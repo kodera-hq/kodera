@@ -137,6 +137,8 @@ export function HomeDefault({ org, me, organisationId, tenantId, role, online }:
       </div>
 
       <ApplicationsCard
+        org={org}
+        workspaceFirst={summary.data?.billing_enabled === false}
         apps={tenantStatus.data?.apps}
         errored={tenantStatus.isError}
         onRetry={() => void tenantStatus.refetch()}

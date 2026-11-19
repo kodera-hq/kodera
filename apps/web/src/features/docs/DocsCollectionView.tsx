@@ -191,10 +191,40 @@ export function DocsCollectionView({
   )
   const collectionEtagRef = useRef<string | null>(null)
   const onRowsChangeRef = useRef(onRowsChange)
+  const rowsByDocIdRef = useRef(rowsByDocId)
+  const pendingCellPutsRef = useRef<
+    Map<
+      string,
+      {
+        readonly timer: ReturnType<typeof setTimeout>
+        readonly execute: () => Promise<boolean>
+      }
+    >
+  >(new Map())
+  const debounceBaselineRowRef = useRef<Map<string, WorkspaceCollectionRowModel | undefined>>(
+    new Map()
+  )
+  const rowWriteChainsRef = useRef<Map<string, Promise<boolean>>>(new Map())
 
   useEffect(() => {
     onRowsChangeRef.current = onRowsChange
   }, [onRowsChange])
+
+  useEffect(() => {
+    rowsByDocIdRef.current = rowsByDocId
+  }, [rowsByDocId])
+
+  useEffect(() => {
+    const pendingMap = pendingCellPutsRef.current
+    return () => {
+      const pendingEntries = [...pendingMap.values()]
+      pendingMap.clear()
+      for (const entry of pendingEntries) {
+        clearTimeout(entry.timer)
+        void entry.execute()
+      }
+    }
+  }, [])
 
   const [activeView, setActiveView] = useState<CollectionViewKind>(initialView)
   const [boardGroupById, setBoardGroupById] = useState<string>(() => {
@@ -368,56 +398,55 @@ export function DocsCollectionView({
   ) => {
     setRowsByDocId((prev) => {
       const next = updater(prev)
+      rowsByDocIdRef.current = next
       onRowsChangeRef.current?.(Object.values(next))
       return next
     })
   }
 
-  const updateCellValue = async (
+  const syncRemoteRowWrite = async (
     documentId: string,
     property: CollectionPropertyDef,
-    rawValue: unknown
+    validatedCell: CollectionCellValue,
+    nextValues: Record<string, CollectionCellValue>,
+    previousRow: WorkspaceCollectionRowModel | undefined
   ): Promise<boolean> => {
-    const targetDoc = documents.find((d) => d.id === documentId)
-    if (!targetDoc || effectiveRole === 'viewer' || targetDoc.role === 'viewer') {
-      return false
-    }
-
-    const validated = validateCollectionPropertyValue(property, rawValue)
-    if (!validated.ok) {
-      setValidationError(validationMessageForReason(validated.reason, copy))
-      return false
-    }
-
-    setValidationError(null)
-    const previousRow = rowsByDocId[documentId]
-    const baseValues = buildCompleteRowValues(collection.properties, previousRow?.values)
-    const nextValues: Record<string, CollectionCellValue> = {
-      ...baseValues,
-      [property.id]: validated.cell,
-    }
-    const optimisticRow: WorkspaceCollectionRowModel = {
-      documentId,
-      values: nextValues,
-      updatedAt: new Date().toISOString(),
-    }
-
-    commitRowMap((prev) => ({
-      ...prev,
-      [documentId]: optimisticRow,
-    }))
-
     const shouldSyncRemote =
-      Boolean(organisationId) && (!isControlledLocal || initialRowEtags !== undefined) && !remoteFallbackLocal
+      Boolean(organisationId) &&
+      (!isControlledLocal || initialRowEtags !== undefined) &&
+      !remoteFallbackLocal
 
-    if (shouldSyncRemote && organisationId) {
-      const rollbackOptimisticRow = () => {
-        commitRowMap((prev) => {
-          const copyMap = { ...prev }
-          if (previousRow) copyMap[documentId] = previousRow
-          else delete copyMap[documentId]
-          return copyMap
-        })
+    if (!shouldSyncRemote || !organisationId) {
+      return true
+    }
+
+    const rollbackOptimisticRow = () => {
+      commitRowMap((prev) => {
+        const copyMap = { ...prev }
+        if (previousRow) copyMap[documentId] = previousRow
+        else delete copyMap[documentId]
+        return copyMap
+      })
+    }
+
+    const previousInFlight = rowWriteChainsRef.current.get(documentId)
+    const executeSerialized = async (): Promise<boolean> => {
+      if (previousInFlight) {
+        const prevSucceeded = await previousInFlight.catch(() => false)
+        if (!prevSucceeded) {
+          return false
+        }
+      }
+
+      // Re-read the latest row values (incorporating both the settled preceding write and any
+      // optimistic sibling cell edits made while awaiting) plus the updated row ETag.
+      const latestOptimisticValues = buildCompleteRowValues(
+        collection.properties,
+        rowsByDocIdRef.current[documentId]?.values ?? nextValues
+      )
+      const mergedValues: Record<string, CollectionCellValue> = {
+        ...latestOptimisticValues,
+        [property.id]: validatedCell,
       }
 
       try {
@@ -426,7 +455,7 @@ export function DocsCollectionView({
 
         if (hasExistingRow) {
           let etag = rowEtagsRef.current.get(documentId) ?? null
-          let payloadValues = nextValues
+          let payloadValues = mergedValues
           if (!etag) {
             const fetched = await getWorkspaceCollectionRow(
               organisationId,
@@ -439,7 +468,7 @@ export function DocsCollectionView({
               rowEtagsRef.current.set(documentId, etag)
               payloadValues = {
                 ...buildCompleteRowValues(collection.properties, fetched.row.values),
-                [property.id]: validated.cell,
+                [property.id]: validatedCell,
               }
             }
           }
@@ -466,16 +495,21 @@ export function DocsCollectionView({
             rowEtagsRef.current.delete(documentId)
           }
           setConflict((prev) => (prev?.documentId === documentId ? null : prev))
-          commitRowMap((prev) => ({
-            ...prev,
-            [documentId]: saved.row,
-          }))
+          const isTailOfChain =
+            rowWriteChainsRef.current.get(documentId) === trackedPromise &&
+            ![...pendingCellPutsRef.current.keys()].some((k) => k.startsWith(`${documentId}:`))
+          if (isTailOfChain) {
+            commitRowMap((prev) => ({
+              ...prev,
+              [documentId]: saved.row,
+            }))
+          }
         } else {
           const created = await putWorkspaceCollectionRow(
             organisationId,
             collection.id,
             documentId,
-            nextValues,
+            mergedValues,
             { mode: 'create', ifNoneMatch: '*' },
             collection.properties
           )
@@ -484,34 +518,178 @@ export function DocsCollectionView({
             rowEtagsRef.current.set(documentId, created.etag)
           }
           setConflict((prev) => (prev?.documentId === documentId ? null : prev))
-          commitRowMap((prev) => ({
-            ...prev,
-            [documentId]: created.row,
-          }))
+          const isTailOfChain =
+            rowWriteChainsRef.current.get(documentId) === trackedPromise &&
+            ![...pendingCellPutsRef.current.keys()].some((k) => k.startsWith(`${documentId}:`))
+          if (isTailOfChain) {
+            commitRowMap((prev) => ({
+              ...prev,
+              [documentId]: created.row,
+            }))
+          }
         }
       } catch (err) {
-        if (
-          isPreconditionFailedError(err) ||
-          isPreconditionRequiredError(err)
-        ) {
+        if (isPreconditionFailedError(err) || isPreconditionRequiredError(err)) {
           // Roll back the stale optimistic write, forget the refused version so no stale sibling
           // values can be paired with a newer ETag before reload, and prompt reload.
           rollbackOptimisticRow()
           rowEtagsRef.current.delete(documentId)
           setConflict({
             documentId,
-            kind: isPreconditionRequiredError(err)
-              ? 'version-required'
-              : 'version-conflict',
+            kind: isPreconditionRequiredError(err) ? 'version-required' : 'version-conflict',
           })
           return false
         }
         setValidationError(copy.validation.invalidValue)
         return false
       }
+
+      return true
     }
 
+    const trackedPromise = executeSerialized()
+    rowWriteChainsRef.current.set(documentId, trackedPromise)
+    try {
+      return await trackedPromise
+    } finally {
+      if (rowWriteChainsRef.current.get(documentId) === trackedPromise) {
+        rowWriteChainsRef.current.delete(documentId)
+      }
+    }
+  }
+
+  const updateCellValue = async (
+    documentId: string,
+    property: CollectionPropertyDef,
+    rawValue: unknown
+  ): Promise<boolean> => {
+    const targetDoc = documents.find((d) => d.id === documentId)
+    if (!targetDoc || effectiveRole === 'viewer' || targetDoc.role === 'viewer') {
+      return false
+    }
+
+    const cellKey = `${documentId}:${property.id}`
+    const existingPending = pendingCellPutsRef.current.get(cellKey)
+    if (existingPending) {
+      clearTimeout(existingPending.timer)
+      pendingCellPutsRef.current.delete(cellKey)
+    }
+
+    const validated = validateCollectionPropertyValue(property, rawValue)
+    if (!validated.ok) {
+      setValidationError(validationMessageForReason(validated.reason, copy))
+      return false
+    }
+
+    setValidationError(null)
+    const currentRows = rowsByDocIdRef.current
+    const previousRow = debounceBaselineRowRef.current.has(documentId)
+      ? debounceBaselineRowRef.current.get(documentId)
+      : currentRows[documentId]
+    debounceBaselineRowRef.current.delete(documentId)
+
+    const baseValues = buildCompleteRowValues(collection.properties, currentRows[documentId]?.values)
+    const nextValues: Record<string, CollectionCellValue> = {
+      ...baseValues,
+      [property.id]: validated.cell,
+    }
+    const optimisticRow: WorkspaceCollectionRowModel = {
+      documentId,
+      values: nextValues,
+      updatedAt: new Date().toISOString(),
+    }
+
+    commitRowMap((prev) => ({
+      ...prev,
+      [documentId]: optimisticRow,
+    }))
+
+    return syncRemoteRowWrite(documentId, property, validated.cell, nextValues, previousRow)
+  }
+
+  const CELL_PUT_DEBOUNCE_MS = 400
+
+  const scheduleDebouncedCellUpdate = (
+    documentId: string,
+    property: CollectionPropertyDef,
+    rawValue: unknown
+  ): boolean => {
+    const targetDoc = documents.find((d) => d.id === documentId)
+    if (!targetDoc || effectiveRole === 'viewer' || targetDoc.role === 'viewer') {
+      return false
+    }
+
+    const validated = validateCollectionPropertyValue(property, rawValue)
+    if (!validated.ok) {
+      setValidationError(validationMessageForReason(validated.reason, copy))
+      return false
+    }
+
+    setValidationError(null)
+    const currentRows = rowsByDocIdRef.current
+    if (!debounceBaselineRowRef.current.has(documentId)) {
+      debounceBaselineRowRef.current.set(documentId, currentRows[documentId])
+    }
+
+    const baseValues = buildCompleteRowValues(collection.properties, currentRows[documentId]?.values)
+    const nextValues: Record<string, CollectionCellValue> = {
+      ...baseValues,
+      [property.id]: validated.cell,
+    }
+    const optimisticRow: WorkspaceCollectionRowModel = {
+      documentId,
+      values: nextValues,
+      updatedAt: new Date().toISOString(),
+    }
+
+    commitRowMap((prev) => ({
+      ...prev,
+      [documentId]: optimisticRow,
+    }))
+
+    const cellKey = `${documentId}:${property.id}`
+    const existingPending = pendingCellPutsRef.current.get(cellKey)
+    if (existingPending) {
+      clearTimeout(existingPending.timer)
+    }
+
+    const execute = async (): Promise<boolean> => {
+      pendingCellPutsRef.current.delete(cellKey)
+      const baselineRow = debounceBaselineRowRef.current.get(documentId)
+      const hasOtherPendingForDoc = [...pendingCellPutsRef.current.keys()].some((k) =>
+        k.startsWith(`${documentId}:`)
+      )
+      if (!hasOtherPendingForDoc) {
+        debounceBaselineRowRef.current.delete(documentId)
+      }
+      const latestValues = buildCompleteRowValues(
+        collection.properties,
+        rowsByDocIdRef.current[documentId]?.values ?? nextValues
+      )
+      return syncRemoteRowWrite(
+        documentId,
+        property,
+        validated.cell,
+        { ...latestValues, [property.id]: validated.cell },
+        baselineRow
+      )
+    }
+
+    const timer = setTimeout(() => {
+      void execute()
+    }, CELL_PUT_DEBOUNCE_MS)
+
+    pendingCellPutsRef.current.set(cellKey, { timer, execute })
     return true
+  }
+
+  const flushDebouncedCellUpdate = (documentId: string, propertyId: string): Promise<boolean> | null => {
+    const cellKey = `${documentId}:${propertyId}`
+    const pending = pendingCellPutsRef.current.get(cellKey)
+    if (!pending) return null
+    clearTimeout(pending.timer)
+    pendingCellPutsRef.current.delete(cellKey)
+    return pending.execute()
   }
 
   const handleReloadAfterConflict = async () => {
@@ -917,6 +1095,11 @@ export function DocsCollectionView({
             delete copyDrafts[draftKey]
             return copyDrafts
           })
+          const flushed = flushDebouncedCellUpdate(row.documentId, prop.id)
+          if (flushed) {
+            void flushed
+            return
+          }
           const trimmed = raw.trim()
           if (trimmed === committed) return
           void updateCellValue(row.documentId, prop, trimmed === '' ? null : Number(trimmed))
@@ -929,9 +1112,18 @@ export function DocsCollectionView({
             data-grid-col={colIndex}
             data-testid={`collection-cell-${row.documentId}-${prop.id}`}
             value={displayValue}
-            onChange={(e) =>
-              setNumberDrafts((prev) => ({ ...prev, [draftKey]: e.target.value }))
-            }
+            onChange={(e) => {
+              const raw = e.target.value
+              setNumberDrafts((prev) => ({ ...prev, [draftKey]: raw }))
+              const trimmed = raw.trim()
+              if (trimmed === '' || (trimmed !== '-' && Number.isFinite(Number(trimmed)))) {
+                scheduleDebouncedCellUpdate(
+                  row.documentId,
+                  prop,
+                  trimmed === '' ? null : Number(trimmed)
+                )
+              }
+            }}
             onBlur={(e) => commitNumber(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
@@ -941,6 +1133,19 @@ export function DocsCollectionView({
               }
               if (e.key === 'Escape') {
                 e.preventDefault()
+                const pending = pendingCellPutsRef.current.get(draftKey)
+                if (pending) {
+                  clearTimeout(pending.timer)
+                  pendingCellPutsRef.current.delete(draftKey)
+                  const baseline = debounceBaselineRowRef.current.get(row.documentId)
+                  debounceBaselineRowRef.current.delete(row.documentId)
+                  commitRowMap((prev) => {
+                    const copyMap = { ...prev }
+                    if (baseline) copyMap[row.documentId] = baseline
+                    else delete copyMap[row.documentId]
+                    return copyMap
+                  })
+                }
                 setNumberDrafts((prev) => {
                   const copyDrafts = { ...prev }
                   delete copyDrafts[draftKey]
@@ -1120,9 +1325,19 @@ export function DocsCollectionView({
             data-grid-col={colIndex}
             data-testid={`collection-cell-${row.documentId}-${prop.id}`}
             value={textVal}
-            onKeyDown={(e) => handleGridCellKeyDown(e, rowIndex, colIndex)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                void flushDebouncedCellUpdate(row.documentId, prop.id)
+                return
+              }
+              handleGridCellKeyDown(e, rowIndex, colIndex)
+            }}
+            onBlur={() => {
+              void flushDebouncedCellUpdate(row.documentId, prop.id)
+            }}
             onChange={(e) => {
-              void updateCellValue(row.documentId, prop, e.target.value || null)
+              scheduleDebouncedCellUpdate(row.documentId, prop, e.target.value || null)
             }}
             className="h-8 min-w-[120px] rounded-sm border border-c-border-input bg-c-surface px-2 text-xs text-c-ink focus-visible:border-c-accent-ink focus-visible:ring focus-visible:outline-hidden"
           />
@@ -1542,13 +1757,13 @@ export function DocsCollectionView({
           {copy.emptyFiltered}
         </p>
       ) : activeView === 'table' ? (
-        <div className="overflow-x-auto rounded-md border border-c-border-soft bg-c-surface">
+        <div className="min-h-[280px] flex-1 overflow-auto rounded-md border border-c-border-soft bg-c-surface">
           <table
             ref={gridRef}
             role="grid"
             aria-label={collection.title}
             data-testid="collection-table-grid"
-            className="w-full border-collapse text-left text-xs"
+            className="w-full min-w-[880px] border-collapse text-left text-xs"
           >
             <thead>
               <tr className="border-b border-c-border-soft bg-c-sunken">
@@ -1561,7 +1776,7 @@ export function DocsCollectionView({
                         : 'descending'
                       : 'none'
                   }
-                  className="px-3 py-2 font-semibold text-c-ink-2"
+                  className="px-3 py-2 font-semibold whitespace-nowrap text-c-ink-2"
                 >
                   <button
                     type="button"
@@ -1587,7 +1802,7 @@ export function DocsCollectionView({
                             : 'descending'
                           : 'none'
                       }
-                      className="px-3 py-2 font-semibold text-c-ink-2"
+                      className="px-3 py-2 font-semibold whitespace-nowrap text-c-ink-2"
                     >
                       <button
                         type="button"
@@ -2020,7 +2235,7 @@ export function DocsCollectionView({
                 }
               }}
               onChange={(e) => setNewEntryTitle(e.target.value)}
-              className="h-8 rounded-sm border border-c-border-input bg-c-surface px-2 text-xs text-c-ink placeholder:text-c-placeholder focus-visible:border-c-accent-ink focus-visible:ring focus-visible:outline-hidden"
+              className="h-8 min-w-[256px] rounded-sm border border-c-border-input bg-c-surface px-2 text-xs text-c-ink placeholder:text-c-placeholder focus-visible:border-c-accent-ink focus-visible:ring focus-visible:outline-hidden narrow:w-full narrow:min-w-0"
             />
             <Button
               size="sm"

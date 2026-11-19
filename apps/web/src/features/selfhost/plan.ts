@@ -68,6 +68,28 @@ const ERROR_MESSAGES_FR: Readonly<Record<SelfHostValidationErrorCode, string>> =
     'Le jeton API fournisseur contient des caractères invalides ou dépasse 512 caractères.',
 })
 
+const ERROR_MESSAGES_EN: Readonly<Record<SelfHostValidationErrorCode, string>> = Object.freeze({
+  InvalidProvider:
+    'Unsupported cloud provider. Choose Scaleway, Hetzner, Hostinger, or OVHcloud.',
+  InvalidDomain:
+    'Invalid public domain. Enter a valid public FQDN (excluding localhost, .local, .internal, and raw IP addresses).',
+  InvalidAdminEmail:
+    'Invalid ACME email address. Enter an administrator address on a valid public domain.',
+  InvalidRegion:
+    'Invalid provider region (1 to 32 ASCII alphanumeric characters or hyphens).',
+  TokenTooShort: 'The provider API token must contain at least 16 ASCII characters.',
+  TokenContainsWhitespace: 'The provider API token must not contain spaces or line breaks.',
+  TokenInvalidCharacters:
+    'The provider API token contains invalid characters or exceeds 512 characters.',
+})
+
+export function selfHostValidationErrorMessage(
+  code: SelfHostValidationErrorCode,
+  locale?: string
+): string {
+  return locale?.startsWith('en') ? ERROR_MESSAGES_EN[code] : ERROR_MESSAGES_FR[code]
+}
+
 export class SelfHostValidationError extends Error {
   readonly code: SelfHostValidationErrorCode
 
@@ -278,7 +300,10 @@ export function validateSelfHostSpec(input: SelfHostSpecInput): SelfHostDeployme
   })
 }
 
-export function safeValidateSelfHostSpec(input: SelfHostSpecInput): SelfHostValidationResult {
+export function safeValidateSelfHostSpec(
+  input: SelfHostSpecInput,
+  locale?: string
+): SelfHostValidationResult {
   try {
     const plan = validateSelfHostSpec(input)
     return Object.freeze({ ok: true, plan })
@@ -287,13 +312,13 @@ export function safeValidateSelfHostSpec(input: SelfHostSpecInput): SelfHostVali
       return Object.freeze({
         ok: false,
         code: error.code,
-        message: error.message,
+        message: locale ? selfHostValidationErrorMessage(error.code, locale) : error.message,
       })
     }
     return Object.freeze({
       ok: false,
       code: 'InvalidDomain',
-      message: ERROR_MESSAGES_FR.InvalidDomain,
+      message: selfHostValidationErrorMessage('InvalidDomain', locale),
     })
   }
 }

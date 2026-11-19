@@ -15,6 +15,7 @@ import {
 import { DocumentationCopyButton } from './DocumentationCopyButton'
 import { WebhookSignatureLab } from './WebhookSignatureLab'
 import { CommunityPreviewDialog, useCommunityPreview } from './communityPreview'
+import { SelfHostDeployerPanel } from '../selfhost/SelfHostDeployerPanel'
 export function DeveloperDocsHub({
   onOpenSupportChannel,
 }: {
@@ -50,13 +51,27 @@ export function DeveloperDocsHub({
           <p className="mb-4 text-sm font-semibold text-c-ink">{copy.title}</p>
           <label className="flex flex-col gap-2 text-xs text-c-ink-2">
             {copy.search}
-            <input
-              type="search"
-              value={query}
-              maxLength={128}
-              onChange={(event) => setQuery(event.target.value)}
-              className="w-full rounded-md border border-c-border-input bg-c-surface p-3 text-sm text-c-ink focus-visible:ring focus-visible:outline-hidden"
-            />
+            <span className="relative block">
+              <svg
+                aria-hidden="true"
+                viewBox="0 0 16 16"
+                className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-c-ink-3"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+              >
+                <circle cx="7" cy="7" r="4.5" />
+                <path strokeLinecap="round" d="m10.5 10.5 3 3" />
+              </svg>
+              <input
+                type="search"
+                value={query}
+                maxLength={128}
+                placeholder={copy.searchPlaceholder}
+                onChange={(event) => setQuery(event.target.value)}
+                className="w-full rounded-md border border-c-border-input bg-c-surface py-3 pr-3 pl-10 text-sm text-c-ink placeholder:text-c-placeholder focus-visible:ring focus-visible:outline-hidden"
+              />
+            </span>
           </label>
           <nav aria-label={copy.navigation} className="mt-4 flex flex-col gap-2">
             {narrow && !query.trim() ? (
@@ -132,7 +147,7 @@ export function DeveloperDocsHub({
                 </aside>
               ) : null}
               {section.code ? (
-                <div className="min-w-0 overflow-hidden rounded-md border border-c-border bg-c-sunken">
+                <div className="w-full min-w-0 overflow-hidden rounded-md border border-c-border bg-c-sunken">
                   <div className="flex flex-wrap items-center justify-between gap-2 border-b border-c-border-soft p-3">
                     <span className="font-mono text-xs text-c-ink-2">{section.language}</span>
                     <DocumentationCopyButton
@@ -146,14 +161,22 @@ export function DeveloperDocsHub({
                     role="region"
                     aria-label={`${section.language} · ${section.title}`}
                     tabIndex={0}
-                    className="overflow-x-auto p-4 font-mono text-xs leading-relaxed text-c-ink focus-visible:ring focus-visible:outline-hidden"
+                    className="w-full overflow-x-auto p-4 pr-6 font-mono text-xs leading-relaxed whitespace-pre text-c-ink focus-visible:ring focus-visible:outline-hidden"
                   >
-                    <code>{section.code}</code>
+                    <code className="block w-max min-w-full">{section.code}</code>
                   </pre>
                 </div>
               ) : null}
             </section>
           ))}
+          {active.id === 'quickstart' ? (
+            <div
+              data-testid="developer-docs-selfhost-deployer"
+              className="mt-6 border-t border-c-border-soft pt-6"
+            >
+              <SelfHostDeployerPanel />
+            </div>
+          ) : null}
           {active.id === 'extensions' ? (
             <section aria-label={copy.catalogue} className="mb-6 border-t border-c-border pt-4">
               <h3 className="mb-3 text-lg font-semibold">{copy.catalogue}</h3>

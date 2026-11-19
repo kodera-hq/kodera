@@ -132,8 +132,8 @@ export function DocsWorkspacePanel({
       const found = allPads.find((pad) => pad.id === targetId)
       if (found !== undefined) return found
     }
-    return allPads[0] ?? defaultPad ?? undefined
-  }, [allPads, activePadId, selectedPadId, defaultPad])
+    return allPads[0]
+  }, [allPads, activePadId, selectedPadId])
 
   /** The pad's address, once checked against this tenant's own origin; `null` for anything else. */
   const validatedCurrentUrl = useMemo(() => {
@@ -257,9 +257,6 @@ export function DocsWorkspacePanel({
                     </p>
                   </div>
                 </div>
-                <StatusPill state="info">
-                  {t('console.docs.panel.status-in-development')}
-                </StatusPill>
               </div>
 
               <div
@@ -308,12 +305,19 @@ export function DocsWorkspacePanel({
 
                 <div
                   data-testid="docs-inline-collaborative-editor"
-                  className="flex flex-col gap-2 rounded-md border border-c-border-soft bg-c-surface p-3"
+                  className="flex flex-col gap-3 rounded-md border border-c-border-soft bg-c-surface p-3"
                 >
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="text-xs font-semibold text-c-ink">
-                      {t('console.docs.panel.editor-title')}
-                    </span>
+                  {/* Single concise local-draft banner instead of 5 redundant disclaimers */}
+                  <div
+                    data-testid="docs-inline-notice"
+                    className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-c-border-soft bg-c-sunken px-3 py-2 text-xs text-c-ink-2"
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <StatusPill state="info">
+                        {t('console.docs.panel.status-in-development')}
+                      </StatusPill>
+                      <span>{t('console.docs.panel.editor-notice')}</span>
+                    </div>
                     <span
                       data-testid="docs-inline-save-badge"
                       className="font-mono text-xs text-c-ink-3"
@@ -321,9 +325,6 @@ export function DocsWorkspacePanel({
                       {inlineSavedLabel}
                     </span>
                   </div>
-                  <p data-testid="docs-inline-notice" className="text-xs text-c-ink-2">
-                    {t('console.docs.panel.editor-notice')}
-                  </p>
 
                   <MarkdownDraftEditor
                     title={
@@ -338,6 +339,8 @@ export function DocsWorkspacePanel({
                     }}
                     sourceLabel={t('console.docs.panel.editor-label')}
                     sourceTestId="docs-inline-textarea"
+                    viewToggle
+                    hideLocalDisclaimers
                   />
                 </div>
               </div>

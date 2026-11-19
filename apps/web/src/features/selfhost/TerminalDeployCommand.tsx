@@ -40,13 +40,13 @@ export function TerminalDeployCommand() {
   const [copied, setCopied] = useState(false)
   const command = buildTerminalDeployCommand(domain, issuer, mailbox)
   return (
-    <section className="flex flex-col gap-3 rounded-lg border border-c-border p-4">
-      <h3>{t('console.onboarding.studio.terminal')} · kodera-deploy.sh</h3>
-      <p>{t('console.onboarding.studio.trust')}</p>
-      <label className="flex flex-col gap-2 text-sm">
+    <section className="flex min-w-0 flex-col gap-3 rounded-lg border border-c-border p-4">
+      <h3 className="break-words">{t('console.onboarding.studio.terminal')} · kodera-deploy.sh</h3>
+      <p className="break-words">{t('console.onboarding.studio.trust')}</p>
+      <label className="flex min-w-0 flex-col gap-2 text-sm">
         {t('console.onboarding.studio.domain')}
         <input
-          className="rounded-md border border-c-border bg-c-surface p-3 text-c-ink"
+          className="w-full min-w-0 rounded-md border border-c-border bg-c-surface p-3 text-c-ink"
           value={domain}
           onChange={(e) => {
             setDomain(e.target.value)
@@ -55,10 +55,10 @@ export function TerminalDeployCommand() {
           maxLength={253}
         />
       </label>
-      <label className="flex flex-col gap-2 text-sm">
+      <label className="flex min-w-0 flex-col gap-2 text-sm">
         {t('console.onboarding.studio.issuer')}
         <input
-          className="rounded-md border border-c-border bg-c-surface p-3 text-c-ink"
+          className="w-full min-w-0 rounded-md border border-c-border bg-c-surface p-3 text-c-ink"
           value={issuer}
           onChange={(e) => {
             setIssuer(e.target.value)
@@ -67,10 +67,10 @@ export function TerminalDeployCommand() {
           maxLength={2048}
         />
       </label>
-      <label className="flex flex-col gap-2 text-sm">
+      <label className="flex min-w-0 flex-col gap-2 text-sm">
         {t('console.onboarding.studio.support')}
         <input
-          className="rounded-md border border-c-border bg-c-surface p-3 text-c-ink"
+          className="w-full min-w-0 rounded-md border border-c-border bg-c-surface p-3 text-c-ink"
           type="email"
           value={mailbox}
           onChange={(e) => {
@@ -80,10 +80,11 @@ export function TerminalDeployCommand() {
           maxLength={254}
         />
       </label>
-      <code className="overflow-auto text-xs">
+      <code className="block w-full overflow-x-auto rounded-md bg-c-sunken p-3 font-mono text-xs whitespace-pre text-c-ink">
         {command ?? t('console.onboarding.studio.invalid')}
       </code>
       <Button
+        className="h-auto min-h-10 max-w-full py-2"
         disabled={!command}
         onClick={() => {
           if (command && navigator.clipboard)
@@ -93,9 +94,11 @@ export function TerminalDeployCommand() {
               .catch(() => setCopied(false))
         }}
       >
-        {copied
-          ? t('console.onboarding.studio.copied')
-          : t('console.onboarding.studio.copy-command')}
+        <span className="whitespace-normal">
+          {copied
+            ? t('console.onboarding.studio.copied')
+            : t('console.onboarding.studio.copy-command')}
+        </span>
       </Button>
     </section>
   )

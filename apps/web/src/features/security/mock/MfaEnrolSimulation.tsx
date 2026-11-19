@@ -40,8 +40,20 @@ interface CodeFormValues {
 
 import type { MfaEnrolScreenProps } from '../MfaEnrolScreen'
 
-export function MfaEnrolSimulation({ accountEmail, onEnrolled }: MfaEnrolScreenProps) {
-  const { t } = useTranslation()
+export function MfaEnrolSimulation({ accountEmail, memberRole, onEnrolled }: MfaEnrolScreenProps) {
+  const { t, i18n } = useTranslation()
+  const isEnglish = i18n.resolvedLanguage?.startsWith('en') === true
+  const isVoluntaryMember = memberRole === 'org_member'
+  const headingTitle = isVoluntaryMember
+    ? isEnglish
+      ? 'Protect your account (2FA)'
+      : 'Protéger votre compte (2FA)'
+    : t('console.login.mfa.title')
+  const headingSubtitle = isVoluntaryMember
+    ? isEnglish
+      ? 'Add a passkey or an authenticator app to strengthen your personal sign-in security.'
+      : 'Ajoutez une clé d’accès ou une application d’authentification pour renforcer la sécurité de votre connexion.'
+    : t('console.login.mfa.subtitle')
   const [method, setMethod] = useState<Method>('choose')
   const [passkeyError, setPasskeyError] = useState<string | undefined>(undefined)
   const [totpStep, setTotpStep] = useState<TotpStep>('scan')
@@ -127,9 +139,9 @@ export function MfaEnrolSimulation({ accountEmail, onEnrolled }: MfaEnrolScreenP
               tabIndex={-1}
               className="text-xl font-semibold text-c-ink outline-hidden"
             >
-              {t('console.login.mfa.title')}
+              {headingTitle}
             </h1>
-            <p className="mt-1 text-md text-c-ink-3">{t('console.login.mfa.subtitle')}</p>
+            <p className="mt-1 text-md text-c-ink-3">{headingSubtitle}</p>
 
             <div className="mt-6 flex flex-col gap-4">
               <Card>

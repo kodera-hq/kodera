@@ -6,10 +6,12 @@
 // own). Every read is a query from `queries.ts`; the only state this
 // component owns is which drawer is open.
 
-import { useEffect, useState } from 'react'
+import { useContext, useEffect, useState } from 'react'
+import { QueryClientContext } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { useRouter } from '@tanstack/react-router'
 import { ApiProblem } from '@/api/client'
+import { statusSummaryQueryKey } from '@/app/queryKeys'
 import { orgRoute } from '../../app/org-route'
 import { trackStatusViewed, trackSupportFromStatus } from './analytics'
 import type { MessageKey } from '@/i18n'
@@ -86,6 +88,14 @@ export function StatusScreen() {
   const canSeeBilling = ['org_owner', 'org_admin', 'org_billing'].includes(membership.role)
   const canOrder = membership.role === 'org_owner'
 
+  const queryClient = useContext(QueryClientContext)
+  const cachedSummary = queryClient?.getQueryData<{ billing_enabled?: boolean }>(
+    statusSummaryQueryKey(organisationId)
+  )
+  const workspaceFirst =
+    cachedSummary?.billing_enabled === false ||
+    (cachedSummary === undefined &&
+      (org === 'community' || membership.organisation.slug === 'community'))
   const tenantQuery = useOrganisationTenant(organisationId)
   const tenant = tenantQuery.data
   const statusQuery = useTenantStatus(tenant?.id)
@@ -290,6 +300,8 @@ export function StatusScreen() {
             })}
           </h1>
           <LiveOverview
+            org={org}
+            workspaceFirst={workspaceFirst}
             status={data}
             lastUpdatedText={lastUpdatedText}
             canSeeBilling={canSeeBilling}

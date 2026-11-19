@@ -19,6 +19,16 @@ import { moduleGlyphName } from '@/app/railModules'
 import type { MessageKey } from '@/i18n'
 
 export type TenantApp = components['schemas']['TenantApp']
+type DisplayedApp =
+  | TenantApp
+  | {
+      code: 'workspace'
+      name: string
+      url: string
+      default_url?: string | undefined
+      version?: string | null | undefined
+      state: TenantApp['state']
+    }
 
 const TRACKED_APP_CODES = new Set(['visio', 'docs'])
 
@@ -81,7 +91,13 @@ const APP_STATE: Record<TenantApp['state'], { tone: StatusPillState; label: Mess
   maintenance: { tone: 'info', label: 'console.status.app.status-maintenance' },
 }
 
-function AppCard({ app }: { app: TenantApp }) {
+function AppCard({
+  app,
+  displayAddress,
+}: {
+  app: DisplayedApp
+  displayAddress?: string | undefined
+}) {
   const { t } = useTranslation()
   const titleId = useId()
   const health =
@@ -112,18 +128,27 @@ function AppCard({ app }: { app: TenantApp }) {
             <StatusPill state={health.tone}>{t(health.label)}</StatusPill>
             <LinkButton
               className="ml-auto"
-              href={app.url}
-              target="_blank"
+              href={app.code === 'workspace' && app.url.startsWith('/') ? app.url : app.url}
+              {...(app.code === 'workspace' ? {} : { target: '_blank' as const })}
               size="sm"
               variant="secondary"
               onClick={handleOpen}
-              aria-label={`${t('console.status.overview.action-open-app', { app: app.name })} — ${t('console.common.a11y-opens-new-tab')}`}
+              aria-label={
+                app.code === 'workspace'
+                  ? t('console.status.overview.action-open-app', { app: app.name })
+                  : `${t('console.status.overview.action-open-app', { app: app.name })} — ${t('console.common.a11y-opens-new-tab')}`
+              }
             >
-              {t('console.status.overview.action-open-app', { app: app.name })} ↗
+              {t('console.status.overview.action-open-app', { app: app.name })}
+              {app.code === 'workspace' ? '' : ' ↗'}
             </LinkButton>
           </div>
           <div className="grid min-w-0 grid-cols-1 gap-3 xl:grid-cols-2">
-            <AppAddressRow key={`primary:${app.url}`} label={app.name} value={app.url} />
+            <AppAddressRow
+              key={`primary:${displayAddress ?? app.url}`}
+              label={app.name}
+              value={displayAddress ?? app.url}
+            />
             {app.default_url === undefined ? null : (
               <AppAddressRow
                 key={`fallback:${app.default_url}`}
@@ -140,18 +165,44 @@ function AppCard({ app }: { app: TenantApp }) {
 
 export interface AppsCardProps {
   apps: readonly TenantApp[]
+  org?: string | undefined
+  workspaceFirst?: boolean | undefined
 }
 
-export function AppsCard({ apps }: AppsCardProps) {
-  const { t } = useTranslation()
+export function AppsCard({ apps, org, workspaceFirst = false }: AppsCardProps) {
+  const { t, i18n } = useTranslation()
   const titleId = useId()
+  const isEnglish = i18n.resolvedLanguage?.startsWith('en') === true
+  const origin = typeof window !== 'undefined' ? window.location.origin : 'https://app.kodera.io'
+  const workspacePath = org ? `/${org}/workspace` : '/workspace'
+
+  const effectiveApps: readonly DisplayedApp[] =
+    apps.length === 0 && workspaceFirst
+      ? [
+          {
+            code: 'workspace',
+            name: isEnglish ? 'Collaborative workspace' : 'Espace collaboratif',
+            url: `${origin}${workspacePath}`,
+            state: 'live',
+          },
+        ]
+      : apps
+
+  if (effectiveApps.length === 0) {
+    return null
+  }
+
   return (
     <section aria-labelledby={titleId} className="flex flex-col gap-4">
       <h2 id={titleId} className="text-md font-semibold text-c-ink">
         {t('console.status.overview.title-apps')}
       </h2>
-      {apps.map((app) => (
-        <AppCard key={app.code} app={app} />
+      {effectiveApps.map((app) => (
+        <AppCard
+          key={app.code}
+          app={app.code === 'workspace' ? { ...app, url: workspacePath } : app}
+          displayAddress={app.url}
+        />
       ))}
     </section>
   )

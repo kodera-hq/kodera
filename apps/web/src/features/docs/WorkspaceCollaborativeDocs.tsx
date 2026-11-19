@@ -27,6 +27,15 @@ import {
   type WebSocketLike,
 } from './collabSession'
 import {
+  DocsDriveExplorer,
+  FOLDER_MARKDOWN_MARKER,
+  ensureFolderMarker,
+  isExplicitFolderMarkdown,
+  stripFolderMarker,
+  type WorkspaceDriveFileItem,
+} from './DocsDriveExplorer'
+import { getDocsDriveCopy } from './docsDriveMessages'
+import {
   ALL_STARTER_TEMPLATE_KEYS,
   buildDocumentTree,
   canCreateDocumentUnderParent,
@@ -39,6 +48,7 @@ import {
   type DocumentAccessRole,
   type DocumentTemplateKey,
 } from './pageTree'
+import { slugifyDocsSegment } from './url'
 import {
   computeLocalBacklinks,
   resolveWikilinkTarget,
@@ -68,7 +78,7 @@ export interface WorkspacePageRecord {
   readonly order?: number | undefined
 }
 
-export type WorkspaceEditorSurface = 'blocks' | 'markdown' | 'collections'
+export type WorkspaceEditorSurface = 'drive' | 'blocks' | 'markdown' | 'collections'
 
 const LazyDocsCollectionView = lazy(() => import('./DocsCollectionView'))
 
@@ -87,6 +97,7 @@ export interface WorkspaceCollaborativeDocsProps {
   readonly onDocumentsLoaded?: ((docs: readonly WorkspacePageRecord[]) => void) | undefined
   readonly localDocuments?: readonly WorkspacePageRecord[] | undefined
   readonly onLocalDocumentsChange?: ((docs: readonly WorkspacePageRecord[]) => void) | undefined
+  readonly workspaceFiles?: readonly WorkspaceDriveFileItem[] | undefined
   readonly confidential?: ConfidentialCollabPolicy | undefined
   readonly webSocketFactory?: ((url: string) => WebSocketLike) | undefined
 }
@@ -104,57 +115,69 @@ function treeIndentClass(depth: number): string {
   return TREE_INDENT_BY_DEPTH[Math.min(6, Math.max(1, depth))] ?? 'pl-12'
 }
 
-/**
- * A page write Core refused on its precondition, and which of the two it was — the same pair the
- * structured collection reports (`DocsCollectionView.tsx`), for the same contract
- * (`src/api/generated/problems.ts`), with one difference that shapes everything here: what was
- * refused is a draft somebody is still typing, not a single cell.
- *
- * `version-conflict` is `precondition-failed` (the version sent was stale — a collaborator or the
- * collaboration server committed first). `version-required` is `precondition-required`, and also
- * the case where this tab holds no version for the page at all: a write would then have to go out
- * with no `If-Match`, so it is refused before it is sent rather than sent unconditionally over
- * somebody else's text.
- *
- * Neither state touches the draft in the editor. Nothing is rolled back, nothing is re-read
- * behind the person's back and nothing is retried: the title and the Markdown they have not saved
- * stay exactly as they typed them, and the two recovery actions are theirs to choose.
- *
- * It is held per document, and only those two actions end it. Opening another page and coming
- * back is not one of them: the refusal and the draft it refused both come back with the page,
- * because a version read on the way in says nothing about the draft the member never saved.
- */
+export interface DocumentOutlineHeading {
+  readonly index: number
+  readonly level: 1 | 2 | 3
+  readonly text: string
+}
+
+export function extractDocumentOutline(markdown: string): readonly DocumentOutlineHeading[] {
+  const lines = markdown.replace(/\r\n/g, '\n').split('\n')
+  const items: DocumentOutlineHeading[] = []
+  let inFence = false
+  let headingCounter = 0
+
+  for (const raw of lines) {
+    const trimmed = raw.trim()
+    if (trimmed.startsWith('```')) {
+      inFence = !inFence
+      continue
+    }
+    if (inFence) continue
+    const match = /^(#{1,3})\s+(.+)$/.exec(trimmed)
+    if (!match?.[1] || !match[2]) continue
+    const level = match[1].length as 1 | 2 | 3
+    const text = match[2]
+      .replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_m, target: string, alias?: string) => alias || target)
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+      .replace(/[*_~\x60]/g, '')
+      .trim()
+    if (text.length > 0) {
+      items.push({ index: headingCounter, level, text })
+      headingCounter += 1
+    }
+  }
+  return items
+}
+
+export function downloadDocumentAsMarkdown(title: string, markdown: string): void {
+  const cleanBody = markdown.replaceAll(`${FOLDER_MARKDOWN_MARKER}\n\n`, '').replaceAll(FOLDER_MARKDOWN_MARKER, '')
+  const content = cleanBody.trimStart().startsWith('# ')
+    ? cleanBody
+    : `# ${title.trim() || 'Document'}\n\n${cleanBody}`
+  const slug = slugifyDocsSegment(title) || 'document'
+  const href = URL.createObjectURL(new Blob([content], { type: 'text/markdown;charset=utf-8' }))
+  const anchor = document.createElement('a')
+  anchor.href = href
+  anchor.download = `${slug}.md`
+  anchor.click()
+  URL.revokeObjectURL(href)
+}
+
 interface PageWriteConflict {
   readonly kind: 'version-conflict' | 'version-required'
-  /**
-   * The draft as the write left it, and as it has been typed since — the text that must come
-   * back with the page, and that 'keep my draft as a new page' must save.
-   */
   readonly title: string
   readonly markdown: string
 }
 
-/** The single debounced save waiting to go out, and the document it would write. */
 interface ScheduledSave {
   readonly documentId: string
   readonly timer: ReturnType<typeof setTimeout>
 }
 
-/**
- * How many refused drafts are kept. Each holds a page body, so the number is bounded rather than
- * left to grow with a long session; a member holding more than a handful of unresolved refusals
- * at once has a screen to clear before they have memory to worry about, and the oldest of them is
- * the one they are least likely to come back to.
- */
 const MAX_PRESERVED_CONFLICTS = 8
-
-/** Counters are an integer each, so more documents can carry one than can carry a draft. */
 const MAX_TRACKED_DOCUMENTS = 64
 
-/**
- * The entry, as the newest. Insertion order is recency — the key is re-inserted last — so what is
- * dropped when the map is full is the document touched longest ago, never the one being written.
- */
 function withNewestEntry<V>(
   map: ReadonlyMap<string, V>,
   key: string,
@@ -172,7 +195,6 @@ function withNewestEntry<V>(
   return next
 }
 
-/** Shared so that the state and the ref start as the same empty map, without reading either. */
 const NO_CONFLICTS: ReadonlyMap<string, PageWriteConflict> = new Map()
 
 function withoutEntry<V>(map: ReadonlyMap<string, V>, key: string): ReadonlyMap<string, V> {
@@ -182,7 +204,6 @@ function withoutEntry<V>(map: ReadonlyMap<string, V>, key: string): ReadonlyMap<
   return next
 }
 
-/** The refused write a page conflict is, read off the problem Core answered with. */
 function conflictKindOf(error: unknown): PageWriteConflict['kind'] | null {
   if (isPreconditionRequiredError(error)) return 'version-required'
   if (isPreconditionFailedError(error)) return 'version-conflict'
@@ -260,11 +281,13 @@ export function WorkspaceCollaborativeDocs({
   onDocumentsLoaded,
   localDocuments,
   onLocalDocumentsChange,
+  workspaceFiles = [],
   webSocketFactory,
   confidential,
 }: WorkspaceCollaborativeDocsProps) {
   const { t, i18n } = useTranslation()
   const collectionCopy = getCollectionCopy(i18n.resolvedLanguage)
+  const driveCopy = getDocsDriveCopy(i18n.resolvedLanguage)
   const templateSelectId = useId()
   const parentSelectId = useId()
   const titleInputId = useId()
@@ -290,15 +313,15 @@ export function WorkspaceCollaborativeDocs({
 
   const [templateKey, setTemplateKey] = useState<DocumentTemplateKey>('blank')
   const [editorSurface, setEditorSurface] = useState<WorkspaceEditorSurface>(initialSurface)
+  const [driveFolderId, setDriveFolderId] = useState<string | null>(null)
+  const [explicitFolderIds, setExplicitFolderIds] = useState<ReadonlySet<string>>(() => new Set())
+  const [tocOpen, setTocOpen] = useState(true)
+  const [isSavingRemote, setIsSavingRemote] = useState(false)
   const [treeError, setTreeError] = useState<string | null>(null)
-  /**
-   * One refused write per document, with the draft it refused. The ref is what a callback created
-   * in an earlier render reads — a settled fetch, a debounced save — and the state is what the
-   * banner renders; `commitConflicts` moves both at once, so no path reads one without the other.
-   */
+
+  const editorRegionRef = useRef<HTMLDivElement | null>(null)
   const conflictsRef = useRef<ReadonlyMap<string, PageWriteConflict>>(NO_CONFLICTS)
   const [conflicts, setConflicts] = useState<ReadonlyMap<string, PageWriteConflict>>(NO_CONFLICTS)
-  /** How many times each document's body has been re-read, which is the block editor's identity. */
   const [bodyReloadEpochs, setBodyReloadEpochs] = useState<ReadonlyMap<string, number>>(
     () => new Map()
   )
@@ -311,21 +334,17 @@ export function WorkspaceCollaborativeDocs({
 
   const etagsRef = useRef<Map<string, string>>(new Map())
   const saveTimerRef = useRef<ScheduledSave | null>(null)
-  /**
-   * Each document's latest write or explicit resolution. Every dispatched `PATCH` advances it,
-   * so an older response cannot replace the version or conflict belonging to a newer write.
-   * Re-reading and forking also advance it: cancelling a timer cannot recall an in-flight write.
-   */
   const writeGenerationsRef = useRef<ReadonlyMap<string, number>>(new Map())
-  /** The pages as the editor holds them, for a callback that settles after a later render. */
   const docsRef = useRef<readonly WorkspacePageRecord[]>(docs)
   const onDocumentsLoadedRef = useRef(onDocumentsLoaded)
   const protectionRef = useRef(confidential)
+
   useLayoutEffect(() => {
     protectionRef.current = confidential
     if (confidential?.required && saveTimerRef.current !== null) {
       clearTimeout(saveTimerRef.current.timer)
       saveTimerRef.current = null
+      setIsSavingRemote(false)
     }
   }, [confidential])
 
@@ -333,12 +352,6 @@ export function WorkspaceCollaborativeDocs({
     docsRef.current = docs
   }, [docs])
 
-  /**
-   * Each refused document's remembered draft, kept in step with the editor. The member goes on
-   * typing into a draft no write will take until they resolve the conflict, and the text that has
-   * to come back when they return to the page — and that 'keep my draft as a new page' has to
-   * save — is the one they typed last, not the one the refused write happened to carry.
-   */
   useLayoutEffect(() => {
     const held = conflictsRef.current
     if (held.size === 0) return
@@ -405,6 +418,7 @@ export function WorkspaceCollaborativeDocs({
   }, [isRemoteMode, organisationId, t])
 
   const treeNodes = useMemo(() => buildDocumentTree(docs), [docs])
+  const docById = useMemo(() => new Map(docs.map((d) => [d.id, d])), [docs])
 
   const currentNode = useMemo(() => {
     if (selectedId) {
@@ -417,8 +431,32 @@ export function WorkspaceCollaborativeDocs({
   const currentDoc = currentNode?.doc
   const activeDocId = currentDoc?.id
   const activeDocRole = currentDoc?.role
-  /** The refused write the open page is holding, if it is holding one. */
   const activeConflict = activeDocId ? conflicts.get(activeDocId) : undefined
+
+  const ancestorFolders = useMemo(() => {
+    if (!currentDoc) return []
+    const ancestors: WorkspacePageRecord[] = []
+    const visited = new Set<string>([currentDoc.id])
+    let cursor = currentDoc.parentId
+    while (cursor !== null && !visited.has(cursor)) {
+      visited.add(cursor)
+      const parent = docById.get(cursor)
+      if (!parent) break
+      ancestors.unshift(parent)
+      cursor = parent.parentId
+    }
+    return ancestors
+  }, [currentDoc, docById])
+
+  const isCurrentExplicitFolder =
+    currentDoc !== undefined &&
+    (explicitFolderIds.has(currentDoc.id) || isExplicitFolderMarkdown(currentDoc.markdown))
+  const visibleCurrentMarkdown = currentDoc ? stripFolderMarker(currentDoc.markdown) : ''
+
+  const outlineHeadings = useMemo(
+    () => (currentDoc ? extractDocumentOutline(visibleCurrentMarkdown) : []),
+    [currentDoc, visibleCurrentMarkdown]
+  )
 
   // Fetch ETag + fresh document + backlinks when switching documents in Core 0.43.0 mode.
   useEffect(() => {
@@ -428,11 +466,6 @@ export function WorkspaceCollaborativeDocs({
     void getWorkspaceDocument(organisationId, activeDocId, abort.signal)
       .then(({ document: fresh, etag }) => {
         if (abort.signal.aborted) return
-        // A page whose write was refused is still holding a draft nobody has saved. Opening it
-        // again is not the member choosing the server's version — that choice is the banner's
-        // re-read, and it is the only thing that takes the draft off the screen. So the draft
-        // comes back with the page, and so does the refusal: a version read on the way in says
-        // nothing about a conflict with a collaborator who has already committed.
         const refused = conflictsRef.current.get(activeDocId)
         if (etag && !refused) etagsRef.current.set(activeDocId, etag)
         setInternalDocs((prev) =>
@@ -552,7 +585,7 @@ export function WorkspaceCollaborativeDocs({
     }
   }
 
-  const handleCreatePage = async (parentId: string | null) => {
+  const handleCreatePage = async (parentId: string | null, openInEditor = false) => {
     const depthCheck = canCreateDocumentUnderParent(docs, parentId)
     if (!depthCheck.ok) {
       setTreeError(t('console.docs.collab.error-max-depth'))
@@ -584,6 +617,7 @@ export function WorkspaceCollaborativeDocs({
         }
         commitDocs((prev) => [...prev, record])
         selectDocument(record.id)
+        if (openInEditor) setEditorSurface('blocks')
       } catch {
         setTreeError(t('console.docs.collab.error-save'))
       }
@@ -601,6 +635,69 @@ export function WorkspaceCollaborativeDocs({
     }
     commitDocs((prev) => [...prev, created])
     selectDocument(created.id)
+    if (openInEditor) setEditorSurface('blocks')
+  }
+
+  const handleCreateDriveFolder = async (rawTitle: string, parentId: string | null) => {
+    const trimmed = rawTitle.trim()
+    if (trimmed.length === 0 || trimmed.length > 120) return
+    const depthCheck = canCreateDocumentUnderParent(docs, parentId)
+    if (!depthCheck.ok) {
+      setTreeError(t('console.docs.collab.error-max-depth'))
+      return
+    }
+    setTreeError(null)
+    const folderMarkdown = `${FOLDER_MARKDOWN_MARKER}\n\n## ${trimmed}\n`
+
+    if (isRemoteMode && organisationId) {
+      try {
+        const { document: created, etag } = await createWorkspaceDocument(organisationId, {
+          title: trimmed,
+          parentId,
+        })
+        let latestEtag = etag
+        let persistedMarkdown = folderMarkdown
+        if (!confidential?.required && latestEtag) {
+          const updated = await updateWorkspaceDocument(organisationId, created.id, latestEtag, {
+            markdown: folderMarkdown,
+          })
+          if (updated.etag) {
+            latestEtag = updated.etag
+          }
+          if (updated.document.markdown) {
+            persistedMarkdown = ensureFolderMarker(updated.document.markdown)
+          }
+        }
+        if (latestEtag) etagsRef.current.set(created.id, latestEtag)
+        setExplicitFolderIds((prev) => new Set([...prev, created.id]))
+        const record: WorkspacePageRecord = {
+          id: created.id,
+          parentId: created.parentId,
+          title: created.title,
+          markdown: persistedMarkdown,
+          role: created.role,
+          updatedAt: created.updatedAt,
+          order: docs.length,
+        }
+        commitDocs((prev) => [...prev, record])
+      } catch {
+        setTreeError(t('console.docs.collab.error-save'))
+      }
+      return
+    }
+
+    const createdId = crypto.randomUUID()
+    setExplicitFolderIds((prev) => new Set([...prev, createdId]))
+    const created: WorkspacePageRecord = {
+      id: createdId,
+      parentId,
+      title: trimmed,
+      markdown: folderMarkdown,
+      role: 'editor',
+      updatedAt: new Date().toISOString(),
+      order: docs.length,
+    }
+    commitDocs((prev) => [...prev, created])
   }
 
   const handleCreateCollectionEntry = async (rawTitle: string): Promise<string | null> => {
@@ -665,13 +762,11 @@ export function WorkspaceCollaborativeDocs({
     setConflicts(next)
   }
 
-  /** The draft of a page, as the editor holds it after the render that typed it. */
   const draftOf = (docId: string): { readonly title: string; readonly markdown: string } => {
     const held = docsRef.current.find((d) => d.id === docId)
     return { title: held?.title ?? '', markdown: held?.markdown ?? '' }
   }
 
-  /** The refused state of a page, as it is now, holding the draft the page is holding. */
   const setConflictKind = (docId: string, kind: PageWriteConflict['kind']): void => {
     commitConflicts(
       withNewestEntry(
@@ -683,12 +778,6 @@ export function WorkspaceCollaborativeDocs({
     )
   }
 
-  /**
-   * The same, for a write Core refused — except that a page already refused against a
-   * collaborator's version stays in that state. Forgetting the version is what makes every write
-   * after the first refusal fail for a missing one instead, and `version-required` is the state
-   * with no 'keep my draft as a new page' on it: the one action a stale version calls for.
-   */
   const noteWriteRefusal = (docId: string, kind: PageWriteConflict['kind']): void => {
     const previous = conflictsRef.current.get(docId)
     setConflictKind(docId, previous?.kind === 'version-conflict' ? 'version-conflict' : kind)
@@ -701,10 +790,6 @@ export function WorkspaceCollaborativeDocs({
 
   const writeGenerationOf = (docId: string): number => writeGenerationsRef.current.get(docId) ?? 0
 
-  /**
-   * Retire earlier responses whenever a new write leaves or an explicit resolution begins.
-   * Only the latest generation can update the page's version or its refused-write state.
-   */
   const supersedeWrites = (docId: string): number => {
     const next = writeGenerationOf(docId) + 1
     writeGenerationsRef.current = withNewestEntry(
@@ -716,16 +801,6 @@ export function WorkspaceCollaborativeDocs({
     return next
   }
 
-  /**
-   * A write Core refused, told as one of the two version states rather than as the generic save
-   * error. The refused version is forgotten so that the next write cannot pair the draft with a
-   * tag already known to be stale, and so that the state the person is shown is the one the next
-   * attempt would actually produce. The draft itself is not touched — that is the whole point.
-   *
-   * A failure that is not about a version (offline, a refused field, Core unavailable) keeps the
-   * standard handling: `console.docs.collab.error-save`, whose "réessayez" is right there and
-   * wrong for a precondition.
-   */
   const reportWriteFailure = (docId: string, error: unknown): void => {
     const kind = conflictKindOf(error)
     if (!kind) {
@@ -737,13 +812,13 @@ export function WorkspaceCollaborativeDocs({
     noteWriteRefusal(docId, kind)
   }
 
-  /** The debounced save, dropped. Named with a page, only when it is that page's save. */
   const cancelScheduledSave = (documentId?: string): void => {
     const scheduled = saveTimerRef.current
     if (scheduled === null) return
     if (documentId !== undefined && scheduled.documentId !== documentId) return
     clearTimeout(scheduled.timer)
     saveTimerRef.current = null
+    setIsSavingRemote(false)
   }
 
   const scheduleRemotePatch = (
@@ -752,26 +827,24 @@ export function WorkspaceCollaborativeDocs({
   ) => {
     if (!isRemoteMode || !organisationId) return
     if (conflictsRef.current.get(docId)?.kind === 'version-conflict') {
-      // The version this tab held was refused against a collaborator's and nothing has replaced
-      // it, so this write would be refused in turn — and its refusal would report the missing
-      // version the first one left behind rather than the conflict that is actually open, taking
-      // 'keep my draft as a new page' off the screen with it. Nothing goes out until one of the
-      // two actions ends the conflict. The draft is not lost by not being sent: it is held
-      // against the page, so the action that saves it saves what is typed now.
       cancelScheduledSave(docId)
       return
     }
     cancelScheduledSave()
+    setIsSavingRemote(true)
     const timer = setTimeout(() => {
       saveTimerRef.current = null
-      if (protectionRef.current?.required && patch.markdown !== undefined) return
-      if (conflictsRef.current.get(docId)?.kind === 'version-conflict') return
+      if (protectionRef.current?.required && patch.markdown !== undefined) {
+        setIsSavingRemote(false)
+        return
+      }
+      if (conflictsRef.current.get(docId)?.kind === 'version-conflict') {
+        setIsSavingRemote(false)
+        return
+      }
       const etag = etagsRef.current.get(docId)
       if (!etag) {
-        // The page is on the server and its version is not here, so the write would have to go out
-        // with no `If-Match` — the client-side half of `precondition-required`. Refused before it
-        // is sent: an unconditional body write replaces whatever a collaborator wrote meanwhile.
-        // Silence was the old answer, and it left the draft looking saved when nothing was.
+        setIsSavingRemote(false)
         noteWriteRefusal(docId, 'version-required')
         return
       }
@@ -783,63 +856,36 @@ export function WorkspaceCollaborativeDocs({
           : updateWorkspaceDocument(organisationId, docId, etag, patch)
       void save
         .then(({ etag: nextEtag }) => {
-          // A newer write or explicit resolution now owns the version and conflict state.
           if (writeGenerationOf(docId) !== generation) return
+          setIsSavingRemote(false)
           if (nextEtag) etagsRef.current.set(docId, nextEtag)
           forgetConflict(docId)
         })
         .catch((error: unknown) => {
           if (writeGenerationOf(docId) !== generation) return
+          setIsSavingRemote(false)
           reportWriteFailure(docId, error)
         })
     }, 350)
     saveTimerRef.current = { documentId: docId, timer }
   }
 
-  /**
-   * Make the block editor render the page the re-read just brought.
-   *
-   * `CollaborativeBlockEditor` is keyed per document and seeds its `Y.Doc` from Markdown once
-   * (`seededYdocRef`), so a document whose body is replaced under it keeps the fragment it was
-   * seeded with. The next keystroke would then serialize the body from before the re-read and
-   * send it with the version the re-read brought: the collaborator's commit overwritten by the
-   * very draft the member asked to replace, and this time with a version the server accepts.
-   *
-   * The document's reload epoch moves its key, so the editor is rebuilt, and tells it that this
-   * mount replaces a body rather than resuming one — the one case where it seeds over a fragment
-   * that already has content. Only where no collaboration session owns the body: the epoch is
-   * what `replacesSeededBody` reads, and the editor seeds at all only under
-   * `maySeedFromMarkdown`, which is false under a live session and under a confidential policy.
-   * Where a session owns the body it holds the authoritative state and every participant's share
-   * of it, and a re-read of this tab's own has no business replacing it.
-   */
   const resetSeededBody = (docId: string): void => {
     setBodyReloadEpochs((prev) =>
       withNewestEntry(prev, docId, (prev.get(docId) ?? 0) + 1, MAX_TRACKED_DOCUMENTS)
     )
   }
 
-  /**
-   * The server's version of the page, fetched with a fresh tag, replacing the draft because the
-   * person asked for it. Nothing here is automatic: the other action exists so that a draft worth
-   * keeping is kept first, and this one is the deliberate "show me theirs".
-   */
   const handleReloadLatestVersion = async () => {
     const docId = activeDocId
     if (!docId || !activeConflict || !organisationId) return
-    // A debounced write still in flight would re-send the refused version over what we are about
-    // to read, and land after it. The timer is dropped, and the generation retires what has
-    // already left the tab: no timer can be cleared for a request whose answer is on its way.
     cancelScheduledSave(docId)
     const generation = supersedeWrites(docId)
 
     try {
       const { document: fresh, etag } = await getWorkspaceDocument(organisationId, docId)
-      // Another resolution overtook this read — a second re-read, or the draft kept as a page.
       if (writeGenerationOf(docId) !== generation) return
       if (!etag) {
-        // No version came back with the page, so no write could carry one either: keep the draft
-        // and keep saying so, rather than overwriting it with a page that still cannot be saved.
         etagsRef.current.delete(docId)
         setConflictKind(docId, 'version-required')
         return
@@ -867,21 +913,12 @@ export function WorkspaceCollaborativeDocs({
     }
   }
 
-  /**
-   * The draft, kept as a page of its own, so that choosing to look at the server's version never
-   * costs the person their text. The body is a second write on purpose: `WorkspaceDocumentRequest`
-   * carries a title, a parent and a starter template and no Markdown, so the draft's text can only
-   * arrive as a patch — with the version the creation just handed back, which nobody else can have
-   * moved yet. Awaited before the new page is selected, because selecting it re-reads it.
-   */
   const handleSaveDraftAsNewPage = async () => {
     const docId = activeDocId
     const draft = docId ? docs.find((d) => d.id === docId) : undefined
     if (!docId || !activeConflict || !draft || !organisationId) return
     const savedDraft = { title: draft.title, markdown: draft.markdown }
     cancelScheduledSave(docId)
-    // The draft leaves for a page of its own, so the refused write it came from is retired with
-    // it: an answer still on its way speaks for a version this page no longer holds.
     supersedeWrites(docId)
 
     try {
@@ -892,9 +929,6 @@ export function WorkspaceCollaborativeDocs({
       let version = etag
       if (savedDraft.markdown.length > 0) {
         if (!version) {
-          // Same refusal as `putWorkspaceCollectionRow`'s and `updateWorkspaceDocumentMetadata`'s:
-          // a body write without a version is not sent. Reported below, with the banner left up,
-          // so the draft stays in the editor where it still is.
           throw new RangeError('A created page carried no version to write its body with.')
         }
         const generation = supersedeWrites(created.id)
@@ -944,19 +978,15 @@ export function WorkspaceCollaborativeDocs({
 
   const handleMarkdownChange = (nextMarkdown: string) => {
     if (!currentDoc || effectiveRole === 'viewer') return
-    if (new TextEncoder().encode(nextMarkdown).length > 262_144) return
+    const storedMarkdown = isCurrentExplicitFolder
+      ? ensureFolderMarker(nextMarkdown)
+      : nextMarkdown
+    if (new TextEncoder().encode(storedMarkdown).length > 262_144) return
     commitDocs((prev) =>
-      prev.map((d) => (d.id === currentDoc.id ? { ...d, markdown: nextMarkdown } : d))
+      prev.map((d) => (d.id === currentDoc.id ? { ...d, markdown: storedMarkdown } : d))
     )
-    // With a server session the body travels over the realtime socket only. While it is synced the
-    // collaboration server commits the body and its Markdown itself: a second REST write carried
-    // the tag read on open, which that commit had made stale, so it failed with 412 on every edit
-    // and would replace the whole fragment under a collaborator typing at the same time. Before
-    // the server state arrives (connecting, reconnecting, offline) the editor is not seeded, so
-    // the body it serializes is a fragment of the page and a REST write would replace the page
-    // with it. Markdown goes over REST only when it is the document: the same rule as seeding.
     if (!maySeedFromMarkdown(isRemoteMode, collabSnapshot.status, confidential)) return
-    scheduleRemotePatch(currentDoc.id, { markdown: nextMarkdown })
+    scheduleRemotePatch(currentDoc.id, { markdown: storedMarkdown })
   }
 
   const handleReparent = async (nextParentId: string | null) => {
@@ -978,8 +1008,6 @@ export function WorkspaceCollaborativeDocs({
     if (isRemoteMode && organisationId) {
       const etag = etagsRef.current.get(currentDoc.id)
       if (!etag) {
-        // Same refusal as a scheduled patch with no version: the move stays local and is reported,
-        // rather than going out with no `If-Match` or being dropped without a word.
         noteWriteRefusal(currentDoc.id, 'version-required')
         return
       }
@@ -1040,6 +1068,16 @@ export function WorkspaceCollaborativeDocs({
     if (fallback) selectDocument(fallback)
   }
 
+  const scrollToHeadingIndex = (headingIdx: number) => {
+    const container = editorRegionRef.current
+    if (!container) return
+    const headings = container.querySelectorAll('[data-testid="docs-collab-prosemirror"] h1, [data-testid="docs-collab-prosemirror"] h2, [data-testid="docs-collab-prosemirror"] h3')
+    const target = headings[headingIdx]
+    if (target instanceof HTMLElement && typeof target.scrollIntoView === 'function') {
+      target.scrollIntoView({ block: 'start', behavior: 'smooth' })
+    }
+  }
+
   const localBacklinks = useMemo(() => {
     if (!currentDoc) return []
     return computeLocalBacklinks(
@@ -1063,13 +1101,6 @@ export function WorkspaceCollaborativeDocs({
     return [...byId.values()]
   }, [localBacklinks, remoteBacklinks])
 
-  /**
-   * Whether the draft can be kept as a page of its own, which is only true of a conflict with a
-   * colleague: `version-required` means this tab never had a version to begin with, and the fix
-   * for that is the re-read, not a second page. A confidential policy excludes it too — under one
-   * the body never travels over REST at all (`maySeedFromMarkdown`), so a copy written that way
-   * would be the one write the policy exists to prevent. A title is what the creation needs.
-   */
   const mayCopyDraftToNewPage =
     activeConflict?.kind === 'version-conflict' &&
     !confidential?.required &&
@@ -1086,12 +1117,13 @@ export function WorkspaceCollaborativeDocs({
     return sessionController.ydoc
   }, [collabSnapshot.status, effectiveRole, sessionController])
 
-  /**
-   * The block editor's identity: the page, and how many times its body has been re-read. A
-   * re-read that left the key alone would keep an editor seeded from the body before it.
-   */
   const bodyReloadEpoch = currentDoc ? (bodyReloadEpochs.get(currentDoc.id) ?? 0) : 0
   const blockEditorKey = currentDoc ? `${currentDoc.id}#${bodyReloadEpoch}` : ''
+  const isSinglePageEditorSurface = editorSurface === 'blocks' || editorSurface === 'markdown'
+
+  const surfaceModes: readonly WorkspaceEditorSurface[] = currentDoc
+    ? ['drive', 'blocks', 'markdown', 'collections']
+    : ['drive', 'blocks', 'collections']
 
   return (
     <div
@@ -1148,7 +1180,7 @@ export function WorkspaceCollaborativeDocs({
           <nav aria-label={t('console.docs.collab.tree-title')} className="overflow-y-auto">
             <ul className="flex flex-col gap-1">
               {treeNodes.map((node) => {
-                const isSelected = node.doc.id === currentDoc?.id
+                const isSelected = node.doc.id === currentDoc?.id && isSinglePageEditorSurface
                 return (
                   <li key={node.doc.id}>
                     <button
@@ -1158,7 +1190,7 @@ export function WorkspaceCollaborativeDocs({
                       aria-current={isSelected ? 'page' : undefined}
                       onClick={() => {
                         selectDocument(node.doc.id)
-                        if (editorSurface === 'collections') {
+                        if (!isSinglePageEditorSurface) {
                           setEditorSurface('blocks')
                         }
                       }}
@@ -1186,26 +1218,17 @@ export function WorkspaceCollaborativeDocs({
         )}
       </aside>
 
-      <div className="flex min-w-0 flex-1 flex-col gap-3 rounded-md border border-c-border-soft bg-c-surface p-4">
+      <div
+        ref={editorRegionRef}
+        className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 rounded-md border border-c-border-soft bg-c-surface p-4"
+      >
         {treeError ? (
           <div role="alert" data-testid="docs-tree-error">
             <InlineAlert kind="error">{treeError}</InlineAlert>
           </div>
         ) : null}
 
-        {/*
-          The refused write and the two ways out of it. `InlineAlert kind="error"` is
-          `role="alert"`, implicitly `aria-live="assertive"` — which is what a refusal needs: a
-          polite announcement can be queued behind a presence update and reach the person after
-          they have typed another paragraph into a draft they believe is saved. The sentence is
-          one of two governed catalogue sentences, by precondition, and neither names a status
-          number nor asks for a retry of the write that was just refused.
-
-          The actions are outside the alert on purpose: a live region announces its contents, and
-          two buttons read back as part of the sentence. They are plain buttons, so they are in
-          the tab order with the editor's focus ring and the shared touch-target minimum.
-        */}
-        {activeConflict !== undefined ? (
+        {activeConflict !== undefined && isSinglePageEditorSurface ? (
           <div className="flex flex-col gap-2">
             <InlineAlert
               kind="error"
@@ -1239,11 +1262,6 @@ export function WorkspaceCollaborativeDocs({
           </div>
         ) : null}
 
-        {/*
-          Mounted empty and filled when the draft has landed somewhere of its own: a polite region
-          inserted with its content already in it is often not announced at all, so the region is
-          here from the first render and the alert inside it carries no role of its own.
-        */}
         <div role="status">
           {draftCopiedTo !== null ? (
             <InlineAlert kind="success" inLiveRegion data-testid="page-conflict-draft-saved">
@@ -1252,189 +1270,97 @@ export function WorkspaceCollaborativeDocs({
           ) : null}
         </div>
 
-        {currentDoc && currentNode ? (
-          <>
-            <header className="flex flex-col gap-3 border-b border-c-border-soft pb-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
+        {/* Top Surface Switcher + Document Header */}
+        <header className="flex flex-col gap-3 border-b border-c-border-soft pb-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            {currentDoc && isSinglePageEditorSurface ? (
+              <div className="flex flex-wrap items-center gap-3">
+                {/* Interactive Drive / Parent Folder / Title Breadcrumb */}
+                <nav
+                  aria-label={driveCopy.modeDrive}
+                  data-testid="docs-editor-breadcrumb"
+                  className="flex min-w-0 flex-wrap items-center gap-1 text-xs"
+                >
+                  <button
+                    type="button"
+                    data-testid="docs-breadcrumb-drive-root"
+                    onClick={() => {
+                      setDriveFolderId(null)
+                      setEditorSurface('drive')
+                    }}
+                    className={cx(
+                      'inline-flex min-h-8 items-center gap-1 rounded-md px-2 py-1 font-medium text-c-ink-2 hover:bg-c-muted hover:text-c-ink focus-visible:ring focus-visible:outline-hidden',
+                      TOUCH_TARGET
+                    )}
+                  >
+                    <svg
+                      aria-hidden="true"
+                      viewBox="0 0 16 16"
+                      className="h-4 w-4 shrink-0 text-c-accent-ink"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M2 4.5A1.5 1.5 0 0 1 3.5 3h3l1.5 1.5h4.5A1.5 1.5 0 0 1 14 6v5.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5v-7Z"
+                      />
+                    </svg>
+                    <span>{driveCopy.driveRoot}</span>
+                  </button>
+                  {ancestorFolders.map((folder) => (
+                    <span key={folder.id} className="inline-flex items-center gap-1">
+                      <span aria-hidden="true" className="text-c-ink-3">
+                        /
+                      </span>
+                      <button
+                        type="button"
+                        data-testid={`docs-breadcrumb-folder-${folder.id}`}
+                        onClick={() => {
+                          setDriveFolderId(folder.id)
+                          setEditorSurface('drive')
+                        }}
+                        className={cx(
+                          'inline-flex min-h-8 max-w-[160px] items-center truncate rounded-md px-2 py-1 font-medium text-c-ink-2 hover:bg-c-muted hover:text-c-ink focus-visible:ring focus-visible:outline-hidden',
+                          TOUCH_TARGET
+                        )}
+                      >
+                        <span className="truncate">{folder.title}</span>
+                      </button>
+                    </span>
+                  ))}
+                  <span aria-hidden="true" className="text-c-ink-3">
+                    /
+                  </span>
+                  <span className="max-w-[200px] truncate px-1 font-semibold text-c-ink">
+                    {currentDoc.title}
+                  </span>
+                </nav>
+
                 <CollaboratorPresence
                   status={collabSnapshot.status}
                   role={effectiveRole}
                   peers={collabSnapshot.peers}
                 />
 
-                <div role="group" className="flex flex-wrap items-center gap-1">
-                  {(['blocks', 'markdown', 'collections'] as const).map((mode) => (
-                    <button
-                      key={mode}
-                      type="button"
-                      data-testid={`docs-surface-${mode}`}
-                      aria-pressed={editorSurface === mode}
-                      onClick={() => setEditorSurface(mode)}
-                      className={cx(
-                        'inline-flex min-h-8 items-center justify-center rounded-md border px-3 py-1 text-xs font-semibold focus-visible:ring focus-visible:outline-hidden',
-                        TOUCH_TARGET,
-                        editorSurface === mode
-                          ? 'border-c-accent-ink bg-c-accent-soft text-c-accent-ink'
-                          : 'border-c-border bg-c-surface text-c-ink-2 hover:bg-c-muted'
-                      )}
-                    >
-                      {mode === 'blocks'
-                        ? t('console.docs.collab.mode-blocks')
-                        : mode === 'markdown'
-                          ? t('console.docs.collab.mode-markdown')
-                          : collectionCopy.modeCollections}
-                    </button>
-                  ))}
-                </div>
+                <span
+                  data-testid="docs-save-state"
+                  className="font-mono text-xs text-c-ink-3"
+                >
+                  {isSavingRemote ? driveCopy.saveStateSaving : driveCopy.saveStateSaved}
+                </span>
               </div>
-
-              <div className="flex flex-wrap items-end justify-between gap-3">
-                <div className="flex min-w-0 flex-1 flex-col gap-1">
-                  <label htmlFor={titleInputId} className="sr-only">
-                    {currentDoc.title}
-                  </label>
-                  <input
-                    id={titleInputId}
-                    data-testid="docs-page-title-input"
-                    type="text"
-                    maxLength={120}
-                    readOnly={effectiveRole === 'viewer'}
-                    value={currentDoc.title}
-                    onChange={(event) => handleTitleChange(event.target.value)}
-                    className="h-10 w-full rounded-md border border-c-border-input bg-c-surface px-3 text-md font-semibold text-c-ink read-only:bg-c-sunken read-only:text-c-ink-2 focus-visible:border-c-accent-ink focus-visible:ring focus-visible:outline-hidden"
-                  />
-                </div>
-
-                {effectiveRole === 'editor' ? (
-                  <div className="flex flex-wrap items-center gap-2">
-                    <div className="flex items-center gap-2">
-                      <label htmlFor={parentSelectId} className="text-xs font-medium text-c-ink-2">
-                        {t('console.docs.collab.label-parent-page')}
-                      </label>
-                      <select
-                        id={parentSelectId}
-                        data-testid="docs-parent-select"
-                        value={currentDoc.parentId ?? ''}
-                        onChange={(event) => void handleReparent(event.target.value || null)}
-                        className="h-8 max-w-[176px] rounded-md border border-c-border-input bg-c-surface px-2 text-xs text-c-ink focus-visible:border-c-accent-ink focus-visible:ring focus-visible:outline-hidden"
-                      >
-                        <option value="">{t('console.docs.collab.option-root-page')}</option>
-                        {treeNodes
-                          .filter((node) => node.doc.id !== currentDoc.id)
-                          .map((node) => (
-                            <option key={node.doc.id} value={node.doc.id}>
-                              {node.pathTitles.join(' / ')}
-                            </option>
-                          ))}
-                      </select>
-                    </div>
-
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      disabled={currentNode.siblingIndex === 0}
-                      aria-label={t('console.docs.collab.action-move-up')}
-                      onClick={() => handleReorder('up')}
-                    >
-                      ↑
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      disabled={currentNode.siblingIndex >= currentNode.siblingCount - 1}
-                      aria-label={t('console.docs.collab.action-move-down')}
-                      onClick={() => handleReorder('down')}
-                    >
-                      ↓
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      aria-label={t('console.docs.collab.action-delete-page')}
-                      onClick={() => void handleDelete()}
-                    >
-                      {t('console.docs.collab.action-delete-page')}
-                    </Button>
-                  </div>
-                ) : null}
-              </div>
-            </header>
-
-            {editorSurface === 'collections' ? (
-              <Suspense
-                fallback={
-                  <p role="status" className="py-4 text-xs text-c-ink-3">
-                    {collectionCopy.loadingCollections}
-                  </p>
-                }
-              >
-                <LazyDocsCollectionView
-                  organisationId={isRemoteMode ? organisationId : undefined}
-                  documents={docs.map((d) => ({
-                    id: d.id,
-                    title: d.title,
-                    updatedAt: d.updatedAt,
-                    role: d.role,
-                  }))}
-                  members={effectiveMembers}
-                  activeDocumentId={currentDoc.id}
-                  accessRole={effectiveRole}
-                  onOpenDocument={(docId) => {
-                    selectDocument(docId)
-                    setEditorSurface('blocks')
-                  }}
-                  onCreateDocument={handleCreateCollectionEntry}
-                />
-              </Suspense>
-            ) : editorSurface === 'blocks' ? (
-              <CollaborativeBlockEditor
-                key={blockEditorKey}
-                documentId={currentDoc.id}
-                markdown={currentDoc.markdown}
-                onMarkdownChange={handleMarkdownChange}
-                role={effectiveRole}
-                ydoc={ydocForEditor}
-                seedMarkdown={maySeedFromMarkdown(
-                  isRemoteMode,
-                  collabSnapshot.status,
-                  confidential
-                )}
-                replacesSeededBody={bodyReloadEpoch > 0}
-                peers={collabSnapshot.peers}
-                onSelectionChange={(sel) => sessionController?.updateSelection(sel)}
-                availablePages={docs.map((d) => ({
-                  id: d.id,
-                  title: d.title,
-                  content: d.markdown,
-                }))}
-                onNavigateWikilink={(targetTitle) => {
-                  const resolved = resolveWikilinkTarget(docs, targetTitle)
-                  if (resolved) selectDocument(resolved.id)
-                }}
-              />
             ) : (
-              <textarea
-                aria-label={t('console.docs.collab.mode-markdown')}
-                readOnly={effectiveRole === 'viewer'}
-                value={currentDoc.markdown}
-                onChange={(event) => handleMarkdownChange(event.target.value)}
-                rows={12}
-                className="w-full rounded-md border border-c-border-input bg-c-surface p-3 font-mono text-xs text-c-ink read-only:bg-c-sunken focus-visible:border-c-accent-ink focus-visible:ring focus-visible:outline-hidden"
-              />
+              <div />
             )}
 
-            {editorSurface !== 'collections' ? (
-              <BacklinksFooter
-                backlinks={effectiveBacklinks}
-                onSelectDocument={(docId) => selectDocument(docId)}
-              />
-            ) : null}
-          </>
-        ) : (
-          <>
-            <div className="flex flex-wrap items-center justify-end gap-1 border-b border-c-border-soft pb-3">
-              <div role="group" className="flex flex-wrap items-center gap-1">
-                {(['blocks', 'collections'] as const).map((mode) => (
+            <div className="flex flex-wrap items-center gap-2">
+              <div
+                role="group"
+                className="flex flex-wrap items-center gap-1 rounded-md border border-c-border-soft bg-c-sunken p-1"
+              >
+                {surfaceModes.map((mode) => (
                   <button
                     key={mode}
                     type="button"
@@ -1442,46 +1368,318 @@ export function WorkspaceCollaborativeDocs({
                     aria-pressed={editorSurface === mode}
                     onClick={() => setEditorSurface(mode)}
                     className={cx(
-                      'inline-flex min-h-8 items-center justify-center rounded-md border px-3 py-1 text-xs font-semibold focus-visible:ring focus-visible:outline-hidden',
+                      'inline-flex min-h-8 items-center justify-center gap-1 rounded-sm border px-3 py-1 text-xs font-semibold focus-visible:ring focus-visible:outline-hidden',
                       TOUCH_TARGET,
                       editorSurface === mode
                         ? 'border-c-accent-ink bg-c-accent-soft text-c-accent-ink'
-                        : 'border-c-border bg-c-surface text-c-ink-2 hover:bg-c-muted'
+                        : 'border-transparent bg-transparent text-c-ink-2 hover:bg-c-surface hover:text-c-ink'
                     )}
                   >
-                    {mode === 'blocks'
-                      ? t('console.docs.collab.mode-blocks')
-                      : collectionCopy.modeCollections}
+                    {mode === 'drive'
+                      ? driveCopy.modeDrive
+                      : mode === 'blocks'
+                        ? t('console.docs.collab.mode-blocks')
+                        : mode === 'markdown'
+                          ? t('console.docs.collab.mode-markdown')
+                          : collectionCopy.modeCollections}
                   </button>
                 ))}
               </div>
+
+              {currentDoc && isSinglePageEditorSurface ? (
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    data-testid="docs-export-markdown"
+                    aria-label={driveCopy.exportMarkdown}
+                    title={driveCopy.exportMarkdown}
+                    onClick={() => downloadDocumentAsMarkdown(currentDoc.title, visibleCurrentMarkdown)}
+                    className={cx(
+                      'inline-flex h-8 w-8 items-center justify-center rounded-md border border-c-border bg-c-surface text-c-ink-2 hover:bg-c-muted hover:text-c-ink focus-visible:ring focus-visible:outline-hidden',
+                      TOUCH_TARGET
+                    )}
+                  >
+                    <svg
+                      aria-hidden="true"
+                      viewBox="0 0 16 16"
+                      className="h-4 w-4"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.6"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M8 2.5v7m0 0-2.5-2.5M8 9.5 10.5 7M3 12.5h10"
+                      />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="docs-toc-toggle"
+                    aria-label={driveCopy.outlineToggle}
+                    title={driveCopy.outlineToggle}
+                    aria-expanded={tocOpen}
+                    onClick={() => setTocOpen((prev) => !prev)}
+                    className={cx(
+                      'inline-flex h-8 w-8 items-center justify-center rounded-md border text-xs focus-visible:ring focus-visible:outline-hidden narrow:hidden',
+                      TOUCH_TARGET,
+                      tocOpen
+                        ? 'border-c-accent-ink bg-c-accent-soft text-c-accent-ink'
+                        : 'border-c-border bg-c-surface text-c-ink-2 hover:bg-c-muted hover:text-c-ink'
+                    )}
+                  >
+                    <svg
+                      aria-hidden="true"
+                      viewBox="0 0 16 16"
+                      className="h-4 w-4"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                    >
+                      <path strokeLinecap="round" d="M3 4h10M5 8h8M7 12h6" />
+                    </svg>
+                  </button>
+                </div>
+              ) : null}
             </div>
-            {editorSurface === 'collections' ? (
-              <Suspense
-                fallback={
-                  <p role="status" className="py-4 text-xs text-c-ink-3">
-                    {collectionCopy.loadingCollections}
-                  </p>
-                }
-              >
-                <LazyDocsCollectionView
-                  organisationId={isRemoteMode ? organisationId : undefined}
-                  documents={[]}
-                  members={effectiveMembers}
-                  accessRole="editor"
-                  onOpenDocument={(docId) => {
-                    selectDocument(docId)
-                    setEditorSurface('blocks')
-                  }}
-                  onCreateDocument={handleCreateCollectionEntry}
-                />
-              </Suspense>
-            ) : (
-              <p className="py-8 text-center text-sm text-c-ink-3">
-                {t('console.docs.collab.empty-workspace')}
+          </div>
+
+          {/* Single-page parent/reorder/delete controls ONLY on single-page editor surfaces (hidden on Drive & Collections) */}
+          {currentDoc && currentNode && isSinglePageEditorSurface && effectiveRole === 'editor' ? (
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <label htmlFor={parentSelectId} className="text-xs font-medium text-c-ink-2">
+                  {t('console.docs.collab.label-parent-page')}
+                </label>
+                <select
+                  id={parentSelectId}
+                  data-testid="docs-parent-select"
+                  value={currentDoc.parentId ?? ''}
+                  onChange={(event) => void handleReparent(event.target.value || null)}
+                  className="h-8 max-w-[200px] rounded-md border border-c-border-input bg-c-surface px-2 text-xs text-c-ink focus-visible:border-c-accent-ink focus-visible:ring focus-visible:outline-hidden"
+                >
+                  <option value="">{t('console.docs.collab.option-root-page')}</option>
+                  {treeNodes
+                    .filter((node) => node.doc.id !== currentDoc.id)
+                    .map((node) => (
+                      <option key={node.doc.id} value={node.doc.id}>
+                        {node.pathTitles.join(' / ')}
+                      </option>
+                    ))}
+                </select>
+
+                <div className="flex items-center gap-1">
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    disabled={currentNode.siblingIndex === 0}
+                    aria-label={t('console.docs.collab.action-move-up')}
+                    onClick={() => handleReorder('up')}
+                  >
+                    ↑
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    disabled={currentNode.siblingIndex >= currentNode.siblingCount - 1}
+                    aria-label={t('console.docs.collab.action-move-down')}
+                    onClick={() => handleReorder('down')}
+                  >
+                    ↓
+                  </Button>
+                </div>
+              </div>
+
+              {/* Destructive delete tucked safely away from reorder arrows */}
+              <div className="border-l border-c-border-soft pl-3">
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  aria-label={t('console.docs.collab.action-delete-page')}
+                  onClick={() => void handleDelete()}
+                >
+                  {t('console.docs.collab.action-delete-page')}
+                </Button>
+              </div>
+            </div>
+          ) : null}
+        </header>
+
+        {/* Active Surface Body */}
+        {editorSurface === 'drive' ? (
+          <DocsDriveExplorer
+            documents={docs}
+            treeNodes={treeNodes}
+            explicitFolderIds={explicitFolderIds}
+            activeFolderId={driveFolderId}
+            onNavigateFolder={(folderId) => setDriveFolderId(folderId)}
+            onOpenDocument={(docId, parentFolderId) => {
+              setDriveFolderId(parentFolderId)
+              selectDocument(docId)
+              setEditorSurface('blocks')
+            }}
+            onCreateFolder={handleCreateDriveFolder}
+            onCreateDocumentInFolder={(parentId) => handleCreatePage(parentId, true)}
+            canEdit={effectiveRole === 'editor'}
+            files={workspaceFiles}
+          />
+        ) : editorSurface === 'collections' ? (
+          <Suspense
+            fallback={
+              <p role="status" className="py-4 text-xs text-c-ink-3">
+                {collectionCopy.loadingCollections}
               </p>
-            )}
-          </>
+            }
+          >
+            <LazyDocsCollectionView
+              organisationId={isRemoteMode ? organisationId : undefined}
+              documents={docs.map((d) => ({
+                id: d.id,
+                title: d.title,
+                updatedAt: d.updatedAt,
+                role: d.role,
+              }))}
+              members={effectiveMembers}
+              activeDocumentId={currentDoc?.id}
+              accessRole={currentDoc ? effectiveRole : 'editor'}
+              onOpenDocument={(docId) => {
+                selectDocument(docId)
+                setEditorSurface('blocks')
+              }}
+              onCreateDocument={handleCreateCollectionEntry}
+            />
+          </Suspense>
+        ) : currentDoc && currentNode ? (
+          <div className="flex min-h-0 flex-1 items-start gap-4">
+            <div className="flex min-w-0 flex-1 flex-col gap-3">
+              {editorSurface === 'blocks' ? (
+                <CollaborativeBlockEditor
+                  key={blockEditorKey}
+                  documentId={currentDoc.id}
+                  markdown={visibleCurrentMarkdown}
+                  onMarkdownChange={handleMarkdownChange}
+                  role={effectiveRole}
+                  ydoc={ydocForEditor}
+                  seedMarkdown={maySeedFromMarkdown(
+                    isRemoteMode,
+                    collabSnapshot.status,
+                    confidential
+                  )}
+                  replacesSeededBody={bodyReloadEpoch > 0}
+                  peers={collabSnapshot.peers}
+                  onSelectionChange={(sel) => sessionController?.updateSelection(sel)}
+                  availablePages={docs.map((d) => ({
+                    id: d.id,
+                    title: d.title,
+                    content: d.markdown,
+                  }))}
+                  onNavigateWikilink={(targetTitle) => {
+                    const resolved = resolveWikilinkTarget(docs, targetTitle)
+                    if (resolved) selectDocument(resolved.id)
+                  }}
+                  onExportMarkdown={() =>
+                    downloadDocumentAsMarkdown(currentDoc.title, visibleCurrentMarkdown)
+                  }
+                  paperHeaderSlot={
+                    <div className="border-b border-c-border-soft pb-3">
+                      <label htmlFor={titleInputId} className="sr-only">
+                        {currentDoc.title}
+                      </label>
+                      <input
+                        id={titleInputId}
+                        data-testid="docs-page-title-input"
+                        type="text"
+                        maxLength={120}
+                        readOnly={effectiveRole === 'viewer'}
+                        value={currentDoc.title}
+                        onChange={(event) => handleTitleChange(event.target.value)}
+                        className="w-full rounded-md border border-transparent bg-transparent px-1 py-1 text-2xl font-bold text-c-ink hover:border-c-border-soft read-only:text-c-ink-2 focus-visible:border-c-accent-ink focus-visible:bg-c-surface focus-visible:px-2 focus-visible:ring focus-visible:outline-hidden"
+                      />
+                    </div>
+                  }
+                  paperFooterSlot={
+                    <BacklinksFooter
+                      backlinks={effectiveBacklinks}
+                      onSelectDocument={(docId) => selectDocument(docId)}
+                    />
+                  }
+                />
+              ) : (
+                <div className="w-full rounded-xl bg-c-page px-4 py-6 narrow:px-2 narrow:py-3">
+                  <div className="mx-auto flex w-full max-w-[820px] flex-col gap-4 rounded-xl border border-c-border bg-c-surface p-8 shadow-card narrow:p-4">
+                    <div className="border-b border-c-border-soft pb-3">
+                      <label htmlFor={titleInputId} className="sr-only">
+                        {currentDoc.title}
+                      </label>
+                      <input
+                        id={titleInputId}
+                        data-testid="docs-page-title-input"
+                        type="text"
+                        maxLength={120}
+                        readOnly={effectiveRole === 'viewer'}
+                        value={currentDoc.title}
+                        onChange={(event) => handleTitleChange(event.target.value)}
+                        className="w-full rounded-md border border-c-border-input bg-c-surface px-3 py-2 text-xl font-bold text-c-ink read-only:bg-c-sunken read-only:text-c-ink-2 focus-visible:border-c-accent-ink focus-visible:ring focus-visible:outline-hidden"
+                      />
+                    </div>
+                    <textarea
+                      aria-label={t('console.docs.collab.mode-markdown')}
+                      readOnly={effectiveRole === 'viewer'}
+                      value={visibleCurrentMarkdown}
+                      onChange={(event) => handleMarkdownChange(event.target.value)}
+                      rows={16}
+                      className="w-full rounded-md border border-c-border-input bg-c-sunken p-4 font-mono text-xs leading-relaxed text-c-ink read-only:text-c-ink-2 focus-visible:border-c-accent-ink focus-visible:ring focus-visible:outline-hidden"
+                    />
+                    <BacklinksFooter
+                      backlinks={effectiveBacklinks}
+                      onSelectDocument={(docId) => selectDocument(docId)}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Collapsible Right-Hand Page Outline (Plan de la page / TOC) */}
+            {tocOpen ? (
+              <aside
+                aria-label={driveCopy.outlineTitle}
+                data-testid="docs-page-toc"
+                className="sticky top-4 flex w-[216px] shrink-0 flex-col gap-2 rounded-lg border border-c-border-soft bg-c-sunken p-3 narrow:hidden"
+              >
+                <span className="text-xs font-semibold text-c-ink">{driveCopy.outlineTitle}</span>
+                {outlineHeadings.length === 0 ? (
+                  <p className="text-xs text-c-ink-3">{driveCopy.outlineEmpty}</p>
+                ) : (
+                  <ul className="flex flex-col gap-1">
+                    {outlineHeadings.map((item) => (
+                      <li key={`${item.index}-${item.text}`}>
+                        <button
+                          type="button"
+                          data-testid={`docs-toc-item-${item.index}`}
+                          onClick={() => scrollToHeadingIndex(item.index)}
+                          className={cx(
+                            'flex w-full items-center truncate rounded-sm py-1 pr-2 text-left text-xs hover:bg-c-surface hover:text-c-accent-ink focus-visible:ring focus-visible:outline-hidden',
+                            item.level === 1
+                              ? 'pl-1 font-semibold text-c-ink'
+                              : item.level === 2
+                                ? 'pl-3 font-medium text-c-ink-2'
+                                : 'pl-5 font-regular text-c-ink-3'
+                          )}
+                        >
+                          <span className="truncate">{item.text}</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </aside>
+            ) : null}
+          </div>
+        ) : (
+          <p className="py-8 text-center text-sm text-c-ink-3">
+            {t('console.docs.collab.empty-workspace')}
+          </p>
         )}
       </div>
     </div>

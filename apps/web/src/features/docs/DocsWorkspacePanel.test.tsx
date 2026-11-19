@@ -8,7 +8,7 @@ import type { ChannelDocsPadDescriptor } from './types'
 import { buildChannelDocsPadUrl } from './url'
 
 describe('DocsWorkspacePanel', () => {
-  it('renders the default channel collaborative pad with a safe external link', () => {
+  it('does not synthesize a dead docs.<host> external link when no channel pads are provided (issue 220)', () => {
     render(
       <DocsWorkspacePanel
         tenantSlug="acme-fr"
@@ -21,15 +21,7 @@ describe('DocsWorkspacePanel', () => {
       screen.getByRole('heading', { name: 'Docs — Documents collaboratifs' })
     ).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Notes — Général & Équipe' })).toBeInTheDocument()
-
-    const openLink = screen.getByRole('link', {
-      name: /Ouvrir Notes — Général & Équipe dans Docs/i,
-    })
-    expect(openLink).toHaveAttribute('target', '_blank')
-    expect(openLink).toHaveAttribute('rel', 'noopener noreferrer')
-    expect(openLink.getAttribute('href')).toMatch(
-      /^https:\/\/docs\.acme-fr\.kodera\.io\/pads\/general-equipe-[0-9a-f]{8}$/
-    )
+    expect(screen.queryByRole('link', { name: /Ouvrir Notes/i })).toBeNull()
   })
 
   it('switches between linked channel pads and copies the canonical URL', async () => {
@@ -177,7 +169,14 @@ describe('DocsWorkspacePanel', () => {
       'Brouillon modifié, non partagé'
     )
     expect(screen.queryByRole('button', { name: 'Partager' })).toBeNull()
-    expect(screen.getByText(studioMessages.fr.shareGap)).toBeVisible()
+    // Redundant extra local disclaimers inside MarkdownDraftEditor are collapsed into the single banner
+    expect(screen.queryByText(studioMessages.fr.shareGap)).toBeNull()
+    expect(screen.queryByText(studioMessages.fr.local)).toBeNull()
+    // Edit / Preview toggle switches cleanly without stacking both panes vertically
+    await user.click(screen.getByTestId('docs-draft-mode-preview'))
+    expect(screen.queryByTestId('docs-inline-textarea')).toBeNull()
+    await user.click(screen.getByTestId('docs-draft-mode-edit'))
+    expect(screen.getByTestId('docs-inline-textarea')).toBeInTheDocument()
     expect(container.textContent).not.toMatch(/Yjs|CRDT/i)
   })
 })

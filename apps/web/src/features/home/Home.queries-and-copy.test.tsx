@@ -159,3 +159,12 @@ it('does not label a replacement URL copied when an older write completes', asyn
   await waitFor(() => expect(screen.getByRole('button', { name: 'Copier' })).toBeInTheDocument())
   expect(screen.queryByRole('button', { name: 'Copié' })).toBeNull()
 })
+
+it('synthesizes the active Espace collaboratif row for workspaceFirst orgs with empty apps (issue 221)', () => {
+  render(<ApplicationsCard org="community" workspaceFirst apps={[]} />)
+  expect(screen.getByText('Espace collaboratif')).toBeInTheDocument()
+  expect(screen.getByText('En ligne')).toBeInTheDocument()
+  expect(
+    screen.queryByText(/n’a pas encore d’instance/i)
+  ).not.toBeInTheDocument()
+})

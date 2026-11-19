@@ -25,6 +25,7 @@ import {
   buildChannelDocsPadUrl,
   buildTenantDocsOrigin,
   parseDocsPostMessageEvent,
+  slugifyDocsSegment,
   validateExternalDocsUrl,
 } from './url'
 
@@ -120,7 +121,21 @@ function GuardedDocsSurface({
     )
   }
   return (
-    <DocsWorkspacePanel tenantSlug={tenantSlug} channelId={channelId} channelName={channelName} />
+    <DocsWorkspacePanel
+      tenantSlug={tenantSlug}
+      channelId={channelId}
+      channelName={channelName}
+      pads={[
+        {
+          id: `pad-${channelId}`,
+          title: `Notes — ${channelName}`,
+          channelId,
+          channelName,
+          padSlug: slugifyDocsSegment(channelName),
+          url: resolved.url,
+        },
+      ]}
+    />
   )
 }
 

@@ -21,6 +21,15 @@ import { trackAppOpened, trackAppUrlCopied } from './analytics'
 import type { HomeApp } from './analytics'
 
 type TenantApp = components['schemas']['TenantApp']
+type DisplayedApp =
+  | TenantApp
+  | {
+      code: 'workspace'
+      name: string
+      url: string
+      internalHref: string
+      state: TenantApp['state']
+    }
 
 const TONE_TO_PILL: Record<ReturnType<typeof appStatusTone>, StatusPillState> = {
   success: 'success',
@@ -38,6 +47,8 @@ const STATUS_KEY: Record<TenantApp['state'], MessageKey> = {
 }
 
 export interface ApplicationsCardProps {
+  org?: string | undefined
+  workspaceFirst?: boolean | undefined
   apps: TenantApp[] | undefined
   onRetry?: () => void
   errored?: boolean
@@ -45,12 +56,31 @@ export interface ApplicationsCardProps {
 }
 
 export function ApplicationsCard({
+  org,
+  workspaceFirst = false,
   apps,
   errored = false,
   onRetry,
   agentStale = false,
 }: ApplicationsCardProps) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const isEnglish = i18n.resolvedLanguage?.startsWith('en') === true
+  const origin = typeof window !== 'undefined' ? window.location.origin : 'https://app.kodera.io'
+  const workspaceHref = org ? `/${org}/workspace` : '/workspace'
+  const effectiveApps: DisplayedApp[] | undefined =
+    apps === undefined
+      ? undefined
+      : apps.length === 0 && workspaceFirst
+        ? [
+            {
+              code: 'workspace',
+              name: isEnglish ? 'Collaborative workspace' : 'Espace collaboratif',
+              url: `${origin}${workspaceHref}`,
+              internalHref: workspaceHref,
+              state: 'live',
+            },
+          ]
+        : apps
   const [copied, setCopied] = useState<{ code: string; url: string } | undefined>(undefined)
 
   const [copyFailed, setCopyFailed] = useState(false)
@@ -63,7 +93,7 @@ export function ApplicationsCard({
     },
     []
   )
-  const copy = async (row: TenantApp) => {
+  const copy = async (row: DisplayedApp) => {
     const current = ++request.current
     window.clearTimeout(timer.current)
     setCopied(undefined)
@@ -105,12 +135,12 @@ export function ApplicationsCard({
             {onRetry ? <Button onClick={onRetry}>{t('console.common.action-retry')}</Button> : null}
           </div>
         ) : (
-          <DataTable<TenantApp>
+          <DataTable<DisplayedApp>
             caption={t('console.home.overview.a11y-apps-table')}
             actionsLabel={t('console.home.overview.a11y-app-actions')}
-            loading={apps === undefined}
+            loading={effectiveApps === undefined}
             loadingLabel={t('console.common.a11y-loading')}
-            rows={apps ?? []}
+            rows={effectiveApps ?? []}
             rowKey={(row) => row.code}
             empty={
               <span className="text-sm text-c-ink-3">{t('console.home.overview.empty-body')}</span>
@@ -158,12 +188,12 @@ export function ApplicationsCard({
                     </StatusPill>
                   ),
                 },
-              ] satisfies DataTableColumn<TenantApp>[]
+              ] satisfies DataTableColumn<DisplayedApp>[]
             }
             rowActions={(row) => (
               <LinkButton
-                href={row.url}
-                target="_blank"
+                href={row.code === 'workspace' ? row.internalHref : row.url}
+                {...(row.code === 'workspace' ? {} : { target: '_blank' as const })}
                 variant="tertiary"
                 size="sm"
                 onClick={() => {

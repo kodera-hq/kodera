@@ -67,6 +67,8 @@ export function MarkdownDraftEditor({
   onCommentsChange,
   members = [],
   author,
+  viewToggle = false,
+  hideLocalDisclaimers = false,
 }: {
   title: string
   channelName: string
@@ -79,9 +81,14 @@ export function MarkdownDraftEditor({
   onCommentsChange?: (comments: readonly DocumentComment[]) => void
   members?: readonly DocumentMember[]
   author?: DocumentMember | undefined
+  viewToggle?: boolean | undefined
+  hideLocalDisclaimers?: boolean | undefined
 }) {
   const { i18n } = useTranslation()
-  const copy = studioMessages[i18n.resolvedLanguage === 'en' ? 'en' : 'fr']
+  const isEnglish = i18n.resolvedLanguage === 'en'
+  const copy = studioMessages[isEnglish ? 'en' : 'fr']
+  const modeEditLabel = isEnglish ? 'Edit' : 'Éditer'
+  const modePreviewLabel = isEnglish ? 'Preview' : 'Aperçu'
   const editor = useRef<HTMLTextAreaElement>(null)
   const mentionCursor = useRef<number | null>(null)
   const linkReturnFocus = useRef<HTMLElement | null>(null)
@@ -89,6 +96,7 @@ export function MarkdownDraftEditor({
   const commentsId = useId()
   const noticeId = useId()
   const [selection, setSelection] = useState({ start: 0, end: 0 })
+  const [activeMode, setActiveMode] = useState<'edit' | 'preview'>('edit')
   const [commentBody, setCommentBody] = useState('')
   const [mentionOpen, setMentionOpen] = useState(false)
   const [favorite, setFavorite] = useState(false)
@@ -286,8 +294,45 @@ export function MarkdownDraftEditor({
           <StudioGlyph name="message" />
         </button>
         <span aria-hidden="true" className="mx-1 h-4 border-l border-c-border-soft" />
-        <div className="ml-auto">
-          {shareAction ?? <p className="text-sm text-c-ink-2">{copy.shareGap}</p>}
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          {viewToggle ? (
+            <div
+              role="group"
+              aria-label={copy.preview}
+              className="flex items-center gap-1 rounded-md border border-c-border-soft bg-c-sunken p-1"
+            >
+              <button
+                type="button"
+                data-testid="docs-draft-mode-edit"
+                aria-pressed={activeMode === 'edit'}
+                onClick={() => setActiveMode('edit')}
+                className={`min-h-8 rounded-sm px-3 py-1 text-xs font-semibold focus-visible:ring focus-visible:outline-hidden ${
+                  activeMode === 'edit'
+                    ? 'bg-c-accent-soft text-c-accent-ink'
+                    : 'text-c-ink-2 hover:bg-c-surface'
+                }`}
+              >
+                {modeEditLabel}
+              </button>
+              <button
+                type="button"
+                data-testid="docs-draft-mode-preview"
+                aria-pressed={activeMode === 'preview'}
+                onClick={() => setActiveMode('preview')}
+                className={`min-h-8 rounded-sm px-3 py-1 text-xs font-semibold focus-visible:ring focus-visible:outline-hidden ${
+                  activeMode === 'preview'
+                    ? 'bg-c-accent-soft text-c-accent-ink'
+                    : 'text-c-ink-2 hover:bg-c-surface'
+                }`}
+              >
+                {modePreviewLabel}
+              </button>
+            </div>
+          ) : null}
+          {shareAction ??
+            (hideLocalDisclaimers ? null : (
+              <p className="text-sm text-c-ink-2">{copy.shareGap}</p>
+            ))}
         </div>
       </div>
       <div className="flex min-w-0 gap-6 p-5 narrow:flex-col narrow:p-3">
@@ -295,105 +340,113 @@ export function MarkdownDraftEditor({
           <h2 className="text-2xl leading-snug font-extrabold tracking-tight break-words text-c-ink">
             {title}
           </h2>
-          <p id={noticeId} className="text-xs text-c-ink-3">
-            {copy.local}
-          </p>
-          <div
-            aria-label={copy.preview}
-            className="flex flex-col gap-2 text-md leading-body break-words text-c-ink"
-          >
-            {content.split('\n').map((line, index) => {
-              const task = /^- \[([ xX])\] (.*)$/.exec(line)
-              if (task)
-                return (
-                  <label key={index} className="flex min-h-8 items-center gap-2 narrow:min-h-12">
-                    <input
-                      type="checkbox"
-                      className="h-6 w-6 shrink-0 focus-visible:ring"
-                      checked={task[1] !== ' '}
-                      onChange={() => {
-                        const lines = content.split('\n')
-                        lines[index] = `- [${task[1] === ' ' ? 'x' : ' '}] ${task[2]}`
-                        commit({ text: lines.join('\n'), ...selection }, false)
-                      }}
-                    />
-                    <span>{inline(task[2] ?? '')}</span>
-                  </label>
-                )
-              if (line.startsWith('### '))
-                return (
-                  <h4 key={index} className="mt-3 text-lg font-extrabold tracking-snug">
-                    {inline(line.slice(4))}
-                  </h4>
-                )
-              if (line.startsWith('## '))
-                return (
-                  <h3 key={index} className="mt-3 text-xl font-extrabold tracking-snug">
-                    {inline(line.slice(3))}
-                  </h3>
-                )
-              if (line.startsWith('- ')) return <p key={index}>• {inline(line.slice(2))}</p>
-              return (
-                <p key={index} className="whitespace-pre-wrap">
-                  {inline(line || '\u00a0')}
-                </p>
-              )
-            })}
-          </div>
-          <div className="flex flex-wrap items-center gap-2 text-xs text-c-ink-3">
-            <span className="flex-1">{sourceLabel ?? copy.source}</span>
-            <button
-              type="button"
-              className={TOOL}
-              disabled={!history.length}
-              onClick={() => undo()}
+          {hideLocalDisclaimers ? null : (
+            <p id={noticeId} className="text-xs text-c-ink-3">
+              {copy.local}
+            </p>
+          )}
+          {!viewToggle || activeMode === 'preview' ? (
+            <div
+              aria-label={copy.preview}
+              className="flex flex-col gap-2 text-md leading-body break-words text-c-ink"
             >
-              {copy.undo}
-            </button>
-            <button
-              type="button"
-              className={TOOL}
-              disabled={!future.length}
-              onClick={() => undo(true)}
-            >
-              {copy.redo}
-            </button>
-          </div>
-          <textarea
-            ref={editor}
-            aria-label={sourceLabel ?? copy.source}
-            aria-describedby={noticeId}
-            data-testid={sourceTestId}
-            value={content}
-            rows={6}
-            onSelect={readSelection}
-            onKeyUp={readSelection}
-            onPointerUp={readSelection}
-            onBlur={readSelection}
-            onChange={(event) =>
-              commit(
-                {
-                  text: event.target.value,
-                  start: event.target.selectionStart,
-                  end: event.target.selectionEnd,
-                },
-                false
-              )
-            }
-            onKeyDown={(event) => {
-              if (!(event.metaKey || event.ctrlKey) || event.altKey) return
-              const key = event.key.toLowerCase()
-              if (key === 'b' || key === 'i') {
-                event.preventDefault()
-                command(key === 'b' ? 'bold' : 'italic')
-              }
-              if (key === 'z') {
-                event.preventDefault()
-                undo(event.shiftKey)
-              }
-            }}
-            className="w-full rounded-md border border-c-border-input bg-c-sunken p-3 font-mono text-sm text-c-ink focus-visible:ring focus-visible:outline-hidden"
-          />
+              {content.split('\n').map((line, index) => {
+                const task = /^- \[([ xX])\] (.*)$/.exec(line)
+                if (task)
+                  return (
+                    <label key={index} className="flex min-h-8 items-center gap-2 narrow:min-h-12">
+                      <input
+                        type="checkbox"
+                        className="h-6 w-6 shrink-0 focus-visible:ring"
+                        checked={task[1] !== ' '}
+                        onChange={() => {
+                          const lines = content.split('\n')
+                          lines[index] = `- [${task[1] === ' ' ? 'x' : ' '}] ${task[2]}`
+                          commit({ text: lines.join('\n'), ...selection }, false)
+                        }}
+                      />
+                      <span>{inline(task[2] ?? '')}</span>
+                    </label>
+                  )
+                if (line.startsWith('### '))
+                  return (
+                    <h4 key={index} className="mt-3 text-lg font-extrabold tracking-snug">
+                      {inline(line.slice(4))}
+                    </h4>
+                  )
+                if (line.startsWith('## '))
+                  return (
+                    <h3 key={index} className="mt-3 text-xl font-extrabold tracking-snug">
+                      {inline(line.slice(3))}
+                    </h3>
+                  )
+                if (line.startsWith('- ')) return <p key={index}>• {inline(line.slice(2))}</p>
+                return (
+                  <p key={index} className="whitespace-pre-wrap">
+                    {inline(line || '\u00a0')}
+                  </p>
+                )
+              })}
+            </div>
+          ) : null}
+          {!viewToggle || activeMode === 'edit' ? (
+            <>
+              <div className="flex flex-wrap items-center gap-2 text-xs text-c-ink-3">
+                <span className="flex-1">{sourceLabel ?? copy.source}</span>
+                <button
+                  type="button"
+                  className={TOOL}
+                  disabled={!history.length}
+                  onClick={() => undo()}
+                >
+                  {copy.undo}
+                </button>
+                <button
+                  type="button"
+                  className={TOOL}
+                  disabled={!future.length}
+                  onClick={() => undo(true)}
+                >
+                  {copy.redo}
+                </button>
+              </div>
+              <textarea
+                ref={editor}
+                aria-label={sourceLabel ?? copy.source}
+                aria-describedby={hideLocalDisclaimers ? undefined : noticeId}
+                data-testid={sourceTestId}
+                value={content}
+                rows={8}
+                onSelect={readSelection}
+                onKeyUp={readSelection}
+                onPointerUp={readSelection}
+                onBlur={readSelection}
+                onChange={(event) =>
+                  commit(
+                    {
+                      text: event.target.value,
+                      start: event.target.selectionStart,
+                      end: event.target.selectionEnd,
+                    },
+                    false
+                  )
+                }
+                onKeyDown={(event) => {
+                  if (!(event.metaKey || event.ctrlKey) || event.altKey) return
+                  const key = event.key.toLowerCase()
+                  if (key === 'b' || key === 'i') {
+                    event.preventDefault()
+                    command(key === 'b' ? 'bold' : 'italic')
+                  }
+                  if (key === 'z') {
+                    event.preventDefault()
+                    undo(event.shiftKey)
+                  }
+                }}
+                className="w-full rounded-md border border-c-border-input bg-c-sunken p-3 font-mono text-sm text-c-ink focus-visible:ring focus-visible:outline-hidden"
+              />
+            </>
+          ) : null}
           <p role="status" className="text-xs text-c-ink-2">
             {status}
           </p>

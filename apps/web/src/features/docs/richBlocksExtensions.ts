@@ -471,7 +471,7 @@ export const WikilinkNode = Node.create<WikilinkNodeOptions>({
         class:
           'mx-1 inline-flex min-h-6 items-center gap-1 rounded-sm border border-c-border bg-c-accent-soft px-2 py-0 text-xs font-semibold text-c-accent-ink hover:bg-c-muted',
       }),
-      `[[${label}]]`,
+      `↗ ${label}`,
     ]
   },
 
@@ -492,7 +492,7 @@ export const WikilinkNode = Node.create<WikilinkNodeOptions>({
         const label = String(currentNode.attrs['label'] || title)
         btn.setAttribute('data-wikilink', title)
         btn.setAttribute('aria-label', formatAriaLabel(title))
-        btn.textContent = `[[${label}]]`
+        btn.textContent = `↗ ${label}`
       }
 
       btn.addEventListener('click', (event) => {

@@ -10,6 +10,7 @@ import { communityCopy } from '../login/communityMessages'
 
 export interface MfaEnrolScreenProps {
   accountEmail: string
+  memberRole?: string | undefined
   onEnrolled: () => void
 }
 
@@ -42,7 +43,13 @@ export function MfaEnrolScreen(props: MfaEnrolScreenProps) {
     window.location.pathname === '/community/security/mfa' &&
     (activeRealm === 'community' || activeRealm === 'kodera-staff')
   ) {
-    return <CommunityMfaEnrol accountEmail={props.accountEmail} realm={activeRealm} />
+    return (
+      <CommunityMfaEnrol
+        accountEmail={props.accountEmail}
+        realm={activeRealm}
+        memberRole={props.memberRole}
+      />
+    )
   }
   return <EnrollmentUnavailable />
 }
@@ -50,13 +57,27 @@ export function MfaEnrolScreen(props: MfaEnrolScreenProps) {
 function CommunityMfaEnrol({
   accountEmail,
   realm,
+  memberRole,
 }: {
   accountEmail: string
   realm: 'community' | 'kodera-staff'
+  memberRole?: string | undefined
 }) {
   const { i18n } = useTranslation()
   const auth = useAuth()
   const copy = communityCopy(i18n.resolvedLanguage)
+  const isEnglish = i18n.resolvedLanguage?.startsWith('en') === true
+  const isVoluntaryMember = memberRole === 'org_member'
+  const headingText = isVoluntaryMember
+    ? isEnglish
+      ? 'Protect your account (2FA)'
+      : 'Protéger votre compte (2FA)'
+    : copy.mfaTitle
+  const bodyText = isVoluntaryMember
+    ? isEnglish
+      ? 'Strengthen the security of your Kodera account with an authenticator app (TOTP) or a hardware security key.'
+      : 'Renforcez la sécurité de votre compte Kodera avec une application d’authentification (TOTP) ou une clé de sécurité matérielle.'
+    : copy.mfaBody
   const heading = useRef<HTMLHeadingElement>(null)
   const [pending, setPending] = useState(false)
   const [failed, setFailed] = useState(false)
@@ -92,10 +113,10 @@ function CommunityMfaEnrol({
               tabIndex={-1}
               className="text-xl font-semibold text-c-ink outline-hidden"
             >
-              {copy.mfaTitle}
+              {headingText}
             </h1>
             {accountEmail ? <p className="font-mono text-xs text-c-ink-3">{accountEmail}</p> : null}
-            <p className="text-sm text-c-ink-2">{copy.mfaBody}</p>
+            <p className="text-sm text-c-ink-2">{bodyText}</p>
           </div>
           <div className="flex flex-wrap gap-3">
             {showConfigureTotp ? (
