@@ -1,4 +1,5 @@
 import { readFileSync, realpathSync } from 'node:fs'
+import { isIP } from 'node:net'
 import { isAbsolute, relative, resolve } from 'node:path'
 import { env } from 'node:process'
 import { expect } from '@playwright/test'
@@ -18,7 +19,9 @@ import { fixturePath } from './surfaces'
 
 /** Tenant homeservers share a parent containing at least two domain labels. */
 export function parentDomain(origin: string): string {
-  const labels = new URL(origin).hostname.split('.')
+  const hostname = new URL(origin).hostname
+  if (isIP(hostname.replace(/^\[|\]$/g, ''))) return ''
+  const labels = hostname.split('.')
   return labels.length >= 3 ? labels.slice(1).join('.') : ''
 }
 

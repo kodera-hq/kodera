@@ -316,6 +316,8 @@ describe('actor homeserver isolation', () => {
     ['https://a.kodera.test', 'kodera.test'],
     ['https://a.staging.kodera.io', 'staging.kodera.io'],
     ['https://localhost:8008', ''],
+    ['https://127.0.0.1:8008', ''],
+    ['https://[::1]:8008', ''],
     ['https://kodera.test', ''],
   ])('extracts the tenant parent for %s', (origin, parent) => {
     expect(parentDomain(origin)).toBe(parent)
