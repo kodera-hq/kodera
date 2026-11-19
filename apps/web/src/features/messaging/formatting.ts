@@ -119,7 +119,7 @@ export function insertLink(
   label: string,
   href: string
 ): Formatted {
-  const text = (label.trim() || value.slice(start, end).trim() || href).replace(/[[\]]/gu, '\\$&')
+  const text = (label.trim() || value.slice(start, end).trim() || href).replace(/[\\[\]]/gu, '\\$&')
   const link = `[${text}](${href})`
   return {
     text: value.slice(0, start) + link + value.slice(end),

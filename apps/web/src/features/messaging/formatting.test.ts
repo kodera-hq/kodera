@@ -41,6 +41,12 @@ describe('the formatting toolbar', () => {
     expect(insertLink('', 0, 0, 'a [b]', 'https://x.test/').text).toBe(
       '[a \\[b\\]](https://x.test/)'
     )
+    expect(insertLink('', 0, 0, 'foo\\', 'https://kodera.io').text).toBe(
+      '[foo\\\\](https://kodera.io)'
+    )
+    expect(insertLink('', 0, 0, 'a\\[b]\\', 'https://kodera.io').text).toBe(
+      '[a\\\\\\[b\\]\\\\](https://kodera.io)'
+    )
     expect(safeLinkHref('kodera.io')).toBe('https://kodera.io/')
     expect(safeLinkHref('javascript:alert(1)')).toBeNull()
     expect(safeLinkHref('  ')).toBeNull()
