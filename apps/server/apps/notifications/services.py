@@ -272,7 +272,7 @@ def record(
 
 @transaction.atomic
 def authorize(verified: VerifiedAccessToken, organisation_id: UUID | None = None) -> None:
-    caller(verified, organisation_id)
+    read_caller(verified, organisation_id)
 
 
 def record_moderation(*, organisation_id: UUID, membership_id: UUID) -> None:

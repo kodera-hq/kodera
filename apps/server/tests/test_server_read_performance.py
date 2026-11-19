@@ -169,12 +169,16 @@ def workspace_operations(world, gateway, configured):
         ),
         "get_attachment": lambda: media.get_attachment(**common, attachment_id=attachment_id),
         "authorize": lambda: media.authorize(tokens[3], org.id),
+        "notifications_authorize": lambda: notifications.authorize(tokens[3], org.id),
         "inbox": lambda: notifications.inbox(verified=tokens[3], cursor=None, limit=10),
     }
 
 
 @pytest.mark.django_db(transaction=True)
-@pytest.mark.parametrize("operation", ["get_attachment", "authorize", "inbox"])
+@pytest.mark.parametrize(
+    "operation",
+    ["get_attachment", "authorize", "notifications_authorize", "inbox"],
+)
 def test_media_and_inbox_reads_do_no_writes_or_update_locks(world, workspace_operations, operation):
     from django.db import connection, transaction
     from django.test.utils import CaptureQueriesContext
