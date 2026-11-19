@@ -56,6 +56,7 @@ async function openEspace(page: Page): Promise<void> {
     )
   })
   await page.goto('/community/workspace')
+  await expect(page.getByTestId('studio-workspace')).toBeVisible({ timeout: 20_000 })
   await expect(page.getByRole('button', { name: 'Réglages', exact: true })).toBeVisible({
     timeout: 20_000,
   })

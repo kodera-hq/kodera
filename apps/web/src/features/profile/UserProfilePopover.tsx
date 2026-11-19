@@ -160,6 +160,7 @@ function PassportContent({
       avatarSrc={avatarSrc}
       onAvatarError={forgetAvatar}
       presenceLabel={member.presence === 'offline' ? undefined : copy[member.presence]}
+      presenceStatus={copy[member.presence]}
       accent={passport.accent}
       role={copy[member.role]}
       tags={passport.tags}

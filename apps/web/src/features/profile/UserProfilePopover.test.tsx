@@ -42,6 +42,7 @@ describe('UserProfilePopover (Kodera Passport)', () => {
     expect(card.querySelector('[data-passport-accent="t4"]')).not.toBeNull()
     expect(card.querySelector('[data-presence="online"]')).not.toBeNull()
     expect(within(card).getByText('Admin')).toBeInTheDocument()
+    expect(within(card).getByText('En ligne')).toBeInTheDocument()
     expect(within(card).getByText('design')).toBeInTheDocument()
     expect(within(card).getByText('Sons et lumière')).toBeInTheDocument()
     for (const button of within(card).getAllByRole('button')) {

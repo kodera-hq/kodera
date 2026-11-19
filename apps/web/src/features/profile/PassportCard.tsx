@@ -28,6 +28,8 @@ export interface PassportCardProps {
   anonymous?: boolean
   /** Said after the name, and drawn as a ring around the portrait; absent when offline. */
   presenceLabel?: string | undefined
+  /** Visible presence label on the card (« En ligne », « Concentré », « Hors ligne »). */
+  presenceStatus?: string | undefined
   accent: PassportAccent
   /** The role pill first (« Admin », « Membre »), then the member's own tags. */
   role?: string | undefined
@@ -47,6 +49,7 @@ export function PassportCard({
   onAvatarError,
   anonymous = false,
   presenceLabel,
+  presenceStatus,
   accent,
   role,
   tags,
@@ -55,6 +58,7 @@ export function PassportCard({
   corner,
   children,
 }: PassportCardProps) {
+  const shownPresence = presenceStatus ?? presenceLabel
   return (
     <div className="flex flex-col" data-passport-accent={accent}>
       <div className={cx('relative h-[64px] shrink-0', ACCENT_BANNER[accent])}>
@@ -84,11 +88,23 @@ export function PassportCard({
           </h2>
           <p className="font-mono text-xs break-all text-c-ink-3 select-text">{userId}</p>
         </div>
-        {role === undefined && tags.length === 0 ? null : (
+        {role === undefined && shownPresence === undefined && tags.length === 0 ? null : (
           <ul className="flex flex-wrap items-center gap-1 text-xs">
             {role === undefined ? null : (
               <li className="rounded-full bg-c-accent-soft px-2 py-[2px] font-semibold text-c-accent-ink">
                 {role}
+              </li>
+            )}
+            {shownPresence === undefined ? null : (
+              <li className="inline-flex items-center gap-1 rounded-full border border-c-border px-2 py-[2px] font-medium text-c-ink-2">
+                <span
+                  aria-hidden="true"
+                  className={cx(
+                    'h-2 w-2 rounded-full',
+                    presenceLabel === undefined ? 'bg-c-ink-3' : 'bg-c-ok'
+                  )}
+                />
+                {shownPresence}
               </li>
             )}
             {tags.map((tag) => (
