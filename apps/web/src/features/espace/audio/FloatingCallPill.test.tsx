@@ -198,4 +198,39 @@ describe('FloatingCallPill', () => {
     fireEvent.keyDown(pill, { key: 'Escape' })
     expect(onRedock).toHaveBeenCalledTimes(1)
   })
+
+  it('renders asSection={false} inside an external persistent <section> and forwards redockButtonRef', () => {
+    const redockButtonRef = { current: null as HTMLButtonElement | null }
+    render(
+      <section aria-label="Appel en cours">
+        <FloatingCallPill
+          asSection={false}
+          redockButtonRef={redockButtonRef}
+          label="Appel en cours"
+          room="office-hours"
+          status="connected"
+          statusLabel="Connecté"
+          muted={false}
+          deafened={false}
+          onToggleMute={vi.fn()}
+          onToggleDeafen={vi.fn()}
+          onOpenCall={vi.fn()}
+          onRedock={vi.fn()}
+          onLeave={vi.fn()}
+          labels={{
+            mute: 'Couper le micro',
+            deafen: 'Couper le son',
+            leave: 'Quitter',
+            openCall: 'Ouvrir la scène d’appel',
+            redock: 'Rattacher à la barre latérale',
+          }}
+        />
+      </section>
+    )
+    const regions = screen.getAllByRole('region', { name: 'Appel en cours' })
+    expect(regions).toHaveLength(1)
+    expect(redockButtonRef.current).toBe(
+      screen.getByRole('button', { name: 'Rattacher à la barre latérale' })
+    )
+  })
 })

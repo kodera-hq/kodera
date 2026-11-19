@@ -9,7 +9,16 @@ import { confidentialMessages } from './confidentialMessages'
 // - `floating`: mouse- and keyboard-draggable floating pill (`audio/FloatingCallPill.tsx`),
 //   positioned strictly via CSSOM custom properties (`cssProperty`).
 
-import { lazy, memo, Suspense, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
+import {
+  lazy,
+  memo,
+  Suspense,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react'
 import type { RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { MessageKey } from '../../i18n'
@@ -23,7 +32,7 @@ import { usePassportServices } from '../profile/passportContext'
 import { studioMessages } from '../workspace/studioMessages'
 import type { CallProblem, CallQuality, VideoProblem } from './audio/call'
 import { callPreferences } from './audio/callPreferences'
-import { FloatingCallPill } from './audio/FloatingCallPill'
+import { CallDockRegion, FloatingCallPill } from './audio/FloatingCallPill'
 import { bindPushToTalk } from './audio/pushToTalk'
 import { Rejoiner, REJOIN_ATTEMPTS, type RejoinSnapshot } from './audio/rejoin'
 import type { StagePresentation } from './video/VideoStage'
@@ -249,23 +258,53 @@ function VoiceCallDockView({
               }),
         }
 
+  const detachButtonRef = useRef<HTMLButtonElement>(null)
+  const redockButtonRef = useRef<HTMLButtonElement>(null)
+  const pendingFocusRef = useRef<'detach' | 'redock' | null>(null)
+
   const handleOpenStage = () => {
+    pendingFocusRef.current = 'detach'
     setPresentation('expanded')
     if (onOpenStage !== undefined) onOpenStage()
     else setLocalPlacement('stage')
   }
   const handleDetach = () => {
+    pendingFocusRef.current = 'redock'
     if (onDetach !== undefined) onDetach()
     else setLocalPlacement('floating')
   }
   const handleRedock = () => {
+    pendingFocusRef.current = 'detach'
     if (onRedock !== undefined) onRedock()
     else setLocalPlacement('sidebar')
+  }
+  const handlePresentationChange = (next: StagePresentation) => {
+    setPresentation(next)
+    if (next === 'expanded' && placement === 'sidebar') {
+      handleOpenStage()
+    }
   }
   const handleToggleFullStage = () => {
     if (onToggleFullStage !== undefined) onToggleFullStage()
     else setLocalFullStage((value) => !value)
   }
+
+  const isFloating = placement === 'floating'
+
+  useEffect(() => {
+    if (!callLive || call === null || channel === null) {
+      pendingFocusRef.current = null
+      return
+    }
+    const target = pendingFocusRef.current
+    if (target === 'redock' && isFloating) {
+      pendingFocusRef.current = null
+      redockButtonRef.current?.focus()
+    } else if (target === 'detach' && !isFloating) {
+      pendingFocusRef.current = null
+      detachButtonRef.current?.focus()
+    }
+  }, [call, callLive, channel, isFloating, placement])
 
   const hasAlerts =
     callSnapshot.status === 'reconnecting' ||
@@ -414,78 +453,77 @@ function VoiceCallDockView({
     >
       {alerts}
       {callLive && call !== null && channel !== null ? (
-        placement === 'floating' ? (
-          <FloatingCallPill
-            key={callSnapshot.roomId}
-            label={t('console.workspace.audio.label-dock')}
-            room={channel.roomName}
-            {...(channel.categoryName === undefined ? {} : { category: channel.categoryName })}
-            status={dockStatus}
-            statusLabel={
-              call.mode === 'local-preview' ? audioPreviewMessages[locale].status : dockStatusLabel
-            }
-            quality={localQuality}
-            qualityLabel={qualityLabel}
-            muted={callSnapshot.muted}
-            deafened={callSnapshot.deafened}
-            {...(media === undefined ? {} : { media })}
-            {...(call.micLevel === undefined ? {} : { meterRef })}
-            videoPreview={
-              hasVideo ? (
-                <Suspense fallback={null}>
-                  <VideoStage
-                    feeds={videos}
-                    attach={attachVideo}
-                    nameOf={nameOf}
-                    speakers={dockStatus === 'connected' ? callSnapshot.speakers : []}
-                    {...(callSnapshot.qualities === undefined
-                      ? {}
-                      : { qualities: callSnapshot.qualities })}
-                    presentation="expanded"
-                    onPresentationChange={setPresentation}
-                    compactPreview
-                  />
-                </Suspense>
-              ) : undefined
-            }
-            onToggleMute={() => void call.setMuted(!callSnapshot.muted)}
-            onToggleDeafen={() => void call.setDeafened(!callSnapshot.deafened)}
-            onOpenCall={handleOpenStage}
-            onRedock={handleRedock}
-            onLeave={() => void call.leave()}
-            labels={{
-              mute: t('console.workspace.audio.action-mute'),
-              deafen: t('console.workspace.audio.action-deafen'),
-              leave: t('console.workspace.audio.action-leave'),
-              openCall: t('console.workspace.audio.action-open-stage'),
-              redock: t('console.workspace.audio.action-redock'),
-            }}
-          />
-        ) : (
-          <>
-            {call.mode === 'local-preview' && placement === 'stage' ? (
-              <p role="status" className="px-3 pt-2 text-xs text-c-on-inverse-dim">
-                {audioPreviewMessages[locale].notice}
-              </p>
-            ) : null}
-            {hasVideo && presentation === 'docked' && placement === 'stage' ? (
-              <Suspense fallback={null}>
-                <VideoStage
-                  feeds={videos}
-                  attach={attachVideo}
-                  nameOf={nameOf}
-                  speakers={dockStatus === 'connected' ? callSnapshot.speakers : []}
-                  {...(callSnapshot.qualities === undefined
-                    ? {}
-                    : { qualities: callSnapshot.qualities })}
-                  presentation="docked"
-                  onPresentationChange={setPresentation}
-                />
-              </Suspense>
-            ) : null}
+        <CallDockRegion
+          key={callSnapshot.roomId}
+          label={t('console.workspace.audio.label-dock')}
+          floating={isFloating}
+          dockLayout={dockLayout}
+          onRedock={handleRedock}
+          dockedClassName={cx(
+            'focus-ground-inverse inverse-edge flex w-full flex-col bg-c-inverse text-c-on-inverse',
+            dockLayout === 'compact' ? 'h-[56px] justify-center' : '',
+            dockLayout === 'banner' ? 'rounded-lg' : ''
+          )}
+        >
+          {call.mode === 'local-preview' && placement === 'stage' ? (
+            <p role="status" className="px-3 pt-2 text-xs text-c-on-inverse-dim">
+              {audioPreviewMessages[locale].notice}
+            </p>
+          ) : null}
+          {hasVideo ? (
+            <Suspense fallback={null}>
+              <VideoStage
+                feeds={videos}
+                attach={attachVideo}
+                nameOf={nameOf}
+                speakers={dockStatus === 'connected' ? callSnapshot.speakers : []}
+                {...(callSnapshot.qualities === undefined
+                  ? {}
+                  : { qualities: callSnapshot.qualities })}
+                presentation={placement === 'sidebar' ? 'docked' : presentation}
+                onPresentationChange={handlePresentationChange}
+                compactPreview={isFloating}
+              />
+            </Suspense>
+          ) : null}
+          {isFloating ? (
+            <FloatingCallPill
+              asSection={false}
+              redockButtonRef={redockButtonRef}
+              label={t('console.workspace.audio.label-dock')}
+              room={channel.roomName}
+              {...(channel.categoryName === undefined ? {} : { category: channel.categoryName })}
+              status={dockStatus}
+              statusLabel={
+                call.mode === 'local-preview'
+                  ? audioPreviewMessages[locale].status
+                  : dockStatusLabel
+              }
+              quality={localQuality}
+              qualityLabel={qualityLabel}
+              muted={callSnapshot.muted}
+              deafened={callSnapshot.deafened}
+              {...(media === undefined ? {} : { media })}
+              {...(call.micLevel === undefined ? {} : { meterRef })}
+              onToggleMute={() => void call.setMuted(!callSnapshot.muted)}
+              onToggleDeafen={() => void call.setDeafened(!callSnapshot.deafened)}
+              onOpenCall={handleOpenStage}
+              onRedock={handleRedock}
+              onLeave={() => void call.leave()}
+              labels={{
+                mute: t('console.workspace.audio.action-mute'),
+                deafen: t('console.workspace.audio.action-deafen'),
+                leave: t('console.workspace.audio.action-leave'),
+                openCall: t('console.workspace.audio.action-open-stage'),
+                redock: t('console.workspace.audio.action-redock'),
+              }}
+            />
+          ) : (
             <AudioDock
-              key={callSnapshot.roomId}
+              asSection={false}
               layout={dockLayout}
+              detachButtonRef={detachButtonRef}
+              hideParticipants={hasVideo && presentation === 'expanded' && placement === 'stage'}
               localParticipantId={viewerId}
               previewCamera={call.mode === 'local-preview'}
               quality={localQuality}
@@ -517,23 +555,6 @@ function VoiceCallDockView({
                 preJoin
                   ? t('console.workspace.audio.label-already-here')
                   : studioMessages[locale].participants
-              }
-              stageSlot={
-                hasVideo && presentation === 'expanded' && placement === 'stage' ? (
-                  <Suspense fallback={null}>
-                    <VideoStage
-                      feeds={videos}
-                      attach={attachVideo}
-                      nameOf={nameOf}
-                      speakers={dockStatus === 'connected' ? callSnapshot.speakers : []}
-                      {...(callSnapshot.qualities === undefined
-                        ? {}
-                        : { qualities: callSnapshot.qualities })}
-                      presentation={presentation}
-                      onPresentationChange={setPresentation}
-                    />
-                  </Suspense>
-                ) : undefined
               }
               {...(media === undefined ? {} : { media })}
               cameraUnavailable={studioMessages[locale].cameraGap}
@@ -580,8 +601,8 @@ function VoiceCallDockView({
                 ),
               }}
             />
-          </>
-        )
+          )}
+        </CallDockRegion>
       ) : null}
     </div>
   )

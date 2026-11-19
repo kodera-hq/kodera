@@ -582,22 +582,47 @@ describe('compact sidebar voice card, detachable floating pill, and in-pane Call
       expect(sidebarDock).toHaveClass('h-[56px]')
       expect(screen.queryByText(/détacher|ancrer|réduire/iu)).toBeNull()
 
-      // Click ↗ icon-only button -> detaches into FloatingCallPill
+      // Click ↗ icon-only button -> detaches into FloatingCallPill, keeps <section> identity, and moves focus to ↙
       const detachBtn = within(sidebarDock).getByRole('button', { name: 'Fenêtre flottante' })
       expect(detachBtn).toHaveTextContent('')
       await user.click(detachBtn)
       const pill = screen.getByTestId('floating-call-pill')
       expect(pill).toBeVisible()
+      expect(pill).toBe(stageDock)
+      expect(screen.getByRole('region', { name: 'Appel en cours' })).toBe(stageDock)
       expect(screen.queryByText(/détacher|ancrer|réduire/iu)).toBeNull()
 
-      // Click ↙ icon-only button -> re-docks into compact sidebar card
+      // Focus lands on counterpart ↙ button (never document.body)
       const redockBtn = within(pill).getByRole('button', { name: 'Rattacher à la barre latérale' })
       expect(redockBtn).toHaveTextContent('')
+      expect(document.activeElement).toBe(redockBtn)
+
+      // Click ↙ icon-only button -> re-docks into compact sidebar card, keeps <section> identity, and restores focus to ↗
       await user.click(redockBtn)
       expect(screen.queryByTestId('floating-call-pill')).toBeNull()
-      expect(screen.getByRole('region', { name: 'Appel en cours' })).toHaveAttribute(
-        'data-dock-layout',
-        'compact'
+      const redockedSidebar = screen.getByRole('region', { name: 'Appel en cours' })
+      expect(redockedSidebar).toBe(stageDock)
+      expect(redockedSidebar).toHaveAttribute('data-dock-layout', 'compact')
+      expect(redockedSidebar.style.getPropertyValue('--call-pill-x')).toBe('')
+      expect(redockedSidebar.style.getPropertyValue('--call-pill-y')).toBe('')
+      const restoredDetachBtn = within(redockedSidebar).getByRole('button', {
+        name: 'Fenêtre flottante',
+      })
+      expect(document.activeElement).toBe(restoredDetachBtn)
+
+      // Detach again via ↗, then press Escape -> re-docks and restores focus to ↗ without dropping to <body>
+      await user.click(restoredDetachBtn)
+      expect(screen.getByRole('region', { name: 'Appel en cours' })).toBe(stageDock)
+      expect(document.activeElement).toBe(
+        within(screen.getByTestId('floating-call-pill')).getByRole('button', {
+          name: 'Rattacher à la barre latérale',
+        })
+      )
+      await user.keyboard('{Escape}')
+      expect(screen.queryByTestId('floating-call-pill')).toBeNull()
+      expect(screen.getByRole('region', { name: 'Appel en cours' })).toBe(stageDock)
+      expect(document.activeElement).toBe(
+        within(stageDock).getByRole('button', { name: 'Fenêtre flottante' })
       )
 
       // Click Appels in sidebar navigation -> renders in-pane CallsSurfaceView, zero blocking dialog scrim
@@ -609,13 +634,15 @@ describe('compact sidebar voice card, detachable floating pill, and in-pane Call
       )
       expect(within(callsCanvas).getByTestId('calls-prejoin-mic-meter')).toBeInTheDocument()
 
-      // Return to stage from CallsSurfaceView
+      // Return to stage from CallsSurfaceView -> keeps <section> identity all the way back to stage
       await user.click(
         within(callsCanvas).getAllByRole('button', { name: 'Retourner à la scène' })[0]!
       )
-      expect(
-        screen.getByRole('region', { name: 'Appel en cours' }).closest('[data-call-placement]')
-      ).toHaveAttribute('data-call-placement', 'stage')
+      expect(screen.getByRole('region', { name: 'Appel en cours' })).toBe(stageDock)
+      expect(stageDock.closest('[data-call-placement]')).toHaveAttribute(
+        'data-call-placement',
+        'stage'
+      )
     } finally {
       await act(async () => {
         mounted?.unmount()

@@ -290,11 +290,86 @@ describe('compact sidebar card, zero audio-only <video> boxes, and icon-only flo
       />
     )
     const pill = screen.getByTestId('floating-call-pill')
+    expect(pill).toBe(dock)
     expect(screen.queryByText(/détacher|ancrer|réduire/iu)).toBeNull()
     const redockBtn = within(pill).getByRole('button', { name: 'Rattacher à la barre latérale' })
     expect(redockBtn).toHaveTextContent('')
     expect(redockBtn.querySelector('[data-glyph="redock"]')).not.toBeNull()
     await user.click(redockBtn)
     expect(onRedock).toHaveBeenCalledTimes(1)
+  })
+
+  it('preserves <section>, <video> DOM node, PiP, and mirror state across stage -> sidebar -> floating -> sidebar -> stage', async () => {
+    const user = userEvent.setup()
+    const detachSpy = vi.fn()
+    const { call, set } = fakeCall()
+    call.attachVideo = vi.fn(() => detachSpy)
+
+    render(
+      <VoiceCallDock
+        call={call}
+        channel={{
+          channelId: 'standup',
+          roomId: ROOM,
+          roomName: 'office-hours',
+          categoryName: 'Équipe',
+        }}
+        store={fakeStore([BOB, ME])}
+        viewerId={ME}
+        deviceSettings={null}
+        meterRef={{ current: null }}
+        panelMeterRef={{ current: null }}
+      />
+    )
+    set({
+      status: 'connected',
+      roomId: ROOM,
+      participants: [ME, BOB],
+      camera: 'on',
+      videos: [{ key: 'TR_me', userId: ME, source: 'camera', local: true }],
+    })
+
+    const dockBefore = screen.getByRole('region', { name: 'Appel en cours' })
+    const stageBefore = await screen.findByRole('region', { name: 'Vidéo de l’appel' })
+    const videoBefore = stageBefore.querySelector('video')!
+    expect(videoBefore).toHaveClass('-scale-x-100')
+
+    // User disables mirror explicitly on the stage
+    await user.click(within(stageBefore).getByRole('button', { name: 'Désactiver l’effet miroir' }))
+    expect(videoBefore).not.toHaveClass('-scale-x-100')
+
+    // Detach from stage into floating pill via ↗ -> focus lands on ↙, <section> and <video> stay identical
+    await user.click(within(dockBefore).getByRole('button', { name: 'Fenêtre flottante' }))
+    const floatingDock = screen.getByRole('region', { name: 'Appel en cours' })
+    expect(floatingDock).toBe(dockBefore)
+    expect(screen.getByTestId('floating-call-pill')).toBe(dockBefore)
+    const redockBtn = within(floatingDock).getByRole('button', {
+      name: 'Rattacher à la barre latérale',
+    })
+    expect(document.activeElement).toBe(redockBtn)
+    expect(floatingDock.querySelector('video')).toBe(videoBefore)
+    expect(videoBefore).not.toHaveClass('-scale-x-100')
+    expect(call.attachVideo).toHaveBeenCalledTimes(1)
+    expect(detachSpy).not.toHaveBeenCalled()
+
+    // Re-dock into compact sidebar via ↙ -> focus lands on ↗, <section> and <video> stay identical
+    await user.click(redockBtn)
+    const sidebarDock = screen.getByRole('region', { name: 'Appel en cours' })
+    expect(sidebarDock).toBe(dockBefore)
+    const detachBtn = within(sidebarDock).getByRole('button', { name: 'Fenêtre flottante' })
+    expect(document.activeElement).toBe(detachBtn)
+    expect(sidebarDock.querySelector('video')).toBe(videoBefore)
+    expect(videoBefore).not.toHaveClass('-scale-x-100')
+    expect(call.attachVideo).toHaveBeenCalledTimes(1)
+    expect(detachSpy).not.toHaveBeenCalled()
+
+    // Return to stage -> <section>, <video>, and mirrorLocal=false remain intact
+    await user.click(within(sidebarDock).getByRole('button', { name: /Ouvrir la scène d’appel/ }))
+    const stageAfter = screen.getByRole('region', { name: 'Appel en cours' })
+    expect(stageAfter).toBe(dockBefore)
+    expect(stageAfter.querySelector('video')).toBe(videoBefore)
+    expect(videoBefore).not.toHaveClass('-scale-x-100')
+    expect(call.attachVideo).toHaveBeenCalledTimes(1)
+    expect(detachSpy).not.toHaveBeenCalled()
   })
 })

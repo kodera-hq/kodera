@@ -187,11 +187,15 @@ export interface AudioDockProps {
   onOpenCall?: () => void
   /** Detaches the call into the draggable floating pill (`↗` icon only). */
   onDetach?: () => void
+  /** Ref to the `↗` detach button so focus returns to it after re-docking. */
+  detachButtonRef?: Ref<HTMLButtonElement>
   /** Toggles full-pane stage vs split stage in `studio` layout. */
   fullStage?: boolean
   onToggleFullStage?: () => void
-  /** Video stage content rendered inside `studio` layout when video feeds are active. */
-  stageSlot?: ReactNode
+  /** Hides audio-only participant cards when `VideoStage` is already rendered above the dock. */
+  hideParticipants?: boolean
+  /** Renders as a `<div>` inside an outer persistent `<section>` when `false` (`true` by default). */
+  asSection?: boolean
   /**
    * Each control's short label: its accessible name and its tooltip.
    * `openCall` names the icon-only button `onOpenCall` draws.
@@ -275,15 +279,26 @@ interface ControlProps {
   label: string
   glyph: EspaceGlyphName
   tone: keyof typeof TONE
-  pressed?: boolean
-  busy?: boolean
+  pressed?: boolean | undefined
+  busy?: boolean | undefined
+  buttonRef?: Ref<HTMLButtonElement> | undefined
   onClick: () => void
 }
 
-function Control({ layout, label, glyph, tone, pressed, busy, onClick }: ControlProps) {
+function Control({
+  layout,
+  label,
+  glyph,
+  tone,
+  pressed,
+  busy,
+  buttonRef,
+  onClick,
+}: ControlProps) {
   return (
     <Tooltip content={label} names>
       <button
+        ref={buttonRef}
         type="button"
         aria-label={label}
         onClick={onClick}
@@ -312,9 +327,11 @@ export function AudioDock({
   onLeave,
   onOpenCall,
   onDetach,
+  detachButtonRef,
   fullStage,
   onToggleFullStage,
-  stageSlot,
+  hideParticipants = false,
+  asSection = true,
   labels,
   layout = 'sidebar',
   meterRef,
@@ -340,12 +357,14 @@ export function AudioDock({
     throw new Error('AudioDock onOpenCall needs labels.openCall, the button’s accessible name')
   }
   const isCompact = layout === 'compact'
+  const Root = asSection ? 'section' : 'div'
   return (
-    <section
-      aria-label={label}
-      data-dock-layout={layout}
+    <Root
+      {...(asSection ? { 'aria-label': label, 'data-dock-layout': layout } : {})}
       className={cx(
-        'focus-ground-inverse inverse-edge bg-c-inverse text-c-on-inverse',
+        asSection
+          ? 'focus-ground-inverse inverse-edge bg-c-inverse text-c-on-inverse'
+          : 'text-c-on-inverse',
         DOCK[layout]
       )}
     >
@@ -467,6 +486,7 @@ export function AudioDock({
             {layout === 'studio' && onDetach !== undefined && hasLabel(labels.detach) ? (
               <Tooltip content={labels.detach} names>
                 <button
+                  ref={detachButtonRef}
                   type="button"
                   aria-label={labels.detach}
                   onClick={onDetach}
@@ -504,9 +524,7 @@ export function AudioDock({
           </>
         )}
       </div>
-      {layout === 'studio' && stageSlot !== undefined ? (
-        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto">{stageSlot}</div>
-      ) : layout === 'studio' && participants && participants.length > 0 ? (
+      {layout === 'studio' && !hideParticipants && participants && participants.length > 0 ? (
         <div
           role="region"
           aria-label={participantsLabel ?? copy.participants}
@@ -649,12 +667,13 @@ export function AudioDock({
           pressed={deafened}
           onClick={onToggleDeafen}
         />
-        {isCompact && onDetach !== undefined && hasLabel(labels.detach) ? (
+        {(isCompact || layout === 'banner') && onDetach !== undefined && hasLabel(labels.detach) ? (
           <Control
             layout={layout}
             label={labels.detach}
             glyph="detach"
             tone="idle"
+            buttonRef={detachButtonRef}
             onClick={onDetach}
           />
         ) : null}
@@ -666,6 +685,6 @@ export function AudioDock({
           onClick={onLeave}
         />
       </div>
-    </section>
+    </Root>
   )
 }

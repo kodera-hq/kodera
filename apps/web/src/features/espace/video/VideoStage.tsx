@@ -317,24 +317,54 @@ export default function VideoStage({
   }
 
   const label = t('console.workspace.audio.label-stage')
-  if (compactPreview) {
-    const shown = spotlight ?? feeds[0]!
-    return (
-      <div aria-label={label} data-stage="preview" className="w-full">
-        {tile(shown, true, true)}
-      </div>
-    )
-  }
+  const shown = spotlight ?? feeds[0]!
+  const singleTileMode = compactPreview || presentation === 'docked'
+  const visibleFeeds = singleTileMode ? [shown] : feeds
 
-  if (presentation === 'docked') {
-    const shown = spotlight ?? feeds[0]!
-    return (
-      <section
-        aria-label={label}
-        data-stage="docked"
-        className="fixed top-[68px] right-4 z-30 flex w-[320px] max-w-[calc(100vw-32px)] flex-col gap-2 rounded-lg bg-c-inverse p-2 shadow-pop shadow-c-shadow-2"
+  return (
+    <section
+      aria-label={label}
+      data-stage={compactPreview ? 'preview' : presentation}
+      className={
+        compactPreview
+          ? 'w-full'
+          : presentation === 'docked'
+            ? 'fixed top-[68px] right-4 z-30 flex w-[320px] max-w-[calc(100vw-32px)] flex-col gap-2 rounded-lg bg-c-inverse p-2 shadow-pop shadow-c-shadow-2'
+            : 'mx-2 flex min-h-0 flex-col gap-2 pt-2'
+      }
+    >
+      {!singleTileMode ? (
+        <div className="flex justify-end">
+          <StageButton
+            label={t('console.workspace.audio.action-dock-stage')}
+            glyph="shrink"
+            onClick={() => onPresentationChange('docked')}
+          />
+        </div>
+      ) : null}
+      <ul
+        className={cx(
+          'm-0 grid list-none gap-2 p-0',
+          singleTileMode || feeds.length === 1
+            ? 'grid-cols-1'
+            : spotlight !== null
+              ? 'grid-cols-4 narrow:grid-cols-2'
+              : cx('grid-cols-2 narrow:grid-cols-1', feeds.length > 4 ? 'lg:grid-cols-3' : '')
+        )}
       >
-        {tile(shown, true, true)}
+        {visibleFeeds.map((feed) => {
+          const isSpotlight = !singleTileMode && spotlight?.key === feed.key
+          return (
+            <li
+              key={feed.key}
+              className={cx('min-w-0', isSpotlight ? 'order-first col-span-full' : '')}
+            >
+              {tile(feed, singleTileMode || isSpotlight, singleTileMode)}
+            </li>
+          )
+        })}
+      </ul>
+      {!compactPreview && presentation === 'docked' ? (
         <div className="flex items-center justify-between gap-2">
           <span className="truncate text-xs text-c-on-inverse-dim">
             {feeds.length > 1 ? `${labelOf(shown)} · +${feeds.length - 1}` : labelOf(shown)}
@@ -345,48 +375,7 @@ export default function VideoStage({
             onClick={() => onPresentationChange('expanded')}
           />
         </div>
-      </section>
-    )
-  }
-
-  const others = feeds.filter((feed) => feed.key !== spotlight?.key)
-  return (
-    <section aria-label={label} data-stage="expanded" className="mx-2 flex min-h-0 flex-col gap-2">
-      <div className="flex justify-end">
-        <StageButton
-          label={t('console.workspace.audio.action-dock-stage')}
-          glyph="shrink"
-          onClick={() => onPresentationChange('docked')}
-        />
-      </div>
-      {spotlight === null ? (
-        <ul
-          className={cx(
-            'm-0 grid list-none gap-2 p-0',
-            feeds.length === 1 ? 'grid-cols-1' : 'grid-cols-2 narrow:grid-cols-1',
-            feeds.length > 4 ? 'lg:grid-cols-3' : ''
-          )}
-        >
-          {feeds.map((feed) => (
-            <li key={feed.key} className="min-w-0">
-              {tile(feed, false)}
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <>
-          {tile(spotlight, true)}
-          {others.length === 0 ? null : (
-            <ul className="m-0 grid list-none grid-cols-4 gap-2 p-0 narrow:grid-cols-2">
-              {others.map((feed) => (
-                <li key={feed.key} className="min-w-0">
-                  {tile(feed, false)}
-                </li>
-              ))}
-            </ul>
-          )}
-        </>
-      )}
+      ) : null}
     </section>
   )
 }

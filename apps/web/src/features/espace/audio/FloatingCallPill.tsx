@@ -38,6 +38,9 @@ const DEFAULT_PILL_WIDTH = 304
 const DEFAULT_PILL_HEIGHT = 56
 const DEFAULT_INITIAL_Y = 72
 
+export const FLOATING_PILL_CLASS =
+  'call-floating-pill focus-ground-inverse inverse-edge fixed z-40 flex w-[304px] max-w-[calc(100vw-32px)] cursor-grab flex-col gap-2 rounded-xl bg-c-inverse p-2 text-c-on-inverse shadow-pop shadow-c-shadow-2 active:cursor-grabbing'
+
 export interface PillPosition {
   readonly x: number
   readonly y: number
@@ -124,6 +127,11 @@ function applyPillCssPosition(element: HTMLElement | null, position: PillPositio
   cssProperty('--call-pill-y', `${position.y}px`)(element)
 }
 
+function clearPillCssPosition(element: HTMLElement | null): void {
+  cssProperty('--call-pill-x', undefined)(element)
+  cssProperty('--call-pill-y', undefined)(element)
+}
+
 function initialPosition(): PillPosition {
   const viewportWidth =
     typeof window !== 'undefined' && window.innerWidth > 0 ? window.innerWidth : 1280
@@ -139,91 +147,32 @@ function initialPosition(): PillPosition {
   )
 }
 
-function PillIconButton({
-  label,
-  glyph,
-  tone,
-  pressed,
-  busy,
-  onClick,
-}: {
+export interface CallDockRegionProps {
   label: string
-  glyph: EspaceGlyphName
-  tone: keyof typeof TONE
-  pressed?: boolean
-  busy?: boolean
-  onClick: () => void
-}) {
-  return (
-    <Tooltip content={label} names>
-      <button
-        type="button"
-        aria-label={label}
-        onClick={onClick}
-        {...(busy === true ? { 'aria-busy': true } : {})}
-        {...(pressed === undefined ? {} : { 'aria-pressed': pressed })}
-        className={cx(
-          'focus-offset flex h-[28px] w-[28px] items-center justify-center rounded-md border-2 border-transparent transition-colors duration-fast focus-visible:ring focus-visible:ring-offset-2 focus-visible:outline-hidden',
-          TOUCH_TARGET,
-          TONE[tone]
-        )}
-      >
-        <EspaceGlyph name={glyph} />
-      </button>
-    </Tooltip>
-  )
-}
-
-export interface FloatingCallPillProps {
-  label: string
-  room: string
-  category?: string
-  status: AudioDockStatus
-  statusLabel: ReactNode
-  quality?: SignalQuality
-  qualityLabel?: string
-  muted: boolean
-  deafened: boolean
-  media?: { camera: AudioDockMediaToggle; screen?: AudioDockMediaToggle }
-  meterRef?: Ref<HTMLSpanElement>
-  videoPreview?: ReactNode
-  onToggleMute: () => void
-  onToggleDeafen: () => void
-  onOpenCall: () => void
+  floating: boolean
+  dockLayout?: string | undefined
+  dockedClassName?: string | undefined
   onRedock: () => void
-  onLeave: () => void
-  labels: {
-    mute: string
-    deafen: string
-    leave: string
-    openCall: string
-    redock: string
-  }
+  children: ReactNode
 }
 
-export function FloatingCallPill({
+/**
+ * Persistent `<section>` landmark for an active call across `stage`, `sidebar`, and `floating`
+ * placements so the region DOM node never unmounts and `--call-pill-x` / `--call-pill-y` are
+ * applied strictly while `floating` is active.
+ */
+export function CallDockRegion({
   label,
-  room,
-  category,
-  status,
-  statusLabel,
-  quality,
-  qualityLabel,
-  muted,
-  deafened,
-  media,
-  meterRef,
-  videoPreview,
-  onToggleMute,
-  onToggleDeafen,
-  onOpenCall,
+  floating,
+  dockLayout,
+  dockedClassName,
   onRedock,
-  onLeave,
-  labels,
-}: FloatingCallPillProps) {
+  children,
+}: CallDockRegionProps) {
   const pillRef = useRef<HTMLElement | null>(null)
   const [position, setPosition] = useState<PillPosition>(initialPosition)
   const positionRef = useRef<PillPosition>(position)
+
   useEffect(() => {
     positionRef.current = position
   }, [position])
@@ -236,22 +185,32 @@ export function FloatingCallPill({
     originY: number
   } | null>(null)
 
-  const meterFillRef = useMemo(
-    () => initialCssProperty<HTMLSpanElement>('transform', 'scaleX(0)', meterRef),
-    [meterRef]
-  )
-
   const attachPillRef = useCallback(
     (element: HTMLElement | null) => {
+      if (element === null && pillRef.current !== null) {
+        clearPillCssPosition(pillRef.current)
+      }
       pillRef.current = element
       if (element !== null) {
-        applyPillCssPosition(element, position)
+        if (floating) applyPillCssPosition(element, position)
+        else clearPillCssPosition(element)
       }
     },
-    [position]
+    [floating, position]
   )
 
   useEffect(() => {
+    const element = pillRef.current
+    if (element === null) return
+    if (floating) applyPillCssPosition(element, positionRef.current)
+    else {
+      dragRef.current = null
+      clearPillCssPosition(element)
+    }
+  }, [floating])
+
+  useEffect(() => {
+    if (!floating) return
     const handleResize = () => {
       const { pillWidth, pillHeight, viewportWidth, viewportHeight } = measurePill(pillRef.current)
       const clamped = clampPillPosition(
@@ -268,9 +227,10 @@ export function FloatingCallPill({
     }
     window.addEventListener('resize', handleResize)
     return () => window.removeEventListener('resize', handleResize)
-  }, [])
+  }, [floating])
 
   const onPointerDown = (event: PointerEvent<HTMLElement>) => {
+    if (!floating) return
     if (event.pointerType === 'mouse' && event.button !== 0) return
     const target = event.target instanceof Element ? event.target : null
     if (target?.closest('button, a, input, select, [role="button"]') !== null) return
@@ -285,6 +245,7 @@ export function FloatingCallPill({
   }
 
   const onPointerMove = (event: PointerEvent<HTMLElement>) => {
+    if (!floating) return
     const drag = dragRef.current
     if (drag === null || drag.pointerId !== event.pointerId) return
     const { pillWidth, pillHeight, viewportWidth, viewportHeight } = measurePill(pillRef.current)
@@ -301,6 +262,7 @@ export function FloatingCallPill({
   }
 
   const finishPointerDrag = (event: PointerEvent<HTMLElement>) => {
+    if (!floating) return
     const drag = dragRef.current
     if (drag === null || drag.pointerId !== event.pointerId) return
     dragRef.current = null
@@ -324,9 +286,12 @@ export function FloatingCallPill({
   }
 
   const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+    if (!floating) return
+    const target = event.target instanceof Element ? event.target : null
+    const inOverlay = target?.closest('[role="dialog"], [role="menu"], [role="listbox"]') !== null
     if (
       event.key === 'Escape' &&
-      !event.defaultPrevented &&
+      !inOverlay &&
       !event.altKey &&
       !event.ctrlKey &&
       !event.metaKey &&
@@ -373,23 +338,125 @@ export function FloatingCallPill({
   }
 
   return (
-    // Interactive region supports Alt+Arrow keyboard placement and pointer dragging on its frame.
+    // Interactive region supports Alt+Arrow keyboard placement and pointer dragging when floating.
     // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
     <section
       ref={attachPillRef}
       aria-label={label}
-      data-testid="floating-call-pill"
-      data-dock-layout="floating"
-      tabIndex={-1}
+      data-testid={floating ? 'floating-call-pill' : undefined}
+      data-dock-layout={floating ? 'floating' : dockLayout}
+      tabIndex={floating ? -1 : undefined}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={finishPointerDrag}
       onPointerCancel={finishPointerDrag}
       onKeyDown={onKeyDown}
-      className="call-floating-pill focus-ground-inverse inverse-edge fixed z-40 flex w-[304px] max-w-[calc(100vw-32px)] cursor-grab flex-col gap-2 rounded-xl bg-c-inverse p-2 text-c-on-inverse shadow-pop shadow-c-shadow-2 active:cursor-grabbing"
+      className={floating ? FLOATING_PILL_CLASS : dockedClassName}
     >
+      {children}
+    </section>
+  )
+}
+
+function PillIconButton({
+  label,
+  glyph,
+  tone,
+  pressed,
+  busy,
+  buttonRef,
+  onClick,
+}: {
+  label: string
+  glyph: EspaceGlyphName
+  tone: keyof typeof TONE
+  pressed?: boolean | undefined
+  busy?: boolean | undefined
+  buttonRef?: Ref<HTMLButtonElement> | undefined
+  onClick: () => void
+}) {
+  return (
+    <Tooltip content={label} names>
+      <button
+        ref={buttonRef}
+        type="button"
+        aria-label={label}
+        onClick={onClick}
+        {...(busy === true ? { 'aria-busy': true } : {})}
+        {...(pressed === undefined ? {} : { 'aria-pressed': pressed })}
+        className={cx(
+          'focus-offset flex h-[28px] w-[28px] items-center justify-center rounded-md border-2 border-transparent transition-colors duration-fast focus-visible:ring focus-visible:ring-offset-2 focus-visible:outline-hidden',
+          TOUCH_TARGET,
+          TONE[tone]
+        )}
+      >
+        <EspaceGlyph name={glyph} />
+      </button>
+    </Tooltip>
+  )
+}
+
+export interface FloatingCallPillProps {
+  label: string
+  room: string
+  category?: string
+  status: AudioDockStatus
+  statusLabel: ReactNode
+  quality?: SignalQuality
+  qualityLabel?: string
+  muted: boolean
+  deafened: boolean
+  media?: { camera: AudioDockMediaToggle; screen?: AudioDockMediaToggle }
+  meterRef?: Ref<HTMLSpanElement>
+  videoPreview?: ReactNode
+  redockButtonRef?: Ref<HTMLButtonElement>
+  /** Renders only the inner pill bar when `false` inside a persistent outer `<CallDockRegion>`. */
+  asSection?: boolean
+  onToggleMute: () => void
+  onToggleDeafen: () => void
+  onOpenCall: () => void
+  onRedock: () => void
+  onLeave: () => void
+  labels: {
+    mute: string
+    deafen: string
+    leave: string
+    openCall: string
+    redock: string
+  }
+}
+
+export function FloatingCallPill({
+  label,
+  room,
+  category,
+  status,
+  statusLabel,
+  quality,
+  qualityLabel,
+  muted,
+  deafened,
+  media,
+  meterRef,
+  videoPreview,
+  redockButtonRef,
+  asSection = true,
+  onToggleMute,
+  onToggleDeafen,
+  onOpenCall,
+  onRedock,
+  onLeave,
+  labels,
+}: FloatingCallPillProps) {
+  const meterFillRef = useMemo(
+    () => initialCssProperty<HTMLSpanElement>('transform', 'scaleX(0)', meterRef),
+    [meterRef]
+  )
+
+  const body = (
+    <>
       {videoPreview === undefined ? null : <div className="w-full">{videoPreview}</div>}
-      <div className="flex min-h-10 items-center justify-between gap-2">
+      <div className="flex min-h-10 w-full items-center justify-between gap-2">
         <div className="flex min-w-0 flex-1 items-center gap-2">
           <EspaceGlyph name="grip" className="h-4 w-4 shrink-0 text-c-on-inverse-dim" />
           <div className="flex min-w-0 flex-1 flex-col justify-center">
@@ -468,10 +535,26 @@ export function FloatingCallPill({
             pressed={deafened}
             onClick={onToggleDeafen}
           />
-          <PillIconButton label={labels.redock} glyph="redock" tone="idle" onClick={onRedock} />
+          <PillIconButton
+            label={labels.redock}
+            glyph="redock"
+            tone="idle"
+            buttonRef={redockButtonRef}
+            onClick={onRedock}
+          />
           <PillIconButton label={labels.leave} glyph="leave" tone="leave" onClick={onLeave} />
         </div>
       </div>
-    </section>
+    </>
+  )
+
+  if (!asSection) {
+    return body
+  }
+
+  return (
+    <CallDockRegion label={label} floating onRedock={onRedock}>
+      {body}
+    </CallDockRegion>
   )
 }
