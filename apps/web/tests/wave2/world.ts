@@ -7,7 +7,7 @@ import type { APIResponse, Browser, BrowserContext, Page, Request } from '@playw
 import { throughKeycloak } from './keycloak'
 import { installMatrixNavigationBarrier } from './navigation'
 import { enterOrganisation } from './login'
-import { enterWorkspace } from './workspace'
+import { enterWorkspace, prepareWorkspaceFontsInDocument } from './workspace'
 import { finishCleanup } from './cleanup'
 import type { Account } from './keycloak'
 import { NetworkLedger, recordNetwork } from './oracles/r1-network'
@@ -315,6 +315,7 @@ export class Actor {
   }
   async workspace(selector: string, channelPath?: string) {
     this.budget.reusePage(this.alias, this.page)
+    await this.page.evaluate(prepareWorkspaceFontsInDocument)
     await enterWorkspace(this.page, this.input.organisation, selector, channelPath)
     await expect(this.page.locator(selector)).toBeVisible()
   }

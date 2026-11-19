@@ -11,7 +11,7 @@ import { documentText } from '../wave2/documents'
 import { finishCleanup } from '../wave2/cleanup'
 import { findMailLink, mailLinkPattern } from '../wave2/mailpit'
 import { enterOrganisation } from '../wave2/login'
-import { enterWorkspace } from '../wave2/workspace'
+import { enterWorkspace, prepareWorkspaceFontsInDocument } from '../wave2/workspace'
 import { Actor, parentDomain, readWave2Input } from '../wave2/world'
 import type { Wave2Input } from '../wave2/world'
 import { selectInterfaceLanguage } from '../wave2/language'
@@ -373,7 +373,43 @@ describe('actor homeserver isolation', () => {
   })
 })
 
+describe('workspace font readiness', () => {
+  it('waits for the real channel sigil load before allowing workspace navigation', async () => {
+    let loaded!: () => void
+    const font = new Promise<void>((resolve) => {
+      loaded = resolve
+    })
+    const load = vi.fn(() => font)
+    vi.stubGlobal('document', { fonts: { ready: Promise.resolve(), load } })
+    let ready = false
+    const preparation = prepareWorkspaceFontsInDocument().then(() => {
+      ready = true
+    })
+    await Promise.resolve()
+    expect(load).toHaveBeenCalledWith('500 16px "IBM Plex Mono"', 'É’—012345')
+    expect(ready).toBe(false)
+    loaded()
+    await preparation
+    expect(ready).toBe(true)
+  })
+  it('propagates font transport failures', async () => {
+    vi.stubGlobal('document', {
+      fonts: {
+        ready: Promise.resolve(),
+        load: async () => {
+          throw new Error('font refused')
+        },
+      },
+    })
+    await expect(prepareWorkspaceFontsInDocument()).rejects.toThrow('font refused')
+  })
+})
+
 describe('Matrix navigation response barrier', () => {
+  const routeFor = (continued: () => Promise<void>) => ({
+    continue: continued,
+    request: () => ({ frame: () => ({ evaluate: async () => {} }) }),
+  })
   it('finishes an in-flight Core body before continuing the full-page SSO navigation', async () => {
     const emitter = new EventEmitter()
     let matcher!: (url: URL) => boolean
@@ -385,10 +421,8 @@ describe('Matrix navigation response barrier', () => {
       },
     }) as unknown as BrowserContext
     await installMatrixNavigationBarrier(context, API, HS)
-    expect(matcher(new URL(HS + '/_matrix/client/v3/login/sso/redirect?redirectUrl=owned'))).toBe(
-      true
-    )
-    expect(matcher(new URL(WEB + '/_matrix/client/v3/login/sso/redirect'))).toBe(false)
+    expect(matcher(new URL(HS + '/.well-known/matrix/client'))).toBe(true)
+    expect(matcher(new URL(WEB + '/.well-known/matrix/client'))).toBe(false)
     const request = { url: () => API + '/api/v1/me' }
     emitter.emit('request', request)
     let finishBody!: () => void
@@ -396,7 +430,7 @@ describe('Matrix navigation response barrier', () => {
       finishBody = resolve
     })
     const continued = vi.fn(async () => {})
-    const navigation = navigate({ continue: continued })
+    const navigation = navigate(routeFor(continued))
     emitter.emit('response', { request: () => request, body: () => body })
     await Promise.resolve()
     expect(continued).not.toHaveBeenCalled()
@@ -422,7 +456,7 @@ describe('Matrix navigation response barrier', () => {
       },
     })
     const continued = vi.fn(async () => {})
-    await expect(navigate({ continue: continued })).rejects.toThrow('WAVE2_CORE_RESPONSE_BARRIER')
+    await expect(navigate(routeFor(continued))).rejects.toThrow('WAVE2_CORE_RESPONSE_BARRIER')
     expect(continued).not.toHaveBeenCalled()
   })
 })

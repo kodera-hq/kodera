@@ -17,3 +17,10 @@ export async function enterWorkspace(
     await page.locator(readySelector).waitFor({ state: 'visible', timeout: 15_000 })
   }
 }
+
+/** Load the channel sigil face before full-page Matrix SSO can replace this document. */
+export async function prepareWorkspaceFontsInDocument() {
+  await document.fonts.ready
+  await document.fonts.load('500 16px "IBM Plex Mono"', 'É’—012345')
+  await document.fonts.ready
+}

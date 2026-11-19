@@ -1,7 +1,7 @@
 import type { BrowserContext, Request, Response, Route } from '@playwright/test'
 import { exactOrigin, guard } from './oracles/shared'
 
-/** Finish Core response reads before Matrix SSO replaces the browser document. */
+/** Hold discovery until Core reads finish, before Matrix SSO starts document replacement. */
 export async function installMatrixNavigationBarrier(
   context: BrowserContext,
   apiOrigin: string,
@@ -35,9 +35,20 @@ export async function installMatrixNavigationBarrier(
       .finally(() => finish(request))
   }
   const matcher = (url: URL) =>
-    url.origin === homeserver && url.pathname === '/_matrix/client/v3/login/sso/redirect'
+    url.origin === homeserver && url.pathname === '/.well-known/matrix/client'
   const navigate = async (route: Route) => {
-    while (pending.size) await Promise.all([...pending.values()].map((request) => request.done))
+    do {
+      while (pending.size) await Promise.all([...pending.values()].map((request) => request.done))
+      await route
+        .request()
+        .frame()
+        .evaluate(async () => {
+          await document.fonts.ready
+          await new Promise<void>((resolve) => {
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+          })
+        })
+    } while (pending.size)
     guard(!failed, 'WAVE2_CORE_RESPONSE_BARRIER')
     await route.continue()
   }

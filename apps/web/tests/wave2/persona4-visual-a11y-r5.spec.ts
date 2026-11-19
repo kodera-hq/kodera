@@ -45,7 +45,14 @@ async function settleTimeline(page: Page, input: ReturnType<typeof readWave2Inpu
     await new Promise<void>((resolve) => {
       requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
     })
+    // Responsive replacement must finish before finding the conversation end.
+    window.scrollTo({ top: document.scrollingElement?.scrollHeight ?? 0, behavior: 'instant' })
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+    })
   })
+  for (const message of await page.getByRole('log').locator('article').all())
+    await expect(message).toBeInViewport({ ratio: 1 })
 }
 
 test('Persona 4: twelve explicit web cells on one retained owner page', async ({ browser }) => {
