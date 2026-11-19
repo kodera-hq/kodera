@@ -2,10 +2,17 @@
 
 from django.urls import path
 
-from . import moderation as views
+from . import iam, moderation as views
 
 ROOT = "api/v1/organisations/<uuid:organisation_id>/workspace/"
 urlpatterns = [
+    path(ROOT + "roles", iam.roles),
+    path(ROOT + "roles/<uuid:role_id>", iam.role),
+    path(ROOT + "members/<uuid:membership_id>/roles", iam.member_roles),
+    path(ROOT + "channels/<uuid:channel_id>/overrides", iam.overrides),
+    path(ROOT + "profile", iam.profile),
+    path(ROOT + "bans", iam.bans),
+    path(ROOT + "audit-logs", iam.audit_logs),
     path(ROOT + "moderation", views.moderation),
     path(ROOT + "reports", views.reports),
     path(ROOT + "reports/<uuid:report_id>", views.report_detail),

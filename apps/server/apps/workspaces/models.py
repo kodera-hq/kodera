@@ -101,6 +101,15 @@ class Workspace(StoredModel):
     organisation = models.ForeignKey(
         "orgs.Organisation", on_delete=models.RESTRICT, db_constraint=False
     )
+    description = models.TextField(default="", blank=True)
+    banner_preset = models.TextField(default="", blank=True)
+    icon_mxc = models.TextField(default="", blank=True)
+    traits = models.JSONField(default=list)
+    arrivals_channel_id = models.UUIDField(null=True, blank=True)
+    rules_channel_id = models.UUIDField(null=True, blank=True)
+    moderator_updates_channel_id = models.UUIDField(null=True, blank=True)
+    security_alerts_channel_id = models.UUIDField(null=True, blank=True)
+    invites_paused = models.BooleanField(default=False)
     structure_revision = models.BigIntegerField(default=1)
     default_policy = models.ForeignKey(
         "ResourcePolicy",
@@ -406,6 +415,10 @@ class WorkspaceMemberRestriction(StoredModel):
 
 class WorkspaceInviteLink(StoredModel):
     workspace = models.ForeignKey(Workspace, on_delete=models.RESTRICT)
+    created_by = models.ForeignKey(
+        "orgs.Membership", null=True, blank=True, on_delete=models.RESTRICT, related_name="+"
+    )
+    auto_role_ids = models.JSONField(default=list)
     code_digest = models.TextField(unique=True)
     expires_at = models.DateTimeField()
     max_uses = models.IntegerField()
@@ -471,4 +484,74 @@ class WorkspaceAbuseReport(StoredModel):
         ]
         indexes = [
             models.Index(fields=["workspace", "status", "id"], name="workspace_report_queue")
+        ]
+
+
+class WorkspaceRole(StoredModel):
+    workspace = models.ForeignKey(Workspace, on_delete=models.RESTRICT)
+    organisation_id = models.UUIDField()
+    name = models.TextField()
+    slug = models.SlugField(max_length=64)
+    kind = models.TextField(
+        default="role", choices=[("role", "Role"), ("subteam", "Sub-team"), ("tag", "Tag")]
+    )
+    color = models.TextField(default="#808080")
+    icon = models.TextField(default="", blank=True)
+    position = models.IntegerField(default=0)
+    is_hoisted = models.BooleanField(default=False)
+    is_mentionable = models.BooleanField(default=False)
+    permissions = models.JSONField(default=list, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["workspace", "slug"], name="workspace_role_slug_unique"
+            ),
+            name_constraint("workspace_role_name_valid"),
+            models.CheckConstraint(
+                condition=models.Q(position__gte=0), name="workspace_role_position_valid"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(kind__in=["role", "subteam", "tag"]),
+                name="workspace_role_kind_valid",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(color__regex=r"^#[0-9a-fA-F]{6}$"),
+                name="workspace_role_color_valid",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(slug__regex=r"^[a-z][a-z0-9_-]{0,63}$"),
+                name="workspace_role_slug_valid",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(icon__length__lte=32), name="workspace_role_icon_valid"
+            ),
+        ]
+
+
+class WorkspaceMemberRole(StoredModel):
+    workspace = models.ForeignKey(Workspace, on_delete=models.RESTRICT)
+    membership = models.ForeignKey("orgs.Membership", on_delete=models.RESTRICT)
+    role = models.ForeignKey(WorkspaceRole, on_delete=models.CASCADE)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["membership", "role"], name="workspace_member_role_unique"
+            )
+        ]
+
+
+class WorkspaceChannelRoleOverride(StoredModel):
+    workspace = models.ForeignKey(Workspace, on_delete=models.RESTRICT)
+    channel = models.ForeignKey(Channel, on_delete=models.CASCADE)
+    role = models.ForeignKey(WorkspaceRole, on_delete=models.CASCADE)
+    allow = models.JSONField(default=list)
+    deny = models.JSONField(default=list)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["channel", "role"], name="workspace_channel_role_unique"
+            )
         ]
