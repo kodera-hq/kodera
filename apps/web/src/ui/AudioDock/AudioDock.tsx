@@ -58,9 +58,87 @@ import { Tooltip } from '../Tooltip/Tooltip'
  * (`aria-hidden`): the mute toggle already says whether the member is heard.
  * The fill is `c-ok-on-dark` on a `c-inverse-2` track, like the controls.
  */
-export type AudioDockLayout = 'sidebar' | 'banner' | 'studio'
+export type AudioDockLayout = 'sidebar' | 'compact' | 'banner' | 'studio'
 
 export type AudioDockStatus = 'connected' | 'connecting' | 'reconnecting'
+
+export type SignalQuality = 'excellent' | 'good' | 'poor' | 'lost' | 'unknown'
+
+const QUALITY_BARS: Record<SignalQuality, number> = {
+  excellent: 3,
+  good: 2,
+  poor: 1,
+  lost: 0,
+  unknown: 3,
+}
+
+const QUALITY_INK: Record<SignalQuality, string> = {
+  excellent: 'text-c-ok-on-dark',
+  good: 'text-c-ok-on-dark',
+  poor: 'text-c-warn',
+  lost: 'text-c-bad-on-dark',
+  unknown: 'text-c-ok-on-dark',
+}
+
+export function ConnectionQualityBars({
+  quality = 'unknown',
+  status = 'connected',
+  label,
+}: {
+  quality?: SignalQuality | undefined
+  status?: AudioDockStatus | undefined
+  label?: string | undefined
+}) {
+  const waiting = status !== 'connected'
+  const activeBars = waiting ? 1 : QUALITY_BARS[quality]
+  const tone = waiting ? 'text-c-on-inverse-dim' : QUALITY_INK[quality]
+  const svg = (
+    <span
+      data-connection-quality={waiting ? status : quality}
+      {...(label !== undefined && hasLabel(label)
+        ? { role: 'img', 'aria-label': label }
+        : { 'aria-hidden': true })}
+      className={cx('inline-flex shrink-0 items-center justify-center', tone)}
+    >
+      <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" className="h-3 w-3 shrink-0">
+        <rect
+          x="2"
+          y="10"
+          width="2.5"
+          height="4"
+          rx="0.75"
+          fill="currentColor"
+          className={activeBars >= 1 ? '' : 'opacity-30'}
+        />
+        <rect
+          x="6.75"
+          y="7"
+          width="2.5"
+          height="7"
+          rx="0.75"
+          fill="currentColor"
+          className={activeBars >= 2 ? '' : 'opacity-30'}
+        />
+        <rect
+          x="11.5"
+          y="3.5"
+          width="2.5"
+          height="10.5"
+          rx="0.75"
+          fill="currentColor"
+          className={activeBars >= 3 ? '' : 'opacity-30'}
+        />
+      </svg>
+    </span>
+  )
+  return label !== undefined && hasLabel(label) ? (
+    <Tooltip content={label} names>
+      {svg}
+    </Tooltip>
+  ) : (
+    svg
+  )
+}
 
 /** A camera or screen toggle the call can honour: `on` is pressed, `busy` while it starts. */
 export interface AudioDockMediaToggle {
@@ -80,6 +158,7 @@ export interface AudioDockProps {
     roleLabel?: string
     avatarSrc?: string | undefined
     onAvatarError?: (() => void) | undefined
+    quality?: SignalQuality
   }[]
   participantsLabel?: string
   localParticipantId?: string
@@ -94,6 +173,9 @@ export interface AudioDockProps {
   status: AudioDockStatus
   /** The same state in words, e.g. « Connecté · 12 min », « Reconnexion… ». */
   statusLabel: ReactNode
+  /** LiveKit connection quality for the local participant. */
+  quality?: SignalQuality
+  qualityLabel?: string
   /** The viewer's microphone is off. */
   muted: boolean
   /** The viewer hears nothing (and, by the usual rule, is muted too). */
@@ -103,11 +185,25 @@ export interface AudioDockProps {
   onLeave: () => void
   /** Back to the call's own view. Needs `labels.openCall`, its accessible name. */
   onOpenCall?: () => void
+  /** Detaches the call into the draggable floating pill (`↗` icon only). */
+  onDetach?: () => void
+  /** Toggles full-pane stage vs split stage in `studio` layout. */
+  fullStage?: boolean
+  onToggleFullStage?: () => void
+  /** Video stage content rendered inside `studio` layout when video feeds are active. */
+  stageSlot?: ReactNode
   /**
    * Each control's short label: its accessible name and its tooltip.
    * `openCall` names the icon-only button `onOpenCall` draws.
    */
-  labels: { mute: string; deafen: string; leave: string; openCall?: string }
+  labels: {
+    mute: string
+    deafen: string
+    leave: string
+    openCall?: string
+    detach?: string
+    fullStage?: string
+  }
   layout?: AudioDockLayout
   /** The microphone meter's fill: its transform is the caller's to set (see above). */
   meterRef?: Ref<HTMLSpanElement>
@@ -141,24 +237,25 @@ const STATUS_INK: Record<AudioDockStatus, string> = {
 }
 
 const DOCK: Record<AudioDockLayout, string> = {
-  studio:
-    'm-2 flex flex-wrap items-center gap-4 rounded-lg p-4 narrow:flex-col narrow:items-stretch',
+  studio: 'flex flex-col gap-3 p-3',
   sidebar: 'm-2 flex flex-col gap-3 rounded-lg p-3',
+  compact: 'flex h-[56px] min-h-[56px] w-full items-center justify-between gap-2 px-2 py-1',
   banner: 'flex w-full items-center gap-3 rounded-lg py-2 pr-2 pl-3',
 }
 
 const CONTROLS: Record<AudioDockLayout, string> = {
-  studio: 'flex shrink-0 items-center justify-center gap-2',
+  studio: 'flex shrink-0 flex-wrap items-center justify-center gap-2',
   sidebar: 'grid grid-cols-3 gap-1',
+  compact: 'flex shrink-0 items-center gap-1',
   banner: 'flex shrink-0 items-center gap-2',
 }
 
 // The sidebar's controls are 40 px tall, icon only, with the 44 px floor on a
-// narrow screen (`TOUCH_TARGET`). The banner's are the reference's 52 px call target, a
-// one-off length that is not a spacing step (src/ui/README.md, bracket values).
+// narrow screen (`TOUCH_TARGET`). Compact bottom-sidebar card controls are 28 px squares.
 const CONTROL_SHAPE: Record<AudioDockLayout, string> = {
-  studio: 'h-12 w-12 rounded-md',
+  studio: `h-10 w-10 rounded-md ${TOUCH_TARGET}`,
   sidebar: `h-10 rounded-md ${TOUCH_TARGET}`,
+  compact: `h-[28px] w-[28px] rounded-md ${TOUCH_TARGET}`,
   banner: 'h-[52px] w-[52px] rounded-full',
 }
 
@@ -206,12 +303,18 @@ export function AudioDock({
   category,
   status,
   statusLabel,
+  quality,
+  qualityLabel,
   muted,
   deafened,
   onToggleMute,
   onToggleDeafen,
   onLeave,
   onOpenCall,
+  onDetach,
+  fullStage,
+  onToggleFullStage,
+  stageSlot,
   labels,
   layout = 'sidebar',
   meterRef,
@@ -236,9 +339,11 @@ export function AudioDock({
     // reader can identify; refuse it rather than draw it.
     throw new Error('AudioDock onOpenCall needs labels.openCall, the button’s accessible name')
   }
+  const isCompact = layout === 'compact'
   return (
     <section
       aria-label={label}
+      data-dock-layout={layout}
       className={cx(
         'focus-ground-inverse inverse-edge bg-c-inverse text-c-on-inverse',
         DOCK[layout]
@@ -246,70 +351,167 @@ export function AudioDock({
     >
       <div
         className={cx(
-          'flex min-w-0 flex-1 items-center gap-2',
-          layout === 'studio' ? 'basis-full' : ''
+          'flex min-w-0 items-center gap-2',
+          isCompact ? 'flex-1' : 'flex-1',
+          layout === 'studio' ? 'w-full' : ''
         )}
       >
-        <span
-          aria-hidden="true"
-          data-status={status}
-          className={cx('h-2 w-2 shrink-0 rounded-full', DOT[status])}
-        />
-        <div className="flex min-w-0 flex-1 flex-col">
-          <p className="truncate text-sm leading-snug font-semibold">{room}</p>
-          {category === undefined ? null : (
-            <p className="truncate text-xs text-c-on-inverse-dim">{category}</p>
-          )}
-          {/* Wraps rather than truncates, as the reference's state does: at 14 px bold
-              « Connecté · écoute seule » is wider than the sidebar dock's text column. */}
-          <p
-            role="status"
-            aria-live="polite"
-            aria-atomic="true"
-            className={cx('text-sm font-bold break-words tabular-nums', STATUS_INK[status])}
-          >
-            {statusLabel}
-          </p>
-          {meterRef === undefined ? null : (
+        {isCompact ? (
+          <div className="flex min-w-0 flex-1 flex-col justify-center">
+            <div className="flex min-w-0 items-center gap-1">
+              <span
+                aria-hidden="true"
+                data-status={status}
+                className={cx('h-2 w-2 shrink-0 rounded-full', DOT[status])}
+              />
+              <p
+                role="status"
+                aria-live="polite"
+                aria-atomic="true"
+                className={cx('truncate text-xs font-bold tabular-nums', STATUS_INK[status])}
+              >
+                {statusLabel}
+              </p>
+              <ConnectionQualityBars quality={quality} status={status} label={qualityLabel} />
+            </div>
+            {category === undefined ? null : <span className="sr-only">{category}</span>}
+            {onOpenCall !== undefined && labels.openCall !== undefined ? (
+              <Tooltip content={labels.openCall} names>
+                <button
+                  type="button"
+                  aria-label={`${labels.openCall} (${room})`}
+                  onClick={onOpenCall}
+                  className="focus-offset max-w-full truncate rounded-sm text-left text-xs leading-snug font-semibold text-c-on-inverse hover:underline focus-visible:ring focus-visible:ring-offset-2 focus-visible:outline-hidden"
+                >
+                  {room}
+                </button>
+              </Tooltip>
+            ) : (
+              <p className="truncate text-xs leading-snug font-semibold">{room}</p>
+            )}
+            {meterRef === undefined ? null : (
+              <span
+                aria-hidden="true"
+                data-mic-meter=""
+                className="mt-1 block h-[2px] w-full overflow-hidden rounded-full bg-c-inverse-2"
+              >
+                <span
+                  ref={meterFillRef}
+                  className="block h-full w-full origin-left bg-c-ok-on-dark"
+                />
+              </span>
+            )}
+          </div>
+        ) : (
+          <>
             <span
               aria-hidden="true"
-              data-mic-meter=""
-              className="mt-1 block h-1 w-full overflow-hidden rounded-full bg-c-inverse-2"
-            >
-              {/* Scaled, not sized: the caller moves it on every frame without moving layout. The
-                  track's rounded clip keeps its ends round. */}
-              <span
-                ref={meterFillRef}
-                className="block h-full w-full origin-left bg-c-ok-on-dark"
-              />
-            </span>
-          )}
-        </div>
-        {settings === undefined ? null : <div className="ml-auto shrink-0">{settings}</div>}
-        {onOpenCall === undefined || labels.openCall === undefined ? null : (
-          <Tooltip content={labels.openCall} names>
-            <button
-              type="button"
-              aria-label={labels.openCall}
-              onClick={onOpenCall}
-              className={cx(
-                // Pushed to the row's end, unless the settings already are, just before it.
-                settings === undefined ? 'ml-auto' : '',
-                'focus-offset flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-c-inverse-2 text-c-on-inverse-dim hover:text-c-on-inverse focus-visible:ring focus-visible:ring-offset-2 focus-visible:outline-hidden',
-                TOUCH_TARGET
+              data-status={status}
+              className={cx('h-2 w-2 shrink-0 rounded-full', DOT[status])}
+            />
+            <div className="flex min-w-0 flex-1 flex-col">
+              <div className="flex min-w-0 items-center gap-2">
+                <p className="truncate text-sm leading-snug font-semibold">{room}</p>
+                {quality !== undefined || layout === 'studio' ? (
+                  <ConnectionQualityBars quality={quality} status={status} label={qualityLabel} />
+                ) : null}
+              </div>
+              {category === undefined ? null : (
+                <p className="truncate text-xs text-c-on-inverse-dim">{category}</p>
               )}
-            >
-              <EspaceGlyph name="open" />
-            </button>
-          </Tooltip>
+              {/* Wraps rather than truncates, as the reference's state does: at 14 px bold
+                  « Connecté · écoute seule » is wider than the sidebar dock's text column. */}
+              <p
+                role="status"
+                aria-live="polite"
+                aria-atomic="true"
+                className={cx('text-sm font-bold break-words tabular-nums', STATUS_INK[status])}
+              >
+                {statusLabel}
+              </p>
+              {meterRef === undefined ? null : (
+                <span
+                  aria-hidden="true"
+                  data-mic-meter=""
+                  className="mt-1 block h-1 w-full overflow-hidden rounded-full bg-c-inverse-2"
+                >
+                  {/* Scaled, not sized: the caller moves it on every frame without moving layout. The
+                      track's rounded clip keeps its ends round. */}
+                  <span
+                    ref={meterFillRef}
+                    className="block h-full w-full origin-left bg-c-ok-on-dark"
+                  />
+                </span>
+              )}
+            </div>
+            {settings === undefined ? null : <div className="ml-auto shrink-0">{settings}</div>}
+            {layout === 'studio' &&
+            onToggleFullStage !== undefined &&
+            hasLabel(labels.fullStage) ? (
+              <Tooltip content={labels.fullStage} names>
+                <button
+                  type="button"
+                  aria-label={labels.fullStage}
+                  aria-pressed={fullStage === true}
+                  onClick={onToggleFullStage}
+                  className={cx(
+                    settings === undefined ? 'ml-auto' : '',
+                    'focus-offset flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-c-inverse-2 text-c-on-inverse-dim hover:text-c-on-inverse focus-visible:ring focus-visible:ring-offset-2 focus-visible:outline-hidden',
+                    TOUCH_TARGET
+                  )}
+                >
+                  <EspaceGlyph name={fullStage === true ? 'shrink' : 'expand'} />
+                </button>
+              </Tooltip>
+            ) : null}
+            {layout === 'studio' && onDetach !== undefined && hasLabel(labels.detach) ? (
+              <Tooltip content={labels.detach} names>
+                <button
+                  type="button"
+                  aria-label={labels.detach}
+                  onClick={onDetach}
+                  className={cx(
+                    settings === undefined && onToggleFullStage === undefined ? 'ml-auto' : '',
+                    'focus-offset flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-c-inverse-2 text-c-on-inverse-dim hover:text-c-on-inverse focus-visible:ring focus-visible:ring-offset-2 focus-visible:outline-hidden',
+                    TOUCH_TARGET
+                  )}
+                >
+                  <EspaceGlyph name="detach" />
+                </button>
+              </Tooltip>
+            ) : null}
+            {onOpenCall === undefined || labels.openCall === undefined ? null : (
+              <Tooltip content={labels.openCall} names>
+                <button
+                  type="button"
+                  aria-label={labels.openCall}
+                  onClick={onOpenCall}
+                  className={cx(
+                    // Pushed to the row's end, unless another header control already did.
+                    settings === undefined &&
+                      !(layout === 'studio' && onToggleFullStage !== undefined) &&
+                      !(layout === 'studio' && onDetach !== undefined)
+                      ? 'ml-auto'
+                      : '',
+                    'focus-offset flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-c-inverse-2 text-c-on-inverse-dim hover:text-c-on-inverse focus-visible:ring focus-visible:ring-offset-2 focus-visible:outline-hidden',
+                    TOUCH_TARGET
+                  )}
+                >
+                  <EspaceGlyph name="open" />
+                </button>
+              </Tooltip>
+            )}
+          </>
         )}
       </div>
-      {layout === 'studio' && participants && participants.length > 0 ? (
+      {layout === 'studio' && stageSlot !== undefined ? (
+        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto">{stageSlot}</div>
+      ) : layout === 'studio' && participants && participants.length > 0 ? (
         <div
           role="region"
           aria-label={participantsLabel ?? copy.participants}
           tabIndex={0}
-          className="max-h-shell-dock-width min-w-0 flex-1 overflow-y-auto rounded-md focus-visible:ring focus-visible:outline-hidden"
+          className="max-h-shell-dock-width min-h-0 min-w-0 flex-1 overflow-y-auto rounded-md focus-visible:ring focus-visible:outline-hidden"
         >
           <ul aria-label={participantsLabel} className="grid grid-cols-4 gap-2 narrow:grid-cols-2">
             {participants.map((person) => (
@@ -317,7 +519,7 @@ export function AudioDock({
                 key={person.id}
                 data-speaking={person.speaking || undefined}
                 className={cx(
-                  'flex min-w-0 flex-col items-center gap-3 rounded-lg border bg-c-inverse-2 p-3',
+                  'flex min-w-0 flex-col items-center gap-2 rounded-lg border bg-c-inverse-2 p-3',
                   person.speaking
                     ? 'border-c-ok-on-dark ring-1 ring-c-ok-on-dark'
                     : 'border-c-on-inverse-dim'
@@ -355,6 +557,9 @@ export function AudioDock({
                     )}
                   />
                   <span className="truncate">{person.name}</span>
+                  {person.quality !== undefined ? (
+                    <ConnectionQualityBars quality={person.quality} status={status} />
+                  ) : null}
                 </span>
               </li>
             ))}
@@ -364,16 +569,28 @@ export function AudioDock({
       <div className={CONTROLS[layout]}>
         {media !== undefined ? (
           <>
-            <Control
-              layout={layout}
-              label={media.camera.label}
-              glyph={media.camera.on ? 'camera' : 'camera-off'}
-              tone={media.camera.on ? 'pressed' : 'idle'}
-              pressed={media.camera.on}
-              busy={media.camera.busy}
-              onClick={media.camera.onToggle}
-            />
-            {media.screen === undefined ? null : (
+            {isCompact && media.screen?.on === true ? (
+              <Control
+                layout={layout}
+                label={media.screen.label}
+                glyph="screen"
+                tone="pressed"
+                pressed
+                busy={media.screen.busy}
+                onClick={media.screen.onToggle}
+              />
+            ) : (
+              <Control
+                layout={layout}
+                label={media.camera.label}
+                glyph={media.camera.on ? 'camera' : 'camera-off'}
+                tone={media.camera.on ? 'pressed' : 'idle'}
+                pressed={media.camera.on}
+                busy={media.camera.busy}
+                onClick={media.camera.onToggle}
+              />
+            )}
+            {!isCompact && media.screen !== undefined ? (
               <Control
                 layout={layout}
                 label={media.screen.label}
@@ -383,7 +600,7 @@ export function AudioDock({
                 busy={media.screen.busy}
                 onClick={media.screen.onToggle}
               />
-            )}
+            ) : null}
           </>
         ) : previewCamera && participants?.some((person) => person.id === localParticipantId) ? (
           <Tooltip content={copy.cameraHint}>
@@ -393,20 +610,24 @@ export function AudioDock({
               aria-pressed={cameraActive}
               onClick={() => setCameraActive(!cameraActive)}
               className={cx(
-                'flex h-12 w-12 items-center justify-center rounded-md focus-visible:ring',
+                CONTROL_BASE,
+                CONTROL_SHAPE[layout],
                 cameraActive ? TONE.pressed : TONE.idle
               )}
             >
               <StudioGlyph name="camera" />
             </button>
           </Tooltip>
-        ) : cameraUnavailable ? (
+        ) : !isCompact && cameraUnavailable ? (
           <Tooltip content={cameraUnavailable}>
             <button
               type="button"
               disabled
               aria-label={cameraUnavailable}
-              className="flex h-12 w-12 items-center justify-center rounded-md bg-c-inverse-2 text-c-on-inverse-dim focus-visible:ring"
+              className={cx(
+                'flex items-center justify-center bg-c-inverse-2 text-c-on-inverse-dim focus-visible:ring',
+                CONTROL_SHAPE[layout]
+              )}
             >
               <StudioGlyph name="camera" />
             </button>
@@ -428,6 +649,15 @@ export function AudioDock({
           pressed={deafened}
           onClick={onToggleDeafen}
         />
+        {isCompact && onDetach !== undefined && hasLabel(labels.detach) ? (
+          <Control
+            layout={layout}
+            label={labels.detach}
+            glyph="detach"
+            tone="idle"
+            onClick={onDetach}
+          />
+        ) : null}
         <Control
           layout={layout}
           label={labels.leave}

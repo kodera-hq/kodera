@@ -3,17 +3,21 @@
 // own; the member pins any other feed there. Its own chunk, loaded once a call has video: a call
 // without video never downloads it.
 //
-// Two presentations. `expanded` sits above the call dock, in the page. `docked` is the
-// picture-in-picture thumbnail: the spotlit feed alone, floating in a corner while the member reads
-// and writes in any channel of the workspace, which keeps the call (and so this) mounted. Each feed
-// can also leave the page in the browser's own picture-in-picture window, where the browser offers
-// one.
+// Two presentations. `expanded` sits inside the bounded call stage. `docked` is the compact
+// picture-in-picture thumbnail: the spotlit feed alone, positioned clear of the composer and call
+// controls while the member reads and writes in any channel of the workspace. Each feed can also
+// leave the page in the browser's own picture-in-picture window, where the browser offers one.
 //
 // Every `<video>` is drawn by the call (`attach`), muted: the call's sound plays through its own
-// hidden elements. No `style` attribute anywhere: tiles take their shape from classes.
+// hidden elements. Until frames actually decode (`readyState >= 2 && videoWidth > 0`), the raw
+// `<video>` stays hidden behind an avatar + name + speaking ring + connection quality card so an
+// un-decoded track never renders as an empty black box. Entering native Picture-in-Picture strips
+// `-scale-x-100` so browser placeholder text is never mirrored backwards, and leaving PiP restores
+// the member's mirror preference. No `style` attribute anywhere: tiles take their shape from classes.
 
 import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
+import { ConnectionQualityBars, type SignalQuality } from '../../../ui/AudioDock/AudioDock'
 import { Avatar } from '../../../ui/Avatar/Avatar'
 import { cx } from '../../../ui/cx'
 import { EspaceGlyph, type EspaceGlyphName } from '../../../ui/icons/EspaceGlyph'
@@ -35,10 +39,19 @@ export interface VideoStageProps {
   onPresentationChange: (presentation: StagePresentation) => void
   /** Whether this browser offers its own picture-in-picture window; detected by default. */
   canPictureInPicture?: boolean
+  /** Per-participant connection quality, keyed by Matrix user id. */
+  qualities?: Readonly<Record<string, SignalQuality>>
+  /** Compact mini-preview mode inside the detached floating call pill. */
+  compactPreview?: boolean
 }
 
 function browserPictureInPicture(): boolean {
   return typeof document !== 'undefined' && document.pictureInPictureEnabled === true
+}
+
+/** True only once the browser has decoded at least one non-empty video frame. */
+export function hasDecodedVideoFrame(video: HTMLVideoElement | null): boolean {
+  return video !== null && video.readyState >= 2 && video.videoWidth > 0
 }
 
 /** The feed in the spotlight: the one pinned while it lasts, else the first shared screen. */
@@ -82,33 +95,93 @@ function StageButton({
   )
 }
 
+const FRAME_EVENTS = [
+  'loadeddata',
+  'loadedmetadata',
+  'resize',
+  'playing',
+  'canplay',
+  'emptied',
+  'ended',
+] as const
+
 interface TileProps {
   feed: VideoFeed
   attach: VideoStageProps['attach']
   label: string
   name: string
   speaking: boolean
+  quality: SignalQuality | undefined
   /** The spotlit tile is the large one. */
   large: boolean
+  compactPreview: boolean
+  mirrored: boolean
   actions?: ReactNode
 }
 
-function VideoTile({ feed, attach, label, name, speaking, large, actions }: TileProps) {
+function VideoTile({
+  feed,
+  attach,
+  label,
+  name,
+  speaking,
+  quality,
+  large,
+  compactPreview,
+  mirrored,
+  actions,
+}: TileProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
+  const [prevKey, setPrevKey] = useState(feed.key)
+  const [frameReady, setFrameReady] = useState(false)
+  const [inPip, setInPip] = useState(false)
+  if (prevKey !== feed.key) {
+    setPrevKey(feed.key)
+    setFrameReady(false)
+    setInPip(false)
+  }
+
   useEffect(() => {
     const element = videoRef.current
     if (element === null) return
-    return attach(feed.key, element)
+    const detach = attach(feed.key, element)
+    const syncFrame = () => {
+      setFrameReady(hasDecodedVideoFrame(element))
+    }
+    const onEnterPip = () => setInPip(true)
+    const onLeavePip = () => setInPip(false)
+    syncFrame()
+    if (typeof document !== 'undefined' && document.pictureInPictureElement === element) {
+      setInPip(true)
+    }
+    for (const eventName of FRAME_EVENTS) {
+      element.addEventListener(eventName, syncFrame)
+    }
+    element.addEventListener('enterpictureinpicture', onEnterPip)
+    element.addEventListener('leavepictureinpicture', onLeavePip)
+    return () => {
+      for (const eventName of FRAME_EVENTS) {
+        element.removeEventListener(eventName, syncFrame)
+      }
+      element.removeEventListener('enterpictureinpicture', onEnterPip)
+      element.removeEventListener('leavepictureinpicture', onLeavePip)
+      detach()
+    }
   }, [attach, feed.key])
+
+  const effectiveMirror = mirrored && !inPip && feed.source === 'camera'
+
   return (
     <figure
       aria-label={label}
       data-video-source={feed.source}
       data-speaking={speaking || undefined}
       className={cx(
-        'relative m-0 aspect-video min-w-0 overflow-hidden rounded-lg bg-c-inverse',
-        speaking && feed.source === 'camera' ? 'ring-2 ring-c-ok-on-dark' : '',
-        large ? 'w-full' : ''
+        'relative m-0 aspect-video min-w-0 overflow-hidden rounded-lg bg-c-inverse-2',
+        speaking && feed.source === 'camera'
+          ? 'ring-2 ring-c-ok-on-dark'
+          : 'border border-c-on-inverse-dim',
+        large ? 'max-h-[400px] w-full' : 'max-h-[320px]'
       )}
     >
       {/* No caption track: the video is muted, and the call's sound plays elsewhere. */}
@@ -117,20 +190,40 @@ function VideoTile({ feed, attach, label, name, speaking, large, actions }: Tile
         muted
         playsInline
         autoPlay
+        data-video-ready={frameReady ? 'true' : 'false'}
         className={cx(
-          'h-full w-full',
+          'h-full w-full transition-opacity duration-fast',
           // A screen shows whole, text and all; a camera fills its tile. The member sees their own
-          // camera as in a mirror, as every call application shows it.
+          // camera as in a mirror unless disabled or currently inside native Picture-in-Picture.
           feed.source === 'screen' ? 'object-contain' : 'object-cover',
-          feed.local && feed.source === 'camera' ? '-scale-x-100' : ''
+          effectiveMirror ? '-scale-x-100' : '',
+          frameReady ? 'opacity-100' : 'pointer-events-none opacity-0'
         )}
       />
-      <figcaption className="absolute bottom-2 left-2 flex max-w-[80%] items-center gap-2 rounded-md bg-c-inverse px-2 py-1 text-xs text-c-on-inverse">
+      {frameReady ? null : (
+        <div
+          data-testid="video-avatar-fallback"
+          className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-c-inverse-2 p-3 text-c-on-inverse"
+        >
+          <Avatar
+            name={name}
+            identity={feed.userId}
+            size={compactPreview ? 'md' : 'lg'}
+            className={speaking ? 'ring-2 ring-c-ok-on-dark' : ''}
+          />
+          <div className="flex max-w-full items-center gap-2 px-2">
+            <span className="truncate text-xs font-semibold text-c-on-inverse">{name}</span>
+            <ConnectionQualityBars quality={quality} status="connected" />
+          </div>
+        </div>
+      )}
+      <figcaption className="absolute bottom-2 left-2 z-10 flex max-w-[80%] items-center gap-2 rounded-md bg-c-inverse px-2 py-1 text-xs text-c-on-inverse">
         {large ? null : <Avatar name={name} identity={feed.userId} size="xs" />}
         <span className="truncate">{label}</span>
+        {frameReady ? <ConnectionQualityBars quality={quality} status="connected" /> : null}
       </figcaption>
       {actions === undefined ? null : (
-        <div className="absolute top-2 right-2 flex gap-1">{actions}</div>
+        <div className="absolute top-2 right-2 z-10 flex gap-1">{actions}</div>
       )}
     </figure>
   )
@@ -144,9 +237,12 @@ export default function VideoStage({
   presentation,
   onPresentationChange,
   canPictureInPicture = browserPictureInPicture(),
+  qualities,
+  compactPreview = false,
 }: VideoStageProps) {
   const { t } = useTranslation()
   const [pinned, setPinned] = useState<string | null>(null)
+  const [mirrorLocal, setMirrorLocal] = useState(true)
   if (feeds.length === 0) return null
   const spotlight = spotlightOf(feeds, pinned)
 
@@ -167,49 +263,76 @@ export default function VideoStage({
     const element = event.currentTarget.closest('figure')?.querySelector('video')
     void element?.requestPictureInPicture?.().catch(() => undefined)
   }
-  const tile = (feed: VideoFeed, large: boolean, docked = false) => (
-    <VideoTile
-      key={feed.key}
-      feed={feed}
-      attach={attach}
-      label={labelOf(feed)}
-      name={nameOf(feed.userId)}
-      speaking={speakers.includes(feed.userId)}
-      large={large}
-      actions={
-        <>
-          {docked ? null : (
-            <StageButton
-              label={t(
-                spotlight?.key === feed.key && pinned === feed.key
-                  ? 'console.workspace.audio.action-unspotlight'
-                  : 'console.workspace.audio.action-spotlight'
-              )}
-              glyph="spotlight"
-              pressed={pinned === feed.key}
-              onClick={() => setPinned(pinned === feed.key ? null : feed.key)}
-            />
-          )}
-          {canPictureInPicture ? (
-            <StageButton
-              label={t('console.workspace.audio.action-picture-in-picture')}
-              glyph="picture-in-picture"
-              onClick={openPictureInPicture}
-            />
-          ) : null}
-        </>
-      }
-    />
-  )
+  const tile = (feed: VideoFeed, large: boolean, docked = false) => {
+    const isLocalCamera = feed.local && feed.source === 'camera'
+    return (
+      <VideoTile
+        key={feed.key}
+        feed={feed}
+        attach={attach}
+        label={labelOf(feed)}
+        name={nameOf(feed.userId)}
+        speaking={speakers.includes(feed.userId)}
+        quality={qualities?.[feed.userId]}
+        large={large}
+        compactPreview={compactPreview}
+        mirrored={isLocalCamera ? mirrorLocal : false}
+        actions={
+          <>
+            {isLocalCamera ? (
+              <StageButton
+                label={t(
+                  mirrorLocal
+                    ? 'console.workspace.audio.action-mirror-off'
+                    : 'console.workspace.audio.action-mirror-on'
+                )}
+                glyph="mirror"
+                pressed={mirrorLocal}
+                onClick={() => setMirrorLocal((value) => !value)}
+              />
+            ) : null}
+            {docked || compactPreview ? null : (
+              <StageButton
+                label={t(
+                  spotlight?.key === feed.key && pinned === feed.key
+                    ? 'console.workspace.audio.action-unspotlight'
+                    : 'console.workspace.audio.action-spotlight'
+                )}
+                glyph="spotlight"
+                pressed={pinned === feed.key}
+                onClick={() => setPinned(pinned === feed.key ? null : feed.key)}
+              />
+            )}
+            {canPictureInPicture ? (
+              <StageButton
+                label={t('console.workspace.audio.action-picture-in-picture')}
+                glyph="picture-in-picture"
+                onClick={openPictureInPicture}
+              />
+            ) : null}
+          </>
+        }
+      />
+    )
+  }
 
   const label = t('console.workspace.audio.label-stage')
+  if (compactPreview) {
+    const shown = spotlight ?? feeds[0]!
+    return (
+      <div aria-label={label} data-stage="preview" className="w-full">
+        {tile(shown, true, true)}
+      </div>
+    )
+  }
+
   if (presentation === 'docked') {
     const shown = spotlight ?? feeds[0]!
     return (
       <section
         aria-label={label}
         data-stage="docked"
-        className="fixed right-4 bottom-4 z-40 flex w-[320px] flex-col gap-2 rounded-lg bg-c-inverse p-2 shadow-pop shadow-c-shadow-2"
+        className="fixed top-[68px] right-4 z-30 flex w-[320px] max-w-[calc(100vw-32px)] flex-col gap-2 rounded-lg bg-c-inverse p-2 shadow-pop shadow-c-shadow-2"
       >
         {tile(shown, true, true)}
         <div className="flex items-center justify-between gap-2">
@@ -228,7 +351,7 @@ export default function VideoStage({
 
   const others = feeds.filter((feed) => feed.key !== spotlight?.key)
   return (
-    <section aria-label={label} data-stage="expanded" className="mx-2 flex flex-col gap-2">
+    <section aria-label={label} data-stage="expanded" className="mx-2 flex min-h-0 flex-col gap-2">
       <div className="flex justify-end">
         <StageButton
           label={t('console.workspace.audio.action-dock-stage')}

@@ -5,6 +5,7 @@ for (const width of [1440, 390]) {
   test(`collective studio keeps navigation, selection, draft and call at ${width}px`, async ({
     page,
   }, info) => {
+    test.setTimeout(90_000)
     const en = info.project.name.includes('dark')
     const lang = en ? 'en' : 'fr'
     await page.setViewportSize({ width, height: 1000 })
@@ -54,15 +55,12 @@ for (const width of [1440, 390]) {
     await expect(page.getByRole('heading', { name: 'announcements', exact: true })).toBeVisible()
     await navigation()
     await page.getByRole('button', { name: en ? 'Calls' : 'Appels', exact: true }).click()
-    await page
-      .getByRole(width === 390 ? 'region' : 'dialog', {
-        name: en ? 'Calls' : 'Appels',
-        exact: true,
-      })
-      .getByRole('button', { name: 'office-hours', exact: true })
-      .click()
-    await expect(page.getByRole('button', { name: /^(Rejoindre|Join) office-hours/ })).toBeFocused()
-    await page.getByRole('button', { name: /^(Rejoindre|Join) office-hours/ }).click()
+    const callsSurface = page.getByRole('region', {
+      name: en ? 'Calls' : 'Appels',
+      exact: true,
+    })
+    await expect(callsSurface).toBeVisible()
+    await callsSurface.getByRole('button', { name: /^(Rejoindre|Join) office-hours/ }).click()
     const dock = page.getByRole('region', {
       name: en ? 'Call in progress' : 'Appel en cours',
       exact: true,

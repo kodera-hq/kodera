@@ -225,4 +225,19 @@ describe('RoomRow', () => {
       expect(button).toHaveClass('narrow:min-h-[44px]', 'focus-visible:ring')
     expect(join(/^Rejoindre/)).toHaveClass('min-h-8')
   })
+
+  it('in compact sidebar mode preserves full room name space with a numeric count pill and pl-6 occupant indentation', () => {
+    setup({
+      name: 'office-hours',
+      joinLabel: 'Rejoindre office-hours',
+      occupants: PEOPLE.slice(0, 4),
+      connected: 'Connecté',
+      compact: true,
+    })
+    const button = join('Rejoindre office-hours, 4 personnes, Connecté')
+    expect(within(button).getByText('office-hours')).toHaveClass('min-w-0', 'flex-1', 'truncate')
+    expect(within(button).queryByText('Connecté')).toBeNull()
+    expect(button.querySelector('[data-occupancy]')).toHaveTextContent('4')
+    expect(screen.getByRole('list', { name: 'Dans Point quotidien' })).toHaveClass('pl-6')
+  })
 })

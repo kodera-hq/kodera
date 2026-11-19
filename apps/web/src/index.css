@@ -447,6 +447,20 @@
     padding: calc(24px + env(safe-area-inset-top, 0px)) calc(24px + env(safe-area-inset-right, 0px))
       calc(24px + env(safe-area-inset-bottom, 0px)) 24px;
   }
+
+  /* Bounded call stage when split with the conversation timeline, so video or
+     participant cards never crush the timeline out of view. */
+  .call-stage-bounded {
+    max-height: min(58vh, 540px);
+  }
+
+  /* Detached floating call pill, positioned via CSSOM custom properties
+     (`cssProperty` in `src/ui/cssom.ts`) so `style-src-attr 'none'` holds. */
+  .call-floating-pill {
+    left: var(--call-pill-x, 16px);
+    top: var(--call-pill-y, 72px);
+    touch-action: none;
+  }
 }
 
 /* WCAG 2.4.11: a control reached with Tab must not end up under the narrow

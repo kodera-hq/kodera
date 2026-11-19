@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { ConnectionState, RoomEvent, Track, VideoPresets } from 'livekit-client'
+import { ConnectionQuality, ConnectionState, RoomEvent, Track, VideoPresets } from 'livekit-client'
 import {
   createCallController,
   SCREEN_CAPTURE,
@@ -446,6 +446,38 @@ describe('other people’s video', () => {
     expect(call.getSnapshot().videos).toEqual([])
     const element = document.createElement('video')
     expect(() => call.attachVideo('TR_unknown', element)()).not.toThrow()
+  })
+
+  it('tracks live connection quality per participant and omits muted or ended video tracks', async () => {
+    const { call, room } = setup()
+    await call.join(STANDUP)
+    room().remoteParticipants.set('bob', {
+      identity: `${BOB}|PHONE`,
+      audioTrackPublications: new Map(),
+    })
+    room().emit(RoomEvent.ParticipantConnected, { identity: `${BOB}|PHONE` })
+    room().emit(
+      RoomEvent.ConnectionQualityChanged,
+      ConnectionQuality.Excellent,
+      room().localParticipant
+    )
+    room().emit(RoomEvent.ConnectionQualityChanged, ConnectionQuality.Poor, {
+      identity: `${BOB}|PHONE`,
+    })
+    expect(call.getSnapshot().connectionQuality).toBe('excellent')
+    expect(call.getSnapshot().qualities).toEqual({
+      [ME]: 'excellent',
+      [BOB]: 'poor',
+    })
+
+    // Muted remote video track is never listed as an active feed.
+    room().remoteVideo(`${BOB}|PHONE`, Track.Source.Camera, true)
+    expect(call.getSnapshot().videos).toEqual([])
+
+    // Disconnecting peer prunes their stale quality entry.
+    room().remoteParticipants.delete('bob')
+    room().emit(RoomEvent.ParticipantDisconnected, { identity: `${BOB}|PHONE` })
+    expect(call.getSnapshot().qualities).toEqual({ [ME]: 'excellent' })
   })
 })
 

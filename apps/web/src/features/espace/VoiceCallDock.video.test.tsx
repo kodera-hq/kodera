@@ -218,3 +218,83 @@ describe('push-to-talk', () => {
     expect(call.setMuted).not.toHaveBeenCalledWith(false)
   })
 })
+
+describe('compact sidebar card, zero audio-only <video> boxes, and icon-only floating pill detach', () => {
+  it('renders zero <video> elements in audio-only calls', () => {
+    const { call, set } = fakeCall()
+    const { container } = renderDock(call)
+    set({ status: 'connected', roomId: ROOM, participants: [ME, BOB] })
+    expect(container.querySelectorAll('video')).toHaveLength(0)
+  })
+
+  it('renders the compact 56px sidebar card with icon-only ↗ detach (zero Détacher text) and detaches/re-docks cleanly', async () => {
+    const user = userEvent.setup()
+    const onOpenStage = vi.fn()
+    const { call, set } = fakeCall()
+    const view = render(
+      <VoiceCallDock
+        call={call}
+        channel={{
+          channelId: 'standup',
+          roomId: ROOM,
+          roomName: 'office-hours',
+          categoryName: 'Équipe',
+        }}
+        store={fakeStore([BOB, ME])}
+        viewerId={ME}
+        deviceSettings={null}
+        meterRef={{ current: null }}
+        panelMeterRef={{ current: null }}
+        placement="sidebar"
+        onOpenStage={onOpenStage}
+      />
+    )
+    set({
+      status: 'connected',
+      roomId: ROOM,
+      participants: [ME, BOB],
+      connectionQuality: 'excellent',
+    })
+
+    const dock = screen.getByRole('region', { name: 'Appel en cours' })
+    expect(dock).toHaveAttribute('data-dock-layout', 'compact')
+    expect(dock).toHaveClass('h-[56px]')
+    expect(screen.queryByText(/détacher|ancrer|réduire/iu)).toBeNull()
+
+    const detachBtn = within(dock).getByRole('button', { name: 'Fenêtre flottante' })
+    expect(detachBtn).toHaveTextContent('')
+    expect(detachBtn.querySelector('[data-glyph="detach"]')).not.toBeNull()
+
+    await user.click(within(dock).getByRole('button', { name: /Ouvrir la scène d’appel/ }))
+    expect(onOpenStage).toHaveBeenCalledTimes(1)
+
+    // Switch to floating placement and verify re-dock icon button has zero visible text
+    const onRedock = vi.fn()
+    view.rerender(
+      <VoiceCallDock
+        call={call}
+        channel={{
+          channelId: 'standup',
+          roomId: ROOM,
+          roomName: 'office-hours',
+          categoryName: 'Équipe',
+        }}
+        store={fakeStore([BOB, ME])}
+        viewerId={ME}
+        deviceSettings={null}
+        meterRef={{ current: null }}
+        panelMeterRef={{ current: null }}
+        placement="floating"
+        onOpenStage={onOpenStage}
+        onRedock={onRedock}
+      />
+    )
+    const pill = screen.getByTestId('floating-call-pill')
+    expect(screen.queryByText(/détacher|ancrer|réduire/iu)).toBeNull()
+    const redockBtn = within(pill).getByRole('button', { name: 'Rattacher à la barre latérale' })
+    expect(redockBtn).toHaveTextContent('')
+    expect(redockBtn.querySelector('[data-glyph="redock"]')).not.toBeNull()
+    await user.click(redockBtn)
+    expect(onRedock).toHaveBeenCalledTimes(1)
+  })
+})
