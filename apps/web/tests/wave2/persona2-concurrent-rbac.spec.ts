@@ -58,7 +58,7 @@ test('Persona 2: peer Matrix delivery, concurrent documents, exact preconditions
       await actor.workspace(input.workspaceReady, actor === c ? undefined : input.channelPath)
     }
     const witnesses = new Map(
-      [a, b, c].map((actor) => [actor, syncWitness(actor, input.homeserverOrigin)])
+      [a, b, c].map((actor) => [actor, syncWitness(actor, actor.homeserverOrigin)])
     )
     let succeeded = false
     try {

@@ -3,14 +3,23 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import ts from 'typescript'
 import { check as checkFormatting } from 'prettier'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import scrubArtifacts from '../wave2/teardown'
 import { finishCleanup } from '../wave2/cleanup'
 import { findMailLink, mailLinkPattern } from '../wave2/mailpit'
 import { enterOrganisation } from '../wave2/login'
 import { enterWorkspace } from '../wave2/workspace'
+import { Actor, readWave2Input } from '../wave2/world'
+import type { Wave2Input } from '../wave2/world'
 import { selectInterfaceLanguage } from '../wave2/language'
-import type { APIRequestContext, BrowserContext, Page, Request, Route } from '@playwright/test'
+import type {
+  APIRequestContext,
+  Browser,
+  BrowserContext,
+  Page,
+  Request,
+  Route,
+} from '@playwright/test'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { NetworkLedger, recordNetwork } from '../wave2/oracles/r1-network'
 import type { NetworkObservation, NetworkTemplate } from '../wave2/oracles/r1-network'
@@ -89,6 +98,229 @@ afterEach(() => {
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
   document.body.replaceChildren()
+})
+
+describe('actor homeserver isolation', () => {
+  const outsider = 'https://outsider.example.test'
+  const room = '!private:matrix.example.test'
+  const joinPath = `/_matrix/client/v3/join/${encodeURIComponent(room)}`
+  let ordinal = 0
+  const inputFor = (homeserverOrigin?: string): Wave2Input => {
+    const actor = (alias: string) => ({
+      account: {
+        username: `synthetic-${alias}-${++ordinal}`,
+        email: `${alias}@wave2.test`,
+        password: 'synthetic-password',
+        totpBase32: 'SYNTHETIC',
+      },
+      organisation: alias === 'C' ? 'other' : 'shared',
+      organisationId: alias === 'C' ? 'other-id' : 'shared-id',
+      realm: alias === 'C' ? 'other' : 'shared',
+      role: alias === 'A' ? ('org_owner' as const) : ('org_member' as const),
+      seedJoins: 0,
+      network: [],
+      ...(alias === 'C' && homeserverOrigin !== undefined ? { homeserverOrigin } : {}),
+    })
+    return {
+      revision: 'a'.repeat(40),
+      realm: 'shared',
+      homeserverOrigin: HS,
+      actors: { A: actor('A'), B: actor('B'), C: actor('C') },
+    } as unknown as Wave2Input
+  }
+  const readFixture = async (input: Wave2Input) => {
+    const dir = await mkdtemp(webPath('tests/wave2/runtime/origin-unit-'))
+    const path = resolve(dir, 'input.json')
+    try {
+      await writeFile(path, JSON.stringify(input))
+      vi.stubEnv('KODERA_WAVE2_PERSONA2_INPUT', path)
+      return readWave2Input('PERSONA2')
+    } finally {
+      vi.unstubAllEnvs()
+      await rm(dir, { recursive: true, force: true })
+    }
+  }
+  it.each([undefined, HS, outsider, 'http://127.0.0.1:8008'])(
+    'validates the optional actor origin %s',
+    async (origin) => {
+      await mkdir(webPath('tests/wave2/runtime'), { recursive: true })
+      expect((await readFixture(inputFor(origin))).actors.C.homeserverOrigin).toBe(origin)
+    }
+  )
+  it.each([
+    ['https://outsider.example.test/path', 'TARGET_ORIGIN'],
+    ['https://outsider.example.test/', 'TARGET_ORIGIN'],
+    ['https://outsider.example.test?query=1', 'TARGET_ORIGIN'],
+    ['https://user:secret@outsider.example.test', 'TARGET_ORIGIN'],
+    ['http://outsider.example.test', 'TARGET_TLS'],
+    ['', 'TARGET_ORIGIN'],
+    [null, 'TARGET_ORIGIN'],
+    [42, 'TARGET_ORIGIN'],
+  ])('refuses noncanonical actor origin %s', async (origin, marker) => {
+    const input = inputFor()
+    Object.assign(input.actors.C, { homeserverOrigin: origin })
+    await expect(readFixture(input)).rejects.toThrow(marker as string)
+  })
+  const setup = async (
+    origin: string | undefined,
+    replies = [{ status: 403, body: { errcode: 'M_FORBIDDEN' } }],
+    capture = true
+  ) => {
+    const input = inputFor(origin)
+    input.actors.C.network = [
+      {
+        origin: origin ?? HS,
+        method: 'POST',
+        pathPattern: joinPath,
+        expectedStatus: 403,
+        max: 1,
+        query: origin && origin !== HS ? { server_name: new URL(HS).host } : {},
+        requiredBodyKeys: ['errcode'],
+      },
+      ...(origin && origin !== HS
+        ? [{ origin: HS, method: 'POST', pathPattern: joinPath, expectedStatus: 401, max: 1 }]
+        : []),
+    ]
+    const emitter = new EventEmitter()
+    const post = vi.fn(async (url: string) => {
+      const reply = replies[post.mock.calls.length - 1]!
+      return {
+        url: () => url,
+        status: () => reply.status,
+        headers: () => ({ 'content-type': 'application/json' }),
+        json: async () => reply.body,
+      }
+    })
+    const context = Object.assign(emitter, {
+      newPage: async () => ({}),
+      pages: () => [],
+      exposeBinding: async () => {},
+      addInitScript: async () => {},
+      close: vi.fn(),
+      request: { post },
+    }) as unknown as BrowserContext
+    const browser = { newContext: async () => context } as unknown as Browser
+    const budget = new RateBudget()
+    const actor = await Actor.create(browser, 'C', input, budget)
+    const request = (
+      host: string,
+      authority: string,
+      method = 'GET',
+      path = '/_matrix/client/v3/sync'
+    ) =>
+      emitter.emit('request', {
+        url: () => `${host}${path}`,
+        method: () => method,
+        resourceType: () => 'fetch',
+        headers: () => ({ authorization: authority }),
+      })
+    if (capture) request(origin ?? HS, 'Bearer synthetic-own-authority')
+    return { actor, budget, post, emitter, request }
+  }
+  it.each([undefined, HS])('retains the single-homeserver 403 refusal for %s', async (origin) => {
+    const { actor, budget, post, emitter } = await setup(origin)
+    try {
+      expect(actor.homeserverOrigin).toBe(HS)
+      expect(actor.ledger.allowedOrigins.filter((value) => value === HS)).toHaveLength(1)
+      await actor.denyForeignJoin(HS, room)
+      expect(post).toHaveBeenCalledExactlyOnceWith(`${HS}${joinPath}`, {
+        headers: { authorization: 'Bearer synthetic-own-authority' },
+        data: {},
+        maxRedirects: 0,
+        failOnStatusCode: false,
+      })
+      budget.assertExact('C', { 'local-join': 1 })
+      await actor.assertClean()
+    } finally {
+      await actor.close()
+      expect(emitter.eventNames()).toEqual([])
+    }
+  })
+  it('proves closed federation locally and foreign token rejection with the same own authority', async () => {
+    const { actor, budget, post, request } = await setup(outsider, [
+      { status: 403, body: { errcode: 'M_FORBIDDEN' } },
+      { status: 401, body: { errcode: 'M_UNKNOWN_TOKEN' } },
+    ])
+    try {
+      request(HS, 'Bearer foreign-authority')
+      await actor.denyForeignJoin(HS, room)
+      expect(actor.homeserverOrigin).toBe(outsider)
+      expect(new Set(actor.ledger.allowedOrigins).size).toBe(actor.ledger.allowedOrigins.length)
+      expect(post.mock.calls.map(([url]) => url)).toEqual([
+        `${outsider}${joinPath}?server_name=matrix.example.test`,
+        `${HS}${joinPath}`,
+      ])
+      for (const call of post.mock.calls)
+        expect(call).toEqual([
+          expect.any(String),
+          {
+            headers: { authorization: 'Bearer synthetic-own-authority' },
+            data: {},
+            maxRedirects: 0,
+            failOnStatusCode: false,
+          },
+        ])
+      budget.assertExact('C', { 'local-join': 1 })
+      expect(actor.ledger.receipt().map((row) => row.count)).toEqual([1, 1])
+      await actor.assertClean()
+      request(HS, 'Bearer foreign-authority', 'POST', '/_matrix/client/v3/login')
+      budget.assertExact('C', { 'matrix-login': 0 })
+      request(outsider, 'Bearer synthetic-own-authority', 'POST', '/_matrix/client/v3/login')
+      budget.assertExact('C', { 'matrix-login': 1 })
+    } finally {
+      await actor.close()
+    }
+  })
+  it.each([
+    [undefined, 200, 'M_FORBIDDEN', 'WAVE2_MATRIX_FOREIGN_JOIN'],
+    [undefined, 403, 'M_UNKNOWN_TOKEN', 'WAVE2_MATRIX_FOREIGN_JOIN'],
+    [outsider, 401, 'M_UNKNOWN_TOKEN', 'WAVE2_MATRIX_FOREIGN_JOIN'],
+    [outsider, 403, 'M_UNKNOWN_TOKEN', 'WAVE2_MATRIX_FOREIGN_JOIN'],
+  ])(
+    'refuses the wrong local boundary response %s/%s/%s',
+    async (origin, status, errcode, marker) => {
+      const { actor, budget, post } = await setup(origin, [{ status, body: { errcode } }])
+      try {
+        await expect(actor.denyForeignJoin(HS, room)).rejects.toThrow(marker)
+        expect(post).toHaveBeenCalledTimes(1)
+        expect(actor.ledger.receipt()[0]!.count).toBe(1)
+        budget.assertExact('C', { 'local-join': 1 })
+      } finally {
+        await actor.close()
+      }
+    }
+  )
+  it.each([
+    [403, 'M_FORBIDDEN'],
+    [200, 'M_UNKNOWN_TOKEN'],
+    [401, 'M_FORBIDDEN'],
+  ])('refuses the wrong foreign boundary response %s/%s', async (status, errcode) => {
+    const { actor, post, budget } = await setup(outsider, [
+      { status: 403, body: { errcode: 'M_FORBIDDEN' } },
+      { status, body: { errcode } },
+    ])
+    try {
+      await expect(actor.denyForeignJoin(HS, room)).rejects.toThrow('WAVE2_MATRIX_FOREIGN_TOKEN')
+      expect(post).toHaveBeenCalledTimes(2)
+      expect(actor.ledger.receipt().map((row) => row.count)).toEqual([1, 1])
+      budget.assertExact('C', { 'local-join': 1 })
+    } finally {
+      await actor.close()
+    }
+  })
+  it('requires current own-homeserver authority before sending either request', async () => {
+    const { actor, post, budget, request } = await setup(outsider, [], false)
+    try {
+      request(HS, 'Bearer foreign-authority')
+      await expect(actor.denyForeignJoin(HS, room)).rejects.toThrow(
+        'WAVE2_MATRIX_AUTHORITY_REQUIRED'
+      )
+      expect(post).not.toHaveBeenCalled()
+      budget.assertExact('C', { 'local-join': 0 })
+    } finally {
+      await actor.close()
+    }
+  })
 })
 
 describe('R1 exact network evidence', () => {

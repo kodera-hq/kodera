@@ -1,7 +1,6 @@
 import { readFileSync, realpathSync } from 'node:fs'
 import { isAbsolute, relative, resolve } from 'node:path'
 import { env } from 'node:process'
-import { fileURLToPath } from 'node:url'
 import { expect } from '@playwright/test'
 import type { APIResponse, Browser, BrowserContext, Page, Request } from '@playwright/test'
 import { throughKeycloak } from './keycloak'
@@ -23,6 +22,7 @@ export interface ActorInput {
   organisationId: string
   realm: string
   role: 'org_owner' | 'org_member'
+  homeserverOrigin?: string
   seedJoins: number
   /** Exact permitted background responses, including separately named refusal cases. */
   network: NetworkTemplate[]
@@ -74,7 +74,7 @@ export function readWave2Input(profile: 'PERSONA1' | 'PERSONA2' | 'PERSONA4' | '
       !rawPath.split(/[\\/]/).some((part) => part.startsWith('.env')),
     'WAVE2_INPUT_REQUIRED'
   )
-  const webRoot = realpathSync(fileURLToPath(new URL('../../', import.meta.url)))
+  const webRoot = realpathSync(resolve(import.meta.dirname, '../..'))
   const path = realpathSync(resolve(rawPath))
   const inside = relative(webRoot, path)
   guard(
@@ -108,6 +108,7 @@ export function readWave2Input(profile: 'PERSONA1' | 'PERSONA2' | 'PERSONA4' | '
         Number(actor.seedJoins) >= 0,
       'WAVE2_ACTOR_SHAPE'
     )
+    if (actor.homeserverOrigin !== undefined) exactOrigin(actor.homeserverOrigin as string)
     for (const field of ['email', 'username', 'password', 'totpBase32'])
       guard(
         typeof actor.account[field] === 'string' && actor.account[field] !== '',
@@ -157,7 +158,7 @@ export class Actor {
     readonly ledger: NetworkLedger,
     private readonly recorder: Awaited<ReturnType<typeof recordNetwork>>,
     private readonly origins: ReturnType<typeof targets>,
-    private readonly homeserver: string
+    readonly homeserverOrigin: string
   ) {
     this.authorityListener = (request) => {
       if (request.resourceType() === 'font') {
@@ -171,7 +172,7 @@ export class Actor {
         const authority = request.headers().authorization
         if (authority?.startsWith('Bearer ')) this.bearer = authority
       }
-      if (new URL(request.url()).origin === homeserver) {
+      if (new URL(request.url()).origin === homeserverOrigin) {
         const authority = request.headers().authorization
         if (authority?.startsWith('Bearer ')) this.matrixBearer = authority
       }
@@ -180,7 +181,7 @@ export class Actor {
     this.detachRates = trackRateRequests(context, alias, budget, {
       auth: origins.auth,
       api: origins.api,
-      homeserver,
+      homeserver: homeserverOrigin,
     })
   }
   static async create(
@@ -196,6 +197,7 @@ export class Actor {
   ) {
     const origins = targets()
     const actorInput = input.actors[alias]
+    const actorHomeserver = exactOrigin(actorInput.homeserverOrigin ?? input.homeserverOrigin)
     const identity = JSON.stringify([actorInput.realm, actorInput.account.username])
     guard(!claimedIdentities.has(identity), 'WAVE2_REUSED_IDENTITY')
     claimedIdentities.add(identity)
@@ -210,10 +212,13 @@ export class Actor {
       budget.register(alias)
       if (actorInput.seedJoins) budget.reserve(alias, 'local-join', actorInput.seedJoins)
       const allowed = [
-        ...Object.values(origins),
-        exactOrigin(input.homeserverOrigin),
-        ...(input.livekitOrigin ? [exactOrigin(input.livekitOrigin)] : []),
-        ...(instrumentation.extraOrigins ?? []),
+        ...new Set([
+          ...Object.values(origins),
+          exactOrigin(input.homeserverOrigin),
+          actorHomeserver,
+          ...(input.livekitOrigin ? [exactOrigin(input.livekitOrigin)] : []),
+          ...(instrumentation.extraOrigins ?? []),
+        ]),
       ]
       const ledger = new NetworkLedger(actorInput.network, allowed)
       const recorder = await recordNetwork(context, ledger, instrumentation.allowedRequestFailure)
@@ -229,7 +234,7 @@ export class Actor {
         ledger,
         recorder,
         origins,
-        input.homeserverOrigin
+        actorHomeserver
       )
     } catch (error) {
       await context.close().catch(() => {})
@@ -314,7 +319,7 @@ export class Actor {
     const pathname = fixturePath(pathPattern, values)
     guard(pathname.startsWith('/api/v1/'), 'WAVE2_CORE_PATH')
     const event = classifyRateRequest(`${this.origins.api}${pathname}`, method, {
-      homeserver: this.homeserver,
+      homeserver: this.homeserverOrigin,
       auth: this.origins.auth,
       api: this.origins.api,
     })
@@ -353,6 +358,46 @@ export class Actor {
   }
   async denyForeignJoin(homeserver: string, roomId: string) {
     guard(this.matrixBearer, 'WAVE2_MATRIX_AUTHORITY_REQUIRED')
+    const target = exactOrigin(homeserver)
+    if (this.homeserverOrigin !== target) {
+      this.budget.reserve(this.alias, 'local-join')
+      const joinPath = `/_matrix/client/v3/join/${encodeURIComponent(roomId)}`
+      const refusals = [
+        {
+          url: `${this.homeserverOrigin}${joinPath}?server_name=${encodeURIComponent(new URL(target).host)}`,
+          status: 403,
+          errcode: 'M_FORBIDDEN',
+          marker: 'WAVE2_MATRIX_FOREIGN_JOIN',
+        },
+        {
+          url: `${target}${joinPath}`,
+          status: 401,
+          errcode: 'M_UNKNOWN_TOKEN',
+          marker: 'WAVE2_MATRIX_FOREIGN_TOKEN',
+        },
+      ]
+      for (const refusal of refusals) {
+        const response = await this.context.request.post(refusal.url, {
+          headers: { authorization: this.matrixBearer },
+          data: {},
+          maxRedirects: 0,
+          failOnStatusCode: false,
+        })
+        const body: unknown = await response.json()
+        this.ledger.observe({
+          url: response.url(),
+          method: 'POST',
+          status: response.status(),
+          contentType: response.headers()['content-type'] ?? '',
+          body,
+        })
+        guard(
+          response.status() === refusal.status && object(body) && body.errcode === refusal.errcode,
+          refusal.marker
+        )
+      }
+      return
+    }
     this.budget.reserve(this.alias, 'local-join')
     const response = await this.context.request.post(
       `${exactOrigin(homeserver)}/_matrix/client/v3/join/${encodeURIComponent(roomId)}`,

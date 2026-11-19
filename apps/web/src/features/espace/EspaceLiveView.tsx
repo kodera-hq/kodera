@@ -1601,9 +1601,15 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
                   data-route-heading=""
                   className="flex min-w-0 items-center gap-2 text-lg font-semibold text-c-ink"
                 >
-                  <span aria-hidden="true" className="text-c-ink-3">
-                    {isProximityChannel(activeChannel, proximityChannelIds) ? <AntennaIcon /> : '#'}
-                  </span>
+                  {isProximityChannel(activeChannel, proximityChannelIds) ? (
+                    <span aria-hidden="true" className="text-c-ink-3">
+                      <AntennaIcon />
+                    </span>
+                  ) : (
+                    <span aria-hidden="true" className="font-mono font-medium text-c-ink-3">
+                      #
+                    </span>
+                  )}
                   <span className="min-w-0 truncate">{activeChannelName}</span>
                 </h1>
               )}

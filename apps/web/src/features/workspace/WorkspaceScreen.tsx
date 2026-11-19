@@ -249,7 +249,7 @@ function ReadyWorkspace({
                 data-route-heading=""
                 className="flex min-w-0 items-center gap-2 text-lg font-semibold text-c-ink"
               >
-                <span aria-hidden="true" className="text-c-ink-3">
+                <span aria-hidden="true" className="font-mono font-medium text-c-ink-3">
                   #
                 </span>
                 <span className="min-w-0 truncate">{channelLabel(channel, t)}</span>
