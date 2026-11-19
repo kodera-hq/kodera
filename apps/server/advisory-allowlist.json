@@ -3,22 +3,6 @@
   "advisories": [
     {
       "ecosystem": "npm",
-      "advisory": "GHSA-cg2g-xh64-v4q7",
-      "package": "dompurify",
-      "severity": "critical",
-      "range": ">=3.4.4 <=3.4.16",
-      "reason": "dompurify 3.4.16 is compiled into @redocly/cli 2.72.1, our contract linter, inside Redoc 3's prebuilt bundles. The CLI's THIRD_PARTY_NOTICES omits it, so scripts/ci/check-advisories.py reads its version from the licence banner in the shipped JavaScript and audits it with the listed libraries. No @redocly/cli release bundles a fixed DOMPurify yet: 2.72.1 still carries 3.4.16 (checked at this bump). The linter only runs `redocly lint` in CI over our own contracts/*.openapi.yaml: no HTML is rendered, no DOM exists and no untrusted input is sanitised, so the SAFE_FOR_TEMPLATES shadow-root bypass is unreachable. Remove this entry when an @redocly/cli release removes DOMPurify or bundles dompurify >= 3.4.17."
-    },
-    {
-      "ecosystem": "npm",
-      "advisory": "GHSA-mrv2-3pqr-j5jr",
-      "package": "dompurify",
-      "severity": "high",
-      "range": "<=3.4.16",
-      "reason": "dompurify 3.4.16 is compiled into @redocly/cli 2.72.1, our contract linter, inside Redoc 3's prebuilt bundles. The CLI's THIRD_PARTY_NOTICES omits it, so scripts/ci/check-advisories.py reads its version from the licence banner in the shipped JavaScript and audits it with the listed libraries. No @redocly/cli release bundles a fixed DOMPurify yet: 2.72.1 still carries 3.4.16 (checked at this bump). The linter only runs `redocly lint` in CI over our own contracts/*.openapi.yaml: no HTML is rendered, no DOM exists and no IN_PLACE sanitisation hook runs, so the detached-subtree handler issue is unreachable. Remove this entry when an @redocly/cli release removes DOMPurify or bundles dompurify >= 3.4.17."
-    },
-    {
-      "ecosystem": "npm",
       "advisory": "GHSA-3g3m-2fjr-6pw4",
       "package": "glob",
       "severity": "moderate",
