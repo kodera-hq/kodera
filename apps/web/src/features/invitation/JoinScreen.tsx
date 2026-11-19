@@ -78,6 +78,17 @@ export default function JoinScreen() {
       <Card className="w-full max-w-[480px]">
         <CardBody>
           <div className="flex flex-col gap-4" aria-live="polite">
+            <div className="flex items-center gap-2">
+              <span
+                aria-hidden="true"
+                className="logo-tile-black flex h-8 w-8 items-center justify-center rounded-md font-mono text-sm font-bold"
+              >
+                K
+              </span>
+              <span className="text-sm font-semibold text-c-ink">
+                {t('console.common.product-name')}
+              </span>
+            </div>
             <h1 className="text-xl font-semibold text-c-ink">
               {t('console.invitation.join.title')}
             </h1>
@@ -127,16 +138,36 @@ export default function JoinScreen() {
             phase.name === 'sign-in' ||
             phase.name === 'gone' ||
             phase.name === 'failed' ? (
-              <p className="text-sm text-c-ink">
-                {
+              <>
+                <p className="text-sm text-c-ink">
                   {
-                    missing: t('console.invitation.join.missing'),
-                    'sign-in': t('console.invitation.join.sign-in'),
-                    gone: t('console.invitation.join.gone'),
-                    failed: t('console.invitation.join.failed'),
-                  }[phase.name]
-                }
-              </p>
+                    {
+                      missing: t('console.invitation.join.missing'),
+                      'sign-in': t('console.invitation.join.sign-in'),
+                      gone: t('console.invitation.join.gone'),
+                      failed: t('console.invitation.join.failed'),
+                    }[phase.name]
+                  }
+                </p>
+                <div className="flex flex-wrap items-center gap-4 border-t border-c-border-soft pt-3">
+                  <Link
+                    to="/"
+                    data-testid="join-recovery-home"
+                    className={`text-sm font-medium ${LINK_TEXT.inline}`}
+                  >
+                    {t('console.invitation.join.action-home')}
+                  </Link>
+                  {phase.name === 'sign-in' ? (
+                    <Link
+                      to="/login"
+                      data-testid="join-recovery-signin"
+                      className={`text-sm font-medium ${LINK_TEXT.inline}`}
+                    >
+                      {t('console.invitation.accept.action-sign-in')}
+                    </Link>
+                  ) : null}
+                </div>
+              </>
             ) : null}
           </div>
         </CardBody>

@@ -91,3 +91,20 @@ it('records a Ciel theme in a share code by its mode, which the v1 code knows', 
   const payload = JSON.parse(atob(code.slice('kodera-theme:v1:'.length))) as { baseMode: string }
   expect(payload.baseMode).toBe('dark')
 })
+
+it('seeds official Cobalt tokens for ciel-nuit and dark instead of green Forest, and syncs native color swatches (issue 221)', () => {
+  const { unmount } = render(<ThemeStudioModal {...props} currentThemeMode="ciel-nuit" />)
+  const actionInput = screen.getByTestId('theme-token---c-action') as HTMLInputElement
+  // Official Cobalt action rgb(67, 97, 238), never Forest green rgb(28, 112, 66)
+  expect(actionInput.value).not.toBe('rgb(28, 112, 66)')
+  expect(screen.getByTestId('theme-swatch---c-action')).toHaveAttribute('type', 'color')
+  unmount()
+
+  render(<ThemeStudioModal {...props} currentThemeMode="dark" />)
+  expect((screen.getByTestId('theme-token---c-action') as HTMLInputElement).value).toBe(
+    'rgb(67, 97, 238)'
+  )
+  expect((screen.getByTestId('theme-token---c-page') as HTMLInputElement).value).toBe(
+    'rgb(11, 14, 20)'
+  )
+})

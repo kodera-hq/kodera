@@ -316,3 +316,15 @@ it('says the capacity is not measured yet, with no figure, while Core sends capa
   expect(screen.queryByRole('meter')).toBeNull()
   expect(screen.getByText('https://visio.acme.fr')).toBeInTheDocument()
 })
+
+it('aligns workspace-first empty apps with Tout fonctionne, Espace collaboratif, and humanized À l’instant (issue 221)', () => {
+  renderOverview(baseStatus({ apps: [], components: [] }), {
+    org: 'community',
+    workspaceFirst: true,
+    lastUpdatedText: '0 s',
+  })
+  expect(screen.getByText('Tout fonctionne')).toBeInTheDocument()
+  expect(screen.getByText('À l’instant')).toBeInTheDocument()
+  expect(screen.queryByText(/Mis à jour il y a 0/i)).toBeNull()
+  expect(screen.getByRole('heading', { name: 'Espace collaboratif' })).toBeInTheDocument()
+})

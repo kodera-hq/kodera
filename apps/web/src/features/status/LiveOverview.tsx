@@ -41,6 +41,8 @@ export interface QueryState<T> {
 }
 
 export interface LiveOverviewProps {
+  org?: string | undefined
+  workspaceFirst?: boolean | undefined
   status: TenantStatusView
   lastUpdatedText: string
   canSeeBilling: boolean
@@ -62,6 +64,8 @@ export interface LiveOverviewProps {
 }
 
 export function LiveOverview({
+  org,
+  workspaceFirst = false,
   status,
   lastUpdatedText,
   canSeeBilling,
@@ -83,7 +87,17 @@ export function LiveOverview({
   const historyTrigger = useRef<HTMLElement | null>(null)
 
   const embeddedComponents = status.components ?? []
-  const state = overallState(embeddedComponents, status.agent.stale)
+  const rawState = overallState(embeddedComponents, status.agent.stale)
+  const state =
+    rawState === 'unknown' && workspaceFirst && status.apps.length === 0 && !status.agent.stale
+      ? 'healthy'
+      : rawState
+  const isZeroElapsed = /^0[\s\u00a0\u202f]*(?:s|sec|secs)$/i.test(lastUpdatedText.trim())
+  const updatedDisplay = isZeroElapsed
+    ? locale === 'en'
+      ? 'Just now'
+      : 'À l’instant'
+    : t('console.status.overview.status-updated', { duration: lastUpdatedText })
   const worst = worstComponent(embeddedComponents)
   // The pilot hides what Core does not serve yet (`src/app/capabilities.ts`).
   const showsComponents = offers('status-components')
@@ -174,9 +188,7 @@ export function LiveOverview({
             onOpenTicket={() => onOpenTicket('incident')}
           />
         )}
-        <span className="text-sm text-c-ink-3">
-          {t('console.status.overview.status-updated', { duration: lastUpdatedText })}
-        </span>
+        <span className="text-sm text-c-ink-3">{updatedDisplay}</span>
       </div>
 
       {showsIncidentBanner ? (
@@ -224,7 +236,7 @@ export function LiveOverview({
         />
       ) : null}
 
-      <AppsCard apps={status.apps} />
+      <AppsCard apps={status.apps} org={org} workspaceFirst={workspaceFirst} />
 
       <div className={cx('grid grid-cols-1 gap-6', showsComponents && 'md:grid-cols-2')}>
         {status.capacity === null ? (

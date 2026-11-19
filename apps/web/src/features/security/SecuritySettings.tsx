@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { useAuthLifetime } from '../../auth/AuthProvider'
 import { registerSecuritySessionCleanup } from './localSecuritySession'
 import { Button } from '../../ui/Button/Button'
+import { LinkButton } from '../../ui/LinkButton/LinkButton'
 import { TextField } from '../../ui/TextField/TextField'
 import { InlineAlert } from '../../ui/InlineAlert/InlineAlert'
 import { PAGE_TITLE } from '../../ui/pageTitle'
@@ -17,6 +18,7 @@ import { createKeyBackupClient } from '../confidential/key-backup-client'
 import { createBackupVaultClient } from '../confidential/key-backup-vault-client'
 
 export interface SecuritySettingsProps {
+  org?: string | undefined
   organisationId: string
   accountId: string
   membershipId: string
@@ -30,8 +32,10 @@ interface Session {
   active: boolean
 }
 export default function SecuritySettings(props: SecuritySettingsProps) {
-  const { t } = useTranslation(),
+  const { t, i18n } = useTranslation(),
     lifetime = useAuthLifetime()
+  const isEnglish = i18n.resolvedLanguage?.startsWith('en') === true
+  const mfaHref = props.org ? `/${props.org}/security/mfa` : '/security/mfa'
   const revision = useRef(0)
   const current = useRef<Session | null>(null),
     downloadUrl = useRef<string | null>(null)
@@ -253,10 +257,28 @@ export default function SecuritySettings(props: SecuritySettingsProps) {
       {error && <InlineAlert kind="warning">{t('console.security.settings.error')}</InlineAlert>}
       {success && <p role="status">{t('console.security.settings.restored')}</p>}
       {!identity && (
-        <Button disabled={busy} onClick={() => void start()}>
+        <Button className="w-fit self-start" disabled={busy} onClick={() => void start()}>
           {t('console.security.settings.start')}
         </Button>
       )}
+      <section className={section} aria-labelledby="mfa-settings-title">
+        <h2 id="mfa-settings-title" className="text-xl font-semibold text-c-ink">
+          {isEnglish ? 'Two-factor authentication (2FA)' : 'Double authentification (2FA)'}
+        </h2>
+        <p className="text-sm text-c-ink-2">
+          {isEnglish
+            ? 'Protect your Kodera account with an authenticator app (TOTP) or a hardware security key.'
+            : 'Protégez votre compte Kodera avec une application d’authentification (TOTP) ou une clé de sécurité matérielle.'}
+        </p>
+        <LinkButton
+          href={mfaHref}
+          variant="secondary"
+          data-testid="security-mfa-link"
+          className="w-fit self-start"
+        >
+          {isEnglish ? 'Configure two-factor authentication' : 'Configurer la double authentification'}
+        </LinkButton>
+      </section>
       <section className={section} aria-labelledby="verification-title">
         <h2 id="verification-title" className="text-xl font-semibold text-c-ink">
           {t('console.security.settings.verification')}

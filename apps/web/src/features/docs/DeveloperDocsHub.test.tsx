@@ -78,6 +78,19 @@ it('renders both locales and exports the active language', async () => {
     ).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Copy Markdown for a coding agent (LLM)' }))
     expect(write).toHaveBeenCalledWith(expect.stringContaining('# Quickstart & self-hosting'))
+    const selfHostSection = screen.getByTestId('developer-docs-selfhost-deployer')
+    expect(selfHostSection).toBeInTheDocument()
+    // English locale renders 100% English self-host assistant copy with zero French leakage
+    expect(
+      screen.getByRole('heading', {
+        name: '1-click self-hosting assistant (Local validation preview)',
+      })
+    ).toBeInTheDocument()
+    const validateBtn = screen.getByRole('button', { name: 'Validate configuration locally' })
+    expect(validateBtn.className).toContain('max-w-full')
+    expect(selfHostSection.textContent).not.toMatch(
+      /Assistant d'auto-hébergement|Valider la configuration localement|Validation locale uniquement/i
+    )
   } finally {
     await i18n.changeLanguage('fr')
   }

@@ -24,12 +24,13 @@ export const securityMfaRoute = createRoute({
 })
 
 function SecurityMfaRoute() {
-  const { me } = orgRoute.useLoaderData()
+  const { me, membership } = orgRoute.useLoaderData()
   const router = useRouter()
   const { org } = securityMfaRoute.useParams()
   return (
     <MfaEnrolScreen
       accountEmail={me.email}
+      memberRole={membership.role}
       onEnrolled={() => void router.navigate({ to: '/$org/home', params: { org } })}
     />
   )
@@ -37,10 +38,12 @@ function SecurityMfaRoute() {
 
 function SecuritySettingsRoute() {
   const { me, membership } = orgRoute.useLoaderData()
+  const { org } = securityRoute.useParams()
   const { t } = useTranslation()
   return (
     <Suspense fallback={<p role="status">{t('console.security.settings.loading')}</p>}>
       <SecuritySettings
+        org={org}
         accountId={me.id}
         organisationId={membership.organisation.id}
         membershipId={membership.membership_id}

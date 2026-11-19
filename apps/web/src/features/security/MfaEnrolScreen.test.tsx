@@ -166,4 +166,23 @@ describe('Community OIDC MFA enrolment and step-up', () => {
       .click(screen.getByRole('button', { name: 'Vérifier avec mon code 2FA' }))
     expect(signIn).toHaveBeenCalledWith('community', { prompt: 'login' })
   })
+
+  it('shows voluntary personal security copy instead of admin lockout warning for org_member (issue 221)', async () => {
+    vi.stubEnv('VITE_AUTH_MODE', 'oidc')
+    vi.stubEnv('VITE_ENABLE_MSW', '0')
+    authState.realm = 'community'
+    window.history.replaceState(null, '', '/community/security/mfa')
+    const { MfaEnrolScreen } = await import('./MfaEnrolScreen')
+    render(
+      <MfaEnrolScreen
+        accountEmail="member@kodera.test"
+        memberRole="org_member"
+        onEnrolled={vi.fn()}
+      />
+    )
+    expect(
+      screen.getByRole('heading', { name: 'Protéger votre compte (2FA)', level: 1 })
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/accès administrateur/i)).not.toBeInTheDocument()
+  })
 })

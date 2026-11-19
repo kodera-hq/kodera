@@ -1,5 +1,6 @@
 import { useId, useMemo, useState, type RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
+import { color } from '@kodera/design-tokens/tokens.json'
 import type { MessageKey } from '../../i18n'
 import { Button } from '../../ui/Button/Button'
 import { StatusPill } from '../../ui/StatusPill/StatusPill'
@@ -87,6 +88,62 @@ const OFFICIAL_THEMES = THEME_PREFERENCES.filter(
   (preference): preference is AppliedTheme => preference !== 'system'
 )
 
+const COLOR_PREFIX = String.fromCharCode(35)
+
+function tokenValueToCanonicalRgb(raw: string): string {
+  const channels = raw
+    .slice(1)
+    .match(/.{2}/g)
+    ?.map((part) => Number.parseInt(part, 16))
+  return channels?.length === 3 ? `rgb(${channels.join(', ')})` : 'rgb(0, 0, 0)'
+}
+
+export function officialTokensForTheme(theme: AppliedTheme): CustomThemeTokens {
+  const palette = color[`theme-${theme}`]
+  return {
+    '--c-page': tokenValueToCanonicalRgb(palette.page.$value),
+    '--c-surface': tokenValueToCanonicalRgb(palette.surface.$value),
+    '--c-sunken': tokenValueToCanonicalRgb(palette.sunken.$value),
+    '--c-action': tokenValueToCanonicalRgb(palette.action.$value),
+    '--c-ink': tokenValueToCanonicalRgb(palette.ink.$value),
+  }
+}
+
+function resolveInitialTokensForTheme(theme: AppliedTheme): CustomThemeTokens {
+  const base = officialTokensForTheme(theme)
+  if (typeof document === 'undefined') return base
+  const rootStyle = document.documentElement.style
+  const resolved: Record<string, string> = { ...base }
+  for (const key of CUSTOM_TOKEN_KEYS) {
+    const inlineVal = rootStyle.getPropertyValue(key).trim()
+    if (isCanonicalRgb(inlineVal)) {
+      resolved[key] = inlineVal
+    }
+  }
+  return resolved as unknown as CustomThemeTokens
+}
+
+function canonicalRgbToSwatchValue(rgb: string): string {
+  if (!isCanonicalRgb(rgb)) {
+    return `${COLOR_PREFIX}${'0'.repeat(6)}`
+  }
+  const channels = rgb
+    .slice(4, -1)
+    .split(', ')
+    .map((part) => Math.max(0, Math.min(255, Number.parseInt(part, 10) || 0)))
+  return `${COLOR_PREFIX}${channels.map((ch) => ch.toString(16).padStart(2, '0')).join('')}`
+}
+
+function swatchValueToCanonicalRgb(val: string): string | null {
+  if (val.charCodeAt(0) !== 35 || val.length !== 7) return null
+  const body = val.slice(1)
+  if (!/^[0-9a-fA-F]{6}$/.test(body)) return null
+  const r = Number.parseInt(body.slice(0, 2), 16)
+  const g = Number.parseInt(body.slice(2, 4), 16)
+  const b = Number.parseInt(body.slice(4, 6), 16)
+  return `rgb(${r}, ${g}, ${b})`
+}
+
 export function applyCoreThemeToDocument(theme: AppliedTheme): void {
   if (typeof document === 'undefined') return
   document.documentElement.classList.toggle('dark', themeMode(theme) !== 'light')
@@ -147,10 +204,10 @@ export function ThemeStudioModal({
 
   const [importedId, setImportedId] = useState<string | null>(null)
   const [customName, setCustomName] = useState<string>(copy.defaultName)
-  const [tokens, setTokens] = useState<CustomThemeTokens>(
-    () =>
-      CURATED_COMMUNITY_PRESETS.find((preset) => preset.baseMode === themeMode(currentThemeMode))!
-        .tokens
+  const [customTokens, setCustomTokens] = useState<CustomThemeTokens | null>(null)
+  const tokens = useMemo(
+    () => customTokens ?? resolveInitialTokensForTheme(currentThemeMode),
+    [customTokens, currentThemeMode]
   )
   const [savedThemes, setSavedThemes] =
     useState<readonly CommunityThemeDefinition[]>(loadSavedCommunityThemes)
@@ -187,6 +244,8 @@ export function ThemeStudioModal({
   }
 
   const handleChooseCoreMode = (mode: AppliedTheme) => {
+    setImportedId(null)
+    setCustomTokens(null)
     applyCustomTokensToDocument(null)
     onSelectCoreTheme(mode)
     setStatusMessage(copy.modes[mode].done)
@@ -200,7 +259,7 @@ export function ThemeStudioModal({
     onSelectCoreTheme(preset.baseMode)
     setImportedId(preset.id)
     setCustomName(preset.name)
-    setTokens(preset.tokens)
+    setCustomTokens(preset.tokens)
     applyCustomTokensToDocument(preset.tokens, preset.baseMode)
     setStatusMessage(copy.applied(preset.name))
   }
@@ -210,7 +269,7 @@ export function ThemeStudioModal({
       ...tokens,
       [key]: value,
     }
-    setTokens(next)
+    setCustomTokens(next)
     // A half-typed or foreign colour stays in the field and never reaches the document.
     if (CUSTOM_TOKEN_KEYS.every((tokenKey) => isCanonicalRgb(next[tokenKey]))) {
       if (hasReadableTheme(next, themeMode(currentThemeMode)))
@@ -220,6 +279,8 @@ export function ThemeStudioModal({
   }
 
   const handleResetColors = () => {
+    setImportedId(null)
+    setCustomTokens(null)
     applyCustomTokensToDocument(null)
     setStatusMessage(copy.resetDone)
   }
@@ -287,7 +348,7 @@ export function ThemeStudioModal({
     onSelectCoreTheme(decoded.theme.baseMode)
     setImportedId(decoded.theme.id)
     setCustomName(decoded.theme.name)
-    setTokens(decoded.theme.tokens)
+    setCustomTokens(decoded.theme.tokens)
     applyCustomTokensToDocument(decoded.theme.tokens, decoded.theme.baseMode)
     setStatusMessage(copy.importDone(decoded.theme.name))
   }
@@ -298,7 +359,7 @@ export function ThemeStudioModal({
       onClose={onClose}
       returnFocusTo={returnFocusTo}
       data-testid="kodera-theme-studio-modal"
-      className="flex h-[90%] w-full max-w-[960px] flex-col gap-4 overflow-y-auto rounded-lg border border-c-border p-6 shadow-pop shadow-c-shadow-2"
+      className="flex max-h-[calc(100vh-32px)] min-h-0 w-full max-w-[960px] flex-col gap-4 overflow-y-auto overscroll-contain rounded-lg border border-c-border p-6 shadow-pop shadow-c-shadow-2"
     >
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-c-border-soft pb-3">
         <div className="flex flex-wrap items-center gap-2">
@@ -437,14 +498,29 @@ export function ThemeStudioModal({
                 >
                   {tokenKey}
                 </label>
-                <input
-                  id={`token-${tokenKey}`}
-                  type="text"
-                  data-testid={`theme-token-${tokenKey}`}
-                  value={tokens[tokenKey]}
-                  onChange={(e) => handleUpdateToken(tokenKey, e.target.value)}
-                  className="h-8 w-1/2 rounded-md border border-c-border-input bg-c-surface px-2 font-mono text-xs text-c-ink focus-visible:border-c-accent-ink focus-visible:ring focus-visible:outline-hidden"
-                />
+                <div className="flex items-center gap-2">
+                  <input
+                    type="color"
+                    aria-label={copy.swatchLabel(tokenKey)}
+                    data-testid={`theme-swatch-${tokenKey}`}
+                    value={canonicalRgbToSwatchValue(tokens[tokenKey])}
+                    onChange={(e) => {
+                      const converted = swatchValueToCanonicalRgb(e.target.value)
+                      if (converted !== null) {
+                        handleUpdateToken(tokenKey, converted)
+                      }
+                    }}
+                    className="h-8 w-8 shrink-0 cursor-pointer rounded-md border border-c-border-input bg-c-surface p-[2px] focus-visible:ring focus-visible:outline-hidden"
+                  />
+                  <input
+                    id={`token-${tokenKey}`}
+                    type="text"
+                    data-testid={`theme-token-${tokenKey}`}
+                    value={tokens[tokenKey]}
+                    onChange={(e) => handleUpdateToken(tokenKey, e.target.value)}
+                    className="h-8 w-[160px] rounded-md border border-c-border-input bg-c-surface px-2 font-mono text-xs text-c-ink focus-visible:border-c-accent-ink focus-visible:ring focus-visible:outline-hidden"
+                  />
+                </div>
               </div>
             ))}
           </div>

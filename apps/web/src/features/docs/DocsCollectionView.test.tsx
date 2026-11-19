@@ -587,4 +587,185 @@ describe(
       )
     )
   })
+
+  it('debounces rapid inline cell keystrokes to 400ms and flushes immediately on blur (issue 220)', async () => {
+    vi.useFakeTimers()
+    try {
+      const schemaBase = createDefaultCollectionSchema('fr')
+      const schema = {
+        ...schemaBase,
+        properties: [
+          ...schemaBase.properties,
+          { id: 'notes', name: 'Notes', kind: 'text' as const },
+        ],
+      }
+
+      const putSpy = vi.spyOn(docsApi, 'putWorkspaceCollectionRow').mockImplementation(
+        async (_org, _col, docId, values) => ({
+          row: {
+            documentId: docId,
+            values,
+            updatedAt: '2026-11-19T16:00:00Z',
+          },
+          etag: '"etag-doc-1-debounced"',
+          created: false,
+        })
+      )
+
+      render(
+        <DocsCollectionView
+          organisationId="org-vercelli"
+          documents={SAMPLE_DOCS}
+          members={SAMPLE_MEMBERS}
+          initialCollection={schema}
+          initialRows={SAMPLE_ROWS}
+          initialRowEtags={{ 'doc-1': '"etag-doc-1-v1"' }}
+          onCreateDocument={vi.fn()}
+        />
+      )
+
+      // Table scroll wrapper prevents 135px vertical flex collapse and quick-create input is wide
+      const grid = screen.getByTestId('collection-table-grid')
+      expect(grid.parentElement?.className).toContain('min-h-[280px]')
+      expect(grid.className).toContain('min-w-[880px]')
+      expect(screen.getByTestId('collection-new-entry-input').className).toContain('min-w-[256px]')
+
+      const notesInput = screen.getByTestId('collection-cell-doc-1-notes')
+      for (const partial of ['K', 'Ko', 'Kod', 'Kode', 'Koder', 'Kodera']) {
+        fireEvent.change(notesInput, { target: { value: partial } })
+      }
+
+      // Optimistic value updates immediately, zero remote PUTs before 400ms
+      expect(notesInput).toHaveValue('Kodera')
+      expect(putSpy).not.toHaveBeenCalled()
+
+      await vi.advanceTimersByTimeAsync(399)
+      expect(putSpy).not.toHaveBeenCalled()
+
+      await vi.advanceTimersByTimeAsync(1)
+      expect(putSpy).toHaveBeenCalledTimes(1)
+      expect(putSpy).toHaveBeenLastCalledWith(
+        'org-vercelli',
+        schema.id,
+        'doc-1',
+        expect.objectContaining({ notes: { kind: 'text', value: 'Kodera' } }),
+        { mode: 'update', ifMatch: '"etag-doc-1-v1"' },
+        schema.properties
+      )
+
+      // Rapid number keystrokes flush immediately on blur without waiting 400ms
+      const estimateInput = screen.getByTestId('collection-cell-doc-1-estimate')
+      fireEvent.change(estimateInput, { target: { value: '1' } })
+      fireEvent.change(estimateInput, { target: { value: '13' } })
+      expect(putSpy).toHaveBeenCalledTimes(1)
+
+      fireEvent.blur(estimateInput, { target: { value: '13' } })
+      await vi.advanceTimersByTimeAsync(0)
+      expect(putSpy).toHaveBeenCalledTimes(2)
+      expect(putSpy).toHaveBeenLastCalledWith(
+        'org-vercelli',
+        schema.id,
+        'doc-1',
+        expect.objectContaining({ estimate: { kind: 'number', value: 13 } }),
+        { mode: 'update', ifMatch: '"etag-doc-1-debounced"' },
+        schema.properties
+      )
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('serializes in-flight writes per row so blur + immediate checkbox toggle chains cleanly with updated ETag and zero self-inflicted 412', async () => {
+    const schemaBase = createDefaultCollectionSchema('fr')
+    const schema = {
+      ...schemaBase,
+      properties: [
+        ...schemaBase.properties,
+        { id: 'notes', name: 'Notes', kind: 'text' as const },
+      ],
+    }
+
+    let resolveFirstPut!: (result: Awaited<ReturnType<typeof docsApi.putWorkspaceCollectionRow>>) => void
+    const firstPutPromise = new Promise<Awaited<ReturnType<typeof docsApi.putWorkspaceCollectionRow>>>(
+      (resolve) => {
+        resolveFirstPut = resolve
+      }
+    )
+
+    const putSpy = vi
+      .spyOn(docsApi, 'putWorkspaceCollectionRow')
+      .mockImplementationOnce(() => firstPutPromise)
+      .mockImplementationOnce(async (_org, _col, docId, values) => ({
+        row: {
+          documentId: docId,
+          values,
+          updatedAt: '2026-11-19T17:01:00Z',
+        },
+        etag: '"etag-doc-1-v3"',
+        created: false,
+      }))
+
+    render(
+      <DocsCollectionView
+        organisationId="org-vercelli"
+        documents={SAMPLE_DOCS}
+        members={SAMPLE_MEMBERS}
+        initialCollection={schema}
+        initialRows={SAMPLE_ROWS}
+        initialRowEtags={{ 'doc-1': '"etag-doc-1-v1"' }}
+      />
+    )
+
+    const notesInput = screen.getByTestId('collection-cell-doc-1-notes')
+    const verifiedCheckbox = screen.getByTestId('collection-cell-doc-1-verified')
+
+    // 1. Type in text cell and blur -> PUT #1 starts in flight with "etag-doc-1-v1"
+    fireEvent.change(notesInput, { target: { value: 'Audit OK' } })
+    fireEvent.blur(notesInput)
+    expect(putSpy).toHaveBeenCalledTimes(1)
+    expect(putSpy).toHaveBeenNthCalledWith(
+      1,
+      'org-vercelli',
+      schema.id,
+      'doc-1',
+      expect.objectContaining({ notes: { kind: 'text', value: 'Audit OK' } }),
+      { mode: 'update', ifMatch: '"etag-doc-1-v1"' },
+      schema.properties
+    )
+
+    // 2. While PUT #1 is STILL in flight, toggle verified checkbox on the same row (`doc-1`)
+    fireEvent.click(verifiedCheckbox)
+    // PUT #2 must wait for PUT #1 rather than firing concurrently with stale "etag-doc-1-v1"
+    expect(putSpy).toHaveBeenCalledTimes(1)
+    expect(verifiedCheckbox).not.toBeChecked()
+
+    // 3. Resolve PUT #1 with new ETag `"etag-doc-1-v2"` -> PUT #2 fires with `"etag-doc-1-v2"` AND preserves both `notes: 'Audit OK'` and `verified: false`!
+    resolveFirstPut({
+      row: {
+        documentId: 'doc-1',
+        values: {
+          ...SAMPLE_ROWS[0]!.values,
+          notes: { kind: 'text', value: 'Audit OK' },
+        },
+        updatedAt: '2026-11-19T17:00:00Z',
+      },
+      etag: '"etag-doc-1-v2"',
+      created: false,
+    })
+
+    await waitFor(() => expect(putSpy).toHaveBeenCalledTimes(2))
+    expect(putSpy).toHaveBeenNthCalledWith(
+      2,
+      'org-vercelli',
+      schema.id,
+      'doc-1',
+      expect.objectContaining({
+        notes: { kind: 'text', value: 'Audit OK' },
+        verified: { kind: 'checkbox', value: false },
+      }),
+      { mode: 'update', ifMatch: '"etag-doc-1-v2"' },
+      schema.properties
+    )
+    expect(screen.queryByTestId('collection-conflict-banner')).toBeNull()
+  })
 })
