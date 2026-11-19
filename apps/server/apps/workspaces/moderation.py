@@ -84,7 +84,16 @@ def _context(
     admin: bool = False,
     lock: bool = True,
 ) -> tuple[Workspace, TenantCaller]:
-    # Domain rows first; this same lock serializes grant/restriction changes and projection.
+    if lock:
+        # Refuse unauthorised callers before they can contend on the workspace domain lock.
+        from .selectors import lock_workspace
+
+        initial, _ = _context(
+            verified, organisation_id, moderator=moderator, admin=admin, lock=False
+        )
+        lock_workspace(workspace_id=initial.id)
+        return _context(verified, organisation_id, moderator=moderator, admin=admin, lock=False)
+    # Re-read current authority after taking the lock; never trust the precheck snapshot.
     rows = Workspace.objects.filter(organisation_id=organisation_id)
     workspace = (rows.select_for_update() if lock else rows).first()
     if workspace is None:
@@ -237,8 +246,16 @@ def create_link(
     role: str,
     channel_id: UUID | None,
     request_id: str,
+    auto_role_ids: Any = None,
 ) -> tuple[WorkspaceInviteLink, str]:
     workspace, caller = _context(verified, organisation_id, admin=True)
+    if workspace.invites_paused:
+        raise RefusalError(403)
+    from .iam import check_manage, resolve_roles
+
+    roles = resolve_roles(workspace, [] if auto_role_ids is None else auto_role_ids)
+    if roles:
+        check_manage(workspace, caller, roles)
     _expiry(expires_at)
     if (
         type(max_uses) is not int
@@ -258,6 +275,8 @@ def create_link(
     link = WorkspaceInviteLink.objects.create(
         workspace=workspace,
         code_digest=hashlib.sha256(code.encode()).hexdigest(),
+        created_by_id=caller.membership_id,
+        auto_role_ids=[str(role.id) for role in roles],
         expires_at=expires_at,
         max_uses=max_uses,
         role=role,
@@ -276,6 +295,7 @@ def _link(code: str, *, lock: bool = False, allow_exhausted: bool = False) -> Wo
     link = rows.filter(code_digest=hashlib.sha256(code.encode()).hexdigest()).first()
     if (
         link is None
+        or link.workspace.invites_paused
         or link.revoked_at is not None
         or link.expires_at <= timezone.now()
         or (not allow_exhausted and link.uses_count >= link.max_uses)
@@ -352,6 +372,14 @@ def redeem_link(
     if updated != 1:
         raise RefusalError(404)
     WorkspaceInviteRedemption.objects.get_or_create(link=link, membership_id=membership.id)
+    from .models import WorkspaceMemberRole
+
+    for role_id in link.auto_role_ids:
+        WorkspaceMemberRole.objects.get_or_create(
+            workspace=workspace, membership_id=membership.id, role_id=role_id
+        )
+    if link.auto_role_ids:
+        _audit(workspace, identity.id, "workspace.member.roles_updated", membership.id, request_id)
     if link.role == "moderator":
         WorkspaceModerator.objects.get_or_create(workspace=workspace, membership_id=membership.id)
     if link.channel_id is not None:
@@ -561,3 +589,11 @@ def _grant_link_channel(
         ResourcePolicyRule.objects.get_or_create(
             policy=policy, membership_id=membership.id, kind=ResourcePolicyRule.Kind.ALLOW_MEMBER
         )
+
+
+@transaction.atomic
+def authorise_link_creation(*, verified: VerifiedAccessToken, organisation_id: UUID) -> None:
+    """Pause and current authority gate the initial effect and every stored response replay."""
+    workspace, _ = _context(verified, organisation_id, admin=True, lock=False)
+    if workspace.invites_paused:
+        raise RefusalError(403)

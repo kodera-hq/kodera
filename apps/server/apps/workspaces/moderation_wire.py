@@ -30,6 +30,13 @@ def tag(body: dict[str, Any]) -> str:
 def link_wire(row: WorkspaceInviteLink) -> dict[str, Any]:
     return {
         "id": str(row.id),
+        "createdBy": None
+        if row.created_by is None
+        else {
+            "membershipId": str(row.created_by_id),
+            "displayName": row.created_by.user.display_name,
+        },
+        "auto_role_ids": row.auto_role_ids,
         "expiresAt": row.expires_at.isoformat(),
         "maxUses": row.max_uses,
         "usesCount": row.uses_count,
@@ -74,7 +81,9 @@ def page(
             limit,
             salt,
         )
-    links = WorkspaceInviteLink.objects.filter(workspace=workspace)
+    links = WorkspaceInviteLink.objects.filter(workspace=workspace).select_related(
+        "created_by__user"
+    )
     from django.db.models import F
     from django.utils import timezone
 

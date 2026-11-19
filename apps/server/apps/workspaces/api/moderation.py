@@ -113,6 +113,7 @@ def _serve(request: HttpRequest, handlers: dict[str, Any]) -> HttpResponse:
             "POST",
             "PATCH",
             "DELETE",
+            "PUT",
         }:
             response = _problem(405, request_id)
             response["Allow"] = ", ".join(method for method in handlers if method != "AUTHORIZE")
@@ -276,13 +277,16 @@ def report_detail(request: HttpRequest, organisation_id: UUID, report_id: UUID) 
 def links(request: HttpRequest, organisation_id: UUID) -> HttpResponse:
     def post(verified: Any, request_id: str) -> HttpResponse:
         data = _body(
-            request, {"expiresAt", "maxUses", "channelId", "role"}, {"expiresAt", "maxUses"}
+            request,
+            {"expiresAt", "maxUses", "channelId", "role", "auto_role_ids"},
+            {"expiresAt", "maxUses"},
         )
         row, code = service.create_link(
             verified=verified,
             organisation_id=organisation_id,
             expires_at=_time(data["expiresAt"]),
             max_uses=data["maxUses"],
+            auto_role_ids=data.get("auto_role_ids", []),
             role=data.get("role", "org_member"),
             channel_id=_uuid(data["channelId"]) if "channelId" in data else None,
             request_id=request_id,
@@ -294,7 +298,9 @@ def links(request: HttpRequest, organisation_id: UUID) -> HttpResponse:
         {
             "POST": post,
             "GET": lambda verified, _: _page(request, verified, organisation_id, "links"),
-            "AUTHORIZE": lambda verified: _authorize(verified, organisation_id, admin=True),
+            "AUTHORIZE": lambda verified: service.authorise_link_creation(
+                verified=verified, organisation_id=organisation_id
+            ),
         },
     )
 
