@@ -32,6 +32,15 @@ function redirectUri(): string {
   return `${window.location.origin}/auth/callback`
 }
 
+/**
+ * The provider's pages follow the console's language: English, or French for anything else. Read
+ * from the document's `lang`, which `src/i18n` keeps equal to the resolved language, so the
+ * adapter stays free of the catalogue module.
+ */
+export function signInLocale(): 'en' | 'fr' {
+  return document.documentElement.lang.startsWith('en') ? 'en' : 'fr'
+}
+
 // A stored hint can select one admitted realm segment under the configured
 // provider. It can never supply an origin, traversal, query or fragment.
 const isRealmHint = (value: string | null): value is string =>
@@ -200,6 +209,7 @@ function managerFor(realm: string, protectedClaim = false, registration = false)
     authority: `${keycloakUrl()}/realms/${realm}`,
     client_id: oidcClientId(),
     redirect_uri: redirectUri(),
+    silent_redirect_uri: redirectUri(),
     ...(protectedClaim
       ? { popup_redirect_uri: claimRedirectUri(), loadUserInfo: false }
       : { filterProtocolClaims: false }),
@@ -480,12 +490,11 @@ export class OidcAuthAdapter implements AuthAdapter {
         const manager = managerFor(realm, false, registration)
         this.#manager = manager
         this.#wireEvents(manager)
-        return prompt || kcAction
-          ? manager.signinRedirect({
-              ...(prompt ? { prompt } : {}),
-              ...(kcAction ? { extraQueryParams: { kc_action: kcAction } } : {}),
-            })
-          : manager.signinRedirect()
+        return manager.signinRedirect({
+          ui_locales: signInLocale(),
+          ...(prompt ? { prompt } : {}),
+          ...(kcAction ? { extraQueryParams: { kc_action: kcAction } } : {}),
+        })
       })
       .catch((error: unknown) => {
         if (this.#snapshot.generation === generation) {

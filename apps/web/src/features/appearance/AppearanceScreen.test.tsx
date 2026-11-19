@@ -82,6 +82,22 @@ describe('AppearanceScreen', () => {
     expect(screen.getByRole('status')).toBeEmptyDOMElement()
   })
 
+  it('drops a studio theme\'s colours from the document when an official theme is chosen', async () => {
+    const user = userEvent.setup()
+    // A dark studio theme applied on the page (`themeOverrides.ts`), as « Ciel nuit » surfaces.
+    document.documentElement.style.setProperty('--c-surface', 'rgb(20, 26, 45)')
+    document.documentElement.style.setProperty('--c-page', 'rgb(14, 17, 32)')
+    try {
+      render(<AppearanceScreen />)
+      await user.click(screen.getByRole('radio', { name: 'Clair' }))
+      expect(document.documentElement.style.getPropertyValue('--c-surface')).toBe('')
+      expect(document.documentElement.style.getPropertyValue('--c-page')).toBe('')
+    } finally {
+      document.documentElement.style.removeProperty('--c-surface')
+      document.documentElement.style.removeProperty('--c-page')
+    }
+  })
+
   it('is one Tab stop landing on the chosen card, and the arrows choose', async () => {
     const user = userEvent.setup()
     localStorage.setItem(THEME_STORAGE_KEY, 'light')
@@ -152,7 +168,7 @@ describe('AppearanceScreen', () => {
     expect(screen.getByRole('radio', { name: 'Sombre' })).toHaveAttribute('aria-checked', 'true')
   })
 
-  it('previews each theme with its own roles, « Automatique » half Ciel and half Ciel nuit', () => {
+  it('previews each theme with its own roles, « Automatique » half Ciel and half true black', () => {
     render(<AppearanceScreen />)
 
     const previews = cards().map((card) =>
@@ -161,7 +177,7 @@ describe('AppearanceScreen', () => {
       )
     )
     expect(previews).toEqual([
-      ['ciel', 'ciel-nuit'],
+      ['ciel', 'black'],
       ['ciel'],
       ['ciel-nuit'],
       ['light'],

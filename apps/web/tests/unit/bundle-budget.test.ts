@@ -197,20 +197,20 @@ describe('the entry regression limit', () => {
 
   it('is a number per profile, a few kilobytes above what that profile measures', () => {
     expect(ENTRY_REGRESSION_LIMITS).toEqual({
-      production: 228_000,
-      'production-telemetry': 229_000,
-      staging: 230_000,
+      production: 210_500,
+      'production-telemetry': 211_000,
+      staging: 212_500,
     })
-    expect(budgetsFor('production')).toEqual({ ...BUDGETS, entryRegressionGzip: 228_000 })
-    expect(budgetsFor('production-telemetry')).toEqual({ ...BUDGETS, entryRegressionGzip: 229_000 })
-    expect(budgetsFor('staging')).toEqual({ ...BUDGETS, entryRegressionGzip: 230_000 })
+    expect(budgetsFor('production')).toEqual({ ...BUDGETS, entryRegressionGzip: 210_500 })
+    expect(budgetsFor('production-telemetry')).toEqual({ ...BUDGETS, entryRegressionGzip: 211_000 })
+    expect(budgetsFor('staging')).toEqual({ ...BUDGETS, entryRegressionGzip: 212_500 })
     expect(() => budgetsFor('preview')).toThrow('unknown profile "preview"')
   })
 
   it('only ever goes down: raising one means changing this line, and saying why', () => {
-    expect(ENTRY_REGRESSION_LIMITS.production).toBeLessThanOrEqual(228_000)
-    expect(ENTRY_REGRESSION_LIMITS['production-telemetry']).toBeLessThanOrEqual(229_000)
-    expect(ENTRY_REGRESSION_LIMITS.staging).toBeLessThanOrEqual(230_000)
+    expect(ENTRY_REGRESSION_LIMITS.production).toBeLessThanOrEqual(210_500)
+    expect(ENTRY_REGRESSION_LIMITS['production-telemetry']).toBeLessThanOrEqual(211_000)
+    expect(ENTRY_REGRESSION_LIMITS.staging).toBeLessThanOrEqual(212_500)
   })
 
   it('holds at the limit and is refused one byte over it, by its own name', () => {
@@ -251,12 +251,12 @@ describe('the entry regression limit', () => {
 
   it('is applied when no budgets are given, as the production profile has it', () => {
     const input = build({
-      'assets/main.js': { gzip: 228_000 - 41_000 + 1 },
+      'assets/main.js': { gzip: 210_500 - 41_000 + 1 },
       'assets/vendor-matrix.js': { gzip: 1 },
     })
     expect((measure(input) as Result).violations).toEqual([
-      'ENTRY_OVER_BUDGET: the entry JavaScript is 228001 bytes gzip, over its budget of 180000',
-      'ENTRY_REGRESSION: the entry JavaScript is 228001 bytes gzip, over its regression limit of 228000 (the limit is not the target: the target is 180000)',
+      'ENTRY_OVER_BUDGET: the entry JavaScript is 210501 bytes gzip, over its budget of 180000',
+      'ENTRY_REGRESSION: the entry JavaScript is 210501 bytes gzip, over its regression limit of 210500 (the limit is not the target: the target is 180000)',
     ])
   })
 })

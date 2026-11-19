@@ -87,7 +87,18 @@ describe('OidcAuthAdapter', () => {
     const settings = constructorSpy.mock.calls[0]?.[0] as Record<string, unknown>
     expect(settings).not.toHaveProperty('max_age')
     expect(settings).not.toHaveProperty('prompt')
-    expect(signinRedirect.mock.calls).toEqual([[]])
+    expect(settings.silent_redirect_uri).toBe(`${window.location.origin}/auth/callback`)
+    expect(signinRedirect.mock.calls).toEqual([[{ ui_locales: 'fr' }]])
+  })
+
+  it('asks the provider for English pages when the console is in English', async () => {
+    document.documentElement.lang = 'en'
+    try {
+      await new OidcAuthAdapter().signIn('acme-sa')
+      expect(signinRedirect.mock.calls).toEqual([[{ ui_locales: 'en' }]])
+    } finally {
+      document.documentElement.lang = 'fr'
+    }
   })
 
   it('handleCallback rebuilds the same authority from the realm recorded by signIn', async () => {
@@ -863,13 +874,14 @@ describe('community registration', () => {
         },
       })
     )
-    expect(signinRedirect.mock.calls).toEqual([[]])
+    expect(signinRedirect.mock.calls).toEqual([[{ ui_locales: 'fr' }]])
   })
 
   it('passes kc_action=CONFIGURE_TOTP and prompt=login to signinRedirect for Community 2FA setup', async () => {
     const adapter = new OidcAuthAdapter()
     await adapter.signIn('community', { kcAction: 'CONFIGURE_TOTP', prompt: 'login' })
     expect(signinRedirect).toHaveBeenCalledWith({
+      ui_locales: 'fr',
       prompt: 'login',
       extraQueryParams: { kc_action: 'CONFIGURE_TOTP' },
     })
@@ -878,7 +890,7 @@ describe('community registration', () => {
   it('passes prompt=login without extraQueryParams for Community 2FA verification', async () => {
     const adapter = new OidcAuthAdapter()
     await adapter.signIn('community', { prompt: 'login' })
-    expect(signinRedirect).toHaveBeenCalledWith({ prompt: 'login' })
+    expect(signinRedirect).toHaveBeenCalledWith({ ui_locales: 'fr', prompt: 'login' })
   })
 
   it('rejects unexpected kcAction or prompt values', async () => {

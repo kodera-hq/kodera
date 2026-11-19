@@ -12,6 +12,9 @@
 
 import { useQuery } from '@tanstack/react-query'
 import { coreApi } from '../../api/client'
+import { statusSummaryQueryKey, tenantStatusQueryKey } from '../../app/queryKeys'
+import { fetchStatusSummary } from '../../app/statusSummary'
+import { fetchTenantStatus } from '../status/queries'
 import type { components } from '../../api/schema'
 import {
   shouldPollTenantStatus,
@@ -19,8 +22,6 @@ import {
   tenantStatusRefetchInterval,
 } from './polling'
 
-type OrganisationStatusSummary = components['schemas']['OrganisationStatusSummary']
-type TenantStatusView = components['schemas']['TenantStatusView']
 type Subscription = components['schemas']['Subscription']
 type Invoice = components['schemas']['Invoice']
 type Invitation = components['schemas']['Invitation']
@@ -42,23 +43,9 @@ function firstRow<T>(page: { data: T[] }, label: string): T | null {
   return row
 }
 
-async function fetchStatusSummary(organisationId: string): Promise<OrganisationStatusSummary> {
-  const { data } = await coreApi().GET('/organisations/{organisation_id}/status-summary', {
-    params: { path: { organisation_id: organisationId } },
-  })
-  const summary = unwrap(data, 'GET /organisations/{organisation_id}/status-summary')
-  if (
-    summary.tenant_id !== null &&
-    (typeof summary.tenant_id !== 'string' || summary.tenant_id.length === 0)
-  ) {
-    throw new Error('Status summary returned no tenant identifier or explicit absence.')
-  }
-  return summary
-}
-
 export function useStatusSummaryQuery(organisationId: string) {
   return useQuery({
-    queryKey: ['home', 'status-summary', organisationId],
+    queryKey: statusSummaryQueryKey(organisationId),
     queryFn: () => fetchStatusSummary(organisationId),
     refetchInterval: (query) => statusSummaryRefetchInterval(query.state.fetchFailureCount),
     refetchOnWindowFocus: true,
@@ -88,13 +75,6 @@ export function useFallbackTenantIdQuery(organisationId: string, enabled: boolea
   })
 }
 
-async function fetchTenantStatus(tenantId: string): Promise<TenantStatusView> {
-  const { data } = await coreApi().GET('/tenants/{tenant_id}/status', {
-    params: { path: { tenant_id: tenantId } },
-  })
-  return unwrap(data, 'GET /tenants/{tenant_id}/status')
-}
-
 /**
  * Fetched whenever a tenant id is known, active or not (§6: Home's own
  * Applications card reads `apps[]` from here, which `status-summary` does
@@ -105,7 +85,7 @@ async function fetchTenantStatus(tenantId: string): Promise<TenantStatusView> {
  */
 export function useTenantStatusQuery(tenantId: string | undefined) {
   return useQuery({
-    queryKey: ['home', 'tenant-status', tenantId],
+    queryKey: tenantStatusQueryKey(tenantId),
     queryFn: () => fetchTenantStatus(tenantId as string),
     enabled: tenantId !== undefined,
     refetchInterval: (query) =>

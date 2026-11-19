@@ -18,7 +18,8 @@ const ORG = 'acme-sa'
 const KEY = 'console:theme'
 const SCENARIOS = ['shell.single-organisation', 'home.default'] as const
 /** The theme « Automatique » paints on each device: Ciel, the default, in its light or dark mode. */
-const DEVICE_THEME = { light: 'ciel', dark: 'ciel-nuit' } as const
+// « Automatique » on a dark device is the neutral true black, not Ciel nuit (owner directive).
+const DEVICE_THEME = { light: 'ciel', dark: 'black' } as const
 
 function html(page: Page) {
   return page.locator('html')
@@ -513,7 +514,7 @@ test('appearance/page: follows the device only while Automatique is chosen', asy
   await useScenario(page, SCENARIOS)
   await openAppearance(page)
   await expect(card(page, 'Automatique')).toHaveAttribute('aria-checked', 'true')
-  await expect(html(page)).toHaveAttribute('data-theme', 'ciel-nuit')
+  await expect(html(page)).toHaveAttribute('data-theme', DEVICE_THEME.dark)
 
   await page.emulateMedia({ colorScheme: 'light' })
   await expect(html(page)).toHaveAttribute('data-theme', 'ciel')
@@ -529,7 +530,7 @@ test('appearance/page: follows the device only while Automatique is chosen', asy
   await card(page, 'Automatique').click()
   await expect(html(page)).toHaveAttribute('data-theme', 'ciel')
   await page.emulateMedia({ colorScheme: 'dark' })
-  await expect(html(page)).toHaveAttribute('data-theme', 'ciel-nuit')
+  await expect(html(page)).toHaveAttribute('data-theme', DEVICE_THEME.dark)
 })
 
 test('appearance/page: reads an unknown stored theme as Automatique', async ({ page }) => {
@@ -539,7 +540,7 @@ test('appearance/page: reads an unknown stored theme as Automatique', async ({ p
   await page.evaluate((key) => window.localStorage.setItem(key, 'sepia'), KEY)
   await reloadSignedIn(page)
   await expect(card(page, 'Automatique')).toHaveAttribute('aria-checked', 'true')
-  await expect(html(page)).toHaveAttribute('data-theme', 'ciel-nuit')
+  await expect(html(page)).toHaveAttribute('data-theme', DEVICE_THEME.dark)
 })
 
 test('appearance/page: chooses a theme with the keyboard alone and keeps it after a reload', async ({

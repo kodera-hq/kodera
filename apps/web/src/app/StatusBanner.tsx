@@ -8,7 +8,8 @@ import { Link, useRouterState } from '@tanstack/react-router'
 import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { trackStatusBannerShown } from './analytics'
-import { coreApi } from '../api/client'
+import { statusSummaryQueryKey } from './queryKeys'
+import { fetchStatusSummary } from './statusSummary'
 import { useSessionExpiring } from '../auth/sessionExpiry'
 import type { MessageKey } from '../i18n'
 import { formatDateTime, formatMoney } from '../i18n/format'
@@ -34,13 +35,6 @@ const REFETCH_INTERVAL_MS = 30_000
 // same way and would double it up.
 const DATE_ONLY = new Intl.DateTimeFormat('fr-FR', { dateStyle: 'long', timeZone: 'Europe/Paris' })
 const TIME_ONLY = new Intl.DateTimeFormat('fr-FR', { timeStyle: 'short', timeZone: 'Europe/Paris' })
-
-async function fetchStatusSummary(organisationId: string) {
-  const { data } = await coreApi().GET('/organisations/{organisation_id}/status-summary', {
-    params: { path: { organisation_id: organisationId } },
-  })
-  return data
-}
 
 // `02-status.md`'s own catalogue, not a new key here: the shell needs a
 // French display name for the same closed `key` enum that screen already
@@ -75,7 +69,7 @@ export function StatusBanner({ organisationId, org, role, className }: StatusBan
   })
 
   const { data } = useQuery({
-    queryKey: ['status-summary', organisationId],
+    queryKey: statusSummaryQueryKey(organisationId),
     queryFn: () => fetchStatusSummary(organisationId),
     refetchInterval: REFETCH_INTERVAL_MS,
     // A widget-level failure, never the whole shell (§5 "Partial failure"

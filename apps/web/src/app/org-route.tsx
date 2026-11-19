@@ -43,6 +43,7 @@ import { rootRoute } from './root-route'
 import { surfaceOf } from './railModules'
 import { SessionExpiryDialog } from './SessionExpiryDialog'
 import { Shell } from './Shell'
+import { ORGANISATION_PENDING_MIN_MS, ORGANISATION_PENDING_MS } from './pendingTiming'
 
 type Me = components['schemas']['Me']
 type Membership = Me['organisations'][number]
@@ -69,8 +70,10 @@ export const orgRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '$org',
   pendingComponent: SessionLoading,
-  pendingMs: 0,
-  pendingMinMs: 0,
+  // A layout that resolves within `ORGANISATION_PENDING_MS` paints no loading screen at all, and
+  // one that does paint it keeps it long enough to be read rather than blink.
+  pendingMs: ORGANISATION_PENDING_MS,
+  pendingMinMs: ORGANISATION_PENDING_MIN_MS,
   // Runs before the loader, so an unauthenticated visit never issues the
   // `/me` request at all. A deep link already names the organisation, so it
   // goes straight to sign-in for that realm rather than through the generic
@@ -422,9 +425,7 @@ function OrgLayoutContent() {
   // tenant's mark is the one place that already resolves the tenant.
   const organisationMark = demoOrganisationMark(membership.organisation.slug)
 
-  // Keep the subtree mounted so an explicit reauthentication can restore a
-  // draft, but remove every protected surface from rendering and the
-  // accessibility tree as soon as its loader authority becomes stale.
+  // Keep drafts mounted, but conceal protected content until `/me` validates the current token.
   return (
     <>
       {authorityMismatch ? <SessionExpiryDialog /> : null}

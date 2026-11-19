@@ -609,7 +609,9 @@ describe('each answer Core can give', () => {
     show()
     await userEvent.click(await createButton())
     await waitFor(() =>
-      expect(shown.invalidate).toHaveBeenCalledWith({ queryKey: ['home', 'status-summary'] })
+      expect(shown.invalidate).toHaveBeenCalledWith({
+        queryKey: ['status-summary', ORGANISATION_ID],
+      })
     )
     expect(homeReread()).toBe(false)
   })
@@ -684,9 +686,11 @@ describe('each answer Core can give', () => {
     serve(calls)
     recordCreation(calls, created)
     show()
-    let finishRead = () => {}
+    // The home's queries and the shared status summary are read again together; both must settle.
+    const pendingReads: Array<() => void> = []
+    const finishRead = () => pendingReads.splice(0).forEach((resolve) => resolve())
     shown.invalidate!.mockImplementation(
-      () => new Promise<void>((resolve) => (finishRead = resolve))
+      () => new Promise<void>((resolve) => pendingReads.push(resolve))
     )
     await userEvent.click(await createButton())
     await waitFor(() => expect(homeReread()).toBe(true))

@@ -7,10 +7,11 @@
 ;(() => {
   const KEY = 'console:theme'
   const THEMES = ['ciel', 'ciel-nuit', 'light', 'dark', 'black']
-  // « Automatique » follows the device inside the default family, Ciel: its light theme, or its
-  // dark one when the device asks for dark (owner decision B2).
+  // « Automatique » follows the device: Ciel, the default family's light theme, or the
+  // neutral true-black theme when the device asks for dark (owner directive: the default
+  // dark is a carbon black, not Ciel's blue night). Ciel nuit stays one click away.
   const DEVICE_LIGHT = 'ciel'
-  const DEVICE_DARK = 'ciel-nuit'
+  const DEVICE_DARK = 'black'
   let device = null
   try {
     device = window.matchMedia('(prefers-color-scheme: dark)')

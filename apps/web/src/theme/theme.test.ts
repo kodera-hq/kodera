@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { defaultTheme, themeFor, themeIds, themes } from '@kodera/design-tokens/themes'
+import { defaultTheme, themeIds, themes } from '@kodera/design-tokens/themes'
 import {
   THEME_CHANGE_EVENT,
   THEME_PREFERENCES,
@@ -38,18 +38,22 @@ function boot({ stored, dark }: { stored: string | null; dark: boolean }) {
 }
 
 describe('public/theme.js', () => {
-  it('follows the device in the Ciel family until a theme is chosen, and follows its changes', () => {
+  it('follows the device — Ciel or true black — until a theme is chosen, and follows its changes', () => {
     const page = boot({ stored: null, dark: true })
-    expect(page.theme()).toBe('ciel-nuit')
+    expect(page.theme()).toBe('black')
     page.setDevice(false)
     expect(page.theme()).toBe('ciel')
   })
 
-  it('follows the device with the tokens package default and its dark twin', () => {
+  it('follows the device with the tokens package default, and with true black when it is dark', () => {
     // A default moved in the tokens package and not here would ship the old family by default.
-    const family = themes.find((theme) => theme.id === defaultTheme)!.family
     expect(boot({ stored: null, dark: false }).theme()).toBe(defaultTheme)
-    expect(boot({ stored: null, dark: true }).theme()).toBe(themeFor(family, 'dark')!.id)
+    // Owner directive: the default dark is the neutral carbon black, not the default family's
+    // blue night twin — which stays offered as its own choice.
+    const black = themes.find((theme) => theme.id === 'black')!
+    expect(black.scheme).toBe('dark')
+    expect(boot({ stored: null, dark: true }).theme()).toBe('black')
+    expect(THEME_PREFERENCES).toContain('ciel-nuit')
   })
 
   it('offers every theme the tokens package ships', () => {
@@ -61,7 +65,7 @@ describe('public/theme.js', () => {
   it('applies a stored theme over the device', () => {
     expect(boot({ stored: 'black', dark: false }).theme()).toBe('black')
     expect(boot({ stored: 'light', dark: true }).theme()).toBe('light')
-    expect(boot({ stored: 'system', dark: true }).theme()).toBe('ciel-nuit')
+    expect(boot({ stored: 'system', dark: true }).theme()).toBe('black')
     expect(boot({ stored: 'ciel', dark: true }).theme()).toBe('ciel')
     expect(boot({ stored: 'ciel-nuit', dark: false }).theme()).toBe('ciel-nuit')
   })
@@ -110,7 +114,7 @@ describe('public/theme.js', () => {
   it('treats a value it does not know as Automatique', () => {
     for (const stored of ['sepia', '', 'DARK', '"dark"']) {
       const page = boot({ stored, dark: true })
-      expect(page.theme(), stored).toBe('ciel-nuit')
+      expect(page.theme(), stored).toBe('black')
       page.setDevice(false)
       expect(page.theme(), stored).toBe('ciel')
     }
@@ -121,7 +125,7 @@ describe('public/theme.js', () => {
     page.setDevice(true)
     expect(page.theme()).toBe('light')
     page.events.dispatchEvent(new CustomEvent(THEME_CHANGE_EVENT, { detail: 'system' }))
-    expect(page.theme()).toBe('ciel-nuit')
+    expect(page.theme()).toBe('black')
   })
 
   it('re-applies on the change this module announces and on another tab’s choice', () => {
@@ -148,7 +152,7 @@ describe('public/theme.js', () => {
       addEventListener: () => {},
     }
     new Function('window', BOOT)(fakeWindow)
-    expect(root.dataset.theme).toBe('ciel-nuit')
+    expect(root.dataset.theme).toBe('black')
   })
 })
 

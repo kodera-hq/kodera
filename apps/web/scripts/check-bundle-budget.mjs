@@ -82,15 +82,16 @@ export const BUDGETS = Object.freeze({ entryGzip: 180_000, chunkGzip: 160_000 })
  * The entry's regression limit, per build profile: NOT the target (that is `CEILINGS.entryGzip`,
  * which the entry does not meet), only the size the entry may not grow past meanwhile.
  *
- * - `production`: measured 224 967 bytes.
- * - `staging`: measured 226 766 bytes (the first-owner journey is built in).
+ * - `production`: measured 207 225 bytes.
+ * - `production-telemetry`: measured 207 613 bytes.
+ * - `staging`: measured 208 948 bytes (the first-owner journey is built in).
  *
  * About 3 kB of room each. These only ever go down.
  */
 export const ENTRY_REGRESSION_LIMITS = Object.freeze({
-  production: 228_000,
-  'production-telemetry': 229_000,
-  staging: 230_000,
+  production: 210_500,
+  'production-telemetry': 211_000,
+  staging: 212_500,
 })
 
 /** The budgets a profile is measured against. */

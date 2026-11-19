@@ -161,7 +161,7 @@ it('announces the header title and focuses the heading when the area changes', a
   expect(screen.getByRole('status')).toHaveTextContent('Page Facturation chargée.')
 })
 
-it('hides the old shell and invalidates once while fresh token authority is loading', async () => {
+it('conceals the retained shell and invalidates once while a renewed credential reloads', async () => {
   const router = await openLayout('/acme-sa/home', [['home', titled('Bonjour Claire')]])
   await screen.findByRole('heading', { level: 1, name: 'Bonjour Claire' })
   await waitFor(() => expect(router.state.status).toBe('idle'))
@@ -181,9 +181,12 @@ it('hides the old shell and invalidates once while fresh token authority is load
   await act(async () => {
     await expect(authAdapter.renew()).resolves.toBe(true)
   })
-  await waitFor(() => expect(document.querySelector('main[aria-busy="true"]')).not.toBeNull())
-  expect(screen.queryByRole('heading', { level: 1, name: 'Bonjour Claire' })).toBeNull()
-  expect(invalidate).toHaveBeenCalledTimes(1)
+  // Renewed bytes need fresh Core authority: retain the draft subtree, concealed from people
+  // and assistive technology until `/me` validates this credential.
+  await waitFor(() => expect(invalidate).toHaveBeenCalledTimes(1))
+  const heading = screen.getByRole('heading', { level: 1, name: 'Bonjour Claire', hidden: true })
+  expect(heading.closest('[hidden][aria-hidden="true"]')).not.toBeNull()
+  expect(document.querySelector('main[aria-busy="true"]')).not.toBeNull()
 
   await act(async () => {
     await expect(authAdapter.renew()).resolves.toBe(true)

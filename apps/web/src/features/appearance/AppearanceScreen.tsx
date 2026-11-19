@@ -18,6 +18,7 @@ import { useEffect, useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { cx } from '../../ui/cx'
 import { InlineAlert } from '../../ui/InlineAlert/InlineAlert'
+import { applyCustomTokensToDocument } from './themeOverrides'
 import {
   THEME_PREFERENCES,
   THEME_STORAGE_KEY,
@@ -95,6 +96,10 @@ export function AppearanceScreen() {
   function choose(value: string) {
     const next = THEME_PREFERENCES.find((candidate) => candidate === value)
     if (next === undefined) return
+    // An official theme is drawn with its own roles only: colours a studio theme set on the
+    // document (`themeOverrides.ts`) would otherwise outlive it, and a light page would keep a
+    // dark theme's surfaces (« Clair » under « Ciel nuit » panes in Docs and Files).
+    applyCustomTokensToDocument(null)
     setPreference(next)
     setNotKept(!saveThemePreference(next))
   }

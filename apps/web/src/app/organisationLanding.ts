@@ -4,6 +4,7 @@
 import type { components } from '../api/schema'
 import { fetchFirstTenant, fetchTenantStatus } from '../features/status/queries'
 import { landingFor, type Landing } from './landing'
+import { organisationTenantQueryKey, tenantStatusQueryKey } from './queryKeys'
 import { queryClient } from './queryClient'
 
 type OrganisationRole = components['schemas']['OrganisationRole']
@@ -15,12 +16,12 @@ type AppCode = components['schemas']['AppCode']
 async function organisationApps(organisationId: string): Promise<AppCode[] | null | undefined> {
   try {
     const tenant = await queryClient.fetchQuery({
-      queryKey: ['organisation-tenant', organisationId],
+      queryKey: organisationTenantQueryKey(organisationId),
       queryFn: () => fetchFirstTenant(organisationId),
     })
     if (tenant === null) return null
     const status = await queryClient.fetchQuery({
-      queryKey: ['tenant-status', tenant.id],
+      queryKey: tenantStatusQueryKey(tenant.id),
       queryFn: () => fetchTenantStatus(tenant.id),
     })
     return status.apps.map((app) => app.code)

@@ -80,6 +80,9 @@ interface ActiveWikilinkMenuState {
   readonly toPos: number
 }
 
+/** How long typing must pause before the page is serialized to Markdown and reported. */
+export const MARKDOWN_SERIALIZE_DEBOUNCE_MS = 350
+
 export function CollaborativeBlockEditor({
   documentId,
   markdown,
@@ -105,10 +108,29 @@ export function CollaborativeBlockEditor({
 
   const containerRef = useRef<HTMLDivElement | null>(null)
   const lastEmittedMarkdownRef = useRef<string>(markdown)
+  const pendingSerializeRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pendingMarkdownRef = useRef<{
+    json: ReturnType<Editor['getJSON']>
+    onChange: typeof onMarkdownChange
+  } | null>(null)
   const seededYdocRef = useRef<Y.Doc | null>(null)
   const onMarkdownChangeRef = useRef(onMarkdownChange)
   const onSelectionChangeRef = useRef(onSelectionChange)
   const onNavigateWikilinkRef = useRef(onNavigateWikilink)
+
+  /** Serializes the page now and reports it if it changed, superseding any pending debounce. Reads
+   * only refs, so every handler may call it without depending on it. */
+  const emitMarkdownNow = (ed: Editor) => {
+    if (pendingSerializeRef.current !== null) clearTimeout(pendingSerializeRef.current)
+    pendingSerializeRef.current = null
+    pendingMarkdownRef.current = null
+    const serialized = tiptapDocToMarkdown(ed.getJSON())
+    if (serialized !== lastEmittedMarkdownRef.current) {
+      lastEmittedMarkdownRef.current = serialized
+      onMarkdownChangeRef.current?.(serialized)
+    }
+  }
+  const emitMarkdownNowRef = useRef(emitMarkdownNow)
 
   useEffect(() => {
     onMarkdownChangeRef.current = onMarkdownChange
@@ -233,6 +255,19 @@ export function CollaborativeBlockEditor({
   useEffect(() => {
     if (editor.isDestroyed) return
 
+    const flushMarkdown = () => {
+      if (pendingSerializeRef.current !== null) clearTimeout(pendingSerializeRef.current)
+      pendingSerializeRef.current = null
+      const pending = pendingMarkdownRef.current
+      pendingMarkdownRef.current = null
+      if (pending === null) return
+      const serialized = tiptapDocToMarkdown(pending.json)
+      if (serialized !== lastEmittedMarkdownRef.current) {
+        lastEmittedMarkdownRef.current = serialized
+        pending.onChange?.(serialized)
+      }
+    }
+
     const syncMenusFromEditorState = (ed: Editor) => {
       if (!ed.isEditable) {
         setSlashMenu(null)
@@ -289,13 +324,13 @@ export function CollaborativeBlockEditor({
       // it; the re-read a refused write offers is exactly where that is reachable, because the
       // editor is rebuilt there around a body the member has just asked for.
       if (!transaction.docChanged) return
-      if (ed.isEditable) {
-        const serialized = tiptapDocToMarkdown(ed.getJSON())
-        if (serialized !== lastEmittedMarkdownRef.current) {
-          lastEmittedMarkdownRef.current = serialized
-          onMarkdownChangeRef.current?.(serialized)
-        }
-      }
+      if (!ed.isEditable) return
+      // Serializing a large page on every keystroke is the editor's hot path; the Markdown is
+      // only needed once typing pauses, so it is computed then — and at once on blur and when
+      // the editor goes away, so nothing typed is ever left unreported.
+      if (pendingSerializeRef.current !== null) clearTimeout(pendingSerializeRef.current)
+      pendingMarkdownRef.current = { json: ed.getJSON(), onChange: onMarkdownChangeRef.current }
+      pendingSerializeRef.current = setTimeout(flushMarkdown, MARKDOWN_SERIALIZE_DEBOUNCE_MS)
     }
 
     const handleSelectionUpdate = ({ editor: ed }: { editor: Editor }) => {
@@ -309,6 +344,7 @@ export function CollaborativeBlockEditor({
     }
 
     const handleBlur = () => {
+      if (pendingSerializeRef.current !== null) flushMarkdown()
       onSelectionChangeRef.current?.(null)
     }
 
@@ -320,6 +356,8 @@ export function CollaborativeBlockEditor({
       editor.off('update', handleUpdate)
       editor.off('selectionUpdate', handleSelectionUpdate)
       editor.off('blur', handleBlur)
+      // Unmount, a mode switch or a new editor: whatever was typed last is reported now.
+      if (pendingSerializeRef.current !== null) flushMarkdown()
     }
   }, [editor])
 
@@ -331,11 +369,7 @@ export function CollaborativeBlockEditor({
     cmd.execute(editor)
     setSlashMenu(null)
     setInTable(editor.isActive('docTable'))
-    const serialized = tiptapDocToMarkdown(editor.getJSON())
-    if (serialized !== lastEmittedMarkdownRef.current) {
-      lastEmittedMarkdownRef.current = serialized
-      onMarkdownChangeRef.current?.(serialized)
-    }
+    emitMarkdownNow(editor)
   }
 
   const applyWikilinkSelection = (page: WikilinkDocumentTarget, range: ActiveWikilinkMenuState) => {
@@ -353,11 +387,7 @@ export function CollaborativeBlockEditor({
       ])
       .run()
     setWikilinkMenu(null)
-    const serialized = tiptapDocToMarkdown(editor.getJSON())
-    if (serialized !== lastEmittedMarkdownRef.current) {
-      lastEmittedMarkdownRef.current = serialized
-      onMarkdownChangeRef.current?.(serialized)
-    }
+    emitMarkdownNow(editor)
   }
 
   const handleContainerKeyDownCapture = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -482,11 +512,9 @@ export function CollaborativeBlockEditor({
     const onRemoteYdocUpdate = (_update: Uint8Array, origin: unknown) => {
       if (editor.isDestroyed) return
       if (origin === REMOTE_SYNC_ORIGIN || origin === OFFLINE_CACHE_ORIGIN) {
-        const serialized = tiptapDocToMarkdown(editor.getJSON())
-        if (serialized !== lastEmittedMarkdownRef.current) {
-          lastEmittedMarkdownRef.current = serialized
-          onMarkdownChangeRef.current?.(serialized)
-        }
+        // A remote change lands on top of whatever local typing is still waiting to be reported:
+        // one serialization covers both.
+        emitMarkdownNowRef.current(editor)
       }
     }
     ydoc.on('update', onRemoteYdocUpdate)

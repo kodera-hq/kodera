@@ -241,7 +241,7 @@ export function StudioNavigation({
                     ? 'espace-canvas-mode-files'
                     : undefined
             }
-            className={`flex min-h-8 items-center gap-2 rounded-md px-2 py-1 text-left text-sm focus-visible:ring focus-visible:outline-hidden narrow:min-h-12 ${entry.selected ? 'bg-c-ok-soft font-bold text-c-ink' : 'text-c-ink-2 hover:bg-c-muted'}`}
+            className={`flex min-h-8 items-center gap-2 rounded-md px-2 py-1 text-left text-sm focus-visible:ring focus-visible:outline-hidden narrow:min-h-12 ${entry.selected ? 'bg-c-accent-soft font-bold text-c-accent-ink' : 'text-c-ink-2 hover:bg-c-muted'}`}
           >
             <StudioGlyph name={entry.icon} />
             <span>{section === 'call-entry' ? copy.audioOnly : copy[entry.name]}</span>

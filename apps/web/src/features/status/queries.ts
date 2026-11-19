@@ -6,6 +6,7 @@
 
 import { useQuery } from '@tanstack/react-query'
 import { offers } from '@/app/capabilities'
+import { organisationTenantQueryKey, tenantStatusQueryKey } from '@/app/queryKeys'
 import { coreApi } from '@/api/client'
 import type { components } from '@/api/schema'
 import { statusPollingIntervalMs } from './polling'
@@ -47,7 +48,7 @@ export async function fetchFirstTenant(organisationId: string): Promise<Tenant |
 
 export function useOrganisationTenant(organisationId: string) {
   return useQuery({
-    queryKey: ['organisation-tenant', organisationId],
+    queryKey: organisationTenantQueryKey(organisationId),
     queryFn: () => fetchFirstTenant(organisationId),
   })
 }
@@ -88,7 +89,7 @@ export async function fetchTenantStatus(tenantId: string): Promise<TenantStatusV
  */
 export function useTenantStatus(tenantId: string | undefined) {
   return useQuery({
-    queryKey: ['tenant-status', tenantId],
+    queryKey: tenantStatusQueryKey(tenantId),
     queryFn: () => fetchTenantStatus(tenantId as string),
     enabled: tenantId !== undefined,
     refetchOnWindowFocus: 'always',

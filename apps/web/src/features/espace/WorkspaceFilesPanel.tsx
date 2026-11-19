@@ -154,7 +154,10 @@ export function WorkspaceFilesPanel({
   )
 
   return (
-    <section aria-labelledby={headingId} className="flex min-h-0 flex-1 flex-col gap-4">
+    <section
+      aria-labelledby={headingId}
+      className="flex min-h-0 flex-1 flex-col gap-4 narrow:overflow-y-auto"
+    >
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="flex min-w-0 flex-col gap-1">
           <h2 id={headingId} className="text-lg font-semibold text-c-ink">
@@ -247,7 +250,7 @@ export function WorkspaceFilesPanel({
         <ul
           aria-label={t('console.workspace.files.label-list')}
           className={cx(
-            'min-h-0 flex-1 overflow-y-auto',
+            'min-h-0 flex-1 overflow-y-auto narrow:flex-none narrow:overflow-visible',
             layout === 'grid'
               ? 'grid auto-rows-min grid-cols-3 content-start gap-3 md:grid-cols-2 lg:grid-cols-3 narrow:grid-cols-1'
               : 'flex flex-col gap-2'

@@ -405,7 +405,9 @@ test('a healthy session stays unobstructed after one minute and keyboard focus',
     expect(await sessionGate(page)).toMatchObject({ ownsFetch: true, failure: null })
     await sessionGate(page, 'armBoth')
     await page.waitForTimeout(61_000)
-    // Keep the interval's actual token response pending through focus: one SDK renewal.
+    // Returning focus renews once, even after a minute without a periodic polling loop.
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+    // Keep the actual token response pending through another focus: one SDK renewal.
     await expect.poll(async () => (await sessionGate(page)).tokenHeld).toBeGreaterThan(0)
     expect(await sessionGate(page)).toMatchObject({
       tokenStarted: 1,

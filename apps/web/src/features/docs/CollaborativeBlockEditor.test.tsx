@@ -1,5 +1,7 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { Editor } from '@tiptap/react'
+import * as Y from 'yjs'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import '@/i18n'
 import { ApiProblem } from '@/api/client'
@@ -14,6 +16,54 @@ afterEach(() => {
 })
 
 describe('CollaborativeBlockEditor and WorkspaceCollaborativeDocs', () => {
+  it.each(['document', 'ydoc', 'unmount', 'blur'])(
+    'flushes pending edits to their original callback on %s changes',
+    async (change) => {
+      const subscriptions = vi.spyOn(Editor.prototype, 'on')
+      const oldChange = vi.fn()
+      const newChange = vi.fn()
+      const firstDoc = new Y.Doc()
+      const nextDoc = new Y.Doc()
+      const props = {
+        documentId: 'original',
+        markdown: 'Original paragraph',
+        onMarkdownChange: oldChange,
+        ...(change === 'ydoc' ? { ydoc: firstDoc } : {}),
+      }
+      const view = render(<CollaborativeBlockEditor {...props} />)
+      const index = subscriptions.mock.calls.findIndex(([event]) => event === 'update')
+      const editor = subscriptions.mock.contexts[index] as Editor
+      act(() => {
+        editor.commands.insertContent('Pending edit ')
+      })
+      expect(oldChange).not.toHaveBeenCalled()
+      if (change === 'unmount') view.unmount()
+      else if (change === 'blur')
+        act(() => {
+          editor.emit('blur', {
+            editor,
+            event: new FocusEvent('blur'),
+            transaction: editor.state.tr,
+          })
+        })
+      else
+        view.rerender(
+          <CollaborativeBlockEditor
+            {...props}
+            documentId={change === 'document' ? 'replacement' : 'original'}
+            {...(change === 'ydoc' ? { ydoc: nextDoc } : {})}
+            onMarkdownChange={newChange}
+          />
+        )
+      await waitFor(() => expect(oldChange).toHaveBeenCalledTimes(1))
+      expect(oldChange.mock.calls[0]?.[0]).toContain('Pending edit')
+      expect(newChange).not.toHaveBeenCalled()
+      view.unmount()
+      firstDoc.destroy()
+      nextDoc.destroy()
+    }
+  )
+
   it('inserts rich blocks via the / slash menu including task lists, callouts, tables, and CSP-safe SVG diagrams', async () => {
     const user = userEvent.setup()
     const onMarkdownChange = vi.fn()

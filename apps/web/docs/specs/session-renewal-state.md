@@ -25,8 +25,10 @@ Run `npm test -- src/auth/sessionExpiry.test.tsx src/auth/oidc.test.ts`.
 - An SDK renewal success closes an open expiry countdown.
 - Extend asks the adapter to renew; pending or failed renewal does not claim
   success or hide the warning. A missing/expired token requires sign-in again.
-- Focus and the visible-tab periodic check request real renewal through the
-  adapter; concurrent explicit requests share one SDK operation.
+- Focus and visibility return request real renewal through the adapter, with a
+  two-second cooldown after mount or the last renewal. Paired browser events and
+  concurrent explicit requests share one SDK operation. A single deadline timer
+  waits `max(15 seconds, expiresAt - now - 60 seconds)`; no periodic renewal loop runs.
 - Remaining time comes from the credential's absolute expiry. Delayed timers
   and resumed tabs must not add time to a session or restart its countdown.
 - Logout invalidates outstanding renewal results and callbacks. Neither a
@@ -91,7 +93,7 @@ different person's silent session as `login_required`; `validateSubOnSilentRenew
 is off so that user reaches the adapter, whose issuer and subject check signs out.
 Any other error, including a provider fault answered with an error body such as
 `unknown_error` on HTTP 500, and every network failure, is transient: the token
-keeps its real life and the next focus or periodic check retries.
+keeps its real life and the next focus or deadline check retries.
 
 On a refusal the adapter ends the credential at once, even when the access token
 still has up to two minutes left: `getAccessToken()` returns nothing, the SDK

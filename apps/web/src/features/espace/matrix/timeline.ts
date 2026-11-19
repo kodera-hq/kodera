@@ -218,6 +218,40 @@ export function threadView(
   return replies
 }
 
+/**
+ * A room's main timeline and every one of its threads, from one pass over its events.
+ *
+ * The same as `timelineView` and a `threadView` per root, without re-reading the room for each
+ * root: the relations are collected once and each thread reply is filed under its root as it is
+ * met, so a room of `M` messages and `E` events costs `O(E)` rather than `O(M × E)`.
+ *
+ * @param events the room's events in timeline order, as synced, local echoes last
+ * @param me the signed-in member's Matrix user id
+ * @returns the main timeline, oldest first, and the replies by thread root, oldest first
+ */
+export function roomViews(
+  events: readonly TimelineEvent[],
+  me: string
+): { timeline: MessageView[]; threads: Map<string, MessageView[]> } {
+  const { edits, reactions } = collectRelations(events)
+  const timeline: MessageView[] = []
+  const threads = new Map<string, MessageView[]>()
+  for (const event of events) {
+    if (event.type !== 'm.room.message') continue
+    const rel = relation(event)
+    if (rel?.rel_type === 'm.replace') continue
+    if (rel?.rel_type === 'm.thread') {
+      if (typeof rel.event_id !== 'string') continue
+      let replies = threads.get(rel.event_id)
+      if (replies === undefined) threads.set(rel.event_id, (replies = []))
+      replies.push(toMessageView(event, me, edits, reactions))
+      continue
+    }
+    timeline.push(toMessageView(event, me, edits, reactions))
+  }
+  return { timeline, threads }
+}
+
 /** Who is in an audio room, from the room-access service's state event (design §2.2). */
 export interface Occupancy {
   /** The members in the call, by Matrix user id, each once. */

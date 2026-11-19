@@ -33,9 +33,9 @@ export const THEME_COPY: Record<ThemePreference, { label: MessageKey; hint: Mess
   },
 }
 
-/** The themes a preview draws: « Automatique » shows both a device can ask for. */
+/** The themes a preview draws: « Automatique » shows both a device can ask for — Ciel or true black. */
 export const THEME_PREVIEW: Record<ThemePreference, readonly AppliedTheme[]> = {
-  system: ['ciel', 'ciel-nuit'],
+  system: ['ciel', 'black'],
   ciel: ['ciel'],
   'ciel-nuit': ['ciel-nuit'],
   light: ['light'],

@@ -61,15 +61,14 @@ itself is not the organisation's.
 The delivered design's Réglages › Vous › Apparence pane, its theme cards only.
 
 - **Six cards, one choice**, in this order: « Automatique » (the default), « Ciel », « Ciel nuit »,
-  « Clair », « Sombre », « Noir ». « Automatique » follows the device inside the default family,
-  Ciel (packages/design-tokens/docs/specs/ethereal-sky-glass.md, owner decision B2): « Ciel » on a
-  light device, « Ciel nuit » on a dark one. The Givre themes stay one click away. The mock draws
-  the last three; « Automatique », which follows the device, is an owner-approved deviation from
+  « Clair », « Sombre », « Noir ». « Automatique » follows the device: « Ciel » on a light device
+  and « Noir » (`noir`, rendered as `data-theme="black"`) on a dark one. « Ciel nuit » and the Givre
+  themes stay one click away. The mock draws the last three; « Automatique », which follows the device, is an owner-approved deviation from
   the mock (plan D4), and the two Ciel cards follow the same decision.
 - **A card:** a 56 px preview, the theme's name (13 px, 600) and the mock's hint (`text-xs`, the
   type scale's smallest step). The preview draws the theme's own page strip, surface and primary
   action colour, scoped with `data-theme` on the preview, so it cannot drift from the theme it
-  names; « Automatique »'s preview is half « Ciel », half « Ciel nuit ».
+  names; « Automatique »'s preview is half « Ciel », half « Noir ».
 - **The chosen card** has a 2 px `c-accent-ink` edge and a `c-accent-ink` name; the others a 1 px
   `c-border` edge. The mock draws the chosen edge in `c-action`; `c-accent-ink` follows the
   owner-approved chosen-edge ruling of the plan cards , taken when `action` was
@@ -124,7 +123,7 @@ to this page only; to keep it, allow the site to store data in the browser's set
   `public/theme.js` as a classic script and awaits its successful load/application before
   importing the real main module and calling `boot`. It sets `data-theme` on `html` from the
   stored choice or the device's `prefers-color-scheme`, and follows the device's changes while
-  « Automatique » is chosen, in Ciel: « Ciel » on a light device, « Ciel nuit » on a dark one. The
+  « Automatique » is chosen: « Ciel » on a light device, « Noir » (`black`) on a dark one. The
   browser's own parts (scrollbars, native controls) follow with `color-scheme: dark` in dark,
   black and « Ciel nuit ».
 - **Focus order:** page `h1` → the radio group (one stop, on the checked card) → the warning, when
@@ -140,8 +139,8 @@ to this page only; to keep it, allow the site to store data in the browser's set
 - **Every theme passes axe, contrast included**, on this page and on every launch view
   (`tests/visual/screens.spec.ts`), without rule exclusions. The end-to-end suite runs twice, on a light
   device and on a dark one (`playwright.config.ts`), so every axe check it carries is also a check
-  of « Ciel nuit », the theme a dark device gets by default. The visual baselines choose Givre
-  light explicitly, so they keep guarding the Givre themes now that Ciel is the default. The unit test `tests/unit/e2e-projects.test.ts`
+  of « Noir », the theme a dark device gets by default. The visual baselines choose Givre
+  light explicitly, so they keep guarding the Givre themes with the automatic light and dark defaults. The unit test `tests/unit/e2e-projects.test.ts`
   fails if the dark project is dropped or turned light, if a test runs in one project only, or if
   `npm run test:e2e` or the CI step calling it filters the suite. The chosen state is carried by more than colour
   (edge width and `aria-checked`).
@@ -160,7 +159,7 @@ counting it would be the one request this page makes.
 
 1. **Given** a device set to dark, then to light, then a stored choice of black on a dark device,
    **when** the console loads and the same page is reloaded for each changed preference,
-   **then** `data-theme` is `ciel-nuit`, `ciel`, then `black` while the real main module response is still
+   **then** `data-theme` is `black`, `ciel`, then `black` while the real main module response is still
    withheld; the real theme resource completes before main is requested, and the original main
    response is then continued and the application boots.
    `appearance/boot: applies the selected theme before the real main response, from the choice or the device`
@@ -168,13 +167,13 @@ counting it would be the one request this page makes.
 2. **Given** a device set to dark and no theme chosen,
    **when** the device turns light, the person chooses « Sombre », the device changes twice, and
    the person chooses « Automatique »,
-   **then** the page follows the device (`ciel-nuit`, then `ciel`), holds dark while « Sombre » is
+   **then** the page follows the device (`black`, then `ciel`), holds dark while « Sombre » is
    chosen whatever the device says, and follows the device again once « Automatique » is chosen.
    `appearance/page: follows the device only while Automatique is chosen`
 
 3. **Given** a stored theme the console does not know (`sepia`) on a dark device,
    **when** the page loads,
-   **then** « Automatique » is checked and the page is `ciel-nuit`.
+   **then** « Automatique » is checked and the page is `black`.
    `appearance/page: reads an unknown stored theme as Automatique`
 
 4. **Given** the Apparence page and a light device,

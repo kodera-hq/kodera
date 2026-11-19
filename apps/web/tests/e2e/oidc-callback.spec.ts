@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
 import { signIn } from './support/signIn'
 import { useScenario as selectScenario } from './support/useScenario'
+import { readBootstrapEntry } from './support/mainArtifact'
 
 declare global {
   interface Window {
@@ -55,6 +56,30 @@ async function start(page: Page) {
   })
   return silentFrame(page)
 }
+
+test('silent callback loads only the bootstrap and exchanges its token in the parent', async ({
+  page,
+}) => {
+  const frame = await start(page)
+  const scripts: string[] = []
+  let callbackStarted = false
+  page.on('request', (request) => {
+    if (request.frame() !== frame) return
+    const path = new URL(request.url()).pathname
+    if (request.isNavigationRequest() && path === '/auth/callback') callbackStarted = true
+    if (callbackStarted && request.resourceType() === 'script') scripts.push(path)
+  })
+  await frame
+    .getByRole('button', { name: 'Continuer' })
+    .evaluate((button: HTMLButtonElement) => button.click())
+  await expect.poll(() => frame.isDetached()).toBe(true)
+  expect(scripts).toEqual([await readBootstrapEntry(new URL('../../dist/', import.meta.url))])
+  await expect.poll(() => page.evaluate(() => window.__callbackTokenRequests?.length)).toBe(1)
+  expect(await page.evaluate(() => sessionStorage.getItem('kodera.web.auth.returnTo'))).toBe(
+    '/acme-sa/home?preserve=1'
+  )
+  await expect(page).toHaveURL(/\/acme-sa\/home$/)
+})
 
 test('silent callback renews only the parent and preserves its destination', async ({ page }) => {
   let frame = await start(page)
