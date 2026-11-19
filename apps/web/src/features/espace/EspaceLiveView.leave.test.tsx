@@ -357,6 +357,51 @@ afterEach(() => {
   room.state.value = 'disconnected'
 })
 
+describe('staying in the workspace during a live call (kodera issue 201)', () => {
+  it('keeps the call through resizes across the 768 px breakpoint and channel changes', async () => {
+    let narrow = false
+    const listeners = new Set<() => void>()
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn((query: string) => ({
+        get matches() {
+          return narrow
+        },
+        media: query,
+        addEventListener: (_: string, listener: () => void) => listeners.add(listener),
+        removeEventListener: (_: string, listener: () => void) => listeners.delete(listener),
+      }))
+    )
+    const resize = (next: boolean) => {
+      narrow = next
+      act(() => {
+        for (const listener of [...listeners]) listener()
+      })
+    }
+    const user = userEvent.setup()
+    const router = await mount()
+    await joinCall(user)
+
+    resize(true)
+    resize(false)
+    resize(true)
+    act(
+      () =>
+        void router.navigate({
+          to: '/$org/workspace/$channelId',
+          params: { org: 'acme', channelId: ANNOUNCES },
+        })
+    )
+    await waitFor(() => expect(pathname(router)).toBe(`/acme/workspace/${ANNOUNCES}`))
+    resize(false)
+
+    expect(screen.queryByRole('dialog', { name: 'Quitter l’appel ?' })).toBeNull()
+    expect(screen.getByRole('region', { name: 'Appel en cours' })).toBeVisible()
+    expect(room.connect).toHaveBeenCalledTimes(1)
+    expect(room.disconnect).not.toHaveBeenCalled()
+  })
+})
+
 describe('leaving the workspace during a live call', () => {
   it('asks before another Console page; staying keeps the address and the call', async () => {
     const user = userEvent.setup()

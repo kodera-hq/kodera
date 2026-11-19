@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { occupancyOf, threadView, timelineView, type RawEvent } from './timeline'
+import { occupancyOf, roomViews, threadView, timelineView, type RawEvent } from './timeline'
 
 const ME = '@alice:kodera.test'
 const BOB = '@bob:kodera.test'
@@ -317,4 +317,28 @@ it('exposes attachment names for file browsing without trusting download URLs', 
     timelineView([{ ...file, unsigned: { redacted_because: {} } }], ME)[0]?.attachment
   ).toBeUndefined()
   expect(timelineView([message('$text', 'review.pdf')], ME)[0]?.attachment).toBeUndefined()
+})
+
+describe('a room read in one pass (roomViews)', () => {
+  const reply = (id: string, root: string, body: string, sender = BOB) =>
+    message(id, body, sender, { 'm.relates_to': { rel_type: 'm.thread', event_id: root } })
+
+  it('gives the same timeline and the same threads as the per-root views', () => {
+    const events = [
+      message('$a', 'premier'),
+      message('$b', 'second', BOB),
+      reply('$a1', '$a', 'réponse 1'),
+      reply('$a2', '$a', 'réponse 2', ME),
+      reply('$b1', '$b', 'réponse b'),
+      edit('$a1e', '$a1', 'réponse 1 corrigée', BOB),
+      reaction('$r', '$a2', '👍', BOB),
+      edit('$ae', '$a', 'premier corrigé'),
+    ]
+    const { timeline, threads } = roomViews(events, ME)
+    expect(timeline).toEqual(timelineView(events, ME))
+    expect(threads.get('$a')).toEqual(threadView(events, '$a', ME))
+    expect(threads.get('$b')).toEqual(threadView(events, '$b', ME))
+    expect([...threads.keys()]).toEqual(['$a', '$b'])
+    expect(threads.get('$a')?.map((m) => m.body)).toEqual(['réponse 1 corrigée', 'réponse 2'])
+  })
 })

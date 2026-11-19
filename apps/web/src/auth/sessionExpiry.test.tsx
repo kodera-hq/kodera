@@ -58,7 +58,12 @@ vi.mock('./oidc', () => ({
   },
 }))
 import { AuthProvider, useAuth } from './AuthProvider'
-import { SessionExpiryProvider, useSessionExpiryDialog } from './sessionExpiry'
+import {
+  RENEWAL_LEAD_MS,
+  RENEWAL_RETRY_MS,
+  SessionExpiryProvider,
+  useSessionExpiryDialog,
+} from './sessionExpiry'
 import { onBeforeSignIn } from './beforeSignIn'
 import { authAdapter } from './oidc'
 
@@ -202,14 +207,55 @@ describe('session renewal and expiry', () => {
     expect(screen.getByTestId('expiry')).toHaveTextContent('0')
   })
 
-  it('requests renewal on focus and a visible periodic check', async () => {
+  it('renews on focus only once the credential is due, sharing one renewal', async () => {
+    let finish!: (renewed: boolean) => void
+    state.renew.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+    )
     start()
     await act(async () => {
+      window.dispatchEvent(new Event('focus'))
+      document.dispatchEvent(new Event('visibilitychange'))
       window.dispatchEvent(new Event('focus'))
     })
     expect(state.renew).toHaveBeenCalledTimes(1)
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(60_000)
+      finish(false)
+    })
+    expect(state.renew).toHaveBeenCalledTimes(1)
+  })
+
+  it('never renews on focus or on a schedule while the credential is far from expiry', async () => {
+    state.expiresAt = Date.now() + 3_600_000
+    start()
+    await act(async () => {
+      for (let check = 0; check < 5; check += 1) window.dispatchEvent(new Event('focus'))
+      document.dispatchEvent(new Event('visibilitychange'))
+      await vi.advanceTimersByTimeAsync(60_000 * 10)
+    })
+    expect(state.renew).not.toHaveBeenCalled()
+  })
+
+  it('schedules one renewal for RENEWAL_LEAD_MS before expiry, then retries a failure later', async () => {
+    state.expiresAt = Date.now() + 600_000
+    start()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(600_000 - RENEWAL_LEAD_MS - 1)
+    })
+    expect(state.renew).not.toHaveBeenCalled()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1)
+    })
+    expect(state.renew).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(RENEWAL_RETRY_MS - 1)
+    })
+    expect(state.renew).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1)
     })
     expect(state.renew).toHaveBeenCalledTimes(2)
   })

@@ -43,6 +43,7 @@ import { rootRoute } from './root-route'
 import { surfaceOf } from './railModules'
 import { SessionExpiryDialog } from './SessionExpiryDialog'
 import { Shell } from './Shell'
+import { ORGANISATION_PENDING_MIN_MS, ORGANISATION_PENDING_MS } from './pendingTiming'
 
 type Me = components['schemas']['Me']
 type Membership = Me['organisations'][number]
@@ -69,8 +70,10 @@ export const orgRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '$org',
   pendingComponent: SessionLoading,
-  pendingMs: 0,
-  pendingMinMs: 0,
+  // A layout that resolves within `ORGANISATION_PENDING_MS` paints no loading screen at all, and
+  // one that does paint it keeps it long enough to be read rather than blink.
+  pendingMs: ORGANISATION_PENDING_MS,
+  pendingMinMs: ORGANISATION_PENDING_MIN_MS,
   // Runs before the loader, so an unauthenticated visit never issues the
   // `/me` request at all. A deep link already names the organisation, so it
   // goes straight to sign-in for that realm rather than through the generic
@@ -203,6 +206,23 @@ export const orgRoute = createRoute({
   component: AuthenticatedOrgLayout,
 })
 
+/**
+ * Whether the organisation's protected surface must leave the screen while its loader authority
+ * is stale. A silent renewal for the same sign-in (`generation` unchanged: the adapter accepts a
+ * renewed user only for the same issuer and subject) changes the token's bytes and nothing the
+ * page was drawn for, so it neither hides the shell nor paints the loading screen; the layout
+ * reloads `/me` with the new credential behind the page. A credential that is gone, refused, or
+ * that belongs to another sign-in still conceals everything at once.
+ */
+export function concealsProtectedSurface(state: {
+  authorityMismatch: boolean
+  sameGeneration: boolean
+  hasUsableToken: boolean
+}): boolean {
+  if (!state.authorityMismatch) return false
+  return !(state.sameGeneration && state.hasUsableToken)
+}
+
 function AuthenticatedOrgLayout() {
   const auth = useAuth()
   if (auth.status === 'pending') return <SessionLoading />
@@ -273,6 +293,11 @@ function OrgLayoutContent() {
   const authorityMismatch =
     auth.generation !== meGeneration || auth.credentialGeneration !== meCredentialGeneration
   const hasUsableToken = auth.status === 'ready' && lifetime.hasUsableCredential()
+  const concealed = concealsProtectedSurface({
+    authorityMismatch,
+    sameGeneration: auth.generation === meGeneration,
+    hasUsableToken,
+  })
   const mfaEnrolled = useMfaGuard(me, auth.user?.identity, org)
   const onMfaScreen = pathname === mfaEnrolPath(org)
   useLayoutEffect(() => {
@@ -386,14 +411,14 @@ function OrgLayoutContent() {
     // `min-h-screen` added a screen of empty scroll under the shell's bars.
     return (
       <>
-        {authorityMismatch ? <SessionExpiryDialog /> : null}
+        {concealed ? <SessionExpiryDialog /> : null}
         <div
-          className={authorityMismatch ? undefined : 'contents'}
+          className={concealed ? undefined : 'contents'}
           data-ph-no-capture
-          hidden={authorityMismatch}
-          aria-hidden={authorityMismatch || undefined}
+          hidden={concealed}
+          aria-hidden={concealed || undefined}
         >
-          {authorityMismatch ? null : <SessionExpiryDialog />}
+          {concealed ? null : <SessionExpiryDialog />}
           <main className="flex min-h-screen min-w-0 flex-col overflow-x-auto p-6 narrow:p-4">
             {onMfaScreen ? <Outlet /> : null}
           </main>
@@ -404,7 +429,7 @@ function OrgLayoutContent() {
             redirecting={!onMfaScreen}
           />
         </div>
-        {authorityMismatch && hasUsableToken ? <SessionLoading /> : null}
+        {concealed && hasUsableToken ? <SessionLoading /> : null}
       </>
     )
   }
@@ -424,18 +449,21 @@ function OrgLayoutContent() {
 
   // Keep the subtree mounted so an explicit reauthentication can restore a
   // draft, but remove every protected surface from rendering and the
-  // accessibility tree as soon as its loader authority becomes stale.
+  // accessibility tree as soon as its loader authority becomes stale — unless
+  // the stale part is only the bytes of a token renewed in place for the same
+  // sign-in (`concealsProtectedSurface`): then the page stays on screen, and
+  // the reload of `/me` the effect above starts happens behind it.
   return (
     <>
-      {authorityMismatch ? <SessionExpiryDialog /> : null}
+      {concealed ? <SessionExpiryDialog /> : null}
       <div
-        className={authorityMismatch ? undefined : 'contents'}
+        className={concealed ? undefined : 'contents'}
         data-ph-no-capture
-        hidden={authorityMismatch}
-        aria-hidden={authorityMismatch || undefined}
+        hidden={concealed}
+        aria-hidden={concealed || undefined}
       >
         <Shell
-          sessionExpiry={authorityMismatch ? undefined : <SessionExpiryDialog />}
+          sessionExpiry={concealed ? undefined : <SessionExpiryDialog />}
           org={org}
           organisationId={membership.organisation.id}
           personId={me.id}
@@ -469,7 +497,7 @@ function OrgLayoutContent() {
           announcedByScreen={isOrderStepChange}
         />
       </div>
-      {authorityMismatch && hasUsableToken ? <SessionLoading /> : null}
+      {concealed && hasUsableToken ? <SessionLoading /> : null}
     </>
   )
 }

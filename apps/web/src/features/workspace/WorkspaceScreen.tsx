@@ -226,7 +226,7 @@ function ReadyWorkspace({
 
   return (
     <div className="flex min-h-0 flex-1 narrow:flex-col">
-      <section className="flex min-w-0 flex-1 flex-col gap-4 overflow-y-auto bg-c-surface px-6 py-5 narrow:overflow-visible narrow:bg-transparent narrow:p-0">
+      <section className="flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-y-auto bg-c-surface px-6 py-5 narrow:bg-transparent narrow:p-0">
         <header className="flex items-center gap-3 border-b border-c-border-soft pb-4">
           <div className="flex min-w-0 flex-1 flex-col gap-1">
             {channel === null || channel === undefined ? (

@@ -1516,7 +1516,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
     <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-testid="studio-workspace">
       <div className="flex min-h-0 flex-1 narrow:flex-col">
         {narrow ? (
-          <div className="order-first flex shrink-0 flex-col gap-3 border-b border-c-border-soft pb-3">
+          <div className="order-first flex shrink-0 flex-col gap-2 border-b border-c-border-soft pb-2">
             <div className="flex min-w-0 items-center gap-2">
               <div className="min-w-0 flex-1">
                 <OrganisationHeader name={organisationName} slug={org} />
@@ -1572,14 +1572,14 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
         <section
           ref={channelColumn}
           onKeyDown={columnKeyDown}
-          className="workspace-canvas flex min-w-0 flex-1 flex-col gap-4 overflow-y-auto bg-c-surface px-6 py-5 narrow:overflow-visible narrow:bg-transparent narrow:p-0"
+          className="workspace-canvas flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-y-auto bg-c-surface px-6 py-5 narrow:gap-2 narrow:bg-transparent narrow:p-0"
         >
           <p aria-live="polite" aria-atomic="true" className="sr-only">
             {announcement.count === 0 ? null : (
               <span key={announcement.count}>{announcement.text}</span>
             )}
           </p>
-          <header className="flex items-center gap-3 border-b border-c-border-soft pb-4 narrow:flex-wrap">
+          <header className="flex items-center gap-3 border-b border-c-border-soft pb-4 narrow:flex-wrap narrow:gap-2 narrow:pb-2">
             <div className="flex min-w-0 flex-1 flex-col gap-1 narrow:basis-full">
               {activeChannel === null || activeChannel === undefined ? (
                 <h1

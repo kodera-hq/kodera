@@ -33,6 +33,7 @@ import { beginLazyRouteWait, endLazyRouteWaits } from './lazyRouteWait'
 import { rootRoute } from './root-route'
 import { areaNamesOf } from './routeUnits'
 import type { RouteUnits } from './routeUnits'
+import { ORGANISATION_PENDING_MIN_MS, ORGANISATION_PENDING_MS } from './pendingTiming'
 import { SessionLoading } from './SessionLoading'
 
 /** Routes outside any organisation that are fetched the first time one of their addresses is opened. */
@@ -131,8 +132,8 @@ export function createLazyRouteTree(
     path: '$org',
     // The organisation layout's own pending screen and timing (`./org-route.tsx`).
     pendingComponent: SessionLoading,
-    pendingMs: 0,
-    pendingMinMs: 0,
+    pendingMs: ORGANISATION_PENDING_MS,
+    pendingMinMs: ORGANISATION_PENDING_MIN_MS,
     beforeLoad: ({ location }) => {
       const area = areaOf(location.pathname)
       return grow(

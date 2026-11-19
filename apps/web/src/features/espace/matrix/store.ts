@@ -53,7 +53,7 @@ export { RefreshRefused }
 import {
   occupancyOf,
   threadView,
-  timelineView,
+  roomViews,
   type MessageView,
   type Occupancy,
   type TimelineEvent,
@@ -387,7 +387,7 @@ export class EspaceStore {
   /** Each joined room's pinned events: the same array until the room's pins change. */
   readonly #pins = new Map<string, readonly string[]>()
   readonly #eventsByRoom = new Map<string, TimelineEvent[]>()
-  /** Relations seen before a redaction erased them (see timelineView). */
+  /** Relations seen before a redaction erased them (see `timelineView`, `./timeline.ts`). */
   readonly #relations = new Map<string, Relation>()
   readonly #dirty = new Set<string>()
   readonly #listeners = new Set<() => void>()
@@ -935,7 +935,8 @@ export class EspaceStore {
       const events = this.#events(room)
       this.#eventsByRoom.set(roomId, events)
       this.#histories.set(roomId, this.#historyOf(room))
-      const next = timelineView(events, this.#me)
+      // One pass over the room for its timeline and all its threads (`roomViews`).
+      const { timeline: next, threads: repliesByRoot } = roomViews(events, this.#me)
       const timeline = reuse(this.#timelines.get(roomId), next, (m) => m.key)
       this.#timelines.set(roomId, timeline)
       this.#cached.delete(roomId)
@@ -946,7 +947,7 @@ export class EspaceStore {
       const prevThreads = this.#threads.get(roomId)
       const nextThreads = new Map<string, readonly MessageView[]>()
       for (const msg of next) {
-        const replies = threadView(events, msg.eventId, this.#me)
+        const replies = repliesByRoot.get(msg.eventId) ?? []
         if (replies.length > 0 || prevThreads?.has(msg.eventId)) {
           nextThreads.set(
             msg.eventId,

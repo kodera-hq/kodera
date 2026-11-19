@@ -11,6 +11,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useRouter } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 import { ApiProblem } from '../../api/client'
+import { statusSummaryQueryKey } from '../../app/queryKeys'
 import { isTenantSlug } from '../../api/tenantSlug'
 import { Button } from '../../ui/Button/Button'
 import { InlineAlert } from '../../ui/InlineAlert/InlineAlert'
@@ -184,12 +185,13 @@ export function CreateWorkspace({
   // and the owner is told the workspace exists.
   async function showTenant() {
     setOpening(true)
-    await queryClient.invalidateQueries({ queryKey: ['home'] })
-    const summary = queryClient.getQueryData<{ tenant_id?: string | null }>([
-      'home',
-      'status-summary',
-      organisationId,
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['home'] }),
+      queryClient.invalidateQueries({ queryKey: statusSummaryQueryKey(organisationId) }),
     ])
+    const summary = queryClient.getQueryData<{ tenant_id?: string | null }>(
+      statusSummaryQueryKey(organisationId)
+    )
     const fallback = queryClient.getQueryData<string | null>([
       'home',
       'tenants-fallback',
@@ -234,7 +236,7 @@ export function CreateWorkspace({
         return
       case `${PROBLEM}billing-enabled`:
         // Billing came back on: the home reads the summary again and offers the order.
-        void queryClient.invalidateQueries({ queryKey: ['home', 'status-summary'] })
+        void queryClient.invalidateQueries({ queryKey: statusSummaryQueryKey(organisationId) })
         return
       case `${PROBLEM}invalid-state-transition`:
         setFailure('not-ready')

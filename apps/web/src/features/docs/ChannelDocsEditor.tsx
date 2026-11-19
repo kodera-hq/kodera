@@ -300,7 +300,7 @@ export function ChannelDocsEditor({
                       'min-h-10 rounded-md border pr-3 py-2 text-sm focus-visible:ring',
                       padClass,
                       node.doc.id === current.id
-                        ? 'border-c-border bg-c-ok-soft font-bold text-c-ink'
+                        ? 'border-c-border bg-c-accent-soft font-bold text-c-accent-ink'
                         : 'border-c-border bg-c-surface text-c-ink'
                     )}
                   >

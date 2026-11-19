@@ -348,6 +348,15 @@
    the container's own ground. The default ring is 2.20 : 1 on `inverse` in
    light, and 1.49 / 3.00 / 3.00 on `bad`. */
 @layer utilities {
+  /* One visible screen tall: the height under a phone browser's own bars, which `100vh`
+     overshoots while they show. `100vh` first for a browser without `dvh`. The narrow
+     workspace frame (`Shell.tsx`) wears it, so its timeline scrolls inside and the composer
+     stays at the foot of the screen. */
+  .visible-screen-frame {
+    height: 100vh;
+    height: 100dvh;
+  }
+
   .focus-offset {
     --tw-ring-offset-color: var(--focus-ring-ground);
   }

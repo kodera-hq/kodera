@@ -1,16 +1,7 @@
-import { createRoute } from '@tanstack/react-router'
-import { lazy, Suspense } from 'react'
+import { createRoute, lazyRouteComponent } from '@tanstack/react-router'
 import { z } from '@/validation-policy'
 import { onCommunityHost } from '../../app/communityHost'
 import { rootRoute } from '../../app/root-route'
-import { SessionLoading } from '../../app/SessionLoading'
-import { LoginScreen } from './LoginScreen'
-
-// The Community welcome has no callback tokens or entry state to capture. Fetch
-// its presentation only when this login destination is opened.
-const CommunityWelcome = lazy(() =>
-  import('./CommunityWelcome').then(({ CommunityWelcome }) => ({ default: CommunityWelcome }))
-)
 
 // `/login` and `/login?org={slug}` (docs/specs/00-shell-and-login.md §3):
 // realm discovery, top-level rather than under `/{org}` — there is no
@@ -37,17 +28,8 @@ export const loginRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/login',
   validateSearch: loginSearchSchema,
-  component: LoginRoute,
+  // The sign-in form, its form library and its field components are a chunk of their own: a
+  // signed-in visit, an invitation or a callback never draws them. The router fetches the
+  // chunk while it resolves `/login`, so no fallback is painted in between.
+  component: lazyRouteComponent(() => import('./LoginRoute'), 'LoginRoute'),
 })
-
-function LoginRoute() {
-  const { org, mode } = loginRoute.useSearch()
-  if (import.meta.env.VITE_AUTH_MODE === 'oidc' && shouldRenderCommunityWelcome(org, mode)) {
-    return (
-      <Suspense fallback={<SessionLoading />}>
-        <CommunityWelcome />
-      </Suspense>
-    )
-  }
-  return <LoginScreen {...(org === undefined ? {} : { initialSlug: org })} />
-}

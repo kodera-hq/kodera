@@ -367,6 +367,9 @@ describe('actual source static-serving boundary', { concurrent: false }, () => {
     await mkdir(join(root, 'assets'), { recursive: true })
     await writeFile(join(root, 'index.html'), INDEX)
     await writeFile(join(root, 'llms.txt'), '# Kodera\n')
+    await mkdir(join(root, 'auth'), { recursive: true })
+    await writeFile(join(root, 'auth', 'silent-callback.html'), '<!doctype html><title>t</title>')
+    await writeFile(join(root, 'auth', 'silent-callback.js'), 'void 0\n')
     await mkdir(join(root, 'developer-docs'), { recursive: true })
     await writeFile(join(root, 'developer-docs', 'quickstart.md'), '# Quickstart\n')
     await writeFile(join(root, 'assets', 'app.js'), APP_JS)
@@ -435,6 +438,18 @@ describe('actual source static-serving boundary', { concurrent: false }, () => {
     security(head.headers, "'self'")
     const suffix = await http(port(), '/console/auth/callback/extra')
     security(suffix.headers)
+  })
+
+  it('lets the console frame its static silent-renewal page, and nothing beside it', async () => {
+    const silent = await http(port(), '/console/auth/silent-callback.html?code=synthetic')
+    expect(silent.status).toBe(200)
+    expect(silent.headers['content-type']).toBe('text/html; charset=utf-8')
+    security(silent.headers, "'self'")
+    const script = await http(port(), '/console/auth/silent-callback.js')
+    expect(script.status).toBe(200)
+    security(script.headers)
+    const lookalike = await http(port(), '/console/auth/silent-callback.html/extra')
+    security(lookalike.headers)
   })
 
   it('never derives CSP sources from adversarial Host or forwarding headers', async () => {
@@ -1019,7 +1034,7 @@ describe('actual source static-serving boundary', { concurrent: false }, () => {
 
 // Finite real-source controls. The production file is read and hash-checked only;
 // each executable variant is an owned temporary exact copy, never a fake server.
-const PRISTINE_SHA = '9050d7a6bd3506554eeeea4af83d020ce1dd85716d0b7364145785d1a0877515'
+const PRISTINE_SHA = '6764e77dd25909115c8ae11cb9bc0b1c7e15db406ffe1dbbab83e8f2cc188617'
 type Scenario =
   | 'referrer'
   | 'permissions-policy'

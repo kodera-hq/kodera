@@ -14,7 +14,7 @@ import { TOUCH_TARGET_HEIGHT } from '../touchTarget'
  *
  * States, each carried by more than colour, and each read in the accessible
  * name in the caller's words (« général, non lu, 3 mentions »):
- * - selected: `aria-current="page"`, the `c-ok-soft` fill and
+ * - selected: `aria-current="page"`, the `c-accent-soft` fill and
  *   `c-accent-ink` label, plus a bar at the leading edge and the semibold
  *   weight, so it does not rest on hue;
  * - unread: `c-ink` semibold against the idle `c-ink-2` regular weight;
@@ -55,7 +55,7 @@ const BASE =
 const TONE = {
   idle: 'font-regular text-c-ink-3 hover:bg-c-muted hover:text-c-ink',
   unread: 'font-semibold text-c-ink hover:bg-c-muted',
-  selected: 'bg-c-ok-soft font-bold text-c-ink',
+  selected: 'bg-c-accent-soft font-bold text-c-accent-ink',
 } as const
 
 /** A text channel. Rendered inside an `<li>` it creates itself. */

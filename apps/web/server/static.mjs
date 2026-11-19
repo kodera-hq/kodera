@@ -251,8 +251,13 @@ async function configuration(arguments_) {
   }
 }
 
+// The silent renewal's static landing page (`public/auth/silent-callback.html`): opened in a
+// hidden frame of the console itself, so it is the one other page the console may frame.
+const SILENT_CALLBACK_PATH = '/auth/silent-callback.html'
+
 function headers(config, path) {
   const ordinaryCallback = path === '/auth/callback' && !within(path, config.claimPath)
+  const silentCallback = path === SILENT_CALLBACK_PATH && !within(path, config.claimPath)
   const policy = [
     "default-src 'self'",
     "script-src 'self'",
@@ -294,7 +299,7 @@ function headers(config, path) {
       ...(config.attachmentBase === null ? [] : [config.attachmentBase]),
     ].join(' '),
     `frame-src 'self' ${config.providerOrigin}/realms/`,
-    `frame-ancestors ${ordinaryCallback ? "'self'" : "'none'"}`,
+    `frame-ancestors ${ordinaryCallback || silentCallback ? "'self'" : "'none'"}`,
   ].join('; ')
   return {
     'Referrer-Policy': 'no-referrer',

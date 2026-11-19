@@ -85,7 +85,10 @@ it('shows the expired dialog in place and signs in again to the same realm', asy
     </AuthProvider>
   )
   expect(screen.queryByText('Votre session a expiré')).toBeNull()
-  // The focus check is one of the provider's own renewal triggers.
+  // The focus check is one of the provider's own renewal triggers, once the credential is within
+  // its renewal lead (`RENEWAL_LEAD_MS`): 200 s on, the 300 s token has 100 s left.
+  const later = Date.now() + 200_000
+  vi.spyOn(Date, 'now').mockReturnValue(later)
   await act(async () => {
     fireEvent.focus(window)
     await vi.waitFor(() => expect(authAdapter.getAccessToken()).toBeUndefined())

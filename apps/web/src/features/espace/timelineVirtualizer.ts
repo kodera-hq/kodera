@@ -229,20 +229,41 @@ export class TimelineLayout {
   }
 }
 
+/**
+ * The rows' keys as one array for as long as they are the same keys in the same order. A log's
+ * parent draws a new `keys` array every time it draws; kept as it is, an equal one would read as
+ * new rows, drop the computed tops and measure every drawn row again.
+ */
+export function stableKeys(): (keys: readonly string[]) => readonly string[] {
+  let last: readonly string[] = []
+  return (keys) => {
+    if (keys === last) return last
+    if (keys.length === last.length && keys.every((key, index) => key === last[index])) return last
+    last = keys
+    return keys
+  }
+}
+
 export function useTimelineVirtualizer({
-  keys,
+  keys: drawnKeys,
   estimate,
   scrollRef,
 }: VirtualizerOptions): Virtualizer & { layout: TimelineLayout } {
+  const [intern] = useState(stableKeys)
+  const keys = intern(drawnKeys)
   const [layout] = useState(() => new TimelineLayout(keys, estimate))
   const window = useSyncExternalStore(layout.subscribe, layout.getSnapshot, layout.getSnapshot)
 
-  // Every draw: take the rows drawn, measure them, then draw again if the window moved.
+  // Every draw: the rows drawn and their estimate; the same keys keep the computed tops.
   useLayoutEffect(() => {
     layout.setRows(keys, estimate)
+  })
+  // Measured when the rows or the window drawn change, not on a draw that changes neither. A row
+  // whose content grows in place resizes the list, which the layout observes (`attach`).
+  useLayoutEffect(() => {
     layout.measure()
     layout.redraw(false)
-  })
+  }, [layout, keys, window])
 
   useLayoutEffect(() => layout.attach(scrollRef.current), [layout, scrollRef])
 

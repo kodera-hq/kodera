@@ -1202,7 +1202,7 @@
   "console.shell.appearance.hint-ciel-nuit": "le ciel de nuit, faible luminosité",
   "console.shell.appearance.hint-dark": "faible luminosité, fin de journée",
   "console.shell.appearance.hint-light": "bureau, plein jour",
-  "console.shell.appearance.hint-system": "le ciel clair ou le ciel de nuit, selon le réglage de votre appareil",
+  "console.shell.appearance.hint-system": "le ciel clair ou le noir profond, selon le réglage de votre appareil",
   "console.shell.appearance.label-black": "Noir",
   "console.shell.appearance.label-ciel": "Ciel",
   "console.shell.appearance.label-ciel-nuit": "Ciel nuit",

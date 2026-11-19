@@ -13,8 +13,9 @@ export const THEME_STORAGE_KEY = 'console:theme'
 export const THEME_CHANGE_EVENT = 'console:theme'
 
 /**
- * Every choice, the default first: « Automatique » follows the device inside the Ciel family
- * (owner decision B2), then Ciel's two themes, then the three Givre themes, each one click away.
+ * Every choice, the default first: « Automatique » follows the device — Ciel when it is light, the
+ * neutral true-black theme when it is dark — then Ciel's two themes, then the three Givre themes,
+ * each one click away.
  */
 export const THEME_PREFERENCES: readonly ThemePreference[] = [
   'system',

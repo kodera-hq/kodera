@@ -23,7 +23,7 @@ function Identity({ name, slug }: OrganisationHeaderProps) {
       {/* The trigger names the visible initials once; don't read their node again. */}
       <span
         aria-hidden="true"
-        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-c-ok-soft text-sm font-bold text-c-ink"
+        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-c-accent-soft text-sm font-bold text-c-accent-ink"
       >
         {initialsOf(name)}
       </span>

@@ -120,18 +120,39 @@ export function Shell({
       : 'console.shell.header.action-show-navigation'
   )
 
-  if (narrow) {
-    // A workspace phone tab bar carries the rail places and the way back to the console.
-    const modules = phoneTabBarOf(surface) === 'modules'
-    const organisationSwitch: OrganisationSwitch | undefined =
-      memberships === undefined || onSwitchOrganisation === undefined
-        ? undefined
-        : { memberships, onSwitch: onSwitchOrganisation, staff }
-    return (
-      <OrganisationSwitchContext.Provider value={organisationSwitch}>
-        <div className="flex min-h-screen flex-col">
-          {settings}
-          <SkipToContentLink />
+  // One tree for every layout (kodera issue 201): each slot below keeps its place whatever the
+  // viewport or the surface, and a layout fills it or leaves it empty. `<main>` and the page in it
+  // (`children`, the router's `<Outlet />`) therefore keep the same React path across the 768 px
+  // breakpoint and across Console ↔ workspace, so crossing either never unmounts the page —
+  // and never ends the call the workspace view owns.
+  const workspace = surface === 'workspace'
+  // The narrow frame and the workspace have no console sidebar: their own headers carry the
+  // organisation switch (`organisationSwitch.ts`).
+  const organisationSwitch: OrganisationSwitch | undefined =
+    (narrow || workspace) && memberships !== undefined && onSwitchOrganisation !== undefined
+      ? { memberships, onSwitch: onSwitchOrganisation, staff }
+      : undefined
+  // A workspace phone tab bar carries the rail places and the way back to the console.
+  const narrowModules = phoneTabBarOf(surface) === 'modules'
+  const consoleFrame = !narrow && !workspace
+
+  return (
+    <OrganisationSwitchContext.Provider value={organisationSwitch}>
+      {/* A phone's workspace is one screen tall too (`visible-screen-frame`, the visible height under a
+          browser's own bars): its timeline scrolls inside, and the composer stays at the foot
+          of the screen rather than below the whole history (kodera issue 216, 390 × 844). */}
+      <div
+        className={
+          narrow
+            ? workspace
+              ? 'flex visible-screen-frame flex-col overflow-hidden'
+              : 'flex min-h-screen flex-col'
+            : 'flex min-h-screen'
+        }
+      >
+        {settings}
+        <SkipToContentLink />
+        {narrow ? (
           <NarrowTopBar
             org={org}
             organisation={organisation}
@@ -141,151 +162,118 @@ export function Shell({
             user={user}
             onSignOut={onSignOut}
           />
-          {modules ? (
+        ) : (
+          <ModuleRail
+            org={org}
+            organisationId={organisationId}
+            organisationName={organisation.name}
+            user={user}
+            surface={surface}
+            role={role}
+          />
+        )}
+        {narrow ? (
+          narrowModules ? (
             <NarrowModuleBar org={org} organisationId={organisationId} />
           ) : (
             <NarrowTabBar org={org} role={role} />
-          )}
-          {/* `clear-of-bars` (src/index.css): a control reached with Tab here
-            scrolls clear of both bars. */}
-          <div className="clear-of-bars flex min-w-0 flex-1 flex-col">
-            <IncidentBannerClaimProvider>
-              {sessionExpiry}
-              <DemoDisclosure org={org} surface={surface} />
-              <StatusBanner
-                organisationId={organisationId}
-                org={org}
-                role={role}
-                className="px-4 pt-4 empty:hidden"
-              />
-              {/* 16 px on every side (the mock's mobile gutter), one column. */}
-              <main
-                id={MAIN_CONTENT_ID}
-                tabIndex={-1}
-                className={`flex w-full min-w-0 flex-1 flex-col gap-6 p-4 ${MAIN_CONTENT_FOCUS}`}
-              >
-                {children}
-              </main>
-            </IncidentBannerClaimProvider>
+          )
+        ) : null}
+        {consoleFrame ? (
+          <div id="console-sidebar" hidden={!sidebarVisible}>
+            <Sidebar
+              org={org}
+              organisation={organisation}
+              {...(organisationMark === undefined ? {} : { organisationMark })}
+              {...(memberships === undefined ? {} : { memberships })}
+              {...(onSwitchOrganisation === undefined ? {} : { onSwitchOrganisation })}
+              user={user}
+              role={role}
+              onSignOut={onSignOut}
+              {...(onOpenAccountPlace === undefined ? {} : { onOpenAccountPlace })}
+            />
           </div>
-        </div>
-      </OrganisationSwitchContext.Provider>
-    )
-  }
-
-  const rail = (
-    <ModuleRail
-      org={org}
-      organisationId={organisationId}
-      organisationName={organisation.name}
-      user={user}
-      surface={surface}
-      role={role}
-    />
-  )
-
-  if (surface === 'workspace') {
-    // One screen tall: the workspace scrolls inside its own panes, so its channel list and its
-    // conversation stay in view together. The banner slot is kept — an offline or session
-    // notice concerns this surface as much as the console. No console sidebar here, so the
-    // workspace's own header carries the organisation switch (`organisationSwitch.ts`).
-    const organisationSwitch: OrganisationSwitch | undefined =
-      memberships === undefined || onSwitchOrganisation === undefined
-        ? undefined
-        : { memberships, onSwitch: onSwitchOrganisation, staff }
-    return (
-      <OrganisationSwitchContext.Provider value={organisationSwitch}>
-        <div className="flex min-h-screen">
-          {settings}
-          <SkipToContentLink />
-          {rail}
-          <div className="flex h-screen min-w-0 flex-1 flex-col">
-            <IncidentBannerClaimProvider>
-              {sessionExpiry}
-              <DemoDisclosure org={org} surface={surface} />
-              <StatusBanner organisationId={organisationId} org={org} role={role} />
-              <main
-                id={MAIN_CONTENT_ID}
-                tabIndex={-1}
-                className={`flex min-h-0 w-full flex-1 flex-col ${MAIN_CONTENT_FOCUS}`}
-              >
-                {children}
-              </main>
-            </IncidentBannerClaimProvider>
-          </div>
-        </div>
-      </OrganisationSwitchContext.Provider>
-    )
-  }
-
-  return (
-    <div className="flex min-h-screen">
-      {settings}
-      <SkipToContentLink />
-      {rail}
-      <div id="console-sidebar" hidden={!sidebarVisible}>
-        <Sidebar
-          org={org}
-          organisation={organisation}
-          {...(organisationMark === undefined ? {} : { organisationMark })}
-          {...(memberships === undefined ? {} : { memberships })}
-          {...(onSwitchOrganisation === undefined ? {} : { onSwitchOrganisation })}
-          user={user}
-          role={role}
-          onSignOut={onSignOut}
-          {...(onOpenAccountPlace === undefined ? {} : { onOpenAccountPlace })}
-        />
-      </div>
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header
-          aria-label={t('console.shell.header.a11y-label')}
-          className="material-bar flex h-shell-header-height shrink-0 items-center gap-3 border-b border-c-border-soft px-6"
+        ) : null}
+        {/* Narrow: `clear-of-bars` (src/index.css), so a control reached with Tab scrolls clear
+            of both bars. Workspace: one screen tall, the workspace scrolls inside its own panes
+            so its channel list and its conversation stay in view together. */}
+        <div
+          className={
+            narrow
+              ? `clear-of-bars flex min-w-0 flex-1 flex-col${workspace ? ' min-h-0' : ''}`
+              : workspace
+                ? 'flex h-screen min-w-0 flex-1 flex-col'
+                : 'flex min-w-0 flex-1 flex-col'
+          }
         >
-          <Tooltip content={toggleName} side="bottom" names>
-            <Button
-              variant="tertiary"
-              size="sm"
-              aria-label={toggleName}
-              aria-controls="console-sidebar"
-              aria-expanded={sidebarVisible}
-              onClick={() => setSidebarVisible((visible) => !visible)}
+          {consoleFrame ? (
+            <header
+              aria-label={t('console.shell.header.a11y-label')}
+              className="material-bar flex h-shell-header-height shrink-0 items-center gap-3 border-b border-c-border-soft px-6"
             >
-              <svg
-                aria-hidden="true"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                className="h-4 w-4"
-              >
-                <rect x="3" y="4" width="18" height="16" rx="2" />
-                <path d="M9 4v16" />
-              </svg>
-            </Button>
-          </Tooltip>
-          <p className="min-w-0 flex-1 truncate text-md font-semibold text-c-ink">
-            {t(contentTitleKey)}
-          </p>
-          <HelpLink org={org} variant="tertiary" size="sm">
-            {t('console.shell.nav.title-help')}
-          </HelpLink>
-        </header>
-        <IncidentBannerClaimProvider>
-          {/* Status banner slot (§4.5): one slot, at most one banner, chosen by
-              offline → session-expiring → incident → dunning → capacity →
-              maintenance precedence (`src/app/bannerPrecedence.ts`). */}
-          {sessionExpiry}
-          <DemoDisclosure org={org} surface={surface} />
-          <StatusBanner organisationId={organisationId} org={org} role={role} />
-          <main
-            id={MAIN_CONTENT_ID}
-            tabIndex={-1}
-            className={`flex w-full flex-1 flex-col gap-6 px-6 py-5 ${MAIN_CONTENT_FOCUS}`}
-          >
-            {children}
-          </main>
-        </IncidentBannerClaimProvider>
+              <Tooltip content={toggleName} side="bottom" names>
+                <Button
+                  variant="tertiary"
+                  size="sm"
+                  aria-label={toggleName}
+                  aria-controls="console-sidebar"
+                  aria-expanded={sidebarVisible}
+                  onClick={() => setSidebarVisible((visible) => !visible)}
+                >
+                  <svg
+                    aria-hidden="true"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    className="h-4 w-4"
+                  >
+                    <rect x="3" y="4" width="18" height="16" rx="2" />
+                    <path d="M9 4v16" />
+                  </svg>
+                </Button>
+              </Tooltip>
+              <p className="min-w-0 flex-1 truncate text-md font-semibold text-c-ink">
+                {t(contentTitleKey)}
+              </p>
+              <HelpLink org={org} variant="tertiary" size="sm">
+                {t('console.shell.nav.title-help')}
+              </HelpLink>
+            </header>
+          ) : null}
+          <IncidentBannerClaimProvider>
+            {/* Status banner slot (§4.5): one slot, at most one banner, chosen by
+                offline → session-expiring → incident → dunning → capacity →
+                maintenance precedence (`src/app/bannerPrecedence.ts`). The banner notice
+                concerns the workspace as much as the console. */}
+            {sessionExpiry}
+            <DemoDisclosure org={org} surface={surface} />
+            <StatusBanner
+              organisationId={organisationId}
+              org={org}
+              role={role}
+              {...(narrow ? { className: 'px-4 pt-4 empty:hidden' } : {})}
+            />
+            {/* Narrow: 16 px on every side (the mock's mobile gutter), one column; the phone's
+                workspace keeps a tighter gutter, its own panes drawing their edges. */}
+            <main
+              id={MAIN_CONTENT_ID}
+              tabIndex={-1}
+              className={`${
+                narrow
+                  ? workspace
+                    ? 'flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-y-auto px-3 pt-2'
+                    : 'flex w-full min-w-0 flex-1 flex-col gap-6 p-4'
+                  : workspace
+                    ? 'flex min-h-0 w-full flex-1 flex-col'
+                    : 'flex w-full flex-1 flex-col gap-6 px-6 py-5'
+              } ${MAIN_CONTENT_FOCUS}`}
+            >
+              {children}
+            </main>
+          </IncidentBannerClaimProvider>
+        </div>
       </div>
-    </div>
+    </OrganisationSwitchContext.Provider>
   )
 }

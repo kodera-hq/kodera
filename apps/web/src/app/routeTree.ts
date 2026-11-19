@@ -23,6 +23,7 @@ import { loginRoute } from '../features/login/routes'
 import { entryCataloguesReady, withNamespaces } from '../i18n'
 import { ORGANISATION_NAMESPACES } from '../i18n/namespaces'
 import { indexRoute } from './index-route'
+import { ORGANISATION_PENDING_MIN_MS, ORGANISATION_PENDING_MS } from './pendingTiming'
 import { createLazyRouteTree } from './lazyRouteTree'
 import type { LazyRoutes } from './lazyRouteTree'
 import { rootRoute } from './root-route'
@@ -336,6 +337,10 @@ export async function createAppRouter(options: { history?: RouterHistory } = {})
     // route below `/$org` — fails with the console's own
     // French screen, drawn inside the shell when the shell is on screen.
     defaultErrorComponent: RouteError,
+    // A route with a pending screen of its own and no timing of its own paints it only past
+    // this long, and then keeps it long enough to read (`./pendingTiming.ts`).
+    defaultPendingMs: ORGANISATION_PENDING_MS,
+    defaultPendingMinMs: ORGANISATION_PENDING_MIN_MS,
     ...(options.history === undefined ? {} : { history: options.history }),
   })
   tree.bind(router)
