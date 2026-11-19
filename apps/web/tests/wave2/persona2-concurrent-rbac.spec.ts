@@ -1,3 +1,4 @@
+import { documentText } from './documents'
 import { finishCleanup } from './cleanup'
 import { expect, test } from '@playwright/test'
 import type { Response } from '@playwright/test'
@@ -119,7 +120,9 @@ test('Persona 2: peer Matrix delivery, concurrent documents, exact preconditions
       )
       for (const actor of [a, b])
         for (const marker of markers)
-          await expect(actor.page.locator(input.editor)).toContainText(marker)
+          await expect
+            .poll(() => actor.page.locator(input.editor).evaluate(documentText))
+            .toContain(marker)
       await expect
         .poll(async () => {
           const response = await a.core(documentPath, values)

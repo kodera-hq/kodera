@@ -5,6 +5,9 @@ import ts from 'typescript'
 import { check as checkFormatting } from 'prettier'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import scrubArtifacts from '../wave2/teardown'
+import { MatrixSyncLifecycle } from '../wave2/sync-lifecycle'
+import { installMatrixNavigationBarrier } from '../wave2/navigation'
+import { documentText } from '../wave2/documents'
 import { finishCleanup } from '../wave2/cleanup'
 import { findMailLink, mailLinkPattern } from '../wave2/mailpit'
 import { enterOrganisation } from '../wave2/login'
@@ -198,6 +201,8 @@ describe('actor homeserver isolation', () => {
       addInitScript: async () => {},
       close: vi.fn(),
       request: { post },
+      route: async () => {},
+      unroute: async () => {},
     }) as unknown as BrowserContext
     const browser = { newContext: async () => context } as unknown as Browser
     const budget = new RateBudget()
@@ -365,6 +370,147 @@ describe('actor homeserver isolation', () => {
     } finally {
       await actor.close()
     }
+  })
+})
+
+describe('Matrix navigation response barrier', () => {
+  it('finishes an in-flight Core body before continuing the full-page SSO navigation', async () => {
+    const emitter = new EventEmitter()
+    let matcher!: (url: URL) => boolean
+    let navigate!: (route: { continue(): Promise<void> }) => Promise<void>
+    const context = Object.assign(emitter, {
+      route: async (match: typeof matcher, callback: typeof navigate) => {
+        matcher = match
+        navigate = callback
+      },
+    }) as unknown as BrowserContext
+    await installMatrixNavigationBarrier(context, API, HS)
+    expect(matcher(new URL(HS + '/_matrix/client/v3/login/sso/redirect?redirectUrl=owned'))).toBe(
+      true
+    )
+    expect(matcher(new URL(WEB + '/_matrix/client/v3/login/sso/redirect'))).toBe(false)
+    const request = { url: () => API + '/api/v1/me' }
+    emitter.emit('request', request)
+    let finishBody!: () => void
+    const body = new Promise<void>((resolve) => {
+      finishBody = resolve
+    })
+    const continued = vi.fn(async () => {})
+    const navigation = navigate({ continue: continued })
+    emitter.emit('response', { request: () => request, body: () => body })
+    await Promise.resolve()
+    expect(continued).not.toHaveBeenCalled()
+    finishBody()
+    await navigation
+    expect(continued).toHaveBeenCalledOnce()
+  })
+  it('refuses a failed body read rather than exempting it', async () => {
+    const emitter = new EventEmitter()
+    let navigate!: (route: { continue(): Promise<void> }) => Promise<void>
+    const context = Object.assign(emitter, {
+      route: async (_match: unknown, callback: typeof navigate) => {
+        navigate = callback
+      },
+    }) as unknown as BrowserContext
+    await installMatrixNavigationBarrier(context, API, HS)
+    const request = { url: () => API + '/api/v1/me' }
+    emitter.emit('request', request)
+    emitter.emit('response', {
+      request: () => request,
+      body: async () => {
+        throw new Error('body refused')
+      },
+    })
+    const continued = vi.fn(async () => {})
+    await expect(navigate({ continue: continued })).rejects.toThrow('WAVE2_CORE_RESPONSE_BARRIER')
+    expect(continued).not.toHaveBeenCalled()
+  })
+})
+
+describe('responsive Matrix sync lifecycle', () => {
+  const setup = async () => {
+    const emitter = new EventEmitter()
+    let nativeAbort!: (source: unknown, url: unknown) => void
+    const context = Object.assign(emitter, {
+      exposeBinding: async (_name: string, callback: typeof nativeAbort) => {
+        nativeAbort = callback
+      },
+      addInitScript: async () => {},
+    }) as unknown as BrowserContext
+    const sync = new MatrixSyncLifecycle(HS)
+    await sync.install(context)
+    const request = (
+      origin = HS,
+      method = 'GET',
+      failure = 'net::ERR_ABORTED',
+      path = '/_matrix/client/v3/sync'
+    ) =>
+      ({
+        url: () => origin + path,
+        method: () => method,
+        failure: () => ({ errorText: failure }),
+      }) as unknown as Request
+    return { emitter, sync, request, nativeAbort }
+  }
+  it('admits only the old native-aborted poll during a resize with a successful replacement', async () => {
+    const { emitter, sync, request, nativeAbort } = await setup()
+    const old = request()
+    emitter.emit('request', old)
+    expect(sync.allowedRequestFailure(old)).toBe(false)
+    await sync.resize(async () => {
+      expect(sync.allowedRequestFailure(old)).toBe(false)
+      nativeAbort({}, old.url())
+      expect(sync.allowedRequestFailure(old)).toBe(true)
+      emitter.emit('requestfailed', old)
+      const replacement = request()
+      emitter.emit('request', replacement)
+      expect(sync.allowedRequestFailure(replacement)).toBe(false)
+      emitter.emit('response', { request: () => replacement, status: () => 200 })
+    })
+    expect(sync.allowedRequestFailure(old)).toBe(false)
+  })
+  it.each([
+    [API, 'GET', 'net::ERR_ABORTED', '/_matrix/client/v3/sync'],
+    [HS, 'POST', 'net::ERR_ABORTED', '/_matrix/client/v3/sync'],
+    [HS, 'GET', 'net::ERR_FAILED', '/_matrix/client/v3/sync'],
+    [HS, 'GET', 'net::ERR_CONNECTION_RESET', '/_matrix/client/v3/sync'],
+    [HS, 'GET', 'net::ERR_ABORTED', '/_matrix/client/v3/messages'],
+  ])('refuses unrelated failures %s/%s/%s/%s', async (origin, method, failure, path) => {
+    const { emitter, sync, request, nativeAbort } = await setup()
+    const failed = request(origin, method, failure, path)
+    emitter.emit('request', failed)
+    await sync.resize(async () => {
+      nativeAbort({}, failed.url())
+      expect(sync.allowedRequestFailure(failed)).toBe(false)
+    })
+  })
+  it('does not reuse native abort evidence after the resize ends', async () => {
+    const { emitter, sync, request, nativeAbort } = await setup()
+    const old = request()
+    emitter.emit('request', old)
+    await sync.resize(async () => {
+      nativeAbort({}, old.url())
+    })
+    await sync.resize(async () => {
+      expect(sync.allowedRequestFailure(old)).toBe(false)
+    })
+  })
+})
+
+describe('collaborative document text', () => {
+  it('joins text split by a peer caret without mutating the live editor', () => {
+    const editor = document.createElement('div')
+    editor.innerHTML =
+      '<p>wave2-pe<span data-collab-caret="peer" aria-hidden="true">Peer name</span>er</p>'
+    expect(documentText(editor)).toBe('wave2-peer')
+    expect(editor.querySelector('[data-collab-caret]')).not.toBeNull()
+    expect(editor.textContent).toContain('Peer name')
+  })
+  it('keeps ordinary document content and refuses a missing marker', () => {
+    const editor = document.createElement('div')
+    editor.innerHTML = '<p>First <strong>document</strong> marker</p><p>Second marker</p>'
+    expect(documentText(editor)).toBe('First document markerSecond marker')
+    expect(documentText(editor)).not.toContain('missing marker')
   })
 })
 

@@ -5,6 +5,7 @@ import { env } from 'node:process'
 import { expect } from '@playwright/test'
 import type { APIResponse, Browser, BrowserContext, Page, Request } from '@playwright/test'
 import { throughKeycloak } from './keycloak'
+import { installMatrixNavigationBarrier } from './navigation'
 import { enterOrganisation } from './login'
 import { enterWorkspace } from './workspace'
 import { finishCleanup } from './cleanup'
@@ -167,7 +168,8 @@ export class Actor {
     readonly ledger: NetworkLedger,
     private readonly recorder: Awaited<ReturnType<typeof recordNetwork>>,
     private readonly origins: ReturnType<typeof targets>,
-    readonly homeserverOrigin: string
+    readonly homeserverOrigin: string,
+    private readonly detachNavigation: () => Promise<void>
   ) {
     this.authorityListener = (request) => {
       if (request.resourceType() === 'font') {
@@ -231,6 +233,11 @@ export class Actor {
       ]
       const ledger = new NetworkLedger(actorInput.network, allowed)
       const recorder = await recordNetwork(context, ledger, instrumentation.allowedRequestFailure)
+      const detachNavigation = await installMatrixNavigationBarrier(
+        context,
+        origins.api,
+        actorHomeserver
+      )
       if (instrumentation.beforePage) await instrumentation.beforePage(context)
       const page = await context.newPage()
       budget.retainPage(alias, page)
@@ -243,7 +250,8 @@ export class Actor {
         ledger,
         recorder,
         origins,
-        actorHomeserver
+        actorHomeserver,
+        detachNavigation
       )
     } catch (error) {
       await context.close().catch(() => {})
@@ -439,7 +447,7 @@ export class Actor {
     this.context.off('request', this.authorityListener)
     await finishCleanup(
       true,
-      [() => this.recorder.dispose(), () => this.context.close()],
+      [() => this.recorder.dispose(), this.detachNavigation, () => this.context.close()],
       'WAVE2_CLEANUP'
     )
   }

@@ -1,6 +1,7 @@
 import type { Page } from '@playwright/test'
 import { expect, test } from '@playwright/test'
 import { Actor, gateWorld, readWave2Input, targets } from './world'
+import { MatrixSyncLifecycle } from './sync-lifecycle'
 import { selectInterfaceLanguage } from './language'
 import { finishCleanup } from './cleanup'
 import { NetworkLedger, recordNetwork } from './oracles/r1-network'
@@ -51,7 +52,11 @@ test('Persona 4: twelve explicit web cells on one retained owner page', async ({
   const input = readWave2Input('PERSONA4')
   await gateWorld(browser, input)
   const budget = new RateBudget()
-  const actor = await Actor.create(browser, 'A', input, budget)
+  const sync = new MatrixSyncLifecycle(input.actors.A.homeserverOrigin ?? input.homeserverOrigin)
+  const actor = await Actor.create(browser, 'A', input, budget, {
+    beforePage: (context) => sync.install(context),
+    allowedRequestFailure: sync.allowedRequestFailure,
+  })
   let succeeded = false
   try {
     await prepareCell(actor.page, {
@@ -100,9 +105,11 @@ test('Persona 4: twelve explicit web cells on one retained owner page', async ({
             width,
             height: 900,
           }
-          await actor.page.setViewportSize({ width, height: 900 })
-          await actor.page.emulateMedia({ colorScheme: theme, reducedMotion: 'reduce' })
-          await settleTimeline(actor.page, input)
+          await sync.resize(async () => {
+            await actor.page.setViewportSize({ width, height: 900 })
+            await actor.page.emulateMedia({ colorScheme: theme, reducedMotion: 'reduce' })
+            await settleTimeline(actor.page, input)
+          })
           await assertCell(actor.page, cell)
           assertLayout(await layoutFaults(actor.page))
           await verifyFonts(
