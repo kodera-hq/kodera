@@ -1865,6 +1865,9 @@ Source: `src/features/espace/EspaceLiveView.tsx`, the call dock and the audio ro
 | `console.workspace.arrivals.action-waved` | You waved at {name} |
 | `console.workspace.directs.rail-title` | Direct messages |
 | `console.workspace.directs.header-offline` | Offline |
+| `console.workspace.directs.welcome-title` | Direct conversation with {name} |
+| `console.workspace.directs.live-empty` | This is the beginning of your direct conversation with @{name}. |
+| `console.workspace.directs.history-start` | Start of your direct conversation with {name} |
 | `console.workspace.notifications.label-mentioned-rooms` | Rooms where you are mentioned |
 | `console.workspace.notifications.mention-room` | {channel} — mentions: {count} |
 | `console.workspace.directs.rail-unread` | {count, plural, one {{count} unread message} many {{count} unread messages} other {{count} unread messages}} |

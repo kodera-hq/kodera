@@ -40,7 +40,7 @@ export function KoderaEmoji({ name }: { name: KoderaEmojiName }) {
 }
 
 /** A plain run with its known Kodera codes drawn as glyphs. */
-function withGlyphs(run: string): ReactNode {
+export function withGlyphs(run: string): ReactNode {
   const segments = koderaSegments(run)
   if (segments.length === 1 && 'text' in segments[0]!) return run
   return segments.map((segment, index) =>

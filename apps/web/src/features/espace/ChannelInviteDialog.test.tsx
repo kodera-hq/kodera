@@ -88,7 +88,10 @@ describe('Matrix channel invitation dialog', () => {
     await user.click(screen.getByTestId('espace-channel-invite-btn'))
     const dialog = screen.getByRole('dialog')
     const web = `${window.location.origin}/community/workspace/${props.channel.id}`
-    await user.click(within(dialog).getByRole('button', { name: 'Copier : Lien Web Kodera' }))
+    const copyWeb = within(dialog).getByRole('button', { name: 'Copier : Lien Web Kodera' })
+    const form = dialog.querySelector('form')!
+    expect(copyWeb.compareDocumentPosition(form) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    await user.click(copyWeb)
     expect(clipboard).toHaveBeenLastCalledWith(web)
     expect(dialog.querySelector('svg[role="img"]')).not.toBeNull()
     const advanced = dialog.querySelector('details')!

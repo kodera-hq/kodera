@@ -16,6 +16,8 @@ import type { ChannelDoc } from '../docs/ChannelDocsEditor'
 import type { ChannelSearchEntry } from '../workspace/ChannelSearch'
 import { OrganisationHeader } from '../workspace/OrganisationHeader'
 import { NotificationCenter } from '../notifications/NotificationCenter'
+import type { Notification } from '../notifications/notificationFeed'
+import { usePassportServices } from '../profile/passportContext'
 import { DirectMessages } from './DirectMessages'
 import { StudioNavigation } from '../workspace/StudioNavigation'
 import { categoryLabel, channelLabel } from '../workspace/workspace'
@@ -91,6 +93,9 @@ interface AudioRoomProps {
  * snapshot then, and nothing otherwise, so a room the member is not in is not drawn again each
  * time someone speaks in another.
  */
+const noAvatarSub = () => () => undefined
+const noAvatarVersion = () => 0
+
 function AudioRoom({
   id,
   channel,
@@ -109,6 +114,8 @@ function AudioRoom({
 }: AudioRoomProps) {
   const { t, i18n } = useTranslation()
   const demoCopy = demoMessages[i18n.resolvedLanguage === 'en' ? 'en' : 'fr']
+  const avatars = usePassportServices()?.avatars
+  useSyncExternalStore(avatars?.subscribe ?? noAvatarSub, avatars?.getVersion ?? noAvatarVersion)
   const roomId = room?.roomId
   const callInThisRoom = useCallback(
     (snapshot: CallSnapshot) =>
@@ -157,14 +164,26 @@ function AudioRoom({
           ? t('console.workspace.audio.label-empty')
           : t('console.workspace.audio.count-people', { count })
       }
-      occupants={occupants.map((occupant) => ({
-        ...occupant,
-        onlineLabel: store.isOnline?.(occupant.id)
-          ? simulation
-            ? demoCopy.presence
-            : t('console.workspace.presence.online')
-          : undefined,
-      }))}
+      occupants={occupants.map((occupant) => {
+        const mxc = room?.avatars?.[occupant.id]
+        const src = mxc === undefined ? undefined : avatars?.get(mxc)
+        return {
+          ...occupant,
+          onlineLabel: store.isOnline?.(occupant.id)
+            ? simulation
+              ? demoCopy.presence
+              : t('console.workspace.presence.online')
+            : undefined,
+          ...(src === undefined
+            ? {}
+            : {
+                src,
+                onAvatarError: () => {
+                  if (mxc !== undefined) avatars?.forget(mxc)
+                },
+              }),
+        }
+      })}
       occupantsLabel={t('console.workspace.audio.label-occupants', { room: label })}
       sharingLabel={t('console.workspace.audio.label-sharing-screen')}
       overflowLabel={(hidden) => t('console.workspace.audio.action-show-others', { count: hidden })}
@@ -243,6 +262,7 @@ export interface ChannelSidebarProps {
   /** A channel's permissions, offered only where `canManageChannel` says the member may. */
   onChannelPermissions?: ((target: ChannelMenuTarget) => void) | undefined
   canManageChannel?: ((channelId: string) => boolean) | undefined
+  onOpenNotification?: ((item: Notification) => void) | undefined
 }
 
 function ChannelSidebarView({
@@ -287,6 +307,7 @@ function ChannelSidebarView({
   onChannelCopyLink,
   onChannelPermissions,
   canManageChannel,
+  onOpenNotification,
 }: ChannelSidebarProps) {
   /** An inbox entry pressed: its channel opens, or its direct conversation when it is one. */
   function openMentionedRoom(roomId: string) {
@@ -478,6 +499,7 @@ function ChannelSidebarView({
                 store={store}
                 onSelectInvite={onSelectDirect}
                 onOpenRoom={openMentionedRoom}
+                onOpenNotification={onOpenNotification}
               />
             )}
           </div>

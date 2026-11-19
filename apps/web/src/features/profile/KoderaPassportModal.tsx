@@ -5,14 +5,14 @@
 // and the card others will see is drawn beside the form as they type. Saving or « Plus tard » both
 // mark it done (`onboarded`), so it is not offered again.
 
-import { useEffect, useId, useState, type FormEvent } from 'react'
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '../../ui/Button/Button'
 import { cx } from '../../ui/cx'
 import { Dialog } from '../../ui/Dialog/Dialog'
 import { ActionIcon } from '../../ui/icons/ActionIcons'
 import { KoderaMark } from '../../ui/icons/KoderaMark'
-import { checkAvatarFile } from './avatarImage'
+import { checkAvatarFile, inspectRasterImage } from './avatarImage'
 import {
   MAX_BIO,
   MAX_TAG,
@@ -101,6 +101,14 @@ export function KoderaPassportModal({
   const [dragging, setDragging] = useState(false)
   const [problem, setProblem] = useState<'name' | 'avatar' | 'save' | null>(null)
   const [saving, setSaving] = useState(false)
+  const pickSerial = useRef(0)
+  const mounted = useRef(true)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
   const chosenUrl = avatar?.previewUrl
   useEffect(() => {
     return () => {
@@ -110,15 +118,34 @@ export function KoderaPassportModal({
   const previewSrc = chosenUrl ?? avatarSrc
   const shownName = name.trim() === '' ? t('console.workspace.passport.preview-name') : name.trim()
 
-  function pick(file: File | undefined) {
+  async function pick(file: File | undefined) {
     if (file === undefined) return
+    const serial = ++pickSerial.current
     if (checkAvatarFile(file) !== null) {
       setProblem('avatar')
       return
     }
+    let bytes: Uint8Array<ArrayBuffer>
+    try {
+      const buffer =
+        typeof file.arrayBuffer === 'function'
+          ? await file.arrayBuffer()
+          : await new Response(file).arrayBuffer()
+      bytes = new Uint8Array(buffer)
+    } catch {
+      if (mounted.current && serial === pickSerial.current) setProblem('avatar')
+      return
+    }
+    if (!mounted.current || serial !== pickSerial.current) return
+    const inspection = inspectRasterImage(bytes)
+    if (!inspection.ok) {
+      setProblem('avatar')
+      return
+    }
     setProblem(null)
+    const verified = new Blob([bytes], { type: inspection.mime })
     const previewUrl =
-      typeof URL.createObjectURL === 'function' ? URL.createObjectURL(file) : undefined
+      typeof URL.createObjectURL === 'function' ? URL.createObjectURL(verified) : undefined
     setAvatar({ file, previewUrl })
   }
 
@@ -196,7 +223,7 @@ export function KoderaPassportModal({
               onDrop={(event) => {
                 event.preventDefault()
                 setDragging(false)
-                pick(event.dataTransfer.files[0])
+                void pick(event.dataTransfer.files[0])
               }}
               className={cx(
                 'flex cursor-pointer items-center gap-3 rounded-md border border-dashed p-3 text-sm text-c-ink-2',
@@ -212,7 +239,7 @@ export function KoderaPassportModal({
                 accept="image/png,image/jpeg,image/webp"
                 className="sr-only"
                 onChange={(event) => {
-                  pick(event.target.files?.[0])
+                  void pick(event.target.files?.[0])
                   event.target.value = ''
                 }}
               />

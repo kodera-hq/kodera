@@ -174,6 +174,26 @@ function InviteForm({
   const webLabel = t('console.workspace.channel-invite.web')
   return (
     <div className="flex max-h-[calc(60vh)] flex-col gap-4 overflow-y-auto">
+      {/* The one link most people need, first: a single click copies it, and the code opens it
+      on a phone. */}
+      <QrPanel
+        value={links.web}
+        size="sm"
+        className="shrink-0"
+        alt={t('console.workspace.channel-invite.qr-alt', { channel: channel.name })}
+        failureMessage={t('console.workspace.channel-invite.qr-unavailable')}
+        code={{
+          ...copyProps,
+          label: webLabel,
+          value: links.web,
+          layout: 'stacked',
+          status: copied === 'web' ? 'copied' : 'idle',
+          copyAccessibleLabel: t('console.workspace.channel-invite.copy', { label: webLabel }),
+          onCopy: () => {
+            void copy('web', links.web)
+          },
+        }}
+      />
       <form
         noValidate
         onSubmit={(event) => {
@@ -221,26 +241,6 @@ function InviteForm({
           )}
         </div>
       </form>
-      {/* The one link most people need, first: a single click copies it, and the code opens it
-      on a phone. */}
-      <QrPanel
-        value={links.web}
-        size="sm"
-        className="shrink-0"
-        alt={t('console.workspace.channel-invite.qr-alt', { channel: channel.name })}
-        failureMessage={t('console.workspace.channel-invite.qr-unavailable')}
-        code={{
-          ...copyProps,
-          label: webLabel,
-          value: links.web,
-          layout: 'stacked',
-          status: copied === 'web' ? 'copied' : 'idle',
-          copyAccessibleLabel: t('console.workspace.channel-invite.copy', { label: webLabel }),
-          onCopy: () => {
-            void copy('web', links.web)
-          },
-        }}
-      />
       <details className="group shrink-0 rounded-md border border-c-border-soft">
         <summary className="cursor-pointer rounded-md px-3 py-2 text-sm font-semibold text-c-ink-2 hover:text-c-ink focus-visible:ring focus-visible:outline-hidden">
           {t('console.workspace.channel-invite.advanced')}

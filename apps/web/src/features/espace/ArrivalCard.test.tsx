@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import '../../i18n'
 import { ArrivalCard, isArrivalsChannel } from './ArrivalCard'
+import { arrivalInserts } from './ArrivalInsert'
 
 describe('isArrivalsChannel', () => {
   it.each(['arrivées', 'Arrivées', '#arrivees', 'arrivals', '👋-welcome', 'Bienvenue'])(
@@ -42,5 +43,20 @@ describe('ArrivalCard', () => {
       <ArrivalCard name="Ana" userId="@ana:example.org" waved={false} disabled onWave={vi.fn()} />
     )
     expect(screen.getByRole('button', { name: 'Saluer Ana' })).toBeDisabled()
+  })
+
+  it('persists waved state from store reactions and tolerates non-finite timestamps', () => {
+    const inserts = arrivalInserts(
+      [
+        { eventId: '$join1', userId: '@miguel:example.org', ts: Number.NaN, waved: true },
+      ],
+      () => 'Miguel Victoria',
+      true,
+      vi.fn(async () => undefined)
+    )
+    render(<>{inserts[0]!.node}</>)
+    const waved = screen.getByRole('button', { name: 'Vous avez salué Miguel Victoria' })
+    expect(waved).toHaveAttribute('aria-pressed', 'true')
+    expect(waved).toBeDisabled()
   })
 })

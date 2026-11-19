@@ -3137,4 +3137,84 @@ describe('confidential room plaintext quarantine', () => {
       fixture.stop()
     }
   })
+
+  it('rejects malformed room_id answers from directory alias lookup and createRoom', async () => {
+    const SERVER = 'acme-sa.kodera.test'
+    const CH = '0b4e7c1a-2f3d-4e5f-8a9b-0c1d2e3f4a5b'
+    const base = vi.fn<typeof fetch>(async (input) => {
+      const url = new URL(String(input instanceof Request ? input.url : input))
+      if (url.pathname.startsWith('/_matrix/client/v3/directory/room/')) {
+        return new Response(JSON.stringify({ room_id: '!../evil/path?x=1' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      if (url.pathname === '/_matrix/client/v3/createRoom') {
+        return new Response(JSON.stringify({ room_id: '!bad/room#frag' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })
+    })
+    const store = createEspaceStore(
+      { baseUrl: HS, userId: `@me:${SERVER}`, deviceId: 'DEV1', accessToken: 'tok' },
+      base
+    )
+    try {
+      await store.resolveChannels([CH])
+      expect(store.getSnapshot().channels.get(CH)).toBeUndefined()
+      await expect(store.openDirect([`@marina:${SERVER}`])).rejects.toThrow('Invalid Matrix room ID')
+    } finally {
+      store.stop()
+    }
+  })
+
+  it('deduplicates repeat member joins in getArrivals, derives waved from own 👋 reaction, and toggles reactions on join events', async () => {
+    const NEWCOMER = '@newcomer:matrix.acme.kodera.io'
+    const joinFirst: SnapshotEvent = {
+      event_id: '$join-1',
+      type: 'm.room.member',
+      state_key: NEWCOMER,
+      sender: NEWCOMER,
+      origin_server_ts: SNAPSHOT_TIME,
+      content: { membership: 'join', displayname: 'Marina' },
+    }
+    const joinProfileUpdate: SnapshotEvent = {
+      event_id: '$join-2',
+      type: 'm.room.member',
+      state_key: NEWCOMER,
+      sender: NEWCOMER,
+      origin_server_ts: SNAPSHOT_TIME + 5_000,
+      content: { membership: 'join', displayname: 'Marina Loiseau' },
+    }
+    const waveReaction: SnapshotEvent = {
+      event_id: '$wave-me',
+      type: 'm.reaction',
+      sender: SNAPSHOT_ME,
+      origin_server_ts: SNAPSHOT_TIME + 6_000,
+      content: { 'm.relates_to': { rel_type: 'm.annotation', event_id: '$join-1', key: '👋' } },
+    }
+    const fixture = snapshotFixture([joinFirst, joinProfileUpdate, waveReaction], {
+      state: [joinProfileUpdate],
+    })
+    try {
+      await fixture.start()
+      const arrivals = fixture.store.getArrivals(SNAPSHOT_ROOM)
+      const newcomerArrivals = arrivals.filter((entry) => entry.userId === NEWCOMER)
+      expect(newcomerArrivals).toHaveLength(1)
+      expect(newcomerArrivals[0]).toMatchObject({
+        eventId: '$join-1',
+        userId: NEWCOMER,
+        waved: true,
+      })
+
+      const client = matrixClientForTests(fixture.store)
+      const redact = vi.spyOn(client, 'redactEvent').mockResolvedValue({ event_id: '$redacted' })
+      await fixture.store.toggleReaction(SNAPSHOT_ROOM, '$join-1', '👋')
+      expect(redact).toHaveBeenCalledWith(SNAPSHOT_ROOM, '$wave-me')
+    } finally {
+      fixture.stop()
+    }
+  })
 })

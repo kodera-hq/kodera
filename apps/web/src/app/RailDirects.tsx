@@ -3,7 +3,7 @@
 // the one on screen. Icons and faces only: each name is the control's accessible name and tooltip.
 
 import { useTranslation } from 'react-i18next'
-import { useAvatarSrc } from '../features/espace/useAvatarSrc'
+import { useAvatarSrc, useForgetAvatar } from '../features/espace/useAvatarSrc'
 import { Avatar } from '../ui/Avatar/Avatar'
 import { cx } from '../ui/cx'
 import { ActionIcon } from '../ui/icons/ActionIcons'
@@ -17,6 +17,7 @@ const RAIL_BUTTON =
 function Face({ direct, directs }: { direct: RailDirect; directs: RailDirects }) {
   const { t } = useTranslation()
   const src = useAvatarSrc(directs.avatars, direct.avatarMxc)
+  const forget = useForgetAvatar(directs.avatars, direct.avatarMxc)
   const label =
     direct.unread > 0
       ? `${direct.name}, ${t('console.workspace.directs.rail-unread', { count: direct.unread })}`
@@ -42,6 +43,7 @@ function Face({ direct, directs }: { direct: RailDirect; directs: RailDirects })
             identity={direct.userId ?? direct.roomId}
             size="lg"
             aria-hidden="true"
+            onError={forget}
             {...(src === undefined ? {} : { src })}
           />
           {direct.unread > 0 ? (

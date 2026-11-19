@@ -22,9 +22,11 @@ export const MAX_DIRECT_PEOPLE = 8
 
 /**
  * A Matrix room id: the classic `!opaque:server` form, or the room version 12 form, where the id is
- * the hash of the create event and carries no server name (`!opaque`, MSC4291).
+ * the URL-safe base64 hash of the create event and carries no server name (`!opaque`, MSC4291).
+ * Rejects path separators, `..`, query/fragment delimiters, control characters, and malformed hosts.
  */
-const ROOM_ID = /^![^\s:]+(?::\S+)?$/u
+const ROOM_ID =
+  /^!(?!.*\.\.)[A-Za-z0-9._=-]+(?::(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*|\[[0-9A-Fa-f:.]+\])(?::[0-9]{1,5})?)?$/u
 
 /** Whether `value` reads as a Matrix room id, of either form. */
 export function isMatrixRoomId(value: unknown): value is string {
@@ -35,8 +37,9 @@ export function isMatrixRoomId(value: unknown): value is string {
 export function directMap(content: unknown): Map<string, string[]> {
   const map = new Map<string, string[]>()
   if (content === null || typeof content !== 'object' || Array.isArray(content)) return map
-  for (const [userId, rooms] of Object.entries(content as Record<string, unknown>)) {
-    if (!isMatrixUserId(userId) || !Array.isArray(rooms)) continue
+  const record = content as Record<string, unknown>
+  for (const [userId, rooms] of Object.entries(record)) {
+    if (!Object.hasOwn(record, userId) || !isMatrixUserId(userId) || !Array.isArray(rooms)) continue
     const roomIds = rooms.filter(isMatrixRoomId)
     if (roomIds.length > 0) map.set(userId, [...new Set(roomIds)])
   }
@@ -82,10 +85,18 @@ export function withDirect(
   roomId: string,
   people: readonly string[]
 ): Record<string, string[]> {
-  const next: Record<string, string[]> = {}
-  for (const [userId, roomIds] of map) next[userId] = [...roomIds]
-  for (const userId of people) {
-    next[userId] = [...new Set([...(next[userId] ?? []), roomId])]
+  const safe: Record<string, string[]> = Object.create(null) as Record<string, string[]>
+  for (const [userId, roomIds] of map) {
+    if (!isMatrixUserId(userId)) continue
+    const valid = roomIds.filter(isMatrixRoomId)
+    if (valid.length > 0) safe[userId] = [...new Set(valid)]
   }
-  return next
+  if (isMatrixRoomId(roomId)) {
+    for (const userId of people) {
+      if (!isMatrixUserId(userId)) continue
+      const existing = Object.hasOwn(safe, userId) ? safe[userId]! : []
+      safe[userId] = [...new Set([...existing, roomId])]
+    }
+  }
+  return { ...safe }
 }

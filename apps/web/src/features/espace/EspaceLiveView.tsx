@@ -42,7 +42,6 @@ import {
 } from './EspaceDraftProvider'
 import { Button } from '../../ui/Button/Button'
 import { Drawer } from '../../ui/Drawer/Drawer'
-import { Avatar } from '../../ui/Avatar/Avatar'
 import { ChannelInviteDialog } from './ChannelInviteDialog'
 import { useLocalProfile } from '../profile/localProfile'
 import { UserProfilePopover, type MemberProfile } from '../profile/UserProfilePopover'
@@ -125,7 +124,10 @@ import { PassportContext, type PassportServices } from '../profile/passportConte
 import { useAvatarSrc } from './useAvatarSrc'
 import { MemberAvatar } from './MemberAvatar'
 import { publishRailDirects } from '../../app/railDirectsStore'
-import type { DirectSummary } from './matrix/directs'
+import { isMatrixRoomId, type DirectSummary } from './matrix/directs'
+import { WORKSPACE_COMMAND_EVENT } from '../workspace/WorkspaceMenu'
+import type { ChannelMenuTarget } from './ChannelContextMenu'
+import type { Notification } from '../notifications/notificationFeed'
 
 // The view's public names stay this module's, wherever their definitions live.
 export { isProximityChannel, mergeTimelineInserts } from './liveViewModel'
@@ -173,6 +175,33 @@ function directChannelOf(roomId: string, name: string): WorkspaceChannel {
     lifecycle: 'active',
     room_state: 'ready',
   } as WorkspaceChannel
+}
+
+function mutedChannelsStorageKey(org: string, workspaceId: string): string {
+  return `kodera.muted-channels.${org}:${workspaceId}`
+}
+
+function readMutedChannels(org: string, workspaceId: string): Set<string> {
+  try {
+    const raw = window.localStorage.getItem(mutedChannelsStorageKey(org, workspaceId))
+    if (!raw) return new Set()
+    const parsed = JSON.parse(raw) as unknown
+    return Array.isArray(parsed)
+      ? new Set(parsed.filter((item): item is string => typeof item === 'string'))
+      : new Set()
+  } catch {
+    return new Set()
+  }
+}
+
+function writeMutedChannels(org: string, workspaceId: string, channels: ReadonlySet<string>): void {
+  try {
+    const key = mutedChannelsStorageKey(org, workspaceId)
+    if (channels.size === 0) window.localStorage.removeItem(key)
+    else window.localStorage.setItem(key, JSON.stringify([...channels]))
+  } catch {
+    // Storage unavailable: keep session mute state in memory.
+  }
 }
 
 // Drawn only once « Fichiers » is chosen: the hub and its aggregation never weigh on opening a
@@ -725,10 +754,11 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
   /** Under the channel's name: its topic, then its member count (p02 « topic · 18 membres »). */
   // A one-to-one conversation's other person: their presence is the header's line, where a
   // channel says its topic and its count.
-  const directPeer =
+  const activeDirect =
     directRoomId === null
       ? undefined
-      : activeStore.getDirects?.().find((item) => item.roomId === directRoomId)?.userIds
+      : activeStore.getDirects?.().find((item) => item.roomId === directRoomId)
+  const directPeer = activeDirect?.userIds
   const directPresence =
     directPeer?.length === 1
       ? activeStore.isOnline?.(directPeer[0]!)
@@ -871,7 +901,10 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
   const railDirectList = useStoreSlice(activeStore.subscribe, activeStore.getSnapshot, railDirectsOf)
   const railAvatars = passportServices?.avatars
   useEffect(() => {
-    if (simulation || activeStore.getDirects === undefined) return
+    if (simulation || activeStore.getDirects === undefined) {
+      publishRailDirects(null)
+      return
+    }
     publishRailDirects({
       items: railDirectList.map((item) => ({
         roomId: item.roomId,
@@ -902,7 +935,12 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
       [activeStore, viewerId]
     )
   )
-  const [passportClosed, setPassportClosed] = useState(false)
+  const [closedPassport, setClosedPassport] = useState<{
+    store: EspaceStoreLike
+    viewerId: string
+  } | null>(null)
+  const passportClosed =
+    closedPassport?.store === activeStore && closedPassport.viewerId === viewerId
   const passportOffered =
     !simulation &&
     !passportClosed &&
@@ -918,10 +956,10 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
     }
     await settingsProfile.setDisplayName(draft.displayName)
     await activeStore.setPassport(draft.passport)
-    setPassportClosed(true)
+    setClosedPassport({ store: activeStore, viewerId })
   })
   const dismissPassport = useStableHandler(() => {
-    setPassportClosed(true)
+    setClosedPassport({ store: activeStore, viewerId })
     void activeStore.setPassport?.({ ...ownPassport, onboarded: true }).catch(() => undefined)
   })
   const roomMembers = useMemo(() => {
@@ -974,6 +1012,36 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
       ...(member.avatarMxc === undefined ? {} : { avatarMxc: member.avatarMxc }),
     }
   }
+  const resolveMember = useStableHandler((userId: string): MemberProfile => {
+    if (userId === viewerId) {
+      return memberProfile({
+        userId: viewerId,
+        name: viewerName,
+        ...(ownMatrixProfile?.avatarUrl === undefined
+          ? {}
+          : { avatarMxc: ownMatrixProfile.avatarUrl }),
+      })
+    }
+    const found =
+      rawRoster.find((member) => member.userId === userId) ??
+      roomMembers?.find((member) => member.userId === userId)
+    if (found !== undefined) return memberProfile(found)
+    return {
+      userId,
+      name: userId,
+      presence: activeStore.isOnline?.(userId) ? 'online' : 'offline',
+      role: profileRoleIn(activeStore, activeRoomId, userId),
+    }
+  })
+  const mentionMembers = useMemo(() => {
+    const source = rawRoster.length > 0 ? rawRoster : roomMembers
+    if (source === undefined) return undefined
+    const unnamed = t('console.workspace.members.unnamed')
+    return source.map(({ userId, name }) => ({
+      userId,
+      name: safeDisplayName(name, userId, unnamed),
+    }))
+  }, [rawRoster, roomMembers, t])
   const connectorChannels = useMemo(
     () =>
       [
@@ -1212,6 +1280,30 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
       : (activeStore.firstShownAfter?.(activeRoomId, readAtOpen.eventId) ?? null)
   useMarkRead({ room: activeRoom, newestKey: timeline.at(-1)?.key, store: activeStore })
 
+  const muteScopeKey = `${org}:${workspace.organisation_id}`
+  const [mutedState, setMutedState] = useState<{
+    scope: string
+    channels: ReadonlySet<string>
+  }>(() => ({
+    scope: muteScopeKey,
+    channels: readMutedChannels(org, workspace.organisation_id),
+  }))
+  if (mutedState.scope !== muteScopeKey) {
+    setMutedState({
+      scope: muteScopeKey,
+      channels: readMutedChannels(org, workspace.organisation_id),
+    })
+  }
+  const mutedChannels = mutedState.channels
+  const isChannelMuted = useCallback((id: string) => mutedChannels.has(id), [mutedChannels])
+  const toggleChannelMute = useStableHandler((target: ChannelMenuTarget) => {
+    const next = new Set(mutedChannels)
+    if (next.has(target.channelId)) next.delete(target.channelId)
+    else next.add(target.channelId)
+    writeMutedChannels(org, workspace.organisation_id, next)
+    setMutedState({ scope: muteScopeKey, channels: next })
+  })
+
   const messageCues = useRef<{ store: EspaceStoreLike; tracker: MessageCueTracker } | null>(null)
   useEffect(() => {
     if (messageCues.current?.store !== activeStore) {
@@ -1221,11 +1313,18 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
       activeStore,
       snapshot,
       (cue, context) => {
+        if (
+          cue === 'msg_channel_unread' &&
+          context.channelId !== undefined &&
+          mutedChannels.has(context.channelId)
+        ) {
+          return
+        }
         soundEngine.play(cue, context)
       },
       activeCanvasMode === 'chat' ? activeRoomId : null
     )
-  }, [activeStore, snapshot, timeline, activeRoomId, activeCanvasMode])
+  }, [activeStore, snapshot, timeline, activeRoomId, activeCanvasMode, mutedChannels])
 
   /** `keepFocus`: the new address leaves the focus where it is (`RouteFocus`), as a click does not. */
   const selectTextChannel = useStableHandler((nextChannelId: string, keepFocus = false) => {
@@ -1307,12 +1406,24 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
   )
   const inviteTrigger = useRef<HTMLButtonElement>(null)
   const canInvite =
+    directRoomId === null &&
     activeRoom !== undefined &&
     activeChannel != null &&
     !focusedDocs &&
     activeCanvasMode === 'chat' &&
     !navigationUnsettled
   const openInvitation = useCallback(() => inviteTrigger.current?.click(), [])
+  const pendingInviteChannelId = useRef<string | null>(null)
+  useEffect(() => {
+    if (
+      pendingInviteChannelId.current !== null &&
+      activeChannel?.id === pendingInviteChannelId.current &&
+      canInvite
+    ) {
+      pendingInviteChannelId.current = null
+      setTimeout(() => inviteTrigger.current?.click(), 0)
+    }
+  }, [activeChannel?.id, canInvite])
 
   const searchEntries = useMemo<ChannelSearchEntry[]>(
     () => [
@@ -1607,6 +1718,113 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
     )
   }
 
+  const copyChannelLink = useStableHandler((target: ChannelMenuTarget) => {
+    const url = `${window.location.origin}/${encodeURIComponent(org)}/workspace/${encodeURIComponent(target.channelId)}`
+    const clipboard = navigator.clipboard
+    if (!clipboard?.writeText) {
+      setAnnouncement(t('console.workspace.channel-menu.announce-copy-failed'))
+      return
+    }
+    void clipboard.writeText(url).then(
+      () =>
+        setAnnouncement(
+          t('console.workspace.channel-menu.announce-copied', { channel: target.label })
+        ),
+      () => setAnnouncement(t('console.workspace.channel-menu.announce-copy-failed'))
+    )
+  })
+  const inviteFromChannelMenu = useStableHandler((target: ChannelMenuTarget) => {
+    if (target.kind === 'audio') {
+      window.dispatchEvent(
+        new CustomEvent(WORKSPACE_COMMAND_EVENT, {
+          detail: { command: 'settings', section: 'members' },
+        })
+      )
+      return
+    }
+    if (target.channelId === activeChannel?.id && canInvite) {
+      setTimeout(() => inviteTrigger.current?.click(), 0)
+      return
+    }
+    pendingInviteChannelId.current = target.channelId
+    selectTextChannel(target.channelId)
+  })
+  const openChannelSettings = useStableHandler((target: ChannelMenuTarget) => {
+    if (target.kind === 'text' && target.channelId !== activeChannel?.id) {
+      selectTextChannel(target.channelId)
+    }
+    window.dispatchEvent(
+      new CustomEvent(WORKSPACE_COMMAND_EVENT, {
+        detail: { command: 'settings', section: target.kind === 'audio' ? 'audio' : 'members' },
+      })
+    )
+  })
+  const canManageChannel = useCallback(
+    (id: string) => {
+      const resolved = snapshot.channels.get(id)
+      if (resolved?.state !== 'resolved') return false
+      const role = profileRoleIn(activeStore, resolved.roomId, viewerId)
+      return role === 'admin' || role === 'maintainer' || role === 'core'
+    },
+    [snapshot.channels, activeStore, viewerId]
+  )
+  const openChannelPermissions = useStableHandler((target: ChannelMenuTarget) => {
+    if (target.kind === 'text' && target.channelId !== activeChannel?.id) {
+      selectTextChannel(target.channelId)
+    }
+    window.dispatchEvent(
+      new CustomEvent(WORKSPACE_COMMAND_EVENT, {
+        detail: { command: 'settings', section: 'moderation' },
+      })
+    )
+  })
+  const openNotification = useStableHandler((item: Notification) => {
+    if (item.kind === 'moderation') {
+      window.dispatchEvent(
+        new CustomEvent(WORKSPACE_COMMAND_EVENT, {
+          detail: { command: 'settings', section: 'moderation' },
+        })
+      )
+      return
+    }
+    if (item.kind === 'document') {
+      const matched = documents.find(
+        (doc) => doc.id === item.resourceId || doc.id === `workspace-page:${item.resourceId}`
+      )
+      if (matched !== undefined && openStudioDocument !== undefined) {
+        openStudioDocument(matched)
+      } else {
+        changeCanvas('docs')
+      }
+      return
+    }
+    if (item.kind === 'invitation') {
+      if (isMatrixRoomId(item.resourceId)) {
+        selectDirect(item.resourceId)
+      } else {
+        window.dispatchEvent(
+          new CustomEvent(WORKSPACE_COMMAND_EVENT, {
+            detail: { command: 'settings', section: 'members' },
+          })
+        )
+      }
+      return
+    }
+    if (textChannelIds.includes(item.resourceId)) {
+      selectTextChannel(item.resourceId)
+      return
+    }
+    for (const [chId, room] of snapshot.channels) {
+      if (room.state === 'resolved' && room.roomId === item.resourceId) {
+        selectTextChannel(chId)
+        return
+      }
+    }
+    if (isMatrixRoomId(item.resourceId)) {
+      selectDirect(item.resourceId)
+    }
+  })
+
   // Leaving the view ends the call, so leaving it asks first. Not while signed out: the call is
   // already left then, and « Se reconnecter » leaves the page on purpose.
   const guardCall = inLiveCall && !signedOut
@@ -1647,6 +1865,14 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
       onJoinAudioRoom={joinAudioRoom}
       onCreateInCategory={onCreateInCategory === undefined ? undefined : createInCategory}
       onChannelContextMenu={onChannelContextMenu}
+      onChannelSettings={openChannelSettings}
+      onChannelToggleMute={toggleChannelMute}
+      isChannelMuted={isChannelMuted}
+      onChannelInvite={inviteFromChannelMenu}
+      onChannelCopyLink={copyChannelLink}
+      onChannelPermissions={openChannelPermissions}
+      canManageChannel={canManageChannel}
+      onOpenNotification={simulation ? undefined : openNotification}
     />
   )
 
@@ -1757,10 +1983,20 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
                     className="flex min-w-0 items-center gap-2 text-lg font-semibold text-c-ink"
                   >
                     {directRoomId !== null ? (
-                      // A direct conversation is a person, not a channel: « @Name », never « # ».
-                      <span aria-hidden="true" className="font-medium text-c-ink-3">
-                        @
-                      </span>
+                      // A direct conversation is a person, not a channel: their avatar and « @Name », never « # ».
+                      <>
+                        <span aria-hidden="true" className="inline-flex shrink-0">
+                          <MemberAvatar
+                            mxc={activeDirect?.avatarMxc}
+                            name={activeChannelName}
+                            identity={activeDirect?.userIds[0] ?? directRoomId}
+                            size="xs"
+                          />
+                        </span>
+                        <span aria-hidden="true" className="font-medium text-c-ink-3">
+                          @
+                        </span>
+                      </>
                     ) : isProximityChannel(activeChannel, proximityChannelIds) ? (
                       <span aria-hidden="true" className="text-c-ink-3">
                         <AntennaIcon />
@@ -1801,8 +2037,9 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
                         {faces.map((face) => {
                           const named = isNamedProfile(cleanText(face.name, 80), face.userId)
                           return (
-                            <Avatar
+                            <MemberAvatar
                               key={face.userId}
+                              mxc={face.avatarMxc}
                               name={safeDisplayName(face.name, face.userId, unnamedMember)}
                               identity={face.userId}
                               onlineLabel={
@@ -1823,7 +2060,8 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
                   </div>
                 ) : null}
               </div>
-              {activeRoom !== undefined &&
+              {directRoomId === null &&
+              activeRoom !== undefined &&
               activeChannel != null &&
               !focusedDocs &&
               activeCanvasMode === 'chat' ? (
@@ -1949,6 +2187,15 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
                   roomId={activeRoomId}
                   channelId={activeChannel.id}
                   channelName={activeChannelName}
+                  direct={
+                    directRoomId === null
+                      ? undefined
+                      : {
+                          userId: activeDirect?.userIds[0] ?? directRoomId,
+                          avatarMxc: activeDirect?.avatarMxc,
+                        }
+                  }
+                  resolveMember={resolveMember}
                   viewerId={viewerId}
                   archived={isArchivedChannel}
                   canWrite={canWrite}
@@ -2161,6 +2408,8 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
                 <MessageRow
                   profileRole={profileRoleIn(activeStore, activeRoomId, threadRootMessage.sender)}
                   onMention={!canWrite || navigationUnsettled ? undefined : mentionMember}
+                  mentionMembers={mentionMembers}
+                  resolveMember={resolveMember}
                   key={threadRootMessage.key}
                   onlineLabel={
                     activeStore.isOnline?.(threadRootMessage.sender)
@@ -2204,6 +2453,8 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
                 <MessageRow
                   profileRole={profileRoleIn(activeStore, activeRoomId, reply.sender)}
                   onMention={!canWrite || navigationUnsettled ? undefined : mentionMember}
+                  mentionMembers={mentionMembers}
+                  resolveMember={resolveMember}
                   key={reply.key}
                   onlineLabel={
                     activeStore.isOnline?.(reply.sender)

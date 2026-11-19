@@ -23,6 +23,7 @@ export interface PassportCardProps {
   name: string
   userId: string
   avatarSrc?: string | undefined
+  onAvatarError?: (() => void) | undefined
   /** The portrait has no name to take initials from: a person glyph stands in. */
   anonymous?: boolean
   /** Said after the name, and drawn as a ring around the portrait; absent when offline. */
@@ -43,6 +44,7 @@ export function PassportCard({
   name,
   userId,
   avatarSrc,
+  onAvatarError,
   anonymous = false,
   presenceLabel,
   accent,
@@ -72,6 +74,7 @@ export function PassportCard({
             size="xl"
             anonymous={anonymous}
             onlineLabel={presenceLabel}
+            {...(onAvatarError === undefined ? {} : { onError: onAvatarError })}
             {...(avatarSrc === undefined ? {} : { src: avatarSrc })}
           />
         </span>

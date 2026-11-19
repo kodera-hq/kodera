@@ -72,6 +72,14 @@ describe('direct conversations', () => {
     expect(isMatrixRoomId('!')).toBe(false)
     expect(isMatrixRoomId('!has space')).toBe(false)
     expect(isMatrixRoomId('!a:')).toBe(false)
+    expect(isMatrixRoomId('!a/b')).toBe(false)
+    expect(isMatrixRoomId('!a..b')).toBe(false)
+    expect(isMatrixRoomId('!a?query=1')).toBe(false)
+    expect(isMatrixRoomId('!a#frag')).toBe(false)
+    expect(isMatrixRoomId('!a\u202eb')).toBe(false)
+    expect(isMatrixRoomId('!a:https://evil.test')).toBe(false)
+    expect(isMatrixRoomId('!a:-bad.host')).toBe(false)
+    expect(isMatrixRoomId(`!${'a'.repeat(255)}`)).toBe(false)
     expect(isMatrixRoomId('#alias:kodera.test')).toBe(false)
     expect(isMatrixRoomId(4)).toBe(false)
     const map = directMap({ [ALICE]: [V12, '!a:kodera.test', V12], [BOB]: ['!bad id'] })
@@ -80,4 +88,23 @@ describe('direct conversations', () => {
     expect(existingDirect(rooms, [ALICE], (id) => id === V12)).toBe(V12)
     expect(withDirect(map, V12, [BOB])[BOB]).toEqual([V12])
   })
+
+  it('guards withDirect against prototype keys and malformed room or user identifiers', () => {
+    const poisoned = new Map<string, readonly string[]>([
+      ['__proto__', ['!evil:kodera.test']],
+      ['toString', ['!evil:kodera.test']],
+      [ALICE, ['!a:kodera.test', '!bad/path']],
+    ])
+    const result = withDirect(poisoned, V12_SAFE, ['__proto__', 'toString', 'constructor', BOB])
+    expect(result).toEqual({
+      [ALICE]: ['!a:kodera.test'],
+      [BOB]: [V12_SAFE],
+    })
+    expect(({} as Record<string, unknown>)['!evil:kodera.test']).toBeUndefined()
+    expect(withDirect(directMap({ [ALICE]: ['!a:kodera.test'] }), '!bad/room', [BOB])).toEqual({
+      [ALICE]: ['!a:kodera.test'],
+    })
+  })
 })
+
+const V12_SAFE = '!yQ3LoeaSVpUe_valid-v12'

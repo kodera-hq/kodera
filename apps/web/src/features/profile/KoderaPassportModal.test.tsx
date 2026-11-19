@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import '../../i18n'
@@ -70,5 +70,35 @@ describe('KoderaPassportModal', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('n’a pas pu être enregistré')
     await user.click(screen.getAllByRole('button', { name: 'Plus tard' })[0]!)
     expect(onDismiss).toHaveBeenCalled()
+  })
+
+  it('rejects disguised SVGs and >4096x4096 decompression bombs before URL.createObjectURL', async () => {
+    const createUrl = vi.spyOn(URL, 'createObjectURL')
+    try {
+      renderModal()
+      const input = document.querySelector('input[type="file"]') as HTMLInputElement
+
+      const disguisedSvg = new File(['<svg xmlns="http://www.w3.org/2000/svg"/>'], 'evil.png', {
+        type: 'image/png',
+      })
+      fireEvent.change(input, { target: { files: [disguisedSvg] } })
+      expect(await screen.findByRole('alert')).toHaveTextContent('PNG, JPEG ou WebP')
+      expect(createUrl).not.toHaveBeenCalled()
+
+      // Craft a minimal PNG header claiming 8192 x 8192 pixels (> 4096 limit).
+      const bomb = new Uint8Array(24)
+      bomb.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0)
+      const view = new DataView(bomb.buffer)
+      view.setUint32(8, 13, false)
+      bomb.set([0x49, 0x48, 0x44, 0x52], 12) // IHDR
+      view.setUint32(16, 8192, false)
+      view.setUint32(20, 8192, false)
+      const bombFile = new File([bomb], 'bomb.png', { type: 'image/png' })
+      fireEvent.change(input, { target: { files: [bombFile] } })
+      await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('PNG, JPEG ou WebP'))
+      expect(createUrl).not.toHaveBeenCalled()
+    } finally {
+      createUrl.mockRestore()
+    }
   })
 })

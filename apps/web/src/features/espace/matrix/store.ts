@@ -47,6 +47,7 @@ import {
   directPeople,
   directRooms,
   existingDirect,
+  isMatrixRoomId,
   withDirect,
   type DirectSummary,
 } from './directs'
@@ -140,10 +141,12 @@ export interface MemberView {
   avatarMxc?: string
 }
 
-/** A newcomer's arrival in a room: their join event, when, and who they are. */
+/** A newcomer's arrival in a room: their join event, when, who they are, and whether waved at. */
 export interface ArrivalView extends MemberView {
   eventId: string
   ts: number
+  /** The signed-in member already sent a 👋 reaction on this join event. */
+  waved?: boolean
 }
 
 export interface InviteView {
@@ -904,23 +907,53 @@ export class EspaceStore {
     const cached = this.#arrivals.get(roomId)
     if (cached?.snapshot === this.#snapshot) return cached.list
     const room = this.#client.getRoom(roomId)
+    const liveEvents = room?.getLiveTimeline().getEvents() ?? []
+    const wavedEventIds = new Set<string>()
+    if (room !== null) {
+      for (const event of [...liveEvents, ...room.getPendingEvents()]) {
+        if (event.getType() !== 'm.reaction' || event.isRedacted()) continue
+        if (event.getSender() !== this.#me) continue
+        const relates = (event.getOriginalContent() as Record<string, unknown>)['m.relates_to'] as
+          | { rel_type?: unknown; event_id?: unknown; key?: unknown }
+          | undefined
+        if (
+          relates?.rel_type === 'm.annotation' &&
+          typeof relates.event_id === 'string' &&
+          relates.key === '👋'
+        ) {
+          wavedEventIds.add(relates.event_id)
+        }
+      }
+    }
+    const seenUsers = new Set<string>()
     const list: ArrivalView[] = []
-    for (const event of room?.getLiveTimeline().getEvents() ?? []) {
+    for (const event of liveEvents) {
       if (event.getType() !== EventType.RoomMember) continue
       const userId = event.getStateKey()
       const eventId = event.getId()
       if (userId === undefined || eventId === undefined || room === null) continue
-      if (userId === this.#me || this.#services.has(userId)) continue
+      if (userId === this.#me || this.#services.has(userId) || seenUsers.has(userId)) continue
       if (event.getContent().membership !== 'join') continue
       if (event.getPrevContent().membership === 'join') continue
-      list.push({ eventId, ts: event.getTs(), ...memberOf(room, userId) })
+      seenUsers.add(userId)
+      const ts = event.getTs()
+      list.push({
+        eventId,
+        ts: Number.isFinite(ts) ? ts : 0,
+        ...(wavedEventIds.has(eventId) ? { waved: true } : {}),
+        ...memberOf(room, userId),
+      })
     }
     const previous = cached?.list
     const same =
       previous !== undefined &&
       previous.length === list.length &&
       previous.every(
-        (item, at) => item.eventId === list[at]!.eventId && item.name === list[at]!.name
+        (item, at) =>
+          item.eventId === list[at]!.eventId &&
+          item.name === list[at]!.name &&
+          item.avatarMxc === list[at]!.avatarMxc &&
+          item.waved === list[at]!.waved
       )
     const next = same ? previous : list
     this.#arrivals.set(roomId, { snapshot: this.#snapshot, list: next })
@@ -1558,10 +1591,9 @@ export class EspaceStore {
     let room: ChannelRoom | null
     try {
       const answer = (await this.#client.getRoomIdForAlias(alias)) as { room_id?: unknown }
-      room =
-        typeof answer.room_id === 'string' && answer.room_id.startsWith('!')
-          ? { state: 'resolved', roomId: answer.room_id }
-          : null
+      room = isMatrixRoomId(answer.room_id)
+        ? { state: 'resolved', roomId: answer.room_id }
+        : null
     } catch (error) {
       // The directory's own 404: anything else (a proxy's 404 page among them) is a failure.
       room =
@@ -1725,6 +1757,23 @@ export class EspaceStore {
     }
   }
 
+  #hasOwnReaction(roomId: string, eventId: string, key: string): boolean {
+    const room = this.#client.getRoom(roomId)
+    if (room === null) return false
+    return [...room.getLiveTimeline().getEvents(), ...room.getPendingEvents()].some((event) => {
+      if (event.getType() !== 'm.reaction' || event.isRedacted()) return false
+      if (event.getSender() !== this.#me) return false
+      const relates = (event.getOriginalContent() as Record<string, unknown>)['m.relates_to'] as
+        | { rel_type?: unknown; event_id?: unknown; key?: unknown }
+        | undefined
+      return (
+        relates?.rel_type === 'm.annotation' &&
+        relates.event_id === eventId &&
+        relates.key === key
+      )
+    })
+  }
+
   async toggleReaction(roomId: string, eventId: string, key: string): Promise<void> {
     const messages = this.#timelines.get(roomId) ?? NONE
     let target = messages.find((m) => m.eventId === eventId)
@@ -1734,8 +1783,11 @@ export class EspaceStore {
         if (target !== undefined) break
       }
     }
-    const existing = target?.reactions.find((r) => r.key === key)
-    if (existing?.mine === true) {
+    const mine =
+      target !== undefined
+        ? target.reactions.some((r) => r.key === key && r.mine)
+        : this.#hasOwnReaction(roomId, eventId, key)
+    if (mine) {
       await this.unreact(roomId, eventId, key)
     } else {
       await this.react(roomId, eventId, key)
@@ -1882,6 +1934,7 @@ export class EspaceStore {
       preset: Preset.PrivateChat,
       visibility: Visibility.Private,
     })
+    if (!isMatrixRoomId(roomId)) throw new Error('Invalid Matrix room ID')
     // Someone invited later reads only what is sent from their invitation on. Nothing has been
     // sent yet, so nobody reads anything before it.
     await this.#client.sendStateEvent(

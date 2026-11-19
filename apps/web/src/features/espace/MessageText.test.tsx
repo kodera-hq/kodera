@@ -2,7 +2,9 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import '../../i18n'
+import { MessageRow } from './MessageRow'
 import { MessageText, linkSegments, mentionSegments, permalinkUser } from './MessageText'
+import type { MessageView } from './matrix/timeline'
 
 describe('the web addresses in a message', () => {
   it('are cut out of the text in order, nothing lost or added', () => {
@@ -187,5 +189,110 @@ describe('the mentions in a message', () => {
     expect(screen.queryByRole('button')).toBeNull()
     expect(screen.queryByRole('link')).toBeNull()
     expect(screen.getByText('@Miguel Victoria')).toHaveAttribute('data-mention', MIGUEL.userId)
+  })
+})
+
+describe('markdown formatting and mention anti-spoofing', () => {
+  it('renders safe markdown links, strikethrough, lists, quotes, bold mentions, and preserves inline code precedence', () => {
+    const open = vi.fn()
+    const { container } = render(
+      <MessageText
+        body={[
+          'Voir [Portail Kodera](https://kodera.io/docs) et [Piège](javascript:alert(1)) et ~~ancien~~',
+          'littéral `https://kodera.io` et `@Miguel Victoria` mais **@Miguel Victoria**',
+          '- premier point',
+          '- second point',
+          '> note citée',
+        ].join('\n')}
+        members={[MIGUEL]}
+        onMentionClick={open}
+      />
+    )
+    const link = screen.getByRole('link', { name: 'Portail Kodera' })
+    expect(link).toHaveAttribute('href', 'https://kodera.io/docs')
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer')
+    expect(screen.queryByRole('link', { name: 'Piège' })).toBeNull()
+    expect(container.textContent).toContain('[Piège](javascript:alert(1))')
+    expect(container.querySelector('del')?.textContent).toBe('ancien')
+    expect(Array.from(container.querySelectorAll('code')).map((el) => el.textContent)).toEqual([
+      'https://kodera.io',
+      '@Miguel Victoria',
+    ])
+    expect(screen.queryByRole('link', { name: 'https://kodera.io' })).toBeNull()
+    const pills = screen.getAllByRole('button', { name: '@Miguel Victoria' })
+    expect(pills).toHaveLength(1)
+    expect(pills[0]!.closest('strong')).not.toBeNull()
+    expect(Array.from(container.querySelectorAll('ul > li')).map((el) => el.textContent)).toEqual([
+      'premier point',
+      'second point',
+    ])
+    expect(container.querySelector('blockquote')?.textContent).toBe('note citée')
+  })
+
+  it('prevents formatted_body mention pills from impersonating room members or forging popover names', async () => {
+    const user = userEvent.setup()
+    const MARINA = { userId: '@marina:kodera.test', name: 'Marina Loiseau' }
+    const ATTACKER = '@mallory:evil.test'
+    const message: MessageView = {
+      key: '$spoof',
+      eventId: '$spoof',
+      sender: '@sender:kodera.test',
+      senderName: 'Expéditeur',
+      body: 'Salut @Marina Loiseau, @Directrice et @bob:kodera.test',
+      mentionPills: [
+        { userId: ATTACKER, label: 'Marina Loiseau' },
+        { userId: ATTACKER, label: 'Directrice' },
+      ],
+      ts: 1_700_000_000_000,
+      delivery: 'sent',
+      edited: false,
+      redacted: false,
+      replyTo: null,
+      reactions: [],
+    }
+    render(
+      <MessageRow
+        profileRole="member"
+        onMention={vi.fn()}
+        message={message}
+        placement="timeline"
+        viewerId="@viewer:kodera.test"
+        archived={false}
+        expanded={false}
+        repliedMessage={undefined}
+        threadReplies={[]}
+        menuContextKey="ctx"
+        mentionMembers={[MARINA]}
+        resolveMember={(userId) =>
+          userId === MARINA.userId
+            ? { userId: MARINA.userId, name: MARINA.name, presence: 'online', role: 'admin' }
+            : { userId, name: userId, presence: 'offline', role: 'member' }
+        }
+        onRetry={vi.fn()}
+        onReaction={vi.fn()}
+        onReply={vi.fn()}
+        onEdit={vi.fn()}
+        onRemove={vi.fn()}
+        onOpenThread={vi.fn()}
+      />
+    )
+
+    // Authoritative Marina cannot be hijacked to @mallory:evil.test.
+    await user.click(screen.getByRole('button', { name: '@Marina Loiseau' }))
+    const marinaDialog = await screen.findByRole('dialog', { name: 'Marina Loiseau' })
+    expect(marinaDialog).toHaveTextContent('@marina:kodera.test')
+    expect(marinaDialog).not.toHaveTextContent(ATTACKER)
+    await user.keyboard('{Escape}')
+
+    // Unknown userId with forged label "Directrice" never shows "Directrice" as authoritative identity.
+    await user.click(screen.getByRole('button', { name: '@Directrice' }))
+    const attackerDialog = await screen.findByRole('dialog', { name: ATTACKER })
+    expect(attackerDialog).toHaveTextContent(ATTACKER)
+    expect(screen.queryByRole('heading', { name: 'Directrice' })).toBeNull()
+    await user.keyboard('{Escape}')
+
+    // Plain-text MXID without formatted_body is also clickable.
+    await user.click(screen.getByRole('button', { name: '@bob:kodera.test' }))
+    expect(await screen.findByRole('dialog', { name: '@bob:kodera.test' })).toBeInTheDocument()
   })
 })

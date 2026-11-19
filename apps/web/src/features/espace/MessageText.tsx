@@ -1,13 +1,14 @@
-import { MarkdownText } from '../messaging/MarkdownText'
+import { InlineMarkdown, MarkdownText } from '../messaging/MarkdownText'
 // A message's text with its web addresses as links (V1 bar M10): http and https only, each
 // opening a new tab with no handle back on this page and no referrer. No preview is fetched.
 // Everything else stays text, which React escapes.
 
-import { useId } from 'react'
+import { Fragment, useId, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { cx } from '../../ui/cx'
-import { EmojiText } from './KoderaEmoji'
+import { withGlyphs } from './KoderaEmoji'
 import { LINK_TEXT } from '../../ui/linkText'
+import { isMatrixUserId } from './roomInvitations'
 
 export type TextSegment = { text: string } | { text: string; href: string }
 
@@ -97,7 +98,7 @@ export function permalinkUser(href: string): string | null {
     return null
   }
   const match = USER_ID.exec(id)
-  return match !== null && match[0] === id ? id : null
+  return match !== null && match[0] === id && isMatrixUserId(id) ? id : null
 }
 
 /**
@@ -177,7 +178,7 @@ function MentionPill({
   )
 }
 
-function MentionedText({
+function MentionedRun({
   text,
   members,
   onMentionClick,
@@ -188,7 +189,7 @@ function MentionedText({
 }) {
   const segments = mentionSegments(text, members)
   if (segments.length === 1 && !('userId' in segments[0]!) && !('room' in segments[0]!))
-    return <EmojiText text={text} />
+    return <>{withGlyphs(text)}</>
   return (
     <>
       {segments.map((segment, index) =>
@@ -202,7 +203,7 @@ function MentionedText({
             onMentionClick={onMentionClick}
           />
         ) : (
-          <EmojiText key={index} text={segment.text} />
+          <Fragment key={index}>{withGlyphs(segment.text)}</Fragment>
         )
       )}
     </>
@@ -220,70 +221,74 @@ export function MessageText({
   /** Makes a member's pill a button; without it the pill is only highlighted text. */
   onMentionClick?: MentionClick | undefined
 }) {
-  return (
-    <MarkdownText
-      body={body}
-      renderText={(text) => (
-        <LinkedText body={text} members={members} onMentionClick={onMentionClick} />
-      )}
-    />
-  )
-}
-
-function LinkedText({
-  body,
-  members,
-  onMentionClick,
-}: {
-  body: string
-  members: readonly MentionMember[] | undefined
-  onMentionClick: MentionClick | undefined
-}) {
   const { t } = useTranslation()
   const newTabId = useId()
-  const segments = linkSegments(body)
-  if (!segments.some((segment) => 'href' in segment))
-    return <MentionedText text={body} members={members} onMentionClick={onMentionClick} />
+  const hasExternalUrl = /https?:\/\/(?!matrix\.to\/#\/(?:@|%40))/iu.test(body)
   const nameOf = (userId: string) => members?.find((member) => member.userId === userId)?.name
-  return (
-    <>
-      {segments.map((segment, index) => {
-        const user = 'href' in segment ? permalinkUser(segment.href) : null
-        if (user !== null)
-          return (
-            <MentionPill
+  const renderLink = (href: string, label: ReactNode) => {
+    const user = permalinkUser(href)
+    if (user !== null) {
+      return (
+        <MentionPill
+          text={`@${nameOf(user)?.trim() || user}`}
+          userId={user}
+          onMentionClick={onMentionClick}
+        />
+      )
+    }
+    return (
+      <a
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-describedby={newTabId}
+        className={cx(
+          LINK_TEXT.inline,
+          'rounded-sm focus-visible:ring focus-visible:outline-hidden'
+        )}
+      >
+        {label}
+      </a>
+    )
+  }
+  const renderPlainRun = (run: string) => {
+    const segments = linkSegments(run)
+    if (!segments.some((segment) => 'href' in segment))
+      return <MentionedRun text={run} members={members} onMentionClick={onMentionClick} />
+    return (
+      <>
+        {segments.map((segment, index) =>
+          'href' in segment ? (
+            <Fragment key={index}>{renderLink(segment.href, segment.text)}</Fragment>
+          ) : (
+            <MentionedRun
               key={index}
-              text={`@${nameOf(user)?.trim() || user}`}
-              userId={user}
+              text={segment.text}
+              members={members}
               onMentionClick={onMentionClick}
             />
           )
-        return 'href' in segment ? (
-          <a
-            key={index}
-            href={segment.href}
-            target="_blank"
-            rel="noopener noreferrer"
-            aria-describedby={newTabId}
-            className={cx(
-              LINK_TEXT.inline,
-              'rounded-sm focus-visible:ring focus-visible:outline-hidden'
-            )}
-          >
-            {segment.text}
-          </a>
-        ) : (
-          <MentionedText
-            key={index}
-            text={segment.text}
-            members={members}
-            onMentionClick={onMentionClick}
+        )}
+      </>
+    )
+  }
+  return (
+    <>
+      <MarkdownText
+        body={body}
+        renderText={(blockText) => (
+          <InlineMarkdown
+            text={blockText}
+            renderLink={renderLink}
+            renderText={renderPlainRun}
           />
-        )
-      })}
-      <span id={newTabId} className="sr-only">
-        {t('console.common.a11y-opens-new-tab')}
-      </span>
+        )}
+      />
+      {hasExternalUrl ? (
+        <span id={newTabId} className="sr-only">
+          {t('console.common.a11y-opens-new-tab')}
+        </span>
+      ) : null}
     </>
   )
 }

@@ -12,7 +12,7 @@ import { CloseIcon } from '../../ui/icons/Close'
 import { MentionIcon, SendIcon } from '../../ui/icons/Composer'
 import { Tooltip } from '../../ui/Tooltip/Tooltip'
 import { TOUCH_TARGET } from '../../ui/touchTarget'
-import { useAvatarSrc } from '../espace/useAvatarSrc'
+import { useAvatarSrc, useForgetAvatar } from '../espace/useAvatarSrc'
 import { useStoreSlice } from '../espace/useStoreSlice'
 import type { ProfilePresence } from './localProfile'
 import { EMPTY_PASSPORT, type Passport } from './passport'
@@ -150,6 +150,7 @@ function PassportContent({
   const services = usePassportServices()
   const passport = usePassport(services, member.userId)
   const avatarSrc = useAvatarSrc(services?.avatars, member.avatarMxc)
+  const forgetAvatar = useForgetAvatar(services?.avatars, member.avatarMxc)
   const [feedback, setFeedback] = useState('')
   const bio = member.status || passport.bio
   return (
@@ -157,6 +158,7 @@ function PassportContent({
       name={member.name}
       userId={member.userId}
       avatarSrc={avatarSrc}
+      onAvatarError={forgetAvatar}
       presenceLabel={member.presence === 'offline' ? undefined : copy[member.presence]}
       accent={passport.accent}
       role={copy[member.role]}

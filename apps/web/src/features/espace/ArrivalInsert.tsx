@@ -21,8 +21,10 @@ function Arrival({
   onWave: (eventId: string) => Promise<void>
 }) {
   const { i18n } = useTranslation()
-  const [waved, setWaved] = useState(false)
-  const iso = new Date(arrival.ts).toISOString()
+  const [optimisticWave, setOptimisticWave] = useState(false)
+  const waved = arrival.waved === true || optimisticWave
+  const validTs = Number.isFinite(arrival.ts) && arrival.ts > 0
+  const iso = validTs ? new Date(arrival.ts).toISOString() : undefined
   return (
     <ArrivalCard
       name={name}
@@ -31,12 +33,15 @@ function Arrival({
         <MemberAvatar mxc={arrival.avatarMxc} name={name} identity={arrival.userId} size="lg" />
       }
       dateTime={iso}
-      timeLabel={formatTime(iso, i18n.resolvedLanguage === 'en' ? 'en' : 'fr')}
+      timeLabel={
+        iso === undefined ? undefined : formatTime(iso, i18n.resolvedLanguage === 'en' ? 'en' : 'fr')
+      }
       waved={waved}
       disabled={!canReact}
       onWave={() => {
-        setWaved(true)
-        onWave(arrival.eventId).catch(() => setWaved(false))
+        if (waved) return
+        setOptimisticWave(true)
+        onWave(arrival.eventId).catch(() => setOptimisticWave(false))
       }}
     />
   )

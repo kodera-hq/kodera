@@ -4,11 +4,13 @@
 // it points at, a redaction empties a message, reactions count per key, a thread reply stays in
 // its thread.
 
+import { cleanText } from '../../../ui/safeText'
 import {
   attachmentRefsOf,
   attachmentsFallback,
   type AttachmentRef,
 } from '../../messaging/attachments/attachmentRefs'
+import { isMatrixUserId } from '../roomInvitations'
 
 /** A Matrix event as the client-server API delivers it, the part Espace reads. */
 export interface RawEvent {
@@ -135,8 +137,8 @@ export function mentionPillsOf(content: Record<string, unknown>): MentionPill[] 
     } catch {
       continue
     }
-    if (!/^@[^\s:]+:\S+$/u.test(userId) || userId.length > 255) continue
-    const label = decodeEntities(match[2]!).trim()
+    if (!isMatrixUserId(userId)) continue
+    const label = cleanText(decodeEntities(match[2]!).trim(), 80)
     if (label !== '' && !pills.has(`${userId}\n${label}`))
       pills.set(`${userId}\n${label}`, { userId, label })
   }

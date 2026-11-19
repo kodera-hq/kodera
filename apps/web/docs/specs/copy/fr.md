@@ -1879,6 +1879,9 @@ Source: `src/features/espace/EspaceLiveView.tsx`, the call dock and the audio ro
 | `console.workspace.arrivals.action-waved` | Vous avez salué {name} |
 | `console.workspace.directs.rail-title` | Messages privés |
 | `console.workspace.directs.header-offline` | Hors ligne |
+| `console.workspace.directs.welcome-title` | Conversation privée avec {name} |
+| `console.workspace.directs.live-empty` | Ceci est le début de votre conversation privée avec @{name}. |
+| `console.workspace.directs.history-start` | Début de votre conversation privée avec {name} |
 | `console.workspace.notifications.label-mentioned-rooms` | Salons où vous êtes mentionné |
 | `console.workspace.notifications.mention-room` | {channel} — mentions : {count} |
 | `console.workspace.directs.rail-unread` | {count, plural, one {{count} message non lu} many {{count} messages non lus} other {{count} messages non lus}} |
