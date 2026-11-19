@@ -1,4 +1,4 @@
-import { test } from '@playwright/test'
+import { expect, test } from '@playwright/test'
 import { throughKeycloak } from './keycloak'
 import { linkFromMail, mailLinkPattern } from './mailpit'
 import { exactOrigin, guard } from './oracles/shared'
@@ -10,6 +10,14 @@ test('Persona 1: owned claim and separate invited-member acceptance', async ({ b
   await withActors(browser, input, ['A', 'B'], async (actors) => {
     for (const alias of ['A', 'B'] as const) {
       const actor = actors[alias]!
+      const matrixJoined = actor.page.waitForResponse((response) => {
+        const url = new URL(response.url())
+        return (
+          url.origin === input.homeserverOrigin &&
+          response.request().method() === 'POST' &&
+          /^\/_matrix\/client\/v3\/join\/[^/]+$/.test(url.pathname)
+        )
+      })
       const isOwner = alias === 'A'
       const prefix = isOwner ? 'claim' : 'invitations/accept'
       const path = `/${prefix}/${encodeURIComponent(actor.input.organisationId)}/${encodeURIComponent(actor.input.organisation)}`
@@ -53,9 +61,18 @@ test('Persona 1: owned claim and separate invited-member acceptance', async ({ b
       guard(me.status() === 200, 'WAVE2_ME_STATUS')
       actor.assertMembership(await me.json())
       guard(new URL(actor.page.url()).hash === '', 'WAVE2_FRAGMENT_RETIRED')
-      await actor.workspace(input.workspaceReady)
+      await actor.workspace(input.workspaceReady, input.channelPath)
+      // The shell can precede the join: require its successful response and usable composer.
+      guard((await matrixJoined).status() === 200, 'WAVE2_MATRIX_JOIN_STATUS')
+      await expect(actor.page.locator(input.composer)).toBeEditable()
       actor.budget.rememberState(alias, await actor.context.storageState())
       actor.budget.assertExact(alias, { 'core-token': 2, 'matrix-login': 1, 'local-join': 2 })
     }
+    for (const alias of ['A', 'B'] as const)
+      actors[alias]!.budget.assertExact(alias, {
+        'core-token': 2,
+        'matrix-login': 1,
+        'local-join': 2,
+      })
   })
 })

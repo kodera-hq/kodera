@@ -1,5 +1,8 @@
+import type { Page } from '@playwright/test'
 import { expect, test } from '@playwright/test'
 import { Actor, gateWorld, readWave2Input, targets } from './world'
+import { MatrixSyncLifecycle } from './sync-lifecycle'
+import { selectInterfaceLanguage } from './language'
 import { finishCleanup } from './cleanup'
 import { NetworkLedger, recordNetwork } from './oracles/r1-network'
 import { RateBudget } from './oracles/r3-rate-budget'
@@ -32,11 +35,35 @@ import {
 import type { VisualCell } from './oracles/r6-visual-a11y'
 import { guard } from './oracles/shared'
 
+async function settleTimeline(page: Page, input: ReturnType<typeof readWave2Input>) {
+  const log = page.getByRole('log')
+  await expect(page.locator(input.composer)).toBeEditable()
+  await expect(log.locator('article').first()).toBeVisible()
+  await expect(page.locator(input.visual.sansSelector)).toBeVisible()
+  await expect(page.locator(input.visual.monoSelector)).toBeVisible()
+  await log.evaluate(async (el) => {
+    await document.fonts.ready
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+    })
+    // Responsive replacement must finish before finding the conversation end.
+    el.scrollTop = el.scrollHeight
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+    })
+  })
+  await expect(log.locator('article').last()).toBeInViewport({ ratio: 1 })
+}
+
 test('Persona 4: twelve explicit web cells on one retained owner page', async ({ browser }) => {
   const input = readWave2Input('PERSONA4')
   await gateWorld(browser, input)
   const budget = new RateBudget()
-  const actor = await Actor.create(browser, 'A', input, budget)
+  const sync = new MatrixSyncLifecycle(input.actors.A.homeserverOrigin ?? input.homeserverOrigin)
+  const actor = await Actor.create(browser, 'A', input, budget, {
+    beforePage: (context) => sync.install(context),
+    allowedRequestFailure: sync.allowedRequestFailure,
+  })
   let succeeded = false
   try {
     await prepareCell(actor.page, {
@@ -50,6 +77,7 @@ test('Persona 4: twelve explicit web cells on one retained owner page', async ({
     })
     await actor.signIn()
     await actor.workspace(input.workspaceReady, input.visual.webPath)
+    await settleTimeline(actor.page, input)
     guard(
       Number.isSafeInteger(input.visual.clockEpochMs) && input.visual.clockEpochMs > 0,
       'R6_CLOCK_FIXTURE'
@@ -68,8 +96,12 @@ test('Persona 4: twelve explicit web cells on one retained owner page', async ({
           )
         }, theme)
         // Use the application's actual language control: locale and storageState do not switch it.
-        await actor.page.locator(input.visual.languageButton).click()
-        await actor.page.locator(input.visual.languageOptions[language]).click()
+        await selectInterfaceLanguage(actor.page, {
+          button: input.visual.languageButton,
+          option: input.visual.languageOptions[language],
+          section: input.visual.languageSection,
+          close: input.visual.languageClose,
+        })
         for (const width of VIEWPORT_WIDTHS) {
           const cell: VisualCell = {
             origin: 'web',
@@ -80,8 +112,11 @@ test('Persona 4: twelve explicit web cells on one retained owner page', async ({
             width,
             height: 900,
           }
-          await actor.page.setViewportSize({ width, height: 900 })
-          await actor.page.emulateMedia({ colorScheme: theme, reducedMotion: 'reduce' })
+          await sync.resize(async () => {
+            await actor.page.setViewportSize({ width, height: 900 })
+            await actor.page.emulateMedia({ colorScheme: theme, reducedMotion: 'reduce' })
+            await settleTimeline(actor.page, input)
+          })
           await assertCell(actor.page, cell)
           assertLayout(await layoutFaults(actor.page))
           await verifyFonts(
@@ -245,6 +280,15 @@ test('R5: explicit opt-in, validated EU capture and immediate native cancellatio
           requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
         })
     )
+    await expect
+      .poll(() =>
+        actor.page.evaluate(
+          () =>
+            (window as unknown as { __wave2DispatchFacts: DispatchFact[] }).__wave2DispatchFacts
+              .length
+        )
+      )
+      .toBeGreaterThan(factsBeforeHold)
     const before = consent.attempts.length
     const heldCount = interceptor!.heldCount()
     await revokeConsent(consent, () => toggle.evaluate((el: HTMLElement) => el.click()))

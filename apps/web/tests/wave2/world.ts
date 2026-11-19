@@ -1,10 +1,13 @@
 import { readFileSync, realpathSync } from 'node:fs'
+import { isIP } from 'node:net'
 import { isAbsolute, relative, resolve } from 'node:path'
 import { env } from 'node:process'
-import { fileURLToPath } from 'node:url'
 import { expect } from '@playwright/test'
 import type { APIResponse, Browser, BrowserContext, Page, Request } from '@playwright/test'
 import { throughKeycloak } from './keycloak'
+import { installMatrixNavigationBarrier } from './navigation'
+import { enterOrganisation } from './login'
+import { enterWorkspace, prepareWorkspaceFontsInDocument } from './workspace'
 import { finishCleanup } from './cleanup'
 import type { Account } from './keycloak'
 import { NetworkLedger, recordNetwork } from './oracles/r1-network'
@@ -15,12 +18,21 @@ import { exactOrigin, guard, object } from './oracles/shared'
 import { assertLocalFont } from './oracles/r6-visual-a11y'
 import { fixturePath } from './surfaces'
 
+/** Tenant homeservers share a parent containing at least two domain labels. */
+export function parentDomain(origin: string): string {
+  const hostname = new URL(origin).hostname
+  if (isIP(hostname.replace(/^\[|\]$/g, ''))) return ''
+  const labels = hostname.split('.')
+  return labels.length >= 3 ? labels.slice(1).join('.') : ''
+}
+
 export interface ActorInput {
   account: Account
   organisation: string
   organisationId: string
   realm: string
   role: 'org_owner' | 'org_member'
+  homeserverOrigin?: string
   seedJoins: number
   /** Exact permitted background responses, including separately named refusal cases. */
   network: NetworkTemplate[]
@@ -52,6 +64,8 @@ export interface Wave2Input {
     monoSelector: string
     tokenSelector: string
     languageButton: string
+    languageSection?: string
+    languageClose?: string
     languageOptions: { fr: string; en: string }
     tabOrder: readonly string[] | Record<375 | 768 | 1440, readonly string[]>
     landingSansSelector: string
@@ -70,7 +84,7 @@ export function readWave2Input(profile: 'PERSONA1' | 'PERSONA2' | 'PERSONA4' | '
       !rawPath.split(/[\\/]/).some((part) => part.startsWith('.env')),
     'WAVE2_INPUT_REQUIRED'
   )
-  const webRoot = realpathSync(fileURLToPath(new URL('../../', import.meta.url)))
+  const webRoot = realpathSync(resolve(import.meta.dirname, '../..'))
   const path = realpathSync(resolve(rawPath))
   const inside = relative(webRoot, path)
   guard(
@@ -104,6 +118,7 @@ export function readWave2Input(profile: 'PERSONA1' | 'PERSONA2' | 'PERSONA4' | '
         Number(actor.seedJoins) >= 0,
       'WAVE2_ACTOR_SHAPE'
     )
+    if (actor.homeserverOrigin !== undefined) exactOrigin(actor.homeserverOrigin as string)
     for (const field of ['email', 'username', 'password', 'totpBase32'])
       guard(
         typeof actor.account[field] === 'string' && actor.account[field] !== '',
@@ -151,9 +166,11 @@ export class Actor {
     readonly page: Page,
     readonly budget: RateBudget,
     readonly ledger: NetworkLedger,
+    readonly foreignLedger: NetworkLedger | undefined,
     private readonly recorder: Awaited<ReturnType<typeof recordNetwork>>,
     private readonly origins: ReturnType<typeof targets>,
-    private readonly homeserver: string
+    readonly homeserverOrigin: string,
+    private readonly detachNavigation: () => Promise<void>
   ) {
     this.authorityListener = (request) => {
       if (request.resourceType() === 'font') {
@@ -167,7 +184,7 @@ export class Actor {
         const authority = request.headers().authorization
         if (authority?.startsWith('Bearer ')) this.bearer = authority
       }
-      if (new URL(request.url()).origin === homeserver) {
+      if (new URL(request.url()).origin === homeserverOrigin) {
         const authority = request.headers().authorization
         if (authority?.startsWith('Bearer ')) this.matrixBearer = authority
       }
@@ -176,7 +193,7 @@ export class Actor {
     this.detachRates = trackRateRequests(context, alias, budget, {
       auth: origins.auth,
       api: origins.api,
-      homeserver,
+      homeserver: homeserverOrigin,
     })
   }
   static async create(
@@ -192,6 +209,8 @@ export class Actor {
   ) {
     const origins = targets()
     const actorInput = input.actors[alias]
+    const sharedHomeserver = exactOrigin(input.homeserverOrigin)
+    const actorHomeserver = exactOrigin(actorInput.homeserverOrigin ?? input.homeserverOrigin)
     const identity = JSON.stringify([actorInput.realm, actorInput.account.username])
     guard(!claimedIdentities.has(identity), 'WAVE2_REUSED_IDENTITY')
     claimedIdentities.add(identity)
@@ -206,13 +225,33 @@ export class Actor {
       budget.register(alias)
       if (actorInput.seedJoins) budget.reserve(alias, 'local-join', actorInput.seedJoins)
       const allowed = [
-        ...Object.values(origins),
-        exactOrigin(input.homeserverOrigin),
-        ...(input.livekitOrigin ? [exactOrigin(input.livekitOrigin)] : []),
-        ...(instrumentation.extraOrigins ?? []),
+        ...new Set([
+          ...Object.values(origins),
+          actorHomeserver,
+          ...(input.livekitOrigin ? [exactOrigin(input.livekitOrigin)] : []),
+          ...(instrumentation.extraOrigins ?? []).map(exactOrigin),
+        ]),
       ]
-      const ledger = new NetworkLedger(actorInput.network, allowed)
+      const ownTemplates: NetworkTemplate[] = []
+      const foreignTemplates: NetworkTemplate[] = []
+      for (const template of actorInput.network) {
+        if (
+          actorHomeserver !== sharedHomeserver &&
+          exactOrigin(template.origin) === sharedHomeserver
+        )
+          foreignTemplates.push(template)
+        else ownTemplates.push(template)
+      }
+      const ledger = new NetworkLedger(ownTemplates, allowed)
+      const foreignLedger = foreignTemplates.length
+        ? new NetworkLedger(foreignTemplates, [sharedHomeserver])
+        : undefined
       const recorder = await recordNetwork(context, ledger, instrumentation.allowedRequestFailure)
+      const detachNavigation = await installMatrixNavigationBarrier(
+        context,
+        origins.api,
+        actorHomeserver
+      )
       if (instrumentation.beforePage) await instrumentation.beforePage(context)
       const page = await context.newPage()
       budget.retainPage(alias, page)
@@ -223,9 +262,11 @@ export class Actor {
         page,
         budget,
         ledger,
+        foreignLedger,
         recorder,
         origins,
-        input.homeserverOrigin
+        actorHomeserver,
+        detachNavigation
       )
     } catch (error) {
       await context.close().catch(() => {})
@@ -248,14 +289,7 @@ export class Actor {
       return object(body) && typeof body.realm === 'string'
     })
     await this.page.goto(`/login?org=${encodeURIComponent(this.input.organisation)}&mode=tenant`)
-    await this.page.getByLabel('Adresse e-mail').fill(this.input.account.email)
-    await this.page.getByRole('button', { name: 'Continuer', exact: true }).click()
-    const slug = this.page.getByLabel('Identifiant de votre organisation')
-    await expect(slug.or(this.page.locator('#username')).first()).toBeVisible()
-    if (await slug.isVisible()) {
-      await slug.fill(this.input.organisation)
-      await this.page.getByRole('button', { name: 'Continuer', exact: true }).click()
-    }
+    await enterOrganisation(this.page, this.input.account.email, this.input.organisation)
     const discovery: unknown = await (await discovered).json()
     guard(
       object(discovery) &&
@@ -296,9 +330,8 @@ export class Actor {
   }
   async workspace(selector: string, channelPath?: string) {
     this.budget.reusePage(this.alias, this.page)
-    const path = channelPath ?? `/${this.input.organisation}/workspace`
-    if (new URL(this.page.url()).pathname !== path)
-      await this.page.locator(`a[href="${path}"]`).first().click()
+    await this.page.evaluate(prepareWorkspaceFontsInDocument)
+    await enterWorkspace(this.page, this.input.organisation, selector, channelPath)
     await expect(this.page.locator(selector)).toBeVisible()
   }
   async core(
@@ -319,7 +352,7 @@ export class Actor {
     const pathname = fixturePath(pathPattern, values)
     guard(pathname.startsWith('/api/v1/'), 'WAVE2_CORE_PATH')
     const event = classifyRateRequest(`${this.origins.api}${pathname}`, method, {
-      homeserver: this.homeserver,
+      homeserver: this.homeserverOrigin,
       auth: this.origins.auth,
       api: this.origins.api,
     })
@@ -354,10 +387,56 @@ export class Actor {
   }
   async assertClean() {
     await this.recorder.assertClean()
+    this.foreignLedger?.assertClean()
     this.budget.assertClean()
   }
   async denyForeignJoin(homeserver: string, roomId: string) {
     guard(this.matrixBearer, 'WAVE2_MATRIX_AUTHORITY_REQUIRED')
+    const target = exactOrigin(homeserver)
+    if (this.homeserverOrigin !== target) {
+      const parent = parentDomain(this.homeserverOrigin)
+      guard(parent && parent === parentDomain(target), 'WAVE2_FOREIGN_DOMAIN_BOUNDARY')
+      guard(this.foreignLedger, 'R1_UNADMITTED_ORIGIN')
+      this.budget.reserve(this.alias, 'local-join')
+      const joinPath = `/_matrix/client/v3/join/${encodeURIComponent(roomId)}`
+      const refusals = [
+        {
+          url: `${this.homeserverOrigin}${joinPath}?server_name=${encodeURIComponent(new URL(target).host)}`,
+          status: 502,
+          errcode: 'M_UNKNOWN',
+          marker: 'WAVE2_MATRIX_FOREIGN_JOIN',
+          ledger: this.ledger,
+        },
+        {
+          url: `${target}${joinPath}`,
+          status: 401,
+          errcode: 'M_UNKNOWN_TOKEN',
+          marker: 'WAVE2_MATRIX_FOREIGN_TOKEN',
+          ledger: this.foreignLedger,
+        },
+      ]
+      for (const refusal of refusals) {
+        const response = await this.context.request.post(refusal.url, {
+          headers: { authorization: this.matrixBearer },
+          data: {},
+          maxRedirects: 0,
+          failOnStatusCode: false,
+        })
+        const body: unknown = await response.json()
+        refusal.ledger.observe({
+          url: response.url(),
+          method: 'POST',
+          status: response.status(),
+          contentType: response.headers()['content-type'] ?? '',
+          body,
+        })
+        guard(
+          response.status() === refusal.status && object(body) && body.errcode === refusal.errcode,
+          refusal.marker
+        )
+      }
+      return
+    }
     this.budget.reserve(this.alias, 'local-join')
     const response = await this.context.request.post(
       `${exactOrigin(homeserver)}/_matrix/client/v3/join/${encodeURIComponent(roomId)}`,
@@ -388,7 +467,7 @@ export class Actor {
     this.context.off('request', this.authorityListener)
     await finishCleanup(
       true,
-      [() => this.recorder.dispose(), () => this.context.close()],
+      [() => this.recorder.dispose(), this.detachNavigation, () => this.context.close()],
       'WAVE2_CLEANUP'
     )
   }

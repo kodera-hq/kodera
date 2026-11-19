@@ -652,13 +652,28 @@ test('appearance/page: says the choice is not kept when the browser refuses to s
   await expect(card(page, 'Automatique')).toHaveAttribute('aria-checked', 'true')
 })
 
+for (const theme of ['light', 'ciel'] as const)
+  test(`appearance/native: ${theme} stays light on a dark device`, async ({ page }) => {
+    await page.emulateMedia({ colorScheme: 'dark' })
+    await page.addInitScript(({ key, value }) => localStorage.setItem(key, value), {
+      key: KEY,
+      value: theme,
+    })
+    await page.goto('/login')
+    await expect(html(page)).toHaveAttribute('data-theme', theme)
+    await expect(html(page)).toHaveCSS('color-scheme', 'light')
+    await page.reload()
+    await expect(html(page)).toHaveAttribute('data-theme', theme)
+    await expect(html(page)).toHaveCSS('color-scheme', 'light')
+  })
+
 test('appearance/page: passes axe in every theme', async ({ page }) => {
   await useScenario(page, SCENARIOS)
   await openAppearance(page)
   for (const [theme, scheme, label] of [
-    ['ciel', 'normal', 'Ciel'],
+    ['ciel', 'light', 'Ciel'],
     ['ciel-nuit', 'dark', 'Ciel nuit'],
-    ['light', 'normal', 'Clair'],
+    ['light', 'light', 'Clair'],
     ['dark', 'dark', 'Sombre'],
     ['black', 'dark', 'Noir'],
   ] as const) {

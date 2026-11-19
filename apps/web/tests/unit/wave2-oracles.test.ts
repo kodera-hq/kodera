@@ -3,11 +3,26 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import ts from 'typescript'
 import { check as checkFormatting } from 'prettier'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import scrubArtifacts from '../wave2/teardown'
+import { MatrixSyncLifecycle } from '../wave2/sync-lifecycle'
+import { installMatrixNavigationBarrier } from '../wave2/navigation'
+import { documentText } from '../wave2/documents'
 import { finishCleanup } from '../wave2/cleanup'
 import { findMailLink, mailLinkPattern } from '../wave2/mailpit'
-import type { APIRequestContext, BrowserContext, Page, Request, Route } from '@playwright/test'
+import { enterOrganisation } from '../wave2/login'
+import { enterWorkspace, prepareWorkspaceFontsInDocument } from '../wave2/workspace'
+import { Actor, parentDomain, readWave2Input } from '../wave2/world'
+import type { Wave2Input } from '../wave2/world'
+import { selectInterfaceLanguage } from '../wave2/language'
+import type {
+  APIRequestContext,
+  Browser,
+  BrowserContext,
+  Page,
+  Request,
+  Route,
+} from '@playwright/test'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { NetworkLedger, recordNetwork } from '../wave2/oracles/r1-network'
 import type { NetworkObservation, NetworkTemplate } from '../wave2/oracles/r1-network'
@@ -86,6 +101,536 @@ afterEach(() => {
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
   document.body.replaceChildren()
+})
+
+describe('actor homeserver isolation', () => {
+  const outsider = 'https://outsider.example.test'
+  const room = '!private:matrix.example.test'
+  const joinPath = `/_matrix/client/v3/join/${encodeURIComponent(room)}`
+  let ordinal = 0
+  const inputFor = (homeserverOrigin?: string): Wave2Input => {
+    const actor = (alias: string) => ({
+      account: {
+        username: `synthetic-${alias}-${++ordinal}`,
+        email: `${alias}@wave2.test`,
+        password: 'synthetic-password',
+        totpBase32: 'SYNTHETIC',
+      },
+      organisation: alias === 'C' ? 'other' : 'shared',
+      organisationId: alias === 'C' ? 'other-id' : 'shared-id',
+      realm: alias === 'C' ? 'other' : 'shared',
+      role: alias === 'A' ? ('org_owner' as const) : ('org_member' as const),
+      seedJoins: 0,
+      network: [],
+      ...(alias === 'C' && homeserverOrigin !== undefined ? { homeserverOrigin } : {}),
+    })
+    return {
+      revision: 'a'.repeat(40),
+      realm: 'shared',
+      homeserverOrigin: HS,
+      actors: { A: actor('A'), B: actor('B'), C: actor('C') },
+    } as unknown as Wave2Input
+  }
+  const readFixture = async (input: Wave2Input) => {
+    const dir = await mkdtemp(webPath('tests/wave2/origin-unit-'))
+    const path = resolve(dir, 'input.json')
+    try {
+      await writeFile(path, JSON.stringify(input))
+      vi.stubEnv('KODERA_WAVE2_PERSONA2_INPUT', path)
+      return readWave2Input('PERSONA2')
+    } finally {
+      vi.unstubAllEnvs()
+      await rm(dir, { recursive: true, force: true })
+    }
+  }
+  it.each([undefined, HS, outsider, 'http://127.0.0.1:8008'])(
+    'validates the optional actor origin %s',
+    async (origin) => {
+      expect((await readFixture(inputFor(origin))).actors.C.homeserverOrigin).toBe(origin)
+    }
+  )
+  it.each([
+    ['https://outsider.example.test/path', 'TARGET_ORIGIN'],
+    ['https://outsider.example.test/', 'TARGET_ORIGIN'],
+    ['https://outsider.example.test?query=1', 'TARGET_ORIGIN'],
+    ['https://user:secret@outsider.example.test', 'TARGET_ORIGIN'],
+    ['http://outsider.example.test', 'TARGET_TLS'],
+    ['', 'TARGET_ORIGIN'],
+    [null, 'TARGET_ORIGIN'],
+    [42, 'TARGET_ORIGIN'],
+  ])('refuses noncanonical actor origin %s', async (origin, marker) => {
+    const input = inputFor()
+    Object.assign(input.actors.C, { homeserverOrigin: origin })
+    await expect(readFixture(input)).rejects.toThrow(marker as string)
+  })
+  const setup = async (
+    origin: string | undefined,
+    replies = [{ status: 403, body: { errcode: 'M_FORBIDDEN' } }],
+    capture = true,
+    includeForeignTemplate = true
+  ) => {
+    const input = inputFor(origin)
+    input.actors.C.network = [
+      {
+        origin: origin ?? HS,
+        method: 'POST',
+        pathPattern: joinPath,
+        expectedStatus: origin && origin !== HS ? 502 : 403,
+        max: 1,
+        query: origin && origin !== HS ? { server_name: new URL(HS).host } : {},
+        requiredBodyKeys: ['errcode'],
+      },
+      ...(origin && origin !== HS && includeForeignTemplate
+        ? [{ origin: HS, method: 'POST', pathPattern: joinPath, expectedStatus: 401, max: 1 }]
+        : []),
+    ]
+    const emitter = new EventEmitter()
+    const post = vi.fn(async (url: string) => {
+      const reply = replies[post.mock.calls.length - 1]!
+      return {
+        url: () => url,
+        status: () => reply.status,
+        headers: () => ({ 'content-type': 'application/json' }),
+        json: async () => reply.body,
+      }
+    })
+    const context = Object.assign(emitter, {
+      newPage: async () => ({}),
+      pages: () => [],
+      exposeBinding: async () => {},
+      addInitScript: async () => {},
+      close: vi.fn(),
+      request: { post },
+      route: async () => {},
+      unroute: async () => {},
+    }) as unknown as BrowserContext
+    const browser = { newContext: async () => context } as unknown as Browser
+    const budget = new RateBudget()
+    const actor = await Actor.create(browser, 'C', input, budget)
+    const request = (
+      host: string,
+      authority: string,
+      method = 'GET',
+      path = '/_matrix/client/v3/sync'
+    ) =>
+      emitter.emit('request', {
+        url: () => `${host}${path}`,
+        method: () => method,
+        resourceType: () => 'fetch',
+        headers: () => ({ authorization: authority }),
+      })
+    if (capture) request(origin ?? HS, 'Bearer synthetic-own-authority')
+    return { actor, budget, post, emitter, request }
+  }
+  it.each([undefined, HS])('retains the single-homeserver 403 refusal for %s', async (origin) => {
+    const { actor, budget, post, emitter } = await setup(origin)
+    try {
+      expect(actor.homeserverOrigin).toBe(HS)
+      expect(actor.ledger.allowedOrigins.filter((value) => value === HS)).toHaveLength(1)
+      expect(actor.foreignLedger).toBeUndefined()
+      await actor.denyForeignJoin(HS, room)
+      expect(post).toHaveBeenCalledExactlyOnceWith(`${HS}${joinPath}`, {
+        headers: { authorization: 'Bearer synthetic-own-authority' },
+        data: {},
+        maxRedirects: 0,
+        failOnStatusCode: false,
+      })
+      budget.assertExact('C', { 'local-join': 1 })
+      await actor.assertClean()
+    } finally {
+      await actor.close()
+      expect(emitter.eventNames()).toEqual([])
+    }
+  })
+  it('proves closed federation locally and foreign token rejection with the same own authority', async () => {
+    const { actor, budget, post, request } = await setup(outsider, [
+      { status: 502, body: { errcode: 'M_UNKNOWN' } },
+      { status: 401, body: { errcode: 'M_UNKNOWN_TOKEN' } },
+    ])
+    try {
+      await actor.denyForeignJoin(HS, room)
+      expect(actor.homeserverOrigin).toBe(outsider)
+      expect(actor.ledger.allowedOrigins).toContain(outsider)
+      expect(actor.ledger.allowedOrigins).not.toContain(HS)
+      expect(actor.foreignLedger?.allowedOrigins).toEqual([HS])
+      expect(new Set(actor.ledger.allowedOrigins).size).toBe(actor.ledger.allowedOrigins.length)
+      expect(post.mock.calls.map(([url]) => url)).toEqual([
+        `${outsider}${joinPath}?server_name=matrix.example.test`,
+        `${HS}${joinPath}`,
+      ])
+      for (const call of post.mock.calls)
+        expect(call).toEqual([
+          expect.any(String),
+          {
+            headers: { authorization: 'Bearer synthetic-own-authority' },
+            data: {},
+            maxRedirects: 0,
+            failOnStatusCode: false,
+          },
+        ])
+      budget.assertExact('C', { 'local-join': 1 })
+      expect(actor.ledger.receipt()).toEqual([
+        expect.objectContaining({ origin: outsider, expectedStatus: 502, count: 1 }),
+      ])
+      expect(actor.foreignLedger?.receipt()).toEqual([
+        expect.objectContaining({ origin: HS, expectedStatus: 401, count: 1 }),
+      ])
+      await actor.assertClean()
+      request(HS, 'Bearer foreign-authority', 'POST', '/_matrix/client/v3/login')
+      budget.assertExact('C', { 'matrix-login': 0 })
+      request(outsider, 'Bearer synthetic-own-authority', 'POST', '/_matrix/client/v3/login')
+      budget.assertExact('C', { 'matrix-login': 1 })
+    } finally {
+      await actor.close()
+    }
+  })
+  it('rejects a successful browser request to the shared homeserver while retaining both probe refusals', async () => {
+    const { actor, emitter, request } = await setup(outsider, [
+      { status: 502, body: { errcode: 'M_UNKNOWN' } },
+      { status: 401, body: { errcode: 'M_UNKNOWN_TOKEN' } },
+    ])
+    try {
+      await actor.denyForeignJoin(HS, room)
+      await actor.assertClean()
+      request(HS, 'Bearer foreign-authority')
+      expect(actor.ledger.failures).toContain('R1_UNADMITTED_ORIGIN')
+      emitter.emit('response', {
+        url: () => `${HS}/_matrix/client/v3/sync`,
+        request: () => ({ method: () => 'GET' }),
+        status: () => 200,
+        headers: () => ({ 'content-type': 'application/json' }),
+      })
+      await expect(actor.assertClean()).rejects.toThrow('R1_UNADMITTED_ORIGIN')
+      expect(actor.ledger.receipt().map((row) => row.count)).toEqual([1])
+      expect(actor.foreignLedger?.receipt().map((row) => row.count)).toEqual([1])
+      actor.foreignLedger?.assertClean()
+    } finally {
+      await actor.close()
+    }
+  })
+  it('requires a foreign probe ledger before transmitting authority', async () => {
+    const { actor, post, budget } = await setup(outsider, [], true, false)
+    try {
+      expect(actor.foreignLedger).toBeUndefined()
+      await expect(actor.denyForeignJoin(HS, room)).rejects.toThrow('R1_UNADMITTED_ORIGIN')
+      expect(post).not.toHaveBeenCalled()
+      budget.assertExact('C', { 'local-join': 0 })
+    } finally {
+      await actor.close()
+    }
+  })
+  it('checks foreign probe template limits when asserting actor cleanliness', async () => {
+    const { actor } = await setup(outsider, [
+      { status: 502, body: { errcode: 'M_UNKNOWN' } },
+      { status: 401, body: { errcode: 'M_UNKNOWN_TOKEN' } },
+    ])
+    try {
+      await actor.denyForeignJoin(HS, room)
+      actor.foreignLedger?.observe({
+        url: `${HS}${joinPath}`,
+        method: 'POST',
+        status: 401,
+        contentType: 'application/json',
+        body: { errcode: 'M_UNKNOWN_TOKEN' },
+      })
+      actor.ledger.assertClean()
+      await expect(actor.assertClean()).rejects.toThrow('R1_MAX_COUNT')
+    } finally {
+      await actor.close()
+    }
+  })
+  it.each([
+    [undefined, 200, 'M_FORBIDDEN', 'WAVE2_MATRIX_FOREIGN_JOIN'],
+    [undefined, 403, 'M_UNKNOWN_TOKEN', 'WAVE2_MATRIX_FOREIGN_JOIN'],
+    [outsider, 200, 'M_UNKNOWN', 'WAVE2_MATRIX_FOREIGN_JOIN'],
+    [outsider, 403, 'M_FORBIDDEN', 'WAVE2_MATRIX_FOREIGN_JOIN'],
+    [outsider, 502, 'M_FORBIDDEN', 'WAVE2_MATRIX_FOREIGN_JOIN'],
+    [outsider, 401, 'M_UNKNOWN_TOKEN', 'WAVE2_MATRIX_FOREIGN_JOIN'],
+    [outsider, 403, 'M_UNKNOWN_TOKEN', 'WAVE2_MATRIX_FOREIGN_JOIN'],
+  ])(
+    'refuses the wrong local boundary response %s/%s/%s',
+    async (origin, status, errcode, marker) => {
+      const { actor, budget, post } = await setup(origin, [{ status, body: { errcode } }])
+      try {
+        await expect(actor.denyForeignJoin(HS, room)).rejects.toThrow(marker)
+        expect(post).toHaveBeenCalledTimes(1)
+        expect(actor.ledger.receipt()[0]!.count).toBe(1)
+        budget.assertExact('C', { 'local-join': 1 })
+      } finally {
+        await actor.close()
+      }
+    }
+  )
+  it.each([
+    [403, 'M_FORBIDDEN'],
+    [200, 'M_UNKNOWN_TOKEN'],
+    [401, 'M_FORBIDDEN'],
+  ])('refuses the wrong foreign boundary response %s/%s', async (status, errcode) => {
+    const { actor, post, budget } = await setup(outsider, [
+      { status: 502, body: { errcode: 'M_UNKNOWN' } },
+      { status, body: { errcode } },
+    ])
+    try {
+      await expect(actor.denyForeignJoin(HS, room)).rejects.toThrow('WAVE2_MATRIX_FOREIGN_TOKEN')
+      expect(post).toHaveBeenCalledTimes(2)
+      expect(actor.ledger.receipt().map((row) => row.count)).toEqual([1])
+      expect(actor.foreignLedger?.receipt().map((row) => row.count)).toEqual([1])
+      budget.assertExact('C', { 'local-join': 1 })
+    } finally {
+      await actor.close()
+    }
+  })
+  it.each([
+    ['https://a.wave2.localhost', 'wave2.localhost'],
+    ['https://a.kodera.test', 'kodera.test'],
+    ['https://a.staging.kodera.io', 'staging.kodera.io'],
+    ['https://localhost:8008', ''],
+    ['https://127.0.0.1:8008', ''],
+    ['https://[::1]:8008', ''],
+    ['https://kodera.test', ''],
+  ])('extracts the tenant parent for %s', (origin, parent) => {
+    expect(parentDomain(origin)).toBe(parent)
+  })
+  it.each(['https://matrix.other.test', 'https://localhost:8008', 'https://example.test'])(
+    'refuses a foreign domain before transmitting authority to %s',
+    async (target) => {
+      const { actor, post, budget } = await setup(outsider)
+      try {
+        await expect(actor.denyForeignJoin(target, room)).rejects.toThrow(
+          'WAVE2_FOREIGN_DOMAIN_BOUNDARY'
+        )
+        expect(post).not.toHaveBeenCalled()
+        budget.assertExact('C', { 'local-join': 0 })
+      } finally {
+        await actor.close()
+      }
+    }
+  )
+  it.each([
+    'https://capture.example.test/path',
+    'https://capture.example.test/',
+    'http://capture.example.test',
+  ])('validates extra instrumentation origin %s before opening a page', async (origin) => {
+    const close = vi.fn(async () => {})
+    const newPage = vi.fn()
+    const browser = { newContext: async () => ({ close, newPage }) } as unknown as Browser
+    await expect(
+      Actor.create(browser, 'C', inputFor(), new RateBudget(), {
+        extraOrigins: [origin],
+      })
+    ).rejects.toThrow(/TARGET_/)
+    expect(newPage).not.toHaveBeenCalled()
+    expect(close).toHaveBeenCalledOnce()
+  })
+  it('requires current own-homeserver authority before sending either request', async () => {
+    const { actor, post, budget, request } = await setup(outsider, [], false)
+    try {
+      request(HS, 'Bearer foreign-authority')
+      await expect(actor.denyForeignJoin(HS, room)).rejects.toThrow(
+        'WAVE2_MATRIX_AUTHORITY_REQUIRED'
+      )
+      expect(post).not.toHaveBeenCalled()
+      budget.assertExact('C', { 'local-join': 0 })
+    } finally {
+      await actor.close()
+    }
+  })
+})
+
+describe('workspace font readiness', () => {
+  it('waits for the real channel sigil load before allowing workspace navigation', async () => {
+    let loaded!: () => void
+    const font = new Promise<void>((resolve) => {
+      loaded = resolve
+    })
+    const load = vi.fn(() => font)
+    vi.stubGlobal('document', { fonts: { ready: Promise.resolve(), load } })
+    let ready = false
+    const preparation = prepareWorkspaceFontsInDocument().then(() => {
+      ready = true
+    })
+    await Promise.resolve()
+    expect(load).toHaveBeenCalledWith('500 16px "IBM Plex Mono"', 'É’—012345')
+    expect(ready).toBe(false)
+    loaded()
+    await preparation
+    expect(ready).toBe(true)
+  })
+  it('propagates font transport failures', async () => {
+    vi.stubGlobal('document', {
+      fonts: {
+        ready: Promise.resolve(),
+        load: async () => {
+          throw new Error('font refused')
+        },
+      },
+    })
+    await expect(prepareWorkspaceFontsInDocument()).rejects.toThrow('font refused')
+  })
+})
+
+describe('Matrix navigation response barrier', () => {
+  const routeFor = (continued: () => Promise<void>) => ({
+    continue: continued,
+    abort: vi.fn(async () => {}),
+    request: () => ({ frame: () => ({ evaluate: async () => {} }) }),
+  })
+  it('finishes an in-flight Core body before continuing the full-page SSO navigation', async () => {
+    const emitter = new EventEmitter()
+    let matcher!: (url: URL) => boolean
+    let navigate!: (route: { continue(): Promise<void> }) => Promise<void>
+    const context = Object.assign(emitter, {
+      route: async (match: typeof matcher, callback: typeof navigate) => {
+        matcher = match
+        navigate = callback
+      },
+    }) as unknown as BrowserContext
+    await installMatrixNavigationBarrier(context, API, HS)
+    expect(matcher(new URL(HS + '/.well-known/matrix/client'))).toBe(true)
+    expect(matcher(new URL(WEB + '/.well-known/matrix/client'))).toBe(false)
+    const request = { url: () => API + '/api/v1/me' }
+    emitter.emit('request', request)
+    let finishBody!: () => void
+    const body = new Promise<void>((resolve) => {
+      finishBody = resolve
+    })
+    const continued = vi.fn(async () => {})
+    const navigation = navigate(routeFor(continued))
+    emitter.emit('response', { request: () => request, body: () => body })
+    await Promise.resolve()
+    expect(continued).not.toHaveBeenCalled()
+    finishBody()
+    await navigation
+    expect(continued).toHaveBeenCalledOnce()
+  })
+  it.each([false, true])(
+    'aborts a failed body read before refusing even if abort rejects: %s',
+    async (abortFails) => {
+      const emitter = new EventEmitter()
+      let navigate!: (route: { continue(): Promise<void> }) => Promise<void>
+      const context = Object.assign(emitter, {
+        route: async (_match: unknown, callback: typeof navigate) => {
+          navigate = callback
+        },
+      }) as unknown as BrowserContext
+      await installMatrixNavigationBarrier(context, API, HS)
+      const request = { url: () => API + '/api/v1/me' }
+      emitter.emit('request', request)
+      emitter.emit('response', {
+        request: () => request,
+        body: async () => {
+          throw new Error('body refused')
+        },
+      })
+      const continued = vi.fn(async () => {})
+      const route = routeFor(continued)
+      let finishAbort!: () => void
+      const aborted = new Promise<void>((resolve) => {
+        finishAbort = resolve
+      })
+      route.abort.mockImplementation(async () => {
+        await aborted
+        if (abortFails) throw new Error('abort refused')
+      })
+      let settled = false
+      const navigation = navigate(route).finally(() => {
+        settled = true
+      })
+      const refusal = expect(navigation).rejects.toThrow('WAVE2_CORE_RESPONSE_BARRIER')
+      await vi.waitFor(() => expect(route.abort).toHaveBeenCalledOnce())
+      expect(settled).toBe(false)
+      finishAbort()
+      await refusal
+      expect(continued).not.toHaveBeenCalled()
+    }
+  )
+})
+
+describe('responsive Matrix sync lifecycle', () => {
+  const setup = async () => {
+    const emitter = new EventEmitter()
+    let nativeAbort!: (source: unknown, url: unknown) => void
+    const context = Object.assign(emitter, {
+      exposeBinding: async (_name: string, callback: typeof nativeAbort) => {
+        nativeAbort = callback
+      },
+      addInitScript: async () => {},
+    }) as unknown as BrowserContext
+    const sync = new MatrixSyncLifecycle(HS)
+    await sync.install(context)
+    const request = (
+      origin = HS,
+      method = 'GET',
+      failure = 'net::ERR_ABORTED',
+      path = '/_matrix/client/v3/sync'
+    ) =>
+      ({
+        url: () => origin + path,
+        method: () => method,
+        failure: () => ({ errorText: failure }),
+      }) as unknown as Request
+    return { emitter, sync, request, nativeAbort }
+  }
+  it('admits only the old native-aborted poll during a resize with a successful replacement', async () => {
+    const { emitter, sync, request, nativeAbort } = await setup()
+    const old = request()
+    emitter.emit('request', old)
+    expect(sync.allowedRequestFailure(old)).toBe(false)
+    await sync.resize(async () => {
+      expect(sync.allowedRequestFailure(old)).toBe(false)
+      nativeAbort({}, old.url())
+      expect(sync.allowedRequestFailure(old)).toBe(true)
+      emitter.emit('requestfailed', old)
+      const replacement = request()
+      emitter.emit('request', replacement)
+      expect(sync.allowedRequestFailure(replacement)).toBe(false)
+      emitter.emit('response', { request: () => replacement, status: () => 200 })
+    })
+    expect(sync.allowedRequestFailure(old)).toBe(false)
+  })
+  it.each([
+    [API, 'GET', 'net::ERR_ABORTED', '/_matrix/client/v3/sync'],
+    [HS, 'POST', 'net::ERR_ABORTED', '/_matrix/client/v3/sync'],
+    [HS, 'GET', 'net::ERR_FAILED', '/_matrix/client/v3/sync'],
+    [HS, 'GET', 'net::ERR_CONNECTION_RESET', '/_matrix/client/v3/sync'],
+    [HS, 'GET', 'net::ERR_ABORTED', '/_matrix/client/v3/messages'],
+  ])('refuses unrelated failures %s/%s/%s/%s', async (origin, method, failure, path) => {
+    const { emitter, sync, request, nativeAbort } = await setup()
+    const failed = request(origin, method, failure, path)
+    emitter.emit('request', failed)
+    await sync.resize(async () => {
+      nativeAbort({}, failed.url())
+      expect(sync.allowedRequestFailure(failed)).toBe(false)
+    })
+  })
+  it('does not reuse native abort evidence after the resize ends', async () => {
+    const { emitter, sync, request, nativeAbort } = await setup()
+    const old = request()
+    emitter.emit('request', old)
+    await sync.resize(async () => {
+      nativeAbort({}, old.url())
+    })
+    await sync.resize(async () => {
+      expect(sync.allowedRequestFailure(old)).toBe(false)
+    })
+  })
+})
+
+describe('collaborative document text', () => {
+  it('joins text split by a peer caret without mutating the live editor', () => {
+    const editor = document.createElement('div')
+    editor.innerHTML =
+      '<p>wave2-pe<span data-collab-caret="peer" aria-hidden="true">Peer name</span>er</p>'
+    expect(documentText(editor)).toBe('wave2-peer')
+    expect(editor.querySelector('[data-collab-caret]')).not.toBeNull()
+    expect(editor.textContent).toContain('Peer name')
+  })
+  it('keeps ordinary document content and refuses a missing marker', () => {
+    const editor = document.createElement('div')
+    editor.innerHTML = '<p>First <strong>document</strong> marker</p><p>Second marker</p>'
+    expect(documentText(editor)).toBe('First document markerSecond marker')
+    expect(documentText(editor)).not.toContain('missing marker')
+  })
 })
 
 describe('R1 exact network evidence', () => {
@@ -191,6 +736,25 @@ describe('R3 per-run budgets and reuse', () => {
     budget.register('A')
     return budget
   }
+  it('meters claim consumption separately from the later Matrix join and refuses an extra attempt', () => {
+    const budget = setup()
+    const context = new EventEmitter()
+    const detach = trackRateRequests(context as unknown as BrowserContext, 'A', budget, {
+      auth: AUTH,
+      api: API,
+      homeserver: HS,
+    })
+    const attempt = (url: string) =>
+      context.emit('request', { url: () => url, method: () => 'POST' })
+    attempt(`${API}/api/v1/owner-claims/actions/consume`)
+    expect(() => budget.assertExact('A', { 'local-join': 2 })).toThrow('R3_EXACT_ALLOCATION')
+    attempt(`${HS}/_matrix/client/v3/join/%21synthetic`)
+    budget.assertExact('A', { 'local-join': 2 })
+    attempt(`${HS}/_matrix/client/v3/join/%21synthetic`)
+    expect(() => budget.assertExact('A', { 'local-join': 2 })).toThrow('R3_EXACT_ALLOCATION')
+    detach()
+    expect(context.eventNames()).toEqual([])
+  })
   it('admits strictly fewer than five logins and ten local joins, including denied/seed attempts', () => {
     const budget = setup()
     budget.reserve('A', 'matrix-login', 4)
@@ -947,6 +1511,110 @@ function relativeImports(source: string): string[] {
 }
 
 describe('adversarial regression coverage', () => {
+  it.each([false, true])(
+    'switches language through real controls with a settings panel: %s',
+    async (panel) => {
+      const actions: string[] = []
+      const page = {
+        locator: (selector: string) => ({
+          click: async () => {
+            actions.push(selector)
+          },
+        }),
+      } as unknown as Page
+      await selectInterfaceLanguage(page, {
+        button: '#language',
+        option: '#english',
+        ...(panel ? { section: '#appearance', close: '#close' } : {}),
+      })
+      expect(actions).toEqual(
+        panel ? ['#language', '#appearance', '#english', '#close'] : ['#language', '#english']
+      )
+    }
+  )
+
+  it.each(['home', 'workspace', 'workspace/previous'])(
+    'enters a channel through the retained workspace from %s',
+    async (start) => {
+      let path = `/synthetic-org/${start}`
+      const actions: string[] = []
+      const page = {
+        url: () => `${WEB}${path}`,
+        locator: (selector: string) => ({
+          first() {
+            return this
+          },
+          click: async () => {
+            const target = /^a\[href="([^"]+)"\]$/.exec(selector)![1]!
+            actions.push(target)
+            path = target
+          },
+          waitFor: async () => {
+            actions.push(`ready:${path}`)
+          },
+        }),
+      } as unknown as Page
+      await enterWorkspace(page, 'synthetic-org', '#ready', '/synthetic-org/workspace/channel')
+      expect(actions).toEqual([
+        ...(start === 'home' ? ['/synthetic-org/workspace'] : []),
+        `ready:/synthetic-org/${start === 'home' ? 'workspace' : start}`,
+        '/synthetic-org/workspace/channel',
+        'ready:/synthetic-org/workspace/channel',
+      ])
+      actions.length = 0
+      await enterWorkspace(page, 'synthetic-org', '#ready', path)
+      expect(actions).toEqual([`ready:${path}`])
+    }
+  )
+
+  it.each(['tenant', 'email-slug', 'email-provider'] as const)(
+    'enters the actual %s discovery form without waiting for an absent email field',
+    async (entry) => {
+      let state: 'email' | 'slug' | 'provider' = entry === 'tenant' ? 'slug' : 'email'
+      const fills: string[] = []
+      type DiscoveryLocator = {
+        isVisible: () => Promise<boolean>
+        fill: (value: string) => Promise<void>
+        or: (other: DiscoveryLocator) => {
+          first: () => { waitFor: () => Promise<void> }
+        }
+      }
+      const locator = (field: 'email' | 'slug' | 'provider'): DiscoveryLocator => ({
+        isVisible: async () => state === field,
+        fill: async (value: string) => {
+          expect(state).toBe(field)
+          fills.push(value)
+        },
+        or(other: DiscoveryLocator) {
+          return {
+            first: () => ({
+              waitFor: async () =>
+                expect((await this.isVisible()) || (await other.isVisible())).toBe(true),
+            }),
+          }
+        },
+      })
+      const page = {
+        getByLabel: (label: string) => locator(label === 'Adresse e-mail' ? 'email' : 'slug'),
+        locator: () => locator('provider'),
+        getByRole: () => ({
+          click: async () => {
+            state = state === 'email' && entry === 'email-slug' ? 'slug' : 'provider'
+          },
+        }),
+      } as unknown as Page
+      await enterOrganisation(page, 'synthetic@example.test', 'synthetic-org')
+      expect(state).toBe('provider')
+      expect(fills).toEqual(
+        entry === 'tenant'
+          ? ['synthetic-org']
+          : entry === 'email-slug'
+            ? ['synthetic@example.test', 'synthetic-org']
+            : ['synthetic@example.test']
+      )
+    }
+  )
+
   it.each([
     [WEB, '/assets/app.js', 404],
     [HS, '/_matrix/client/v3/sync', 401],
@@ -1096,6 +1764,60 @@ describe('adversarial regression coverage', () => {
       } as unknown as APIRequestContext
       await expect(findMailLink(request, API, to, /claim/)).rejects.toThrow(/^WAVE2_MAIL_SCAN$/)
     }
+  })
+
+  it('R2 searches by recipient and paginates beyond fifty messages with exact ownership checks', async () => {
+    const to = 'synthetic+wave@example.test'
+    const link = `${WEB}/claim/one#synthetic`
+    const get = vi.fn(async (url: string) => {
+      if (url.includes('/api/v1/message/')) {
+        expect(url).toBe(`${API}/api/v1/message/owned`)
+        return { status: () => 200, json: async () => ({ HTML: link }) }
+      }
+      const parsed = new URL(url)
+      expect(parsed.pathname).toBe('/api/v1/search')
+      expect(parsed.searchParams.get('query')).toBe(`to:${to}`)
+      expect(parsed.searchParams.get('limit')).toBe('50')
+      const start = Number(parsed.searchParams.get('start'))
+      expect([0, 50]).toContain(start)
+      return {
+        status: () => 200,
+        json: async () => ({
+          messages:
+            start === 0
+              ? Array.from({ length: 50 }, (_, i) => ({
+                  ID: String(i),
+                  To: [{ Address: 'other@example.test' }],
+                }))
+              : [{ ID: 'owned', To: [{ Address: to.toUpperCase() }] }],
+        }),
+      }
+    })
+    expect(
+      await findMailLink(
+        { get } as unknown as APIRequestContext,
+        API,
+        to,
+        mailLinkPattern(`${WEB}/claim/one`)
+      )
+    ).toBe(link)
+    expect(get).toHaveBeenCalledTimes(3)
+  })
+
+  it('R2 bounds a nonterminating Mailpit listing and sanitizes later-page failures', async () => {
+    const messages = Array.from({ length: 50 }, (_, i) => ({ ID: String(i), To: [] }))
+    const get = vi.fn().mockResolvedValue({ status: () => 200, json: async () => ({ messages }) })
+    await expect(
+      findMailLink({ get } as unknown as APIRequestContext, API, 'synthetic@example.test', /claim/)
+    ).rejects.toThrow(/^WAVE2_MAIL_SCAN_LIMIT$/)
+    expect(get).toHaveBeenCalledTimes(100)
+    get
+      .mockReset()
+      .mockResolvedValueOnce({ status: () => 200, json: async () => ({ messages }) })
+      .mockRejectedValueOnce(new Error('private transport detail'))
+    await expect(
+      findMailLink({ get } as unknown as APIRequestContext, API, 'synthetic@example.test', /claim/)
+    ).rejects.toThrow(/^WAVE2_MAIL_SCAN$/)
   })
 
   it('R3 retains the shared-address ceiling across budgets and cleanup, with independent account counts', () => {

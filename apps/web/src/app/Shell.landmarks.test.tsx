@@ -129,6 +129,42 @@ describe('shell landmarks', () => {
     expect(container.querySelectorAll('[tabindex]:not([tabindex="-1"])')).toHaveLength(0)
   })
 
+  // A11Y_SKIP_LINK_DEAD: the live harness tabs to the link, presses Enter and asks
+  // where the focus went. A fragment navigation moves it to the target only when the
+  // target can hold the focus, so the `tabIndex={-1}` on `main` and the link's own
+  // `focus()` are what make « Aller au contenu » skip anything at all (WCAG 2.4.1) —
+  // without them the focus stays on the link and the next Tab walks the rail again.
+  it.each([
+    ['console', undefined],
+    ['workspace', 'workspace'],
+  ] as const)('lands the skip link inside main on Enter (%s)', async (_name, surface) => {
+    renderShell(surface === undefined ? {} : { surface })
+    const main = screen.getByRole('main')
+    expect(main).toHaveAttribute('tabindex', '-1')
+
+    const user = userEvent.setup()
+    await user.tab()
+    expect(screen.getByRole('link', { name: 'Aller au contenu' })).toHaveFocus()
+    await user.keyboard('{Enter}')
+
+    expect(main.contains(document.activeElement)).toBe(true)
+    expect(document.activeElement).toBe(main)
+  })
+
+  it('lands the skip link inside main when it is clicked, not only tabbed to', async () => {
+    renderShell()
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('link', { name: 'Aller au contenu' }))
+    expect(screen.getByRole('main').contains(document.activeElement)).toBe(true)
+  })
+
+  // The landmark is a reading position, not a control: the ring belongs on whatever the
+  // member operates next.
+  it('draws no focus ring on the landmark it moves the focus to', () => {
+    renderShell()
+    expect(screen.getByRole('main')).toHaveClass('outline-hidden')
+  })
+
   it('colours the skip link shadow only while it is shown, as at login', () => {
     // `shadow-pop` sets its own static colour; the themed one has to carry the
     // same `focus-visible:` variant to land after it. Unprefixed, it applied

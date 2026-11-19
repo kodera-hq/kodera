@@ -1,3 +1,4 @@
+import { documentText } from './documents'
 import { finishCleanup } from './cleanup'
 import { expect, test } from '@playwright/test'
 import type { Response } from '@playwright/test'
@@ -58,7 +59,7 @@ test('Persona 2: peer Matrix delivery, concurrent documents, exact preconditions
       await actor.workspace(input.workspaceReady, actor === c ? undefined : input.channelPath)
     }
     const witnesses = new Map(
-      [a, b, c].map((actor) => [actor, syncWitness(actor, input.homeserverOrigin)])
+      [a, b, c].map((actor) => [actor, syncWitness(actor, actor.homeserverOrigin)])
     )
     let succeeded = false
     try {
@@ -71,7 +72,7 @@ test('Persona 2: peer Matrix delivery, concurrent documents, exact preconditions
         const sent = sender.page.waitForResponse((response) => {
           const url = new URL(response.url())
           return (
-            url.origin === input.homeserverOrigin &&
+            url.origin === sender.homeserverOrigin &&
             response.request().method() === 'PUT' &&
             /^\/_matrix\/client\/v3\/rooms\/[^/]+\/send\/m\.room\.message\/[^/]+$/.test(
               url.pathname
@@ -119,7 +120,9 @@ test('Persona 2: peer Matrix delivery, concurrent documents, exact preconditions
       )
       for (const actor of [a, b])
         for (const marker of markers)
-          await expect(actor.page.locator(input.editor)).toContainText(marker)
+          await expect
+            .poll(() => actor.page.locator(input.editor).evaluate(documentText))
+            .toContain(marker)
       await expect
         .poll(async () => {
           const response = await a.core(documentPath, values)
