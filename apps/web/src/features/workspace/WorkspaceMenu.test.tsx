@@ -5,7 +5,7 @@ import '../../i18n'
 import { OrganisationSwitchContext } from '../../app/organisationSwitch'
 import { WorkspaceMenu, WORKSPACE_COMMAND_EVENT } from './WorkspaceMenu'
 
-it('contains only workspaces, workspace creation, and settings', async () => {
+it('contains only workspaces, workspace creation, administration and personal settings', async () => {
   const user = userEvent.setup()
   const onSwitch = vi.fn()
   render(
@@ -27,7 +27,7 @@ it('contains only workspaces, workspace creation, and settings', async () => {
   )
   await user.click(screen.getByRole('button', { name: 'Workspace' }))
   expect(screen.getAllByRole('menuitemradio')).toHaveLength(2)
-  expect(screen.getAllByRole('menuitem')).toHaveLength(2)
+  expect(screen.getAllByRole('menuitem')).toHaveLength(3)
   expect(screen.getByRole('menuitemradio', { name: /Kodera Community/ })).toHaveAttribute(
     'aria-checked',
     'true'
@@ -42,7 +42,8 @@ it('contains only workspaces, workspace creation, and settings', async () => {
 
 it.each([
   ['+ Créer ou configurer un nouvel espace', 'configure'],
-  ['Réglages de l’espace…', 'settings'],
+  ['Administration de l’espace…', 'admin'],
+  ['Paramètres personnels…', 'settings'],
 ])('dispatches the %s command', async (name, command) => {
   const listener = vi.fn()
   window.addEventListener(WORKSPACE_COMMAND_EVENT, listener)

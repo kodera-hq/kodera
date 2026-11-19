@@ -23,6 +23,7 @@ import {
   wave4CollectionsDemoHandlers,
 } from '../demo/wave4Collections'
 import { MESSAGING_DEMO_ROUTES, messagingDemoHandlers } from '../demo/messagingMedia'
+import { GOVERNANCE_DEMO_ROUTES, governanceDemoHandlers } from '../demo/workspaceGovernance'
 import {
   WORKSPACE_DOCS_DEMO_ROUTES,
   workspaceDocumentsDemoHandlers,
@@ -169,6 +170,7 @@ export const DEMO_ROUTES: readonly string[] = [
   'POST /organisations/:organisation_id/workspace/actions/initialise',
   ...WAVE4_COLLECTIONS_DEMO_ROUTES,
   ...MESSAGING_DEMO_ROUTES,
+  ...GOVERNANCE_DEMO_ROUTES,
   ...WORKSPACE_DOCS_DEMO_ROUTES,
   ...WAVE4_BILLING_PRIVACY_DEMO_ROUTES,
 ]
@@ -842,6 +844,7 @@ export const handlers: HttpHandler[] = [
   }),
   ...wave4CollectionsDemoHandlers(BASE, headers),
   ...messagingDemoHandlers(BASE, headers),
+  ...governanceDemoHandlers(BASE, headers),
   ...workspaceDocumentsDemoHandlers(BASE, headers),
   ...wave4BillingPrivacyDemoHandlers(BASE, headers),
 ]

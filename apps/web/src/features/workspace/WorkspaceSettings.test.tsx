@@ -1,7 +1,10 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, render as rtlRender, screen, waitFor, within } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, expect, it, vi } from 'vitest'
-import type { ReactNode } from 'react'
+import type * as IamApiModule from './iamApi'
+import type * as MembersApiModule from './admin/membersApi'
+import type { ReactElement, ReactNode } from 'react'
 import '../../i18n'
 import WorkspaceSettings from './WorkspaceSettings'
 import { getLocalProfile } from '../profile/localProfile'
@@ -37,12 +40,59 @@ vi.mock('@tanstack/react-router', () => ({
     </a>
   ),
 }))
+const iam = vi.hoisted(() => ({
+  roles: {
+    roles: [] as unknown[],
+    assignments: [] as { membership_id: string; role_ids: string[] }[],
+  },
+}))
+vi.mock('./iamApi', async (actual) => ({
+  ...(await actual<typeof IamApiModule>()),
+  listWorkspaceRoles: vi.fn(async () => iam.roles),
+  getWorkspaceProfile: vi.fn(async () => ({
+    value: {
+      description: '',
+      banner_preset: 'ink',
+      icon_mxc: '',
+      traits: [],
+      arrivals_channel_id: null,
+      rules_channel_id: null,
+      moderator_updates_channel_id: null,
+      security_alerts_channel_id: null,
+      invites_paused: false,
+    },
+    etag: '"p1"',
+  })),
+}))
+const directory = vi.hoisted(() => ({
+  rows: [] as {
+    id: string
+    display_name: string | null
+    email: string | null
+    role: string
+    state: string
+  }[],
+}))
+vi.mock('./admin/membersApi', async (actual) => ({
+  ...(await actual<typeof MembersApiModule>()),
+  useDirectory: () => ({
+    data: { pages: [{ data: directory.rows, has_more: false, next_cursor: null }] },
+    hasNextPage: false,
+    isError: false,
+  }),
+}))
 vi.mock('./HostingOfferPanel', () => ({ HostingOfferPanel: () => <div>Hosting</div> }))
 vi.mock('../extensions/ExtensionsCatalogPanel', () => ({
   ExtensionsCatalogPanel: () => <div>Extensions</div>,
 }))
+function render(ui: ReactElement) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return rtlRender(<QueryClientProvider client={client}>{ui}</QueryClientProvider>)
+}
+
 const props = {
   org: 'community',
+  membershipId: 'membership-self',
   organisationId: 'org-community',
   organisationName: 'Community',
   displayName: 'Member',
@@ -53,6 +103,8 @@ const props = {
 beforeEach(() => {
   localStorage.clear()
   vi.clearAllMocks()
+  iam.roles = { roles: [], assignments: [] }
+  directory.rows = []
 })
 
 it('persists profile changes and allows clearing the display name before typing', async () => {
@@ -75,12 +127,29 @@ it('persists profile changes and allows clearing the display name before typing'
   expect(props.onClose).toHaveBeenCalled()
 })
 
-it('keeps appearance and audio available to a member while filtering admin destinations', async () => {
+it('opens the personal settings by default with only personal sections and no admin switch for a member', async () => {
+  render(<WorkspaceSettings {...props} />)
+  expect(screen.getByRole('heading', { level: 2, name: 'Mon profil & statut' })).toBeVisible()
+  expect(screen.getByRole('dialog', { name: 'Paramètres personnels' })).toBeVisible()
+  const tabs = within(screen.getByRole('tablist')).getAllByRole('tab')
+  expect(tabs.map((tab) => tab.textContent)).toEqual([
+    'Mon profil & statut',
+    'Sécurité & connexion',
+    'Apparence & thèmes',
+    'Voix & audio',
+    'Notifications',
+    'Confidentialité & RGPD',
+  ])
+  await waitFor(() => expect(iam.roles).toBeDefined())
+  expect(screen.queryByRole('button', { name: 'Administration de l’espace' })).toBeNull()
+  expect(screen.queryByRole('tab', { name: 'Rôles & Tags' })).toBeNull()
+})
+
+it('keeps appearance and audio available to a member', async () => {
   const user = userEvent.setup()
   render(<WorkspaceSettings {...props} />)
   await user.click(screen.getByRole('tab', { name: 'Apparence & thèmes' }))
-  // Every theme the console has, named as the appearance screen names them — the panel offered
-  // three of six, so the default (« Ciel ») had no card and no member could come back to it.
+  // Every theme the console has, named as the appearance screen names them.
   for (const theme of ['Automatique', 'Ciel', 'Ciel nuit', 'Clair', 'Sombre', 'Noir']) {
     expect(screen.getByRole('button', { name: theme })).toBeVisible()
   }
@@ -97,22 +166,100 @@ it('keeps appearance and audio available to a member while filtering admin desti
   expect(await screen.findByRole('slider', { name: 'Volume principal' })).toBeVisible()
   expect(screen.queryByRole('heading', { level: 1 })).toBeNull()
   expect(screen.getByRole('heading', { level: 3, name: 'Ambiance sonore' })).toBeVisible()
-  expect(screen.getAllByRole('radiogroup', { name: 'Signature sonore' })).toHaveLength(1)
-  expect(screen.getAllByRole('radiogroup', { name: 'Mode sonore' })).toHaveLength(1)
-  expect(screen.getByRole('switch', { name: 'Mentions et messages' })).toBeVisible()
-  expect(
-    screen.getByRole('radiogroup', { name: 'Signal de mention et message direct' })
-  ).toBeVisible()
-  await user.click(screen.getByRole('tab', { name: 'Hébergement & administration' }))
-  // Security settings now has a real local verification/archive screen; federation remains a stub.
-  expect(screen.getByRole('link', { name: 'Sécurité & MFA' })).toHaveAttribute(
+  await user.click(screen.getByRole('tab', { name: 'Notifications' }))
+  await user.click(screen.getByRole('button', { name: 'Régler les sons' }))
+  expect(screen.getByRole('tab', { name: 'Voix & audio' })).toHaveAttribute('aria-selected', 'true')
+  await user.click(screen.getByRole('tab', { name: 'Sécurité & connexion' }))
+  expect(screen.getByRole('link', { name: 'Ouvrir la sécurité du compte' })).toHaveAttribute(
     'href',
     '/community/security'
   )
-  expect(screen.queryByRole('link', { name: 'Fédération' })).toBeNull()
+})
+
+it('offers a 44px « Retour » at the top left and closes on Escape, in both modes', async () => {
+  const user = userEvent.setup()
+  const { unmount } = render(<WorkspaceSettings {...props} />)
+  const back = screen.getByRole('button', { name: 'Retour' })
+  expect(back.className).toContain('h-[44px]')
+  expect(back.className).toContain('narrow:min-h-[44px]')
+  await user.click(back)
+  expect(props.onClose).toHaveBeenCalledTimes(1)
+  unmount()
+  render(<WorkspaceSettings {...{ ...props, role: 'org_owner' as const }} mode="admin" />)
+  expect(screen.getByRole('dialog', { name: 'Administration de l’espace' })).toBeVisible()
+  expect(screen.getByText('Échap')).toBeVisible()
+  await user.keyboard('{Escape}')
+  expect(props.onClose).toHaveBeenCalledTimes(2)
+})
+
+it('gives owners a categorized administration rail and a switch back to personal settings', async () => {
+  const user = userEvent.setup()
+  render(<WorkspaceSettings {...{ ...props, role: 'org_owner' as const }} />)
+  await user.click(screen.getByRole('button', { name: 'Administration de l’espace' }))
+  expect(screen.getByRole('dialog', { name: 'Administration de l’espace' })).toBeVisible()
+  const tabs = within(screen.getByRole('tablist')).getAllByRole('tab')
+  expect(tabs.map((tab) => tab.textContent)).toEqual([
+    'Profil de l’espace',
+    'Communauté & #arrivées',
+    'Salons & permissions',
+    'Intégrations & extensions',
+    'Membres',
+    'Rôles & Tags',
+    'Invitations',
+    'Sécurité & modération',
+    'Logs d’audit',
+    'Quotas & ressources',
+    'Hébergement',
+  ])
+  for (const group of ['Espace', 'Personnes', 'Sécurité', 'Plateforme']) {
+    expect(within(screen.getByRole('tablist')).getByText(group)).toBeVisible()
+  }
+  expect(
+    await screen.findByRole('figure', { name: 'Aperçu de la carte de l’espace' })
+  ).toBeVisible()
+  await user.click(screen.getByRole('tab', { name: 'Hébergement' }))
   expect(screen.getByRole('link', { name: 'Statut' })).toBeVisible()
-  expect(screen.queryByRole('link', { name: 'Facturation' })).toBeNull()
-  expect(screen.queryByRole('link', { name: 'Domaine' })).toBeNull()
+  expect(screen.getByRole('link', { name: 'Facturation' })).toBeVisible()
+  await user.click(screen.getByRole('button', { name: 'Paramètres personnels' }))
+  expect(screen.getByRole('heading', { level: 2, name: 'Mon profil & statut' })).toBeVisible()
+  expect(screen.getByText(/Rôle dans l’organisation\s*:\s*Propriétaire/u)).toBeVisible()
+})
+
+it('lets a delegated role manager open only the sections their roles grant', async () => {
+  iam.roles = {
+    roles: [
+      {
+        id: 'r-manager',
+        name: 'Coordination',
+        slug: 'coordination',
+        kind: 'role',
+        color: '',
+        icon: '',
+        position: 5,
+        is_hoisted: false,
+        is_mentionable: false,
+        permissions: ['manage_roles'],
+        member_count: 1,
+        etag: '"r"',
+      },
+    ],
+    assignments: [{ membership_id: 'membership-self', role_ids: ['r-manager'] }],
+  }
+  const user = userEvent.setup()
+  render(<WorkspaceSettings {...props} />)
+  await user.click(await screen.findByRole('button', { name: 'Administration de l’espace' }))
+  const tabs = within(screen.getByRole('tablist')).getAllByRole('tab')
+  expect(tabs.map((tab) => tab.textContent)).toEqual([
+    'Salons & permissions',
+    'Membres',
+    'Rôles & Tags',
+  ])
+})
+
+it('tells a member without delegation that the administration is reserved', async () => {
+  render(<WorkspaceSettings {...props} mode="admin" />)
+  expect(await screen.findByText(/réservée à ses propriétaires/u)).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Paramètres personnels' })).toBeVisible()
 })
 
 it('validates Matrix invitations and waits for the room acknowledgement', async () => {
@@ -124,8 +271,9 @@ it('validates Matrix invitations and waits for the room acknowledgement', async 
         resolve = done
       })
   )
-  render(<WorkspaceSettings {...props} />)
-  await user.click(screen.getByRole('tab', { name: 'Membres, rôles & invitations' }))
+  render(
+    <WorkspaceSettings {...{ ...props, role: 'org_owner' as const }} initialSection="members" />
+  )
   await user.click(screen.getByRole('button', { name: 'Inviter dans cette conversation' }))
   expect(runtime.invite).not.toHaveBeenCalled()
   await user.type(
@@ -139,7 +287,37 @@ it('validates Matrix invitations and waits for the room acknowledgement', async 
   await waitFor(() => expect(screen.getByText('Invitation envoyée.')).toBeVisible())
 })
 
-it('sanitizes member display names, isolates MXIDs with bdi, and holds busy until clearAvatar settles', async () => {
+it('names members without raw Matrix addresses and says « Propriétaire », not a wire role', async () => {
+  directory.rows = [
+    {
+      id: 'member-owner',
+      display_name: 'Camille Dubois',
+      email: 'camille@acme.fr',
+      role: 'org_owner',
+      state: 'active',
+    },
+    {
+      id: 'member-raw',
+      display_name: '@ce239589-a4bd-41db-9cfb-d06e66a77ff3:community.kodera.io',
+      email: 'marc.petit@acme.fr',
+      role: 'org_member',
+      state: 'active',
+    },
+  ]
+  render(
+    <WorkspaceSettings {...{ ...props, role: 'org_owner' as const }} initialSection="members" />
+  )
+  const list = screen.getByRole('list', { name: 'Membres' })
+  expect(within(list).getByText('Camille Dubois')).toBeVisible()
+  expect(within(list).getByText('marc.petit')).toBeVisible()
+  expect(
+    within(list).getByRole('button', { name: 'Changer le rôle de Camille Dubois' })
+  ).toHaveTextContent('Propriétaire')
+  expect(list.textContent).not.toMatch(/@[0-9a-f-]{36}:/u)
+  expect(list.textContent).not.toMatch(/org_owner|Owner|HTTP|40\d|50\d/u)
+})
+
+it('holds busy until clearAvatar settles', async () => {
   const user = userEvent.setup()
   let finishClear: () => void = () => undefined
   const clearAvatar = vi.fn(
@@ -152,15 +330,6 @@ it('sanitizes member display names, isolates MXIDs with bdi, and holds busy unti
     .spyOn(URL, 'createObjectURL')
     .mockReturnValue('blob:https://console.test/avatar')
   const revokeUrlSpy = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined)
-  const originalMembers = runtime.members
-  ;(runtime as { members: unknown; profile?: unknown }).members = [
-    { userId: '@member:community.kodera.io', name: 'Member' },
-    {
-      userId: '@ce239589-a4bd-41db-9cfb-d06e66a77ff3:community.kodera.io',
-      name: 'ce239589-a4bd-41db-9cfb-d06e66a77ff3',
-    },
-    { userId: '@spoof:community.kodera.io', name: 'Alice\u202E\u061C Spoof' },
-  ]
   ;(runtime as { profile?: unknown }).profile = {
     matrixDisplayName: 'Member',
     avatarKey: 'mxc://community.kodera.io/pic1',
@@ -171,12 +340,10 @@ it('sanitizes member display names, isolates MXIDs with bdi, and holds busy unti
   }
   try {
     render(<WorkspaceSettings {...props} />)
-    // Single unified avatar image in Profile summary card
     await waitFor(() =>
       expect(screen.getByRole('img')).toHaveAttribute('src', 'blob:https://console.test/avatar')
     )
     expect(screen.getAllByRole('img')).toHaveLength(1)
-
     const removeBtn = screen.getByRole('button', { name: 'Retirer la photo' })
     await user.click(removeBtn)
     expect(clearAvatar).toHaveBeenCalledTimes(1)
@@ -185,15 +352,7 @@ it('sanitizes member display names, isolates MXIDs with bdi, and holds busy unti
     await waitFor(() =>
       expect(screen.getByRole('button', { name: 'Choisir une image' })).toBeEnabled()
     )
-
-    await user.click(screen.getByRole('tab', { name: 'Membres, rôles & invitations' }))
-    expect(screen.getByText('Membre · ce23')).toBeVisible()
-    expect(screen.getByText('Alice Spoof')).toBeVisible()
-    const bdi = screen.getByText('@spoof:community.kodera.io')
-    expect(bdi.tagName.toLowerCase()).toBe('bdi')
-    expect(bdi).toHaveAttribute('dir', 'ltr')
   } finally {
-    ;(runtime as { members: unknown; profile?: unknown }).members = originalMembers
     delete (runtime as { profile?: unknown }).profile
     createUrlSpy.mockRestore()
     revokeUrlSpy.mockRestore()

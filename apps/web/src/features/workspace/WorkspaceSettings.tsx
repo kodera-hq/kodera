@@ -21,7 +21,6 @@ import { THEME_COPY, THEME_PREVIEW } from '../../theme/themeChoices'
 import { applyCustomTokensToDocument } from '../appearance/themeOverrides'
 import { AudioSettings, type AudioSettingsCall } from '../espace/AudioSettings'
 import { readDeviceChoice, saveDeviceChoice } from '../espace/audio/devices'
-import { safeDisplayName } from '../espace/liveViewModel'
 import { isMatrixUserId } from '../espace/roomInvitations'
 import { ExtensionsCatalogPanel } from '../extensions/ExtensionsCatalogPanel'
 import { useLocalProfile, type LocalProfile } from '../profile/localProfile'
@@ -40,23 +39,32 @@ import {
 import { settingsCopy } from './settingsMessages'
 import type { WorkspaceSettingsProps } from './WorkspaceSettingsHost'
 import type { MessageKey } from '../../i18n'
+import { adminCopy } from './admin/adminMessages'
+import { BackIcon } from './admin/AdminIcons'
+import { AuditLogPanel } from './admin/AuditLogPanel'
+import { ChannelOverridesPanel } from './admin/ChannelOverridesPanel'
+import { CommunityPanel } from './admin/CommunityPanel'
+import { InvitesPanel } from './admin/InvitesPanel'
+import { NotificationsSection, SecuritySection, ShortcutsSection } from './admin/PersonalPanels'
+import {
+  ADMIN_GROUPS,
+  ADMIN_SECTIONS,
+  delegatedSections,
+  modeOf,
+  PERSONAL_SECTIONS,
+  type AdminSection,
+  type Section,
+  type SettingsMode,
+} from './admin/sections'
+import { useDelegation } from './admin/useIam'
+import { WorkspaceMembersPanel } from './admin/WorkspaceMembersPanel'
+import { WorkspaceProfilePanel } from './admin/WorkspaceProfilePanel'
+import { WorkspaceRolesPanel, type RoleAuthority } from './admin/WorkspaceRolesPanel'
 
 const LazySoundsScreen = lazy(() =>
   import('../sounds/SoundsScreen').then((module) => ({ default: module.SoundsScreen }))
 )
 
-export type Section =
-  | 'profile'
-  | 'appearance'
-  | 'audio'
-  | 'members'
-  | 'moderation'
-  | 'extensions'
-  | 'quotas'
-  | 'privacy'
-  | 'hosting'
-const PERSONAL: Section[] = ['profile', 'appearance', 'audio']
-const WORKSPACE: Section[] = ['members', 'moderation', 'extensions', 'quotas', 'privacy', 'hosting']
 const LINK =
   'rounded-md border border-c-border px-4 py-3 text-sm font-medium text-c-ink hover:bg-c-muted focus-visible:ring focus-visible:outline-hidden'
 
@@ -374,125 +382,161 @@ function Voice({ runtime }: { runtime: WorkspaceSettingsRuntime | undefined }) {
   )
 }
 
-function Members({
-  runtime,
-  org,
-  role,
-  onClose,
-}: {
-  onClose: () => void
-  runtime: WorkspaceSettingsRuntime | undefined
-  org: string
-  role: WorkspaceSettingsProps['role']
-}) {
-  const { t, i18n } = useTranslation()
+/** Invite someone into the conversation that is open behind the settings, by Matrix ID. */
+function ConversationInvite({ runtime }: { runtime: WorkspaceSettingsRuntime | undefined }) {
+  const { i18n } = useTranslation()
   const copy = settingsCopy(i18n.resolvedLanguage)
-  const unnamed = t('console.workspace.members.unnamed')
   const [inviteId, setInviteId] = useState('')
   const [pending, setPending] = useState(false)
   const [result, setResult] = useState<'invited' | 'inviteInvalid' | 'inviteError' | null>(null)
-  const canManage = role === 'org_owner' || role === 'org_admin'
+  const invite = runtime?.invite
+  if (invite === undefined) return null
   return (
-    <div className="flex flex-col gap-5">
-      <p className="text-sm text-c-ink-2">{copy.membersHint}</p>
-      {runtime ? (
-        <ul className="divide-y divide-c-border-soft">
-          {runtime.members.map((member) => {
-            const memberName = safeDisplayName(member.name, member.userId, unnamed)
-            const memberRole = runtime.memberRole(member.userId)
-            const external =
-              member.userId.split(':').slice(1).join(':') !==
-              runtime.userId.split(':').slice(1).join(':')
-            const label = external
-              ? copy.external
-              : memberRole === 'admin'
-                ? copy.admin
-                : memberRole === 'owner'
-                  ? copy.owner
-                  : copy.member
-            return (
-              <li key={member.userId} className="flex items-center gap-3 py-3">
-                <Avatar name={memberName} identity={member.userId} />
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-semibold">{memberName}</p>
-                  <p className="truncate text-xs text-c-ink-3">
-                    <bdi dir="ltr">{member.userId}</bdi>
-                  </p>
-                </div>
-                <span className="text-xs text-c-ink-2">{label}</span>
-              </li>
-            )
-          })}
-        </ul>
-      ) : (
-        <p className="text-sm text-c-ink-2">{copy.unavailable}</p>
-      )}
-      {runtime?.invite ? (
-        <form
-          className="flex flex-col gap-3 border-t border-c-border-soft pt-5"
-          onSubmit={(event) => {
-            event.preventDefault()
-            if (pending) return
-            if (!isMatrixUserId(inviteId.trim())) {
-              setResult('inviteInvalid')
-              return
-            }
-            setPending(true)
-            setResult(null)
-            void runtime
-              .invite?.(inviteId.trim())
-              .then(
-                () => {
-                  setResult('invited')
-                  setInviteId('')
-                },
-                () => setResult('inviteError')
-              )
-              .finally(() => setPending(false))
-          }}
-        >
-          <TextField
-            label={copy.inviteId}
-            value={inviteId}
-            onChange={(event) => setInviteId(event.target.value)}
-          />
-          <Button type="submit" loading={pending}>
-            {copy.invite}
-          </Button>
-          <p role="status" className="text-sm text-c-ink-2">
-            {result ? copy[result] : ''}
-          </p>
-        </form>
-      ) : null}
-      {canManage ? (
-        <Link to="/$org/people" params={{ org }} onClick={onClose} className={LINK}>
-          {copy.manageMembers}
-        </Link>
-      ) : null}
-    </div>
+    <form
+      className="flex flex-col gap-3 rounded-lg border border-c-border p-5"
+      onSubmit={(event) => {
+        event.preventDefault()
+        if (pending) return
+        if (!isMatrixUserId(inviteId.trim())) {
+          setResult('inviteInvalid')
+          return
+        }
+        setPending(true)
+        setResult(null)
+        void invite(inviteId.trim())
+          .then(
+            () => {
+              setResult('invited')
+              setInviteId('')
+            },
+            () => setResult('inviteError')
+          )
+          .finally(() => setPending(false))
+      }}
+    >
+      <h3 className="font-semibold">{copy.invite}</h3>
+      <TextField
+        label={copy.inviteId}
+        value={inviteId}
+        onChange={(event) => setInviteId(event.target.value)}
+      />
+      <div>
+        <Button type="submit" variant="secondary" loading={pending}>
+          {copy.invite}
+        </Button>
+      </div>
+      <p role="status" className="text-sm text-c-ink-2">
+        {result ? copy[result] : ''}
+      </p>
+    </form>
   )
 }
+
+function Appearance({
+  onOpenStudio,
+  studioTrigger,
+}: {
+  onOpenStudio: () => void
+  studioTrigger: RefObject<HTMLButtonElement | null>
+}) {
+  const { t, i18n } = useTranslation()
+  const copy = settingsCopy(i18n.resolvedLanguage)
+  const themeCardsId = useId()
+  const { preference, choose } = useThemePreference()
+  return (
+    <>
+      <LanguageSwitch />
+      <p className="text-sm text-c-ink-2">{copy.appearanceHint}</p>
+      <div
+        className="grid grid-cols-3 gap-4 narrow:grid-cols-1"
+        role="group"
+        aria-label={copy.appearance}
+      >
+        {/* Every theme the console has, « Automatique » and the two frosted-glass ones included.
+            The chosen one is said by its edge and by `aria-pressed`, not by a glyph inside its
+            name. */}
+        {THEME_PREFERENCES.map((mode) => (
+          <button
+            type="button"
+            key={mode}
+            aria-pressed={preference === mode}
+            onClick={() => {
+              applyCustomTokensToDocument(null)
+              choose(mode)
+            }}
+            aria-labelledby={`${themeCardsId}-${mode}-label`}
+            aria-describedby={`${themeCardsId}-${mode}-hint`}
+            className="flex flex-col gap-3 rounded-lg border border-c-border p-4 text-left focus-visible:ring focus-visible:outline-hidden aria-pressed:border-c-accent-ink aria-pressed:ring-1 aria-pressed:ring-c-accent-ink motion-safe:transition-colors motion-safe:duration-150"
+          >
+            <span
+              data-theme={THEME_PREVIEW[mode][0]}
+              aria-hidden="true"
+              className="flex h-12 overflow-hidden rounded-md border border-c-border bg-c-page"
+            >
+              <span className="w-8 bg-c-inverse" />
+              <span className="material-panel w-12" />
+              <span className="flex flex-1 flex-col justify-center gap-2 p-3">
+                <span className="h-2 w-full rounded-full bg-c-muted" />
+                <span className="h-2 w-1/2 rounded-full bg-c-action" />
+              </span>
+            </span>
+            <span id={`${themeCardsId}-${mode}-label`} className="text-sm font-semibold">
+              {t(THEME_COPY[mode].label)}
+            </span>
+            <span id={`${themeCardsId}-${mode}-hint`} className="text-xs text-c-ink-3">
+              {t(THEME_COPY[mode].hint)}
+            </span>
+          </button>
+        ))}
+      </div>
+      <div>
+        <Button ref={studioTrigger} variant="secondary" onClick={onOpenStudio}>
+          {copy.studio}
+        </Button>
+      </div>
+    </>
+  )
+}
+
+const TAB =
+  'rounded-md px-3 py-3 text-left text-sm font-medium text-c-ink-2 hover:bg-c-muted focus-visible:ring focus-visible:outline-hidden data-[state=active]:bg-c-accent-soft data-[state=active]:text-c-accent-ink narrow:shrink-0 narrow:whitespace-nowrap'
+const HEADER_ICON = cx(
+  'flex h-[44px] min-w-[44px] shrink-0 items-center justify-center gap-2 rounded-full text-c-ink-3',
+  TOUCH_TARGET,
+  'hover:bg-c-muted hover:text-c-ink focus-visible:ring focus-visible:outline-hidden',
+  'motion-safe:transition-colors motion-safe:duration-150'
+)
 
 export default function WorkspaceSettings({
   org,
   organisationId,
   personId,
+  membershipId,
   organisationName,
   displayName,
   role,
   onClose,
   returnFocus,
   initialSection = 'profile',
+  mode: initialMode,
 }: WorkspaceSettingsProps & {
   onClose: () => void
   returnFocus: RefObject<HTMLElement | null>
   initialSection?: Section
+  mode?: SettingsMode
 }) {
   const narrow = useNarrowViewport()
-  const { t, i18n } = useTranslation()
+  const { i18n } = useTranslation()
   const copy = settingsCopy(i18n.resolvedLanguage)
-  const [section, setSection] = useState<Section>(initialSection)
-  const themeCardsId = useId()
+  const admin = adminCopy(i18n.resolvedLanguage)
+  const [mode, setMode] = useState<SettingsMode>(initialMode ?? modeOf(initialSection))
+  const [section, setSection] = useState<Section>(
+    initialMode === undefined || modeOf(initialSection) === initialMode
+      ? initialSection
+      : initialMode === 'admin'
+        ? 'overview'
+        : 'profile'
+  )
   const [studio, setStudio] = useState(false)
   const studioTrigger = useRef<HTMLButtonElement>(null)
   const closeStudio = () => {
@@ -509,8 +553,19 @@ export default function WorkspaceSettings({
   const shareTheme = useActiveThemeShare()
   const canManage = role === 'org_owner' || role === 'org_admin'
   const canBill = canManage || role === 'org_billing'
-  // An area whose route renders only the placeholder is not offered: following the link lands on
-  // « Cette page n'est pas encore disponible », which reads as something broken.
+  // Part of the administration is held through assigned workspace roles: a member's delegated
+  // sections, and an administrator's role ceiling. Only an owner needs no read to know it.
+  const delegation = useDelegation(organisationId, membershipId, role !== 'org_owner')
+  const adminSections: readonly AdminSection[] = canManage
+    ? ADMIN_SECTIONS
+    : delegatedSections(delegation)
+  const canAdminister = adminSections.length > 0
+  const authority: RoleAuthority = {
+    owner: role === 'org_owner',
+    admin: canManage,
+    ceiling: delegation.ceiling,
+    held: delegation.held,
+  }
   const links = [
     { to: '/$org/status', label: copy.statusPage, show: true },
     { to: '/$org/domain', label: copy.domain, show: canManage },
@@ -519,9 +574,176 @@ export default function WorkspaceSettings({
       label: copy.federation,
       show: canManage && !isStubArea('federation'),
     },
-    { to: '/$org/security', label: copy.security, show: !isStubArea('security') },
     { to: '/$org/invoices', label: copy.billing, show: canBill },
   ]
+  const switchMode = (next: SettingsMode) => {
+    setMode(next)
+    setSection(next === 'admin' ? (adminSections[0] ?? 'overview') : 'profile')
+  }
+  const groups =
+    mode === 'personal'
+      ? [
+          {
+            key: 'personal',
+            title: admin.groups.personal,
+            items: PERSONAL_SECTIONS as readonly Section[],
+          },
+        ]
+      : ADMIN_GROUPS.map((group) => ({
+          key: group.key,
+          title: admin.groups[group.key],
+          items: group.items.filter((item) => adminSections.includes(item)) as readonly Section[],
+        })).filter((group) => group.items.length > 0)
+  const visible = groups.flatMap((group) => group.items)
+  const title = mode === 'personal' ? admin.titlePersonal : admin.titleAdmin
+  const restricted = <p className="text-sm text-c-ink-2">{admin.sectionRestricted}</p>
+
+  function body(item: Section) {
+    switch (item) {
+      case 'profile':
+        return (
+          <>
+            <p className="text-sm text-c-ink-2">{copy.profileHint}</p>
+            {runtime ? <Profile runtime={runtime} name={displayName} /> : <p>{copy.unavailable}</p>}
+            <p className="text-xs text-c-ink-3">
+              {copy.roleHint}:{' '}
+              {role === 'org_owner'
+                ? copy.owner
+                : role === 'org_admin'
+                  ? copy.admin
+                  : role === 'org_billing'
+                    ? copy.billing
+                    : copy.member}
+            </p>
+          </>
+        )
+      case 'security':
+        return <SecuritySection org={org} onNavigate={onClose} />
+      case 'appearance':
+        return <Appearance onOpenStudio={() => setStudio(true)} studioTrigger={studioTrigger} />
+      case 'audio':
+        return (
+          <>
+            <p className="text-sm text-c-ink-2">{copy.audioHint}</p>
+            <Voice runtime={runtime} />
+            <Suspense fallback={null}>
+              <LazySoundsScreen embedded />
+            </Suspense>
+          </>
+        )
+      case 'notifications':
+        return <NotificationsSection onOpenAudio={() => setSection('audio')} />
+      case 'privacy':
+        return (
+          <WorkspacePrivacyPanel
+            org={org}
+            organisationId={organisationId}
+            personId={personId}
+            role={role}
+          />
+        )
+      case 'shortcuts':
+        return <ShortcutsSection />
+      case 'overview':
+        return (
+          <WorkspaceProfilePanel
+            organisationId={organisationId}
+            organisationName={organisationName}
+            canEdit={canManage}
+          />
+        )
+      case 'members':
+        return (
+          <>
+            <WorkspaceMembersPanel
+              organisationId={organisationId}
+              callerRole={role}
+              callerMembershipId={membershipId}
+              authority={authority}
+            />
+            <ConversationInvite runtime={runtime} />
+          </>
+        )
+      case 'roles':
+        return <WorkspaceRolesPanel organisationId={organisationId} authority={authority} />
+      case 'channels':
+        return <ChannelOverridesPanel organisationId={organisationId} authority={authority} />
+      case 'invites':
+        return canManage ? (
+          <InvitesPanel organisationId={organisationId} authority={authority} />
+        ) : (
+          restricted
+        )
+      case 'extensions':
+        return <ExtensionsCatalogPanel channels={runtime?.channels} />
+      case 'moderation':
+        return canManage ? <ModerationPanel organisationId={organisationId} /> : restricted
+      case 'audit':
+        return <AuditLogPanel organisationId={organisationId} />
+      case 'community':
+        return <CommunityPanel organisationId={organisationId} canEdit={canManage} />
+      case 'quotas':
+        return (
+          <WorkspaceQuotasPanel
+            org={org}
+            organisationId={organisationId}
+            role={role}
+            onNavigate={onClose}
+          />
+        )
+      case 'hosting':
+        return (
+          <>
+            <HostingOfferPanel
+              initiallyExpanded
+              workspace={
+                workspaceSummary.data?.workspace
+                  ? {
+                      channels: [
+                        ...workspaceSummary.data.workspace.categories.flatMap(
+                          (category) => category.channels
+                        ),
+                        ...workspaceSummary.data.workspace.uncategorised_channels,
+                      ],
+                    }
+                  : undefined
+              }
+              organisation={organisationName}
+              mode={tenant.data?.hostingMode ?? tenant.data?.hosting_mode}
+            />
+            <section className="flex flex-col gap-3 rounded-lg border border-c-border p-5">
+              <h3 className="font-semibold">{copy.selfHosted}</h3>
+              <p className="text-sm text-c-ink-2">{copy.selfHostedHint}</p>
+              <a
+                className={LINK}
+                href="https://github.com/kodera-hq/kodera/tree/main/deploy/community"
+                target="_blank"
+                rel="noreferrer"
+              >
+                {copy.selfHostedLink}
+              </a>
+            </section>
+            <h3 className="font-semibold">{copy.console}</h3>
+            <div className="flex flex-wrap gap-3">
+              {links
+                .filter((link) => link.show)
+                .map((link) => (
+                  <Link
+                    key={link.to}
+                    to={link.to}
+                    params={{ org }}
+                    onClick={onClose}
+                    className={LINK}
+                  >
+                    {link.label}
+                  </Link>
+                ))}
+            </div>
+          </>
+        )
+    }
+  }
+
   return (
     <Modal.Root
       open
@@ -539,6 +761,7 @@ export default function WorkspaceSettings({
         <Modal.Overlay className="fixed inset-0 z-40 bg-c-scrim" />
         <Modal.Content
           aria-describedby={undefined}
+          data-settings-mode={mode}
           onCloseAutoFocus={(event) => {
             event.preventDefault()
             const target = returnFocus.current
@@ -547,256 +770,106 @@ export default function WorkspaceSettings({
           }}
           className="material-dialog fixed inset-0 z-40 flex flex-col text-c-ink outline-hidden"
         >
-          <header className="flex shrink-0 items-center justify-between gap-4 border-b border-c-border-soft px-6 py-4">
-            <div>
-              <Modal.Title className="text-lg font-semibold">{copy.title}</Modal.Title>
-              <p className="text-sm text-c-ink-3">{organisationName}</p>
-            </div>
-            {/* Closing is one gesture on a quiet control, not a labelled button competing with the
-                panel's own actions: the shortcut is said beside it, and only where there is a
-                keyboard to use it. */}
-            <div className="flex shrink-0 items-center gap-2">
-              <kbd className="rounded-sm border border-c-border-soft bg-c-sunken px-2 py-[2px] font-mono text-xs text-c-ink-3 narrow:hidden">
-                {copy.escHint}
-              </kbd>
-              <Modal.Close
-                aria-label={copy.close}
-                className={cx(
-                  'flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-c-ink-3',
-                  TOUCH_TARGET,
-                  'hover:bg-c-muted hover:text-c-ink focus-visible:ring focus-visible:outline-hidden',
-                  'motion-safe:transition-colors motion-safe:duration-150'
-                )}
+          <header className="flex shrink-0 items-center justify-between gap-4 border-b border-c-border-soft px-4 py-3">
+            <div className="flex min-w-0 items-center gap-3">
+              {/* Leaving the settings is one gesture, top left, where a « back » is looked for:
+                  the conversation, its call and its drafts were never unmounted behind it. */}
+              <button
+                title={admin.backHint}
+                type="button"
+                onClick={onClose}
+                className={cx(HEADER_ICON, 'px-3')}
               >
+                <BackIcon />
+                <span className="text-sm font-medium narrow:sr-only">{admin.back}</span>
+              </button>
+              <div className="min-w-0">
+                <Modal.Title className="truncate text-lg font-semibold">{title}</Modal.Title>
+                <p className="truncate text-sm text-c-ink-3">{organisationName}</p>
+              </div>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              {mode === 'personal' && canAdminister ? (
+                <button
+                  type="button"
+                  className={cx(LINK, 'py-2 narrow:hidden')}
+                  onClick={() => switchMode('admin')}
+                >
+                  {admin.switchToAdmin}
+                </button>
+              ) : null}
+              {mode === 'admin' ? (
+                <button
+                  type="button"
+                  className={cx(LINK, 'py-2 narrow:hidden')}
+                  onClick={() => switchMode('personal')}
+                >
+                  {admin.switchToPersonal}
+                </button>
+              ) : null}
+              <kbd className="rounded-sm border border-c-border-soft bg-c-sunken px-2 py-[2px] font-mono text-xs text-c-ink-3 narrow:hidden">
+                {admin.escHint}
+              </kbd>
+              <Modal.Close aria-label={copy.close} className={HEADER_ICON}>
                 <CloseIcon />
               </Modal.Close>
             </div>
           </header>
-          <Tabs.Root
-            value={section}
-            onValueChange={(value) => setSection(value as Section)}
-            orientation={narrow ? 'horizontal' : 'vertical'}
-            className="flex min-h-0 flex-1 narrow:flex-col"
-          >
-            <Tabs.List
-              aria-label={copy.title}
-              className="material-panel flex w-shell-sidebar-width shrink-0 flex-col gap-1 overflow-y-auto border-r border-c-border-soft p-4 narrow:w-full narrow:flex-row narrow:overflow-x-auto narrow:border-r-0 narrow:border-b"
-            >
-              {[
-                { title: copy.personal, items: PERSONAL },
-                { title: copy.workspace, items: WORKSPACE },
-              ].map((group) => (
-                <div
-                  key={group.title}
-                  className="mb-4 flex flex-col gap-1 narrow:mb-0 narrow:shrink-0 narrow:flex-row"
-                >
-                  <p className="px-3 py-2 text-xs font-semibold text-c-ink-3 narrow:hidden">
-                    {group.title}
-                  </p>
-                  {group.items.map((item) => (
-                    <Tabs.Trigger
-                      key={item}
-                      value={item}
-                      className="rounded-md px-3 py-3 text-left text-sm font-medium text-c-ink-2 hover:bg-c-muted focus-visible:ring focus-visible:outline-hidden data-[state=active]:bg-c-accent-soft data-[state=active]:text-c-accent-ink narrow:shrink-0 narrow:whitespace-nowrap"
-                    >
-                      {copy[item]}
-                    </Tabs.Trigger>
-                  ))}
-                </div>
-              ))}
-            </Tabs.List>
-            <div className="min-w-0 flex-1 overflow-y-auto p-8 narrow:p-4">
-              {[...PERSONAL, ...WORKSPACE].map((item) => (
-                <Tabs.Content
-                  key={item}
-                  value={item}
-                  // A panel is read, not operated: Radix makes it focusable so the keyboard can
-                  // reach its content, and a ring around the whole section says « you are here »
-                  // about something nothing can be done with. The ring stays on the controls.
-                  className="mx-auto flex max-w-shell-document-max-width flex-col gap-6 outline-hidden"
-                >
-                  <h2 className="text-xl font-semibold">{copy[item]}</h2>
-                  {item === 'profile' ? (
-                    <>
-                      <p className="text-sm text-c-ink-2">{copy.profileHint}</p>
-                      {runtime ? (
-                        <Profile runtime={runtime} name={displayName} />
-                      ) : (
-                        <p>{copy.unavailable}</p>
-                      )}
-                      <p className="text-xs text-c-ink-3">
-                        {copy.roleHint}:{' '}
-                        {role === 'org_owner'
-                          ? copy.owner
-                          : role === 'org_admin'
-                            ? copy.admin
-                            : role === 'org_billing'
-                              ? copy.billing
-                              : copy.member}
-                      </p>
-                    </>
-                  ) : null}
-                  {item === 'appearance' ? (
-                    <>
-                      <LanguageSwitch />
-                      <p className="text-sm text-c-ink-2">{copy.appearanceHint}</p>
-                      <div
-                        className="grid grid-cols-3 gap-4 narrow:grid-cols-1"
-                        role="group"
-                        aria-label={copy.appearance}
-                      >
-                        {/* Every theme the console has, « Automatique » and the two frosted-glass
-                            ones included: offering three of six left the default theme with no
-                            card, so its own member read « aucun thème choisi ». The chosen one is
-                            said by its edge and by `aria-pressed`, not by a glyph inside its
-                            name. */}
-                        {THEME_PREFERENCES.map((mode) => (
-                          <button
-                            type="button"
-                            key={mode}
-                            aria-pressed={preference === mode}
-                            onClick={() => {
-                              applyCustomTokensToDocument(null)
-                              choose(mode)
-                            }}
-                            // Named by its theme and described by its hint, as the appearance
-                            // screen does: without this the two run together into one word.
-                            aria-labelledby={`${themeCardsId}-${mode}-label`}
-                            aria-describedby={`${themeCardsId}-${mode}-hint`}
-                            className="flex flex-col gap-3 rounded-lg border border-c-border p-4 text-left focus-visible:ring focus-visible:outline-hidden aria-pressed:border-c-accent-ink aria-pressed:ring-1 aria-pressed:ring-c-accent-ink motion-safe:transition-colors motion-safe:duration-150"
-                          >
-                            <span
-                              data-theme={THEME_PREVIEW[mode][0]}
-                              aria-hidden="true"
-                              className="flex h-12 overflow-hidden rounded-md border border-c-border bg-c-page"
-                            >
-                              <span className="w-8 bg-c-inverse" />
-                              {/* The panel level of the active theme's material: flat in the
-                                  Givre family, frosted in the Ciel one, so the card shows what
-                                  the theme actually draws. */}
-                              <span className="material-panel w-12" />
-                              <span className="flex flex-1 flex-col justify-center gap-2 p-3">
-                                <span className="h-2 w-full rounded-full bg-c-muted" />
-                                <span className="h-2 w-1/2 rounded-full bg-c-action" />
-                              </span>
-                            </span>
-                            <span
-                              id={`${themeCardsId}-${mode}-label`}
-                              className="text-sm font-semibold"
-                            >
-                              {t(THEME_COPY[mode].label)}
-                            </span>
-                            <span
-                              id={`${themeCardsId}-${mode}-hint`}
-                              className="text-xs text-c-ink-3"
-                            >
-                              {t(THEME_COPY[mode].hint)}
-                            </span>
-                          </button>
-                        ))}
-                      </div>
-                      <div>
-                        <Button
-                          ref={studioTrigger}
-                          variant="secondary"
-                          onClick={() => setStudio(true)}
-                        >
-                          {copy.studio}
-                        </Button>
-                      </div>
-                    </>
-                  ) : null}
-                  {item === 'audio' ? (
-                    <>
-                      <p className="text-sm text-c-ink-2">{copy.audioHint}</p>
-                      <Voice runtime={runtime} />
-                      <Suspense fallback={null}>
-                        <LazySoundsScreen embedded />
-                      </Suspense>
-                    </>
-                  ) : null}
-                  {item === 'members' ? (
-                    <Members runtime={runtime} org={org} role={role} onClose={onClose} />
-                  ) : null}
-                  {item === 'moderation' ? (
-                    canManage ? (
-                      <ModerationPanel organisationId={organisationId} />
-                    ) : (
-                      <p className="text-sm text-c-ink-2">{copy.moderationRestricted}</p>
-                    )
-                  ) : null}
-                  {item === 'extensions' ? (
-                    <ExtensionsCatalogPanel channels={runtime?.channels} />
-                  ) : null}
-                  {item === 'quotas' ? (
-                    <WorkspaceQuotasPanel
-                      org={org}
-                      organisationId={organisationId}
-                      role={role}
-                      onNavigate={onClose}
-                    />
-                  ) : null}
-                  {item === 'privacy' ? (
-                    <WorkspacePrivacyPanel
-                      org={org}
-                      organisationId={organisationId}
-                      personId={personId}
-                      role={role}
-                    />
-                  ) : null}
-                  {item === 'hosting' ? (
-                    <>
-                      <HostingOfferPanel
-                        initiallyExpanded
-                        workspace={
-                          workspaceSummary.data?.workspace
-                            ? {
-                                channels: [
-                                  ...workspaceSummary.data.workspace.categories.flatMap(
-                                    (category) => category.channels
-                                  ),
-                                  ...workspaceSummary.data.workspace.uncategorised_channels,
-                                ],
-                              }
-                            : undefined
-                        }
-                        organisation={organisationName}
-                        mode={tenant.data?.hostingMode ?? tenant.data?.hosting_mode}
-                      />
-                      <section className="flex flex-col gap-3 rounded-lg border border-c-border p-5">
-                        <h3 className="font-semibold">{copy.selfHosted}</h3>
-                        <p className="text-sm text-c-ink-2">{copy.selfHostedHint}</p>
-                        <a
-                          className={LINK}
-                          href="https://github.com/kodera-hq/kodera/tree/main/deploy/community"
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          {copy.selfHostedLink}
-                        </a>
-                      </section>
-                      <h3 className="font-semibold">{copy.console}</h3>
-                      <div className="flex flex-wrap gap-3">
-                        {links
-                          .filter((link) => link.show)
-                          .map((link) => (
-                            <Link
-                              key={link.to}
-                              to={link.to}
-                              params={{ org }}
-                              onClick={onClose}
-                              className={LINK}
-                            >
-                              {link.label}
-                            </Link>
-                          ))}
-                      </div>
-                    </>
-                  ) : null}
-                </Tabs.Content>
-              ))}
+          {mode === 'admin' && !canAdminister ? (
+            <div className="mx-auto flex max-w-shell-document-max-width flex-col gap-4 p-8">
+              <p className="text-sm text-c-ink-2">{admin.adminRestricted}</p>
             </div>
-          </Tabs.Root>
+          ) : (
+            <Tabs.Root
+              value={visible.includes(section) ? section : (visible[0] ?? section)}
+              onValueChange={(value) => setSection(value as Section)}
+              orientation={narrow ? 'horizontal' : 'vertical'}
+              className="flex min-h-0 flex-1 narrow:flex-col"
+            >
+              <Tabs.List
+                aria-label={title}
+                className="material-panel flex w-shell-sidebar-width shrink-0 flex-col gap-1 overflow-y-auto border-r border-c-border-soft p-4 narrow:w-full narrow:flex-row narrow:overflow-x-auto narrow:border-r-0 narrow:border-b"
+              >
+                {groups.map((group) => (
+                  <div
+                    key={group.key}
+                    className="mb-4 flex flex-col gap-1 narrow:mb-0 narrow:shrink-0 narrow:flex-row"
+                  >
+                    <p className="px-3 py-2 text-xs font-semibold text-c-ink-3 narrow:hidden">
+                      {group.title}
+                    </p>
+                    {group.items.map((item) => (
+                      <Tabs.Trigger key={item} value={item} className={TAB}>
+                        {admin.sections[item]}
+                      </Tabs.Trigger>
+                    ))}
+                  </div>
+                ))}
+                {narrow && (mode === 'admin' || canAdminister) ? (
+                  <button
+                    type="button"
+                    className={cx(TAB, 'border border-c-border')}
+                    onClick={() => switchMode(mode === 'admin' ? 'personal' : 'admin')}
+                  >
+                    {mode === 'admin' ? admin.switchToPersonal : admin.switchToAdmin}
+                  </button>
+                ) : null}
+              </Tabs.List>
+              <div className="min-w-0 flex-1 overflow-y-auto p-8 narrow:p-4">
+                {visible.map((item) => (
+                  <Tabs.Content
+                    key={item}
+                    value={item}
+                    // A panel is read, not operated: the ring stays on the controls.
+                    className="mx-auto flex max-w-shell-document-max-width flex-col gap-6 outline-hidden"
+                  >
+                    <h2 className="text-xl font-semibold">{admin.sections[item]}</h2>
+                    {body(item)}
+                  </Tabs.Content>
+                ))}
+              </div>
+            </Tabs.Root>
+          )}
           <ThemeStudioModal
             open={studio}
             currentThemeMode={appliedTheme(preference)}

@@ -47,6 +47,8 @@ export interface ShellProps {
   org: string
   organisationId: string
   personId?: string | undefined
+  /** The caller's membership in this organisation (`Me.organisations[].membership_id`). */
+  membershipId?: string | undefined
   organisation: OrgSwitcherOrganisation
   memberships?: readonly OrgSwitcherMembership[]
   onSwitchOrganisation?: (slug: string) => void
@@ -90,6 +92,7 @@ export function Shell({
   org,
   organisationId,
   personId,
+  membershipId,
   organisation,
   memberships,
   onSwitchOrganisation,
@@ -112,6 +115,7 @@ export function Shell({
       org={org}
       organisationId={organisationId}
       personId={personId}
+      membershipId={membershipId}
       organisationName={organisation.name}
       displayName={user.displayName}
       role={role}
