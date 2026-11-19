@@ -159,3 +159,17 @@ export const WithActions: Story = {
     ),
   },
 }
+
+/**
+ * The avatar and the author's name as profile disclosures (`MessageRow` wraps both in
+ * `UserProfilePopover`). Covered here because the accessibility gate over these stories
+ * (`src/ui/stories-a11y.test.tsx`) is what judges a named control holding visible text:
+ * the circle's initials are decoration, the author is the name of both triggers.
+ */
+export const ProfileTriggers: Story = {
+  args: {
+    avatarIdentity: '@claire:kodera.test',
+    avatarOnlineLabel: 'en ligne',
+    profileTrigger: (trigger) => trigger,
+  },
+}

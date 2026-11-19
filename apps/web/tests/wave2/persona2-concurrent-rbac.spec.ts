@@ -71,7 +71,7 @@ test('Persona 2: peer Matrix delivery, concurrent documents, exact preconditions
         const sent = sender.page.waitForResponse((response) => {
           const url = new URL(response.url())
           return (
-            url.origin === input.homeserverOrigin &&
+            url.origin === sender.homeserverOrigin &&
             response.request().method() === 'PUT' &&
             /^\/_matrix\/client\/v3\/rooms\/[^/]+\/send\/m\.room\.message\/[^/]+$/.test(
               url.pathname

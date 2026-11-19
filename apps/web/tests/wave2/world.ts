@@ -16,6 +16,12 @@ import { exactOrigin, guard, object } from './oracles/shared'
 import { assertLocalFont } from './oracles/r6-visual-a11y'
 import { fixturePath } from './surfaces'
 
+/** Tenant homeservers share a parent containing at least two domain labels. */
+export function parentDomain(origin: string): string {
+  const labels = new URL(origin).hostname.split('.')
+  return labels.length >= 3 ? labels.slice(1).join('.') : ''
+}
+
 export interface ActorInput {
   account: Account
   organisation: string
@@ -217,7 +223,7 @@ export class Actor {
           exactOrigin(input.homeserverOrigin),
           actorHomeserver,
           ...(input.livekitOrigin ? [exactOrigin(input.livekitOrigin)] : []),
-          ...(instrumentation.extraOrigins ?? []),
+          ...(instrumentation.extraOrigins ?? []).map(exactOrigin),
         ]),
       ]
       const ledger = new NetworkLedger(actorInput.network, allowed)
@@ -360,13 +366,15 @@ export class Actor {
     guard(this.matrixBearer, 'WAVE2_MATRIX_AUTHORITY_REQUIRED')
     const target = exactOrigin(homeserver)
     if (this.homeserverOrigin !== target) {
+      const parent = parentDomain(this.homeserverOrigin)
+      guard(parent && parent === parentDomain(target), 'WAVE2_FOREIGN_DOMAIN_BOUNDARY')
       this.budget.reserve(this.alias, 'local-join')
       const joinPath = `/_matrix/client/v3/join/${encodeURIComponent(roomId)}`
       const refusals = [
         {
           url: `${this.homeserverOrigin}${joinPath}?server_name=${encodeURIComponent(new URL(target).host)}`,
-          status: 403,
-          errcode: 'M_FORBIDDEN',
+          status: 502,
+          errcode: 'M_UNKNOWN',
           marker: 'WAVE2_MATRIX_FOREIGN_JOIN',
         },
         {

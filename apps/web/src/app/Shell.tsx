@@ -23,6 +23,23 @@ import { useNarrowViewport } from './useNarrowViewport'
 const SKIP_LINK =
   'sr-only focus-visible:not-sr-only focus-visible:absolute focus-visible:left-4 focus-visible:top-4 focus-visible:z-50 focus-visible:rounded-md focus-visible:bg-c-elevated focus-visible:px-4 focus-visible:py-2 focus-visible:text-c-ink focus-visible:shadow-pop focus-visible:shadow-c-shadow-2 focus-visible:outline-hidden focus-visible:ring'
 
+const MAIN_CONTENT_ID = 'main-content'
+const MAIN_CONTENT_FOCUS = 'outline-hidden'
+
+/** Focus explicitly so repeated fragment activation also reaches the landmark. */
+function SkipToContentLink() {
+  const { t } = useTranslation()
+  return (
+    <a
+      href={`#${MAIN_CONTENT_ID}`}
+      className={SKIP_LINK}
+      onClick={() => document.getElementById(MAIN_CONTENT_ID)?.focus()}
+    >
+      {t('console.shell.nav.action-skip-to-content')}
+    </a>
+  )
+}
+
 export interface ShellProps {
   org: string
   organisationId: string
@@ -114,9 +131,7 @@ export function Shell({
       <OrganisationSwitchContext.Provider value={organisationSwitch}>
         <div className="flex min-h-screen flex-col">
           {settings}
-          <a href="#main-content" className={SKIP_LINK}>
-            {t('console.shell.nav.action-skip-to-content')}
-          </a>
+          <SkipToContentLink />
           <NarrowTopBar
             org={org}
             organisation={organisation}
@@ -144,7 +159,11 @@ export function Shell({
                 className="px-4 pt-4 empty:hidden"
               />
               {/* 16 px on every side (the mock's mobile gutter), one column. */}
-              <main id="main-content" className="flex w-full min-w-0 flex-1 flex-col gap-6 p-4">
+              <main
+                id={MAIN_CONTENT_ID}
+                tabIndex={-1}
+                className={`flex w-full min-w-0 flex-1 flex-col gap-6 p-4 ${MAIN_CONTENT_FOCUS}`}
+              >
                 {children}
               </main>
             </IncidentBannerClaimProvider>
@@ -178,16 +197,18 @@ export function Shell({
       <OrganisationSwitchContext.Provider value={organisationSwitch}>
         <div className="flex min-h-screen">
           {settings}
-          <a href="#main-content" className={SKIP_LINK}>
-            {t('console.shell.nav.action-skip-to-content')}
-          </a>
+          <SkipToContentLink />
           {rail}
           <div className="flex h-screen min-w-0 flex-1 flex-col">
             <IncidentBannerClaimProvider>
               {sessionExpiry}
               <DemoDisclosure org={org} surface={surface} />
               <StatusBanner organisationId={organisationId} org={org} role={role} />
-              <main id="main-content" className="flex min-h-0 w-full flex-1 flex-col">
+              <main
+                id={MAIN_CONTENT_ID}
+                tabIndex={-1}
+                className={`flex min-h-0 w-full flex-1 flex-col ${MAIN_CONTENT_FOCUS}`}
+              >
                 {children}
               </main>
             </IncidentBannerClaimProvider>
@@ -200,9 +221,7 @@ export function Shell({
   return (
     <div className="flex min-h-screen">
       {settings}
-      <a href="#main-content" className={SKIP_LINK}>
-        {t('console.shell.nav.action-skip-to-content')}
-      </a>
+      <SkipToContentLink />
       {rail}
       <div id="console-sidebar" hidden={!sidebarVisible}>
         <Sidebar
@@ -258,7 +277,11 @@ export function Shell({
           {sessionExpiry}
           <DemoDisclosure org={org} surface={surface} />
           <StatusBanner organisationId={organisationId} org={org} role={role} />
-          <main id="main-content" className="flex w-full flex-1 flex-col gap-6 px-6 py-5">
+          <main
+            id={MAIN_CONTENT_ID}
+            tabIndex={-1}
+            className={`flex w-full flex-1 flex-col gap-6 px-6 py-5 ${MAIN_CONTENT_FOCUS}`}
+          >
             {children}
           </main>
         </IncidentBannerClaimProvider>

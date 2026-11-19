@@ -161,16 +161,17 @@ export function TimelineMessage({
   const showAddReaction = !isDeleted && addReaction !== undefined
   const faces = thread?.participants?.slice(0, 3) ?? []
 
-  const avatar = (
-    <Avatar
-      name={author}
-      identity={avatarIdentity}
-      onlineLabel={avatarOnlineLabel}
-      size="lg"
-      aria-hidden="true"
-      {...(avatarSrc === undefined ? {} : { src: avatarSrc })}
-    />
-  )
+  const avatarProps = {
+    name: author,
+    identity: avatarIdentity,
+    onlineLabel: avatarOnlineLabel,
+    size: 'lg' as const,
+    ...(avatarSrc === undefined ? {} : { src: avatarSrc }),
+  }
+  /** Beside the body, the circle is decoration: the article is already named by its author. */
+  const avatar = <Avatar {...avatarProps} aria-hidden="true" />
+  // The image names the profile control without exposing decorative initials to speech input.
+  const namedAvatar = <Avatar {...avatarProps} />
   return (
     <article
       data-ph-no-capture
@@ -203,10 +204,9 @@ export function TimelineMessage({
           profileTrigger(
             <button
               type="button"
-              aria-label={author}
               className="rounded-full focus-visible:ring focus-visible:outline-hidden"
             >
-              {avatar}
+              {namedAvatar}
             </button>
           )
         ) : (
@@ -233,7 +233,8 @@ export function TimelineMessage({
                 ? profileTrigger(
                     <button
                       type="button"
-                      className="rounded-sm text-left hover:underline focus-visible:ring focus-visible:outline-hidden"
+                      // Keep the profile trigger at the shared 24 px pointer target floor.
+                      className="inline-flex min-h-6 items-center rounded-sm text-left hover:underline focus-visible:ring focus-visible:outline-hidden"
                     >
                       {author}
                     </button>

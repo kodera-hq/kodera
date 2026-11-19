@@ -9,7 +9,7 @@ import { finishCleanup } from '../wave2/cleanup'
 import { findMailLink, mailLinkPattern } from '../wave2/mailpit'
 import { enterOrganisation } from '../wave2/login'
 import { enterWorkspace } from '../wave2/workspace'
-import { Actor, readWave2Input } from '../wave2/world'
+import { Actor, parentDomain, readWave2Input } from '../wave2/world'
 import type { Wave2Input } from '../wave2/world'
 import { selectInterfaceLanguage } from '../wave2/language'
 import type {
@@ -172,7 +172,7 @@ describe('actor homeserver isolation', () => {
         origin: origin ?? HS,
         method: 'POST',
         pathPattern: joinPath,
-        expectedStatus: 403,
+        expectedStatus: origin && origin !== HS ? 502 : 403,
         max: 1,
         query: origin && origin !== HS ? { server_name: new URL(HS).host } : {},
         requiredBodyKeys: ['errcode'],
@@ -238,7 +238,7 @@ describe('actor homeserver isolation', () => {
   })
   it('proves closed federation locally and foreign token rejection with the same own authority', async () => {
     const { actor, budget, post, request } = await setup(outsider, [
-      { status: 403, body: { errcode: 'M_FORBIDDEN' } },
+      { status: 502, body: { errcode: 'M_UNKNOWN' } },
       { status: 401, body: { errcode: 'M_UNKNOWN_TOKEN' } },
     ])
     try {
@@ -274,6 +274,9 @@ describe('actor homeserver isolation', () => {
   it.each([
     [undefined, 200, 'M_FORBIDDEN', 'WAVE2_MATRIX_FOREIGN_JOIN'],
     [undefined, 403, 'M_UNKNOWN_TOKEN', 'WAVE2_MATRIX_FOREIGN_JOIN'],
+    [outsider, 200, 'M_UNKNOWN', 'WAVE2_MATRIX_FOREIGN_JOIN'],
+    [outsider, 403, 'M_FORBIDDEN', 'WAVE2_MATRIX_FOREIGN_JOIN'],
+    [outsider, 502, 'M_FORBIDDEN', 'WAVE2_MATRIX_FOREIGN_JOIN'],
     [outsider, 401, 'M_UNKNOWN_TOKEN', 'WAVE2_MATRIX_FOREIGN_JOIN'],
     [outsider, 403, 'M_UNKNOWN_TOKEN', 'WAVE2_MATRIX_FOREIGN_JOIN'],
   ])(
@@ -296,7 +299,7 @@ describe('actor homeserver isolation', () => {
     [401, 'M_FORBIDDEN'],
   ])('refuses the wrong foreign boundary response %s/%s', async (status, errcode) => {
     const { actor, post, budget } = await setup(outsider, [
-      { status: 403, body: { errcode: 'M_FORBIDDEN' } },
+      { status: 502, body: { errcode: 'M_UNKNOWN' } },
       { status, body: { errcode } },
     ])
     try {
@@ -307,6 +310,46 @@ describe('actor homeserver isolation', () => {
     } finally {
       await actor.close()
     }
+  })
+  it.each([
+    ['https://a.wave2.localhost', 'wave2.localhost'],
+    ['https://a.kodera.test', 'kodera.test'],
+    ['https://a.staging.kodera.io', 'staging.kodera.io'],
+    ['https://localhost:8008', ''],
+    ['https://kodera.test', ''],
+  ])('extracts the tenant parent for %s', (origin, parent) => {
+    expect(parentDomain(origin)).toBe(parent)
+  })
+  it.each(['https://matrix.other.test', 'https://localhost:8008', 'https://example.test'])(
+    'refuses a foreign domain before transmitting authority to %s',
+    async (target) => {
+      const { actor, post, budget } = await setup(outsider)
+      try {
+        await expect(actor.denyForeignJoin(target, room)).rejects.toThrow(
+          'WAVE2_FOREIGN_DOMAIN_BOUNDARY'
+        )
+        expect(post).not.toHaveBeenCalled()
+        budget.assertExact('C', { 'local-join': 0 })
+      } finally {
+        await actor.close()
+      }
+    }
+  )
+  it.each([
+    'https://capture.example.test/path',
+    'https://capture.example.test/',
+    'http://capture.example.test',
+  ])('validates extra instrumentation origin %s before opening a page', async (origin) => {
+    const close = vi.fn(async () => {})
+    const newPage = vi.fn()
+    const browser = { newContext: async () => ({ close, newPage }) } as unknown as Browser
+    await expect(
+      Actor.create(browser, 'C', inputFor(), new RateBudget(), {
+        extraOrigins: [origin],
+      })
+    ).rejects.toThrow(/TARGET_/)
+    expect(newPage).not.toHaveBeenCalled()
+    expect(close).toHaveBeenCalledOnce()
   })
   it('requires current own-homeserver authority before sending either request', async () => {
     const { actor, post, budget, request } = await setup(outsider, [], false)

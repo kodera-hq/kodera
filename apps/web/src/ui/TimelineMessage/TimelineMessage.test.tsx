@@ -252,6 +252,54 @@ describe('TimelineMessage', () => {
     expect(within(button).getByText('dernière il y a 4 min')).toHaveClass('text-c-ink-3')
   })
 
+  describe('with a profile disclosure around the avatar and the author', () => {
+    function withTrigger() {
+      return setup({
+        avatarIdentity: '@claire:kodera.test',
+        avatarOnlineLabel: 'en ligne',
+        profileTrigger: (trigger) => trigger,
+      })
+    }
+
+    // WCAG 2.5.3: a control named by `aria-label` has to carry its visible text in that
+    // name, and « CD » is not the name of Claire Dubois — so the label goes rather than
+    // grows. The circle names the button from its content, as `role="img"` with a label of
+    // its own, whose subtree is presentational: the initials are still never read.
+    it('names the avatar trigger by the circle, not by a label of its own', () => {
+      const { container } = withTrigger()
+      const avatarTrigger = container.querySelector('.w-10 > button')!
+      expect(avatarTrigger).not.toHaveAttribute('aria-label')
+      expect(avatarTrigger).not.toHaveAttribute('aria-labelledby')
+      const circle = within(avatarTrigger as HTMLElement).getByRole('img')
+      expect(circle).toHaveTextContent('CD')
+      expect(circle).toHaveAttribute('aria-label', 'Claire Dubois, en ligne')
+      expect(avatarTrigger).toHaveAccessibleName('Claire Dubois, en ligne')
+      // Which is the point: the initials are no part of the name the label would have had
+      // to repeat.
+      expect(avatarTrigger).not.toHaveAccessibleName(/CD/)
+    })
+
+    // The circle beside a body, with no disclosure around it, stays decoration: the
+    // article is named by its author already, and the Avatar must not say it twice.
+    it('keeps the plain avatar hidden from the name, as before', () => {
+      const { container } = setup({ avatarIdentity: '@claire:kodera.test' })
+      expect(container.querySelector('.w-10 > *')).toHaveAttribute('aria-hidden', 'true')
+    })
+
+    // WCAG 2.2 AA 2.5.8: 24 px, against the 20 px a line of 14 px text measures.
+    it('stands the author trigger at the 24 px pointer-target floor', () => {
+      const { container } = withTrigger()
+      const authorTrigger = container.querySelector('[id$="-author"] button')
+      expect(authorTrigger).toHaveTextContent('Claire Dubois')
+      expect(authorTrigger).toHaveClass('min-h-6', 'inline-flex', 'items-center')
+    })
+
+    it('leaves the article named by its author, time and presence', () => {
+      withTrigger()
+      expect(screen.getByRole('article')).toHaveAccessibleName('Claire Dubois , en ligne 09:31')
+    })
+  })
+
   it('names two messages on one page each by its own author and time', () => {
     render(
       <>

@@ -1,3 +1,4 @@
+import type { Page } from '@playwright/test'
 import { expect, test } from '@playwright/test'
 import { Actor, gateWorld, readWave2Input, targets } from './world'
 import { selectInterfaceLanguage } from './language'
@@ -33,6 +34,19 @@ import {
 import type { VisualCell } from './oracles/r6-visual-a11y'
 import { guard } from './oracles/shared'
 
+async function settleTimeline(page: Page, input: ReturnType<typeof readWave2Input>) {
+  await expect(page.locator(input.composer)).toBeEditable()
+  await expect(page.getByRole('log').locator('article').first()).toBeVisible()
+  await expect(page.locator(input.visual.sansSelector)).toBeVisible()
+  await expect(page.locator(input.visual.monoSelector)).toBeVisible()
+  await page.evaluate(async () => {
+    await document.fonts.ready
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+    })
+  })
+}
+
 test('Persona 4: twelve explicit web cells on one retained owner page', async ({ browser }) => {
   const input = readWave2Input('PERSONA4')
   await gateWorld(browser, input)
@@ -51,7 +65,7 @@ test('Persona 4: twelve explicit web cells on one retained owner page', async ({
     })
     await actor.signIn()
     await actor.workspace(input.workspaceReady, input.visual.webPath)
-    await expect(actor.page.locator(input.composer)).toBeEditable()
+    await settleTimeline(actor.page, input)
     guard(
       Number.isSafeInteger(input.visual.clockEpochMs) && input.visual.clockEpochMs > 0,
       'R6_CLOCK_FIXTURE'
@@ -88,12 +102,7 @@ test('Persona 4: twelve explicit web cells on one retained owner page', async ({
           }
           await actor.page.setViewportSize({ width, height: 900 })
           await actor.page.emulateMedia({ colorScheme: theme, reducedMotion: 'reduce' })
-          await actor.page.evaluate(
-            () =>
-              new Promise<void>((resolve) => {
-                requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
-              })
-          )
+          await settleTimeline(actor.page, input)
           await assertCell(actor.page, cell)
           assertLayout(await layoutFaults(actor.page))
           await verifyFonts(
@@ -257,6 +266,15 @@ test('R5: explicit opt-in, validated EU capture and immediate native cancellatio
           requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
         })
     )
+    await expect
+      .poll(() =>
+        actor.page.evaluate(
+          () =>
+            (window as unknown as { __wave2DispatchFacts: DispatchFact[] }).__wave2DispatchFacts
+              .length
+        )
+      )
+      .toBeGreaterThan(factsBeforeHold)
     const before = consent.attempts.length
     const heldCount = interceptor!.heldCount()
     await revokeConsent(consent, () => toggle.evaluate((el: HTMLElement) => el.click()))
