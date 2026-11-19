@@ -51,6 +51,7 @@ test('Persona 4: twelve explicit web cells on one retained owner page', async ({
     })
     await actor.signIn()
     await actor.workspace(input.workspaceReady, input.visual.webPath)
+    await expect(actor.page.locator(input.composer)).toBeEditable()
     guard(
       Number.isSafeInteger(input.visual.clockEpochMs) && input.visual.clockEpochMs > 0,
       'R6_CLOCK_FIXTURE'
@@ -87,6 +88,12 @@ test('Persona 4: twelve explicit web cells on one retained owner page', async ({
           }
           await actor.page.setViewportSize({ width, height: 900 })
           await actor.page.emulateMedia({ colorScheme: theme, reducedMotion: 'reduce' })
+          await actor.page.evaluate(
+            () =>
+              new Promise<void>((resolve) => {
+                requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+              })
+          )
           await assertCell(actor.page, cell)
           assertLayout(await layoutFaults(actor.page))
           await verifyFonts(
