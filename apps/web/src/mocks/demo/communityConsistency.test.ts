@@ -299,3 +299,16 @@ it('keeps UUID fixture identifiers across reload and satisfies the real current-
   const workspace = await get(`/organisations/${before.organisation}/workspace`, 'identity-team')
   expect(workspace).toMatchObject({ id: before.workspace, organisation_id: before.organisation })
 })
+
+it('searches the demo directory beyond its first page before pagination', async () => {
+  const path = '/organisations/vercelli/memberships'
+  const all = (await get(path, 'vercelli')).data
+  const wanted = all.at(-1)
+  const first = await get(`${path}?limit=25`, 'vercelli')
+  expect(first.data).toHaveLength(25)
+  expect(first.data.some((row: { id: string }) => row.id === wanted.id)).toBe(false)
+  const q = encodeURIComponent(`  ${wanted.email.toUpperCase()}  `)
+  const found = await get(`${path}?limit=25&q=${q}`, 'vercelli')
+  expect(found.data.map((row: { id: string }) => row.id)).toContain(wanted.id)
+  expect(found.has_more).toBe(false)
+})

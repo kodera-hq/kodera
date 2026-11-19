@@ -92,9 +92,17 @@ Console primitives that carry them: `Tabs`, `TextField` (search, debounced 300 m
 sur site"), `DataTable` with `Avatar`, `Badge` (role), `StatusPill` (never connected / on-site),
 row menu, `Pagination` as a cursor "load more", `EmptyState`, `Skeleton`.
 
+Search sends the normalized, debounced `q` to Core before cursor pagination, so it finds
+people beyond the first 25 rows. Names match for every caller; email matches only where Core
+discloses it, including a member's own row. Changing the search starts a separate page sequence;
+loading, no results and retry states apply to that sequence. Loaded rows stay visible while a
+new search or filter loads within the same organisation; pagination waits for its response.
+`q` accepts at most 200 characters; empty or whitespace-only searches behave like an omitted query.
+
 Filters are the three of the delivered design — Toutes · Admins · En attente — rendered as
 `Tabs`, and the subtitle counts the same three groups from `memberships/count`, one call per
-group, never summed in the browser.
+group, never summed in the browser. These role/state population counts do not accept `q` and
+remain independent of search.
 
 **The federation nudge.** When no federation provider is active and the organisation's
 entitlements include `federation`, the list carries one informational `Banner`: letting existing
@@ -113,8 +121,10 @@ an owner or an administrator, and withholds them, omitted or `null`, from everyo
 list has two projections, chosen from who is asking and never from a fact's absence. An owner or
 administrator reads the directory: name, address, role, last sign-in. Any other role reads the
 colleagues' list: name, role and state, with no address column, no sign-in and no private fact
-drawn as a dash, as « never » or as a word. Its search field searches names only and says so
-(`console.people.list.placeholder-search-name`). A person with neither a name nor a disclosed
+drawn as a dash, as « never » or as a word. Its search field offers name search and says so
+(`console.people.list.placeholder-search-name`). Server search matches stored `display_name`
+and disclosed email, including a member's own email; it does not match the client's fallback
+label, translated role or state. A person with neither a name nor a disclosed
 address is listed under `console.people.list.label-unnamed`, never under an empty cell. In the
 directory, an account that has no address (an on-site access) shows a dash to the eye and
 `console.people.list.sr-no-email` to a screen reader. Runnable acceptance: `npx vitest run

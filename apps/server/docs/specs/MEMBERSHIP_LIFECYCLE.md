@@ -86,11 +86,14 @@ organisation,
 - **A withheld fact never leaves the service layer.** `read_directory` builds a row with no contact
   and `read_membership` a view with no contact and no identity before either leaves its snapshot, so
   a serializer cannot emit what it was never given.
-- **No input reads a withheld fact.** `listMemberships` accepts `cursor`, `limit`, `role` and `state`
-  and refuses every other query key `400`, so no filter, search or ordering runs on an address, an
-  identity or a sign-in fact; rows are ordered by membership id. `countMemberships` refuses its
-  `account_kind` filter for every caller (Core does not store the fact), so no count narrows on one.
-  A cursor binds the person, the organisation, the filters and two membership ids, nothing else.
+- **No input reads a withheld fact.** `listMemberships` accepts `cursor`, `limit`, `role`, `state`
+  and `q` and refuses every other query key `400`. Search matches stored display names and
+  disclosed email addresses before pagination: only `org_owner` and `org_admin` match any email;
+  an `org_member` matches email only on their own row. A colleague's withheld email never affects
+  results. Rows are ordered by membership id. `countMemberships` counts the role/state population,
+  does not accept `q`, and refuses `account_kind` for every caller (Core does not store the fact).
+  A cursor binds the person, the organisation, role, state, limit, normalized `q` and two membership
+  ids; the search text is authenticated without being carried in the cursor.
 - **The validator is not an oracle and never crosses callers.** The strong `ETag` of `getMembership`
   hashes `id`, `organisation_id`, `role`, `state` and `updated_at` only, never a private fact, so a
   guess cannot be confirmed against it. The representation without the private facts is a different

@@ -9,6 +9,7 @@ import { http, HttpResponse } from 'msw/http'
 import type { HttpHandler } from 'msw/http'
 import type { components } from '@/api/schema'
 import { bindCurrentUserToMockRequest } from '../currentUserIdentity'
+import { membershipDirectoryResponse } from '../membershipDirectory'
 import { EXAMPLES, type OperationExample } from './examples'
 import { PROBLEM_STATUS, PROBLEM_TITLES } from './problems'
 
@@ -131,7 +132,7 @@ export const handlers: HttpHandler[] = [
   http.get(BASE + "/organisations/:organisation_id/workspace/administration", () => answer(EXAMPLES["getWorkspaceAdministration"])),
   http.get(BASE + "/organisations/:organisation_id/notice-contacts", () => answer(EXAMPLES["getNoticeContacts"])),
   http.patch(BASE + "/organisations/:organisation_id/notice-contacts", ({ request }) => answerRequiringIfMatch(EXAMPLES["patchNoticeContacts"], request)),
-  http.get(BASE + "/organisations/:organisation_id/memberships", () => answer(EXAMPLES["listMemberships"])),
+  http.get(BASE + "/organisations/:organisation_id/memberships", ({ request }) => membershipDirectoryResponse((EXAMPLES["listMemberships"].body as { data: components['schemas']['Membership'][] }).data, request, (EXAMPLES.getMe.body as components['schemas']['Me']).organisations[0]!.role, (EXAMPLES.getMe.body as components['schemas']['Me']).organisations[0]!.membership_id, { 'X-Request-Id': requestId() })),
   http.get(BASE + "/organisations/:organisation_id/memberships/:membership_id", () => answer(EXAMPLES["getMembership"])),
   http.patch(BASE + "/organisations/:organisation_id/memberships/:membership_id", ({ request }) => answerRequiringIfMatch(EXAMPLES["changeMembershipRole"], request)),
   http.delete(BASE + "/organisations/:organisation_id/memberships/:membership_id", () => answer(EXAMPLES["removeMembership"])),

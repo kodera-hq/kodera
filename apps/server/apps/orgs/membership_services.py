@@ -102,6 +102,8 @@ def read_directory(
             organisation_id=identity.organisation_id,
             query=parameters,
             continuation=continuation,
+            caller_person_id=person.id,
+            caller_role=role,
         )
         has_more = len(memberships) > parameters.limit
         visible = memberships[: parameters.limit]

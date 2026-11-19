@@ -1,6 +1,7 @@
 """Independent complete-set traversal, strict inputs and continuation authority."""
 
 import base64
+from urllib.parse import urlencode
 from uuid import uuid4
 
 import pytest
@@ -91,6 +92,9 @@ def test_filters_and_removed_empty(http_world):
         "cursor=",
         "cursor=a&cursor=a",
         "search=person",
+        "q=a&q=b",
+        "q=%00",
+        "q=" + "x" * 201,
         "limit=1&unknown=x",
         "cursor=" + "x" * 513,
         "unknown=" + "x" * 2048,
@@ -121,7 +125,7 @@ def test_invalid_cursor_integrity(http_world):
         safe_problem(directory(w, query="?limit=1&cursor=" + malformed), 400, "validation-error")
 
 
-@pytest.mark.parametrize("binding", ["limit", "role", "state", "person", "organisation"])
+@pytest.mark.parametrize("binding", ["limit", "role", "state", "q", "person", "organisation"])
 def test_cursor_binding(http_world, http_signer, binding):
     w = http_world
     cursor = first_cursor(w)
@@ -133,6 +137,8 @@ def test_cursor_binding(http_world, http_signer, binding):
         query += "&role=org_member"
     elif binding == "state":
         query += "&state=active"
+    elif binding == "q":
+        query += "&q=changed"
     elif binding == "person":
         user, _ = seed(w)
         identity(w.models, w.first, user, subject="another-principal")
@@ -242,3 +248,56 @@ def test_cursor_contains_no_contact_subject_or_bearer(http_world):
     raw = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4))
     for value in (w.person.email, w.current.subject, w.credential):
         assert value.encode() not in raw
+
+
+def test_search_traversal_and_normalized_cursor_binding(http_world):
+    w = http_world
+    expected = []
+    for index in range(7):
+        user, item = seed(w, role="org_admin")
+        raw_update(user, display_name="Needle " + str(index))
+        expected.append(str(item.id))
+        seed(w, role="org_admin")
+    cursor, seen = None, []
+    while True:
+        query = {"limit": 2, "q": "  NEEDLE  ", "role": "org_admin", "state": "active"}
+        if cursor:
+            query.update(cursor=cursor, q="needle")
+        response = directory(w, query="?" + urlencode(query))
+        assert response.status_code == 200, response.content
+        body = response.json()
+        seen.extend(row["id"] for row in body["data"])
+        cursor = body["next_cursor"]
+        if not body["has_more"]:
+            assert cursor is None
+            break
+        assert body["data"] and cursor
+        for changed in ("other", ""):
+            rebound = {**query, "q": changed, "cursor": cursor}
+            safe_problem(directory(w, query="?" + urlencode(rebound)), 400, "validation-error")
+        raw = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4))
+        assert b"needle" not in raw.lower()
+    assert seen == sorted(expected)
+
+
+@pytest.mark.parametrize("q", ["", " ", "  "])
+def test_empty_search_is_identical_to_omitted_and_keeps_cursor(http_world, q):
+    w = http_world
+    first = directory(w, query="?limit=1").json()
+    assert directory(w, query="?" + urlencode({"limit": 1, "q": q})).json() == first
+    cursor = first["next_cursor"]
+    assert cursor
+    assert directory(w, query="?" + urlencode({"limit": 1, "q": q, "cursor": cursor})).json() == (
+        directory(w, query="?" + urlencode({"limit": 1, "cursor": cursor})).json()
+    )
+
+
+def test_search_bounds_unicode_and_literal_sql_wildcards(http_world):
+    w = http_world
+    user, item = seed(w)
+    raw_update(user, display_name="😀" * 200)
+    response = directory(w, query="?" + urlencode({"q": "😀" * 200}))
+    assert response.status_code == 200
+    assert [row["id"] for row in response.json()["data"]] == [str(item.id)]
+    for query in ("%", "_", "absent"):
+        assert directory(w, query="?" + urlencode({"q": query})).json()["data"] == []

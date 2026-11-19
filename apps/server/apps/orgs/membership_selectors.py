@@ -15,6 +15,8 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
+from django.db.models import Q
+
 from .membership_pagination import DirectoryQuery
 from .models import Membership
 
@@ -82,15 +84,27 @@ def _eligible(*, organisation_id: UUID, role: str | None, state: str | None) -> 
 
 
 def count_memberships(*, organisation_id: UUID, role: str | None, state: str | None) -> int:
-    """How many rows `directory_memberships` would page through for the same filters."""
+    """Count the directory's role/state population; countMemberships does not accept q."""
     count: int = _eligible(organisation_id=organisation_id, role=role, state=state).count()
     return count
 
 
 def directory_memberships(
-    *, organisation_id: UUID, query: DirectoryQuery, continuation: tuple[UUID, UUID] | None
+    *,
+    organisation_id: UUID,
+    query: DirectoryQuery,
+    continuation: tuple[UUID, UUID] | None,
+    caller_person_id: UUID | None = None,
+    caller_role: str = "",
 ) -> tuple[tuple[DirectoryMembership, ...], UUID | None]:
     eligible = _eligible(organisation_id=organisation_id, role=query.role, state=query.state)
+    if query.q:
+        names = Q(user__display_name__icontains=query.q)
+        emails = Q(user__email__icontains=query.q)
+        if not discloses_private_facts(caller_role=caller_role, own_row=False):
+            # A filter is an oracle too: never test a colleague's withheld email.
+            emails &= Q(user_id=caller_person_id)
+        eligible = eligible.filter(names | emails)
     if continuation is None:
         ceiling = eligible.order_by("-id").values_list("id", flat=True).first()
     else:

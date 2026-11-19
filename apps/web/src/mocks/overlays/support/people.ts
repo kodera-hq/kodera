@@ -18,6 +18,7 @@ import type { components } from '@/api/schema'
 import { bindCurrentUserToMockRequest } from '../../currentUserIdentity'
 import { EXAMPLES } from '../../generated/examples'
 import { problem } from '../../problem'
+import { membershipDirectoryResponse } from '../../membershipDirectory'
 
 type Me = components['schemas']['Me']
 export type Membership = components['schemas']['Membership']
@@ -210,15 +211,9 @@ export function peopleHandlers(seed: PeopleSeed): HttpHandler[] {
       return HttpResponse.json({ count, counted_at: iso(0) })
     }),
 
-    http.get(`${BASE}/organisations/:organisation_id/memberships`, ({ request }) => {
-      const url = new URL(request.url)
-      const role = url.searchParams.get('role')
-      const state = url.searchParams.get('state')
-      const rows = members.filter(
-        (m) => (role === null || m.role === role) && (state === null || m.state === state)
-      )
-      return HttpResponse.json(page(rows, url))
-    }),
+    http.get(`${BASE}/organisations/:organisation_id/memberships`, ({ request }) =>
+      membershipDirectoryResponse(members, request, seed.callerRole, CALLER_MEMBERSHIP_ID, {}, 25)
+    ),
 
     http.get(`${BASE}/organisations/:organisation_id/memberships/:membership_id`, ({ params }) => {
       const found = members.find((m) => m.id === params['membership_id'])
