@@ -21,8 +21,8 @@ import type { EspaceStoreLike } from './liveViewModel'
 export type WorkspaceFileKind = 'image' | 'document' | 'other' | 'page'
 
 /** The chips the hub filters by, in the order they are drawn. */
-export const WORKSPACE_FILE_FILTERS = ['all', 'image', 'document', 'page', 'other'] as const
-export type WorkspaceFileFilter = (typeof WORKSPACE_FILE_FILTERS)[number]
+export const WORKSPACE_FILE_FILTERS = ['all', 'image', 'document', 'media'] as const
+export type WorkspaceFileFilter = 'all' | WorkspaceFileKind | 'media'
 
 export interface WorkspaceFileEntry {
   readonly id: string
@@ -117,7 +117,7 @@ export function workspaceFilesOf(
       }
     }
     for (const document of documents) {
-      if (document.channelId !== channel.id) continue
+      if (document.channelId !== channel.id || document.id.startsWith('workspace-page:')) continue
       pages.push({
         id: document.id,
         name: cleanText(document.title, 120),
@@ -127,6 +127,16 @@ export function workspaceFilesOf(
         document,
       })
     }
+  }
+  for (const document of documents.filter((doc) => doc.id.startsWith('workspace-page:'))) {
+    pages.push({
+      id: document.id,
+      name: cleanText(document.title, 120),
+      kind: 'page',
+      ts: 0,
+      channel: { id: '', label: 'Docs', kind: 'text' },
+      document,
+    })
   }
   files.sort((a, b) => b.ts - a.ts || a.name.localeCompare(b.name))
   return [...files, ...pages]
@@ -141,7 +151,10 @@ export function filterWorkspaceFiles(
   const needle = term.trim().toLocaleLowerCase()
   return entries.filter(
     (entry) =>
-      (filter === 'all' || entry.kind === filter) &&
+      (filter === 'all' ||
+        entry.kind === filter ||
+        (filter === 'document' && entry.kind === 'page') ||
+        (filter === 'media' && /^(audio|video)\//.test(entry.ref?.contentType ?? ''))) &&
       (needle === '' ||
         entry.name.toLocaleLowerCase().includes(needle) ||
         entry.channel.label.toLocaleLowerCase().includes(needle))

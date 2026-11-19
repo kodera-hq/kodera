@@ -1,3 +1,4 @@
+import { useRouter } from '@tanstack/react-router'
 // docs/specs/03-people.md §4.1 and §5 (`list` row): search, role filter,
 // the "Inviter" menu, the members table with its row menu, the cursor "load
 // more", and the empty, error and offline states.
@@ -114,7 +115,28 @@ export function MembersPanel({
   const invalidate = useInvalidatePeople(organisationId)
   const resendInvitation = useResendInvitation(organisationId)
   const [filter, setFilter] = useState<MemberFilter>('all')
-  const [search, setSearch] = useState('')
+  const router = useRouter({ warn: false })
+  const [search, setSearchValue] = useState(
+    () => new URL(window.location.href).searchParams.get('q')?.slice(0, 200) ?? ''
+  )
+  const setSearch = (value: string) => {
+    setSearchValue(value)
+    const url = new URL(window.location.href)
+    if (value) url.searchParams.set('q', value)
+    else url.searchParams.delete('q')
+    if (router) router.history.replace(`${url.pathname}${url.search}${url.hash}`)
+    else window.history.replaceState(window.history.state, '', url)
+  }
+  useEffect(() => {
+    const sync = () =>
+      setSearchValue(new URL(window.location.href).searchParams.get('q')?.slice(0, 200) ?? '')
+    const unsubscribe = router?.subscribe('onResolved', sync)
+    window.addEventListener('popstate', sync)
+    return () => {
+      unsubscribe?.()
+      window.removeEventListener('popstate', sync)
+    }
+  }, [router])
   const query = useDebounced(search, 300)
   const [pending, setPending] = useState<Pending>(null)
   // "Dernière connexion" is relative to when the list was opened.

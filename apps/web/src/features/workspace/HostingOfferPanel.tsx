@@ -1,3 +1,4 @@
+import type { ClaimedWorkspace } from '../onboarding/instantClaimClient'
 import { CommunityAccess } from '../docs/CommunityAccess'
 import { SUPPORT_EMAIL } from '../../app/supportContact'
 import { LinkButton } from '../../ui/LinkButton/LinkButton'
@@ -6,14 +7,42 @@ import { cx } from '../../ui/cx'
 import { useTranslation } from 'react-i18next'
 import { Button } from '../../ui/Button/Button'
 import { onboardingCopy } from '../onboarding/onboardingMessages'
-import type { ClaimedWorkspace } from '../onboarding/instantClaimClient'
+export interface MigrationWorkspaceSummary {
+  channels: readonly { name: string; kind: string }[]
+  enabledConnectors?: readonly string[]
+  payload?: { templateId?: string; themeId?: string; enabledConnectors?: readonly string[] }
+}
+const migrationCopy = {
+  fr: {
+    subject: 'Kodera — demande de migration assistée',
+    greeting: 'Bonjour, je souhaite être accompagné pour migrer mon espace.',
+    organisation: 'Organisation',
+    current: 'Hébergement actuel',
+    target: 'Hébergement souhaité',
+    channels: 'Salons',
+    connectors: 'Connecteurs activés',
+    unspecified: 'Non précisé',
+  },
+  en: {
+    subject: 'Kodera — assisted hosting migration',
+    greeting: 'Hello, I would like assistance migrating my workspace.',
+    organisation: 'Organisation',
+    current: 'Current hosting',
+    target: 'Requested hosting',
+    channels: 'Channels',
+    connectors: 'Enabled connectors',
+    unspecified: 'Not specified',
+  },
+} as const
 export type HostingMode = 'community' | 'cloud-shared' | 'cloud-dedicated'
-export function publicMigrationConfiguration(workspace: ClaimedWorkspace) {
+export function publicMigrationConfiguration(
+  workspace: MigrationWorkspaceSummary | ClaimedWorkspace
+) {
   return {
-    templateId: workspace.payload.templateId,
-    themeId: workspace.payload.themeId,
+    templateId: workspace.payload?.templateId,
+    themeId: workspace.payload?.themeId,
     channels: workspace.channels.map((c) => ({ name: c.name, kind: c.kind })),
-    enabledConnectors: workspace.enabledConnectors,
+    enabledConnectors: workspace.enabledConnectors ?? [],
   }
 }
 export function HostingOfferPanel({
@@ -27,7 +56,7 @@ export function HostingOfferPanel({
   compact?: boolean
   organisation?: string | undefined
   mode?: HostingMode | undefined
-  workspace?: ClaimedWorkspace | undefined
+  workspace?: MigrationWorkspaceSummary | ClaimedWorkspace | undefined
 }) {
   const { i18n } = useTranslation()
   const copy = onboardingCopy(i18n.resolvedLanguage)
@@ -38,18 +67,21 @@ export function HostingOfferPanel({
     'cloud-shared': copy.shared,
     'cloud-dedicated': copy.dedicated,
   }
-  const configuration = workspace ? publicMigrationConfiguration(workspace) : undefined
-  const body = JSON.stringify(
-    {
-      request: 'assisted-hosting-migration',
-      organisation,
-      currentMode: mode ?? 'unknown',
-      requestedMode: target,
-      configuration,
-    },
-    null,
-    2
-  )
+  const currentMode = mode ?? 'community'
+  const migration = migrationCopy[i18n.resolvedLanguage?.startsWith('en') ? 'en' : 'fr']
+  const configuration = workspace
+    ? publicMigrationConfiguration(workspace)
+    : { organisation, hostingMode: currentMode }
+  const separator = i18n.resolvedLanguage?.startsWith('en') ? ': ' : '\u00a0: '
+  const body = [
+    migration.greeting,
+    '',
+    `${migration.organisation}${separator}${organisation ?? migration.unspecified}`,
+    `${migration.current}${separator}${labels[currentMode]}`,
+    `${migration.target}${separator}${labels[target]}`,
+    `${migration.channels}${separator}${workspace?.channels.map((channel) => channel.name).join(', ') || migration.unspecified}`,
+    `${migration.connectors}${separator}${workspace?.enabledConnectors?.join(', ') || migration.unspecified}`,
+  ].join('\n')
   return (
     <details
       open={expanded}
@@ -60,7 +92,9 @@ export function HostingOfferPanel({
       {expanded ? (
         <div className="mt-3 flex flex-col gap-3">
           <p>
-            {copy.current}: {mode ? labels[mode] : copy.unknown}
+            {copy.current}
+            {separator}
+            {labels[currentMode]}
           </p>
           <p className="text-sm text-c-ink-2">{copy.comparison}</p>
           <CommunityAccess />
@@ -96,17 +130,17 @@ export function HostingOfferPanel({
           <h3>{copy.connectors}</h3>
           {!workspace ? <p>{copy.unknown}</p> : null}
           <ul>
-            {(workspace?.payload.enabledConnectors ?? []).map((id) => (
+            {(workspace?.payload?.enabledConnectors ?? []).map((id) => (
               <li key={id}>
                 {id === 'frameio-review-bridge' ? 'Frame.io Review Bridge' : id} ·{' '}
-                {workspace?.enabledConnectors.includes(id) ? copy.enabled : copy.pending}
+                {workspace?.enabledConnectors?.includes(id) ? copy.enabled : copy.pending}
               </li>
             ))}
           </ul>
           <LinkButton
             inline
             className="text-sm"
-            href={`mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent('Kodera — assisted hosting migration')}&body=${encodeURIComponent(body)}`}
+            href={`mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(migration.subject)}&body=${encodeURIComponent(body)}`}
           >
             {copy.migration}
           </LinkButton>

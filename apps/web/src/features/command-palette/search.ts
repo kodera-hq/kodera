@@ -15,9 +15,21 @@ export function fuzzyEntries(
   if (!needle) return [...entries]
   return entries
     .flatMap((entry, index) => {
-      const text = fold(`${entry.label} ${entry.category ?? ''}`)
+      const text = fold(entry.label)
       const contiguous = text.indexOf(needle)
-      if (contiguous >= 0) return [{ entry, index, score: contiguous }]
+      if (contiguous >= 0) {
+        const boundary = contiguous === 0 || /[\s_/#-]/.test(text[contiguous - 1]!)
+        return [
+          {
+            entry,
+            index,
+            score:
+              (contiguous === 0 ? -200 : boundary ? -100 : 0) +
+              contiguous +
+              (text.length - needle.length) / 100,
+          },
+        ]
+      }
       let at = 0
       let first = -1
       for (const char of needle) {
@@ -26,7 +38,17 @@ export function fuzzyEntries(
         if (first < 0) first = at
         at++
       }
-      return [{ entry, index, score: 1000 + at - first + first }]
+      return [
+        {
+          entry,
+          index,
+          score:
+            1000 +
+            first * 2 +
+            (at - first - needle.length) * 10 -
+            (first === 0 ? 100 : /[\s_/#-]/.test(text[first - 1]!) ? 50 : 0),
+        },
+      ]
     })
     .sort((a, b) => a.score - b.score || a.index - b.index)
     .map(({ entry }) => entry)

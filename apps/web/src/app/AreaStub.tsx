@@ -1,3 +1,4 @@
+import { HomeRecovery } from './HomeRecovery'
 // What every launch area renders until its own unit lands: a page heading
 // naming the area, nothing else. Shared so the nine `src/features/<area>/
 // routes.ts` files stay a one-line `component`, not nine copies of the same
@@ -22,6 +23,7 @@ export function AreaStub({ titleKey }: AreaStubProps) {
     <div className="flex flex-1 flex-col items-center justify-center gap-3 py-12 text-center">
       <h1 className="text-lg font-semibold text-c-ink">{t(titleKey)}</h1>
       <p className="max-w-[320px] text-sm text-c-ink-3">{t('console.common.body-area-pending')}</p>
+      <HomeRecovery />
     </div>
   )
 }

@@ -8,7 +8,7 @@ import type { OrganisationRole } from './Sidebar'
 import type { UserBlockUser } from './UserBlock'
 import { otherApplications, useTenantApplications } from './tenantApplications'
 import { openWorkspaceCommand, WorkspaceMenu } from '../features/workspace/WorkspaceMenu'
-import { ModuleGlyph } from '../ui/icons/ModuleGlyph'
+import { KoderaIcon, type KoderaIconName } from '../ui/icons/KoderaIcons'
 import { RAIL_TIP_OFFSET } from '../ui/Rail/Rail'
 import { Tooltip } from '../ui/Tooltip/Tooltip'
 
@@ -16,8 +16,18 @@ import { Tooltip } from '../ui/Tooltip/Tooltip'
 // the item's accessible name and shows beside it, on hover and on focus, as a tooltip; no visible
 // label under the glyph, and no `title`, which would draw the browser's own second tooltip. The
 // glyph is decoration; the control carries the name.
+const MODULE_ICONS: Record<string, KoderaIconName> = {
+  visio: 'calls',
+  docs: 'docs',
+  drive: 'drive',
+  messaging: 'messages',
+  grist: 'roles',
+  console: 'settings',
+  workspace: 'workspace',
+  unknown: 'workspace',
+}
 const ITEM_BASE =
-  'flex h-12 w-12 items-center justify-center rounded-lg transition-colors duration-fast focus-visible:outline-hidden focus-visible:ring focus-visible:ring-c-on-inverse'
+  'tactile flex h-12 w-12 items-center justify-center rounded-lg transition-colors duration-fast focus-visible:outline-hidden focus-visible:ring focus-visible:ring-c-on-inverse'
 
 // The focus ring is `c-on-inverse`, not the default ring: docs/specs/
 // 00-shell-and-login.md §10 requires 3:1 against both adjacent surfaces, and
@@ -93,7 +103,10 @@ export function ModuleRail({
                 className="absolute top-4 left-1 h-4 w-1 rounded-sm bg-c-on-inverse"
               />
             ) : null}
-            <ModuleGlyph name={item.glyph} />
+            <KoderaIcon
+              name={MODULE_ICONS[item.glyph] ?? 'workspace'}
+              className="icon-lift h-6 w-6"
+            />
           </Link>
         </Tooltip>
       </li>
@@ -154,7 +167,10 @@ export function ModuleRail({
                 aria-label={`${app.name} — ${openInNewTab}`}
                 className={ITEM_IDLE}
               >
-                <ModuleGlyph name={moduleGlyphName(app.code)} />
+                <KoderaIcon
+                  name={MODULE_ICONS[moduleGlyphName(app.code)] ?? 'workspace'}
+                  className="icon-lift h-6 w-6"
+                />
               </a>
             </Tooltip>
           </li>
@@ -187,7 +203,7 @@ export function ModuleRail({
                     className="absolute top-4 left-1 h-4 w-1 rounded-sm bg-c-on-inverse"
                   />
                 ) : null}
-                <ModuleGlyph name="console" />
+                <KoderaIcon name="settings" className="icon-lift h-6 w-6" />
               </button>
             </Tooltip>
           </li>

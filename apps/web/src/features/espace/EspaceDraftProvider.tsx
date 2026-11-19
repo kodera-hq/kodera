@@ -1,3 +1,4 @@
+import { permitsPlaintext } from '../confidential/room-boundary'
 import {
   createContext,
   useContext,
@@ -63,6 +64,7 @@ interface ViewRecord {
   roomId: string
   owner: Owner | null
   active: boolean
+  unsubscribe?: (() => void) | undefined
 }
 export interface DraftLease {
   read(): ChannelDraft
@@ -74,10 +76,15 @@ export interface DraftLease {
 }
 
 /** Private data and token-free authority stamps; transport owners live only in active leases. */
-class DraftMemory {
+export class DraftMemory {
   private authority: Authority
   private owner: Owner | null = null
   private drafts = new Map<string, ChannelDraft>()
+  private pendingWrites = new Map<
+    string,
+    { timer: ReturnType<typeof setTimeout>; write: () => void }
+  >()
+  private storageKey: string | null = null
   private views = new Set<ViewRecord>()
   private attached = false
   private revision = 0
@@ -119,11 +126,109 @@ class DraftMemory {
       }
     }
   }
-  private retire() {
+  private persist(roomId: string, store: EspaceStoreLike) {
+    const key = this.storageKey
+    if (key === null) return
+    const timer = this.pendingWrites.get(roomId)
+    if (timer) clearTimeout(timer.timer)
+    const owner = this.owner
+    const write = () => {
+      this.pendingWrites.delete(roomId)
+      if (owner === null || owner !== this.owner || this.terminal(owner) || !this.accepted()) return
+      try {
+        const raw: unknown = JSON.parse(sessionStorage.getItem(key) ?? '{}')
+        const saved: Record<string, unknown> =
+          raw && typeof raw === 'object' && !Array.isArray(raw) ? { ...raw } : {}
+        const boundary = store.getRoomBoundary?.(roomId)
+        const draft = this.drafts.get(roomId)
+        if (
+          boundary !== undefined &&
+          permitsPlaintext(boundary) &&
+          draft &&
+          (draft.text || draft.threadText)
+        ) {
+          saved[roomId] = {
+            text: draft.text.slice(0, 65536),
+            threadText: draft.threadText.slice(0, 65536),
+          }
+        } else delete saved[roomId]
+        const bounded = Object.fromEntries(Object.entries(saved).slice(-64))
+        if (Object.keys(bounded).length) sessionStorage.setItem(key, JSON.stringify(bounded))
+        else sessionStorage.removeItem(key)
+      } catch {
+        /* Storage restrictions never interrupt composing. */
+      }
+    }
+    this.pendingWrites.set(roomId, { timer: setTimeout(write, 300), write })
+  }
+  private flush(roomId: string) {
+    const pending = this.pendingWrites.get(roomId)
+    if (pending) {
+      clearTimeout(pending.timer)
+      pending.write()
+    }
+  }
+  private discardStoredRoom(roomId: string) {
+    const timer = this.pendingWrites.get(roomId)
+    if (timer) clearTimeout(timer.timer)
+    this.pendingWrites.delete(roomId)
+    if (this.storageKey === null) return
+    try {
+      const saved: unknown = JSON.parse(sessionStorage.getItem(this.storageKey) ?? '{}')
+      if (saved && typeof saved === 'object' && !Array.isArray(saved)) {
+        const remaining = { ...saved } as Record<string, unknown>
+        delete remaining[roomId]
+        if (Object.keys(remaining).length)
+          sessionStorage.setItem(this.storageKey, JSON.stringify(remaining))
+        else sessionStorage.removeItem(this.storageKey)
+      }
+    } catch {
+      /* Ignore malformed or unavailable storage. */
+    }
+  }
+  private restore(roomId: string, store: EspaceStoreLike) {
+    if (this.storageKey === null) return
+    const boundary = store.getRoomBoundary?.(roomId)
+    if (boundary === undefined || !permitsPlaintext(boundary)) {
+      this.discardStoredRoom(roomId)
+      if (boundary !== undefined) this.drafts.delete(roomId)
+      return
+    }
+    if (this.drafts.has(roomId)) return
+    try {
+      const saved: unknown = JSON.parse(sessionStorage.getItem(this.storageKey) ?? '{}')
+      const entry: unknown =
+        saved && typeof saved === 'object' ? (saved as Record<string, unknown>)[roomId] : undefined
+      if (!entry || typeof entry !== 'object') return
+      const draft = entry as Record<string, unknown>
+      if (
+        typeof draft.text === 'string' &&
+        typeof draft.threadText === 'string' &&
+        draft.text.length <= 65536 &&
+        draft.threadText.length <= 65536
+      )
+        this.drafts.set(roomId, { ...EMPTY_DRAFT, text: draft.text, threadText: draft.threadText })
+    } catch {
+      /* Ignore malformed or unavailable storage. */
+    }
+  }
+  private retire(clearStorage = true) {
+    for (const pending of this.pendingWrites.values()) clearTimeout(pending.timer)
+    this.pendingWrites.clear()
+    if (clearStorage && this.storageKey !== null) {
+      try {
+        sessionStorage.removeItem(this.storageKey)
+      } catch {
+        /* Storage may be blocked. */
+      }
+    }
+    this.storageKey = null
     this.viewEpoch += 1
     this.owner = null
     this.drafts.clear()
     for (const view of this.views) {
+      view.unsubscribe?.()
+      view.unsubscribe = undefined
       view.active = false
       view.store = null
       view.owner = null
@@ -230,8 +335,11 @@ class DraftMemory {
     return () => {
       offCore()
       offMatrix()
+      if (this.owner !== null && !this.terminal(this.owner)) {
+        for (const roomId of this.pendingWrites.keys()) this.flush(roomId)
+      }
       this.attached = false
-      this.retire()
+      this.retire(this.owner !== null && this.terminal(this.owner))
     }
   }
   accept(authority: Authority) {
@@ -287,9 +395,16 @@ class DraftMemory {
         serverSlug,
       }
     }
+    if (this.owner !== null) {
+      this.storageKey = `kodera:drafts:${encodeURIComponent(this.owner.organisationId)}:${encodeURIComponent(this.owner.org)}:${encodeURIComponent(this.owner.issuer)}:${encodeURIComponent(this.owner.userId)}:${encodeURIComponent(this.owner.baseUrl)}`
+      this.restore(roomId, store)
+    }
     // A committed replacement store or room supersedes all detached handlers.
     for (const previous of this.views) {
       if (previous.store !== store || previous.roomId !== roomId) {
+        this.flush(previous.roomId)
+        previous.unsubscribe?.()
+        previous.unsubscribe = undefined
         previous.active = false
         previous.store = null
         previous.owner = null
@@ -298,6 +413,13 @@ class DraftMemory {
     }
     const view: ViewRecord = { store, roomId, owner: this.owner, active: true }
     this.views.add(view)
+    view.unsubscribe = store.subscribe(() => {
+      const boundary = store.getRoomBoundary?.(roomId)
+      if (boundary !== undefined && !permitsPlaintext(boundary)) {
+        this.discardStoredRoom(roomId)
+        if (this.drafts.delete(roomId)) this.publish()
+      }
+    })
     const current = () => {
       const owner = view.owner
       const currentStore = view.store
@@ -338,6 +460,7 @@ class DraftMemory {
         const change = typeof patch === 'function' ? patch(previous) : patch
         if (!allowedCommand()) return false
         this.drafts.set(roomId, { ...previous, ...change })
+        this.persist(roomId, store)
         this.publish()
         return true
       },
@@ -348,11 +471,17 @@ class DraftMemory {
         try {
           effect()
         } finally {
-          if (patch !== undefined) this.publish()
+          if (patch !== undefined) {
+            this.persist(roomId, store)
+            this.publish()
+          }
         }
         return true
       },
       release: () => {
+        this.flush(roomId)
+        view.unsubscribe?.()
+        view.unsubscribe = undefined
         view.active = false
         view.store = null
         view.owner = null

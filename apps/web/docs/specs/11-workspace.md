@@ -910,8 +910,16 @@ credential rotation suspends access until matching loader acceptance. Terminal
 Core or Matrix boundaries permanently retire old memory and commands, including
 coalesced unusable-to-usable or same-object clear/re-registration.
 
-This increment retains draft data only in memory. It retains no store,
-controller, transport token, DOM reference or media owner across outlet removal.
+Draft targets remain in memory. Ordinary and community rooms debounce-save only
+composer text and thread text to sessionStorage after 300 ms, scoped to the
+organisation, Matrix user and homeserver. Unknown, invalid and confidential
+rooms never acquire persisted text; entering one removes any saved draft for
+that room. Logout and terminal identity boundaries clear saved drafts. Reload
+can restore text after the same identity and room boundary are admitted. No
+store, controller, transport token, DOM reference or media owner is retained
+across outlet removal. Last active channel navigation is stored per organisation
+and person in localStorage, validated against accessible active channels before
+restoration, with an explicit route channel taking precedence.
 The existing live-call leave confirmation and controller cleanup remain:
 Cancel preserves the current call; Confirm ends it during departure. Returning
 does not automatically send, join, reconnect or activate capture.

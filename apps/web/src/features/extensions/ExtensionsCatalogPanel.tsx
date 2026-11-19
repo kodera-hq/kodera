@@ -54,6 +54,13 @@ const PANEL_COPY = {
     registeredCommands: 'Commandes slash enregistrées',
     webhookLabel: 'URL de destination du webhook (HTTPS public uniquement, protection anti-SSRF)',
     verifyWebhookButton: "Vérifier l'URL du webhook",
+    errors: {
+      INVALID_URL: 'Saisissez une adresse HTTPS complète et valide.',
+      SSRF_INSECURE_PROTOCOL: 'Seules les adresses HTTPS sont autorisées.',
+      SSRF_EMBEDDED_CREDENTIALS: 'Retirez les identifiants de l’adresse.',
+      SSRF_FORBIDDEN_HOST: 'Utilisez un nom d’hôte public.',
+      SSRF_FORBIDDEN_IP: 'Les adresses privées et réservées sont interdites.',
+    },
     rejectedUrl: 'URL refusée',
     allowedEndpoint: 'Point de terminaison HTTPS autorisé :',
   },
@@ -81,6 +88,13 @@ const PANEL_COPY = {
     registeredCommands: 'Registered slash commands',
     webhookLabel: 'Webhook destination URL (public HTTPS only, anti-SSRF guard)',
     verifyWebhookButton: 'Verify webhook URL',
+    errors: {
+      INVALID_URL: 'Enter a complete, valid HTTPS address.',
+      SSRF_INSECURE_PROTOCOL: 'Only HTTPS addresses are allowed.',
+      SSRF_EMBEDDED_CREDENTIALS: 'Remove credentials from the address.',
+      SSRF_FORBIDDEN_HOST: 'Use a public hostname.',
+      SSRF_FORBIDDEN_IP: 'Private and reserved addresses are not allowed.',
+    },
     rejectedUrl: 'URL rejected',
     allowedEndpoint: 'Allowed HTTPS endpoint:',
   },
@@ -333,13 +347,9 @@ export function ExtensionsCatalogPanel({
                   {channels.length === 0 ? copy.noChannels : copy.channelHint}
                 </p>
               </div>
-              {/* The manifest, the scopes and the signature: what a developer needs and what an
-                administrator reads once. Out of the way of setting a connector up, not hidden —
-                a `details` keeps every word in the page and findable. */}
-              <details className="border-t border-c-border-soft pt-3">
-                <summary className="cursor-pointer text-sm font-medium text-c-ink-2 focus-visible:ring focus-visible:outline-hidden">
-                  {copy.technical}
-                </summary>
+
+              <div className="flex flex-col gap-3 border-t border-c-border-soft pt-3">
+                <h3 className="text-sm font-medium text-c-ink-2">{copy.technical}</h3>
                 {/* The three steps, in the order the member carries them out. */}
                 <ol className="flex flex-col gap-1 text-sm text-c-ink-2">
                   <li>{copy.setupStep1}</li>
@@ -377,7 +387,8 @@ export function ExtensionsCatalogPanel({
                       className="flex flex-col gap-1 rounded-md border border-c-bad bg-c-bad-soft px-3 py-2 text-xs font-medium text-c-bad-ink"
                     >
                       <span>
-                        {copy.rejectedUrl} ({validationResult.code}) : {validationResult.message}
+                        {copy.rejectedUrl} ({validationResult.code}) :{' '}
+                        {copy.errors[validationResult.code]}
                       </span>
                     </div>
                   ) : null}
@@ -445,7 +456,7 @@ export function ExtensionsCatalogPanel({
                     extensionId={selectedExtension.id}
                   />
                 </div>
-              </details>
+              </div>
             </div>
           )}
         </CardBody>

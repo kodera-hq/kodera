@@ -73,7 +73,7 @@ export const Tooltip = forwardRef<HTMLDivElement, TooltipProps>(function Tooltip
           sideOffset={sideOffset}
           {...(names ? { 'aria-hidden': true } : {})}
           className={cx(
-            'z-50 rounded-sm bg-c-inverse px-3 py-1 text-xs font-medium text-c-on-inverse shadow-pop shadow-c-shadow-2'
+            'surface-pop z-50 rounded-sm bg-c-inverse px-3 py-1 text-xs font-medium text-c-on-inverse shadow-pop shadow-c-shadow-2'
           )}
         >
           {content}

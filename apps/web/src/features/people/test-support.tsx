@@ -14,6 +14,9 @@ import { ToastProvider } from '../../ui/Toast/Toast'
 export const ORG_ID = '6f1d2e3c-8a4b-4c5d-9e6f-0a1b2c3d4e5f'
 
 export function signInSynthetic() {
+  const url = new URL(window.location.href)
+  url.searchParams.delete('q')
+  window.history.replaceState(window.history.state, '', url)
   vi.stubEnv('VITE_CORE_API_URL', 'https://core.example.test/api/v1')
   vi.spyOn(authAdapter, 'getSnapshot').mockReturnValue({
     status: 'ready',

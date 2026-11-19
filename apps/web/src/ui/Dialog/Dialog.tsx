@@ -1,6 +1,6 @@
 import * as RadixDialog from '@radix-ui/react-dialog'
 import { forwardRef, useRef } from 'react'
-import type { ReactNode, RefObject } from 'react'
+import type { ReactNode, RefObject, KeyboardEventHandler } from 'react'
 import { cx } from '../cx'
 import { TOUCH_TARGET } from '../touchTarget'
 import { CloseIcon } from '../icons/Close'
@@ -28,6 +28,9 @@ const SIZE: Record<DialogSize, string> = {
 }
 
 export interface DialogProps {
+  variant?: 'default' | 'palette'
+  onKeyDown?: KeyboardEventHandler<HTMLDivElement>
+  onEscapeKeyDown?: (event: KeyboardEvent) => void
   open?: boolean
   defaultOpen?: boolean
   onOpenChange?: (open: boolean) => void
@@ -95,6 +98,9 @@ export interface DialogProps {
  */
 export const Dialog = forwardRef<HTMLDivElement, DialogProps>(function Dialog(
   {
+    variant = 'default',
+    onEscapeKeyDown,
+    onKeyDown,
     open,
     defaultOpen,
     onOpenChange,
@@ -136,15 +142,23 @@ export const Dialog = forwardRef<HTMLDivElement, DialogProps>(function Dialog(
          * dialog keeps on a narrow screen — a spacing step doing the job a
          * `calc()` width used to, so `Content` itself can stay a plain
          * `w-full` up to its size's `max-w` instead of computing one. */}
-        <div className="fixed inset-0 z-40 flex items-center justify-center p-4">
+        <div
+          className={cx(
+            'fixed inset-0 z-40 flex justify-center p-4',
+            variant === 'palette' ? 'items-start pt-[calc(12vh)]' : 'items-center'
+          )}
+        >
           <RadixDialog.Content
             ref={ref}
             className={cx(
-              'material-dialog w-full rounded-lg border border-c-border p-6 shadow-pop shadow-c-shadow-2',
+              'surface-pop material-dialog w-full rounded-lg border border-c-border shadow-pop shadow-c-shadow-2',
+              variant === 'palette' ? 'p-3' : 'p-6',
               FOCUS_GROUND_ELEVATED,
               SIZE[size]
             )}
             onCloseAutoFocus={closeAutoFocusHandler(returnFocusTo)}
+            onKeyDown={onKeyDown}
+            onEscapeKeyDown={onEscapeKeyDown}
             // Two refusals, each with its own test. `onInteractOutside` is
             // the one handler Radix calls for every way of acting outside the
             // content, a press included: a second handler for the press alone
@@ -167,7 +181,11 @@ export const Dialog = forwardRef<HTMLDivElement, DialogProps>(function Dialog(
                   },
                 })}
           >
-            <div className="flex items-start justify-between gap-4">
+            <div
+              className={
+                variant === 'palette' ? 'sr-only' : 'flex items-start justify-between gap-4'
+              }
+            >
               <RadixDialog.Title
                 ref={titleRef}
                 tabIndex={initialFocus === 'title' ? -1 : undefined}
@@ -180,7 +198,7 @@ export const Dialog = forwardRef<HTMLDivElement, DialogProps>(function Dialog(
               >
                 {title}
               </RadixDialog.Title>
-              {dismissible ? (
+              {dismissible && variant !== 'palette' ? (
                 <RadixDialog.Close
                   aria-label={closeLabel}
                   className={cx(
@@ -199,7 +217,7 @@ export const Dialog = forwardRef<HTMLDivElement, DialogProps>(function Dialog(
                 {description}
               </RadixDialog.Description>
             )}
-            <div className="mt-4">{children}</div>
+            <div className={variant === 'palette' ? '' : 'mt-4'}>{children}</div>
             {footer === undefined ? null : (
               <div className="mt-6 flex justify-end gap-3">{footer}</div>
             )}

@@ -120,3 +120,15 @@ describe('universal workspace palette', () => {
     window.removeEventListener(WORKSPACE_COMMAND_EVENT, command)
   })
 })
+
+it('clears a nonempty query before closing and exposes group headers', async () => {
+  const user = userEvent.setup()
+  render(<UniversalSearch entries={entries} shortcut onChoose={() => null} />)
+  await user.keyboard('{Control>}k{/Control}')
+  expect(screen.getAllByText('Salons')[0]).toBeVisible()
+  await user.type(screen.getByRole('combobox'), 'gen')
+  await user.keyboard('{Escape}')
+  expect(screen.getByRole('combobox')).toHaveValue('')
+  await user.keyboard('{Escape}')
+  expect(screen.queryByRole('dialog')).toBeNull()
+})

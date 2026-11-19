@@ -581,3 +581,40 @@
     }
   }
 }
+/* Motion changes only composited properties and follows the person's preference. */
+@media (prefers-reduced-motion: no-preference) {
+  .tactile {
+    transition: transform var(--dur-fast) var(--ease-out);
+  }
+  .tactile:active {
+    transform: scale(0.98);
+  }
+  .icon-lift {
+    transition: transform var(--dur-fast) var(--ease-out);
+  }
+  :is(button, a):hover > .icon-lift {
+    transform: translateY(-1px);
+  }
+  .surface-pop {
+    animation: surface-pop var(--spring-snappy-duration) var(--spring-snappy);
+  }
+  @keyframes surface-pop {
+    from {
+      opacity: 0;
+      transform: translateY(8px) scale(0.98);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tactile,
+  .icon-lift,
+  .surface-pop {
+    animation: none;
+    transition: none;
+    transform: none;
+  }
+}

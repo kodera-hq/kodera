@@ -84,3 +84,13 @@ describe('the local sign-out', () => {
     expect(window.localStorage.getItem('kodera.web.test')).toBeNull()
   })
 })
+
+it('clears saved composer text and remembered channels even without an open workspace', () => {
+  sessionStorage.setItem('kodera:drafts:organisation:person', 'unsent text')
+  localStorage.setItem('kodera:last-channel:organisation:person', 'general')
+  localStorage.setItem('console:theme', 'dark')
+  clearLocalSessionStorage()
+  expect(sessionStorage.getItem('kodera:drafts:organisation:person')).toBeNull()
+  expect(localStorage.getItem('kodera:last-channel:organisation:person')).toBeNull()
+  expect(localStorage.getItem('console:theme')).toBe('dark')
+})

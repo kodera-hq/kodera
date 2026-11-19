@@ -1,5 +1,5 @@
 import { forwardRef, useCallback, useId, useRef, useState } from 'react'
-import type { DragEvent, KeyboardEvent, RefCallback } from 'react'
+import type { DragEvent, KeyboardEvent, RefCallback, ReactNode } from 'react'
 import { cx } from '../cx'
 import { FieldError } from '../FieldError/FieldError'
 
@@ -293,3 +293,46 @@ export const FileDrop = forwardRef<HTMLDivElement, FileDropProps>(function FileD
     </div>
   )
 })
+
+/** A multiple-file drop surface around an existing, keyboard-accessible picker. */
+export function FileDropArea({
+  children,
+  onFiles,
+  disabled = false,
+}: {
+  children: ReactNode
+  onFiles: (files: readonly File[]) => void
+  disabled?: boolean
+}) {
+  const [dragging, setDragging] = useState(false)
+  const depth = useRef(0)
+  return (
+    <div
+      className={cx(
+        'flex min-h-0 flex-1 flex-col rounded-md',
+        dragging && 'ring-2 ring-c-accent-ink ring-inset'
+      )}
+      onDragEnter={(event) => {
+        if (disabled || !event.dataTransfer.types.includes('Files')) return
+        event.preventDefault()
+        depth.current++
+        setDragging(true)
+      }}
+      onDragOver={(event) => {
+        if (!disabled && event.dataTransfer.types.includes('Files')) event.preventDefault()
+      }}
+      onDragLeave={() => {
+        depth.current = Math.max(0, depth.current - 1)
+        if (!depth.current) setDragging(false)
+      }}
+      onDrop={(event) => {
+        event.preventDefault()
+        depth.current = 0
+        setDragging(false)
+        if (!disabled) onFiles([...event.dataTransfer.files])
+      }}
+    >
+      {children}
+    </div>
+  )
+}

@@ -1,3 +1,4 @@
+import { WorkspacePaletteRegistration } from '../command-palette/WorkspacePaletteRegistration'
 import { MessageCueTracker } from './messageCues'
 // Espace's live view: one organisation's channels, the channel shown with its messages, its
 // composer and its members, an open thread, and the audio room the member is in. This module is
@@ -206,6 +207,11 @@ function writeMutedChannels(org: string, workspaceId: string, channels: Readonly
 
 // Drawn only once « Fichiers » is chosen: the hub and its aggregation never weigh on opening a
 // channel, and the chunk is fetched on the click that needs it.
+const LazyExtensionsCatalogPanel = lazy(() =>
+  import('../extensions/ExtensionsCatalogPanel').then((module) => ({
+    default: module.ExtensionsCatalogPanel,
+  }))
+)
 const LazyWorkspaceFilesPanel = lazy(() =>
   import('./WorkspaceFilesPanel').then((module) => ({ default: module.WorkspaceFilesPanel }))
 )
@@ -1895,6 +1901,16 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
         />
       ) : null}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-testid="studio-workspace">
+        <WorkspacePaletteRegistration
+          store={activeStore}
+          entries={searchEntries}
+          documents={documents}
+          openDocument={openStudioDocument}
+          onChoose={openFromSearch}
+          onSelectDirect={selectDirect}
+          onChangeCanvasMode={onChangeCanvasMode ? changeCanvas : undefined}
+          simulation={simulation}
+        />
         <div className="flex min-h-0 flex-1 narrow:flex-col">
           {narrow ? (
             <div className="order-first flex shrink-0 flex-col gap-2 border-b border-c-border-soft pb-2">
@@ -1960,7 +1976,10 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
                 <span key={announcement.count}>{announcement.text}</span>
               )}
             </p>
-            <header className="flex items-center gap-3 border-b border-c-border-soft pb-4 narrow:flex-wrap narrow:gap-2 narrow:pb-2">
+            <header
+              hidden={activeCanvasMode === 'files' || activeCanvasMode === 'integrations'}
+              className="flex items-center gap-3 border-b border-c-border-soft pb-4 narrow:flex-wrap narrow:gap-2 narrow:pb-2"
+            >
               <div className="flex min-w-0 flex-1 flex-col gap-1 narrow:basis-full">
                 {activeChannel === null || activeChannel === undefined ? (
                   <h1
@@ -2145,6 +2164,11 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
                 {docsCanvasSlot}
               </div>
             ) : null}
+            {activeCanvasMode === 'integrations' ? (
+              <Suspense fallback={<Skeleton shape="block" />}>
+                <LazyExtensionsCatalogPanel channels={searchEntries} />
+              </Suspense>
+            ) : null}
             {activeCanvasMode === 'files' ? (
               <div
                 data-testid="espace-files-canvas"
@@ -2161,6 +2185,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
                   }
                 >
                   <LazyWorkspaceFilesPanel
+                    activeChannelId={activeChannel?.id}
                     store={activeStore}
                     snapshot={snapshot}
                     searchEntries={searchEntries}

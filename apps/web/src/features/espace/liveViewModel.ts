@@ -87,7 +87,7 @@ export function isProximityChannel(
  * it, or the workspace's files. One channel is chosen throughout; the canvas says what is drawn
  * of it, and choosing a channel always brings it back to the conversation.
  */
-export type CanvasMode = 'chat' | 'docs' | 'files'
+export type CanvasMode = 'chat' | 'docs' | 'files' | 'integrations'
 
 export interface EspaceStoreLike {
   acceptInvite?: (roomId: string) => Promise<void>

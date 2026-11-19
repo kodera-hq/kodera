@@ -1,3 +1,4 @@
+import { HomeRecovery } from './HomeRecovery'
 // Rendered by `orgRoute`'s `notFoundComponent` when the `:org` slug in the
 // URL matches no entry in `GET /me`'s `organisations[]` (docs/specs/
 // 00-shell-and-login.md §3: "Unknown slug → a not-found screen using
@@ -31,6 +32,7 @@ export function NotFoundOrganisation() {
       <p className="max-w-[320px] text-sm text-c-ink-3">
         {t('console.common.body-not-found-organisation')}
       </p>
+      <HomeRecovery />
     </Frame>
   )
 }

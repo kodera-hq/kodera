@@ -1,3 +1,4 @@
+import { KoderaIcon } from '../../ui/icons/KoderaIcons'
 // « Rechercher » at the head of the workspace's channel column, and the dialog it opens
 // (docs/specs/11-workspace.md §4.1): a jump to a channel or an audio room by its name. It searches
 // names only, never messages.
@@ -9,7 +10,7 @@
 // navigation, so the two agree. Choosing an audio room only moves focus to its row in the column:
 // joining stays the row's own action, so a search never turns a microphone on.
 
-import { useEffect, useEffectEvent, useId, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useEffectEvent, useId, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { cx } from '../../ui/cx'
@@ -25,6 +26,14 @@ export interface ChannelSearchEntry {
 }
 
 export interface ChannelSearchProps {
+  onDismiss?: (() => void) | undefined
+  hiddenTrigger?: boolean
+  openEvent?: string
+  palette?: boolean
+  groupOrder?: readonly string[]
+  groupLabel?: string
+  recentLabel?: string
+  legend?: string
   entries: readonly ChannelSearchEntry[]
   /** Opens the entry, and answers where focus goes once the dialog has closed: `null` keeps it
    * on « Rechercher ». */
@@ -76,39 +85,15 @@ export function withdrawn(element: HTMLElement | null): boolean {
   return element === null || element.closest('[hidden],[aria-hidden="true"],[inert]') !== null
 }
 
-function SearchIcon({ className }: { className: string }) {
-  return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      className={className}
-    >
-      <circle cx="11" cy="11" r="7" />
-      <path d="m20 20-3.5-3.5" />
-    </svg>
-  )
-}
-
-function SpeakerIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      className="h-4 w-4 shrink-0 text-c-ink-3"
-    >
-      <path d="M11 5 6 9H3v6h3l5 4V5Z" />
-      <path d="M15.5 8.5a5 5 0 0 1 0 7" />
-    </svg>
-  )
-}
-
 export function ChannelSearch({
+  onDismiss,
+  hiddenTrigger = false,
+  openEvent,
+  palette = false,
+  groupLabel,
+  groupOrder,
+  recentLabel,
+  legend,
   entries,
   onChoose,
   shortcut,
@@ -122,6 +107,7 @@ export function ChannelSearch({
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [active, setActive] = useState(0)
+  const [recent, setRecent] = useState<string[]>([])
   const field = useRef<HTMLInputElement>(null)
   const button = useRef<HTMLButtonElement>(null)
   const [mac] = useState(isMac)
@@ -130,7 +116,19 @@ export function ChannelSearch({
   const returnFocusTo = useRef<HTMLElement | null>(null)
   const listId = useId()
   const optionId = (index: number) => `${listId}-${index}`
-  const found = useMemo(() => match(entries, query), [entries, query, match])
+  const found = useMemo(() => {
+    const matches = match(entries, query)
+    if (!palette || query.trim()) return matches
+    return [...matches].sort((a, b) => {
+      const ar = recent.indexOf(a.id),
+        br = recent.indexOf(b.id)
+      if (ar >= 0 || br >= 0) return (ar < 0 ? Infinity : ar) - (br < 0 ? Infinity : br)
+      return (
+        (groupOrder?.indexOf(a.category ?? groupLabel ?? '') ?? 0) -
+        (groupOrder?.indexOf(b.category ?? groupLabel ?? '') ?? 0)
+      )
+    })
+  }, [entries, query, match, palette, recent, groupLabel, groupOrder])
   const highlighted = Math.min(active, Math.max(found.length - 1, 0))
 
   function show(opener: Element | null) {
@@ -158,16 +156,27 @@ export function ChannelSearch({
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [shortcut, mac])
 
+  useEffect(() => {
+    if (!openEvent) return
+    const listener = () => show(document.activeElement)
+    window.addEventListener(openEvent, listener)
+    return () => window.removeEventListener(openEvent, listener)
+  }, [openEvent])
+
   function choose(entry: ChannelSearchEntry | undefined) {
     if (entry === undefined) return
     // A place that cannot take focus — a disabled control, or one no longer in the page — would
     // leave focus on `body`; « Rechercher » takes it instead.
+    setRecent((previous) => [entry.id, ...previous.filter((id) => id !== entry.id)].slice(0, 6))
     const target = onChoose(entry)
     returnFocusTo.current =
       target !== null && target.isConnected && !target.matches(':disabled')
         ? target
-        : button.current
+        : hiddenTrigger
+          ? returnFocusTo.current
+          : button.current
     setOpen(false)
+    onDismiss?.()
   }
 
   function onFieldKeyDown(event: KeyboardEvent<HTMLInputElement>) {
@@ -192,6 +201,7 @@ export function ChannelSearch({
     <>
       <button
         ref={button}
+        hidden={hiddenTrigger}
         type="button"
         {...(shortcut ? { 'aria-keyshortcuts': mac ? 'Meta+K' : 'Control+K' } : {})}
         onClick={(event) => show(event.currentTarget)}
@@ -204,7 +214,7 @@ export function ChannelSearch({
           'focus-visible:ring focus-visible:outline-hidden'
         )}
       >
-        <SearchIcon className="h-4 w-4 shrink-0" />
+        <KoderaIcon name="search" className="h-4 w-4 shrink-0" />
         <span className="min-w-0 flex-1 truncate">{t('console.workspace.search.action-open')}</span>
         {shortcut ? (
           <kbd
@@ -220,8 +230,19 @@ export function ChannelSearch({
         ) : null}
       </button>
       <Dialog
+        variant={palette ? 'palette' : 'default'}
+        onEscapeKeyDown={(event) => {
+          if (palette && query.length > 0) {
+            event.preventDefault()
+            setQuery('')
+            setActive(0)
+          }
+        }}
         open={open}
-        onOpenChange={setOpen}
+        onOpenChange={(value) => {
+          setOpen(value)
+          if (!value) onDismiss?.()
+        }}
         title={title ?? t('console.workspace.search.title')}
         closeLabel={t('console.common.action-close')}
         initialFocus={field}
@@ -229,7 +250,7 @@ export function ChannelSearch({
       >
         <div className="flex flex-col gap-3">
           <div className="flex h-10 items-center gap-2 rounded-md border border-c-border-input bg-c-surface px-3 focus-within:ring">
-            <SearchIcon className="h-4 w-4 shrink-0 text-c-ink-3" />
+            <KoderaIcon name="search" className="h-4 w-4 shrink-0 text-c-ink-3" />
             <input
               ref={field}
               type="text"
@@ -239,6 +260,7 @@ export function ChannelSearch({
               aria-expanded={found.length > 0}
               aria-controls={listId}
               {...(found.length > 0 ? { 'aria-activedescendant': optionId(highlighted) } : {})}
+              placeholder={queryLabel ?? t('console.workspace.search.label-query')}
               autoComplete="off"
               spellCheck={false}
               value={query}
@@ -263,43 +285,71 @@ export function ChannelSearch({
             )}
           >
             {found.map((entry, index) => (
-              // The keyboard is handled on the field above (arrows move the highlight, `Enter`
-              // chooses); this `onClick` is the pointer path onto the same `choose`, as in
-              // `Combobox`. `onMouseDown` keeps focus on the field, as the pattern requires.
-              // eslint-disable-next-line jsx-a11y/click-events-have-key-events
-              <li
-                key={entry.id}
-                id={optionId(index)}
-                role="option"
-                aria-selected={index === highlighted}
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => choose(entry)}
-                onMouseMove={() => setActive(index)}
-                className={cx(
-                  'flex cursor-pointer items-center gap-2 rounded-sm px-2 py-2 text-sm',
-                  TOUCH_TARGET_HEIGHT,
-                  // Told apart by more than its colour: the highlight also draws an edge.
-                  index === highlighted
-                    ? 'bg-c-accent-soft text-c-accent-ink ring-1 ring-c-accent-ink ring-inset'
-                    : 'text-c-ink-2'
-                )}
-              >
-                {entry.kind !== 'audio' ? (
-                  <span aria-hidden="true" className="w-4 shrink-0 text-center text-c-ink-3">
-                    {entry.kind === 'command' ? '›' : '#'}
+              <Fragment key={entry.id}>
+                {palette &&
+                (index === 0 ||
+                  (recent.includes(entry.id) && !query
+                    ? recentLabel
+                    : (entry.category ?? groupLabel)) !==
+                    (recent.includes(found[index - 1]!.id) && !query
+                      ? recentLabel
+                      : (found[index - 1]!.category ?? groupLabel))) ? (
+                  <li
+                    role="presentation"
+                    className="sticky top-0 z-10 bg-c-elevated px-2 py-2 text-xs font-semibold text-c-ink-3"
+                  >
+                    {recent.includes(entry.id) && !query
+                      ? recentLabel
+                      : (entry.category ?? groupLabel)}
+                  </li>
+                ) : null}
+
+                {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events */}
+                <li
+                  key={entry.id}
+                  id={optionId(index)}
+                  role="option"
+                  aria-selected={index === highlighted}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => choose(entry)}
+                  onMouseMove={() => setActive(index)}
+                  className={cx(
+                    'flex cursor-pointer items-center gap-2 rounded-sm px-2 py-2 text-sm',
+                    TOUCH_TARGET_HEIGHT,
+                    // Told apart by more than its colour: the highlight also draws an edge.
+                    index === highlighted
+                      ? 'bg-c-accent-soft text-c-accent-ink ring-1 ring-c-accent-ink ring-inset'
+                      : 'text-c-ink-2'
+                  )}
+                >
+                  <KoderaIcon
+                    name={
+                      entry.kind === 'audio'
+                        ? 'calls'
+                        : entry.id.includes(':doc:')
+                          ? 'docs'
+                          : entry.id.includes(':dm:')
+                            ? 'directs'
+                            : entry.id.includes(':settings:')
+                              ? 'settings'
+                              : entry.kind === 'command'
+                                ? 'command'
+                                : 'messages'
+                    }
+                  />
+                  <span className="min-w-0 flex-1 truncate font-medium">{entry.label}</span>
+                  <span className="shrink-0 truncate text-xs text-c-ink-3">
+                    {entry.kind === 'audio'
+                      ? t('console.workspace.search.label-audio')
+                      : (entry.category ?? '')}
                   </span>
-                ) : (
-                  <SpeakerIcon />
-                )}
-                <span className="min-w-0 flex-1 truncate font-medium">{entry.label}</span>
-                <span className="shrink-0 truncate text-xs text-c-ink-3">
-                  {entry.kind === 'audio'
-                    ? t('console.workspace.search.label-audio')
-                    : (entry.category ?? '')}
-                </span>
-              </li>
+                </li>
+              </Fragment>
             ))}
           </ul>
+          {legend ? (
+            <p className="border-t border-c-border-soft px-2 pt-3 text-xs text-c-ink-3">{legend}</p>
+          ) : null}
           {footer ? <p className="px-2 text-xs text-c-ink-3">{footer}</p> : null}
           {/* Mounted with the dialog and kept in the accessibility tree while empty (`sr-only`,
               not `hidden`), so a screen reader hears the words when they come. */}

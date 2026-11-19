@@ -17,6 +17,7 @@ const runtime = {
 }
 vi.mock('./settingsRuntime', () => ({ useWorkspaceSettingsRuntime: () => runtime }))
 vi.mock('./queries', () => ({
+  useWorkspaceQuery: () => ({ data: undefined }),
   useWorkspaceTenantQuery: () => ({ data: { hostingMode: 'community' } }),
 }))
 vi.mock('@tanstack/react-router', () => ({
