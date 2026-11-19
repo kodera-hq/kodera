@@ -101,6 +101,26 @@ const LOCATIONS: readonly [string, Segments][] = [
   ],
 ]
 
+// Contract 0.50.0's workspace roles carry a slug rule of their own, on the `slug` of
+// `WorkspaceRole`, `WorkspaceRoleCreate` and `WorkspaceRolePatch`: 1–64 characters, a
+// leading letter then lowercase letters, digits, hyphens or underscores. The server's
+// contract test (apps/server/tests/test_customer_read_contract.py) holds the same three
+// locations to the same rule and to `minLength: 1` / `maxLength: 64` beside the pattern,
+// so the two pins cannot drift apart unnoticed.
+const WORKSPACE_ROLE_SLUG_PATTERN = /^[a-z][a-z0-9_-]{0,63}$/
+
+const WORKSPACE_ROLE_LOCATIONS: readonly [string, Segments][] = [
+  ['WorkspaceRole.slug', ['components', 'schemas', 'WorkspaceRole', 'properties', 'slug']],
+  [
+    'WorkspaceRoleCreate.slug',
+    ['components', 'schemas', 'WorkspaceRoleCreate', 'properties', 'slug'],
+  ],
+  [
+    'WorkspaceRolePatch.slug',
+    ['components', 'schemas', 'WorkspaceRolePatch', 'properties', 'slug'],
+  ],
+]
+
 describe('ORGANISATION_SLUG_PATTERN', () => {
   it.each(LOCATIONS)('is the pattern the pinned contract carries on %s', (_name, segments) => {
     const declared = valueAt(segments)
@@ -122,10 +142,14 @@ describe('ORGANISATION_SLUG_PATTERN', () => {
     expect(carrying).toEqual(LOCATIONS.map(([, segments]) => segments.join('/')).sort())
   })
 
-  it('leaves the pinned contract no slug-shaped rule other than the organisation and tenant ones', () => {
-    // A third rule is a contract change the console has not taken yet, not something to
+  it('leaves the pinned contract no slug-shaped rule other than the organisation, tenant, and workspace-role ones', () => {
+    // A fourth rule is a contract change the console has not taken yet, not something to
     // discover in production.
-    const known = new Set([ORGANISATION_SLUG_PATTERN.source, TENANT_SLUG_PATTERN.source])
+    const known = new Set([
+      ORGANISATION_SLUG_PATTERN.source,
+      TENANT_SLUG_PATTERN.source,
+      WORKSPACE_ROLE_SLUG_PATTERN.source,
+    ])
     // Contract 0.29.0 reserves `synth-` on organisation creation only, which the console never
     // sends (staff intake does). Discovery still answers synthetic realms, so the console's own
     // rule must not refuse them: the reservation is listed here by its exact path, not mirrored.
@@ -137,6 +161,32 @@ describe('ORGANISATION_SLUG_PATTERN', () => {
       .map(([path, pattern]) => `${path.join('/')}: ${pattern}`)
       .filter((row) => !createOnly.has(row))
     expect(unknown).toEqual([])
+  })
+})
+
+describe('the workspace-role slug rule', () => {
+  it.each(WORKSPACE_ROLE_LOCATIONS)(
+    'is the rule the pinned contract carries on %s, bounded 1 to 64',
+    (_name, segments) => {
+      const schema = valueAt(segments)
+      // The bounds are asserted beside the pattern because the contract carries them
+      // beside it, and the server pin judges both.
+      expect(schema).toMatchObject({
+        pattern: WORKSPACE_ROLE_SLUG_PATTERN.source,
+        minLength: 1,
+        maxLength: 64,
+      })
+    }
+  )
+
+  it('is carried by the pinned contract at exactly the locations listed', () => {
+    const carrying = slugShapedPatterns()
+      .filter(([, pattern]) => pattern === WORKSPACE_ROLE_SLUG_PATTERN.source)
+      .map(([path]) => path.join('/'))
+      .sort()
+    expect(carrying).toEqual(
+      WORKSPACE_ROLE_LOCATIONS.map(([, segments]) => [...segments, 'pattern'].join('/')).sort()
+    )
   })
 })
 
