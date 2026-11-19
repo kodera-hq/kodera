@@ -1,8 +1,6 @@
-// `session-expiry` (docs/specs/00-shell-and-login.md §4.7): one silent refresh
-// per access token, scheduled for `RENEWAL_LEAD_MS` before it expires, and on
-// focus or on the tab becoming visible only once that moment has passed (a
-// timer a suspended tab never ran); the countdown warning appears only in the
-// final 120 seconds of the access token lifetime.
+// `session-expiry` (docs/specs/00-shell-and-login.md §4.7): one deadline timer per
+// credential, plus a single-flight renewal when focus or visibility returns. A short
+// cooldown coalesces paired browser events; no periodic renewal loop is needed.
 // On expiry the console stashes the registered form values,
 // re-authenticates in place, and restores it — see `STASH_STORAGE_KEY`
 // below for why that stash is `sessionStorage`, not the plain in-memory
@@ -18,25 +16,14 @@ import { authAdapter } from './oidc'
 import { rememberReturnTo } from './return-to'
 import { beforeSignIn, onBeforeSignIn } from './beforeSignIn'
 
-/**
- * How long before its expiry an access token is renewed. Every renewal replaces the token's bytes,
- * which the organisation layout re-reads `/me` for; renewing on every focus and every minute did
- * so dozens of times per token. Ahead of the SDK's own 120-second expiring notice
- * (`accessTokenExpiringNotificationTimeInSeconds`, `./oidc.ts`) by 30 seconds, so a healthy
- * renewal is done before the countdown warning would open.
- */
-export const RENEWAL_LEAD_MS = 150_000
-/** The wait before another attempt after one that failed, and the shortest gap between two. */
-export const RENEWAL_RETRY_MS = 30_000
-/** `setTimeout` runs a longer delay at once: a token lifetime above it is waited for in steps. */
+/** Renew one minute before expiry, without immediately renewing short-lived credentials. */
+export const RENEWAL_LEAD_MS = 60_000
+/** Minimum wait for deadline scheduling and retries after a failed attempt. */
+export const RENEWAL_RETRY_MS = 15_000
+/** Coalesce focus and visibility events, including during initial mount. */
+const RENEWAL_COOLDOWN_MS = 2_000
+/** `setTimeout` overflows above this delay; longer lifetimes are waited for in steps. */
 const LONGEST_TIMER_MS = 2 ** 31 - 1
-
-/** Whether the current credential is due for its renewal: within its lead, or already gone. */
-function renewalDue(now = Date.now()): boolean {
-  const expiresAt = authAdapter.getExpiresAt()
-  if (authAdapter.getAccessToken() === undefined || expiresAt === undefined) return true
-  return now >= expiresAt - RENEWAL_LEAD_MS
-}
 
 export type StashedFormState = Record<string, unknown>
 
@@ -116,6 +103,12 @@ export function SessionExpiryProvider({ children }: { children: ReactNode }) {
   const dismissedDeadline = useRef<number | undefined>(undefined)
   const deadline = useRef<number | undefined>(undefined)
   const generation = useRef(0)
+  const renewalInFlight = useRef<Promise<void> | undefined>(undefined)
+  const lastRenewal = useRef(0)
+  const lastFocusEvent = useRef<{ type: string; at: number } | undefined>(undefined)
+  useEffect(() => {
+    lastRenewal.current = Date.now()
+  }, [])
   // The realm the LAST live session used, kept even once `auth.user` is
   // cleared: re-authenticating needs to know which realm to send the person
   // back to, and by the time `signInAgain` runs there may be no session left
@@ -158,14 +151,24 @@ export function SessionExpiryProvider({ children }: { children: ReactNode }) {
   const requestRenewal = useCallback(
     async (recordExtension = false) => {
       if (!auth.isAuthenticated) return
+      if (renewalInFlight.current !== undefined) return renewalInFlight.current
       const current = generation.current
-      const renewed = await authAdapter.renew().catch(() => false)
-      if (generation.current !== current) return
-      if (renewed) {
-        closeCountdown()
-        if (recordExtension) trackSessionExpiryDialogShown('extended')
-      } else {
-        beginCountdown(true)
+      const attempt = (async () => {
+        const renewed = await authAdapter.renew().catch(() => false)
+        if (generation.current !== current) return
+        if (renewed) {
+          closeCountdown()
+          if (recordExtension) trackSessionExpiryDialogShown('extended')
+        } else {
+          beginCountdown(true)
+        }
+      })()
+      renewalInFlight.current = attempt
+      try {
+        await attempt
+      } finally {
+        lastRenewal.current = Date.now()
+        renewalInFlight.current = undefined
       }
     },
     [auth.isAuthenticated, closeCountdown, beginCountdown]
@@ -179,7 +182,10 @@ export function SessionExpiryProvider({ children }: { children: ReactNode }) {
       if (active) beginCountdown()
     })
     const unsubscribeRenewed = authAdapter.onRenewed(() => {
-      if (active) closeCountdown()
+      if (active) {
+        lastRenewal.current = Date.now()
+        closeCountdown()
+      }
     })
     const unsubscribeFailed = authAdapter.onRenewalFailed(() => {
       if (active) beginCountdown(true)
@@ -193,46 +199,54 @@ export function SessionExpiryProvider({ children }: { children: ReactNode }) {
     }
   }, [auth.isAuthenticated, auth.user?.realm, beginCountdown, closeCountdown])
 
-  // One timer per credential: a renewed token (`credentialGeneration`) reschedules from its own
-  // expiry. Focus and visibility only catch up on a timer a hidden or suspended tab did not run,
-  // and two checks in a row share one renewal.
+  // Credential rotation reschedules its deadline. Focus renews even a long-lived token so the
+  // current-user fence can revalidate authority; early focus is deferred through the cooldown.
   useEffect(() => {
     if (!auth.isAuthenticated) return
     let timer: number | undefined
-    let inFlight = false
+    let focusTimer: number | undefined
     let active = true
-    const schedule = (afterAttempt: boolean) => {
+    const schedule = () => {
       window.clearTimeout(timer)
-      timer = undefined
       if (!active) return
       const expiresAt = authAdapter.getExpiresAt()
-      if (expiresAt === undefined && !afterAttempt) return
-      const untilDue = (expiresAt ?? Date.now()) - RENEWAL_LEAD_MS - Date.now()
-      const delay = Math.max(afterAttempt ? RENEWAL_RETRY_MS : 0, untilDue)
-      timer = window.setTimeout(check, Math.min(delay, LONGEST_TIMER_MS))
+      if (expiresAt === undefined) return
+      const delay = Math.max(RENEWAL_RETRY_MS, expiresAt - Date.now() - RENEWAL_LEAD_MS)
+      timer = window.setTimeout(
+        () => {
+          // Very long lifetimes are waited for in bounded steps, never renewed early.
+          if (expiresAt - Date.now() > RENEWAL_LEAD_MS) schedule()
+          else check()
+        },
+        Math.min(delay, LONGEST_TIMER_MS)
+      )
     }
     const check = () => {
-      if (!active || inFlight) return
-      // A hidden tab waits: becoming visible again is itself a check.
-      if (document.visibilityState !== 'visible') return
-      if (!renewalDue()) {
-        schedule(false)
-        return
-      }
-      inFlight = true
-      void requestRenewal().finally(() => {
-        inFlight = false
-        schedule(true)
-      })
+      if (!active || document.visibilityState !== 'visible') return
+      void requestRenewal().finally(schedule)
     }
-    schedule(false)
-    window.addEventListener('focus', check)
-    document.addEventListener('visibilitychange', check)
+    const onFocus = (event: Event) => {
+      if (document.visibilityState !== 'visible' || renewalInFlight.current !== undefined) return
+      const previous = lastFocusEvent.current
+      const now = Date.now()
+      // A tab return can deliver both events after a fast renewal has already settled.
+      if (previous && previous.type !== event.type && now - previous.at < RENEWAL_COOLDOWN_MS)
+        return
+      lastFocusEvent.current = { type: event.type, at: now }
+      window.clearTimeout(focusTimer)
+      const remaining = lastRenewal.current + RENEWAL_COOLDOWN_MS - Date.now()
+      if (remaining > 0) focusTimer = window.setTimeout(check, remaining)
+      else check()
+    }
+    schedule()
+    window.addEventListener('focus', onFocus)
+    document.addEventListener('visibilitychange', onFocus)
     return () => {
       active = false
       window.clearTimeout(timer)
-      window.removeEventListener('focus', check)
-      document.removeEventListener('visibilitychange', check)
+      window.clearTimeout(focusTimer)
+      window.removeEventListener('focus', onFocus)
+      document.removeEventListener('visibilitychange', onFocus)
     }
   }, [auth.isAuthenticated, auth.credentialGeneration, requestRenewal])
 

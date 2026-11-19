@@ -87,7 +87,7 @@ describe('OidcAuthAdapter', () => {
     const settings = constructorSpy.mock.calls[0]?.[0] as Record<string, unknown>
     expect(settings).not.toHaveProperty('max_age')
     expect(settings).not.toHaveProperty('prompt')
-    expect(settings.silent_redirect_uri).toBe(`${window.location.origin}/auth/silent-callback.html`)
+    expect(settings.silent_redirect_uri).toBe(`${window.location.origin}/auth/callback`)
     expect(signinRedirect.mock.calls).toEqual([[{ ui_locales: 'fr' }]])
   })
 

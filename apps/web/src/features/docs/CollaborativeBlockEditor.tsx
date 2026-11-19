@@ -109,6 +109,10 @@ export function CollaborativeBlockEditor({
   const containerRef = useRef<HTMLDivElement | null>(null)
   const lastEmittedMarkdownRef = useRef<string>(markdown)
   const pendingSerializeRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pendingMarkdownRef = useRef<{
+    json: ReturnType<Editor['getJSON']>
+    onChange: typeof onMarkdownChange
+  } | null>(null)
   const seededYdocRef = useRef<Y.Doc | null>(null)
   const onMarkdownChangeRef = useRef(onMarkdownChange)
   const onSelectionChangeRef = useRef(onSelectionChange)
@@ -119,6 +123,7 @@ export function CollaborativeBlockEditor({
   const emitMarkdownNow = (ed: Editor) => {
     if (pendingSerializeRef.current !== null) clearTimeout(pendingSerializeRef.current)
     pendingSerializeRef.current = null
+    pendingMarkdownRef.current = null
     const serialized = tiptapDocToMarkdown(ed.getJSON())
     if (serialized !== lastEmittedMarkdownRef.current) {
       lastEmittedMarkdownRef.current = serialized
@@ -251,12 +256,16 @@ export function CollaborativeBlockEditor({
     if (editor.isDestroyed) return
 
     const flushMarkdown = () => {
-      if (editor.isDestroyed || !editor.isEditable) {
-        if (pendingSerializeRef.current !== null) clearTimeout(pendingSerializeRef.current)
-        pendingSerializeRef.current = null
-        return
+      if (pendingSerializeRef.current !== null) clearTimeout(pendingSerializeRef.current)
+      pendingSerializeRef.current = null
+      const pending = pendingMarkdownRef.current
+      pendingMarkdownRef.current = null
+      if (pending === null) return
+      const serialized = tiptapDocToMarkdown(pending.json)
+      if (serialized !== lastEmittedMarkdownRef.current) {
+        lastEmittedMarkdownRef.current = serialized
+        pending.onChange?.(serialized)
       }
-      emitMarkdownNowRef.current(editor)
     }
 
     const syncMenusFromEditorState = (ed: Editor) => {
@@ -320,6 +329,7 @@ export function CollaborativeBlockEditor({
       // only needed once typing pauses, so it is computed then — and at once on blur and when
       // the editor goes away, so nothing typed is ever left unreported.
       if (pendingSerializeRef.current !== null) clearTimeout(pendingSerializeRef.current)
+      pendingMarkdownRef.current = { json: ed.getJSON(), onChange: onMarkdownChangeRef.current }
       pendingSerializeRef.current = setTimeout(flushMarkdown, MARKDOWN_SERIALIZE_DEBOUNCE_MS)
     }
 

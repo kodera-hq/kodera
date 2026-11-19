@@ -151,6 +151,15 @@ async function startEntry(): Promise<void> {
     showRecovery()
     return
   }
+  // The admitted callback also serves silent renewal. Only the parent owns the SDK transaction;
+  // a framed response must never load the theme or mount another application.
+  if (path === '/auth/callback' && window.parent !== window) {
+    window.parent.postMessage(
+      { source: 'oidc-client', url: window.location.href, keepOpen: false },
+      window.location.origin
+    )
+    return
+  }
   const protectedCallback =
     path === '/auth/claim-callback' || path.startsWith('/auth/claim-callback/')
   const protectedClaim = path === '/claim' || path.startsWith('/claim/')

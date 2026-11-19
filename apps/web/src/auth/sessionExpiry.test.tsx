@@ -207,7 +207,7 @@ describe('session renewal and expiry', () => {
     expect(screen.getByTestId('expiry')).toHaveTextContent('0')
   })
 
-  it('renews on focus only once the credential is due, sharing one renewal', async () => {
+  it('defers initial paired focus events through the cooldown, sharing one renewal', async () => {
     let finish!: (renewed: boolean) => void
     state.renew.mockImplementation(
       () =>
@@ -220,6 +220,8 @@ describe('session renewal and expiry', () => {
       window.dispatchEvent(new Event('focus'))
       document.dispatchEvent(new Event('visibilitychange'))
       window.dispatchEvent(new Event('focus'))
+      expect(state.renew).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(2_000)
     })
     expect(state.renew).toHaveBeenCalledTimes(1)
     await act(async () => {
@@ -228,15 +230,54 @@ describe('session renewal and expiry', () => {
     expect(state.renew).toHaveBeenCalledTimes(1)
   })
 
-  it('never renews on focus or on a schedule while the credential is far from expiry', async () => {
+  it('renews a long-lived token on focus and coalesces events after completion', async () => {
     state.expiresAt = Date.now() + 3_600_000
     start()
     await act(async () => {
       for (let check = 0; check < 5; check += 1) window.dispatchEvent(new Event('focus'))
       document.dispatchEvent(new Event('visibilitychange'))
-      await vi.advanceTimersByTimeAsync(60_000 * 10)
+      await vi.advanceTimersByTimeAsync(2_000)
+    })
+    expect(state.renew).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      window.dispatchEvent(new Event('focus'))
+      document.dispatchEvent(new Event('visibilitychange'))
+      await vi.advanceTimersByTimeAsync(1_999)
+    })
+    expect(state.renew).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1)
+    })
+    expect(state.renew).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not renew a 120-second token immediately or poll a long-lived token every minute', async () => {
+    start()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(59_999)
     })
     expect(state.renew).not.toHaveBeenCalled()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1)
+    })
+    expect(state.renew).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not queue a second renewal for the paired event after a fast response', async () => {
+    state.expiresAt = Date.now() + 3_600_000
+    start()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_000)
+    })
+    await act(async () => {
+      window.dispatchEvent(new Event('focus'))
+    })
+    expect(state.renew).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      document.dispatchEvent(new Event('visibilitychange'))
+      await vi.advanceTimersByTimeAsync(2_000)
+    })
+    expect(state.renew).toHaveBeenCalledTimes(1)
   })
 
   it('schedules one renewal for RENEWAL_LEAD_MS before expiry, then retries a failure later', async () => {

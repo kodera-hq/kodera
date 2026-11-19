@@ -168,7 +168,7 @@
      checked, exemption and all, by tests/unit/ui/index-css.test.ts.
      Tracked upstream: kodera-hq/kodera#5, item 1. */
   body {
-    @apply bg-c-page-gradient bg-fixed text-md leading-body text-c-ink;
+    @apply bg-c-page bg-c-page-gradient bg-fixed text-md leading-body text-c-ink;
   }
 
   /* `viewport-fit=cover` (index.html) lets a phone held sideways draw the page

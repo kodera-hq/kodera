@@ -206,23 +206,6 @@ export const orgRoute = createRoute({
   component: AuthenticatedOrgLayout,
 })
 
-/**
- * Whether the organisation's protected surface must leave the screen while its loader authority
- * is stale. A silent renewal for the same sign-in (`generation` unchanged: the adapter accepts a
- * renewed user only for the same issuer and subject) changes the token's bytes and nothing the
- * page was drawn for, so it neither hides the shell nor paints the loading screen; the layout
- * reloads `/me` with the new credential behind the page. A credential that is gone, refused, or
- * that belongs to another sign-in still conceals everything at once.
- */
-export function concealsProtectedSurface(state: {
-  authorityMismatch: boolean
-  sameGeneration: boolean
-  hasUsableToken: boolean
-}): boolean {
-  if (!state.authorityMismatch) return false
-  return !(state.sameGeneration && state.hasUsableToken)
-}
-
 function AuthenticatedOrgLayout() {
   const auth = useAuth()
   if (auth.status === 'pending') return <SessionLoading />
@@ -293,11 +276,6 @@ function OrgLayoutContent() {
   const authorityMismatch =
     auth.generation !== meGeneration || auth.credentialGeneration !== meCredentialGeneration
   const hasUsableToken = auth.status === 'ready' && lifetime.hasUsableCredential()
-  const concealed = concealsProtectedSurface({
-    authorityMismatch,
-    sameGeneration: auth.generation === meGeneration,
-    hasUsableToken,
-  })
   const mfaEnrolled = useMfaGuard(me, auth.user?.identity, org)
   const onMfaScreen = pathname === mfaEnrolPath(org)
   useLayoutEffect(() => {
@@ -411,14 +389,14 @@ function OrgLayoutContent() {
     // `min-h-screen` added a screen of empty scroll under the shell's bars.
     return (
       <>
-        {concealed ? <SessionExpiryDialog /> : null}
+        {authorityMismatch ? <SessionExpiryDialog /> : null}
         <div
-          className={concealed ? undefined : 'contents'}
+          className={authorityMismatch ? undefined : 'contents'}
           data-ph-no-capture
-          hidden={concealed}
-          aria-hidden={concealed || undefined}
+          hidden={authorityMismatch}
+          aria-hidden={authorityMismatch || undefined}
         >
-          {concealed ? null : <SessionExpiryDialog />}
+          {authorityMismatch ? null : <SessionExpiryDialog />}
           <main className="flex min-h-screen min-w-0 flex-col overflow-x-auto p-6 narrow:p-4">
             {onMfaScreen ? <Outlet /> : null}
           </main>
@@ -429,7 +407,7 @@ function OrgLayoutContent() {
             redirecting={!onMfaScreen}
           />
         </div>
-        {concealed && hasUsableToken ? <SessionLoading /> : null}
+        {authorityMismatch && hasUsableToken ? <SessionLoading /> : null}
       </>
     )
   }
@@ -447,23 +425,18 @@ function OrgLayoutContent() {
   // tenant's mark is the one place that already resolves the tenant.
   const organisationMark = demoOrganisationMark(membership.organisation.slug)
 
-  // Keep the subtree mounted so an explicit reauthentication can restore a
-  // draft, but remove every protected surface from rendering and the
-  // accessibility tree as soon as its loader authority becomes stale — unless
-  // the stale part is only the bytes of a token renewed in place for the same
-  // sign-in (`concealsProtectedSurface`): then the page stays on screen, and
-  // the reload of `/me` the effect above starts happens behind it.
+  // Keep drafts mounted, but conceal protected content until `/me` validates the current token.
   return (
     <>
-      {concealed ? <SessionExpiryDialog /> : null}
+      {authorityMismatch ? <SessionExpiryDialog /> : null}
       <div
-        className={concealed ? undefined : 'contents'}
+        className={authorityMismatch ? undefined : 'contents'}
         data-ph-no-capture
-        hidden={concealed}
-        aria-hidden={concealed || undefined}
+        hidden={authorityMismatch}
+        aria-hidden={authorityMismatch || undefined}
       >
         <Shell
-          sessionExpiry={concealed ? undefined : <SessionExpiryDialog />}
+          sessionExpiry={authorityMismatch ? undefined : <SessionExpiryDialog />}
           org={org}
           organisationId={membership.organisation.id}
           personId={me.id}
@@ -497,7 +470,7 @@ function OrgLayoutContent() {
           announcedByScreen={isOrderStepChange}
         />
       </div>
-      {concealed && hasUsableToken ? <SessionLoading /> : null}
+      {authorityMismatch && hasUsableToken ? <SessionLoading /> : null}
     </>
   )
 }

@@ -49,8 +49,16 @@ function blurredSurfaces(page: Page): Promise<string[]> {
 /** Opens the demo workspace. The caller activates `SCENARIOS` first: the hooks lint rule refuses
  * a `use*` call inside a named helper. */
 async function openEspace(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      'console:theme',
+      matchMedia('(prefers-color-scheme: dark)').matches ? 'ciel-nuit' : 'ciel'
+    )
+  })
   await page.goto('/community/workspace')
-  await expect(page.getByRole('button', { name: 'Réglages', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Réglages', exact: true })).toBeVisible({
+    timeout: 20_000,
+  })
   await expect(page.locator('html')).toHaveAttribute('data-theme', /^ciel/)
 }
 

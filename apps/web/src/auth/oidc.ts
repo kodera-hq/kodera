@@ -32,12 +32,6 @@ function redirectUri(): string {
   return `${window.location.origin}/auth/callback`
 }
 
-// The static page a renewal attempted in a hidden frame lands on (`public/auth/silent-callback.*`):
-// it boots nothing and hands the provider's answer back to this window.
-function silentRedirectUri(): string {
-  return `${window.location.origin}/auth/silent-callback.html`
-}
-
 /**
  * The provider's pages follow the console's language: English, or French for anything else. Read
  * from the document's `lang`, which `src/i18n` keeps equal to the resolved language, so the
@@ -215,7 +209,7 @@ function managerFor(realm: string, protectedClaim = false, registration = false)
     authority: `${keycloakUrl()}/realms/${realm}`,
     client_id: oidcClientId(),
     redirect_uri: redirectUri(),
-    silent_redirect_uri: silentRedirectUri(),
+    silent_redirect_uri: redirectUri(),
     ...(protectedClaim
       ? { popup_redirect_uri: claimRedirectUri(), loadUserInfo: false }
       : { filterProtocolClaims: false }),
