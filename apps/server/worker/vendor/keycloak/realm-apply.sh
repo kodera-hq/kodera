@@ -802,9 +802,13 @@ check_rep() {
         # checks them; the staff realm keeps them as Keycloak made them, since
         # nobody there holds the role.
         (if on("offline") then
+          # Keycloak 26.8.2 locks the scope list of its bearer-only system client
+          # realm-management (HTTP 403 on scope removal), which cannot initiate OIDC flows
+          # or mint tokens; exempt it on live organisation realms only while bearerOnly is true.
           (.clients[]? | .clientId as $id
            | select(($is_staff or ($natives | index($id)) == null)
                     and (($is_staff and $mode == "live" and ($builtins | index($id)) != null) | not)
+                    and ((($is_staff | not) and $mode == "live" and $id == "realm-management" and .bearerOnly == true) | not)
                     and offers_offline)
            | "client \($id) must not offer offline_access, as a default or an optional scope; "
              + (if $is_staff then "the staff realm gives no offline session"
@@ -1457,6 +1461,7 @@ offline_offerers() {
   clients="$(kc_read array "the clients of realm '$REALM'" clients -r "$REALM")" || exit 1
   clients="$(jq_read "the clients of realm '$REALM'" -r --argjson natives "$NATIVE_CLIENTS" '
       [.[] | select(.clientId as $c | $natives | index($c) | not)
+       | select((.clientId == "realm-management" and .bearerOnly == true) | not)
        | select(((.defaultClientScopes // []) + (.optionalClientScopes // [])) | index("offline_access") != null)
        | .clientId] | sort | join(", ")' <<<"$clients")" || exit 1
   [[ -z "$clients" ]] || parts+=("clients $clients")
@@ -1507,6 +1512,7 @@ take_offline_access_off_others() {
   clients="$(kc_read array "the clients of realm '$REALM'" clients -r "$REALM")" || exit 1
   clients="$(jq_read "the clients of realm '$REALM'" -c --argjson natives "$NATIVE_CLIENTS" '
       [.[] | select(.clientId as $c | $natives | index($c) | not)
+       | select((.clientId == "realm-management" and .bearerOnly == true) | not)
        | {id, clientId, default: ((.defaultClientScopes // []) | index("offline_access") != null),
           optional: ((.optionalClientScopes // []) | index("offline_access") != null)}
        | select(.default or .optional)] | sort_by(.clientId)' <<<"$clients")" || exit 1
