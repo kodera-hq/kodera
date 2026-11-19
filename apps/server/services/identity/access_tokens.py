@@ -372,6 +372,20 @@ def _optional_boolean(payload: dict[str, Any], name: str) -> bool | None:
     return value if type(value) is bool else None
 
 
+def unverified_issuer(compact: str) -> str:
+    """Bounded routing hint only; the selected verifier still checks signature and exact issuer."""
+    try:
+        _require(isinstance(compact, str) and len(compact) <= MAX_TOKEN)
+        parts = compact.split(".")
+        _require(len(parts) == 3)
+        issuer = _object(_segment(parts[1])).get("iss")
+        if not isinstance(issuer, str):
+            raise TokenVerificationError()
+        return issuer
+    except (ValueError, TypeError, UnicodeError, binascii.Error, RecursionError):
+        raise TokenVerificationError() from None
+
+
 def verify_access_token(compact: str, *, admitted: IssuerKeySnapshot) -> VerifiedAccessToken:
     try:
         now = time.time()

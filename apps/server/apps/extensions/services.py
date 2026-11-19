@@ -26,11 +26,11 @@ def admin(verified, organisation_id):
         raise ExtensionRefusedError("extension_workspace_absent", 404)
     if WorkspaceCutoff.objects.filter(organisation_id=organisation_id).exists():
         raise ExtensionRefusedError("extension_workspace_cut_off", 410)
-    workspace_id, principal = documents.context(verified, organisation_id)
+    workspace_id, principal = documents.write_context(verified, organisation_id)
     lock_membership_user(membership_id=principal.membership_id)
     lock_delivery_identity(identity_id=principal.identity_id)
     # A current-role read after the actor locks sees a revocation that committed first.
-    workspace_id, principal = documents.context(verified, organisation_id)
+    workspace_id, principal = documents.write_context(verified, organisation_id)
     if principal.role not in {"org_owner", "org_admin"}:
         raise ExtensionRefusedError("extension_owner_or_admin_required", 403)
     return workspace_id, principal

@@ -82,11 +82,11 @@ def _context(
     *,
     moderator: bool = False,
     admin: bool = False,
+    lock: bool = True,
 ) -> tuple[Workspace, TenantCaller]:
     # Domain rows first; this same lock serializes grant/restriction changes and projection.
-    workspace = (
-        Workspace.objects.select_for_update().filter(organisation_id=organisation_id).first()
-    )
+    rows = Workspace.objects.filter(organisation_id=organisation_id)
+    workspace = (rows.select_for_update() if lock else rows).first()
     if workspace is None:
         raise RefusalError(404)
     try:
@@ -122,9 +122,10 @@ def authorise_workspace(
     organisation_id: UUID,
     moderator: bool = False,
     admin: bool = False,
+    lock: bool = True,
 ) -> TenantCaller:
     """Current workspace admission as an immutable caller, without leaking a stored model."""
-    return _context(verified, organisation_id, moderator=moderator, admin=admin)[1]
+    return _context(verified, organisation_id, moderator=moderator, admin=admin, lock=lock)[1]
 
 
 def member_restrictions(

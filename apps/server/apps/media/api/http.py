@@ -10,7 +10,7 @@ from django.conf import settings
 from django.core.exceptions import RequestDataTooBig
 from django.http import HttpRequest, HttpResponse
 
-from core.api import lanes
+from core.api import idempotency, lanes
 from core.api.guarded_replay import respond_once
 from core.api.idempotency import StoredResponse
 from services.identity.access_tokens import TokenVerificationError, VerifiedAccessToken
@@ -95,7 +95,11 @@ def uuid(value: Any) -> UUID:
 
 
 def serve(
-    request: HttpRequest, handlers: dict[str, Handler], organisation_id: UUID | None = None
+    request: HttpRequest,
+    handlers: dict[str, Handler],
+    organisation_id: UUID | None = None,
+    *,
+    prepare: Callable[[VerifiedAccessToken, str], Handler] | None = None,
 ) -> HttpResponse:
     request_id = responses.request_id(request)
     method = request.method or ""
@@ -112,9 +116,32 @@ def serve(
             raise RefusalError(403)
         authorize(verified, organisation_id)
 
+        handler = handlers[method]
+        prepared_failure = None
+        supplied = request.headers.get(idempotency.KEY_HEADER, "")
+        if (
+            method == "POST"
+            and prepare is not None
+            and not idempotency.is_missing(supplied)
+            and not idempotency.is_malformed(supplied)
+            and idempotency.scope_for(
+                request, issuer=verified.issuer, subject=verified.subject, key=supplied
+            )
+            is not None
+            and not idempotency.holds_answer(
+                request, issuer=verified.issuer, subject=verified.subject, key=supplied
+            )
+        ):
+            try:
+                handler = prepare(verified, request_id)
+            except RefusalError as failure:
+                prepared_failure = failure
+
         def execute() -> HttpResponse:
             try:
-                return handlers[method](verified, request_id)
+                if prepared_failure is not None:
+                    raise prepared_failure
+                return handler(verified, request_id)
             except RefusalError as failure:
                 return problem(failure, request_id)
 

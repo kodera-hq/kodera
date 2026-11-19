@@ -28,7 +28,7 @@ def caller(verified: VerifiedAccessToken, organisation_id: UUID | None = None) -
     if organisation_id is None:
         raise RefusalError(403, "identity-unknown")
     try:
-        return authorise_workspace(verified=verified, organisation_id=organisation_id)
+        return authorise_workspace(verified=verified, organisation_id=organisation_id, lock=False)
     except WorkspaceRefusal as failure:
         raise RefusalError(failure.status, failure.kind) from None
 

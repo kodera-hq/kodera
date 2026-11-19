@@ -23,6 +23,15 @@ def workspace_organisation(*, workspace_id: UUID) -> UUID:
     return Workspace.objects.values_list("organisation_id", flat=True).get(id=workspace_id)
 
 
+def workspace_id_for(*, organisation_id: UUID) -> UUID | None:
+    """Resolve the workspace without taking a row lock."""
+    return (
+        Workspace.objects.filter(organisation_id=organisation_id)
+        .values_list("id", flat=True)
+        .first()
+    )
+
+
 def lock_workspace(*, workspace_id: UUID) -> None:
     Workspace.objects.select_for_update().get(id=workspace_id)
 

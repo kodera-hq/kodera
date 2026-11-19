@@ -46,3 +46,9 @@ are omitted until their bytes, MIME and dimensions are independently validated.
 Tests use generated identities/credentials, fake DNS/providers and an owned private
 socket. Signature compatibility is also checked against an independent S3 SDK in
 an isolated temporary tool directory. No real provider request is required.
+
+URL preview cache checks and persistence use short transactions. Fetches run in
+autocommit, before the HTTP replay transaction; the final audit rechecks current
+workspace authority. Successful metadata is cached for five minutes per organisation
+and URL digest using the configured Django cache. Replay hits and key reuse skip
+fetching, and missing or malformed replay keys do not start network work.

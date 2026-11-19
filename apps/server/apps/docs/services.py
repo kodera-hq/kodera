@@ -18,6 +18,7 @@ from apps.audit.services import record_workspace_resource_event
 from apps.orgs.actor_selectors import TenantCaller
 from apps.workspaces.channel_sets import lock_workspace
 from apps.workspaces.moderation import RefusalError as WorkspaceRefusal, authorise_workspace
+from apps.workspaces.selectors import workspace_id_for
 from services.identity.access_tokens import VerifiedAccessToken
 
 from . import engine, tickets, tree
@@ -26,17 +27,30 @@ from .models import Document, DocumentLink, DocumentSnapshot, DocumentUpdate
 from .templates import TEMPLATES
 
 
-def context(verified: VerifiedAccessToken, organisation_id: UUID) -> tuple[UUID, TenantCaller]:
+def read_context(verified: VerifiedAccessToken, organisation_id: UUID) -> tuple[UUID, TenantCaller]:
     if not connection.in_atomic_block:
         raise RuntimeError("document access requires the operation transaction")
-    workspace_id = lock_workspace(organisation_id)
+    workspace_id = workspace_id_for(organisation_id=organisation_id)
     if workspace_id is None:
         raise RefusalError(404)
     try:
-        principal = authorise_workspace(verified=verified, organisation_id=organisation_id)
+        principal = authorise_workspace(
+            verified=verified, organisation_id=organisation_id, lock=False
+        )
     except WorkspaceRefusal as error:
         raise RefusalError(error.status, error.kind) from None
     return workspace_id, principal
+
+
+def write_context(
+    verified: VerifiedAccessToken, organisation_id: UUID
+) -> tuple[UUID, TenantCaller]:
+    # Refused callers never queue on the quota/structural write lock. Recheck authority
+    # after acquiring it so a moderation change committed while waiting is observed.
+    read_context(verified, organisation_id)
+    if lock_workspace(organisation_id) is None:
+        raise RefusalError(404)
+    return read_context(verified, organisation_id)
 
 
 def role(principal: TenantCaller, verified: VerifiedAccessToken, document_id: UUID) -> str | None:
@@ -132,31 +146,41 @@ def validate_tree(value: dict[UUID, UUID | None]) -> None:
 
 
 def links(row: Document, names: tuple[str, ...]) -> None:
+    """Replace outgoing references with bounded batched resolution using PostgreSQL casing."""
     DocumentLink.objects.filter(source=row).delete()
+    if not names:
+        return
     with connection.cursor() as cursor:
-        for value in names:
-            cursor.execute("SELECT lower(%s)", [unicodedata.normalize("NFC", value)])
-            normalized = cursor.fetchone()[0]
-            if DocumentLink.objects.filter(source=row, target_title=normalized).exists():
-                continue
-            target = Document.objects.filter(
-                workspace_id=row.workspace_id, deleted_at__isnull=True, title__iexact=normalized
-            ).first()
-            DocumentLink.objects.create(source=row, target=target, target_title=normalized)
-        # Resolve existing previously-unresolved references when a page is created or renamed.
         cursor.execute(
-            """UPDATE docs_documentlink l SET target_id=t.id,updated_at=clock_timestamp()
-            FROM docs_document s,docs_document t WHERE l.source_id=s.id AND s.workspace_id=%s
-            AND t.workspace_id=s.workspace_id AND t.deleted_at IS NULL AND lower(t.title)=l.target_title
-            AND l.target_id IS DISTINCT FROM t.id""",
-            [row.workspace_id],
+            """SELECT DISTINCT lower(name) FROM unnest(%s::text[]) AS names(name)""",
+            [[unicodedata.normalize("NFC", value) for value in names]],
         )
+        normalized = [value[0] for value in cursor.fetchall()]
         cursor.execute(
-            """UPDATE docs_documentlink l SET target_id=NULL,updated_at=clock_timestamp()
-            FROM docs_document s WHERE l.source_id=s.id AND s.workspace_id=%s AND l.target_id IS NOT NULL
-            AND NOT EXISTS(SELECT 1 FROM docs_document t WHERE t.id=l.target_id AND t.workspace_id=s.workspace_id
-                           AND t.deleted_at IS NULL AND lower(t.title)=l.target_title)""",
-            [row.workspace_id],
+            """SELECT lower(title),id FROM docs_document
+            WHERE workspace_id=%s AND deleted_at IS NULL AND lower(title)=ANY(%s::text[])""",
+            [row.workspace_id, normalized],
+        )
+        targets = dict(cursor.fetchall())
+    DocumentLink.objects.bulk_create(
+        [
+            DocumentLink(source=row, target_id=targets.get(name), target_title=name)
+            for name in normalized
+        ]
+    )
+
+
+def resolve_incoming(row: Document, old_title: str | None = None) -> None:
+    """Only creation/rename can change the resolution of these two title buckets."""
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """UPDATE docs_documentlink l SET target_id=(
+              SELECT t.id FROM docs_document t WHERE t.workspace_id=%s
+              AND t.deleted_at IS NULL AND lower(t.title)=l.target_title
+            ),updated_at=clock_timestamp()
+            FROM docs_document s WHERE l.source_id=s.id AND s.workspace_id=%s
+            AND l.target_title IN (lower(%s),lower(%s))""",
+            [row.workspace_id, row.workspace_id, old_title or row.title, row.title],
         )
 
 
@@ -195,14 +219,14 @@ def append(
 
 @transaction.atomic
 def authorize(verified: VerifiedAccessToken, organisation_id: UUID) -> None:
-    context(verified, organisation_id)
+    read_context(verified, organisation_id)
 
 
 @transaction.atomic
 def authorize_document(
     *, verified: VerifiedAccessToken, organisation_id: UUID, document_id: UUID, edit: bool = False
 ) -> None:
-    workspace_id, principal = context(verified, organisation_id)
+    workspace_id, principal = read_context(verified, organisation_id)
     resource(
         workspace_id=workspace_id,
         principal=principal,
@@ -222,7 +246,7 @@ def create(
     template_key: str | None,
     request_id: str,
 ) -> dict[str, Any]:
-    workspace_id, principal = context(verified, organisation_id)
+    workspace_id, principal = write_context(verified, organisation_id)
     if template_key is not None and (
         not isinstance(template_key, str) or template_key not in TEMPLATES
     ):
@@ -258,6 +282,7 @@ def create(
         document=row, sequence=0, head_sequence=0, state=result.snapshot
     )
     links(row, result.links)
+    resolve_incoming(row)
     audit(principal, row, "created", request_id)
     return wire(row, "editor")
 
@@ -266,7 +291,7 @@ def create(
 def read(
     *, verified: VerifiedAccessToken, organisation_id: UUID, document_id: UUID
 ) -> dict[str, Any]:
-    workspace_id, principal = context(verified, organisation_id)
+    workspace_id, principal = read_context(verified, organisation_id)
     row, permission = resource(
         workspace_id=workspace_id, principal=principal, verified=verified, document_id=document_id
     )
@@ -283,7 +308,7 @@ def patch(
     if_match: str,
     request_id: str,
 ) -> dict[str, Any]:
-    workspace_id, principal = context(verified, organisation_id)
+    workspace_id, principal = write_context(verified, organisation_id)
     row, permission = resource(
         workspace_id=workspace_id,
         principal=principal,
@@ -317,6 +342,7 @@ def patch(
         final[row.id] = parent
         validate_tree(final)
         row.parent_id = parent
+    old_title = row.title
     if "title" in changes:
         row.title = title(changes["title"])
     transformed = None
@@ -342,12 +368,10 @@ def patch(
     if transformed is not None:
         append(row, snapshot, transformed, principal)
     else:
-        existing = tuple(
-            DocumentLink.objects.filter(source=row).values_list("target_title", flat=True)
-        )
-        links(row, existing)
         with connection.cursor() as cursor:
             cursor.execute("SELECT pg_notify('kodera_docs',%s)", [str(row.id)])
+    if row.title != old_title:
+        resolve_incoming(row, old_title)
     audit(principal, row, "updated", request_id)
     return wire(row, permission)
 
@@ -356,7 +380,7 @@ def patch(
 def delete(
     *, verified: VerifiedAccessToken, organisation_id: UUID, document_id: UUID, request_id: str
 ) -> None:
-    workspace_id, principal = context(verified, organisation_id)
+    workspace_id, principal = write_context(verified, organisation_id)
     row, _ = resource(
         workspace_id=workspace_id,
         principal=principal,
@@ -380,7 +404,7 @@ def delete(
 def collab_session(
     *, verified: VerifiedAccessToken, organisation_id: UUID, document_id: UUID, request_id: str
 ) -> dict[str, str]:
-    workspace_id, principal = context(verified, organisation_id)
+    workspace_id, principal = read_context(verified, organisation_id)
     row, permission = resource(
         workspace_id=workspace_id, principal=principal, verified=verified, document_id=document_id
     )
@@ -443,7 +467,7 @@ def list_documents(
     limit: int,
     parent_id: UUID | None = None,
 ) -> dict[str, Any]:
-    workspace_id, principal = context(verified, organisation_id)
+    workspace_id, principal = read_context(verified, organisation_id)
     salt = cursor_salt(principal, verified, "tree:" + str(parent_id))
     after = anchor(cursor, salt, limit)
     if parent_id is not None:
@@ -478,7 +502,7 @@ def backlinks(
     cursor: str | None,
     limit: int,
 ) -> dict[str, Any]:
-    workspace_id, principal = context(verified, organisation_id)
+    workspace_id, principal = read_context(verified, organisation_id)
     resource(
         workspace_id=workspace_id, principal=principal, verified=verified, document_id=document_id
     )
@@ -515,7 +539,7 @@ def search(
 
     from apps.workspaces.channel_access import may_view, resolve_all
 
-    workspace_id, principal = context(verified, organisation_id)
+    workspace_id, principal = read_context(verified, organisation_id)
     if not isinstance(query, str) or not 1 <= len(query) <= 200:
         raise RefusalError(400)
     salt = cursor_salt(principal, verified, "search:" + hashlib.sha256(query.encode()).hexdigest())
