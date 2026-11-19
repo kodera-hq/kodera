@@ -12,9 +12,14 @@ FROM quay.io/keycloak/keycloak:26.8.2@sha256:4da21f9a53bcbac1026a0d654b740a81e98
 FROM eclipse-temurin:21-jdk@sha256:db5cc6341a1d7bc40cdb51e1f0d9824f3bb2cc8107d29da421dc4df7d11f05f1 AS kcadm
 COPY --from=keycloak /opt/keycloak/bin/kcadm.sh /opt/kcadm/bin/
 COPY --from=keycloak /opt/keycloak/bin/client/ /opt/kcadm/bin/client/
-RUN modules=$(jdeps --multi-release 21 --ignore-missing-deps --print-module-deps \
+RUN raw=$(jdeps --multi-release 21 --ignore-missing-deps --print-module-deps \
       --class-path '/opt/kcadm/bin/client/lib/*' \
       /opt/kcadm/bin/client/keycloak-admin-cli-*.jar /opt/kcadm/bin/client/lib/*.jar) \
+    && modules=$(printf '%s\n' "$raw" | grep -v '^Warning:' | grep -v '^$' || true) \
+    && if ! printf '%s\n' "$modules" | LC_ALL=C grep -Eq '^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*(,[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*)*$' \
+         || [ "$(printf '%s\n' "$modules" | grep -c .)" -ne 1 ]; then \
+         printf 'invalid jdeps module output:\n%s\n' "$raw" >&2; exit 1; \
+       fi \
     && jlink --add-modules "$modules,java.desktop,java.naming,java.security.jgss,java.sql,jdk.crypto.ec" \
       --strip-debug --no-man-pages --no-header-files --compress=zip-6 --output /opt/kcadm/jre \
     && JAVA_HOME=/opt/kcadm/jre /opt/kcadm/bin/kcadm.sh --help > /dev/null

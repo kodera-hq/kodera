@@ -9,7 +9,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
+import shlex
 import signal
+import subprocess
 import time
 from pathlib import Path
 
@@ -379,3 +382,123 @@ def test_only_the_worker_image_carries_realm_apply_and_kcadm() -> None:
             continue
         assert not [f for f in image_files(root, dockerfile) if f.startswith("worker/")], dockerfile
         assert "kcadm" not in (root / dockerfile).read_text().lower(), dockerfile
+
+
+def test_worker_dockerfile_jdeps_strips_split_package_warnings_before_jlink(
+    tmp_path: Path,
+) -> None:
+    root = Path(__file__).resolve().parents[2]
+    dockerfile = (root / "Dockerfile.worker").read_text()
+    joined = re.sub(r"\\\n[ \t]*", " ", dockerfile)
+    matches = [
+        line.removeprefix("RUN ").strip()
+        for line in joined.splitlines()
+        if line.startswith("RUN ") and "jdeps " in line and "jlink " in line
+    ]
+    assert len(matches) == 1, "expected exactly one jdeps+jlink RUN step in Dockerfile.worker"
+    # Containment check before running under /bin/sh -c: only /opt/kcadm and /dev/null absolute paths may appear.
+    abs_paths = set(re.findall(r"(?<![A-Za-z0-9_.-])/[A-Za-z0-9_./*-]+", matches[0]))
+    assert all(p == "/dev/null" or p.startswith("/opt/kcadm") for p in abs_paths), abs_paths
+
+    kcadm_root = tmp_path / "opt" / "kcadm"
+    assert not any(c in str(kcadm_root) for c in " \t\n'\"$`\\;|*?")
+    lib_dir = kcadm_root / "bin" / "client" / "lib"
+    lib_dir.mkdir(parents=True)
+    cli_jar = kcadm_root / "bin" / "client" / "keycloak-admin-cli-26.8.2.jar"
+    bc_jar = lib_dir / "bcprov-jdk18on-1.86.jar"
+    cli_jar.write_text("")
+    bc_jar.write_text("")
+
+    kcadm_called = tmp_path / "kcadm.called"
+    kcadm_sh = kcadm_root / "bin" / "kcadm.sh"
+    kcadm_sh.write_text(
+        f"#!/bin/sh\nprintf '%s\\n' \"$JAVA_HOME|$*\" > {shlex.quote(str(kcadm_called))}\n"
+    )
+    kcadm_sh.chmod(0o755)
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    jdeps_called = tmp_path / "jdeps.called"
+    jdeps_stub = bin_dir / "jdeps"
+    jdeps_stub.write_text(
+        "#!/bin/sh\n"
+        f"printf '%s\\n' \"$@\" > {shlex.quote(str(jdeps_called))}\n"
+        'cat "$FAKE_JDEPS_STDOUT"\n'
+        'exit "${FAKE_JDEPS_EXIT:-0}"\n'
+    )
+    jdeps_stub.chmod(0o755)
+
+    jlink_called = tmp_path / "jlink.called"
+    jlink_stub = bin_dir / "jlink"
+    jlink_stub.write_text(f"#!/bin/sh\nprintf '%s\\n' \"$@\" > {shlex.quote(str(jlink_called))}\n")
+    jlink_stub.chmod(0o755)
+
+    cmd = matches[0].replace("/opt/kcadm", str(kcadm_root))
+    base_env = {
+        "PATH": f"{bin_dir}:/usr/bin:/bin",
+        "HOME": str(tmp_path),
+    }
+    stdout_file = tmp_path / "jdeps.stdout"
+
+    def run_step(jdeps_stdout: str, jdeps_exit: int = 0) -> subprocess.CompletedProcess[str]:
+        jdeps_called.unlink(missing_ok=True)
+        jlink_called.unlink(missing_ok=True)
+        kcadm_called.unlink(missing_ok=True)
+        stdout_file.write_text(jdeps_stdout)
+        # Match Docker's default SHELL ["/bin/sh", "-c"] (without -e) so && chaining is genuinely tested.
+        return subprocess.run(  # noqa: S603 - fixed /bin/sh -c and path-contained Dockerfile command
+            ["/bin/sh", "-c", cmd],
+            cwd=tmp_path,
+            env={
+                **base_env,
+                "FAKE_JDEPS_STDOUT": str(stdout_file),
+                "FAKE_JDEPS_EXIT": str(jdeps_exit),
+            },
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+    # Case 1a: Warning-free jdeps output links cleanly.
+    clean = run_step("java.base,java.logging\n")
+    assert clean.returncode == 0, clean.stderr
+
+    # Case 1b: BouncyCastle 1.86 split-package warnings (+ interior/trailing blank lines) are stripped.
+    ok = run_step(
+        "Warning: split package: org.bouncycastle.util "
+        "file:///opt/kcadm/bin/client/lib/bcprov-jdk18on-1.86.jar "
+        "/opt/kcadm/bin/client/lib/bcprov-jdk18on-1.86.jar\n\n"
+        "java.base,java.logging,jdk.unsupported\n\n"
+    )
+    assert ok.returncode == 0, ok.stderr
+    jdeps_args = jdeps_called.read_text().splitlines()
+    cp_idx = jdeps_args.index("--class-path")
+    assert jdeps_args[cp_idx + 1] == f"{kcadm_root}/bin/client/lib/*"
+    assert str(cli_jar) in jdeps_args
+    assert str(bc_jar) in jdeps_args
+    jlink_args = jlink_called.read_text().splitlines()
+    add_modules_idx = jlink_args.index("--add-modules")
+    assert jlink_args[add_modules_idx + 1] == (
+        "java.base,java.logging,jdk.unsupported,"
+        "java.desktop,java.naming,java.security.jgss,java.sql,jdk.crypto.ec"
+    )
+    assert kcadm_called.read_text().strip() == f"{kcadm_root / 'jre'}|--help"
+
+    # Case 2: Non-zero jdeps exit status aborts under /bin/sh -c before jlink or kcadm.
+    failed_exit = run_step("java.base,java.logging\n", jdeps_exit=2)
+    assert failed_exit.returncode == 2
+    assert not jlink_called.exists()
+    assert not kcadm_called.exists()
+
+    # Case 3: Warning-only, multi-line non-warning, or malformed module output fails closed with stderr diagnostic.
+    for bad_stdout in (
+        "Warning: split package: org.bouncycastle.util\n",
+        "java.base\njava.logging\n",
+        "java..base\n",
+        "INVALID_MODULE!\n",
+    ):
+        failed_parse = run_step(bad_stdout)
+        assert failed_parse.returncode != 0
+        assert "invalid jdeps module output:" in failed_parse.stderr
+        assert not jlink_called.exists()
+        assert not kcadm_called.exists()
