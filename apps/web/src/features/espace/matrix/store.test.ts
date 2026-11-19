@@ -601,6 +601,8 @@ function snapshotFixture(
     summary?: Record<string, unknown>
     /** Who the first sync says is typing (`m.typing`). */
     typing?: string[]
+    /** The homeserver's push rules, as `GET /pushrules/` answers. */
+    pushRules?: Record<string, unknown>
     refresh?: (refreshToken: string) => Promise<{ accessToken: string; refreshToken?: string }>
   } = {}
 ) {
@@ -671,7 +673,15 @@ function snapshotFixture(
       return json(200, { capabilities: {} })
     }
     if (method === 'GET' && path === '/_matrix/client/v3/pushrules/') {
-      return json(200, { global: {} })
+      return json(200, room.pushRules ?? { global: {} })
+    }
+    if (
+      method === 'PUT' &&
+      path.startsWith('/_matrix/client/v3/pushrules/global/override/') &&
+      room.pushRules !== undefined
+    ) {
+      requests.push({ path, body: JSON.parse(String(init?.body ?? '{}')) })
+      return json(200, {})
     }
     if (method === 'POST' && path === `/_matrix/client/v3/user/${SNAPSHOT_ME}/filter`) {
       return json(200, { filter_id: 'snapshot-filter' })
@@ -1732,6 +1742,91 @@ describe('mentions (M8)', () => {
         { user_ids: [SNAPSHOT_ALICE] },
         undefined,
       ])
+    } finally {
+      fixture.stop()
+    }
+  })
+})
+
+describe('formatted messages, room mentions and avatars', () => {
+  it('sends the Markdown as formatted_body beside the plain body, pills and @salon included', async () => {
+    const fixture = snapshotFixture()
+    try {
+      await fixture.start()
+      await fixture.store.send(SNAPSHOT_ROOM, '**Bravo** @Henri Duflot', {
+        mentions: [SNAPSHOT_ALICE],
+        mentionTargets: [{ userId: SNAPSHOT_ALICE, label: 'Henri Duflot' }],
+      })
+      await fixture.store.send(SNAPSHOT_ROOM, '@salon réunion', { mentionsRoom: true })
+      await fixture.store.send(SNAPSHOT_ROOM, 'bonjour')
+      const sent = fixture.requests.filter(({ path }) => path.includes('/send/m.room.message/'))
+      expect(sent[0]!.body).toMatchObject({
+        body: '**Bravo** @Henri Duflot',
+        format: 'org.matrix.custom.html',
+        formatted_body: `<strong>Bravo</strong> <a href="https://matrix.to/#/${SNAPSHOT_ALICE}">@Henri Duflot</a>`,
+        'm.mentions': { user_ids: [SNAPSHOT_ALICE] },
+      })
+      expect(sent[1]!.body['m.mentions']).toEqual({ user_ids: [], room: true })
+      expect(sent[2]!.body.format).toBeUndefined()
+      expect(sent[2]!.body.formatted_body).toBeUndefined()
+    } finally {
+      fixture.stop()
+    }
+  })
+
+  it('adds the mention push rules an older homeserver lacks, and leaves a present one alone', async () => {
+    const fixture = snapshotFixture(undefined, {
+      pushRules: {
+        global: {
+          override: [
+            { rule_id: '.m.rule.master', default: true, enabled: false, actions: [] },
+            { rule_id: '.m.rule.is_room_mention', default: true, enabled: false, actions: [] },
+          ],
+        },
+      },
+    })
+    try {
+      await fixture.start()
+      await vi.waitFor(() =>
+        expect(fixture.requests.filter(({ path }) => path.includes('/pushrules/'))).toHaveLength(1)
+      )
+      const [added] = fixture.requests.filter(({ path }) => path.includes('/pushrules/'))
+      expect(added!.path).toBe(
+        '/_matrix/client/v3/pushrules/global/override/io.kodera.rule.is_user_mention'
+      )
+      expect(added!.body).toMatchObject({
+        conditions: [
+          {
+            kind: 'event_property_contains',
+            key: 'content.m\\.mentions.user_ids',
+            value: SNAPSHOT_ME,
+          },
+        ],
+      })
+    } finally {
+      fixture.stop()
+    }
+  })
+
+  it('carries the room member avatar on members and on their messages', async () => {
+    const avatar = 'mxc://matrix.acme.kodera.io/AliceFace01'
+    const fixture = snapshotFixture(undefined, {
+      state: [
+        {
+          ...snapshotMessage('$alice-avatar', ''),
+          type: 'm.room.member',
+          state_key: SNAPSHOT_ALICE,
+          content: { membership: 'join', displayname: 'Alice', avatar_url: avatar },
+        },
+      ],
+    })
+    try {
+      await fixture.start()
+      expect(fixture.store.getMembers(SNAPSHOT_ROOM)).toEqual([
+        { userId: SNAPSHOT_ALICE, name: 'Alice', avatarMxc: avatar },
+      ])
+      expect(fixture.store.getTimeline(SNAPSHOT_ROOM)[0]?.avatarMxc).toBe(avatar)
+      expect(fixture.store.getAvatarCache().get('https://evil.test/x.png')).toBeUndefined()
     } finally {
       fixture.stop()
     }

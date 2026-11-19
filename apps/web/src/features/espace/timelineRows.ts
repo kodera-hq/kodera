@@ -85,3 +85,34 @@ export function quarterHourDays(dayOf: (ts: number) => string): (ts: number) => 
     return day
   }
 }
+
+/** How close two messages of one author must be for the second to continue the first's run. */
+export const RUN_GAP_MS = 5 * 60_000
+
+/**
+ * Whether `message` continues `previous`'s run (cozy grouping, reference screen p02): drawn
+ * without its avatar and header because the row above already says who wrote it. Only between
+ * two message rows, so a day divider or « Nouveaux messages » always starts a new run; never for
+ * a deleted message on either side, a reply (its quote needs its author above it), a thread's root
+ * (its thread link hangs from a visible header), or after a gap longer than five minutes, or one
+ * that runs backwards.
+ */
+export function continuesRun(
+  previous: TimelineRow | undefined,
+  message: MessageView,
+  isThreadRoot: (eventId: string) => boolean = () => false
+): boolean {
+  if (previous?.kind !== 'message') return false
+  const before = previous.message
+  const gap = message.ts - before.ts
+  return (
+    before.sender === message.sender &&
+    !before.redacted &&
+    !message.redacted &&
+    message.replyTo === null &&
+    message.document === undefined &&
+    !isThreadRoot(message.eventId) &&
+    gap >= 0 &&
+    gap <= RUN_GAP_MS
+  )
+}

@@ -32,7 +32,7 @@ import {
 import type { MemberView, SendOptions } from './matrix/store'
 import type { MessageView } from './matrix/timeline'
 import { MentionInput } from './MentionInput'
-import { mentionedIn } from './mentions'
+import { mentionedIn, mentionsRoom, mentionTargetsIn } from './mentions'
 import type { MentionCandidate } from './mentions'
 import { newestEditable } from './shortcuts'
 import { useStoreSlice } from './useStoreSlice'
@@ -96,10 +96,21 @@ export function inRoom(target: RoomTarget | null, roomId: string | null): string
   return target !== null && target.roomId === roomId ? target.eventId : null
 }
 
-/** The members the text names, as `m.mentions` carries them; nothing when it names none. */
-function mentioning(text: string, members: readonly MentionCandidate[]): SendOptions {
+/**
+ * The members the text names, as `m.mentions` carries them, with the names the text writes them
+ * by so the message's HTML links each as a pill; « @salon » sets `m.mentions.room`. Nothing when
+ * it names no one.
+ */
+export function mentioning(text: string, members: readonly MentionCandidate[]): SendOptions {
   const userIds = mentionedIn(text, members)
-  return userIds.length === 0 ? {} : { mentions: userIds }
+  const room = mentionsRoom(text)
+  if (userIds.length === 0 && !room) return {}
+  const targets = mentionTargetsIn(text, members)
+  return {
+    mentions: userIds,
+    ...(room ? { mentionsRoom: true } : {}),
+    ...(targets.length === 0 ? {} : { mentionTargets: targets }),
+  }
 }
 
 const textOf = (draft: ChannelDraft) => draft.text
@@ -136,6 +147,8 @@ export interface MessageComposerProps {
   draft: DraftChannel
   /** The channel as the sidebar labels it: the field's name and its placeholder. */
   channelName: string
+  /** A direct conversation: the field says the person written to, never « #channel ». */
+  direct?: boolean | undefined
   simulation: boolean
   narrow: boolean
   /** Between two addresses, the channel the member means is not known: nothing is sent. */
@@ -163,6 +176,7 @@ function MessageComposerView({
   viewerId,
   draft,
   channelName,
+  direct = false,
   simulation,
   narrow,
   navigationUnsettled,
@@ -312,9 +326,9 @@ function MessageComposerView({
           )}
         >
           <label htmlFor={inputId} className="sr-only">
-            {t('console.workspace.composer.label-message', {
-              channel: channelName,
-            })}
+            {direct
+              ? t('console.workspace.composer.label-direct', { name: channelName })
+              : t('console.workspace.composer.label-message', { channel: channelName })}
           </label>
           <RichComposerInput
             scope={roomId}
@@ -339,6 +353,53 @@ function MessageComposerView({
             mentionRef={mentionRef}
             insertRef={insertRef}
             onKeyDown={keyDown}
+            trailing={
+              <>
+                {/* p02's `.icon-btn`, drawn as the thread panel's close button is. */}
+                <Tooltip content={t('console.workspace.composer.action-mention')} names>
+                  <button
+                    type="button"
+                    aria-label={t('console.workspace.composer.action-mention')}
+                    disabled={navigationUnsettled}
+                    onClick={() => mentionRef.current?.()}
+                    className={cx(
+                      'flex h-8 w-8 shrink-0 items-center justify-center rounded-sm text-c-ink-3',
+                      'hover:bg-c-sunken hover:text-c-ink',
+                      'disabled:cursor-not-allowed disabled:text-c-on-disabled disabled:hover:bg-transparent',
+                      TOUCH_TARGET,
+                      'focus-visible:ring focus-visible:outline-hidden'
+                    )}
+                  >
+                    <MentionIcon />
+                  </button>
+                </Tooltip>
+                <EmojiPalette
+                  disabled={navigationUnsettled}
+                  anchorRef={composerBox}
+                  onPick={(emoji) => insertRef.current?.(emoji)}
+                />
+                {/* Icons only (owner decision): the name, « Envoyer » or « Enregistrer »
+                  while editing, is the accessible name and the tooltip. Enter still sends. */}
+                <Button
+                  type="submit"
+                  variant="primary"
+                  size="sm"
+                  icon={<SendIcon />}
+                  iconOnly
+                  aria-label={t(
+                    editingEventId !== null
+                      ? 'console.workspace.composer.action-save'
+                      : 'console.workspace.composer.action-send'
+                  )}
+                  disabled={
+                    navigationUnsettled ||
+                    attachmentStaged ||
+                    (editingEventId === null && queued.length > 0 && filesReady === null)
+                  }
+                  className="ml-auto"
+                />
+              </>
+            }
             {...(narrow
               ? {}
               : {
@@ -348,9 +409,9 @@ function MessageComposerView({
             placeholder={
               simulation
                 ? demoCopy.placeholder
-                : t('console.workspace.composer.placeholder-message', {
-                    channel: channelName,
-                  })
+                : direct
+                  ? t('console.workspace.composer.placeholder-direct', { name: channelName })
+                  : t('console.workspace.composer.placeholder-message', { channel: channelName })
             }
             // Read-only, not `disabled`, while the address is undecided: a disabled
             // field drops the focus to the page, and a channel shortcut pressed while
@@ -366,51 +427,6 @@ function MessageComposerView({
               TOUCH_TARGET_HEIGHT
             )}
           />
-          <div className="flex shrink-0 items-center gap-1">
-            {/* p02's `.icon-btn`, drawn as the thread panel's close button is. */}
-            <Tooltip content={t('console.workspace.composer.action-mention')} names>
-              <button
-                type="button"
-                aria-label={t('console.workspace.composer.action-mention')}
-                disabled={navigationUnsettled}
-                onClick={() => mentionRef.current?.()}
-                className={cx(
-                  'flex h-8 w-8 shrink-0 items-center justify-center rounded-sm text-c-ink-3',
-                  'hover:bg-c-sunken hover:text-c-ink',
-                  'disabled:cursor-not-allowed disabled:text-c-on-disabled disabled:hover:bg-transparent',
-                  TOUCH_TARGET,
-                  'focus-visible:ring focus-visible:outline-hidden'
-                )}
-              >
-                <MentionIcon />
-              </button>
-            </Tooltip>
-            <EmojiPalette
-              disabled={navigationUnsettled}
-              anchorRef={composerBox}
-              onPick={(emoji) => insertRef.current?.(emoji)}
-            />
-            {/* Icons only (owner decision): the name, « Envoyer » or « Enregistrer »
-              while editing, is the accessible name and the tooltip. Enter still sends. */}
-            <Button
-              type="submit"
-              variant="primary"
-              size="sm"
-              icon={<SendIcon />}
-              iconOnly
-              aria-label={t(
-                editingEventId !== null
-                  ? 'console.workspace.composer.action-save'
-                  : 'console.workspace.composer.action-send'
-              )}
-              disabled={
-                navigationUnsettled ||
-                attachmentStaged ||
-                (editingEventId === null && queued.length > 0 && filesReady === null)
-              }
-              className="ml-auto"
-            />
-          </div>
         </div>
       </form>
     </>

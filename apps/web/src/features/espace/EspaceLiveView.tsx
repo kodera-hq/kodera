@@ -64,7 +64,15 @@ import { OrganisationHeader } from '../workspace/OrganisationHeader'
 import { categoryLabel, channelLabel, currentChannel } from '../workspace/workspace'
 import type { Workspace, WorkspaceCategory, WorkspaceChannel } from '../workspace/workspace'
 import { createCallController, type CallSnapshot } from './audio/call'
-import { createEspaceStore, HEADER_FACES, type MemberView, type RoomSummary } from './matrix/store'
+import {
+  createEspaceStore,
+  HEADER_FACES,
+  type ArrivalView,
+  type MemberView,
+  type RoomSummary,
+} from './matrix/store'
+import { isArrivalsChannel } from './ArrivalCard'
+import { arrivalInserts } from './ArrivalInsert'
 import { serverNameOf } from './homeserver'
 import { LeaveCallGuard } from './LeaveCallGuard'
 import { useTimelineScroll } from './useTimelineScroll'
@@ -110,6 +118,14 @@ import { PinnedMessages } from './PinnedMessages'
 import { useStableHandler, useStoreSlice } from './useStoreSlice'
 import { VoiceCallDock } from './VoiceCallDock'
 import { cssProperty } from '../../ui/cssom'
+import { squareAvatarPng } from '../profile/avatarImage'
+import { KoderaPassportModal, type PassportDraft } from '../profile/KoderaPassportModal'
+import { EMPTY_PASSPORT, isPlaceholderName } from '../profile/passport'
+import { PassportContext, type PassportServices } from '../profile/passportContext'
+import { useAvatarSrc } from './useAvatarSrc'
+import { MemberAvatar } from './MemberAvatar'
+import { publishRailDirects } from '../../app/railDirectsStore'
+import type { DirectSummary } from './matrix/directs'
 
 // The view's public names stay this module's, wherever their definitions live.
 export { isProximityChannel, mergeTimelineInserts } from './liveViewModel'
@@ -118,6 +134,7 @@ export type { AudioCallLike, EspaceStoreLike, TimelineInsert } from './liveViewM
 const NO_CANDIDATES: readonly MentionCandidate[] = []
 const NO_DOCUMENTS: readonly ChannelDoc[] = []
 const NO_INSERTS: readonly TimelineInsert[] = []
+const NO_ARRIVALS: readonly ArrivalView[] = []
 
 /** The member's own microphone is on, in a call that is through. */
 const microphoneOn = (call: CallSnapshot) =>
@@ -144,6 +161,8 @@ function deviceSettingsOf(call: AudioCallLike): AudioSettingsCall | null {
  * A direct conversation, drawn as a channel is: its room is the summary itself, never one Core
  * resolves, so its id is marked as no channel id Core issues.
  */
+const NO_DIRECTS: readonly DirectSummary[] = []
+
 function directChannelOf(roomId: string, name: string): WorkspaceChannel {
   return {
     id: `direct:${roomId}`,
@@ -704,12 +723,29 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
       ? null
       : t('console.workspace.channel.members-count', { count: activeRoom.joined })
   /** Under the channel's name: its topic, then its member count (p02 « topic · 18 membres »). */
-  const headerLine = [
-    ...(activeChannel !== null && activeChannel !== undefined && activeChannel.topic !== ''
-      ? [{ key: 'topic', text: activeChannel.topic }]
-      : []),
-    ...(memberCount === null ? [] : [{ key: 'members', text: memberCount }]),
-  ]
+  // A one-to-one conversation's other person: their presence is the header's line, where a
+  // channel says its topic and its count.
+  const directPeer =
+    directRoomId === null
+      ? undefined
+      : activeStore.getDirects?.().find((item) => item.roomId === directRoomId)?.userIds
+  const directPresence =
+    directPeer?.length === 1
+      ? activeStore.isOnline?.(directPeer[0]!)
+        ? t('console.workspace.presence.online')
+        : t('console.workspace.directs.header-offline')
+      : undefined
+  const headerLine =
+    directRoomId !== null
+      ? directPresence === undefined
+        ? []
+        : [{ key: 'presence', text: directPresence }]
+      : [
+          ...(activeChannel !== null && activeChannel !== undefined && activeChannel.topic !== ''
+            ? [{ key: 'topic', text: activeChannel.topic }]
+            : []),
+          ...(memberCount === null ? [] : [{ key: 'members', text: memberCount }]),
+        ]
   /** Beside it, a few of those members' faces, drawn only with the count they illustrate. */
   const faces = activeRoom?.faces ?? []
   // The first sync lazy-loads only the people who wrote lately: when the header shows fewer faces
@@ -810,6 +846,84 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
     }
   }, [activeStore, ownMatrixProfile, viewerId])
   const profileCopy = profileMessages(i18n.resolvedLanguage)
+  // What a profile card reads beyond its member (`passportContext.ts`): avatars, passports, and
+  // a direct message written from the card. The demo has none of them.
+  const passportServices = useMemo((): PassportServices | null => {
+    if (simulation) return null
+    const { openDirect } = activeStore
+    return {
+      avatars: activeStore.getAvatarCache?.(),
+      subscribe: activeStore.subscribe,
+      getSnapshot: activeStore.getSnapshot,
+      getPassport: activeStore.getPassport?.bind(activeStore),
+      sendDirect:
+        openDirect === undefined
+          ? undefined
+          : async (userId: string, text: string) => {
+              const roomId = await openDirect.call(activeStore, [userId])
+              await activeStore.send(roomId, text)
+            },
+    }
+  }, [activeStore, simulation])
+  // The rail's direct conversations (`app/railDirectsStore.ts`): published while this view is live, so
+  // the shell's rail pops the faces of the people with unread messages under its DM button.
+  const railDirectsOf = useCallback(() => activeStore.getDirects?.() ?? NO_DIRECTS, [activeStore])
+  const railDirectList = useStoreSlice(activeStore.subscribe, activeStore.getSnapshot, railDirectsOf)
+  const railAvatars = passportServices?.avatars
+  useEffect(() => {
+    if (simulation || activeStore.getDirects === undefined) return
+    publishRailDirects({
+      items: railDirectList.map((item) => ({
+        roomId: item.roomId,
+        name: item.name,
+        userId: item.userIds.length === 1 ? item.userIds[0] : undefined,
+        avatarMxc: item.avatarMxc,
+        unread: item.unread,
+        active: item.roomId === directRoomId,
+      })),
+      avatars: railAvatars,
+      onOpen: selectDirect,
+      onOpenAll: () => {
+        const heading = document.querySelector<HTMLElement>('[data-directs-section] h3')
+        heading?.scrollIntoView({ block: 'nearest' })
+        heading?.focus()
+      },
+    })
+  }, [activeStore, simulation, railDirectList, railAvatars, directRoomId, selectDirect])
+  useEffect(() => () => publishRailDirects(null), [])
+  const ownAvatarSrc = useAvatarSrc(passportServices?.avatars, ownMatrixProfile?.avatarUrl)
+  // The first-run passport (`KoderaPassportModal`): offered once the member is live, while the
+  // name their homeserver holds is no name they chose and they have neither saved nor dismissed it.
+  const ownPassport = useStoreSlice(
+    activeStore.subscribe,
+    activeStore.getSnapshot,
+    useCallback(
+      () => activeStore.getPassport?.(viewerId) ?? EMPTY_PASSPORT,
+      [activeStore, viewerId]
+    )
+  )
+  const [passportClosed, setPassportClosed] = useState(false)
+  const passportOffered =
+    !simulation &&
+    !passportClosed &&
+    snapshot.status === 'live' &&
+    settingsProfile !== undefined &&
+    activeStore.setPassport !== undefined &&
+    !ownPassport.onboarded &&
+    isPlaceholderName(ownMatrixProfile?.displayName, viewerId)
+  const savePassport = useStableHandler(async (draft: PassportDraft) => {
+    if (settingsProfile === undefined || activeStore.setPassport === undefined) return
+    if (draft.avatar !== null) {
+      await settingsProfile.setAvatar(await squareAvatarPng(draft.avatar), 'avatar.png')
+    }
+    await settingsProfile.setDisplayName(draft.displayName)
+    await activeStore.setPassport(draft.passport)
+    setPassportClosed(true)
+  })
+  const dismissPassport = useStableHandler(() => {
+    setPassportClosed(true)
+    void activeStore.setPassport?.({ ...ownPassport, onboarded: true }).catch(() => undefined)
+  })
   const roomMembers = useMemo(() => {
     void snapshot
     return activeRoomId === null ? undefined : activeStore.getMembers?.(activeRoomId)
@@ -857,6 +971,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
             : 'offline',
       role: profileRoleIn(activeStore, activeRoomId, member.userId),
       ...(member.userId === viewerId ? { status: localProfile.status } : {}),
+      ...(member.avatarMxc === undefined ? {} : { avatarMxc: member.avatarMxc }),
     }
   }
   const connectorChannels = useMemo(
@@ -1288,6 +1403,29 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
     !protectionUnavailable &&
     activeRoomId !== null &&
     (activeStore.canReact?.(activeRoomId) ?? true)
+  // The welcome channel (`#arrivées`): each newcomer's join is a card with a 👋 to wave at them.
+  const welcomeRoomId =
+    directRoomId === null && activeRoomId !== null && isArrivalsChannel(activeChannelName)
+      ? activeRoomId
+      : null
+  const arrivalsOf = useCallback(
+    () =>
+      welcomeRoomId === null ? NO_ARRIVALS : (activeStore.getArrivals?.(welcomeRoomId) ?? NO_ARRIVALS),
+    [activeStore, welcomeRoomId]
+  )
+  const arrivals = useStoreSlice(activeStore.subscribe, activeStore.getSnapshot, arrivalsOf)
+  const shownInserts = useMemo(() => {
+    const base = timelineInserts ?? NO_INSERTS
+    if (welcomeRoomId === null || arrivals.length === 0) return base
+    return [
+      ...base,
+      ...arrivalInserts(arrivals, nameOfMember, canReact, (eventId, emoji) =>
+        activeStore.toggleReaction(welcomeRoomId, eventId, emoji)
+      ),
+    ].sort((a, b) => a.ts - b.ts)
+    // `nameOfMember` reads the language's word for an unnamed member, which `t` changes with.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timelineInserts, welcomeRoomId, arrivals, canReact, activeStore, t])
   // In place of the composer, why the member cannot write here; nothing while the sync starts.
   const paneNotice = protectionUnavailable
     ? roomBoundary === 'unknown'
@@ -1513,486 +1651,509 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
   )
 
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-testid="studio-workspace">
-      <div className="flex min-h-0 flex-1 narrow:flex-col">
-        {narrow ? (
-          <div className="order-first flex shrink-0 flex-col gap-2 border-b border-c-border-soft pb-2">
-            <div className="flex min-w-0 items-center gap-2">
-              <div className="min-w-0 flex-1">
-                <OrganisationHeader name={organisationName} slug={org} />
-              </div>
-              <Drawer
-                open={channelsOpen}
-                onOpenChange={changeChannelChooser}
-                side="bottom"
-                title={t('console.workspace.sidebar.title')}
-                closeLabel={t('console.common.action-close')}
-                returnFocusTo={channelChooserReturnFocus}
-                trigger={
-                  <Button variant="secondary" size="sm" className="shrink-0">
-                    {t('console.workspace.sidebar.title')}
-                  </Button>
-                }
-              >
-                {sidebar}
-              </Drawer>
-            </div>
-          </div>
-        ) : null}
-        {inRouter ? <LeaveCallGuard live={guardCall} /> : null}
-        {narrow ? null : (
-          // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
-          <div
-            data-testid="espace-sidebar-primary-resizer"
-            role="separator"
-            aria-orientation="vertical"
-            aria-label={t('console.workspace.layout.resize-channels')}
-            aria-valuenow={leftSidebarWidth}
-            aria-valuemin={180}
-            aria-valuemax={420}
-            // A focusable splitter (role="separator" with a value) is interactive in WAI-ARIA.
-            // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
-            tabIndex={0}
-            onMouseDown={startLeftSidebarResize}
-            onDoubleClick={() => setLeftSidebarWidth(256)}
-            onKeyDown={(event) => {
-              if (event.key === 'ArrowLeft') {
-                event.preventDefault()
-                setLeftSidebarWidth((w) => Math.max(180, w - 16))
-              } else if (event.key === 'ArrowRight') {
-                event.preventDefault()
-                setLeftSidebarWidth((w) => Math.min(420, w + 16))
-              }
-            }}
-            className="w-1 shrink-0 cursor-col-resize bg-c-border-soft transition-colors hover:bg-c-action focus-visible:bg-c-action focus-visible:outline-hidden"
-          />
-        )}
-        {/* `Escape` from anything in the column that did not use it (spec « Keyboard shortcuts »). */}
-        {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions */}
-        <section
-          ref={channelColumn}
-          onKeyDown={columnKeyDown}
-          className="workspace-canvas flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-y-auto bg-c-surface px-6 py-5 narrow:gap-2 narrow:bg-transparent narrow:p-0"
-        >
-          <p aria-live="polite" aria-atomic="true" className="sr-only">
-            {announcement.count === 0 ? null : (
-              <span key={announcement.count}>{announcement.text}</span>
-            )}
-          </p>
-          <header className="flex items-center gap-3 border-b border-c-border-soft pb-4 narrow:flex-wrap narrow:gap-2 narrow:pb-2">
-            <div className="flex min-w-0 flex-1 flex-col gap-1 narrow:basis-full">
-              {activeChannel === null || activeChannel === undefined ? (
-                <h1
-                  ref={headingRef}
-                  tabIndex={-1}
-                  data-route-heading=""
-                  className="text-lg font-semibold text-c-ink"
-                >
-                  {t(
-                    activeChannel === null
-                      ? 'console.workspace.channel.title-not-found'
-                      : 'console.workspace._.title'
-                  )}
-                </h1>
-              ) : (
-                <h1
-                  ref={headingRef}
-                  tabIndex={-1}
-                  data-route-heading=""
-                  className="flex min-w-0 items-center gap-2 text-lg font-semibold text-c-ink"
-                >
-                  {isProximityChannel(activeChannel, proximityChannelIds) ? (
-                    <span aria-hidden="true" className="text-c-ink-3">
-                      <AntennaIcon />
-                    </span>
-                  ) : (
-                    <span aria-hidden="true" className="font-mono font-medium text-c-ink-3">
-                      #
-                    </span>
-                  )}
-                  <span className="min-w-0 truncate">{activeChannelName}</span>
-                </h1>
-              )}
-              {roomBoundary === undefined ? null : (
-                <p role="status" className="text-xs text-c-ink-3">
-                  {protectionCopy[roomBoundary]}
-                </p>
-              )}
-              {headerLine.length > 0 ? (
-                <div className="flex min-w-0 items-center gap-2">
-                  <p className="min-w-0 text-sm text-c-ink-3">
-                    {headerLine.map((part, index) => (
-                      <Fragment key={part.key}>
-                        {index > 0 ? (
-                          <>
-                            {' '}
-                            <span aria-hidden="true">·</span>{' '}
-                          </>
-                        ) : null}
-                        <span>{part.text}</span>
-                      </Fragment>
-                    ))}
-                  </p>
-                  {/* Reference screen p02: who is here, at a glance, beside the count that says it
-                    in words, so the faces are not read. Someone with no name gets a person
-                    glyph, never a character of their id. */}
-                  {memberCount !== null && faces.length > 0 ? (
-                    <span className="flex shrink-0 gap-1 narrow:hidden">
-                      {faces.map((face) => {
-                        const named = isNamedProfile(cleanText(face.name, 80), face.userId)
-                        return (
-                          <Avatar
-                            key={face.userId}
-                            name={safeDisplayName(face.name, face.userId, unnamedMember)}
-                            identity={face.userId}
-                            onlineLabel={
-                              activeStore.isOnline?.(face.userId)
-                                ? simulation
-                                  ? demoCopy.presence
-                                  : t('console.workspace.presence.online')
-                                : undefined
-                            }
-                            anonymous={!named}
-                            size="xs"
-                            className="ring-2 ring-c-surface"
-                          />
-                        )
-                      })}
-                    </span>
-                  ) : null}
+    <PassportContext.Provider value={passportServices}>
+      {passportOffered ? (
+        <KoderaPassportModal
+          open
+          userId={viewerId}
+          initialName={
+            isPlaceholderName(ownMatrixProfile?.displayName, viewerId)
+              ? ''
+              : cleanText(ownMatrixProfile?.displayName, 80)
+          }
+          initialPassport={ownPassport}
+          avatarSrc={ownAvatarSrc}
+          roleLabel={profileCopy[profileRoleIn(activeStore, activeRoomId, viewerId)]}
+          onSave={savePassport}
+          onDismiss={dismissPassport}
+        />
+      ) : null}
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-testid="studio-workspace">
+        <div className="flex min-h-0 flex-1 narrow:flex-col">
+          {narrow ? (
+            <div className="order-first flex shrink-0 flex-col gap-2 border-b border-c-border-soft pb-2">
+              <div className="flex min-w-0 items-center gap-2">
+                <div className="min-w-0 flex-1">
+                  <OrganisationHeader name={organisationName} slug={org} />
                 </div>
-              ) : null}
-            </div>
-            {activeRoom !== undefined &&
-            activeChannel != null &&
-            !focusedDocs &&
-            activeCanvasMode === 'chat' ? (
-              <ChannelInviteDialog
-                key={`${org}:${activeRoom.roomId}`}
-                triggerRef={inviteTrigger}
-                org={org}
-                channel={activeChannel}
-                room={activeRoom}
-                store={activeStore}
-                unavailable={navigationUnsettled || signedOut}
-              />
-            ) : null}
-            {activeRoomId === null || focusedDocs || activeCanvasMode !== 'chat' ? null : (
-              <>
-                <MessageSearch store={activeStore} roomId={activeRoomId} onShow={showMessage} />
-                <PinnedMessages store={activeStore} roomId={activeRoomId} onShow={showMessage} />
-              </>
-            )}
-            {activeRoomId === null || focusedDocs ? null : (
-              <Button
-                variant="tertiary"
-                size="sm"
-                icon={<PersonIcon />}
-                iconOnly
-                aria-label={t('console.workspace.members.title')}
-                ref={membersTrigger}
-                aria-controls={membersPanelId}
-                aria-expanded={membersOpen}
-                onClick={() => setMembersOpen((open) => !open)}
-              />
-            )}
-            <StudioNavigation
-              compact={narrow}
-              section="call-entry"
-              mode={activeCanvasMode ?? 'chat'}
-              rooms={audioRooms}
-              onChoose={(entry) => {
-                if (narrow) {
-                  setChannelsOpen(true)
-                  return null
-                }
-                return openFromSearch(entry)
-              }}
-            />
-            {activeCanvasMode === 'docs' ? (
-              <span className="text-sm font-bold text-c-ink">
-                {t('console.workspace.canvas.mode-docs')}
-              </span>
-            ) : null}
-          </header>
-
-          {snapshot.status === 'signed-out' ? (
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <InlineAlert kind="warning">
-                {t('console.workspace.message.session-expired')}
-              </InlineAlert>
-              {onReconnect === undefined ? null : (
-                <Button variant="secondary" size="sm" onClick={onReconnect}>
-                  {t('console.workspace.message.action-reconnect')}
-                </Button>
-              )}
+                <Drawer
+                  open={channelsOpen}
+                  onOpenChange={changeChannelChooser}
+                  side="bottom"
+                  title={t('console.workspace.sidebar.title')}
+                  closeLabel={t('console.common.action-close')}
+                  returnFocusTo={channelChooserReturnFocus}
+                  trigger={
+                    <Button variant="secondary" size="sm" className="shrink-0">
+                      {t('console.workspace.sidebar.title')}
+                    </Button>
+                  }
+                >
+                  {sidebar}
+                </Drawer>
+              </div>
             </div>
           ) : null}
+          {inRouter ? <LeaveCallGuard live={guardCall} /> : null}
+          {narrow ? null : (
+            // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
+            <div
+              data-testid="espace-sidebar-primary-resizer"
+              role="separator"
+              aria-orientation="vertical"
+              aria-label={t('console.workspace.layout.resize-channels')}
+              aria-valuenow={leftSidebarWidth}
+              aria-valuemin={180}
+              aria-valuemax={420}
+              // A focusable splitter (role="separator" with a value) is interactive in WAI-ARIA.
+              // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
+              tabIndex={0}
+              onMouseDown={startLeftSidebarResize}
+              onDoubleClick={() => setLeftSidebarWidth(256)}
+              onKeyDown={(event) => {
+                if (event.key === 'ArrowLeft') {
+                  event.preventDefault()
+                  setLeftSidebarWidth((w) => Math.max(180, w - 16))
+                } else if (event.key === 'ArrowRight') {
+                  event.preventDefault()
+                  setLeftSidebarWidth((w) => Math.min(420, w + 16))
+                }
+              }}
+              className="w-1 shrink-0 cursor-col-resize bg-c-border-soft transition-colors hover:bg-c-action focus-visible:bg-c-action focus-visible:outline-hidden"
+            />
+          )}
+          {/* `Escape` from anything in the column that did not use it (spec « Keyboard shortcuts »). */}
+          {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions */}
+          <section
+            ref={channelColumn}
+            onKeyDown={columnKeyDown}
+            className="workspace-canvas flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-y-auto bg-c-surface px-6 py-5 narrow:gap-2 narrow:bg-transparent narrow:p-0"
+          >
+            <p aria-live="polite" aria-atomic="true" className="sr-only">
+              {announcement.count === 0 ? null : (
+                <span key={announcement.count}>{announcement.text}</span>
+              )}
+            </p>
+            <header className="flex items-center gap-3 border-b border-c-border-soft pb-4 narrow:flex-wrap narrow:gap-2 narrow:pb-2">
+              <div className="flex min-w-0 flex-1 flex-col gap-1 narrow:basis-full">
+                {activeChannel === null || activeChannel === undefined ? (
+                  <h1
+                    ref={headingRef}
+                    tabIndex={-1}
+                    data-route-heading=""
+                    className="text-lg font-semibold text-c-ink"
+                  >
+                    {t(
+                      activeChannel === null
+                        ? 'console.workspace.channel.title-not-found'
+                        : 'console.workspace._.title'
+                    )}
+                  </h1>
+                ) : (
+                  <h1
+                    ref={headingRef}
+                    tabIndex={-1}
+                    data-route-heading=""
+                    className="flex min-w-0 items-center gap-2 text-lg font-semibold text-c-ink"
+                  >
+                    {directRoomId !== null ? (
+                      // A direct conversation is a person, not a channel: « @Name », never « # ».
+                      <span aria-hidden="true" className="font-medium text-c-ink-3">
+                        @
+                      </span>
+                    ) : isProximityChannel(activeChannel, proximityChannelIds) ? (
+                      <span aria-hidden="true" className="text-c-ink-3">
+                        <AntennaIcon />
+                      </span>
+                    ) : (
+                      <span aria-hidden="true" className="font-mono font-medium text-c-ink-3">
+                        #
+                      </span>
+                    )}
+                    <span className="min-w-0 truncate">{activeChannelName}</span>
+                  </h1>
+                )}
+                {roomBoundary === undefined ? null : (
+                  <p role="status" className="text-xs text-c-ink-3">
+                    {protectionCopy[roomBoundary]}
+                  </p>
+                )}
+                {headerLine.length > 0 ? (
+                  <div className="flex min-w-0 items-center gap-2">
+                    <p className="min-w-0 text-sm text-c-ink-3">
+                      {headerLine.map((part, index) => (
+                        <Fragment key={part.key}>
+                          {index > 0 ? (
+                            <>
+                              {' '}
+                              <span aria-hidden="true">·</span>{' '}
+                            </>
+                          ) : null}
+                          <span>{part.text}</span>
+                        </Fragment>
+                      ))}
+                    </p>
+                    {/* Reference screen p02: who is here, at a glance, beside the count that says it
+                    in words, so the faces are not read. Someone with no name gets a person
+                    glyph, never a character of their id. */}
+                    {memberCount !== null && faces.length > 0 ? (
+                      <span className="flex shrink-0 gap-1 narrow:hidden">
+                        {faces.map((face) => {
+                          const named = isNamedProfile(cleanText(face.name, 80), face.userId)
+                          return (
+                            <Avatar
+                              key={face.userId}
+                              name={safeDisplayName(face.name, face.userId, unnamedMember)}
+                              identity={face.userId}
+                              onlineLabel={
+                                activeStore.isOnline?.(face.userId)
+                                  ? simulation
+                                    ? demoCopy.presence
+                                    : t('console.workspace.presence.online')
+                                  : undefined
+                              }
+                              anonymous={!named}
+                              size="xs"
+                              className="ring-2 ring-c-surface"
+                            />
+                          )
+                        })}
+                      </span>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+              {activeRoom !== undefined &&
+              activeChannel != null &&
+              !focusedDocs &&
+              activeCanvasMode === 'chat' ? (
+                <ChannelInviteDialog
+                  key={`${org}:${activeRoom.roomId}`}
+                  triggerRef={inviteTrigger}
+                  org={org}
+                  channel={activeChannel}
+                  room={activeRoom}
+                  store={activeStore}
+                  unavailable={navigationUnsettled || signedOut}
+                />
+              ) : null}
+              {activeRoomId === null || focusedDocs || activeCanvasMode !== 'chat' ? null : (
+                <>
+                  <MessageSearch store={activeStore} roomId={activeRoomId} onShow={showMessage} />
+                  <PinnedMessages store={activeStore} roomId={activeRoomId} onShow={showMessage} />
+                </>
+              )}
+              {activeRoomId === null || focusedDocs ? null : (
+                <Button
+                  variant="tertiary"
+                  size="sm"
+                  icon={<PersonIcon />}
+                  iconOnly
+                  aria-label={t('console.workspace.members.title')}
+                  ref={membersTrigger}
+                  aria-controls={membersPanelId}
+                  aria-expanded={membersOpen}
+                  onClick={() => setMembersOpen((open) => !open)}
+                />
+              )}
+              <StudioNavigation
+                compact={narrow}
+                section="call-entry"
+                mode={activeCanvasMode ?? 'chat'}
+                rooms={audioRooms}
+                onChoose={(entry) => {
+                  if (narrow) {
+                    setChannelsOpen(true)
+                    return null
+                  }
+                  return openFromSearch(entry)
+                }}
+              />
+              {activeCanvasMode === 'docs' ? (
+                <span className="text-sm font-bold text-c-ink">
+                  {t('console.workspace.canvas.mode-docs')}
+                </span>
+              ) : null}
+            </header>
 
-          {/* The documents pane stays mounted once it has been opened, so coming back to it is
+            {snapshot.status === 'signed-out' ? (
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <InlineAlert kind="warning">
+                  {t('console.workspace.message.session-expired')}
+                </InlineAlert>
+                {onReconnect === undefined ? null : (
+                  <Button variant="secondary" size="sm" onClick={onReconnect}>
+                    {t('console.workspace.message.action-reconnect')}
+                  </Button>
+                )}
+              </div>
+            ) : null}
+
+            {/* The documents pane stays mounted once it has been opened, so coming back to it is
               instant — but not before: mounting it on every visit to a channel loads the
               collaborative editor's chunk and reads the workspace's documents for a member who
               never opens « Docs ». */}
-          {docsEverOpened &&
-          activeChannel != null &&
-          directRoomId === null &&
-          docsCanvasSlot !== undefined ? (
-            <div
-              hidden={activeCanvasMode !== 'docs'}
-              data-testid="espace-inline-docs-canvas"
-              className={
-                activeCanvasMode === 'docs' ? 'canvas-enter flex min-h-0 flex-1 flex-col' : ''
-              }
-            >
-              {docsCanvasSlot}
-            </div>
-          ) : null}
-          {activeCanvasMode === 'files' ? (
-            <div
-              data-testid="espace-files-canvas"
-              className="canvas-enter flex min-h-0 flex-1 flex-col"
-            >
-              <Suspense
-                fallback={
-                  // The page's own ground, so the canvas does not blink a different colour on
-                  // the way in.
-                  <div className="flex min-h-0 flex-1 flex-col gap-3 bg-c-surface p-4">
-                    <Skeleton shape="text" />
-                    <Skeleton shape="block" />
-                  </div>
+            {docsEverOpened &&
+            activeChannel != null &&
+            directRoomId === null &&
+            docsCanvasSlot !== undefined ? (
+              <div
+                hidden={activeCanvasMode !== 'docs'}
+                data-testid="espace-inline-docs-canvas"
+                className={
+                  activeCanvasMode === 'docs' ? 'canvas-enter flex min-h-0 flex-1 flex-col' : ''
                 }
               >
-                <LazyWorkspaceFilesPanel
-                  store={activeStore}
-                  snapshot={snapshot}
-                  searchEntries={searchEntries}
-                  documents={documents}
-                  {...(openStudioDocument === undefined ? {} : { onOpenDocument })}
-                  onOpenChannel={(channelId) => selectTextChannel(channelId)}
-                  onOpenDirect={selectDirect}
-                />
-              </Suspense>
-            </div>
-          ) : null}
-          {activeChannel == null || activeCanvasMode !== 'chat' ? null : (
-            <>
-              {isProximityChannel(activeChannel, proximityChannelIds) &&
-              renderProximityPanel !== undefined ? (
-                <div data-testid="espace-proximity-room-surface" className="flex flex-col gap-3">
-                  <div data-testid="proximity-room-panel">
-                    {renderProximityPanel(activeChannel)}
+                {docsCanvasSlot}
+              </div>
+            ) : null}
+            {activeCanvasMode === 'files' ? (
+              <div
+                data-testid="espace-files-canvas"
+                className="canvas-enter flex min-h-0 flex-1 flex-col"
+              >
+                <Suspense
+                  fallback={
+                    // The page's own ground, so the canvas does not blink a different colour on
+                    // the way in.
+                    <div className="flex min-h-0 flex-1 flex-col gap-3 bg-c-surface p-4">
+                      <Skeleton shape="text" />
+                      <Skeleton shape="block" />
+                    </div>
+                  }
+                >
+                  <LazyWorkspaceFilesPanel
+                    store={activeStore}
+                    snapshot={snapshot}
+                    searchEntries={searchEntries}
+                    documents={documents}
+                    {...(openStudioDocument === undefined ? {} : { onOpenDocument })}
+                    onOpenChannel={(channelId) => selectTextChannel(channelId)}
+                    onOpenDirect={selectDirect}
+                  />
+                </Suspense>
+              </div>
+            ) : null}
+            {activeChannel == null || activeCanvasMode !== 'chat' ? null : (
+              <>
+                {isProximityChannel(activeChannel, proximityChannelIds) &&
+                renderProximityPanel !== undefined ? (
+                  <div data-testid="espace-proximity-room-surface" className="flex flex-col gap-3">
+                    <div data-testid="proximity-room-panel">
+                      {renderProximityPanel(activeChannel)}
+                    </div>
                   </div>
-                </div>
-              ) : null}
-              <MessageTimeline
-                store={activeStore}
-                roomId={activeRoomId}
-                channelId={activeChannel.id}
-                channelName={activeChannelName}
-                viewerId={viewerId}
-                archived={isArchivedChannel}
-                canWrite={canWrite}
-                canReact={canReact}
-                simulation={simulation}
-                expandedEventId={openThreadRootId}
-                unreadFrom={unreadFrom}
-                menuContext={`${draftContext.generation}:${viewerId}:${activeRoomId}`}
-                documents={documents}
-                onOpenDocument={openStudioDocument}
-                inserts={timelineInserts ?? NO_INSERTS}
-                onMention={!canWrite || navigationUnsettled ? undefined : mentionMember}
-                actions={rowActions}
-                handleRef={timelineHandle}
-                logRef={logRef}
-                onScroll={onLogScroll}
-                onLoadOlder={showOlder}
-              />
-
-              {!canWrite ? (
-                paneNotice === undefined ? null : (
-                  <p className="border-t border-c-border-soft pt-3 text-sm text-c-ink-3">
-                    {paneNotice}
-                  </p>
-                )
-              ) : (
-                <MessageComposer
+                ) : null}
+                <MessageTimeline
                   store={activeStore}
                   roomId={activeRoomId}
-                  viewerId={viewerId}
-                  draft={draft}
+                  channelId={activeChannel.id}
                   channelName={activeChannelName}
+                  viewerId={viewerId}
+                  archived={isArchivedChannel}
+                  canWrite={canWrite}
+                  canReact={canReact}
                   simulation={simulation}
-                  narrow={narrow}
-                  navigationUnsettled={navigationUnsettled}
-                  inputId={composerInputId}
-                  guidanceId={demoGuidanceId}
-                  members={mentionCandidates}
-                  attachmentStaged={attachmentStaged}
-                  onStagingChange={changeStaging}
-                  onInvite={canInvite ? openInvitation : undefined}
-                  onMentionStart={loadMembers}
-                  onEdit={editMessage}
-                  onAnnounce={setAnnouncement}
-                  mentionRef={startMention}
-                  insertRef={insertInComposer}
+                  expandedEventId={openThreadRootId}
+                  unreadFrom={unreadFrom}
+                  menuContext={`${draftContext.generation}:${viewerId}:${activeRoomId}`}
+                  documents={documents}
+                  onOpenDocument={openStudioDocument}
+                  inserts={shownInserts}
+                  onMention={!canWrite || navigationUnsettled ? undefined : mentionMember}
+                  actions={rowActions}
+                  handleRef={timelineHandle}
+                  logRef={logRef}
+                  onScroll={onLogScroll}
+                  onLoadOlder={showOlder}
                 />
-              )}
-            </>
-          )}
-        </section>
 
-        {!narrow && !focusedDocs && membersOpen && activeRoomId !== null ? (
-          // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
-          <div
-            data-testid="espace-sidebar-secondary-resizer"
-            role="separator"
-            aria-orientation="vertical"
-            aria-label={t('console.workspace.layout.resize-side-panel')}
-            aria-valuenow={rightSidebarWidth}
-            aria-valuemin={220}
-            aria-valuemax={560}
-            // A focusable splitter (role="separator" with a value) is interactive in WAI-ARIA.
-            // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
-            tabIndex={0}
-            onMouseDown={startRightSidebarResize}
-            onDoubleClick={() => setRightSidebarWidth(280)}
-            onKeyDown={(event) => {
-              if (event.key === 'ArrowLeft') {
-                event.preventDefault()
-                setRightSidebarWidth((w) => Math.min(560, w + 16))
-              } else if (event.key === 'ArrowRight') {
-                event.preventDefault()
-                setRightSidebarWidth((w) => Math.max(220, w - 16))
-              }
-            }}
-            className="w-1 shrink-0 cursor-col-resize bg-c-border-soft transition-colors hover:bg-c-action focus-visible:bg-c-action focus-visible:outline-hidden"
-          />
-        ) : null}
-
-        {!focusedDocs && membersOpen && activeRoomId !== null ? (
-          // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
-          <aside
-            id={membersPanelId}
-            onKeyDown={(event) => {
-              if (event.key === 'Escape' && !event.defaultPrevented) {
-                event.preventDefault()
-                closeMembers()
-              }
-            }}
-            aria-label={t('console.workspace.members.title')}
-            ref={cssProperty('width', narrow ? undefined : `${rightSidebarWidth}px`)}
-            className="material-panel flex w-shell-sidebar-width shrink-0 flex-col gap-3 overflow-y-auto border-l border-c-border-soft p-4 narrow:w-full"
-          >
-            <div className="flex items-center justify-between gap-2">
-              <h2 className="text-sm font-semibold text-c-ink">
-                {t('console.workspace.members.title')}
-              </h2>
-              <Button
-                variant="tertiary"
-                size="sm"
-                icon={<CloseIcon />}
-                iconOnly
-                aria-label={t('console.common.action-close')}
-                onClick={closeMembers}
-              />
-            </div>
-            <div
-              data-testid="espace-members-presence-summary"
-              className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-c-border-soft bg-c-surface px-3 py-2 text-xs font-medium text-c-ink-2"
-            >
-              <span className="text-c-ok-ink">
-                {simulation
-                  ? demoCopy.roster
-                  : t('console.workspace.members.online-count', {
-                      count: roster.filter((member) => memberProfile(member).presence !== 'offline')
-                        .length,
-                    })}
-              </span>
-              <span className="text-c-ink-3">
-                {simulation ? demoCopy.presence : profileCopy.offline} (
-                {roster.filter((member) => memberProfile(member).presence === 'offline').length})
-              </span>
-            </div>
-            {(['maintainer', 'core', 'admin', 'partner', 'member', 'offline'] as const).map(
-              (group) => {
-                const members = roster
-                  .map(memberProfile)
-                  .filter((member) =>
-                    group === 'offline'
-                      ? member.presence === 'offline'
-                      : member.presence !== 'offline' && member.role === group
+                {!canWrite ? (
+                  paneNotice === undefined ? null : (
+                    <p className="border-t border-c-border-soft pt-3 text-sm text-c-ink-3">
+                      {paneNotice}
+                    </p>
                   )
-                if (members.length === 0) return null
-                const label =
-                  group === 'offline'
-                    ? profileCopy.offlineGroup
-                    : group === 'admin'
-                      ? t('console.workspace.members.admins')
-                      : profileCopy[group]
-                return (
-                  <section key={group} aria-label={label} className="flex flex-col gap-2">
-                    <h3 className="text-xs font-semibold text-c-ink-3">
-                      {label} · {members.length}
-                    </h3>
-                    <ul className="flex flex-col gap-1">
-                      {members.map((member) => (
-                        <li key={member.userId}>
-                          <UserProfilePopover
-                            member={member}
-                            onMention={
-                              !canWrite || navigationUnsettled || member.userId === viewerId
-                                ? undefined
-                                : mentionMember
-                            }
-                            trigger={
-                              <button
-                                type="button"
-                                className="flex w-full min-w-0 items-center gap-3 rounded-lg p-2 text-left hover:bg-c-muted focus-visible:ring focus-visible:outline-hidden"
-                              >
-                                <Avatar
-                                  name={member.name}
-                                  identity={member.userId}
-                                  size="lg"
-                                  presenceGround="sunken"
-                                  onlineLabel={
-                                    member.presence === 'offline'
-                                      ? undefined
-                                      : member.presence === 'online'
-                                        ? simulation
-                                          ? demoCopy.presence
-                                          : t('console.workspace.presence.online')
-                                        : profileCopy[member.presence]
-                                  }
-                                />
-                                <span className="flex min-w-0 flex-1 flex-col gap-1">
-                                  <span className="truncate text-sm font-medium text-c-ink-2">
-                                    {member.name}
-                                  </span>
-                                  <span className="truncate text-xs text-c-ink-3">
-                                    {member.status || profileCopy[member.presence]}
-                                  </span>
-                                </span>
-                              </button>
-                            }
-                          />
-                        </li>
-                      ))}
-                    </ul>
-                  </section>
-                )
-              }
+                ) : (
+                  <MessageComposer
+                    store={activeStore}
+                    roomId={activeRoomId}
+                    viewerId={viewerId}
+                    draft={draft}
+                    channelName={activeChannelName}
+                    direct={directRoomId !== null}
+                    simulation={simulation}
+                    narrow={narrow}
+                    navigationUnsettled={navigationUnsettled}
+                    inputId={composerInputId}
+                    guidanceId={demoGuidanceId}
+                    members={mentionCandidates}
+                    attachmentStaged={attachmentStaged}
+                    onStagingChange={changeStaging}
+                    onInvite={canInvite ? openInvitation : undefined}
+                    onMentionStart={loadMembers}
+                    onEdit={editMessage}
+                    onAnnounce={setAnnouncement}
+                    mentionRef={startMention}
+                    insertRef={insertInComposer}
+                  />
+                )}
+              </>
             )}
-          </aside>
-        ) : null}
-        {threadRootMessage !== undefined &&
-        activeChannel !== null &&
-        activeChannel !== undefined ? (
-          <>
-            <p className="text-xs text-c-ink-2">{t('console.onboarding.studio.thread-poll')}</p>
+          </section>
+
+          {!narrow && !focusedDocs && membersOpen && activeRoomId !== null ? (
+            // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
+            <div
+              data-testid="espace-sidebar-secondary-resizer"
+              role="separator"
+              aria-orientation="vertical"
+              aria-label={t('console.workspace.layout.resize-side-panel')}
+              aria-valuenow={rightSidebarWidth}
+              aria-valuemin={220}
+              aria-valuemax={560}
+              // A focusable splitter (role="separator" with a value) is interactive in WAI-ARIA.
+              // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
+              tabIndex={0}
+              onMouseDown={startRightSidebarResize}
+              onDoubleClick={() => setRightSidebarWidth(280)}
+              onKeyDown={(event) => {
+                if (event.key === 'ArrowLeft') {
+                  event.preventDefault()
+                  setRightSidebarWidth((w) => Math.min(560, w + 16))
+                } else if (event.key === 'ArrowRight') {
+                  event.preventDefault()
+                  setRightSidebarWidth((w) => Math.max(220, w - 16))
+                }
+              }}
+              className="w-1 shrink-0 cursor-col-resize bg-c-border-soft transition-colors hover:bg-c-action focus-visible:bg-c-action focus-visible:outline-hidden"
+            />
+          ) : null}
+
+          {!focusedDocs && membersOpen && activeRoomId !== null ? (
+            // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
+            <aside
+              id={membersPanelId}
+              onKeyDown={(event) => {
+                if (event.key === 'Escape' && !event.defaultPrevented) {
+                  event.preventDefault()
+                  closeMembers()
+                }
+              }}
+              aria-label={t('console.workspace.members.title')}
+              ref={cssProperty('width', narrow ? undefined : `${rightSidebarWidth}px`)}
+              className="material-panel flex w-shell-sidebar-width shrink-0 flex-col gap-3 overflow-y-auto border-l border-c-border-soft p-4 narrow:w-full"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <h2 className="text-sm font-semibold text-c-ink">
+                  {t('console.workspace.members.title')}
+                </h2>
+                <Button
+                  variant="tertiary"
+                  size="sm"
+                  icon={<CloseIcon />}
+                  iconOnly
+                  aria-label={t('console.common.action-close')}
+                  onClick={closeMembers}
+                />
+              </div>
+              <div
+                data-testid="espace-members-presence-summary"
+                className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-c-border-soft bg-c-surface px-3 py-2 text-xs font-medium text-c-ink-2"
+              >
+                <span className="text-c-ok-ink">
+                  {simulation
+                    ? demoCopy.roster
+                    : t('console.workspace.members.online-count', {
+                        count: roster.filter(
+                          (member) => memberProfile(member).presence !== 'offline'
+                        ).length,
+                      })}
+                </span>
+                <span className="text-c-ink-3">
+                  {simulation ? demoCopy.presence : profileCopy.offline} (
+                  {roster.filter((member) => memberProfile(member).presence === 'offline').length})
+                </span>
+              </div>
+              {(['maintainer', 'core', 'admin', 'partner', 'member', 'offline'] as const).map(
+                (group) => {
+                  const members = roster
+                    .map(memberProfile)
+                    .filter((member) =>
+                      group === 'offline'
+                        ? member.presence === 'offline'
+                        : member.presence !== 'offline' && member.role === group
+                    )
+                  if (members.length === 0) return null
+                  const label =
+                    group === 'offline'
+                      ? profileCopy.offlineGroup
+                      : group === 'admin'
+                        ? t('console.workspace.members.admins')
+                        : profileCopy[group]
+                  return (
+                    <section key={group} aria-label={label} className="flex flex-col gap-2">
+                      <h3 className="text-xs font-semibold text-c-ink-3">
+                        {label} · {members.length}
+                      </h3>
+                      <ul className="flex flex-col gap-1">
+                        {members.map((member) => (
+                          <li key={member.userId}>
+                            <UserProfilePopover
+                              member={member}
+                              onMention={
+                                !canWrite || navigationUnsettled || member.userId === viewerId
+                                  ? undefined
+                                  : mentionMember
+                              }
+                              trigger={
+                                <button
+                                  type="button"
+                                  className="flex w-full min-w-0 items-center gap-3 rounded-lg p-2 text-left hover:bg-c-muted focus-visible:ring focus-visible:outline-hidden"
+                                >
+                                  <MemberAvatar
+                                    mxc={member.avatarMxc}
+                                    name={member.name}
+                                    identity={member.userId}
+                                    size="lg"
+                                    presenceGround="sunken"
+                                    onlineLabel={
+                                      member.presence === 'offline'
+                                        ? undefined
+                                        : member.presence === 'online'
+                                          ? simulation
+                                            ? demoCopy.presence
+                                            : t('console.workspace.presence.online')
+                                          : profileCopy[member.presence]
+                                    }
+                                  />
+                                  <span className="flex min-w-0 flex-1 flex-col gap-1">
+                                    <span className="truncate text-sm font-medium text-c-ink-2">
+                                      {member.name}
+                                    </span>
+                                    <span className="truncate text-xs text-c-ink-3">
+                                      {member.status || profileCopy[member.presence]}
+                                    </span>
+                                  </span>
+                                </button>
+                              }
+                            />
+                          </li>
+                        ))}
+                      </ul>
+                    </section>
+                  )
+                }
+              )}
+            </aside>
+          ) : null}
+          {threadRootMessage !== undefined &&
+          activeChannel !== null &&
+          activeChannel !== undefined ? (
             <ThreadPanel
               label={t('console.workspace.thread.title')}
               title={t('console.workspace.thread.title')}
-              channel={`# ${activeChannelName}`}
+              channel={directRoomId === null ? `# ${activeChannelName}` : `@${activeChannelName}`}
               closeLabel={t('console.common.action-close')}
               onClose={() => draft.update({ threadRoot: null })}
               returnFocusTo={threadFocusTarget}
@@ -2065,22 +2226,22 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
                 />
               ))}
             </ThreadPanel>
-          </>
-        ) : null}
+          ) : null}
 
-        {narrow ? null : sidebar}
+          {narrow ? null : sidebar}
+        </div>
+        <div className="shrink-0">
+          <VoiceCallDock
+            call={activeCall}
+            channel={callChannel}
+            store={activeStore}
+            viewerId={viewerId}
+            deviceSettings={deviceSettings}
+            meterRef={micActivity.meterRef}
+            panelMeterRef={micActivity.panelMeterRef}
+          />
+        </div>
       </div>
-      <div className="shrink-0">
-        <VoiceCallDock
-          call={activeCall}
-          channel={callChannel}
-          store={activeStore}
-          viewerId={viewerId}
-          deviceSettings={deviceSettings}
-          meterRef={micActivity.meterRef}
-          panelMeterRef={micActivity.panelMeterRef}
-        />
-      </div>
-    </div>
+    </PassportContext.Provider>
   )
 })

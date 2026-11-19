@@ -201,7 +201,10 @@ describe('shortcodes in the composer', () => {
     await user.type(composer, '@zo{Enter}')
     expect(composer).toHaveValue('@Zoé :fire: ')
     await user.keyboard('{Enter}')
-    expect(store.send).toHaveBeenCalledWith(ROOM, '@Zoé 🔥', { mentions: [ZOE] })
+    expect(store.send).toHaveBeenCalledWith(ROOM, '@Zoé 🔥', {
+      mentions: [ZOE],
+      mentionTargets: [{ userId: ZOE, label: 'Zoé :fire:' }],
+    })
   })
 
   it('never reinterprets a received message', () => {

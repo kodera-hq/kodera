@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { calendarDay } from '../../i18n/format'
 import type { MessageView } from './matrix/timeline'
-import { NEW_MESSAGES_KEY, quarterHourDays, timelineRows } from './timelineRows'
+import {
+  continuesRun,
+  NEW_MESSAGES_KEY,
+  quarterHourDays,
+  RUN_GAP_MS,
+  timelineRows,
+} from './timelineRows'
 
 const ME = '@me:acme-sa.kodera.test'
 const ALICE = '@alice:acme-sa.kodera.test'
@@ -193,5 +199,74 @@ describe('quarterHourDays', () => {
     const midnight = Date.UTC(2026, 10, 2, 18, 15)
     expect(dayOf(midnight - 1)).toBe('2026-11-02')
     expect(dayOf(midnight)).toBe('2026-11-03')
+  })
+})
+
+describe('cozy grouping', () => {
+  const BOB = '@bob:acme-sa.kodera.test'
+  const utcDay = (ts: number) => new Date(ts).toISOString().slice(0, 10)
+  /** Which messages continue the run above them, as the log would draw them. */
+  function compact(
+    messages: MessageView[],
+    roots: readonly string[] = [],
+    unreadFrom: string | null = null
+  ) {
+    const rows = timelineRows(messages, { dayOf: utcDay, unreadFrom, me: ME })
+    return rows.flatMap((row, index) =>
+      row.kind === 'message' &&
+      continuesRun(rows[index - 1], row.message, (id) => roots.includes(id))
+        ? [row.message.eventId]
+        : []
+    )
+  }
+
+  it('folds the same author’s messages within five minutes into one run', () => {
+    expect(
+      compact([
+        message('$a', '2026-11-04T08:00:00Z'),
+        message('$b', '2026-11-04T08:04:59Z'),
+        message('$c', '2026-11-04T08:09:59Z'),
+        message('$d', '2026-11-04T08:15:00Z'),
+      ])
+    ).toEqual(['$b', '$c'])
+    expect(RUN_GAP_MS).toBe(300_000)
+  })
+
+  it('starts a new run for another author, a day, « Nouveaux messages », a reply or a root', () => {
+    expect(
+      compact(
+        [
+          message('$a', '2026-11-04T08:00:00Z'),
+          message('$b', '2026-11-04T08:01:00Z', { sender: BOB }),
+          message('$c', '2026-11-04T08:02:00Z', { sender: BOB, replyTo: '$a' }),
+          message('$d', '2026-11-04T08:03:00Z', { sender: BOB }),
+          message('$e', '2026-11-04T08:03:30Z', { sender: BOB }),
+        ],
+        ['$e']
+      )
+    ).toEqual(['$d'])
+    expect(
+      compact([message('$a', '2026-11-04T23:59:00Z'), message('$b', '2026-11-05T00:01:00Z')])
+    ).toEqual([])
+    expect(
+      compact(
+        [
+          message('$a', '2026-11-04T08:00:00Z', { sender: ME }),
+          message('$b', '2026-11-04T08:01:00Z'),
+        ],
+        [],
+        '$b'
+      )
+    ).toEqual([])
+  })
+
+  it('never folds a deleted message, nor one stamped before the one above it', () => {
+    expect(
+      compact([
+        message('$a', '2026-11-04T08:00:00Z', { redacted: true }),
+        message('$b', '2026-11-04T08:01:00Z'),
+        message('$c', '2026-11-04T08:00:30Z'),
+      ])
+    ).toEqual([])
   })
 })

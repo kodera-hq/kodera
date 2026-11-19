@@ -13,10 +13,23 @@ export interface DirectSummary {
   /** Their names as the room knows them, else their ids, joined. */
   name: string
   unread: number
+  /** A one-to-one conversation's other person's avatar, an `mxc://` address. */
+  avatarMxc?: string
 }
 
 /** At most this many other people in a group conversation started here. */
 export const MAX_DIRECT_PEOPLE = 8
+
+/**
+ * A Matrix room id: the classic `!opaque:server` form, or the room version 12 form, where the id is
+ * the hash of the create event and carries no server name (`!opaque`, MSC4291).
+ */
+const ROOM_ID = /^![^\s:]+(?::\S+)?$/u
+
+/** Whether `value` reads as a Matrix room id, of either form. */
+export function isMatrixRoomId(value: unknown): value is string {
+  return typeof value === 'string' && value.length <= 255 && ROOM_ID.test(value)
+}
 
 /** The `m.direct` map, checked: user ids that are ids, room ids that are room ids. */
 export function directMap(content: unknown): Map<string, string[]> {
@@ -24,9 +37,7 @@ export function directMap(content: unknown): Map<string, string[]> {
   if (content === null || typeof content !== 'object' || Array.isArray(content)) return map
   for (const [userId, rooms] of Object.entries(content as Record<string, unknown>)) {
     if (!isMatrixUserId(userId) || !Array.isArray(rooms)) continue
-    const roomIds = rooms.filter(
-      (room): room is string => typeof room === 'string' && /^![^\s:]+:\S+$/u.test(room)
-    )
+    const roomIds = rooms.filter(isMatrixRoomId)
     if (roomIds.length > 0) map.set(userId, [...new Set(roomIds)])
   }
   return map

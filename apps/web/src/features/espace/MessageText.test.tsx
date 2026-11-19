@@ -1,7 +1,8 @@
 import { render, screen, waitFor } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import userEvent from '@testing-library/user-event'
+import { describe, expect, it, vi } from 'vitest'
 import '../../i18n'
-import { MessageText, linkSegments } from './MessageText'
+import { MessageText, linkSegments, mentionSegments, permalinkUser } from './MessageText'
 
 describe('the web addresses in a message', () => {
   it('are cut out of the text in order, nothing lost or added', () => {
@@ -121,5 +122,70 @@ describe("Kodera's own emoji in a message", () => {
     const strong = container.querySelector('strong')!
     expect(strong.textContent).toContain('bravo')
     expect(strong.querySelector('[data-kodera-emoji="kodera_spark"]')).not.toBeNull()
+  })
+})
+
+const MIGUEL = { userId: '@miguel:kodera.test', name: 'Miguel Victoria' }
+const MIG = { userId: '@mig:kodera.test', name: 'Miguel' }
+
+describe('the mentions in a message', () => {
+  it('cut out multi-word names, the longest first, full ids and the whole room, nothing lost', () => {
+    const text = 'Salut @Miguel Victoria et @Miguel, @salon: voir @ana:kodera.test. mail@x.fr'
+    const segments = mentionSegments(text, [MIG, MIGUEL])
+    expect(segments).toEqual([
+      { text: 'Salut ' },
+      { text: '@Miguel Victoria', userId: MIGUEL.userId },
+      { text: ' et ' },
+      { text: '@Miguel', userId: MIG.userId },
+      { text: ', ' },
+      { text: '@salon', room: true },
+      { text: ': voir ' },
+      { text: '@ana:kodera.test', userId: '@ana:kodera.test' },
+      { text: '. mail@x.fr' },
+    ])
+    expect(segments.map((segment) => segment.text).join('')).toBe(text)
+  })
+
+  it('leave an unknown name, a partial name and an address alone', () => {
+    expect(mentionSegments('@Inconnu et @Migueline', [MIG])).toEqual([
+      { text: '@Inconnu et @Migueline' },
+    ])
+  })
+
+  it('read a member from a matrix.to permalink, and nothing else', () => {
+    expect(permalinkUser('https://matrix.to/#/@miguel:kodera.test')).toBe('@miguel:kodera.test')
+    expect(permalinkUser('https://matrix.to/#/%40miguel%3Akodera.test')).toBe('@miguel:kodera.test')
+    expect(permalinkUser('https://matrix.to/#/!room:kodera.test')).toBeNull()
+    expect(permalinkUser('https://evil.test/#/@miguel:kodera.test')).toBeNull()
+  })
+
+  it('draws members as pills that open their profile, and the room as a plain pill', async () => {
+    const user = userEvent.setup()
+    const open = vi.fn()
+    render(
+      <p>
+        <MessageText
+          body="@Miguel Victoria regarde, @salon aussi"
+          members={[MIGUEL]}
+          onMentionClick={open}
+        />
+      </p>
+    )
+    const pill = screen.getByRole('button', { name: '@Miguel Victoria' })
+    await user.click(pill)
+    expect(open).toHaveBeenCalledWith(MIGUEL.userId, pill)
+    expect(screen.queryByRole('button', { name: '@salon' })).toBeNull()
+    expect(screen.getByText('@salon')).toHaveAttribute('data-mention', 'room')
+  })
+
+  it('draws a pill as highlighted text when nothing opens a profile', () => {
+    render(
+      <p>
+        <MessageText body="Voir https://matrix.to/#/@miguel:kodera.test" members={[MIGUEL]} />
+      </p>
+    )
+    expect(screen.queryByRole('button')).toBeNull()
+    expect(screen.queryByRole('link')).toBeNull()
+    expect(screen.getByText('@Miguel Victoria')).toHaveAttribute('data-mention', MIGUEL.userId)
   })
 })

@@ -1812,6 +1812,8 @@ Source: `src/features/espace/EspaceLiveView.tsx`, the call dock and the audio ro
 | `console.workspace.composer.label-mention-list` | Membres à mentionner |
 | `console.workspace.composer.label-message` | Message dans #{channel} |
 | `console.workspace.composer.placeholder-message` | Écrire dans #{channel} |
+| `console.workspace.composer.label-direct` | Message à {name} |
+| `console.workspace.composer.placeholder-direct` | Écrire à {name} |
 | `console.workspace.composer.action-save` | Enregistrer |
 | `console.workspace.composer.action-send` | Envoyer |
 | `console.workspace.composer.action-mention` | Mentionner |
@@ -1819,6 +1821,67 @@ Source: `src/features/espace/EspaceLiveView.tsx`, the call dock and the audio ro
 | `console.workspace.composer.label-emoji-palette` | Émojis |
 | `console.workspace.composer.action-insert-emoji` | Insérer {emoji} |
 | `console.workspace.composer.label-emoji-list` | Émojis correspondants |
+| `console.workspace.composer.format-bold` | Gras |
+| `console.workspace.composer.format-italic` | Italique |
+| `console.workspace.composer.format-strike` | Barré |
+| `console.workspace.composer.format-code` | Code en ligne |
+| `console.workspace.composer.format-code-block` | Bloc de code |
+| `console.workspace.composer.format-bullet` | Liste à puces |
+| `console.workspace.composer.format-quote` | Citation |
+| `console.workspace.composer.format-link` | Insérer un lien |
+| `console.workspace.composer.link-title` | Ajouter un lien |
+| `console.workspace.composer.link-text` | Texte affiché |
+| `console.workspace.composer.link-url` | Adresse |
+| `console.workspace.composer.link-insert` | Insérer le lien |
+| `console.workspace.composer.link-invalid` | Saisissez une adresse web commençant par https:// ou http://. |
+| `console.workspace.composer.action-attach` | Joindre des fichiers |
+| `console.workspace.composer.action-command` | Commandes |
+| `console.workspace.composer.upload-failed` | Échec de l’envoi |
+| `console.workspace.composer.upload-retry` | Réessayer l’envoi de {name} |
+| `console.workspace.composer.upload-remove` | Retirer {name} |
+| `console.workspace.passport.dm-label` | Message à {name} |
+| `console.workspace.passport.dm-placeholder` | Écrire à {name} |
+| `console.workspace.passport.dm-send` | Envoyer à {name} |
+| `console.workspace.passport.dm-sent` | Message envoyé en conversation privée. |
+| `console.workspace.passport.dm-error` | Le message n’a pas pu être envoyé. Réessayez. |
+| `console.workspace.passport.onboarding-title` | Votre passeport Kodera |
+| `console.workspace.passport.onboarding-description` | Choisissez comment les autres membres vous reconnaissent : votre nom, votre photo et quelques mots. |
+| `console.workspace.passport.field-name` | Nom affiché |
+| `console.workspace.passport.error-name` | Saisissez le nom sous lequel les autres membres vous verront. |
+| `console.workspace.passport.field-avatar` | Photo de profil |
+| `console.workspace.passport.avatar-drop` | Déposez une image PNG, JPEG ou WebP, ou choisissez-en une |
+| `console.workspace.passport.error-avatar` | Cette image ne peut pas servir de photo. Choisissez un PNG, JPEG ou WebP de moins de 2 Mo. |
+| `console.workspace.passport.field-accent` | Couleur de bannière |
+| `console.workspace.passport.accent-option` | Couleur {number} |
+| `console.workspace.passport.field-bio` | Statut ou courte bio |
+| `console.workspace.passport.field-tags` | Étiquettes, séparées par des virgules |
+| `console.workspace.passport.error-save` | Le passeport n’a pas pu être enregistré. Réessayez. |
+| `console.workspace.passport.action-later` | Plus tard |
+| `console.workspace.passport.action-save` | Enregistrer mon passeport |
+| `console.workspace.passport.preview-label` | Aperçu de votre passeport |
+| `console.workspace.passport.preview-name` | Votre nom |
+| `console.workspace.channel-menu.label` | Actions pour #{channel} |
+| `console.workspace.channel-menu.action-settings` | Paramètres du salon |
+| `console.workspace.channel-menu.action-mute` | Mettre en sourdine |
+| `console.workspace.channel-menu.action-unmute` | Réactiver les notifications |
+| `console.workspace.channel-menu.action-invite` | Inviter |
+| `console.workspace.channel-menu.action-copy-link` | Copier le lien |
+| `console.workspace.channel-menu.action-permissions` | Permissions |
+| `console.workspace.channel-menu.announce-copied` | Lien de #{channel} copié |
+| `console.workspace.channel-menu.announce-copy-failed` | Le lien n’a pas pu être copié. |
+| `console.workspace.channel-invite.advanced` | Liens Matrix avancés |
+| `console.workspace.channel-invite.qr-alt` | Code QR du lien vers #{channel} |
+| `console.workspace.channel-invite.qr-unavailable` | Le code QR n’a pas pu être généré. Copiez le lien. |
+| `console.workspace.arrivals.label` | Arrivée de {name} |
+| `console.workspace.arrivals.title` | {name} vient d’arriver |
+| `console.workspace.arrivals.body` | Souhaitez-lui la bienvenue ! |
+| `console.workspace.arrivals.action-wave` | Saluer {name} |
+| `console.workspace.arrivals.action-waved` | Vous avez salué {name} |
+| `console.workspace.directs.rail-title` | Messages privés |
+| `console.workspace.directs.header-offline` | Hors ligne |
+| `console.workspace.notifications.label-mentioned-rooms` | Salons où vous êtes mentionné |
+| `console.workspace.notifications.mention-room` | {channel} — mentions : {count} |
+| `console.workspace.directs.rail-unread` | {count, plural, one {{count} message non lu} many {{count} messages non lus} other {{count} messages non lus}} |
 | `console.workspace.shortcuts.announce-channel` | Salon #{channel} |
 | `console.workspace.shortcuts.announce-no-unread` | Aucun autre salon non lu |
 | `console.workspace.shortcuts.announce-marked-read` | #{channel} marqué comme lu |

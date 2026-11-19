@@ -5,9 +5,11 @@ import { lazy, Suspense, useCallback, useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '../../ui/Button/Button'
 import { cx } from '../../ui/cx'
+import { ActionIcon } from '../../ui/icons/ActionIcons'
 import type { ChannelSearchEntry } from '../workspace/ChannelSearch'
 import type { EspaceStoreLike } from './liveViewModel'
 import type { DirectSummary } from './matrix/directs'
+import { MemberAvatar } from './MemberAvatar'
 import { PendingInvitations } from './PendingInvitations'
 import { useStoreSlice } from './useStoreSlice'
 
@@ -41,17 +43,23 @@ export function DirectMessages({
 
   return (
     <section
+      data-directs-section=""
       aria-labelledby={headingId}
       className="flex flex-col gap-1 border-t border-c-border-soft pt-2"
     >
       <div className="flex items-center justify-between gap-2 px-2">
-        <h3 id={headingId} className="text-xs font-semibold text-c-ink-3">
+        <h3 id={headingId} tabIndex={-1} className="text-xs font-semibold text-c-ink-3 outline-hidden">
           {t('console.workspace.directs.title')}
         </h3>
         {store.openDirect === undefined ? null : (
-          <Button variant="secondary" size="sm" onClick={() => setComposing(true)}>
-            {t('console.workspace.directs.action-new')}
-          </Button>
+          <Button
+            variant="tertiary"
+            size="sm"
+            icon={<ActionIcon name="plus" />}
+            iconOnly
+            aria-label={t('console.workspace.directs.action-new')}
+            onClick={() => setComposing(true)}
+          />
         )}
       </div>
       {composing ? (
@@ -84,6 +92,14 @@ export function DirectMessages({
                     : 'text-c-ink-2'
                 )}
               >
+                <span aria-hidden="true" className="inline-flex shrink-0">
+                  <MemberAvatar
+                    name={direct.name}
+                    identity={direct.userIds[0] ?? direct.roomId}
+                    mxc={direct.avatarMxc}
+                    size="xs"
+                  />
+                </span>
                 <span className="min-w-0 flex-1 truncate">{direct.name}</span>
                 {direct.unread > 0 ? (
                   <span className="min-w-5 shrink-0 rounded-full bg-c-action px-1 text-center text-xs font-bold text-c-on-inverse tabular-nums">

@@ -35,7 +35,7 @@ import {
 import type { History } from './matrix/store'
 import type { MessageView } from './matrix/timeline'
 import { MessageRow, type MessageRowActions } from './MessageRow'
-import { quarterHourDays, timelineRows, type TimelineRow } from './timelineRows'
+import { continuesRun, quarterHourDays, timelineRows, type TimelineRow } from './timelineRows'
 import { ROW_KEY_ATTRIBUTE, useTimelineVirtualizer } from './timelineVirtualizer'
 import { useCalendarToday } from './useCalendarToday'
 
@@ -295,65 +295,74 @@ function MessageTimelineView({
       ) : null}
       <div ref={listRef} className="flex flex-col">
         <div ref={beforeRef} aria-hidden="true" data-timeline-spacer="before" />
-        {rows.slice(window.start, window.end).map((row, offset) => (
-          <div
-            key={row.key}
-            {...{ [ROW_KEY_ATTRIBUTE]: row.key }}
-            {...(row.kind === 'insert' ? { 'data-testid': 'espace-timeline-insert' } : {})}
-            // The log's 8 px gap, carried by the row so its measured height is the room it takes.
-            className={`rounded-md transition-colors data-[shown=true]:bg-c-muted ${
-              window.start + offset === 0 ? '' : 'pt-2'
-            }`}
-          >
-            {row.kind === 'insert' ? (
-              row.node
-            ) : row.kind === 'day' ? (
-              <TimelineDivider>{dayLabel(row.day, row.ts)}</TimelineDivider>
-            ) : row.kind === 'new' ? (
-              <TimelineDivider tone="new">
-                {t('console.workspace.channel.label-new-messages')}
-              </TimelineDivider>
-            ) : (
-              <MessageRow
-                profileRole={profileRoleIn(store, roomId, row.message.sender)}
-                onMention={onMention}
-                onlineLabel={
-                  store.isOnline?.(row.message.sender)
-                    ? simulation
-                      ? demoCopy.presence
-                      : t('console.workspace.presence.online')
-                    : undefined
-                }
-                document={documents.find(
-                  (doc) => doc.id === row.message.document?.id && doc.channelId === channelId
-                )}
-                onOpenDocument={onOpenDocument}
-                message={row.message}
-                placement="timeline"
-                viewerId={viewerId}
-                archived={archived}
-                canWrite={canWrite}
-                canReact={canReact}
-                expanded={expandedEventId === row.message.eventId}
-                repliedMessage={
-                  row.message.replyTo === null ? undefined : byEventId.get(row.message.replyTo)
-                }
-                threadReplies={
-                  roomId === null ? NO_MESSAGES : store.getThread(roomId, row.message.eventId)
-                }
-                menuContextKey={`${menuContext}:${row.message.key}`}
-                pinned={pins.has(row.message.eventId)}
-                onPin={canPin ? pin : undefined}
-                onRetry={actions.onRetry}
-                onReaction={actions.onReaction}
-                onReply={actions.onReply}
-                onEdit={actions.onEdit}
-                onRemove={actions.onRemove}
-                onOpenThread={actions.onOpenThread}
-              />
-            )}
-          </div>
-        ))}
+        {rows.slice(window.start, window.end).map((row, offset) => {
+          const previous = rows[window.start + offset - 1]
+          return (
+            <div
+              key={row.key}
+              {...{ [ROW_KEY_ATTRIBUTE]: row.key }}
+              {...(row.kind === 'insert' ? { 'data-testid': 'espace-timeline-insert' } : {})}
+              // The log's 8 px gap, carried by the row so its measured height is the room it takes.
+              className={`rounded-md transition-colors data-[shown=true]:bg-c-muted ${
+                window.start + offset === 0 ? '' : 'pt-2'
+              }`}
+            >
+              {row.kind === 'insert' ? (
+                row.node
+              ) : row.kind === 'day' ? (
+                <TimelineDivider>{dayLabel(row.day, row.ts)}</TimelineDivider>
+              ) : row.kind === 'new' ? (
+                <TimelineDivider tone="new">
+                  {t('console.workspace.channel.label-new-messages')}
+                </TimelineDivider>
+              ) : (
+                <MessageRow
+                  profileRole={profileRoleIn(store, roomId, row.message.sender)}
+                  onMention={onMention}
+                  onlineLabel={
+                    store.isOnline?.(row.message.sender)
+                      ? simulation
+                        ? demoCopy.presence
+                        : t('console.workspace.presence.online')
+                      : undefined
+                  }
+                  document={documents.find(
+                    (doc) => doc.id === row.message.document?.id && doc.channelId === channelId
+                  )}
+                  onOpenDocument={onOpenDocument}
+                  message={row.message}
+                  compact={
+                    previous?.kind === 'message' &&
+                    continuesRun(previous, row.message, (eventId) =>
+                      roomId === null ? false : store.getThread(roomId, eventId).length > 0
+                    )
+                  }
+                  placement="timeline"
+                  viewerId={viewerId}
+                  archived={archived}
+                  canWrite={canWrite}
+                  canReact={canReact}
+                  expanded={expandedEventId === row.message.eventId}
+                  repliedMessage={
+                    row.message.replyTo === null ? undefined : byEventId.get(row.message.replyTo)
+                  }
+                  threadReplies={
+                    roomId === null ? NO_MESSAGES : store.getThread(roomId, row.message.eventId)
+                  }
+                  menuContextKey={`${menuContext}:${row.message.key}`}
+                  pinned={pins.has(row.message.eventId)}
+                  onPin={canPin ? pin : undefined}
+                  onRetry={actions.onRetry}
+                  onReaction={actions.onReaction}
+                  onReply={actions.onReply}
+                  onEdit={actions.onEdit}
+                  onRemove={actions.onRemove}
+                  onOpenThread={actions.onOpenThread}
+                />
+              )}
+            </div>
+          )
+        })}
         <div ref={afterRef} aria-hidden="true" data-timeline-spacer="after" />
       </div>
     </div>

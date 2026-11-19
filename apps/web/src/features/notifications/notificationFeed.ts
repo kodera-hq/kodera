@@ -76,15 +76,28 @@ export class NotificationFeed {
 
   /** Marks every unread one read: at once on screen, then in Core; a refusal shows them again. */
   async markAllRead(now = new Date()): Promise<void> {
-    const ids = this.#snapshot.items.filter((item) => item.readAt === null).map((item) => item.id)
+    await this.markRead(
+      this.#snapshot.items.filter((item) => item.readAt === null).map((item) => item.id),
+      now
+    )
+  }
+
+  /** Marks the given unread ones read, as `markAllRead` does: the one a member opened, say. */
+  async markRead(wanted: readonly string[], now = new Date()): Promise<void> {
+    const asked = new Set(wanted)
+    const ids = this.#snapshot.items
+      .filter((item) => item.readAt === null && asked.has(item.id))
+      .map((item) => item.id)
     if (ids.length === 0) return
+    const marked = new Set(ids)
     const before = this.#snapshot
+    const items = before.items.map((item) =>
+      marked.has(item.id) ? { ...item, readAt: now.toISOString() } : item
+    )
     this.#publish({
       status: before.status,
-      items: before.items.map((item) =>
-        item.readAt === null ? { ...item, readAt: now.toISOString() } : item
-      ),
-      unread: 0,
+      items,
+      unread: items.filter((item) => item.readAt === null).length,
     })
     try {
       await this.#markRead(ids.slice(0, 200))

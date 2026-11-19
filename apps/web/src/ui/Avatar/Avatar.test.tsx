@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { Avatar } from './Avatar'
 
@@ -52,6 +52,16 @@ describe('Avatar', () => {
     const image = screen.getByRole('img', { name: 'Henri Duflot' })
     expect(image.tagName).toBe('IMG')
     expect(image).toHaveAttribute('src', '/avatars/henri.jpg')
+  })
+
+  it('falls back to its initials, never a clipped alt text, when the photo fails to load', () => {
+    const { rerender } = render(<Avatar name="Henri Duflot" src="blob:broken" />)
+    fireEvent.error(screen.getByRole('img', { name: 'Henri Duflot' }))
+    const fallback = screen.getByRole('img', { name: 'Henri Duflot' })
+    expect(fallback.tagName).toBe('SPAN')
+    expect(fallback).toHaveTextContent('HD')
+    rerender(<Avatar name="Henri Duflot" src="blob:fresh" />)
+    expect(screen.getByRole('img', { name: 'Henri Duflot' }).tagName).toBe('IMG')
   })
 
   it('styles the admin variant with the dark ground', () => {

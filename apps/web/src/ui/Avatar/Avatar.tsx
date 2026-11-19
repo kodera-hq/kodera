@@ -1,4 +1,4 @@
-import { forwardRef } from 'react'
+import { forwardRef, useState } from 'react'
 import type { HTMLAttributes, Ref } from 'react'
 import { cx } from '../cx'
 import { PersonIcon } from '../icons/Person'
@@ -12,12 +12,14 @@ export type AvatarVariant = 'admin' | 'member' | 'pending'
  * (`TimelineMessage`), and the faces beside a channel's member count in its
  * header, which sit on that line of text. It is not a size to pick for
  * anything else. */
-export type AvatarSize = 'md' | 'xs' | 'lg'
+export type AvatarSize = 'md' | 'xs' | 'lg' | 'xl'
 
 const SIZE: Record<AvatarSize, string> = {
   md: 'h-8 w-8',
   lg: 'h-10 w-10',
   xs: 'h-5 w-5',
+  /** The Kodera Passport card's portrait (`features/profile/PassportCard.tsx`), and nothing else. */
+  xl: 'h-[64px] w-[64px] text-xl',
 }
 
 /**
@@ -97,6 +99,10 @@ export const Avatar = forwardRef<HTMLImageElement | HTMLSpanElement, AvatarProps
   },
   ref
 ) {
+  // A photo that fails to load (revoked, refused, not an image) gives way to the initials: the
+  // browser would otherwise draw its broken-image box and the `alt` text clipped in the circle.
+  const [broken, setBroken] = useState<string | null>(null)
+  const photo = src !== undefined && src !== broken ? src : undefined
   const accessibleName = onlineLabel === undefined ? name : `${name}, ${onlineLabel}`
   const dot =
     onlineLabel === undefined ? null : (
@@ -109,7 +115,7 @@ export const Avatar = forwardRef<HTMLImageElement | HTMLSpanElement, AvatarProps
         )}
       />
     )
-  if (src !== undefined) {
+  if (photo !== undefined) {
     return (
       <span className={cx('relative inline-flex shrink-0', SIZE[size])}>
         <img
@@ -118,8 +124,12 @@ export const Avatar = forwardRef<HTMLImageElement | HTMLSpanElement, AvatarProps
           // same ordering `Button` uses for its state-critical attributes.
           {...rest}
           ref={ref as Ref<HTMLImageElement>}
-          src={src}
+          src={photo}
           alt={accessibleName}
+          onError={(event) => {
+            setBroken(photo)
+            rest.onError?.(event)
+          }}
           className={cx(SIZE[size], 'shrink-0 rounded-full object-cover', className)}
         />
         {dot}

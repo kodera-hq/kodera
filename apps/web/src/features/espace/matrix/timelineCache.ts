@@ -84,6 +84,13 @@ export function isCachedMessage(value: unknown): value is MessageView {
     m.reactions.every(isReaction) &&
     optional(m.senderName, 'string') &&
     (m.mentionsMe === undefined || m.mentionsMe === true) &&
+    (m.mentionsRoom === undefined || m.mentionsRoom === true) &&
+    optional(m.avatarMxc, 'string') &&
+    (m.mentionPills === undefined ||
+      (Array.isArray(m.mentionPills) &&
+        m.mentionPills.every(
+          (pill) => isNamed(pill, ['userId', 'label']) && pill !== undefined
+        ))) &&
     isNamed(m.document, ['id', 'title']) &&
     isNamed(m.attachment, ['name'])
   )

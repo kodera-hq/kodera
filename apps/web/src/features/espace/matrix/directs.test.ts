@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { directMap, directPeople, directRooms, existingDirect, withDirect } from './directs'
+import {
+  directMap,
+  directPeople,
+  directRooms,
+  existingDirect,
+  isMatrixRoomId,
+  withDirect,
+} from './directs'
 
 const ME = '@me:kodera.test'
 const ALICE = '@alice:kodera.test'
@@ -56,5 +63,21 @@ describe('direct conversations', () => {
       [ALICE]: ['!a:kodera.test', '!g:kodera.test'],
       [BOB]: ['!g:kodera.test'],
     })
+  })
+
+  it('accepts room version 12 opaque room ids, which carry no server name', () => {
+    const V12 = '!31hneApxJ_1o-63DmFrpeqnkFfWppnzWso1JvH3ogLM'
+    expect(isMatrixRoomId(V12)).toBe(true)
+    expect(isMatrixRoomId('!a:kodera.test')).toBe(true)
+    expect(isMatrixRoomId('!')).toBe(false)
+    expect(isMatrixRoomId('!has space')).toBe(false)
+    expect(isMatrixRoomId('!a:')).toBe(false)
+    expect(isMatrixRoomId('#alias:kodera.test')).toBe(false)
+    expect(isMatrixRoomId(4)).toBe(false)
+    const map = directMap({ [ALICE]: [V12, '!a:kodera.test', V12], [BOB]: ['!bad id'] })
+    expect([...map]).toEqual([[ALICE, [V12, '!a:kodera.test']]])
+    const rooms = directRooms(map)
+    expect(existingDirect(rooms, [ALICE], (id) => id === V12)).toBe(V12)
+    expect(withDirect(map, V12, [BOB])[BOB]).toEqual([V12])
   })
 })

@@ -4,7 +4,7 @@
 // in the composer does not. Only the audio room the member is in follows the call, so who is
 // speaking draws that room's faces and nothing else of the column.
 
-import { memo, useCallback, useSyncExternalStore } from 'react'
+import { memo, useCallback, useState, useSyncExternalStore } from 'react'
 import type { MouseEvent, ReactNode, RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
 import { demoMessages } from '../../app/demoMessages'
@@ -21,6 +21,7 @@ import { StudioNavigation } from '../workspace/StudioNavigation'
 import { categoryLabel, channelLabel } from '../workspace/workspace'
 import type { Workspace, WorkspaceCategory, WorkspaceChannel } from '../workspace/workspace'
 import { AntennaIcon } from './AntennaIcon'
+import { ChannelContextMenu as ChannelMenu, type ChannelMenuTarget } from './ChannelContextMenu'
 import type { CallSnapshot } from './audio/call'
 import {
   isProximityChannel,
@@ -41,13 +42,24 @@ import { workspaceFilesOf } from './workspaceFiles'
 import { cssProperty } from '../../ui/cssom'
 
 /** What a right-click on a channel's row tells the view's owner. */
-export type ChannelContextMenu = (info: {
-  readonly channelId: string
-  readonly label: string
-  readonly kind: 'text' | 'audio'
-  readonly clientX: number
-  readonly clientY: number
-}) => void
+export type ChannelContextMenu = (info: ChannelMenuTarget) => void
+
+/** The row a `contextmenu` event (pointer, context-menu key or `Shift+F10`) was fired on. */
+function menuTargetOf(
+  event: MouseEvent<HTMLElement>,
+  channelId: string,
+  label: string,
+  kind: 'text' | 'audio'
+): ChannelMenuTarget {
+  return {
+    channelId,
+    label,
+    kind,
+    clientX: event.clientX,
+    clientY: event.clientY,
+    trigger: event.currentTarget,
+  }
+}
 
 interface AudioRoomProps {
   id: string
@@ -165,15 +177,9 @@ function AudioRoom({
       onContextMenu={
         onContextMenu === undefined
           ? undefined
-          : (e: MouseEvent) => {
+          : (e: MouseEvent<HTMLElement>) => {
               e.preventDefault()
-              onContextMenu({
-                channelId: channel.id,
-                label,
-                kind: 'audio',
-                clientX: e.clientX,
-                clientY: e.clientY,
-              })
+              onContextMenu(menuTargetOf(e, channel.id, label, 'audio'))
             }
       }
     />
@@ -225,6 +231,18 @@ export interface ChannelSidebarProps {
   onJoinAudioRoom: AudioRoomProps['onJoin']
   onCreateInCategory: ((category: WorkspaceCategory) => void) | undefined
   onChannelContextMenu: ChannelContextMenu | undefined
+  /**
+   * The channel menu's actions (right-click, context-menu key, `Shift+F10` on a row). The column
+   * draws the menu itself when any is given; each absent one is left out of it.
+   */
+  onChannelSettings?: ((target: ChannelMenuTarget) => void) | undefined
+  onChannelToggleMute?: ((target: ChannelMenuTarget) => void) | undefined
+  isChannelMuted?: ((channelId: string) => boolean) | undefined
+  onChannelInvite?: ((target: ChannelMenuTarget) => void) | undefined
+  onChannelCopyLink?: ((target: ChannelMenuTarget) => void) | undefined
+  /** A channel's permissions, offered only where `canManageChannel` says the member may. */
+  onChannelPermissions?: ((target: ChannelMenuTarget) => void) | undefined
+  canManageChannel?: ((channelId: string) => boolean) | undefined
 }
 
 function ChannelSidebarView({
@@ -262,8 +280,40 @@ function ChannelSidebarView({
   onJoinAudioRoom,
   onCreateInCategory,
   onChannelContextMenu,
+  onChannelSettings,
+  onChannelToggleMute,
+  isChannelMuted,
+  onChannelInvite,
+  onChannelCopyLink,
+  onChannelPermissions,
+  canManageChannel,
 }: ChannelSidebarProps) {
+  /** An inbox entry pressed: its channel opens, or its direct conversation when it is one. */
+  function openMentionedRoom(roomId: string) {
+    for (const [channelId, room] of store.getSnapshot().channels) {
+      if (room.state === 'resolved' && room.roomId === roomId) {
+        onSelectTextChannel(channelId)
+        return
+      }
+    }
+    onSelectDirect?.(roomId)
+  }
   const { t } = useTranslation()
+  const [menuTarget, setMenuTarget] = useState<ChannelMenuTarget | null>(null)
+  const ownsMenu =
+    onChannelSettings !== undefined ||
+    onChannelToggleMute !== undefined ||
+    onChannelInvite !== undefined ||
+    onChannelCopyLink !== undefined ||
+    onChannelPermissions !== undefined
+  // The row's right-click: the column's own menu, when it has actions, and the owner told.
+  const channelContextMenu: ChannelContextMenu | undefined =
+    !ownsMenu && onChannelContextMenu === undefined
+      ? undefined
+      : (target) => {
+          if (ownsMenu) setMenuTarget(target)
+          onChannelContextMenu?.(target)
+        }
   // Unread marks, mentions, occupants and every room's latest message come from the store.
   const snapshot = useSyncExternalStore(store.subscribe, store.getSnapshot)
 
@@ -293,7 +343,7 @@ function ChannelSidebarView({
           simulation={simulation}
           speakingRef={speakingRef}
           onJoin={onJoinAudioRoom}
-          onContextMenu={onChannelContextMenu}
+          onContextMenu={channelContextMenu}
         />
       )
     }
@@ -331,17 +381,11 @@ function ChannelSidebarView({
           onSelectTextChannel(channel.id)
         }}
         onContextMenu={
-          onChannelContextMenu === undefined
+          channelContextMenu === undefined
             ? undefined
             : (e) => {
                 e.preventDefault()
-                onChannelContextMenu({
-                  channelId: channel.id,
-                  label,
-                  kind: 'text',
-                  clientX: e.clientX,
-                  clientY: e.clientY,
-                })
+                channelContextMenu(menuTargetOf(e, channel.id, label, 'text'))
               }
         }
       />
@@ -430,7 +474,11 @@ function ChannelSidebarView({
               </div>
             )}
             {simulation ? null : (
-              <NotificationCenter store={store} onSelectInvite={onSelectDirect} />
+              <NotificationCenter
+                store={store}
+                onSelectInvite={onSelectDirect}
+                onOpenRoom={openMentionedRoom}
+              />
             )}
           </div>
         )}
@@ -533,6 +581,17 @@ function ChannelSidebarView({
         />
       </div>
       {sidebarFooterSlot ?? null}
+      <ChannelMenu
+        target={menuTarget}
+        onClose={() => setMenuTarget(null)}
+        onSettings={onChannelSettings}
+        onToggleMute={onChannelToggleMute}
+        isMuted={isChannelMuted}
+        onInvite={onChannelInvite}
+        onCopyLink={onChannelCopyLink}
+        onPermissions={onChannelPermissions}
+        canManage={canManageChannel}
+      />
     </nav>
   )
 }

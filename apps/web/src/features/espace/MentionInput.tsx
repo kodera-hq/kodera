@@ -14,7 +14,8 @@ import type { InputHTMLAttributes, KeyboardEvent, Ref } from 'react'
 import { cx } from '../../ui/cx'
 import { TOUCH_TARGET_HEIGHT } from '../../ui/touchTarget'
 import { closeShortcode, insertAtCaret, insertEmoji, matchingEmoji, shortcodeAt } from './emoji'
-import { insertMention, matchingMembers, mentionAt } from './mentions'
+import { useTranslation } from 'react-i18next'
+import { insertMention, matchesRoomMention, matchingMembers, mentionAtWith } from './mentions'
 import type { MentionCandidate } from './mentions'
 
 export interface MentionInputProps extends Omit<
@@ -47,6 +48,8 @@ export interface MentionInputProps extends Omit<
 /** One option of whichever list is open. */
 type Option =
   | { kind: 'member'; key: string; member: MentionCandidate }
+  /** « @salon » (« @room » in English): the whole room, `m.mentions.room`. */
+  | { kind: 'room'; key: string; word: string }
   | { kind: 'emoji'; key: string; emoji: string; name: string }
 
 export function MentionInput({
@@ -65,6 +68,8 @@ export function MentionInput({
   ...rest
 }: MentionInputProps) {
   const listId = useId()
+  const { i18n } = useTranslation()
+  const roomWord = i18n.resolvedLanguage === 'en' ? 'room' : 'salon'
   const input = useRef<HTMLInputElement | HTMLTextAreaElement>(null)
   const [caret, setCaret] = useState<number | null>(null)
   const [active, setActive] = useState(0)
@@ -75,16 +80,21 @@ export function MentionInput({
   const [dismissed, setDismissed] = useState<string | null>(null)
   const placeCaret = useRef<number | null>(null)
 
-  const mention = caret === null ? null : mentionAt(value, caret)
+  const mention = caret === null ? null : mentionAtWith(value, caret, members)
   const shortcode = caret === null || mention !== null ? null : shortcodeAt(value, caret)
   const trigger = mention ?? shortcode
   const options: Option[] =
     mention !== null
-      ? matchingMembers(members, mention.query).map((member) => ({
-          kind: 'member',
-          key: member.userId,
-          member,
-        }))
+      ? [
+          ...matchingMembers(members, mention.query).map((member): Option => ({
+            kind: 'member',
+            key: member.userId,
+            member,
+          })),
+          ...(matchesRoomMention(mention.query)
+            ? [{ kind: 'room', key: `room:${roomWord}`, word: roomWord } satisfies Option]
+            : []),
+        ]
       : shortcode !== null
         ? matchingEmoji(shortcode.query).map(({ emoji, name }) => ({
             kind: 'emoji',
@@ -148,8 +158,12 @@ export function MentionInput({
     const next =
       option.kind === 'member'
         ? insertMention(value, trigger, caret, option.member.label)
-        : insertEmoji(value, trigger, caret, option.emoji)
+        : option.kind === 'room'
+          ? insertMention(value, trigger, caret, option.word)
+          : insertEmoji(value, trigger, caret, option.emoji)
     write(next.text, next.caret)
+    // A chosen « @Miguel » is done, even where a longer « @Miguel Victoria » would go on.
+    if (option.kind !== 'emoji') setDismissed(`${trigger.start}${value[trigger.start]}`)
   }
 
   function keyDown(event: KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) {
@@ -200,7 +214,8 @@ export function MentionInput({
           const at = event.target.selectionStart ?? text.length
           // A closed list stays closed while its « @ » or « : » is being typed; it reopens on
           // the next one.
-          if (mentionAt(text, at) === null && shortcodeAt(text, at) === null) setDismissed(null)
+          if (mentionAtWith(text, at, members) === null && shortcodeAt(text, at) === null)
+            setDismissed(null)
           // Mid-composition, the input method owns the text: writing it now would double it.
           const composing = (event.nativeEvent as InputEvent).isComposing === true
           const closed =
@@ -247,6 +262,8 @@ export function MentionInput({
             >
               {option.kind === 'member' ? (
                 option.member.label
+              ) : option.kind === 'room' ? (
+                <span className="font-semibold">@{option.word}</span>
               ) : (
                 <>
                   <span className="text-lg">{option.emoji}</span>

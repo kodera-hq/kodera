@@ -56,6 +56,26 @@ describe('the files waiting in a composer', () => {
     expect(failing.files('room')[0]?.status).toBe('failed')
   })
 
+  it('retries a failed upload in place without asking for the file again', async () => {
+    const upload = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('network'))
+      .mockResolvedValueOnce({ id: crypto.randomUUID() } as never)
+    const queue = new AttachmentQueue('org', upload)
+    await queue.add('room', [png('report.png')])
+    const failed = queue.files('room')[0]
+    expect(failed?.status).toBe('failed')
+
+    await queue.retry('room', failed!.key)
+    expect(upload).toHaveBeenCalledTimes(2)
+    expect(queue.files('room')[0]).toMatchObject({
+      key: failed!.key,
+      status: 'ready',
+      filename: 'report.png',
+    })
+    expect(queue.readyRefs('room')).toHaveLength(1)
+  })
+
   it('refuses an eleventh file, and aborts a removed upload', async () => {
     const queue = new AttachmentQueue('org', storing())
     await queue.add(

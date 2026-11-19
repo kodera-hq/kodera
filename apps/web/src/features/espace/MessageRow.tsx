@@ -3,7 +3,7 @@
 // replies, whether its thread is open), changes. A keystroke in the composer, a sound level in a
 // call or a sidebar being resized draws no message again.
 
-import { memo, useRef } from 'react'
+import { memo, useRef, useState } from 'react'
 import type { MouseEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { formatTime } from '../../i18n/format'
@@ -13,6 +13,8 @@ import { TimelineMessage } from '../../ui/TimelineMessage/TimelineMessage'
 import type { ThreadParticipant } from '../../ui/TimelineMessage/TimelineMessage'
 import type { ChannelDoc } from '../docs/ChannelDocsEditor'
 import { useLocalProfile } from '../profile/localProfile'
+import { usePassportServices } from '../profile/passportContext'
+import { useAvatarSrc } from './useAvatarSrc'
 import { profileMessages } from '../profile/profileMessages'
 import {
   UserProfilePopover,
@@ -55,6 +57,8 @@ export interface MessageRowProps extends MessageRowActions {
   onMention: ((member: MemberProfile) => void) | undefined
   onlineLabel?: string | undefined
   message: MessageView
+  /** The message continues its author's run above it: no avatar, no header (`continuesRun`). */
+  compact?: boolean | undefined
   placement: 'timeline' | 'thread'
   viewerId: string
   archived: boolean
@@ -75,6 +79,7 @@ function MessageRowView({
   document,
   onOpenDocument,
   message: msg,
+  compact = false,
   profileRole,
   onMention,
   onlineLabel,
@@ -112,7 +117,17 @@ function MessageRowView({
     presence,
     role: profileRole,
     ...(msg.sender === viewerId ? { status: profile.status } : {}),
+    ...(msg.avatarMxc === undefined ? {} : { avatarMxc: msg.avatarMxc }),
   }
+  const avatarSrc = useAvatarSrc(usePassportServices()?.avatars, msg.avatarMxc)
+  // The members the message's HTML names with a pill: their « @Name » opens their passport.
+  const pillMembers =
+    msg.mentionPills === undefined || msg.mentionPills.length === 0
+      ? undefined
+      : msg.mentionPills.map((pill) => ({ userId: pill.userId, name: pill.label }))
+  const [pill, setPill] = useState<{ userId: string; name: string; anchor: HTMLElement } | null>(
+    null
+  )
   const isoTime = new Date(msg.ts).toISOString()
   const isOwn = msg.sender === viewerId
   const allowWrite = !isReadOnlyChannel && canWrite
@@ -132,6 +147,7 @@ function MessageRowView({
       }
       author={authorName}
       avatarIdentity={msg.sender}
+      {...(avatarSrc === undefined ? {} : { avatarSrc })}
       avatarOnlineLabel={presence === 'offline' ? undefined : copy[presence]}
       profileTrigger={(trigger) => (
         <UserProfilePopover
@@ -143,6 +159,7 @@ function MessageRowView({
       dateTime={isoTime}
       timeLabel={formatTime(isoTime, locale)}
       focused={!inThread && expanded}
+      compact={compact}
       {...(msg.mentionsMe === true
         ? { mention: t('console.workspace.message.label-mentions-you') }
         : {})}
@@ -288,7 +305,33 @@ function MessageRowView({
         )
       }
     >
-      {msg.body === '' ? null : <MessageText body={msg.body} />}
+      {msg.body === '' ? null : (
+        <MessageText
+          body={msg.body}
+          members={pillMembers}
+          onMentionClick={
+            pillMembers === undefined
+              ? undefined
+              : (userId, anchor) => {
+                  const named = pillMembers.find((candidate) => candidate.userId === userId)
+                  setPill({ userId, name: named?.name ?? userId, anchor })
+                }
+          }
+        />
+      )}
+      {pill === null ? null : (
+        <UserProfilePopover
+          member={{
+            userId: pill.userId,
+            name: pill.name,
+            presence: 'offline',
+            role: 'member',
+          }}
+          anchor={pill.anchor}
+          onAnchorClose={() => setPill(null)}
+          onMention={pill.userId === viewerId || !allowWrite ? undefined : onMention}
+        />
+      )}
       {msg.attachments === undefined ? null : <MessageAttachments refs={msg.attachments} />}
       {msg.redacted ? null : <UnfurlCard body={msg.body} />}
     </TimelineMessage>
