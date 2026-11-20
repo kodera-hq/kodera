@@ -1,5 +1,7 @@
 import { test, expect } from '@playwright/test'
 import AxeBuilder from '@axe-core/playwright'
+
+test.use({ reducedMotion: 'reduce' })
 for (const theme of ['light', 'dark', 'black']) {
   test(`${theme}: live workspace palette, formatting, slash drafts and attachment staging`, async ({
     page,
@@ -24,6 +26,9 @@ for (const theme of ['light', 'dark', 'black']) {
     ).toEqual([])
     await dialog.getByRole('combobox').fill('gnrl')
     await page.keyboard.press('ArrowDown')
+    await page.keyboard.press('Escape')
+    await expect(dialog.getByRole('combobox')).toHaveValue('')
+    await expect(dialog).toBeVisible()
     await page.keyboard.press('Escape')
     await expect(search).toBeFocused()
     const field = page.getByRole('textbox', { name: /Message/ }).first()

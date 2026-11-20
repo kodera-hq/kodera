@@ -205,7 +205,9 @@ export function Shell({
           <div
             className={
               narrow
-                ? `clear-of-bars flex min-w-0 flex-1 flex-col${workspace ? 'min-h-0' : ''}`
+                ? workspace
+                  ? 'clear-of-bars flex min-h-0 min-w-0 flex-1 flex-col'
+                  : 'clear-of-bars flex min-w-0 flex-1 flex-col'
                 : workspace
                   ? 'flex h-screen min-w-0 flex-1 flex-col'
                   : 'flex min-w-0 flex-1 flex-col'

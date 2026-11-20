@@ -152,7 +152,7 @@ export function UniversalSearch(props: PaletteSource) {
   return (
     <button
       type="button"
-      aria-label={t('console.workspace.search.action-open')}
+      aria-keyshortcuts={isMac() ? 'Meta+K' : 'Control+K'}
       onClick={() => window.dispatchEvent(new Event(OPEN_PALETTE))}
       className="tactile flex h-10 w-full items-center gap-2 rounded-sm bg-c-muted px-2 text-sm text-c-ink-3 focus-visible:ring focus-visible:outline-hidden"
     >

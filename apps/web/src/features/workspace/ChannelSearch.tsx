@@ -296,7 +296,7 @@ export function ChannelSearch({
                       : (found[index - 1]!.category ?? groupLabel))) ? (
                   <li
                     role="presentation"
-                    className="sticky top-0 z-10 bg-c-elevated px-2 py-2 text-xs font-semibold text-c-ink-3"
+                    className="sticky top-0 z-10 bg-c-elevated px-2 py-2 text-xs font-semibold text-c-ink-2"
                   >
                     {recent.includes(entry.id) && !query
                       ? recentLabel
@@ -338,7 +338,7 @@ export function ChannelSearch({
                     }
                   />
                   <span className="min-w-0 flex-1 truncate font-medium">{entry.label}</span>
-                  <span className="shrink-0 truncate text-xs text-c-ink-3">
+                  <span className="shrink-0 truncate text-xs text-c-ink-2">
                     {entry.kind === 'audio'
                       ? t('console.workspace.search.label-audio')
                       : (entry.category ?? '')}
@@ -348,12 +348,12 @@ export function ChannelSearch({
             ))}
           </ul>
           {legend ? (
-            <p className="border-t border-c-border-soft px-2 pt-3 text-xs text-c-ink-3">{legend}</p>
+            <p className="border-t border-c-border-soft px-2 pt-3 text-xs text-c-ink-2">{legend}</p>
           ) : null}
-          {footer ? <p className="px-2 text-xs text-c-ink-3">{footer}</p> : null}
+          {footer ? <p className="px-2 text-xs text-c-ink-2">{footer}</p> : null}
           {/* Mounted with the dialog and kept in the accessibility tree while empty (`sr-only`,
               not `hidden`), so a screen reader hears the words when they come. */}
-          <p role="status" className="px-2 text-sm text-c-ink-3 empty:sr-only">
+          <p role="status" className="px-2 text-sm text-c-ink-2 empty:sr-only">
             {found.length === 0 ? (emptyLabel ?? t('console.workspace.search.label-empty')) : null}
           </p>
         </div>

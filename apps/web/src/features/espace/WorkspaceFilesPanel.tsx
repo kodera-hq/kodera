@@ -65,6 +65,7 @@ export function WorkspaceFilesPanel({
 }: WorkspaceFilesPanelProps) {
   const { t, i18n } = useTranslation()
   const headingId = useId()
+  const searchInput = useRef<HTMLInputElement>(null)
   const [layout, setLayout] = useState<'grid' | 'list'>('grid')
   const [filter, setFilter] = useState<WorkspaceFileFilter>('all')
   const [term, setTerm] = useState('')
@@ -169,13 +170,24 @@ export function WorkspaceFilesPanel({
             <div className="flex min-w-0 flex-1 items-center gap-2 rounded-md bg-c-muted px-3 py-2 text-c-ink-3">
               <KoderaIcon name="search" />
               <input
-                type="search"
+                ref={searchInput}
+                type="text"
                 aria-label={t('console.workspace.files.field-search')}
                 placeholder={t('console.workspace.files.field-search')}
                 value={term}
                 onChange={(event) => setTerm(event.target.value)}
                 className="min-w-0 flex-1 bg-transparent text-sm text-c-ink outline-hidden placeholder:text-c-placeholder"
               />
+              {term !== '' ? (
+                <IconButton
+                  icon="close"
+                  label={t('console.people.list.action-clear-search')}
+                  onClick={() => {
+                    setTerm('')
+                    searchInput.current?.focus()
+                  }}
+                />
+              ) : null}
             </div>
             <div
               role="group"

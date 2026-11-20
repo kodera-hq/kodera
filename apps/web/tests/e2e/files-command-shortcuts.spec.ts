@@ -11,6 +11,9 @@ test('Files and Integrations stay in the canvas while global shortcuts own one a
   await page.goto('/community/workspace')
   await page.getByRole('button', { name: 'Fichiers', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Fichiers', exact: true })).toBeVisible()
+  await expect(
+    page.getByRole('textbox', { name: 'Rechercher un fichier', exact: true })
+  ).toBeVisible()
   await expect(page.getByRole('heading', { name: 'announcements', exact: true })).toBeHidden()
   await expect(
     page.getByRole('group', { name: 'Filtrer par type' }).getByRole('button')
@@ -41,6 +44,8 @@ test('Files and Integrations stay in the canvas while global shortcuts own one a
     .getByRole('button', { name: /— Connecter$/ })
     .first()
     .click()
+  await expect(page.getByRole('textbox', { name: /URL de destination du webhook/ })).toBeHidden()
+  await page.locator('summary').filter({ hasText: 'Détails techniques & sécurité' }).click()
   await expect(page.getByRole('textbox', { name: /URL de destination du webhook/ })).toBeVisible()
 })
 
