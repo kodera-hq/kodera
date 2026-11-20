@@ -181,7 +181,7 @@ export function WorkspaceFilesPanel({
               {term !== '' ? (
                 <IconButton
                   icon="close"
-                  label={t('console.people.list.action-clear-search')}
+                  label={t('console.workspace.files.action-clear-search')}
                   onClick={() => {
                     setTerm('')
                     searchInput.current?.focus()

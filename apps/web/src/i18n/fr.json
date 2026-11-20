@@ -1740,6 +1740,7 @@
   "console.workspace.directs.title-federated": "Personne d’un autre serveur",
   "console.workspace.directs.title-new": "Nouvelle conversation directe",
   "console.workspace.directs.welcome-title": "Conversation privée avec {{name}}",
+  "console.workspace.files.action-clear-search": "Effacer la recherche",
   "console.workspace.files.empty-body": "Les pièces jointes et les pages de vos salons apparaîtront ici.",
   "console.workspace.files.empty-search-body": "Aucun fichier ne correspond à cette recherche ni à ce filtre.",
   "console.workspace.files.empty-search-title": "Aucun résultat",

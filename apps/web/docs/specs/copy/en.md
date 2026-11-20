@@ -1918,6 +1918,7 @@ Source: `src/features/espace/EspaceLiveView.tsx`, the call dock and the audio ro
 | `console.workspace.files.title` | Workspace files |
 | `console.workspace.files.held` | {count, plural, one {{count} item · {size} shared} other {{count} items · {size} shared}} |
 | `console.workspace.files.field-search` | Search for a file |
+| `console.workspace.files.action-clear-search` | Clear the search |
 | `console.workspace.files.label-filter` | Filter by type |
 | `console.workspace.files.label-layout` | Layout |
 | `console.workspace.files.label-list` | Workspace files and documents |

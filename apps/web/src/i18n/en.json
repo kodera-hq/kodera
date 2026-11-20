@@ -1740,6 +1740,7 @@
   "console.workspace.directs.title-federated": "Someone on another server",
   "console.workspace.directs.title-new": "New direct conversation",
   "console.workspace.directs.welcome-title": "Direct conversation with {{name}}",
+  "console.workspace.files.action-clear-search": "Clear the search",
   "console.workspace.files.empty-body": "Attachments and pages from your channels appear here.",
   "console.workspace.files.empty-search-body": "No file matches this search or this filter.",
   "console.workspace.files.empty-search-title": "No results",

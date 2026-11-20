@@ -1932,6 +1932,7 @@ Source: `src/features/espace/EspaceLiveView.tsx`, the call dock and the audio ro
 | `console.workspace.files.title` | Fichiers de l’espace |
 | `console.workspace.files.held` | {count, plural, one {{count} élément · {size} partagé} other {{count} éléments · {size} partagés}} |
 | `console.workspace.files.field-search` | Rechercher un fichier |
+| `console.workspace.files.action-clear-search` | Effacer la recherche |
 | `console.workspace.files.label-filter` | Filtrer par type |
 | `console.workspace.files.label-layout` | Affichage |
 | `console.workspace.files.label-list` | Fichiers et documents de l’espace |
