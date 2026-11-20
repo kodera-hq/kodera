@@ -28,6 +28,22 @@
   --red-100: #FBE5E2;
   --red-500: #C2372B;
   --red-600: #B5321F;
+  --noir-50: #F7F8F8; /* Primary editorial ink on the dark surfaces. */
+  --noir-100: #E6E6E6; /* Primary pill call-to-action fill, labelled in noir.950. */
+  --noir-400: #8A8F98; /* Secondary editorial text and the primary 11px monospace label tier on the dark surfaces. */
+  --noir-500: #7E8289; /* Subtle 11px monospace label tier on the dark surfaces. */
+  --noir-600: #62666D; /* Non-text only: a control border or a diagram stroke on the dark surfaces, gated at 3:1. Never text. */
+  --noir-700: #4A4E55; /* Secondary text on the sky, lilac and lime offer cards. */
+  --noir-800: #191A1C; /* Raised surface: a badge or the secondary button fill. */
+  --noir-850: #141516; /* Landing card. */
+  --noir-900: #0F1011; /* Landing shell. */
+  --noir-950: #08090A; /* Landing canvas, and the dark ink on bright cards and pill buttons. */
+  --noir-sky: #B2D5FF; /* Offer card, sky stop. */
+  --noir-lilac: #DFD1FF; /* Offer card, lilac stop. */
+  --noir-lime: #E4F222; /* Offer card, lime surface. */
+  --noir-release: #E5484D; /* Release timeline indicator on the dark surfaces, gated at 3:1 as a non-text indicator. */
+  --noir-rule: rgba(255, 255, 255, 0.08); /* Decorative architectural hairline only. Never text, and never the sole boundary of a control. */
+  --noir-specular: rgba(255, 255, 255, 0.10); /* Decorative inset specular highlight only. Never text, and never the sole boundary of a control. */
   --theme-light-page: #FFFFFF;
   --theme-light-page-grad: linear-gradient(115deg,#FFFFFF 0%,#FFFFFF 45%,#FFFFFF 100%);
   --theme-light-surface: #FFFFFF;
@@ -450,6 +466,7 @@
   /* type */
   --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  --font-display: 'Inter Variable', Inter, system-ui, -apple-system, 'Segoe UI', sans-serif; /* Display face of the public landing surface. Product UI keeps font.family.sans; this family installs nothing, a consumer self-hosts the face. */
   --text-xs: 12px;
   --text-sm: 13px;
   --text-md: 14px;
@@ -524,7 +541,9 @@
   --dur-fast: 120ms;
   --dur-base: 200ms;
   --dur-slow: 320ms;
+  --dur-intro: 2200ms; /* The landing intro sequence, played once. Not for interface feedback; a consumer skips it under reduced motion. */
   --ease-out: cubic-bezier(0.2, 0.7, 0.3, 1);
+  --ease-curtain: cubic-bezier(0.32, 0.72, 0, 1); /* The landing intro curtain: a long, decelerating reveal paired with motion.duration.intro. */
   --spring-snappy: var(--ease-out);
   --spring-snappy-duration: 400ms;
   --spring-gentle: var(--ease-out);

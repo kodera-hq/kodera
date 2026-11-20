@@ -6,10 +6,35 @@ One section per tag, newest first, no dates: the tag and the commit it points at
 
 ## Unreleased
 
+Nothing yet.
+
+## v0.7.0
+
+"Dark Precision", the landing scale, on top of everything carried over from `Unreleased` below (the Apache-2.0 relicence, `ciel` as the default theme, and the "Ethereal Sky Glass" engine). Additive: every token name, CSS variable, preset key and native member a consumer uses today still resolves to the same value, and every name below is new, so this is a minor (`RELEASE.md`, step 5). `apps/web` moves its workspace pin to `0.7.0` in the same change, so the workspace link holds.
+
+### Decided by
+
+- **`feat/design-tokens-noir-landing-v070`**: decided by zôÖma for the dark-only public landing surface (`kodera-ops#65`), with non-text and contrast adjustments (`color.noir.400`/`500` for `11px` labels, `color.noir.600` non-text only) verified against WCAG AA.
+
+### Tokens added — the landing scale
+
+- **`color.noir`**, an additive primitive palette for the public landing surface: `950` `#08090A`, `900` `#0F1011`, `850` `#141516`, `800` `#191A1C`, `700` `#4A4E55`, `600` `#62666D`, `500` `#7E8289`, `400` `#8A8F98`, `100` `#E6E6E6`, `50` `#F7F8F8`, `sky` `#B2D5FF`, `lilac` `#DFD1FF`, `lime` `#E4F222`, `release` `#E5484D`, `rule` `rgba(255, 255, 255, 0.08)`, `specular` `rgba(255, 255, 255, 0.10)`. CSS variables `--noir-<step>` on `:root`; preset colours `noir-<step>`. Not a theme: the theme registry, the `[data-theme]` blocks and the native palettes are unchanged.
+- **`font.family.display`**: `Inter Variable`, `Inter`, `system-ui`, `-apple-system`, `Segoe UI`, `sans-serif`. CSS `--font-display`, preset `font-display`, native `KoderaTokens.FontFamily.display` (metadata only; it installs no font). `font.family.sans` and `font.family.mono` are unchanged, and `font.weight` gains nothing: it admits the named standard weights only.
+- **`motion.duration.intro`** (`2200ms`) and **`motion.easing.curtain`** (`[0.32, 0.72, 0, 1]`): the landing intro sequence. CSS `--dur-intro` and `--ease-curtain`; preset `duration-intro` and `ease-curtain`. Both names fit the grammar and the native format leaves `motion.duration` and `motion.easing` outside its surface, as before.
+
+### Contrast — the landing scale
+
+- 28 new normative rows, 0 fail, and no entry in `contrast-known-failures.json` or `token-grammar-exceptions.json`:
+  - text, 4.5:1 — `noir.50`, `noir.400` and `noir.500` on each of `noir.950`, `900`, `850`, `800` (12 rows, lowest `noir.500` on `noir.800` at 4.51); `noir.950` on `noir.100` (15.97) and on `color.white` (19.93); `noir.950` and `noir.700` on `noir.sky`, `lilac` and `lime` (6 rows, lowest 5.52). The `noir.50` on `noir.800` row also stands for the secondary button and badge label.
+  - non-text, 3:1 (SC 1.4.11) — `noir.600` on the four grounds (lowest 3.02 on `noir.800`) and `noir.release` on the four grounds (lowest 4.45).
+- 8 new `measurements`, `kind: "decorative"`: `noir.rule` and `noir.specular` on the four grounds (1.18–1.34). They are recorded so the ratio is visible, and they are not acceptance: neither colour is text or the sole boundary of a control.
+
+The entries below were carried over from `Unreleased`.
+
 - Relicensed from MIT to Apache-2.0 (`LICENSE`, `package.json`) for open-core monorepo unification.
 - **`ciel` is the default theme** (owner decision B2, `feat/w3-ciel-default-theme-and-strict-style-csp`): the two gates `docs/specs/ethereal-sky-glass.md` set before a default both stand. The unthemed root now takes `ciel`; `themes.js` `defaultTheme`, the manifest's `default` flags, Swift `Theme.defaultTheme` and Compose's `isDefault` follow. No token name or value changes. The root claim is `:root:where(:not(<every other theme>))` rather than a bare `:root`, which tied with `[data-theme="<other>"]` and lost to whichever block came later: with the default declared after Givre, a bare `:root` would have painted Ciel on a page that chose Givre. `test/theme-registry.selftest.mjs` holds the claim, with a mutation for the bare form.
 
-"Ethereal Sky Glass", the engine and its foundation tokens (`docs/specs/ethereal-sky-glass.md`). Additive: every token name, CSS variable, preset key and native member a consumer uses today still resolves to the same value, so this is a minor (`RELEASE.md`, step 5). The family, its theme ids, the opaque fallback and the two gates before it can be a default were decided by zôÖma, through the lead session; the values the new themes carry are initial and are not decided.
+"Ethereal Sky Glass", the engine and its foundation tokens (`docs/specs/ethereal-sky-glass.md`). Additive: every token name, CSS variable, preset key and native member a consumer uses today still resolves to the same value, so this is a minor (`RELEASE.md`, step 5). The family, its theme ids, the opaque fallback, the foundation values and the promotion to default (owner decision B2) were decided by zôÖma, through the lead session.
 
 ### Added
 

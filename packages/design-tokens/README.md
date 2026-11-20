@@ -63,13 +63,46 @@ Two defaults are worth knowing before using any of it:
 
 A translucent surface is measured by the contrast gate over a **backdrop set**: a named list, in `contrast-pairs.json`, of the opaque extremes one theme paints behind its surfaces. A row on a translucent ground names its theme's set and is held to the worst ground in it, to the bounds of every blend a blur can make of them, and to the opaque fallback. A translucent ground with no set fails, as it always did. `docs/adr/0003` is the argument and its limits.
 
+## The landing scale: `color.noir` and `font.family.display`
+
+"Dark Precision", the public landing surface's palette and display face. It is a **primitive scale, not a theme**: it is not in `scripts/lib/themes.mjs`, it has no `[data-theme]` block and no native palette, and nothing in the product shell reads it. `font.family.sans` and `font.family.mono` are unchanged; product UI keeps them.
+
+| Token | Value | CSS | Use | Gated |
+|---|---|---|---|---|
+| `color.noir.950` | `#08090A` | `--noir-950` | landing canvas; dark ink on bright cards and pill buttons | ground, and 4.5:1 ink on `100`, `white`, `sky`, `lilac`, `lime` |
+| `color.noir.900` | `#0F1011` | `--noir-900` | landing shell | ground |
+| `color.noir.850` | `#141516` | `--noir-850` | landing card | ground |
+| `color.noir.800` | `#191A1C` | `--noir-800` | raised surface, badge, secondary button fill | ground |
+| `color.noir.700` | `#4A4E55` | `--noir-700` | secondary text on the offer cards | 4.5:1 on `sky`, `lilac`, `lime` (5.52–6.78) |
+| `color.noir.600` | `#62666D` | `--noir-600` | **non-text only**: control border, diagram stroke | 3:1 on the four grounds (3.02–3.45) |
+| `color.noir.500` | `#7E8289` | `--noir-500` | subtle 11 px monospace label | 4.5:1 on the four grounds (4.51–5.16) |
+| `color.noir.400` | `#8A8F98` | `--noir-400` | secondary editorial text, primary 11 px monospace label | 4.5:1 on the four grounds (5.36–6.13) |
+| `color.noir.100` | `#E6E6E6` | `--noir-100` | primary pill call-to-action fill | carries `950` at 15.97:1 |
+| `color.noir.50` | `#F7F8F8` | `--noir-50` | primary editorial ink | 4.5:1 on the four grounds (16.37–18.73) |
+| `color.noir.sky`, `.lilac`, `.lime` | `#B2D5FF`, `#DFD1FF`, `#E4F222` | `--noir-sky`, `--noir-lilac`, `--noir-lime` | offer card stops and surface | carry `950` and `700` |
+| `color.noir.release` | `#E5484D` | `--noir-release` | release timeline indicator | 3:1 non-text on the four grounds (4.45–5.09) |
+| `color.noir.rule` | `rgba(255, 255, 255, 0.08)` | `--noir-rule` | **decorative** architectural hairline | measured only, 1.18–1.25:1 |
+| `color.noir.specular` | `rgba(255, 255, 255, 0.10)` | `--noir-specular` | **decorative** inset specular highlight | measured only, 1.25–1.34:1 |
+| `font.family.display` | `Inter Variable`, `Inter`, `system-ui`, … | `--font-display` | landing display face | — |
+| `motion.duration.intro` | `2200ms` | `--dur-intro` | the landing intro sequence, played once | — |
+| `motion.easing.curtain` | `cubic-bezier(0.32, 0.72, 0, 1)` | `--ease-curtain` | the intro curtain reveal | — |
+
+The "four grounds" are `950`, `900`, `850` and `800`. In the preset the colours are `noir-<step>` (`bg-noir-950`, `text-noir-400`, `border-noir-600`), the face is `font-display`, and the motion pair is `duration-intro` with `ease-curtain`. Native bindings gain `KoderaTokens.FontFamily.display` only; the colours and the two motion tokens are outside native format 1, like every primitive that no theme role references.
+
+Four rules come with the scale; the contrast register holds the first two:
+
+- **`color.noir.600` is never text.** It clears 3:1 for a non-text boundary (WCAG 2.1 SC 1.4.11) and no 4.5:1 row exists for it. The lowest text tier is `noir.500`.
+- **`color.noir.rule` and `color.noir.specular` are decorative.** They sit in the `measurements` section as `kind: "decorative"`, not in `pairs`: a hairline or a highlight never carries text, and never is the only boundary of a control. A control on the landing draws its edge in `noir.600`.
+- **`font.family.display` installs nothing.** As with the other families, a consumer self-hosts the face; the stack falls back to the platform sans when it is absent. Its weights come from `font.weight`, which admits the named standard weights only, so an intermediate variable-font weight is a consumer-side `font-variation-settings`, not a token.
+- **`motion.duration.intro` is not an interface duration.** It is for one intro sequence that a consumer skips under `prefers-reduced-motion: reduce`.
+
 ## Native consumers
 
 The build also emits SwiftUI and Compose source files, exported as `@kodera/design-tokens/native/swift` and `/native/compose`, plus `/native/manifest`. Native projects consume these generated files from a pinned package revision. The Swift file imports `SwiftUI`; the Kotlin file declares `package io.kodera.tokens` and imports Compose `Color`, `dp`, `sp` and font weight. Native compilation is a consumer check; this package checks generation and source equality with plain Node.
 
 Both platforms expose one palette per registered theme — `KoderaTokens.light`, `.dark`, `.black`, `.ciel` and `.cielNuit` — with camelCase colour roles: `surface`, `ink`, `actionHover`, `borderInput`, `cursor1Soft`, and the rest. Each palette has the same 78 colour properties; the page gradient is excluded explicitly. The numeric groups are `KoderaTokens.Space.s4`, `Radius.md`, `FontSize.lg`, and `FontWeight.semibold`. Hyphenated keys become camelCase; numeric keys receive an `s` prefix, including `FontSize.s2xl`. Invalid or colliding native identifiers fail the build.
 
-Spacing, radius and font-size tokens preserve the numeric magnitude of source `px` values: Swift points for all three, Compose `dp` for spacing/radius and `sp` for font size. Consumers apply native font scaling and responsive layout. Font weights map to SwiftUI `Font.Weight` and Compose font weights without changing the source weight. `KoderaTokens.FontFamily.sans` and `.mono` expose `primary` and `fallbacks` metadata only: they neither install fonts nor choose a platform font automatically.
+Spacing, radius and font-size tokens preserve the numeric magnitude of source `px` values: Swift points for all three, Compose `dp` for spacing/radius and `sp` for font size. Consumers apply native font scaling and responsive layout. Font weights map to SwiftUI `Font.Weight` and Compose font weights without changing the source weight. `KoderaTokens.FontFamily.sans`, `.mono` and `.display` expose `primary` and `fallbacks` metadata only: they neither install fonts nor choose a platform font automatically.
 
 Colours use sRGB channels and preserve alpha without compositing. `dist/native/manifest.json` declares format `kodera-native-tokens/1`, the SHA-256 of the exact `tokens.json` bytes, every exported source path and alias chain, native API names, values and units. Package version, environment, time and commit identity are not generator inputs. All other token paths are listed with an exclusion reason; gradients and elevation have no approximation in this format. Web CSS, preset and type outputs keep their existing behavior.
 
