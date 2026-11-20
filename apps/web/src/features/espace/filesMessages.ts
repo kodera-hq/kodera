@@ -1,5 +1,13 @@
 export const filesMessages = {
   en: {
+    import: 'Import files',
+    liveOnly: 'Connect to a workspace to import files.',
+    download: 'Download',
+    openChannel: 'Open in',
+    previous: 'Previous file',
+    next: 'Next file',
+    loading: 'Loading preview…',
+    noPreview: 'Preview unavailable for this file. Download it or open its conversation.',
     target: 'Send to channel',
     choose: 'Choose a channel',
     upload: 'Choose files or drop them here',
@@ -16,6 +24,14 @@ export const filesMessages = {
     preview: 'Preview image',
   },
   fr: {
+    import: 'Importer des fichiers',
+    liveOnly: 'Connectez-vous à un espace pour importer des fichiers.',
+    download: 'Télécharger',
+    openChannel: 'Ouvrir dans',
+    previous: 'Fichier précédent',
+    next: 'Fichier suivant',
+    loading: 'Chargement de l’aperçu…',
+    noPreview: 'Aperçu indisponible pour ce fichier. Téléchargez-le ou ouvrez sa conversation.',
     target: 'Envoyer dans le salon',
     choose: 'Choisir un salon',
     upload: 'Choisissez des fichiers ou déposez-les ici',

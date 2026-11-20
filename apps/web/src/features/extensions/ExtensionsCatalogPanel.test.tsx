@@ -221,6 +221,10 @@ describe('ExtensionsCatalogPanel & catalog', () => {
     const chosen = OFFICIAL_EXTENSIONS_CATALOG[0]!
     await user.click(screen.getByRole('button', { name: `${chosen.name} — Connecter` }))
     expect(screen.getByTestId(`extension-verified-${chosen.slug}`)).not.toBeVisible()
+    expect(screen.getByLabelText(/URL de destination du webhook/i)).not.toBeVisible()
+    await user.click(screen.getByText('Détails techniques & sécurité', { exact: true }))
+    expect(screen.getByTestId(`extension-verified-${chosen.slug}`)).toBeVisible()
+    expect(screen.getByLabelText(/URL de destination du webhook/i)).toBeVisible()
     expect(screen.getAllByText(new RegExp(`${chosen.id}(?:$|\\s)`)).length).toBeGreaterThanOrEqual(
       1
     )
@@ -275,7 +279,6 @@ describe('ExtensionsCatalogPanel & catalog', () => {
 
     // The scopes a connector asks for are drawn with its setup, under the technical details.
     await user.click(screen.getByRole('button', { name: `${chosen.name} — Connecter` }))
-    await user.click(screen.getByText('Détails techniques & sécurité', { exact: true }))
     for (const scope of chosen.scopes) {
       expect(screen.getAllByText(scope).length).toBeGreaterThanOrEqual(1)
     }
@@ -333,8 +336,9 @@ describe('ExtensionsCatalogPanel & catalog', () => {
       expect(screen.getByTestId('extension-verified-renderfarm')).toHaveTextContent(
         'Verified v1 schema'
       )
-      expect(screen.getByTestId('extension-verified-renderfarm')).not.toBeVisible()
+      expect(screen.getByLabelText(/Webhook destination URL/i)).not.toBeVisible()
       await userEvent.click(screen.getByText('Technical details & security', { exact: true }))
+      expect(screen.getByLabelText(/Webhook destination URL/i)).toBeVisible()
       expect(screen.getByTestId('extension-verified-renderfarm')).toBeVisible()
       expect(
         screen.getByText(/Tracks 3D and VFX render queues with shot codes/i)

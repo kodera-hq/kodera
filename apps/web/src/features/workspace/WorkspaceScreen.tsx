@@ -1,3 +1,4 @@
+import { readLastChannel, saveLastChannel } from './lastChannel'
 import { track } from '../../analytics/track'
 import { CanvasNavigation } from './canvasNavigation'
 import { flushSync } from 'react-dom'
@@ -40,7 +41,16 @@ import { onboardingCopy } from '../onboarding/onboardingMessages'
 // not repeated.
 
 import { useParams, useRouter } from '@tanstack/react-router'
-import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
 import type { WorkspacePageRecord } from '../docs/WorkspaceCollaborativeDocs'
 import {
   createDemoWorkspaceStore,
@@ -457,7 +467,7 @@ function LiveWorkspace({
           ...docsWorkspace.docs,
           ...workspacePages.map((page): ChannelDoc => ({
             id: `workspace-page:${page.id}`,
-            channelId: channel?.id ?? '',
+            channelId: '',
             title: page.title,
             content: page.markdown,
             parentId: page.parentId,
@@ -679,6 +689,26 @@ export function WorkspaceScreen() {
   const organisationName = membership.organisation.name
   const query = useWorkspaceQuery(organisationId)
   const tenantQuery = useWorkspaceTenantQuery(organisationId)
+  const savedChannel = readLastChannel(org, me.id)
+  const availableChannels = useMemo(
+    () =>
+      query.data?.workspace
+        ? [
+            ...query.data.workspace.categories.flatMap((category) => category.channels),
+            ...query.data.workspace.uncategorised_channels,
+          ]
+        : [],
+    [query.data]
+  )
+  const restoredChannelId =
+    params.channelId ??
+    availableChannels.find(
+      (channel) => channel.id === savedChannel && channel.lifecycle !== 'archived'
+    )?.id
+  useEffect(() => {
+    if (restoredChannelId && availableChannels.some((channel) => channel.id === restoredChannelId))
+      saveLastChannel(org, me.id, restoredChannelId)
+  }, [org, me.id, restoredChannelId, availableChannels])
   const tenant = tenantQuery.data
   const phase = tenant === undefined || tenant === null ? undefined : tenantPhase(tenant.status)
   const read = query.data === undefined ? undefined : workspaceView(query.data.workspace)
@@ -782,7 +812,7 @@ export function WorkspaceScreen() {
               org={org}
               organisationName={organisationName}
               workspace={view.workspace}
-              channelId={params.channelId}
+              channelId={restoredChannelId}
               serverSlug={serverSlug}
               actions={actions}
               accountName={accountName}
@@ -796,7 +826,7 @@ export function WorkspaceScreen() {
               org={org}
               organisationName={organisationName}
               workspace={view.workspace}
-              channelId={params.channelId}
+              channelId={restoredChannelId}
               session={live.session}
               serverSlug={live.serverSlug}
               actions={actions}
@@ -807,7 +837,7 @@ export function WorkspaceScreen() {
               org={org}
               organisationName={organisationName}
               workspace={view.workspace}
-              channelId={params.channelId}
+              channelId={restoredChannelId}
               serverSlug={serverSlug}
               preparing={preparing}
               actions={actions}

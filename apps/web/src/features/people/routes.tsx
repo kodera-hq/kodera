@@ -36,7 +36,10 @@ function Guard({ children }: { children: ReactNode }) {
 export const peopleRoute = createRoute({
   getParentRoute: () => orgRoute,
   path: 'people',
-  validateSearch: z.object({ tab: z.enum(['invitations']).optional() }),
+  validateSearch: z.object({
+    tab: z.enum(['invitations']).optional(),
+    q: z.string().max(200).optional(),
+  }),
   component: () => (
     <Guard>
       <PeopleListBody />

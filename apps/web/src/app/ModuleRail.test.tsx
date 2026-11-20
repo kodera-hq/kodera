@@ -348,7 +348,7 @@ describe('module rail', () => {
     fixture.apps = [ESPACE]
     renderRail()
     const messages = screen.getByRole('link', { name: 'Messages' })
-    expect(messages.querySelector('svg')).toHaveAttribute('data-glyph', 'messaging')
+    expect(messages.querySelector('svg')).toHaveAttribute('data-kodera-icon', 'messages')
   })
 
   it('keeps personal settings available while the role is not known', () => {

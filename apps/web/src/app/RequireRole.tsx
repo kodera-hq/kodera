@@ -1,3 +1,4 @@
+import { HomeRecovery } from './HomeRecovery'
 // A direct URL to an area a member-role token cannot use (docs/specs/
 // 00-shell-and-login.md §5 "Permission denied" row, acceptance test 7):
 // "the action is not rendered at all, and a direct URL shows a `Banner`
@@ -37,6 +38,7 @@ export function RequireRole({ allow, titleKey, children }: RequireRoleProps) {
         })}
         className="w-full max-w-[560px] text-left"
       />
+      <HomeRecovery />
     </div>
   )
 }

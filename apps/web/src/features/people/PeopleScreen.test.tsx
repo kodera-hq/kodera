@@ -917,3 +917,26 @@ describe('confirmed invitation revocation', () => {
     expect(f.writes()).toBe(1)
   })
 })
+
+it('restores member search from the address and synchronizes edits and history', async () => {
+  const previous = window.location.href
+  window.history.replaceState(window.history.state, '', '?q=Marc')
+  try {
+    const user = userEvent.setup()
+    renderScreen([defaultPeople()])
+    const field = screen.getByRole('searchbox')
+    expect(field).toHaveValue('Marc')
+    await user.clear(field)
+    await user.type(field, 'Samir')
+    expect(new URL(window.location.href).searchParams.get('q')).toBe('Samir')
+    act(() => {
+      window.history.replaceState(window.history.state, '', '?q=Nadia')
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+    expect(field).toHaveValue('Nadia')
+    await user.clear(field)
+    expect(new URL(window.location.href).searchParams.has('q')).toBe(false)
+  } finally {
+    window.history.replaceState(window.history.state, '', previous)
+  }
+})

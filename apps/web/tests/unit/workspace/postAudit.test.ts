@@ -198,3 +198,15 @@ it('makes no recording-notice guarantee while lifecycle cues remain unwired and 
   expect(engine.evaluate('compliance_rec_stop').allowed).toBe(false)
   engine.destroy()
 })
+
+it('keeps organisation-wide Docs pages outside channel attribution', () => {
+  const { store, snapshot } = fixture()
+  const pages = workspaceFilesOf(
+    store,
+    snapshot,
+    [{ id: 'general', label: 'general', kind: 'text' }],
+    [{ id: 'workspace-page:policy', channelId: '', title: 'Workspace policy', content: '' }]
+  )
+  expect(pages).toHaveLength(1)
+  expect(pages[0]).toMatchObject({ name: 'Workspace policy', channel: { id: '', label: 'Docs' } })
+})

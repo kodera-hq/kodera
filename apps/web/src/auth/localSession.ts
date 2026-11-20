@@ -99,6 +99,8 @@ export function clearLocalSessionStorage(): void {
       for (const key of Object.keys(storage)) {
         if (
           key.startsWith('kodera.web.') ||
+          key.startsWith('kodera:drafts:') ||
+          key.startsWith('kodera:last-channel:') ||
           key.startsWith('order-draft:') ||
           key.startsWith('order-draft-latest:')
         ) {

@@ -12,6 +12,7 @@ import { ChannelRow } from '../../ui/ChannelRow/ChannelRow'
 import { RoomRow } from '../../ui/RoomRow/RoomRow'
 import { SidebarCategory } from '../../ui/SidebarCategory/SidebarCategory'
 import { UniversalSearch } from '../command-palette/UniversalSearch'
+import { paletteCopy } from '../command-palette/messages'
 import type { ChannelDoc } from '../docs/ChannelDocsEditor'
 import type { ChannelSearchEntry } from '../workspace/ChannelSearch'
 import { OrganisationHeader } from '../workspace/OrganisationHeader'
@@ -319,7 +320,7 @@ function ChannelSidebarView({
     }
     onSelectDirect?.(roomId)
   }
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const [menuTarget, setMenuTarget] = useState<ChannelMenuTarget | null>(null)
   const ownsMenu =
     onChannelSettings !== undefined ||
@@ -514,7 +515,19 @@ function ChannelSidebarView({
           shortcut={!narrow}
           actions={[
             ...(onChangeCanvasMode
-              ? [{ id: 'docs', label: 'Docs', open: () => onChangeCanvasMode('docs') }]
+              ? [
+                  { id: 'docs', label: 'Docs', open: () => onChangeCanvasMode('docs') },
+                  {
+                    id: 'files',
+                    label: paletteCopy(i18n.resolvedLanguage).files,
+                    open: () => onChangeCanvasMode('files'),
+                  },
+                  {
+                    id: 'integrations',
+                    label: paletteCopy(i18n.resolvedLanguage).integrations,
+                    open: () => onChangeCanvasMode('integrations'),
+                  },
+                ]
               : []),
             ...(canInvite
               ? [

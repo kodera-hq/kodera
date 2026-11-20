@@ -1,3 +1,4 @@
+import { formatBytes } from '../../../ui/formatBytes'
 // Files stay metadata-only until opened. Raster images use bounded, credential-free reads and
 // local blob previews; every other format opens outside the console in a fresh tab.
 
@@ -24,17 +25,6 @@ export function safeDownloadUrl(value: unknown): string | null {
   } catch {
     return null
   }
-}
-
-function sizeOf(bytes: number, language: string | undefined): string {
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'] as const
-  let value = bytes
-  let unit = 0
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024
-    unit += 1
-  }
-  return `${new Intl.NumberFormat(language, { maximumFractionDigits: unit === 0 ? 0 : 1 }).format(value)} ${units[unit]}`
 }
 
 export function MessageAttachments({ refs }: { refs: readonly AttachmentRef[] }) {
@@ -137,7 +127,7 @@ export function MessageAttachments({ refs }: { refs: readonly AttachmentRef[] })
               <span aria-hidden="true">📎</span>
               <span className="min-w-0 truncate">{cleanText(ref.filename, 120)}</span>
               <span className="shrink-0 text-xs text-c-ink-3">
-                {sizeOf(ref.sizeBytes, i18n.resolvedLanguage)}
+                {formatBytes(ref.sizeBytes, i18n.resolvedLanguage)}
               </span>
             </button>
           </li>

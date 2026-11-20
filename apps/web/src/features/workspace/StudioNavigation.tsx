@@ -1,7 +1,8 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Dialog } from '../../ui/Dialog/Dialog'
-import { StudioGlyph, type StudioGlyphName } from '../../ui/icons/StudioGlyph'
+import { type StudioGlyphName } from '../../ui/icons/StudioGlyph'
+import { KoderaIcon } from '../../ui/icons/KoderaIcons'
 import { studioMessages } from './studioMessages'
 import { openWorkspaceCommand } from './WorkspaceMenu'
 import type { ChannelDoc } from '../docs/ChannelDocsEditor'
@@ -108,7 +109,9 @@ export function StudioNavigation({
             {
               name: 'integrations',
               icon: 'integrations',
-              action: () => openWorkspaceCommand('extensions'),
+              action: () =>
+                onChange ? onChange('integrations') : openWorkspaceCommand('extensions'),
+              selected: mode === 'integrations',
             },
           ]
   const choose = (entry: ChannelSearchEntry, doc?: ChannelDoc) => {
@@ -135,7 +138,7 @@ export function StudioNavigation({
                 className={itemClass}
                 onClick={() => choose(room)}
               >
-                <StudioGlyph name="calls" />
+                <KoderaIcon name="calls" />
                 {room.label}
               </button>
             ))
@@ -154,7 +157,7 @@ export function StudioNavigation({
                 className={itemClass}
                 onClick={() => choose(item.channel)}
               >
-                <StudioGlyph name="bell" />
+                <KoderaIcon name="spark" />
                 <span className="flex min-w-0 flex-col gap-1">
                   <strong>#{item.channel.label}</strong>
                   <span>
@@ -179,7 +182,7 @@ export function StudioNavigation({
                 className={itemClass}
                 onClick={() => choose(file.channel, file.document)}
               >
-                <StudioGlyph name={file.document ? 'docs' : 'files'} />
+                <KoderaIcon name={file.document ? 'docs' : 'files'} />
                 <span className="flex min-w-0 flex-col gap-1">
                   <strong className="break-words">{file.title}</strong>
                   <span className="text-xs text-c-ink-2">
@@ -219,7 +222,8 @@ export function StudioNavigation({
             }}
             aria-current={entry.selected ? 'page' : undefined}
             aria-expanded={
-              ['notifications', 'files', 'calls'].includes(entry.name) && entry.selected === undefined
+              ['notifications', 'files', 'calls'].includes(entry.name) &&
+              entry.selected === undefined
                 ? panel === entry.name
                 : undefined
             }
@@ -243,7 +247,21 @@ export function StudioNavigation({
             }
             className={`flex min-h-8 items-center gap-2 rounded-md px-2 py-1 text-left text-sm focus-visible:ring focus-visible:outline-hidden narrow:min-h-12 ${entry.selected ? 'bg-c-accent-soft font-bold text-c-accent-ink' : 'text-c-ink-2 hover:bg-c-muted'}`}
           >
-            <StudioGlyph name={entry.icon} />
+            {entry.icon === 'bell' || entry.icon === 'message' ? (
+              <KoderaIcon name={entry.icon === 'bell' ? 'spark' : 'messages'} />
+            ) : (
+              <KoderaIcon
+                name={
+                  entry.icon === 'docs'
+                    ? 'docs'
+                    : entry.icon === 'calls'
+                      ? 'calls'
+                      : entry.icon === 'files'
+                        ? 'files'
+                        : 'integrations'
+                }
+              />
+            )}
             <span>{section === 'call-entry' ? copy.audioOnly : copy[entry.name]}</span>
           </button>
         ))}

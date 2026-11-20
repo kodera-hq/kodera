@@ -30,7 +30,7 @@ import { HostingOfferPanel } from './HostingOfferPanel'
 import { ModerationPanel } from './moderation/ModerationPanel'
 import { WorkspacePrivacyPanel } from './WorkspacePrivacyPanel'
 import { WorkspaceQuotasPanel } from './WorkspaceQuotasPanel'
-import { useWorkspaceTenantQuery } from './queries'
+import { useWorkspaceQuery, useWorkspaceTenantQuery } from './queries'
 import { useActiveThemeShare } from './themeSharing'
 import {
   useWorkspaceSettingsRuntime,
@@ -505,6 +505,7 @@ export default function WorkspaceSettings({
   const active = useWorkspaceSettingsRuntime()
   const runtime = active?.org === org ? active : undefined
   const tenant = useWorkspaceTenantQuery(organisationId)
+  const workspaceSummary = useWorkspaceQuery(organisationId)
   const shareTheme = useActiveThemeShare()
   const canManage = role === 'org_owner' || role === 'org_admin'
   const canBill = canManage || role === 'org_billing'
@@ -747,6 +748,18 @@ export default function WorkspaceSettings({
                     <>
                       <HostingOfferPanel
                         initiallyExpanded
+                        workspace={
+                          workspaceSummary.data?.workspace
+                            ? {
+                                channels: [
+                                  ...workspaceSummary.data.workspace.categories.flatMap(
+                                    (category) => category.channels
+                                  ),
+                                  ...workspaceSummary.data.workspace.uncategorised_channels,
+                                ],
+                              }
+                            : undefined
+                        }
                         organisation={organisationName}
                         mode={tenant.data?.hostingMode ?? tenant.data?.hosting_mode}
                       />

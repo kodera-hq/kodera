@@ -1,4 +1,13 @@
-import { useRef, useState } from 'react'
+import { useRouter } from '@tanstack/react-router'
+import { useEffect, useRef, useState } from 'react'
+import {
+  OPEN_PALETTE,
+  usePaletteSource,
+  useRegisterPalette,
+  type PaletteSource,
+} from './PaletteContext'
+import { KoderaIcon } from '../../ui/icons/KoderaIcons'
+import { isMac } from '../workspace/ChannelSearch'
 import { useTranslation } from 'react-i18next'
 import { useOrganisationSwitch } from '../../app/organisationSwitch'
 import { saveThemePreference, THEME_PREFERENCES } from '../../theme/theme'
@@ -18,7 +27,7 @@ export interface PaletteTarget {
   label: string
   open: () => void
 }
-export function UniversalSearch({
+function SearchContents({
   entries,
   onChoose,
   shortcut,
@@ -26,6 +35,9 @@ export function UniversalSearch({
   actions: quickActions = [],
   directMessages = [],
   members = [],
+  hiddenTrigger,
+  openEvent,
+  onDismiss,
 }: ChannelSearchProps & {
   actions?: readonly PaletteTarget[]
   documents?: readonly PaletteTarget[]
@@ -51,9 +63,7 @@ export function UniversalSearch({
   for (const action of quickActions)
     add(`action:${action.id}`, action.label, copy.actions, () => requestAnimationFrame(action.open))
   for (const person of members)
-    add(`member:${person.id}`, person.label, copy.actions, () =>
-      requestAnimationFrame(person.open)
-    )
+    add(`member:${person.id}`, person.label, copy.actions, () => requestAnimationFrame(person.open))
   for (const doc of documents) add(`doc:${doc.id}`, doc.label, copy.docs, doc.open)
   for (const dm of directMessages) add(`dm:${dm.id}`, dm.label, copy.direct, dm.open)
   for (const section of [
@@ -85,7 +95,23 @@ export function UniversalSearch({
   return (
     <div ref={surface}>
       <ChannelSearch
-        entries={[...entries, ...commands]}
+        palette
+        {...(onDismiss ? { onDismiss } : {})}
+        {...(hiddenTrigger === undefined ? {} : { hiddenTrigger })}
+        {...(openEvent === undefined ? {} : { openEvent })}
+        groupOrder={[
+          copy.actions,
+          copy.channels,
+          copy.direct,
+          copy.docs,
+          copy.settings,
+          copy.workspace,
+          copy.theme,
+        ]}
+        groupLabel={copy.channels}
+        recentLabel={copy.recent}
+        legend={copy.legend}
+        entries={[...entries.map((entry) => ({ ...entry, category: copy.channels })), ...commands]}
         shortcut={shortcut}
         title={copy.title}
         emptyLabel={copy.empty}
@@ -115,6 +141,69 @@ export function UniversalSearch({
           {notice}
         </p>
       ) : null}
+    </div>
+  )
+}
+
+export function UniversalSearch(props: PaletteSource) {
+  const registered = useRegisterPalette(props)
+  const { t } = useTranslation()
+  if (!registered || !props.shortcut) return <SearchContents {...props} />
+  return (
+    <button
+      type="button"
+      aria-keyshortcuts={isMac() ? 'Meta+K' : 'Control+K'}
+      onClick={() => window.dispatchEvent(new Event(OPEN_PALETTE))}
+      className="tactile flex h-10 w-full items-center gap-2 rounded-sm bg-c-muted px-2 text-sm text-c-ink-3 focus-visible:ring focus-visible:outline-hidden"
+    >
+      <KoderaIcon name="search" />
+      <span className="flex-1 text-left">{t('console.workspace.search.action-open')}</span>
+      <kbd aria-hidden="true">{isMac() ? '⌘K' : 'Ctrl+K'}</kbd>
+    </button>
+  )
+}
+
+const SHOW_PALETTE = 'kodera:show-palette'
+export function GlobalUniversalSearch({ org, request }: { org?: string; request: number }) {
+  const router = useRouter({ warn: false })
+  const { i18n } = useTranslation()
+  const copy = paletteCopy(i18n.resolvedLanguage)
+  const registry = usePaletteSource()
+  const [source, setSource] = useState<PaletteSource | null>(null)
+  const root = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (request === 0) return
+    let frame = requestAnimationFrame(() => {
+      if (withdrawn(root.current) || document.querySelector('[role="dialog"]')) return
+      setSource(registry?.read() ?? null)
+      frame = requestAnimationFrame(() => window.dispatchEvent(new Event(SHOW_PALETTE)))
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [registry, request])
+  return (
+    <div ref={root}>
+      <SearchContents
+        {...(source ?? {
+          entries: [],
+          onChoose: () => null,
+          actions: org
+            ? [
+                {
+                  id: 'workspace',
+                  label: copy.openWorkspace,
+                  open: () => {
+                    if (router) void router.navigate({ to: '/$org/workspace', params: { org } })
+                    else window.location.assign(`/${encodeURIComponent(org)}/workspace`)
+                  },
+                },
+              ]
+            : [],
+        })}
+        onDismiss={() => setSource(null)}
+        shortcut={false}
+        hiddenTrigger
+        openEvent={SHOW_PALETTE}
+      />
     </div>
   )
 }

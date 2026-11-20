@@ -1,3 +1,9 @@
+import { Tooltip } from '../../ui/Tooltip/Tooltip'
+import type { ReactNode } from 'react'
+import { FileDropArea } from '../../ui/FileDrop/FileDrop'
+import { KoderaIcon } from '../../ui/icons/KoderaIcons'
+import { IconButton } from '../../ui/IconButton'
+import { formatBytes } from '../../ui/formatBytes'
 import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '../../ui/Button/Button'
@@ -12,6 +18,8 @@ import type { EspaceStoreLike } from './liveViewModel'
 import { filesMessages } from './filesMessages'
 
 interface Props {
+  activeChannelId?: string | undefined
+  children?: (upload: { trigger: ReactNode; controls: ReactNode }) => ReactNode
   store: EspaceStoreLike
   snapshot: EspaceSnapshot
   channels: readonly ChannelSearchEntry[]
@@ -19,7 +27,24 @@ interface Props {
 
 export function FilesUpload(props: Props) {
   const organisationId = useMessagingOrganisation()
-  return organisationId === null ? null : (
+  const { i18n } = useTranslation()
+  const copy = filesMessages[i18n.resolvedLanguage?.startsWith('en') ? 'en' : 'fr']
+  return organisationId === null ? (
+    <>
+      {props.children?.({
+        trigger: (
+          <Tooltip content={copy.liveOnly}>
+            <span>
+              <Button disabled icon={<KoderaIcon name="upload" />}>
+                {copy.import}
+              </Button>
+            </span>
+          </Tooltip>
+        ),
+        controls: null,
+      })}
+    </>
+  ) : (
     <LiveFilesUpload key={organisationId} {...props} organisationId={organisationId} />
   )
 }
@@ -29,9 +54,11 @@ function LiveFilesUpload({
   snapshot,
   channels,
   organisationId,
+  activeChannelId,
+  children,
 }: Props & { organisationId: string }) {
   const { i18n } = useTranslation()
-  const copy = filesMessages[i18n.resolvedLanguage === 'en' ? 'en' : 'fr']
+  const copy = filesMessages[i18n.resolvedLanguage?.startsWith('en') ? 'en' : 'fr']
   const id = useId()
   const quota = useWorkspaceQuotasQuery(organisationId)
   const queue = useMemo(
@@ -61,11 +88,16 @@ function LiveFilesUpload({
     return channel.kind === 'text' &&
       room?.state === 'resolved' &&
       snapshot.rooms.some((entry) => entry.roomId === room.roomId) &&
+      (store.getRoomBoundary?.(room.roomId) === undefined ||
+        permitsPlaintext(store.getRoomBoundary!(room.roomId))) &&
       store.canSendMessage?.(room.roomId) !== false
       ? [{ ...channel, roomId: room.roomId }]
       : []
   })
-  const roomId = available.find((channel) => channel.id === target)?.roomId ?? ''
+  const uploadChannelId = available.some((channel) => channel.id === target)
+    ? target
+    : (available.find((channel) => channel.id === activeChannelId)?.id ?? available[0]?.id ?? '')
+  const roomId = available.find((channel) => channel.id === uploadChannelId)?.roomId ?? ''
   const queued = useSyncExternalStore(queue.subscribe, () => queue.files(roomId))
   const ready = queue.readyRefs(roomId)
   const usage = quota.data
@@ -106,7 +138,7 @@ function LiveFilesUpload({
     }
   }
 
-  return (
+  const controls = (
     <section
       className="flex flex-col gap-3 rounded-lg border border-c-border p-3"
       aria-label={copy.send}
@@ -116,7 +148,7 @@ function LiveFilesUpload({
       </label>
       <select
         id={`${id}-channel`}
-        value={target}
+        value={uploadChannelId}
         disabled={sending || queued.length > 0}
         onChange={(event) => setTarget(event.target.value)}
         className="min-h-10 rounded-md border border-c-border-input bg-c-surface px-3 text-sm text-c-ink focus-visible:ring focus-visible:outline-hidden"
@@ -136,12 +168,14 @@ function LiveFilesUpload({
         }}
         onDrop={(event) => {
           event.preventDefault()
+          event.stopPropagation()
           add([...event.dataTransfer.files])
         }}
       >
         {copy.upload}
         <input
           id={`${id}-files`}
+          className="sr-only"
           type="file"
           multiple
           disabled={roomId === '' || sending}
@@ -155,14 +189,12 @@ function LiveFilesUpload({
         <p className="text-xs text-c-ink-3">{copy.unavailable}</p>
       ) : (
         <p className="text-xs text-c-ink-3">
-          {copy.quota}:{' '}
-          {new Intl.NumberFormat(i18n.resolvedLanguage, { maximumFractionDigits: 2 }).format(
-            usage.usage.mediaBytes / 1024 ** 3
-          )}{' '}
-          GB
-          {usage.limits.mediaBytes === null
+          {copy.quota}
+          {i18n.resolvedLanguage?.startsWith('en') ? ': ' : '\u00a0: '}
+          {formatBytes(usage.usage.mediaBytes, i18n.resolvedLanguage)}
+          {usage.limits.mediaBytes == null
             ? ''
-            : ` / ${new Intl.NumberFormat(i18n.resolvedLanguage, { maximumFractionDigits: 2 }).format(usage.limits.mediaBytes / 1024 ** 3)} GB`}
+            : ` / ${formatBytes(usage.limits.mediaBytes, i18n.resolvedLanguage)}`}
         </p>
       )}
       <ul className="flex flex-col gap-2">
@@ -176,15 +208,12 @@ function LiveFilesUpload({
                   ? copy.pending
                   : copy.failed}
             </span>
-            <Button
-              size="sm"
-              variant="secondary"
+            <IconButton
+              icon="close"
+              label={`${copy.remove} ${cleanText(file.filename, 120)}`}
               disabled={sending}
-              aria-label={`${copy.remove} ${cleanText(file.filename, 120)}`}
               onClick={() => queue.remove(roomId, file.key)}
-            >
-              {copy.remove}
-            </Button>
+            />
           </li>
         ))}
       </ul>
@@ -206,5 +235,20 @@ function LiveFilesUpload({
         {copy.send}
       </Button>
     </section>
+  )
+  const trigger = (
+    <Button
+      icon={<KoderaIcon name="upload" />}
+      disabled={roomId === '' || sending}
+      onClick={() => document.getElementById(`${id}-files`)?.click()}
+    >
+      {copy.import}
+    </Button>
+  )
+
+  return (
+    <FileDropArea disabled={roomId === '' || sending} onFiles={add}>
+      {children ? children({ trigger, controls }) : controls}
+    </FileDropArea>
   )
 }

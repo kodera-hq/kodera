@@ -1916,8 +1916,9 @@ Source: `src/features/espace/EspaceLiveView.tsx`, the call dock and the audio ro
 | `console.workspace.canvas.mode-docs` | Docs |
 | `console.workspace.canvas.mode-files` | Files |
 | `console.workspace.files.title` | Workspace files |
-| `console.workspace.files.held` | {count} item(s) · {size} shared |
+| `console.workspace.files.held` | {count, plural, one {{count} item · {size} shared} other {{count} items · {size} shared}} |
 | `console.workspace.files.field-search` | Search for a file |
+| `console.workspace.files.action-clear-search` | Clear the search |
 | `console.workspace.files.label-filter` | Filter by type |
 | `console.workspace.files.label-layout` | Layout |
 | `console.workspace.files.label-list` | Workspace files and documents |
@@ -1927,6 +1928,7 @@ Source: `src/features/espace/EspaceLiveView.tsx`, the call dock and the audio ro
 | `console.workspace.files.filter-images` | Images |
 | `console.workspace.files.filter-documents` | Documents |
 | `console.workspace.files.filter-pages` | Pages |
+| `console.workspace.files.filter-media` | Audio/Video |
 | `console.workspace.files.filter-other` | Other |
 | `console.workspace.files.empty-title` | No files yet |
 | `console.workspace.files.empty-body` | Attachments and pages from your channels appear here. |

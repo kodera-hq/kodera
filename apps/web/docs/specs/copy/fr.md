@@ -1930,8 +1930,9 @@ Source: `src/features/espace/EspaceLiveView.tsx`, the call dock and the audio ro
 | `console.workspace.canvas.mode-docs` | Docs |
 | `console.workspace.canvas.mode-files` | Fichiers |
 | `console.workspace.files.title` | Fichiers de l’espace |
-| `console.workspace.files.held` | {count} élément(s) · {size} partagés |
+| `console.workspace.files.held` | {count, plural, one {{count} élément · {size} partagé} other {{count} éléments · {size} partagés}} |
 | `console.workspace.files.field-search` | Rechercher un fichier |
+| `console.workspace.files.action-clear-search` | Effacer la recherche |
 | `console.workspace.files.label-filter` | Filtrer par type |
 | `console.workspace.files.label-layout` | Affichage |
 | `console.workspace.files.label-list` | Fichiers et documents de l’espace |
@@ -1941,6 +1942,7 @@ Source: `src/features/espace/EspaceLiveView.tsx`, the call dock and the audio ro
 | `console.workspace.files.filter-images` | Images |
 | `console.workspace.files.filter-documents` | Documents |
 | `console.workspace.files.filter-pages` | Pages |
+| `console.workspace.files.filter-media` | Audio/Vidéo |
 | `console.workspace.files.filter-other` | Autres |
 | `console.workspace.files.empty-title` | Aucun fichier pour l’instant |
 | `console.workspace.files.empty-body` | Les pièces jointes et les pages de vos salons apparaîtront ici. |

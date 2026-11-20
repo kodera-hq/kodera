@@ -83,7 +83,7 @@ export const Popover = forwardRef<HTMLDivElement, PopoverProps>(function Popover
           align={align}
           sideOffset={6}
           className={cx(
-            'material-popover z-50 rounded-md border border-c-border p-4 shadow-pop shadow-c-shadow-2',
+            'surface-pop material-popover z-50 rounded-md border border-c-border p-4 shadow-pop shadow-c-shadow-2',
             FOCUS_GROUND_ELEVATED,
             'focus:outline-hidden',
             // 220 px is not on the tokens package's spacing grid and

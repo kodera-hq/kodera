@@ -7,6 +7,9 @@ import { expect, test, type Page } from '@playwright/test'
 import { signIn } from './support/signIn'
 import { useScenario } from './support/useScenario'
 
+// Accessibility checks read the settled palette rather than its opacity transition.
+test.use({ reducedMotion: 'reduce' })
+
 const ORG = 'acme-sa'
 const SHELL = 'shell.single-organisation'
 
@@ -359,6 +362,9 @@ test('workspace/search: says when no channel has the name, and gives focus back 
   await expect(dialog.getByRole('option')).toHaveCount(0)
   await expectAxeClean(page)
 
+  await page.keyboard.press('Escape')
+  await expect(dialog.getByRole('combobox')).toHaveValue('')
+  await expect(dialog).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(dialog).toHaveCount(0)
   await expect(search).toBeFocused()

@@ -71,11 +71,7 @@ describe('ChannelSearch', () => {
     await user.keyboard('{Control>}k{/Control}')
     expect(screen.getByRole('dialog', { name: 'Aller à un salon' })).toBeInTheDocument()
     expect(field()).toHaveFocus()
-    expect(options()).toEqual([
-      '#bienvenueGénéral',
-      '#généralGénéral',
-      'Point quotidienSalon audio',
-    ])
+    expect(options()).toEqual(['bienvenueGénéral', 'généralGénéral', 'Point quotidienSalon audio'])
   })
 
   it('takes ⌘ K on a Mac, leaves Ctrl K to the text field there, and says so', async () => {
@@ -157,11 +153,7 @@ describe('ChannelSearch', () => {
     // The status region is there, empty, before any words come, so a screen reader hears them.
     expect(screen.getByRole('status')).toBeEmptyDOMElement()
     await user.type(field(), 'e')
-    expect(options()).toEqual([
-      '#bienvenueGénéral',
-      '#généralGénéral',
-      'Point quotidienSalon audio',
-    ])
+    expect(options()).toEqual(['bienvenueGénéral', 'généralGénéral', 'Point quotidienSalon audio'])
     expect(field()).toHaveAttribute('aria-activedescendant', screen.getAllByRole('option')[0]?.id)
 
     await user.keyboard('{ArrowDown}')

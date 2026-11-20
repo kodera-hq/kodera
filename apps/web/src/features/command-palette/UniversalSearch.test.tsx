@@ -4,6 +4,7 @@ import { describe, it, expect, vi } from 'vitest'
 import '../../i18n'
 import { OrganisationSwitchContext } from '../../app/organisationSwitch'
 import { UniversalSearch } from './UniversalSearch'
+import { OPEN_PALETTE, PaletteProvider } from './PaletteContext'
 import { fuzzyEntries } from './search'
 import { WORKSPACE_COMMAND_EVENT } from '../workspace/WorkspaceMenu'
 const entries = [
@@ -11,6 +12,27 @@ const entries = [
   { id: 'audio', label: 'Daily team', kind: 'audio' as const },
 ]
 describe('universal workspace palette', () => {
+  it('labels the registered trigger with its visible text and exposes the shortcut separately', async () => {
+    const user = userEvent.setup()
+    const open = vi.fn()
+    window.addEventListener(OPEN_PALETTE, open)
+    try {
+      render(
+        <PaletteProvider>
+          <UniversalSearch entries={entries} shortcut onChoose={() => null} />
+        </PaletteProvider>
+      )
+      const trigger = screen.getByRole('button', { name: 'Rechercher' })
+      expect(trigger).toHaveAccessibleName('Rechercher')
+      expect(trigger).not.toHaveAttribute('aria-label')
+      expect(trigger).toHaveAttribute('aria-keyshortcuts', 'Control+K')
+      expect(screen.getByText('Ctrl+K')).toHaveAttribute('aria-hidden', 'true')
+      await user.click(trigger)
+      expect(open).toHaveBeenCalledOnce()
+    } finally {
+      window.removeEventListener(OPEN_PALETTE, open)
+    }
+  })
   it('ranks names ahead of fuzzy subsequences and accepts accent-insensitive input safely', () => {
     expect(fuzzyEntries(entries, 'gnrl').map((entry) => entry.id)).toEqual(['general'])
     expect(fuzzyEntries(entries, 'GENÉRAL').map((entry) => entry.id)).toEqual(['general'])
@@ -119,4 +141,16 @@ describe('universal workspace palette', () => {
     })
     window.removeEventListener(WORKSPACE_COMMAND_EVENT, command)
   })
+})
+
+it('clears a nonempty query before closing and exposes group headers', async () => {
+  const user = userEvent.setup()
+  render(<UniversalSearch entries={entries} shortcut onChoose={() => null} />)
+  await user.keyboard('{Control>}k{/Control}')
+  expect(screen.getAllByText('Salons')[0]).toBeVisible()
+  await user.type(screen.getByRole('combobox'), 'gen')
+  await user.keyboard('{Escape}')
+  expect(screen.getByRole('combobox')).toHaveValue('')
+  await user.keyboard('{Escape}')
+  expect(screen.queryByRole('dialog')).toBeNull()
 })
