@@ -19,6 +19,9 @@ public enum CommunityChannelKind: String, Equatable, Sendable {
 
 public enum CommunityChannelTopic: String, CaseIterable, Equatable, Sendable {
     case releases
+    case general
+    case arrivals
+    case gitTracker
     case developers
     case support
     case extensions
@@ -94,6 +97,8 @@ public enum CommunityWorkspaceBlueprint {
             showsFederatedPartnerBadge: false,
             channels: [
                 CommunityChannelBlueprint(id: "announcements", name: "announcements", kind: .text, topic: .releases, categoryId: .community),
+                CommunityChannelBlueprint(id: "general", name: "general", kind: .text, topic: .general, categoryId: .community),
+                CommunityChannelBlueprint(id: "arrivals", name: "arrivals", kind: .text, topic: .arrivals, categoryId: .community),
                 CommunityChannelBlueprint(id: "developers-community", name: "developers-community", kind: .text, topic: .developers, categoryId: .community),
                 CommunityChannelBlueprint(id: "support", name: "support", kind: .text, topic: .support, categoryId: .community),
                 CommunityChannelBlueprint(id: "extensions", name: "extensions", kind: .text, topic: .extensions, categoryId: .community),
@@ -111,6 +116,7 @@ public enum CommunityWorkspaceBlueprint {
                 CommunityChannelBlueprint(id: "dev", name: "dev", kind: .text, topic: .engineering, categoryId: .coreKodera),
                 CommunityChannelBlueprint(id: "strategy", name: "strategy", kind: .text, topic: .strategy, categoryId: .coreKodera),
                 CommunityChannelBlueprint(id: "ops-oncall", name: "ops-oncall", kind: .text, topic: .operations, categoryId: .coreKodera),
+                CommunityChannelBlueprint(id: "kodera-git-tracker", name: "kodera-git-tracker", kind: .text, topic: .gitTracker, categoryId: .coreKodera),
             ]
         ),
         CommunityCategoryBlueprint(

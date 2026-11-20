@@ -6,6 +6,8 @@ export const COMMUNITY_CATEGORIES = [
     audience: 'audiencePublic',
     channels: [
       { id: 'announcements', name: 'announcements', description: 'releases', voice: false },
+      { id: 'general', name: 'general', description: 'general', voice: false },
+      { id: 'arrivals', name: 'arrivals', description: 'arrivals', voice: false },
       {
         id: 'developers-community',
         name: 'developers-community',
@@ -27,6 +29,7 @@ export const COMMUNITY_CATEGORIES = [
       { id: 'dev', name: 'dev', description: 'engineering', voice: false },
       { id: 'strategy', name: 'strategy', description: 'strategy', voice: false },
       { id: 'ops-oncall', name: 'ops-oncall', description: 'operations', voice: false },
+      { id: 'kodera-git-tracker', name: 'kodera-git-tracker', description: 'gitTracker', voice: false },
     ],
   },
   {

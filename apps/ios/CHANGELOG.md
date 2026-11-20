@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Align the community blueprint with server provisioning, including general discussion, member arrivals and the private repository activity room.
+
 - Declare the three approved associated domains and bind the app entitlement file to the public signing team. Refuse domain, capability, entitlement-path and team drift in resource checks. Signed-device Universal Links and inbound link handling remain unqualified; no push entitlement or background mode is added.
 
 - Expire prepared proximity capabilities at their lease deadline even before scanning starts, and reject noncanonical event scopes. Bound peer tracking without evicting replay receipts, and exclude this device’s own beacons.

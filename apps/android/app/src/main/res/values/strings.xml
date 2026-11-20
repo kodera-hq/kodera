@@ -284,6 +284,9 @@
     <string name="community_audience_public">Ouvert à la communauté, aux équipes auto-hébergées et aux contributeurs.</string>
     <string name="community_audience_core">Salons internes de l’équipe Kodera, privés par défaut.</string>
     <string name="community_audience_partners">Salons sur invitation fédérée accessibles depuis Element, Tchap ou Cinny.</string>
+    <string name="community_topic_general">Discussions générales de la communauté.</string>
+    <string name="community_topic_arrivals">Bienvenue aux nouveaux membres et présentations.</string>
+    <string name="community_topic_git_tracker">Activité vérifiée des dépôts.</string>
     <string name="community_topic_releases">Notes de version et annonces produit.</string>
     <string name="community_topic_developers">Intégrations SDK, API et architecture.</string>
     <string name="community_topic_support">Entraide communautaire et diagnostic d’instance.</string>

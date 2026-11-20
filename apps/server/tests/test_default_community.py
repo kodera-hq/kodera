@@ -1,19 +1,22 @@
 """Canonical community provisioning, membership and private-room boundaries."""
 
+from datetime import timedelta
 from types import SimpleNamespace
 
 import pytest
-from django.db import transaction
+from django.db import connection, transaction
 from django.test import override_settings
+from django.utils import timezone
 
 from apps.identity.models import Identity, User
 from apps.orgs.community import bootstrap_community_workspace, ensure_community_membership
-from apps.orgs.models import Membership
+from apps.orgs.models import Membership, Organisation, SlugReservation
 from apps.support.community import CommunitySupportForbiddenError, open_community_ticket
 from apps.support.models import SupportTicket
 from apps.support.tickets import TicketRateLimitedError, TicketRequest
 from apps.workspaces.channel_access import resolve
 from apps.workspaces.channel_sets import channel_set_input
+from apps.workspaces.community import provision_community_workspace
 from apps.workspaces.models import Category, Channel, Workspace
 from apps.workspaces.structure import WorkspaceNotFoundError, read_workspace
 from services.identity.access_tokens import VerifiedAccessToken
@@ -56,7 +59,7 @@ def signup(subject="member"):
 def test_bootstrap_idempotence_and_private_policies(community):
     assert bootstrap_community_workspace().id == community.workspace.id
     assert Category.objects.count() == 3
-    assert Channel.objects.count() == 14
+    assert Channel.objects.count() == 15
     announcement = resolve(Channel.objects.get(name="announcements").id)
     assert announcement.read_only
     assert not {"message.react", "channel.history"} & announcement.denied
@@ -117,6 +120,7 @@ def test_member_visibility_and_engine_acl(community):
     assert names == {
         "announcements",
         "general",
+        "arrivals",
         "developers-community",
         "support",
         "extensions",
@@ -554,7 +558,7 @@ def test_deployed_operator_executes_bootstrap_and_explicit_binding(http_signer):
         )
         assert result.returncode == 0, result.stderr
     assert Workspace.objects.count() == 1
-    assert Channel.objects.count() == 14
+    assert Channel.objects.count() == 15
     assert Identity.objects.get(issuer=ISSUER, subject="proven-owner").user_id == owner.id
 
 
@@ -586,3 +590,230 @@ def test_support_reports_unknown_identity_and_denies_revoked_membership(
     expected = "forbidden" if state == "removed" else "identity-unknown"
     assert response.json()["type"] == "https://kodera.io/problems/" + expected
     assert SupportTicket.objects.count() == 0
+
+
+@pytest.mark.parametrize("existing_workspace", [False, True])
+def test_direct_provision_locks_workspace_before_child_access(existing_workspace):
+    with transaction.atomic():
+        owner = User.objects.create(email="owner@example.test")
+        organisation = Organisation.objects.create(
+            slug="community",
+            realm="community",
+            issuer=ISSUER,
+            name="Kodera Community",
+            state="active",
+            is_default_community=True,
+        )
+        SlugReservation.objects.create(
+            organisation=organisation,
+            slug="community",
+            state="permanent",
+            protected_at=timezone.now(),
+        )
+        Membership.objects.create(
+            user_id=owner.id,
+            organisation=organisation,
+            role="org_owner",
+            state="active",
+            accepted_at=timezone.now(),
+        )
+        if existing_workspace:
+            Workspace.objects.create(organisation=organisation)
+    workspace_locked = False
+
+    def observe(execute, statement, params, many, context):
+        nonlocal workspace_locked
+        statement = str(statement)
+        if 'FROM "workspaces_workspace"' in statement and "FOR UPDATE" in statement:
+            assert connection.in_atomic_block
+            result = execute(statement, params, many, context)
+            workspace_locked = True
+            return result
+        if any(f'"{model._meta.db_table}"' in statement for model in (Category, Channel)):
+            assert connection.in_atomic_block
+            assert workspace_locked, "Workspace must be locked before accessing its children"
+        return execute(statement, params, many, context)
+
+    assert not connection.in_atomic_block
+    with connection.execute_wrapper(observe):
+        result = provision_community_workspace(
+            organisation_id=organisation.id, administrator_ids=()
+        )
+    assert not connection.in_atomic_block
+    assert workspace_locked
+    workspace = Workspace.objects.get(pk=result.id)
+    assert (
+        workspace.arrivals_channel_id
+        == Channel.objects.get(workspace=workspace, template_key="arrivals").id
+    )
+
+
+@pytest.mark.parametrize("binding", ["unset", "canonical", "administrator"])
+def test_provision_updates_workspace_timestamp_only_when_binding_arrivals(community, binding):
+    workspace = community.workspace
+    arrivals = Channel.objects.get(workspace=workspace, template_key="arrivals")
+    chosen_id = {
+        "unset": None,
+        "canonical": arrivals.id,
+        "administrator": Channel.objects.get(workspace=workspace, template_key="general").id,
+    }[binding]
+    before = timezone.now() - timedelta(days=1)
+    Workspace.objects.filter(pk=workspace.pk).update(
+        arrivals_channel_id=chosen_id, updated_at=before
+    )
+
+    started_at = timezone.now()
+    provision_community_workspace(organisation_id=community.organisation.id, administrator_ids=())
+    workspace.refresh_from_db()
+    assert workspace.arrivals_channel_id == (arrivals.id if binding == "unset" else chosen_id)
+    if binding == "unset":
+        assert started_at <= workspace.updated_at <= timezone.now()
+    else:
+        assert workspace.updated_at == before
+
+
+def test_fresh_bootstrap_binds_arrivals_after_general(community):
+    workspace = community.workspace
+    names = list(
+        Channel.objects.filter(workspace=workspace, category__template_key="community")
+        .order_by("position", "id")
+        .values_list("name", flat=True)
+    )
+    assert names[:4] == ["announcements", "general", "arrivals", "developers-community"]
+    arrivals = Channel.objects.get(workspace=workspace, template_key="arrivals")
+    assert workspace.arrivals_channel_id == arrivals.id
+    assert (arrivals.kind, arrivals.lifecycle, arrivals.policy_mode, arrivals.topic) == (
+        "text",
+        "active",
+        "inherit",
+        "",
+    )
+    access = resolve(arrivals.id)
+    assert access.visibility == "organisation" and not access.read_only
+    before = list(Channel.objects.filter(workspace=workspace).values_list("id", flat=True))
+    for _ in range(2):
+        bootstrap_community_workspace()
+    workspace.refresh_from_db()
+    assert workspace.arrivals_channel_id == arrivals.id
+    assert set(Channel.objects.filter(workspace=workspace).values_list("id", flat=True)) == set(
+        before
+    )
+
+
+@pytest.mark.parametrize("missing_arrivals", [False, True])
+def test_bootstrap_preserves_administrator_arrivals_choice(community, missing_arrivals):
+    workspace = community.workspace
+    chosen = Channel.objects.get(workspace=workspace, name="general")
+    Workspace.objects.filter(pk=workspace.pk).update(arrivals_channel_id=chosen.id)
+    if missing_arrivals:
+        Channel.objects.filter(workspace=workspace, template_key="arrivals").update(
+            name="earlier-welcome", template_key=None
+        )
+    for _ in range(2):
+        bootstrap_community_workspace()
+    workspace.refresh_from_db()
+    assert workspace.arrivals_channel_id == chosen.id
+    assert Channel.objects.filter(workspace=workspace, name="arrivals").count() == 1
+
+
+@pytest.mark.parametrize("existing", ["canonical", "untemplated", "missing"])
+def test_bootstrap_binds_unset_arrivals_on_existing_workspace(community, existing):
+    workspace = community.workspace
+    arrivals = Channel.objects.get(workspace=workspace, template_key="arrivals")
+    Workspace.objects.filter(pk=workspace.pk).update(arrivals_channel_id=None)
+    if existing == "missing":
+        Channel.objects.filter(pk=arrivals.pk).update(name="earlier-welcome", template_key=None)
+    elif existing == "untemplated":
+        Channel.objects.filter(pk=arrivals.pk).update(template_key=None)
+    for _ in range(2):
+        bootstrap_community_workspace()
+    workspace.refresh_from_db()
+    bound = Channel.objects.get(workspace=workspace, template_key="arrivals")
+    assert workspace.arrivals_channel_id == bound.id
+    assert existing == "missing" or bound.id == arrivals.id
+    assert Channel.objects.filter(workspace=workspace, name="arrivals").count() == 1
+
+
+@pytest.mark.parametrize("ignored", ["deleted", "deletion_pending", "other_category"])
+@pytest.mark.parametrize("adopt_existing", [False, True])
+def test_bootstrap_ignores_unrelated_arrivals(community, ignored, adopt_existing):
+    workspace = community.workspace
+    arrivals = Channel.objects.get(workspace=workspace, template_key="arrivals")
+    Workspace.objects.filter(pk=workspace.pk).update(arrivals_channel_id=None)
+    changes = {"template_key": None}
+    if ignored == "other_category":
+        changes["category"] = Category.objects.get(workspace=workspace, template_key="core_kodera")
+        changes["position"] = 99
+    else:
+        changes["lifecycle"] = ignored
+    Channel.objects.filter(pk=arrivals.pk).update(**changes)
+    candidate = None
+    if adopt_existing:
+        candidate = Channel.objects.create(
+            workspace=workspace,
+            category=Category.objects.get(workspace=workspace, template_key="community"),
+            name="arrivals",
+            kind="text",
+            lifecycle="active",
+            position=99,
+        )
+
+    for _ in range(2):
+        bootstrap_community_workspace()
+    workspace.refresh_from_db()
+    arrivals.refresh_from_db()
+    canonical = Channel.objects.get(workspace=workspace, template_key="arrivals")
+    assert workspace.arrivals_channel_id == canonical.id
+    assert canonical.id != arrivals.id
+    assert canonical.category.template_key == "community"
+    assert (canonical.kind, canonical.lifecycle, canonical.policy_mode) == (
+        "text",
+        "active",
+        "inherit",
+    )
+    assert not adopt_existing or canonical.id == candidate.id
+    assert arrivals.template_key is None
+    assert arrivals.lifecycle == changes.get("lifecycle", "active")
+    assert arrivals.category_id == changes.get("category", canonical.category).id
+    assert Channel.objects.filter(workspace=workspace, name="arrivals").count() == 2
+
+
+@pytest.mark.parametrize("drift", ["archived", "audio", "explicit", "ambiguous"])
+def test_bootstrap_refuses_incompatible_existing_arrivals(community, drift):
+    workspace = community.workspace
+    arrivals = Channel.objects.get(workspace=workspace, template_key="arrivals")
+    Workspace.objects.filter(pk=workspace.pk).update(arrivals_channel_id=None)
+    changes = {"template_key": None}
+    if drift == "archived":
+        changes["lifecycle"] = "archived"
+    elif drift == "audio":
+        changes["name"] = "earlier-welcome"
+        Channel.objects.create(
+            workspace=workspace,
+            category=arrivals.category,
+            name="arrivals",
+            kind="audio",
+            lifecycle="active",
+            position=99,
+        )
+    elif drift == "explicit":
+        changes["policy_mode"] = "explicit"
+        changes["explicit_policy_id"] = Channel.objects.get(
+            workspace=workspace, template_key="announcements"
+        ).explicit_policy_id
+    else:
+        Channel.objects.create(
+            workspace=workspace,
+            category=arrivals.category,
+            name="arrivals",
+            kind="text",
+            lifecycle="active",
+            position=99,
+        )
+    Channel.objects.filter(pk=arrivals.pk).update(**changes)
+    with pytest.raises(ValueError, match="Canonical channel drift"):
+        bootstrap_community_workspace()
+    workspace.refresh_from_db()
+    arrivals.refresh_from_db()
+    assert workspace.arrivals_channel_id is None
+    assert arrivals.template_key is None

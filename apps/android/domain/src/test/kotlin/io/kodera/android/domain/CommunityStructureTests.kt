@@ -21,7 +21,10 @@ class CommunityStructureTests {
         assertEquals(CommunityAudience.PUBLIC_OPEN, community.audience)
         assertFalse(community.showsFederatedPartnerBadge)
         assertTrue(community.partnerBadges.isEmpty())
-        assertEquals(7, community.channels.size)
+        assertEquals(
+            listOf("announcements", "general", "arrivals", "developers-community", "support", "extensions", "self-hosting", "show-and-tell", "office-hours"),
+            community.channels.map { it.id },
+        )
         assertTrue(community.channels.all { !it.isPrivateByDefault })
         assertTrue(community.channels.single { it.id == "office-hours" }.isVoice)
 
@@ -31,7 +34,7 @@ class CommunityStructureTests {
         assertEquals(CommunityAudience.CORE_TEAM, core.audience)
         assertFalse(core.showsFederatedPartnerBadge)
         assertTrue(core.keepsInternalRoomsPrivate)
-        assertEquals(listOf("dev", "strategy", "ops-oncall"), core.channels.map { it.id })
+        assertEquals(listOf("dev", "strategy", "ops-oncall", "kodera-git-tracker"), core.channels.map { it.id })
         assertTrue(core.channels.all { it.visibility == CommunityChannelVisibility.PRIVATE_INTERNAL && it.isPrivateByDefault })
 
         val partners = categories[2]

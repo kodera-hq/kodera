@@ -90,7 +90,9 @@
       "dev",
       "strategy",
       "ops-oncall",
-      "kodera-git-tracker"
+      "kodera-git-tracker",
+      "partner-onboarding",
+      "partner-feedback"
     ],
     "connectors": [],
     "roles": [
@@ -127,7 +129,10 @@
       {
         "name": "Design Partners",
         "visibility": "restricted",
-        "channels": []
+        "channels": [
+          "partner-onboarding",
+          "partner-feedback"
+        ]
       }
     ],
     "readOnlyChannels": [

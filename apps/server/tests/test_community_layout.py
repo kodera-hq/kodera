@@ -44,7 +44,7 @@ ROOT = Path(__file__).resolve().parents[1]
 # Every word the default layout may use. Adding a room means adding its words here, in review.
 VOCABULARY = frozenset(
     """
-    announcements general developers community support extensions self hosting show and tell
+    announcements general arrivals developers community support extensions self hosting show and tell
     office hours core dev strategy ops oncall git tracker design partner partners onboarding
     feedback kodera
     """.split()
@@ -120,7 +120,7 @@ def test_a_fresh_bootstrap_provisions_the_purpose_names_and_nothing_else(communi
     ]
     assert naming_violations(provisioned_texts(community.workspace.id)) == []
     assert Category.objects.get(template_key="design_partners").name == "Design Partners"
-    assert Channel.objects.filter(workspace=community.workspace).count() == 14
+    assert Channel.objects.filter(workspace=community.workspace).count() == 15
     for room in partner_rooms(community):
         access = resolve(room["id"])
         assert access.visibility == "restricted" and access.allow_members == ()
@@ -214,8 +214,8 @@ def test_a_rerun_on_the_earlier_layout_renames_each_room_in_place(community):
         # The partner's grant on the category still reaches the renamed room.
         assert resolve(room.id).allow_members == (before.partner.id,)
     assert [room.position for room in renamed] == [0, 1]
-    # Nothing created, nothing deleted: the fourteen canonical rooms and the administrator's own.
-    assert Channel.objects.filter(workspace=community.workspace).count() == 15
+    # Nothing created, nothing deleted: the fifteen canonical rooms and the administrator's own.
+    assert Channel.objects.filter(workspace=community.workspace).count() == 16
     own = Channel.objects.get(id=before.own.id)
     assert (own.name, own.template_key, own.version) == ("partner-alpha-notes", None, 1)
     assert naming_violations(layout_texts(layout.CATEGORIES)) == []
@@ -241,7 +241,7 @@ def test_the_next_rerun_finds_nothing_to_rename(community):
         (room.name, room.version) for room in renamed
     ]
     assert Workspace.objects.get(id=community.workspace.id).structure_revision == revision
-    assert Channel.objects.filter(workspace=community.workspace).count() == 15
+    assert Channel.objects.filter(workspace=community.workspace).count() == 16
 
 
 def test_a_rerun_on_the_present_layout_renames_nothing(community):
@@ -268,7 +268,7 @@ def check_one_earlier_room_takes_the_name_left(w):
 
 def test_a_half_migrated_community_is_completed_in_place(community):
     check_one_earlier_room_takes_the_name_left(community)
-    assert Channel.objects.filter(workspace=community.workspace).count() == 14
+    assert Channel.objects.filter(workspace=community.workspace).count() == 15
 
 
 def test_a_room_an_administrator_renamed_is_theirs_and_stays(community):
@@ -298,7 +298,7 @@ def test_an_archived_earlier_room_is_drift_and_nothing_is_changed(community):
     with pytest.raises(ValueError, match="channel drift"):
         bootstrap_community_workspace()
     assert [room["name"] for room in partner_rooms(community)][:2] == [n for n, _ in EARLIER]
-    assert Channel.objects.filter(workspace=community.workspace).count() == 15
+    assert Channel.objects.filter(workspace=community.workspace).count() == 16
 
 
 def test_no_other_category_is_reconciled_this_way(community):

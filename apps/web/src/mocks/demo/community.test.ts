@@ -1,6 +1,6 @@
 import { beforeAll, afterAll, afterEach, expect, it, vi } from 'vitest'
 import { setupServer } from 'msw/node'
-import '../../i18n'
+import i18n from '../../i18n'
 import { handlers } from '../overlays/demo.groupe-vercelli'
 import {
   registerInteractiveDemos,
@@ -11,6 +11,7 @@ import {
 } from '../../app/interactiveDemo'
 import { createLocalWorkspaceStore } from './workspaceStore'
 import { readyWorkspace } from '../fixtures/workspaceFixtures'
+import { workspaceDemoMessages } from './workspaceMessages'
 import {
   COMMUNITY_CHANNEL_NAMES,
   COMMUNITY_ORGANISATION_ID,
@@ -28,7 +29,11 @@ afterAll(() => {
   server.close()
   vi.unstubAllEnvs()
 })
-afterEach(() => registerInteractiveDemo(undefined))
+afterEach(async () => {
+  registerInteractiveDemo(undefined)
+  sessionStorage.removeItem(`kodera.demo.conversations.${COMMUNITY_ORGANISATION_ID}`)
+  await i18n.changeLanguage('fr')
+})
 const base = 'https://core.test/api/v1'
 const get = async (path: string, headers = {}) => (await fetch(base + path, { headers })).json()
 
@@ -52,7 +57,7 @@ it('discovers community without replacing the existing vercelli identity', async
   expect(me.identities[0]).toMatchObject({ realm: 'community', subject: 'mock-user-community' })
   expect((await get('/me')).organisations[0].organisation.slug).toBe('vercelli')
 })
-it('serves the matching organisation, tenant and three exact categories and twelve ready community channels', async () => {
+it('serves the matching organisation, tenant and three exact categories and fifteen ready community channels', async () => {
   expect(await get(`/organisations/${COMMUNITY_ORGANISATION_ID}`)).toMatchObject({
     slug: 'community',
   })
@@ -68,6 +73,9 @@ it('serves the matching organisation, tenant and three exact categories and twel
       .flatMap((category: { channels: { name: string }[] }) => category.channels)
       .map((channel: { name: string }) => channel.name)
   ).toEqual(COMMUNITY_CHANNEL_NAMES)
+  expect(
+    workspace.categories.flatMap((category: { channels: unknown[] }) => category.channels)
+  ).toHaveLength(15)
   expect(workspace.categories.map((category: { name: string }) => category.name)).toEqual([
     'Community',
     'Core Kodera',
@@ -80,6 +88,8 @@ it('serves the matching organisation, tenant and three exact categories and twel
   ).toEqual([
     [
       ['announcements', 'text'],
+      ['general', 'text'],
+      ['arrivals', 'text'],
       ['developers-community', 'text'],
       ['support', 'text'],
       ['extensions', 'text'],
@@ -91,6 +101,7 @@ it('serves the matching organisation, tenant and three exact categories and twel
       ['dev', 'text'],
       ['strategy', 'text'],
       ['ops-oncall', 'text'],
+      ['kodera-git-tracker', 'text'],
     ],
     [
       ['partner-onboarding', 'text'],
@@ -103,39 +114,66 @@ it('serves the matching organisation, tenant and three exact categories and twel
     capacity: null,
   })
 })
-it('registers both local stores, preserving per-organisation isolation and normal landing', async () => {
-  expect(createDemoWorkspaceStore('community', communityWorkspace())).toBeUndefined()
-  registerInteractiveDemos([
-    { slug: 'vercelli', createStore: createLocalWorkspaceStore },
-    communityDemo,
-  ])
-  expect(isDemoActive('community')).toBe(true)
-  expect(isDemoActive('vercelli')).toBe(true)
-  expect(demoLandingFor('community')).toBe('/$org/workspace')
-  expect(demoLandingFor('vercelli')).toBeUndefined()
-  const community = createDemoWorkspaceStore('community', communityWorkspace())!
-  const vercelli = createDemoWorkspaceStore('vercelli', readyWorkspace())!
-  for (const room of community.getSnapshot().rooms.filter((room) => room.kind === 'text')) {
-    expect(community.getTimeline(room.roomId)[0]?.body).toMatch(
-      ['announcements', 'support'].includes(room.name) ? /simul/i : /Bienvenue/
+it.each(['fr', 'en'] as const)(
+  'registers both local stores with complete %s timelines, preserving per-organisation isolation and normal landing',
+  async (language) => {
+    await i18n.changeLanguage(language)
+    expect(createDemoWorkspaceStore('community', communityWorkspace())).toBeUndefined()
+    registerInteractiveDemos([
+      { slug: 'vercelli', createStore: createLocalWorkspaceStore },
+      communityDemo,
+    ])
+    expect(isDemoActive('community')).toBe(true)
+    expect(isDemoActive('vercelli')).toBe(true)
+    expect(demoLandingFor('community')).toBe('/$org/workspace')
+    expect(demoLandingFor('vercelli')).toBeUndefined()
+    const community = createDemoWorkspaceStore('community', communityWorkspace())!
+    const vercelli = createDemoWorkspaceStore('vercelli', readyWorkspace())!
+    expect(community.getSnapshot().rooms.map((room) => room.name)).toEqual(COMMUNITY_CHANNEL_NAMES)
+    expect(Object.keys(workspaceDemoMessages[language].community).sort()).toEqual(
+      community
+        .getSnapshot()
+        .rooms.filter((room) => room.kind === 'text')
+        .map((room) => room.name)
+        .sort()
     )
-    expect(community.getTimeline(room.roomId)).toHaveLength(room.name === 'announcements' ? 3 : 2)
-    if (room.name === 'partner-onboarding' || room.name === 'partner-feedback') {
-      expect(community.getTimeline(room.roomId)[1]?.body).toMatch(/Element.*Matrix|Matrix.*Element/)
+    for (const room of community.getSnapshot().rooms.filter((room) => room.kind === 'audio')) {
+      expect(community.getTimeline(room.roomId)).toEqual([])
     }
-  }
-  const room = community.getSnapshot().rooms[0]!.roomId
-  await community.send(room, 'Community message')
-  expect(community.getTimeline(room).at(-1)?.body).toBe('Community message')
-  expect(
-    vercelli
-      .getSnapshot()
-      .rooms.every((room) =>
-        vercelli.getTimeline(room.roomId).every((message) => message.body !== 'Community message')
+    for (const room of community.getSnapshot().rooms.filter((room) => room.kind === 'text')) {
+      const conversation =
+        workspaceDemoMessages[language].community[
+          room.name as keyof typeof workspaceDemoMessages.fr.community
+        ]
+      expect(
+        community
+          .getTimeline(room.roomId)
+          .slice(0, 2)
+          .map((message) => message.body)
+      ).toEqual(conversation)
+      expect(community.getTimeline(room.roomId)[0]?.body).toMatch(
+        ['announcements', 'support'].includes(room.name) ? /simul/i : /Bienvenue|Welcome/
       )
-  ).toBe(true)
-  expect(createDemoWorkspaceStore('other', communityWorkspace())).toBeUndefined()
-})
+      expect(community.getTimeline(room.roomId)).toHaveLength(room.name === 'announcements' ? 3 : 2)
+      if (room.name === 'partner-onboarding' || room.name === 'partner-feedback') {
+        expect(community.getTimeline(room.roomId)[1]?.body).toMatch(
+          /Element.*Matrix|Matrix.*Element/
+        )
+      }
+    }
+    const room = community.getSnapshot().rooms[0]!.roomId
+    await community.send(room, 'Community message')
+    expect(community.getTimeline(room).at(-1)?.body).toBe('Community message')
+    expect(
+      vercelli
+        .getSnapshot()
+        .rooms.every((room) =>
+          vercelli.getTimeline(room.roomId).every((message) => message.body !== 'Community message')
+        )
+    ).toBe(true)
+    expect(createDemoWorkspaceStore('other', communityWorkspace())).toBeUndefined()
+  }
+)
 
 it.each(['community', 'vercelli'] as const)(
   'keeps local Matrix invitations scoped to one room in %s',

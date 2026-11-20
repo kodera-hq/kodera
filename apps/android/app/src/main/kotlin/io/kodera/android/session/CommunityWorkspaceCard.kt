@@ -46,6 +46,9 @@ internal object CommunityCategoryPresentation {
     }
 
     fun topicLabelRes(topic: CommunityChannelTopic): Int = when (topic) {
+        CommunityChannelTopic.GENERAL -> R.string.community_topic_general
+        CommunityChannelTopic.ARRIVALS -> R.string.community_topic_arrivals
+        CommunityChannelTopic.GIT_TRACKER -> R.string.community_topic_git_tracker
         CommunityChannelTopic.RELEASES -> R.string.community_topic_releases
         CommunityChannelTopic.DEVELOPERS -> R.string.community_topic_developers
         CommunityChannelTopic.SUPPORT -> R.string.community_topic_support

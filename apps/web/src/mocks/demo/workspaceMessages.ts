@@ -19,6 +19,14 @@ export const workspaceDemoMessages = {
         'Exemple simulé d’annonces et de notes de version dans Kodera Community. Ce salon ne diffuse pas d’annonces officielles.',
         `Simulation locale : essayez un échange dans #support. Pour toute question réelle sur le produit, écrivez à ${SUPPORT_EMAIL}.`,
       ],
+      general: [
+        'Bienvenue dans les discussions générales de la communauté Kodera.',
+        'Partagez vos idées et vos questions avec les autres membres de la communauté.',
+      ],
+      arrivals: [
+        'Bienvenue aux nouveaux membres ! Présentez-vous et racontez ce qui vous amène ici.',
+        'Cette conversation est simulée : les présentations restent dans cette session du navigateur.',
+      ],
       'developers-community': [
         'Bienvenue ! Partagez ici vos questions de développement, d’architecture et d’API.',
         'Pour une proposition de contrat, joignez un exemple de requête et de réponse ; nous pouvons discuter des limites du control plane avant la revue.',
@@ -51,6 +59,10 @@ export const workspaceDemoMessages = {
         'Bienvenue dans le salon privé infrastructure, Keycloak et monitoring.',
         'Avant toute intervention, vérifiez les alertes, l’issuer OIDC concerné et les procédures opérateur. Conservez les secrets hors des conversations.',
       ],
+      'kodera-git-tracker': [
+        'Bienvenue dans le suivi Git de la communauté Kodera.',
+        'Exemple simulé d’activité de dépôt : aucun webhook réel n’est reçu dans cette démonstration.',
+      ],
       'partner-onboarding': [
         'Bienvenue dans le salon privé d’accueil des partenaires de conception.',
         'Exemple de message depuis Element, client Matrix standard : notre équipe souhaite retrouver le même fil de feedback dans Element et dans le Workspace Kodera, sans recopier la conversation.',
@@ -77,6 +89,14 @@ export const workspaceDemoMessages = {
       announcements: [
         'Simulated example of announcements and release notes in Kodera Community. This channel does not publish official announcements.',
         `Local simulation: try a conversation in #support. For real product questions, email ${SUPPORT_EMAIL}.`,
+      ],
+      general: [
+        'Welcome to general discussions in the Kodera community.',
+        'Share ideas and questions with other community members.',
+      ],
+      arrivals: [
+        'Welcome, new members! Introduce yourself and share what brings you here.',
+        'This conversation is simulated: introductions stay in this browser session.',
       ],
       'developers-community': [
         'Welcome! Ask development, architecture and API questions here.',
@@ -109,6 +129,10 @@ export const workspaceDemoMessages = {
       'ops-oncall': [
         'Welcome to the private infrastructure, Keycloak and monitoring channel.',
         'Before an intervention, check alerts, the affected OIDC issuer and operator procedures. Keep secrets out of conversations.',
+      ],
+      'kodera-git-tracker': [
+        'Welcome to the Kodera community Git tracker.',
+        'Simulated repository activity example: no real webhook is received in this demo.',
       ],
       'partner-onboarding': [
         'Welcome to the private onboarding room for design partners.',

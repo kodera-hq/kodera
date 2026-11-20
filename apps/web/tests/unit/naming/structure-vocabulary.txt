@@ -9,6 +9,7 @@ alertmanager
 alerts
 and
 announcements
+arrivals
 announcer
 assistant
 audience
@@ -32,8 +33,10 @@ extensions
 feed
 feedback
 frameio
+general
 gdrive
 gh
+git
 github
 gitlab
 hello

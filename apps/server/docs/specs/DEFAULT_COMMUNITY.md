@@ -33,18 +33,25 @@ The command queues membership and channel sets; the enrolled
 tenant agent must acknowledge real rooms before messaging is ready. It is repeatable, and is
 also the operator's way to queue the sets at once rather than at the agent's next poll.
 
-The Community category contains announcements, general, developers-community,
+The Community category contains announcements, general, arrivals, developers-community,
 support, extensions, self-hosting, show-and-tell and the office-hours audio room.
 Announcements allows member history and reactions while posts require an
 administrator. Core Kodera includes the private `kodera-git-tracker` channel for
 operator-configured verified provider activity. Core Kodera is explicitly granted to community owners/admins;
 Design Partners starts with no member grants. Assign partner access explicitly.
 
+The `arrivals` text room welcomes new members and inherits the Community access policy.
+Bootstrap binds `workspace.arrivals_channel_id` to this room only when the field is `None`.
+Repeated runs preserve an administrator-selected room, reuse an existing canonical arrivals
+room, and create it if missing. A compatible untemplated room named `arrivals` is adopted
+in place; ambiguous or incompatible rooms require operator reconciliation. Existing rooms
+retain their positions; a fresh workspace places `arrivals` immediately after `general`.
+
 ## The layout
 
 | Category | Template key | Visibility | Channels |
 |---|---|---|---|
-| Community | `community` | organisation | `announcements`, `general`, `developers-community`, `support`, `extensions`, `self-hosting`, `show-and-tell`, `office-hours` (audio) |
+| Community | `community` | organisation | `announcements`, `general`, `arrivals`, `developers-community`, `support`, `extensions`, `self-hosting`, `show-and-tell`, `office-hours` (audio) |
 | Core Kodera | `core_kodera` | restricted, granted to owners and admins | `dev`, `strategy`, `ops-oncall`, `kodera-git-tracker` |
 | Design Partners | `design_partners` | restricted, no grant | `partner-onboarding`, `partner-feedback` |
 
