@@ -370,11 +370,30 @@ describe('MessageComposer', () => {
       editing: { roomId: ROOM, eventId: '$m4' },
       text: 'ping @bob:[2001:db8::1]!',
     })
-    renderComposer(ipv6Swap.store, ipv6Draft, [{ userId: BOB_ONE.userId, label: 'bob' }])
+    const v4 = renderComposer(ipv6Swap.store, ipv6Draft, [{ userId: BOB_ONE.userId, label: 'bob' }])
     screen.getByRole('textbox', { name: /général/ }).focus()
     await user.keyboard('{Enter}')
     await waitFor(() =>
       expect(ipv6Swap.edit).toHaveBeenCalledWith(ROOM, '$m4', 'ping @bob:[2001:db8::1]!')
     )
+    v4.unmount()
+
+    // 5. Editing `@bob:one.test` to symbol-suffixed MXIDs (`@bob+:two.test`, `@bob=:two.test`,
+    // `@bob/admin`) must NOT attach `@bob:one.test` via `{ label: 'bob' }` or historical mentions.
+    for (const editedText of ['ping @bob+:two.test!', 'ping @bob=:two.test!', 'ping @bob/admin!']) {
+      const symSwap = storeWith(undefined, undefined, [originalMxid])
+      const symDraft = draftFor()
+      symDraft.update({
+        editing: { roomId: ROOM, eventId: '$m4' },
+        text: editedText,
+      })
+      const view = renderComposer(symSwap.store, symDraft, [
+        { userId: BOB_ONE.userId, label: 'bob' },
+      ])
+      screen.getByRole('textbox', { name: /général/ }).focus()
+      await user.keyboard('{Enter}')
+      await waitFor(() => expect(symSwap.edit).toHaveBeenCalledWith(ROOM, '$m4', editedText))
+      view.unmount()
+    }
   })
 })

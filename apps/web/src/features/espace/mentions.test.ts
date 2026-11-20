@@ -112,6 +112,11 @@ describe('the whole room', () => {
     expect(mentionsRoom('mail@salon.fr')).toBe(false)
     expect(mentionsRoom('ping @room:one.test')).toBe(false)
     expect(mentionsRoom('ping @room:[2001:db8::1]')).toBe(false)
+    expect(mentionsRoom('ping @room+:two.test')).toBe(false)
+    expect(mentionsRoom('ping @room=:two.test')).toBe(false)
+    expect(mentionsRoom('ping @room/:two.test')).toBe(false)
+    expect(mentionsRoom('ping @room+ops')).toBe(false)
+    expect(mentionsRoom('ping @room/ops')).toBe(false)
   })
 })
 
@@ -136,14 +141,24 @@ describe('the mention targets of a message', () => {
     expect(mentionTargetsIn('rien', [MIGUEL])).toEqual([])
   })
 
-  it('does not match a short label or MXID prefix inside another MXID domain, IPv6 host, or suffix', () => {
+  it('does not match a short label or MXID prefix inside another MXID domain, IPv6 host, symbol localpart, or suffix', () => {
     const bobOne = { userId: '@bob:one.test', label: 'bob:one.test' }
     const bobIpv6 = { userId: '@bob:[2001:db8::1]', label: 'bob:[2001:db8::1]' }
+    const bobPlus = { userId: '@bob+:two.test', label: 'bob+:two.test' }
     const bobLocal = { userId: '@bob:one.test', label: 'bob' }
     expect(mentionTargetsIn('ping @bob:two.test!', [bobOne, bobLocal])).toEqual([])
     expect(mentionTargetsIn('ping @bob:[2001:db8::1]!', [bobOne, bobLocal])).toEqual([])
     expect(mentionTargetsIn('ping @bob:[2001:db8::1]:8448!', [bobIpv6, bobLocal])).toEqual([])
     expect(mentionTargetsIn('ping @bob:[2001:db8::1]!', [bobIpv6])).toEqual([bobIpv6])
+    expect(mentionTargetsIn('ping @bob+:two.test!', [bobOne, bobLocal])).toEqual([])
+    expect(mentionTargetsIn('ping @bob=:two.test!', [bobOne, bobLocal])).toEqual([])
+    expect(mentionTargetsIn('ping @bob/:two.test!', [bobOne, bobLocal])).toEqual([])
+    expect(mentionTargetsIn('ping @bob-:two.test!', [bobOne, bobLocal])).toEqual([])
+    expect(mentionTargetsIn('ping @bob!:two.test!', [bobOne, bobLocal])).toEqual([])
+    expect(mentionTargetsIn('ping @bob+tag!', [bobOne, bobLocal])).toEqual([])
+    expect(mentionTargetsIn('ping @bob=tag!', [bobOne, bobLocal])).toEqual([])
+    expect(mentionTargetsIn('ping @bob/admin!', [bobOne, bobLocal])).toEqual([])
+    expect(mentionTargetsIn('ping @bob+:two.test!', [bobPlus, bobLocal])).toEqual([bobPlus])
     expect(mentionTargetsIn('ping @bob:one.test.evil!', [bobOne, bobLocal])).toEqual([])
     expect(mentionTargetsIn('ping @bob:one.test.', [bobOne])).toEqual([bobOne])
     expect(mentionTargetsIn('ping @bob: note', [bobLocal])).toEqual([bobLocal])
