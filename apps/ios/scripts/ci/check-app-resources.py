@@ -53,8 +53,8 @@ from xml.parsers.expat import ExpatError
 # The qualified token producer. Regenerating the tokens from another revision
 # is a deliberate act: update this pin in the same change.
 TOKEN_FORMAT = "kodera-native-tokens/1"
-TOKEN_PRODUCER_COMMIT = "cf4e10dbd9aaab05f65deedfb50ca100fd0e3d73"
-TOKEN_SOURCE_SHA256 = "b433e6661de2804471ba3f62715b21b9ef81e218a967bc83ca62132f82161e51"
+PRODUCER_COMMIT_PIN = "e4d3a65c0770c8fd6f36bf2e46a5778b6656e792"
+SOURCE_SHA256_PIN = "cdf9e7a299fb260a9aacd87c39cac82a7cec644e01a3a50757a92d5174ddee5a"
 
 LANGUAGES = ("fr", "en")
 SOURCE_LANGUAGE = "fr"
@@ -338,10 +338,10 @@ def findings(root):
         errors.append("App/Generated/KoderaTokens.swift differs from TokenProvenance.json generatedSha256; regenerate it, do not edit it")
     if pin.get("format") != TOKEN_FORMAT:
         errors.append(f"TokenProvenance.json format is not {TOKEN_FORMAT}")
-    if pin.get("producerCommit") != TOKEN_PRODUCER_COMMIT:
+    if pin.get("producerCommit") != PRODUCER_COMMIT_PIN:
         errors.append("TokenProvenance.json producerCommit is not the qualified token producer")
     source_sha = pin.get("sourceSha256")
-    if source_sha != TOKEN_SOURCE_SHA256 or source_sha not in read_bytes(tokens).decode("utf-8", "replace"):
+    if source_sha != SOURCE_SHA256_PIN or source_sha not in read_bytes(tokens).decode("utf-8", "replace"):
         errors.append("KoderaTokens.swift does not carry the sourceSha256 recorded in TokenProvenance.json")
 
     catalogue = read_json(app / "Resources/Localizable.xcstrings")
