@@ -821,23 +821,29 @@ def test_assign_roles_locks_membership_before_workspace(world, monkeypatch):
     from apps.workspaces import iam
     from apps.workspaces.moderation import RefusalError
 
-    org, _, members, tokens = world
+    org, workspace, members, tokens = world
     owner = {"verified": tokens[0], "organisation_id": org.id, "request_id": str(uuid4())}
     role = iam.create_role(**owner, data={"name": "Builders", "slug": "builders"})
     events: list[tuple[str, UUID]] = []
     real_target = iam._target
+    real_lock_org = iam.lock_organisation_fence
     real_lock_workspace = iam.lock_workspace
 
-    def tracked_target(workspace, membership_id, *, lock=True):
+    def tracked_target(ws, membership_id, *, lock=False):
         if lock:
-            events.append(("membership", membership_id))
-        return real_target(workspace, membership_id, lock=lock)
+            events.append(("membership_lock", membership_id))
+        return real_target(ws, membership_id, lock=lock)
+
+    def tracked_lock_org(*, organisation_id):
+        events.append(("organisation", organisation_id))
+        return real_lock_org(organisation_id=organisation_id)
 
     def tracked_lock_workspace(*, workspace_id):
         events.append(("workspace", workspace_id))
         return real_lock_workspace(workspace_id=workspace_id)
 
     monkeypatch.setattr(iam, "_target", tracked_target)
+    monkeypatch.setattr(iam, "lock_organisation_fence", tracked_lock_org)
     monkeypatch.setattr(iam, "lock_workspace", tracked_lock_workspace)
     with pytest.raises(RefusalError) as unauthorized:
         iam.assign_roles(
@@ -851,7 +857,7 @@ def test_assign_roles_locks_membership_before_workspace(world, monkeypatch):
     assert events == []
 
     iam.assign_roles(**owner, membership_id=members[3].id, role_ids=[role["id"]])
-    assert [step for step, _ in events] == ["membership", "workspace"]
+    assert events == [("organisation", org.id), ("workspace", workspace.id)]
 
 
 def test_create_link_refuses_explicit_null_auto_role_ids(world):
@@ -907,20 +913,25 @@ def test_moderate_report_and_redeem_lock_membership_before_workspace(world, monk
     events: list[str] = []
     real_for_workspace = moderation.for_workspace
     real_for_user = moderation.for_user
+    real_lock_org = moderation.lock_organisation_fence
     real_create_from_link = moderation.create_from_workspace_link
     real_lock_workspace = moderation.lock_workspace
 
     def tracked_for_workspace(*, organisation_id, membership_id, lock=True):
         if lock:
-            events.append("membership")
+            events.append("membership_lock")
         return real_for_workspace(
             organisation_id=organisation_id, membership_id=membership_id, lock=lock
         )
 
     def tracked_for_user(*, organisation_id, user_id, lock=False):
         if lock:
-            events.append("membership")
+            events.append("membership_lock")
         return real_for_user(organisation_id=organisation_id, user_id=user_id, lock=lock)
+
+    def tracked_lock_org(*, organisation_id):
+        events.append("organisation")
+        return real_lock_org(organisation_id=organisation_id)
 
     def tracked_create_from_link(*, organisation_id, user_id):
         events.append("membership_create")
@@ -932,6 +943,7 @@ def test_moderate_report_and_redeem_lock_membership_before_workspace(world, monk
 
     monkeypatch.setattr(moderation, "for_workspace", tracked_for_workspace)
     monkeypatch.setattr(moderation, "for_user", tracked_for_user)
+    monkeypatch.setattr(moderation, "lock_organisation_fence", tracked_lock_org)
     monkeypatch.setattr(moderation, "create_from_workspace_link", tracked_create_from_link)
     monkeypatch.setattr(moderation, "lock_workspace", tracked_lock_workspace)
 
@@ -959,7 +971,7 @@ def test_moderate_report_and_redeem_lock_membership_before_workspace(world, monk
             expires_at=None,
             request_id=str(uuid4()),
         )
-        assert events == ["membership", "workspace"]
+        assert events == ["organisation", "workspace"]
 
     events.clear()
     moderation.report(
@@ -971,11 +983,11 @@ def test_moderate_report_and_redeem_lock_membership_before_workspace(world, monk
         event_id="",
         request_id=str(uuid4()),
     )
-    assert events == ["membership", "workspace"]
+    assert events == ["organisation", "workspace"]
 
     events.clear()
     moderation.redeem_link(verified=tokens[3], code=code, request_id=str(uuid4()))
-    assert events == ["membership", "workspace"]
+    assert events == ["organisation", "workspace"]
 
     newcomer_subject = str(uuid4())
     newcomer_user = User.objects.create(email=f"{newcomer_subject}@example.org")
@@ -1001,7 +1013,7 @@ def test_moderate_report_and_redeem_lock_membership_before_workspace(world, monk
     )
     events.clear()
     joined = moderation.redeem_link(verified=newcomer_token, code=code, request_id=str(uuid4()))
-    assert events == ["membership", "membership", "membership_create", "workspace"]
+    assert events == ["membership_create", "workspace"]
     assert WorkspaceMemberRole.objects.filter(
         workspace=workspace, membership_id=joined.id, role_id=role["id"]
     ).exists()

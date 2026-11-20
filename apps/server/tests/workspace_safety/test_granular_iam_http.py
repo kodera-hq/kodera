@@ -597,26 +597,36 @@ def test_http_idempotent_writes_never_lock_membership_after_workspace(
     code = link.json()["code"]
 
     events: list[str] = []
+    real_iam_lock_org = iam.lock_organisation_fence
     real_iam_lock_workspace = iam.lock_workspace
+    real_mod_lock_org = moderation.lock_organisation_fence
     real_for_workspace = moderation.for_workspace
     real_for_user = moderation.for_user
     real_create_from_link = moderation.create_from_workspace_link
     real_mod_lock_workspace = moderation.lock_workspace
 
+    def tracked_iam_org(*, organisation_id):
+        events.append("organisation")
+        return real_iam_lock_org(organisation_id=organisation_id)
+
     def tracked_iam_lock(*, workspace_id):
         events.append("workspace")
         return real_iam_lock_workspace(workspace_id=workspace_id)
 
+    def tracked_mod_org(*, organisation_id):
+        events.append("organisation")
+        return real_mod_lock_org(organisation_id=organisation_id)
+
     def tracked_for_workspace(*, organisation_id, membership_id, lock=True):
         if lock:
-            events.append("membership")
+            events.append("membership_lock")
         return real_for_workspace(
             organisation_id=organisation_id, membership_id=membership_id, lock=lock
         )
 
     def tracked_for_user(*, organisation_id, user_id, lock=False):
         if lock:
-            events.append("membership")
+            events.append("membership_lock")
         return real_for_user(organisation_id=organisation_id, user_id=user_id, lock=lock)
 
     def tracked_create_from_link(*, organisation_id, user_id):
@@ -627,7 +637,9 @@ def test_http_idempotent_writes_never_lock_membership_after_workspace(
         events.append("workspace")
         return real_mod_lock_workspace(workspace_id=workspace_id)
 
+    monkeypatch.setattr(iam, "lock_organisation_fence", tracked_iam_org)
     monkeypatch.setattr(iam, "lock_workspace", tracked_iam_lock)
+    monkeypatch.setattr(moderation, "lock_organisation_fence", tracked_mod_org)
     monkeypatch.setattr(moderation, "for_workspace", tracked_for_workspace)
     monkeypatch.setattr(moderation, "for_user", tracked_for_user)
     monkeypatch.setattr(moderation, "create_from_workspace_link", tracked_create_from_link)
@@ -642,7 +654,7 @@ def test_http_idempotent_writes_never_lock_membership_after_workspace(
     )
     call(assigned, ROOT + "/members/{membership_id}/roles", "put")
     assert assigned.status_code == 200
-    assert events == ["membership", "workspace"]
+    assert events == ["organisation", "workspace"]
 
     events.clear()
     mod_key = str(uuid4())
@@ -658,7 +670,7 @@ def test_http_idempotent_writes_never_lock_membership_after_workspace(
     )
     call(moderated, ROOT + "/moderation", "post")
     assert moderated.status_code == 200
-    assert events == ["membership", "workspace"]
+    assert events == ["organisation", "workspace"]
 
     events.clear()
     mod_replay = client.post(
@@ -682,7 +694,19 @@ def test_http_idempotent_writes_never_lock_membership_after_workspace(
     )
     call(reported, ROOT + "/reports", "post")
     assert reported.status_code == 201
-    assert events == ["membership", "workspace"]
+    assert events == ["organisation", "workspace"]
+
+    events.clear()
+    existing_redeemed = client.post(
+        "/api/v1/workspace-invites/redeem",
+        data=json.dumps({"code": code}),
+        content_type="application/json",
+        HTTP_AUTHORIZATION="Bearer " + credentials[2],
+        HTTP_IDEMPOTENCY_KEY=str(uuid4()),
+    )
+    call(existing_redeemed, "/workspace-invites/redeem", "post")
+    assert existing_redeemed.status_code == 200
+    assert events == ["organisation", "workspace"]
 
     newcomer_subject = str(uuid4())
     newcomer_user = User.objects.create(email=f"{newcomer_subject}@example.org")
@@ -706,7 +730,7 @@ def test_http_idempotent_writes_never_lock_membership_after_workspace(
     )
     call(redeemed, "/workspace-invites/redeem", "post")
     assert redeemed.status_code == 200
-    assert events == ["membership", "membership", "membership_create", "workspace"]
+    assert events == ["membership_create", "workspace"]
     assert WorkspaceMemberRole.objects.filter(
         workspace=workspace, membership_id=UUID(redeemed.json()["membershipId"]), role_id=role_id
     ).exists()

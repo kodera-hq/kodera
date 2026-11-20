@@ -9,6 +9,7 @@ from django.db import IntegrityError, transaction
 from django.db.models import Count, Q
 
 from apps.orgs.actor_selectors import TenantCaller
+from apps.orgs.selectors import lock_organisation_fence
 from services.identity.access_tokens import VerifiedAccessToken
 
 from .iam_validation import validate_permissions
@@ -309,9 +310,11 @@ def assign_roles(
     role_ids: Any,
     request_id: str,
 ) -> dict[str, Any]:
-    # Preserve `membership -> workspace` lock ordering across membership lifecycle and IAM writes.
+    # Serialize under `organisation (FOR NO KEY UPDATE) -> workspace (FOR UPDATE)` with zero locks
+    # on `orgs_membership`, matching both `0005` membership triggers and `extensions` lock order.
     initial_workspace, _ = authorize(verified, organisation_id, "manage_roles")
-    target = _target(initial_workspace, membership_id)
+    _target(initial_workspace, membership_id, lock=False)
+    lock_organisation_fence(organisation_id=organisation_id)
     lock_workspace(workspace_id=initial_workspace.id)
     workspace, caller = authorize(verified, organisation_id, "manage_roles")
     target = _target(workspace, membership_id, lock=False)

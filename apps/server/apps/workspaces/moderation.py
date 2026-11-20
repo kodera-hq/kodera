@@ -20,6 +20,7 @@ from apps.orgs.actor_selectors import (
     TenantCallerUnknownError,
     read_tenant_caller,
 )
+from apps.orgs.selectors import lock_organisation_fence
 from apps.orgs.workspace_members import (
     WorkspaceMembership,
     create_from_workspace_link,
@@ -152,7 +153,9 @@ def member_restrictions(
     return row[0] or row[1], row[2] is not None and row[2] > (now or timezone.now())
 
 
-def _target(workspace: Workspace, membership_id: UUID, *, lock: bool = True) -> WorkspaceMembership:
+def _target(
+    workspace: Workspace, membership_id: UUID, *, lock: bool = False
+) -> WorkspaceMembership:
     member = for_workspace(
         organisation_id=workspace.organisation_id, membership_id=membership_id, lock=lock
     )
@@ -168,9 +171,10 @@ def _target_context(
     *,
     moderator: bool = False,
 ) -> tuple[Workspace, TenantCaller, WorkspaceMembership]:
-    """Preserve `membership -> workspace` lock ordering on member-targeted writes."""
+    """Acquire `organisation (FOR NO KEY UPDATE) -> workspace (FOR UPDATE)` without locking memberships."""
     initial_workspace, _ = _context(verified, organisation_id, moderator=moderator, lock=False)
-    target = _target(initial_workspace, target_id, lock=True)
+    _target(initial_workspace, target_id, lock=False)
+    lock_organisation_fence(organisation_id=organisation_id)
     lock_workspace(workspace_id=initial_workspace.id)
     workspace, caller = _context(verified, organisation_id, moderator=moderator, lock=False)
     target = _target(workspace, target_id, lock=False)
@@ -347,9 +351,7 @@ def preview_link(*, verified: VerifiedAccessToken, code: str) -> WorkspaceInvite
     return link
 
 
-def _verify_invite_auto_roles(
-    workspace: Workspace, link: WorkspaceInviteLink, *, lock_creator: bool = True
-) -> list[Any]:
+def _verify_invite_auto_roles(workspace: Workspace, link: WorkspaceInviteLink) -> list[Any]:
     from .models import WorkspaceRole
 
     if not link.auto_role_ids:
@@ -359,7 +361,7 @@ def _verify_invite_auto_roles(
     creator = for_workspace(
         organisation_id=workspace.organisation_id,
         membership_id=link.created_by_id,
-        lock=lock_creator,
+        lock=False,
     )
     if creator is None or creator.role not in ADMINS:
         raise RefusalError(403)
@@ -387,9 +389,10 @@ def _verify_invite_auto_roles(
 def redeem_link(
     *, verified: VerifiedAccessToken, code: str, request_id: str
 ) -> WorkspaceMembership:
-    # Serialize per-person redemption first, then lock/create membership rows (`orgs_membership` ->
-    # `identity_user` -> `orgs_organisation`) strictly before `workspaces_workspace`, the link row,
-    # and engine heads. Any refusal rolls back the atomic savepoint cleanly.
+    # Serialize per-person redemption first, then acquire `organisation (FOR NO KEY UPDATE)` (via
+    # `create_from_workspace_link`'s trigger on newcomer join or `lock_organisation_fence` on
+    # existing-member redemption) strictly before `workspaces_workspace`, with zero row locks on
+    # existing `orgs_membership` rows.
     initial = _link(code, allow_exhausted=True)
     person, identity = _identity(verified, initial)
     organisation_id = initial.workspace.organisation_id
@@ -398,26 +401,34 @@ def redeem_link(
             "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
             [f"workspace_redeem:{organisation_id}:{person.id}"],
         )
-    existing = for_user(organisation_id=organisation_id, user_id=person.id, lock=True)
+    existing = for_user(organisation_id=organisation_id, user_id=person.id, lock=False)
     joined = existing is None
     created: WorkspaceMembership | None = None
-    if joined:
+    if existing is None:
         if initial.uses_count >= initial.max_uses:
             raise RefusalError(404)
         if initial.auto_role_ids:
             if initial.created_by_id is None:
                 raise RefusalError(403)
-            for_workspace(
-                organisation_id=organisation_id,
-                membership_id=initial.created_by_id,
-                lock=True,
-            )
+            if (
+                for_workspace(
+                    organisation_id=organisation_id,
+                    membership_id=initial.created_by_id,
+                    lock=False,
+                )
+                is None
+            ):
+                raise RefusalError(403)
         created = create_from_workspace_link(organisation_id=organisation_id, user_id=person.id)
+    else:
+        if existing.state != "active" or existing.accepted_at is None:
+            raise RefusalError(403)
+        lock_organisation_fence(organisation_id=organisation_id)
     lock_workspace(workspace_id=initial.workspace_id)
     workspace = Workspace.objects.get(id=initial.workspace_id)
     link = _link(code, lock=True, allow_exhausted=True)
     person, identity = _identity(verified, link)
-    auto_roles = _verify_invite_auto_roles(workspace, link, lock_creator=False) if joined else []
+    auto_roles = _verify_invite_auto_roles(workspace, link) if joined else []
     if created is not None:
         membership = created
     else:
@@ -614,7 +625,7 @@ def projection(workspace_id: UUID) -> dict[str, Any]:
 def admit_redemption(*, verified: VerifiedAccessToken, code: str) -> None:
     link = _link(code, allow_exhausted=True)
     person, identity = _identity(verified, link)
-    member = for_user(organisation_id=link.workspace.organisation_id, user_id=person.id)
+    member = for_user(organisation_id=link.workspace.organisation_id, user_id=person.id, lock=False)
     if member is not None and (member.state != "active" or member.accepted_at is None):
         raise RefusalError(403)
     redeemed = (
@@ -624,7 +635,7 @@ def admit_redemption(*, verified: VerifiedAccessToken, code: str) -> None:
     if not redeemed and link.uses_count >= link.max_uses:
         raise RefusalError(404)
     if member is None:
-        _verify_invite_auto_roles(link.workspace, link, lock_creator=False)
+        _verify_invite_auto_roles(link.workspace, link)
     if member is not None:
         restriction = WorkspaceMemberRestriction.objects.filter(
             workspace_id=link.workspace_id, membership_id=member.id
