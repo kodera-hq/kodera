@@ -1,8 +1,12 @@
 """Scoped document trees, explicit grants and a compactable binary Yjs journal."""
 
+from typing import Any
+
 from django.db import models
 
 from core.db.models import RetainedModel, StoredModel
+
+from . import titles
 
 
 class Document(RetainedModel):
@@ -14,6 +18,8 @@ class Document(RetainedModel):
     )
     visibility = models.TextField(default="workspace")
     title = models.TextField()
+    # Derived from `title` on every save; uniqueness and wiki-link resolution compare it.
+    title_key = models.TextField()
     markdown = models.TextField(default="")
     revision = models.BigIntegerField(default=1)
 
@@ -36,9 +42,12 @@ class Document(RetainedModel):
             models.CheckConstraint(
                 condition=~models.Q(parent_id=models.F("id")), name="docs_parent_not_self"
             ),
+            models.CheckConstraint(
+                condition=models.Q(title_key__length__range=(1, titles.MAX_KEY_LENGTH)),
+                name="docs_title_key_bound",
+            ),
             models.UniqueConstraint(
-                models.Func("title", function="lower"),
-                "workspace",
+                fields=["workspace", "title_key"],
                 condition=models.Q(deleted_at__isnull=True),
                 name="docs_active_title_unique",
             ),
@@ -47,6 +56,13 @@ class Document(RetainedModel):
         indexes = [
             models.Index(fields=["workspace", "parent", "-id"], name="docs_tree_page"),
         ]
+
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        self.title_key = titles.key(self.title)
+        update_fields = kwargs.get("update_fields")
+        if update_fields is not None and "title" in update_fields:
+            kwargs["update_fields"] = {*update_fields, "title_key"}
+        super().save(*args, **kwargs)
 
 
 class DocumentGrant(StoredModel):
@@ -68,13 +84,14 @@ class DocumentLink(StoredModel):
     target = models.ForeignKey(
         Document, on_delete=models.RESTRICT, null=True, blank=True, related_name="incoming_links"
     )
+    # The target's title key (`titles.key`), matched against `Document.title_key`.
     target_title = models.TextField()
 
     class Meta:
         constraints = [
             models.UniqueConstraint(fields=["source", "target_title"], name="docs_link_unique"),
             models.CheckConstraint(
-                condition=models.Q(target_title__length__range=(1, 255)),
+                condition=models.Q(target_title__length__range=(1, titles.MAX_KEY_LENGTH)),
                 name="docs_link_title_bound",
             ),
         ]

@@ -436,6 +436,7 @@ def assert_image_boundary(ignore):
         "!apps/docs/services.py",
         "!apps/docs/templates.py",
         "!apps/docs/tickets.py",
+        "!apps/docs/titles.py",
         "!apps/docs/tree.py",
         "!apps/docs/api/__init__.py",
         "!apps/docs/api/http.py",

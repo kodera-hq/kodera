@@ -23,8 +23,7 @@ from apps.workspaces import moderation
 pytestmark = pytest.mark.django_db(transaction=True)
 
 
-@pytest.fixture
-def native_engine(settings):
+def _native_engine(settings):
     root = Path(__file__).resolve().parents[2] / "yjs_collab"
     key = secrets.token_bytes(32)
     environment = {
@@ -46,6 +45,17 @@ def native_engine(settings):
         if process.stdout is None or not select.select([process.stdout], [], [], 10)[0]:
             raise RuntimeError("test-owned transform service did not start")
         line = process.stdout.readline()
+        if not line:
+            # The child closed stdout before announcing its port: report why, not a JSON error.
+            try:
+                code = process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                code = None
+            stderr = process.stderr.read().decode(errors="replace") if process.stderr else ""
+            raise RuntimeError(
+                f"test-owned transform service exited before announcing its port "
+                f"(exit code {code}): {stderr.strip()[-4000:]}"
+            )
         result = json.loads(line)
         if type(result.get("port")) is not int or not 1 <= result["port"] <= 65535:
             raise RuntimeError("test-owned transform service did not return its port")
@@ -64,6 +74,11 @@ def native_engine(settings):
             process.stdout.close()
         if process.stderr is not None:
             process.stderr.close()
+
+
+@pytest.fixture
+def native_engine(settings):
+    yield from _native_engine(settings)
 
 
 def create(world, name="Example", parent=None, template=None):
@@ -309,6 +324,65 @@ def test_native_journal_compaction_reconnect_and_viewer_refusal_are_durable(
         DocumentUpdate.objects.filter(document=document).update(state=b"changed")
     with pytest.raises(IntegrityError, match="not covered by a snapshot"), transaction.atomic():
         DocumentUpdate.objects.filter(document=document).delete()
+
+
+def test_collaborative_wiki_links_resolve_accented_titles_on_title_keys(
+    world, native_engine, settings
+):
+    from urllib.parse import quote
+
+    from django.conf import settings as current_settings
+
+    org, _, _, tokens = world
+    target = create(world, "Équipe")
+    document = Document.objects.get(pk=create(world, "Collaborative links")["id"])
+    editor = services.collab_session(
+        verified=tokens[3], organisation_id=org.id, document_id=document.id, request_id=str(uuid4())
+    )
+    database = current_settings.DATABASES["default"]
+    url = (
+        "postgresql://"
+        + quote(database["USER"], safe="")
+        + ":"
+        + quote(database["PASSWORD"], safe="")
+        + "@"
+        + database["HOST"]
+        + ":"
+        + str(database["PORT"])
+        + "/"
+        + quote(database["NAME"], safe="")
+    )
+    root = Path(__file__).resolve().parents[2] / "yjs_collab"
+    binary = shutil.which("node")
+    if binary is None:
+        raise RuntimeError("native document tests require Node.js")
+    result = subprocess.run(  # noqa: S603 - resolved interpreter, owned test program and generated database
+        [binary, str(root / "test/link-store-fixture.mjs")],
+        cwd=root,
+        env={
+            "PATH": os.environ["PATH"],
+            "KODERA_TEST_DATABASE_URL": url,
+            "KODERA_TEST_COLLAB_KEY": base64.urlsafe_b64encode(
+                settings.KODERA_COLLAB_TICKET_KEY
+            ).decode(),
+        },
+        input=json.dumps(
+            {"editor": editor["token"], "links": ["équipe", "E\u0301QUIPE", "Straße"]}
+        ).encode(),
+        capture_output=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stderr.decode()
+    # The collaboration service and the REST path agree on one key per title.
+    assert json.loads(result.stdout) == [
+        {"target_title": "strasse", "target_id": None},
+        {"target_title": "équipe", "target_id": target["id"]},
+    ]
+    strasse = create(world, "STRASSE")
+    assert (
+        str(DocumentLink.objects.get(source=document, target_title="strasse").target_id)
+        == (strasse["id"])
+    )
 
 
 def test_postgres_backed_sockets_converge_audit_and_recheck_current_roles(

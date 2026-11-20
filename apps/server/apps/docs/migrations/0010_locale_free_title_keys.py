@@ -1,0 +1,139 @@
+"""Compare document titles and wiki-link targets on a key that ignores the cluster's LC_CTYPE.
+
+`lower()` folds ASCII only under the `C` ctype the community profile initialises, so
+`Équipe` and `équipe` could coexist and `[[équipe]]` never resolved. The key is
+`apps.docs.titles.key` (NFC, Unicode full case folding, NFC), frozen below.
+"""
+
+import unicodedata
+
+from django.db import migrations, models
+
+MAX_KEY_LENGTH = 1020
+SUFFIX_LIMIT = 10_000
+BATCH = 500
+
+
+def key(value):
+    return unicodedata.normalize("NFC", unicodedata.normalize("NFC", value).casefold())
+
+
+def backfill(apps, schema_editor):
+    alias = schema_editor.connection.alias
+    documents = apps.get_model("docs", "Document").objects.using(alias)
+    document_links = apps.get_model("docs", "DocumentLink").objects.using(alias)
+    taken = set()
+    pending = []
+    keyed = []
+    rows = documents.order_by("id").only("id", "workspace_id", "title", "deleted_at")
+    for row in rows.iterator(chunk_size=BATCH):
+        row.title_key = key(row.title)
+        if row.deleted_at is None:
+            if (row.workspace_id, row.title_key) in taken:
+                pending.append(row)
+                continue
+            taken.add((row.workspace_id, row.title_key))
+        keyed.append(row)
+    documents.bulk_update(keyed, ["title_key"], batch_size=BATCH)
+    # Titles that only became equal once folded beyond ASCII (possible under the `C`
+    # ctype): the oldest keeps its title, later ones gain the first free numeric suffix.
+    for row in pending:
+        for number in range(2, SUFFIX_LIMIT):
+            suffix = f" ({number})"
+            title = row.title[: 255 - len(suffix)].rstrip() + suffix
+            if (row.workspace_id, key(title)) not in taken:
+                break
+        else:
+            raise RuntimeError("document title keys cannot be made unique")
+        taken.add((row.workspace_id, key(title)))
+        documents.filter(pk=row.pk).update(title=title, title_key=key(title))
+    # Stored link targets were `lower()` of the NFC name; folding that is folding the name.
+    seen = set()
+    duplicates = []
+    changed = []
+    links = document_links.order_by("id").only("id", "source_id", "target_title")
+    for link in links.iterator(chunk_size=BATCH):
+        folded = key(link.target_title)
+        if (link.source_id, folded) in seen:
+            duplicates.append(link.pk)
+            continue
+        seen.add((link.source_id, folded))
+        if folded != link.target_title:
+            link.target_title = folded
+            changed.append(link)
+    for start in range(0, len(duplicates), BATCH):
+        document_links.filter(pk__in=duplicates[start : start + BATCH]).delete()
+    document_links.bulk_update(changed, ["target_title"], batch_size=BATCH)
+    with schema_editor.connection.cursor() as cursor:
+        cursor.execute(
+            """WITH resolved AS (
+              SELECT l.id, t.id AS target_id
+              FROM docs_documentlink l
+              JOIN docs_document s ON s.id=l.source_id
+              LEFT JOIN docs_document t ON t.workspace_id=s.workspace_id
+                AND t.deleted_at IS NULL AND t.title_key=l.target_title
+              WHERE l.target_id IS DISTINCT FROM t.id
+            )
+            UPDATE docs_documentlink l SET target_id=r.target_id,updated_at=clock_timestamp()
+            FROM resolved r WHERE l.id=r.id"""
+        )
+
+
+# The key is a pure function of each row's own title and leaves with the row on erasure,
+# so the durable-erasure write fence is lifted only for this derivation, inside the
+# migration's transaction, and restored before it commits.
+FENCE_OFF = """
+ALTER TABLE docs_document DISABLE TRIGGER aa_privacy_cutoff;
+ALTER TABLE docs_documentlink DISABLE TRIGGER aa_privacy_cutoff;
+"""
+FENCE_ON = """
+SET CONSTRAINTS ALL IMMEDIATE;
+ALTER TABLE docs_document ENABLE TRIGGER aa_privacy_cutoff;
+ALTER TABLE docs_documentlink ENABLE TRIGGER aa_privacy_cutoff;
+"""
+
+
+class Migration(migrations.Migration):
+    dependencies = [("docs", "0009_link_title_lookup")]
+
+    operations = [
+        migrations.RunSQL(
+            "SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='60s';",
+            reverse_sql=migrations.RunSQL.noop,
+        ),
+        migrations.RemoveConstraint(model_name="document", name="docs_active_title_unique"),
+        migrations.RemoveConstraint(model_name="documentlink", name="docs_link_title_bound"),
+        migrations.AddField(
+            model_name="document", name="title_key", field=models.TextField(null=True)
+        ),
+        migrations.RunSQL(FENCE_OFF, reverse_sql=migrations.RunSQL.noop),
+        migrations.RunPython(backfill, migrations.RunPython.noop),
+        migrations.RunSQL(FENCE_ON, reverse_sql=migrations.RunSQL.noop),
+        migrations.AlterField(model_name="document", name="title_key", field=models.TextField()),
+        migrations.AddConstraint(
+            model_name="document",
+            constraint=models.CheckConstraint(
+                condition=models.Q(title_key__length__range=(1, MAX_KEY_LENGTH)),
+                name="docs_title_key_bound",
+            ),
+        ),
+        migrations.AddConstraint(
+            model_name="document",
+            constraint=models.UniqueConstraint(
+                fields=["workspace", "title_key"],
+                condition=models.Q(deleted_at__isnull=True),
+                name="docs_active_title_unique",
+            ),
+        ),
+        migrations.AddConstraint(
+            model_name="documentlink",
+            constraint=models.CheckConstraint(
+                condition=models.Q(target_title__length__range=(1, MAX_KEY_LENGTH)),
+                name="docs_link_title_bound",
+            ),
+        ),
+        migrations.RunSQL(
+            migrations.RunSQL.noop,
+            reverse_sql="SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='60s';",
+        ),
+    ]

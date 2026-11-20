@@ -454,6 +454,7 @@ UPDATE_COLUMNS = (
     # ownership, visibility, creator, channel binding and journal rows stay immutable.
     ("docs_document", "parent_id"),
     ("docs_document", "title"),
+    ("docs_document", "title_key"),
     ("docs_document", "markdown"),
     ("docs_document", "revision"),
     ("docs_document", "deleted_at"),
