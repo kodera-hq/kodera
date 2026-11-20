@@ -12,6 +12,7 @@ names at least one https issuer. It reports key names only, never a value.
 from __future__ import annotations
 
 import argparse
+import ast
 import base64
 import binascii
 import contextlib
@@ -3647,6 +3648,395 @@ def run_generator_selftest(deploy_source: str, suite_source: str) -> int:
     return 0
 
 
+# Source paths are fixed, and every parser reads declarations without executing application code.
+COMMUNITY_STRUCTURE_PATHS = {
+    "template": "deploy/community/workspace-templates.json",
+    "server": "apps/server/apps/workspaces/community.py",
+    "web": "apps/web/src/features/docs/communityStructure.ts",
+    "ios": "apps/ios/packages/KoderaDomain/Sources/KoderaDomain/CommunityStructure.swift",
+    "android": "apps/android/domain/src/main/kotlin/io/kodera/android/domain/CommunityStructure.kt",
+    "scaffolder": "packages/create-kodera/src/cli.ts",
+    "scaffolder_runtime": "packages/create-kodera/runtime/cli.mjs",
+}
+
+
+def declaration_parts(source: str) -> list[str]:
+    """Split top-level comma-separated declarations; reject unbalanced or computed syntax later."""
+    parts = []
+    start = 0
+    stack = []
+    quote = None
+    escaped = False
+    pairs = {"(": ")", "[": "]", "{": "}"}
+    for index, char in enumerate(source):
+        if quote:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = None
+        elif char in "\"'":
+            quote = char
+        elif char in pairs:
+            stack.append(pairs[char])
+        elif char in ")]}":
+            if not stack or stack.pop() != char:
+                raise ValueError("unbalanced declaration")
+        elif char == "," and not stack:
+            parts.append(source[start:index].strip())
+            start = index + 1
+    if quote or stack:
+        raise ValueError("unterminated declaration")
+    parts.append(source[start:].strip())
+    return [part for part in parts if part]
+
+
+def literal_declaration(source: str) -> object:
+    """Parse the JSON-like TypeScript literal subset, refusing expressions and duplicate keys."""
+    source = source.strip()
+    if source.startswith("{") and source.endswith("}"):
+        result = {}
+        for part in declaration_parts(source[1:-1]):
+            key, separator, value = part.partition(":")
+            if not separator:
+                raise ValueError("missing property value")
+            key = key.strip()
+            key = ast.literal_eval(key) if key.startswith(("'", '"')) else key
+            if not isinstance(key, str) or key in result:
+                raise ValueError("invalid or duplicate property")
+            result[key] = literal_declaration(value)
+        return result
+    if source.startswith("[") and source.endswith("]"):
+        return [literal_declaration(part) for part in declaration_parts(source[1:-1])]
+    if source in ("true", "false"):
+        return source == "true"
+    value = ast.literal_eval(source)
+    if not isinstance(value, str):
+        raise ValueError("expected a literal string")
+    return value
+
+
+def call_fields(source: str, constructor: str, separator: str) -> dict[str, str]:
+    source = source.strip()
+    prefix = constructor + "("
+    if not source.startswith(prefix) or not source.endswith(")"):
+        raise ValueError("expected " + constructor + " declaration")
+    result = {}
+    for part in declaration_parts(source[len(prefix) : -1]):
+        key, found, value = part.partition(separator)
+        key = key.strip()
+        if not found or key in result:
+            raise ValueError("invalid or duplicate constructor argument")
+        result[key] = value.strip()
+    return result
+
+
+def native_categories(source: str, platform: str) -> tuple[list[tuple], list[str]]:
+    swift = platform == "ios"
+    pattern = (
+        r"public static let categories: \[CommunityCategoryBlueprint\] = \[(.*?)\n    \]"
+        if swift
+        else r"val categories: List<CommunityCategoryBlueprint> = listOf\((.*?)\n    \)"
+    )
+    matches = re.findall(pattern, source, re.DOTALL)
+    if len(matches) != 1:
+        raise ValueError("expected one static category list")
+    categories, voices = [], []
+    for declaration in declaration_parts(matches[0]):
+        category = call_fields(
+            declaration, "CommunityCategoryBlueprint", ":" if swift else "="
+        )
+        category_id = category["categoryId"]
+        ids = (
+            {
+                ".community": "community",
+                ".coreKodera": "core-kodera",
+                ".designPartners": "design-partners",
+            }
+            if swift
+            else {
+                "CommunityCategoryId.COMMUNITY": "community",
+                "CommunityCategoryId.CORE_KODERA": "core-kodera",
+                "CommunityCategoryId.DESIGN_PARTNERS": "design-partners",
+            }
+        )
+        channels = category["channels"]
+        opening, closing = ("[", "]") if swift else ("listOf(", ")")
+        if not channels.startswith(opening) or not channels.endswith(closing):
+            raise ValueError("expected static native channel list")
+        names = []
+        for channel in declaration_parts(channels[len(opening) : -len(closing)]):
+            fields = call_fields(
+                channel, "CommunityChannelBlueprint", ":" if swift else "="
+            )
+            name = ast.literal_eval(fields["name"])
+            if (
+                ast.literal_eval(fields["id"]) != name
+                or fields["categoryId"] != category_id
+            ):
+                raise ValueError("channel identifier or category mismatch")
+            kind = fields["kind"]
+            if kind not in (
+                (".text", ".audio")
+                if swift
+                else ("CommunityChannelKind.TEXT", "CommunityChannelKind.AUDIO")
+            ):
+                raise ValueError("unknown channel kind")
+            if kind in (".audio", "CommunityChannelKind.AUDIO"):
+                voices.append(name)
+            names.append(name)
+        categories.append((ids[category_id], ast.literal_eval(category["name"]), names))
+    return categories, voices
+
+
+def check_community_structure(sources: dict[str, str]) -> list[str]:
+    errors = []
+    try:
+        template = json.loads(sources["template"])["community"]
+        expected = [
+            (c["name"].lower().replace(" ", "-"), c["name"], c["channels"])
+            for c in template["categories"]
+        ]
+        flattened = [name for _, _, names in expected for name in names]
+        if template["channels"] != flattened or len(set(flattened)) != len(flattened):
+            errors.append("community template flattened channel ordering drift")
+    except (ValueError, KeyError, TypeError) as error:
+        return [f"community template declaration invalid: {error}"]
+    for label in (
+        "server",
+        "web",
+        "ios",
+        "android",
+        "scaffolder",
+        "scaffolder_runtime",
+    ):
+        refusal = (
+            f"community structure parity drift: {COMMUNITY_STRUCTURE_PATHS[label]}"
+        )
+        try:
+            source = sources[label]
+            if label == "server":
+                tree = ast.parse(source)
+                assignments = [
+                    node.value
+                    for node in tree.body
+                    if isinstance(node, ast.Assign)
+                    and any(
+                        isinstance(t, ast.Name) and t.id == "CATEGORIES"
+                        for t in node.targets
+                    )
+                ]
+                if len(assignments) != 1:
+                    raise ValueError("expected one literal CATEGORIES")
+                actual = [
+                    (key.replace("_", "-"), name, list(names))
+                    for key, name, names in ast.literal_eval(assignments[0])
+                ]
+                voices = template["voiceChannels"]
+            elif label in ("ios", "android"):
+                actual, voices = native_categories(source, label)
+            else:
+                pattern = (
+                    r"export const COMMUNITY_CATEGORIES = (\[.*?\]) as const"
+                    if label == "web"
+                    else r"export const TEMPLATES = Object.freeze\((\{.*?\})\)\n"
+                )
+                declarations = re.findall(pattern, source, re.DOTALL)
+                if len(declarations) != 1:
+                    raise ValueError("expected one static template declaration")
+                data = literal_declaration(declarations[0])
+                if label.startswith("scaffolder"):
+                    if data["community"] != template:
+                        errors.append(refusal)
+                    continue
+                actual = [
+                    (c["id"], c["name"], [ch["id"] for ch in c["channels"]])
+                    for c in data
+                ]
+                if any(
+                    ch["id"] != ch["name"] or not isinstance(ch["voice"], bool)
+                    for c in data
+                    for ch in c["channels"]
+                ):
+                    raise ValueError("invalid web channel metadata")
+                voices = [ch["id"] for c in data for ch in c["channels"] if ch["voice"]]
+            if actual != expected or voices != template["voiceChannels"]:
+                errors.append(refusal)
+        except (ValueError, SyntaxError, KeyError, TypeError) as error:
+            errors.append(f"{refusal} (invalid declaration: {error})")
+    return errors
+
+
+def read_community_structure() -> tuple[dict[str, str], list[str]]:
+    sources, errors = {}, []
+    for label, name in COMMUNITY_STRUCTURE_PATHS.items():
+        source = read_regular_file(ROOT / name)
+        if source is None:
+            errors.append(
+                "community structure source is not a regular UTF-8 file: " + name
+            )
+        else:
+            sources[label] = source
+    return sources, errors
+
+
+def community_structure_status(sources: dict[str, str]) -> int:
+    errors = check_community_structure(sources)
+    for error in errors:
+        print("[FAIL] " + error, file=sys.stderr)
+    return 1 if errors else 0
+
+
+def run_community_structure_selftest(sources: dict[str, str]) -> int:
+    """Each mutation must produce the same refusal and nonzero status as the CI gate."""
+    cases = []
+    for label in (
+        "server",
+        "web",
+        "ios",
+        "android",
+        "scaffolder",
+        "scaffolder_runtime",
+    ):
+        quote = '"' if label in ("server", "ios", "android") else "'"
+        cases.extend(
+            [
+                (
+                    label,
+                    "drop arrivals",
+                    lambda s, q=quote: "\n".join(
+                        line for line in s.split("\n") if q + "arrivals" + q not in line
+                    ),
+                ),
+                (
+                    label,
+                    "reorder channels",
+                    lambda s, q=quote: (
+                        s.replace(q + "general" + q, q + "swap-room" + q)
+                        .replace(q + "arrivals" + q, q + "general" + q)
+                        .replace(q + "swap-room" + q, q + "arrivals" + q)
+                    ),
+                ),
+                (
+                    label,
+                    "mismatch category",
+                    lambda s, q=quote: s.replace(
+                        q + "Community" + q, q + "Wrong Category" + q
+                    ),
+                ),
+            ]
+        )
+    # Also prove the parsers bind category boundaries, not just a flattened room list.
+    cases += [
+        (
+            "server",
+            "move room to another category",
+            lambda s: s.replace('            "arrivals",\n', "").replace(
+                '("dev", "strategy",', '("arrivals", "dev", "strategy",'
+            ),
+        ),
+        (
+            "web",
+            "move room to another category",
+            lambda s: s.replace(
+                "      { id: 'arrivals', name: 'arrivals', description: 'arrivals', voice: false },\n",
+                "",
+            ).replace(
+                "      { id: 'dev',",
+                "      { id: 'arrivals', name: 'arrivals', description: 'arrivals', voice: false },\n      { id: 'dev',",
+            ),
+        ),
+        (
+            "web",
+            "change voice kind",
+            lambda s: s.replace(
+                "description: 'arrivals', voice: false",
+                "description: 'arrivals', voice: true",
+            ),
+        ),
+        (
+            "server",
+            "computed categories",
+            lambda s: s.replace("CATEGORIES = (", "CATEGORIES = tuple("),
+        ),
+    ]
+    cases.append(
+        (
+            "template",
+            "flattened channel ordering",
+            lambda s: json.dumps(
+                {
+                    **json.loads(s),
+                    "community": {
+                        **json.loads(s)["community"],
+                        "channels": [
+                            name
+                            for name in json.loads(s)["community"]["channels"]
+                            if name != "arrivals"
+                        ],
+                    },
+                }
+            ),
+        )
+    )
+    for label, description, mutate in cases:
+        if label == "server" and description == "drop arrivals":
+            changed = re.sub(
+                r"^CATEGORIES = \(\n.*?^\)",
+                lambda match: match[0].replace('            "arrivals",\n', ""),
+                sources[label],
+                count=1,
+                flags=re.MULTILINE | re.DOTALL,
+            )
+        elif label == "android" and description == "drop arrivals":
+            changed = re.sub(
+                r'                CommunityChannelBlueprint\(\n\s*id = "arrivals",.*?\n                \),\n',
+                "",
+                sources[label],
+                flags=re.DOTALL,
+            )
+        else:
+            changed = mutate(sources[label])
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import json, runpy, sys; gate = runpy.run_path(sys.argv[1]); "
+                "sys.exit(gate['community_structure_status'](json.load(sys.stdin)))",
+                str(Path(__file__).resolve()),
+            ],
+            input=json.dumps({**sources, label: changed}),
+            text=True,
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+        expected = (
+            "community template flattened channel ordering drift"
+            if label == "template"
+            else f"community structure parity drift: {COMMUNITY_STRUCTURE_PATHS[label]}"
+        )
+        if (
+            changed == sources[label]
+            or result.returncode != 1
+            or expected not in result.stderr
+            or (
+                description != "computed categories"
+                and "invalid declaration" in result.stderr
+            )
+        ):
+            print(
+                f"[FAIL] {label} mutation '{description}' did not exit nonzero with '{expected}': {result.stderr}",
+                file=sys.stderr,
+            )
+            return 1
+    print(
+        f"OK: community structure parity valid across server, web, iOS, Android and scaffolder; {len(cases)} mutations refused by name with nonzero status."
+    )
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -3699,6 +4089,17 @@ def main() -> int:
             print(f"[FAIL] {label} {reason}: {path}", file=sys.stderr)
             return 1
         texts[label] = text
+
+    structure_sources, structure_errors = read_community_structure()
+    if structure_errors:
+        for error in structure_errors:
+            print("[FAIL] " + error, file=sys.stderr)
+        return 1
+
+    if community_structure_status(structure_sources):
+        return 1
+    if args.selftest and run_community_structure_selftest(structure_sources):
+        return 1
 
     compose_text = texts["docker-compose.yml"]
     env_text = texts[".env.example"]
@@ -3787,7 +4188,7 @@ def main() -> int:
             print(f"[FAIL] {err}", file=sys.stderr)
         return 1
 
-    print("OK: deploy/community passed all compose, .env.example, Caddyfile, split topology, LiveKit, Synapse, generator and scaffolder parity checks.")
+    print("OK: deploy/community passed all compose, .env.example, Caddyfile, split topology, LiveKit, Synapse, generator, community structure and scaffolder parity checks.")
     return 0
 
 

@@ -14,6 +14,9 @@ enum CommunityCategoryPresentation {
 
     static func topicKey(for topic: CommunityChannelTopic) -> String {
         switch topic {
+        case .general: "community.topic_general"
+        case .arrivals: "community.topic_arrivals"
+        case .gitTracker: "community.topic_git_tracker"
         case .releases: "community.topic_releases"
         case .developers: "community.topic_developers"
         case .support: "community.topic_support"

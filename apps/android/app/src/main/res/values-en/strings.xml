@@ -284,6 +284,9 @@
     <string name="community_audience_public">Open to community members, self-hosters, and contributors.</string>
     <string name="community_audience_core">Internal Kodera team rooms, private by default.</string>
     <string name="community_audience_partners">Invite-only federated rooms accessible from Element, Tchap, or Cinny.</string>
+    <string name="community_topic_general">General community discussion.</string>
+    <string name="community_topic_arrivals">Welcome new members and introduce yourself.</string>
+    <string name="community_topic_git_tracker">Verified repository activity.</string>
     <string name="community_topic_releases">Release announcements and product updates.</string>
     <string name="community_topic_developers">SDK integrations, APIs, and architecture.</string>
     <string name="community_topic_support">Community troubleshooting and deployment help.</string>

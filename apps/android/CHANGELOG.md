@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Align the community blueprint with server provisioning, including general discussion, member arrivals and the private repository activity room.
+
 - Retain only the original owner/workspace receipt across a visible system permission dialog while stopping radios on focus loss; cancel it on stop, recreation or revalidation. Validate canonical event scope grammar before direct epoch MAC use. Expire prepared epoch material before a scan starts, bound peer/replay/RSSI state to 256 entries, and refuse self-beacons across both transports.
 
 - Wire voluntary proximity into the signed-in workspace screen with explicit Android nearby permissions and authenticated workspace-scoped, current-epoch-only bootstrap. Export no workspace master key; stop and wipe at strict epoch expiry and require fresh authenticated bootstrap and consent to continue. Late permission/bootstrap results are fenced across owner, workspace, background and membership revalidation; sign-out/background wipes provisioning. Radio starts only after the member explicitly joins. Physical BLE/mDNS/QUIC interoperability remains unqualified.

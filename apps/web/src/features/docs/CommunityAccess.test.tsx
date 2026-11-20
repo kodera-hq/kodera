@@ -14,14 +14,14 @@ beforeEach(() => {
   localStorage.clear()
   post.mockReset()
 })
-it('previews the three categories and twelve planned channels, preserves truthful status and returns focus on Escape', async () => {
+it('previews the three categories and fifteen planned channels, preserves truthful status and returns focus on Escape', async () => {
   const user = userEvent.setup()
   render(<CommunityAccess />)
   const entry = screen.getByRole('button', { name: 'Communauté · community.kodera.io' })
   await user.click(entry)
   const dialog = screen.getByRole('dialog')
   const nav = within(dialog).getByRole('navigation', { name: 'Salons communautaires' })
-  expect(within(nav).getAllByRole('button')).toHaveLength(12)
+  expect(within(nav).getAllByRole('button')).toHaveLength(15)
   await user.click(within(nav).getByRole('button', { name: '# extensions' }))
   expect(within(dialog).getByRole('heading', { name: '# extensions' })).toBeInTheDocument()
   expect(within(dialog).getByText(/Disponibilité du domaine/)).toBeInTheDocument()

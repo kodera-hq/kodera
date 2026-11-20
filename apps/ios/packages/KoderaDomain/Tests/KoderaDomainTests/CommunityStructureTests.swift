@@ -19,6 +19,8 @@ final class CommunityStructureTests: XCTestCase {
             categories[0].channels.map(\.name),
             [
                 "announcements",
+                "general",
+                "arrivals",
                 "developers-community",
                 "support",
                 "extensions",
@@ -33,7 +35,7 @@ final class CommunityStructureTests: XCTestCase {
         )
         XCTAssertEqual(
             categories[1].channels.map(\.name),
-            ["dev", "strategy", "ops-oncall"]
+            ["dev", "strategy", "ops-oncall", "kodera-git-tracker"]
         )
         XCTAssertEqual(
             categories[2].channels.map(\.name),
@@ -41,7 +43,7 @@ final class CommunityStructureTests: XCTestCase {
         )
         XCTAssertTrue(categories[2].channels.allSatisfy(\.isFederatedPartnerRoom))
         XCTAssertFalse(categories[0].channels.contains(where: \.isFederatedPartnerRoom))
-        XCTAssertEqual(CommunityWorkspaceBlueprint.channels.count, 12)
+        XCTAssertEqual(CommunityWorkspaceBlueprint.channels.count, 15)
         XCTAssertEqual(CommunityWorkspaceBlueprint.canonicalDomain, "community.kodera.io")
     }
 

@@ -284,7 +284,7 @@ describe('no outside organisation is named in the product', () => {
   it('reads real sources: both catalogues, every room and every extension', () => {
     expect(Object.keys(fr).length).toBeGreaterThan(1000)
     expect(Object.keys(en)).toEqual(Object.keys(fr))
-    expect(COMMUNITY.flatMap((category) => category.channels)).toHaveLength(12)
+    expect(COMMUNITY.flatMap((category) => category.channels)).toHaveLength(15)
     expect(OFFICIAL_EXTENSIONS_CATALOG).toHaveLength(22)
     expect(PROSE.length).toBeGreaterThan(3000)
     // The rules do find names and hosts in these sources: the lists are what lets them pass.

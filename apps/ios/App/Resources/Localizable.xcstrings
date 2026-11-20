@@ -3425,6 +3425,54 @@
         }
       }
     },
+    "community.topic_general": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Discussions générales de la communauté."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "General community discussion."
+          }
+        }
+      }
+    },
+    "community.topic_arrivals": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bienvenue aux nouveaux membres et présentations."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Welcome new members and introduce yourself."
+          }
+        }
+      }
+    },
+    "community.topic_git_tracker": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Activité vérifiée des dépôts."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verified repository activity."
+          }
+        }
+      }
+    },
     "community.topic_releases": {
       "localizations": {
         "fr": {

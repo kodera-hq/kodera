@@ -30,6 +30,7 @@ CATEGORIES = (
         (
             "announcements",
             "general",
+            "arrivals",
             "developers-community",
             "support",
             "extensions",
@@ -140,6 +141,31 @@ def provision_community_workspace(
                 structure_revision=F("structure_revision") + 1
             )
         for index, channel_name in enumerate(channels):
+            # Adopt a compatible arrivals room created before its workspace binding existed.
+            if (
+                channel_name == "arrivals"
+                and not Channel.objects.filter(
+                    workspace=workspace, template_key="arrivals"
+                ).exists()
+            ):
+                existing = Channel.objects.filter(
+                    workspace=workspace, category=category, name="arrivals"
+                ).exclude(
+                    lifecycle__in=[Channel.Lifecycle.DELETED, Channel.Lifecycle.DELETION_PENDING]
+                )
+                if existing.count() > 1:
+                    raise ValueError("Canonical channel drift requires operator reconciliation")
+                candidate = existing.first()
+                if candidate is not None:
+                    if (
+                        candidate.template_key is not None
+                        or candidate.kind != "text"
+                        or candidate.lifecycle != "active"
+                        or candidate.policy_mode != "inherit"
+                    ):
+                        raise ValueError("Canonical channel drift requires operator reconciliation")
+                    candidate.template_key = "arrivals"
+                    candidate.save(update_fields=["template_key"])
             channel, created = Channel.objects.get_or_create(
                 workspace=workspace,
                 template_key=_template_key(channel_name),
@@ -162,6 +188,11 @@ def provision_community_workspace(
                 or (not created and channel.policy_mode != expected_mode)
             ):
                 raise ValueError("Canonical channel drift requires operator reconciliation")
+            if channel_name == "arrivals":
+                # A conditional write also preserves a concurrently selected administrator room.
+                Workspace.objects.filter(pk=workspace.pk, arrivals_channel_id__isnull=True).update(
+                    arrivals_channel_id=channel.id
+                )
             if channel_name == "announcements":
                 if channel.explicit_policy_id is None:
                     channel.explicit_policy = ResourcePolicy.objects.create(
