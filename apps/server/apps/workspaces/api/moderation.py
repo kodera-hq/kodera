@@ -288,10 +288,10 @@ def links(request: HttpRequest, organisation_id: UUID) -> HttpResponse:
             organisation_id=organisation_id,
             expires_at=_time(data["expiresAt"]),
             max_uses=data["maxUses"],
-            auto_role_ids=data.get("auto_role_ids", []),
             role=data.get("role", "org_member"),
             channel_id=_uuid(data["channelId"]) if "channelId" in data else None,
             request_id=request_id,
+            **({"auto_role_ids": data["auto_role_ids"]} if "auto_role_ids" in data else {}),
         )
         return _json({"link": link_wire(row), "code": code}, 201)
 

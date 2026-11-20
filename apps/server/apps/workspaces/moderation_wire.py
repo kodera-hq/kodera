@@ -27,14 +27,40 @@ def tag(body: dict[str, Any]) -> str:
     )
 
 
-def link_wire(row: WorkspaceInviteLink) -> dict[str, Any]:
+def _creator_display_name(
+    row: WorkspaceInviteLink, erased_users: set[UUID] | None = None
+) -> str | None:
+    creator = row.created_by
+    if (
+        creator is None
+        or creator.organisation_id != row.workspace.organisation_id
+        or creator.state != "active"
+        or creator.accepted_at is None
+        or creator.deleted_at is not None
+        or not creator.user.enabled
+        or creator.user.deleted_at is not None
+    ):
+        return None
+    if erased_users is None:
+        from apps.engine_intents.selectors import erased_user_ids
+
+        erased_users = erased_user_ids(
+            organisation_id=row.workspace.organisation_id, user_ids={creator.user_id}
+        )
+    if creator.user_id in erased_users:
+        return None
+    display_name: str | None = creator.user.display_name
+    return display_name
+
+
+def link_wire(row: WorkspaceInviteLink, *, erased_users: set[UUID] | None = None) -> dict[str, Any]:
     return {
         "id": str(row.id),
         "createdBy": None
-        if row.created_by is None
+        if row.created_by_id is None
         else {
             "membershipId": str(row.created_by_id),
-            "displayName": row.created_by.user.display_name,
+            "displayName": _creator_display_name(row, erased_users),
         },
         "auto_role_ids": row.auto_role_ids,
         "expiresAt": row.expires_at.isoformat(),
@@ -82,7 +108,7 @@ def page(
             salt,
         )
     links = WorkspaceInviteLink.objects.filter(workspace=workspace).select_related(
-        "created_by__user"
+        "workspace", "created_by__user"
     )
     from django.db.models import F
     from django.utils import timezone
@@ -95,7 +121,28 @@ def page(
         links = links.filter(revoked_at__isnull=False)
     elif status != "all":
         raise RefusalError(400)
-    return _select(links, link_wire, cursor, limit, salt)
+    return _select(
+        links,
+        link_wire,
+        cursor,
+        limit,
+        salt,
+        encode_batch=lambda selected: _encode_links(workspace.organisation_id, selected),
+    )
+
+
+def _encode_links(
+    organisation_id: UUID, selected: list[WorkspaceInviteLink]
+) -> list[dict[str, Any]]:
+    from apps.engine_intents.selectors import erased_user_ids
+
+    creator_users = {
+        row.created_by.user_id
+        for row in selected
+        if row.created_by is not None and row.created_by.state == "active"
+    }
+    erased = erased_user_ids(organisation_id=organisation_id, user_ids=creator_users)
+    return [link_wire(row, erased_users=erased) for row in selected]
 
 
 def _select[Row: StoredModel](
@@ -104,6 +151,8 @@ def _select[Row: StoredModel](
     cursor: str | None,
     limit: int,
     salt: str,
+    *,
+    encode_batch: Callable[[list[Row]], list[dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
     if cursor is not None:
         if not cursor or len(cursor) > 512:
@@ -117,7 +166,9 @@ def _select[Row: StoredModel](
     more = len(selected) > limit
     selected = selected[:limit]
     return {
-        "data": [encode(row) for row in selected],
+        "data": encode_batch(selected)
+        if encode_batch is not None
+        else [encode(row) for row in selected],
         "has_more": more,
         "next_cursor": signing.dumps(str(selected[-1].id), salt=salt) if more else None,
     }

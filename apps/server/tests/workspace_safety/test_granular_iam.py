@@ -754,3 +754,122 @@ def test_unprivileged_profile_patch_refused_before_workspace_lock(world, monkeyp
         )
     assert refused.value.status == 403
     assert locked == []
+
+
+def test_delegated_role_manager_cannot_assign_or_strip_role_with_unheld_override(world):
+    from apps.workspaces import governance, iam
+    from apps.workspaces.models import Channel, WorkspaceMemberRole
+    from apps.workspaces.moderation import RefusalError
+
+    org, workspace, members, tokens = world
+    channel = Channel.objects.create(workspace=workspace, name="General", kind="text", position=0)
+    owner = {"verified": tokens[0], "organisation_id": org.id, "request_id": str(uuid4())}
+    manager = iam.create_role(
+        **owner,
+        data={
+            "name": "Managers",
+            "slug": "managers",
+            "position": 50,
+            "permissions": ["manage_roles", "channel.view"],
+        },
+    )
+    overridden = iam.create_role(
+        **owner,
+        data={
+            "name": "Restricted",
+            "slug": "restricted",
+            "position": 10,
+            "permissions": ["channel.view"],
+        },
+    )
+    plain = iam.create_role(
+        **owner,
+        data={"name": "Tag", "slug": "tag", "position": 5, "permissions": []},
+    )
+    iam.assign_roles(**owner, membership_id=members[2].id, role_ids=[manager["id"]])
+    governance.overrides(
+        **owner,
+        channel_id=channel.id,
+        data=[
+            {
+                "role_id": overridden["id"],
+                "allow": ["channel.view"],
+                "deny": ["message.delete_any"],
+            }
+        ],
+    )
+    delegate = {**owner, "verified": tokens[2]}
+    with pytest.raises(RefusalError) as add_refused:
+        iam.assign_roles(**delegate, membership_id=members[3].id, role_ids=[overridden["id"]])
+    assert add_refused.value.status == 403
+
+    iam.assign_roles(**owner, membership_id=members[3].id, role_ids=[overridden["id"]])
+    with pytest.raises(RefusalError) as strip_refused:
+        iam.assign_roles(**delegate, membership_id=members[3].id, role_ids=[])
+    assert strip_refused.value.status == 403
+    assert WorkspaceMemberRole.objects.filter(
+        membership=members[3], role_id=overridden["id"]
+    ).exists()
+
+    updated = iam.assign_roles(
+        **delegate, membership_id=members[3].id, role_ids=[overridden["id"], plain["id"]]
+    )
+    assert set(updated["role_ids"]) == {overridden["id"], plain["id"]}
+
+
+def test_assign_roles_locks_membership_before_workspace(world, monkeypatch):
+    from apps.workspaces import iam
+    from apps.workspaces.moderation import RefusalError
+
+    org, _, members, tokens = world
+    owner = {"verified": tokens[0], "organisation_id": org.id, "request_id": str(uuid4())}
+    role = iam.create_role(**owner, data={"name": "Builders", "slug": "builders"})
+    events: list[tuple[str, UUID]] = []
+    real_target = iam._target
+    real_lock_workspace = iam.lock_workspace
+
+    def tracked_target(workspace, membership_id):
+        events.append(("membership", membership_id))
+        return real_target(workspace, membership_id)
+
+    def tracked_lock_workspace(*, workspace_id):
+        events.append(("workspace", workspace_id))
+        return real_lock_workspace(workspace_id=workspace_id)
+
+    monkeypatch.setattr(iam, "_target", tracked_target)
+    monkeypatch.setattr(iam, "lock_workspace", tracked_lock_workspace)
+    with pytest.raises(RefusalError) as unauthorized:
+        iam.assign_roles(
+            verified=tokens[3],
+            organisation_id=org.id,
+            membership_id=members[2].id,
+            role_ids=[role["id"]],
+            request_id=str(uuid4()),
+        )
+    assert unauthorized.value.status == 403
+    assert events == []
+
+    iam.assign_roles(**owner, membership_id=members[3].id, role_ids=[role["id"]])
+    assert [step for step, _ in events[:2]] == ["membership", "workspace"]
+
+
+def test_create_link_refuses_explicit_null_auto_role_ids(world):
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from apps.workspaces import moderation
+
+    org, _, _, tokens = world
+    with pytest.raises(moderation.RefusalError) as refused:
+        moderation.create_link(
+            verified=tokens[0],
+            organisation_id=org.id,
+            expires_at=timezone.now() + timedelta(hours=1),
+            max_uses=2,
+            role="org_member",
+            channel_id=None,
+            auto_role_ids=None,
+            request_id=str(uuid4()),
+        )
+    assert refused.value.status == 422

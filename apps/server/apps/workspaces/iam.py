@@ -260,6 +260,26 @@ def update_role(
     return role_wire(role, active_members)
 
 
+def _override_permissions(workspace: Workspace, role_ids: set[UUID]) -> list[str]:
+    if not role_ids:
+        return []
+    return sorted(
+        {
+            permission
+            for allow, deny in WorkspaceChannelRoleOverride.objects.filter(
+                workspace=workspace, role_id__in=role_ids
+            ).values_list("allow", "deny")
+            for permission in (*allow, *deny)
+        }
+    )
+
+
+def clear_member_roles(*, workspace_id: UUID, membership_id: UUID) -> None:
+    WorkspaceMemberRole.objects.filter(
+        workspace_id=workspace_id, membership_id=membership_id
+    ).delete()
+
+
 @transaction.atomic
 def delete_role(
     *, verified: VerifiedAccessToken, organisation_id: UUID, role_id: UUID, request_id: str
@@ -270,16 +290,7 @@ def delete_role(
     role = WorkspaceRole.objects.filter(workspace=workspace, id=role_id).first()
     if role is None:
         raise RefusalError(404)
-    check_manage(workspace, caller, [role])
-    override_permissions = {
-        permission
-        for allow, deny in WorkspaceChannelRoleOverride.objects.filter(
-            workspace=workspace, role=role
-        ).values_list("allow", "deny")
-        for permission in (*allow, *deny)
-    }
-    if override_permissions:
-        check_manage(workspace, caller, [], permissions=sorted(override_permissions))
+    check_manage(workspace, caller, [role], permissions=_override_permissions(workspace, {role.id}))
     for link in WorkspaceInviteLink.objects.filter(
         workspace=workspace, auto_role_ids__contains=[str(role.id)]
     ):
@@ -298,7 +309,11 @@ def assign_roles(
     role_ids: Any,
     request_id: str,
 ) -> dict[str, Any]:
-    workspace, caller = mutation_context(verified, organisation_id, "manage_roles")
+    # Preserve `membership -> workspace` lock ordering across membership lifecycle and IAM writes.
+    initial_workspace, _ = authorize(verified, organisation_id, "manage_roles")
+    target = _target(initial_workspace, membership_id)
+    lock_workspace(workspace_id=initial_workspace.id)
+    workspace, caller = authorize(verified, organisation_id, "manage_roles")
     target = _target(workspace, membership_id)
     roles = resolve_roles(workspace, role_ids)
     current = list(
@@ -308,7 +323,13 @@ def assign_roles(
     )
     if caller.role != "org_owner" and (target.role in ADMINS or target.id == caller.membership_id):
         raise RefusalError(403)
-    check_manage(workspace, caller, [*current, *roles])
+    changed_ids = {role.id for role in current} ^ {role.id for role in roles}
+    check_manage(
+        workspace,
+        caller,
+        [*current, *roles],
+        permissions=_override_permissions(workspace, changed_ids),
+    )
     WorkspaceMemberRole.objects.filter(workspace=workspace, membership_id=target.id).delete()
     WorkspaceMemberRole.objects.bulk_create(
         [

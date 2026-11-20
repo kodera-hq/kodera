@@ -40,6 +40,7 @@ from .models import (
 from .moderation_policy import target_allowed
 
 ADMINS = frozenset({"org_owner", "org_admin"})
+_UNSET = object()
 
 
 class RefusalError(Exception):
@@ -246,14 +247,14 @@ def create_link(
     role: str,
     channel_id: UUID | None,
     request_id: str,
-    auto_role_ids: Any = None,
+    auto_role_ids: Any = _UNSET,
 ) -> tuple[WorkspaceInviteLink, str]:
     workspace, caller = _context(verified, organisation_id, admin=True)
     if workspace.invites_paused:
         raise RefusalError(403)
     from .iam import check_manage, resolve_roles
 
-    roles = resolve_roles(workspace, [] if auto_role_ids is None else auto_role_ids)
+    roles = resolve_roles(workspace, [] if auto_role_ids is _UNSET else auto_role_ids)
     if roles:
         check_manage(workspace, caller, roles)
     _expiry(expires_at)

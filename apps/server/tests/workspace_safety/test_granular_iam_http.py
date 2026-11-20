@@ -325,6 +325,21 @@ def test_paused_invites_refuse_creation_replay(world, http):
         "HTTP_AUTHORIZATION": "Bearer " + credentials[0],
         "HTTP_IDEMPOTENCY_KEY": str(uuid4()),
     }
+    null_auto_roles = client.post(
+        path,
+        data=json.dumps(
+            {
+                "expiresAt": (timezone.now() + timedelta(hours=1)).isoformat(),
+                "maxUses": 2,
+                "auto_role_ids": None,
+            }
+        ),
+        content_type="application/json",
+        HTTP_AUTHORIZATION="Bearer " + credentials[0],
+        HTTP_IDEMPOTENCY_KEY=str(uuid4()),
+    )
+    call(null_auto_roles, ROOT + "/invite-links", "post")
+    assert null_auto_roles.status_code == 422
     assert (
         client.post(path, data=body, content_type="application/json", **headers).status_code == 201
     )
@@ -440,3 +455,98 @@ def test_erasure_cutoff_blocks_iam_mutations_and_purge_scrubs_iam_state(world):
     assert workspace.banner_preset == ""
     assert workspace.icon_mxc == ""
     assert workspace.traits == []
+
+
+@override_settings(ROOT_URLCONF="apps.workspaces.api.moderation_urls")
+def test_member_departure_and_erasure_clear_workspace_roles_and_redact_invite_creator(world, http):
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from apps.orgs import membership_lifecycle
+    from apps.workspaces import iam, moderation
+
+    org, workspace, members, tokens = world
+    client, credentials = http
+    members[1].user.display_name = "Departing Admin"
+    members[1].user.save(update_fields=["display_name", "updated_at"])
+
+    owner = {"verified": tokens[0], "organisation_id": org.id, "request_id": str(uuid4())}
+    ceiling = iam.create_role(**owner, data={"name": "Leads", "slug": "leads", "position": 20})
+    builder = iam.create_role(
+        **owner, data={"name": "Builders", "slug": "builders", "position": 10}
+    )
+    iam.assign_roles(**owner, membership_id=members[1].id, role_ids=[ceiling["id"]])
+    iam.assign_roles(**owner, membership_id=members[2].id, role_ids=[builder["id"]])
+    iam.assign_roles(**owner, membership_id=members[3].id, role_ids=[builder["id"]])
+
+    link, _ = moderation.create_link(
+        verified=tokens[1],
+        organisation_id=org.id,
+        expires_at=timezone.now() + timedelta(hours=1),
+        max_uses=5,
+        channel_id=None,
+        role="org_member",
+        auto_role_ids=[builder["id"]],
+        request_id=str(uuid4()),
+    )
+    links_path = f"/api/v1/organisations/{org.id}/workspace/invite-links"
+    before = client.get(links_path, HTTP_AUTHORIZATION="Bearer " + credentials[0])
+    call(before, ROOT + "/invite-links", "get")
+    assert before.status_code == 200
+    assert before.json()["data"] == [
+        {
+            **before.json()["data"][0],
+            "id": str(link.id),
+            "createdBy": {
+                "membershipId": str(members[1].id),
+                "displayName": "Departing Admin",
+            },
+        }
+    ]
+
+    membership_lifecycle.remove_membership(
+        verified=tokens[0],
+        organisation_id=org.id,
+        membership_id=members[3].id,
+        if_match=None,
+        request_id=str(uuid4()),
+    )
+    assert not WorkspaceMemberRole.objects.filter(
+        workspace=workspace, membership_id=members[3].id
+    ).exists()
+
+    _, suspended_tag = membership_lifecycle.read_membership(
+        verified=tokens[0], organisation_id=org.id, membership_id=members[2].id
+    )
+    membership_lifecycle.change_membership(
+        verified=tokens[0],
+        organisation_id=org.id,
+        membership_id=members[2].id,
+        patch={"state": "suspended"},
+        if_match=suspended_tag,
+        request_id=str(uuid4()),
+    )
+    membership_lifecycle.remove_membership(
+        verified=tokens[0],
+        organisation_id=org.id,
+        membership_id=members[2].id,
+        if_match=None,
+        request_id=str(uuid4()),
+    )
+    assert not WorkspaceMemberRole.objects.filter(
+        workspace=workspace, membership_id=members[2].id
+    ).exists()
+
+    membership_lifecycle.erase_member(organisation_id=org.id, membership_id=members[1].id)
+    assert not WorkspaceMemberRole.objects.filter(
+        workspace=workspace, membership_id=members[1].id
+    ).exists()
+
+    after = client.get(links_path, HTTP_AUTHORIZATION="Bearer " + credentials[0])
+    call(after, ROOT + "/invite-links", "get")
+    assert after.status_code == 200
+    assert after.json()["data"][0]["createdBy"] == {
+        "membershipId": str(members[1].id),
+        "displayName": None,
+    }
