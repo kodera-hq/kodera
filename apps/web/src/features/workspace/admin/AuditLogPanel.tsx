@@ -86,6 +86,9 @@ const AUDIT_VERBS = [
   'unban',
   'kick',
   'mute',
+  'relayed',
+  'committed',
+  'retired',
 ].sort((a, b) => b.length - a.length)
 
 export function auditActionVerb(action: string): string {

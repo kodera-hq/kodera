@@ -350,6 +350,9 @@ const fr = {
       registered: 'a enregistré',
       published: 'a publié',
       claimed: 'a réclamé',
+      relayed: 'a relayé un message chiffré dans',
+      committed: 'a validé une époque de clés dans',
+      retired: 'a retiré un appareil de',
       archived: 'a archivé',
       unarchived: 'a désarchivé',
       // An unknown verb stays neutral: it must never read as a successful change.
@@ -699,6 +702,9 @@ const en: AdminCopy = {
       registered: 'registered',
       published: 'published',
       claimed: 'claimed',
+      relayed: 'relayed an encrypted message in',
+      committed: 'committed a key epoch in',
+      retired: 'retired a device from',
       archived: 'archived',
       unarchived: 'unarchived',
       // An unknown verb stays neutral: it must never read as a successful change.

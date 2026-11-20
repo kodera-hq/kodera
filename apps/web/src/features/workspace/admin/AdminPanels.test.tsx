@@ -458,6 +458,9 @@ describe('Logs d’audit', () => {
     ['workspace.e2ee.package_published', 'published'],
     ['workspace.e2ee.package_claimed', 'claimed'],
     ['workspace.e2ee.room_created', 'created'],
+    ['workspace.e2ee.application_relayed', 'relayed'],
+    ['workspace.e2ee.epoch_committed', 'committed'],
+    ['workspace.e2ee.device_retired', 'retired'],
     ['workspace.push_subscription.updated', 'updated'],
     ['workspace.push_subscription.revoked', 'revoked'],
     ['workspace.notification.read', 'read'],
@@ -502,6 +505,9 @@ describe('Logs d’audit', () => {
     ['workspace.collection.row_updated', 'document'],
     ['workspace.e2ee.device_registered', 'security'],
     ['workspace.e2ee.device_revoked', 'security'],
+    ['workspace.e2ee.application_relayed', 'security'],
+    ['workspace.e2ee.epoch_committed', 'security'],
+    ['workspace.e2ee.device_retired', 'security'],
     ['workspace.push_subscription.updated', 'notification'],
     ['workspace.push_subscription.revoked', 'notification'],
     ['workspace.notification.read', 'notification'],
@@ -604,6 +610,9 @@ describe('Logs d’audit', () => {
       'registered',
       'published',
       'claimed',
+      'relayed',
+      'committed',
+      'retired',
     ]
     for (const verb of verbs) {
       expect(adminCopy('fr').auditVerb(verb)).not.toBe('a enregistré un événement sur')
@@ -657,6 +666,12 @@ describe('Logs d’audit', () => {
     expect(adminCopy('en').auditVerb('read')).toBe('read')
     expect(adminCopy('fr').auditVerb('previewed')).toBe('a prévisualisé')
     expect(adminCopy('en').auditVerb('previewed')).toBe('previewed')
+    expect(adminCopy('fr').auditVerb('relayed')).toBe('a relayé un message chiffré dans')
+    expect(adminCopy('en').auditVerb('relayed')).toBe('relayed an encrypted message in')
+    expect(adminCopy('fr').auditVerb('committed')).toBe('a validé une époque de clés dans')
+    expect(adminCopy('en').auditVerb('committed')).toBe('committed a key epoch in')
+    expect(adminCopy('fr').auditVerb('retired')).toBe('a retiré un appareil de')
+    expect(adminCopy('en').auditVerb('retired')).toBe('retired a device from')
     // An unknown verb is neutral: it can never masquerade as a successful update.
     expect(adminCopy('fr').auditVerb('something_unheard_of')).toBe('a enregistré un événement sur')
     expect(adminCopy('en').auditVerb('something_unheard_of')).toBe('recorded an event on')
