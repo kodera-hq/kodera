@@ -46,6 +46,8 @@ it('lets a connector setup choose an available channel while stating that delive
   expect(
     screen.getByText('Ce choix prépare la configuration. Aucune connexion n’est encore activée.')
   ).toBeVisible()
+  expect(screen.getByTestId('extension-verified-github')).not.toBeVisible()
+  await userEvent.click(screen.getByText('Détails techniques & sécurité'))
   expect(screen.getByTestId('extension-verified-github')).toBeVisible()
   expect(screen.getByRole('textbox', { name: /URL de destination du webhook/ })).toBeVisible()
 })
