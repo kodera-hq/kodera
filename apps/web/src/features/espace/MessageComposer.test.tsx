@@ -357,9 +357,24 @@ describe('MessageComposer', () => {
       editing: { roomId: ROOM, eventId: '$m5' },
       text: 'ping @bob!',
     })
-    renderComposer(colliding.store, collidingDraft, [BOB_ONE, BOB_TWO])
+    const v3 = renderComposer(colliding.store, collidingDraft, [BOB_ONE, BOB_TWO])
     screen.getByRole('textbox', { name: /général/ }).focus()
     await user.keyboard('{Enter}')
     await waitFor(() => expect(colliding.edit).toHaveBeenCalledWith(ROOM, '$m5', 'ping @bob!'))
+    v3.unmount()
+
+    // 4. Editing `@bob:one.test` to bracketed IPv6 `@bob:[2001:db8::1]!` must NOT match `{ label: 'bob' }`.
+    const ipv6Swap = storeWith(undefined, undefined, [originalMxid])
+    const ipv6Draft = draftFor()
+    ipv6Draft.update({
+      editing: { roomId: ROOM, eventId: '$m4' },
+      text: 'ping @bob:[2001:db8::1]!',
+    })
+    renderComposer(ipv6Swap.store, ipv6Draft, [{ userId: BOB_ONE.userId, label: 'bob' }])
+    screen.getByRole('textbox', { name: /général/ }).focus()
+    await user.keyboard('{Enter}')
+    await waitFor(() =>
+      expect(ipv6Swap.edit).toHaveBeenCalledWith(ROOM, '$m4', 'ping @bob:[2001:db8::1]!')
+    )
   })
 })

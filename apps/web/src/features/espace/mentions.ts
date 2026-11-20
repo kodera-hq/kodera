@@ -69,11 +69,17 @@ export function hasMentionBoundaryAfter(rest: string, label: string): boolean {
   if (rest.length === label.length) return true
   const next = rest[label.length]!
   if (/\s/u.test(next)) return true
-  if (!/\p{P}/u.test(next)) return false
+  if (!/\p{P}/u.test(next) && next !== '+' && next !== '=') return false
   const afterNext = rest[label.length + 1] ?? ''
   if (
-    (next === ':' || next === '.' || next === '-' || next === '_') &&
-    /[\p{L}\p{N}_-]/u.test(afterNext)
+    (next === ':' && (/[\p{L}\p{N}_-]/u.test(afterNext) || afterNext === '[')) ||
+    ((next === '.' ||
+      next === '-' ||
+      next === '_' ||
+      next === '/' ||
+      next === '+' ||
+      next === '=') &&
+      /[\p{L}\p{N}_-]/u.test(afterNext))
   ) {
     return false
   }
