@@ -26,21 +26,22 @@ def _snapshot(row: Membership) -> WorkspaceMembership:
     )
 
 
-def for_workspace(*, organisation_id: UUID, membership_id: UUID) -> WorkspaceMembership | None:
-    """Lock one current target while the caller holds its workspace domain lock."""
+def for_workspace(
+    *, organisation_id: UUID, membership_id: UUID, lock: bool = True
+) -> WorkspaceMembership | None:
+    """Read or lock one current target membership in the caller's transaction."""
     if not connection.in_atomic_block:
         raise RuntimeError("workspace membership is read in its operation transaction")
-    row = (
-        Membership.objects.select_for_update()
-        .filter(
-            id=membership_id,
-            organisation_id=organisation_id,
-            deleted_at__isnull=True,
-            state="active",
-            accepted_at__isnull=False,
-        )
-        .first()
+    rows = Membership.objects.filter(
+        id=membership_id,
+        organisation_id=organisation_id,
+        deleted_at__isnull=True,
+        state="active",
+        accepted_at__isnull=False,
     )
+    if lock:
+        rows = rows.select_for_update(no_key=True)
+    row = rows.first()
     return _snapshot(row) if row is not None else None
 
 
@@ -54,7 +55,7 @@ def for_user(
         organisation_id=organisation_id, user_id=user_id, deleted_at__isnull=True
     )
     if lock:
-        rows = rows.select_for_update()
+        rows = rows.select_for_update(no_key=True)
     row = rows.first()
     return _snapshot(row) if row is not None else None
 

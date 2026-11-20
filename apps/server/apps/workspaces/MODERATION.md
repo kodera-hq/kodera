@@ -46,3 +46,30 @@ members. It preserves independent operator bans, including when a Core ban is
 applied and later removed. An unavailable moderation transport stops the pass
 after its first failed room. Unchanged incremental room fingerprints avoid another
 ban inventory read; a full reconciliation repairs external state drift.
+
+Granular administration (Core 0.50.0) stores roles, sub-teams and skill/rank tags with
+multiple assignments per active member. Higher numeric positions outrank lower ones.
+Only owners manage roles at or above their own highest assigned role; administrators
+need an owner-assigned ceiling. Delegated `manage_roles` holders may manage lower
+roles only with capabilities they already hold, and cannot replace their own roles
+or administrator assignments. Removing assignments checks the removed roles too.
+Channel overrides replace a unique, disjoint allow/deny list per role atomically.
+The role and override endpoints store administrative permission metadata; the existing
+content projection kernel and agent policy format remain unchanged.
+
+Every mutation checks current authority before the workspace lock and again after it.
+Database scope guards reject cross-workspace roles, channel references and memberships.
+The server profile stores bounded descriptions, presets, Matrix icon references,
+up to five badges and workspace-local text-channel references. Owners/admins update
+it. Its invite pause immediately refuses link creation, preview and redemption,
+including stored creation/redemption response admission. Link rows expose their creator,
+usage, expiry, target channel and configured auto-role IDs, never their code digest.
+First redemption by a newly joining member rechecks the creator's current role ceiling
+and assigns auto-roles atomically with the usage increment and audit event; existing
+members and administrators never receive invite auto-roles.
+Deleting a role removes its assignments, overrides and invite auto-role references.
+
+Owner/admin ban searches match email or display name and reuse the existing `unban`
+moderation action. Audit table reads require owner/admin or `view_audit_log`; exact actor
+and action filters and signed caller/filter-bound pagination never cross organisations.
+The table returns identifiers and action metadata without raw audit evidence payloads.

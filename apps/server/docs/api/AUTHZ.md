@@ -114,6 +114,9 @@ Read as: what each role may do to each resource. `own` means "rows belonging to 
 | `Proximity` | read own, act own | read own, act own | read own, act own | read own, act own | — | — | — | — |
 | `Workspace`, `Category`, `Channel` | read own, create own, update own, delete own, act own (initialise, archive) | read own, create own, update own, delete own, act own (initialise, archive) | read own | read own | — | — | — | — |
 | `WorkspaceModeration` | read, act own | read, act own | read, act own (moderator grant) | read, act own (moderator grant) | — | — | — | — |
+| `WorkspaceRole` | full own | full own | full own (manage_roles grant for mutations) | full own (manage_roles grant for mutations) | — | — | — | — |
+| `WorkspaceProfile` | read, update own | read, update own | read own | read own | — | — | — | — |
+| `WorkspaceAudit` | read own | read own | read own (view_audit_log grant) | read own (view_audit_log grant) | — | — | — | — |
 | `WorkspaceReport` | full own | full own | create, read, update own (queue requires moderator grant) | create, read, update own (queue requires moderator grant) | — | — | — | — |
 | `WorkspaceInviteLink` | full own | full own | read, act own (preview and redeem only) | read, act own (preview and redeem only) | — | — | — | — |
 | `WorkspaceAttachment` | full own | full own | full own | full own | — | — | — | — |
@@ -365,3 +368,14 @@ Authorisation failures are evidence, so they are recorded, not only logged.
 Status: Active
 
 The five customer `/api/v1/proximity` operations use `proximity:read` for bootstrap, resolve and nearby, and `proximity:act` for checkin and checkout. All four customer roles require current active membership in the exact workspace; staff is refused. Resolve and nearby additionally require active voluntary opt-in within the same scope. Each request rechecks authority. A current epoch key grants offline MAC capability only until that epoch ends; revoked members cannot bootstrap later epochs, but offline revocation is not instantaneous.
+
+
+Granular workspace administration requires current active membership. Workspace role mutations
+serialize on the workspace row and recheck authorization after locking. Higher numeric positions
+outrank lower positions; only an owner can manage a role at or above their own highest assigned
+role. Administrators without an assigned role cannot manage roles until an owner assigns a
+ceiling. Delegated `manage_roles` holders may manage lower roles with capabilities they already
+hold, and cannot change their own assignments or administrator memberships. Channel overrides
+are administrative role metadata. Profile updates and ban-list searches require owner/admin;
+audit-table reads additionally admit assigned `view_audit_log` holders. Invite pause prevents
+workspace link creation, preview and redemption. Existing moderation `unban` lifts a listed ban.

@@ -20,11 +20,13 @@ from services.identity.trusted_issuers import verify_configured_token
 from . import responses
 
 
-def _json(body: Any, status: int = 200, *, etag: bool = False) -> HttpResponse:
+def _json(body: Any, status: int = 200, *, etag: bool | str = False) -> HttpResponse:
     response = HttpResponse(
         json.dumps(body, separators=(",", ":")), status=status, content_type="application/json"
     )
-    if etag:
+    if isinstance(etag, str):
+        response["ETag"] = etag
+    elif etag:
         response["ETag"] = tag(body)
     return response
 
@@ -113,6 +115,7 @@ def _serve(request: HttpRequest, handlers: dict[str, Any]) -> HttpResponse:
             "POST",
             "PATCH",
             "DELETE",
+            "PUT",
         }:
             response = _problem(405, request_id)
             response["Allow"] = ", ".join(method for method in handlers if method != "AUTHORIZE")
@@ -167,7 +170,11 @@ def _authorize(
     verified: Any, organisation_id: UUID, *, moderator: bool = False, admin: bool = False
 ) -> None:
     service.authorise_workspace(
-        verified=verified, organisation_id=organisation_id, moderator=moderator, admin=admin
+        verified=verified,
+        organisation_id=organisation_id,
+        moderator=moderator,
+        admin=admin,
+        lock=False,
     )
 
 
@@ -276,7 +283,9 @@ def report_detail(request: HttpRequest, organisation_id: UUID, report_id: UUID) 
 def links(request: HttpRequest, organisation_id: UUID) -> HttpResponse:
     def post(verified: Any, request_id: str) -> HttpResponse:
         data = _body(
-            request, {"expiresAt", "maxUses", "channelId", "role"}, {"expiresAt", "maxUses"}
+            request,
+            {"expiresAt", "maxUses", "channelId", "role", "auto_role_ids"},
+            {"expiresAt", "maxUses"},
         )
         row, code = service.create_link(
             verified=verified,
@@ -286,6 +295,7 @@ def links(request: HttpRequest, organisation_id: UUID) -> HttpResponse:
             role=data.get("role", "org_member"),
             channel_id=_uuid(data["channelId"]) if "channelId" in data else None,
             request_id=request_id,
+            **({"auto_role_ids": data["auto_role_ids"]} if "auto_role_ids" in data else {}),
         )
         return _json({"link": link_wire(row), "code": code}, 201)
 
@@ -294,7 +304,9 @@ def links(request: HttpRequest, organisation_id: UUID) -> HttpResponse:
         {
             "POST": post,
             "GET": lambda verified, _: _page(request, verified, organisation_id, "links"),
-            "AUTHORIZE": lambda verified: _authorize(verified, organisation_id, admin=True),
+            "AUTHORIZE": lambda verified: service.authorise_link_creation(
+                verified=verified, organisation_id=organisation_id
+            ),
         },
     )
 

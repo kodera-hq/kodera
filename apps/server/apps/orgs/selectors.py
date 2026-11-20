@@ -180,6 +180,11 @@ def lock_organisation(*, organisation_id: UUID) -> bool:
     return Organisation.objects.select_for_update().filter(id=organisation_id).first() is not None
 
 
+def lock_organisation_fence(*, organisation_id: UUID) -> None:
+    """Hold a non-key organisation fence before workspace locks so membership writers serialize."""
+    Organisation.objects.select_for_update(no_key=True).filter(id=organisation_id).first()
+
+
 def lock_membership_user(*, membership_id: UUID) -> UUID:
     """Lock the membership and its joined user, retaining the original lock set."""
     row = Membership.objects.select_for_update().select_related("user").get(id=membership_id)

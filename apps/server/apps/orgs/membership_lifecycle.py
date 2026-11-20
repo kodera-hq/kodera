@@ -311,6 +311,10 @@ def remove_membership(
                 member_set_hooks.member_left(
                     Membership.objects.get(id=view.id), reason=member_set_hooks.MEMBER_REMOVED
                 )
+            else:
+                member_set_hooks.clear_departed_workspace_roles(
+                    organisation_id=view.organisation_id, membership_id=view.id
+                )
             removed = _view(view.organisation_id, view.id)
             if removed is None:
                 raise RuntimeError("the removed membership is no longer readable")

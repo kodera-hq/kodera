@@ -27,6 +27,9 @@ ROLE = re.compile(r"[a-z_][a-z0-9_]{0,62}\Z")
 # Read by the intake path itself, or by an `INSERT ... RETURNING` of a column with a database
 # default, or by the deferred constraint triggers of orgs.0002 that run at commit.
 SELECT = (
+    "workspaces_workspacerole",
+    "workspaces_workspacememberrole",
+    "workspaces_workspacechannelroleoverride",
     # Confidential transport stores public device keys and opaque ciphertext only.
     "e2ee_device",
     "e2ee_room",
@@ -158,6 +161,9 @@ SELECT = (
 # The rows one intake writes: the organisation, its reservation and intake record, the job, its
 # steps and audit rows, and the stored answer.
 INSERT = (
+    "workspaces_workspacerole",
+    "workspaces_workspacememberrole",
+    "workspaces_workspacechannelroleoverride",
     "e2ee_device",
     "e2ee_room",
     "e2ee_participant",
@@ -316,6 +322,31 @@ INSERT = (
 #   resending, revoking and accepting; never its address, role, token or inviter.
 # - orgs_membership.accepted_at: accepting revives a removed membership of the same person.
 UPDATE_COLUMNS = (
+    ("workspaces_workspacerole", "name"),
+    ("workspaces_workspacerole", "slug"),
+    ("workspaces_workspacerole", "kind"),
+    ("workspaces_workspacerole", "color"),
+    ("workspaces_workspacerole", "icon"),
+    ("workspaces_workspacerole", "position"),
+    ("workspaces_workspacerole", "is_hoisted"),
+    ("workspaces_workspacerole", "is_mentionable"),
+    ("workspaces_workspacerole", "permissions"),
+    ("workspaces_workspacerole", "updated_at"),
+    ("workspaces_workspacememberrole", "updated_at"),
+    ("workspaces_workspacechannelroleoverride", "allow"),
+    ("workspaces_workspacechannelroleoverride", "deny"),
+    ("workspaces_workspacechannelroleoverride", "updated_at"),
+    ("workspaces_workspace", "description"),
+    ("workspaces_workspace", "banner_preset"),
+    ("workspaces_workspace", "icon_mxc"),
+    ("workspaces_workspace", "traits"),
+    ("workspaces_workspace", "arrivals_channel_id"),
+    ("workspaces_workspace", "rules_channel_id"),
+    ("workspaces_workspace", "moderator_updates_channel_id"),
+    ("workspaces_workspace", "security_alerts_channel_id"),
+    ("workspaces_workspace", "invites_paused"),
+    ("workspaces_workspace", "updated_at"),
+    ("workspaces_workspaceinvitelink", "auto_role_ids"),
     # Revocation and single-use payload discard; public key bindings never change.
     ("e2ee_device", "revoked_at"),
     ("e2ee_device", "updated_at"),
@@ -612,6 +643,9 @@ UPDATE_COLUMNS = (
 # user/group deletion, group-membership unlinking, and active session revocation — never `ee_audit_ledger`
 # or `ee_audit_signing_key`.
 DELETE = (
+    "workspaces_workspacerole",
+    "workspaces_workspacememberrole",
+    "workspaces_workspacechannelroleoverride",
     "docs_collectionrow",
     "identity_discoveryquotaevent",
     "identity_passportmagiclinktoken",
@@ -629,6 +663,7 @@ DELETE = (
     "ee_scim_session",
 )
 EXECUTE_FUNCTIONS = (
+    "workspace_iam_permissions(jsonb)",
     "workspace_quota_usage(uuid)",
     "audit_workspace_resource_event(uuid, text, uuid, uuid, uuid, text)",
     "docs_document_role(uuid, uuid, uuid, uuid, text, text)",

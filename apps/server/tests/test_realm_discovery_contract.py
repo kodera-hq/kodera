@@ -86,7 +86,8 @@ DISCOVERY_SCHEMAS = (
 # Rebound after reviewed Confidential replay-header references and claim-epoch schema; all prior surfaces preserved.
 # Rebound at 0.48.0: keycloakTenant securityScheme host aligned with auth.kodera.io; discovery unchanged.
 # Rebound at 0.49.0: listMemberships optional q filter; discovery unchanged.
-UNCHANGED_SHA = "1c9074086a275c971f6be99b366b291a82c81af4a35ceea2496a0a952addc4a5"
+# Rebound at 0.50.0: granular workspace roles, overrides, profile, bans, and audit logs; discovery unchanged.
+UNCHANGED_SHA = "f5be6ec5527674cd5f85ed01c3e463befc0e202f34da41631b0fc22c454038c8"
 # Approved schema/key semantics; prose is removed before hashing.
 # Rebound at 0.26.0: discoverRealm declares 403 forbidden, a browser request refused from its
 # headers before any quota charge; the rest of the discovery wire is unchanged.

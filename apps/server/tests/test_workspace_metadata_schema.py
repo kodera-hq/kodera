@@ -212,6 +212,8 @@ def test_registered_schema_matches_migrations(schema):
             "0010_moderation_scope_guards",
             "0011_workspacequota",
             "0012_quota_enforcement",
+            "0013_granular_iam",
+            "0014_iam_scope_guards",
         }
 
 

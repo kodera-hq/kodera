@@ -3,7 +3,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from .models import EngineAgentCredential
+from .models import EngineAgentCredential, EngineKnownSubject
 
 
 def last_heartbeat(*, organisation_id: UUID, tenant_id: UUID) -> datetime | None:
@@ -18,3 +18,16 @@ def last_heartbeat(*, organisation_id: UUID, tenant_id: UUID) -> datetime | None
     if seen is None:
         seen = active.filter(tenant_ref__isnull=True).values_list("last_seen_at", flat=True).first()
     return seen
+
+
+def erased_user_ids(*, organisation_id: UUID, user_ids: set[UUID]) -> set[UUID]:
+    """People recorded as GDPR-erased in `organisation_id`."""
+    if not user_ids:
+        return set()
+    return set(
+        EngineKnownSubject.objects.filter(
+            organisation_id=organisation_id,
+            user_id__in=user_ids,
+            erased_at__isnull=False,
+        ).values_list("user_id", flat=True)
+    )

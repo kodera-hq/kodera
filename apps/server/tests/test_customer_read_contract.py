@@ -153,7 +153,12 @@ def test_identity_mfa_enrolled_is_the_bounded_current_local_totp_fact(contract):
 # baseline.
 ORGANISATION_SLUG_PATTERN = r"^[a-z0-9][a-z0-9-]{3,18}[a-z0-9](?![\s\S])"
 TENANT_SLUG_PATTERN = r"^[a-z0-9][a-z0-9-]{1,30}[a-z0-9](?![\s\S])"
-SLUG_RULES = {"organisation": ORGANISATION_SLUG_PATTERN, "tenant": TENANT_SLUG_PATTERN}
+WORKSPACE_ROLE_SLUG_PATTERN = r"^[a-z][a-z0-9_-]{0,63}$"
+SLUG_RULES = {
+    "organisation": ORGANISATION_SLUG_PATTERN,
+    "tenant": TENANT_SLUG_PATTERN,
+    "workspace_role": WORKSPACE_ROLE_SLUG_PATTERN,
+}
 SLUG_CASES = {
     "organisation": [
         ("abcde", True),
@@ -178,6 +183,19 @@ SLUG_CASES = {
         ("a_bc", False),
         ("Abc", False),
         ("abc\n", False),
+    ],
+    "workspace_role": [
+        ("a", True),
+        ("builders", True),
+        ("sub_team-1", True),
+        ("a" * 64, True),
+        ("", False),
+        ("a" * 65, False),
+        ("1role", False),
+        ("-role", False),
+        ("_role", False),
+        ("Builders", False),
+        ("role name", False),
     ],
 }
 
@@ -209,6 +227,7 @@ SLUG_NAME = re.compile(
 )
 TENANT_WORD = re.compile(r"tenant|slug[-_]?availability", re.IGNORECASE)
 ORGANISATION_WORD = re.compile(rf"organi[sz]ation|realm|{ORG_WORD}", re.IGNORECASE)
+WORKSPACE_ROLE_WORD = re.compile(r"workspace_role", re.IGNORECASE)
 # Values under these keywords are data or prose, never a field. A property may
 # carry one of these names, so the rule never applies inside `properties`.
 NOT_A_SCHEMA = {"example", "examples", "default", "enum", "const", "description", "summary"}
@@ -254,6 +273,14 @@ ORGANISATION_SLUG_LOCATIONS = tuple(
         "OrganisationBootstrap",
     )
 )
+WORKSPACE_ROLE_SLUG_LOCATIONS = tuple(
+    ("core-api", ("components", "schemas", name, "properties", "slug"))
+    for name in (
+        "WorkspaceRole",
+        "WorkspaceRoleCreate",
+        "WorkspaceRolePatch",
+    )
+)
 
 
 def load_contracts():
@@ -297,7 +324,11 @@ def classify_slug(context):
     for token in tokens:
         rules = {
             rule
-            for rule, word in (("tenant", TENANT_WORD), ("organisation", ORGANISATION_WORD))
+            for rule, word in (
+                ("tenant", TENANT_WORD),
+                ("organisation", ORGANISATION_WORD),
+                ("workspace_role", WORKSPACE_ROLE_WORD),
+            )
             if word.search(words(token))
         }
         if len(rules) > 1:
@@ -514,6 +545,13 @@ def slug_rule_problems(contracts):
             problems.append(
                 f"{where} ({rule} slug) carries {carries}, not the {rule} rule {SLUG_RULES[rule]!r}"
             )
+        elif rule == "workspace_role" and (
+            schema.get("minLength") != 1 or schema.get("maxLength") != 64
+        ):
+            problems.append(
+                f"{where} (workspace_role slug) carries minLength={schema.get('minLength')!r}, "
+                f"maxLength={schema.get('maxLength')!r}, not minLength=1, maxLength=64"
+            )
     return problems
 
 
@@ -532,7 +570,11 @@ def test_every_slug_field_in_both_contracts_carries_the_rule_its_context_names()
     found = {where for where, *_ in fields}
     expected = {
         pointer_text(name, pointer)
-        for name, pointer in (*TENANT_SLUG_LOCATIONS, *ORGANISATION_SLUG_LOCATIONS)
+        for name, pointer in (
+            *TENANT_SLUG_LOCATIONS,
+            *ORGANISATION_SLUG_LOCATIONS,
+            *WORKSPACE_ROLE_SLUG_LOCATIONS,
+        )
     }
     assert expected <= found, "the walk no longer finds: " + "; ".join(sorted(expected - found))
     problems = slug_rule_problems(contracts)
@@ -900,6 +942,36 @@ SLUG_RULE_MUTATIONS = [
         "WidgetHeader",
         id="a-referenced-response-header-is-judged-under-the-referring-name",
     ),
+    pytest.param(
+        lambda c: with_property(
+            c,
+            "core-api",
+            "WorkspaceRole",
+            "slug",
+            {"type": "string", "minLength": 1, "maxLength": 64, "pattern": TENANT_SLUG_PATTERN},
+        ),
+        "core-api components/schemas/WorkspaceRole/properties/slug (workspace_role slug) "
+        f"carries pattern {TENANT_SLUG_PATTERN!r}, not the workspace_role rule "
+        f"{WORKSPACE_ROLE_SLUG_PATTERN!r}",
+        id="a-workspace-role-slug-with-a-malformed-pattern",
+    ),
+    pytest.param(
+        lambda c: with_property(
+            c,
+            "core-api",
+            "WorkspaceRoleCreate",
+            "slug",
+            {
+                "type": "string",
+                "minLength": 0,
+                "maxLength": 128,
+                "pattern": WORKSPACE_ROLE_SLUG_PATTERN,
+            },
+        ),
+        "core-api components/schemas/WorkspaceRoleCreate/properties/slug "
+        "(workspace_role slug) carries minLength=0, maxLength=128, not minLength=1, maxLength=64",
+        id="a-workspace-role-slug-with-malformed-bounds",
+    ),
 ]
 
 
@@ -985,7 +1057,8 @@ N4_PATH = "/organisations/{organisation_id}/bootstrap"
 # Rebound for additive workspace surfaces; existing assurance guards are unchanged.
 # Rebound at 0.48.0: keycloakTenant securityScheme host aligned with auth.kodera.io; assurance guards unchanged.
 # Rebound at 0.49.0: listMemberships optional q filter; assurance guards unchanged.
-N4_VERSION = "0.49.0"
+# Rebound at 0.50.0: granular workspace roles, overrides, profile, bans, and audit logs; assurance guards unchanged.
+N4_VERSION = "0.50.0"
 # Rebound at 0.19.0 (2026-10-21, on top of 0.18.1): the notice-contacts delta and the Plan example's EU hosting.
 # Rebound at 0.22.0: the ten structure operations, their schemas and Problem.reason's first value;
 # then room_state on WorkspaceChannel, the starter's lounge (template version 2) and AppCode messaging;
@@ -1036,7 +1109,8 @@ N4_VERSION = "0.49.0"
 # Rebound after shared replay-header normalization; all prior wire definitions remain exact.
 # Rebound at 0.48.0: keycloakTenant securityScheme host aligned with auth.kodera.io; no N4 bytes changed.
 # Rebound at 0.49.0: listMemberships optional q filter; no N4 bytes changed.
-N4_OLD_CONTRACT = "29cba0e1926504b93787c37220fe7c657f4523c66165386c2e1fa4ee6d28b76c"
+# Rebound at 0.50.0: granular workspace roles, overrides, profile, bans, and audit logs; no N4 bytes changed.
+N4_OLD_CONTRACT = "f9972ff24912e99447f15e4ddac96409d28f8c40f54365bdf6d85eb6afcbbdc5"
 # Rebound at 0.20.0 (2026-10-22): CONVENTIONS.md §6 gains the order-in-progress and invoice-issued rows and a changelog line.
 # Rebound at 0.24.0 (2026-10-22): CONVENTIONS.md §6's invoice-issued row narrowed, and a changelog line.
 # Rebound at 0.28.0: CONVENTIONS.md §6 gains the identity-unknown row and a changelog line.

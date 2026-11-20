@@ -71,14 +71,21 @@ const report = (findings: Finding[]): string[] =>
 /** Every source file a colour could be written into. */
 const scanned = (): string[] => [...sourceFiles(SRC), INDEX_CSS]
 
-// The types `npm run api:generate` writes from the pinned Core contract carry the contract's own
-// prose as doc comments, verbatim: contract 0.14.0 cites « kodera-core #164 », which the hex
-// pattern reads as a three-digit colour. The file is never hand-edited (docs/dev/API_CLIENT.md),
-// renders nothing, and the contract is not this repository's to reword — so it is left out of the
-// hex walk, and only that one. Every other check still reads it, and the exclusion is held to a
-// file the walk really reaches, so it cannot quietly cover a path that has moved.
+// Everything `npm run api:generate` writes from the pinned Core contract, each file marked
+// `// GENERATED FILE — DO NOT EDIT`: the types (`src/api/schema.d.ts`) and the two generated
+// directories (`src/api/generated/`, `src/mocks/generated/`). They carry the contract's own
+// prose and example data verbatim — contract 0.14.0 cites « kodera-core #164 » in a doc
+// comment, which the hex pattern reads as a three-digit colour, and contract 0.50.0's
+// `WorkspaceRole` examples carry `"color": "#2563eb"` in the mock examples. None of that is
+// this repository's to reword: the files are never hand-edited (docs/dev/API_CLIENT.md) and
+// render nothing, so they are left out of the hex walk, and only that walk. Every other
+// check still reads them, and the exclusion is held to files the walk really reaches, so it
+// cannot quietly cover a path that has moved.
 const CONTRACT_TYPES = join(SRC, 'api', 'schema.d.ts')
-const scannedForHex = (): string[] => scanned().filter((file) => file !== CONTRACT_TYPES)
+const GENERATED_ROOTS = [join(SRC, 'api', 'generated'), join(SRC, 'mocks', 'generated')]
+const GENERATED_FILES = [...GENERATED_ROOTS.flatMap((root) => sourceFiles(root)), CONTRACT_TYPES]
+const isGenerated = (file: string): boolean => GENERATED_FILES.includes(file)
+const scannedForHex = (): string[] => scanned().filter((file) => !isGenerated(file))
 
 // ---------------------------------------------------------------------------
 
@@ -203,12 +210,16 @@ describe('design tokens', () => {
     expect(report(inlineHex(scannedForHex()))).toEqual([])
   })
 
-  it('leaves exactly one file out of the hex walk: the generated contract types', () => {
+  it('leaves exactly the generated OpenAPI artifacts out of the hex walk', () => {
     // One walk each: `scannedForHex` walks the source tree, so calling it per file is quadratic.
     const all = scanned()
     const kept = new Set(scannedForHex())
-    expect(all).toContain(CONTRACT_TYPES)
-    expect(all.filter((file) => !kept.has(file))).toEqual([CONTRACT_TYPES])
+    // The exclusion is held to files the walk really reaches, so it cannot quietly cover
+    // a path that has moved: the generated roots must be walked, and the hex walk must
+    // drop them and nothing else.
+    expect(GENERATED_FILES.length).toBeGreaterThanOrEqual(4)
+    for (const file of GENERATED_FILES) expect(all).toContain(file)
+    expect(all.filter((file) => !kept.has(file)).sort()).toEqual([...GENERATED_FILES].sort())
   })
 
   it('reports an inline hex, including one in a style prop no class scanner reads', () => {

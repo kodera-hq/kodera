@@ -28,6 +28,19 @@ MEMBER_ERASED = "member_erased"
 CHANNEL_SET_REASON = "membership.changed"
 
 
+def clear_departed_workspace_roles(*, organisation_id: UUID, membership_id: UUID) -> None:
+    from django.apps import apps as django_apps
+
+    if not django_apps.is_installed("apps.workspaces"):
+        return
+    from apps.workspaces import channel_sets
+    from apps.workspaces.iam import clear_member_roles
+
+    workspace_id = channel_sets.lock_workspace(organisation_id)
+    if workspace_id is not None:
+        clear_member_roles(workspace_id=workspace_id, membership_id=membership_id)
+
+
 def member_left(membership: Membership, *, reason: str) -> None:
     # Imported here: apps.engine_intents.services reads this app's selectors.
     from apps.engine_intents.services import emit_member_left
@@ -39,6 +52,10 @@ def member_left(membership: Membership, *, reason: str) -> None:
     # first (ESPACE_STRUCTURE.md §13.5); then the member set, then the channel set.
     refresh_community_staff_grants(membership.organisation_id)
     prepared = channel_sets.prepare(membership.organisation_id)
+    if prepared is not None and reason == MEMBER_REMOVED:
+        from apps.workspaces.iam import clear_member_roles
+
+        clear_member_roles(workspace_id=prepared.workspace_id, membership_id=membership.id)
     emit_member_left(membership, reason=reason)
     channel_sets.emit_prepared(prepared, reason=CHANNEL_SET_REASON)
 
@@ -51,6 +68,10 @@ def member_erased(membership: Membership) -> None:
     from apps.workspaces import channel_sets
 
     prepared = channel_sets.prepare(membership.organisation_id)
+    if prepared is not None:
+        from apps.workspaces.iam import clear_member_roles
+
+        clear_member_roles(workspace_id=prepared.workspace_id, membership_id=membership.id)
     mark_erased(organisation_id=membership.organisation_id, user_id=membership.user_id)
     emit_member_left(membership, reason=MEMBER_ERASED)
     channel_sets.emit_prepared(prepared, reason=CHANNEL_SET_REASON)

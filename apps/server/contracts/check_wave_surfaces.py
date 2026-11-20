@@ -51,6 +51,7 @@ def validate(document: dict[str, Any]) -> None:
         "0.47.0",
         "0.48.0",
         "0.49.0",
+        "0.50.0",
     }:
         raise ValueError("version")
     operations = {
@@ -179,7 +180,17 @@ if __name__ == "__main__":
     main()
     if yaml.safe_load(Path(__file__).with_name("core-api.openapi.yaml").read_text())["info"][
         "version"
-    ] in {"0.44.0", "0.44.1", "0.44.2", "0.45.0", "0.46.0", "0.47.0", "0.48.0", "0.49.0"}:
+    ] in {
+        "0.44.0",
+        "0.44.1",
+        "0.44.2",
+        "0.45.0",
+        "0.46.0",
+        "0.47.0",
+        "0.48.0",
+        "0.49.0",
+        "0.50.0",
+    }:
         from check_wave4_surfaces import main as wave4_main
 
         wave4_main()
