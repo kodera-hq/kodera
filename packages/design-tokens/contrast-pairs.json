@@ -6669,6 +6669,202 @@
       "bg": "semantic.theme.ciel-nuit.page-grad",
       "label": "ciel-nuit: focus ring core straight on the sky, worst case over its stops and every blend between them (non-text, 1.4.11)",
       "min": 3
+    },
+    {
+      "id": "noir.50/noir.950",
+      "fg": "color.noir.50",
+      "bg": "color.noir.950",
+      "label": "noir: primary editorial ink on the landing canvas",
+      "min": 4.5
+    },
+    {
+      "id": "noir.50/noir.900",
+      "fg": "color.noir.50",
+      "bg": "color.noir.900",
+      "label": "noir: primary editorial ink on the landing shell",
+      "min": 4.5
+    },
+    {
+      "id": "noir.50/noir.850",
+      "fg": "color.noir.50",
+      "bg": "color.noir.850",
+      "label": "noir: primary editorial ink on the landing card",
+      "min": 4.5
+    },
+    {
+      "id": "noir.50/noir.800",
+      "fg": "color.noir.50",
+      "bg": "color.noir.800",
+      "label": "noir: primary editorial ink on the landing raised surface, and the secondary button and badge label on its fill",
+      "min": 4.5
+    },
+    {
+      "id": "noir.400/noir.950",
+      "fg": "color.noir.400",
+      "bg": "color.noir.950",
+      "label": "noir: secondary editorial text and primary 11px monospace label on the landing canvas",
+      "min": 4.5
+    },
+    {
+      "id": "noir.400/noir.900",
+      "fg": "color.noir.400",
+      "bg": "color.noir.900",
+      "label": "noir: secondary editorial text and primary 11px monospace label on the landing shell",
+      "min": 4.5
+    },
+    {
+      "id": "noir.400/noir.850",
+      "fg": "color.noir.400",
+      "bg": "color.noir.850",
+      "label": "noir: secondary editorial text and primary 11px monospace label on the landing card",
+      "min": 4.5
+    },
+    {
+      "id": "noir.400/noir.800",
+      "fg": "color.noir.400",
+      "bg": "color.noir.800",
+      "label": "noir: secondary editorial text and primary 11px monospace label on the landing raised surface",
+      "min": 4.5
+    },
+    {
+      "id": "noir.500/noir.950",
+      "fg": "color.noir.500",
+      "bg": "color.noir.950",
+      "label": "noir: subtle 11px monospace label on the landing canvas",
+      "min": 4.5
+    },
+    {
+      "id": "noir.500/noir.900",
+      "fg": "color.noir.500",
+      "bg": "color.noir.900",
+      "label": "noir: subtle 11px monospace label on the landing shell",
+      "min": 4.5
+    },
+    {
+      "id": "noir.500/noir.850",
+      "fg": "color.noir.500",
+      "bg": "color.noir.850",
+      "label": "noir: subtle 11px monospace label on the landing card",
+      "min": 4.5
+    },
+    {
+      "id": "noir.500/noir.800",
+      "fg": "color.noir.500",
+      "bg": "color.noir.800",
+      "label": "noir: subtle 11px monospace label on the landing raised surface",
+      "min": 4.5
+    },
+    {
+      "id": "noir.950/noir.100",
+      "fg": "color.noir.950",
+      "bg": "color.noir.100",
+      "label": "noir: dark label on the primary pill call-to-action fill",
+      "min": 4.5
+    },
+    {
+      "id": "noir.950/white",
+      "fg": "color.noir.950",
+      "bg": "color.white",
+      "label": "noir: dark ink on a white card or button",
+      "min": 4.5
+    },
+    {
+      "id": "noir.950/noir.sky",
+      "fg": "color.noir.950",
+      "bg": "color.noir.sky",
+      "label": "noir: primary ink on the sky offer card",
+      "min": 4.5
+    },
+    {
+      "id": "noir.950/noir.lilac",
+      "fg": "color.noir.950",
+      "bg": "color.noir.lilac",
+      "label": "noir: primary ink on the lilac offer card",
+      "min": 4.5
+    },
+    {
+      "id": "noir.950/noir.lime",
+      "fg": "color.noir.950",
+      "bg": "color.noir.lime",
+      "label": "noir: primary ink on the lime offer card",
+      "min": 4.5
+    },
+    {
+      "id": "noir.700/noir.sky",
+      "fg": "color.noir.700",
+      "bg": "color.noir.sky",
+      "label": "noir: secondary text on the sky offer card",
+      "min": 4.5
+    },
+    {
+      "id": "noir.700/noir.lilac",
+      "fg": "color.noir.700",
+      "bg": "color.noir.lilac",
+      "label": "noir: secondary text on the lilac offer card",
+      "min": 4.5
+    },
+    {
+      "id": "noir.700/noir.lime",
+      "fg": "color.noir.700",
+      "bg": "color.noir.lime",
+      "label": "noir: secondary text on the lime offer card",
+      "min": 4.5
+    },
+    {
+      "id": "noir.600/noir.950",
+      "fg": "color.noir.600",
+      "bg": "color.noir.950",
+      "label": "noir: control border or diagram stroke on the landing canvas (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "noir.600/noir.900",
+      "fg": "color.noir.600",
+      "bg": "color.noir.900",
+      "label": "noir: control border or diagram stroke on the landing shell (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "noir.600/noir.850",
+      "fg": "color.noir.600",
+      "bg": "color.noir.850",
+      "label": "noir: control border or diagram stroke on the landing card (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "noir.600/noir.800",
+      "fg": "color.noir.600",
+      "bg": "color.noir.800",
+      "label": "noir: control border or diagram stroke on the landing raised surface (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "noir.release/noir.950",
+      "fg": "color.noir.release",
+      "bg": "color.noir.950",
+      "label": "noir: release timeline indicator on the landing canvas (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "noir.release/noir.900",
+      "fg": "color.noir.release",
+      "bg": "color.noir.900",
+      "label": "noir: release timeline indicator on the landing shell (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "noir.release/noir.850",
+      "fg": "color.noir.release",
+      "bg": "color.noir.850",
+      "label": "noir: release timeline indicator on the landing card (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "noir.release/noir.800",
+      "fg": "color.noir.release",
+      "bg": "color.noir.800",
+      "label": "noir: release timeline indicator on the landing raised surface (non-text, 1.4.11)",
+      "min": 3
     }
   ],
   "measurements": [
@@ -7808,6 +8004,78 @@
       "label": "ciel-nuit: the specular edge of a material against the page",
       "kind": "decorative",
       "purpose": "A hairline of light on a material's border. Decorative: a material is found by its ground, its shadow and its content, never by this edge alone.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "noir.rule/noir.950",
+      "fg": "color.noir.rule",
+      "bg": "color.noir.950",
+      "label": "noir: decorative hairline on the landing canvas",
+      "kind": "decorative",
+      "purpose": "An architectural hairline between landing sections and bento cells. Decorative only: never text, and never the sole boundary of a control; a control on the landing uses noir.600 (gated at 3:1).",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "noir.rule/noir.900",
+      "fg": "color.noir.rule",
+      "bg": "color.noir.900",
+      "label": "noir: decorative hairline on the landing shell",
+      "kind": "decorative",
+      "purpose": "An architectural hairline between landing sections and bento cells. Decorative only: never text, and never the sole boundary of a control; a control on the landing uses noir.600 (gated at 3:1).",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "noir.rule/noir.850",
+      "fg": "color.noir.rule",
+      "bg": "color.noir.850",
+      "label": "noir: decorative hairline on the landing card",
+      "kind": "decorative",
+      "purpose": "An architectural hairline between landing sections and bento cells. Decorative only: never text, and never the sole boundary of a control; a control on the landing uses noir.600 (gated at 3:1).",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "noir.rule/noir.800",
+      "fg": "color.noir.rule",
+      "bg": "color.noir.800",
+      "label": "noir: decorative hairline on the landing raised surface",
+      "kind": "decorative",
+      "purpose": "An architectural hairline between landing sections and bento cells. Decorative only: never text, and never the sole boundary of a control; a control on the landing uses noir.600 (gated at 3:1).",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "noir.specular/noir.950",
+      "fg": "color.noir.specular",
+      "bg": "color.noir.950",
+      "label": "noir: decorative specular highlight on the landing canvas",
+      "kind": "decorative",
+      "purpose": "An inset specular highlight on the top edge of a landing card or button. Decorative only: never text, and never the sole boundary of a control; the card is found by its fill against the canvas.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "noir.specular/noir.900",
+      "fg": "color.noir.specular",
+      "bg": "color.noir.900",
+      "label": "noir: decorative specular highlight on the landing shell",
+      "kind": "decorative",
+      "purpose": "An inset specular highlight on the top edge of a landing card or button. Decorative only: never text, and never the sole boundary of a control; the card is found by its fill against the canvas.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "noir.specular/noir.850",
+      "fg": "color.noir.specular",
+      "bg": "color.noir.850",
+      "label": "noir: decorative specular highlight on the landing card",
+      "kind": "decorative",
+      "purpose": "An inset specular highlight on the top edge of a landing card or button. Decorative only: never text, and never the sole boundary of a control; the card is found by its fill against the canvas.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "noir.specular/noir.800",
+      "fg": "color.noir.specular",
+      "bg": "color.noir.800",
+      "label": "noir: decorative specular highlight on the landing raised surface",
+      "kind": "decorative",
+      "purpose": "An inset specular highlight on the top edge of a landing card or button. Decorative only: never text, and never the sole boundary of a control; the card is found by its fill against the canvas.",
       "thresholdForComparison": 3
     }
   ],

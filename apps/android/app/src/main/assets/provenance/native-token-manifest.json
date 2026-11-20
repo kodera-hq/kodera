@@ -2,7 +2,7 @@
   "format": "kodera-native-tokens/1",
   "source": {
     "path": "tokens.json",
-    "sha256": "b433e6661de2804471ba3f62715b21b9ef81e218a967bc83ca62132f82161e51"
+    "sha256": "cdf9e7a299fb260a9aacd87c39cac82a7cec644e01a3a50757a92d5174ddee5a"
   },
   "themes": [
     {
@@ -6810,6 +6810,24 @@
       }
     },
     {
+      "path": "font.family.display",
+      "aliases": [
+        "font.family.display"
+      ],
+      "api": "KoderaTokens.FontFamily.display",
+      "type": "fontFamily",
+      "value": {
+        "primary": "Inter Variable",
+        "fallbacks": [
+          "Inter",
+          "system-ui",
+          "-apple-system",
+          "Segoe UI",
+          "sans-serif"
+        ]
+      }
+    },
+    {
       "path": "semantic.material.light.bar",
       "aliases": [
         "semantic.material.light.bar",
@@ -7765,6 +7783,70 @@
     },
     {
       "path": "color.red.600",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.noir.50",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.noir.100",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.noir.400",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.noir.500",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.noir.600",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.noir.700",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.noir.800",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.noir.850",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.noir.900",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.noir.950",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.noir.sky",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.noir.lilac",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.noir.lime",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.noir.release",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.noir.rule",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.noir.specular",
       "reason": "outside the native format 1 surface"
     },
     {
@@ -9656,7 +9738,15 @@
       "reason": "outside the native format 1 surface"
     },
     {
+      "path": "motion.duration.intro",
+      "reason": "outside the native format 1 surface"
+    },
+    {
       "path": "motion.easing.out",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "motion.easing.curtain",
       "reason": "outside the native format 1 surface"
     },
     {

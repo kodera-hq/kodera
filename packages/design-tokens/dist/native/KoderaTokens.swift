@@ -1,6 +1,6 @@
 // GENERATED FILE — DO NOT EDIT. kodera-native-tokens/1
 // Public source checksum (SHA-256)
-// b433e6661de2804471ba3f62715b21b9ef81e218a967bc83ca62132f82161e51
+// cdf9e7a299fb260a9aacd87c39cac82a7cec644e01a3a50757a92d5174ddee5a
 // Source file: tokens.json
 
 import SwiftUI
@@ -651,5 +651,6 @@ public enum KoderaTokens {
     public enum FontFamily {
         public static let sans = Family(primary: "Plus Jakarta Sans", fallbacks: ["system-ui", "-apple-system", "Segoe UI", "sans-serif"])
         public static let mono = Family(primary: "IBM Plex Mono", fallbacks: ["ui-monospace", "SF Mono", "Menlo", "monospace"])
+        public static let display = Family(primary: "Inter Variable", fallbacks: ["Inter", "system-ui", "-apple-system", "Segoe UI", "sans-serif"])
     }
 }
