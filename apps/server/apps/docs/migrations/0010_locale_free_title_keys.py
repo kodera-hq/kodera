@@ -26,10 +26,12 @@ def backfill(apps, schema_editor):
     taken = set()
     pending = []
     keyed = []
+    pre_dedup_keys = {}
     rows = documents.order_by("id").only("id", "workspace_id", "title", "deleted_at")
     for row in rows.iterator(chunk_size=BATCH):
         row.title_key = key(row.title)
         if row.deleted_at is None:
+            pre_dedup_keys[row.pk] = row.title_key
             if (row.workspace_id, row.title_key) in taken:
                 pending.append(row)
                 continue
@@ -48,22 +50,36 @@ def backfill(apps, schema_editor):
             raise RuntimeError("document title keys cannot be made unique")
         taken.add((row.workspace_id, key(title)))
         documents.filter(pk=row.pk).update(title=title, title_key=key(title))
-    # Stored link targets were `lower()` of the NFC name; folding that is folding the name.
+    # Resolved links fold from their target document's pre-dedup title (preserving links
+    # such as [[İ]] whose legacy lower() stored "i" under UTF-8 libc, while keeping
+    # links aligned with source markdown when a duplicate title gained a numeric suffix).
     seen = set()
     duplicates = []
     changed = []
-    links = document_links.order_by("id").only("id", "source_id", "target_title")
+    prior_keys = set()
+    links = document_links.order_by("id").only("id", "source_id", "target_id", "target_title")
     for link in links.iterator(chunk_size=BATCH):
-        folded = key(link.target_title)
+        target_orig_key = pre_dedup_keys.get(link.target_id) if link.target_id is not None else None
+        folded = target_orig_key if target_orig_key is not None else key(link.target_title)
         if (link.source_id, folded) in seen:
             duplicates.append(link.pk)
             continue
         seen.add((link.source_id, folded))
         if folded != link.target_title:
+            prior_keys.add((link.source_id, link.target_title))
             link.target_title = folded
             changed.append(link)
     for start in range(0, len(duplicates), BATCH):
         document_links.filter(pk__in=duplicates[start : start + BATCH]).delete()
+    if any((link.source_id, link.target_title) in prior_keys for link in changed):
+        staged = []
+        for link in changed:
+            final_title = link.target_title
+            link.target_title = f"[{link.pk}]"
+            staged.append((link, final_title))
+        document_links.bulk_update(changed, ["target_title"], batch_size=BATCH)
+        for link, final_title in staged:
+            link.target_title = final_title
     document_links.bulk_update(changed, ["target_title"], batch_size=BATCH)
     with schema_editor.connection.cursor() as cursor:
         cursor.execute(
@@ -118,15 +134,18 @@ def reverse_backfill(apps, schema_editor):
     changed = []
     prior_keys = set()
     links = (
-        document_links.select_related("target")
+        document_links.annotate(
+            _target_db_lower=models.functions.Lower("target__title"),
+            _self_db_lower=models.functions.Lower("target_title"),
+        )
         .order_by("id")
-        .only("id", "source_id", "target_id", "target_title", "target__title")
+        .only("id", "source_id", "target_id", "target_title")
     )
     for link in links.iterator(chunk_size=BATCH):
         restored = (
-            link.target.title.lower()[:255]
-            if link.target_id is not None
-            else link.target_title[:255]
+            link._target_db_lower[:255]
+            if link.target_id is not None and link._target_db_lower
+            else (link._self_db_lower or link.target_title)[:255]
         )
         if (link.source_id, restored) in seen:
             duplicates.append(link.pk)

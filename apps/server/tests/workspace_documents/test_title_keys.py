@@ -459,15 +459,15 @@ def test_migration_0010_rollback_deduplicates_utf8_locale_lower_collisions(
                 cur.execute("SELECT lower(%s) = %s", ["\u0130", "i"])
                 assert cur.fetchone() == (True,), f"{utf8_locale} did not fold U+0130 to 'i'"
 
-            MigrationExecutor(target).migrate(new)
-            state_apps = MigrationExecutor(target).loader.project_state(new).apps
-            organisation_model = state_apps.get_model("orgs", "Organisation")
-            reservation_model = state_apps.get_model("orgs", "SlugReservation")
-            workspace_model = state_apps.get_model("workspaces", "Workspace")
-            user_model = state_apps.get_model("identity", "User")
-            membership_model = state_apps.get_model("orgs", "Membership")
-            document_model = state_apps.get_model("docs", "Document")
-            link_model = state_apps.get_model("docs", "DocumentLink")
+            MigrationExecutor(target).migrate(old)
+            old_state = MigrationExecutor(target).loader.project_state(old).apps
+            organisation_model = old_state.get_model("orgs", "Organisation")
+            reservation_model = old_state.get_model("orgs", "SlugReservation")
+            workspace_model = old_state.get_model("workspaces", "Workspace")
+            user_model = old_state.get_model("identity", "User")
+            membership_model = old_state.get_model("orgs", "Membership")
+            old_document_model = old_state.get_model("docs", "Document")
+            old_link_model = old_state.get_model("docs", "DocumentLink")
 
             with transaction.atomic(using=alias):
                 org = organisation_model.objects.using(alias).create(
@@ -493,37 +493,72 @@ def test_migration_0010_rollback_deduplicates_utf8_locale_lower_collisions(
                     state="active",
                     accepted_at=timezone.now(),
                 )
-                ascii_i = document_model.objects.using(alias).create(
-                    id=UUID("01900000-0000-7000-8000-000000000101"),
+                source_doc = old_document_model.objects.using(alias).create(
+                    id=UUID("01900000-0000-7000-8000-000000000100"),
                     workspace=workspace,
                     creator=member,
-                    title="i",
-                    title_key=titles.key("i"),
+                    title="Index",
                 )
-                dotted_i = document_model.objects.using(alias).create(
+                dotted_i = old_document_model.objects.using(alias).create(
                     id=UUID("01900000-0000-7000-8000-000000000102"),
                     workspace=workspace,
                     creator=member,
                     title="\u0130",
-                    title_key=titles.key("\u0130"),
                 )
-                link_model.objects.using(alias).create(
+                # Under 0009 on UTF-8 libc, [[İ]] stored PostgreSQL lower('İ') == 'i'.
+                old_link_model.objects.using(alias).create(
                     id=UUID("01900000-0000-7000-8000-000000000103"),
-                    source=ascii_i,
+                    source=source_doc,
                     target=dotted_i,
-                    target_title=titles.key("\u0130"),
+                    target_title="i",
+                )
+
+            MigrationExecutor(target).migrate(new)
+            state_apps = MigrationExecutor(target).loader.project_state(new).apps
+            document_model = state_apps.get_model("docs", "Document")
+            link_model = state_apps.get_model("docs", "DocumentLink")
+            assert list(
+                link_model.objects.using(alias)
+                .filter(source_id=source_doc.pk)
+                .values_list("target_title", "target_id")
+            ) == [(titles.key("\u0130"), dotted_i.pk)]
+
+            with transaction.atomic(using=alias):
+                ascii_i = document_model.objects.using(alias).create(
+                    id=UUID("01900000-0000-7000-8000-000000000101"),
+                    workspace_id=workspace.pk,
+                    creator_id=member.pk,
+                    title="i",
+                    title_key=titles.key("i"),
                 )
 
             MigrationExecutor(target).migrate(old)
             rolled_apps = MigrationExecutor(target).loader.project_state(old).apps
             old_doc = rolled_apps.get_model("docs", "Document")
+            old_link = rolled_apps.get_model("docs", "DocumentLink")
             rolled_titles = dict(
                 old_doc.objects.using(alias)
                 .filter(pk__in=[ascii_i.pk, dotted_i.pk])
                 .values_list("id", "title")
             )
             assert rolled_titles == {ascii_i.pk: "i", dotted_i.pk: "\u0130 (2)"}
+            assert list(
+                old_link.objects.using(alias)
+                .filter(source_id=source_doc.pk)
+                .values_list("target_title", "target_id")
+            ) == [("i (2)", dotted_i.pk)]
+
             MigrationExecutor(target).migrate(new)
+            reapplied_link = (
+                MigrationExecutor(target)
+                .loader.project_state(new)
+                .apps.get_model("docs", "DocumentLink")
+            )
+            assert list(
+                reapplied_link.objects.using(alias)
+                .filter(source_id=source_doc.pk)
+                .values_list("target_title", "target_id")
+            ) == [(titles.key("\u0130 (2)"), dotted_i.pk)]
         finally:
             try:
                 connections[alias].close()
