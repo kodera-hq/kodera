@@ -13,7 +13,6 @@ import {
   useEffect,
   useMemo,
   useRef,
-  useState,
   type KeyboardEvent,
   type PointerEvent,
   type ReactNode,
@@ -170,12 +169,28 @@ export function CallDockRegion({
   children,
 }: CallDockRegionProps) {
   const pillRef = useRef<HTMLElement | null>(null)
-  const [position, setPosition] = useState<PillPosition>(initialPosition)
-  const positionRef = useRef<PillPosition>(position)
+  const positionRef = useRef<PillPosition | null>(null)
 
-  useEffect(() => {
-    positionRef.current = position
-  }, [position])
+  const currentPosition = (): PillPosition => {
+    positionRef.current ??= initialPosition()
+    return positionRef.current
+  }
+
+  const syncClampedPosition = useCallback((element: HTMLElement | null) => {
+    if (element === null) return
+    const current = positionRef.current ?? initialPosition()
+    const { pillWidth, pillHeight, viewportWidth, viewportHeight } = measurePill(element)
+    const clamped = clampPillPosition(
+      current.x,
+      current.y,
+      pillWidth,
+      pillHeight,
+      viewportWidth,
+      viewportHeight
+    )
+    positionRef.current = clamped
+    applyPillCssPosition(element, clamped)
+  }, [])
 
   const dragRef = useRef<{
     pointerId: number
@@ -192,55 +207,46 @@ export function CallDockRegion({
       }
       pillRef.current = element
       if (element !== null) {
-        if (floating) applyPillCssPosition(element, position)
+        if (floating) syncClampedPosition(element)
         else clearPillCssPosition(element)
       }
     },
-    [floating, position]
+    [floating, syncClampedPosition]
   )
 
   useEffect(() => {
     const element = pillRef.current
     if (element === null) return
-    if (floating) applyPillCssPosition(element, positionRef.current)
-    else {
+    if (floating) {
+      syncClampedPosition(element)
+    } else {
       dragRef.current = null
       clearPillCssPosition(element)
     }
-  }, [floating])
+  }, [floating, syncClampedPosition])
 
   useEffect(() => {
     if (!floating) return
     const handleResize = () => {
-      const { pillWidth, pillHeight, viewportWidth, viewportHeight } = measurePill(pillRef.current)
-      const clamped = clampPillPosition(
-        positionRef.current.x,
-        positionRef.current.y,
-        pillWidth,
-        pillHeight,
-        viewportWidth,
-        viewportHeight
-      )
-      positionRef.current = clamped
-      applyPillCssPosition(pillRef.current, clamped)
-      setPosition(clamped)
+      syncClampedPosition(pillRef.current)
     }
     window.addEventListener('resize', handleResize)
     return () => window.removeEventListener('resize', handleResize)
-  }, [floating])
+  }, [floating, syncClampedPosition])
 
   const onPointerDown = (event: PointerEvent<HTMLElement>) => {
     if (!floating) return
     if (event.pointerType === 'mouse' && event.button !== 0) return
     const target = event.target instanceof Element ? event.target : null
     if (target?.closest('button, a, input, select, [role="button"]') !== null) return
+    const origin = currentPosition()
     event.currentTarget.setPointerCapture?.(event.pointerId)
     dragRef.current = {
       pointerId: event.pointerId,
       startClientX: event.clientX,
       startClientY: event.clientY,
-      originX: positionRef.current.x,
-      originY: positionRef.current.y,
+      originX: origin.x,
+      originY: origin.y,
     }
   }
 
@@ -282,7 +288,6 @@ export function CallDockRegion({
     )
     positionRef.current = snapped
     applyPillCssPosition(pillRef.current, snapped)
-    setPosition(snapped)
   }
 
   const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
@@ -305,8 +310,9 @@ export function CallDockRegion({
     const { pillWidth, pillHeight, viewportWidth, viewportHeight } = measurePill(pillRef.current)
     const maxX = Math.max(PILL_MARGIN, viewportWidth - pillWidth - PILL_MARGIN)
     const maxY = Math.max(PILL_MARGIN, viewportHeight - pillHeight - PILL_MARGIN)
-    let targetX = positionRef.current.x
-    let targetY = positionRef.current.y
+    const origin = currentPosition()
+    let targetX = origin.x
+    let targetY = origin.y
     switch (event.key) {
       case 'ArrowLeft':
         targetX = event.shiftKey ? PILL_MARGIN : targetX - PILL_NUDGE_STEP
@@ -334,7 +340,6 @@ export function CallDockRegion({
     )
     positionRef.current = next
     applyPillCssPosition(pillRef.current, next)
-    setPosition(next)
   }
 
   return (

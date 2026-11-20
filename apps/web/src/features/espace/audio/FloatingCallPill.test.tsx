@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import '../../../i18n'
 import {
+  CallDockRegion,
   clampPillPosition,
   FloatingCallPill,
   PILL_MARGIN,
@@ -232,5 +233,43 @@ describe('FloatingCallPill', () => {
     expect(redockButtonRef.current).toBe(
       screen.getByRole('button', { name: 'Rattacher à la barre latérale' })
     )
+  })
+
+  it('clamps stored coordinates against current viewport when resized while docked and then detached', () => {
+    const onRedock = vi.fn()
+    const view = render(
+      <CallDockRegion label="Appel en cours" floating={false} onRedock={onRedock}>
+        <span>docked</span>
+      </CallDockRegion>
+    )
+    const region = screen.getByRole('region', { name: 'Appel en cours' })
+
+    // Detach at 1280px -> x = 960px
+    view.rerender(
+      <CallDockRegion label="Appel en cours" floating onRedock={onRedock}>
+        <span>floating</span>
+      </CallDockRegion>
+    )
+    expect(region.style.getPropertyValue('--call-pill-x')).toBe('960px')
+
+    // Re-dock into sidebar, resize viewport down to 390px while docked, then detach again
+    view.rerender(
+      <CallDockRegion label="Appel en cours" floating={false} onRedock={onRedock}>
+        <span>docked</span>
+      </CallDockRegion>
+    )
+    expect(region.style.getPropertyValue('--call-pill-x')).toBe('')
+
+    Object.defineProperty(window, 'innerWidth', { value: 390, configurable: true, writable: true })
+    Object.defineProperty(window, 'innerHeight', { value: 640, configurable: true, writable: true })
+    fireEvent(window, new Event('resize'))
+
+    view.rerender(
+      <CallDockRegion label="Appel en cours" floating onRedock={onRedock}>
+        <span>floating</span>
+      </CallDockRegion>
+    )
+    expect(region.style.getPropertyValue('--call-pill-x')).toBe(`${390 - 304 - PILL_MARGIN}px`)
+    expect(region.style.getPropertyValue('--call-pill-y')).toBe('72px')
   })
 })

@@ -94,43 +94,80 @@ export function CallsSurfaceView({
   )
 
   const [testingMic, setTestingMic] = useState(false)
+  const [micPending, setMicPending] = useState(false)
   const [micError, setMicError] = useState(false)
+  const mountedRef = useRef(true)
+  const micRequestIdRef = useRef(0)
+  const micPendingRef = useRef(false)
   const micCleanupRef = useRef<(() => void) | null>(null)
 
-  const stopMicTest = () => {
-    micCleanupRef.current?.()
+  const stopStreamTracks = (stream: MediaStream) => {
+    for (const item of stream.getTracks()) {
+      try {
+        item.stop()
+      } catch {
+        // Best-effort track teardown.
+      }
+    }
+  }
+
+  const runMicCleanup = () => {
+    const cleanup = micCleanupRef.current
     micCleanupRef.current = null
-    setTestingMic(false)
+    cleanup?.()
+  }
+
+  const stopMicTest = () => {
+    micRequestIdRef.current += 1
+    micPendingRef.current = false
+    runMicCleanup()
+    if (mountedRef.current) {
+      setMicPending(false)
+      setTestingMic(false)
+    }
     cssProperty('transform', 'scaleX(0)')(prejoinMeterFillRef.current)
   }
 
-  useEffect(
-    () => () => {
-      micCleanupRef.current?.()
-      micCleanupRef.current = null
-    },
-    []
-  )
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      micRequestIdRef.current += 1
+      micPendingRef.current = false
+      runMicCleanup()
+    }
+  }, [])
 
   const toggleMicTest = async () => {
     if (testingMic) {
       stopMicTest()
       return
     }
+    if (micPendingRef.current) return
+    runMicCleanup()
     setMicError(false)
     const getUserMedia = globalThis.navigator?.mediaDevices?.getUserMedia
     if (typeof getUserMedia !== 'function') {
       setMicError(true)
       return
     }
+    const requestId = ++micRequestIdRef.current
+    micPendingRef.current = true
+    setMicPending(true)
     try {
       const chosenInput = fallbackSettings.getDeviceChoice().input
       const stream = await getUserMedia.call(globalThis.navigator.mediaDevices, {
         audio: chosenInput !== null ? { deviceId: { ideal: chosenInput } } : true,
       })
+      if (!mountedRef.current || micRequestIdRef.current !== requestId) {
+        stopStreamTracks(stream)
+        return
+      }
       const track = stream.getAudioTracks()[0]
       if (track === undefined) {
-        for (const t of stream.getTracks()) t.stop()
+        stopStreamTracks(stream)
+        micPendingRef.current = false
+        setMicPending(false)
         setMicError(true)
         return
       }
@@ -140,6 +177,16 @@ export function CallsSurfaceView({
       } catch {
         meter = null
       }
+      if (!mountedRef.current || micRequestIdRef.current !== requestId) {
+        try {
+          meter?.close()
+        } catch {
+          // Closing an audio context never blocks cleanup.
+        }
+        stopStreamTracks(stream)
+        return
+      }
+      runMicCleanup()
       let frame = 0
       let active = true
       const tick = () => {
@@ -157,16 +204,15 @@ export function CallsSurfaceView({
         } catch {
           // Closing an audio context never blocks cleanup.
         }
-        for (const item of stream.getTracks()) {
-          try {
-            item.stop()
-          } catch {
-            // Best-effort track teardown.
-          }
-        }
+        stopStreamTracks(stream)
       }
+      micPendingRef.current = false
+      setMicPending(false)
       setTestingMic(true)
     } catch {
+      if (!mountedRef.current || micRequestIdRef.current !== requestId) return
+      micPendingRef.current = false
+      setMicPending(false)
       setMicError(true)
       stopMicTest()
     }
@@ -329,7 +375,10 @@ export function CallsSurfaceView({
                         variant="secondary"
                         size="sm"
                         disabled={unavailable !== undefined || call === null || room === undefined}
-                        onClick={() => onJoinRoom(channel, room, categoryName)}
+                        onClick={() => {
+                          stopMicTest()
+                          onJoinRoom(channel, room, categoryName)
+                        }}
                       >
                         {t('console.workspace.audio.action-join-room', { room: label })}
                       </Button>
@@ -361,6 +410,7 @@ export function CallsSurfaceView({
             <Button
               variant="secondary"
               size="sm"
+              disabled={micPending}
               icon={<EspaceGlyph name={testingMic ? 'mic-off' : 'mic'} />}
               onClick={() => void toggleMicTest()}
             >
