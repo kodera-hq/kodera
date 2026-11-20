@@ -190,6 +190,8 @@ def configure(document, environment=None):
     # Accounts come from the operator's identity provider only (Core ADR-0018).
     document["enable_registration"] = False
     document["password_config"] = {"enabled": False}
+    # A member picks their own Matrix display name; a later SSO sign-in must not clobber it.
+    document["enable_set_displayname"] = True
     # The web client keeps tokens in memory and refuses one that never expires.
     document["refreshable_access_token_lifetime"] = "5m"
     document["refresh_token_lifetime"] = "24h"
@@ -221,11 +223,13 @@ def configure(document, environment=None):
             "allow_existing_users": False, "backchannel_logout_enabled": True,
             "user_mapping_provider": {"config": {
                 "subject_template": "{{ user.sub }}", "localpart_template": "{{ user.sub | lower }}",
+                "display_name_template": "{{ user.name or user.preferred_username }}",
                 "confirm_localpart": False,
             }},
         }]
         # Synapse matches by prefix: without the trailing slash a look-alike origin gets the token.
-        document["sso"] = dict(document.get("sso") or {}, client_whitelist=[f"https://{server}/"])
+        # update_profile_information stays off: a member-chosen display name is never overwritten.
+        document["sso"] = dict(document.get("sso") or {}, client_whitelist=[f"https://{server}/"], update_profile_information=False)
     return document
 
 

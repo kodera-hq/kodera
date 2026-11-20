@@ -80,6 +80,7 @@
     "channels": [
       "announcements",
       "general",
+      "arrivals",
       "developers-community",
       "support",
       "extensions",
@@ -104,6 +105,7 @@
         "channels": [
           "announcements",
           "general",
+          "arrivals",
           "developers-community",
           "support",
           "extensions",

@@ -1555,6 +1555,7 @@ def check_synapse_policy_source(source: str) -> list[str]:
         '"pkce_method": "always"',
         '"allow_existing_users": False',
         '"localpart_template": "{{ user.sub | lower }}"',
+        '"display_name_template": "{{ user.name or user.preferred_username }}"',
     )
     return ["Synapse configuration missing policy guard: " + guard for guard in required if guard not in source]
 
@@ -1726,6 +1727,8 @@ def check_synapse_config(source: str) -> list[str]:
         problems = []
         if closed.get("enable_registration") is not False or (closed.get("password_config") or {}).get("enabled") is not False:
             problems.append("Synapse must keep open registration and password sign-in off")
+        if closed.get("enable_set_displayname") is not True:
+            problems.append("Synapse must let members set their own Matrix display name (enable_set_displayname is not true)")
         if "oidc_providers" in closed:
             problems.append("Synapse must not invent an identity provider when none is configured")
         for key, value in PILOT_SETTINGS.items():
@@ -1755,6 +1758,10 @@ def check_synapse_config(source: str) -> list[str]:
                 or mapping.get("localpart_template") != "{{ user.sub | lower }}" or mapping.get("subject_template") != "{{ user.sub }}"
             ):
                 problems.append(f"Synapse OIDC sign-in is not wired as documented ({idp_id}: client synapse, PKCE, subject localpart)")
+            if mapping.get("display_name_template") != "{{ user.name or user.preferred_username }}":
+                problems.append(f"Synapse OIDC sign-in must provision the member's display name from the realm name claims ({idp_id})")
+            if (signed.get("sso") or {}).get("update_profile_information") is not False:
+                problems.append(f"Synapse SSO sign-in must never overwrite a member-chosen display name ({idp_id})")
             if (signed.get("sso") or {}).get("client_whitelist") != ["https://chat.example.org/"] or signed.get("public_baseurl") != "https://chat.example.org/":
                 problems.append(f"Synapse OIDC sign-in must return to the web origin with a trailing slash only ({idp_id})")
             if (signed.get("password_config") or {}).get("enabled") is not False or signed.get("enable_registration") is not False:
@@ -3275,6 +3282,12 @@ SYNAPSE_CONFIG_MUTATIONS: tuple[tuple[str, str, str, str], ...] = (
      "Synapse OIDC sign-in is not wired as documented"),
     ("the Matrix ID comes from a mutable claim", '"localpart_template": "{{ user.sub | lower }}"', '"localpart_template": "{{ user.preferred_username }}"',
      "Synapse OIDC sign-in is not wired as documented"),
+    ("initial display-name provisioning is dropped", '"display_name_template": "{{ user.name or user.preferred_username }}",\n', '',
+     "Synapse OIDC sign-in must provision the member's display name"),
+    ("SSO sign-in overwrites the member-chosen display name", 'update_profile_information=False', 'update_profile_information=True',
+     "Synapse SSO sign-in must never overwrite a member-chosen display name"),
+    ("members cannot set their own display name", 'document["enable_set_displayname"] = True', 'document["enable_set_displayname"] = False',
+     "enable_set_displayname"),
     ("the login token goes to a look-alike origin", 'client_whitelist=[f"https://{server}/"]', 'client_whitelist=[f"https://{server}"]',
      "Synapse OIDC sign-in must return to the web origin with a trailing slash only"),
     ("a plain-http issuer is accepted", 'r"https://" + PUBLIC_DOMAIN + r"(?:/[A-Za-z0-9._~/-]{0,512})?", issuer', 'r"https?://" + PUBLIC_DOMAIN + r"(?:/[A-Za-z0-9._~/-]{0,512})?", issuer',
