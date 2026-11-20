@@ -38,6 +38,7 @@ from .models import (
     WorkspaceModerator,
 )
 from .moderation_policy import target_allowed
+from .selectors import lock_workspace
 
 ADMINS = frozenset({"org_owner", "org_admin"})
 _UNSET = object()
@@ -87,8 +88,6 @@ def _context(
 ) -> tuple[Workspace, TenantCaller]:
     if lock:
         # Refuse unauthorised callers before they can contend on the workspace domain lock.
-        from .selectors import lock_workspace
-
         initial, _ = _context(
             verified, organisation_id, moderator=moderator, admin=admin, lock=False
         )
@@ -160,6 +159,22 @@ def _target(workspace: Workspace, membership_id: UUID) -> WorkspaceMembership:
     return member
 
 
+def _target_context(
+    verified: VerifiedAccessToken,
+    organisation_id: UUID,
+    target_id: UUID,
+    *,
+    moderator: bool = False,
+) -> tuple[Workspace, TenantCaller, WorkspaceMembership]:
+    """Preserve `membership -> workspace` lock ordering on member-targeted writes."""
+    initial_workspace, _ = _context(verified, organisation_id, moderator=moderator, lock=False)
+    target = _target(initial_workspace, target_id)
+    lock_workspace(workspace_id=initial_workspace.id)
+    workspace, caller = _context(verified, organisation_id, moderator=moderator, lock=False)
+    target = _target(workspace, target_id)
+    return workspace, caller, target
+
+
 def _storable_text(value: str) -> bool:
     return all(char != "\x00" and not 0xD800 <= ord(char) <= 0xDFFF for char in value)
 
@@ -203,8 +218,9 @@ def moderate(
     expires_at: datetime | None,
     request_id: str,
 ) -> dict[str, Any]:
-    workspace, caller = _context(verified, organisation_id, moderator=True)
-    target = _target(workspace, target_id)
+    workspace, caller, target = _target_context(
+        verified, organisation_id, target_id, moderator=True
+    )
     if not target_allowed(caller.role, target.role, action) or target.id == caller.membership_id:
         raise RefusalError(403)
     if not isinstance(action, str) or action not in {"kick", "ban", "unban", "mute"}:
@@ -365,9 +381,18 @@ def _verify_invite_auto_roles(workspace: Workspace, link: WorkspaceInviteLink) -
 def redeem_link(
     *, verified: VerifiedAccessToken, code: str, request_id: str
 ) -> WorkspaceMembership:
-    # Look up without locking, then take the domain lock before the link row and engine heads.
+    # Look up without locking, then lock any membership rows before the workspace, link, and heads.
     initial = _link(code, allow_exhausted=True)
-    workspace = Workspace.objects.select_for_update().get(id=initial.workspace_id)
+    person, identity = _identity(verified, initial)
+    membership = for_user(
+        organisation_id=initial.workspace.organisation_id, user_id=person.id, lock=True
+    )
+    if membership is None and initial.auto_role_ids and initial.created_by_id is not None:
+        for_workspace(
+            organisation_id=initial.workspace.organisation_id, membership_id=initial.created_by_id
+        )
+    lock_workspace(workspace_id=initial.workspace_id)
+    workspace = Workspace.objects.get(id=initial.workspace_id)
     link = _link(code, lock=True, allow_exhausted=True)
     person, identity = _identity(verified, link)
     membership = for_user(organisation_id=workspace.organisation_id, user_id=person.id, lock=True)
@@ -468,8 +493,7 @@ def report(
     event_id: str,
     request_id: str,
 ) -> WorkspaceAbuseReport:
-    workspace, caller = _context(verified, organisation_id)
-    target = _target(workspace, target_id)
+    workspace, caller, target = _target_context(verified, organisation_id, target_id)
     _text(reason, 4000)
     if not isinstance(event_id, str) or len(event_id) > 512 or not _storable_text(event_id):
         raise RefusalError(422)

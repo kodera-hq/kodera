@@ -873,3 +873,93 @@ def test_create_link_refuses_explicit_null_auto_role_ids(world):
             request_id=str(uuid4()),
         )
     assert refused.value.status == 422
+
+
+def test_moderate_report_and_redeem_lock_membership_before_workspace(world, monkeypatch):
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from apps.workspaces import iam, moderation
+
+    org, _, members, tokens = world
+    role = iam.create_role(
+        verified=tokens[0],
+        organisation_id=org.id,
+        data={"name": "Guests", "slug": "guests"},
+        request_id=str(uuid4()),
+    )
+    _, code = moderation.create_link(
+        verified=tokens[0],
+        organisation_id=org.id,
+        expires_at=timezone.now() + timedelta(hours=1),
+        max_uses=5,
+        role="org_member",
+        channel_id=None,
+        auto_role_ids=[role["id"]],
+        request_id=str(uuid4()),
+    )
+
+    events: list[str] = []
+    real_for_workspace = moderation.for_workspace
+    real_for_user = moderation.for_user
+    real_lock_workspace = moderation.lock_workspace
+
+    def tracked_for_workspace(*, organisation_id, membership_id):
+        events.append("membership")
+        return real_for_workspace(organisation_id=organisation_id, membership_id=membership_id)
+
+    def tracked_for_user(*, organisation_id, user_id, lock=False):
+        if lock:
+            events.append("membership")
+        return real_for_user(organisation_id=organisation_id, user_id=user_id, lock=lock)
+
+    def tracked_lock_workspace(*, workspace_id):
+        events.append("workspace")
+        return real_lock_workspace(workspace_id=workspace_id)
+
+    monkeypatch.setattr(moderation, "for_workspace", tracked_for_workspace)
+    monkeypatch.setattr(moderation, "for_user", tracked_for_user)
+    monkeypatch.setattr(moderation, "lock_workspace", tracked_lock_workspace)
+
+    with pytest.raises(moderation.RefusalError) as refused:
+        moderation.moderate(
+            verified=tokens[3],
+            organisation_id=org.id,
+            target_id=members[2].id,
+            action="ban",
+            reason="Unauthorized",
+            expires_at=None,
+            request_id=str(uuid4()),
+        )
+    assert refused.value.status == 403
+    assert events == []
+
+    for action in ["ban", "unban"]:
+        events.clear()
+        moderation.moderate(
+            verified=tokens[0],
+            organisation_id=org.id,
+            target_id=members[3].id,
+            action=action,
+            reason="Order check",
+            expires_at=None,
+            request_id=str(uuid4()),
+        )
+        assert events[:2] == ["membership", "workspace"]
+
+    events.clear()
+    moderation.report(
+        verified=tokens[3],
+        organisation_id=org.id,
+        target_id=members[2].id,
+        reason="Order check",
+        channel_id=None,
+        event_id="",
+        request_id=str(uuid4()),
+    )
+    assert events[:2] == ["membership", "workspace"]
+
+    events.clear()
+    moderation.redeem_link(verified=tokens[3], code=code, request_id=str(uuid4()))
+    assert events[:2] == ["membership", "workspace"]
