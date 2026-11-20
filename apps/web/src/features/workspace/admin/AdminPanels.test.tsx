@@ -410,6 +410,106 @@ describe('Logs d’audit', () => {
     expect(screen.getByRole('option', { name: 'Camille Dubois' })).toBeVisible()
   })
 
+  // Every workspace.* action Core emits (AuditEvent rows with action__startswith='workspace.'),
+  // mapped to the verb auditActionVerb must read and the category auditCategory must return.
+  const CORE_ACTION_VERBS: Array<[string, string]> = [
+    ['workspace.initialised', 'initialised'],
+    ['workspace.category_created', 'created'],
+    ['workspace.category_updated', 'updated'],
+    ['workspace.category_deleted', 'deleted'],
+    ['workspace.channel_created', 'created'],
+    ['workspace.channel_updated', 'updated'],
+    ['workspace.channel_archived', 'archived'],
+    ['workspace.channel_unarchived', 'unarchived'],
+    ['workspace.channel_access_changed', 'access_changed'],
+    ['workspace.channel_set_refused', 'refused'],
+    ['workspace.channel.overrides_updated', 'overrides_updated'],
+    ['workspace.role.created', 'created'],
+    ['workspace.role.updated', 'updated'],
+    ['workspace.role.deleted', 'deleted'],
+    ['workspace.member.roles_updated', 'roles_updated'],
+    ['workspace.member.kick', 'kick'],
+    ['workspace.member.ban', 'ban'],
+    ['workspace.member.unban', 'unban'],
+    ['workspace.member.mute', 'mute'],
+    ['workspace.member.unmute', 'unmute'],
+    ['workspace.invite_link.created', 'created'],
+    ['workspace.invite_link.channel_granted', 'channel_granted'],
+    ['workspace.invite_link.redeemed', 'redeemed'],
+    ['workspace.invite_link.revoked', 'revoked'],
+    ['workspace.report.created', 'created'],
+    ['workspace.report.resolved', 'resolved'],
+    ['workspace.report.dismissed', 'dismissed'],
+    ['workspace.profile.updated', 'updated'],
+    ['workspace.quota.configured', 'configured'],
+    ['workspace.document.created', 'created'],
+    ['workspace.document.updated', 'updated'],
+    ['workspace.document.deleted', 'deleted'],
+    ['workspace.document.collab_created', 'created'],
+    ['workspace.document.collab_updated', 'updated'],
+    ['workspace.document.collab_refused', 'refused'],
+    ['workspace.collection.created', 'created'],
+    ['workspace.collection.updated', 'updated'],
+    ['workspace.collection.deleted', 'deleted'],
+    ['workspace.collection.row_updated', 'updated'],
+    ['workspace.collection.row_deleted', 'deleted'],
+    ['workspace.e2ee.device_registered', 'registered'],
+    ['workspace.e2ee.device_revoked', 'revoked'],
+    ['workspace.e2ee.package_published', 'published'],
+    ['workspace.e2ee.package_claimed', 'claimed'],
+    ['workspace.e2ee.room_created', 'created'],
+    ['workspace.push_subscription.updated', 'updated'],
+    ['workspace.push_subscription.revoked', 'revoked'],
+    ['workspace.notification.read', 'read'],
+    ['workspace.attachment.upload_created', 'created'],
+    ['workspace.attachment.completed', 'completed'],
+    ['workspace.url.previewed', 'previewed'],
+  ]
+
+  const CORE_ACTION_CATEGORIES: Array<[string, string]> = [
+    ['workspace.initialised', 'workspace'],
+    ['workspace.category_created', 'channel'],
+    ['workspace.category_updated', 'channel'],
+    ['workspace.category_deleted', 'channel'],
+    ['workspace.channel_created', 'channel'],
+    ['workspace.channel_updated', 'channel'],
+    ['workspace.channel_archived', 'channel'],
+    ['workspace.channel_unarchived', 'channel'],
+    ['workspace.channel_access_changed', 'channel'],
+    ['workspace.channel_set_refused', 'channel'],
+    ['workspace.channel.overrides_updated', 'channel'],
+    ['workspace.role.created', 'role'],
+    ['workspace.role.updated', 'role'],
+    ['workspace.role.deleted', 'role'],
+    ['workspace.member.roles_updated', 'member'],
+    ['workspace.member.kick', 'moderation'],
+    ['workspace.member.ban', 'moderation'],
+    ['workspace.member.unban', 'moderation'],
+    ['workspace.member.mute', 'moderation'],
+    ['workspace.member.unmute', 'moderation'],
+    ['workspace.invite_link.created', 'invite'],
+    ['workspace.invite_link.channel_granted', 'invite'],
+    ['workspace.invite_link.redeemed', 'invite'],
+    ['workspace.invite_link.revoked', 'invite'],
+    ['workspace.report.created', 'moderation'],
+    ['workspace.report.resolved', 'moderation'],
+    ['workspace.report.dismissed', 'moderation'],
+    ['workspace.profile.updated', 'profile'],
+    ['workspace.quota.configured', 'quota'],
+    ['workspace.document.created', 'document'],
+    ['workspace.document.collab_refused', 'document'],
+    ['workspace.collection.created', 'document'],
+    ['workspace.collection.row_updated', 'document'],
+    ['workspace.e2ee.device_registered', 'security'],
+    ['workspace.e2ee.device_revoked', 'security'],
+    ['workspace.push_subscription.updated', 'notification'],
+    ['workspace.push_subscription.revoked', 'notification'],
+    ['workspace.notification.read', 'notification'],
+    ['workspace.attachment.upload_created', 'content'],
+    ['workspace.attachment.completed', 'content'],
+    ['workspace.url.previewed', 'content'],
+  ]
+
   it('maps actions to categories', () => {
     expect(auditCategory('workspace.role.created')).toBe('role')
     expect(auditCategory('workspace.member_roles.replaced')).toBe('member')
@@ -429,9 +529,13 @@ describe('Logs d’audit', () => {
     expect(auditCategory('workspace.channel_archived')).toBe('channel')
     expect(auditCategory('workspace.category_deleted')).toBe('channel')
     expect(auditCategory('workspace.invite_link_created')).toBe('invite')
+    // Every real Core action classifies cleanly — never null.
+    for (const [action, category] of CORE_ACTION_CATEGORIES) {
+      expect(auditCategory(action)).toBe(category)
+    }
   })
 
-  it('reads the verb of dot-separated and underscore-suffixed Core actions', () => {
+  it('reads the verb of every real Core workspace action', () => {
     expect(auditActionVerb('workspace.channel_created')).toBe('created')
     expect(auditActionVerb('workspace.channel_archived')).toBe('archived')
     expect(auditActionVerb('workspace.category_deleted')).toBe('deleted')
@@ -442,32 +546,122 @@ describe('Logs d’audit', () => {
     expect(auditActionVerb('workspace.member.roles_updated')).toBe('roles_updated')
     expect(auditActionVerb('workspace.member.ban')).toBe('ban')
     expect(auditActionVerb('workspace.member.unban')).toBe('unban')
+    // Explicitly: refused sets, granted channel access, access changes, overrides, reports,
+    // and the present-tense moderation verbs.
+    expect(auditActionVerb('workspace.channel_set_refused')).toBe('refused')
+    expect(auditActionVerb('workspace.invite_link.channel_granted')).toBe('channel_granted')
+    expect(auditActionVerb('workspace.channel_access_changed')).toBe('access_changed')
+    expect(auditActionVerb('workspace.channel.overrides_updated')).toBe('overrides_updated')
+    expect(auditActionVerb('workspace.report.resolved')).toBe('resolved')
+    expect(auditActionVerb('workspace.report.dismissed')).toBe('dismissed')
+    expect(auditActionVerb('workspace.member.kick')).toBe('kick')
+    expect(auditActionVerb('workspace.member.mute')).toBe('mute')
+    expect(auditActionVerb('workspace.member.unmute')).toBe('unmute')
+    // Every real Core action string resolves to a known verb.
+    for (const [action, verb] of CORE_ACTION_VERBS) {
+      expect(auditActionVerb(action)).toBe(verb)
+    }
+    // An unknown action keeps its own token; the copy renders that token neutrally.
+    expect(auditActionVerb('workspace.something_unheard_of')).toBe('something_unheard_of')
   })
 
-  it('maps every Core 0.50.0 verb in French and in English, never the fallback', () => {
+  it('maps every Core verb in French and in English, and an unknown verb stays neutral', () => {
     const verbs = [
       'created',
+      'updated',
       'deleted',
       'archived',
       'unarchived',
+      'assigned',
       'revoked',
+      'replaced',
+      'removed',
+      'suspended',
+      'reactivated',
+      'ban',
+      'unban',
+      'kick',
+      'mute',
+      'unmute',
       'banned',
       'unbanned',
       'kicked',
       'muted',
       'unmuted',
       'roles_updated',
-      'suspended',
-      'reactivated',
-      'removed',
+      'overrides_updated',
+      'access_changed',
+      'channel_granted',
+      'refused',
+      'redeemed',
+      'resolved',
+      'dismissed',
+      'configured',
+      'initialised',
+      'completed',
+      'read',
+      'previewed',
+      'registered',
+      'published',
+      'claimed',
     ]
     for (const verb of verbs) {
-      expect(adminCopy('fr').auditVerb(verb)).not.toBe('a modifié')
-      expect(adminCopy('en').auditVerb(verb)).not.toBe('updated')
+      expect(adminCopy('fr').auditVerb(verb)).not.toBe('a enregistré un événement sur')
+      expect(adminCopy('en').auditVerb(verb)).not.toBe('recorded an event on')
     }
-    // `updated` is the one verb whose wording is the fallback's.
     expect(adminCopy('fr').auditVerb('updated')).toBe('a modifié')
     expect(adminCopy('en').auditVerb('updated')).toBe('updated')
+    // The present-tense Core moderation verbs read like their past-tense twins.
+    expect(adminCopy('fr').auditVerb('kick')).toBe('a expulsé')
+    expect(adminCopy('fr').auditVerb('kicked')).toBe('a expulsé')
+    expect(adminCopy('fr').auditVerb('ban')).toBe('a banni')
+    expect(adminCopy('fr').auditVerb('banned')).toBe('a banni')
+    expect(adminCopy('fr').auditVerb('unban')).toBe('a rétabli')
+    expect(adminCopy('fr').auditVerb('unbanned')).toBe('a rétabli')
+    expect(adminCopy('fr').auditVerb('mute')).toBe('a rendu muet')
+    expect(adminCopy('fr').auditVerb('muted')).toBe('a rendu muet')
+    expect(adminCopy('fr').auditVerb('unmute')).toBe('a rendu la parole à')
+    expect(adminCopy('fr').auditVerb('unmuted')).toBe('a rendu la parole à')
+    expect(adminCopy('en').auditVerb('kick')).toBe('kicked')
+    expect(adminCopy('en').auditVerb('kicked')).toBe('kicked')
+    expect(adminCopy('en').auditVerb('ban')).toBe('banned')
+    expect(adminCopy('en').auditVerb('banned')).toBe('banned')
+    expect(adminCopy('en').auditVerb('unban')).toBe('unbanned')
+    expect(adminCopy('en').auditVerb('unbanned')).toBe('unbanned')
+    expect(adminCopy('en').auditVerb('mute')).toBe('muted')
+    expect(adminCopy('en').auditVerb('muted')).toBe('muted')
+    expect(adminCopy('en').auditVerb('unmute')).toBe('unmuted')
+    expect(adminCopy('en').auditVerb('unmuted')).toBe('unmuted')
+    // The verbs the console must render exactly, in both languages.
+    expect(adminCopy('fr').auditVerb('refused')).toBe('n’a pas pu modifier')
+    expect(adminCopy('en').auditVerb('refused')).toBe('was refused changes to')
+    expect(adminCopy('fr').auditVerb('channel_granted')).toBe('a accordé l’accès salon via')
+    expect(adminCopy('en').auditVerb('channel_granted')).toBe('granted channel access via')
+    expect(adminCopy('fr').auditVerb('access_changed')).toBe('a modifié l’accès de')
+    expect(adminCopy('en').auditVerb('access_changed')).toBe('changed access to')
+    expect(adminCopy('fr').auditVerb('overrides_updated')).toBe('a mis à jour les permissions de')
+    expect(adminCopy('en').auditVerb('overrides_updated')).toBe('updated the channel permissions of')
+    expect(adminCopy('fr').auditVerb('redeemed')).toBe('a utilisé')
+    expect(adminCopy('en').auditVerb('redeemed')).toBe('redeemed')
+    expect(adminCopy('fr').auditVerb('resolved')).toBe('a résolu')
+    expect(adminCopy('en').auditVerb('resolved')).toBe('resolved')
+    expect(adminCopy('fr').auditVerb('dismissed')).toBe('a classé sans suite')
+    expect(adminCopy('en').auditVerb('dismissed')).toBe('dismissed')
+    expect(adminCopy('fr').auditVerb('configured')).toBe('a configuré')
+    expect(adminCopy('en').auditVerb('configured')).toBe('configured')
+    expect(adminCopy('fr').auditVerb('initialised')).toBe('a initialisé')
+    expect(adminCopy('en').auditVerb('initialised')).toBe('initialised')
+    expect(adminCopy('fr').auditVerb('completed')).toBe('a terminé')
+    expect(adminCopy('en').auditVerb('completed')).toBe('completed')
+    expect(adminCopy('fr').auditVerb('read')).toBe('a lu')
+    expect(adminCopy('en').auditVerb('read')).toBe('read')
+    expect(adminCopy('fr').auditVerb('previewed')).toBe('a prévisualisé')
+    expect(adminCopy('en').auditVerb('previewed')).toBe('previewed')
+    // An unknown verb is neutral: it can never masquerade as a successful update.
+    expect(adminCopy('fr').auditVerb('something_unheard_of')).toBe('a enregistré un événement sur')
+    expect(adminCopy('en').auditVerb('something_unheard_of')).toBe('recorded an event on')
+    expect(adminCopy('fr').auditVerb('something_unheard_of')).not.toBe('a modifié')
+    expect(adminCopy('en').auditVerb('something_unheard_of')).not.toBe('updated')
   })
 
   it('says what Core did for underscore-suffixed actions: created, archived, deleted', async () => {
@@ -506,6 +700,55 @@ describe('Logs d’audit', () => {
     expect(log).toHaveTextContent('Camille Dubois a créé un salon')
     expect(log).toHaveTextContent('Camille Dubois a archivé un salon')
     expect(log).toHaveTextContent('Camille Dubois a supprimé un salon')
+  })
+
+  it('renders refused, granted, access-changed and report actions with their exact verbs', async () => {
+    api.listWorkspaceAuditLogs.mockResolvedValue({
+      data: [
+        {
+          id: 'r1',
+          occurred_at: '2026-11-18T09:00:00Z',
+          actor_id: 'identity-marc',
+          actor_type: 'tenant',
+          action: 'workspace.channel_set_refused',
+          target_urn: 'urn:kodera:channel:c1',
+        },
+        {
+          id: 'r2',
+          occurred_at: '2026-11-18T08:00:00Z',
+          actor_id: 'identity-camille',
+          actor_type: 'tenant',
+          action: 'workspace.invite_link.channel_granted',
+          target_urn: 'urn:kodera:invite:l1',
+        },
+        {
+          id: 'r3',
+          occurred_at: '2026-11-18T07:00:00Z',
+          actor_id: 'identity-camille',
+          actor_type: 'tenant',
+          action: 'workspace.channel_access_changed',
+          target_urn: 'urn:kodera:channel:c1',
+        },
+        {
+          id: 'r4',
+          occurred_at: '2026-11-18T06:00:00Z',
+          actor_id: 'identity-camille',
+          actor_type: 'tenant',
+          action: 'workspace.report.resolved',
+          target_urn: 'urn:kodera:report:rep1',
+        },
+      ],
+      hasMore: false,
+      nextCursor: null,
+    })
+    renderPanel(<AuditLogPanel organisationId={ORG} />)
+    const log = await screen.findByRole('list', { name: 'Logs d’audit' })
+    // A refused set never reads as a successful change.
+    expect(log).toHaveTextContent('Marc Petit n’a pas pu modifier un salon')
+    expect(log).toHaveTextContent('Camille Dubois a accordé l’accès salon via une invitation')
+    expect(log).toHaveTextContent('Camille Dubois a modifié l’accès de un salon')
+    expect(log).toHaveTextContent('Camille Dubois a résolu la modération')
+    expect(log.textContent).not.toMatch(/workspace\./u)
   })
 })
 

@@ -33,6 +33,12 @@ export const AUDIT_CATEGORIES = [
   'invite',
   'moderation',
   'profile',
+  'workspace',
+  'quota',
+  'document',
+  'content',
+  'notification',
+  'security',
 ] as const
 export type AuditCategory = (typeof AUDIT_CATEGORIES)[number]
 
@@ -40,16 +46,30 @@ export type AuditCategory = (typeof AUDIT_CATEGORIES)[number]
  * The verb of a Core audit action. Core emits dot-separated actions (`workspace.role.created`,
  * `workspace.member.roles_updated`) and underscore-suffixed ones (`workspace.channel_created`,
  * `workspace.invite_link_revoked`): the verb is the longest known verb the action ends with, so
- * `channel_created` reads as `created`, never as an unknown fallback.
+ * `channel_created` reads as `created` and `channel_set_refused` as `refused`, never as an
+ * unknown fallback.
  */
 const AUDIT_VERBS = [
-  'roles_updated',
   'overrides_updated',
+  'channel_granted',
+  'access_changed',
+  'roles_updated',
+  'initialised',
+  'configured',
+  'registered',
   'unarchived',
   'reactivated',
+  'completed',
+  'previewed',
+  'published',
   'suspended',
   'unbanned',
   'unmuted',
+  'refused',
+  'claimed',
+  'redeemed',
+  'resolved',
+  'dismissed',
   'created',
   'deleted',
   'archived',
@@ -61,9 +81,7 @@ const AUDIT_VERBS = [
   'updated',
   'assigned',
   'replaced',
-  'redeemed',
-  'resolved',
-  'dismissed',
+  'unmute',
   'ban',
   'unban',
   'kick',
@@ -79,8 +97,9 @@ export function auditActionVerb(action: string): string {
 export function auditCategory(action: string): Exclude<AuditCategory, 'all'> | null {
   const part = action.split('.')[1] ?? ''
   const verb = action.split('.').at(-1) ?? ''
-  // A member action that moderates (ban, unban, kick, mute) is moderation, not membership.
-  if (part === 'member' && ['ban', 'unban', 'kick', 'mute'].includes(verb)) return 'moderation'
+  // A member action that moderates (ban, unban, kick, mute, unmute) is moderation, not membership.
+  if (part === 'member' && ['ban', 'unban', 'kick', 'mute', 'unmute'].includes(verb))
+    return 'moderation'
   if (part.startsWith('role')) return 'role'
   if (part.startsWith('member')) return 'member'
   if (part.startsWith('channel') || part.startsWith('categor')) return 'channel'
@@ -88,6 +107,12 @@ export function auditCategory(action: string): Exclude<AuditCategory, 'all'> | n
   if (part.startsWith('moderation') || part.startsWith('ban') || part.startsWith('report'))
     return 'moderation'
   if (part.startsWith('profile')) return 'profile'
+  if (part.startsWith('initialised')) return 'workspace'
+  if (part.startsWith('quota')) return 'quota'
+  if (part.startsWith('document') || part.startsWith('collection')) return 'document'
+  if (part.startsWith('attachment') || part.startsWith('url')) return 'content'
+  if (part.startsWith('notification') || part.startsWith('push')) return 'notification'
+  if (part.startsWith('e2ee')) return 'security'
   return null
 }
 
