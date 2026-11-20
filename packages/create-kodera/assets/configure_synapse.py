@@ -223,7 +223,9 @@ def configure(document, environment=None):
             "allow_existing_users": False, "backchannel_logout_enabled": True,
             "user_mapping_provider": {"config": {
                 "subject_template": "{{ user.sub }}", "localpart_template": "{{ user.sub | lower }}",
-                "display_name_template": "{{ user.name or user.preferred_username }}",
+                # registrationEmailAsUsername makes preferred_username the member's e-mail address,
+                # so the initial display name is the given name only, never a surname or an address.
+                "display_name_template": "{{ user.given_name }}",
                 "confirm_localpart": False,
             }},
         }]

@@ -1555,7 +1555,7 @@ def check_synapse_policy_source(source: str) -> list[str]:
         '"pkce_method": "always"',
         '"allow_existing_users": False',
         '"localpart_template": "{{ user.sub | lower }}"',
-        '"display_name_template": "{{ user.name or user.preferred_username }}"',
+        '"display_name_template": "{{ user.given_name }}"',
     )
     return ["Synapse configuration missing policy guard: " + guard for guard in required if guard not in source]
 
@@ -1758,8 +1758,13 @@ def check_synapse_config(source: str) -> list[str]:
                 or mapping.get("localpart_template") != "{{ user.sub | lower }}" or mapping.get("subject_template") != "{{ user.sub }}"
             ):
                 problems.append(f"Synapse OIDC sign-in is not wired as documented ({idp_id}: client synapse, PKCE, subject localpart)")
-            if mapping.get("display_name_template") != "{{ user.name or user.preferred_username }}":
-                problems.append(f"Synapse OIDC sign-in must provision the member's display name from the realm name claims ({idp_id})")
+            template = mapping.get("display_name_template") or ""
+            if template != "{{ user.given_name }}":
+                problems.append(f"Synapse OIDC sign-in must provision the member's display name from the given name claim only ({idp_id})")
+            # registrationEmailAsUsername makes preferred_username the member's e-mail address:
+            # neither claim may ever reach a public display name.
+            if "preferred_username" in template or "email" in template:
+                problems.append(f"Synapse OIDC sign-in must never expose the preferred_username or email claim in the public display name ({idp_id})")
             if (signed.get("sso") or {}).get("update_profile_information") is not False:
                 problems.append(f"Synapse SSO sign-in must never overwrite a member-chosen display name ({idp_id})")
             if (signed.get("sso") or {}).get("client_whitelist") != ["https://chat.example.org/"] or signed.get("public_baseurl") != "https://chat.example.org/":
@@ -3282,8 +3287,12 @@ SYNAPSE_CONFIG_MUTATIONS: tuple[tuple[str, str, str, str], ...] = (
      "Synapse OIDC sign-in is not wired as documented"),
     ("the Matrix ID comes from a mutable claim", '"localpart_template": "{{ user.sub | lower }}"', '"localpart_template": "{{ user.preferred_username }}"',
      "Synapse OIDC sign-in is not wired as documented"),
-    ("initial display-name provisioning is dropped", '"display_name_template": "{{ user.name or user.preferred_username }}",\n', '',
+    ("initial display-name provisioning is dropped", '"display_name_template": "{{ user.given_name }}",\n', '',
      "Synapse OIDC sign-in must provision the member's display name"),
+    ("the display name leaks the e-mail-shaped username", '"display_name_template": "{{ user.given_name }}"', '"display_name_template": "{{ user.given_name }} {{ user.preferred_username }}"',
+     "must never expose the preferred_username or email claim"),
+    ("the display name is the member's e-mail address", '"display_name_template": "{{ user.given_name }}"', '"display_name_template": "{{ user.email }}"',
+     "must never expose the preferred_username or email claim"),
     ("SSO sign-in overwrites the member-chosen display name", 'update_profile_information=False', 'update_profile_information=True',
      "Synapse SSO sign-in must never overwrite a member-chosen display name"),
     ("members cannot set their own display name", 'document["enable_set_displayname"] = True', 'document["enable_set_displayname"] = False',

@@ -131,7 +131,7 @@ Members sign in to Synapse through your identity provider, never with a Matrix p
 
 - the confidential client **`synapse`** of your realm, with the callback `https://<KODERA_DOMAIN>/_synapse/client/oidc/callback` (`https://matrix.<KODERA_DOMAIN>/…` in the split topology), PKCE S256 and back-channel logout;
 - the Matrix localpart from the stable `sub` claim, never from an e-mail address or a mutable user name;
-- the initial display name from the realm's `name` claim, falling back to `preferred_username`, so a new member is not shown as a raw localpart; members can change it (`enable_set_displayname`), and later SSO sign-ins never overwrite it (`sso.update_profile_information` stays off);
+- the initial display name from the realm's `given_name` claim only: the community realm sets `registrationEmailAsUsername`, so `preferred_username` is the member's e-mail address and neither it nor the full `name` claim is ever shown; members can change it (`enable_set_displayname`), and later SSO sign-ins never overwrite it (`sso.update_profile_information` stays off);
 - `sso.client_whitelist` holding `https://<KODERA_DOMAIN>/` only, with its trailing slash: Synapse matches by prefix.
 
 Which realm it is:

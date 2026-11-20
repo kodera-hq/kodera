@@ -217,7 +217,7 @@ def selftest():
     provider = oidc['oidc_providers'][0]
     assert provider['pkce_method'] == 'always' and provider['allow_existing_users'] is False
     assert provider['user_mapping_provider']['config']['localpart_template'] == '{{ user.sub | lower }}'
-    assert provider['user_mapping_provider']['config']['display_name_template'] == '{{ user.name or user.preferred_username }}'
+    assert provider['user_mapping_provider']['config']['display_name_template'] == '{{ user.given_name }}'
     assert oidc['enable_set_displayname'] is True and oidc['sso']['update_profile_information'] is False
     assert oidc['password_config']['enabled'] is False and oidc['enable_registration'] is False
     assert configure(oidc, community_environment) == oidc and len(oidc['oidc_providers']) == 1
