@@ -296,4 +296,70 @@ describe('MessageComposer', () => {
       })
     )
   })
+
+  it('rejects full-MXID domain swaps, domain suffixes, and colliding localparts on edit', async () => {
+    const user = userEvent.setup()
+    const BOB_ONE = { userId: '@bob:one.test', label: 'Robert One' }
+    const BOB_TWO = { userId: '@bob:two.test', label: 'Robert Two' }
+    const BOB_EVIL = { userId: '@bob:one.test.evil', label: 'Robert Evil' }
+    const originalMxid: MessageView = {
+      key: '$m4',
+      eventId: '$m4',
+      sender: ME,
+      body: 'ping @bob:one.test',
+      ts: 4,
+      edited: false,
+      redacted: false,
+      delivery: 'sent',
+      replyTo: null,
+      reactions: [],
+      mentionedUsers: [BOB_ONE.userId],
+    }
+
+    // 1. Editing `@bob:one.test` to `@bob:two.test!` must NOT retain `@bob:one.test`.
+    const swap = storeWith(undefined, undefined, [originalMxid])
+    const swapDraft = draftFor()
+    swapDraft.update({
+      editing: { roomId: ROOM, eventId: '$m4' },
+      text: 'ping @bob:two.test!',
+    })
+    const v1 = renderComposer(swap.store, swapDraft, [BOB_ONE])
+    screen.getByRole('textbox', { name: /général/ }).focus()
+    await user.keyboard('{Enter}')
+    await waitFor(() => expect(swap.edit).toHaveBeenCalledWith(ROOM, '$m4', 'ping @bob:two.test!'))
+    v1.unmount()
+
+    // 2. Editing `@bob:one.test` to `@bob:one.test.evil!` must NOT retain `@bob:one.test`.
+    const suffix = storeWith(undefined, undefined, [originalMxid])
+    const suffixDraft = draftFor()
+    suffixDraft.update({
+      editing: { roomId: ROOM, eventId: '$m4' },
+      text: 'ping @bob:one.test.evil!',
+    })
+    const v2 = renderComposer(suffix.store, suffixDraft, [BOB_ONE, BOB_EVIL])
+    screen.getByRole('textbox', { name: /général/ }).focus()
+    await user.keyboard('{Enter}')
+    await waitFor(() =>
+      expect(suffix.edit).toHaveBeenCalledWith(ROOM, '$m4', 'ping @bob:one.test.evil!')
+    )
+    v2.unmount()
+
+    // 3. Colliding localparts (`@bob:one.test` and `@bob:two.test` in room) reject bare `@bob` fallback.
+    const bareAmbiguous: MessageView = {
+      ...originalMxid,
+      key: '$m5',
+      eventId: '$m5',
+      body: 'ping @bob',
+    }
+    const colliding = storeWith(undefined, undefined, [bareAmbiguous])
+    const collidingDraft = draftFor()
+    collidingDraft.update({
+      editing: { roomId: ROOM, eventId: '$m5' },
+      text: 'ping @bob!',
+    })
+    renderComposer(colliding.store, collidingDraft, [BOB_ONE, BOB_TWO])
+    screen.getByRole('textbox', { name: /général/ }).focus()
+    await user.keyboard('{Enter}')
+    await waitFor(() => expect(colliding.edit).toHaveBeenCalledWith(ROOM, '$m5', 'ping @bob!'))
+  })
 })

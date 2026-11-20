@@ -110,6 +110,7 @@ describe('the whole room', () => {
     expect(mentionsRoom('Bonjour @room!')).toBe(true)
     expect(mentionsRoom('@salons')).toBe(false)
     expect(mentionsRoom('mail@salon.fr')).toBe(false)
+    expect(mentionsRoom('ping @room:one.test')).toBe(false)
   })
 })
 
@@ -132,5 +133,14 @@ describe('the mention targets of a message', () => {
       ])
     ).toEqual([{ userId: MIGUEL.userId, label: 'Miguel Victoria' }])
     expect(mentionTargetsIn('rien', [MIGUEL])).toEqual([])
+  })
+
+  it('does not match a short label or MXID prefix inside another MXID domain or suffix', () => {
+    const bobOne = { userId: '@bob:one.test', label: 'bob:one.test' }
+    const bobLocal = { userId: '@bob:one.test', label: 'bob' }
+    expect(mentionTargetsIn('ping @bob:two.test!', [bobOne, bobLocal])).toEqual([])
+    expect(mentionTargetsIn('ping @bob:one.test.evil!', [bobOne, bobLocal])).toEqual([])
+    expect(mentionTargetsIn('ping @bob:one.test.', [bobOne])).toEqual([bobOne])
+    expect(mentionTargetsIn('ping @bob: note', [bobLocal])).toEqual([bobLocal])
   })
 })

@@ -59,6 +59,28 @@ export function insertMention(
 }
 
 /**
+ * Whether `rest` (the text after `@`) ends a mention of `label` cleanly at `label.length`.
+ * Trailing sentence punctuation (`.`, `!`, `,`, `: `) counts as a boundary, whereas `:`, `.`, `-`
+ * or `_` immediately followed by another identifier/domain/port character continues an MXID or
+ * handle (`@bob:two.test`, `@bob:one.test.evil`, `@bob-smith`) and does not match `@bob` or
+ * `@bob:one.test`.
+ */
+export function hasMentionBoundaryAfter(rest: string, label: string): boolean {
+  if (rest.length === label.length) return true
+  const next = rest[label.length]!
+  if (/\s/u.test(next)) return true
+  if (!/\p{P}/u.test(next)) return false
+  const afterNext = rest[label.length + 1] ?? ''
+  if (
+    (next === ':' || next === '.' || next === '-' || next === '_') &&
+    /[\p{L}\p{N}_-]/u.test(afterNext)
+  ) {
+    return false
+  }
+  return true
+}
+
+/**
  * Every `{ userId, label }` candidate written in full after an « @ » in `text` (at the start or
  * after a space, ended by the end, a space or punctuation), longest label winning at each « @ »,
  * deduplicated by `userId` and `label`.
@@ -76,9 +98,7 @@ function matchedCandidatesIn(
     if (at > 0 && !/\s/u.test(text[at - 1]!)) continue
     const rest = text.slice(at + 1)
     const member = byLength.find(
-      ({ label }) =>
-        rest.startsWith(label) &&
-        (rest.length === label.length || /[\s\p{P}]/u.test(rest[label.length]!))
+      ({ label }) => rest.startsWith(label) && hasMentionBoundaryAfter(rest, label)
     )
     if (member === undefined) continue
     const key = `${member.userId}\n${member.label}`
@@ -153,7 +173,19 @@ export function matchesRoomMention(query: string): boolean {
  * ended by the end, a space or punctuation: what `m.mentions.room` carries.
  */
 export function mentionsRoom(text: string): boolean {
-  return /(^|\s)@(salon|room)(?=$|[\s\p{P}])/iu.test(text)
+  for (let at = text.indexOf('@'); at !== -1; at = text.indexOf('@', at + 1)) {
+    if (at > 0 && !/\s/u.test(text[at - 1]!)) continue
+    const rest = text.slice(at + 1)
+    for (const word of ROOM_MENTION_WORDS) {
+      if (
+        rest.slice(0, word.length).toLowerCase() === word &&
+        hasMentionBoundaryAfter(rest, rest.slice(0, word.length))
+      ) {
+        return true
+      }
+    }
+  }
+  return false
 }
 
 /**

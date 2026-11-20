@@ -32,7 +32,7 @@ import {
 import type { MemberView, SendOptions } from './matrix/store'
 import type { MessageView } from './matrix/timeline'
 import { MentionInput } from './MentionInput'
-import { mentionedIn, mentionsRoom, mentionTargetsIn } from './mentions'
+import { hasMentionBoundaryAfter, mentionedIn, mentionsRoom, mentionTargetsIn } from './mentions'
 import type { MentionCandidate } from './mentions'
 import { newestEditable } from './shortcuts'
 import { useStoreSlice } from './useStoreSlice'
@@ -135,18 +135,24 @@ export function historicalMentionCandidates(
   for (const userId of mentionedUsers) recordLocalpart(userId)
 
   for (const userId of mentionedUsers) {
-    if (userId.startsWith('@') && message.body.includes(userId)) {
-      add(userId, userId.slice(1))
+    if (!userId.startsWith('@')) continue
+    const mxidLabel = userId.slice(1)
+    if (mentionTargetsIn(message.body, [{ userId, label: mxidLabel }]).length > 0) {
+      add(userId, mxidLabel)
     }
-    if (userId.startsWith('@')) {
-      const colon = userId.indexOf(':')
-      const rawLocalpart = colon > 1 ? userId.slice(1, colon) : userId.slice(1)
-      const owners = localpartOwners.get(rawLocalpart.toLowerCase())
-      if (owners !== undefined && owners.size === 1) {
-        for (const match of message.body.matchAll(/(?:^|\s)@([^\s@\p{P}]+)(?=$|[\s\p{P}])/gu)) {
-          if (match[1]!.toLowerCase() === rawLocalpart.toLowerCase()) {
-            add(userId, match[1]!)
-          }
+    const colon = userId.indexOf(':')
+    const rawLocalpart = colon > 1 ? userId.slice(1, colon) : userId.slice(1)
+    const owners = localpartOwners.get(rawLocalpart.toLowerCase())
+    if (owners !== undefined && owners.size === 1) {
+      for (let at = message.body.indexOf('@'); at !== -1; at = message.body.indexOf('@', at + 1)) {
+        if (at > 0 && !/\s/u.test(message.body[at - 1]!)) continue
+        const rest = message.body.slice(at + 1)
+        const slice = rest.slice(0, rawLocalpart.length)
+        if (
+          slice.toLowerCase() === rawLocalpart.toLowerCase() &&
+          hasMentionBoundaryAfter(rest, slice)
+        ) {
+          add(userId, slice)
         }
       }
     }
