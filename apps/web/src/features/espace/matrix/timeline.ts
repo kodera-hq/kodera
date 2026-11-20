@@ -74,6 +74,8 @@ export interface MessageView {
   mentionsMe?: true
   /** The message names the whole room (`m.mentions.room`, « @salon »). */
   mentionsRoom?: true
+  /** The members its `m.mentions.user_ids` names, kept so an edit preserves renamed targets. */
+  mentionedUsers?: string[]
   /** The members its HTML names with a `matrix.to` pill, as its text writes them. */
   mentionPills?: MentionPill[]
   /** The sender's avatar in the room, an `mxc://` address the screen resolves (`avatarCache.ts`). */
@@ -219,6 +221,25 @@ function pillsOf(
   return pills.length === 0 ? {} : { mentionPills: pills }
 }
 
+function mentionedUsersOf(
+  content: Record<string, unknown>,
+  redacted: boolean
+): { mentionedUsers?: string[] } {
+  if (redacted) return {}
+  const value = content['m.mentions']
+  if (value === null || typeof value !== 'object') return {}
+  const raw = (value as { user_ids?: unknown }).user_ids
+  if (!Array.isArray(raw)) return {}
+  const users: string[] = []
+  const seen = new Set<string>()
+  for (const id of raw) {
+    if (typeof id !== 'string' || !isMatrixUserId(id) || seen.has(id)) continue
+    seen.add(id)
+    users.push(id)
+  }
+  return users.length === 0 ? {} : { mentionedUsers: users }
+}
+
 function toMessageView(
   event: TimelineEvent,
   me: string,
@@ -252,6 +273,7 @@ function toMessageView(
     replyTo: typeof replyTo === 'string' ? replyTo : null,
     ...(!redacted && event.sender !== me && mentions(current, me) ? { mentionsMe: true } : {}),
     ...(!redacted && mentionsRoom(current) ? { mentionsRoom: true } : {}),
+    ...mentionedUsersOf(current, redacted),
     ...pillsOf(current, redacted),
     ...(event.sender_avatar === undefined ? {} : { avatarMxc: event.sender_avatar }),
     reactions: redacted

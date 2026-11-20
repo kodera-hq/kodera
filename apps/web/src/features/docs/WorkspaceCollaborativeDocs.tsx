@@ -346,6 +346,7 @@ export function WorkspaceCollaborativeDocs({
   // Debounced writes, one per page: editing page B inside the debounce window must not cancel the
   // write page A still owes the server.
   const saveTimersRef = useRef<Map<string, ScheduledSave>>(new Map())
+  const inFlightSavesRef = useRef<Set<symbol>>(new Set())
   const writeGenerationsRef = useRef<ReadonlyMap<string, number>>(new Map())
   const docsRef = useRef<readonly WorkspacePageRecord[]>(docs)
   const onDocumentsLoadedRef = useRef(onDocumentsLoaded)
@@ -357,7 +358,7 @@ export function WorkspaceCollaborativeDocs({
     if (confidential?.required && scheduled.size > 0) {
       for (const save of scheduled.values()) clearTimeout(save.timer)
       scheduled.clear()
-      setIsSavingRemote(false)
+      if (inFlightSavesRef.current.size === 0) setIsSavingRemote(false)
     }
   }, [confidential])
 
@@ -831,9 +832,12 @@ export function WorkspaceCollaborativeDocs({
     noteWriteRefusal(docId, kind)
   }
 
-  /** The save indicator rests only once no page has a write waiting on its debounce. */
+  const hasPendingOrInFlightSaves = (): boolean =>
+    saveTimersRef.current.size > 0 || inFlightSavesRef.current.size > 0
+
+  /** The save indicator rests only once no page has a write waiting on its debounce or in flight. */
   const settleSavingIndicator = (): void => {
-    if (saveTimersRef.current.size === 0) setIsSavingRemote(false)
+    if (!hasPendingOrInFlightSaves()) setIsSavingRemote(false)
   }
 
   const cancelScheduledSave = (documentId: string): void => {
@@ -874,21 +878,33 @@ export function WorkspaceCollaborativeDocs({
       }
       const generation = supersedeWrites(docId)
       const { markdown, ...metadata } = patch
-      const save =
-        markdown === undefined
-          ? updateWorkspaceDocumentMetadata(organisationId, docId, etag, metadata)
-          : updateWorkspaceDocument(organisationId, docId, etag, patch)
+      const saveToken = Symbol(docId)
+      inFlightSavesRef.current.add(saveToken)
+      let save: ReturnType<typeof updateWorkspaceDocument>
+      try {
+        save =
+          markdown === undefined
+            ? updateWorkspaceDocumentMetadata(organisationId, docId, etag, metadata)
+            : updateWorkspaceDocument(organisationId, docId, etag, patch)
+      } catch (error) {
+        inFlightSavesRef.current.delete(saveToken)
+        settleSavingIndicator()
+        if (writeGenerationOf(docId) === generation) reportWriteFailure(docId, error)
+        return
+      }
       void save
         .then(({ etag: nextEtag }) => {
           if (writeGenerationOf(docId) !== generation) return
-          settleSavingIndicator()
           if (nextEtag) etagsRef.current.set(docId, nextEtag)
           forgetConflict(docId)
         })
         .catch((error: unknown) => {
           if (writeGenerationOf(docId) !== generation) return
-          settleSavingIndicator()
           reportWriteFailure(docId, error)
+        })
+        .finally(() => {
+          inFlightSavesRef.current.delete(saveToken)
+          settleSavingIndicator()
         })
     }
     const timer = setTimeout(run, 350)

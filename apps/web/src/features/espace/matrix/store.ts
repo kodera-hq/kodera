@@ -72,6 +72,44 @@ import {
   type RoomBoundary,
 } from '../../confidential/room-boundary'
 
+const PRE_V12_ROOM_VERSIONS: ReadonlySet<string> = new Set([
+  '1',
+  '2',
+  '3',
+  '4',
+  '5',
+  '6',
+  '7',
+  '8',
+  '9',
+  '10',
+  '11',
+])
+
+/**
+ * Whether `userId` holds infinite creator authority in a Matrix Room v12+ (`m.room.create` sender
+ * or `content.additional_creators`), checked directly on `m.room.create` because `matrix-js-sdk`
+ * leaves `member.powerLevel` at numeric `0` until an `m.room.power_levels` state event exists.
+ */
+function isV12RoomCreator(room: Room | null | undefined, userId: string): boolean {
+  const createEvent = room?.currentState.getStateEvents('m.room.create', '')
+  if (createEvent === null || createEvent === undefined) return false
+  const content = createEvent.getContent() as Record<string, unknown> | undefined
+  const roomVersion =
+    typeof content?.room_version === 'string' && content.room_version !== ''
+      ? content.room_version
+      : '1'
+  if (PRE_V12_ROOM_VERSIONS.has(roomVersion)) return false
+  const primaryCreator =
+    createEvent.getSender() || (typeof content?.creator === 'string' ? content.creator : undefined)
+  if (primaryCreator === userId) return true
+  const additional = content?.additional_creators
+  return (
+    Array.isArray(additional) &&
+    additional.some((creator) => typeof creator === 'string' && creator === userId)
+  )
+}
+
 export type SyncStatus = 'starting' | 'live' | 'reconnecting' | 'signed-out' | 'stopped'
 
 /**
@@ -1373,9 +1411,9 @@ export class EspaceStore {
 
   getMemberRole = (roomId: string, userId: string): 'admin' | 'member' => {
     const room = this.#client.getRoom(roomId)
-    // The SDK's member level leads: it already counts a room v12 creator (MSC4289), who holds
-    // `Infinity` and appears in no `users` map. The raw power levels answer for a member the
-    // client has not loaded yet.
+    // Room v12+ creators (`m.room.create` sender and `additional_creators`) hold infinite power
+    // even when no `m.room.power_levels` state event exists yet and `member.powerLevel` is still `0`.
+    if (isV12RoomCreator(room, userId)) return 'admin'
     const memberLevel: unknown = room?.getMember(userId)?.powerLevel
     const powers = room?.currentState.getStateEvents('m.room.power_levels', '')?.getContent()
     const level: unknown =

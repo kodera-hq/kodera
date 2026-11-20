@@ -8,6 +8,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { ApiProblem } from '@/api/client'
 import i18n from '@/i18n'
 import fr from '@/i18n/fr.json'
+import { getDocsDriveCopy } from './docsDriveMessages'
 import { WorkspaceCollaborativeDocs } from './WorkspaceCollaborativeDocs'
 import * as docsApi from './workspaceDocumentsApi'
 import type { CoreWorkspaceDocument } from './workspaceDocumentsApi'
@@ -157,4 +158,81 @@ it('sends the pending write when the surface unmounts inside the debounce window
   // The cleared timer never sends it a second time.
   vi.advanceTimersByTime(1000)
   expect(metadata).toHaveBeenCalledTimes(1)
+})
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res
+    reject = rej
+  })
+  return { promise, resolve, reject }
+}
+
+it('keeps the saving indicator active while another document save is still in flight', async () => {
+  const copy = getDocsDriveCopy('fr')
+  const { metadata } = await openWorkspace()
+  const saveA = deferred<{ document: CoreWorkspaceDocument; etag: string }>()
+  const saveB = deferred<{ document: CoreWorkspaceDocument; etag: string }>()
+  metadata.mockImplementation((_organisationId, documentId) =>
+    documentId === PAGE_A.id ? saveA.promise : saveB.promise
+  )
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+
+  typeTitle('Architecture v2')
+  fireEvent.click(screen.getByTestId(`docs-tree-item-${PAGE_B.id}`))
+  typeTitle('Runbook v2')
+  expect(screen.getByTestId('docs-save-state')).toHaveTextContent(copy.saveStateSaving)
+
+  // Fire both debounce timers so the queued timer Map is empty and both HTTP writes are in flight.
+  await act(async () => {
+    vi.advanceTimersByTime(400)
+  })
+  expect(metadata).toHaveBeenCalledTimes(2)
+  expect(screen.getByTestId('docs-save-state')).toHaveTextContent(copy.saveStateSaving)
+
+  // Resolving page A while page B is still unresolved must NOT report "Saved" prematurely.
+  await act(async () => {
+    saveA.resolve({ document: PAGE_A, etag: '"a2"' })
+    await saveA.promise
+  })
+  expect(screen.getByTestId('docs-save-state')).toHaveTextContent(copy.saveStateSaving)
+
+  // Only once page B also settles does the indicator report "Saved".
+  await act(async () => {
+    saveB.resolve({ document: PAGE_B, etag: '"b2"' })
+    await saveB.promise
+  })
+  expect(screen.getByTestId('docs-save-state')).toHaveTextContent(copy.saveStateSaved)
+})
+
+it('clears in-flight tracking in finally even when a concurrent save rejects', async () => {
+  const copy = getDocsDriveCopy('fr')
+  const { metadata } = await openWorkspace()
+  const saveA = deferred<{ document: CoreWorkspaceDocument; etag: string }>()
+  const saveB = deferred<{ document: CoreWorkspaceDocument; etag: string }>()
+  metadata.mockImplementation((_organisationId, documentId) =>
+    documentId === PAGE_A.id ? saveA.promise : saveB.promise
+  )
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+
+  typeTitle('Architecture v2')
+  fireEvent.click(screen.getByTestId(`docs-tree-item-${PAGE_B.id}`))
+  typeTitle('Runbook v2')
+  await act(async () => {
+    vi.advanceTimersByTime(400)
+  })
+
+  await act(async () => {
+    saveA.reject(new Error('network'))
+    await saveA.promise.catch(() => undefined)
+  })
+  expect(screen.getByTestId('docs-save-state')).toHaveTextContent(copy.saveStateSaving)
+
+  await act(async () => {
+    saveB.resolve({ document: PAGE_B, etag: '"b2"' })
+    await saveB.promise
+  })
+  expect(screen.getByTestId('docs-save-state')).toHaveTextContent(copy.saveStateSaved)
 })

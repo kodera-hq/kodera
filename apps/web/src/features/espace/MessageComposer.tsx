@@ -97,6 +97,80 @@ export function inRoom(target: RoomTarget | null, roomId: string | null): string
 }
 
 /**
+ * Historical `{ userId, label }` candidates carried by an existing message (`mentionPills` and
+ * `mentionedUsers`), so editing punctuation around an unchanged `@OldName` after a member renamed
+ * themselves preserves their `m.mentions` identity and pill instead of dropping it.
+ */
+export function historicalMentionCandidates(
+  message: Pick<MessageView, 'body' | 'mentionPills' | 'mentionedUsers'> | undefined,
+  members: readonly MentionCandidate[]
+): MentionCandidate[] {
+  if (message === undefined) return []
+  const candidates: MentionCandidate[] = []
+  const seen = new Set<string>()
+  const add = (userId: string, rawLabel: string) => {
+    const label = rawLabel.trim()
+    const key = `${userId}\n${label}`
+    if (userId === '' || label === '' || seen.has(key)) return
+    seen.add(key)
+    candidates.push({ userId, label })
+  }
+  for (const pill of message.mentionPills ?? []) add(pill.userId, pill.label)
+  for (const target of mentionTargetsIn(message.body, members)) add(target.userId, target.label)
+  const mentionedUsers = message.mentionedUsers ?? []
+  for (const userId of mentionedUsers) {
+    if (userId.startsWith('@') && message.body.includes(userId)) add(userId, userId.slice(1))
+  }
+  if (mentionedUsers.length > 0) {
+    const known = [...candidates, ...members]
+    const resolvedUsers = new Set(mentionedIn(message.body, known))
+    const unmappedUsers = mentionedUsers.filter((userId) => !resolvedUsers.has(userId))
+    if (unmappedUsers.length > 0) {
+      const matchedLabels = new Set(
+        mentionTargetsIn(message.body, known).map(({ label }) => label.toLowerCase())
+      )
+      const unmatchedTokens: string[] = []
+      const seenTokens = new Set<string>()
+      for (const match of message.body.matchAll(/(?:^|\s)@([^\s@\p{P}]+)(?=$|[\s\p{P}])/gu)) {
+        const token = match[1]!
+        const lower = token.toLowerCase()
+        if (lower === 'salon' || lower === 'room' || matchedLabels.has(lower)) continue
+        if (!seenTokens.has(token)) {
+          seenTokens.add(token)
+          unmatchedTokens.push(token)
+        }
+      }
+      if (unmappedUsers.length === unmatchedTokens.length) {
+        for (let index = 0; index < unmappedUsers.length; index += 1) {
+          add(unmappedUsers[index]!, unmatchedTokens[index]!)
+        }
+      }
+    }
+  }
+  return candidates
+}
+
+export function editMentionCandidates(
+  members: readonly MentionCandidate[],
+  retained: readonly MentionCandidate[] | undefined,
+  original: Pick<MessageView, 'body' | 'mentionPills' | 'mentionedUsers'> | undefined
+): MentionCandidate[] {
+  const combined: MentionCandidate[] = []
+  const seen = new Set<string>()
+  const push = (candidate: MentionCandidate) => {
+    const label = candidate.label.trim()
+    const key = `${candidate.userId}\n${label}`
+    if (candidate.userId === '' || label === '' || seen.has(key)) return
+    seen.add(key)
+    combined.push({ userId: candidate.userId, label })
+  }
+  for (const candidate of retained ?? []) push(candidate)
+  for (const candidate of historicalMentionCandidates(original, members)) push(candidate)
+  for (const candidate of members) push(candidate)
+  return combined
+}
+
+/**
  * The members the text names, as `m.mentions` carries them, with the names the text writes them
  * by so the message's HTML links each as a pill; « @salon » sets `m.mentions.room`. Nothing when
  * it names no one.
@@ -233,11 +307,19 @@ function MessageComposerView({
       if (trimmed === '') return
       store.setTyping?.(roomId, false)
       // An edit started in another room is dropped, never sent here, as an edit or as a message.
-      const editOptions = mentioning(typed, members)
+      const original =
+        editingEventId === null
+          ? undefined
+          : store.getTimeline(roomId).find((candidate) => candidate.eventId === editingEventId)
+      const editOptions = mentioning(
+        typed,
+        editMentionCandidates(members, editing.mentionTargets, original)
+      )
       draft.command(
         () => {
           if (editingEventId === null) return
-          if (Object.keys(editOptions).length === 0) void store.edit(roomId, editingEventId, trimmed)
+          if (Object.keys(editOptions).length === 0)
+            void store.edit(roomId, editingEventId, trimmed)
           else void store.edit(roomId, editingEventId, trimmed, editOptions)
         },
         { editing: null, text: '' }

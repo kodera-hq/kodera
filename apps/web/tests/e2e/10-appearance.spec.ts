@@ -8,6 +8,7 @@
 /// <reference lib="dom" />
 
 import { createHash } from 'node:crypto'
+import { inflateSync } from 'node:zlib'
 import AxeBuilder from '@axe-core/playwright'
 import { expect, test, type Page, type Request, type Response, type Route } from '@playwright/test'
 import { signIn } from './support/signIn'
@@ -668,17 +669,122 @@ for (const theme of ['light', 'ciel'] as const)
     await expect(html(page)).toHaveCSS('color-scheme', 'light')
   })
 
+/** Reads the top-left `[R, G, B]` pixel from a 1×1 PNG screenshot buffer. */
+function pngTopLeftRgb(png: Buffer): [number, number, number] {
+  const idat: Buffer[] = []
+  let offset = 8
+  while (offset + 8 <= png.length) {
+    const length = png.readUInt32BE(offset)
+    const type = png.subarray(offset + 4, offset + 8).toString('ascii')
+    const data = png.subarray(offset + 8, offset + 8 + length)
+    if (type === 'IDAT') idat.push(data)
+    if (type === 'IEND') break
+    offset += 12 + length
+  }
+  const raw = inflateSync(Buffer.concat(idat))
+  // At (x=0, y=0), left/up/up-left predictors are all 0 under every PNG filter (0..4).
+  expect(raw[0]).toBeGreaterThanOrEqual(0)
+  expect(raw[0]).toBeLessThanOrEqual(4)
+  return [raw[1]!, raw[2]!, raw[3]!]
+}
+
 for (const theme of ['dark', 'black', 'ciel-nuit'] as const)
   test(`appearance/native: ${theme} paints a dark canvas on a light device before any stylesheet`, async ({
     page,
-  }) => {
+  }, testInfo) => {
+    const baseURL = testInfo.project.use.baseURL
+    if (typeof baseURL !== 'string') throw Error('APPEARANCE_BASE_URL_ABSENT')
+    const origin = new URL(baseURL).origin
+    const distDirectory = new URL('../../dist/', import.meta.url)
+    const entry = await readBootstrapEntry(distDirectory)
+    const artifact = await mainArtifact({ distDirectory, entry, origin, testInfo })
+    const mainURL = origin + artifact.path
+
     await page.emulateMedia({ colorScheme: 'light' })
     await page.addInitScript(({ key, value }) => localStorage.setItem(key, value), {
       key: KEY,
       value: theme,
     })
+
+    let notifyMainHeld: () => void = () => undefined
+    const mainHeld = new Promise<void>((resolve) => {
+      notifyMainHeld = resolve
+    })
+    let releaseGate: () => void = () => undefined
+    const gateReleased = new Promise<void>((resolve) => {
+      releaseGate = resolve
+    })
+    let continueGate = false
+    const inFlightRoutes: Promise<void>[] = []
+    const gatePredicate = (url: URL) =>
+      url.origin === origin && (url.href === mainURL || url.pathname.endsWith('.css'))
+    const gateHandler = async (route: Route, request: Request) => {
+      const work = (async () => {
+        if (request.url() === mainURL) notifyMainHeld()
+        await gateReleased
+        if (continueGate) await route.continue()
+        else await route.abort()
+      })()
+      inFlightRoutes.push(work)
+      await work
+    }
+    await page.route(gatePredicate, gateHandler)
+
     const meta = page.locator('meta[name="color-scheme"]')
-    await page.goto('/login')
+    try {
+      const navigation = page.goto('/login')
+      await mainHeld
+      // While the main bundle and every stylesheet are still held at the route gate, `theme.js`
+      // has already run synchronously after the bootstrap's cleanup/retirement step.
+      const preHydration = await page.evaluate(() => ({
+        theme: document.documentElement.dataset.theme ?? null,
+        metaScheme:
+          document.querySelector('meta[name="color-scheme"]')?.getAttribute('content') ?? null,
+        styleAttr: document.documentElement.getAttribute('style'),
+        styleSheets: document.styleSheets.length,
+        rootChildren: document.getElementById('root')?.childElementCount ?? -1,
+      }))
+      expect(preHydration).toEqual({
+        theme,
+        metaScheme: 'dark',
+        styleAttr: null,
+        styleSheets: 0,
+        rootChildren: 0,
+      })
+      // Actual browser canvas check before any CSS or React DOM arrives: dark UA ground, never white.
+      const [r, g, b] = pngTopLeftRgb(
+        await page.screenshot({ clip: { x: 0, y: 0, width: 1, height: 1 } })
+      )
+      expect(Math.max(r, g, b)).toBeLessThan(64)
+
+      continueGate = true
+      releaseGate()
+      await navigation
+      await expect(
+        page.getByRole('heading', { name: 'Se connecter à votre console' })
+      ).toBeVisible()
+      const timing = await page.evaluate(
+        ({ themeURL, mainScriptURL }) => {
+          const entryFor = (url: string) => {
+            const items = performance.getEntriesByName(url, 'resource')
+            const first = items[0]
+            return first instanceof PerformanceResourceTiming
+              ? { start: first.startTime, end: first.responseEnd }
+              : null
+          }
+          return { theme: entryFor(themeURL), main: entryFor(mainScriptURL) }
+        },
+        { themeURL: origin + '/theme.js', mainScriptURL: mainURL }
+      )
+      expect(timing.theme).not.toBeNull()
+      expect(timing.main).not.toBeNull()
+      expect(timing.theme!.end).toBeLessThanOrEqual(timing.main!.start)
+    } finally {
+      releaseGate()
+      await Promise.allSettled(inFlightRoutes)
+      await page.unroute(gatePredicate, gateHandler)
+    }
+
     await expect(html(page)).toHaveAttribute('data-theme', theme)
     // The meta tag the UA reads for the canvas, before CSS: the theme's scheme, never the device's.
     await expect(meta).toHaveAttribute('content', 'dark')
@@ -721,6 +827,8 @@ test('appearance/page: passes axe in every theme', async ({ page }) => {
       'box-shadow',
       'none'
     )
+    // Let any sidebar tooltip opened while tabbing through the rail finish unmounting before axe runs.
+    await expect(page.locator('[role="tooltip"][data-state="closed"]')).toHaveCount(0)
     const { violations } = await new AxeBuilder({ page }).analyze()
     expect(violations, `axe in the ${theme} theme`).toEqual([])
   }

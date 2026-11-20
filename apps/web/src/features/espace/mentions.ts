@@ -59,12 +59,19 @@ export function insertMention(
 }
 
 /**
- * The members the text names, as « @label » followed by the end, a space or punctuation. At each
- * « @ » the longest name wins, so « @Henri Duflot » names Henri Duflot, not also an « Henri ».
+ * Every `{ userId, label }` candidate written in full after an « @ » in `text` (at the start or
+ * after a space, ended by the end, a space or punctuation), longest label winning at each « @ »,
+ * deduplicated by `userId` and `label`.
  */
-export function mentionedIn(text: string, members: readonly MentionCandidate[]): string[] {
-  const byLength = [...members].sort((a, b) => b.label.length - a.label.length)
-  const found = new Set<string>()
+function matchedCandidatesIn(
+  text: string,
+  members: readonly MentionCandidate[]
+): MentionCandidate[] {
+  const byLength = members
+    .filter(({ label }) => label !== '')
+    .sort((a, b) => b.label.length - a.label.length)
+  const seen = new Set<string>()
+  const matched: MentionCandidate[] = []
   for (let at = text.indexOf('@'); at !== -1; at = text.indexOf('@', at + 1)) {
     if (at > 0 && !/\s/u.test(text[at - 1]!)) continue
     const rest = text.slice(at + 1)
@@ -73,9 +80,22 @@ export function mentionedIn(text: string, members: readonly MentionCandidate[]):
         rest.startsWith(label) &&
         (rest.length === label.length || /[\s\p{P}]/u.test(rest[label.length]!))
     )
-    if (member !== undefined) found.add(member.userId)
+    if (member === undefined) continue
+    const key = `${member.userId}\n${member.label}`
+    if (!seen.has(key)) {
+      seen.add(key)
+      matched.push({ userId: member.userId, label: member.label })
+    }
   }
-  return [...found]
+  return matched
+}
+
+/**
+ * The members the text names, as « @label » followed by the end, a space or punctuation. At each
+ * « @ » the longest name wins, so « @Henri Duflot » names Henri Duflot, not also an « Henri ».
+ */
+export function mentionedIn(text: string, members: readonly MentionCandidate[]): string[] {
+  return [...new Set(matchedCandidatesIn(text, members).map(({ userId }) => userId))]
 }
 
 /** The words that name the whole room, as Element and other Matrix clients write them. */
@@ -144,12 +164,15 @@ export function mentionTargetsIn(
   text: string,
   members: readonly MentionCandidate[]
 ): { userId: string; label: string }[] {
-  const named = new Set(mentionedIn(text, members))
+  const matched = new Set(
+    matchedCandidatesIn(text, members).map(({ userId, label }) => `${userId}\n${label}`)
+  )
   const seen = new Set<string>()
   const targets: { userId: string; label: string }[] = []
   for (const member of members) {
-    if (!named.has(member.userId) || seen.has(member.userId)) continue
-    seen.add(member.userId)
+    const key = `${member.userId}\n${member.label}`
+    if (!matched.has(key) || seen.has(key)) continue
+    seen.add(key)
     targets.push({ userId: member.userId, label: member.label })
   }
   return targets

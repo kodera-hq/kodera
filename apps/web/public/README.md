@@ -37,14 +37,15 @@ every `.ico` frame and checks the black ground, the mark and the safe zone.
 | `site.webmanifest` | The web-app manifest. `theme_color` and `background_color` are both `#000000` (`color.black`, the tile), so the address bar, the splash screen and the icon share one ground. |
 | `kodera-mark-slate.svg` | The bare monogram, seven paths, viewBox 463 × 608.663. Vector reference for the inline `KoderaMark` component in `src/ui/icons/KoderaMark.tsx`; the component reuses its paths. |
 | `kodera-mark-white.svg` | The same seven paths filled white, byte-for-byte the design repository's `kodera-mark-white.svg`. The module rail draws it straight on its `c-inverse` ground, as the mock does. Slate on a light tile could not follow the theme: the tile turns dark in dark and black. |
-| `theme.js` | Not a brand asset: the boot script that sets `data-theme` before the first paint (`docs/specs/10-appearance.md` §10). It is here because it must be a classic script at a fixed URL, and so it is **not hashed**, unlike the bundle it shares a storage key, an event name and a theme list with. Hosting must serve `/theme.js` with `Cache-Control: no-cache` (revalidate on every load): a copy cached for long would run an old contract against a new bundle. |
+| `theme.js` | Not a brand asset: the classic script loaded dynamically by `src/entry-bootstrap.ts` after verified URL and legacy-worker cleanup (and awaited before the head template or main bundle) to set `data-theme` and `<meta name="color-scheme">` (`docs/specs/10-appearance.md` §10, `docs/specs/entry-bootstrap.md`). It is here because it must be a classic script at a fixed URL, and so it is **not hashed**, unlike the bundle it shares a storage key, an event name and a theme list with. Hosting must serve `/theme.js` with `Cache-Control: no-cache` (revalidate on every load): a copy cached for long would run an old contract against a new bundle. |
 | `kodera-lockup-slate.svg` | Mark plus the outlined "KODERA" wordmark. Same rationale, for surfaces that name the maker. |
 
 ## What `index.html` carries
 
-The application entry already links the icons and manifest below. Its blocking `/theme.js`
-script runs before this markup to select the theme before the first paint. Keep this icon
-contract aligned with `index.html`:
+`index.html` holds the icons and manifest below inside `<template id="entry-page-head">`. After
+verified URL and legacy-worker cleanup, `src/entry-bootstrap.ts` loads `/theme.js` and awaits it
+before appending that template and importing the main bundle (`docs/specs/entry-bootstrap.md`).
+Keep this icon contract aligned with `index.html`:
 
 ```html
 <link rel="icon" href="/favicon.svg" type="image/svg+xml" />

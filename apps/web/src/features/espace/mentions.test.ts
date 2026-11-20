@@ -125,6 +125,12 @@ describe('the mention targets of a message', () => {
       { userId: MIGUEL.userId, label: 'Miguel Victoria' },
       { userId: ALICE.userId, label: 'Henri Duflot' },
     ])
+    expect(
+      mentionTargetsIn('ping @Miguel Victoria!', [
+        { userId: MIGUEL.userId, label: 'Miguel V.' },
+        MIGUEL,
+      ])
+    ).toEqual([{ userId: MIGUEL.userId, label: 'Miguel Victoria' }])
     expect(mentionTargetsIn('rien', [MIGUEL])).toEqual([])
   })
 })
