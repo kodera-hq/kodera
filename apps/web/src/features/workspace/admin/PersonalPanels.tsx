@@ -7,7 +7,7 @@ import { Link } from '@tanstack/react-router'
 import { isStubArea } from '../../../app/stubAreas'
 import { PushSwitch } from '../../notifications/NotificationCenter'
 import { isMac } from '../ChannelSearch'
-import { Panel, useAdminCopy } from './shared'
+import { PANEL, Panel, useAdminCopy } from './shared'
 
 const LINK =
   'self-start rounded-md border border-c-border px-4 py-3 text-sm font-medium text-c-ink hover:bg-c-muted focus-visible:ring focus-visible:outline-hidden'
@@ -50,7 +50,9 @@ export function NotificationsSection({ onOpenAudio }: { onOpenAudio: () => void 
 }
 
 /** The workspace's core keyboard shortcuts, read-only: `⌘K`/`Ctrl+K`, `⌘/`/`Ctrl+/`, the Alt
- * channel moves, `↑` to edit one's last message, and `Échap` to close. */
+ * channel moves, `↑` to edit one's last message, and `Échap` to close. The settings dialog
+ * already heads this tab « Raccourcis », so the panel adds no second heading of the same
+ * name — just the hint and the key list. */
 export function ShortcutsSection() {
   const copy = useAdminCopy()
   const mac = isMac()
@@ -63,7 +65,8 @@ export function ShortcutsSection() {
     [copy.shortcut.close, copy.escHint],
   ]
   return (
-    <Panel title={copy.sections.shortcuts} hint={copy.shortcutsHint}>
+    <section className={PANEL} aria-label={copy.sections.shortcuts}>
+      <p className="text-sm text-c-ink-2">{copy.shortcutsHint}</p>
       <ul className="flex flex-col gap-2">
         {rows.map(([label, keys]) => (
           <li key={label} className="flex items-center justify-between gap-3 text-sm">
@@ -72,6 +75,6 @@ export function ShortcutsSection() {
           </li>
         ))}
       </ul>
-    </Panel>
+    </section>
   )
 }

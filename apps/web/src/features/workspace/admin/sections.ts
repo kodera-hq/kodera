@@ -36,6 +36,10 @@ export function isSection(value: unknown): value is Section {
   return typeof value === 'string' && ALL.includes(value)
 }
 
+export function isAdminSection(value: unknown): value is AdminSection {
+  return typeof value === 'string' && (ADMIN_SECTIONS as readonly string[]).includes(value)
+}
+
 export function modeOf(section: Section): SettingsMode {
   return (PERSONAL_SECTIONS as readonly string[]).includes(section) ? 'personal' : 'admin'
 }

@@ -18,6 +18,7 @@ import {
 } from '../workspace/ChannelSearch'
 import { WORKSPACE_COMMAND_EVENT } from '../workspace/WorkspaceMenu'
 import { withdrawn } from '../workspace/ChannelSearch'
+import { isAdminSection } from '../workspace/admin/sections'
 import { fuzzyEntries } from './search'
 import { paletteCopy } from './messages'
 import { communitySupportPath } from './support'
@@ -66,11 +67,12 @@ function SearchContents({
     add(`member:${person.id}`, person.label, copy.actions, () => requestAnimationFrame(person.open))
   for (const doc of documents) add(`doc:${doc.id}`, doc.label, copy.docs, doc.open)
   for (const dm of directMessages) add(`dm:${dm.id}`, dm.label, copy.direct, dm.open)
-  // Administration sections are offered only when the caller's effective admin capability
-  // allows them; `undefined` (no shell) keeps the palette's previous behaviour.
+  // Only administration sections are gated on the caller's effective admin capability:
+  // personal settings stay in the palette for every member. `undefined` (no shell) keeps
+  // the palette's previous behaviour.
   const adminSections = switcher?.adminSections
   const mayOpenSection = (section: string) =>
-    adminSections === undefined || adminSections.includes(section as (typeof adminSections)[number])
+    !isAdminSection(section) || adminSections === undefined || adminSections.includes(section)
   for (const section of [
     'profile',
     'appearance',

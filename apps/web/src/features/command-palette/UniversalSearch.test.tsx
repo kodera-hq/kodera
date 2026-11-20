@@ -178,6 +178,36 @@ describe('universal workspace palette', () => {
     await user.type(screen.getByRole('combobox'), 'Hébergement')
     expect(await screen.findByText('Hébergement et administration')).toBeVisible()
   })
+  it('keeps personal settings commands for an ordinary member while omitting administration ones', async () => {
+    const user = userEvent.setup()
+    render(
+      <OrganisationSwitchContext.Provider
+        value={{
+          memberships: [{ name: 'My studio', slug: 'studio', current: true }],
+          onSwitch: vi.fn(),
+          adminSections: [],
+        }}
+      >
+        <UniversalSearch entries={entries} shortcut onChoose={() => null} />
+      </OrganisationSwitchContext.Provider>
+    )
+    await user.keyboard('{Control>}k{/Control}')
+    const field = screen.getByRole('combobox')
+    // Personal settings commands are offered to every member, whatever their admin sections.
+    await user.type(field, 'profil')
+    expect(await screen.findByText('Mon profil et mon statut')).toBeVisible()
+    await user.type(field, '{Control>}a{/Control}apparence')
+    expect(await screen.findByText('Apparence et thèmes')).toBeVisible()
+    await user.type(field, '{Control>}a{/Control}voix')
+    expect(await screen.findByText('Voix et audio')).toBeVisible()
+    // Administration commands stay hidden without a delegated section.
+    await user.type(field, '{Control>}a{/Control}membres')
+    expect(screen.queryByText('Membres, rôles et invitations')).toBeNull()
+    await user.type(field, '{Control>}a{/Control}connecteurs')
+    expect(screen.queryByText('Connecteurs et extensions')).toBeNull()
+    await user.type(field, '{Control>}a{/Control}hébergement')
+    expect(screen.queryByText('Hébergement et administration')).toBeNull()
+  })
 })
 
 it('clears a nonempty query before closing and exposes group headers', async () => {
