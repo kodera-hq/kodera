@@ -440,6 +440,7 @@ function OrgLayoutContent() {
           org={org}
           organisationId={membership.organisation.id}
           personId={me.id}
+          membershipId={membership.membership_id}
           organisation={{ name: membership.organisation.name, slug: membership.organisation.slug }}
           {...(organisationMark === undefined ? {} : { organisationMark })}
           memberships={memberships}

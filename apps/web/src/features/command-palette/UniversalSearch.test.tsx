@@ -7,6 +7,7 @@ import { UniversalSearch } from './UniversalSearch'
 import { OPEN_PALETTE, PaletteProvider } from './PaletteContext'
 import { fuzzyEntries } from './search'
 import { WORKSPACE_COMMAND_EVENT } from '../workspace/WorkspaceMenu'
+import type { AdminSection } from '../workspace/admin/sections'
 const entries = [
   { id: 'general', label: 'Général', kind: 'text' as const },
   { id: 'audio', label: 'Daily team', kind: 'audio' as const },
@@ -140,6 +141,72 @@ describe('universal workspace palette', () => {
       section: 'audio',
     })
     window.removeEventListener(WORKSPACE_COMMAND_EVENT, command)
+  })
+  it('offers administration commands only to callers whose admin sections allow them', async () => {
+    const user = userEvent.setup()
+    const renderPalette = (adminSections?: readonly AdminSection[]) =>
+      render(
+        <OrganisationSwitchContext.Provider
+          value={{
+            memberships: [{ name: 'My studio', slug: 'studio', current: true }],
+            onSwitch: vi.fn(),
+            ...(adminSections === undefined ? {} : { adminSections }),
+          }}
+        >
+          <UniversalSearch entries={entries} shortcut onChoose={() => null} />
+        </OrganisationSwitchContext.Provider>
+      )
+    // A plain member with zero delegated permissions: no members/extensions/hosting commands.
+    const first = renderPalette([])
+    await user.keyboard('{Control>}k{/Control}')
+    await user.type(screen.getByRole('combobox'), 'Membres')
+    expect(screen.queryByText('Membres, rôles et invitations')).toBeNull()
+    await user.type(screen.getByRole('combobox'), '{Control>}a{/Control}Connecteurs')
+    expect(screen.queryByText('Connecteurs & extensions')).toBeNull()
+    await user.keyboard('{Escape}')
+    first.unmount()
+    // A delegated manager with the members section: the command is offered, personal ones too.
+    const second = renderPalette(['members'])
+    await user.keyboard('{Control>}k{/Control}')
+    await user.type(screen.getByRole('combobox'), 'Membres')
+    expect(await screen.findByText('Membres, rôles et invitations')).toBeVisible()
+    await user.keyboard('{Escape}')
+    second.unmount()
+    // Without a switcher at all the palette keeps its previous behaviour (personal + admin).
+    render(<UniversalSearch entries={entries} shortcut onChoose={() => null} />)
+    await user.keyboard('{Control>}k{/Control}')
+    await user.type(screen.getByRole('combobox'), 'Hébergement')
+    expect(await screen.findByText('Hébergement et administration')).toBeVisible()
+  })
+  it('keeps personal settings commands for an ordinary member while omitting administration ones', async () => {
+    const user = userEvent.setup()
+    render(
+      <OrganisationSwitchContext.Provider
+        value={{
+          memberships: [{ name: 'My studio', slug: 'studio', current: true }],
+          onSwitch: vi.fn(),
+          adminSections: [],
+        }}
+      >
+        <UniversalSearch entries={entries} shortcut onChoose={() => null} />
+      </OrganisationSwitchContext.Provider>
+    )
+    await user.keyboard('{Control>}k{/Control}')
+    const field = screen.getByRole('combobox')
+    // Personal settings commands are offered to every member, whatever their admin sections.
+    await user.type(field, 'profil')
+    expect(await screen.findByText('Mon profil et mon statut')).toBeVisible()
+    await user.type(field, '{Control>}a{/Control}apparence')
+    expect(await screen.findByText('Apparence et thèmes')).toBeVisible()
+    await user.type(field, '{Control>}a{/Control}voix')
+    expect(await screen.findByText('Voix et audio')).toBeVisible()
+    // Administration commands stay hidden without a delegated section.
+    await user.type(field, '{Control>}a{/Control}membres')
+    expect(screen.queryByText('Membres, rôles et invitations')).toBeNull()
+    await user.type(field, '{Control>}a{/Control}connecteurs')
+    expect(screen.queryByText('Connecteurs et extensions')).toBeNull()
+    await user.type(field, '{Control>}a{/Control}hébergement')
+    expect(screen.queryByText('Hébergement et administration')).toBeNull()
   })
 })
 

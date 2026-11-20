@@ -101,7 +101,7 @@ const messages = {
     admin: 'Admin',
     member: 'Membre',
     external: 'Partenaire externe Matrix',
-    owner: 'Owner',
+    owner: 'Propriétaire',
     invite: 'Inviter dans cette conversation',
     inviteId: 'Identifiant Matrix à inviter',
     invited: 'Invitation envoyée.',

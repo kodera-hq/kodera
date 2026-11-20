@@ -86,8 +86,8 @@ it('shows community initials and domain and dispatches the same actions as the r
   expect(screen.getByText('community.kodera.io')).toHaveClass('text-xs', 'text-c-ink-3')
   await user.click(screen.getByRole('button', { name: /Kodera Community/ }))
   expect(screen.queryByRole('menuitemradio', { name: 'Noir OLED' })).not.toBeInTheDocument()
-  await user.click(screen.getByRole('menuitem', { name: 'Réglages de l’espace…' }))
-  expect(listener.mock.calls[0]?.[0].detail).toBe('settings')
+  await user.click(screen.getByRole('menuitem', { name: 'Administration de l’espace…' }))
+  expect(listener.mock.calls[0]?.[0].detail).toBe('admin')
   window.removeEventListener('kodera:workspace-command', listener)
 })
 

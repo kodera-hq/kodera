@@ -47,7 +47,7 @@ function usePolling(source: NotificationFeed) {
   }, [source])
 }
 
-function PushSwitch() {
+export function PushSwitch() {
   const { t } = useTranslation()
   const [enabled, setEnabled] = useState<boolean | null>(null)
   const [problem, setProblem] = useState(false)

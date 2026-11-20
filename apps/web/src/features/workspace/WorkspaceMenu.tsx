@@ -7,7 +7,7 @@ import { workspaceMenuCopy } from './workspaceMenuMessages'
 import { initialsOf } from '../../ui/Avatar/Avatar'
 
 export type WorkspaceCommand =
-  'configure' | 'settings' | 'extensions' | 'studio' | 'hosting' | 'developer'
+  'configure' | 'settings' | 'admin' | 'extensions' | 'studio' | 'hosting' | 'developer'
 export const WORKSPACE_COMMAND_EVENT = 'kodera:workspace-command'
 export function openWorkspaceCommand(command: WorkspaceCommand) {
   window.dispatchEvent(new CustomEvent(WORKSPACE_COMMAND_EVENT, { detail: command }))
@@ -75,6 +75,14 @@ export function WorkspaceMenu({
           {onCommunityHost() && organisationSwitch?.staff !== true ? null : (
             <Menu.Item className={ITEM} onSelect={() => openWorkspaceCommand('configure')}>
               {copy.create}
+            </Menu.Item>
+          )}
+          {/* A member with no administration access (no owner/admin role, no delegated
+              capability) gets no administration entry point at all. `undefined` — no shell, as
+              in a component test — keeps the item, the consumers' default. */}
+          {organisationSwitch?.canAdminister === false ? null : (
+            <Menu.Item className={ITEM} onSelect={() => openWorkspaceCommand('admin')}>
+              {copy.admin}
             </Menu.Item>
           )}
           <Menu.Item className={ITEM} onSelect={() => openWorkspaceCommand('settings')}>

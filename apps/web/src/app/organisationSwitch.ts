@@ -4,6 +4,7 @@
 // header draws the organisation without a menu.
 
 import { createContext, useContext } from 'react'
+import type { AdminSection } from '../features/workspace/admin/sections'
 import type { OrgSwitcherMembership } from './OrgSwitcher'
 
 export interface OrganisationSwitch {
@@ -17,6 +18,15 @@ export interface OrganisationSwitch {
    * one; staff, who operate the fleet, keep it.
    */
   readonly staff?: boolean | undefined
+  /**
+   * Whether the caller may open the workspace administration at all: an owner, an administrator,
+   * or a member with at least one delegated administration capability (`manage_roles`,
+   * `view_audit_log`). `false` hides every administration entry point; `undefined` (no shell, as
+   * in a component test) leaves the decision to the consumer's default.
+   */
+  readonly canAdminister?: boolean | undefined
+  /** The administration sections this caller may open; `undefined` when unknown. */
+  readonly adminSections?: readonly AdminSection[] | undefined
 }
 
 export const OrganisationSwitchContext = createContext<OrganisationSwitch | undefined>(undefined)
