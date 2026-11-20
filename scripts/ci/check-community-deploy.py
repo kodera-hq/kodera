@@ -3790,6 +3790,43 @@ def native_categories(source: str, platform: str) -> tuple[list[tuple], list[str
     return categories, voices
 
 
+def server_voice_channels(tree: ast.Module) -> list[str]:
+    """Read audio channel names from the provisioner's literal kind conditions."""
+    voices = []
+    for function in tree.body:
+        if (
+            not isinstance(function, ast.FunctionDef)
+            or function.name != "provision_community_workspace"
+        ):
+            continue
+        for node in ast.walk(function):
+            if not (
+                isinstance(node, ast.IfExp)
+                and isinstance(node.body, ast.Constant)
+                and node.body.value == "audio"
+                and isinstance(node.orelse, ast.Constant)
+                and node.orelse.value == "text"
+            ):
+                continue
+            test = node.test
+            if not (
+                isinstance(test, ast.Compare)
+                and isinstance(test.left, ast.Name)
+                and test.left.id == "channel_name"
+                and len(test.ops) == 1
+                and isinstance(test.ops[0], ast.Eq)
+                and isinstance(test.comparators[0], ast.Constant)
+                and isinstance(test.comparators[0].value, str)
+            ):
+                raise ValueError("expected a literal audio channel name condition")
+            name = test.comparators[0].value
+            if name not in voices:
+                voices.append(name)
+    if not voices:
+        raise ValueError("expected a static audio channel kind condition")
+    return voices
+
+
 def check_community_structure(sources: dict[str, str]) -> list[str]:
     errors = []
     try:
@@ -3833,7 +3870,7 @@ def check_community_structure(sources: dict[str, str]) -> list[str]:
                     (key.replace("_", "-"), name, list(names))
                     for key, name, names in ast.literal_eval(assignments[0])
                 ]
-                voices = template["voiceChannels"]
+                voices = server_voice_channels(tree)
             elif label in ("ios", "android"):
                 actual, voices = native_categories(source, label)
             else:
@@ -3945,6 +3982,15 @@ def run_community_structure_selftest(sources: dict[str, str]) -> int:
             ).replace(
                 "      { id: 'dev',",
                 "      { id: 'arrivals', name: 'arrivals', description: 'arrivals', voice: false },\n      { id: 'dev',",
+            ),
+        ),
+        (
+            "server",
+            "change voice kind",
+            lambda s: s.replace(
+                '"audio" if channel_name == "office-hours" else "text"',
+                '"audio" if channel_name == "general" else "text"',
+                1,
             ),
         ),
         (

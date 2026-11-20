@@ -1,19 +1,22 @@
 """Canonical community provisioning, membership and private-room boundaries."""
 
+from datetime import timedelta
 from types import SimpleNamespace
 
 import pytest
-from django.db import transaction
+from django.db import connection, transaction
 from django.test import override_settings
+from django.utils import timezone
 
 from apps.identity.models import Identity, User
 from apps.orgs.community import bootstrap_community_workspace, ensure_community_membership
-from apps.orgs.models import Membership
+from apps.orgs.models import Membership, Organisation, SlugReservation
 from apps.support.community import CommunitySupportForbiddenError, open_community_ticket
 from apps.support.models import SupportTicket
 from apps.support.tickets import TicketRateLimitedError, TicketRequest
 from apps.workspaces.channel_access import resolve
 from apps.workspaces.channel_sets import channel_set_input
+from apps.workspaces.community import provision_community_workspace
 from apps.workspaces.models import Category, Channel, Workspace
 from apps.workspaces.structure import WorkspaceNotFoundError, read_workspace
 from services.identity.access_tokens import VerifiedAccessToken
@@ -587,6 +590,86 @@ def test_support_reports_unknown_identity_and_denies_revoked_membership(
     expected = "forbidden" if state == "removed" else "identity-unknown"
     assert response.json()["type"] == "https://kodera.io/problems/" + expected
     assert SupportTicket.objects.count() == 0
+
+
+@pytest.mark.parametrize("existing_workspace", [False, True])
+def test_direct_provision_locks_workspace_before_child_access(existing_workspace):
+    with transaction.atomic():
+        owner = User.objects.create(email="owner@example.test")
+        organisation = Organisation.objects.create(
+            slug="community",
+            realm="community",
+            issuer=ISSUER,
+            name="Kodera Community",
+            state="active",
+            is_default_community=True,
+        )
+        SlugReservation.objects.create(
+            organisation=organisation,
+            slug="community",
+            state="permanent",
+            protected_at=timezone.now(),
+        )
+        Membership.objects.create(
+            user_id=owner.id,
+            organisation=organisation,
+            role="org_owner",
+            state="active",
+            accepted_at=timezone.now(),
+        )
+        if existing_workspace:
+            Workspace.objects.create(organisation=organisation)
+    workspace_locked = False
+
+    def observe(execute, statement, params, many, context):
+        nonlocal workspace_locked
+        statement = str(statement)
+        if 'FROM "workspaces_workspace"' in statement and "FOR UPDATE" in statement:
+            assert connection.in_atomic_block
+            result = execute(statement, params, many, context)
+            workspace_locked = True
+            return result
+        if any(f'"{model._meta.db_table}"' in statement for model in (Category, Channel)):
+            assert connection.in_atomic_block
+            assert workspace_locked, "Workspace must be locked before accessing its children"
+        return execute(statement, params, many, context)
+
+    assert not connection.in_atomic_block
+    with connection.execute_wrapper(observe):
+        result = provision_community_workspace(
+            organisation_id=organisation.id, administrator_ids=()
+        )
+    assert not connection.in_atomic_block
+    assert workspace_locked
+    workspace = Workspace.objects.get(pk=result.id)
+    assert (
+        workspace.arrivals_channel_id
+        == Channel.objects.get(workspace=workspace, template_key="arrivals").id
+    )
+
+
+@pytest.mark.parametrize("binding", ["unset", "canonical", "administrator"])
+def test_provision_updates_workspace_timestamp_only_when_binding_arrivals(community, binding):
+    workspace = community.workspace
+    arrivals = Channel.objects.get(workspace=workspace, template_key="arrivals")
+    chosen_id = {
+        "unset": None,
+        "canonical": arrivals.id,
+        "administrator": Channel.objects.get(workspace=workspace, template_key="general").id,
+    }[binding]
+    before = timezone.now() - timedelta(days=1)
+    Workspace.objects.filter(pk=workspace.pk).update(
+        arrivals_channel_id=chosen_id, updated_at=before
+    )
+
+    started_at = timezone.now()
+    provision_community_workspace(organisation_id=community.organisation.id, administrator_ids=())
+    workspace.refresh_from_db()
+    assert workspace.arrivals_channel_id == (arrivals.id if binding == "unset" else chosen_id)
+    if binding == "unset":
+        assert started_at <= workspace.updated_at <= timezone.now()
+    else:
+        assert workspace.updated_at == before
 
 
 def test_fresh_bootstrap_binds_arrivals_after_general(community):
