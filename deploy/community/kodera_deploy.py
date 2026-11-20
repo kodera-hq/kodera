@@ -216,7 +216,7 @@ def selftest():
     oidc = configure({'server_name': 'chat.example.org'}, community_environment)
     provider = oidc['oidc_providers'][0]
     assert provider['pkce_method'] == 'always' and provider['allow_existing_users'] is False
-    assert provider['user_mapping_provider']['config']['localpart_template'] == '{{ user.sub | lower }}'
+    assert provider['user_mapping_provider']['config']['localpart_template'] == '{{ user.sub }}'
     assert provider['user_mapping_provider']['config']['display_name_template'] == '{{ user.given_name }}'
     assert oidc['enable_set_displayname'] is True and oidc['sso']['update_profile_information'] is False
     assert oidc['password_config']['enabled'] is False and oidc['enable_registration'] is False

@@ -191,7 +191,10 @@ def configure(document, environment=None):
     document["enable_registration"] = False
     document["password_config"] = {"enabled": False}
     # A member picks their own Matrix display name; a later SSO sign-in must not clobber it.
+    # An existing homeserver.yaml can carry either setting with the unsafe value, so every
+    # start overwrites both, whether or not an identity provider is configured.
     document["enable_set_displayname"] = True
+    document["sso"] = dict(document.get("sso") or {}, update_profile_information=False)
     # The web client keeps tokens in memory and refuses one that never expires.
     document["refreshable_access_token_lifetime"] = "5m"
     document["refresh_token_lifetime"] = "24h"
@@ -222,7 +225,7 @@ def configure(document, environment=None):
             "scopes": ["openid", "profile", "email"], "pkce_method": "always",
             "allow_existing_users": False, "backchannel_logout_enabled": True,
             "user_mapping_provider": {"config": {
-                "subject_template": "{{ user.sub }}", "localpart_template": "{{ user.sub | lower }}",
+                "subject_template": "{{ user.sub }}", "localpart_template": "{{ user.sub }}",
                 # registrationEmailAsUsername makes preferred_username the member's e-mail address,
                 # so the initial display name is the given name only, never a surname or an address.
                 "display_name_template": "{{ user.given_name }}",
@@ -230,8 +233,7 @@ def configure(document, environment=None):
             }},
         }]
         # Synapse matches by prefix: without the trailing slash a look-alike origin gets the token.
-        # update_profile_information stays off: a member-chosen display name is never overwritten.
-        document["sso"] = dict(document.get("sso") or {}, client_whitelist=[f"https://{server}/"], update_profile_information=False)
+        document["sso"]["client_whitelist"] = [f"https://{server}/"]
     return document
 
 

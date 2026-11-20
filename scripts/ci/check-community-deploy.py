@@ -1554,7 +1554,7 @@ def check_synapse_policy_source(source: str) -> list[str]:
         'yaml.safe_dump(configure(document, os.environ)',
         '"pkce_method": "always"',
         '"allow_existing_users": False',
-        '"localpart_template": "{{ user.sub | lower }}"',
+        '"localpart_template": "{{ user.sub }}"',
         '"display_name_template": "{{ user.given_name }}"',
     )
     return ["Synapse configuration missing policy guard: " + guard for guard in required if guard not in source]
@@ -1606,6 +1606,16 @@ def _generated_homeserver() -> dict:
     }
 
 
+def _existing_homeserver() -> dict:
+    """An existing volume can carry the unsafe values a fresh one does not: display-name edits
+    off and SSO profile updates on. Configuration checks start from them, so a regression
+    that merely retains a pre-existing unsafe value fails the checker by name."""
+    document = _generated_homeserver()
+    document["enable_set_displayname"] = False
+    document["sso"] = {"update_profile_information": True}
+    return document
+
+
 def _refuses(call: Callable[[], object], kind: type[Exception] = ValueError) -> bool:
     try:
         call()
@@ -1615,13 +1625,13 @@ def _refuses(call: Callable[[], object], kind: type[Exception] = ValueError) -> 
 
 
 def check_synapse_config(source: str) -> list[str]:
-    """Run deploy/community/configure_synapse.py on a freshly generated homeserver and refuse a
+    """Run deploy/community/configure_synapse.py on fresh and existing homeservers and refuse a
     result that is not the hardened one. It judges what Synapse would read, not the source text."""
     module = types.ModuleType("community_configure_synapse")
     try:
         exec(compile(source, "configure_synapse.py", "exec"), module.__dict__)  # noqa: S102 - the repository's own file
         configure = module.configure
-        closed = configure(_generated_homeserver(), {})
+        closed = configure(_existing_homeserver(), {})
     except Exception as error:  # noqa: BLE001 - any failure to evaluate is a refusal
         return [f"configure_synapse.py could not be evaluated: {type(error).__name__}"]
     errors: list[str] = []
@@ -1657,14 +1667,14 @@ def check_synapse_config(source: str) -> list[str]:
         problems = []
         if closed.get("federation_domain_whitelist") != [] or "federation" in listener_names(closed) or closed.get("trusted_key_servers") != []:
             problems.append("Synapse federation must be closed by default (empty whitelist, no federation listener, no key server)")
-        opened = configure(_generated_homeserver(), {FEDERATION_ENV_NAME: "b.example.org, a.example.org"})
+        opened = configure(_existing_homeserver(), {FEDERATION_ENV_NAME: "b.example.org, a.example.org"})
         if opened.get("federation_domain_whitelist") != ["a.example.org", "b.example.org"] or "federation" not in listener_names(opened):
             problems.append("Synapse federation opt-in must be the operator's explicit allowlist")
         for unsafe in ("*", "localhost", "partner.internal", "a.example.org,*"):
-            if not _refuses(lambda unsafe=unsafe: configure(_generated_homeserver(), {FEDERATION_ENV_NAME: unsafe})):
+            if not _refuses(lambda unsafe=unsafe: configure(_existing_homeserver(), {FEDERATION_ENV_NAME: unsafe})):
                 problems.append("Synapse federation allowlist must refuse a wildcard or private server name")
                 break
-        public = configure(_generated_homeserver(), {"KODERA_FEDERATION_MODE": "open"})
+        public = configure(_existing_homeserver(), {"KODERA_FEDERATION_MODE": "open"})
         if public.get("federation_domain_whitelist", "missing") is not None or "federation" not in listener_names(public):
             problems.append("Synapse explicit open mode must enable federation transport")
         if (public.get("rc_federation") != {"window_size": 1000, "sleep_limit": 10, "sleep_delay": 500, "reject_limit": 50, "concurrent": 3}
@@ -1674,7 +1684,7 @@ def check_synapse_config(source: str) -> list[str]:
                 or public.get("allow_profile_lookup_over_federation") is not False):
             problems.append("Synapse open federation must retain rate, TLS and private-address abuse controls")
         for unsafe in ({"KODERA_FEDERATION_MODE": "typo"}, {"KODERA_FEDERATION_MODE": "partner"}, {"KODERA_FEDERATION_MODE": "closed", FEDERATION_ENV_NAME: "a.example.org"}, {"KODERA_FEDERATION_MODE": "open", FEDERATION_ENV_NAME: "a.example.org"}, {"KODERA_FEDERATION_MODE": "open", "HTTPS_PROXY": "http://proxy.example.org"}):
-            if not _refuses(lambda unsafe=unsafe: configure(_generated_homeserver(), unsafe)):
+            if not _refuses(lambda unsafe=unsafe: configure(_existing_homeserver(), unsafe)):
                 problems.append("Synapse federation modes must refuse ambiguity and proxy bypass")
                 break
         return problems
@@ -1727,8 +1737,6 @@ def check_synapse_config(source: str) -> list[str]:
         problems = []
         if closed.get("enable_registration") is not False or (closed.get("password_config") or {}).get("enabled") is not False:
             problems.append("Synapse must keep open registration and password sign-in off")
-        if closed.get("enable_set_displayname") is not True:
-            problems.append("Synapse must let members set their own Matrix display name (enable_set_displayname is not true)")
         if "oidc_providers" in closed:
             problems.append("Synapse must not invent an identity provider when none is configured")
         for key, value in PILOT_SETTINGS.items():
@@ -1747,7 +1755,7 @@ def check_synapse_config(source: str) -> list[str]:
                            SYNAPSE_OIDC_ENV_NAME: SYNTHETIC_CREDENTIAL}, "https://id.example.org/realms/community"),
         )
         for idp_id, environment, issuer in cases:
-            signed = configure(_generated_homeserver(), environment)
+            signed = configure(_existing_homeserver(), environment)
             providers = signed.get("oidc_providers") or []
             provider = providers[0] if len(providers) == 1 else {}
             mapping = (provider.get("user_mapping_provider") or {}).get("config") or {}
@@ -1755,7 +1763,7 @@ def check_synapse_config(source: str) -> list[str]:
                 provider.get("idp_id") != idp_id or provider.get("issuer") != issuer or provider.get("client_id") != "synapse"
                 or provider.get("client_secret") != SYNTHETIC_CREDENTIAL or provider.get("pkce_method") != "always"
                 or provider.get("allow_existing_users") is not False or provider.get("backchannel_logout_enabled") is not True
-                or mapping.get("localpart_template") != "{{ user.sub | lower }}" or mapping.get("subject_template") != "{{ user.sub }}"
+                or mapping.get("localpart_template") != "{{ user.sub }}" or mapping.get("subject_template") != "{{ user.sub }}"
             ):
                 problems.append(f"Synapse OIDC sign-in is not wired as documented ({idp_id}: client synapse, PKCE, subject localpart)")
             template = mapping.get("display_name_template") or ""
@@ -1765,15 +1773,13 @@ def check_synapse_config(source: str) -> list[str]:
             # neither claim may ever reach a public display name.
             if "preferred_username" in template or "email" in template:
                 problems.append(f"Synapse OIDC sign-in must never expose the preferred_username or email claim in the public display name ({idp_id})")
-            if (signed.get("sso") or {}).get("update_profile_information") is not False:
-                problems.append(f"Synapse SSO sign-in must never overwrite a member-chosen display name ({idp_id})")
             if (signed.get("sso") or {}).get("client_whitelist") != ["https://chat.example.org/"] or signed.get("public_baseurl") != "https://chat.example.org/":
                 problems.append(f"Synapse OIDC sign-in must return to the web origin with a trailing slash only ({idp_id})")
             if (signed.get("password_config") or {}).get("enabled") is not False or signed.get("enable_registration") is not False:
                 problems.append(f"Synapse OIDC sign-in must keep password sign-in and registration off ({idp_id})")
             if configure(copy.deepcopy(signed), environment) != signed:
                 problems.append(f"Synapse OIDC configuration must be idempotent across restarts ({idp_id})")
-            unrelated = dict(_generated_homeserver(), oidc_providers=[{"idp_id": "unrelated"}])
+            unrelated = dict(_existing_homeserver(), oidc_providers=[{"idp_id": "unrelated"}])
             if not _refuses(lambda unrelated=unrelated, environment=environment: configure(unrelated, environment)):
                 problems.append(f"Synapse OIDC sign-in must not silently replace an unrelated identity provider ({idp_id})")
         generic, community = cases[0][1], cases[1][1]
@@ -1788,19 +1794,48 @@ def check_synapse_config(source: str) -> list[str]:
             dict(community, **{COMMUNITY_KEYS[0]: "other"}),
             dict(community, **{SYNAPSE_OIDC_ISSUER_ENV_NAME: "https://id.example.org/realms/studio"}),
         )
-        if not all(_refuses(lambda environment=environment: configure(_generated_homeserver(), environment)) for environment in unsafe):
+        if not all(_refuses(lambda environment=environment: configure(_existing_homeserver(), environment)) for environment in unsafe):
             problems.append("Synapse OIDC sign-in accepts an unsafe issuer or a missing client credential")
+        return problems
+
+    def profiles() -> list[str]:
+        problems = []
+        modes = (
+            ("no OIDC", {}),
+            ("kodera", {SYNAPSE_OIDC_ISSUER_ENV_NAME: "https://id.example.org/realms/studio",
+                        SYNAPSE_OIDC_ENV_NAME: SYNTHETIC_CREDENTIAL}),
+            ("community", {COMMUNITY_KEYS[0]: "community", COMMUNITY_KEYS[1]: "https://id.example.org/realms/community",
+                           SYNAPSE_OIDC_ENV_NAME: SYNTHETIC_CREDENTIAL}),
+        )
+        for topology_name in ("single", "split"):
+            for mode, environment in modes:
+                environment = {**environment, TOPOLOGY_ENV_NAME: topology_name, COMPOSE_TOPOLOGY_ENV_NAME: topology_name}
+                for state, seed in (("fresh", _generated_homeserver), ("existing", _existing_homeserver)):
+                    configured = configure(seed(), environment)
+                    label = f"{state}, {mode}, {topology_name}"
+                    if configured.get("enable_set_displayname") is not True:
+                        problems.append(f"Synapse must let members set their own Matrix display name (enable_set_displayname is not true: {label})")
+                    if (configured.get("sso") or {}).get("update_profile_information") is not False:
+                        problems.append(f"Synapse SSO sign-in must never overwrite a member-chosen display name ({label})")
+                    for provider in configured.get("oidc_providers", []):
+                        mapping = (provider.get("user_mapping_provider") or {}).get("config") or {}
+                        if mapping.get("localpart_template") != "{{ user.sub }}":
+                            problems.append(f"Synapse OIDC sign-in is not wired as documented ({label}: subject localpart)")
+                        if mapping.get("display_name_template") != "{{ user.given_name }}":
+                            problems.append(f"Synapse OIDC sign-in must provision the member's display name from the given name claim only ({label})")
+                    if configure(copy.deepcopy(configured), environment) != configured:
+                        problems.append(f"Synapse profile configuration must be idempotent across restarts ({label})")
         return problems
 
     def topologies() -> list[str]:
         problems = []
         split = {TOPOLOGY_ENV_NAME: "split", COMPOSE_TOPOLOGY_ENV_NAME: "split"}
-        plain = configure(_generated_homeserver(), split)
+        plain = configure(_existing_homeserver(), split)
         if plain.get("public_baseurl") != "https://matrix.chat.example.org/" or plain.get("server_name") != "chat.example.org":
             problems.append("Synapse split topology must publish its client API at https://matrix.<server_name>/")
         community = {COMMUNITY_KEYS[0]: "community", COMMUNITY_KEYS[1]: "https://id.example.org/realms/community",
                      SYNAPSE_OIDC_ENV_NAME: SYNTHETIC_CREDENTIAL, **split}
-        signed = configure(_generated_homeserver(), community)
+        signed = configure(_existing_homeserver(), community)
         if signed.get("public_baseurl") != "https://matrix.chat.example.org/":
             problems.append("Synapse split topology must publish its client API at https://matrix.<server_name>/")
         if (signed.get("sso") or {}).get("client_whitelist") != ["https://chat.example.org/"]:
@@ -1815,14 +1850,14 @@ def check_synapse_config(source: str) -> list[str]:
             {TOPOLOGY_ENV_NAME: "both", COMPOSE_TOPOLOGY_ENV_NAME: "both"},
             {TOPOLOGY_ENV_NAME: "Split", COMPOSE_TOPOLOGY_ENV_NAME: "Split"},
         )
-        if not all(_refuses(lambda environment=environment: configure(_generated_homeserver(), environment)) for environment in mismatched):
+        if not all(_refuses(lambda environment=environment: configure(_existing_homeserver(), environment)) for environment in mismatched):
             problems.append("Synapse must refuse a topology the Compose files do not run")
         return problems
 
     for label, call in (
         ("database", database), ("federation", federation), ("room policy", policy),
         ("rate limits", rate_limits), ("accounts", accounts), ("sign-in", sign_in),
-        ("topologies", topologies),
+        ("profiles", profiles), ("topologies", topologies),
     ):
         guarded(label, call)
     return errors
@@ -3285,7 +3320,9 @@ SYNAPSE_CONFIG_MUTATIONS: tuple[tuple[str, str, str, str], ...] = (
      "Synapse must keep the documented setting encryption_enabled_by_default_for_room_type"),
     ("PKCE is optional", '"pkce_method": "always"', '"pkce_method": "never"',
      "Synapse OIDC sign-in is not wired as documented"),
-    ("the Matrix ID comes from a mutable claim", '"localpart_template": "{{ user.sub | lower }}"', '"localpart_template": "{{ user.preferred_username }}"',
+    ("the Matrix ID comes from a mutable claim", '"localpart_template": "{{ user.sub }}"', '"localpart_template": "{{ user.preferred_username }}"',
+     "Synapse OIDC sign-in is not wired as documented"),
+    ("the stable subject is lowercased", '"localpart_template": "{{ user.sub }}"', '"localpart_template": "{{ user.sub | lower }}"',
      "Synapse OIDC sign-in is not wired as documented"),
     ("initial display-name provisioning is dropped", '"display_name_template": "{{ user.given_name }}",\n', '',
      "Synapse OIDC sign-in must provision the member's display name"),
@@ -3293,11 +3330,28 @@ SYNAPSE_CONFIG_MUTATIONS: tuple[tuple[str, str, str, str], ...] = (
      "must never expose the preferred_username or email claim"),
     ("the display name is the member's e-mail address", '"display_name_template": "{{ user.given_name }}"', '"display_name_template": "{{ user.email }}"',
      "must never expose the preferred_username or email claim"),
+    ("the display name exposes the full name claim", '"display_name_template": "{{ user.given_name }}"', '"display_name_template": "{{ user.name }}"',
+     "display name from the given name claim only"),
+    ("the display name exposes the family name", '"display_name_template": "{{ user.given_name }}"', '"display_name_template": "{{ user.given_name }} {{ user.family_name }}"',
+     "display name from the given name claim only"),
     ("SSO sign-in overwrites the member-chosen display name", 'update_profile_information=False', 'update_profile_information=True',
      "Synapse SSO sign-in must never overwrite a member-chosen display name"),
+    ("unsafe existing SSO profile updates are retained", 'document["sso"] = dict(document.get("sso") or {}, update_profile_information=False)',
+     'document.setdefault("sso", {"update_profile_information": False})',
+     "Synapse SSO sign-in must never overwrite a member-chosen display name (existing, no OIDC, single)"),
+    ("SSO profile updates stay on without OIDC", 'update_profile_information=False', 'update_profile_information=issuer is None',
+     "Synapse SSO sign-in must never overwrite a member-chosen display name (fresh, no OIDC, single)"),
+    ("SSO profile updates stay on in split topology", 'update_profile_information=False', 'update_profile_information=split',
+     "Synapse SSO sign-in must never overwrite a member-chosen display name (fresh, no OIDC, split)"),
     ("members cannot set their own display name", 'document["enable_set_displayname"] = True', 'document["enable_set_displayname"] = False',
      "enable_set_displayname"),
-    ("the login token goes to a look-alike origin", 'client_whitelist=[f"https://{server}/"]', 'client_whitelist=[f"https://{server}"]',
+    ("unsafe existing display-name restrictions are retained", 'document["enable_set_displayname"] = True', 'document.setdefault("enable_set_displayname", True)',
+     "enable_set_displayname is not true: existing, no OIDC, single"),
+    ("OIDC disables member display-name edits", 'document["enable_set_displayname"] = True', 'document["enable_set_displayname"] = issuer is None',
+     "enable_set_displayname is not true: fresh, kodera, single"),
+    ("split topology disables member display-name edits", 'document["enable_set_displayname"] = True', 'document["enable_set_displayname"] = not split',
+     "enable_set_displayname is not true: fresh, no OIDC, split"),
+    ("the login token goes to a look-alike origin", 'document["sso"]["client_whitelist"] = [f"https://{server}/"]', 'document["sso"]["client_whitelist"] = [f"https://{server}"]',
      "Synapse OIDC sign-in must return to the web origin with a trailing slash only"),
     ("a plain-http issuer is accepted", 'r"https://" + PUBLIC_DOMAIN + r"(?:/[A-Za-z0-9._~/-]{0,512})?", issuer', 'r"https?://" + PUBLIC_DOMAIN + r"(?:/[A-Za-z0-9._~/-]{0,512})?", issuer',
      "Synapse OIDC sign-in accepts an unsafe issuer or a missing client credential"),
@@ -3305,7 +3359,7 @@ SYNAPSE_CONFIG_MUTATIONS: tuple[tuple[str, str, str, str], ...] = (
      "Synapse OIDC sign-in must not silently replace an unrelated identity provider (kodera)"),
     ("the split client API is published on the web origin", 'split_baseurl = f"https://matrix.{server}/"', 'split_baseurl = f"https://{server}/"',
      "Synapse split topology must publish its client API at https://matrix.<server_name>/"),
-    ("split sign-in returns the login token to the Matrix origin", 'client_whitelist=[f"https://{server}/"]', 'client_whitelist=[split_baseurl if split else f"https://{server}/"]',
+    ("split sign-in returns the login token to the Matrix origin", 'document["sso"]["client_whitelist"] = [f"https://{server}/"]', 'document["sso"]["client_whitelist"] = [split_baseurl if split else f"https://{server}/"]',
      "Synapse split sign-in must return the login token to the web origin https://<server_name>/ only"),
     ("a topology the Compose files do not run is accepted", '    if chosen != running:', '    if False:',
      "Synapse must refuse a topology the Compose files do not run"),
