@@ -33,6 +33,7 @@ function SearchContents({
   onChoose,
   shortcut,
   documents = [],
+  files = [],
   actions: quickActions = [],
   directMessages = [],
   members = [],
@@ -42,6 +43,7 @@ function SearchContents({
 }: ChannelSearchProps & {
   actions?: readonly PaletteTarget[]
   documents?: readonly PaletteTarget[]
+  files?: readonly PaletteTarget[]
   directMessages?: readonly PaletteTarget[]
   members?: readonly PaletteTarget[]
 }) {
@@ -66,23 +68,31 @@ function SearchContents({
   for (const person of members)
     add(`member:${person.id}`, person.label, copy.actions, () => requestAnimationFrame(person.open))
   for (const doc of documents) add(`doc:${doc.id}`, doc.label, copy.docs, doc.open)
+  for (const file of files)
+    add(`file:${file.id}`, file.label, copy.files, () => requestAnimationFrame(file.open))
   for (const dm of directMessages) add(`dm:${dm.id}`, dm.label, copy.direct, dm.open)
   // Only administration sections are gated on the caller's effective admin capability:
-  // personal settings stay in the palette for every member. `undefined` (no shell) keeps
-  // the palette's previous behaviour.
-  const adminSections = switcher?.adminSections
-  const mayOpenSection = (section: string) =>
-    !isAdminSection(section) || adminSections === undefined || adminSections.includes(section)
+  // personal settings stay in the palette for every member. Fail closed: without the shell's
+  // computed sections (no switcher, or none passed) no administration command is offered.
+  const allowed: readonly string[] = switcher?.adminSections ?? []
+  const mayOpenSection = (section: string) => !isAdminSection(section) || allowed.includes(section)
   for (const section of [
     'profile',
     'appearance',
     'audio',
     'members',
+    'roles',
+    'channels',
+    'invites',
+    'moderation',
+    'audit',
     'extensions',
     'hosting',
   ] as const) {
     if (!mayOpenSection(section)) continue
-    add(`settings:${section}`, copy[section], copy.settings, () => {
+    // `channels` is also the channel group's own label: the section carries a label of its own.
+    const label = section === 'channels' ? copy.channelSettings : copy[section]
+    add(`settings:${section}`, label, copy.settings, () => {
       // Let the palette's focus restoration finish before the next modal takes focus.
       requestAnimationFrame(() =>
         window.dispatchEvent(
@@ -112,6 +122,7 @@ function SearchContents({
           copy.channels,
           copy.direct,
           copy.docs,
+          copy.files,
           copy.settings,
           copy.workspace,
           copy.theme,

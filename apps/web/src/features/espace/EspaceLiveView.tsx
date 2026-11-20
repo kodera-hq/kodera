@@ -1999,6 +1999,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
           onSelectDirect={selectDirect}
           onChangeCanvasMode={onChangeCanvasMode ? changeCanvas : undefined}
           simulation={simulation}
+          snapshot={snapshot}
         />
         <div className="grid min-h-0 flex-1 grid-cols-[auto_auto_minmax(0,1fr)_auto_auto_auto] grid-rows-[auto_minmax(0,1fr)_auto] narrow:flex narrow:flex-col">
           {narrow ? (

@@ -6,8 +6,10 @@ import { rememberReturnTo } from '../../auth/return-to'
 import { keepLanguagePreference } from '../../i18n/languagePreference'
 import { Button } from '../../ui/Button/Button'
 import { Card, CardBody } from '../../ui/Card/Card'
+import { cx } from '../../ui/cx'
 import { InlineAlert } from '../../ui/InlineAlert/InlineAlert'
 import { KoderaMark } from '../../ui/icons/KoderaMark'
+import { LINK_TEXT } from '../../ui/linkText'
 import { communityCopy } from './communityMessages'
 
 export function CommunityWelcome() {
@@ -48,7 +50,10 @@ export function CommunityWelcome() {
           <Link
             to="/login"
             search={{ mode: 'tenant' }}
-            className="focus-visible:outline-c-accent self-start text-sm text-c-ink-3 underline-offset-4 hover:text-c-ink hover:underline focus-visible:rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2"
+            className={cx(
+              'self-start rounded-sm text-sm focus-visible:ring focus-visible:outline-hidden',
+              LINK_TEXT.inline
+            )}
           >
             {copy.dedicatedOrgSignIn}
           </Link>
@@ -64,7 +69,9 @@ export function CommunityWelcome() {
                 key={language}
                 size="sm"
                 variant="tertiary"
-                aria-pressed={i18n.resolvedLanguage?.startsWith(language)}
+                // The language in use reads as chosen without relying on colour alone.
+                className="aria-pressed:font-semibold aria-pressed:text-c-ink aria-pressed:underline"
+                aria-pressed={i18n.resolvedLanguage?.startsWith(language) === true}
                 onClick={() => {
                   keepLanguagePreference(language)
                   void i18n.changeLanguage(language)

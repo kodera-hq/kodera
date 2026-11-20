@@ -233,9 +233,12 @@ function MessageComposerView({
       if (trimmed === '') return
       store.setTyping?.(roomId, false)
       // An edit started in another room is dropped, never sent here, as an edit or as a message.
+      const editOptions = mentioning(typed, members)
       draft.command(
         () => {
-          if (editingEventId !== null) void store.edit(roomId, editingEventId, trimmed)
+          if (editingEventId === null) return
+          if (Object.keys(editOptions).length === 0) void store.edit(roomId, editingEventId, trimmed)
+          else void store.edit(roomId, editingEventId, trimmed, editOptions)
         },
         { editing: null, text: '' }
       )

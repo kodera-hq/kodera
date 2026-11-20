@@ -72,3 +72,19 @@ it('switches locale without leaving the welcome screen', async () => {
   )
   expect(sessionStorage.getItem('console:language')).toBe('en')
 })
+it('marks the language in use as pressed with a visible, non-colour cue and underlines the dedicated link', async () => {
+  await renderWelcome()
+  const fr = screen.getByRole('button', { name: 'FR' })
+  const en = screen.getByRole('button', { name: 'EN' })
+  expect(fr).toHaveAttribute('aria-pressed', 'true')
+  expect(en).toHaveAttribute('aria-pressed', 'false')
+  for (const button of [fr, en]) {
+    expect(button.className).toContain('aria-pressed:font-semibold')
+    expect(button.className).toContain('aria-pressed:underline')
+  }
+  await userEvent.click(en)
+  await waitFor(() => expect(en).toHaveAttribute('aria-pressed', 'true'))
+  expect(fr).toHaveAttribute('aria-pressed', 'false')
+  const dedicated = screen.getByRole('link')
+  expect(dedicated.className.split(' ')).toContain('underline')
+})

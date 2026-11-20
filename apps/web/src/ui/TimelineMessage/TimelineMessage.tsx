@@ -50,7 +50,11 @@ export interface TimelineReaction {
   mine: boolean
   /** The toggle's accessible name, e.g. « 👍 3, vous avez réagi ». */
   label: string
-  onToggle: () => void
+  /**
+   * Absent where the viewer may not react: the reaction is then shown, count and name included,
+   * but drawn as a plain label rather than a control (no focus, no hover, nothing to press).
+   */
+  onToggle?: (() => void) | undefined
 }
 
 /** Someone who replied in the thread, drawn as a 20 px face on its link. */
@@ -306,25 +310,43 @@ export function TimelineMessage({
         ) : null}
         {shownReactions.length === 0 && !showAddReaction ? null : (
           <div className="flex flex-wrap items-center gap-1 pt-1">
-            {shownReactions.map((reaction) => (
-              <button
-                key={reaction.key}
-                type="button"
-                aria-pressed={reaction.mine}
-                aria-label={reaction.label}
-                onClick={reaction.onToggle}
-                className={cx(
-                  'inline-flex h-6 items-center gap-1 rounded-full border px-2 text-xs font-semibold tabular-nums focus-visible:ring focus-visible:outline-hidden',
-                  TOUCH_TARGET_HEIGHT,
-                  reaction.mine
-                    ? 'border-c-accent-ink bg-c-accent-soft text-c-accent-ink'
-                    : 'border-c-border bg-c-surface text-c-ink-2 hover:border-c-border-strong'
-                )}
-              >
-                <span aria-hidden="true">{reaction.emoji}</span>
-                <span aria-hidden="true">{reaction.count}</span>
-              </button>
-            ))}
+            {shownReactions.map((reaction) =>
+              reaction.onToggle === undefined ? (
+                <span
+                  key={reaction.key}
+                  role="img"
+                  aria-label={reaction.label}
+                  data-reaction-static=""
+                  className={cx(
+                    'inline-flex h-6 items-center gap-1 rounded-full border px-2 text-xs font-semibold tabular-nums',
+                    reaction.mine
+                      ? 'border-c-accent-ink bg-c-accent-soft text-c-accent-ink'
+                      : 'border-c-border bg-c-surface text-c-ink-2'
+                  )}
+                >
+                  <span aria-hidden="true">{reaction.emoji}</span>
+                  <span aria-hidden="true">{reaction.count}</span>
+                </span>
+              ) : (
+                <button
+                  key={reaction.key}
+                  type="button"
+                  aria-pressed={reaction.mine}
+                  aria-label={reaction.label}
+                  onClick={reaction.onToggle}
+                  className={cx(
+                    'inline-flex h-6 items-center gap-1 rounded-full border px-2 text-xs font-semibold tabular-nums focus-visible:ring focus-visible:outline-hidden',
+                    TOUCH_TARGET_HEIGHT,
+                    reaction.mine
+                      ? 'border-c-accent-ink bg-c-accent-soft text-c-accent-ink'
+                      : 'border-c-border bg-c-surface text-c-ink-2 hover:border-c-border-strong'
+                  )}
+                >
+                  <span aria-hidden="true">{reaction.emoji}</span>
+                  <span aria-hidden="true">{reaction.count}</span>
+                </button>
+              )
+            )}
             {showAddReaction ? <span data-add-reaction="">{addReaction}</span> : null}
           </div>
         )}

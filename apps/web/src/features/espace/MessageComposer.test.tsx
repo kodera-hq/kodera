@@ -26,7 +26,7 @@ function draftFor(): DraftChannel {
   }
 }
 
-function storeWith(send = vi.fn(async () => undefined)) {
+function storeWith(send = vi.fn(async () => undefined), edit = vi.fn(async () => undefined)) {
   const store = {
     subscribe: () => () => undefined,
     getSnapshot: () => ({}) as never,
@@ -34,20 +34,20 @@ function storeWith(send = vi.fn(async () => undefined)) {
     getTimeline: () => [],
     getThread: () => [],
     send,
-    edit: vi.fn(async () => undefined),
+    edit,
     remove: vi.fn(async () => undefined),
     toggleReaction: vi.fn(async () => undefined),
   } as unknown as EspaceStoreLike
-  return { store, send }
+  return { store, send, edit }
 }
 
-function renderComposer(store: EspaceStoreLike) {
+function renderComposer(store: EspaceStoreLike, draft = draftFor()) {
   return render(
     <MessageComposer
       store={store}
       roomId={ROOM}
       viewerId={ME}
-      draft={draftFor()}
+      draft={draft}
       channelName="général"
       simulation={false}
       narrow={false}
@@ -126,5 +126,27 @@ describe('MessageComposer', () => {
     await waitFor(() => expect(field.selectionStart).toBe(2))
     await user.click(bold)
     expect(field).toHaveValue('word')
+  })
+
+  it('passes updated mentions to store.edit when saving an edited message', async () => {
+    const user = userEvent.setup()
+    const { store, edit } = storeWith()
+    const draft = draftFor()
+    draft.update({
+      editing: { roomId: ROOM, eventId: '$m1' },
+      text: 'ping @Miguel Victoria',
+    })
+    renderComposer(store, draft)
+    const field = screen.getByRole('textbox', { name: /général/ })
+    await user.type(field, ' et @salon, merci')
+    await user.keyboard('{Enter}')
+    await waitFor(() =>
+      expect(edit).toHaveBeenCalledWith(ROOM, '$m1', 'ping @Miguel Victoria et @salon, merci', {
+        mentions: [MIGUEL.userId],
+        mentionsRoom: true,
+        mentionTargets: [MIGUEL],
+      })
+    )
+    expect(field).toHaveValue('')
   })
 })

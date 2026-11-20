@@ -305,6 +305,86 @@ describe('a message that mentions the viewer (M8)', () => {
     expect(view.filter((m) => m.mentionsMe === true).map((m) => m.eventId)).toEqual(['$named'])
     expect(view.find((m) => m.eventId === '$text')).not.toHaveProperty('mentionsMe')
   })
+
+  const CAROL = '@carol:kodera.test'
+  const pill = (id: string, label: string) => `<a href="https://matrix.to/#/${id}">@${label}</a>`
+  const editWith = (
+    id: string,
+    target: string,
+    newContent: Record<string, unknown>,
+    outer: Record<string, unknown> = {},
+    sender = BOB
+  ) =>
+    event({
+      event_id: id,
+      sender,
+      content: {
+        msgtype: 'm.text',
+        body: `* ${String(newContent.body)}`,
+        ...outer,
+        'm.new_content': { msgtype: 'm.text', ...newContent },
+        'm.relates_to': { rel_type: 'm.replace', event_id: target },
+      },
+    })
+
+  it('reads mentions and pills from the latest edit, so a mention the edit removes clears', () => {
+    const original = message('$m', '@Alice @salon', BOB, {
+      format: 'org.matrix.custom.html',
+      formatted_body: `${pill(ME, 'Alice')} @salon`,
+      'm.mentions': { user_ids: [ME], room: true },
+    })
+    const removed = editWith(
+      '$e',
+      '$m',
+      {
+        body: '@Carol',
+        format: 'org.matrix.custom.html',
+        formatted_body: pill(CAROL, 'Carol'),
+        'm.mentions': { user_ids: [CAROL] },
+      },
+      // The edit's own fallback still carries the old mention: it must not count.
+      { 'm.mentions': { user_ids: [ME], room: true } }
+    )
+    const [view] = timelineView([original, removed], ME)
+    expect(view).toMatchObject({ body: '@Carol', edited: true })
+    expect(view).not.toHaveProperty('mentionsMe')
+    expect(view).not.toHaveProperty('mentionsRoom')
+    expect(view?.mentionPills).toEqual([{ userId: CAROL, label: 'Carol' }])
+  })
+
+  it('names the viewer once an edit adds the mention, and drops it when new content has none', () => {
+    const original = message('$m', 'bonjour', BOB)
+    const added = editWith('$e1', '$m', {
+      body: '@Alice',
+      format: 'org.matrix.custom.html',
+      formatted_body: pill(ME, 'Alice'),
+      'm.mentions': { user_ids: [ME] },
+    })
+    expect(timelineView([original, added], ME)[0]).toMatchObject({
+      mentionsMe: true,
+      mentionPills: [{ userId: ME, label: 'Alice' }],
+    })
+    const plain = editWith('$e2', '$m', { body: 'bonjour à tous' })
+    const [latest] = timelineView([original, added, plain], ME)
+    expect(latest).not.toHaveProperty('mentionsMe')
+    expect(latest).not.toHaveProperty('mentionPills')
+    expect(roomViews([original, added, plain], ME).timeline[0]).not.toHaveProperty('mentionsMe')
+  })
+
+  it("ignores another member's edit, whose new content cannot add a mention", () => {
+    const original = message('$m', 'bonjour', BOB)
+    const forged = editWith(
+      '$e',
+      '$m',
+      { body: '@Alice', 'm.mentions': { user_ids: [ME], room: true } },
+      {},
+      CAROL
+    )
+    const [view] = timelineView([original, forged], ME)
+    expect(view).toMatchObject({ body: 'bonjour', edited: false })
+    expect(view).not.toHaveProperty('mentionsMe')
+    expect(view).not.toHaveProperty('mentionsRoom')
+  })
 })
 
 it('exposes attachment names for file browsing without trusting download URLs', () => {

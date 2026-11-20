@@ -272,4 +272,65 @@ describe('FloatingCallPill', () => {
     expect(region.style.getPropertyValue('--call-pill-x')).toBe(`${390 - 304 - PILL_MARGIN}px`)
     expect(region.style.getPropertyValue('--call-pill-y')).toBe('72px')
   })
+
+  it('re-clamps a pill parked against the lower right corner when its content grows, and disconnects on unmount', () => {
+    const observers: {
+      callback: ResizeObserverCallback
+      observe: ReturnType<typeof vi.fn>
+      disconnect: ReturnType<typeof vi.fn>
+    }[] = []
+    class RecordingResizeObserver {
+      readonly observe = vi.fn()
+      readonly unobserve = vi.fn()
+      readonly disconnect = vi.fn()
+      constructor(callback: ResizeObserverCallback) {
+        observers.push({ callback, observe: this.observe, disconnect: this.disconnect })
+      }
+    }
+    vi.stubGlobal('ResizeObserver', RecordingResizeObserver)
+    try {
+      const view = render(
+        <CallDockRegion label="Appel en cours" floating onRedock={vi.fn()}>
+          <span>floating</span>
+        </CallDockRegion>
+      )
+      const region = screen.getByRole('region', { name: 'Appel en cours' })
+      expect(observers).toHaveLength(1)
+      expect(observers[0]?.observe).toHaveBeenCalledWith(region)
+
+      // Park the pill in the bottom-right corner at its compact size.
+      fireEvent.keyDown(region, { key: 'ArrowRight', altKey: true, shiftKey: true })
+      fireEvent.keyDown(region, { key: 'ArrowDown', altKey: true, shiftKey: true })
+      expect(region.style.getPropertyValue('--call-pill-x')).toBe(`${1280 - 304 - PILL_MARGIN}px`)
+      expect(region.style.getPropertyValue('--call-pill-y')).toBe(`${800 - 56 - PILL_MARGIN}px`)
+
+      // A camera tile mounts: the pill grows to 256px tall and must stay inside the viewport.
+      vi.spyOn(region, 'getBoundingClientRect').mockReturnValue(
+        DOMRect.fromRect({ x: 0, y: 0, width: 304, height: 256 })
+      )
+      observers[0]?.callback([], {} as ResizeObserver)
+      expect(region.style.getPropertyValue('--call-pill-x')).toBe(`${1280 - 304 - PILL_MARGIN}px`)
+      expect(region.style.getPropertyValue('--call-pill-y')).toBe(`${800 - 256 - PILL_MARGIN}px`)
+
+      view.unmount()
+      expect(observers[0]?.disconnect).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('still floats and clamps where ResizeObserver is unavailable', () => {
+    vi.stubGlobal('ResizeObserver', undefined)
+    try {
+      render(
+        <CallDockRegion label="Appel en cours" floating onRedock={vi.fn()}>
+          <span>floating</span>
+        </CallDockRegion>
+      )
+      const region = screen.getByRole('region', { name: 'Appel en cours' })
+      expect(region.style.getPropertyValue('--call-pill-x')).toBe('960px')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
 })

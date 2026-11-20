@@ -83,6 +83,30 @@ describe('TimelineMessage', () => {
     expect(onThanks).toHaveBeenCalledTimes(1)
   })
 
+  it('draws a reaction without a toggle as a named label, not a control', async () => {
+    const user = userEvent.setup()
+    setup({
+      reactions: [
+        { key: '👍', emoji: '👍', count: 3, mine: true, label: '👍 3, vous avez réagi' },
+        { key: '🙏', emoji: '🙏', count: 1, mine: false, label: '🙏 1' },
+      ],
+    })
+    expect(screen.queryAllByRole('button')).toHaveLength(0)
+    const mine = screen.getByRole('img', { name: '👍 3, vous avez réagi' })
+    const other = screen.getByRole('img', { name: '🙏 1' })
+    expect(mine.tagName).toBe('SPAN')
+    expect(mine).toHaveTextContent('👍3')
+    expect(mine).toHaveClass('border-c-accent-ink', 'bg-c-accent-soft')
+    expect(mine).not.toHaveAttribute('aria-pressed')
+    expect(other).toHaveClass('border-c-border')
+    for (const chip of [mine, other]) {
+      expect(chip).not.toHaveAttribute('tabindex')
+      expect(chip.className).not.toMatch(/hover:|focus-visible:|cursor-/u)
+    }
+    await user.tab()
+    expect(document.body).toHaveFocus()
+  })
+
   it('opens its thread from an ink button that says how many replies', async () => {
     const user = userEvent.setup()
     const onOpen = vi.fn()

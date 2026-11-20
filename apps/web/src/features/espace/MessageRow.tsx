@@ -236,7 +236,8 @@ function MessageRowView({
             : 'console.workspace.message.reaction-label',
           { emoji: r.key, count: r.count }
         ),
-        onToggle: () => onReaction(msg.eventId, r.key),
+        // Where the member may not react, the counts stay readable but nothing can be pressed.
+        ...(allowReact ? { onToggle: () => onReaction(msg.eventId, r.key) } : {}),
       }))}
       {...(!inThread && threadReplies.length > 0
         ? {

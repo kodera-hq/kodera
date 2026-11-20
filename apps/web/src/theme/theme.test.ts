@@ -128,6 +128,50 @@ describe('public/theme.js', () => {
     expect(page.theme()).toBe('black')
   })
 
+  it('syncs the color-scheme meta before any stylesheet, so a dark theme never paints a light canvas', () => {
+    const run = (stored: string | null, dark: boolean) => {
+      const events = new EventTarget()
+      const meta = document.createElement('meta')
+      meta.setAttribute('name', 'color-scheme')
+      meta.setAttribute('content', 'light dark')
+      const root = { dataset: {} as Record<string, string> }
+      const fakeWindow = {
+        matchMedia: () => Object.assign(new EventTarget(), { matches: dark }),
+        localStorage: { getItem: () => stored },
+        document: {
+          documentElement: root,
+          querySelector: (selector: string) =>
+            selector === 'meta[name="color-scheme"]' ? meta : null,
+        },
+        addEventListener: events.addEventListener.bind(events),
+      }
+      new Function('window', BOOT)(fakeWindow)
+      return { meta, events, root }
+    }
+    const expected: Record<string, 'light' | 'dark'> = {
+      light: 'light',
+      ciel: 'light',
+      dark: 'dark',
+      black: 'dark',
+      'ciel-nuit': 'dark',
+    }
+    for (const preference of THEME_PREFERENCES.filter((candidate) => candidate !== 'system')) {
+      const scheme = themes.find((theme) => theme.id === preference)?.scheme
+      expect(expected[preference], preference).toBe(scheme)
+      // Against the opposite device, so the meta follows the theme and not the device.
+      const { meta } = run(preference, expected[preference] === 'light')
+      expect(meta.getAttribute('content'), preference).toBe(expected[preference])
+    }
+    // Automatique follows the device, and a later choice re-syncs the canvas.
+    const page = run(null, false)
+    expect(page.meta.getAttribute('content')).toBe('light')
+    page.events.dispatchEvent(new CustomEvent(THEME_CHANGE_EVENT, { detail: 'black' }))
+    expect(page.meta.getAttribute('content')).toBe('dark')
+    expect(page.root.dataset.theme).toBe('black')
+    // The theme is never an inline style: `style-src-attr 'none'` stays satisfied.
+    expect(BOOT).not.toMatch(/\.style\b|setAttribute\(\s*['"]style/)
+  })
+
   it('re-applies on the change this module announces and on another tab’s choice', () => {
     const page = boot({ stored: null, dark: false })
     page.events.dispatchEvent(new CustomEvent(THEME_CHANGE_EVENT, { detail: 'black' }))

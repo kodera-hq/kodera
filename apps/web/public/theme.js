@@ -26,12 +26,24 @@
   }
   // Anything but a known theme — "system", nothing, a stale or foreign value —
   // follows the device, and only then does a device change repaint the page.
+  const LIGHT = ['ciel', 'light']
   const apply = () => {
-    window.document.documentElement.dataset.theme = THEMES.includes(chosen)
+    const theme = THEMES.includes(chosen)
       ? chosen
       : device !== null && device.matches
         ? DEVICE_DARK
         : DEVICE_LIGHT
+    window.document.documentElement.dataset.theme = theme
+    // The canvas follows the theme before any stylesheet loads: a dark theme on a light device
+    // (a return through `/auth/callback`, say) never paints a white page first. The meta tag,
+    // not an inline style, so `style-src-attr 'none'` still holds.
+    try {
+      window.document
+        .querySelector('meta[name="color-scheme"]')
+        .setAttribute('content', LIGHT.includes(theme) ? 'light' : 'dark')
+    } catch {
+      // No meta tag on this document: the stylesheet's `color-scheme` rule still applies.
+    }
   }
   // First, so nothing below can leave the page without a theme.
   apply()

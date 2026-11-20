@@ -668,6 +668,31 @@ for (const theme of ['light', 'ciel'] as const)
     await expect(html(page)).toHaveCSS('color-scheme', 'light')
   })
 
+for (const theme of ['dark', 'black', 'ciel-nuit'] as const)
+  test(`appearance/native: ${theme} paints a dark canvas on a light device before any stylesheet`, async ({
+    page,
+  }) => {
+    await page.emulateMedia({ colorScheme: 'light' })
+    await page.addInitScript(({ key, value }) => localStorage.setItem(key, value), {
+      key: KEY,
+      value: theme,
+    })
+    const meta = page.locator('meta[name="color-scheme"]')
+    await page.goto('/login')
+    await expect(html(page)).toHaveAttribute('data-theme', theme)
+    // The meta tag the UA reads for the canvas, before CSS: the theme's scheme, never the device's.
+    await expect(meta).toHaveAttribute('content', 'dark')
+    await expect(html(page)).toHaveCSS('color-scheme', 'dark')
+    // No inline style carries it: `style-src-attr 'none'` holds.
+    await expect(html(page)).not.toHaveAttribute('style', /.+/)
+    // Back to a light choice in another tab: the canvas follows without a reload.
+    await page.evaluate(
+      ({ key }) => window.dispatchEvent(new StorageEvent('storage', { key, newValue: 'ciel' })),
+      { key: KEY }
+    )
+    await expect(meta).toHaveAttribute('content', 'light')
+  })
+
 test('appearance/page: passes axe in every theme', async ({ page }) => {
   await useScenario(page, SCENARIOS)
   await openAppearance(page)

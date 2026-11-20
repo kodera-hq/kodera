@@ -21,6 +21,7 @@ import type { CallSnapshot, CallStatus } from './audio/call'
 import type {
   ArrivalView,
   ChannelRoom,
+  EditOptions,
   EspaceSnapshot,
   History,
   MemberView,
@@ -119,7 +120,7 @@ export interface EspaceStoreLike {
   /** Opens, or starts, the direct conversation with these people; resolves to its room id. */
   openDirect?: (userIds: readonly string[]) => Promise<string>
   send: (roomId: string, body: string, options?: SendOptions) => Promise<void>
-  edit: (roomId: string, eventId: string, body: string) => Promise<void>
+  edit: (roomId: string, eventId: string, body: string, options?: EditOptions) => Promise<void>
   remove: (roomId: string, eventId: string) => Promise<void>
   toggleReaction: (roomId: string, eventId: string, key: string) => Promise<void>
   resend?: (roomId: string, key: string) => Promise<void>

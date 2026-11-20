@@ -138,7 +138,10 @@ export function extractDocumentOutline(markdown: string): readonly DocumentOutli
     if (!match?.[1] || !match[2]) continue
     const level = match[1].length as 1 | 2 | 3
     const text = match[2]
-      .replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_m, target: string, alias?: string) => alias || target)
+      .replace(
+        /\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g,
+        (_m, target: string, alias?: string) => alias || target
+      )
       .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
       .replace(/[*_~\x60]/g, '')
       .trim()
@@ -151,7 +154,9 @@ export function extractDocumentOutline(markdown: string): readonly DocumentOutli
 }
 
 export function downloadDocumentAsMarkdown(title: string, markdown: string): void {
-  const cleanBody = markdown.replaceAll(`${FOLDER_MARKDOWN_MARKER}\n\n`, '').replaceAll(FOLDER_MARKDOWN_MARKER, '')
+  const cleanBody = markdown
+    .replaceAll(`${FOLDER_MARKDOWN_MARKER}\n\n`, '')
+    .replaceAll(FOLDER_MARKDOWN_MARKER, '')
   const content = cleanBody.trimStart().startsWith('# ')
     ? cleanBody
     : `# ${title.trim() || 'Document'}\n\n${cleanBody}`
@@ -170,9 +175,14 @@ interface PageWriteConflict {
   readonly markdown: string
 }
 
+type RemotePatch = { title?: string; markdown?: string; parentId?: string | null }
+
+/** One page's debounced write: its timer, the fields it carries, and the write itself. */
 interface ScheduledSave {
-  readonly documentId: string
   readonly timer: ReturnType<typeof setTimeout>
+  readonly patch: RemotePatch
+  /** Sends the write now (the timer firing, or a flush when the surface unmounts). */
+  readonly run: () => void
 }
 
 const MAX_PRESERVED_CONFLICTS = 8
@@ -333,7 +343,9 @@ export function WorkspaceCollaborativeDocs({
   const [controllerBridge] = useState(() => new CollabControllerBridge())
 
   const etagsRef = useRef<Map<string, string>>(new Map())
-  const saveTimerRef = useRef<ScheduledSave | null>(null)
+  // Debounced writes, one per page: editing page B inside the debounce window must not cancel the
+  // write page A still owes the server.
+  const saveTimersRef = useRef<Map<string, ScheduledSave>>(new Map())
   const writeGenerationsRef = useRef<ReadonlyMap<string, number>>(new Map())
   const docsRef = useRef<readonly WorkspacePageRecord[]>(docs)
   const onDocumentsLoadedRef = useRef(onDocumentsLoaded)
@@ -341,9 +353,10 @@ export function WorkspaceCollaborativeDocs({
 
   useLayoutEffect(() => {
     protectionRef.current = confidential
-    if (confidential?.required && saveTimerRef.current !== null) {
-      clearTimeout(saveTimerRef.current.timer)
-      saveTimerRef.current = null
+    const scheduled = saveTimersRef.current
+    if (confidential?.required && scheduled.size > 0) {
+      for (const save of scheduled.values()) clearTimeout(save.timer)
+      scheduled.clear()
       setIsSavingRemote(false)
     }
   }, [confidential])
@@ -544,9 +557,15 @@ export function WorkspaceCollaborativeDocs({
   ])
 
   useEffect(() => {
+    const scheduled = saveTimersRef.current
     return () => {
-      if (saveTimerRef.current !== null) {
-        clearTimeout(saveTimerRef.current.timer)
+      // Leaving the surface inside the debounce window sends what is owed instead of dropping it.
+      // Each write still runs its own guards (confidential body, open conflict, missing version).
+      const owed = [...scheduled.values()]
+      scheduled.clear()
+      for (const save of owed) {
+        clearTimeout(save.timer)
+        save.run()
       }
     }
   }, [])
@@ -812,39 +831,44 @@ export function WorkspaceCollaborativeDocs({
     noteWriteRefusal(docId, kind)
   }
 
-  const cancelScheduledSave = (documentId?: string): void => {
-    const scheduled = saveTimerRef.current
-    if (scheduled === null) return
-    if (documentId !== undefined && scheduled.documentId !== documentId) return
-    clearTimeout(scheduled.timer)
-    saveTimerRef.current = null
-    setIsSavingRemote(false)
+  /** The save indicator rests only once no page has a write waiting on its debounce. */
+  const settleSavingIndicator = (): void => {
+    if (saveTimersRef.current.size === 0) setIsSavingRemote(false)
   }
 
-  const scheduleRemotePatch = (
-    docId: string,
-    patch: { title?: string; markdown?: string; parentId?: string | null }
-  ) => {
+  const cancelScheduledSave = (documentId: string): void => {
+    const scheduled = saveTimersRef.current.get(documentId)
+    if (scheduled === undefined) return
+    clearTimeout(scheduled.timer)
+    saveTimersRef.current.delete(documentId)
+    settleSavingIndicator()
+  }
+
+  const scheduleRemotePatch = (docId: string, nextPatch: RemotePatch) => {
     if (!isRemoteMode || !organisationId) return
     if (conflictsRef.current.get(docId)?.kind === 'version-conflict') {
       cancelScheduledSave(docId)
       return
     }
-    cancelScheduledSave()
+    // A newer edit of the same page within the window folds into the write it already owes, so a
+    // title typed just before a body edit is not lost to it.
+    const pending = saveTimersRef.current.get(docId)
+    if (pending !== undefined) clearTimeout(pending.timer)
+    const patch: RemotePatch = { ...pending?.patch, ...nextPatch }
     setIsSavingRemote(true)
-    const timer = setTimeout(() => {
-      saveTimerRef.current = null
+    const run = () => {
+      if (saveTimersRef.current.get(docId)?.run === run) saveTimersRef.current.delete(docId)
       if (protectionRef.current?.required && patch.markdown !== undefined) {
-        setIsSavingRemote(false)
+        settleSavingIndicator()
         return
       }
       if (conflictsRef.current.get(docId)?.kind === 'version-conflict') {
-        setIsSavingRemote(false)
+        settleSavingIndicator()
         return
       }
       const etag = etagsRef.current.get(docId)
       if (!etag) {
-        setIsSavingRemote(false)
+        settleSavingIndicator()
         noteWriteRefusal(docId, 'version-required')
         return
       }
@@ -857,17 +881,18 @@ export function WorkspaceCollaborativeDocs({
       void save
         .then(({ etag: nextEtag }) => {
           if (writeGenerationOf(docId) !== generation) return
-          setIsSavingRemote(false)
+          settleSavingIndicator()
           if (nextEtag) etagsRef.current.set(docId, nextEtag)
           forgetConflict(docId)
         })
         .catch((error: unknown) => {
           if (writeGenerationOf(docId) !== generation) return
-          setIsSavingRemote(false)
+          settleSavingIndicator()
           reportWriteFailure(docId, error)
         })
-    }, 350)
-    saveTimerRef.current = { documentId: docId, timer }
+    }
+    const timer = setTimeout(run, 350)
+    saveTimersRef.current.set(docId, { timer, patch, run })
   }
 
   const resetSeededBody = (docId: string): void => {
@@ -978,9 +1003,7 @@ export function WorkspaceCollaborativeDocs({
 
   const handleMarkdownChange = (nextMarkdown: string) => {
     if (!currentDoc || effectiveRole === 'viewer') return
-    const storedMarkdown = isCurrentExplicitFolder
-      ? ensureFolderMarker(nextMarkdown)
-      : nextMarkdown
+    const storedMarkdown = isCurrentExplicitFolder ? ensureFolderMarker(nextMarkdown) : nextMarkdown
     if (new TextEncoder().encode(storedMarkdown).length > 262_144) return
     commitDocs((prev) =>
       prev.map((d) => (d.id === currentDoc.id ? { ...d, markdown: storedMarkdown } : d))
@@ -1071,7 +1094,9 @@ export function WorkspaceCollaborativeDocs({
   const scrollToHeadingIndex = (headingIdx: number) => {
     const container = editorRegionRef.current
     if (!container) return
-    const headings = container.querySelectorAll('[data-testid="docs-collab-prosemirror"] h1, [data-testid="docs-collab-prosemirror"] h2, [data-testid="docs-collab-prosemirror"] h3')
+    const headings = container.querySelectorAll(
+      '[data-testid="docs-collab-prosemirror"] h1, [data-testid="docs-collab-prosemirror"] h2, [data-testid="docs-collab-prosemirror"] h3'
+    )
     const target = headings[headingIdx]
     if (target instanceof HTMLElement && typeof target.scrollIntoView === 'function') {
       target.scrollIntoView({ block: 'start', behavior: 'smooth' })
@@ -1344,10 +1369,7 @@ export function WorkspaceCollaborativeDocs({
                   peers={collabSnapshot.peers}
                 />
 
-                <span
-                  data-testid="docs-save-state"
-                  className="font-mono text-xs text-c-ink-3"
-                >
+                <span data-testid="docs-save-state" className="font-mono text-xs text-c-ink-3">
                   {isSavingRemote ? driveCopy.saveStateSaving : driveCopy.saveStateSaved}
                 </span>
               </div>
@@ -1393,7 +1415,9 @@ export function WorkspaceCollaborativeDocs({
                     data-testid="docs-export-markdown"
                     aria-label={driveCopy.exportMarkdown}
                     title={driveCopy.exportMarkdown}
-                    onClick={() => downloadDocumentAsMarkdown(currentDoc.title, visibleCurrentMarkdown)}
+                    onClick={() =>
+                      downloadDocumentAsMarkdown(currentDoc.title, visibleCurrentMarkdown)
+                    }
                     className={cx(
                       'inline-flex h-8 w-8 items-center justify-center rounded-md border border-c-border bg-c-surface text-c-ink-2 hover:bg-c-muted hover:text-c-ink focus-visible:ring focus-visible:outline-hidden',
                       TOUCH_TARGET
@@ -1594,7 +1618,7 @@ export function WorkspaceCollaborativeDocs({
                         readOnly={effectiveRole === 'viewer'}
                         value={currentDoc.title}
                         onChange={(event) => handleTitleChange(event.target.value)}
-                        className="w-full rounded-md border border-transparent bg-transparent px-1 py-1 text-2xl font-bold text-c-ink hover:border-c-border-soft read-only:text-c-ink-2 focus-visible:border-c-accent-ink focus-visible:bg-c-surface focus-visible:px-2 focus-visible:ring focus-visible:outline-hidden"
+                        className="w-full rounded-md border border-transparent bg-transparent px-1 py-1 text-2xl font-bold text-c-ink read-only:text-c-ink-2 hover:border-c-border-soft focus-visible:border-c-accent-ink focus-visible:bg-c-surface focus-visible:px-2 focus-visible:ring focus-visible:outline-hidden"
                       />
                     </div>
                   }

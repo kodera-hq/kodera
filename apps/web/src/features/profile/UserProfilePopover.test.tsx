@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import '../../i18n'
@@ -66,6 +66,56 @@ describe('UserProfilePopover (Kodera Passport)', () => {
     await waitFor(() => expect(sendDirect).toHaveBeenCalledWith('@miguel:kodera.test', 'Salut !'))
     expect(await screen.findByRole('status')).toHaveTextContent('Message envoyé')
     expect(field).toHaveValue('')
+  })
+
+  it('locks the draft while it is on its way, and keeps it when the send fails', async () => {
+    const user = userEvent.setup()
+    let settle!: () => void
+    let refuse!: (reason: unknown) => void
+    const sendDirect = vi
+      .fn<(userId: string, text: string) => Promise<void>>()
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            settle = resolve
+          })
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((_resolve, reject) => {
+            refuse = reject
+          })
+      )
+    renderCard(
+      { subscribe: () => () => undefined, getSnapshot: () => 1, sendDirect },
+      () => undefined
+    )
+    await user.click(screen.getByRole('button', { name: 'Miguel Victoria' }))
+    const field = await screen.findByRole('textbox', { name: 'Message à Miguel Victoria' })
+    const send = screen.getByRole('button', { name: 'Envoyer à Miguel Victoria' })
+
+    await user.type(field, 'Premier{Enter}')
+    expect(sendDirect).toHaveBeenCalledTimes(1)
+    // Mid-send the field is locked but keeps focus, and a second Enter sends nothing more.
+    expect(field).toHaveAttribute('readonly')
+    expect(field).toHaveAttribute('aria-disabled', 'true')
+    expect(field).toHaveFocus()
+    expect(send).toBeDisabled()
+    await user.type(field, ' encore{Enter}')
+    expect(field).toHaveValue('Premier')
+    expect(sendDirect).toHaveBeenCalledTimes(1)
+
+    await act(async () => settle())
+    expect(field).toHaveValue('')
+    expect(field).not.toHaveAttribute('readonly')
+    expect(screen.getByRole('status')).toHaveTextContent('Message envoyé')
+
+    await user.type(field, 'Second{Enter}')
+    expect(sendDirect).toHaveBeenLastCalledWith('@miguel:kodera.test', 'Second')
+    await act(async () => refuse(new Error('offline')))
+    // A failed send never costs the member their text.
+    expect(field).toHaveValue('Second')
+    expect(field).not.toHaveAttribute('readonly')
   })
 
   it('offers no message field on the member’s own card', async () => {
