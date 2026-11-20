@@ -385,7 +385,7 @@ function PillIconButton({
         {...(busy === true ? { 'aria-busy': true } : {})}
         {...(pressed === undefined ? {} : { 'aria-pressed': pressed })}
         className={cx(
-          'focus-offset flex h-[28px] w-[28px] items-center justify-center rounded-md border-2 border-transparent transition-colors duration-fast focus-visible:ring focus-visible:ring-offset-2 focus-visible:outline-hidden',
+          'focus-offset flex h-[28px] min-h-[28px] w-[28px] min-w-[28px] shrink-0 items-center justify-center rounded-md border-2 border-transparent transition-colors duration-fast focus-visible:ring focus-visible:ring-offset-2 focus-visible:outline-hidden',
           TOUCH_TARGET,
           TONE[tone]
         )}

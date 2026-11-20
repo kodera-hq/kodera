@@ -244,27 +244,27 @@ const DOCK: Record<AudioDockLayout, string> = {
   studio: 'flex flex-col gap-3 p-3',
   sidebar: 'm-2 flex flex-col gap-3 rounded-lg p-3',
   compact: 'flex h-[56px] min-h-[56px] w-full items-center justify-between gap-2 px-2 py-1',
-  banner: 'flex w-full items-center gap-3 rounded-lg py-2 pr-2 pl-3',
+  banner: 'flex w-full flex-col gap-2 rounded-lg p-2',
 }
 
 const CONTROLS: Record<AudioDockLayout, string> = {
   studio: 'flex shrink-0 flex-wrap items-center justify-center gap-2',
   sidebar: 'grid grid-cols-3 gap-1',
   compact: 'flex shrink-0 items-center gap-1',
-  banner: 'flex shrink-0 items-center gap-2',
+  banner: 'flex w-full shrink-0 flex-wrap items-center justify-end gap-2',
 }
 
 // The sidebar's controls are 40 px tall, icon only, with the 44 px floor on a
 // narrow screen (`TOUCH_TARGET`). Compact bottom-sidebar card controls are 28 px squares.
 const CONTROL_SHAPE: Record<AudioDockLayout, string> = {
-  studio: `h-10 w-10 rounded-md ${TOUCH_TARGET}`,
-  sidebar: `h-10 rounded-md ${TOUCH_TARGET}`,
-  compact: `h-[28px] w-[28px] rounded-md ${TOUCH_TARGET}`,
-  banner: 'h-[52px] w-[52px] rounded-full',
+  studio: `h-10 w-10 min-h-10 min-w-10 rounded-md ${TOUCH_TARGET}`,
+  sidebar: `h-10 min-h-10 rounded-md ${TOUCH_TARGET}`,
+  compact: `h-[28px] w-[28px] min-h-[28px] min-w-[28px] rounded-md ${TOUCH_TARGET}`,
+  banner: 'h-[52px] w-[52px] min-h-[52px] min-w-[52px] rounded-full',
 }
 
 const CONTROL_BASE =
-  'focus-offset flex items-center justify-center border-2 border-transparent transition-colors duration-fast focus-visible:ring focus-visible:ring-offset-2 focus-visible:outline-hidden'
+  'focus-offset flex shrink-0 items-center justify-center border-2 border-transparent transition-colors duration-fast focus-visible:ring focus-visible:ring-offset-2 focus-visible:outline-hidden'
 
 // On the dock's `c-inverse` ground: controls on `c-inverse-2`, pressed ones
 // reversed, and « Quitter » the dock's only red fill.
@@ -372,7 +372,7 @@ export function AudioDock({
         className={cx(
           'flex min-w-0 items-center gap-2',
           isCompact ? 'flex-1' : 'flex-1',
-          layout === 'studio' ? 'w-full' : ''
+          layout === 'studio' || layout === 'banner' ? 'w-full' : ''
         )}
       >
         {isCompact ? (
@@ -475,7 +475,7 @@ export function AudioDock({
                   onClick={onToggleFullStage}
                   className={cx(
                     settings === undefined ? 'ml-auto' : '',
-                    'focus-offset flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-c-inverse-2 text-c-on-inverse-dim hover:text-c-on-inverse focus-visible:ring focus-visible:ring-offset-2 focus-visible:outline-hidden',
+                    'focus-offset flex h-8 min-h-8 w-8 min-w-8 shrink-0 items-center justify-center rounded-md bg-c-inverse-2 text-c-on-inverse-dim hover:text-c-on-inverse focus-visible:ring focus-visible:ring-offset-2 focus-visible:outline-hidden',
                     TOUCH_TARGET
                   )}
                 >
@@ -492,7 +492,7 @@ export function AudioDock({
                   onClick={onDetach}
                   className={cx(
                     settings === undefined && onToggleFullStage === undefined ? 'ml-auto' : '',
-                    'focus-offset flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-c-inverse-2 text-c-on-inverse-dim hover:text-c-on-inverse focus-visible:ring focus-visible:ring-offset-2 focus-visible:outline-hidden',
+                    'focus-offset flex h-8 min-h-8 w-8 min-w-8 shrink-0 items-center justify-center rounded-md bg-c-inverse-2 text-c-on-inverse-dim hover:text-c-on-inverse focus-visible:ring focus-visible:ring-offset-2 focus-visible:outline-hidden',
                     TOUCH_TARGET
                   )}
                 >
@@ -513,7 +513,7 @@ export function AudioDock({
                       !(layout === 'studio' && onDetach !== undefined)
                       ? 'ml-auto'
                       : '',
-                    'focus-offset flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-c-inverse-2 text-c-on-inverse-dim hover:text-c-on-inverse focus-visible:ring focus-visible:ring-offset-2 focus-visible:outline-hidden',
+                    'focus-offset flex h-8 min-h-8 w-8 min-w-8 shrink-0 items-center justify-center rounded-md bg-c-inverse-2 text-c-on-inverse-dim hover:text-c-on-inverse focus-visible:ring focus-visible:ring-offset-2 focus-visible:outline-hidden',
                     TOUCH_TARGET
                   )}
                 >

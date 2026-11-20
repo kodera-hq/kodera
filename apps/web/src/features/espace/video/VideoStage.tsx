@@ -82,7 +82,7 @@ function StageButton({
         onClick={onClick}
         {...(pressed === undefined ? {} : { 'aria-pressed': pressed })}
         className={cx(
-          'focus-offset flex h-8 w-8 items-center justify-center rounded-md focus-visible:ring focus-visible:ring-offset-2 focus-visible:outline-hidden',
+          'focus-offset flex h-8 min-h-8 w-8 min-w-8 shrink-0 items-center justify-center rounded-md focus-visible:ring focus-visible:ring-offset-2 focus-visible:outline-hidden',
           pressed === true
             ? 'bg-c-on-inverse text-c-inverse'
             : 'bg-c-inverse text-c-on-inverse hover:text-c-on-inverse-dim',
