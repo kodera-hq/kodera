@@ -550,3 +550,175 @@ def test_member_departure_and_erasure_clear_workspace_roles_and_redact_invite_cr
         "membershipId": str(members[1].id),
         "displayName": None,
     }
+
+
+@override_settings(ROOT_URLCONF="apps.workspaces.api.moderation_urls")
+def test_http_idempotent_writes_never_lock_membership_after_workspace(
+    world, http, http_signer, monkeypatch
+):
+    from datetime import timedelta
+
+    from customer_http_fixtures import token
+    from django.utils import timezone
+
+    from apps.identity.models import Identity, User
+    from apps.workspaces import iam, moderation
+
+    org, workspace, members, _ = world
+    client, credentials = http
+    base = f"/api/v1/organisations/{org.id}/workspace"
+
+    role = client.post(
+        base + "/roles",
+        data=json.dumps({"name": "Guests", "slug": "guests"}),
+        content_type="application/json",
+        HTTP_AUTHORIZATION="Bearer " + credentials[0],
+        HTTP_IDEMPOTENCY_KEY=str(uuid4()),
+    )
+    call(role, ROOT + "/roles", "post")
+    assert role.status_code == 201
+    role_id = role.json()["id"]
+
+    link = client.post(
+        base + "/invite-links",
+        data=json.dumps(
+            {
+                "expiresAt": (timezone.now() + timedelta(hours=1)).isoformat(),
+                "maxUses": 5,
+                "auto_role_ids": [role_id],
+            }
+        ),
+        content_type="application/json",
+        HTTP_AUTHORIZATION="Bearer " + credentials[0],
+        HTTP_IDEMPOTENCY_KEY=str(uuid4()),
+    )
+    call(link, ROOT + "/invite-links", "post")
+    assert link.status_code == 201
+    code = link.json()["code"]
+
+    events: list[str] = []
+    real_iam_lock_workspace = iam.lock_workspace
+    real_for_workspace = moderation.for_workspace
+    real_for_user = moderation.for_user
+    real_create_from_link = moderation.create_from_workspace_link
+    real_mod_lock_workspace = moderation.lock_workspace
+
+    def tracked_iam_lock(*, workspace_id):
+        events.append("workspace")
+        return real_iam_lock_workspace(workspace_id=workspace_id)
+
+    def tracked_for_workspace(*, organisation_id, membership_id, lock=True):
+        if lock:
+            events.append("membership")
+        return real_for_workspace(
+            organisation_id=organisation_id, membership_id=membership_id, lock=lock
+        )
+
+    def tracked_for_user(*, organisation_id, user_id, lock=False):
+        if lock:
+            events.append("membership")
+        return real_for_user(organisation_id=organisation_id, user_id=user_id, lock=lock)
+
+    def tracked_create_from_link(*, organisation_id, user_id):
+        events.append("membership_create")
+        return real_create_from_link(organisation_id=organisation_id, user_id=user_id)
+
+    def tracked_mod_lock(*, workspace_id):
+        events.append("workspace")
+        return real_mod_lock_workspace(workspace_id=workspace_id)
+
+    monkeypatch.setattr(iam, "lock_workspace", tracked_iam_lock)
+    monkeypatch.setattr(moderation, "for_workspace", tracked_for_workspace)
+    monkeypatch.setattr(moderation, "for_user", tracked_for_user)
+    monkeypatch.setattr(moderation, "create_from_workspace_link", tracked_create_from_link)
+    monkeypatch.setattr(moderation, "lock_workspace", tracked_mod_lock)
+
+    assigned = client.put(
+        base + f"/members/{members[2].id}/roles",
+        data=json.dumps({"role_ids": [role_id]}),
+        content_type="application/json",
+        HTTP_AUTHORIZATION="Bearer " + credentials[0],
+        HTTP_IDEMPOTENCY_KEY=str(uuid4()),
+    )
+    call(assigned, ROOT + "/members/{membership_id}/roles", "put")
+    assert assigned.status_code == 200
+    assert events == ["membership", "workspace"]
+
+    events.clear()
+    mod_key = str(uuid4())
+    mod_payload = json.dumps(
+        {"membershipId": str(members[3].id), "action": "kick", "reason": "HTTP lock order"}
+    )
+    moderated = client.post(
+        base + "/moderation",
+        data=mod_payload,
+        content_type="application/json",
+        HTTP_AUTHORIZATION="Bearer " + credentials[0],
+        HTTP_IDEMPOTENCY_KEY=mod_key,
+    )
+    call(moderated, ROOT + "/moderation", "post")
+    assert moderated.status_code == 200
+    assert events == ["membership", "workspace"]
+
+    events.clear()
+    mod_replay = client.post(
+        base + "/moderation",
+        data=mod_payload,
+        content_type="application/json",
+        HTTP_AUTHORIZATION="Bearer " + credentials[0],
+        HTTP_IDEMPOTENCY_KEY=mod_key,
+    )
+    assert mod_replay.status_code == 200
+    assert mod_replay["Idempotency-Replayed"] == "true"
+    assert events == []
+
+    events.clear()
+    reported = client.post(
+        base + "/reports",
+        data=json.dumps({"membershipId": str(members[1].id), "reason": "HTTP lock order"}),
+        content_type="application/json",
+        HTTP_AUTHORIZATION="Bearer " + credentials[2],
+        HTTP_IDEMPOTENCY_KEY=str(uuid4()),
+    )
+    call(reported, ROOT + "/reports", "post")
+    assert reported.status_code == 201
+    assert events == ["membership", "workspace"]
+
+    newcomer_subject = str(uuid4())
+    newcomer_user = User.objects.create(email=f"{newcomer_subject}@example.org")
+    Identity.objects.create(
+        user=newcomer_user,
+        organisation=org,
+        issuer=org.issuer,
+        realm=org.realm,
+        subject=newcomer_subject,
+        email=newcomer_user.email,
+    )
+    newcomer_jwt = token(http_signer, org.issuer, subject=newcomer_subject, email_verified=True)
+    redeem_key = str(uuid4())
+    events.clear()
+    redeemed = client.post(
+        "/api/v1/workspace-invites/redeem",
+        data=json.dumps({"code": code}),
+        content_type="application/json",
+        HTTP_AUTHORIZATION="Bearer " + newcomer_jwt,
+        HTTP_IDEMPOTENCY_KEY=redeem_key,
+    )
+    call(redeemed, "/workspace-invites/redeem", "post")
+    assert redeemed.status_code == 200
+    assert events == ["membership", "membership", "membership_create", "workspace"]
+    assert WorkspaceMemberRole.objects.filter(
+        workspace=workspace, membership_id=UUID(redeemed.json()["membershipId"]), role_id=role_id
+    ).exists()
+
+    events.clear()
+    redeem_replay = client.post(
+        "/api/v1/workspace-invites/redeem",
+        data=json.dumps({"code": code}),
+        content_type="application/json",
+        HTTP_AUTHORIZATION="Bearer " + newcomer_jwt,
+        HTTP_IDEMPOTENCY_KEY=redeem_key,
+    )
+    assert redeem_replay.status_code == 200
+    assert redeem_replay["Idempotency-Replayed"] == "true"
+    assert events == []

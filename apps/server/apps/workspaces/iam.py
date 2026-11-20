@@ -314,7 +314,7 @@ def assign_roles(
     target = _target(initial_workspace, membership_id)
     lock_workspace(workspace_id=initial_workspace.id)
     workspace, caller = authorize(verified, organisation_id, "manage_roles")
-    target = _target(workspace, membership_id)
+    target = _target(workspace, membership_id, lock=False)
     roles = resolve_roles(workspace, role_ids)
     current = list(
         WorkspaceRole.objects.filter(

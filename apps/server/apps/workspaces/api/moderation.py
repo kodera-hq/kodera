@@ -170,7 +170,11 @@ def _authorize(
     verified: Any, organisation_id: UUID, *, moderator: bool = False, admin: bool = False
 ) -> None:
     service.authorise_workspace(
-        verified=verified, organisation_id=organisation_id, moderator=moderator, admin=admin
+        verified=verified,
+        organisation_id=organisation_id,
+        moderator=moderator,
+        admin=admin,
+        lock=False,
     )
 
 

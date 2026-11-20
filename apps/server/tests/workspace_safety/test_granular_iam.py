@@ -828,9 +828,10 @@ def test_assign_roles_locks_membership_before_workspace(world, monkeypatch):
     real_target = iam._target
     real_lock_workspace = iam.lock_workspace
 
-    def tracked_target(workspace, membership_id):
-        events.append(("membership", membership_id))
-        return real_target(workspace, membership_id)
+    def tracked_target(workspace, membership_id, *, lock=True):
+        if lock:
+            events.append(("membership", membership_id))
+        return real_target(workspace, membership_id, lock=lock)
 
     def tracked_lock_workspace(*, workspace_id):
         events.append(("workspace", workspace_id))
@@ -850,7 +851,7 @@ def test_assign_roles_locks_membership_before_workspace(world, monkeypatch):
     assert events == []
 
     iam.assign_roles(**owner, membership_id=members[3].id, role_ids=[role["id"]])
-    assert [step for step, _ in events[:2]] == ["membership", "workspace"]
+    assert [step for step, _ in events] == ["membership", "workspace"]
 
 
 def test_create_link_refuses_explicit_null_auto_role_ids(world):
@@ -880,9 +881,12 @@ def test_moderate_report_and_redeem_lock_membership_before_workspace(world, monk
 
     from django.utils import timezone
 
+    from apps.identity.models import Identity, User
     from apps.workspaces import iam, moderation
+    from apps.workspaces.models import WorkspaceMemberRole
+    from services.identity.access_tokens import VerifiedAccessToken
 
-    org, _, members, tokens = world
+    org, workspace, members, tokens = world
     role = iam.create_role(
         verified=tokens[0],
         organisation_id=org.id,
@@ -903,16 +907,24 @@ def test_moderate_report_and_redeem_lock_membership_before_workspace(world, monk
     events: list[str] = []
     real_for_workspace = moderation.for_workspace
     real_for_user = moderation.for_user
+    real_create_from_link = moderation.create_from_workspace_link
     real_lock_workspace = moderation.lock_workspace
 
-    def tracked_for_workspace(*, organisation_id, membership_id):
-        events.append("membership")
-        return real_for_workspace(organisation_id=organisation_id, membership_id=membership_id)
+    def tracked_for_workspace(*, organisation_id, membership_id, lock=True):
+        if lock:
+            events.append("membership")
+        return real_for_workspace(
+            organisation_id=organisation_id, membership_id=membership_id, lock=lock
+        )
 
     def tracked_for_user(*, organisation_id, user_id, lock=False):
         if lock:
             events.append("membership")
         return real_for_user(organisation_id=organisation_id, user_id=user_id, lock=lock)
+
+    def tracked_create_from_link(*, organisation_id, user_id):
+        events.append("membership_create")
+        return real_create_from_link(organisation_id=organisation_id, user_id=user_id)
 
     def tracked_lock_workspace(*, workspace_id):
         events.append("workspace")
@@ -920,6 +932,7 @@ def test_moderate_report_and_redeem_lock_membership_before_workspace(world, monk
 
     monkeypatch.setattr(moderation, "for_workspace", tracked_for_workspace)
     monkeypatch.setattr(moderation, "for_user", tracked_for_user)
+    monkeypatch.setattr(moderation, "create_from_workspace_link", tracked_create_from_link)
     monkeypatch.setattr(moderation, "lock_workspace", tracked_lock_workspace)
 
     with pytest.raises(moderation.RefusalError) as refused:
@@ -946,7 +959,7 @@ def test_moderate_report_and_redeem_lock_membership_before_workspace(world, monk
             expires_at=None,
             request_id=str(uuid4()),
         )
-        assert events[:2] == ["membership", "workspace"]
+        assert events == ["membership", "workspace"]
 
     events.clear()
     moderation.report(
@@ -958,8 +971,37 @@ def test_moderate_report_and_redeem_lock_membership_before_workspace(world, monk
         event_id="",
         request_id=str(uuid4()),
     )
-    assert events[:2] == ["membership", "workspace"]
+    assert events == ["membership", "workspace"]
 
     events.clear()
     moderation.redeem_link(verified=tokens[3], code=code, request_id=str(uuid4()))
-    assert events[:2] == ["membership", "workspace"]
+    assert events == ["membership", "workspace"]
+
+    newcomer_subject = str(uuid4())
+    newcomer_user = User.objects.create(email=f"{newcomer_subject}@example.org")
+    Identity.objects.create(
+        user=newcomer_user,
+        organisation=org,
+        issuer=org.issuer,
+        realm=org.realm,
+        subject=newcomer_subject,
+        email=newcomer_user.email,
+    )
+    newcomer_token = VerifiedAccessToken(
+        org.issuer,
+        newcomer_subject,
+        ("kodera-server",),
+        0,
+        2**31,
+        None,
+        None,
+        None,
+        None,
+        email_verified=True,
+    )
+    events.clear()
+    joined = moderation.redeem_link(verified=newcomer_token, code=code, request_id=str(uuid4()))
+    assert events == ["membership", "membership", "membership_create", "workspace"]
+    assert WorkspaceMemberRole.objects.filter(
+        workspace=workspace, membership_id=joined.id, role_id=role["id"]
+    ).exists()

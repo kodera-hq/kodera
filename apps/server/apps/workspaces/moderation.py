@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
 
-from django.db import transaction
+from django.db import connection, transaction
 from django.db.models import F
 from django.utils import timezone
 
@@ -152,8 +152,10 @@ def member_restrictions(
     return row[0] or row[1], row[2] is not None and row[2] > (now or timezone.now())
 
 
-def _target(workspace: Workspace, membership_id: UUID) -> WorkspaceMembership:
-    member = for_workspace(organisation_id=workspace.organisation_id, membership_id=membership_id)
+def _target(workspace: Workspace, membership_id: UUID, *, lock: bool = True) -> WorkspaceMembership:
+    member = for_workspace(
+        organisation_id=workspace.organisation_id, membership_id=membership_id, lock=lock
+    )
     if member is None:
         raise RefusalError(404)
     return member
@@ -168,10 +170,10 @@ def _target_context(
 ) -> tuple[Workspace, TenantCaller, WorkspaceMembership]:
     """Preserve `membership -> workspace` lock ordering on member-targeted writes."""
     initial_workspace, _ = _context(verified, organisation_id, moderator=moderator, lock=False)
-    target = _target(initial_workspace, target_id)
+    target = _target(initial_workspace, target_id, lock=True)
     lock_workspace(workspace_id=initial_workspace.id)
     workspace, caller = _context(verified, organisation_id, moderator=moderator, lock=False)
-    target = _target(workspace, target_id)
+    target = _target(workspace, target_id, lock=False)
     return workspace, caller, target
 
 
@@ -345,7 +347,9 @@ def preview_link(*, verified: VerifiedAccessToken, code: str) -> WorkspaceInvite
     return link
 
 
-def _verify_invite_auto_roles(workspace: Workspace, link: WorkspaceInviteLink) -> list[Any]:
+def _verify_invite_auto_roles(
+    workspace: Workspace, link: WorkspaceInviteLink, *, lock_creator: bool = True
+) -> list[Any]:
     from .models import WorkspaceRole
 
     if not link.auto_role_ids:
@@ -353,7 +357,9 @@ def _verify_invite_auto_roles(workspace: Workspace, link: WorkspaceInviteLink) -
     if link.created_by_id is None:
         raise RefusalError(403)
     creator = for_workspace(
-        organisation_id=workspace.organisation_id, membership_id=link.created_by_id
+        organisation_id=workspace.organisation_id,
+        membership_id=link.created_by_id,
+        lock=lock_creator,
     )
     if creator is None or creator.role not in ADMINS:
         raise RefusalError(403)
@@ -381,26 +387,46 @@ def _verify_invite_auto_roles(workspace: Workspace, link: WorkspaceInviteLink) -
 def redeem_link(
     *, verified: VerifiedAccessToken, code: str, request_id: str
 ) -> WorkspaceMembership:
-    # Look up without locking, then lock any membership rows before the workspace, link, and heads.
+    # Serialize per-person redemption first, then lock/create membership rows (`orgs_membership` ->
+    # `identity_user` -> `orgs_organisation`) strictly before `workspaces_workspace`, the link row,
+    # and engine heads. Any refusal rolls back the atomic savepoint cleanly.
     initial = _link(code, allow_exhausted=True)
     person, identity = _identity(verified, initial)
-    membership = for_user(
-        organisation_id=initial.workspace.organisation_id, user_id=person.id, lock=True
-    )
-    if membership is None and initial.auto_role_ids and initial.created_by_id is not None:
-        for_workspace(
-            organisation_id=initial.workspace.organisation_id, membership_id=initial.created_by_id
+    organisation_id = initial.workspace.organisation_id
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+            [f"workspace_redeem:{organisation_id}:{person.id}"],
         )
+    existing = for_user(organisation_id=organisation_id, user_id=person.id, lock=True)
+    joined = existing is None
+    created: WorkspaceMembership | None = None
+    if joined:
+        if initial.uses_count >= initial.max_uses:
+            raise RefusalError(404)
+        if initial.auto_role_ids:
+            if initial.created_by_id is None:
+                raise RefusalError(403)
+            for_workspace(
+                organisation_id=organisation_id,
+                membership_id=initial.created_by_id,
+                lock=True,
+            )
+        created = create_from_workspace_link(organisation_id=organisation_id, user_id=person.id)
     lock_workspace(workspace_id=initial.workspace_id)
     workspace = Workspace.objects.get(id=initial.workspace_id)
     link = _link(code, lock=True, allow_exhausted=True)
     person, identity = _identity(verified, link)
-    membership = for_user(organisation_id=workspace.organisation_id, user_id=person.id, lock=True)
-    joined = membership is None
-    auto_roles = _verify_invite_auto_roles(workspace, link) if joined else []
-    if membership is not None:
-        if membership.state != "active" or membership.accepted_at is None:
+    auto_roles = _verify_invite_auto_roles(workspace, link, lock_creator=False) if joined else []
+    if created is not None:
+        membership = created
+    else:
+        rechecked = for_user(
+            organisation_id=workspace.organisation_id, user_id=person.id, lock=False
+        )
+        if rechecked is None or rechecked.state != "active" or rechecked.accepted_at is None:
             raise RefusalError(403)
+        membership = rechecked
         restriction = (
             WorkspaceMemberRestriction.objects.select_for_update()
             .filter(workspace=workspace, membership_id=membership.id)
@@ -418,10 +444,6 @@ def redeem_link(
         if restriction is not None and restriction.kicked:
             restriction.kicked = False
             restriction.save(update_fields=["kicked", "updated_at"])
-    else:
-        membership = create_from_workspace_link(
-            organisation_id=workspace.organisation_id, user_id=person.id
-        )
     # The row lock is the concurrency boundary; the conditional update is a second guard.
     updated = WorkspaceInviteLink.objects.filter(
         pk=link.pk,
@@ -602,7 +624,7 @@ def admit_redemption(*, verified: VerifiedAccessToken, code: str) -> None:
     if not redeemed and link.uses_count >= link.max_uses:
         raise RefusalError(404)
     if member is None:
-        _verify_invite_auto_roles(link.workspace, link)
+        _verify_invite_auto_roles(link.workspace, link, lock_creator=False)
     if member is not None:
         restriction = WorkspaceMemberRestriction.objects.filter(
             workspace_id=link.workspace_id, membership_id=member.id
