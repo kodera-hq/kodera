@@ -41,7 +41,8 @@ const people = vi.hoisted(() => ({
   rows: [
     {
       id: 'member-camille',
-      person_id: 'member-camille',
+      person_id: 'person-camille',
+      identity_id: 'identity-camille',
       display_name: 'Camille Dubois',
       email: 'camille@acme.fr',
       role: 'org_owner',
@@ -49,7 +50,8 @@ const people = vi.hoisted(() => ({
     },
     {
       id: 'member-marc',
-      person_id: 'member-marc',
+      person_id: 'person-marc',
+      identity_id: 'identity-marc',
       display_name: 'Marc Petit',
       email: 'marc@acme.fr',
       role: 'org_member',
@@ -101,12 +103,12 @@ beforeEach(() => {
     },
   ])
   api.createInvite.mockResolvedValue({ code: 'secret-code' })
-  api.listWorkspaceAuditLogs.mockResolvedValue({
+  api.listWorkspaceAuditLogs.mockImplementation(async (_org, filter) => ({
     data: [
       {
         id: 'e1',
         occurred_at: '2026-11-18T09:00:00Z',
-        actor_id: 'member-camille',
+        actor_id: 'identity-camille',
         actor_type: 'tenant',
         action: 'workspace.role.created',
         target_urn: 'urn:kodera:workspace_role:r-builders',
@@ -119,10 +121,26 @@ beforeEach(() => {
         action: 'workspace.invite_link.revoked',
         target_urn: 'urn:kodera:invite:l1',
       },
-    ],
+      {
+        id: 'e3',
+        occurred_at: '2026-11-18T07:00:00Z',
+        actor_id: 'identity-marc',
+        actor_type: 'tenant',
+        action: 'workspace.member.ban',
+        target_urn: 'urn:kodera:membership:member-marc',
+      },
+      {
+        id: 'e4',
+        occurred_at: '2026-11-18T06:00:00Z',
+        actor_id: 'identity-ghost',
+        actor_type: 'tenant',
+        action: 'workspace.member.kick',
+        target_urn: 'urn:kodera:membership:member-gone',
+      },
+    ].filter((event) => filter?.actorId === undefined || event.actor_id === filter.actorId),
     hasMore: false,
     nextCursor: null,
-  })
+  }))
 })
 
 describe('Salons & permissions', () => {
@@ -152,11 +170,29 @@ describe('Salons & permissions', () => {
     renderPanel(
       <ChannelOverridesPanel
         organisationId={ORG}
-        authority={{ owner: false, ceiling: 5, held: new Set() }}
+        authority={{ owner: false, admin: false, ceiling: 5, held: new Set() }}
       />
     )
     const view = await screen.findByRole('radiogroup', { name: 'Voir les salons' })
     expect(within(view).getByRole('radio', { name: 'Autoriser' })).toBeDisabled()
+  })
+
+  it('locks every cell when an existing override row names a role the caller cannot manage', async () => {
+    const user = userEvent.setup()
+    // An administrator with a ceiling of 5 may edit Design (position 4) and grant anything,
+    // but the channel's saved overrides still name Builders (position 10): Core would refuse
+    // the whole PUT, so every cell stays read-only.
+    renderPanel(
+      <ChannelOverridesPanel
+        organisationId={ORG}
+        authority={{ owner: false, admin: true, ceiling: 5, held: new Set() }}
+      />
+    )
+    await user.click(await screen.findByRole('combobox', { name: 'Rôle' }))
+    await user.click(await screen.findByRole('option', { name: /^Design/ }))
+    const view = await screen.findByRole('radiogroup', { name: 'Voir les salons' })
+    expect(within(view).getByRole('radio', { name: 'Autoriser' })).toBeDisabled()
+    expect(within(view).getByRole('radio', { name: 'Refuser' })).toBeDisabled()
   })
 })
 
@@ -199,12 +235,46 @@ describe('Membres', () => {
     ).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Changer le rôle de Marc Petit' })).toBeEnabled()
   })
+
+  it('lets an administrator without a workspace-role ceiling assign no roles', async () => {
+    // Core 0.50.0: an org_admin with no owner-assigned workspace role has no hierarchy
+    // ceiling, so only the owner bypasses the target checks — the admin cannot assign.
+    renderPanel(
+      <WorkspaceMembersPanel
+        organisationId={ORG}
+        callerRole="org_admin"
+        callerMembershipId="member-camille"
+        authority={{ owner: false, admin: true, ceiling: -1, held: new Set() }}
+      />
+    )
+    const roles = await screen.findByRole('list', { name: 'Rôles de Marc Petit' })
+    expect(within(roles).getByText('Builders')).toBeVisible()
+    expect(
+      screen.queryByRole('button', { name: 'Attribuer un rôle à Marc Petit' })
+    ).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Retirer Builders à Marc Petit' })).toBeNull()
+  })
+
+  it('lets an administrator with a ceiling assign the roles below it', async () => {
+    renderPanel(
+      <WorkspaceMembersPanel
+        organisationId={ORG}
+        callerRole="org_admin"
+        callerMembershipId="member-camille"
+        authority={{ owner: false, admin: true, ceiling: 20, held: new Set() }}
+      />
+    )
+    expect(
+      await screen.findByRole('button', { name: 'Attribuer un rôle à Marc Petit' })
+    ).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Retirer Builders à Marc Petit' })).toBeEnabled()
+  })
 })
 
 describe('Invitations', () => {
   it('shows host, masked code, channel, uses, expiry and auto-roles, and revokes after confirming', async () => {
     const user = userEvent.setup()
-    renderPanel(<InvitesPanel organisationId={ORG} />)
+    renderPanel(<InvitesPanel organisationId={ORG} authority={OWNER} />)
     const table = await screen.findByRole('table', { name: 'Invitations' })
     const headers = within(table)
       .getAllByRole('columnheader')
@@ -237,7 +307,7 @@ describe('Invitations', () => {
 
   it('creates a link with a landing channel and auto-roles, shown once', async () => {
     const user = userEvent.setup()
-    renderPanel(<InvitesPanel organisationId={ORG} />)
+    renderPanel(<InvitesPanel organisationId={ORG} authority={OWNER} />)
     await user.click(await screen.findByRole('button', { name: 'Créer un lien' }))
     const form = screen.getByRole('form', { name: 'Créer un lien' })
     await user.click(within(form).getByRole('checkbox', { name: 'Design' }))
@@ -251,9 +321,29 @@ describe('Invitations', () => {
     expect(await screen.findByText('Copiez-le maintenant : il ne sera plus affiché.')).toBeVisible()
   })
 
+  it('disables auto-role checkboxes for roles above a delegate’s ceiling and never sends them', async () => {
+    const user = userEvent.setup()
+    // Builders sits at position 10, above this delegate's ceiling of 5: Core would refuse
+    // the invite (403), so the checkbox is disabled and the id never leaves the console.
+    renderPanel(
+      <InvitesPanel
+        organisationId={ORG}
+        authority={{ owner: false, admin: false, ceiling: 5, held: new Set() }}
+      />
+    )
+    await user.click(await screen.findByRole('button', { name: 'Créer un lien' }))
+    const form = screen.getByRole('form', { name: 'Créer un lien' })
+    expect(within(form).getByRole('checkbox', { name: 'Builders' })).toBeDisabled()
+    expect(within(form).getByRole('checkbox', { name: 'Design' })).toBeEnabled()
+    await user.click(within(form).getByRole('checkbox', { name: 'Design' }))
+    await user.click(within(form).getByRole('button', { name: 'Créer un lien' }))
+    await waitFor(() => expect(api.createInvite).toHaveBeenCalledTimes(1))
+    expect(api.createInvite.mock.calls[0]![1].autoRoleIds).toEqual(['r-design'])
+  })
+
   it('pauses invitations through the workspace profile', async () => {
     const user = userEvent.setup()
-    renderPanel(<InvitesPanel organisationId={ORG} />)
+    renderPanel(<InvitesPanel organisationId={ORG} authority={OWNER} />)
     const toggle = await screen.findByRole('switch', { name: /Suspendre les invitations/u })
     await waitFor(() => expect(toggle).toBeEnabled())
     await user.click(toggle)
@@ -266,14 +356,20 @@ describe('Invitations', () => {
 })
 
 describe('Logs d’audit', () => {
-  it('names actors from the directory and filters by category and actor', async () => {
+  it('names actors from the directory — by person id or identity id — and filters by category and actor', async () => {
     const user = userEvent.setup()
     renderPanel(<AuditLogPanel organisationId={ORG} />)
     const log = await screen.findByRole('list', { name: 'Logs d’audit' })
-    expect(within(log).getAllByRole('listitem')).toHaveLength(2)
+    expect(within(log).getAllByRole('listitem')).toHaveLength(4)
     expect(log).toHaveTextContent('Camille Dubois a créé un rôle')
     expect(log).toHaveTextContent('Kodera a révoqué une invitation')
-    expect(log.textContent).not.toMatch(/member-camille|urn:|workspace\./u)
+    // A ban is moderation, and its verb reads as one; the unknown actor gets a neutral name.
+    expect(log).toHaveTextContent('Marc Petit a banni la modération')
+    expect(log).toHaveTextContent('Membre ou ancien membre a expulsé la modération')
+    expect(log.textContent).not.toMatch(/identity-|person-|urn:|workspace\./u)
+    await user.click(screen.getByRole('combobox', { name: 'Catégorie' }))
+    await user.click(await screen.findByRole('option', { name: 'la modération' }))
+    expect(within(log).getAllByRole('listitem')).toHaveLength(2)
     await user.click(screen.getByRole('combobox', { name: 'Catégorie' }))
     await user.click(await screen.findByRole('option', { name: 'un rôle' }))
     expect(within(log).getAllByRole('listitem')).toHaveLength(1)
@@ -281,17 +377,44 @@ describe('Logs d’audit', () => {
     await user.click(await screen.findByRole('option', { name: 'Camille Dubois' }))
     await waitFor(() =>
       expect(api.listWorkspaceAuditLogs).toHaveBeenLastCalledWith(ORG, {
-        actorId: 'member-camille',
+        actorId: 'identity-camille',
       })
     )
+    expect(within(log).getAllByRole('listitem')).toHaveLength(1)
+  })
+
+  it('keeps every actor seen before the filter in the actor dropdown', async () => {
+    const user = userEvent.setup()
+    renderPanel(<AuditLogPanel organisationId={ORG} />)
+    const actorFilter = await screen.findByRole('combobox', { name: 'Auteur' })
+    await user.click(actorFilter)
+    expect(await screen.findByRole('option', { name: 'Marc Petit' })).toBeVisible()
+    expect(screen.getByRole('option', { name: 'Membre ou ancien membre' })).toBeVisible()
+    await user.click(screen.getByRole('option', { name: 'Camille Dubois' }))
+    await waitFor(() =>
+      expect(api.listWorkspaceAuditLogs).toHaveBeenLastCalledWith(ORG, {
+        actorId: 'identity-camille',
+      })
+    )
+    // The filtered query returns only Camille: the dropdown still lists the others.
+    await user.click(screen.getByRole('combobox', { name: 'Auteur' }))
+    expect(await screen.findByRole('option', { name: 'Marc Petit' })).toBeVisible()
+    expect(screen.getByRole('option', { name: 'Membre ou ancien membre' })).toBeVisible()
+    expect(screen.getByRole('option', { name: 'Camille Dubois' })).toBeVisible()
   })
 
   it('maps actions to categories', () => {
     expect(auditCategory('workspace.role.created')).toBe('role')
     expect(auditCategory('workspace.member_roles.replaced')).toBe('member')
+    expect(auditCategory('workspace.member.roles_updated')).toBe('member')
     expect(auditCategory('workspace.channel_overrides.replaced')).toBe('channel')
     expect(auditCategory('workspace.invite_link.created')).toBe('invite')
     expect(auditCategory('workspace.moderation.ban')).toBe('moderation')
+    // Member actions that moderate are moderation, not membership.
+    expect(auditCategory('workspace.member.ban')).toBe('moderation')
+    expect(auditCategory('workspace.member.unban')).toBe('moderation')
+    expect(auditCategory('workspace.member.kick')).toBe('moderation')
+    expect(auditCategory('workspace.member.mute')).toBe('moderation')
     expect(auditCategory('workspace.profile.updated')).toBe('profile')
     expect(auditCategory('workspace.unknown')).toBeNull()
   })

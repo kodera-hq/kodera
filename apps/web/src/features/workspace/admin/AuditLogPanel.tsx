@@ -2,11 +2,16 @@
 // category and by who acted. Core returns identifiers only; the console names an actor from the
 // organisation directory when it can, and says « Kodera » for the platform's own actions.
 
-import { useInfiniteQuery } from '@tanstack/react-query'
+import { useInfiniteQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import { Button } from '../../../ui/Button/Button'
 import { Select } from '../../../ui/Select/Select'
-import { isIamUnsupported, listWorkspaceAuditLogs, type AuditEvent } from '../iamApi'
+import {
+  isIamUnsupported,
+  listWorkspaceAuditLogs,
+  type AuditEvent,
+  type Page,
+} from '../iamApi'
 import { iamKeys, retryUnlessUnsupported } from './useIam'
 import { useDirectory } from './membersApi'
 import { memberName } from './WorkspaceMembersPanel'
@@ -34,6 +39,9 @@ export type AuditCategory = (typeof AUDIT_CATEGORIES)[number]
 /** The category an action belongs to, from its dotted name (`workspace.role.created`). */
 export function auditCategory(action: string): Exclude<AuditCategory, 'all'> | null {
   const part = action.split('.')[1] ?? ''
+  const verb = action.split('.').at(-1) ?? ''
+  // A member action that moderates (ban, unban, kick, mute) is moderation, not membership.
+  if (part === 'member' && ['ban', 'unban', 'kick', 'mute'].includes(verb)) return 'moderation'
   if (part.startsWith('role')) return 'role'
   if (part.startsWith('member')) return 'member'
   if (part.startsWith('channel') || part.startsWith('categor')) return 'channel'
@@ -52,10 +60,14 @@ export function AuditLogPanel({ organisationId }: { organisationId: string }) {
   const [category, setCategory] = useState<AuditCategory>('all')
   const [actor, setActor] = useState(ALL_ACTORS)
   const directory = useDirectory(organisationId)
+  // Core names an audit actor by its identity id; the directory may key a row by either its
+  // person id or its identity id, so both resolve to the member's name.
   const people = useMemo(() => {
     const names = new Map<string, string>()
     for (const member of (directory.data?.pages ?? []).flatMap((page) => page.data)) {
-      if (member.person_id) names.set(member.person_id, memberName(member, copy.unnamed))
+      const label = memberName(member, copy.unnamed)
+      if (member.person_id) names.set(member.person_id, label)
+      if (member.identity_id) names.set(member.identity_id, label)
     }
     return names
   }, [directory.data, copy.unnamed])
@@ -82,15 +94,27 @@ export function AuditLogPanel({ organisationId }: { organisationId: string }) {
       ? copy.auditPlatform
       : event.actor_id === null
         ? copy.unnamed
-        : (people.get(event.actor_id) ?? copy.auditFormerMember)
+        : (people.get(event.actor_id) ?? copy.auditUnknownMember)
+  // The dropdown lists the directory's identity ids plus every actor seen in any cached audit
+  // page: once an actor filter is applied, its query returns only that actor, but the
+  // unfiltered pages stay in the cache, so the other actors do not disappear.
+  const queryClient = useQueryClient()
   const actors = useMemo(() => {
-    const seen = new Map<string, string>()
-    for (const event of (events.data?.pages ?? []).flatMap((page) => page.data)) {
-      if (event.actor_type === 'tenant' && event.actor_id !== null)
-        seen.set(event.actor_id, people.get(event.actor_id) ?? copy.auditFormerMember)
+    const ids = new Set<string>()
+    const collect = (event: AuditEvent) => {
+      if (event.actor_type === 'tenant' && event.actor_id !== null) ids.add(event.actor_id)
     }
-    return [...seen]
-  }, [events.data, people, copy.auditFormerMember])
+    for (const event of (events.data?.pages ?? []).flatMap((page) => page.data)) collect(event)
+    for (const member of (directory.data?.pages ?? []).flatMap((page) => page.data)) {
+      if (member.identity_id) ids.add(member.identity_id)
+    }
+    for (const [, data] of queryClient.getQueriesData<InfiniteData<Page<AuditEvent>>>({
+      queryKey: ['workspace-iam', organisationId, 'audit'],
+    })) {
+      for (const event of (data?.pages ?? []).flatMap((page) => page.data)) collect(event)
+    }
+    return [...ids].map((id) => [id, people.get(id) ?? copy.auditUnknownMember] as const)
+  }, [queryClient, directory.data, events.data, organisationId, people, copy])
 
   if (events.isError && isIamUnsupported(events.error)) return <Unsupported />
 
@@ -113,7 +137,7 @@ export function AuditLogPanel({ organisationId }: { organisationId: string }) {
           options={[
             { value: ALL_ACTORS, label: copy.auditAllActors },
             ...(actor !== ALL_ACTORS && !actors.some(([id]) => id === actor)
-              ? [{ value: actor, label: people.get(actor) ?? copy.auditFormerMember }]
+              ? [{ value: actor, label: people.get(actor) ?? copy.auditUnknownMember }]
               : []),
             ...actors.map(([id, name]) => ({ value: id, label: name })),
           ]}

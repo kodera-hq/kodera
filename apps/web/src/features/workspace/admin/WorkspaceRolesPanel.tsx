@@ -71,19 +71,33 @@ export const CAPABILITY_GROUPS: readonly {
 export interface RoleAuthority {
   /** Owners manage every role; anyone else only below their own highest assigned position. */
   owner: boolean
+  /** Workspace administrators (`org_admin`) manage every custom role below their ceiling and
+   * grant any capability, exactly as Core 0.50.0 allows them to. */
+  admin: boolean
   ceiling: number
   held: ReadonlySet<WorkspaceCapability>
 }
 
-export function mayManage(
-  authority: RoleAuthority,
-  role: Pick<WorkspaceRole, 'position'>
-): boolean {
-  return authority.owner || role.position < authority.ceiling
+type ManagedRole = Pick<WorkspaceRole, 'position' | 'is_default' | 'permissions'>
+
+/**
+ * Core 0.50.0's rule: a default role is never edited from the console, a role at or above the
+ * caller's highest assigned position is out of reach, and a delegated manager (no `org_admin`)
+ * only manages roles whose capabilities they hold themselves. Owners and administrators bypass
+ * the capability check.
+ */
+export function mayManage(authority: RoleAuthority, role: ManagedRole): boolean {
+  if (role.is_default) return false
+  if (authority.owner) return true
+  if (role.position >= authority.ceiling) return false
+  return (
+    authority.admin || role.permissions.every((permission) => authority.held.has(permission))
+  )
 }
 
+/** Delegates cannot grant capabilities they do not hold; owners and administrators can. */
 export function mayGrant(authority: RoleAuthority, capability: WorkspaceCapability): boolean {
-  return authority.owner || authority.held.has(capability)
+  return Boolean(authority.owner || authority.admin || authority.held.has(capability))
 }
 
 const EMPTY_DRAFT: RoleDraft = {
@@ -125,9 +139,12 @@ function RoleEditor({
         ? [...new Set([...draft.permissions, capability])]
         : draft.permissions.filter((item) => item !== capability),
     })
-  const swatches = ROLE_SWATCHES.includes(draft.color.toLowerCase())
-    ? ROLE_SWATCHES
-    : [draft.color, ...ROLE_SWATCHES]
+  // A custom colour joins the swatches only when the contract's pattern accepts it; anything
+  // else (an empty colour, a name) would draw a broken dot at the head of the row.
+  const swatches =
+    /^#[0-9a-fA-F]{6}$/u.test(draft.color) && !ROLE_SWATCHES.includes(draft.color.toLowerCase())
+      ? [draft.color, ...ROLE_SWATCHES]
+      : ROLE_SWATCHES
   return (
     <form
       aria-label={copy.roleEditor}
@@ -212,7 +229,9 @@ function RoleEditor({
             </div>
           </fieldset>
         ))}
-        {authority.owner ? null : <p className="text-xs text-c-ink-3">{copy.roleGrantHint}</p>}
+        {authority.owner || authority.admin ? null : (
+          <p className="text-xs text-c-ink-3">{copy.roleGrantHint}</p>
+        )}
       </div>
       <div className="flex gap-2">
         <Button type="submit" variant="primary" loading={busy} disabled={draft.name.trim() === ''}>
@@ -282,6 +301,19 @@ export function WorkspaceRolesPanel({
     : Math.max(0, Math.min(topPosition + 1, authority.ceiling - 1))
   const canCreate = authority.owner || authority.ceiling > 0
 
+  /**
+   * Equal positions at the caller's ceiling cannot be separated upward — Core rejects a move to
+   * the ceiling itself (403) — so the pair is separated downward instead, and at the floor
+   * (position 0) the move is not offered at all.
+   */
+  const blockedAtCeiling = (above: WorkspaceRole, below: WorkspaceRole) => {
+    const high = Math.max(above.position, below.position)
+    const low = Math.min(above.position, below.position)
+    return (
+      high === low && !authority.owner && low === 0 && high + 1 >= authority.ceiling
+    )
+  }
+
   function move(role: WorkspaceRole, direction: 'up' | 'down') {
     const index = roles.findIndex((item) => item.id === role.id)
     const neighbour = roles[direction === 'up' ? index - 1 : index + 1]
@@ -290,11 +322,15 @@ export function WorkspaceRolesPanel({
     // `above` takes the higher slot; equal positions are separated rather than swapped.
     const high = Math.max(above.position, below.position)
     const low = Math.min(above.position, below.position)
-    const nextAbove = high === low ? high + 1 : high
+    const atCeiling = high === low && !authority.owner && high + 1 >= authority.ceiling
+    // Upward separation past the ceiling is refused by Core: keep the slot and separate down.
+    const nextAbove = high === low && !atCeiling ? high + 1 : high
+    const nextBelow = high === low && atCeiling && low > 0 ? low - 1 : low
     run(async () => {
-      await updateWorkspaceRole(organisationId, above, { position: nextAbove })
-      if (below.position !== low)
-        await updateWorkspaceRole(organisationId, below, { position: low })
+      if (nextAbove !== above.position)
+        await updateWorkspaceRole(organisationId, above, { position: nextAbove })
+      if (nextBelow !== below.position)
+        await updateWorkspaceRole(organisationId, below, { position: nextBelow })
     }, copy.roleMoved)
   }
 
@@ -329,7 +365,14 @@ export function WorkspaceRolesPanel({
       </div>
       {editing === 'new' ? (
         <RoleEditor
-          initial={{ ...EMPTY_DRAFT, position: newPosition }}
+          // A delegated manager starts with only the default capabilities they hold themselves.
+          initial={{
+            ...EMPTY_DRAFT,
+            position: newPosition,
+            permissions: EMPTY_DRAFT.permissions.filter((permission) =>
+              mayGrant(authority, permission)
+            ),
+          }}
           authority={authority}
           busy={busy}
           onCancel={() => setEditing(null)}
@@ -392,7 +435,12 @@ export function WorkspaceRolesPanel({
                         iconOnly
                         icon={<UpIcon />}
                         aria-label={copy.roleUp(role.name)}
-                        disabled={busy || above === undefined || !mayManage(authority, above)}
+                        disabled={
+                          busy ||
+                          above === undefined ||
+                          !mayManage(authority, above) ||
+                          blockedAtCeiling(role, above)
+                        }
                         onClick={() => move(role, 'up')}
                       />
                       <Button
@@ -401,7 +449,12 @@ export function WorkspaceRolesPanel({
                         iconOnly
                         icon={<DownIcon />}
                         aria-label={copy.roleDown(role.name)}
-                        disabled={busy || below === undefined || !mayManage(authority, below)}
+                        disabled={
+                          busy ||
+                          below === undefined ||
+                          !mayManage(authority, below) ||
+                          blockedAtCeiling(below, role)
+                        }
                         onClick={() => move(role, 'down')}
                       />
                       <Button

@@ -69,15 +69,18 @@ function MemberRow({
   const name = memberName(member, copy.unnamed)
   const self = member.id === callerMembershipId
   const targets = self ? [] : roleChangeTargets(callerRole, member.role)
-  const ownsAdmin = callerRole === 'org_owner' || callerRole === 'org_admin'
-  // Delegates change neither their own assignments nor an administrator's.
+  const assignedRoles = (roles ?? []).filter((role) => assigned.includes(role.id))
+  // Only the owner bypasses the target checks (Core 0.50.0): an administrator or a delegated
+  // manager changes neither their own assignments, nor an owner's/admin's, nor a role set that
+  // includes a role above their ceiling or with capabilities they do not hold.
   const mayAssign =
     roles !== undefined &&
-    (ownsAdmin ||
+    (callerRole === 'org_owner' ||
       (authority.ceiling >= 0 &&
         !self &&
         member.role !== 'org_owner' &&
-        member.role !== 'org_admin'))
+        member.role !== 'org_admin' &&
+        assignedRoles.every((role) => mayManage(authority, role))))
 
   function applyRole(role: OrganisationRole) {
     setBusy(true)
@@ -107,7 +110,6 @@ function MemberRow({
       })
   }
 
-  const assignedRoles = (roles ?? []).filter((role) => assigned.includes(role.id))
   const addable = (roles ?? []).filter(
     (role) => !assigned.includes(role.id) && mayManage(authority, role)
   )

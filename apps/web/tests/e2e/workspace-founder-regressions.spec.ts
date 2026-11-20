@@ -12,7 +12,7 @@ test('founder surfaces: profile, audio controls, connector target and settings E
   await expect(page.getByRole('heading', { name: 'announcements', exact: true })).toBeVisible()
   const trigger = page.getByRole('button', { name: 'Réglages', exact: true })
   await trigger.click()
-  const settings = page.getByRole('dialog', { name: 'Réglages', exact: true })
+  const settings = page.getByRole('dialog', { name: 'Paramètres personnels', exact: true })
   await expect(
     settings.getByRole('textbox', { name: 'Nom d’affichage', exact: true })
   ).toBeVisible()
@@ -55,39 +55,43 @@ test('founder surfaces: profile, audio controls, connector target and settings E
     animations: 'disabled',
   })
 
-  await settings.getByRole('tab', { name: 'Connecteurs & extensions', exact: true }).click()
   await settings
+    .getByRole('button', { name: 'Administration de l’espace', exact: true })
+    .click()
+  const admin = page.getByRole('dialog', { name: 'Administration de l’espace', exact: true })
+  await admin.getByRole('tab', { name: 'Intégrations & extensions', exact: true }).click()
+  await admin
     .getByRole('button', { name: /— Connecter$/ })
     .first()
     .click()
-  const target = settings.getByRole('combobox', { name: 'Salon de destination', exact: true })
+  const target = admin.getByRole('combobox', { name: 'Salon de destination', exact: true })
   await expect(target).toBeEnabled()
   expect(await target.locator('option').count()).toBeGreaterThan(1)
   await target.selectOption({ index: 1 })
   await expect(target).not.toHaveValue('')
   await expect(
-    settings.getByText(
+    admin.getByText(
       'Ce choix prépare la configuration. Aucune connexion n’est encore activée.',
       { exact: true }
     )
   ).toBeVisible()
-  const disclosure = settings.getByText('Détails techniques & sécurité', { exact: true })
+  const disclosure = admin.getByText('Détails techniques & sécurité', { exact: true })
   await expect(disclosure.locator('..')).not.toHaveAttribute('open', '')
-  await expect(settings.getByText('Schéma v1 vérifié', { exact: true })).not.toBeVisible()
+  await expect(admin.getByText('Schéma v1 vérifié', { exact: true })).not.toBeVisible()
   await expect(
-    settings.getByRole('textbox', { name: /URL de destination du webhook/ })
+    admin.getByRole('textbox', { name: /URL de destination du webhook/ })
   ).not.toBeVisible()
   await disclosure.click()
-  await expect(settings.getByText('Schéma v1 vérifié', { exact: true })).toBeVisible()
+  await expect(admin.getByText('Schéma v1 vérifié', { exact: true })).toBeVisible()
   await expect(
-    settings.getByRole('textbox', { name: /URL de destination du webhook/ })
+    admin.getByRole('textbox', { name: /URL de destination du webhook/ })
   ).toBeVisible()
   await page.screenshot({
     path: info.outputPath('workspace-connector-target.png'),
     animations: 'disabled',
   })
   await page.keyboard.press('Escape')
-  await expect(settings).toHaveCount(0)
+  await expect(page.getByRole('dialog')).toHaveCount(0)
   await expect(trigger).toBeFocused()
 })
 

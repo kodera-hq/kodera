@@ -241,12 +241,13 @@ test('community sidebar, both menus, appearance and product dialogs are usable',
     ['Sombre', 'dark'],
     ['Noir', 'black'],
   ] as const) {
-    await menu(page, 'Réglages de l’espace…', true)
-    await page.getByRole('tab', { name: 'Apparence & thèmes', exact: true }).click()
+    await menu(page, 'Paramètres personnels…', true)
+    const personal = page.getByRole('dialog', { name: 'Paramètres personnels', exact: true })
+    await personal.getByRole('tab', { name: 'Apparence & thèmes', exact: true }).click()
     for (const cardLabel of ['Automatique', 'Ciel', 'Ciel nuit', 'Clair', 'Sombre', 'Noir']) {
-      await expect(page.getByRole('button', { name: cardLabel, exact: true })).toBeVisible()
+      await expect(personal.getByRole('button', { name: cardLabel, exact: true })).toBeVisible()
     }
-    await page.getByRole('button', { name, exact: true }).click()
+    await personal.getByRole('button', { name, exact: true }).click()
     await page.keyboard.press('Escape')
     await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
     await page.screenshot({
@@ -259,21 +260,24 @@ test('community sidebar, both menus, appearance and product dialogs are usable',
       .analyze()
     expect(accessibility.violations, `Workspace accessibility in ${theme}`).toEqual([])
   }
-  await menu(page, 'Réglages de l’espace…')
-  await page.getByRole('tab', { name: 'Apparence & thèmes', exact: true }).click()
-  await page.getByRole('button', { name: 'Ouvrir Theme Studio', exact: true }).click()
+  await menu(page, 'Paramètres personnels…')
+  const personal = page.getByRole('dialog', { name: 'Paramètres personnels', exact: true })
+  await personal.getByRole('tab', { name: 'Apparence & thèmes', exact: true }).click()
+  await personal.getByRole('button', { name: 'Ouvrir Theme Studio', exact: true }).click()
   await expect(page.getByTestId('theme-share-code-input')).toBeVisible()
   await page.getByTestId('theme-share-to-channel-btn').click()
   await page.keyboard.press('Escape')
   await page.keyboard.press('Escape')
   await expect(page.getByRole('log')).toContainText('kodera-theme:v1:')
-  await menu(page, 'Réglages de l’espace…', true)
-  await page.getByRole('tab', { name: 'Connecteurs & extensions', exact: true }).click()
-  await expect(page.getByRole('dialog')).toContainText('Frame.io')
+  await menu(page, 'Administration de l’espace…', true)
+  const admin = page.getByRole('dialog', { name: 'Administration de l’espace', exact: true })
+  await admin.getByRole('tab', { name: 'Intégrations & extensions', exact: true }).click()
+  await expect(admin).toContainText('Frame.io')
   await page.keyboard.press('Escape')
-  await menu(page, 'Réglages de l’espace…')
-  await page.getByRole('tab', { name: 'Hébergement & administration', exact: true }).click()
-  await expect(page.getByRole('dialog')).toContainText('Mode actuel')
+  await menu(page, 'Administration de l’espace…')
+  const hosting = page.getByRole('dialog', { name: 'Administration de l’espace', exact: true })
+  await hosting.getByRole('tab', { name: 'Hébergement', exact: true }).click()
+  await expect(hosting).toContainText('Mode actuel')
   await page.keyboard.press('Escape')
 })
 

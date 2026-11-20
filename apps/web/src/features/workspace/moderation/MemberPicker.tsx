@@ -82,7 +82,7 @@ export function MemberPicker({
         role="combobox"
         autoComplete="off"
         aria-expanded={showList}
-        aria-controls={listId}
+        aria-controls={showList ? listId : undefined}
         aria-autocomplete="list"
         {...(showList && options[active] !== undefined
           ? { 'aria-activedescendant': `${listId}-${options[active].id}` }

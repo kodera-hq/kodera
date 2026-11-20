@@ -1,9 +1,11 @@
 import { DemoDisclosure } from './DemoDisclosure'
-import { useState, type ReactNode } from 'react'
+import { useContext, useMemo, useState, type ReactNode } from 'react'
+import { QueryClientContext } from '@tanstack/react-query'
 import { ShellShortcuts } from './ShellShortcuts'
 import { PaletteProvider } from '../features/command-palette/PaletteContext'
-
 import { WorkspaceSettingsHost } from '../features/workspace/WorkspaceSettingsHost'
+import { useDelegation } from '../features/workspace/admin/useIam'
+import { ADMIN_SECTIONS, delegatedSections } from '../features/workspace/admin/sections'
 import type { MessageKey } from '../i18n'
 import { Button } from '../ui/Button/Button'
 import { Tooltip } from '../ui/Tooltip/Tooltip'
@@ -28,6 +30,67 @@ const SKIP_LINK =
 
 const MAIN_CONTENT_ID = 'main-content'
 const MAIN_CONTENT_FOCUS = 'outline-hidden'
+
+/**
+ * Enriches the organisation switch with the caller's effective administration access
+ * (`canAdminister` / `adminSections`), computed from the organisation role and the delegated
+ * workspace roles — the same rule `WorkspaceSettings` applies. Runs only under a query client
+ * and only when a switch exists; a bare `<Shell>` in a component test gets the plain value, and
+ * every consumer treats `undefined` as its own default.
+ */
+function AdminAccess({
+  base,
+  organisationId,
+  membershipId,
+  role,
+  children,
+}: {
+  base: OrganisationSwitch | undefined
+  organisationId: string
+  membershipId: string | undefined
+  role: OrganisationRole
+  children: ReactNode
+}) {
+  const client = useContext(QueryClientContext)
+  if (client === undefined || base === undefined)
+    return <OrganisationSwitchContext.Provider value={base}>{children}</OrganisationSwitchContext.Provider>
+  return (
+    <AdminAccessWithQueries
+      base={base}
+      organisationId={organisationId}
+      membershipId={membershipId}
+      role={role}
+    >
+      {children}
+    </AdminAccessWithQueries>
+  )
+}
+
+function AdminAccessWithQueries({
+  base,
+  organisationId,
+  membershipId,
+  role,
+  children,
+}: {
+  base: OrganisationSwitch
+  organisationId: string
+  membershipId: string | undefined
+  role: OrganisationRole
+  children: ReactNode
+}) {
+  const canManage = role === 'org_owner' || role === 'org_admin'
+  const delegation = useDelegation(organisationId, membershipId, role !== 'org_owner')
+  const adminSections = useMemo(
+    () => (canManage ? ADMIN_SECTIONS : delegatedSections(delegation)),
+    [canManage, delegation]
+  )
+  const value = useMemo<OrganisationSwitch>(
+    () => ({ ...base, canAdminister: adminSections.length > 0, adminSections }),
+    [base, adminSections]
+  )
+  return <OrganisationSwitchContext.Provider value={value}>{children}</OrganisationSwitchContext.Provider>
+}
 
 /** Focus explicitly so repeated fragment activation also reaches the landmark. */
 function SkipToContentLink() {
@@ -145,7 +208,12 @@ export function Shell({
 
   return (
     <PaletteProvider key={org}>
-      <OrganisationSwitchContext.Provider value={organisationSwitch}>
+      <AdminAccess
+        base={organisationSwitch}
+        organisationId={organisationId}
+        membershipId={membershipId}
+        role={role}
+      >
         {/* A phone's workspace is one screen tall too (`visible-screen-frame`, the visible height under a
           browser's own bars): its timeline scrolls inside, and the composer stays at the foot
           of the screen rather than below the whole history (kodera issue 216, 390 × 844). */}
@@ -285,7 +353,7 @@ export function Shell({
             </IncidentBannerClaimProvider>
           </div>
         </div>
-      </OrganisationSwitchContext.Provider>
+      </AdminAccess>
     </PaletteProvider>
   )
 }

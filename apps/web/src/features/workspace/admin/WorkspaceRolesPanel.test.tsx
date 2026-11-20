@@ -3,8 +3,9 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type * as IamApiModule from '../iamApi'
 import '../../../i18n'
-import { IamUnsupported } from '../iamApi'
+import { IamUnsupported, type WorkspaceCapability } from '../iamApi'
 import { mayGrant, mayManage, WorkspaceRolesPanel } from './WorkspaceRolesPanel'
+import { ROLE_SWATCHES } from './WorkspaceProfilePanel'
 import { ORG, OWNER, renderPanel, role } from './test-support'
 
 const api = vi.hoisted(() => ({
@@ -126,7 +127,7 @@ describe('Rôles & Tags', () => {
 
   it('limits a delegated manager to roles below their ceiling and capabilities they hold', async () => {
     const user = userEvent.setup()
-    const delegate = { owner: false, ceiling: 5, held: new Set(['channel.view'] as const) }
+    const delegate = { owner: false, admin: false, ceiling: 5, held: new Set(['channel.view'] as const) }
     renderPanel(<WorkspaceRolesPanel organisationId={ORG} authority={delegate} />)
     const list = await screen.findByRole('list', { name: 'Rôles & Tags' })
     const [top, bottom] = within(list).getAllByRole('listitem')
@@ -139,6 +140,81 @@ describe('Rôles & Tags', () => {
     expect(editor).toHaveTextContent('que les droits que vous détenez')
   })
 
+  it('starts a new role for a delegate with only the default capabilities they hold', async () => {
+    const user = userEvent.setup()
+    const delegate = {
+      owner: false,
+      admin: false,
+      ceiling: 5,
+      held: new Set(['channel.view', 'message.post'] as const),
+    }
+    renderPanel(<WorkspaceRolesPanel organisationId={ORG} authority={delegate} />)
+    await user.click(await screen.findByRole('button', { name: 'Créer un rôle' }))
+    const editor = screen.getByRole('form', { name: 'Éditeur de rôle' })
+    expect(within(editor).getByRole('checkbox', { name: 'Voir les salons' })).toBeChecked()
+    expect(within(editor).getByRole('checkbox', { name: 'Envoyer des messages' })).toBeChecked()
+    // Not held by the delegate: neither pre-checked nor togglable.
+    expect(within(editor).getByRole('checkbox', { name: 'Lire l’historique' })).toBeDisabled()
+    expect(within(editor).getByRole('checkbox', { name: 'Répondre dans les fils' })).toBeDisabled()
+    expect(within(editor).getByRole('checkbox', { name: 'Ajouter des réactions' })).toBeDisabled()
+    await user.type(within(editor).getByRole('textbox', { name: 'Nom' }), 'Support')
+    await user.click(within(editor).getByRole('button', { name: 'Enregistrer' }))
+    await waitFor(() => expect(api.createWorkspaceRole).toHaveBeenCalledTimes(1))
+    expect(api.createWorkspaceRole.mock.calls[0]![1].permissions).toEqual([
+      'channel.view',
+      'message.post',
+    ])
+  })
+
+  it('never prepends a colour the contract would refuse to the swatch row', async () => {
+    const user = userEvent.setup()
+    // A role whose colour Core dropped (outside the contract's pattern) arrives empty.
+    api.listWorkspaceRoles.mockResolvedValue({
+      roles: [role({ id: 'r-plain', name: 'Plain', color: '' })],
+      assignments: [],
+    })
+    renderPanel(<WorkspaceRolesPanel organisationId={ORG} authority={OWNER} />)
+    await user.click(await screen.findByRole('button', { name: 'Modifier Plain' }))
+    const editor = screen.getByRole('form', { name: 'Éditeur de rôle' })
+    // The row shows exactly the token swatches — no empty extra dot in front.
+    expect(within(editor).getAllByRole('button', { name: /^Couleur #/u })).toHaveLength(
+      ROLE_SWATCHES.length
+    )
+  })
+
+  it('separates equal-position roles downward instead of pushing one to the ceiling Core refuses', async () => {
+    const user = userEvent.setup()
+    api.listWorkspaceRoles.mockResolvedValue({
+      roles: [
+        role({ id: 'r-a', name: 'Alpha', position: 2 }),
+        role({ id: 'r-b', name: 'Beta', position: 2 }),
+      ],
+      assignments: [],
+    })
+    // A non-owner whose ceiling is 3: equal positions 2/2 cannot go to 3 (Core answers 403).
+    const delegate = { owner: false, admin: false, ceiling: 3, held: new Set<WorkspaceCapability>() }
+    renderPanel(<WorkspaceRolesPanel organisationId={ORG} authority={delegate} />)
+    await user.click(await screen.findByRole('button', { name: 'Monter Beta' }))
+    await waitFor(() => expect(api.updateWorkspaceRole).toHaveBeenCalledTimes(1))
+    // `above` keeps its slot; the pair is separated downward instead.
+    expect(api.updateWorkspaceRole.mock.calls[0]![1]).toMatchObject({ id: 'r-a' })
+    expect(api.updateWorkspaceRole.mock.calls[0]![2]).toEqual({ position: 1 })
+  })
+
+  it('disables the move when equal positions sit at the floor and the ceiling is next', async () => {
+    api.listWorkspaceRoles.mockResolvedValue({
+      roles: [
+        role({ id: 'r-a', name: 'Alpha', position: 0 }),
+        role({ id: 'r-b', name: 'Beta', position: 0 }),
+      ],
+      assignments: [],
+    })
+    const delegate = { owner: false, admin: false, ceiling: 1, held: new Set<WorkspaceCapability>() }
+    renderPanel(<WorkspaceRolesPanel organisationId={ORG} authority={delegate} />)
+    expect(await screen.findByRole('button', { name: 'Monter Beta' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Descendre Alpha' })).toBeDisabled()
+  })
+
   it('says the feature arrives with a server update on an older server', async () => {
     api.listWorkspaceRoles.mockRejectedValue(new IamUnsupported())
     renderPanel(<WorkspaceRolesPanel organisationId={ORG} authority={OWNER} />)
@@ -146,11 +222,35 @@ describe('Rôles & Tags', () => {
   })
 
   it('applies the hierarchy rules', () => {
-    const delegate = { owner: false, ceiling: 5, held: new Set(['message.post'] as const) }
-    expect(mayManage(delegate, { position: 4 })).toBe(true)
-    expect(mayManage(delegate, { position: 5 })).toBe(false)
+    const delegate = {
+      owner: false,
+      admin: false,
+      ceiling: 5,
+      held: new Set(['message.post'] as const),
+    }
+    const below = role({ id: 'r-below', name: 'Below', position: 4, permissions: ['message.post'] })
+    expect(mayManage(delegate, below)).toBe(true)
+    expect(mayManage(delegate, role({ id: 'r-at', name: 'At', position: 5 }))).toBe(false)
+    // Core's default roles are never managed from the console, not even by the owner.
+    expect(
+      mayManage(delegate, role({ id: 'r-def', name: 'Default', position: 4, is_default: true }))
+    ).toBe(false)
+    expect(
+      mayManage(OWNER, role({ id: 'r-def', name: 'Default', position: 999, is_default: true }))
+    ).toBe(false)
+    // A delegate only manages roles whose capabilities they hold themselves.
+    expect(
+      mayManage(delegate, role({ id: 'r-rich', name: 'Rich', position: 4, permissions: ['manage_roles'] }))
+    ).toBe(false)
     expect(mayGrant(delegate, 'message.post')).toBe(true)
     expect(mayGrant(delegate, 'manage_roles')).toBe(false)
-    expect(mayManage(OWNER, { position: 999 })).toBe(true)
+    expect(mayManage(OWNER, role({ id: 'r-any', name: 'Any', position: 999 }))).toBe(true)
+    // An administrator manages below their ceiling and grants anything, like Core allows.
+    const admin = { owner: false, admin: true, ceiling: 5, held: new Set<never>() }
+    expect(
+      mayManage(admin, role({ id: 'r-rich', name: 'Rich', position: 4, permissions: ['manage_roles'] }))
+    ).toBe(true)
+    expect(mayManage(admin, role({ id: 'r-at', name: 'At', position: 5 }))).toBe(false)
+    expect(mayGrant(admin, 'manage_roles')).toBe(true)
   })
 })

@@ -25,6 +25,7 @@ export function role(overrides: Partial<WorkspaceRole> & Pick<WorkspaceRole, 'id
     position: 1,
     is_hoisted: false,
     is_mentionable: false,
+    is_default: false,
     permissions: [],
     member_count: 0,
     etag: `"${overrides.id}"`,
@@ -32,7 +33,7 @@ export function role(overrides: Partial<WorkspaceRole> & Pick<WorkspaceRole, 'id
   } satisfies WorkspaceRole
 }
 
-export const OWNER = { owner: true, ceiling: -1, held: new Set<never>() }
+export const OWNER = { owner: true, admin: true, ceiling: -1, held: new Set<never>() }
 
 export const WORKSPACE = {
   workspace: {

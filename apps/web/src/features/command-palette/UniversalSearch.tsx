@@ -66,6 +66,11 @@ function SearchContents({
     add(`member:${person.id}`, person.label, copy.actions, () => requestAnimationFrame(person.open))
   for (const doc of documents) add(`doc:${doc.id}`, doc.label, copy.docs, doc.open)
   for (const dm of directMessages) add(`dm:${dm.id}`, dm.label, copy.direct, dm.open)
+  // Administration sections are offered only when the caller's effective admin capability
+  // allows them; `undefined` (no shell) keeps the palette's previous behaviour.
+  const adminSections = switcher?.adminSections
+  const mayOpenSection = (section: string) =>
+    adminSections === undefined || adminSections.includes(section as (typeof adminSections)[number])
   for (const section of [
     'profile',
     'appearance',
@@ -74,6 +79,7 @@ function SearchContents({
     'extensions',
     'hosting',
   ] as const) {
+    if (!mayOpenSection(section)) continue
     add(`settings:${section}`, copy[section], copy.settings, () => {
       // Let the palette's focus restoration finish before the next modal takes focus.
       requestAnimationFrame(() =>

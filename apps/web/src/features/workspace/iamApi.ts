@@ -51,6 +51,8 @@ export interface WorkspaceRole {
   position: number
   is_hoisted: boolean
   is_mentionable: boolean
+  /** Core's built-in roles (everyone, admins…) are managed by Core itself, never edited here. */
+  is_default: boolean
   permissions: WorkspaceCapability[]
   member_count: number
   etag: string
@@ -209,6 +211,7 @@ export function parseRole(value: unknown): WorkspaceRole {
     position: typeof value['position'] === 'number' ? value['position'] : 0,
     is_hoisted: value['is_hoisted'] === true,
     is_mentionable: value['is_mentionable'] === true,
+    is_default: value['is_default'] === true,
     permissions: capabilities(value['permissions']),
     member_count: typeof value['member_count'] === 'number' ? value['member_count'] : 0,
     etag: str(value['etag']),

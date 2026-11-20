@@ -77,9 +77,14 @@ export function WorkspaceMenu({
               {copy.create}
             </Menu.Item>
           )}
-          <Menu.Item className={ITEM} onSelect={() => openWorkspaceCommand('admin')}>
-            {copy.admin}
-          </Menu.Item>
+          {/* A member with no administration access (no owner/admin role, no delegated
+              capability) gets no administration entry point at all. `undefined` — no shell, as
+              in a component test — keeps the item, the consumers' default. */}
+          {organisationSwitch?.canAdminister === false ? null : (
+            <Menu.Item className={ITEM} onSelect={() => openWorkspaceCommand('admin')}>
+              {copy.admin}
+            </Menu.Item>
+          )}
           <Menu.Item className={ITEM} onSelect={() => openWorkspaceCommand('settings')}>
             {copy.settings}
           </Menu.Item>

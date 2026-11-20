@@ -17,7 +17,7 @@ import {
   type OverrideState,
   type WorkspaceCapability,
 } from '../iamApi'
-import { CAPABILITY_GROUPS, mayManage, type RoleAuthority } from './WorkspaceRolesPanel'
+import { CAPABILITY_GROUPS, mayGrant, mayManage, type RoleAuthority } from './WorkspaceRolesPanel'
 import { iamKeys, retryUnlessUnsupported, useWorkspaceChannels, useWorkspaceRoles } from './useIam'
 import {
   Loading,
@@ -135,6 +135,14 @@ export function ChannelOverridesPanel({
   const editable = selectedRole !== undefined && mayManage(authority, selectedRole)
   const dirty = draft !== undefined && JSON.stringify(draft) !== JSON.stringify(overrides.data)
   const overridden = new Set((draft ?? []).map((row) => row.role_id))
+  // Core refuses the whole PUT when one row names a role the caller cannot manage or a
+  // capability a non-admin delegate does not hold: those cells stay read-only.
+  const roleById = new Map(roles.data.roles.map((item) => [item.id, item]))
+  const rowsBlocked = (draft ?? []).some((row) => {
+    const rowRole = roleById.get(row.role_id)
+    if (rowRole === undefined || !mayManage(authority, rowRole)) return true
+    return [...row.allow, ...row.deny].some((capability) => !mayGrant(authority, capability))
+  })
 
   function save() {
     if (draft === undefined || channel === undefined) return
@@ -204,7 +212,7 @@ export function ChannelOverridesPanel({
                   <TriState
                     label={copy.capability[capability]}
                     value={overrideState(draft, role, capability)}
-                    disabled={!editable || busy}
+                    disabled={!editable || busy || rowsBlocked || !mayGrant(authority, capability)}
                     onChange={(state) => setDraft(withOverride(draft, role, capability, state))}
                   />
                 </div>

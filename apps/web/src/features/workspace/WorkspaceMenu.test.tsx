@@ -54,3 +54,54 @@ it.each([
   expect(listener.mock.calls[0]?.[0].detail).toBe(command)
   window.removeEventListener(WORKSPACE_COMMAND_EVENT, listener)
 })
+
+it('hides the administration entry point when the caller cannot administer the workspace', async () => {
+  const user = userEvent.setup()
+  render(
+    <OrganisationSwitchContext.Provider
+      value={{
+        memberships: [{ name: 'Kodera Community', slug: 'community', current: true }],
+        onSwitch: vi.fn(),
+        canAdminister: false,
+        adminSections: [],
+      }}
+    >
+      <WorkspaceMenu
+        name="Kodera Community"
+        slug="community"
+        trigger={<button>Workspace</button>}
+      />
+    </OrganisationSwitchContext.Provider>
+  )
+  await user.click(screen.getByRole('button', { name: 'Workspace' }))
+  expect(screen.getAllByRole('menuitem')).toHaveLength(2)
+  expect(screen.queryByRole('menuitem', { name: 'Administration de l’espace…' })).toBeNull()
+  expect(screen.getByRole('menuitem', { name: 'Paramètres personnels…' })).toBeVisible()
+})
+
+it('keeps the administration entry point for a delegated manager and an administrator', async () => {
+  const user = userEvent.setup()
+  for (const canAdminister of [true, undefined]) {
+    const { unmount } = render(
+      <OrganisationSwitchContext.Provider
+        value={{
+          memberships: [{ name: 'Kodera Community', slug: 'community', current: true }],
+          onSwitch: vi.fn(),
+          ...(canAdminister === undefined
+            ? {}
+            : { canAdminister, adminSections: ['members', 'roles'] as const }),
+        }}
+      >
+        <WorkspaceMenu
+          name="Kodera Community"
+          slug="community"
+          trigger={<button>Workspace</button>}
+        />
+      </OrganisationSwitchContext.Provider>
+    )
+    await user.click(screen.getByRole('button', { name: 'Workspace' }))
+    expect(screen.getByRole('menuitem', { name: 'Administration de l’espace…' })).toBeVisible()
+    await user.keyboard('{Escape}')
+    unmount()
+  }
+})

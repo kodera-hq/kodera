@@ -138,7 +138,7 @@ test('strict style CSP: Radix primitives, the audio dock and Theme Studio raise 
 
   // Dialog: the settings, whose scroll lock now applies (an adopted stylesheet, not a `<style>`).
   await page.getByRole('button', { name: 'Réglages', exact: true }).click()
-  const settings = page.getByRole('dialog', { name: 'Réglages', exact: true })
+  const settings = page.getByRole('dialog', { name: 'Paramètres personnels', exact: true })
   await expect(settings).toBeVisible()
   await expect
     .poll(() => page.evaluate(() => getComputedStyle(document.body).overflow))

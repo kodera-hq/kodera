@@ -20,6 +20,7 @@ import {
 import { expiryIn, inviteUrl, revokeInviteLink } from '../moderation/moderationApi'
 import { PlusIcon, RevokeIcon } from './AdminIcons'
 import { iamKeys, useWorkspaceChannels, useWorkspaceProfile, useWorkspaceRoles } from './useIam'
+import { mayManage, type RoleAuthority } from './WorkspaceRolesPanel'
 import {
   ConfirmIconAction,
   Loading,
@@ -33,7 +34,13 @@ import {
 
 const NO_CHANNEL = 'none'
 
-export function InvitesPanel({ organisationId }: { organisationId: string }) {
+export function InvitesPanel({
+  organisationId,
+  authority,
+}: {
+  organisationId: string
+  authority: RoleAuthority
+}) {
   const copy = useAdminCopy()
   const date = useDateTime()
   const client = useQueryClient()
@@ -75,7 +82,12 @@ export function InvitesPanel({ organisationId }: { organisationId: string }) {
           client.setQueryData(iamKeys.profile(organisationId), saved)
           setNotice({ text: next ? copy.invitesPausedOn : copy.invitesPausedOff, tone: 'neutral' })
         },
-        (error: unknown) => setNotice({ text: problemText(error, copy), tone: 'bad' })
+        (error: unknown) => {
+          setNotice({ text: problemText(error, copy), tone: 'bad' })
+          // A stale tag (412/428) means the profile moved on: reload it so the next toggle
+          // carries a fresh etag instead of failing again.
+          void profile.refetch()
+        }
       )
       .finally(() => setBusy(false))
   }
@@ -83,12 +95,17 @@ export function InvitesPanel({ organisationId }: { organisationId: string }) {
   function create() {
     setBusy(true)
     setNotice({ text: '', tone: 'neutral' })
+    // Core refuses an auto-role the caller cannot manage (403): never send one.
+    const manageableRoles = autoRoles.filter((id) => {
+      const item = roleById.get(id)
+      return item !== undefined && mayManage(authority, item)
+    })
     void createInvite(organisationId, {
       expiresAt: expiryIn(Number(days)),
       maxUses: Number(maxUses),
       role,
       channelId: channelId === NO_CHANNEL ? undefined : channelId,
-      autoRoleIds: autoRoles,
+      autoRoleIds: manageableRoles,
     })
       .then(
         ({ code }) => {
@@ -185,6 +202,7 @@ export function InvitesPanel({ organisationId }: { organisationId: string }) {
                     key={item.id}
                     label={item.name}
                     checked={autoRoles.includes(item.id)}
+                    disabled={!mayManage(authority, item)}
                     onCheckedChange={(checked) =>
                       setAutoRoles((current) =>
                         checked === true

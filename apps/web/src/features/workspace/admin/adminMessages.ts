@@ -26,6 +26,7 @@ const fr = {
     audio: 'Voix & audio',
     notifications: 'Notifications',
     privacy: 'Confidentialité & RGPD',
+    shortcuts: 'Raccourcis',
     overview: 'Profil de l’espace',
     members: 'Membres',
     roles: 'Rôles & Tags',
@@ -84,6 +85,17 @@ const fr = {
   notificationsSoundsHint:
     'Le signal des mentions et messages directs se règle avec les sons de l’interface.',
   notificationsOpenSounds: 'Régler les sons',
+
+  // Shortcuts (read-only reference)
+  shortcutsHint: 'Les raccourcis clavier de l’espace, tels qu’ils sont câblés — lecture seule.',
+  shortcut: {
+    search: 'Ouvrir la recherche rapide',
+    members: 'Aller à la recherche de personnes',
+    channel: 'Salon au-dessus ou en dessous',
+    unread: 'Salon non lu au-dessus ou en dessous',
+    edit: 'Modifier son dernier message envoyé',
+    close: 'Fermer la fenêtre ou le panneau actif',
+  },
 
   // Profile
   profileName: 'Nom de l’espace',
@@ -280,7 +292,9 @@ const fr = {
   auditFilterActor: 'Auteur',
   auditAllActors: 'Tout le monde',
   auditPlatform: 'Kodera',
-  auditFormerMember: 'Ancien membre',
+  // An actor the directory does not resolve (its identity fact withheld from this caller):
+  // neutral, it names neither a current nor a former member.
+  auditUnknownMember: 'Membre ou ancien membre',
   auditCategory: {
     all: 'Toutes les catégories',
     role: 'un rôle',
@@ -298,6 +312,17 @@ const fr = {
       assigned: 'a attribué',
       revoked: 'a révoqué',
       replaced: 'a remplacé',
+      ban: 'a banni',
+      unban: 'a rétabli',
+      kick: 'a expulsé',
+      mute: 'a rendu muet',
+      roles_updated: 'a mis à jour les rôles de',
+      overrides_updated: 'a mis à jour les permissions de',
+      redeemed: 'a utilisé',
+      resolved: 'a résolu',
+      dismissed: 'a classé sans suite',
+      archived: 'a archivé',
+      unarchived: 'a désarchivé',
     })[verb] ?? 'a modifié',
 
   // Community
@@ -343,6 +368,7 @@ const en: AdminCopy = {
     audio: 'Voice & audio',
     notifications: 'Notifications',
     privacy: 'Privacy & GDPR',
+    shortcuts: 'Shortcuts',
     overview: 'Workspace profile',
     members: 'Members',
     roles: 'Roles & tags',
@@ -394,6 +420,17 @@ const en: AdminCopy = {
   notificationsSoundsHint:
     'The mention and direct-message signal is set with the interface sounds.',
   notificationsOpenSounds: 'Adjust sounds',
+
+  // Shortcuts (read-only reference)
+  shortcutsHint: 'The workspace’s keyboard shortcuts, as they are wired — read-only.',
+  shortcut: {
+    search: 'Open quick search',
+    members: 'Jump to people search',
+    channel: 'Channel above or below',
+    unread: 'Unread channel above or below',
+    edit: 'Edit your last sent message',
+    close: 'Close the active window or panel',
+  },
   profileName: 'Workspace name',
   profileNameHint: 'The workspace is named after your organisation.',
   profileDescription: 'Description',
@@ -574,7 +611,9 @@ const en: AdminCopy = {
   auditFilterActor: 'Actor',
   auditAllActors: 'Everyone',
   auditPlatform: 'Kodera',
-  auditFormerMember: 'Former member',
+  // An actor the directory does not resolve (its identity fact withheld from this caller):
+  // neutral, it names neither a current nor a former member.
+  auditUnknownMember: 'Workspace or former member',
   auditCategory: {
     all: 'All categories',
     role: 'a role',
@@ -592,6 +631,17 @@ const en: AdminCopy = {
       assigned: 'assigned',
       revoked: 'revoked',
       replaced: 'replaced',
+      ban: 'banned',
+      unban: 'unbanned',
+      kick: 'kicked',
+      mute: 'muted',
+      roles_updated: 'updated the roles of',
+      overrides_updated: 'updated the channel permissions of',
+      redeemed: 'redeemed',
+      resolved: 'resolved',
+      dismissed: 'dismissed',
+      archived: 'archived',
+      unarchived: 'unarchived',
     })[verb] ?? 'updated',
   communityHint:
     'Choose where newcomers land, where the rules live and where the moderation team is notified.',

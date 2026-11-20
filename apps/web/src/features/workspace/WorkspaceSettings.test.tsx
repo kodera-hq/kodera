@@ -128,6 +128,7 @@ it('persists profile changes and allows clearing the display name before typing'
 })
 
 it('opens the personal settings by default with only personal sections and no admin switch for a member', async () => {
+  const user = userEvent.setup()
   render(<WorkspaceSettings {...props} />)
   expect(screen.getByRole('heading', { level: 2, name: 'Mon profil & statut' })).toBeVisible()
   expect(screen.getByRole('dialog', { name: 'Paramètres personnels' })).toBeVisible()
@@ -139,10 +140,20 @@ it('opens the personal settings by default with only personal sections and no ad
     'Voix & audio',
     'Notifications',
     'Confidentialité & RGPD',
+    'Raccourcis',
   ])
   await waitFor(() => expect(iam.roles).toBeDefined())
   expect(screen.queryByRole('button', { name: 'Administration de l’espace' })).toBeNull()
   expect(screen.queryByRole('tab', { name: 'Rôles & Tags' })).toBeNull()
+  // The read-only shortcuts reference lists the core keys as key caps.
+  await user.click(screen.getByRole('tab', { name: 'Raccourcis' }))
+  expect(screen.getByRole('heading', { level: 2, name: 'Raccourcis' })).toBeVisible()
+  expect(screen.getByText('Ctrl+K')).toBeVisible()
+  expect(screen.getByText('Ctrl+/')).toBeVisible()
+  expect(screen.getByText('Alt+↑/↓')).toBeVisible()
+  expect(screen.getByText('Alt+Shift+↑/↓')).toBeVisible()
+  // 'Échap' also names the header's own key hint, so the tab adds a second one.
+  expect(screen.getAllByText('Échap').length).toBeGreaterThanOrEqual(2)
 })
 
 it('keeps appearance and audio available to a member', async () => {

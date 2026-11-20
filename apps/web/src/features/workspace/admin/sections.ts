@@ -8,6 +8,7 @@ export const PERSONAL_SECTIONS = [
   'audio',
   'notifications',
   'privacy',
+  'shortcuts',
 ] as const
 
 export const ADMIN_SECTIONS = [
