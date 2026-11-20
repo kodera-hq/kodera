@@ -1,7 +1,6 @@
-import django.db.models.deletion
-import django.db.models.functions.text
-import django.db.models.lookups
 from django.db import migrations, models
+from django.db.models.functions import Length
+from django.db.models.lookups import GreaterThan
 
 import core.db.ids
 
@@ -73,7 +72,7 @@ class Migration(migrations.Migration):
             field=models.ForeignKey(
                 blank=True,
                 null=True,
-                on_delete=django.db.models.deletion.RESTRICT,
+                on_delete=models.RESTRICT,
                 related_name="+",
                 to="orgs.membership",
             ),
@@ -110,9 +109,7 @@ class Migration(migrations.Migration):
                 ("permissions", models.JSONField(blank=True, default=list)),
                 (
                     "workspace",
-                    models.ForeignKey(
-                        on_delete=django.db.models.deletion.RESTRICT, to="workspaces.workspace"
-                    ),
+                    models.ForeignKey(on_delete=models.RESTRICT, to="workspaces.workspace"),
                 ),
             ],
         ),
@@ -132,21 +129,15 @@ class Migration(migrations.Migration):
                 ("updated_at", models.DateTimeField(auto_now=True)),
                 (
                     "membership",
-                    models.ForeignKey(
-                        on_delete=django.db.models.deletion.RESTRICT, to="orgs.membership"
-                    ),
+                    models.ForeignKey(on_delete=models.RESTRICT, to="orgs.membership"),
                 ),
                 (
                     "workspace",
-                    models.ForeignKey(
-                        on_delete=django.db.models.deletion.RESTRICT, to="workspaces.workspace"
-                    ),
+                    models.ForeignKey(on_delete=models.RESTRICT, to="workspaces.workspace"),
                 ),
                 (
                     "role",
-                    models.ForeignKey(
-                        on_delete=django.db.models.deletion.CASCADE, to="workspaces.workspacerole"
-                    ),
+                    models.ForeignKey(on_delete=models.CASCADE, to="workspaces.workspacerole"),
                 ),
             ],
         ),
@@ -168,21 +159,15 @@ class Migration(migrations.Migration):
                 ("deny", models.JSONField(default=list)),
                 (
                     "channel",
-                    models.ForeignKey(
-                        on_delete=django.db.models.deletion.CASCADE, to="workspaces.channel"
-                    ),
+                    models.ForeignKey(on_delete=models.CASCADE, to="workspaces.channel"),
                 ),
                 (
                     "workspace",
-                    models.ForeignKey(
-                        on_delete=django.db.models.deletion.RESTRICT, to="workspaces.workspace"
-                    ),
+                    models.ForeignKey(on_delete=models.RESTRICT, to="workspaces.workspace"),
                 ),
                 (
                     "role",
-                    models.ForeignKey(
-                        on_delete=django.db.models.deletion.CASCADE, to="workspaces.workspacerole"
-                    ),
+                    models.ForeignKey(on_delete=models.CASCADE, to="workspaces.workspacerole"),
                 ),
             ],
         ),
@@ -197,8 +182,8 @@ class Migration(migrations.Migration):
             constraint=models.CheckConstraint(
                 condition=models.Q(
                     ("name__length__range", (1, 100)),
-                    django.db.models.lookups.GreaterThan(
-                        django.db.models.functions.text.Length(
+                    GreaterThan(
+                        Length(
                             models.Func(
                                 models.F("name"),
                                 models.Value(" \t\n\r"),

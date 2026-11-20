@@ -3225,6 +3225,7 @@ def migration_create_model_names(
             "django.db.models.BigIntegerField",
             "django.db.models.BinaryField",
             "django.db.models.BooleanField",
+            "django.db.models.CASCADE",
             "django.db.models.CheckConstraint",
             "django.db.models.DateTimeField",
             "django.db.models.Deferrable.DEFERRED",
@@ -3240,10 +3241,12 @@ def migration_create_model_names(
             "django.db.models.PositiveIntegerField",
             "django.db.models.Q",
             "django.db.models.RESTRICT",
+            "django.db.models.SlugField",
             "django.db.models.TextField",
             "django.db.models.UUIDField",
             "django.db.models.UniqueConstraint",
             "django.db.models.Value",
+            "django.db.models.deletion.CASCADE",
             "django.db.models.deletion.RESTRICT",
             "django.db.models.expressions.CombinedExpression",
             "django.db.models.functions.Length",
@@ -3265,7 +3268,15 @@ def migration_create_model_names(
             "django.db.models.Deferrable.DEFERRED": {
                 ("django.db.models.UniqueConstraint", "deferrable")
             },
+            "django.db.models.CASCADE": {
+                ("django.db.models.ForeignKey", "on_delete"),
+                ("django.db.models.OneToOneField", "on_delete"),
+            },
             "django.db.models.RESTRICT": {
+                ("django.db.models.ForeignKey", "on_delete"),
+                ("django.db.models.OneToOneField", "on_delete"),
+            },
+            "django.db.models.deletion.CASCADE": {
                 ("django.db.models.ForeignKey", "on_delete"),
                 ("django.db.models.OneToOneField", "on_delete"),
             },
