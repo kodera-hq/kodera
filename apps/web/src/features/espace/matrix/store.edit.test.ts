@@ -213,7 +213,7 @@ describe('an edit names, in its new content, everyone its new text names', () =>
     expect(sent[0]?.['m.new_content']).not.toHaveProperty('m.mentions')
   })
 
-  it('preserves a renamed member in m.new_content without re-notifying in top-level m.mentions', async () => {
+  it('preserves a renamed member in m.new_content without re-notifying in outer m.mentions', async () => {
     const { store, sent } = await started({
       // Bob has renamed himself to "Robert" since the original message named "@Bob".
       names: { [BOB]: 'Robert', [CAROL]: 'Carol' },
