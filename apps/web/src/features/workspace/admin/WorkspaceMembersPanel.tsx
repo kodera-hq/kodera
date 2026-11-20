@@ -130,7 +130,7 @@ function MemberRow({
           )}
         </div>
         <MenuButton
-          label={copy.memberChangeRole(name)}
+          label={copy.memberChangeRole(name, copy.orgRole[member.role])}
           disabled={busy || targets.length === 0}
           content={
             <>

@@ -6,11 +6,12 @@ import type * as ModerationApiModule from '../moderation/moderationApi'
 import type * as WorkspaceQueriesModule from '../queries'
 import type * as MembersApiModule from './membersApi'
 import '../../../i18n'
-import { AuditLogPanel, auditCategory } from './AuditLogPanel'
+import { AuditLogPanel, auditActionVerb, auditCategory } from './AuditLogPanel'
 import { ChannelOverridesPanel } from './ChannelOverridesPanel'
 import { CommunityPanel } from './CommunityPanel'
 import { InvitesPanel } from './InvitesPanel'
 import { WorkspaceMembersPanel } from './WorkspaceMembersPanel'
+import { adminCopy } from './adminMessages'
 import { ORG, OWNER, PROFILE, renderPanel, role, WORKSPACE } from './test-support'
 
 const api = vi.hoisted(() => ({
@@ -231,9 +232,15 @@ describe('Membres', () => {
       />
     )
     expect(
-      await screen.findByRole('button', { name: 'Changer le rôle de Camille Dubois' })
+      await screen.findByRole('button', {
+        name: 'Changer le rôle de Camille Dubois (rôle actuel : Propriétaire)',
+      })
     ).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Changer le rôle de Marc Petit' })).toBeEnabled()
+    expect(
+      screen.getByRole('button', {
+        name: 'Changer le rôle de Marc Petit (rôle actuel : Membre)',
+      })
+    ).toBeEnabled()
   })
 
   it('lets an administrator without a workspace-role ceiling assign no roles', async () => {
@@ -417,6 +424,88 @@ describe('Logs d’audit', () => {
     expect(auditCategory('workspace.member.mute')).toBe('moderation')
     expect(auditCategory('workspace.profile.updated')).toBe('profile')
     expect(auditCategory('workspace.unknown')).toBeNull()
+    // Underscore-suffixed Core actions land in the same categories.
+    expect(auditCategory('workspace.channel_created')).toBe('channel')
+    expect(auditCategory('workspace.channel_archived')).toBe('channel')
+    expect(auditCategory('workspace.category_deleted')).toBe('channel')
+    expect(auditCategory('workspace.invite_link_created')).toBe('invite')
+  })
+
+  it('reads the verb of dot-separated and underscore-suffixed Core actions', () => {
+    expect(auditActionVerb('workspace.channel_created')).toBe('created')
+    expect(auditActionVerb('workspace.channel_archived')).toBe('archived')
+    expect(auditActionVerb('workspace.category_deleted')).toBe('deleted')
+    expect(auditActionVerb('workspace.channel_unarchived')).toBe('unarchived')
+    expect(auditActionVerb('workspace.invite_link_created')).toBe('created')
+    expect(auditActionVerb('workspace.invite_link_revoked')).toBe('revoked')
+    expect(auditActionVerb('workspace.role.created')).toBe('created')
+    expect(auditActionVerb('workspace.member.roles_updated')).toBe('roles_updated')
+    expect(auditActionVerb('workspace.member.ban')).toBe('ban')
+    expect(auditActionVerb('workspace.member.unban')).toBe('unban')
+  })
+
+  it('maps every Core 0.50.0 verb in French and in English, never the fallback', () => {
+    const verbs = [
+      'created',
+      'deleted',
+      'archived',
+      'unarchived',
+      'revoked',
+      'banned',
+      'unbanned',
+      'kicked',
+      'muted',
+      'unmuted',
+      'roles_updated',
+      'suspended',
+      'reactivated',
+      'removed',
+    ]
+    for (const verb of verbs) {
+      expect(adminCopy('fr').auditVerb(verb)).not.toBe('a modifié')
+      expect(adminCopy('en').auditVerb(verb)).not.toBe('updated')
+    }
+    // `updated` is the one verb whose wording is the fallback's.
+    expect(adminCopy('fr').auditVerb('updated')).toBe('a modifié')
+    expect(adminCopy('en').auditVerb('updated')).toBe('updated')
+  })
+
+  it('says what Core did for underscore-suffixed actions: created, archived, deleted', async () => {
+    api.listWorkspaceAuditLogs.mockResolvedValue({
+      data: [
+        {
+          id: 'u1',
+          occurred_at: '2026-11-18T09:00:00Z',
+          actor_id: 'identity-camille',
+          actor_type: 'tenant',
+          action: 'workspace.channel_created',
+          target_urn: 'urn:kodera:channel:c1',
+        },
+        {
+          id: 'u2',
+          occurred_at: '2026-11-18T08:00:00Z',
+          actor_id: 'identity-camille',
+          actor_type: 'tenant',
+          action: 'workspace.channel_archived',
+          target_urn: 'urn:kodera:channel:c1',
+        },
+        {
+          id: 'u3',
+          occurred_at: '2026-11-18T07:00:00Z',
+          actor_id: 'identity-camille',
+          actor_type: 'tenant',
+          action: 'workspace.category_deleted',
+          target_urn: 'urn:kodera:category:cat',
+        },
+      ],
+      hasMore: false,
+      nextCursor: null,
+    })
+    renderPanel(<AuditLogPanel organisationId={ORG} />)
+    const log = await screen.findByRole('list', { name: 'Logs d’audit' })
+    expect(log).toHaveTextContent('Camille Dubois a créé un salon')
+    expect(log).toHaveTextContent('Camille Dubois a archivé un salon')
+    expect(log).toHaveTextContent('Camille Dubois a supprimé un salon')
   })
 })
 

@@ -3,7 +3,7 @@
 // PUT — Core keeps allow and deny disjoint and applies the replacement atomically.
 
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { Button } from '../../../ui/Button/Button'
 import { cx } from '../../../ui/cx'
 import { Select } from '../../../ui/Select/Select'
@@ -50,22 +50,40 @@ export function TriState({
   onChange: (state: OverrideState) => void
 }) {
   const copy = useAdminCopy()
+  // WAI-ARIA radio-group pattern: the checked option is the group's only Tab stop, and the
+  // arrow keys move both the selection and the focus, wrapping around at both ends.
+  const options = useRef<(HTMLButtonElement | null)[]>([])
+  function move(event: KeyboardEvent<HTMLButtonElement>, from: number, delta: 1 | -1) {
+    event.preventDefault()
+    const state = STATES[(from + delta + STATES.length) % STATES.length]
+    if (state === undefined) return
+    onChange(state)
+    options.current[STATES.indexOf(state)]?.focus()
+  }
   return (
     <div
       role="radiogroup"
       aria-label={label}
       className="inline-flex shrink-0 overflow-hidden rounded-md border border-c-border"
     >
-      {STATES.map((state) => (
+      {STATES.map((state, index) => (
         <button
           key={state}
+          ref={(node) => {
+            options.current[index] = node
+          }}
           type="button"
           role="radio"
           aria-checked={value === state}
+          tabIndex={value === state ? 0 : -1}
           aria-label={copy.override[state]}
           title={copy.override[state]}
           disabled={disabled}
           onClick={() => onChange(state)}
+          onKeyDown={(event) => {
+            if (event.key === 'ArrowRight' || event.key === 'ArrowDown') move(event, index, 1)
+            else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') move(event, index, -1)
+          }}
           className={cx(
             'flex h-8 w-10 items-center justify-center text-sm text-c-ink-3 focus-visible:ring focus-visible:outline-hidden focus-visible:ring-inset',
             'narrow:h-[44px] narrow:w-[44px]',

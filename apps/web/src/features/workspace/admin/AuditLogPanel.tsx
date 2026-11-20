@@ -36,6 +36,45 @@ export const AUDIT_CATEGORIES = [
 ] as const
 export type AuditCategory = (typeof AUDIT_CATEGORIES)[number]
 
+/**
+ * The verb of a Core audit action. Core emits dot-separated actions (`workspace.role.created`,
+ * `workspace.member.roles_updated`) and underscore-suffixed ones (`workspace.channel_created`,
+ * `workspace.invite_link_revoked`): the verb is the longest known verb the action ends with, so
+ * `channel_created` reads as `created`, never as an unknown fallback.
+ */
+const AUDIT_VERBS = [
+  'roles_updated',
+  'overrides_updated',
+  'unarchived',
+  'reactivated',
+  'suspended',
+  'unbanned',
+  'unmuted',
+  'created',
+  'deleted',
+  'archived',
+  'revoked',
+  'banned',
+  'kicked',
+  'muted',
+  'removed',
+  'updated',
+  'assigned',
+  'replaced',
+  'redeemed',
+  'resolved',
+  'dismissed',
+  'ban',
+  'unban',
+  'kick',
+  'mute',
+].sort((a, b) => b.length - a.length)
+
+export function auditActionVerb(action: string): string {
+  const token = action.split('.').at(-1) ?? action
+  return AUDIT_VERBS.find((verb) => token === verb || token.endsWith(`_${verb}`)) ?? token
+}
+
 /** The category an action belongs to, from its dotted name (`workspace.role.created`). */
 export function auditCategory(action: string): Exclude<AuditCategory, 'all'> | null {
   const part = action.split('.')[1] ?? ''
@@ -156,7 +195,7 @@ export function AuditLogPanel({ organisationId }: { organisationId: string }) {
         >
           {rows.map((event) => {
             const kind = auditCategory(event.action)
-            const verb = event.action.split('.').at(-1) ?? ''
+            const verb = auditActionVerb(event.action)
             return (
               <li key={event.id} className="flex items-start justify-between gap-3 py-2 text-sm">
                 <div className="min-w-0">

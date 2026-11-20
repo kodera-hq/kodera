@@ -322,7 +322,9 @@ it('names members without raw Matrix addresses and says « Propriétaire », not
   expect(within(list).getByText('Camille Dubois')).toBeVisible()
   expect(within(list).getByText('marc.petit')).toBeVisible()
   expect(
-    within(list).getByRole('button', { name: 'Changer le rôle de Camille Dubois' })
+    within(list).getByRole('button', {
+      name: 'Changer le rôle de Camille Dubois (rôle actuel : Propriétaire)',
+    })
   ).toHaveTextContent('Propriétaire')
   expect(list.textContent).not.toMatch(/@[0-9a-f-]{36}:/u)
   expect(list.textContent).not.toMatch(/org_owner|Owner|HTTP|40\d|50\d/u)

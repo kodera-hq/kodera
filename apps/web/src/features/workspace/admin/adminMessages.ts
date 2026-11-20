@@ -200,7 +200,10 @@ const fr = {
   membersHint:
     'Changez le rôle d’une personne en deux clics et attribuez-lui rôles, sous-équipes et tags. Le dernier propriétaire ne peut pas être rétrogradé.',
   memberSearch: 'Rechercher une personne',
-  memberChangeRole: (name: string) => `Changer le rôle de ${name}`,
+  // The trigger visibly shows the member's current role, so the accessible name carries that
+  // exact visible label too (WCAG 2.5.3 label in name).
+  memberChangeRole: (name: string, role: string) =>
+    `Changer le rôle de ${name} (rôle actuel : ${role})`,
   memberRoleChanged: (name: string, role: string) =>
     `${name} est maintenant ${role.toLowerCase()}.`,
   memberRoles: (name: string) => `Rôles de ${name}`,
@@ -316,6 +319,14 @@ const fr = {
       unban: 'a rétabli',
       kick: 'a expulsé',
       mute: 'a rendu muet',
+      banned: 'a banni',
+      unbanned: 'a rétabli',
+      kicked: 'a expulsé',
+      muted: 'a rendu muet',
+      unmuted: 'a rendu la parole à',
+      suspended: 'a suspendu',
+      reactivated: 'a réactivé',
+      removed: 'a retiré',
       roles_updated: 'a mis à jour les rôles de',
       overrides_updated: 'a mis à jour les permissions de',
       redeemed: 'a utilisé',
@@ -529,7 +540,10 @@ const en: AdminCopy = {
   membersHint:
     'Change a person’s role in two clicks and assign roles, sub-teams and tags. The last owner cannot be demoted.',
   memberSearch: 'Search people',
-  memberChangeRole: (name: string) => `Change ${name}’s role`,
+  // The trigger visibly shows the member's current role, so the accessible name carries that
+  // exact visible label too (WCAG 2.5.3 label in name).
+  memberChangeRole: (name: string, role: string) =>
+    `Change ${name}’s role (current role: ${role})`,
   memberRoleChanged: (name: string, role: string) => `${name} is now ${role.toLowerCase()}.`,
   memberRoles: (name: string) => `${name}’s roles`,
   memberRoleAdd: (name: string) => `Assign a role to ${name}`,
@@ -635,6 +649,14 @@ const en: AdminCopy = {
       unban: 'unbanned',
       kick: 'kicked',
       mute: 'muted',
+      banned: 'banned',
+      unbanned: 'unbanned',
+      kicked: 'kicked',
+      muted: 'muted',
+      unmuted: 'unmuted',
+      suspended: 'suspended',
+      reactivated: 'reactivated',
+      removed: 'removed',
       roles_updated: 'updated the roles of',
       overrides_updated: 'updated the channel permissions of',
       redeemed: 'redeemed',
