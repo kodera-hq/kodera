@@ -4,11 +4,13 @@
 // it points at, a redaction empties a message, reactions count per key, a thread reply stays in
 // its thread.
 
+import { cleanText } from '../../../ui/safeText'
 import {
   attachmentRefsOf,
   attachmentsFallback,
   type AttachmentRef,
 } from '../../messaging/attachments/attachmentRefs'
+import { isMatrixUserId } from '../roomInvitations'
 
 /** A Matrix event as the client-server API delivers it, the part Espace reads. */
 export interface RawEvent {
@@ -28,6 +30,14 @@ export interface TimelineEvent extends RawEvent {
   local?: 'pending' | 'failed'
   /** The sender's display name in the room, when the homeserver holds one. */
   sender_name?: string
+  /** The sender's avatar in the room (`m.room.member` `avatar_url`), an `mxc://` address. */
+  sender_avatar?: string
+}
+
+/** A member a message names with a pill: `@label` in its text, `userId` behind it. */
+export interface MentionPill {
+  userId: string
+  label: string
 }
 
 export interface Reaction {
@@ -62,6 +72,12 @@ export interface MessageView {
   reactions: Reaction[]
   /** Another member's message that names the signed-in one in its `m.mentions`; absent otherwise. */
   mentionsMe?: true
+  /** The message names the whole room (`m.mentions.room`, « @salon »). */
+  mentionsRoom?: true
+  /** The members its HTML names with a `matrix.to` pill, as its text writes them. */
+  mentionPills?: MentionPill[]
+  /** The sender's avatar in the room, an `mxc://` address the screen resolves (`avatarCache.ts`). */
+  avatarMxc?: string
 }
 
 type Relation = { rel_type?: unknown; event_id?: unknown; key?: unknown; 'm.in_reply_to'?: unknown }
@@ -81,12 +97,52 @@ function text(content: unknown): string | null {
   return typeof body === 'string' ? body : null
 }
 
-/** Whether the message's intentional mentions (`m.mentions.user_ids`) name `me`. */
+/** Whether the message's intentional mentions (`m.mentions.user_ids`, or `room`) name `me`. */
 function mentions(content: Record<string, unknown>, me: string): boolean {
   const value = content['m.mentions']
   if (value === null || typeof value !== 'object') return false
   const userIds = (value as { user_ids?: unknown }).user_ids
-  return Array.isArray(userIds) && userIds.includes(me)
+  return (Array.isArray(userIds) && userIds.includes(me)) || mentionsRoom(content)
+}
+
+function mentionsRoom(content: Record<string, unknown>): boolean {
+  const value = content['m.mentions']
+  return value !== null && typeof value === 'object' && (value as { room?: unknown }).room === true
+}
+
+const PILL = /<a\s+href="https:\/\/matrix\.to\/#\/(@[^"/?]+)"\s*>@?([^<]{1,80})<\/a>/giu
+
+function decodeEntities(text: string): string {
+  return text
+    .replace(/&lt;/gu, '<')
+    .replace(/&gt;/gu, '>')
+    .replace(/&quot;/gu, '"')
+    .replace(/&#39;/gu, "'")
+    .replace(/&amp;/gu, '&')
+}
+
+/**
+ * The user pills of a message's HTML (`<a href="https://matrix.to/#/@id">Name</a>`), read with a
+ * pattern and never parsed as HTML: only the id and the words go on, as text.
+ */
+export function mentionPillsOf(content: Record<string, unknown>): MentionPill[] {
+  if (content.format !== 'org.matrix.custom.html') return []
+  const html = content.formatted_body
+  if (typeof html !== 'string' || html.length > 65_536) return []
+  const pills = new Map<string, MentionPill>()
+  for (const match of html.matchAll(PILL)) {
+    let userId: string
+    try {
+      userId = decodeURIComponent(match[1]!)
+    } catch {
+      continue
+    }
+    if (!isMatrixUserId(userId)) continue
+    const label = cleanText(decodeEntities(match[2]!).trim(), 80)
+    if (label !== '' && !pills.has(`${userId}\n${label}`))
+      pills.set(`${userId}\n${label}`, { userId, label })
+  }
+  return [...pills.values()]
 }
 
 function collectRelations(events: readonly TimelineEvent[]) {
@@ -132,6 +188,12 @@ function messageText(
   return { body: body === attachmentsFallback(attachments) ? '' : body, attachments }
 }
 
+function pillsOf(event: TimelineEvent, redacted: boolean): { mentionPills?: MentionPill[] } {
+  if (redacted) return {}
+  const pills = mentionPillsOf(event.content)
+  return pills.length === 0 ? {} : { mentionPills: pills }
+}
+
 function toMessageView(
   event: TimelineEvent,
   me: string,
@@ -164,6 +226,9 @@ function toMessageView(
     ...(!redacted && event.sender !== me && mentions(event.content, me)
       ? { mentionsMe: true }
       : {}),
+    ...(!redacted && mentionsRoom(event.content) ? { mentionsRoom: true } : {}),
+    ...pillsOf(event, redacted),
+    ...(event.sender_avatar === undefined ? {} : { avatarMxc: event.sender_avatar }),
     reactions: redacted
       ? []
       : [...(reactions.get(event.event_id) ?? new Map<string, Set<string>>())].map(

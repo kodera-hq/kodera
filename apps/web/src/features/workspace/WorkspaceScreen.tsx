@@ -103,13 +103,13 @@ const STATE_TITLE: Record<WorkspaceView['kind'], MessageKey> = {
 function LoadingState() {
   const { t } = useTranslation()
   return (
-    <div className="flex flex-1 gap-6 px-6 py-5 narrow:p-0">
-      <div className="flex w-shell-sidebar-width flex-col gap-3 narrow:hidden">
+    <div className="flex min-h-0 flex-1">
+      <div className="material-panel flex w-shell-sidebar-width shrink-0 flex-col gap-3 border-r border-c-border-soft p-3 narrow:hidden">
         <Skeleton shape="block" label={t('console.common.a11y-loading')} />
         <Skeleton shape="text" />
         <Skeleton shape="text" />
       </div>
-      <div className="flex flex-1 flex-col gap-3">
+      <div className="flex flex-1 flex-col gap-3 px-6 py-5 narrow:p-0">
         <Skeleton shape="block" />
       </div>
     </div>

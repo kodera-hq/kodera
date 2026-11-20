@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { directMap, directPeople, directRooms, existingDirect, withDirect } from './directs'
+import {
+  directMap,
+  directPeople,
+  directRooms,
+  existingDirect,
+  isMatrixRoomId,
+  withDirect,
+} from './directs'
 
 const ME = '@me:kodera.test'
 const ALICE = '@alice:kodera.test'
@@ -57,4 +64,47 @@ describe('direct conversations', () => {
       [BOB]: ['!g:kodera.test'],
     })
   })
+
+  it('accepts room version 12 opaque room ids, which carry no server name', () => {
+    const V12 = '!31hneApxJ_1o-63DmFrpeqnkFfWppnzWso1JvH3ogLM'
+    expect(isMatrixRoomId(V12)).toBe(true)
+    expect(isMatrixRoomId('!a:kodera.test')).toBe(true)
+    expect(isMatrixRoomId('!')).toBe(false)
+    expect(isMatrixRoomId('!has space')).toBe(false)
+    expect(isMatrixRoomId('!a:')).toBe(false)
+    expect(isMatrixRoomId('!a/b')).toBe(false)
+    expect(isMatrixRoomId('!a..b')).toBe(false)
+    expect(isMatrixRoomId('!a?query=1')).toBe(false)
+    expect(isMatrixRoomId('!a#frag')).toBe(false)
+    expect(isMatrixRoomId('!a\u202eb')).toBe(false)
+    expect(isMatrixRoomId('!a:https://evil.test')).toBe(false)
+    expect(isMatrixRoomId('!a:-bad.host')).toBe(false)
+    expect(isMatrixRoomId(`!${'a'.repeat(255)}`)).toBe(false)
+    expect(isMatrixRoomId('#alias:kodera.test')).toBe(false)
+    expect(isMatrixRoomId(4)).toBe(false)
+    const map = directMap({ [ALICE]: [V12, '!a:kodera.test', V12], [BOB]: ['!bad id'] })
+    expect([...map]).toEqual([[ALICE, [V12, '!a:kodera.test']]])
+    const rooms = directRooms(map)
+    expect(existingDirect(rooms, [ALICE], (id) => id === V12)).toBe(V12)
+    expect(withDirect(map, V12, [BOB])[BOB]).toEqual([V12])
+  })
+
+  it('guards withDirect against prototype keys and malformed room or user identifiers', () => {
+    const poisoned = new Map<string, readonly string[]>([
+      ['__proto__', ['!evil:kodera.test']],
+      ['toString', ['!evil:kodera.test']],
+      [ALICE, ['!a:kodera.test', '!bad/path']],
+    ])
+    const result = withDirect(poisoned, V12_SAFE, ['__proto__', 'toString', 'constructor', BOB])
+    expect(result).toEqual({
+      [ALICE]: ['!a:kodera.test'],
+      [BOB]: [V12_SAFE],
+    })
+    expect(({} as Record<string, unknown>)['!evil:kodera.test']).toBeUndefined()
+    expect(withDirect(directMap({ [ALICE]: ['!a:kodera.test'] }), '!bad/room', [BOB])).toEqual({
+      [ALICE]: ['!a:kodera.test'],
+    })
+  })
 })
+
+const V12_SAFE = '!yQ3LoeaSVpUe_valid-v12'

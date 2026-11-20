@@ -18,6 +18,7 @@ import { AudioDock } from '../../ui/AudioDock/AudioDock'
 import { Button } from '../../ui/Button/Button'
 import { InlineAlert } from '../../ui/InlineAlert/InlineAlert'
 import { profileMessages } from '../profile/profileMessages'
+import { usePassportServices } from '../profile/passportContext'
 import { studioMessages } from '../workspace/studioMessages'
 import type { CallProblem, VideoProblem } from './audio/call'
 import { callPreferences } from './audio/callPreferences'
@@ -75,6 +76,7 @@ const NO_REJOIN: RejoinSnapshot = Object.freeze({
 })
 const subscribeToNoRejoin = () => () => undefined
 const noRejoin = () => NO_REJOIN
+const noAvatarVersion = () => 0
 
 function canShareScreen(): boolean {
   return typeof globalThis.navigator?.mediaDevices?.getDisplayMedia === 'function'
@@ -121,6 +123,8 @@ function VoiceCallDockView({
   )
   // The people in the room are named, and given their role, from the store.
   const snapshot = useSyncExternalStore(store.subscribe, store.getSnapshot)
+  const avatars = usePassportServices()?.avatars
+  useSyncExternalStore(avatars?.subscribe ?? subscribeToNoRejoin, avatars?.getVersion ?? noAvatarVersion)
   const preferences = useSyncExternalStore(callPreferences.subscribe, callPreferences.getSnapshot)
   // A preview adapter makes no media: no video, no retry, no push-to-talk on it.
   const realCall = call !== null && call.mode !== 'local-preview' ? call : null
@@ -333,13 +337,26 @@ function VoiceCallDockView({
             layout="studio"
             localParticipantId={viewerId}
             previewCamera={call.mode === 'local-preview'}
-            participants={people.map((id) => ({
-              id,
-              name: nameOf(id),
-              roleLabel:
-                profileCopy[store.getProfileRole?.(callSnapshot.roomId ?? '', id) ?? 'member'],
-              speaking: dockStatus === 'connected' && callSnapshot.speakers.includes(id),
-            }))}
+            participants={people.map((id) => {
+              const mxc =
+                id === viewerId ? store.getOwnProfile?.()?.avatarUrl : callRoom?.avatars?.[id]
+              const avatarSrc = mxc === undefined ? undefined : avatars?.get(mxc)
+              return {
+                id,
+                name: nameOf(id),
+                roleLabel:
+                  profileCopy[store.getProfileRole?.(callSnapshot.roomId ?? '', id) ?? 'member'],
+                speaking: dockStatus === 'connected' && callSnapshot.speakers.includes(id),
+                ...(avatarSrc === undefined
+                  ? {}
+                  : {
+                      avatarSrc,
+                      onAvatarError: () => {
+                        if (mxc !== undefined) avatars?.forget(mxc)
+                      },
+                    }),
+              }
+            })}
             participantsLabel={
               preJoin
                 ? t('console.workspace.audio.label-already-here')

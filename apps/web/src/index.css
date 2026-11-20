@@ -524,3 +524,60 @@
     }
   }
 }
+
+/* The first-run Kodera Passport (`features/profile/KoderaPassportModal.tsx`): the monogram's seven
+   strokes rise into place one after another, then the preview card settles. Only `transform` and
+   `opacity` move, so the compositor draws every frame; under reduced motion nothing moves at all
+   and the monogram and card are simply there. */
+@layer components {
+  @media (prefers-reduced-motion: no-preference) {
+    .passport-monogram path {
+      transform-box: fill-box;
+      transform-origin: center;
+      will-change: transform, opacity;
+      animation: passport-stroke var(--dur-slow) var(--ease-out) both;
+    }
+    .passport-monogram path:nth-child(2) {
+      animation-delay: 60ms;
+    }
+    .passport-monogram path:nth-child(3) {
+      animation-delay: 120ms;
+    }
+    .passport-monogram path:nth-child(4) {
+      animation-delay: 180ms;
+    }
+    .passport-monogram path:nth-child(5) {
+      animation-delay: 240ms;
+    }
+    .passport-monogram path:nth-child(6) {
+      animation-delay: 300ms;
+    }
+    .passport-monogram path:nth-child(7) {
+      animation-delay: 360ms;
+    }
+    .passport-preview {
+      will-change: transform, opacity;
+      animation: passport-settle var(--dur-slow) var(--ease-out) 240ms both;
+    }
+    @keyframes passport-stroke {
+      from {
+        opacity: 0;
+        transform: translate3d(0, 24%, 0) scale(0.6);
+      }
+      to {
+        opacity: 1;
+        transform: translate3d(0, 0, 0) scale(1);
+      }
+    }
+    @keyframes passport-settle {
+      from {
+        opacity: 0;
+        transform: translate3d(0, var(--sp-2), 0) scale(0.98);
+      }
+      to {
+        opacity: 1;
+        transform: translate3d(0, 0, 0) scale(1);
+      }
+    }
+  }
+}

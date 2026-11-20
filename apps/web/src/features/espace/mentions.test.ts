@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { MENTION_LIMIT, insertMention, matchingMembers, mentionAt, mentionedIn } from './mentions'
+import {
+  MENTION_LIMIT,
+  insertMention,
+  matchesRoomMention,
+  matchingMembers,
+  mentionAt,
+  mentionAtWith,
+  mentionedIn,
+  mentionTargetsIn,
+  mentionsRoom,
+} from './mentions'
 
 const ALICE = { userId: '@henri.duflot:kodera.test', label: 'Henri Duflot' }
 const ALICE_SHORT = { userId: '@henri:kodera.test', label: 'Henri' }
@@ -69,5 +79,52 @@ describe('the members a text names', () => {
     const members = [ALICE_SHORT, ALICE]
     expect(mentionedIn('@Henri Duflot', members)).toEqual([ALICE.userId])
     expect(mentionedIn('@Henri, @Henri', members)).toEqual([ALICE_SHORT.userId])
+  })
+})
+
+const MIGUEL = { userId: '@miguel:kodera.test', label: 'Miguel Victoria' }
+
+describe('a multi-word name being typed', () => {
+  it('stays one mention while a member’s name goes on that way', () => {
+    expect(mentionAtWith('Salut @Miguel Vic', 17, [MIGUEL])).toEqual({
+      start: 6,
+      query: 'Miguel Vic',
+    })
+    expect(mentionAtWith('@Miguel ', 8, [MIGUEL])).toEqual({ start: 0, query: 'Miguel ' })
+    expect(matchingMembers([MIGUEL, ALICE], 'miguel vic')).toEqual([MIGUEL])
+  })
+
+  it('ends at the first word no name has, so the rest is the message', () => {
+    expect(mentionAtWith('@Miguel est là', 14, [MIGUEL])).toBeNull()
+    expect(mentionAtWith('@al ', 4, [ALICE])).toBeNull()
+    expect(mentionAtWith('@al', 3, [])).toEqual({ start: 0, query: 'al' })
+  })
+})
+
+describe('the whole room', () => {
+  it('is offered for « @sal » and « @ro », and named by « @salon » or « @room » alone', () => {
+    expect(matchesRoomMention('sal')).toBe(true)
+    expect(matchesRoomMention('RO')).toBe(true)
+    expect(matchesRoomMention('salons')).toBe(false)
+    expect(mentionsRoom('@salon réunion à 14 h')).toBe(true)
+    expect(mentionsRoom('Bonjour @room!')).toBe(true)
+    expect(mentionsRoom('@salons')).toBe(false)
+    expect(mentionsRoom('mail@salon.fr')).toBe(false)
+  })
+})
+
+describe('the mention targets of a message', () => {
+  it('are the named members with the label the text writes, once each', () => {
+    expect(
+      mentionTargetsIn('@Miguel Victoria et @Henri Duflot, @Miguel Victoria', [
+        MIGUEL,
+        ALICE,
+        ALICE_SHORT,
+      ])
+    ).toEqual([
+      { userId: MIGUEL.userId, label: 'Miguel Victoria' },
+      { userId: ALICE.userId, label: 'Henri Duflot' },
+    ])
+    expect(mentionTargetsIn('rien', [MIGUEL])).toEqual([])
   })
 })

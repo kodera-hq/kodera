@@ -3,7 +3,7 @@
 // replies, whether its thread is open), changes. A keystroke in the composer, a sound level in a
 // call or a sidebar being resized draws no message again.
 
-import { memo, useRef } from 'react'
+import { memo, useRef, useState } from 'react'
 import type { MouseEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { formatTime } from '../../i18n/format'
@@ -13,6 +13,8 @@ import { TimelineMessage } from '../../ui/TimelineMessage/TimelineMessage'
 import type { ThreadParticipant } from '../../ui/TimelineMessage/TimelineMessage'
 import type { ChannelDoc } from '../docs/ChannelDocsEditor'
 import { useLocalProfile } from '../profile/localProfile'
+import { usePassportServices } from '../profile/passportContext'
+import { useAvatarSrc } from './useAvatarSrc'
 import { profileMessages } from '../profile/profileMessages'
 import {
   UserProfilePopover,
@@ -22,7 +24,8 @@ import {
 import { studioMessages } from '../workspace/studioMessages'
 import { nameOf, sameItems } from './liveViewModel'
 import type { MessageView } from './matrix/timeline'
-import { MessageText } from './MessageText'
+import { MessageText, type MentionMember } from './MessageText'
+import { isMatrixUserId } from './roomInvitations'
 import { MessageAttachments } from '../messaging/attachments/MessageAttachments'
 import { UnfurlCard } from '../messaging/unfurl/UnfurlCard'
 import { ReactionPalette } from './ReactionPalette'
@@ -55,6 +58,8 @@ export interface MessageRowProps extends MessageRowActions {
   onMention: ((member: MemberProfile) => void) | undefined
   onlineLabel?: string | undefined
   message: MessageView
+  /** The message continues its author's run above it: no avatar, no header (`continuesRun`). */
+  compact?: boolean | undefined
   placement: 'timeline' | 'thread'
   viewerId: string
   archived: boolean
@@ -68,6 +73,10 @@ export interface MessageRowProps extends MessageRowActions {
   pinned?: boolean | undefined
   /** Pins or unpins it; absent where the member may not change the room's pins. */
   onPin?: ((eventId: string, pinned: boolean) => void) | undefined
+  /** Authoritative room members for rendering `@Name` mention pills without spoofing. */
+  mentionMembers?: readonly MentionMember[] | undefined
+  /** Resolves a Matrix user ID to its authoritative room profile; never trusts sender HTML labels. */
+  resolveMember?: ((userId: string) => MemberProfile) | undefined
 }
 
 /** One mounted message; only activation reports a timeline opener to the view. */
@@ -75,6 +84,7 @@ function MessageRowView({
   document,
   onOpenDocument,
   message: msg,
+  compact = false,
   profileRole,
   onMention,
   onlineLabel,
@@ -95,6 +105,8 @@ function MessageRowView({
   onOpenThread,
   pinned = false,
   onPin,
+  mentionMembers,
+  resolveMember,
 }: MessageRowProps) {
   const { t, i18n } = useTranslation()
   const locale = i18n.resolvedLanguage === 'en' ? 'en' : 'fr'
@@ -112,7 +124,47 @@ function MessageRowView({
     presence,
     role: profileRole,
     ...(msg.sender === viewerId ? { status: profile.status } : {}),
+    ...(msg.avatarMxc === undefined ? {} : { avatarMxc: msg.avatarMxc }),
   }
+  const avatarSrc = useAvatarSrc(usePassportServices()?.avatars, msg.avatarMxc)
+  // Authoritative room members lead; sender-authored HTML pills cannot override an authoritative
+  // member's name or hijack another room member's display name.
+  const authoritativeByUser = new Map<string, string>()
+  const authoritativeByLowerName = new Map<string, string>()
+  const effectiveMembers: MentionMember[] = []
+  const registerAuthoritative = (userId: string, name: string | undefined) => {
+    const clean = name?.trim()
+    if (!clean || authoritativeByUser.has(userId)) return
+    authoritativeByUser.set(userId, clean)
+    if (!authoritativeByLowerName.has(clean.toLowerCase())) {
+      authoritativeByLowerName.set(clean.toLowerCase(), userId)
+    }
+    effectiveMembers.push({ userId, name: clean })
+  }
+  for (const item of mentionMembers ?? []) registerAuthoritative(item.userId, item.name)
+  registerAuthoritative(msg.sender, authorName)
+  for (const candidate of msg.mentionPills ?? []) {
+    if (!isMatrixUserId(candidate.userId)) continue
+    const label = candidate.label.trim()
+    if (label === '') continue
+    const owner = authoritativeByLowerName.get(label.toLowerCase())
+    if (owner !== undefined && owner !== candidate.userId) continue
+    const knownName = authoritativeByUser.get(candidate.userId)
+    if (knownName !== undefined) continue
+    effectiveMembers.push({ userId: candidate.userId, name: label })
+  }
+  const [pill, setPill] = useState<{ userId: string; anchor: HTMLElement } | null>(null)
+  const pillMember: MemberProfile | null =
+    pill === null
+      ? null
+      : pill.userId === msg.sender
+        ? member
+        : (resolveMember?.(pill.userId) ?? {
+            userId: pill.userId,
+            name: authoritativeByUser.get(pill.userId) ?? pill.userId,
+            presence: 'offline',
+            role: 'member',
+          })
   const isoTime = new Date(msg.ts).toISOString()
   const isOwn = msg.sender === viewerId
   const allowWrite = !isReadOnlyChannel && canWrite
@@ -132,6 +184,7 @@ function MessageRowView({
       }
       author={authorName}
       avatarIdentity={msg.sender}
+      {...(avatarSrc === undefined ? {} : { avatarSrc })}
       avatarOnlineLabel={presence === 'offline' ? undefined : copy[presence]}
       profileTrigger={(trigger) => (
         <UserProfilePopover
@@ -143,6 +196,7 @@ function MessageRowView({
       dateTime={isoTime}
       timeLabel={formatTime(isoTime, locale)}
       focused={!inThread && expanded}
+      compact={compact}
       {...(msg.mentionsMe === true
         ? { mention: t('console.workspace.message.label-mentions-you') }
         : {})}
@@ -288,7 +342,23 @@ function MessageRowView({
         )
       }
     >
-      {msg.body === '' ? null : <MessageText body={msg.body} />}
+      {msg.body === '' ? null : (
+        <MessageText
+          body={msg.body}
+          members={effectiveMembers}
+          onMentionClick={(userId, anchor) => {
+            if (isMatrixUserId(userId)) setPill({ userId, anchor })
+          }}
+        />
+      )}
+      {pill === null || pillMember === null ? null : (
+        <UserProfilePopover
+          member={pillMember}
+          anchor={pill.anchor}
+          onAnchorClose={() => setPill(null)}
+          onMention={pill.userId === viewerId || !allowWrite ? undefined : onMention}
+        />
+      )}
       {msg.attachments === undefined ? null : <MessageAttachments refs={msg.attachments} />}
       {msg.redacted ? null : <UnfurlCard body={msg.body} />}
     </TimelineMessage>
@@ -299,6 +369,18 @@ function MessageRowView({
  * A thread's replies are the same while each reply is: a store that rebuilds the array for an
  * unchanged thread has changed nothing a message draws.
  */
+function sameMentionMembers(
+  left: readonly MentionMember[] | undefined,
+  right: readonly MentionMember[] | undefined
+): boolean {
+  if (left === right) return true
+  if (left === undefined || right === undefined || left.length !== right.length) return false
+  for (let i = 0; i < left.length; i += 1) {
+    if (left[i]!.userId !== right[i]!.userId || left[i]!.name !== right[i]!.name) return false
+  }
+  return true
+}
+
 function sameRow(previous: MessageRowProps, next: MessageRowProps): boolean {
   const keys = new Set([...Object.keys(previous), ...Object.keys(next)]) as Set<
     keyof MessageRowProps
@@ -306,6 +388,8 @@ function sameRow(previous: MessageRowProps, next: MessageRowProps): boolean {
   for (const key of keys) {
     if (key === 'threadReplies') {
       if (!sameItems(previous.threadReplies, next.threadReplies)) return false
+    } else if (key === 'mentionMembers') {
+      if (!sameMentionMembers(previous.mentionMembers, next.mentionMembers)) return false
     } else if (!Object.is(previous[key], next[key])) return false
   }
   return true

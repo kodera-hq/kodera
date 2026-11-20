@@ -34,6 +34,7 @@ export class AttachmentQueue {
   readonly #mayUpload: (room: string) => boolean
   #rooms = new Map<string, readonly QueuedFile[]>()
   #aborts = new Map<string, AbortController>()
+  #sources = new Map<string, { room: string; file: File }>()
   #listeners = new Set<() => void>()
   #serial = 0
   #generation = 0
@@ -76,55 +77,26 @@ export class AttachmentQueue {
           return
         }
         this.#put(room, { ...base, status: 'uploading' })
-        let checked
-        try {
-          checked = preflight(file, await headOf(file))
-        } catch {
-          this.#replace(room, key, { ...base, status: 'failed' })
-          return
-        }
-        if (!checked.ok) {
-          this.#replace(room, key, { ...base, status: 'refused', reason: checked.reason })
-          return
-        }
-        if (!this.#mayUpload(room)) {
-          this.#replace(room, key, { ...base, status: 'failed' })
-          return
-        }
-        if (generation !== this.#generation || !this.files(room).some((entry) => entry.key === key))
-          return
-        const named = { ...base, filename: checked.filename }
-        const abort = new AbortController()
-        this.#aborts.set(key, abort)
-        try {
-          const stored = await this.#upload({
-            organisationId: this.#organisationId,
-            file,
-            checked,
-            signal: abort.signal,
-            mayUpload: () => generation === this.#generation && this.#mayUpload(room),
-          })
-          this.#replace(room, key, {
-            ...named,
-            status: 'ready',
-            ref: {
-              id: stored.id,
-              filename: checked.filename,
-              contentType: checked.contentType,
-              sizeBytes: checked.sizeBytes,
-            },
-          })
-        } catch {
-          this.#replace(room, key, { ...named, status: 'failed' })
-        } finally {
-          this.#aborts.delete(key)
-        }
+        await this.#send(room, key, file, base, generation)
       })
     )
   }
 
+  /** Re-sends a failed file in place without asking the member to choose it again. */
+  async retry(room: string, key: string): Promise<void> {
+    const existing = this.files(room).find((item) => item.key === key)
+    const source = this.#sources.get(key)
+    if (existing?.status !== 'failed' || source?.room !== room || !this.#mayUpload(room)) return
+    const generation = this.#generation
+    const base = { key, filename: existing.filename, sizeBytes: existing.sizeBytes }
+    this.#sources.delete(key)
+    this.#replace(room, key, { ...base, status: 'uploading' })
+    await this.#send(room, key, source.file, base, generation)
+  }
+
   remove(room: string, key: string): void {
     this.#aborts.get(key)?.abort()
+    this.#sources.delete(key)
     this.#set(
       room,
       this.files(room).filter((file) => file.key !== key)
@@ -133,15 +105,77 @@ export class AttachmentQueue {
 
   /** Forgets the room's list once its message is sent. */
   clear(room: string): void {
-    for (const file of this.files(room)) this.#aborts.get(file.key)?.abort()
+    for (const file of this.files(room)) {
+      this.#aborts.get(file.key)?.abort()
+      this.#sources.delete(file.key)
+    }
     this.#set(room, NONE)
   }
 
   /** Stops every upload: the composer is gone. */
   close(): void {
     this.#generation += 1
+    this.#sources.clear()
     for (const abort of this.#aborts.values()) abort.abort()
     this.#aborts.clear()
+  }
+
+  async #send(
+    room: string,
+    key: string,
+    file: File,
+    base: { key: string; filename: string; sizeBytes: number },
+    generation: number
+  ): Promise<void> {
+    const rememberFailure = (named = base) => {
+      if (generation === this.#generation && this.files(room).some((entry) => entry.key === key)) {
+        this.#sources.set(key, { room, file })
+      }
+      this.#replace(room, key, { ...named, status: 'failed' })
+    }
+    let checked
+    try {
+      checked = preflight(file, await headOf(file))
+    } catch {
+      rememberFailure()
+      return
+    }
+    if (!checked.ok) {
+      this.#replace(room, key, { ...base, status: 'refused', reason: checked.reason })
+      return
+    }
+    if (!this.#mayUpload(room)) {
+      rememberFailure()
+      return
+    }
+    if (generation !== this.#generation || !this.files(room).some((entry) => entry.key === key))
+      return
+    const named = { ...base, filename: checked.filename }
+    const abort = new AbortController()
+    this.#aborts.set(key, abort)
+    try {
+      const stored = await this.#upload({
+        organisationId: this.#organisationId,
+        file,
+        checked,
+        signal: abort.signal,
+        mayUpload: () => generation === this.#generation && this.#mayUpload(room),
+      })
+      this.#replace(room, key, {
+        ...named,
+        status: 'ready',
+        ref: {
+          id: stored.id,
+          filename: checked.filename,
+          contentType: checked.contentType,
+          sizeBytes: checked.sizeBytes,
+        },
+      })
+    } catch {
+      rememberFailure(named)
+    } finally {
+      this.#aborts.delete(key)
+    }
   }
 
   #put(room: string, file: QueuedFile) {

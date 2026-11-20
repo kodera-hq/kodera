@@ -73,7 +73,14 @@ export interface AudioDockMediaToggle {
 
 export interface AudioDockProps {
   /** The region's accessible name, e.g. « Appel en cours ». */
-  participants?: readonly { id: string; name: string; speaking: boolean; roleLabel?: string }[]
+  participants?: readonly {
+    id: string
+    name: string
+    speaking: boolean
+    roleLabel?: string
+    avatarSrc?: string | undefined
+    onAvatarError?: (() => void) | undefined
+  }[]
   participantsLabel?: string
   localParticipantId?: string
   previewCamera?: boolean
@@ -325,7 +332,13 @@ export function AudioDock({
                     <span className="text-center text-xs">{copy.cameraPreview}</span>
                   </div>
                 ) : (
-                  <Avatar name={person.name} identity={person.id} size="lg" />
+                  <Avatar
+                    name={person.name}
+                    identity={person.id}
+                    size="lg"
+                    {...(person.onAvatarError === undefined ? {} : { onError: person.onAvatarError })}
+                    {...(person.avatarSrc === undefined ? {} : { src: person.avatarSrc })}
+                  />
                 )}
                 <span className="rounded-full bg-c-inverse px-2 py-1 text-xs text-c-on-inverse-dim">
                   {person.id === localParticipantId

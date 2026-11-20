@@ -170,7 +170,10 @@ describe('mentions in the composer', () => {
     expect(screen.queryByRole('listbox')).toBeNull()
 
     await user.type(composer, 'tu as vu ?{Enter}')
-    expect(store.send).toHaveBeenCalledWith(ROOM, '@Bob Dupont tu as vu ?', { mentions: [BOB] })
+    expect(store.send).toHaveBeenCalledWith(ROOM, '@Bob Dupont tu as vu ?', {
+      mentions: [BOB],
+      mentionTargets: [{ userId: BOB, label: 'Bob Dupont' }],
+    })
   })
 
   it('finds a name without its accents, and chooses it with a click', async () => {
@@ -208,6 +211,10 @@ describe('mentions in the composer', () => {
     await user.type(composer, '@Marina Loiseau, et @Bob Dupont.{Escape}{Enter}')
     expect(store.send).toHaveBeenCalledWith(ROOM, '@Marina Loiseau, et @Bob Dupont.', {
       mentions: [ALICE, BOB],
+      mentionTargets: [
+        { userId: ALICE, label: 'Marina Loiseau' },
+        { userId: BOB, label: 'Bob Dupont' },
+      ],
     })
   })
 
@@ -250,6 +257,7 @@ describe('mentions in the composer', () => {
     await user.click(send)
     expect(store.send).toHaveBeenCalledWith(ROOM, 'Salut @Bob Dupont fin', {
       mentions: [BOB],
+      mentionTargets: [{ userId: BOB, label: 'Bob Dupont' }],
     })
   })
 
@@ -259,6 +267,10 @@ describe('mentions in the composer', () => {
     const composer = renderView(store)
     await user.type(composer, 'Merci')
     await user.tab()
+    expect(screen.getByRole('button', { name: 'Joindre des fichiers' })).toHaveFocus()
+    await user.tab()
+    expect(screen.getByRole('button', { name: /Commande/i })).toHaveFocus()
+    await user.tab()
     expect(screen.getByRole('button', { name: 'Mentionner' })).toHaveFocus()
     await user.keyboard('{Enter}')
     expect(composer).toHaveValue('Merci @')
@@ -266,7 +278,7 @@ describe('mentions in the composer', () => {
     expect(composer).toHaveAttribute('aria-controls')
     // One bordered box for the field and its tools, ringed while the focus is in it.
     expect(
-      screen.getByRole('button', { name: 'Mentionner' }).parentElement?.parentElement
+      screen.getByRole('button', { name: 'Mentionner' }).closest('.composer-frame-focus')
     ).toHaveClass('focus-within:ring')
   })
 
@@ -331,6 +343,7 @@ describe('mentions in the composer', () => {
     await user.type(input, '@bo{Enter}ok{Enter}')
     expect(store.send).toHaveBeenCalledWith(ROOM, '@Bob Dupont ok', {
       mentions: [BOB],
+      mentionTargets: [{ userId: BOB, label: 'Bob Dupont' }],
       threadRootId: '$m1',
     })
   })
@@ -449,7 +462,10 @@ describe('member profile cards', () => {
     expect(composer).toHaveValue('Hello @Marina Loiseau ')
     expect(composer).toHaveFocus()
     await user.keyboard('{Enter}')
-    expect(store.send).toHaveBeenCalledWith(ROOM, 'Hello @Marina Loiseau', { mentions: [ALICE] })
+    expect(store.send).toHaveBeenCalledWith(ROOM, 'Hello @Marina Loiseau', {
+      mentions: [ALICE],
+      mentionTargets: [{ userId: ALICE, label: 'Marina Loiseau' }],
+    })
   })
 
   it('opens member cards and keeps the members panel open when Escape dismisses a profile', async () => {

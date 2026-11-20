@@ -2,6 +2,7 @@ import { Link } from '@tanstack/react-router'
 import { isDemoActive } from './interactiveDemo'
 import { useTranslation } from 'react-i18next'
 import { moduleGlyphName, railSurfaces } from './railModules'
+import { RailDirectsGroup } from './RailDirects'
 import type { RailSurface, RailSurfaceItem } from './railModules'
 import type { OrganisationRole } from './Sidebar'
 import type { UserBlockUser } from './UserBlock'
@@ -137,6 +138,10 @@ export function ModuleRail({
           </Link>
         </Tooltip>
       )}
+
+      {/* The workspace's direct conversations, under the organisation's mark: their button, then
+          the faces of the people with unread messages (`RailDirects.tsx`). */}
+      {surface === 'workspace' ? <RailDirectsGroup /> : null}
 
       <ul className="flex w-full flex-1 flex-col items-center gap-1 border-t border-c-rail-line pt-3">
         {apps.map((app) => (

@@ -80,17 +80,37 @@ describe('universal Matrix invitation links', () => {
 })
 
 describe('Matrix channel invitation dialog', () => {
+  it('leads with the web link and its code, and keeps Matrix addresses in a collapsed section', async () => {
+    const user = userEvent.setup()
+    const clipboard = vi.spyOn(navigator.clipboard, 'writeText')
+    const props = setup()
+    render(<ChannelInviteDialog {...props} />)
+    await user.click(screen.getByTestId('espace-channel-invite-btn'))
+    const dialog = screen.getByRole('dialog')
+    const web = `${window.location.origin}/community/workspace/${props.channel.id}`
+    const copyWeb = within(dialog).getByRole('button', { name: 'Copier : Lien Web Kodera' })
+    const form = dialog.querySelector('form')!
+    expect(copyWeb.compareDocumentPosition(form) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    await user.click(copyWeb)
+    expect(clipboard).toHaveBeenLastCalledWith(web)
+    expect(dialog.querySelector('svg[role="img"]')).not.toBeNull()
+    const advanced = dialog.querySelector('details')!
+    expect(advanced.open).toBe(false)
+    expect(within(advanced).getByText('Lien universel Matrix (matrix.to)')).toBeInTheDocument()
+  })
+
   it('copies every displayed format in one click and reports clipboard failure', async () => {
     const user = userEvent.setup()
     const clipboard = vi.spyOn(navigator.clipboard, 'writeText')
     render(<ChannelInviteDialog {...setup()} />)
     await user.click(screen.getByTestId('espace-channel-invite-btn'))
     const dialog = screen.getByRole('dialog')
+    await user.click(dialog.querySelector('summary')!)
     const expected = [
+      `${window.location.origin}/community/workspace/${setup().channel.id}`,
       'https://matrix.to/#/%23partner-onboarding%3Ademo.invalid?via=community.kodera.io',
       '#partner-onboarding:demo.invalid',
       'matrix:r/partner-onboarding:demo.invalid?action=join&via=community.kodera.io',
-      `${window.location.origin}/community/workspace/${setup().channel.id}`,
     ]
     const buttons = within(dialog).getAllByRole('button', { name: /^Copier :/ })
     for (const [index, button] of buttons.entries()) {

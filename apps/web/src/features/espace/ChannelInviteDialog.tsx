@@ -4,6 +4,7 @@ import { Button } from '../../ui/Button/Button'
 import { CopyableField } from '../../ui/CopyableField/CopyableField'
 import { Dialog } from '../../ui/Dialog/Dialog'
 import { InlineAlert } from '../../ui/InlineAlert/InlineAlert'
+import { QrPanel } from '../../ui/QrPanel/QrPanel'
 import { TextField } from '../../ui/TextField/TextField'
 import type { WorkspaceChannel } from '../workspace/workspace'
 import type { EspaceStoreLike } from './EspaceLiveView'
@@ -143,6 +144,8 @@ function InviteForm({
     }
   }
 
+  // The advanced addresses, for a Matrix client of the invitee's own: collapsed by default, since
+  // the web link opens the channel for everyone, in Kodera or in a browser.
   const fields = [
     {
       key: 'matrixTo',
@@ -163,10 +166,34 @@ function InviteForm({
       label: t('console.workspace.channel-invite.matrix-uri'),
       value: links.matrixUri,
     },
-    { key: 'web', label: t('console.workspace.channel-invite.web'), value: links.web },
   ]
+  const copyProps = {
+    copyLabel: t('console.common.action-copy'),
+    copiedLabel: t('console.workspace.channel-invite.copied'),
+  }
+  const webLabel = t('console.workspace.channel-invite.web')
   return (
     <div className="flex max-h-[calc(60vh)] flex-col gap-4 overflow-y-auto">
+      {/* The one link most people need, first: a single click copies it, and the code opens it
+      on a phone. */}
+      <QrPanel
+        value={links.web}
+        size="sm"
+        className="shrink-0"
+        alt={t('console.workspace.channel-invite.qr-alt', { channel: channel.name })}
+        failureMessage={t('console.workspace.channel-invite.qr-unavailable')}
+        code={{
+          ...copyProps,
+          label: webLabel,
+          value: links.web,
+          layout: 'stacked',
+          status: copied === 'web' ? 'copied' : 'idle',
+          copyAccessibleLabel: t('console.workspace.channel-invite.copy', { label: webLabel }),
+          onCopy: () => {
+            void copy('web', links.web)
+          },
+        }}
+      />
       <form
         noValidate
         onSubmit={(event) => {
@@ -214,23 +241,31 @@ function InviteForm({
           )}
         </div>
       </form>
-      <p className="text-sm text-c-ink-2">{t('console.workspace.channel-invite.clients')}</p>
-      {fields.map((field) => (
-        <CopyableField
-          key={field.key}
-          label={field.label}
-          value={field.value}
-          layout="stacked"
-          status={copied === field.key ? 'copied' : 'idle'}
-          className="shrink-0"
-          copyLabel={t('console.common.action-copy')}
-          copyAccessibleLabel={t('console.workspace.channel-invite.copy', { label: field.label })}
-          copiedLabel={t('console.workspace.channel-invite.copied')}
-          onCopy={() => {
-            void copy(field.key, field.value)
-          }}
-        />
-      ))}
+      <details className="group shrink-0 rounded-md border border-c-border-soft">
+        <summary className="cursor-pointer rounded-md px-3 py-2 text-sm font-semibold text-c-ink-2 hover:text-c-ink focus-visible:ring focus-visible:outline-hidden">
+          {t('console.workspace.channel-invite.advanced')}
+        </summary>
+        <div className="flex flex-col gap-3 px-3 pt-1 pb-3">
+          <p className="text-sm text-c-ink-2">{t('console.workspace.channel-invite.clients')}</p>
+          {fields.map((field) => (
+            <CopyableField
+              key={field.key}
+              {...copyProps}
+              label={field.label}
+              value={field.value}
+              layout="stacked"
+              status={copied === field.key ? 'copied' : 'idle'}
+              className="shrink-0"
+              copyAccessibleLabel={t('console.workspace.channel-invite.copy', {
+                label: field.label,
+              })}
+              onCopy={() => {
+                void copy(field.key, field.value)
+              }}
+            />
+          ))}
+        </div>
+      </details>
       {copyError ? (
         <InlineAlert kind="error">{t('console.workspace.channel-invite.copy-error')}</InlineAlert>
       ) : null}

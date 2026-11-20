@@ -309,6 +309,7 @@ test('channels, messages, reactions, threads, invitations and notes work togethe
     .fill('@qa:matrix.example')
   await page.getByRole('button', { name: 'Envoyer l’invitation Matrix', exact: true }).click()
   await expect(page.getByRole('dialog')).toContainText('Invitation Matrix envoyée')
+  await page.getByRole('dialog').locator('summary').click()
   for (const [name, prefix] of [
     ['Lien universel Matrix (matrix.to)', 'https://matrix.to/'],
     ['URI native Matrix', 'matrix:'],

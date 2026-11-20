@@ -20,9 +20,11 @@ import {
   HttpApiEvent,
   MatrixError,
   MemoryStore,
+  Method,
   MsgType,
   NotificationCountType,
   Preset,
+  PushRuleKind,
   PendingEventOrdering,
   RoomEvent,
   RoomStateEvent,
@@ -45,6 +47,7 @@ import {
   directPeople,
   directRooms,
   existingDirect,
+  isMatrixRoomId,
   withDirect,
   type DirectSummary,
 } from './directs'
@@ -59,6 +62,9 @@ import {
   type TimelineEvent,
 } from './timeline'
 import { openTimelineCache, type TimelineCache } from './timelineCache'
+import { AvatarCache, isMxcUrl } from './avatarCache'
+import { HTML_FORMAT, markdownToHtml, type MentionTarget } from '../../messaging/markdownHtml'
+import { passportOf, PASSPORT_KEY, type Passport } from '../../profile/passport'
 import {
   RoomBoundaryTracker,
   ConfidentialRoomUnavailable,
@@ -77,6 +83,10 @@ export type History = 'more' | 'loading' | 'failed' | 'start'
 
 export interface SendOptions {
   mentions?: string[]
+  /** The message names the whole room (« @salon »): `m.mentions.room`. */
+  mentionsRoom?: boolean
+  /** The named members as the text writes them, linked as pills in the message's HTML. */
+  mentionTargets?: readonly MentionTarget[]
   replyTo?: string
   threadRootId?: string
   /** Files already stored by Core, named by id (docs/specs/messaging-media-and-notifications.md). */
@@ -99,6 +109,8 @@ export interface RoomSummary {
   occupancy: Occupancy | null
   /** The display names of the audio room's occupants that have one, by Matrix user id. */
   names?: Readonly<Record<string, string>>
+  /** The avatars of the audio room's occupants that have one, `mxc://` addresses by user id. */
+  avatars?: Readonly<Record<string, string>>
   /**
    * A text channel's people, the signed-in member included and Kodera's own accounts left out:
    * from the homeserver's count (the sync's `m.joined_member_count`), right even while only some
@@ -125,6 +137,16 @@ export interface MemberView {
   userId: string
   /** The room's display name; absent when it has none, and the id is all there is. */
   name?: string
+  /** The member's avatar in the room, an `mxc://` address (`avatarCache.ts` draws it). */
+  avatarMxc?: string
+}
+
+/** A newcomer's arrival in a room: their join event, when, who they are, and whether waved at. */
+export interface ArrivalView extends MemberView {
+  eventId: string
+  ts: number
+  /** The signed-in member already sent a 👋 reaction on this join event. */
+  waved?: boolean
 }
 
 export interface InviteView {
@@ -280,8 +302,24 @@ function displayName(room: Room, userId: string, disambiguate = true): string | 
  * character would draw a face of « 9 ». The header draws a person glyph for a face with no name.
  */
 function faceOf(room: Room, userId: string): MemberView {
-  const name = displayName(room, userId, false)
-  return name === undefined ? { userId } : { userId, name }
+  return memberOf(room, userId, false)
+}
+
+/** The member's avatar in the room, when it is an address the cache resolves. */
+function avatarOf(room: Room, userId: string): string | undefined {
+  const mxc = room.getMember(userId)?.getMxcAvatarUrl()
+  return isMxcUrl(mxc) ? mxc : undefined
+}
+
+/** A member as a screen draws them: their name in the room, when they have one, and avatar. */
+function memberOf(room: Room, userId: string, disambiguate = true): MemberView {
+  const name = displayName(room, userId, disambiguate)
+  const avatarMxc = avatarOf(room, userId)
+  return {
+    userId,
+    ...(name === undefined ? {} : { name }),
+    ...(avatarMxc === undefined ? {} : { avatarMxc }),
+  }
 }
 
 async function readBoundedAvatarBytes(
@@ -458,6 +496,13 @@ export class EspaceStore {
   /** `m.direct` changed since the last rebuild: the direct conversations are read again. */
   #directsChanged = false
   #directs: { snapshot: EspaceSnapshot; list: readonly DirectSummary[] } | null = null
+  /** Members' avatars as `blob:` addresses, fetched with the member's token (`avatarCache.ts`). */
+  readonly #avatars: AvatarCache
+  /** Passports read from members' profiles, by user id; `null` once asked and none found. */
+  readonly #passports = new Map<string, Passport | null>()
+  readonly #passportsAsked = new Set<string>()
+  #pushRulesChecked = false
+  readonly #arrivals = new Map<string, { snapshot: EspaceSnapshot; list: readonly ArrivalView[] }>()
   /** Rooms whose join is under way or was refused (`M_FORBIDDEN`). */
   readonly #joins = new Map<string, RoomJoinState>()
   #joinsChanged = false
@@ -539,6 +584,7 @@ export class EspaceStore {
       fetchFn: this.#fetch,
     })
     clients.set(this, this.#client)
+    this.#avatars = new AvatarCache((mxc) => this.fetchAvatar(mxc))
   }
 
   /**
@@ -629,7 +675,14 @@ export class EspaceStore {
       this.#schedule()
     })
     on(ClientEvent.AccountData, (event: MatrixEvent) => {
-      if (this.#stopped || event.getType() !== 'm.direct') return
+      if (this.#stopped) return
+      if (event.getType() === PASSPORT_KEY) {
+        this.#passports.set(this.#me, passportOf(event.getContent()))
+        this.#snapshot = { ...this.#snapshot }
+        this.#schedule()
+        return
+      }
+      if (event.getType() !== 'm.direct') return
       this.#directsChanged = true
       this.#schedule()
     })
@@ -783,6 +836,7 @@ export class EspaceStore {
       this.#joinCooldownTimer = null
     }
     this.#joinRateLimitedUntil = 0
+    this.#avatars.close()
     this.#status = status
     this.#snapshot = { ...this.#snapshot, status }
     this.#emit()
@@ -842,6 +896,68 @@ export class EspaceStore {
       if (id !== undefined && shown.has(id)) return id
     }
     return null
+  }
+
+  /**
+   * The people who joined the room in its loaded timeline (`m.room.member`, `membership` turning
+   * to `join`), oldest first, Kodera's own accounts and the member left out: the welcome channel
+   * greets each with a card (`ArrivalCard`). The same array for the same snapshot.
+   */
+  getArrivals = (roomId: string): readonly ArrivalView[] => {
+    const cached = this.#arrivals.get(roomId)
+    if (cached?.snapshot === this.#snapshot) return cached.list
+    const room = this.#client.getRoom(roomId)
+    const liveEvents = room?.getLiveTimeline().getEvents() ?? []
+    const wavedEventIds = new Set<string>()
+    if (room !== null) {
+      for (const event of [...liveEvents, ...room.getPendingEvents()]) {
+        if (event.getType() !== 'm.reaction' || event.isRedacted()) continue
+        if (event.getSender() !== this.#me) continue
+        const relates = (event.getOriginalContent() as Record<string, unknown>)['m.relates_to'] as
+          | { rel_type?: unknown; event_id?: unknown; key?: unknown }
+          | undefined
+        if (
+          relates?.rel_type === 'm.annotation' &&
+          typeof relates.event_id === 'string' &&
+          relates.key === '👋'
+        ) {
+          wavedEventIds.add(relates.event_id)
+        }
+      }
+    }
+    const seenUsers = new Set<string>()
+    const list: ArrivalView[] = []
+    for (const event of liveEvents) {
+      if (event.getType() !== EventType.RoomMember) continue
+      const userId = event.getStateKey()
+      const eventId = event.getId()
+      if (userId === undefined || eventId === undefined || room === null) continue
+      if (userId === this.#me || this.#services.has(userId) || seenUsers.has(userId)) continue
+      if (event.getContent().membership !== 'join') continue
+      if (event.getPrevContent().membership === 'join') continue
+      seenUsers.add(userId)
+      const ts = event.getTs()
+      list.push({
+        eventId,
+        ts: Number.isFinite(ts) ? ts : 0,
+        ...(wavedEventIds.has(eventId) ? { waved: true } : {}),
+        ...memberOf(room, userId),
+      })
+    }
+    const previous = cached?.list
+    const same =
+      previous !== undefined &&
+      previous.length === list.length &&
+      previous.every(
+        (item, at) =>
+          item.eventId === list[at]!.eventId &&
+          item.name === list[at]!.name &&
+          item.avatarMxc === list[at]!.avatarMxc &&
+          item.waved === list[at]!.waved
+      )
+    const next = same ? previous : list
+    this.#arrivals.set(roomId, { snapshot: this.#snapshot, list: next })
+    return next
   }
 
   /** One thread's replies, oldest first; the same array until one of them changes. */
@@ -1002,6 +1118,7 @@ export class EspaceStore {
     const status = this.#stopped ? this.#snapshot.status : this.#status
     if (status === 'live') {
       this.#loadOwnProfileIfMissing()
+      this.#ensureMentionRules()
       this.#syncWantedJoins(rooms)
       this.#recheck(rooms, invites)
     }
@@ -1040,8 +1157,11 @@ export class EspaceStore {
         ? occupancyOf(room.currentState.getStateEvents(OCCUPANCY, '')?.getContent())
         : null
     const names: Record<string, string> = {}
+    const avatars: Record<string, string> = {}
     for (const userId of occupancy?.participants ?? []) {
       const name = displayName(room, userId)
+      const avatar = avatarOf(room, userId)
+      if (avatar !== undefined) avatars[userId] = avatar
       if (name !== undefined) names[userId] = name
       // Someone in the call who never wrote here is not among the lazy-loaded members.
       else if (room.getMember(userId) === null) this.loadMembers(room.roomId)
@@ -1056,6 +1176,7 @@ export class EspaceStore {
       mentions: room.getUnreadNotificationCount(NotificationCountType.Highlight),
       occupancy,
       names,
+      ...(Object.keys(avatars).length === 0 ? {} : { avatars }),
       ...(kind === 'text'
         ? { joined: this.#peopleCount(room), faces: this.#headerFaces(room) }
         : {}),
@@ -1150,10 +1271,7 @@ export class EspaceStore {
     return room
       .getJoinedMembers()
       .filter((member) => member.userId !== this.#me && !this.#services.has(member.userId))
-      .map((member): MemberView => {
-        const name = displayName(room, member.userId)
-        return name === undefined ? { userId: member.userId } : { userId: member.userId, name }
-      })
+      .map((member): MemberView => memberOf(room, member.userId))
       .sort(
         (a, b) =>
           Number(a.name === undefined) - Number(b.name === undefined) ||
@@ -1375,6 +1493,7 @@ export class EspaceStore {
             : undefined
       const txn = event.getTxnId() ?? (event.getUnsigned().transaction_id as string | undefined)
       const senderName = displayName(room, event.getSender() ?? '')
+      const senderAvatar = avatarOf(room, event.getSender() ?? '')
       return {
         event_id: id,
         type: event.getType(),
@@ -1387,6 +1506,7 @@ export class EspaceStore {
         ...(txn === undefined ? {} : { key: txn }),
         ...(local === undefined ? {} : { local }),
         ...(senderName === undefined ? {} : { sender_name: senderName }),
+        ...(senderAvatar === undefined ? {} : { sender_avatar: senderAvatar }),
       }
     })
   }
@@ -1471,10 +1591,9 @@ export class EspaceStore {
     let room: ChannelRoom | null
     try {
       const answer = (await this.#client.getRoomIdForAlias(alias)) as { room_id?: unknown }
-      room =
-        typeof answer.room_id === 'string' && answer.room_id.startsWith('!')
-          ? { state: 'resolved', roomId: answer.room_id }
-          : null
+      room = isMatrixRoomId(answer.room_id)
+        ? { state: 'resolved', roomId: answer.room_id }
+        : null
     } catch (error) {
       // The directory's own 404: anything else (a proxy's 404 page among them) is a failure.
       room =
@@ -1564,22 +1683,37 @@ export class EspaceStore {
             }
           : undefined
     const attachments = options.attachments ?? []
+    // The Markdown the member typed, as HTML other Matrix clients draw; `body` stays the text.
+    const html = body === '' ? null : markdownToHtml(body, options.mentionTargets ?? [])
+    const mentions =
+      options.mentions === undefined && options.mentionsRoom !== true
+        ? undefined
+        : {
+            user_ids: options.mentions ?? [],
+            ...(options.mentionsRoom === true ? { room: true } : {}),
+          }
     await this.#client.sendMessage(roomId, {
       msgtype: MsgType.Text,
       // Other clients show the files' names when the message has no text of its own.
       body: body === '' && attachments.length > 0 ? attachmentsFallback(attachments) : body,
+      ...(html === null ? {} : { format: HTML_FORMAT, formatted_body: html }),
       ...(attachments.length === 0 ? {} : { [ATTACHMENTS_FIELD]: attachments }),
-      ...(options.mentions === undefined ? {} : { 'm.mentions': { user_ids: options.mentions } }),
+      ...(mentions === undefined ? {} : { 'm.mentions': mentions }),
       ...(relatesTo === undefined ? {} : { 'm.relates_to': relatesTo }),
     } as never)
   }
 
   async edit(roomId: string, eventId: string, body: string): Promise<void> {
     this.#requirePlaintextRoom(roomId)
+    const html = markdownToHtml(body)
     await this.#client.sendMessage(roomId, {
       msgtype: MsgType.Text,
       body: `* ${body}`,
-      'm.new_content': { msgtype: MsgType.Text, body },
+      'm.new_content': {
+        msgtype: MsgType.Text,
+        body,
+        ...(html === null ? {} : { format: HTML_FORMAT, formatted_body: html }),
+      },
       'm.relates_to': { rel_type: 'm.replace', event_id: eventId },
     } as never)
   }
@@ -1623,6 +1757,23 @@ export class EspaceStore {
     }
   }
 
+  #hasOwnReaction(roomId: string, eventId: string, key: string): boolean {
+    const room = this.#client.getRoom(roomId)
+    if (room === null) return false
+    return [...room.getLiveTimeline().getEvents(), ...room.getPendingEvents()].some((event) => {
+      if (event.getType() !== 'm.reaction' || event.isRedacted()) return false
+      if (event.getSender() !== this.#me) return false
+      const relates = (event.getOriginalContent() as Record<string, unknown>)['m.relates_to'] as
+        | { rel_type?: unknown; event_id?: unknown; key?: unknown }
+        | undefined
+      return (
+        relates?.rel_type === 'm.annotation' &&
+        relates.event_id === eventId &&
+        relates.key === key
+      )
+    })
+  }
+
   async toggleReaction(roomId: string, eventId: string, key: string): Promise<void> {
     const messages = this.#timelines.get(roomId) ?? NONE
     let target = messages.find((m) => m.eventId === eventId)
@@ -1632,8 +1783,11 @@ export class EspaceStore {
         if (target !== undefined) break
       }
     }
-    const existing = target?.reactions.find((r) => r.key === key)
-    if (existing?.mine === true) {
+    const mine =
+      target !== undefined
+        ? target.reactions.some((r) => r.key === key && r.mine)
+        : this.#hasOwnReaction(roomId, eventId, key)
+    if (mine) {
       await this.unreact(roomId, eventId, key)
     } else {
       await this.react(roomId, eventId, key)
@@ -1656,7 +1810,14 @@ export class EspaceStore {
       const room = this.#client.getRoom(roomId)
       if (summary === undefined || room === null) continue
       const names = userIds.map((userId) => safeDisplayName(displayName(room, userId), userId))
-      list.push({ roomId, userIds, name: names.join(', '), unread: summary.unread })
+      const avatarMxc = userIds.length === 1 ? avatarOf(room, userIds[0]!) : undefined
+      list.push({
+        roomId,
+        userIds,
+        name: names.join(', '),
+        unread: summary.unread,
+        ...(avatarMxc === undefined ? {} : { avatarMxc }),
+      })
     }
     list.sort((a, b) => a.name.localeCompare(b.name))
     const previous = this.#directs?.list
@@ -1667,7 +1828,8 @@ export class EspaceStore {
         (item, at) =>
           item.roomId === list[at]!.roomId &&
           item.name === list[at]!.name &&
-          item.unread === list[at]!.unread
+          item.unread === list[at]!.unread &&
+          item.avatarMxc === list[at]!.avatarMxc
       )
     this.#directs = { snapshot, list: same ? previous : list }
     return this.#directs.list
@@ -1772,6 +1934,7 @@ export class EspaceStore {
       preset: Preset.PrivateChat,
       visibility: Visibility.Private,
     })
+    if (!isMatrixRoomId(roomId)) throw new Error('Invalid Matrix room ID')
     // Someone invited later reads only what is sent from their invitation on. Nothing has been
     // sent yet, so nobody reads anything before it.
     await this.#client.sendStateEvent(
@@ -1877,9 +2040,14 @@ export class EspaceStore {
    * what came back is not a bounded raster PNG, JPEG or WebP image.
    */
   async fetchOwnAvatar(size = 96): Promise<Blob | null> {
-    if (this.#stopped) return null
     const mxcUrl = this.getOwnProfile().avatarUrl
-    if (mxcUrl === undefined || !mxcUrl.startsWith('mxc://')) return null
+    return mxcUrl === undefined ? null : this.fetchAvatar(mxcUrl, size)
+  }
+
+  /** Any member's avatar as bytes, as `fetchOwnAvatar` fetches the member's own. */
+  async fetchAvatar(mxcUrl: string, size = 96): Promise<Blob | null> {
+    if (this.#stopped) return null
+    if (!mxcUrl.startsWith('mxc://')) return null
     const href = this.#client.mxcUrlToHttp(mxcUrl, size, size, 'crop', undefined, true, true)
     if (!href) return null
     let parsed: URL
@@ -1957,6 +2125,111 @@ export class EspaceStore {
       this.#emit()
     }
     return uri
+  }
+
+  /** Members' avatars as `blob:` addresses this page holds (`avatarCache.ts`). */
+  getAvatarCache = (): AvatarCache => this.#avatars
+
+  /**
+   * A member's Kodera Passport (`passport.ts`): the member's own from their account data, another
+   * member's from their profile, asked once per session. `undefined` while not known.
+   */
+  getPassport = (userId: string): Passport | undefined => {
+    if (userId === this.#me) {
+      const own = this.#passports.get(userId)
+      if (own !== undefined && own !== null) return own
+      const data = this.#client.getAccountData(PASSPORT_KEY as never)?.getContent()
+      return data === undefined ? undefined : passportOf(data)
+    }
+    const known = this.#passports.get(userId)
+    if (known !== undefined) return known ?? undefined
+    this.#loadPassport(userId)
+    return undefined
+  }
+
+  #loadPassport(userId: string): void {
+    if (this.#stopped || this.#passportsAsked.has(userId) || !isMatrixUserId(userId)) return
+    this.#passportsAsked.add(userId)
+    void this.#client
+      .getProfileInfo(userId)
+      .then((info) => {
+        if (this.#stopped) return
+        const value = (info as Record<string, unknown>)[PASSPORT_KEY]
+        this.#passports.set(userId, value === undefined ? null : passportOf(value))
+        this.#snapshot = { ...this.#snapshot }
+        this.#emit()
+      })
+      .catch(() => {
+        if (!this.#stopped) this.#passports.set(userId, null)
+      })
+  }
+
+  /**
+   * Saves the member's passport: to their account data, and as a field of their global profile
+   * where the homeserver keeps custom fields, so others read it too. Only the account data has to
+   * succeed; a homeserver without extended profiles keeps the passport the member's own.
+   */
+  async setPassport(passport: Passport): Promise<void> {
+    if (this.#stopped) throw new Error('Espace is stopped')
+    const next = passportOf(passport)
+    await this.#client.setAccountData(PASSPORT_KEY as never, next as never)
+    if (this.#stopped) return
+    this.#passports.set(this.#me, next)
+    this.#snapshot = { ...this.#snapshot }
+    this.#emit()
+    const { onboarded: _onboarded, ...shared } = next
+    await this.#client.setExtendedProfileProperty(PASSPORT_KEY, shared).catch(() => undefined)
+  }
+
+  /**
+   * Makes sure a mention reaches the member mentioned, once per session and silently: a homeserver
+   * older than intentional mentions has no `.m.rule.is_user_mention` / `.m.rule.is_room_mention`,
+   * and then Kodera adds its own override rules on `m.mentions` with the same effect. A rule the
+   * member turned off is theirs and is left off; a refusal changes nothing the member does.
+   */
+  #ensureMentionRules(): void {
+    if (this.#pushRulesChecked || this.#stopped) return
+    this.#pushRulesChecked = true
+    void (async () => {
+      // The homeserver's own answer: the SDK's `getPushRules` fills in defaults on this device.
+      const rules = await this.#client.http.authedRequest<{
+        global?: { override?: { rule_id: string }[] }
+      }>(Method.Get, '/pushrules/')
+      const override = rules.global?.override
+      // No override list at all is no ruleset to complete: a homeserver serves its defaults.
+      if (!Array.isArray(override) || override.length === 0) return
+      const ids = new Set(override.map((rule) => rule.rule_id))
+      const wanted = [
+        {
+          standard: '.m.rule.is_user_mention',
+          ruleId: 'io.kodera.rule.is_user_mention',
+          conditions: [
+            {
+              kind: 'event_property_contains',
+              key: 'content.m\\.mentions.user_ids',
+              value: this.#me,
+            },
+          ],
+          actions: ['notify', { set_tweak: 'highlight' }, { set_tweak: 'sound', value: 'default' }],
+        },
+        {
+          standard: '.m.rule.is_room_mention',
+          ruleId: 'io.kodera.rule.is_room_mention',
+          conditions: [
+            { kind: 'event_property_is', key: 'content.m\\.mentions.room', value: true },
+            { kind: 'sender_notification_permission', key: 'room' },
+          ],
+          actions: ['notify', { set_tweak: 'highlight' }],
+        },
+      ]
+      for (const rule of wanted) {
+        if (this.#stopped || ids.has(rule.standard) || ids.has(rule.ruleId)) continue
+        await this.#client.addPushRule('global', PushRuleKind.Override, rule.ruleId, {
+          conditions: rule.conditions,
+          actions: rule.actions,
+        } as never)
+      }
+    })().catch(() => undefined)
   }
 
   /** Removes the member's avatar; their initials stand for them again. */

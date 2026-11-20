@@ -1,7 +1,7 @@
 // The bell beside the organisation's name: the member's notifications, how many are unread, and
 // this browser's Web Push switch (docs/specs/messaging-media-and-notifications.md).
 
-import { useEffect, useState, useSyncExternalStore } from 'react'
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '../../ui/Button/Button'
 import { cx } from '../../ui/cx'
@@ -9,6 +9,7 @@ import { Popover } from '../../ui/Popover/Popover'
 import { Switch } from '../../ui/Switch/Switch'
 import { TOUCH_TARGET } from '../../ui/touchTarget'
 import type { EspaceStoreLike } from '../espace/liveViewModel'
+import type { RoomSummary } from '../espace/matrix/store'
 import { PendingInvitations } from '../espace/PendingInvitations'
 import { NotificationFeed, POLL_MS, type Notification } from './notificationFeed'
 import { currentSubscription, disablePush, enablePush, pushSupported } from './push'
@@ -16,6 +17,7 @@ import { currentSubscription, disablePush, enablePush, pushSupported } from './p
 const feed = new NotificationFeed()
 const subscribeToNone = () => () => undefined
 const noSnapshot = () => undefined
+const NO_ROOMS: readonly RoomSummary[] = []
 
 function BellIcon() {
   return (
@@ -105,7 +107,14 @@ function when(iso: string, language: string | undefined): string {
   )
 }
 
-function NotificationItem({ item }: { item: Notification }) {
+function NotificationItem({
+  item,
+  onOpen,
+}: {
+  item: Notification
+  /** Opens what the notification is about; without it the item is only read. */
+  onOpen: ((item: Notification) => void) | undefined
+}) {
   const { t, i18n } = useTranslation()
   const label = {
     mention: t('console.workspace.notifications.kind-mention'),
@@ -113,8 +122,8 @@ function NotificationItem({ item }: { item: Notification }) {
     moderation: t('console.workspace.notifications.kind-moderation'),
     document: t('console.workspace.notifications.kind-document'),
   }[item.kind]
-  return (
-    <li className="flex items-start gap-2 py-2">
+  const content = (
+    <>
       <span
         aria-hidden="true"
         className={cx(
@@ -136,7 +145,63 @@ function NotificationItem({ item }: { item: Notification }) {
         </span>
         <span className="text-xs text-c-ink-3">{when(item.createdAt, i18n.resolvedLanguage)}</span>
       </span>
+    </>
+  )
+  return (
+    <li className="py-1">
+      {onOpen === undefined ? (
+        <span className="flex items-start gap-2 px-2 py-1">{content}</span>
+      ) : (
+        <button type="button" onClick={() => onOpen(item)} className={JUMP}>
+          {content}
+        </button>
+      )}
     </li>
+  )
+}
+
+/** An inbox line that jumps somewhere: the whole line is the button. */
+const JUMP = cx(
+  'flex w-full items-start gap-2 rounded-sm px-2 py-1 text-left',
+  'hover:bg-c-muted focus-visible:ring focus-visible:outline-hidden',
+  TOUCH_TARGET
+)
+
+/**
+ * The rooms where someone mentioned the member and they have not read it yet, from the
+ * homeserver's highlight counts: each line opens its room at the unread messages.
+ */
+function MentionedRooms({
+  rooms,
+  onOpenRoom,
+}: {
+  rooms: readonly RoomSummary[]
+  onOpenRoom: (roomId: string) => void
+}) {
+  const { t } = useTranslation()
+  if (rooms.length === 0) return null
+  return (
+    <ul
+      aria-label={t('console.workspace.notifications.label-mentioned-rooms')}
+      className="flex flex-col"
+    >
+      {rooms.map((room) => (
+        <li key={room.roomId} className="py-1">
+          <button type="button" onClick={() => onOpenRoom(room.roomId)} className={JUMP}>
+            <span
+              aria-hidden="true"
+              className="mt-2 h-2 w-2 shrink-0 rounded-full bg-c-accent-ink"
+            />
+            <span className="min-w-0 flex-1 text-sm font-semibold break-words text-c-ink">
+              {t('console.workspace.notifications.mention-room', {
+                channel: room.name,
+                count: String(room.mentions),
+              })}
+            </span>
+          </button>
+        </li>
+      ))}
+    </ul>
   )
 }
 
@@ -144,25 +209,54 @@ export function NotificationCenter({
   source = feed,
   store,
   onSelectInvite,
+  onOpenRoom,
+  onOpenNotification,
 }: {
   source?: NotificationFeed
   store?: EspaceStoreLike
   onSelectInvite?: ((roomId: string) => void) | undefined
+  /** Opens a room the member was mentioned in: the inbox lists those rooms when it is given. */
+  onOpenRoom?: ((roomId: string) => void) | undefined
+  /** Opens what one of Core's notifications is about; it is marked read as it is opened. */
+  onOpenNotification?: ((item: Notification) => void) | undefined
 }) {
   const { t } = useTranslation()
+  const [open, setOpen] = useState(false)
   usePolling(source)
   const snapshot = useSyncExternalStore(source.subscribe, source.getSnapshot)
   const matrix = useSyncExternalStore(
     store?.subscribe ?? subscribeToNone,
     store?.getSnapshot ?? noSnapshot
   )
-  const unread = snapshot.unread + (matrix?.invites.length ?? 0)
+  const rooms = matrix?.rooms ?? NO_ROOMS
+  const mentioned = useMemo(
+    () => (onOpenRoom === undefined ? NO_ROOMS : rooms.filter((room) => room.mentions > 0)),
+    [rooms, onOpenRoom]
+  )
+  const unread = snapshot.unread + (matrix?.invites.length ?? 0) + mentioned.length
+  const jumpToRoom =
+    onOpenRoom === undefined
+      ? undefined
+      : (roomId: string) => {
+          setOpen(false)
+          onOpenRoom(roomId)
+        }
+  const openNotification =
+    onOpenNotification === undefined
+      ? undefined
+      : (item: Notification) => {
+          setOpen(false)
+          void source.markRead([item.id])
+          onOpenNotification(item)
+        }
   const label =
     unread === 0
       ? t('console.workspace.notifications.action-open')
       : t('console.workspace.notifications.action-open-unread', { count: String(unread) })
   return (
     <Popover
+      open={open}
+      onOpenChange={setOpen}
       label={t('console.workspace.notifications.title')}
       align="start"
       trigger={
@@ -209,14 +303,18 @@ export function NotificationCenter({
         {store === undefined || onSelectInvite === undefined ? null : (
           <PendingInvitations store={store} onSelect={onSelectInvite} />
         )}
+        {jumpToRoom === undefined ? null : (
+          <MentionedRooms rooms={mentioned} onOpenRoom={jumpToRoom} />
+        )}
         {snapshot.items.length === 0 &&
         (matrix?.invites.length ?? 0) === 0 &&
+        mentioned.length === 0 &&
         snapshot.status === 'ready' ? (
           <p className="text-sm text-c-ink-2">{t('console.workspace.notifications.empty')}</p>
         ) : (
           <ul className="max-h-[320px] divide-y divide-c-border-soft overflow-y-auto">
             {snapshot.items.map((item) => (
-              <NotificationItem key={item.id} item={item} />
+              <NotificationItem key={item.id} item={item} onOpen={openNotification} />
             ))}
           </ul>
         )}

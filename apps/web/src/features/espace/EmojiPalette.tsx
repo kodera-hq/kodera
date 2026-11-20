@@ -102,6 +102,7 @@ export function EmojiPalette({
         <button
           type="button"
           aria-label={t('console.workspace.composer.action-emoji')}
+          title={t('console.workspace.composer.action-emoji')}
           disabled={disabled}
           className={cx(
             'flex h-8 w-8 shrink-0 items-center justify-center rounded-sm text-c-ink-3',

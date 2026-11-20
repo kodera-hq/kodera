@@ -13,20 +13,34 @@ export interface DirectSummary {
   /** Their names as the room knows them, else their ids, joined. */
   name: string
   unread: number
+  /** A one-to-one conversation's other person's avatar, an `mxc://` address. */
+  avatarMxc?: string
 }
 
 /** At most this many other people in a group conversation started here. */
 export const MAX_DIRECT_PEOPLE = 8
 
+/**
+ * A Matrix room id: the classic `!opaque:server` form, or the room version 12 form, where the id is
+ * the URL-safe base64 hash of the create event and carries no server name (`!opaque`, MSC4291).
+ * Rejects path separators, `..`, query/fragment delimiters, control characters, and malformed hosts.
+ */
+const ROOM_ID =
+  /^!(?!.*\.\.)[A-Za-z0-9._=-]+(?::(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*|\[[0-9A-Fa-f:.]+\])(?::[0-9]{1,5})?)?$/u
+
+/** Whether `value` reads as a Matrix room id, of either form. */
+export function isMatrixRoomId(value: unknown): value is string {
+  return typeof value === 'string' && value.length <= 255 && ROOM_ID.test(value)
+}
+
 /** The `m.direct` map, checked: user ids that are ids, room ids that are room ids. */
 export function directMap(content: unknown): Map<string, string[]> {
   const map = new Map<string, string[]>()
   if (content === null || typeof content !== 'object' || Array.isArray(content)) return map
-  for (const [userId, rooms] of Object.entries(content as Record<string, unknown>)) {
-    if (!isMatrixUserId(userId) || !Array.isArray(rooms)) continue
-    const roomIds = rooms.filter(
-      (room): room is string => typeof room === 'string' && /^![^\s:]+:\S+$/u.test(room)
-    )
+  const record = content as Record<string, unknown>
+  for (const [userId, rooms] of Object.entries(record)) {
+    if (!Object.hasOwn(record, userId) || !isMatrixUserId(userId) || !Array.isArray(rooms)) continue
+    const roomIds = rooms.filter(isMatrixRoomId)
     if (roomIds.length > 0) map.set(userId, [...new Set(roomIds)])
   }
   return map
@@ -71,10 +85,18 @@ export function withDirect(
   roomId: string,
   people: readonly string[]
 ): Record<string, string[]> {
-  const next: Record<string, string[]> = {}
-  for (const [userId, roomIds] of map) next[userId] = [...roomIds]
-  for (const userId of people) {
-    next[userId] = [...new Set([...(next[userId] ?? []), roomId])]
+  const safe: Record<string, string[]> = Object.create(null) as Record<string, string[]>
+  for (const [userId, roomIds] of map) {
+    if (!isMatrixUserId(userId)) continue
+    const valid = roomIds.filter(isMatrixRoomId)
+    if (valid.length > 0) safe[userId] = [...new Set(valid)]
   }
-  return next
+  if (isMatrixRoomId(roomId)) {
+    for (const userId of people) {
+      if (!isMatrixUserId(userId)) continue
+      const existing = Object.hasOwn(safe, userId) ? safe[userId]! : []
+      safe[userId] = [...new Set([...existing, roomId])]
+    }
+  }
+  return { ...safe }
 }

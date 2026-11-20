@@ -4,6 +4,8 @@ import type { ConfidentialMediaSession } from '../confidential/media-crypto-clie
 // each part (`MessageTimeline`, `MessageComposer`, `ChannelSidebar`, `VoiceCallDock`) imports the
 // rules without importing another part.
 
+import type { AvatarCache } from './matrix/avatarCache'
+import type { Passport } from '../profile/passport'
 import type { RoomBoundary } from '../confidential/room-boundary'
 import type { DirectSummary } from './matrix/directs'
 import { displayNameOf, isNamedProfile, isOpaqueLocalpart, safeDisplayName } from './memberName'
@@ -17,6 +19,7 @@ import type { Workspace, WorkspaceChannel } from '../workspace/workspace'
 import type { AudioSettingsCall } from './AudioSettings'
 import type { CallSnapshot, CallStatus } from './audio/call'
 import type {
+  ArrivalView,
   ChannelRoom,
   EspaceSnapshot,
   History,
@@ -165,6 +168,14 @@ export interface EspaceStoreLike {
   canPin?: (roomId: string) => boolean
   /** Pins or unpins one of the room's events. */
   setPinned?: (roomId: string, eventId: string, pinned: boolean) => Promise<void>
+  /** Members' avatars, resolved from `mxc://` to `blob:` addresses (`matrix/avatarCache.ts`). */
+  getAvatarCache?: () => AvatarCache
+  /** A member's Kodera Passport; `undefined` while it is not known. */
+  getPassport?: (userId: string) => Passport | undefined
+  /** Saves the member's own passport. */
+  setPassport?: (passport: Passport) => Promise<void>
+  /** Who joined the room in its loaded timeline (the welcome channel's cards). */
+  getArrivals?: (roomId: string) => readonly ArrivalView[]
 }
 
 /** The audio call, as the view reads and drives it (`audio/call.ts`). */

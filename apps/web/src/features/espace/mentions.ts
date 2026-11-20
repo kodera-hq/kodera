@@ -27,7 +27,10 @@ export function mentionAt(text: string, caret: number): { start: number; query: 
   return { start: match.index + match[1]!.length, query: match[2]! }
 }
 
-/** The members whose name, or id, has a word that starts with the query; at most `MENTION_LIMIT`. */
+/**
+ * The members whose name, or id, has a word that starts with the query, a query of several words
+ * matching the name from one of its words on (« miguel vic »); at most `MENTION_LIMIT`.
+ */
 export function matchingMembers(
   members: readonly MentionCandidate[],
   query: string
@@ -35,7 +38,7 @@ export function matchingMembers(
   const wanted = fold(query)
   return members
     .filter(({ userId, label }) =>
-      [...fold(label).split(/\s+/), fold(userId.slice(1))].some((word) => word.startsWith(wanted))
+      [...nameTails(label), fold(userId.slice(1))].some((word) => word.startsWith(wanted))
     )
     .slice(0, MENTION_LIMIT)
 }
@@ -73,4 +76,81 @@ export function mentionedIn(text: string, members: readonly MentionCandidate[]):
     if (member !== undefined) found.add(member.userId)
   }
   return [...found]
+}
+
+/** The words that name the whole room, as Element and other Matrix clients write them. */
+export const ROOM_MENTION_WORDS = ['salon', 'room'] as const
+
+/** The longest multi-word query followed after an « @ »: a full name, not a paragraph. */
+const LONGEST_QUERY = 48
+
+/** The name's words and every run of them that ends the name: « Miguel Victoria », « Victoria ». */
+function nameTails(label: string): string[] {
+  const folded = fold(label)
+  const tails = [folded]
+  for (const match of folded.matchAll(/\s+/gu))
+    tails.push(folded.slice(match.index + match[0].length))
+  return tails
+}
+
+/**
+ * The mention being typed at the caret, a multi-word name included: « @Miguel Vic » is still one
+ * while a member's name goes on that way, and stops being one at the first word no name has, so
+ * the list closes and a « : » after it opens the emoji list again.
+ */
+export function mentionAtWith(
+  text: string,
+  caret: number,
+  members: readonly MentionCandidate[]
+): { start: number; query: string } | null {
+  const single = mentionAt(text, caret)
+  if (single !== null) return single
+  const match = new RegExp(`(^|\\s)@([^\\n@]{1,${LONGEST_QUERY}})$`, 'u').exec(text.slice(0, caret))
+  if (match === null) return null
+  const query = match[2]!
+  // A trailing space is still the name being typed (« @Miguel ») only if a longer name follows.
+  if (!/\s/u.test(query) || /^\s/u.test(query)) return null
+  const wanted = fold(query)
+  const continues = members.some(({ label }) =>
+    nameTails(label).some((tail) => tail.startsWith(wanted))
+  )
+  return continues ? { start: match.index + match[1]!.length, query } : null
+}
+
+/** Whether a mention query could still be « @salon » or « @room », once a letter of it is typed. */
+export function matchesRoomMention(query: string): boolean {
+  // Not on a bare « @ »: the list then is the members, and the whole room is asked for by name.
+  const wanted = fold(query)
+  return (
+    wanted !== '' &&
+    !/\s/u.test(wanted) &&
+    ROOM_MENTION_WORDS.some((word) => word.startsWith(wanted))
+  )
+}
+
+/**
+ * Whether the text names the whole room, « @salon » or « @room » at the start or after a space,
+ * ended by the end, a space or punctuation: what `m.mentions.room` carries.
+ */
+export function mentionsRoom(text: string): boolean {
+  return /(^|\s)@(salon|room)(?=$|[\s\p{P}])/iu.test(text)
+}
+
+/**
+ * The members the text names, as the message's HTML links them (`markdownHtml.ts`): each with
+ * the label the text writes, so the pill wraps exactly « @label ».
+ */
+export function mentionTargetsIn(
+  text: string,
+  members: readonly MentionCandidate[]
+): { userId: string; label: string }[] {
+  const named = new Set(mentionedIn(text, members))
+  const seen = new Set<string>()
+  const targets: { userId: string; label: string }[] = []
+  for (const member of members) {
+    if (!named.has(member.userId) || seen.has(member.userId)) continue
+    seen.add(member.userId)
+    targets.push({ userId: member.userId, label: member.label })
+  }
+  return targets
 }

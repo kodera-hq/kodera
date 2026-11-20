@@ -48,6 +48,7 @@ export interface RoomOccupant {
   onlineLabel?: string | undefined
   /** A photo; initials otherwise. */
   src?: string
+  onAvatarError?: (() => void) | undefined
   /** Shares a screen: the occupant shows the room's `sharingLabel`. */
   sharingScreen?: boolean
   /** Speaking now, as the call says: the face is ringed. */
@@ -216,6 +217,7 @@ export const RoomRow = forwardRef<HTMLButtonElement, RoomRowProps>(function Room
                   aria-hidden="true"
                   {...(occupant.speaking === true ? { 'data-speaking': '' } : {})}
                   className={SPEAKING_RING}
+                  {...(occupant.onAvatarError === undefined ? {} : { onError: occupant.onAvatarError })}
                   {...(occupant.src === undefined ? {} : { src: occupant.src })}
                 />
                 <span className="flex min-w-0 flex-1 flex-col">
