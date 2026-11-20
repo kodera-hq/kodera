@@ -8,10 +8,66 @@ import { KoderaIcon } from '../../ui/icons/KoderaIcons'
 import { Tooltip } from '../../ui/Tooltip/Tooltip'
 import { formatBytes } from '../../ui/formatBytes'
 import { useMessagingOrganisation } from '../messaging/organisationContext'
+import type { AttachmentRef } from '../messaging/attachments/attachmentRefs'
 import { loadImagePreview } from '../messaging/attachments/imagePreview'
 import { safeDownloadUrl } from '../messaging/attachments/MessageAttachments'
+import { getFromStorage } from '../messaging/attachments/storageTransport'
 import { filesMessages } from './filesMessages'
 import type { WorkspaceFileEntry } from './workspaceFiles'
+
+/** The largest text file previewed inline; anything bigger keeps the download path alone. */
+const MAX_TEXT_PREVIEW_BYTES = 256 * 1024
+
+const TEXT_PREVIEW_TYPES: ReadonlySet<string> = new Set([
+  'text/plain',
+  'text/markdown',
+  'text/csv',
+  'application/json',
+])
+
+/**
+ * Reads a small text attachment as UTF-8, bounded before and during the transfer: the declared
+ * size is checked before any byte is fetched, the stream is cut past the bound, and bytes that are
+ * not valid UTF-8 refuse the preview. The result is only ever rendered as React text.
+ */
+async function loadTextPreview(
+  href: string,
+  ref: AttachmentRef,
+  signal: AbortSignal
+): Promise<string | null> {
+  if (!TEXT_PREVIEW_TYPES.has(ref.contentType)) return null
+  if (!(ref.sizeBytes >= 0 && ref.sizeBytes <= MAX_TEXT_PREVIEW_BYTES)) return null
+  const url = new URL(href)
+  if (url.protocol !== 'https:' || url.username !== '' || url.password !== '') return null
+  const response = await getFromStorage(href, {
+    credentials: 'omit',
+    referrerPolicy: 'no-referrer',
+    redirect: 'error',
+    signal,
+  })
+  if (!response.ok || response.body === null) return null
+  const limit = Math.min(MAX_TEXT_PREVIEW_BYTES, ref.sizeBytes)
+  const reader = response.body.getReader()
+  const bytes = new Uint8Array(limit)
+  let size = 0
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      if (size + value.byteLength > limit) return null
+      bytes.set(value, size)
+      size += value.byteLength
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined)
+    reader.releaseLock()
+  }
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, size))
+  } catch {
+    return null
+  }
+}
 
 export function FileLightboxModal({
   entries,
@@ -38,6 +94,7 @@ export function FileLightboxModal({
     org: string
     href: string
     preview: string | null
+    text: string | null
     signal: AbortSignal
   } | null>(null)
   const [failed, setFailed] = useState<string | null>(null)
@@ -61,11 +118,18 @@ export function FileLightboxModal({
         )
         const href = safeDownloadUrl(data?.downloadUrl)
         if (!href) throw new Error('attachment-unavailable')
+        let text: string | null = null
         if (/^image\/(png|jpeg|gif|webp)$/.test(ref.contentType)) {
           try {
             const blob = await loadImagePreview(href, ref, controller.signal)
             if (controller.signal.aborted) return
             objectUrl = URL.createObjectURL(blob)
+          } catch {
+            if (controller.signal.aborted) return
+          }
+        } else if (TEXT_PREVIEW_TYPES.has(ref.contentType)) {
+          try {
+            text = await loadTextPreview(href, ref, controller.signal)
           } catch {
             if (controller.signal.aborted) return
           }
@@ -76,6 +140,7 @@ export function FileLightboxModal({
             org: organisationId,
             href,
             preview: objectUrl,
+            text,
             signal: controller.signal,
           })
       } catch {
@@ -117,6 +182,15 @@ export function FileLightboxModal({
               alt={entry?.name ?? ''}
               className="max-h-[calc(60vh)] max-w-full object-contain"
             />
+          ) : typeof current?.text === 'string' ? (
+            <pre
+              role="region"
+              aria-label={entry?.name ?? copy.preview}
+              tabIndex={0}
+              className="max-h-[calc(60vh)] w-full overflow-auto font-mono text-xs break-words whitespace-pre-wrap text-c-ink focus-visible:ring focus-visible:outline-hidden"
+            >
+              {current.text}
+            </pre>
           ) : (
             <p role="status" className="text-sm text-c-ink-3">
               {organisationId !== null && entry?.ref && !current && failed !== entry.id

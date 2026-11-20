@@ -1,8 +1,9 @@
 import type { EspaceStoreLike } from '../espace/liveViewModel'
+import type { EspaceSnapshot } from '../espace/matrix/store'
 import { WorkspacePaletteRegistration } from './WorkspacePaletteRegistration'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { createEvent, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import '../../i18n'
 import { PaletteProvider } from './PaletteContext'
 import { UniversalSearch } from './UniversalSearch'
@@ -87,4 +88,98 @@ it('queues a shortcut fired immediately after the shell mounts', async () => {
   )
   fireEvent.keyDown(window, { key: 'k', ctrlKey: true })
   expect(await screen.findByRole('combobox')).toHaveFocus()
+})
+
+it('indexes synced workspace files and opens the Files view from the palette', async () => {
+  const user = userEvent.setup()
+  const changeCanvas = vi.fn()
+  const store = {
+    getDirects: () => [],
+    getTimeline: () => [
+      {
+        eventId: '$e1',
+        ts: 1,
+        sender: '@ana:example.org',
+        attachments: [
+          { id: 'a1', filename: 'budget-2027.csv', contentType: 'text/csv', sizeBytes: 12 },
+        ],
+      },
+    ],
+  } as unknown as EspaceStoreLike
+  const snapshot = {
+    channels: new Map([['base', { state: 'resolved', roomId: '!base:example.org' }]]),
+    rooms: [],
+  } as unknown as EspaceSnapshot
+  render(
+    <PaletteProvider>
+      <ShellShortcuts org="sample" />
+      <WorkspacePaletteRegistration
+        store={store}
+        entries={[{ id: 'base', label: 'Base channel', kind: 'text' }]}
+        documents={[]}
+        onChoose={() => null}
+        onSelectDirect={() => {}}
+        onChangeCanvasMode={changeCanvas}
+        simulation={false}
+        snapshot={snapshot}
+      />
+    </PaletteProvider>
+  )
+  await user.keyboard('{Control>}k{/Control}')
+  await user.type(await screen.findByRole('combobox'), 'budget')
+  expect(await screen.findByText('budget-2027.csv')).toBeVisible()
+  await user.keyboard('{Enter}')
+  await waitFor(() => expect(changeCanvas).toHaveBeenCalledWith('files'))
+})
+
+describe('Control+K on a Mac', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  it('keeps native line editing inside a text field and still opens on Command+K', async () => {
+    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue(
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36'
+    )
+    render(
+      <PaletteProvider>
+        <ShellShortcuts org="sample" />
+        <input aria-label="Draft" />
+        <textarea aria-label="Notes" />
+        <div
+          aria-label="Editor"
+          role="textbox"
+          contentEditable
+          suppressContentEditableWarning
+          tabIndex={0}
+        />
+      </PaletteProvider>
+    )
+    for (const name of ['Draft', 'Notes', 'Editor']) {
+      const field = screen.getByLabelText(name)
+      field.focus()
+      const event = createEvent.keyDown(field, { key: 'k', ctrlKey: true })
+      fireEvent(field, event)
+      expect(event.defaultPrevented, name).toBe(false)
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(screen.queryByRole('combobox')).toBeNull()
+    // Command+K opens the palette from the very same field.
+    const draft = screen.getByLabelText('Draft')
+    const command = createEvent.keyDown(draft, { key: 'k', metaKey: true })
+    fireEvent(draft, command)
+    expect(command.defaultPrevented).toBe(true)
+    expect(await screen.findByRole('combobox')).toBeVisible()
+  })
+
+  it('still opens on Control+K outside a text field', async () => {
+    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue(
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36'
+    )
+    render(
+      <PaletteProvider>
+        <ShellShortcuts org="sample" />
+      </PaletteProvider>
+    )
+    fireEvent.keyDown(window, { key: 'k', ctrlKey: true })
+    expect(await screen.findByRole('combobox')).toBeVisible()
+  })
 })

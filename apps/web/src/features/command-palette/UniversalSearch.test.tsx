@@ -160,7 +160,7 @@ describe('universal workspace palette', () => {
     const first = renderPalette([])
     await user.keyboard('{Control>}k{/Control}')
     await user.type(screen.getByRole('combobox'), 'Membres')
-    expect(screen.queryByText('Membres, rôles et invitations')).toBeNull()
+    expect(screen.queryByText('Membres', { exact: true })).toBeNull()
     await user.type(screen.getByRole('combobox'), '{Control>}a{/Control}Connecteurs')
     expect(screen.queryByText('Connecteurs & extensions')).toBeNull()
     await user.keyboard('{Escape}')
@@ -169,14 +169,93 @@ describe('universal workspace palette', () => {
     const second = renderPalette(['members'])
     await user.keyboard('{Control>}k{/Control}')
     await user.type(screen.getByRole('combobox'), 'Membres')
-    expect(await screen.findByText('Membres, rôles et invitations')).toBeVisible()
+    expect(await screen.findByText('Membres', { exact: true })).toBeVisible()
     await user.keyboard('{Escape}')
     second.unmount()
-    // Without a switcher at all the palette keeps its previous behaviour (personal + admin).
-    render(<UniversalSearch entries={entries} shortcut onChoose={() => null} />)
+    // Without a switcher at all the palette fails closed: personal commands only.
+    const third = render(<UniversalSearch entries={entries} shortcut onChoose={() => null} />)
     await user.keyboard('{Control>}k{/Control}')
     await user.type(screen.getByRole('combobox'), 'Hébergement')
-    expect(await screen.findByText('Hébergement et administration')).toBeVisible()
+    expect(screen.queryByText('Hébergement et administration')).toBeNull()
+    await user.type(screen.getByRole('combobox'), '{Control>}a{/Control}Voix')
+    expect(await screen.findByText('Voix et audio')).toBeVisible()
+    await user.keyboard('{Escape}{Escape}')
+    third.unmount()
+    // A switcher that carries no computed sections fails closed too.
+    render(
+      <OrganisationSwitchContext.Provider
+        value={{
+          memberships: [{ name: 'My studio', slug: 'studio', current: true }],
+          onSwitch: vi.fn(),
+        }}
+      >
+        <UniversalSearch entries={entries} shortcut onChoose={() => null} />
+      </OrganisationSwitchContext.Provider>
+    )
+    await user.keyboard('{Control>}k{/Control}')
+    await user.type(screen.getByRole('combobox'), 'Journal')
+    expect(screen.queryByText('Journal d’audit')).toBeNull()
+  })
+  it('offers each IAM administration section only when its section is allowed', async () => {
+    const user = userEvent.setup()
+    const command = vi.fn()
+    window.addEventListener(WORKSPACE_COMMAND_EVENT, command)
+    const labels: Record<string, string> = {
+      roles: 'Rôles et permissions',
+      channels: 'Salons et dérogations de permissions',
+      invites: 'Invitations',
+      moderation: 'Modération',
+      audit: 'Journal d’audit',
+    }
+    try {
+      // A delegated manager with roles + audit: those two, never invites, moderation or channels.
+      const view = render(
+        <OrganisationSwitchContext.Provider
+          value={{
+            memberships: [{ name: 'My studio', slug: 'studio', current: true }],
+            onSwitch: vi.fn(),
+            adminSections: ['roles', 'audit'],
+          }}
+        >
+          <UniversalSearch entries={entries} shortcut onChoose={() => null} />
+        </OrganisationSwitchContext.Provider>
+      )
+      await user.keyboard('{Control>}k{/Control}')
+      const field = screen.getByRole('combobox')
+      for (const [section, label] of Object.entries(labels)) {
+        await user.type(field, `{Control>}a{/Control}${label}`)
+        if (section === 'roles' || section === 'audit')
+          expect(await screen.findByText(label, { exact: true }), section).toBeVisible()
+        else expect(screen.queryByText(label, { exact: true }), section).toBeNull()
+      }
+      await user.type(field, '{Control>}a{/Control}Journal d’audit')
+      await user.keyboard('{Enter}')
+      await waitFor(() => expect(command).toHaveBeenCalled())
+      expect((command.mock.calls[0]![0] as CustomEvent).detail).toEqual({
+        command: 'settings',
+        section: 'audit',
+      })
+      view.unmount()
+    } finally {
+      window.removeEventListener(WORKSPACE_COMMAND_EVENT, command)
+    }
+  })
+  it('lists workspace files in their own group and opens them', async () => {
+    const user = userEvent.setup()
+    const openFile = vi.fn()
+    render(
+      <UniversalSearch
+        entries={entries}
+        files={[{ id: 'f1', label: 'budget-2027.csv', open: openFile }]}
+        shortcut
+        onChoose={() => null}
+      />
+    )
+    await user.keyboard('{Control>}k{/Control}')
+    await user.type(screen.getByRole('combobox'), 'budget')
+    expect(await screen.findByText('budget-2027.csv')).toBeVisible()
+    await user.keyboard('{Enter}')
+    await waitFor(() => expect(openFile).toHaveBeenCalledOnce())
   })
   it('keeps personal settings commands for an ordinary member while omitting administration ones', async () => {
     const user = userEvent.setup()
@@ -202,7 +281,7 @@ describe('universal workspace palette', () => {
     expect(await screen.findByText('Voix et audio')).toBeVisible()
     // Administration commands stay hidden without a delegated section.
     await user.type(field, '{Control>}a{/Control}membres')
-    expect(screen.queryByText('Membres, rôles et invitations')).toBeNull()
+    expect(screen.queryByText('Membres', { exact: true })).toBeNull()
     await user.type(field, '{Control>}a{/Control}connecteurs')
     expect(screen.queryByText('Connecteurs et extensions')).toBeNull()
     await user.type(field, '{Control>}a{/Control}hébergement')

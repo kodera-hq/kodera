@@ -82,14 +82,17 @@ function DirectField({
   const fieldId = useId()
   const [text, setText] = useState('')
   const [state, setState] = useState<'idle' | 'sending' | 'sent' | 'failed'>('idle')
+  const sending = state === 'sending'
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    const body = text.trim()
-    if (body === '' || state === 'sending') return
+    const submitted = text
+    const body = submitted.trim()
+    if (body === '' || sending) return
     setState('sending')
     send(member.userId, body).then(
       () => {
-        setText('')
+        // Only the text that was sent is cleared, never a newer draft typed since.
+        setText((current) => (current === submitted ? '' : current))
         setState('sent')
       },
       () => setState('failed')
@@ -106,12 +109,18 @@ function DirectField({
           value={text}
           maxLength={2000}
           autoComplete="off"
+          // Read-only rather than `disabled` while the message is on its way: the draft cannot be
+          // edited mid-send, and keyboard focus stays in the field instead of falling to the page.
+          readOnly={sending}
+          aria-disabled={sending || undefined}
+          aria-busy={sending || undefined}
           placeholder={t('console.workspace.passport.dm-placeholder', { name: member.name })}
           onChange={(event) => {
+            if (sending) return
             setText(event.target.value)
-            if (state !== 'sending') setState('idle')
+            setState('idle')
           }}
-          className="h-8 min-w-0 flex-1 bg-transparent text-sm text-c-ink outline-hidden placeholder:text-c-placeholder"
+          className="h-8 min-w-0 flex-1 bg-transparent text-sm text-c-ink outline-hidden placeholder:text-c-placeholder aria-disabled:text-c-on-disabled"
         />
         <Button
           type="submit"
@@ -120,7 +129,7 @@ function DirectField({
           icon={<SendIcon />}
           iconOnly
           aria-label={t('console.workspace.passport.dm-send', { name: member.name })}
-          disabled={text.trim() === '' || state === 'sending'}
+          disabled={text.trim() === '' || sending}
         />
       </div>
       <p role="status" className="text-xs text-c-ink-2 empty:sr-only">

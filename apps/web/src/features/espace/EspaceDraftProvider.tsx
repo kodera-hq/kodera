@@ -22,6 +22,8 @@ import type { EspaceStoreLike } from './EspaceLiveView'
 export interface RoomTarget {
   roomId: string
   eventId: string
+  /** Historical `{ userId, label }` mention targets preserved while editing a sent message. */
+  mentionTargets?: readonly { userId: string; label: string }[] | undefined
 }
 export interface ChannelDraft {
   text: string

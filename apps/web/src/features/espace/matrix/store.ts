@@ -72,6 +72,44 @@ import {
   type RoomBoundary,
 } from '../../confidential/room-boundary'
 
+const PRE_V12_ROOM_VERSIONS: ReadonlySet<string> = new Set([
+  '1',
+  '2',
+  '3',
+  '4',
+  '5',
+  '6',
+  '7',
+  '8',
+  '9',
+  '10',
+  '11',
+])
+
+/**
+ * Whether `userId` holds infinite creator authority in a Matrix Room v12+ (`m.room.create` sender
+ * or `content.additional_creators`), checked directly on `m.room.create` because `matrix-js-sdk`
+ * leaves `member.powerLevel` at numeric `0` until an `m.room.power_levels` state event exists.
+ */
+function isV12RoomCreator(room: Room | null | undefined, userId: string): boolean {
+  const createEvent = room?.currentState.getStateEvents('m.room.create', '')
+  if (createEvent === null || createEvent === undefined) return false
+  const content = createEvent.getContent() as Record<string, unknown> | undefined
+  const roomVersion =
+    typeof content?.room_version === 'string' && content.room_version !== ''
+      ? content.room_version
+      : '1'
+  if (PRE_V12_ROOM_VERSIONS.has(roomVersion)) return false
+  const primaryCreator =
+    createEvent.getSender() || (typeof content?.creator === 'string' ? content.creator : undefined)
+  if (primaryCreator === userId) return true
+  const additional = content?.additional_creators
+  return (
+    Array.isArray(additional) &&
+    additional.some((creator) => typeof creator === 'string' && creator === userId)
+  )
+}
+
 export type SyncStatus = 'starting' | 'live' | 'reconnecting' | 'signed-out' | 'stopped'
 
 /**
@@ -92,6 +130,9 @@ export interface SendOptions {
   /** Files already stored by Core, named by id (docs/specs/messaging-media-and-notifications.md). */
   attachments?: AttachmentRef[]
 }
+
+/** What an edit names, read from its new text as `SendOptions` reads a message's. */
+export type EditOptions = Pick<SendOptions, 'mentions' | 'mentionsRoom' | 'mentionTargets'>
 
 /** A joined room, as the sidebar draws it. */
 export interface RoomSummary {
@@ -914,8 +955,7 @@ export class EspaceStore {
         if (event.getType() !== 'm.reaction' || event.isRedacted()) continue
         if (event.getSender() !== this.#me) continue
         const relates = (event.getOriginalContent() as Record<string, unknown>)['m.relates_to'] as
-          | { rel_type?: unknown; event_id?: unknown; key?: unknown }
-          | undefined
+          { rel_type?: unknown; event_id?: unknown; key?: unknown } | undefined
         if (
           relates?.rel_type === 'm.annotation' &&
           typeof relates.event_id === 'string' &&
@@ -1371,8 +1411,15 @@ export class EspaceStore {
 
   getMemberRole = (roomId: string, userId: string): 'admin' | 'member' => {
     const room = this.#client.getRoom(roomId)
+    // Room v12+ creators (`m.room.create` sender and `additional_creators`) hold infinite power
+    // even when no `m.room.power_levels` state event exists yet and `member.powerLevel` is still `0`.
+    if (isV12RoomCreator(room, userId)) return 'admin'
+    const memberLevel: unknown = room?.getMember(userId)?.powerLevel
     const powers = room?.currentState.getStateEvents('m.room.power_levels', '')?.getContent()
-    const level: unknown = powers?.users?.[userId] ?? powers?.users_default ?? 0
+    const level: unknown =
+      typeof memberLevel === 'number' && !Number.isNaN(memberLevel)
+        ? memberLevel
+        : (powers?.users?.[userId] ?? powers?.users_default ?? 0)
     return typeof level === 'number' && level >= 50 ? 'admin' : 'member'
   }
 
@@ -1591,9 +1638,7 @@ export class EspaceStore {
     let room: ChannelRoom | null
     try {
       const answer = (await this.#client.getRoomIdForAlias(alias)) as { room_id?: unknown }
-      room = isMatrixRoomId(answer.room_id)
-        ? { state: 'resolved', roomId: answer.room_id }
-        : null
+      room = isMatrixRoomId(answer.room_id) ? { state: 'resolved', roomId: answer.room_id } : null
     } catch (error) {
       // The directory's own 404: anything else (a proxy's 404 page among them) is a failure.
       room =
@@ -1703,19 +1748,57 @@ export class EspaceStore {
     } as never)
   }
 
-  async edit(roomId: string, eventId: string, body: string): Promise<void> {
+  /**
+   * Replaces the text of one of the member's messages (Matrix spec, m.replace).
+   *
+   * `m.new_content` carries the message's whole new `m.mentions`, so a name the edit removes
+   * stops being a mention. The edit's own fallback carries only who the edit newly names: a
+   * member the message already named is not notified a second time (spec, "Mentioning the
+   * replaced event"). An edit of a message that named no one and still names no one carries no
+   * `m.mentions`, as `send` does.
+   */
+  async edit(
+    roomId: string,
+    eventId: string,
+    body: string,
+    options: EditOptions = {}
+  ): Promise<void> {
     this.#requirePlaintextRoom(roomId)
-    const html = markdownToHtml(body)
+    const html = markdownToHtml(body, options.mentionTargets ?? [])
+    const userIds = [...new Set(options.mentions ?? [])]
+    const room = options.mentionsRoom === true
+    const before = this.#mentionsOf(roomId, eventId)
+    const newly = userIds.filter((userId) => !before.userIds.has(userId))
+    const named = userIds.length > 0 || room || before.userIds.size > 0 || before.room
     await this.#client.sendMessage(roomId, {
       msgtype: MsgType.Text,
       body: `* ${body}`,
+      ...(named
+        ? { 'm.mentions': { user_ids: newly, ...(room && !before.room ? { room: true } : {}) } }
+        : {}),
       'm.new_content': {
         msgtype: MsgType.Text,
         body,
         ...(html === null ? {} : { format: HTML_FORMAT, formatted_body: html }),
+        ...(named ? { 'm.mentions': { user_ids: userIds, ...(room ? { room: true } : {}) } } : {}),
       },
       'm.relates_to': { rel_type: 'm.replace', event_id: eventId },
     } as never)
+  }
+
+  /** Who a message already names, in its original content or its latest edit. */
+  #mentionsOf(roomId: string, eventId: string): { userIds: Set<string>; room: boolean } {
+    const event = this.#client.getRoom(roomId)?.findEventById(eventId)
+    const userIds = new Set<string>()
+    let room = false
+    for (const content of [event?.getOriginalContent(), event?.getContent()]) {
+      const value: unknown = content?.['m.mentions']
+      if (value === null || typeof value !== 'object') continue
+      const { user_ids: ids, room: everyone } = value as { user_ids?: unknown; room?: unknown }
+      if (Array.isArray(ids)) for (const id of ids) if (typeof id === 'string') userIds.add(id)
+      if (everyone === true) room = true
+    }
+    return { userIds, room }
   }
 
   async remove(roomId: string, eventId: string): Promise<void> {
@@ -1764,12 +1847,9 @@ export class EspaceStore {
       if (event.getType() !== 'm.reaction' || event.isRedacted()) return false
       if (event.getSender() !== this.#me) return false
       const relates = (event.getOriginalContent() as Record<string, unknown>)['m.relates_to'] as
-        | { rel_type?: unknown; event_id?: unknown; key?: unknown }
-        | undefined
+        { rel_type?: unknown; event_id?: unknown; key?: unknown } | undefined
       return (
-        relates?.rel_type === 'm.annotation' &&
-        relates.event_id === eventId &&
-        relates.key === key
+        relates?.rel_type === 'm.annotation' && relates.event_id === eventId && relates.key === key
       )
     })
   }

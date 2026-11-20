@@ -234,6 +234,21 @@ export function CallDockRegion({
     return () => window.removeEventListener('resize', handleResize)
   }, [floating, syncClampedPosition])
 
+  // The pill grows when its content does (a camera tile mounting, a screen share starting): a pill
+  // parked against the bottom or right edge would then spill out of the viewport, so a size change
+  // re-clamps it. Re-clamping only moves the pill, never resizes it, so the observer cannot loop.
+  useEffect(() => {
+    if (!floating || typeof ResizeObserver === 'undefined') return
+    const element = pillRef.current
+    if (element === null) return
+    const observer = new ResizeObserver(() => {
+      if (dragRef.current !== null) return
+      syncClampedPosition(pillRef.current)
+    })
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [floating, syncClampedPosition])
+
   const onPointerDown = (event: PointerEvent<HTMLElement>) => {
     if (!floating) return
     if (event.pointerType === 'mouse' && event.button !== 0) return

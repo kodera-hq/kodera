@@ -237,7 +237,7 @@ const fr = {
 
   // Channel overrides
   channelsHint:
-    'Pour un salon et un rôle, autorisez ou refusez un droit, ou laissez le rôle en décider.',
+    'Pour un salon et un rôle, autorisez ou refusez un droit, ou laissez le rôle en décider. Ces dérogations sont enregistrées dans l’administration de l’espace ; elles ne changent pas encore qui peut lire ou écrire dans le salon.',
   channelsEmpty: 'Aucun salon actif pour l’instant.',
   channel: 'Salon',
   role: 'Rôle',
@@ -564,8 +564,7 @@ const en: AdminCopy = {
   memberSearch: 'Search people',
   // The trigger visibly shows the member's current role, so the accessible name carries that
   // exact visible label too (WCAG 2.5.3 label in name).
-  memberChangeRole: (name: string, role: string) =>
-    `Change ${name}’s role (current role: ${role})`,
+  memberChangeRole: (name: string, role: string) => `Change ${name}’s role (current role: ${role})`,
   memberRoleChanged: (name: string, role: string) => `${name} is now ${role.toLowerCase()}.`,
   memberRoles: (name: string) => `${name}’s roles`,
   memberRoleAdd: (name: string) => `Assign a role to ${name}`,
@@ -595,7 +594,8 @@ const en: AdminCopy = {
     suspended: 'Suspended',
     removed: 'Removed',
   },
-  channelsHint: 'For one channel and one role, allow or deny a right, or let the role decide.',
+  channelsHint:
+    'For one channel and one role, allow or deny a right, or let the role decide. These overrides are saved in the workspace’s administration; they do not yet change who can read or post in the channel.',
   channelsEmpty: 'No active channels yet.',
   channel: 'Channel',
   role: 'Role',

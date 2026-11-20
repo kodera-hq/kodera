@@ -86,6 +86,9 @@ export function isCachedMessage(value: unknown): value is MessageView {
     (m.mentionsMe === undefined || m.mentionsMe === true) &&
     (m.mentionsRoom === undefined || m.mentionsRoom === true) &&
     optional(m.avatarMxc, 'string') &&
+    (m.mentionedUsers === undefined ||
+      (Array.isArray(m.mentionedUsers) &&
+        m.mentionedUsers.every((id) => typeof id === 'string'))) &&
     (m.mentionPills === undefined ||
       (Array.isArray(m.mentionPills) &&
         m.mentionPills.every(
@@ -110,6 +113,12 @@ function keptOf(messages: readonly MessageView[], limit: number): MessageView[] 
   const sent = messages.filter((message) => message.delivery === 'sent')
   return sent.slice(Math.max(0, sent.length - limit)).map((message) => ({
     ...message,
+    ...(message.mentionedUsers === undefined
+      ? {}
+      : { mentionedUsers: [...message.mentionedUsers] }),
+    ...(message.mentionPills === undefined
+      ? {}
+      : { mentionPills: message.mentionPills.map((pill) => ({ ...pill })) }),
     reactions: message.reactions.map((reaction) => ({ ...reaction })),
   }))
 }

@@ -59,23 +59,67 @@ export function insertMention(
 }
 
 /**
- * The members the text names, as « @label » followed by the end, a space or punctuation. At each
- * « @ » the longest name wins, so « @Henri Duflot » names Henri Duflot, not also an « Henri ».
+ * Leading Matrix-ID-shaped token after `@` (`localpart:server[:port]`), matching printable
+ * historical localparts (`[\x21-\x39\x3b-\x7e]+`) plus DNS, IPv4, or bracketed IPv6 server names
+ * without absorbing trailing sentence punctuation (`.`, `!`, `,`, `...`).
  */
-export function mentionedIn(text: string, members: readonly MentionCandidate[]): string[] {
-  const byLength = [...members].sort((a, b) => b.label.length - a.label.length)
-  const found = new Set<string>()
+const LEADING_MXID_TOKEN_RE =
+  /^[\x21-\x39\x3b-\x7e]+:(?:[A-Za-z0-9_](?:[A-Za-z0-9._-]*[A-Za-z0-9_])?|\[[0-9A-Fa-f:.]+\])(?::[0-9]+)?/
+
+/**
+ * Whether `rest` (the text after `@`) ends a mention of `label` cleanly at `label.length`.
+ * Trailing sentence punctuation (`.`, `...`, `!`, `,`, `: `) counts as a boundary, whereas a
+ * longer MXID token (`@bob:two.test`, `@bob+:two.test`, `@bob:[2001:db8::1]:8448`) or any handle /
+ * path / symbol continuation in the non-whitespace tail (`@bob-smith`, `@bob+tag`, `@bob/admin`,
+ * `@bob/.admin`, `@bob..admin`) does not match a shorter `label`.
+ */
+export function hasMentionBoundaryAfter(rest: string, label: string): boolean {
+  const mxid = LEADING_MXID_TOKEN_RE.exec(rest)
+  if (mxid !== null && label.length < mxid[0].length) return false
+  if (rest.length === label.length) return true
+  if (/\s/u.test(rest[label.length]!)) return true
+  const tail = /^\S+/u.exec(rest.slice(label.length))?.[0] ?? ''
+  if (!/^\p{P}+$/u.test(tail)) return false
+  if (/[_/\-[\\@#%&*]/u.test(tail) || tail.indexOf(':', 1) !== -1) return false
+  return true
+}
+
+/**
+ * Every `{ userId, label }` candidate written in full after an « @ » in `text` (at the start or
+ * after a space, ended by the end, a space or punctuation), longest label winning at each « @ »,
+ * deduplicated by `userId` and `label`.
+ */
+function matchedCandidatesIn(
+  text: string,
+  members: readonly MentionCandidate[]
+): MentionCandidate[] {
+  const byLength = members
+    .filter(({ label }) => label !== '')
+    .sort((a, b) => b.label.length - a.label.length)
+  const seen = new Set<string>()
+  const matched: MentionCandidate[] = []
   for (let at = text.indexOf('@'); at !== -1; at = text.indexOf('@', at + 1)) {
     if (at > 0 && !/\s/u.test(text[at - 1]!)) continue
     const rest = text.slice(at + 1)
     const member = byLength.find(
-      ({ label }) =>
-        rest.startsWith(label) &&
-        (rest.length === label.length || /[\s\p{P}]/u.test(rest[label.length]!))
+      ({ label }) => rest.startsWith(label) && hasMentionBoundaryAfter(rest, label)
     )
-    if (member !== undefined) found.add(member.userId)
+    if (member === undefined) continue
+    const key = `${member.userId}\n${member.label}`
+    if (!seen.has(key)) {
+      seen.add(key)
+      matched.push({ userId: member.userId, label: member.label })
+    }
   }
-  return [...found]
+  return matched
+}
+
+/**
+ * The members the text names, as « @label » followed by the end, a space or punctuation. At each
+ * « @ » the longest name wins, so « @Henri Duflot » names Henri Duflot, not also an « Henri ».
+ */
+export function mentionedIn(text: string, members: readonly MentionCandidate[]): string[] {
+  return [...new Set(matchedCandidatesIn(text, members).map(({ userId }) => userId))]
 }
 
 /** The words that name the whole room, as Element and other Matrix clients write them. */
@@ -133,7 +177,19 @@ export function matchesRoomMention(query: string): boolean {
  * ended by the end, a space or punctuation: what `m.mentions.room` carries.
  */
 export function mentionsRoom(text: string): boolean {
-  return /(^|\s)@(salon|room)(?=$|[\s\p{P}])/iu.test(text)
+  for (let at = text.indexOf('@'); at !== -1; at = text.indexOf('@', at + 1)) {
+    if (at > 0 && !/\s/u.test(text[at - 1]!)) continue
+    const rest = text.slice(at + 1)
+    for (const word of ROOM_MENTION_WORDS) {
+      if (
+        rest.slice(0, word.length).toLowerCase() === word &&
+        hasMentionBoundaryAfter(rest, rest.slice(0, word.length))
+      ) {
+        return true
+      }
+    }
+  }
+  return false
 }
 
 /**
@@ -144,12 +200,15 @@ export function mentionTargetsIn(
   text: string,
   members: readonly MentionCandidate[]
 ): { userId: string; label: string }[] {
-  const named = new Set(mentionedIn(text, members))
+  const matched = new Set(
+    matchedCandidatesIn(text, members).map(({ userId, label }) => `${userId}\n${label}`)
+  )
   const seen = new Set<string>()
   const targets: { userId: string; label: string }[] = []
   for (const member of members) {
-    if (!named.has(member.userId) || seen.has(member.userId)) continue
-    seen.add(member.userId)
+    const key = `${member.userId}\n${member.label}`
+    if (!matched.has(key) || seen.has(key)) continue
+    seen.add(key)
     targets.push({ userId: member.userId, label: member.label })
   }
   return targets

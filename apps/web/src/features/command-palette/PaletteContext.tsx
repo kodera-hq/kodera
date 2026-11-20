@@ -5,6 +5,7 @@ import type { PaletteTarget } from './UniversalSearch'
 export type PaletteSource = ChannelSearchProps & {
   actions?: readonly PaletteTarget[]
   documents?: readonly PaletteTarget[]
+  files?: readonly PaletteTarget[]
   directMessages?: readonly PaletteTarget[]
   members?: readonly PaletteTarget[]
 }

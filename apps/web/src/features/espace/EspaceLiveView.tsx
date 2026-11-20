@@ -110,7 +110,12 @@ import {
   type EspaceStoreLike,
   type TimelineInsert,
 } from './liveViewModel'
-import { inRoom, MessageComposer, ThreadComposer } from './MessageComposer'
+import {
+  historicalMentionCandidates,
+  inRoom,
+  MessageComposer,
+  ThreadComposer,
+} from './MessageComposer'
 import { MessageRow, type MessageRowActions } from './MessageRow'
 import { MessageSearch } from './MessageSearch'
 import { MessageTimeline, type MessageTimelineHandle } from './MessageTimeline'
@@ -933,7 +938,11 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
   // The rail's direct conversations (`app/railDirectsStore.ts`): published while this view is live, so
   // the shell's rail pops the faces of the people with unread messages under its DM button.
   const railDirectsOf = useCallback(() => activeStore.getDirects?.() ?? NO_DIRECTS, [activeStore])
-  const railDirectList = useStoreSlice(activeStore.subscribe, activeStore.getSnapshot, railDirectsOf)
+  const railDirectList = useStoreSlice(
+    activeStore.subscribe,
+    activeStore.getSnapshot,
+    railDirectsOf
+  )
   const railAvatars = passportServices?.avatars
   useEffect(() => {
     if (simulation || activeStore.getDirects === undefined) {
@@ -1601,7 +1610,9 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
       : null
   const arrivalsOf = useCallback(
     () =>
-      welcomeRoomId === null ? NO_ARRIVALS : (activeStore.getArrivals?.(welcomeRoomId) ?? NO_ARRIVALS),
+      welcomeRoomId === null
+        ? NO_ARRIVALS
+        : (activeStore.getArrivals?.(welcomeRoomId) ?? NO_ARRIVALS),
     [activeStore, welcomeRoomId]
   )
   const arrivals = useStoreSlice(activeStore.subscribe, activeStore.getSnapshot, arrivalsOf)
@@ -1667,7 +1678,14 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
     if (!canWrite) return
     // The new message being written gives way to the edit, which the room is not told about.
     if (activeRoomId !== null) activeStore.setTyping?.(activeRoomId, false)
-    draft.update({ replyTo: null, editing: targetInShownRoom(msg.eventId), text: msg.body })
+    const target = targetInShownRoom(msg.eventId)
+    const retained = historicalMentionCandidates(msg, mentionCandidates)
+    draft.update({
+      replyTo: null,
+      editing:
+        target === null || retained.length === 0 ? target : { ...target, mentionTargets: retained },
+      text: msg.body,
+    })
   })
 
   const removeMessage = useStableHandler((eventId: string) => {
@@ -1999,6 +2017,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
           onSelectDirect={selectDirect}
           onChangeCanvasMode={onChangeCanvasMode ? changeCanvas : undefined}
           simulation={simulation}
+          snapshot={snapshot}
         />
         <div className="grid min-h-0 flex-1 grid-cols-[auto_auto_minmax(0,1fr)_auto_auto_auto] grid-rows-[auto_minmax(0,1fr)_auto] narrow:flex narrow:flex-col">
           {narrow ? (
@@ -2544,86 +2563,86 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
           activeChannel !== null &&
           activeChannel !== undefined ? (
             <div className="row-span-3 row-start-1 flex min-h-0 narrow:contents">
-            <ThreadPanel
-              label={t('console.workspace.thread.title')}
-              title={t('console.workspace.thread.title')}
-              channel={directRoomId === null ? `# ${activeChannelName}` : `@${activeChannelName}`}
-              closeLabel={t('console.common.action-close')}
-              onClose={() => draft.update({ threadRoot: null })}
-              returnFocusTo={threadFocusTarget}
-              parent={
-                <MessageRow
-                  profileRole={profileRoleIn(activeStore, activeRoomId, threadRootMessage.sender)}
-                  onMention={!canWrite || navigationUnsettled ? undefined : mentionMember}
-                  mentionMembers={mentionMembers}
-                  resolveMember={resolveMember}
-                  key={threadRootMessage.key}
-                  onlineLabel={
-                    activeStore.isOnline?.(threadRootMessage.sender)
-                      ? simulation
-                        ? demoCopy.presence
-                        : t('console.workspace.presence.online')
-                      : undefined
-                  }
-                  message={threadRootMessage}
-                  placement="thread"
-                  viewerId={viewerId}
-                  archived={isArchivedChannel}
-                  canWrite={canWrite}
-                  canReact={canReact}
-                  expanded={false}
-                  repliedMessage={undefined}
-                  threadReplies={NO_MESSAGES}
-                  menuContextKey={`${draftContext.generation}:${viewerId}:${activeRoomId}:${threadRootMessage.key}`}
-                  {...rowActions}
-                />
-              }
-              repliesLabel={t('console.workspace.thread.label-replies')}
-              composer={
-                !canWrite || activeRoomId === null || openThreadRootId === null ? undefined : (
-                  <ThreadComposer
-                    store={activeStore}
-                    roomId={activeRoomId}
-                    rootEventId={openThreadRootId}
-                    draft={draft}
-                    simulation={simulation}
-                    navigationUnsettled={navigationUnsettled}
-                    inputId={threadInputId}
-                    guidanceId={demoGuidanceId}
-                    members={mentionCandidates}
-                    onMentionStart={loadMembers}
+              <ThreadPanel
+                label={t('console.workspace.thread.title')}
+                title={t('console.workspace.thread.title')}
+                channel={directRoomId === null ? `# ${activeChannelName}` : `@${activeChannelName}`}
+                closeLabel={t('console.common.action-close')}
+                onClose={() => draft.update({ threadRoot: null })}
+                returnFocusTo={threadFocusTarget}
+                parent={
+                  <MessageRow
+                    profileRole={profileRoleIn(activeStore, activeRoomId, threadRootMessage.sender)}
+                    onMention={!canWrite || navigationUnsettled ? undefined : mentionMember}
+                    mentionMembers={mentionMembers}
+                    resolveMember={resolveMember}
+                    key={threadRootMessage.key}
+                    onlineLabel={
+                      activeStore.isOnline?.(threadRootMessage.sender)
+                        ? simulation
+                          ? demoCopy.presence
+                          : t('console.workspace.presence.online')
+                        : undefined
+                    }
+                    message={threadRootMessage}
+                    placement="thread"
+                    viewerId={viewerId}
+                    archived={isArchivedChannel}
+                    canWrite={canWrite}
+                    canReact={canReact}
+                    expanded={false}
+                    repliedMessage={undefined}
+                    threadReplies={NO_MESSAGES}
+                    menuContextKey={`${draftContext.generation}:${viewerId}:${activeRoomId}:${threadRootMessage.key}`}
+                    {...rowActions}
                   />
-                )
-              }
-            >
-              {activeThreadReplies.map((reply) => (
-                <MessageRow
-                  profileRole={profileRoleIn(activeStore, activeRoomId, reply.sender)}
-                  onMention={!canWrite || navigationUnsettled ? undefined : mentionMember}
-                  mentionMembers={mentionMembers}
-                  resolveMember={resolveMember}
-                  key={reply.key}
-                  onlineLabel={
-                    activeStore.isOnline?.(reply.sender)
-                      ? simulation
-                        ? demoCopy.presence
-                        : t('console.workspace.presence.online')
-                      : undefined
-                  }
-                  message={reply}
-                  placement="thread"
-                  viewerId={viewerId}
-                  archived={isArchivedChannel}
-                  canWrite={canWrite}
-                  canReact={canReact}
-                  expanded={false}
-                  repliedMessage={undefined}
-                  threadReplies={NO_MESSAGES}
-                  menuContextKey={`${draftContext.generation}:${viewerId}:${activeRoomId}:${reply.key}`}
-                  {...rowActions}
-                />
-              ))}
-            </ThreadPanel>
+                }
+                repliesLabel={t('console.workspace.thread.label-replies')}
+                composer={
+                  !canWrite || activeRoomId === null || openThreadRootId === null ? undefined : (
+                    <ThreadComposer
+                      store={activeStore}
+                      roomId={activeRoomId}
+                      rootEventId={openThreadRootId}
+                      draft={draft}
+                      simulation={simulation}
+                      navigationUnsettled={navigationUnsettled}
+                      inputId={threadInputId}
+                      guidanceId={demoGuidanceId}
+                      members={mentionCandidates}
+                      onMentionStart={loadMembers}
+                    />
+                  )
+                }
+              >
+                {activeThreadReplies.map((reply) => (
+                  <MessageRow
+                    profileRole={profileRoleIn(activeStore, activeRoomId, reply.sender)}
+                    onMention={!canWrite || navigationUnsettled ? undefined : mentionMember}
+                    mentionMembers={mentionMembers}
+                    resolveMember={resolveMember}
+                    key={reply.key}
+                    onlineLabel={
+                      activeStore.isOnline?.(reply.sender)
+                        ? simulation
+                          ? demoCopy.presence
+                          : t('console.workspace.presence.online')
+                        : undefined
+                    }
+                    message={reply}
+                    placement="thread"
+                    viewerId={viewerId}
+                    archived={isArchivedChannel}
+                    canWrite={canWrite}
+                    canReact={canReact}
+                    expanded={false}
+                    repliedMessage={undefined}
+                    threadReplies={NO_MESSAGES}
+                    menuContextKey={`${draftContext.generation}:${viewerId}:${activeRoomId}:${reply.key}`}
+                    {...rowActions}
+                  />
+                ))}
+              </ThreadPanel>
             </div>
           ) : null}
 

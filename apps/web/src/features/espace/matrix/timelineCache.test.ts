@@ -109,11 +109,20 @@ describe('the timeline cache', () => {
 
   it('checks every field a message view is drawn from', () => {
     expect(isCachedMessage(message(1))).toBe(true)
-    expect(isCachedMessage(message(1, { senderName: 'Alice', mentionsMe: true }))).toBe(true)
+    expect(
+      isCachedMessage(
+        message(1, {
+          senderName: 'Alice',
+          mentionsMe: true,
+          mentionedUsers: ['@bob:matrix.acme.kodera.test'],
+        })
+      )
+    ).toBe(true)
     expect(isCachedMessage({ ...message(1), ts: Number.NaN })).toBe(false)
     expect(isCachedMessage({ ...message(1), reactions: [{ key: '👍', count: '1' }] })).toBe(false)
     expect(isCachedMessage({ ...message(1), document: { id: 'd' } })).toBe(false)
     expect(isCachedMessage({ ...message(1), mentionsMe: false })).toBe(false)
+    expect(isCachedMessage({ ...message(1), mentionedUsers: [42] })).toBe(false)
     expect(isCachedMessage(null)).toBe(false)
   })
 

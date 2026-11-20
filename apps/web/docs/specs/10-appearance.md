@@ -125,7 +125,10 @@ to this page only; to keep it, allow the site to store data in the browser's set
   stored choice or the device's `prefers-color-scheme`, and follows the device's changes while
   « Automatique » is chosen: « Ciel » on a light device, « Noir » (`black`) on a dark one. The
   browser's own parts (scrollbars, native controls) follow with `color-scheme: dark` in dark,
-  black and « Ciel nuit ».
+  black and « Ciel nuit ». Before any stylesheet loads, the same script sets the
+  `<meta name="color-scheme">` content to `dark` or `light` for the resolved theme, so the
+  browser canvas of a dark theme on a light device (a return through `/auth/callback`) is never
+  painted white first; it is a meta attribute, never an inline style.
 - **Focus order:** page `h1` → the radio group (one stop, on the checked card) → the warning, when
   present, is not focusable. It is announced: its `role="status"` region is on the page, empty,
   from the start, and the warning is put inside it, since a polite region inserted with its

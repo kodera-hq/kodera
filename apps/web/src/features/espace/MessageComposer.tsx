@@ -32,7 +32,7 @@ import {
 import type { MemberView, SendOptions } from './matrix/store'
 import type { MessageView } from './matrix/timeline'
 import { MentionInput } from './MentionInput'
-import { mentionedIn, mentionsRoom, mentionTargetsIn } from './mentions'
+import { hasMentionBoundaryAfter, mentionedIn, mentionsRoom, mentionTargetsIn } from './mentions'
 import type { MentionCandidate } from './mentions'
 import { newestEditable } from './shortcuts'
 import { useStoreSlice } from './useStoreSlice'
@@ -94,6 +94,90 @@ function typingLine(members: readonly MemberView[], t: TFunction): string {
 /** The target's message, while its room is the one shown; nothing for another room's. */
 export function inRoom(target: RoomTarget | null, roomId: string | null): string | null {
   return target !== null && target.roomId === roomId ? target.eventId : null
+}
+
+/**
+ * Historical `{ userId, label }` candidates carried by an existing message (`mentionPills` and
+ * `mentionedUsers`), so editing punctuation around an unchanged `@OldName` after a member renamed
+ * themselves preserves their `m.mentions` identity and pill instead of dropping it.
+ */
+export function historicalMentionCandidates(
+  message: Pick<MessageView, 'body' | 'mentionPills' | 'mentionedUsers'> | undefined,
+  members: readonly MentionCandidate[]
+): MentionCandidate[] {
+  if (message === undefined) return []
+  const candidates: MentionCandidate[] = []
+  const seen = new Set<string>()
+  const add = (userId: string, rawLabel: string) => {
+    const label = rawLabel.trim()
+    const key = `${userId}\n${label}`
+    if (userId === '' || label === '' || seen.has(key)) return
+    seen.add(key)
+    candidates.push({ userId, label })
+  }
+  for (const pill of message.mentionPills ?? []) add(pill.userId, pill.label)
+  for (const target of mentionTargetsIn(message.body, members)) add(target.userId, target.label)
+  const mentionedUsers = message.mentionedUsers ?? []
+  const localpartOwners = new Map<string, Set<string>>()
+  const recordLocalpart = (userId: string) => {
+    if (!userId.startsWith('@')) return
+    const colon = userId.indexOf(':')
+    const localpart = (colon > 1 ? userId.slice(1, colon) : userId.slice(1)).toLowerCase()
+    if (localpart === '' || localpart === 'salon' || localpart === 'room') return
+    let owners = localpartOwners.get(localpart)
+    if (owners === undefined) {
+      owners = new Set<string>()
+      localpartOwners.set(localpart, owners)
+    }
+    owners.add(userId)
+  }
+  for (const member of members) recordLocalpart(member.userId)
+  for (const userId of mentionedUsers) recordLocalpart(userId)
+
+  for (const userId of mentionedUsers) {
+    if (!userId.startsWith('@')) continue
+    const mxidLabel = userId.slice(1)
+    if (mentionTargetsIn(message.body, [{ userId, label: mxidLabel }]).length > 0) {
+      add(userId, mxidLabel)
+    }
+    const colon = userId.indexOf(':')
+    const rawLocalpart = colon > 1 ? userId.slice(1, colon) : userId.slice(1)
+    const owners = localpartOwners.get(rawLocalpart.toLowerCase())
+    if (owners !== undefined && owners.size === 1) {
+      for (let at = message.body.indexOf('@'); at !== -1; at = message.body.indexOf('@', at + 1)) {
+        if (at > 0 && !/\s/u.test(message.body[at - 1]!)) continue
+        const rest = message.body.slice(at + 1)
+        const slice = rest.slice(0, rawLocalpart.length)
+        if (
+          slice.toLowerCase() === rawLocalpart.toLowerCase() &&
+          hasMentionBoundaryAfter(rest, slice)
+        ) {
+          add(userId, slice)
+        }
+      }
+    }
+  }
+  return candidates
+}
+
+export function editMentionCandidates(
+  members: readonly MentionCandidate[],
+  retained: readonly MentionCandidate[] | undefined,
+  original: Pick<MessageView, 'body' | 'mentionPills' | 'mentionedUsers'> | undefined
+): MentionCandidate[] {
+  const combined: MentionCandidate[] = []
+  const seen = new Set<string>()
+  const push = (candidate: MentionCandidate) => {
+    const label = candidate.label.trim()
+    const key = `${candidate.userId}\n${label}`
+    if (candidate.userId === '' || label === '' || seen.has(key)) return
+    seen.add(key)
+    combined.push({ userId: candidate.userId, label })
+  }
+  for (const candidate of retained ?? []) push(candidate)
+  for (const candidate of historicalMentionCandidates(original, members)) push(candidate)
+  for (const candidate of members) push(candidate)
+  return combined
 }
 
 /**
@@ -233,9 +317,20 @@ function MessageComposerView({
       if (trimmed === '') return
       store.setTyping?.(roomId, false)
       // An edit started in another room is dropped, never sent here, as an edit or as a message.
+      const original =
+        editingEventId === null
+          ? undefined
+          : store.getTimeline(roomId).find((candidate) => candidate.eventId === editingEventId)
+      const editOptions = mentioning(
+        typed,
+        editMentionCandidates(members, editing.mentionTargets, original)
+      )
       draft.command(
         () => {
-          if (editingEventId !== null) void store.edit(roomId, editingEventId, trimmed)
+          if (editingEventId === null) return
+          if (Object.keys(editOptions).length === 0)
+            void store.edit(roomId, editingEventId, trimmed)
+          else void store.edit(roomId, editingEventId, trimmed, editOptions)
         },
         { editing: null, text: '' }
       )

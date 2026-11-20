@@ -74,6 +74,8 @@ export interface MessageView {
   mentionsMe?: true
   /** The message names the whole room (`m.mentions.room`, « @salon »). */
   mentionsRoom?: true
+  /** The members its `m.mentions.user_ids` names, kept so an edit preserves renamed targets. */
+  mentionedUsers?: string[]
   /** The members its HTML names with a `matrix.to` pill, as its text writes them. */
   mentionPills?: MentionPill[]
   /** The sender's avatar in the room, an `mxc://` address the screen resolves (`avatarCache.ts`). */
@@ -89,6 +91,12 @@ function relation(event: RawEvent): Relation | null {
 
 function isRedacted(event: RawEvent): boolean {
   return event.unsigned?.redacted_because !== undefined
+}
+
+function contentOf(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null
 }
 
 function text(content: unknown): string | null {
@@ -145,11 +153,22 @@ export function mentionPillsOf(content: Record<string, unknown>): MentionPill[] 
   return [...pills.values()]
 }
 
+/**
+ * The latest edit of a message: its `m.new_content` replaces the message's content as a whole,
+ * mentions and pills included (Matrix spec, m.replace), so a name an edit removes is no longer
+ * a mention of it.
+ */
+interface Edit {
+  body: string
+  content: Record<string, unknown>
+  ts: number
+}
+
 function collectRelations(events: readonly TimelineEvent[]) {
   // An edit counts only from the message's own sender (Matrix spec, m.replace), and the latest
   // one wins. A redacted edit no longer counts.
   const senders = new Map(events.map((event) => [event.event_id, event.sender]))
-  const edits = new Map<string, { body: string; ts: number }>()
+  const edits = new Map<string, Edit>()
   const reactions = new Map<string, Map<string, Set<string>>>()
 
   for (const event of events) {
@@ -157,10 +176,15 @@ function collectRelations(events: readonly TimelineEvent[]) {
     if (rel === null || isRedacted(event) || typeof rel.event_id !== 'string') continue
     if (event.type === 'm.room.message' && rel.rel_type === 'm.replace') {
       if (senders.get(rel.event_id) !== event.sender) continue
-      const body = text(event.content['m.new_content'])
+      const content = contentOf(event.content['m.new_content'])
+      const body = text(content)
       const known = edits.get(rel.event_id)
-      if (body !== null && (known === undefined || event.origin_server_ts >= known.ts)) {
-        edits.set(rel.event_id, { body, ts: event.origin_server_ts })
+      if (
+        content !== null &&
+        body !== null &&
+        (known === undefined || event.origin_server_ts >= known.ts)
+      ) {
+        edits.set(rel.event_id, { body, content, ts: event.origin_server_ts })
       }
     } else if (event.type === 'm.reaction' && rel.rel_type === 'm.annotation') {
       if (typeof rel.key !== 'string' || rel.key === '') continue
@@ -188,21 +212,45 @@ function messageText(
   return { body: body === attachmentsFallback(attachments) ? '' : body, attachments }
 }
 
-function pillsOf(event: TimelineEvent, redacted: boolean): { mentionPills?: MentionPill[] } {
+function pillsOf(
+  content: Record<string, unknown>,
+  redacted: boolean
+): { mentionPills?: MentionPill[] } {
   if (redacted) return {}
-  const pills = mentionPillsOf(event.content)
+  const pills = mentionPillsOf(content)
   return pills.length === 0 ? {} : { mentionPills: pills }
+}
+
+function mentionedUsersOf(
+  content: Record<string, unknown>,
+  redacted: boolean
+): { mentionedUsers?: string[] } {
+  if (redacted) return {}
+  const value = content['m.mentions']
+  if (value === null || typeof value !== 'object') return {}
+  const raw = (value as { user_ids?: unknown }).user_ids
+  if (!Array.isArray(raw)) return {}
+  const users: string[] = []
+  const seen = new Set<string>()
+  for (const id of raw) {
+    if (typeof id !== 'string' || !isMatrixUserId(id) || seen.has(id)) continue
+    seen.add(id)
+    users.push(id)
+  }
+  return users.length === 0 ? {} : { mentionedUsers: users }
 }
 
 function toMessageView(
   event: TimelineEvent,
   me: string,
-  edits: ReadonlyMap<string, { body: string; ts: number }>,
+  edits: ReadonlyMap<string, Edit>,
   reactions: ReadonlyMap<string, Map<string, Set<string>>>
 ): MessageView {
   const rel = relation(event)
   const redacted = isRedacted(event)
   const edit = edits.get(event.event_id)
+  // What the message says now: an edit's new content, never the edit's `* …` fallback.
+  const current = edit?.content ?? event.content
   const inReply = rel?.['m.in_reply_to']
   const replyTo =
     inReply !== null && typeof inReply === 'object'
@@ -223,11 +271,10 @@ function toMessageView(
     redacted,
     delivery: event.local ?? 'sent',
     replyTo: typeof replyTo === 'string' ? replyTo : null,
-    ...(!redacted && event.sender !== me && mentions(event.content, me)
-      ? { mentionsMe: true }
-      : {}),
-    ...(!redacted && mentionsRoom(event.content) ? { mentionsRoom: true } : {}),
-    ...pillsOf(event, redacted),
+    ...(!redacted && event.sender !== me && mentions(current, me) ? { mentionsMe: true } : {}),
+    ...(!redacted && mentionsRoom(current) ? { mentionsRoom: true } : {}),
+    ...mentionedUsersOf(current, redacted),
+    ...pillsOf(current, redacted),
     ...(event.sender_avatar === undefined ? {} : { avatarMxc: event.sender_avatar }),
     reactions: redacted
       ? []
