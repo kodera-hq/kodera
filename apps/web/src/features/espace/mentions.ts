@@ -68,25 +68,19 @@ const LEADING_MXID_TOKEN_RE =
 
 /**
  * Whether `rest` (the text after `@`) ends a mention of `label` cleanly at `label.length`.
- * Trailing sentence punctuation (`.`, `!`, `,`, `: `) counts as a boundary, whereas a longer
- * MXID token (`@bob:two.test`, `@bob+:two.test`, `@bob:[2001:db8::1]:8448`) or handle continuation
- * (`@bob-smith`, `@bob+tag`, `@bob/admin`) does not match a shorter `label`.
+ * Trailing sentence punctuation (`.`, `...`, `!`, `,`, `: `) counts as a boundary, whereas a
+ * longer MXID token (`@bob:two.test`, `@bob+:two.test`, `@bob:[2001:db8::1]:8448`) or any handle /
+ * path / symbol continuation in the non-whitespace tail (`@bob-smith`, `@bob+tag`, `@bob/admin`,
+ * `@bob/.admin`, `@bob..admin`) does not match a shorter `label`.
  */
 export function hasMentionBoundaryAfter(rest: string, label: string): boolean {
   const mxid = LEADING_MXID_TOKEN_RE.exec(rest)
   if (mxid !== null && label.length < mxid[0].length) return false
   if (rest.length === label.length) return true
-  const next = rest[label.length]!
-  if (/\s/u.test(next)) return true
-  if (!/\p{P}/u.test(next)) return false
-  const afterNext = rest[label.length + 1] ?? ''
-  if (
-    (next === ':' && /[\p{L}\p{N}._=+/\-[\]]/u.test(afterNext)) ||
-    ((next === '.' || next === '-' || next === '_' || next === '/') &&
-      /[\p{L}\p{N}_=+/\-:]/u.test(afterNext))
-  ) {
-    return false
-  }
+  if (/\s/u.test(rest[label.length]!)) return true
+  const tail = /^\S+/u.exec(rest.slice(label.length))?.[0] ?? ''
+  if (!/^\p{P}+$/u.test(tail)) return false
+  if (/[_/\-[\\@#%&*]/u.test(tail) || tail.indexOf(':', 1) !== -1) return false
   return true
 }
 

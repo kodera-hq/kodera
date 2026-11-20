@@ -378,22 +378,46 @@ describe('MessageComposer', () => {
     )
     v4.unmount()
 
-    // 5. Editing `@bob:one.test` to symbol-suffixed MXIDs (`@bob+:two.test`, `@bob=:two.test`,
-    // `@bob/admin`) must NOT attach `@bob:one.test` via `{ label: 'bob' }` or historical mentions.
-    for (const editedText of ['ping @bob+:two.test!', 'ping @bob=:two.test!', 'ping @bob/admin!']) {
-      const symSwap = storeWith(undefined, undefined, [originalMxid])
+    // 5. Editing `@bob:one.test` or historical bare `@bob` (member currently named `Robert One`)
+    // to symbol/consecutive-punctuation continuations must NOT attach `@bob:one.test`, whereas
+    // terminal sentence punctuation (`...`) still preserves the historical mention.
+    for (const editedText of [
+      'ping @bob+:two.test!',
+      'ping @bob=:two.test!',
+      'ping @bob/admin!',
+      'ping @bob/.admin!',
+      'ping @bob..admin!',
+      'ping @bob-.admin!',
+      'ping @bob_.admin!',
+    ]) {
+      const symSwap = storeWith(undefined, undefined, [bareAmbiguous])
       const symDraft = draftFor()
       symDraft.update({
-        editing: { roomId: ROOM, eventId: '$m4' },
+        editing: { roomId: ROOM, eventId: '$m5' },
         text: editedText,
       })
-      const view = renderComposer(symSwap.store, symDraft, [
-        { userId: BOB_ONE.userId, label: 'bob' },
-      ])
+      const view = renderComposer(symSwap.store, symDraft, [BOB_ONE])
       screen.getByRole('textbox', { name: /général/ }).focus()
       await user.keyboard('{Enter}')
-      await waitFor(() => expect(symSwap.edit).toHaveBeenCalledWith(ROOM, '$m4', editedText))
+      await waitFor(() => expect(symSwap.edit).toHaveBeenCalledWith(ROOM, '$m5', editedText))
       view.unmount()
     }
+
+    const ellipsisKeep = storeWith(undefined, undefined, [bareAmbiguous])
+    const ellipsisDraft = draftFor()
+    ellipsisDraft.update({
+      editing: { roomId: ROOM, eventId: '$m5' },
+      text: 'ping @bob...',
+    })
+    const v6 = renderComposer(ellipsisKeep.store, ellipsisDraft, [BOB_ONE])
+    screen.getByRole('textbox', { name: /général/ }).focus()
+    await user.keyboard('{Enter}')
+    await waitFor(() =>
+      expect(ellipsisKeep.edit).toHaveBeenCalledWith(ROOM, '$m5', 'ping @bob...', {
+        mentions: [BOB_ONE.userId],
+        mentionTargets: [{ userId: BOB_ONE.userId, label: 'bob' }],
+      })
+    )
+    v6.unmount()
   })
 })
