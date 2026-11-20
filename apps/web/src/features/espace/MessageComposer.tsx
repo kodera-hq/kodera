@@ -118,31 +118,35 @@ export function historicalMentionCandidates(
   for (const pill of message.mentionPills ?? []) add(pill.userId, pill.label)
   for (const target of mentionTargetsIn(message.body, members)) add(target.userId, target.label)
   const mentionedUsers = message.mentionedUsers ?? []
-  for (const userId of mentionedUsers) {
-    if (userId.startsWith('@') && message.body.includes(userId)) add(userId, userId.slice(1))
+  const localpartOwners = new Map<string, Set<string>>()
+  const recordLocalpart = (userId: string) => {
+    if (!userId.startsWith('@')) return
+    const colon = userId.indexOf(':')
+    const localpart = (colon > 1 ? userId.slice(1, colon) : userId.slice(1)).toLowerCase()
+    if (localpart === '' || localpart === 'salon' || localpart === 'room') return
+    let owners = localpartOwners.get(localpart)
+    if (owners === undefined) {
+      owners = new Set<string>()
+      localpartOwners.set(localpart, owners)
+    }
+    owners.add(userId)
   }
-  if (mentionedUsers.length > 0) {
-    const known = [...candidates, ...members]
-    const resolvedUsers = new Set(mentionedIn(message.body, known))
-    const unmappedUsers = mentionedUsers.filter((userId) => !resolvedUsers.has(userId))
-    if (unmappedUsers.length > 0) {
-      const matchedLabels = new Set(
-        mentionTargetsIn(message.body, known).map(({ label }) => label.toLowerCase())
-      )
-      const unmatchedTokens: string[] = []
-      const seenTokens = new Set<string>()
-      for (const match of message.body.matchAll(/(?:^|\s)@([^\s@\p{P}]+)(?=$|[\s\p{P}])/gu)) {
-        const token = match[1]!
-        const lower = token.toLowerCase()
-        if (lower === 'salon' || lower === 'room' || matchedLabels.has(lower)) continue
-        if (!seenTokens.has(token)) {
-          seenTokens.add(token)
-          unmatchedTokens.push(token)
-        }
-      }
-      if (unmappedUsers.length === unmatchedTokens.length) {
-        for (let index = 0; index < unmappedUsers.length; index += 1) {
-          add(unmappedUsers[index]!, unmatchedTokens[index]!)
+  for (const member of members) recordLocalpart(member.userId)
+  for (const userId of mentionedUsers) recordLocalpart(userId)
+
+  for (const userId of mentionedUsers) {
+    if (userId.startsWith('@') && message.body.includes(userId)) {
+      add(userId, userId.slice(1))
+    }
+    if (userId.startsWith('@')) {
+      const colon = userId.indexOf(':')
+      const rawLocalpart = colon > 1 ? userId.slice(1, colon) : userId.slice(1)
+      const owners = localpartOwners.get(rawLocalpart.toLowerCase())
+      if (owners !== undefined && owners.size === 1) {
+        for (const match of message.body.matchAll(/(?:^|\s)@([^\s@\p{P}]+)(?=$|[\s\p{P}])/gu)) {
+          if (match[1]!.toLowerCase() === rawLocalpart.toLowerCase()) {
+            add(userId, match[1]!)
+          }
         }
       }
     }

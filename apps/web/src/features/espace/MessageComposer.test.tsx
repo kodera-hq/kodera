@@ -224,11 +224,76 @@ describe('MessageComposer', () => {
       editing: { roomId: ROOM, eventId: '$m1' },
       text: 'ping @Miguel Victoria',
     })
-    renderComposer(third.store, thirdDraft, renamedMembers)
+    const view3 = renderComposer(third.store, thirdDraft, renamedMembers)
     const field3 = screen.getByRole('textbox', { name: /général/ })
     await user.clear(field3)
     await user.type(field3, 'ping merci!')
     await user.keyboard('{Enter}')
     await waitFor(() => expect(third.edit).toHaveBeenCalledWith(ROOM, '$m1', 'ping merci!'))
+    view3.unmount()
+  })
+
+  it('never infers mention identity from array position when plain-text mentions have reordered or unmapped IDs', async () => {
+    const user = userEvent.setup()
+    const BOB_UUID = {
+      userId: '@018f0000-0000-7000-8000-0000000000b1:kodera.test',
+      label: 'Robert',
+    }
+    const CAROL_UUID = {
+      userId: '@018f0000-0000-7000-8000-0000000000c2:kodera.test',
+      label: 'Caroline',
+    }
+    // Plain-text message with no HTML pills and reordered m.mentions.user_ids after both renamed:
+    // deleting @Carol must never misbind @Bob to CAROL_UUID.
+    const pillLessOriginal: MessageView = {
+      key: '$m2',
+      eventId: '$m2',
+      sender: ME,
+      body: 'ping @Bob and @Carol',
+      ts: 2,
+      edited: false,
+      redacted: false,
+      delivery: 'sent',
+      replyTo: null,
+      reactions: [],
+      mentionedUsers: [CAROL_UUID.userId, BOB_UUID.userId],
+    }
+    const { store, edit } = storeWith(undefined, undefined, [pillLessOriginal])
+    const draft = draftFor()
+    draft.update({
+      editing: { roomId: ROOM, eventId: '$m2' },
+      text: 'ping @Bob!',
+    })
+    const pillLessView = renderComposer(store, draft, [BOB_UUID, CAROL_UUID])
+    screen.getByRole('textbox', { name: /général/ }).focus()
+    await user.keyboard('{Enter}')
+    await waitFor(() => expect(edit).toHaveBeenCalledWith(ROOM, '$m2', 'ping @Bob!'))
+    pillLessView.unmount()
+
+    // Conversely, when explicit HTML pills exist even with reordered mentionedUsers, exact identity holds.
+    const reorderedWithPills: MessageView = {
+      ...pillLessOriginal,
+      key: '$m3',
+      eventId: '$m3',
+      mentionPills: [
+        { userId: BOB_UUID.userId, label: 'Bob' },
+        { userId: CAROL_UUID.userId, label: 'Carol' },
+      ],
+    }
+    const withPills = storeWith(undefined, undefined, [reorderedWithPills])
+    const pillsDraft = draftFor()
+    pillsDraft.update({
+      editing: { roomId: ROOM, eventId: '$m3' },
+      text: 'ping @Bob!',
+    })
+    renderComposer(withPills.store, pillsDraft, [BOB_UUID, CAROL_UUID])
+    screen.getByRole('textbox', { name: /général/ }).focus()
+    await user.keyboard('{Enter}')
+    await waitFor(() =>
+      expect(withPills.edit).toHaveBeenCalledWith(ROOM, '$m3', 'ping @Bob!', {
+        mentions: [BOB_UUID.userId],
+        mentionTargets: [{ userId: BOB_UUID.userId, label: 'Bob' }],
+      })
+    )
   })
 })
