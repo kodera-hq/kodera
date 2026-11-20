@@ -826,35 +826,41 @@ export default function WorkspaceSettings({
               orientation={narrow ? 'horizontal' : 'vertical'}
               className="flex min-h-0 flex-1 narrow:flex-col"
             >
-              <Tabs.List
-                aria-label={title}
-                className="material-panel flex w-shell-sidebar-width shrink-0 flex-col gap-1 overflow-y-auto border-r border-c-border-soft p-4 narrow:w-full narrow:flex-row narrow:overflow-x-auto narrow:border-r-0 narrow:border-b"
-              >
-                {groups.map((group) => (
-                  <div
-                    key={group.key}
-                    className="mb-4 flex flex-col gap-1 narrow:mb-0 narrow:shrink-0 narrow:flex-row"
-                  >
-                    <p className="px-3 py-2 text-xs font-semibold text-c-ink-3 narrow:hidden">
-                      {group.title}
-                    </p>
-                    {group.items.map((item) => (
-                      <Tabs.Trigger key={item} value={item} className={TAB}>
-                        {admin.sections[item]}
-                      </Tabs.Trigger>
-                    ))}
-                  </div>
-                ))}
+              <div className="material-panel flex w-shell-sidebar-width shrink-0 flex-col overflow-y-auto border-r border-c-border-soft p-4 narrow:w-full narrow:flex-row narrow:items-center narrow:gap-1 narrow:overflow-x-auto narrow:border-r-0 narrow:border-b">
+                <Tabs.List
+                  aria-label={title}
+                  className="flex flex-col gap-1 narrow:shrink-0 narrow:flex-row"
+                >
+                  {groups.map((group) => (
+                    <div
+                      key={group.key}
+                      role="presentation"
+                      className="mb-4 flex flex-col gap-1 narrow:mb-0 narrow:shrink-0 narrow:flex-row"
+                    >
+                      <p
+                        aria-hidden="true"
+                        className="px-3 py-2 text-xs font-semibold text-c-ink-3 narrow:hidden"
+                      >
+                        {group.title}
+                      </p>
+                      {group.items.map((item) => (
+                        <Tabs.Trigger key={item} value={item} className={TAB}>
+                          {admin.sections[item]}
+                        </Tabs.Trigger>
+                      ))}
+                    </div>
+                  ))}
+                </Tabs.List>
                 {narrow && (mode === 'admin' || canAdminister) ? (
                   <button
                     type="button"
-                    className={cx(TAB, 'border border-c-border')}
+                    className={cx(TAB, 'shrink-0 border border-c-border')}
                     onClick={() => switchMode(mode === 'admin' ? 'personal' : 'admin')}
                   >
                     {mode === 'admin' ? admin.switchToPersonal : admin.switchToAdmin}
                   </button>
                 ) : null}
-              </Tabs.List>
+              </div>
               <div className="min-w-0 flex-1 overflow-y-auto p-8 narrow:p-4">
                 {visible.map((item) => (
                   <Tabs.Content
