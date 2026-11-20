@@ -6,6 +6,8 @@ import { prosemirrorToYXmlFragment } from 'y-prosemirror'
 import * as encoding from 'lib0/encoding'
 import { randomBytes, randomUUID, createHmac } from 'node:crypto'
 import { apply, inspect, load, replace, Refused } from '../engine.mjs'
+import { nfc, titleKey } from '../title-key.mjs'
+import { KEY_EXPANSION, MAX_KEY_LENGTH } from '../title-key-table.mjs'
 import { bind, verify, TicketRefused } from '../tickets.mjs'
 import { frame, stateFrame, updateFrame, vectorFrame, ViewerWrite } from '../protocol.mjs'
 
@@ -242,4 +244,21 @@ test('replacement writes the block editor content fragment and migrates a legacy
     assert.match(replaced.markdown, /New text/)
     assert.doesNotMatch(replaced.markdown, /Legacy text/)
   } finally { legacy.destroy() }
+})
+
+test('title keys and extracted wikilinks freeze Unicode normalization independent of Node ICU', () => {
+  assert.equal(KEY_EXPANSION, 18)
+  assert.equal(MAX_KEY_LENGTH, 4590)
+  // Node 22+ ICU composes U+105D2 U+0307 to U+105C9, while Python Unicode 15.x keeps two code points.
+  const todhri = '\u{105D2}\u0307'
+  assert.equal(nfc(todhri), todhri)
+  assert.equal(titleKey(todhri), todhri)
+  assert.equal(nfc('\u1100\u1161\u11A8'), '\uAC01')
+  assert.equal(titleKey('E\u0323\u0302\u0301'), titleKey('\u1EBE\u0323'))
+  const arabicMax = '\uFDFA'.repeat(255)
+  const doc = load()
+  try {
+    const updated = replace(doc, `[[${todhri}]] [[${arabicMax}]]\n`)
+    assert.deepEqual(updated.links, [arabicMax, todhri].sort())
+  } finally { doc.destroy() }
 })

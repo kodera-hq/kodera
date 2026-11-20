@@ -3,6 +3,7 @@ import * as Y from 'yjs'
 import { Schema } from 'prosemirror-model'
 import { MarkdownSerializer, defaultMarkdownParser, defaultMarkdownSerializer, schema } from 'prosemirror-markdown'
 import { prosemirrorToYXmlFragment, yDocToProsemirrorJSON } from 'y-prosemirror'
+import { nfc } from './title-key.mjs'
 
 export const MAX_MARKDOWN = 262144
 export const MAX_STATE = 2 * 1024 * 1024
@@ -342,13 +343,13 @@ export function inspect(doc) {
     native.descendants((node, _position, parent) => {
       if (CODE_NODE_NAMES.has(node.type.name)) return false
       if (node.type.name === 'wikilink') {
-        const title = String(node.attrs.title).trim().normalize('NFC')
+        const title = nfc(String(node.attrs.title).trim())
         if (title) links.add(title)
         return false
       }
       if (node.isText && !node.marks.some(mark => mark.type.name === 'code') && !CODE_NODE_NAMES.has(parent?.type.name ?? '')) {
         for (const match of node.text.matchAll(/\[\[([^\[\]\n]{1,255})\]\]/gu)) {
-          const title = match[1].split('|', 1)[0].trim().normalize('NFC')
+          const title = nfc(match[1].split('|', 1)[0].trim())
           if (title) links.add(title)
         }
       }

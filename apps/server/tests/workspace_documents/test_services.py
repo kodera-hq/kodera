@@ -51,7 +51,17 @@ def _native_engine(settings):
                 code = process.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 code = None
-            stderr = process.stderr.read().decode(errors="replace") if process.stderr else ""
+            if code is None or process.poll() is None:
+                process.kill()
+            try:
+                _, raw_stderr = process.communicate(timeout=5)
+            except subprocess.TimeoutExpired as timed_out:
+                raw_stderr = timed_out.stderr or b""
+            stderr = (
+                raw_stderr.decode(errors="replace")
+                if isinstance(raw_stderr, bytes)
+                else (raw_stderr or "")
+            )
             raise RuntimeError(
                 f"test-owned transform service exited before announcing its port "
                 f"(exit code {code}): {stderr.strip()[-4000:]}"

@@ -9,7 +9,8 @@ import unicodedata
 
 from django.db import migrations, models
 
-MAX_KEY_LENGTH = 1020
+KEY_EXPANSION = 18
+MAX_KEY_LENGTH = 255 * KEY_EXPANSION
 SUFFIX_LIMIT = 10_000
 BATCH = 500
 
@@ -79,6 +80,46 @@ def backfill(apps, schema_editor):
         )
 
 
+def reverse_backfill(apps, schema_editor):
+    alias = schema_editor.connection.alias
+    document_links = apps.get_model("docs", "DocumentLink").objects.using(alias)
+    seen = set()
+    duplicates = []
+    changed = []
+    prior_keys = set()
+    links = (
+        document_links.select_related("target")
+        .order_by("id")
+        .only("id", "source_id", "target_id", "target_title", "target__title")
+    )
+    for link in links.iterator(chunk_size=BATCH):
+        restored = (
+            link.target.title.lower()[:255]
+            if link.target_id is not None
+            else link.target_title[:255]
+        )
+        if (link.source_id, restored) in seen:
+            duplicates.append(link.pk)
+            continue
+        seen.add((link.source_id, restored))
+        if restored != link.target_title:
+            prior_keys.add((link.source_id, link.target_title))
+            link.target_title = restored
+            changed.append(link)
+    for start in range(0, len(duplicates), BATCH):
+        document_links.filter(pk__in=duplicates[start : start + BATCH]).delete()
+    if any((link.source_id, link.target_title) in prior_keys for link in changed):
+        staged = []
+        for link in changed:
+            final_title = link.target_title
+            link.target_title = f"[{link.pk}]"
+            staged.append((link, final_title))
+        document_links.bulk_update(changed, ["target_title"], batch_size=BATCH)
+        for link, final_title in staged:
+            link.target_title = final_title
+    document_links.bulk_update(changed, ["target_title"], batch_size=BATCH)
+
+
 # The key is a pure function of each row's own title and leaves with the row on erasure,
 # so the durable-erasure write fence is lifted only for this derivation, inside the
 # migration's transaction, and restored before it commits.
@@ -106,9 +147,9 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name="document", name="title_key", field=models.TextField(null=True)
         ),
-        migrations.RunSQL(FENCE_OFF, reverse_sql=migrations.RunSQL.noop),
-        migrations.RunPython(backfill, migrations.RunPython.noop),
-        migrations.RunSQL(FENCE_ON, reverse_sql=migrations.RunSQL.noop),
+        migrations.RunSQL(FENCE_OFF, reverse_sql=FENCE_ON),
+        migrations.RunPython(backfill, reverse_backfill),
+        migrations.RunSQL(FENCE_ON, reverse_sql=FENCE_OFF),
         migrations.AlterField(model_name="document", name="title_key", field=models.TextField()),
         migrations.AddConstraint(
             model_name="document",
