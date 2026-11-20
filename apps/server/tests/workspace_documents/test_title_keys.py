@@ -416,6 +416,124 @@ def test_migration_0010_deduplicates_c_locale_collisions_and_reresolves_links(
         assert reapplied_rows[titles.key(arabic_max)] == arabic_doc.pk
 
 
+def test_migration_0010_rollback_deduplicates_utf8_locale_lower_collisions(
+    transactional_db, django_db_blocker
+) -> None:
+    import copy
+
+    from django.db import connections, transaction
+    from django.db.migrations.executor import MigrationExecutor
+    from django.utils import timezone
+    from psycopg import sql
+    from test_customer_persistence_concurrency import session
+
+    old = [("docs", "0009_link_title_lookup")]
+    new = [("docs", "0010_locale_free_title_keys")]
+
+    with django_db_blocker.unblock(), session() as coordinator:
+        row = coordinator.execute(
+            "SELECT collcollate FROM pg_collation "
+            "WHERE collencoding = pg_char_to_encoding('UTF8') "
+            "AND collcollate NOT IN ('C', 'POSIX', '') "
+            "ORDER BY (collcollate IN ('en_US.utf8', 'en_US.UTF-8', 'C.UTF-8', 'C.utf8')) DESC, collcollate "
+            "LIMIT 1"
+        ).fetchone()
+        assert row is not None, "PostgreSQL test server has no non-C UTF-8 locale installed"
+        utf8_locale = row[0]
+
+        name = "test_docs_utf8_rollback_" + uuid4().hex
+        alias = name
+        db_settings = copy.deepcopy(connections["default"].settings_dict)
+        db_settings["NAME"] = name
+        coordinator.execute("SET lock_timeout='5s'")
+        coordinator.execute("SET statement_timeout='60s'")
+        coordinator.execute(
+            sql.SQL(
+                "CREATE DATABASE {} TEMPLATE template0 ENCODING 'UTF8' LC_COLLATE {} LC_CTYPE {}"
+            ).format(sql.Identifier(name), sql.Literal(utf8_locale), sql.Literal(utf8_locale))
+        )
+        connections.databases[alias] = db_settings
+        try:
+            target = connections[alias]
+            with target.cursor() as cur:
+                cur.execute("SELECT lower(%s) = %s", ["\u0130", "i"])
+                assert cur.fetchone() == (True,), f"{utf8_locale} did not fold U+0130 to 'i'"
+
+            MigrationExecutor(target).migrate(new)
+            state_apps = MigrationExecutor(target).loader.project_state(new).apps
+            organisation_model = state_apps.get_model("orgs", "Organisation")
+            reservation_model = state_apps.get_model("orgs", "SlugReservation")
+            workspace_model = state_apps.get_model("workspaces", "Workspace")
+            user_model = state_apps.get_model("identity", "User")
+            membership_model = state_apps.get_model("orgs", "Membership")
+            document_model = state_apps.get_model("docs", "Document")
+            link_model = state_apps.get_model("docs", "DocumentLink")
+
+            with transaction.atomic(using=alias):
+                org = organisation_model.objects.using(alias).create(
+                    slug="docs-utf8-01",
+                    realm="docs-utf8-01",
+                    name="Docs UTF8",
+                    issuer="https://identity.example.org/realms/docs-utf8-01",
+                    state="active",
+                )
+                reservation_model.objects.using(alias).create(
+                    organisation=org,
+                    slug=org.slug,
+                    namespace="organisation",
+                    state="permanent",
+                    protected_at=timezone.now(),
+                )
+                workspace = workspace_model.objects.using(alias).create(organisation=org)
+                user = user_model.objects.using(alias).create(email="owner@example.org")
+                member = membership_model.objects.using(alias).create(
+                    user=user,
+                    organisation=org,
+                    role="org_owner",
+                    state="active",
+                    accepted_at=timezone.now(),
+                )
+                ascii_i = document_model.objects.using(alias).create(
+                    id=UUID("01900000-0000-7000-8000-000000000101"),
+                    workspace=workspace,
+                    creator=member,
+                    title="i",
+                    title_key=titles.key("i"),
+                )
+                dotted_i = document_model.objects.using(alias).create(
+                    id=UUID("01900000-0000-7000-8000-000000000102"),
+                    workspace=workspace,
+                    creator=member,
+                    title="\u0130",
+                    title_key=titles.key("\u0130"),
+                )
+                link_model.objects.using(alias).create(
+                    id=UUID("01900000-0000-7000-8000-000000000103"),
+                    source=ascii_i,
+                    target=dotted_i,
+                    target_title=titles.key("\u0130"),
+                )
+
+            MigrationExecutor(target).migrate(old)
+            rolled_apps = MigrationExecutor(target).loader.project_state(old).apps
+            old_doc = rolled_apps.get_model("docs", "Document")
+            rolled_titles = dict(
+                old_doc.objects.using(alias)
+                .filter(pk__in=[ascii_i.pk, dotted_i.pk])
+                .values_list("id", "title")
+            )
+            assert rolled_titles == {ascii_i.pk: "i", dotted_i.pk: "\u0130 (2)"}
+            MigrationExecutor(target).migrate(new)
+        finally:
+            try:
+                connections[alias].close()
+            finally:
+                coordinator.execute("SET statement_timeout='120s'")
+                coordinator.execute(sql.SQL("DROP DATABASE {}").format(sql.Identifier(name)))
+                del connections[alias]
+                del connections.databases[alias]
+
+
 def test_native_engine_surfaces_stderr_when_child_closes_stdout_before_port(
     settings, monkeypatch
 ) -> None:

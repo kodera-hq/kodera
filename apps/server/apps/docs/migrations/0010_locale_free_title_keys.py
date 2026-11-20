@@ -82,7 +82,37 @@ def backfill(apps, schema_editor):
 
 def reverse_backfill(apps, schema_editor):
     alias = schema_editor.connection.alias
+    documents = apps.get_model("docs", "Document").objects.using(alias)
     document_links = apps.get_model("docs", "DocumentLink").objects.using(alias)
+    # Under a non-C LC_CTYPE (e.g. en_US.UTF-8), distinct 0010 keys such as "i" and
+    # "i\u0307" ("İ") collapse to the same PostgreSQL lower(title) ("i"). Deduplicate
+    # against the database's own lower() before 0009's Lower("title") unique index returns.
+    with schema_editor.connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT id, workspace_id, title, lower(title) "
+            "FROM docs_document WHERE deleted_at IS NULL ORDER BY id"
+        )
+        active_rows = cursor.fetchall()
+        taken_lower = set()
+        pending_docs = []
+        for doc_id, workspace_id, title, db_lower in active_rows:
+            if (workspace_id, db_lower) in taken_lower:
+                pending_docs.append((doc_id, workspace_id, title))
+            else:
+                taken_lower.add((workspace_id, db_lower))
+        for doc_id, workspace_id, orig_title in pending_docs:
+            for number in range(2, SUFFIX_LIMIT):
+                suffix = f" ({number})"
+                candidate = orig_title[: 255 - len(suffix)].rstrip() + suffix
+                cursor.execute("SELECT lower(%s)", [candidate])
+                cand_lower = cursor.fetchone()[0]
+                if (workspace_id, cand_lower) not in taken_lower:
+                    break
+            else:
+                raise RuntimeError("document titles cannot be made unique under lower(title)")
+            taken_lower.add((workspace_id, cand_lower))
+            documents.filter(pk=doc_id).update(title=candidate, title_key=key(candidate))
+
     seen = set()
     duplicates = []
     changed = []
