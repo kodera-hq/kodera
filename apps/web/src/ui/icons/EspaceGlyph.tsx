@@ -25,6 +25,10 @@ export type EspaceGlyphName =
   | 'picture-in-picture'
   | 'expand'
   | 'shrink'
+  | 'detach'
+  | 'redock'
+  | 'mirror'
+  | 'grip'
 
 const PATHS: Record<EspaceGlyphName, ReactNode> = {
   // Two sliders: the call's audio settings.
@@ -122,6 +126,23 @@ const PATHS: Record<EspaceGlyphName, ReactNode> = {
     <>
       <path d="M9 3h4v4M13 3L7.5 8.5" />
       <path d="M11 9.5V12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h2.5" />
+    </>
+  ),
+  // Crisp pure arrow (top-right): pop out into the floating call pill.
+  detach: <path d="M4.5 11.5L11.5 4.5M6 4.5h5.5V10" />,
+  // Crisp pure arrow (bottom-left): re-dock the floating pill into the sidebar.
+  redock: <path d="M11.5 4.5L4.5 11.5M10 11.5H4.5V6" />,
+  // Horizontal symmetry axis: mirror or unmirror the local camera feed.
+  mirror: <path d="M8 2.5v11M2.5 5.5L6 8l-3.5 2.5V5.5zM13.5 5.5L10 8l3.5 2.5V5.5z" />,
+  // Subtle six-dot grip for the draggable floating call pill.
+  grip: (
+    <>
+      <circle cx="6" cy="4" r="0.75" fill="currentColor" />
+      <circle cx="10" cy="4" r="0.75" fill="currentColor" />
+      <circle cx="6" cy="8" r="0.75" fill="currentColor" />
+      <circle cx="10" cy="8" r="0.75" fill="currentColor" />
+      <circle cx="6" cy="12" r="0.75" fill="currentColor" />
+      <circle cx="10" cy="12" r="0.75" fill="currentColor" />
     </>
   ),
 }

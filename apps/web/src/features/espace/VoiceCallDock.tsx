@@ -1,27 +1,38 @@
 import { confidentialMessages } from './confidentialMessages'
-// The call under the workspace: what went wrong with it, the click a browser asks for before it
-// plays sound, and the dock with the people in the room, camera, screen, mute, deafen and leave.
-// It reads the call itself, so who is speaking draws the dock and nothing else of the view.
-//
-// Above the dock, the call's video once anyone shows some (a lazy chunk, `video/VideoStage.tsx`),
-// expanded or docked as a thumbnail that stays while the member moves between the workspace's
-// channels; a banner while a lost connection is joined again (`audio/rejoin.ts`); push-to-talk
-// while the member chose it (`audio/pushToTalk.ts`). While the call connects, the dock lists who
-// is already in the room, from the room's occupancy, which everyone in the workspace sees
-// (docs/specs/espace-video-and-screenshare.md).
+// The call surface across the workspace (`docs/specs/espace-video-and-screenshare.md`):
+// - `stage`: bounded call stage in the main pane (`max-height: min(58vh, 540px)` when split with
+//   chat, or full-pane toggle), showing decoded video feeds (`video/VideoStage.tsx`) or clean
+//   participant cards in audio-only calls, with centered icon-only controls and live connection
+//   quality bars.
+// - `sidebar`: compact 56 px bottom-sidebar voice connection card when browsing text channels, DMs,
+//   Docs, Files, or Calls, reclaiming 100% of the main pane width and height.
+// - `floating`: mouse- and keyboard-draggable floating pill (`audio/FloatingCallPill.tsx`),
+//   positioned strictly via CSSOM custom properties (`cssProperty`).
 
-import { lazy, memo, Suspense, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
+import {
+  lazy,
+  memo,
+  Suspense,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react'
 import type { RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { MessageKey } from '../../i18n'
-import { AudioDock } from '../../ui/AudioDock/AudioDock'
+import { AudioDock, type SignalQuality } from '../../ui/AudioDock/AudioDock'
 import { Button } from '../../ui/Button/Button'
+import { cssProperty } from '../../ui/cssom'
+import { cx } from '../../ui/cx'
 import { InlineAlert } from '../../ui/InlineAlert/InlineAlert'
 import { profileMessages } from '../profile/profileMessages'
 import { usePassportServices } from '../profile/passportContext'
 import { studioMessages } from '../workspace/studioMessages'
-import type { CallProblem, VideoProblem } from './audio/call'
+import type { CallProblem, CallQuality, VideoProblem } from './audio/call'
 import { callPreferences } from './audio/callPreferences'
+import { CallDockRegion, FloatingCallPill } from './audio/FloatingCallPill'
 import { bindPushToTalk } from './audio/pushToTalk'
 import { Rejoiner, REJOIN_ATTEMPTS, type RejoinSnapshot } from './audio/rejoin'
 import type { StagePresentation } from './video/VideoStage'
@@ -36,6 +47,8 @@ import {
   type CallChannel,
   type EspaceStoreLike,
 } from './liveViewModel'
+
+export type CallPlacement = 'stage' | 'sidebar' | 'floating'
 
 const CALL_PROBLEM: Record<CallProblem, MessageKey> = {
   forbidden: 'console.workspace.audio.problem-forbidden',
@@ -64,6 +77,14 @@ const VIDEO_PROBLEM: Record<VideoProblem, MessageKey> = {
   'camera-in-use': 'console.workspace.audio.problem-camera-in-use',
   screen: 'console.workspace.audio.problem-screen',
   'video-forbidden': 'console.workspace.audio.problem-video-forbidden',
+}
+
+const QUALITY_KEY: Record<CallQuality, MessageKey> = {
+  excellent: 'console.workspace.audio.quality-excellent',
+  good: 'console.workspace.audio.quality-good',
+  poor: 'console.workspace.audio.quality-poor',
+  lost: 'console.workspace.audio.quality-lost',
+  unknown: 'console.workspace.audio.quality-unknown',
 }
 
 // Its own chunk: a call nobody shows video in never downloads it.
@@ -103,6 +124,16 @@ export interface VoiceCallDockProps {
   /** The member's own microphone, drawn on these frame by frame (`useMicActivity`). */
   meterRef: RefObject<HTMLSpanElement | null>
   panelMeterRef: RefObject<HTMLSpanElement | null>
+  /** Where the call is currently placed (`stage` by default when rendered standalone). */
+  placement?: CallPlacement
+  narrow?: boolean
+  sidebarWidth?: number
+  fullStage?: boolean
+  onToggleFullStage?: () => void
+  onOpenStage?: () => void
+  onDetach?: () => void
+  onRedock?: () => void
+  className?: string
 }
 
 function VoiceCallDockView({
@@ -113,6 +144,15 @@ function VoiceCallDockView({
   deviceSettings,
   meterRef,
   panelMeterRef,
+  placement: controlledPlacement,
+  narrow = false,
+  sidebarWidth,
+  fullStage: controlledFullStage,
+  onToggleFullStage,
+  onOpenStage,
+  onDetach,
+  onRedock,
+  className,
 }: VoiceCallDockProps) {
   const { t, i18n } = useTranslation()
   const locale = i18n.resolvedLanguage === 'en' ? 'en' : 'fr'
@@ -135,6 +175,12 @@ function VoiceCallDockView({
     rejoiner?.getSnapshot ?? noRejoin
   )
   const [presentation, setPresentation] = useState<StagePresentation>('expanded')
+  const [localPlacement, setLocalPlacement] = useState<CallPlacement>('stage')
+  const [localFullStage, setLocalFullStage] = useState(false)
+
+  const placement = controlledPlacement ?? localPlacement
+  const fullStage = controlledFullStage ?? localFullStage
+
   const connectedNow = callSnapshot.status === 'connected'
   const pushToTalk = preferences.inputMode === 'push-to-talk'
   // Bound while the call is through: a reconnect lets go of the key, and binds it again after.
@@ -159,7 +205,7 @@ function VoiceCallDockView({
         ? t('console.workspace.audio.status-connecting')
         : callSnapshot.listenOnly
           ? t('console.workspace.audio.status-listen-only')
-          : pushToTalk
+          : pushToTalk && placement === 'stage'
             ? `${t('console.workspace.audio.status-connected')} · ${t('console.workspace.audio.status-push-to-talk')}`
             : t('console.workspace.audio.status-connected')
   // While a lost connection is joined again, the banner says so in the problem's place.
@@ -179,6 +225,9 @@ function VoiceCallDockView({
   const setScreen = realCall?.setScreenShareEnabled
   const camera = callSnapshot.camera ?? 'off'
   const screen = callSnapshot.screen ?? 'off'
+  const localQuality: SignalQuality = callSnapshot.connectionQuality ?? 'unknown'
+  const qualityLabel = t(QUALITY_KEY[localQuality])
+
   const media =
     setCamera === undefined || attachVideo === undefined || callSnapshot.listenOnly || preJoin
       ? undefined
@@ -209,194 +258,353 @@ function VoiceCallDockView({
               }),
         }
 
-  // The call controls stay outside the mobile chooser, so mute and leave never require reopening it.
-  return (
-    <>
-      <div aria-live="polite" className="flex flex-col gap-2">
-        {callSnapshot.status === 'reconnecting' ? (
-          <div className="px-2">
-            <InlineAlert kind="info" inLiveRegion>
-              {t('console.workspace.audio.label-resuming')}
-            </InlineAlert>
+  const detachButtonRef = useRef<HTMLButtonElement>(null)
+  const redockButtonRef = useRef<HTMLButtonElement>(null)
+  const pendingFocusRef = useRef<'detach' | 'redock' | null>(null)
+
+  const handleOpenStage = () => {
+    pendingFocusRef.current = 'detach'
+    setPresentation('expanded')
+    if (onOpenStage !== undefined) onOpenStage()
+    else setLocalPlacement('stage')
+  }
+  const handleDetach = () => {
+    pendingFocusRef.current = 'redock'
+    if (onDetach !== undefined) onDetach()
+    else setLocalPlacement('floating')
+  }
+  const handleRedock = () => {
+    pendingFocusRef.current = 'detach'
+    if (onRedock !== undefined) onRedock()
+    else setLocalPlacement('sidebar')
+  }
+  const handlePresentationChange = (next: StagePresentation) => {
+    setPresentation(next)
+    if (next === 'expanded' && placement === 'sidebar') {
+      handleOpenStage()
+    }
+  }
+  const handleToggleFullStage = () => {
+    if (onToggleFullStage !== undefined) onToggleFullStage()
+    else setLocalFullStage((value) => !value)
+  }
+
+  const isFloating = placement === 'floating'
+
+  useEffect(() => {
+    if (!callLive || call === null || channel === null) {
+      pendingFocusRef.current = null
+      return
+    }
+    const target = pendingFocusRef.current
+    if (target === 'redock' && isFloating) {
+      pendingFocusRef.current = null
+      redockButtonRef.current?.focus()
+    } else if (target === 'detach' && !isFloating) {
+      pendingFocusRef.current = null
+      detachButtonRef.current?.focus()
+    }
+  }, [call, callLive, channel, isFloating, placement])
+
+  const hasAlerts =
+    callSnapshot.status === 'reconnecting' ||
+    (rejoining && rejoiner !== null) ||
+    (callLive && callSnapshot.videoProblem !== undefined) ||
+    callProblem !== undefined ||
+    (callLive && call !== null && callSnapshot.playbackBlocked)
+
+  if (!hasAlerts && !(callLive && call !== null)) {
+    return null
+  }
+
+  const alerts = hasAlerts ? (
+    <div aria-live="polite" className="flex flex-col gap-2 py-1">
+      {callSnapshot.status === 'reconnecting' ? (
+        <div className="px-2">
+          <InlineAlert kind="info" inLiveRegion>
+            {t('console.workspace.audio.label-resuming')}
+          </InlineAlert>
+        </div>
+      ) : null}
+      {rejoining && rejoiner !== null ? (
+        <div className="flex flex-col gap-2 px-2" data-rejoin={rejoin.phase}>
+          <InlineAlert kind="warning" inLiveRegion>
+            {rejoin.phase === 'gave-up'
+              ? t('console.workspace.audio.label-rejoin-gave-up')
+              : rejoin.phase === 'offline'
+                ? t('console.workspace.audio.label-rejoin-offline')
+                : rejoin.phase === 'trying'
+                  ? t('console.workspace.audio.label-rejoin-trying', {
+                      attempt: rejoin.attempt,
+                      attempts: rejoin.attempts,
+                    })
+                  : t('console.workspace.audio.label-rejoin-waiting', {
+                      attempt: rejoin.attempt,
+                      attempts: rejoin.attempts,
+                    })}
+          </InlineAlert>
+          <div className="flex flex-wrap gap-2">
+            {rejoin.phase === 'trying' ? null : (
+              <Button variant="secondary" size="sm" onClick={rejoiner.retryNow}>
+                {t(
+                  rejoin.phase === 'gave-up'
+                    ? 'console.workspace.audio.action-retry'
+                    : 'console.workspace.audio.action-rejoin-now'
+                )}
+              </Button>
+            )}
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                rejoiner.cancel()
+                void call?.leave()
+              }}
+            >
+              {t('console.workspace.audio.action-dismiss')}
+            </Button>
           </div>
-        ) : null}
-        {rejoining && rejoiner !== null ? (
-          <div className="flex flex-col gap-2 px-2" data-rejoin={rejoin.phase}>
-            <InlineAlert kind="warning" inLiveRegion>
-              {rejoin.phase === 'gave-up'
-                ? t('console.workspace.audio.label-rejoin-gave-up')
-                : rejoin.phase === 'offline'
-                  ? t('console.workspace.audio.label-rejoin-offline')
-                  : rejoin.phase === 'trying'
-                    ? t('console.workspace.audio.label-rejoin-trying', {
-                        attempt: rejoin.attempt,
-                        attempts: rejoin.attempts,
-                      })
-                    : t('console.workspace.audio.label-rejoin-waiting', {
-                        attempt: rejoin.attempt,
-                        attempts: rejoin.attempts,
-                      })}
-            </InlineAlert>
+        </div>
+      ) : null}
+      {callLive && callSnapshot.videoProblem !== undefined ? (
+        <div className="px-2">
+          <InlineAlert kind="warning" inLiveRegion>
+            {t(VIDEO_PROBLEM[callSnapshot.videoProblem])}
+          </InlineAlert>
+        </div>
+      ) : null}
+      {callProblem === undefined ? null : (
+        <div className="flex flex-col gap-2 px-2">
+          <InlineAlert kind="warning" inLiveRegion>
+            {callProblem === 'media-encryption-unavailable' ||
+            callProblem === 'media-transforms-unavailable' ||
+            callProblem === 'media-encryption-revoked'
+              ? confidentialMessages[i18n.resolvedLanguage === 'en' ? 'en' : 'fr'][callProblem]
+              : t(CALL_PROBLEM[callProblem])}
+          </InlineAlert>
+          {callOver ? (
             <div className="flex flex-wrap gap-2">
-              {rejoin.phase === 'trying' ? null : (
-                <Button variant="secondary" size="sm" onClick={rejoiner.retryNow}>
-                  {t(
-                    rejoin.phase === 'gave-up'
-                      ? 'console.workspace.audio.action-retry'
-                      : 'console.workspace.audio.action-rejoin-now'
-                  )}
+              {RETRYABLE.has(callProblem) && channel !== null && call !== null ? (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => void call.join(channel.roomId)}
+                >
+                  {t('console.workspace.audio.action-retry')}
                 </Button>
-              )}
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => {
-                  rejoiner.cancel()
-                  void call?.leave()
-                }}
-              >
+              ) : null}
+              <Button variant="secondary" size="sm" onClick={() => void call?.leave()}>
                 {t('console.workspace.audio.action-dismiss')}
               </Button>
             </div>
+          ) : null}
+        </div>
+      )}
+      {callLive && call !== null && callSnapshot.playbackBlocked ? (
+        <div className="flex flex-col gap-2 px-2">
+          <InlineAlert kind="warning" inLiveRegion>
+            {t('console.workspace.audio.label-playback-blocked')}
+          </InlineAlert>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="primary"
+              size="sm"
+              // From the click itself: the browser lets the sound play from a gesture only.
+              onClick={() => void call.startAudio()}
+            >
+              {t('console.workspace.audio.action-start-audio')}
+            </Button>
           </div>
-        ) : null}
-        {callLive && callSnapshot.videoProblem !== undefined ? (
-          <div className="px-2">
-            <InlineAlert kind="warning" inLiveRegion>
-              {t(VIDEO_PROBLEM[callSnapshot.videoProblem])}
-            </InlineAlert>
-          </div>
-        ) : null}
-        {callProblem === undefined ? null : (
-          <div className="flex flex-col gap-2 px-2">
-            <InlineAlert kind="warning" inLiveRegion>
-              {callProblem === 'media-encryption-unavailable' ||
-              callProblem === 'media-transforms-unavailable' ||
-              callProblem === 'media-encryption-revoked'
-                ? confidentialMessages[i18n.resolvedLanguage === 'en' ? 'en' : 'fr'][callProblem]
-                : t(CALL_PROBLEM[callProblem])}
-            </InlineAlert>
-            {callOver ? (
-              <div className="flex flex-wrap gap-2">
-                {RETRYABLE.has(callProblem) && channel !== null && call !== null ? (
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => void call.join(channel.roomId)}
-                  >
-                    {t('console.workspace.audio.action-retry')}
-                  </Button>
-                ) : null}
-                <Button variant="secondary" size="sm" onClick={() => void call?.leave()}>
-                  {t('console.workspace.audio.action-dismiss')}
-                </Button>
-              </div>
-            ) : null}
-          </div>
-        )}
-        {callLive && call !== null && callSnapshot.playbackBlocked ? (
-          <div className="flex flex-col gap-2 px-2">
-            <InlineAlert kind="warning" inLiveRegion>
-              {t('console.workspace.audio.label-playback-blocked')}
-            </InlineAlert>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                variant="primary"
-                size="sm"
-                // From the click itself: the browser lets the sound play from a gesture only.
-                onClick={() => void call.startAudio()}
-              >
-                {t('console.workspace.audio.action-start-audio')}
-              </Button>
-            </div>
-          </div>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
+    </div>
+  ) : null
 
-      {callLive && call !== null ? (
-        <>
-          {call.mode === 'local-preview' ? (
-            <p role="status" className="px-3 py-2 text-xs text-c-ink-3">
+  const hasVideo = attachVideo !== undefined && videos.length > 0
+  const dockLayout = placement === 'sidebar' ? (narrow ? 'banner' : 'compact') : 'studio'
+
+  const widthRef = cssProperty(
+    'width',
+    !narrow && placement === 'sidebar' && sidebarWidth !== undefined
+      ? `${sidebarWidth}px`
+      : undefined
+  )
+
+  return (
+    <div
+      ref={widthRef}
+      data-call-placement={placement}
+      className={cx(
+        placement === 'stage'
+          ? cx(
+              'flex min-w-0 flex-col border-b border-c-border-soft bg-c-inverse',
+              fullStage
+                ? 'min-h-0 flex-1 overflow-y-auto'
+                : 'call-stage-bounded shrink-0 overflow-y-auto'
+            )
+          : placement === 'sidebar'
+            ? cx(
+                'flex shrink-0 flex-col',
+                narrow ? 'px-2 pt-2' : 'border-t border-r border-c-border-soft bg-c-inverse'
+              )
+            : 'contents',
+        className
+      )}
+    >
+      {alerts}
+      {callLive && call !== null && channel !== null ? (
+        <CallDockRegion
+          key={callSnapshot.roomId}
+          label={t('console.workspace.audio.label-dock')}
+          floating={isFloating}
+          dockLayout={dockLayout}
+          onRedock={handleRedock}
+          dockedClassName={cx(
+            'focus-ground-inverse inverse-edge flex w-full flex-col bg-c-inverse text-c-on-inverse',
+            dockLayout === 'compact' ? 'h-[56px] justify-center' : '',
+            dockLayout === 'banner' ? 'rounded-lg' : ''
+          )}
+        >
+          {call.mode === 'local-preview' && placement === 'stage' ? (
+            <p role="status" className="px-3 pt-2 text-xs text-c-on-inverse-dim">
               {audioPreviewMessages[locale].notice}
             </p>
           ) : null}
-          {attachVideo !== undefined && videos.length > 0 ? (
+          {hasVideo ? (
             <Suspense fallback={null}>
               <VideoStage
                 feeds={videos}
                 attach={attachVideo}
                 nameOf={nameOf}
                 speakers={dockStatus === 'connected' ? callSnapshot.speakers : []}
-                presentation={presentation}
-                onPresentationChange={setPresentation}
+                {...(callSnapshot.qualities === undefined
+                  ? {}
+                  : { qualities: callSnapshot.qualities })}
+                presentation={placement === 'sidebar' ? 'docked' : presentation}
+                onPresentationChange={handlePresentationChange}
+                compactPreview={isFloating}
               />
             </Suspense>
           ) : null}
-          <AudioDock
-            key={callSnapshot.roomId}
-            layout="studio"
-            localParticipantId={viewerId}
-            previewCamera={call.mode === 'local-preview'}
-            participants={people.map((id) => {
-              const mxc =
-                id === viewerId ? store.getOwnProfile?.()?.avatarUrl : callRoom?.avatars?.[id]
-              const avatarSrc = mxc === undefined ? undefined : avatars?.get(mxc)
-              return {
-                id,
-                name: nameOf(id),
-                roleLabel:
-                  profileCopy[store.getProfileRole?.(callSnapshot.roomId ?? '', id) ?? 'member'],
-                speaking: dockStatus === 'connected' && callSnapshot.speakers.includes(id),
-                ...(avatarSrc === undefined
-                  ? {}
-                  : {
-                      avatarSrc,
-                      onAvatarError: () => {
-                        if (mxc !== undefined) avatars?.forget(mxc)
-                      },
-                    }),
+          {isFloating ? (
+            <FloatingCallPill
+              asSection={false}
+              redockButtonRef={redockButtonRef}
+              label={t('console.workspace.audio.label-dock')}
+              room={channel.roomName}
+              {...(channel.categoryName === undefined ? {} : { category: channel.categoryName })}
+              status={dockStatus}
+              statusLabel={
+                call.mode === 'local-preview'
+                  ? audioPreviewMessages[locale].status
+                  : dockStatusLabel
               }
-            })}
-            participantsLabel={
-              preJoin
-                ? t('console.workspace.audio.label-already-here')
-                : studioMessages[locale].participants
-            }
-            {...(media === undefined ? {} : { media })}
-            cameraUnavailable={studioMessages[locale].cameraGap}
-            label={t('console.workspace.audio.label-dock')}
-            room={channel.roomName}
-            {...(channel.categoryName === undefined ? {} : { category: channel.categoryName })}
-            status={dockStatus}
-            statusLabel={
-              call.mode === 'local-preview' ? audioPreviewMessages[locale].status : dockStatusLabel
-            }
-            muted={callSnapshot.muted}
-            deafened={callSnapshot.deafened}
-            {...(call.micLevel === undefined ? {} : { meterRef })}
-            {...(deviceSettings === null
-              ? {}
-              : {
-                  settings: (
-                    <AudioSettings
-                      call={deviceSettings}
-                      inputMissing={callSnapshot.inputMissing === true}
-                      meterRef={panelMeterRef}
-                    />
-                  ),
-                })}
-            onToggleMute={() => void call.setMuted(!callSnapshot.muted)}
-            onToggleDeafen={() => void call.setDeafened(!callSnapshot.deafened)}
-            onLeave={() => void call.leave()}
-            labels={{
-              mute: t('console.workspace.audio.action-mute'),
-              deafen: t('console.workspace.audio.action-deafen'),
-              leave: t('console.workspace.audio.action-leave'),
-            }}
-          />
-        </>
+              quality={localQuality}
+              qualityLabel={qualityLabel}
+              muted={callSnapshot.muted}
+              deafened={callSnapshot.deafened}
+              {...(media === undefined ? {} : { media })}
+              {...(call.micLevel === undefined ? {} : { meterRef })}
+              onToggleMute={() => void call.setMuted(!callSnapshot.muted)}
+              onToggleDeafen={() => void call.setDeafened(!callSnapshot.deafened)}
+              onOpenCall={handleOpenStage}
+              onRedock={handleRedock}
+              onLeave={() => void call.leave()}
+              labels={{
+                mute: t('console.workspace.audio.action-mute'),
+                deafen: t('console.workspace.audio.action-deafen'),
+                leave: t('console.workspace.audio.action-leave'),
+                openCall: t('console.workspace.audio.action-open-stage'),
+                redock: t('console.workspace.audio.action-redock'),
+              }}
+            />
+          ) : (
+            <AudioDock
+              asSection={false}
+              layout={dockLayout}
+              detachButtonRef={detachButtonRef}
+              hideParticipants={hasVideo && presentation === 'expanded' && placement === 'stage'}
+              localParticipantId={viewerId}
+              previewCamera={call.mode === 'local-preview'}
+              quality={localQuality}
+              qualityLabel={qualityLabel}
+              participants={people.map((id) => {
+                const mxc =
+                  id === viewerId ? store.getOwnProfile?.()?.avatarUrl : callRoom?.avatars?.[id]
+                const avatarSrc = mxc === undefined ? undefined : avatars?.get(mxc)
+                return {
+                  id,
+                  name: nameOf(id),
+                  roleLabel:
+                    profileCopy[store.getProfileRole?.(callSnapshot.roomId ?? '', id) ?? 'member'],
+                  speaking: dockStatus === 'connected' && callSnapshot.speakers.includes(id),
+                  ...(avatarSrc === undefined
+                    ? {}
+                    : {
+                        avatarSrc,
+                        onAvatarError: () => {
+                          if (mxc !== undefined) avatars?.forget(mxc)
+                        },
+                      }),
+                  ...(callSnapshot.qualities?.[id] === undefined
+                    ? {}
+                    : { quality: callSnapshot.qualities[id] }),
+                }
+              })}
+              participantsLabel={
+                preJoin
+                  ? t('console.workspace.audio.label-already-here')
+                  : studioMessages[locale].participants
+              }
+              {...(media === undefined ? {} : { media })}
+              cameraUnavailable={studioMessages[locale].cameraGap}
+              label={t('console.workspace.audio.label-dock')}
+              room={channel.roomName}
+              {...(channel.categoryName === undefined ? {} : { category: channel.categoryName })}
+              status={dockStatus}
+              statusLabel={
+                call.mode === 'local-preview'
+                  ? audioPreviewMessages[locale].status
+                  : dockStatusLabel
+              }
+              muted={callSnapshot.muted}
+              deafened={callSnapshot.deafened}
+              {...(call.micLevel === undefined ? {} : { meterRef })}
+              {...(deviceSettings === null || dockLayout === 'compact'
+                ? {}
+                : {
+                    settings: (
+                      <AudioSettings
+                        call={deviceSettings}
+                        inputMissing={callSnapshot.inputMissing === true}
+                        meterRef={panelMeterRef}
+                      />
+                    ),
+                  })}
+              {...(placement === 'sidebar' ? { onOpenCall: handleOpenStage } : {})}
+              onDetach={handleDetach}
+              fullStage={fullStage}
+              onToggleFullStage={handleToggleFullStage}
+              onToggleMute={() => void call.setMuted(!callSnapshot.muted)}
+              onToggleDeafen={() => void call.setDeafened(!callSnapshot.deafened)}
+              onLeave={() => void call.leave()}
+              labels={{
+                mute: t('console.workspace.audio.action-mute'),
+                deafen: t('console.workspace.audio.action-deafen'),
+                leave: t('console.workspace.audio.action-leave'),
+                openCall: t('console.workspace.audio.action-open-stage'),
+                detach: t('console.workspace.audio.action-detach'),
+                fullStage: t(
+                  fullStage
+                    ? 'console.workspace.audio.action-split-stage'
+                    : 'console.workspace.audio.action-full-stage'
+                ),
+              }}
+            />
+          )}
+        </CallDockRegion>
       ) : null}
-    </>
+    </div>
   )
 }
 

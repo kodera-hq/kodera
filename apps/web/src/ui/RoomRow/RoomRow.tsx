@@ -83,6 +83,8 @@ export interface RoomRowProps extends Omit<
   listenOnly?: string
   /** The viewer cannot join: the reason, drawn and read, e.g. « réservé à la direction ». */
   unavailable?: string
+  /** Narrow sidebar density: full room name + compact right count badge instead of inline status prose. */
+  compact?: boolean
 }
 
 const ROW =
@@ -111,6 +113,7 @@ export const RoomRow = forwardRef<HTMLButtonElement, RoomRowProps>(function Room
     connected,
     listenOnly,
     unavailable,
+    compact = false,
     className,
     type = 'button',
     ...rest
@@ -162,7 +165,7 @@ export const RoomRow = forwardRef<HTMLButtonElement, RoomRowProps>(function Room
         <span aria-hidden="true" className="min-w-0 flex-1 truncate">
           {name}
         </span>
-        {isConnected ? (
+        {isConnected && !compact ? (
           <span aria-hidden="true" className="shrink-0 text-xs font-semibold text-c-ok-ink">
             {connected}
           </span>
@@ -174,7 +177,7 @@ export const RoomRow = forwardRef<HTMLButtonElement, RoomRowProps>(function Room
             className="flex shrink-0 items-center gap-1 text-xs font-regular text-c-ink-3"
           >
             <EspaceGlyph name="mic-off" className="h-3 w-3" />
-            {listenOnly}
+            {compact ? null : listenOnly}
           </span>
         ) : null}
         {isUnavailable ? (
@@ -187,7 +190,15 @@ export const RoomRow = forwardRef<HTMLButtonElement, RoomRowProps>(function Room
             <span className="truncate">{unavailable}</span>
           </span>
         ) : null}
-        {occupants.length === 0 ? null : (
+        {occupants.length === 0 ? null : compact ? (
+          <span
+            aria-hidden="true"
+            data-occupancy=""
+            className="inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-c-muted px-2 font-mono text-xs font-medium text-c-ink-2 tabular-nums"
+          >
+            {occupants.length}
+          </span>
+        ) : (
           <span
             aria-hidden="true"
             data-occupancy=""
@@ -198,7 +209,7 @@ export const RoomRow = forwardRef<HTMLButtonElement, RoomRowProps>(function Room
         )}
       </button>
       {occupants.length === 0 ? null : (
-        <ul aria-label={occupantsLabel} className="flex flex-col pr-2 pl-8">
+        <ul aria-label={occupantsLabel} className="flex flex-col pr-2 pl-6">
           {occupants.map((occupant, index) => {
             const isFolded = index >= limit
             return (

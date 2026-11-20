@@ -27,6 +27,7 @@ export function StudioNavigation({
   compact = false,
   mode,
   onChange,
+  onOpenCalls,
   rooms,
   onChoose,
   activity = [],
@@ -40,6 +41,7 @@ export function StudioNavigation({
   section: 'primary' | 'tools' | 'call-entry'
   mode: CanvasMode
   onChange?: ((mode: CanvasMode) => void) | undefined
+  onOpenCalls?: (() => void) | undefined
   rooms: readonly ChannelSearchEntry[]
   onChoose: (room: ChannelSearchEntry) => HTMLElement | null
 }) {
@@ -68,6 +70,7 @@ export function StudioNavigation({
     window.addEventListener('keydown', close, true)
     return () => window.removeEventListener('keydown', close, true)
   }, [compact, panel])
+  const openCallsSurface = onOpenCalls ?? (onChange ? () => onChange('calls') : undefined)
   const entries: {
     name: 'notifications' | 'messages' | 'docs' | 'calls' | 'files' | 'integrations'
     icon: StudioGlyphName
@@ -75,7 +78,14 @@ export function StudioNavigation({
     selected?: boolean
   }[] =
     section === 'call-entry'
-      ? [{ name: 'calls', icon: 'calls', action: () => setPanel('calls') }]
+      ? [
+          {
+            name: 'calls',
+            icon: 'calls',
+            action: openCallsSurface ?? (() => setPanel('calls')),
+            ...(openCallsSurface ? { selected: mode === 'calls' } : {}),
+          },
+        ]
       : section === 'primary'
         ? [
             {
@@ -97,7 +107,12 @@ export function StudioNavigation({
               action: () => onChange?.('docs'),
               selected: mode === 'docs',
             },
-            { name: 'calls', icon: 'calls', action: () => setPanel('calls') },
+            {
+              name: 'calls',
+              icon: 'calls',
+              action: openCallsSurface ?? (() => setPanel('calls')),
+              ...(openCallsSurface ? { selected: mode === 'calls' } : {}),
+            },
             // « Fichiers » is a canvas of its own where the view offers one (`onChange`), and the
             // short dialog only where it does not — the organisation console, which has no canvas.
             {
@@ -243,7 +258,9 @@ export function StudioNavigation({
                   ? 'espace-canvas-mode-chat'
                   : entry.name === 'files' && onChange
                     ? 'espace-canvas-mode-files'
-                    : undefined
+                    : entry.name === 'calls' && openCallsSurface && section !== 'call-entry'
+                      ? 'espace-canvas-mode-calls'
+                      : undefined
             }
             className={`flex min-h-8 items-center gap-2 rounded-md px-2 py-1 text-left text-sm focus-visible:ring focus-visible:outline-hidden narrow:min-h-12 ${entry.selected ? 'bg-c-accent-soft font-bold text-c-accent-ink' : 'text-c-ink-2 hover:bg-c-muted'}`}
           >

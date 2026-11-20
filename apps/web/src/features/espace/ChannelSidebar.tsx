@@ -43,6 +43,7 @@ import type { MentionCandidate } from './mentions'
 import { useStoreSlice } from './useStoreSlice'
 import { workspaceFilesOf } from './workspaceFiles'
 import { cssProperty } from '../../ui/cssom'
+import { cx } from '../../ui/cx'
 
 /** What a right-click on a channel's row tells the view's owner. */
 export type ChannelContextMenu = (info: ChannelMenuTarget) => void
@@ -158,6 +159,7 @@ function AudioRoom({
   return (
     <RoomRow
       id={id}
+      compact
       name={label}
       joinLabel={t('console.workspace.audio.action-join-room', { room: label })}
       occupancyLabel={(count) =>
@@ -244,6 +246,8 @@ export interface ChannelSidebarProps {
   onChangeCanvasMode: ((mode: CanvasMode) => void) | undefined
   /** The studio's sections: the canvas changes, and a phone's chooser closes on it. */
   onSwitchCanvas: ((mode: CanvasMode) => void) | undefined
+  onOpenCalls?: (() => void) | undefined
+  className?: string | undefined
   onSelectTextChannel: (channelId: string) => void
   /** The direct conversation shown, and how one is chosen; absent where there are none. */
   activeDirectRoomId?: string | null
@@ -295,6 +299,8 @@ function ChannelSidebarView({
   onOpenDocument,
   onChangeCanvasMode,
   onSwitchCanvas,
+  onOpenCalls,
+  className,
   onSelectTextChannel,
   activeDirectRoomId,
   onSelectDirect,
@@ -599,7 +605,10 @@ function ChannelSidebarView({
     <nav
       aria-labelledby={headingId}
       ref={cssProperty('width', narrow ? undefined : `${width}px`)}
-      className="material-panel order-first flex w-shell-sidebar-width shrink-0 flex-col justify-between overflow-hidden border-r border-c-border-soft p-3 narrow:max-h-[calc(100vh*3/4)] narrow:w-full narrow:border-r-0"
+      className={cx(
+        'material-panel order-first flex w-shell-sidebar-width shrink-0 flex-col justify-between overflow-hidden border-r border-c-border-soft p-3 narrow:max-h-[calc(100vh*3/4)] narrow:w-full narrow:border-r-0',
+        className
+      )}
     >
       <div className="flex min-h-0 flex-1 flex-col">
         {channelNavigation}
@@ -608,6 +617,7 @@ function ChannelSidebarView({
           section="tools"
           mode={canvasMode}
           onChange={onSwitchCanvas}
+          onOpenCalls={onOpenCalls}
           rooms={audioRooms}
           onChoose={onOpenChannel}
           activity={activity}

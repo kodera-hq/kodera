@@ -27,20 +27,26 @@ Espace's audio rooms carry video too. The call stays the one thin layer over `li
 - **Stopping.** The browser's own « Arrêter le partage » ends the share. The dock follows. Sharing again is the member's to ask.
 - **Ending with the call.** Camera and screen captures end with the call: leaving, switching rooms, a removal, or a lost connection.
 
-### Video stage (`src/features/espace/video/VideoStage.tsx`)
+### Video stage, compact sidebar card and floating pill (`src/features/espace/video/VideoStage.tsx`, `src/features/espace/audio/FloatingCallPill.tsx`, `src/features/espace/CallsSurfaceView.tsx`)
 
-- **Lazy loading.** The stage is a lazy chunk, loaded only once a call has video.
+- **Lazy loading.** The video stage and the in-pane `Appels` surface are lazy chunks, loaded only when needed.
+- **Zero empty black boxes.**
+  - Audio-only calls render participant cards in the stage (and zero `<video>` elements).
+  - Camera and screen tiles keep `<video>` hidden behind an avatar, display name, speaking ring and connection-quality indicator until `readyState >= 2 && videoWidth > 0`.
 - **What it shows.**
   - Shared screens come first, shown whole (`object-contain`).
   - Cameras follow and fill their tiles.
-  - The member's own camera comes last, mirrored.
-  - A camera that is turned off is not listed.
+  - The member's own camera comes last, mirrored by default, with an icon-only Mirror toggle.
+  - Entering native Picture-in-Picture (`enterpictureinpicture`) automatically removes `-scale-x-100` so browser placeholder text is never backwards, and leaving PiP (`leavepictureinpicture`) restores the member's mirror preference.
+  - A camera that is turned off or ended is not listed.
 - **Spotlight.** A shared screen takes the spotlight, with the other feeds in a strip below it. The member can pin any feed there, and unpin it.
-- **Speaking.** Whoever speaks has their camera ringed.
-- **Drawing the video.** Each `<video>` is drawn by the call (`attachVideo`). It is muted, because the call's sound plays through its own hidden elements.
-- **No `style` attributes.** Nothing on the stage uses one, so `style-src 'self'` and `style-src-attr 'none'` stay strict.
-- **Docked presentation.** The stage can shrink to a floating thumbnail of the spotlit feed (« Réduire la vidéo en vignette »). It stays in a corner while the member moves between the workspace's channels: the Espace view, and so the call, stays mounted across those routes.
-- **Leaving the workspace.** This still asks first and ends the call (`LeaveCallGuard`). Keeping a call alive across the rest of the console would move the call above the workspace route, which is out of scope here.
+- **Speaking & quality.** Whoever speaks has their camera ringed, and LiveKit's `ConnectionQualityChanged` events update per-participant signal bars.
+- **Bounded stage & sidebar continuity.**
+  - When focused on the active voice/video room, the stage sits bounded in the main column (`max-height: min(58vh, 540px)` when split with chat, or full main pane via the expand toggle) with centered non-occluded icon-only controls.
+  - When browsing another text channel, DM, `Docs`, `Fichiers` or `Appels`, the call collapses into a compact 56 px card at the foot of the channel sidebar, reclaiming 100% of main column width and height, with a clickable room name returning to the stage and an icon-only `↗` button detaching into `FloatingCallPill`.
+  - `FloatingCallPill` is movable via pointer capture drag, corner/edge snapping, viewport resize clamping and `Alt+Arrow` keyboard shortcuts (`Escape` or `↙` re-docks into the sidebar), positioned strictly via `cssProperty()` (`--call-pill-x`, `--call-pill-y`) with zero `style` attributes and zero `.material-*` glass surfaces.
+- **In-pane `Appels` surface.** Selecting `Appels` in workspace navigation renders `CallsSurfaceView` in-pane (active room cards, Join/Return-to-stage actions, and opt-in pre-join audio/microphone meter check) without a blocking modal dialog.
+- **Leaving the workspace.** This still asks first and ends the call (`LeaveCallGuard`).
 - **Browser picture-in-picture.** Where the browser offers its own window (`document.pictureInPictureEnabled`), each tile can open it.
 
 ### Speaking (`audio/callPreferences.ts`, `audio/pushToTalk.ts`)

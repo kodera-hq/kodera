@@ -1752,6 +1752,18 @@ Source: `src/features/espace/EspaceLiveView.tsx`, the call dock and the audio ro
 | `console.workspace.audio.confirm-leave-body` | Quitter cette page mettra fin à votre appel. Les autres personnes restent dans le salon. |
 | `console.workspace.audio.action-confirm-leave` | Quitter l’appel |
 | `console.workspace.audio.action-stay` | Rester dans l’appel |
+| `console.workspace.audio.action-detach` | Fenêtre flottante |
+| `console.workspace.audio.action-redock` | Rattacher à la barre latérale |
+| `console.workspace.audio.action-open-stage` | Ouvrir la scène d’appel |
+| `console.workspace.audio.action-full-stage` | Plein panneau |
+| `console.workspace.audio.action-split-stage` | Afficher avec la discussion |
+| `console.workspace.audio.action-mirror-on` | Activer l’effet miroir |
+| `console.workspace.audio.action-mirror-off` | Désactiver l’effet miroir |
+| `console.workspace.audio.quality-excellent` | Connexion excellente |
+| `console.workspace.audio.quality-good` | Bonne connexion |
+| `console.workspace.audio.quality-poor` | Connexion faible |
+| `console.workspace.audio.quality-lost` | Connexion interrompue |
+| `console.workspace.audio.quality-unknown` | Qualité de connexion en mesure |
 
 ## Workspace message actions
 
@@ -1929,6 +1941,17 @@ Source: `src/features/espace/EspaceLiveView.tsx`, the call dock and the audio ro
 | `console.workspace.canvas.mode-chat` | Discussion |
 | `console.workspace.canvas.mode-docs` | Docs |
 | `console.workspace.canvas.mode-files` | Fichiers |
+| `console.workspace.canvas.mode-calls` | Appels |
+| `console.workspace.calls.title` | Appels |
+| `console.workspace.calls.subtitle` | Salons vocaux et vidéo actifs, aperçu des participants et vérification rapide de vos périphériques avant de rejoindre. |
+| `console.workspace.calls.rooms-heading` | Salons vocaux et vidéo |
+| `console.workspace.calls.active-heading` | Appel actif |
+| `console.workspace.calls.action-return-stage` | Retourner à la scène |
+| `console.workspace.calls.prejoin-heading` | Vérification audio et micro |
+| `console.workspace.calls.prejoin-hint` | Votre micro reste coupé tant que vous ne lancez pas le test ou ne rejoignez pas un salon. |
+| `console.workspace.calls.action-test-mic` | Tester le micro |
+| `console.workspace.calls.action-stop-mic-test` | Arrêter le test micro |
+| `console.workspace.calls.problem-mic-test` | Impossible d’accéder au micro pour le test. Vérifiez les autorisations du navigateur. |
 | `console.workspace.files.title` | Fichiers de l’espace |
 | `console.workspace.files.held` | {count, plural, one {{count} élément · {size} partagé} other {{count} éléments · {size} partagés}} |
 | `console.workspace.files.field-search` | Rechercher un fichier |

@@ -25,6 +25,7 @@ import { permitsPlaintext, type RoomBoundary } from '../../confidential/room-bou
 
 import {
   BaseKeyProvider,
+  ConnectionQuality,
   ConnectionState,
   DisconnectReason,
   LogLevel,
@@ -58,6 +59,23 @@ import { soundEngine, type SoundEngine } from '../../sounds/SoundEngine'
 import { callPreferences, type CallPreferences } from './callPreferences'
 
 export type CallStatus = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'ended' | 'failed'
+
+export type CallQuality = 'excellent' | 'good' | 'poor' | 'lost' | 'unknown'
+
+function callQualityOf(quality: unknown): CallQuality {
+  switch (quality) {
+    case ConnectionQuality.Excellent:
+      return 'excellent'
+    case ConnectionQuality.Good:
+      return 'good'
+    case ConnectionQuality.Poor:
+      return 'poor'
+    case ConnectionQuality.Lost:
+      return 'lost'
+    default:
+      return 'unknown'
+  }
+}
 
 export type CallProblem =
   /** The join was refused by the room-access service (see `RoomAccessProblem`). */
@@ -173,6 +191,10 @@ export interface CallSnapshot {
   screen?: MediaState
   /** Why the camera or the screen is off when the member asked for it. */
   videoProblem?: VideoProblem
+  /** LiveKit connection quality for the local participant (`ConnectionQualityChanged`). */
+  connectionQuality?: CallQuality
+  /** Per-participant connection quality, keyed by Matrix user id. */
+  qualities?: Readonly<Record<string, CallQuality>>
 }
 
 /** What the controller uses of a LiveKit `Room`; tests hand it a fake. */
@@ -452,6 +474,8 @@ interface Session {
   readonly videoWanted: Record<VideoSource, boolean>
   /** Counts the member's operations on each: the outcome of a replaced one says nothing. */
   readonly videoGeneration: Record<VideoSource, number>
+  /** Per-participant connection quality reported by LiveKit. */
+  readonly qualities: Map<string, CallQuality>
 }
 
 export class CallController {
@@ -990,13 +1014,13 @@ export class CallController {
       }
     }
     const userId = matrixUserOf(session.room.localParticipant.identity)
-    if (userId !== null && !session.videos.has(publication.trackSid)) {
+    if (userId !== null && !ended(track) && !session.videos.has(publication.trackSid)) {
       session.videos.set(publication.trackSid, {
         track,
         userId,
         source,
         local: true,
-        muted: false,
+        muted: publication.isMuted === true,
         elements: new Set(),
       })
     }
@@ -1063,11 +1087,14 @@ export class CallController {
     entry.elements.clear()
   }
 
-  /** Shared screens first, then cameras; the member's own after the others'. Muted ones hidden. */
+  /** Shared screens first, then cameras; the member's own after the others'. Muted or ended ones hidden. */
   #feeds(session: Session): VideoFeed[] {
     const feeds: VideoFeed[] = []
     for (const [key, entry] of session.videos) {
       if (entry.muted) continue
+      const mediaTrack = (entry.track as { mediaStreamTrack?: { readyState?: string } })
+        .mediaStreamTrack
+      if (mediaTrack?.readyState === 'ended') continue
       feeds.push({ key, userId: entry.userId, source: entry.source, local: entry.local })
     }
     const rank = (feed: VideoFeed) => (feed.source === 'screen' ? 0 : 2) + (feed.local ? 1 : 0)
@@ -1282,6 +1309,7 @@ export class CallController {
       videos: new Map(),
       videoWanted: { camera: false, screen: false },
       videoGeneration: { camera: 0, screen: 0 },
+      qualities: new Map(),
     }
     const on = <E extends keyof RoomEventCallbacks>(event: E, handler: RoomEventCallbacks[E]) => {
       room.on(event, handler)
@@ -1347,10 +1375,32 @@ export class CallController {
     on(RoomEvent.ActiveSpeakersChanged, (speakers) => {
       if (mine()) this.#set({ speakers: usersOf(speakers) })
     })
+    on(RoomEvent.ConnectionQualityChanged, (quality, participant) => {
+      if (!mine()) return
+      const mapped = callQualityOf(quality)
+      const identity: unknown = participant?.identity
+      const userId = typeof identity === 'string' ? matrixUserOf(identity) : null
+      if (userId !== null) session.qualities.set(userId, mapped)
+      const isLocal =
+        participant === room.localParticipant || (userId !== null && userId === this.#snapshot.self)
+      this.#set({
+        ...(isLocal ? { connectionQuality: mapped } : {}),
+        qualities: Object.freeze(Object.fromEntries(session.qualities)),
+      })
+    })
     const roster = (trigger: 'voice_peer_join' | 'voice_peer_leave') => () => {
       if (!mine()) return
       const participants = this.#participants(session)
-      this.#set({ participants })
+      if (trigger === 'voice_peer_leave') {
+        const present = new Set(participants)
+        for (const userId of [...session.qualities.keys()]) {
+          if (!present.has(userId)) session.qualities.delete(userId)
+        }
+      }
+      this.#set({
+        participants,
+        qualities: Object.freeze(Object.fromEntries(session.qualities)),
+      })
       if (this.#snapshot.status === 'connected') {
         const participantCount = participants.length
         try {

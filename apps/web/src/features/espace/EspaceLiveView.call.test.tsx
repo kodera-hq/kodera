@@ -411,3 +411,243 @@ describe('bilingual production call boundary', () => {
     }
   )
 })
+
+describe('compact sidebar voice card, detachable floating pill, and in-pane Calls surface', () => {
+  const MULTI_CHANNEL_WORKSPACE: Workspace = {
+    ...WORKSPACE,
+    categories: [
+      {
+        id: 'cat-general',
+        name: 'General',
+        template_key: 'general',
+        channels: [
+          {
+            id: 'ch-general',
+            kind: 'text',
+            name: 'général',
+            template_key: 'general',
+            topic: '',
+            lifecycle: 'active',
+            room_state: 'ready',
+          },
+          {
+            id: 'ch-support',
+            kind: 'text',
+            name: 'support',
+            template_key: null,
+            topic: '',
+            lifecycle: 'active',
+            room_state: 'ready',
+          },
+        ],
+      },
+      {
+        id: 'cat-team',
+        name: 'Team',
+        template_key: 'team',
+        channels: [
+          {
+            id: STANDUP,
+            kind: 'audio',
+            name: 'office-hours',
+            template_key: null,
+            topic: '',
+            lifecycle: 'active',
+            room_state: 'ready',
+          },
+        ],
+      },
+    ],
+  }
+
+  function multiStore(): EspaceStoreLike {
+    const snapshot: EspaceSnapshot = {
+      status: 'live',
+      channels: new Map([
+        ['ch-general', { state: 'resolved', roomId: '!general:matrix.acme.kodera.io' }],
+        ['ch-support', { state: 'resolved', roomId: '!support:matrix.acme.kodera.io' }],
+        [STANDUP, { state: 'resolved', roomId: STANDUP_ROOM }],
+      ]),
+      rooms: [
+        {
+          roomId: '!general:matrix.acme.kodera.io',
+          name: 'général',
+          alias: '#general:matrix.acme.kodera.io',
+          kind: 'text',
+          unread: 0,
+          mentions: 0,
+          occupancy: null,
+        },
+        {
+          roomId: '!support:matrix.acme.kodera.io',
+          name: 'support',
+          alias: '#support:matrix.acme.kodera.io',
+          kind: 'text',
+          unread: 0,
+          mentions: 0,
+          occupancy: null,
+        },
+        {
+          roomId: STANDUP_ROOM,
+          name: 'office-hours',
+          alias: '#office-hours:matrix.acme.kodera.io',
+          kind: 'audio',
+          unread: 0,
+          mentions: 0,
+          occupancy: {
+            participants: ['@alice:matrix.acme.kodera.io', '@bob:matrix.acme.kodera.io'],
+            screenShare: [],
+          },
+          names: {
+            '@alice:matrix.acme.kodera.io': 'Alice Laurent',
+            '@bob:matrix.acme.kodera.io': 'Bob Martin',
+          },
+        },
+      ],
+      invites: [],
+    }
+    return {
+      subscribe: () => () => undefined,
+      getSnapshot: () => snapshot,
+      getUserId: () => '@me:matrix.acme.kodera.io',
+      getTimeline: () => [],
+      getThread: () => [],
+      send: vi.fn(async () => undefined),
+      edit: vi.fn(async () => undefined),
+      remove: vi.fn(async () => undefined),
+      toggleReaction: vi.fn(async () => undefined),
+      accessToken: () => 'tok-live',
+      renewAccessToken: vi.fn(async () => 'tok-next'),
+    }
+  }
+
+  it('docks a compact 56px sidebar voice card when browsing another channel, detaches/re-docks via icon-only arrows, and opens in-pane Appels without a modal scrim', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              url: 'wss://rtc.acme.kodera.test',
+              token: 'lk.jwt',
+              listen_only: false,
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          )
+      )
+    )
+    const user = userEvent.setup()
+    let mounted: ReturnType<typeof render> | undefined
+    try {
+      mounted = render(
+        <EspaceLiveView
+          org="acme"
+          organisationName="Acme SA"
+          workspace={MULTI_CHANNEL_WORKSPACE}
+          channelId="ch-general"
+          store={multiStore()}
+          session={{
+            baseUrl: 'https://acme.kodera.test',
+            userId: '@me:acme.kodera.test',
+            deviceId: 'DEV1',
+            accessToken: 'tok-at-sign-in',
+            refreshToken: 'ref-live',
+            refresh: vi.fn(),
+          }}
+        />
+      )
+
+      // Voice channel row uses compact count pill ("2") without inline "2 personnes" / "Connecté" crowding
+      const joinRow = screen.getByRole('button', { name: /^Rejoindre office-hours/ })
+      expect(joinRow.querySelector('[data-occupancy]')).toHaveTextContent('2')
+
+      // Join office-hours -> opens bounded Call Stage
+      await user.click(joinRow)
+      await waitFor(() => expect(room.connect).toHaveBeenCalledTimes(1))
+      await act(async () => {
+        room.connected()
+        await Promise.resolve()
+      })
+
+      const stageDock = screen.getByRole('region', { name: 'Appel en cours' })
+      expect(stageDock.closest('[data-call-placement="stage"]')).not.toBeNull()
+      expect(stageDock.closest('.call-stage-bounded')).not.toBeNull()
+      expect(document.querySelectorAll('video')).toHaveLength(0)
+
+      // Navigate away to #support -> collapses to compact 56px sidebar card, zero Détacher visible text
+      await user.click(screen.getByRole('link', { name: 'support' }))
+      const sidebarDock = screen.getByRole('region', { name: 'Appel en cours' })
+      expect(sidebarDock).toBe(stageDock)
+      expect(sidebarDock).toHaveAttribute('data-dock-layout', 'compact')
+      expect(sidebarDock).toHaveClass('h-[56px]')
+      expect(screen.queryByText(/détacher|ancrer|réduire/iu)).toBeNull()
+
+      // Click ↗ icon-only button -> detaches into FloatingCallPill, keeps <section> identity, and moves focus to ↙
+      const detachBtn = within(sidebarDock).getByRole('button', { name: 'Fenêtre flottante' })
+      expect(detachBtn).toHaveTextContent('')
+      await user.click(detachBtn)
+      const pill = screen.getByTestId('floating-call-pill')
+      expect(pill).toBeVisible()
+      expect(pill).toBe(stageDock)
+      expect(screen.getByRole('region', { name: 'Appel en cours' })).toBe(stageDock)
+      expect(screen.queryByText(/détacher|ancrer|réduire/iu)).toBeNull()
+
+      // Focus lands on counterpart ↙ button (never document.body)
+      const redockBtn = within(pill).getByRole('button', { name: 'Rattacher à la barre latérale' })
+      expect(redockBtn).toHaveTextContent('')
+      expect(document.activeElement).toBe(redockBtn)
+
+      // Click ↙ icon-only button -> re-docks into compact sidebar card, keeps <section> identity, and restores focus to ↗
+      await user.click(redockBtn)
+      expect(screen.queryByTestId('floating-call-pill')).toBeNull()
+      const redockedSidebar = screen.getByRole('region', { name: 'Appel en cours' })
+      expect(redockedSidebar).toBe(stageDock)
+      expect(redockedSidebar).toHaveAttribute('data-dock-layout', 'compact')
+      expect(redockedSidebar.style.getPropertyValue('--call-pill-x')).toBe('')
+      expect(redockedSidebar.style.getPropertyValue('--call-pill-y')).toBe('')
+      const restoredDetachBtn = within(redockedSidebar).getByRole('button', {
+        name: 'Fenêtre flottante',
+      })
+      expect(document.activeElement).toBe(restoredDetachBtn)
+
+      // Detach again via ↗, then press Escape -> re-docks and restores focus to ↗ without dropping to <body>
+      await user.click(restoredDetachBtn)
+      expect(screen.getByRole('region', { name: 'Appel en cours' })).toBe(stageDock)
+      expect(document.activeElement).toBe(
+        within(screen.getByTestId('floating-call-pill')).getByRole('button', {
+          name: 'Rattacher à la barre latérale',
+        })
+      )
+      await user.keyboard('{Escape}')
+      expect(screen.queryByTestId('floating-call-pill')).toBeNull()
+      expect(screen.getByRole('region', { name: 'Appel en cours' })).toBe(stageDock)
+      expect(document.activeElement).toBe(
+        within(stageDock).getByRole('button', { name: 'Fenêtre flottante' })
+      )
+
+      // Click Appels in sidebar navigation -> renders in-pane CallsSurfaceView, zero blocking dialog scrim
+      await user.click(screen.getByRole('button', { name: 'Appels' }))
+      expect(screen.queryByRole('dialog', { name: 'Appels' })).toBeNull()
+      const callsCanvas = await screen.findByTestId('espace-calls-canvas')
+      expect(within(callsCanvas).getByTestId('calls-active-banner')).toHaveTextContent(
+        'office-hours'
+      )
+      expect(within(callsCanvas).getByTestId('calls-prejoin-mic-meter')).toBeInTheDocument()
+
+      // Return to stage from CallsSurfaceView -> keeps <section> identity all the way back to stage
+      await user.click(
+        within(callsCanvas).getAllByRole('button', { name: 'Retourner à la scène' })[0]!
+      )
+      expect(screen.getByRole('region', { name: 'Appel en cours' })).toBe(stageDock)
+      expect(stageDock.closest('[data-call-placement]')).toHaveAttribute(
+        'data-call-placement',
+        'stage'
+      )
+    } finally {
+      await act(async () => {
+        mounted?.unmount()
+        await Promise.resolve()
+      })
+    }
+  })
+})

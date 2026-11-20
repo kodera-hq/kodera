@@ -116,8 +116,9 @@ import { MessageSearch } from './MessageSearch'
 import { MessageTimeline, type MessageTimelineHandle } from './MessageTimeline'
 import { PinnedMessages } from './PinnedMessages'
 import { useStableHandler, useStoreSlice } from './useStoreSlice'
-import { VoiceCallDock } from './VoiceCallDock'
+import { VoiceCallDock, type CallPlacement } from './VoiceCallDock'
 import { cssProperty } from '../../ui/cssom'
+import { cx } from '../../ui/cx'
 import { squareAvatarPng } from '../profile/avatarImage'
 import { KoderaPassportModal, type PassportDraft } from '../profile/KoderaPassportModal'
 import { EMPTY_PASSPORT, isPlaceholderName } from '../profile/passport'
@@ -214,6 +215,9 @@ const LazyExtensionsCatalogPanel = lazy(() =>
 )
 const LazyWorkspaceFilesPanel = lazy(() =>
   import('./WorkspaceFilesPanel').then((module) => ({ default: module.WorkspaceFilesPanel }))
+)
+const LazyCallsSurfaceView = lazy(() =>
+  import('./CallsSurfaceView').then((module) => ({ default: module.CallsSurfaceView }))
 )
 
 export interface EspaceLiveViewProps {
@@ -570,6 +574,20 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
     if (signedOut && activeCall !== null) void activeCall.leave()
   }, [signedOut, activeCall])
 
+  const [viewingCallStage, setViewingCallStage] = useState(false)
+  const [callDetached, setCallDetached] = useState(false)
+  const [fullStage, setFullStage] = useState(false)
+  const [localCallsOpen, setLocalCallsOpen] = useState(false)
+  const [wasInLiveCall, setWasInLiveCall] = useState(inLiveCall)
+  if (wasInLiveCall !== inLiveCall) {
+    setWasInLiveCall(inLiveCall)
+    if (!inLiveCall) {
+      setViewingCallStage(false)
+      setCallDetached(false)
+      setFullStage(false)
+    }
+  }
+
   const initialChannel = currentChannel(workspace, channelId)
   const addressedChannel = channelId ?? initialChannel?.id
   // With a router, the channel shown is the one the committed address names, never the one a
@@ -583,6 +601,9 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
     setAddressedChannelId(channelId)
     setClickedChannelId(null)
     setRequestedChannelId(null)
+    setViewingCallStage(false)
+    setFullStage(false)
+    setLocalCallsOpen(false)
   }
   const [wasPending, setWasPending] = useState(navigationPending)
   if (wasPending !== navigationPending) {
@@ -603,12 +624,17 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
   const [observedCanvasMode, setObservedCanvasMode] = useState(activeCanvasMode)
   if (observedCanvasMode !== activeCanvasMode) {
     setObservedCanvasMode(activeCanvasMode)
-    if (activeCanvasMode !== 'chat' && direct !== null) {
-      setDirect(null)
+    setLocalCallsOpen(false)
+    if (activeCanvasMode !== 'chat') {
+      setViewingCallStage(false)
+      setFullStage(false)
+      if (direct !== null) setDirect(null)
     }
   }
+  const effectiveCanvasMode: CanvasMode =
+    onChangeCanvasMode === undefined && localCallsOpen ? 'calls' : activeCanvasMode
   const directRoomId =
-    direct !== null && direct.over === selectedChannelId && activeCanvasMode === 'chat'
+    direct !== null && direct.over === selectedChannelId && effectiveCanvasMode === 'chat'
       ? direct.roomId
       : null
   const directRoom =
@@ -637,6 +663,9 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
   )
   const selectDirect = useStableHandler((roomId: string) => {
     closeChannelChooser()
+    setViewingCallStage(false)
+    setFullStage(false)
+    setLocalCallsOpen(false)
     onChangeCanvasMode?.('chat')
     setDirect({ roomId, over: selectedChannelId })
   })
@@ -1328,14 +1357,17 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
         }
         soundEngine.play(cue, context)
       },
-      activeCanvasMode === 'chat' ? activeRoomId : null
+      effectiveCanvasMode === 'chat' ? activeRoomId : null
     )
-  }, [activeStore, snapshot, timeline, activeRoomId, activeCanvasMode, mutedChannels])
+  }, [activeStore, snapshot, timeline, activeRoomId, effectiveCanvasMode, mutedChannels])
 
   /** `keepFocus`: the new address leaves the focus where it is (`RouteFocus`), as a click does not. */
   const selectTextChannel = useStableHandler((nextChannelId: string, keepFocus = false) => {
     closeChannelChooser()
     setDirect(null)
+    setViewingCallStage(false)
+    setFullStage(false)
+    setLocalCallsOpen(false)
     // A conversation chosen is a conversation asked for: the canvas comes back to the chat, or the
     // member would stay in the documents with both the channel and « Docs » drawn as current.
     onChangeCanvasMode?.('chat')
@@ -1374,6 +1406,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
       categoryName: string | undefined
     ) => {
       closeChannelChooser()
+      setLocalCallsOpen(false)
       onChangeCanvasMode?.('chat')
       if (activeCall === null || room === undefined) return
       const boundary = activeStore.getRoomBoundary?.(room.roomId)
@@ -1385,6 +1418,8 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
         setAnnouncement(protectionCopy.unavailable)
         return
       }
+      setViewingCallStage(true)
+      setCallDetached(false)
       setCallChannel({
         channelId: channel.id,
         roomId: room.roomId,
@@ -1395,6 +1430,31 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
       void activeCall.join(room.roomId)
     }
   )
+  const openCallStage = useStableHandler(() => {
+    closeChannelChooser()
+    setCallDetached(false)
+    setViewingCallStage(true)
+    setLocalCallsOpen(false)
+    onChangeCanvasMode?.('chat')
+  })
+  const detachCall = useStableHandler(() => {
+    setCallDetached(true)
+    setViewingCallStage(false)
+    setFullStage(false)
+  })
+  const redockCall = useStableHandler(() => {
+    setCallDetached(false)
+    setViewingCallStage(false)
+    setFullStage(false)
+  })
+  const openCallsSurface = useStableHandler(() => {
+    setDirect(null)
+    setViewingCallStage(false)
+    setFullStage(false)
+    if (onChangeCanvasMode !== undefined) onChangeCanvasMode('calls')
+    else setLocalCallsOpen(true)
+    leaveChannelChooser()
+  })
 
   const loadMembers = useStableHandler(() => {
     if (activeRoomId !== null) activeStore.loadMembers?.(activeRoomId)
@@ -1416,7 +1476,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
     activeRoom !== undefined &&
     activeChannel != null &&
     !focusedDocs &&
-    activeCanvasMode === 'chat' &&
+    effectiveCanvasMode === 'chat' &&
     !navigationUnsettled
   const openInvitation = useCallback(() => inviteTrigger.current?.click(), [])
   const pendingInviteChannelId = useRef<string | null>(null)
@@ -1469,11 +1529,19 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
       : null
   })
   const changeCanvas = useStableHandler((mode: CanvasMode) => {
-    if (mode !== 'chat') setDirect(null)
+    if (mode !== 'chat') {
+      setDirect(null)
+      setViewingCallStage(false)
+      setFullStage(false)
+    }
+    setLocalCallsOpen(mode === 'calls')
     onChangeCanvasMode?.(mode)
   })
   const openDocument = useStableHandler((doc: ChannelDoc) => {
     setDirect(null)
+    setViewingCallStage(false)
+    setFullStage(false)
+    setLocalCallsOpen(false)
     onOpenDocument?.(doc)
     requestAnimationFrame(() => headingRef.current?.focus())
     leaveChannelChooser()
@@ -1481,14 +1549,20 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
   })
   const openStudioDocument = onOpenDocument ? openDocument : undefined
   const openStudioChannel = useStableHandler((entry: ChannelSearchEntry) => {
+    setLocalCallsOpen(false)
     if (entry.kind === 'text') onChangeCanvasMode?.('chat')
     return openFromSearch(entry)
   })
   // Whether « Docs » has been opened in this view's life; see the pane below.
-  const [docsEverOpened, setDocsEverOpened] = useState(activeCanvasMode === 'docs')
-  if (activeCanvasMode === 'docs' && !docsEverOpened) setDocsEverOpened(true)
+  const [docsEverOpened, setDocsEverOpened] = useState(effectiveCanvasMode === 'docs')
+  if (effectiveCanvasMode === 'docs' && !docsEverOpened) setDocsEverOpened(true)
   const switchCanvas = useStableHandler((mode: CanvasMode) => {
-    if (mode !== 'chat') setDirect(null)
+    if (mode !== 'chat') {
+      setDirect(null)
+      setViewingCallStage(false)
+      setFullStage(false)
+    }
+    setLocalCallsOpen(mode === 'calls')
     onChangeCanvasMode?.(mode)
     leaveChannelChooser()
   })
@@ -1834,6 +1908,13 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
   // Leaving the view ends the call, so leaving it asks first. Not while signed out: the call is
   // already left then, and « Se reconnecter » leaves the page on purpose.
   const guardCall = inLiveCall && !signedOut
+  const callPlacement: CallPlacement = !inLiveCall
+    ? 'stage'
+    : callDetached
+      ? 'floating'
+      : viewingCallStage && effectiveCanvasMode === 'chat'
+        ? 'stage'
+        : 'sidebar'
 
   const sidebar = (
     <ChannelSidebar
@@ -1847,7 +1928,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
       headingId={sidebarHeadingId}
       width={leftSidebarWidth}
       activeChannelId={activeChannel?.id}
-      canvasMode={activeCanvasMode ?? 'chat'}
+      canvasMode={effectiveCanvasMode}
       categoryDescriptions={categoryDescriptions}
       proximityChannelIds={proximityChannelIds}
       documents={documents}
@@ -1865,6 +1946,14 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
       onOpenDocument={openStudioDocument}
       onChangeCanvasMode={onChangeCanvasMode ? changeCanvas : undefined}
       onSwitchCanvas={onChangeCanvasMode ? switchCanvas : undefined}
+      onOpenCalls={openCallsSurface}
+      className={
+        narrow
+          ? undefined
+          : callPlacement === 'sidebar' && inLiveCall
+            ? 'col-start-1 row-span-2 row-start-1'
+            : 'col-start-1 row-span-3 row-start-1'
+      }
       onSelectTextChannel={selectTextChannel}
       activeDirectRoomId={directRoomId}
       onSelectDirect={selectDirect}
@@ -1911,7 +2000,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
           onChangeCanvasMode={onChangeCanvasMode ? changeCanvas : undefined}
           simulation={simulation}
         />
-        <div className="flex min-h-0 flex-1 narrow:flex-col">
+        <div className="grid min-h-0 flex-1 grid-cols-[auto_auto_minmax(0,1fr)_auto_auto_auto] grid-rows-[auto_minmax(0,1fr)_auto] narrow:flex narrow:flex-col">
           {narrow ? (
             <div className="order-first flex shrink-0 flex-col gap-2 border-b border-c-border-soft pb-2">
               <div className="flex min-w-0 items-center gap-2">
@@ -1961,7 +2050,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
                   setLeftSidebarWidth((w) => Math.min(420, w + 16))
                 }
               }}
-              className="w-1 shrink-0 cursor-col-resize bg-c-border-soft transition-colors hover:bg-c-action focus-visible:bg-c-action focus-visible:outline-hidden"
+              className="col-start-2 row-span-3 row-start-1 w-1 shrink-0 cursor-col-resize bg-c-border-soft transition-colors hover:bg-c-action focus-visible:bg-c-action focus-visible:outline-hidden"
             />
           )}
           {/* `Escape` from anything in the column that did not use it (spec « Keyboard shortcuts »). */}
@@ -1969,7 +2058,16 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
           <section
             ref={channelColumn}
             onKeyDown={columnKeyDown}
-            className="workspace-canvas flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-y-auto bg-c-surface px-6 py-5 narrow:gap-2 narrow:bg-transparent narrow:p-0"
+            className={cx(
+              'workspace-canvas flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-y-auto bg-c-surface px-6 py-5 narrow:gap-2 narrow:bg-transparent narrow:p-0',
+              narrow
+                ? ''
+                : inLiveCall && callPlacement === 'stage' && fullStage
+                  ? 'hidden'
+                  : callPlacement === 'stage'
+                    ? 'col-start-3 row-span-2 row-start-2'
+                    : 'col-start-3 row-span-3 row-start-1'
+            )}
           >
             <p aria-live="polite" aria-atomic="true" className="sr-only">
               {announcement.count === 0 ? null : (
@@ -1977,7 +2075,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
               )}
             </p>
             <header
-              hidden={activeCanvasMode === 'files' || activeCanvasMode === 'integrations'}
+              hidden={effectiveCanvasMode === 'files' || effectiveCanvasMode === 'integrations'}
               className="flex items-center gap-3 border-b border-c-border-soft pb-4 narrow:flex-wrap narrow:gap-2 narrow:pb-2"
             >
               <div className="flex min-w-0 flex-1 flex-col gap-1 narrow:basis-full">
@@ -2083,7 +2181,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
               activeRoom !== undefined &&
               activeChannel != null &&
               !focusedDocs &&
-              activeCanvasMode === 'chat' ? (
+              effectiveCanvasMode === 'chat' ? (
                 <ChannelInviteDialog
                   key={`${org}:${activeRoom.roomId}`}
                   triggerRef={inviteTrigger}
@@ -2094,7 +2192,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
                   unavailable={navigationUnsettled || signedOut}
                 />
               ) : null}
-              {activeRoomId === null || focusedDocs || activeCanvasMode !== 'chat' ? null : (
+              {activeRoomId === null || focusedDocs || effectiveCanvasMode !== 'chat' ? null : (
                 <>
                   <MessageSearch store={activeStore} roomId={activeRoomId} onShow={showMessage} />
                   <PinnedMessages store={activeStore} roomId={activeRoomId} onShow={showMessage} />
@@ -2116,7 +2214,8 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
               <StudioNavigation
                 compact={narrow}
                 section="call-entry"
-                mode={activeCanvasMode ?? 'chat'}
+                mode={effectiveCanvasMode}
+                onOpenCalls={openCallsSurface}
                 rooms={audioRooms}
                 onChoose={(entry) => {
                   if (narrow) {
@@ -2126,7 +2225,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
                   return openFromSearch(entry)
                 }}
               />
-              {activeCanvasMode === 'docs' ? (
+              {effectiveCanvasMode === 'docs' ? (
                 <span className="text-sm font-bold text-c-ink">
                   {t('console.workspace.canvas.mode-docs')}
                 </span>
@@ -2155,21 +2254,21 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
             directRoomId === null &&
             docsCanvasSlot !== undefined ? (
               <div
-                hidden={activeCanvasMode !== 'docs'}
+                hidden={effectiveCanvasMode !== 'docs'}
                 data-testid="espace-inline-docs-canvas"
                 className={
-                  activeCanvasMode === 'docs' ? 'canvas-enter flex min-h-0 flex-1 flex-col' : ''
+                  effectiveCanvasMode === 'docs' ? 'canvas-enter flex min-h-0 flex-1 flex-col' : ''
                 }
               >
                 {docsCanvasSlot}
               </div>
             ) : null}
-            {activeCanvasMode === 'integrations' ? (
+            {effectiveCanvasMode === 'integrations' ? (
               <Suspense fallback={<Skeleton shape="block" />}>
                 <LazyExtensionsCatalogPanel channels={searchEntries} />
               </Suspense>
             ) : null}
-            {activeCanvasMode === 'files' ? (
+            {effectiveCanvasMode === 'files' ? (
               <div
                 data-testid="espace-files-canvas"
                 className="canvas-enter flex min-h-0 flex-1 flex-col"
@@ -2197,7 +2296,29 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
                 </Suspense>
               </div>
             ) : null}
-            {activeChannel == null || activeCanvasMode !== 'chat' ? null : (
+            {effectiveCanvasMode === 'calls' ? (
+              <div className="canvas-enter flex min-h-0 flex-1 flex-col">
+                <Suspense
+                  fallback={
+                    <div className="flex min-h-0 flex-1 flex-col gap-3 bg-c-surface p-4">
+                      <Skeleton shape="text" />
+                      <Skeleton shape="block" />
+                    </div>
+                  }
+                >
+                  <LazyCallsSurfaceView
+                    workspace={workspace}
+                    store={activeStore}
+                    call={activeCall}
+                    callChannel={callChannel}
+                    deviceSettings={deviceSettings}
+                    onJoinRoom={joinAudioRoom}
+                    onOpenStage={openCallStage}
+                  />
+                </Suspense>
+              </div>
+            ) : null}
+            {activeChannel == null || effectiveCanvasMode !== 'chat' ? null : (
               <>
                 {isProximityChannel(activeChannel, proximityChannelIds) &&
                 renderProximityPanel !== undefined ? (
@@ -2298,7 +2419,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
                   setRightSidebarWidth((w) => Math.max(220, w - 16))
                 }
               }}
-              className="w-1 shrink-0 cursor-col-resize bg-c-border-soft transition-colors hover:bg-c-action focus-visible:bg-c-action focus-visible:outline-hidden"
+              className="row-span-3 row-start-1 w-1 shrink-0 cursor-col-resize bg-c-border-soft transition-colors hover:bg-c-action focus-visible:bg-c-action focus-visible:outline-hidden"
             />
           ) : null}
 
@@ -2314,7 +2435,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
               }}
               aria-label={t('console.workspace.members.title')}
               ref={cssProperty('width', narrow ? undefined : `${rightSidebarWidth}px`)}
-              className="material-panel flex w-shell-sidebar-width shrink-0 flex-col gap-3 overflow-y-auto border-l border-c-border-soft p-4 narrow:w-full"
+              className="material-panel row-span-3 row-start-1 flex w-shell-sidebar-width shrink-0 flex-col gap-3 overflow-y-auto border-l border-c-border-soft p-4 narrow:w-full"
             >
               <div className="flex items-center justify-between gap-2">
                 <h2 className="text-sm font-semibold text-c-ink">
@@ -2422,6 +2543,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
           {threadRootMessage !== undefined &&
           activeChannel !== null &&
           activeChannel !== undefined ? (
+            <div className="row-span-3 row-start-1 flex min-h-0 narrow:contents">
             <ThreadPanel
               label={t('console.workspace.thread.title')}
               title={t('console.workspace.thread.title')}
@@ -2502,11 +2624,11 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
                 />
               ))}
             </ThreadPanel>
+            </div>
           ) : null}
 
           {narrow ? null : sidebar}
-        </div>
-        <div className="shrink-0">
+
           <VoiceCallDock
             call={activeCall}
             channel={callChannel}
@@ -2515,6 +2637,25 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
             deviceSettings={deviceSettings}
             meterRef={micActivity.meterRef}
             panelMeterRef={micActivity.panelMeterRef}
+            placement={callPlacement}
+            narrow={narrow}
+            sidebarWidth={leftSidebarWidth}
+            fullStage={fullStage}
+            onToggleFullStage={() => setFullStage((value) => !value)}
+            onOpenStage={openCallStage}
+            onDetach={detachCall}
+            onRedock={redockCall}
+            className={
+              narrow
+                ? ''
+                : callPlacement === 'sidebar'
+                  ? 'col-start-1 row-start-3'
+                  : callPlacement === 'stage'
+                    ? fullStage && inLiveCall
+                      ? 'col-start-3 row-span-3 row-start-1'
+                      : 'col-start-3 row-start-1'
+                    : ''
+            }
           />
         </div>
       </div>

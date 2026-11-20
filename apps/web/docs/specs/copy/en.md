@@ -1738,6 +1738,18 @@ Source: `src/features/espace/EspaceLiveView.tsx`, the call dock and the audio ro
 | `console.workspace.audio.confirm-leave-body` | Leaving this page will end your call. Everyone else stays in the room. |
 | `console.workspace.audio.action-confirm-leave` | Leave the call |
 | `console.workspace.audio.action-stay` | Stay in the call |
+| `console.workspace.audio.action-detach` | Pop out call |
+| `console.workspace.audio.action-redock` | Dock in sidebar |
+| `console.workspace.audio.action-open-stage` | Open call stage |
+| `console.workspace.audio.action-full-stage` | Full pane |
+| `console.workspace.audio.action-split-stage` | Split with chat |
+| `console.workspace.audio.action-mirror-on` | Mirror camera |
+| `console.workspace.audio.action-mirror-off` | Unmirror camera |
+| `console.workspace.audio.quality-excellent` | Excellent connection |
+| `console.workspace.audio.quality-good` | Good connection |
+| `console.workspace.audio.quality-poor` | Poor connection |
+| `console.workspace.audio.quality-lost` | Connection lost |
+| `console.workspace.audio.quality-unknown` | Measuring connection quality |
 
 ## Workspace message actions
 
@@ -1915,6 +1927,17 @@ Source: `src/features/espace/EspaceLiveView.tsx`, the call dock and the audio ro
 | `console.workspace.canvas.mode-chat` | Chat |
 | `console.workspace.canvas.mode-docs` | Docs |
 | `console.workspace.canvas.mode-files` | Files |
+| `console.workspace.canvas.mode-calls` | Calls |
+| `console.workspace.calls.title` | Calls |
+| `console.workspace.calls.subtitle` | Active voice and video rooms, live participant occupancy and quick device check before joining. |
+| `console.workspace.calls.rooms-heading` | Voice and video rooms |
+| `console.workspace.calls.active-heading` | Active call |
+| `console.workspace.calls.action-return-stage` | Return to stage |
+| `console.workspace.calls.prejoin-heading` | Audio and microphone check |
+| `console.workspace.calls.prejoin-hint` | Your microphone stays off until you run a test or join a room. |
+| `console.workspace.calls.action-test-mic` | Test microphone |
+| `console.workspace.calls.action-stop-mic-test` | Stop microphone test |
+| `console.workspace.calls.problem-mic-test` | Could not access the microphone for testing. Check browser permissions. |
 | `console.workspace.files.title` | Workspace files |
 | `console.workspace.files.held` | {count, plural, one {{count} item · {size} shared} other {{count} items · {size} shared}} |
 | `console.workspace.files.field-search` | Search for a file |

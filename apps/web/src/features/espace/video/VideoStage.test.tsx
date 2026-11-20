@@ -136,6 +136,68 @@ describe('VideoStage', () => {
     expect(request).toHaveBeenCalledTimes(1)
   })
 
+  it('keeps <video> hidden behind the avatar fallback until readyState >= 2 and videoWidth > 0', () => {
+    setup({ speakers: [BOB], qualities: { [BOB]: 'excellent' } })
+    const bob = screen.getByRole('figure', { name: 'Caméra de Bob Martin' })
+    const video = bob.querySelector('video')!
+
+    // Before frames decode: raw <video> is hidden, avatar + name + quality fallback is shown.
+    expect(video).toHaveAttribute('data-video-ready', 'false')
+    expect(video).toHaveClass('opacity-0', 'pointer-events-none')
+    const fallback = within(bob).getByTestId('video-avatar-fallback')
+    expect(fallback).toHaveTextContent('Bob Martin')
+    expect(fallback.querySelector('[data-connection-quality="excellent"]')).not.toBeNull()
+
+    // readyState = 2 with videoWidth = 0 still keeps <video> hidden.
+    Object.defineProperty(video, 'readyState', { value: 2, configurable: true })
+    Object.defineProperty(video, 'videoWidth', { value: 0, configurable: true })
+    act(() => {
+      video.dispatchEvent(new Event('loadeddata'))
+    })
+    expect(video).toHaveAttribute('data-video-ready', 'false')
+    expect(within(bob).getByTestId('video-avatar-fallback')).toBeInTheDocument()
+
+    // Once readyState >= 2 && videoWidth > 0, <video> becomes visible and fallback unmounts.
+    Object.defineProperty(video, 'videoWidth', { value: 1280, configurable: true })
+    act(() => {
+      video.dispatchEvent(new Event('loadeddata'))
+    })
+    expect(video).toHaveAttribute('data-video-ready', 'true')
+    expect(video).toHaveClass('opacity-100')
+    expect(within(bob).queryByTestId('video-avatar-fallback')).toBeNull()
+  })
+
+  it('strips -scale-x-100 on enterpictureinpicture, restores mirror on leavepictureinpicture, and supports the mirror toggle', async () => {
+    const user = userEvent.setup()
+    setup({ canPictureInPicture: true })
+    const mine = screen.getByRole('figure', { name: 'Votre caméra' })
+    const video = mine.querySelector('video')!
+    expect(video).toHaveClass('-scale-x-100')
+
+    // Entering native Picture-in-Picture automatically removes horizontal flip so placeholder text is un-mirrored.
+    act(() => {
+      video.dispatchEvent(new Event('enterpictureinpicture'))
+    })
+    expect(video).not.toHaveClass('-scale-x-100')
+
+    // Leaving Picture-in-Picture restores user mirror preference.
+    act(() => {
+      video.dispatchEvent(new Event('leavepictureinpicture'))
+    })
+    expect(video).toHaveClass('-scale-x-100')
+
+    // User toggles Mirror off explicitly via icon-only button; leaving PiP respects off preference.
+    const mirrorBtn = within(mine).getByRole('button', { name: 'Désactiver l’effet miroir' })
+    expect(mirrorBtn).toHaveTextContent('')
+    await user.click(mirrorBtn)
+    expect(video).not.toHaveClass('-scale-x-100')
+    act(() => {
+      video.dispatchEvent(new Event('enterpictureinpicture'))
+      video.dispatchEvent(new Event('leavepictureinpicture'))
+    })
+    expect(video).not.toHaveClass('-scale-x-100')
+  })
+
   it('draws nothing without video', () => {
     const { container } = setup({ feeds: [] })
     expect(container).toBeEmptyDOMElement()
