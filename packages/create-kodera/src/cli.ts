@@ -44,6 +44,7 @@ export const TEMPLATES = Object.freeze({
     channels: [
       'announcements',
       'general',
+      'arrivals',
       'developers-community',
       'support',
       'extensions',
@@ -64,6 +65,7 @@ export const TEMPLATES = Object.freeze({
         channels: [
           'announcements',
           'general',
+          'arrivals',
           'developers-community',
           'support',
           'extensions',
