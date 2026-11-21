@@ -929,3 +929,22 @@ def test_import_parser_clean_linear_time_under_adversarial_markdown():
         cleaned = import_parsers.clean(tracked)
         assert cleaned == ""
         assert tracked.scans <= 4 * len(tracked)
+
+
+def test_dispatcher_send_type_error_after_transmission_never_retries_http_post(world, monkeypatch):
+    from apps.extensions.models import DeliveryAttempt
+
+    _, job = queued(world)
+    transmitted = []
+
+    def faulty_post_send(endpoint, signed, *, scope_key=None):
+        transmitted.append((endpoint, scope_key))
+        raise TypeError("simulated post-transmission bug")
+
+    monkeypatch.setattr(dispatcher, "send", faulty_post_send)
+    assert dispatcher.dispatch_one(Secrets()) is True
+    assert len(transmitted) == 1
+    job.refresh_from_db()
+    assert job.state == "needs_reconciliation"
+    assert job.attempts == 1
+    assert DeliveryAttempt.objects.filter(delivery=job).get().outcome == "uncertain"

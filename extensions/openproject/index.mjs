@@ -4,15 +4,12 @@ import {
   fsyncSync,
   lstatSync,
   mkdirSync,
-  mkdtempSync,
   openSync,
   readdirSync,
   readFileSync,
-  rmSync,
   unlinkSync,
   writeSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   DEFAULT_MAX_SKEW_SECONDS,
@@ -445,31 +442,72 @@ export function signWorkWebhookPayload(secret, rawBody, options) {
   return `sha256=${createHmac('sha256', secret).update(bodyBuf).digest('hex')}`;
 }
 
-let defaultProcessReplayRoot = null;
+const DURABLE_STORE_BRAND = Symbol('kodera.durableReplayStore');
 
-function getDefaultProcessReplayRoot() {
-  if (defaultProcessReplayRoot === null) {
-    defaultProcessReplayRoot = mkdtempSync(join(tmpdir(), 'kodera-op-replay-'));
-    process.once('exit', () => {
-      try {
-        rmSync(defaultProcessReplayRoot, { recursive: true, force: true });
-      } catch {
-        // Best-effort process-exit cleanup.
+function createEphemeralReplayMapStore(backingMap = new Map()) {
+  return {
+    get durable() {
+      return false;
+    },
+    get size() {
+      return backingMap.size;
+    },
+    has(key, nowSec = null) {
+      const rec = backingMap.get(String(key));
+      if (!rec) return false;
+      const expiresAt = typeof rec === 'number' ? null : rec?.expiresAt ?? null;
+      if (expiresAt !== null && nowSec !== null && nowSec > expiresAt) {
+        backingMap.delete(String(key));
+        return false;
       }
-    });
-  }
-  return defaultProcessReplayRoot;
+      return true;
+    },
+    get(key) {
+      return backingMap.get(String(key));
+    },
+    set(key, value) {
+      backingMap.set(String(key), {
+        recordedAt: Number(value?.recordedAt ?? 0),
+        expiresAt:
+          value?.expiresAt === null || value?.expiresAt === undefined
+            ? null
+            : Number(value.expiresAt),
+      });
+      return this;
+    },
+    claim(key, value, nowSec) {
+      if (this.has(key, nowSec)) {
+        return false;
+      }
+      this.set(key, value);
+      return true;
+    },
+    delete(key) {
+      return backingMap.delete(String(key));
+    },
+    prune(nowSec) {
+      for (const [k, rec] of Array.from(backingMap.entries())) {
+        const expiresAt = typeof rec === 'number' ? null : rec?.expiresAt ?? null;
+        if (expiresAt !== null && nowSec > expiresAt) {
+          backingMap.delete(k);
+        }
+      }
+    },
+    *entries() {
+      yield* backingMap.entries();
+    },
+  };
 }
 
 /**
  * Creates a multi-writer atomic directory-backed durable replay deduplication store.
  *
  * @param {string | Map<string, { recordedAt: number, expiresAt: number | null }> | undefined} [backing]
- * @param {{ scopeNamespace?: string }} [options]
+ * @param {{ scopeNamespace?: string, allowEphemeral?: boolean }} [options]
  */
 export function createDurableReplayStore(backing, options = {}) {
   if (backing instanceof Map) {
-    return Object.assign(backing, { durable: Boolean(backing.durable) });
+    return createEphemeralReplayMapStore(backing);
   }
   if (
     backing &&
@@ -477,10 +515,33 @@ export function createDurableReplayStore(backing, options = {}) {
     typeof backing.has === 'function' &&
     typeof backing.set === 'function'
   ) {
-    if (typeof backing.durable !== 'boolean') {
-      backing.durable = false;
+    if (backing[DURABLE_STORE_BRAND] === true) {
+      return backing;
     }
-    return backing;
+    return {
+      get durable() {
+        return Boolean(backing[DURABLE_STORE_BRAND]);
+      },
+      get size() {
+        return typeof backing.size === 'number' ? backing.size : 0;
+      },
+      has: (...args) => backing.has(...args),
+      get: (...args) => (typeof backing.get === 'function' ? backing.get(...args) : undefined),
+      set: (...args) => backing.set(...args),
+      claim:
+        typeof backing.claim === 'function'
+          ? (...args) => backing.claim(...args)
+          : undefined,
+      delete: (...args) => (typeof backing.delete === 'function' ? backing.delete(...args) : false),
+      prune:
+        typeof backing.prune === 'function'
+          ? (...args) => backing.prune(...args)
+          : undefined,
+      entries:
+        typeof backing.entries === 'function'
+          ? (...args) => backing.entries(...args)
+          : function* empty() {},
+    };
   }
 
   let dirPath;
@@ -496,13 +557,13 @@ export function createDurableReplayStore(backing, options = {}) {
       'openproject',
       options.scopeNamespace ?? 'default'
     );
-  } else if (process.env.NODE_ENV === 'production') {
+  } else if (options.allowEphemeral === true) {
+    return createEphemeralReplayMapStore(new Map());
+  } else {
     throw new WebhookVerificationError(
       'REPLAY_STORE_NOT_DURABLE',
-      'Production work-tracker webhook handler requires replayStorePath, replayStoreDir, or KODERA_WEBHOOK_REPLAY_DIR.'
+      'Durable work-tracker webhook replay store requires replayStoreDir, replayStorePath, or KODERA_WEBHOOK_REPLAY_DIR.'
     );
-  } else {
-    dirPath = join(getDefaultProcessReplayRoot(), options.scopeNamespace ?? 'default');
   }
 
   mkdirSync(dirPath, { recursive: true, mode: 0o700 });
@@ -574,7 +635,10 @@ export function createDurableReplayStore(backing, options = {}) {
   };
 
   return {
-    durable: true,
+    [DURABLE_STORE_BRAND]: true,
+    get durable() {
+      return true;
+    },
     dirPath,
     get size() {
       return listFiles().length;
@@ -943,7 +1007,7 @@ export function createOpenprojectWebhookHandler(config) {
     .slice(0, 32);
   const nativeReplayStore = createDurableReplayStore(
     config.replayStore ?? config.replayStoreDir ?? config.replayStorePath,
-    { scopeNamespace }
+    { scopeNamespace, allowEphemeral: true }
   );
 
   const pruneNativeReplay = (nowSec) => {
@@ -1023,10 +1087,10 @@ export function createOpenprojectWebhookHandler(config) {
     });
 
     const expiresAt = signedTimestamp !== null ? signedTimestamp + maxSkewSeconds : null;
-    if (expiresAt === null && !nativeReplayStore.durable && !config.allowEphemeralReplayStore) {
+    if (expiresAt === null && !nativeReplayStore.durable && config.allowEphemeralReplayStore !== true) {
       throw new WebhookVerificationError(
         'REPLAY_STORE_NOT_DURABLE',
-        'Timeless work-tracker webhook signatures require a durable replay store.'
+        'Timeless work-tracker webhook signatures require replayStoreDir, replayStorePath, or KODERA_WEBHOOK_REPLAY_DIR.'
       );
     }
 

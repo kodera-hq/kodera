@@ -16,6 +16,7 @@ is cut off, so a slow client holds a slot for seconds and cannot exhaust the poo
 """
 
 import hashlib
+import ipaddress
 import json
 import logging
 import math
@@ -48,6 +49,20 @@ WEBHOOK_WORKERS = 16
 GRANTS_PER_MINUTE = 30
 GRANT_WINDOW_S = 60.0
 GRANT_KEYS = 20_000
+ROOM_MEMBER_CHECKS_PER_MINUTE = 120
+ROOM_MEMBER_PEER_CHECKS_PER_MINUTE = 600
+
+
+def _is_internal_peer(address: str) -> bool:
+    try:
+        ip = ipaddress.ip_address(address)
+    except ValueError:
+        return False
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    if ip.is_link_local:
+        return False
+    return ip.is_loopback or ip.is_private
 
 
 class GrantLimiter:
@@ -362,7 +377,15 @@ def make_webhook_server(
     agent_user: str = "",
     timeout_s: float = READ_TIMEOUT_S,
     workers: int = WEBHOOK_WORKERS,
+    member_limiter: GrantLimiter | None = None,
 ) -> ThreadingHTTPServer:
+    peer_limiter = GrantLimiter(ROOM_MEMBER_PEER_CHECKS_PER_MINUTE)
+    subject_limiter = (
+        member_limiter
+        if member_limiter is not None
+        else GrantLimiter(ROOM_MEMBER_CHECKS_PER_MINUTE)
+    )
+
     class Handler(BaseHTTPRequestHandler):
         timeout = timeout_s
 
@@ -370,9 +393,17 @@ def make_webhook_server(
             super().setup()
             self.rfile = _BoundedHeaderStream(self.rfile, self.connection, timeout_s)  # type: ignore[assignment]
 
-        def _answer(self, status: int, payload: dict[str, Any] | None = None) -> None:
+        def _answer(
+            self,
+            status: int,
+            payload: dict[str, Any] | None = None,
+            *,
+            retry_after_s: int | None = None,
+        ) -> None:
             raw = b"" if payload is None else json.dumps(payload, separators=(",", ":")).encode()
             self.send_response(status)
+            if retry_after_s is not None:
+                self.send_header("Retry-After", str(retry_after_s))
             if payload is not None:
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Cache-Control", "no-store")
@@ -383,6 +414,16 @@ def make_webhook_server(
 
         def do_POST(self) -> None:  # noqa: N802
             if self.path == "/internal/room-member":
+                peer_ip = str(self.client_address[0]) if self.client_address else ""
+                if not _is_internal_peer(peer_ip):
+                    return self._answer(403, {"error": "forbidden"})
+                peer_wait = peer_limiter.wait("peer:" + peer_ip)
+                if peer_wait is not None:
+                    return self._answer(
+                        429,
+                        {"error": "rate_limited", "retry_after_s": peer_wait},
+                        retry_after_s=peer_wait,
+                    )
                 body = _read(self, MAX_TOKEN_BODY, timeout_s)
                 if isinstance(body, int):
                     return self._answer(body)
@@ -399,6 +440,13 @@ def make_webhook_server(
                     or not isinstance(query["subject"], str)
                 ):
                     return self._answer(400, {"error": "malformed"})
+                subj_wait = subject_limiter.wait("subject:" + query["subject"].lower())
+                if subj_wait is not None:
+                    return self._answer(
+                        429,
+                        {"error": "rate_limited", "retry_after_s": subj_wait},
+                        retry_after_s=subj_wait,
+                    )
                 try:
                     allowed = matrix.dm_member_joined(
                         query["room_id"], query["subject"], agent_user

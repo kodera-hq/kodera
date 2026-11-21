@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -33,6 +34,7 @@ test('github pull_request + pull_request_review correlate onto a single thread v
   const handler = createGithubWebhookHandler({
     secret: SECRET,
     defaultChannelId: 'chan_pr_reviews',
+    allowEphemeralReplayStore: true,
   });
   const harness = createExtensionTestHarness({ secret: SECRET, handler });
 
@@ -135,7 +137,11 @@ test('github pull_request + pull_request_review correlate onto a single thread v
 });
 
 test('github check_suite, workflow_run, issues, and release events publish validated cards', async () => {
-  const handler = createGithubWebhookHandler({ secret: SECRET, defaultChannelId: 'chan_ci' });
+  const handler = createGithubWebhookHandler({
+    secret: SECRET,
+    defaultChannelId: 'chan_ci',
+    allowEphemeralReplayStore: true,
+  });
   const harness = createExtensionTestHarness({ secret: SECRET, handler });
 
   const workflowBody = JSON.stringify({
@@ -204,7 +210,7 @@ test('github check_suite, workflow_run, issues, and release events publish valid
 });
 
 test('github refuses tampered X-Hub-Signature-256, spoofed X-GitHub-Event header, replays, and SSRF URLs', async () => {
-  const handler = createGithubWebhookHandler({ secret: SECRET });
+  const handler = createGithubWebhookHandler({ secret: SECRET, allowEphemeralReplayStore: true });
   const rawBody = JSON.stringify({
     action: 'opened',
     repository: { full_name: 'kodera-hq/kodera' },
@@ -437,11 +443,22 @@ test('github BUG-0064 blocks timeless signature replays at +10s, +301s, >24h and
   }
 });
 
-test('github BUG-0064 default handler recreation at +90000s and multi-writer stores preserve all entries', async () => {
+test('github BUG-0064 requires durable backing independently of NODE_ENV and blocks cross-process replays at +90000s', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'kodera-gh-mw-'));
+  const prevReplayDir = process.env.KODERA_WEBHOOK_REPLAY_DIR;
   try {
+    delete process.env.KODERA_WEBHOOK_REPLAY_DIR;
+
+    // Ephemeral store truthfully reports durable === false; missing durable dir throws regardless of NODE_ENV
+    assert.equal(createDurableReplayStore(undefined, { allowEphemeral: true }).durable, false);
+    assert.throws(
+      () => createDurableReplayStore(),
+      (err) => err instanceof WebhookVerificationError && err.code === 'REPLAY_STORE_NOT_DURABLE'
+    );
+
     const storeA = createDurableReplayStore(join(dir, 'shared'));
     const storeB = createDurableReplayStore(join(dir, 'shared'));
+    assert.equal(storeA.durable, true);
     assert.equal(storeA.claim('sig:writer-a', { recordedAt: 100, expiresAt: null }, 100), true);
     assert.equal(storeB.claim('sig:writer-b', { recordedAt: 101, expiresAt: null }, 101), true);
     const storeRestarted = createDurableReplayStore(join(dir, 'shared'));
@@ -450,7 +467,6 @@ test('github BUG-0064 default handler recreation at +90000s and multi-writer sto
     assert.equal(storeRestarted.claim('sig:writer-a', { recordedAt: 200, expiresAt: null }, 200), false);
     assert.equal(storeRestarted.claim('sig:writer-b', { recordedAt: 200, expiresAt: null }, 200), false);
 
-    // Default handler recreation without explicit replayStorePath still rejects replay at +90,000s
     const body = JSON.stringify({
       action: 'opened',
       repository: { full_name: 'kodera-hq/kodera' },
@@ -458,36 +474,32 @@ test('github BUG-0064 default handler recreation at +90000s and multi-writer sto
     });
     const sig = signGithubWebhookPayload(SECRET, body);
     const baseNow = 1_760_100_000;
-    const h1 = createGithubWebhookHandler({ secret: SECRET, defaultChannelId: 'chan_recreate_check' });
-    await h1({
-      rawBody: body,
-      headers: {
-        'x-github-event': 'issues',
-        'x-github-delivery': 'gh_deliv_recreate_1',
-        'x-hub-signature-256': sig,
-      },
-      nowUnixSeconds: baseNow,
+
+    // Handler without replayStoreDir or KODERA_WEBHOOK_REPLAY_DIR fails closed even in non-production NODE_ENV
+    const hMissingDurable = createGithubWebhookHandler({
+      secret: SECRET,
+      defaultChannelId: 'chan_missing_durable',
     });
-    const h2 = createGithubWebhookHandler({ secret: SECRET, defaultChannelId: 'chan_recreate_check' });
     await assert.rejects(
       () =>
-        h2({
+        hMissingDurable({
           rawBody: body,
           headers: {
             'x-github-event': 'issues',
-            'x-github-delivery': 'gh_deliv_recreate_2',
+            'x-github-delivery': 'gh_deliv_missing_durable',
             'x-hub-signature-256': sig,
           },
-          nowUnixSeconds: baseNow + 90_000,
+          nowUnixSeconds: baseNow,
         }),
-      (err) => err instanceof WebhookVerificationError && err.code === 'REPLAY_DETECTED'
+      (err) => err instanceof WebhookVerificationError && err.code === 'REPLAY_STORE_NOT_DURABLE'
     );
 
-    // Non-durable Map passed explicitly is refused for timeless signatures
+    // Non-durable Map (even with spoofed .durable = true) is refused for timeless signatures
+    const spoofedMap = Object.assign(new Map(), { durable: true });
     const hEphemeral = createGithubWebhookHandler({
       secret: SECRET,
       defaultChannelId: 'chan_ephemeral_refusal',
-      replayStore: new Map(),
+      replayStore: spoofedMap,
     });
     await assert.rejects(
       () =>
@@ -502,7 +514,66 @@ test('github BUG-0064 default handler recreation at +90000s and multi-writer sto
         }),
       (err) => err instanceof WebhookVerificationError && err.code === 'REPLAY_STORE_NOT_DURABLE'
     );
+
+    // Separate OS processes sharing KODERA_WEBHOOK_REPLAY_DIR persist across process exit and reject replay at +90,000s
+    const sharedEnvDir = join(dir, 'env-replay');
+    const indexUrl = new URL('../index.mjs', import.meta.url).href;
+    const workerScript = `
+      import { createGithubWebhookHandler } from ${JSON.stringify(indexUrl)};
+      const handler = createGithubWebhookHandler({
+        secret: process.env.TEST_WH_SECRET,
+        defaultChannelId: 'chan_recreate_check',
+      });
+      try {
+        await handler({
+          rawBody: process.env.TEST_BODY,
+          headers: {
+            'x-github-event': 'issues',
+            'x-github-delivery': process.env.TEST_DELIVERY,
+            'x-hub-signature-256': process.env.TEST_SIG,
+          },
+          nowUnixSeconds: Number(process.env.TEST_NOW),
+        });
+        process.stdout.write('ACCEPTED');
+      } catch (err) {
+        process.stdout.write(String(err.code || err.message));
+      }
+    `;
+    const firstOut = execFileSync(process.execPath, ['--input-type=module', '-e', workerScript], {
+      env: {
+        ...process.env,
+        NODE_ENV: 'development',
+        KODERA_WEBHOOK_REPLAY_DIR: sharedEnvDir,
+        TEST_WH_SECRET: SECRET,
+        TEST_BODY: body,
+        TEST_SIG: sig,
+        TEST_DELIVERY: 'gh_deliv_proc_1',
+        TEST_NOW: String(baseNow),
+      },
+      encoding: 'utf8',
+    });
+    assert.equal(firstOut, 'ACCEPTED');
+
+    const secondOut = execFileSync(process.execPath, ['--input-type=module', '-e', workerScript], {
+      env: {
+        ...process.env,
+        NODE_ENV: 'development',
+        KODERA_WEBHOOK_REPLAY_DIR: sharedEnvDir,
+        TEST_WH_SECRET: SECRET,
+        TEST_BODY: body,
+        TEST_SIG: sig,
+        TEST_DELIVERY: 'gh_deliv_proc_2',
+        TEST_NOW: String(baseNow + 90_000),
+      },
+      encoding: 'utf8',
+    });
+    assert.equal(secondOut, 'REPLAY_DETECTED');
   } finally {
+    if (prevReplayDir === undefined) {
+      delete process.env.KODERA_WEBHOOK_REPLAY_DIR;
+    } else {
+      process.env.KODERA_WEBHOOK_REPLAY_DIR = prevReplayDir;
+    }
     rmSync(dir, { recursive: true, force: true });
   }
 });

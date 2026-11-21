@@ -458,6 +458,16 @@ def prepare_complete(
     except StorageRefusedError:
         raise RefusalError(503, "service-unavailable") from None
 
+    if room_id is not None:
+        _verify_dm_room_authority(
+            organisation_id=org_id,
+            membership_id=membership_id,
+            verified=verified,
+            room_id=room_id,
+            uploader_id=uploader_id,
+            for_upload=False,
+        )
+
     return PreparedCompletion(
         attachment_id=attachment_id,
         verified_storage=needs_verify,
@@ -469,7 +479,6 @@ def prepare_complete(
     )
 
 
-@transaction.atomic
 def commit_complete(
     *,
     verified: VerifiedAccessToken,
@@ -477,36 +486,122 @@ def commit_complete(
     prepared: PreparedCompletion,
     request_id: str,
 ) -> dict[str, Any]:
-    principal = caller(verified, organisation_id)
-    row = (
-        Attachment.objects.select_for_update()
-        .filter(id=prepared.attachment_id, organisation_id=principal.organisation_id)
-        .first()
-    )
-    if row is None:
-        raise RefusalError(404)
-    if row.uploader_id != principal.membership_id and principal.role not in {
-        "org_owner",
-        "org_admin",
-    }:
-        raise RefusalError(403)
-    _verify_db_read_authority(principal, row)
-    if row.room_id is not None and (
-        prepared.room_id != row.room_id
-        or prepared.dm_verified_membership_id != principal.membership_id
+    if (
+        prepared.room_id is not None
+        and prepared.organisation_id is not None
+        and prepared.dm_verified_membership_id is not None
     ):
-        raise RefusalError(403)
-    if row.cancelled_at is not None:
-        raise RefusalError(409)
-    if row.completed_at is None:
-        if row.upload_expires_at <= timezone.now():
+        _verify_dm_room_authority(
+            organisation_id=prepared.organisation_id,
+            membership_id=prepared.dm_verified_membership_id,
+            verified=verified,
+            room_id=prepared.room_id,
+            uploader_id=prepared.uploader_id,
+            for_upload=False,
+        )
+    with transaction.atomic():
+        principal = caller(verified, organisation_id)
+        row = (
+            Attachment.objects.select_for_update()
+            .filter(id=prepared.attachment_id, organisation_id=principal.organisation_id)
+            .first()
+        )
+        if row is None:
+            raise RefusalError(404)
+        if row.uploader_id != principal.membership_id and principal.role not in {
+            "org_owner",
+            "org_admin",
+        }:
+            raise RefusalError(403)
+        _verify_db_read_authority(principal, row)
+        if row.room_id is not None and (
+            prepared.room_id != row.room_id
+            or prepared.dm_verified_membership_id != principal.membership_id
+        ):
+            raise RefusalError(403)
+        if row.cancelled_at is not None:
             raise RefusalError(409)
-        if not prepared.verified_storage:
-            raise RefusalError(409)
-        row.completed_at = timezone.now()
-        row.save(update_fields=["completed_at", "updated_at"])
-        audit(principal, "workspace.attachment.completed", row.id, request_id)
+        if row.completed_at is None:
+            if row.upload_expires_at <= timezone.now():
+                raise RefusalError(409)
+            if not prepared.verified_storage:
+                raise RefusalError(409)
+            row.completed_at = timezone.now()
+            row.save(update_fields=["completed_at", "updated_at"])
+            audit(principal, "workspace.attachment.completed", row.id, request_id)
+        org_id = principal.organisation_id
+        membership_id = principal.membership_id
+        room_id = row.room_id
+        uploader_id = row.uploader_id
+
+    if room_id is not None:
+        _verify_dm_room_authority(
+            organisation_id=org_id,
+            membership_id=membership_id,
+            verified=verified,
+            room_id=room_id,
+            uploader_id=uploader_id,
+            for_upload=False,
+        )
     return _format_download(row, prepared.download_ticket)
+
+
+def authorize_complete(
+    *, verified: VerifiedAccessToken, organisation_id: UUID, attachment_id: UUID
+) -> None:
+    """Verify current channel/DM completion & download authority before replaying cached URLs."""
+    with transaction.atomic():
+        principal = read_caller(verified, organisation_id)
+        row = Attachment.objects.filter(
+            id=attachment_id, organisation_id=principal.organisation_id
+        ).first()
+        if row is None:
+            raise RefusalError(404)
+        if row.uploader_id != principal.membership_id and principal.role not in {
+            "org_owner",
+            "org_admin",
+        }:
+            raise RefusalError(403)
+        _verify_db_read_authority(principal, row)
+        if row.cancelled_at is not None:
+            raise RefusalError(409)
+        org_id = principal.organisation_id
+        membership_id = principal.membership_id
+        room_id = row.room_id
+        uploader_id = row.uploader_id
+
+    if room_id is not None:
+        _verify_dm_room_authority(
+            organisation_id=org_id,
+            membership_id=membership_id,
+            verified=verified,
+            room_id=room_id,
+            uploader_id=uploader_id,
+            for_upload=False,
+        )
+
+
+def authorize_upload_replay(
+    *, verified: VerifiedAccessToken, organisation_id: UUID, body: dict[str, Any]
+) -> None:
+    """Verify current channel/DM upload authority before replaying a cached upload ticket."""
+    with transaction.atomic():
+        principal = read_caller(verified, organisation_id)
+        channel_id, room_id = _parse_scope(body)
+        if channel_id is not None:
+            _verify_channel_upload_authority(principal, channel_id)
+        org_id = principal.organisation_id
+        membership_id = principal.membership_id
+
+    if room_id is not None:
+        _verify_dm_room_authority(
+            organisation_id=org_id,
+            membership_id=membership_id,
+            verified=verified,
+            room_id=room_id,
+            uploader_id=membership_id,
+            for_upload=True,
+        )
 
 
 def complete_upload(
@@ -595,11 +690,26 @@ def reap_expired_uploads(*, limit: int = 100) -> int:
     gateway = _gateway()
     purged = 0
     for row in candidates:
+        with transaction.atomic():
+            claimed = (
+                Attachment.objects.select_for_update(skip_locked=True)
+                .filter(
+                    id=row.id,
+                    completed_at__isnull=True,
+                    upload_expires_at__lte=timezone.now(),
+                )
+                .first()
+            )
+            if claimed is None:
+                continue
+            if claimed.cancelled_at is None:
+                claimed.cancelled_at = timezone.now()
+                claimed.save(update_fields=["cancelled_at", "updated_at"])
+            obj = _descriptor(claimed)
         try:
-            obj = _descriptor(row)
             gateway.call("delete", obj)
         except StorageRefusedError:
-            # Fail closed: keep the DB tracking row until storage absence is confirmed.
+            # Fail closed: keep the fenced tombstone row until storage absence is confirmed.
             continue
         with transaction.atomic():
             deleted_count, _ = (
@@ -607,6 +717,7 @@ def reap_expired_uploads(*, limit: int = 100) -> int:
                 .filter(
                     id=row.id,
                     completed_at__isnull=True,
+                    cancelled_at__isnull=False,
                     upload_expires_at__lte=timezone.now(),
                 )
                 .delete()

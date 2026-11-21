@@ -1,5 +1,6 @@
 """room-access settings, read once from its environment. Secrets stay in that environment."""
 
+import ipaddress
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -35,6 +36,20 @@ def _grants_per_minute(value: str) -> int:
     if re.fullmatch(r"[1-9][0-9]{0,2}", value) is None or int(value) > 600:
         raise ConfigError("ROOM_ACCESS_GRANTS_PER_MINUTE is an integer from 1 to 600")
     return int(value)
+
+
+def _webhook_bind(value: str) -> str:
+    if value == "localhost":
+        return value
+    try:
+        addr = ipaddress.ip_address(value)
+    except ValueError:
+        raise ConfigError(
+            "ROOM_ACCESS_WEBHOOK_BIND must be loopback, unspecified internal, or a private IP literal"
+        ) from None
+    if not (addr.is_loopback or addr.is_private or addr.is_unspecified) or addr.is_link_local:
+        raise ConfigError("ROOM_ACCESS_WEBHOOK_BIND must never bind a public IP address")
+    return value
 
 
 def _matrix_user(value: str) -> str:
@@ -84,7 +99,7 @@ class Config:
             agent_user=_matrix_user(need("ROOM_ACCESS_AGENT_USER")),
             api_bind=env.get("ROOM_ACCESS_API_BIND", "127.0.0.1"),
             api_port=int(env.get("ROOM_ACCESS_API_PORT", "8095")),
-            webhook_bind=env.get("ROOM_ACCESS_WEBHOOK_BIND", "127.0.0.1"),
+            webhook_bind=_webhook_bind(env.get("ROOM_ACCESS_WEBHOOK_BIND", "127.0.0.1")),
             webhook_port=int(env.get("ROOM_ACCESS_WEBHOOK_PORT", "8096")),
             reconcile_s=float(env.get("ROOM_ACCESS_RECONCILE_S", "2")),
             token_ttl_s=int(env.get("ROOM_ACCESS_TOKEN_TTL_S", "600")),

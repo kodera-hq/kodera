@@ -348,6 +348,7 @@ class _UnixServer(socketserver.UnixStreamServer):
         except BaseException:
             self._backlog.release()
             self.shutdown_request(request)
+            raise
 
     def handle_error(self, request: Any, client_address: Any) -> None:
         # Exception renderers must not disclose a credential or signed resource URL.
@@ -448,7 +449,7 @@ def bind(path: Path, source: DirectorySource) -> _UnixServer:
                 path.unlink()
             server = _UnixServer(str(path), _Handler)
             path.chmod(0o600)
-        except StorageRefusedError:
+        except (StorageRefusedError, SystemExit, KeyboardInterrupt):
             if lock_fd is not None:
                 try:
                     os.close(lock_fd)
@@ -473,7 +474,6 @@ def bind(path: Path, source: DirectorySource) -> _UnixServer:
 
 
 def serve(path: Path, source: DirectorySource) -> None:
-    server = bind(path, source)
     previous_handlers: list[tuple[signal.Signals, Any]] = []
     if threading.current_thread() is threading.main_thread():
 
@@ -483,12 +483,15 @@ def serve(path: Path, source: DirectorySource) -> None:
         for sig in (signal.SIGTERM, signal.SIGINT):
             previous_handlers.append((sig, signal.getsignal(sig)))
             signal.signal(sig, _stop)
+    server: _UnixServer | None = None
     try:
+        server = bind(path, source)
         server.serve_forever(poll_interval=0.2)
     finally:
         for prev_sig, prev in previous_handlers:
             signal.signal(prev_sig, prev)
-        server.server_close()
+        if server is not None:
+            server.server_close()
 
 
 def main(environment: Mapping[str, str] | None = None) -> None:

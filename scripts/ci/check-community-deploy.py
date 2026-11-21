@@ -295,6 +295,7 @@ def parse_env_example(env_text: str) -> tuple[dict[str, str], list[str]]:
 CONSOLE_CLIENT_EXPRESSION = "${KODERA_CONSOLE_CLIENT_ID:-${KODERA_OIDC_CLIENT_ID:-console}}"
 CONSOLE_CLIENT_PATTERN = re.compile(r"[A-Za-z0-9._:-]{1,128}\Z")
 MEDIA_SOCKET = "/run/kodera-media/media.sock"
+MEDIA_ROOM_VERIFIER_URL = "http://room-access:8096/internal/room-member"
 MEDIA_SECRETS_MOUNT = "${KODERA_MEDIA_SECRETS_SOURCE:-media_secrets}:/run/kodera-media-secrets"
 REVIEWED_MEDIA_MOUNTS = frozenset({
     ("media-socket-init", MEDIA_SECRETS_MOUNT),
@@ -360,6 +361,8 @@ def media_runtime_errors(services: dict[str, ServiceSpec]) -> list[str]:
         return ["media requires the API, socket initializer and signing worker"]
     if server.environment.get("KODERA_MEDIA_GATEWAY_SOCKET") != MEDIA_SOCKET:
         errors.append("media API must select the private signing socket")
+    if server.environment.get("KODERA_MEDIA_ROOM_VERIFIER_URL") != MEDIA_ROOM_VERIFIER_URL:
+        errors.append("media API must wire KODERA_MEDIA_ROOM_VERIFIER_URL to room-access")
     if section_entries(server, "volumes") != ["- proximity_socket:/run/proximity:ro", "- media_socket:/run/kodera-media:ro"]:
         errors.append("media API must mount only the read-only proximity and media socket directories")
     if server.depends_on_conditions.get("media-storage-worker") != "service_healthy":
@@ -499,6 +502,11 @@ def run_media_console_selftest(compose: str, env: str, caddy: str, split: str) -
            "media worker requires the private Unix socket connect healthcheck")
     mutate("API socket removed", "server", "      KODERA_MEDIA_GATEWAY_SOCKET: " + MEDIA_SOCKET, "",
            "media API must select the private signing socket")
+    mutate("API room verifier removed", "server", "      KODERA_MEDIA_ROOM_VERIFIER_URL: " + MEDIA_ROOM_VERIFIER_URL, "",
+           "media API must wire KODERA_MEDIA_ROOM_VERIFIER_URL to room-access")
+    mutate("API room verifier redirected", "server", "      KODERA_MEDIA_ROOM_VERIFIER_URL: " + MEDIA_ROOM_VERIFIER_URL,
+           "      KODERA_MEDIA_ROOM_VERIFIER_URL: http://example.org/internal/room-member",
+           "media API must wire KODERA_MEDIA_ROOM_VERIFIER_URL to room-access")
     mutate("API socket writable", "server", "media_socket:/run/kodera-media:ro", "media_socket:/run/kodera-media",
            "media API must mount only the read-only proximity and media socket directories")
     mutate("API worker race", "server", "      media-storage-worker:\n        condition: service_healthy",

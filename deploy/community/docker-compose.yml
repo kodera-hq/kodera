@@ -202,6 +202,7 @@ services:
       DATABASE_URL: postgresql://kodera_api:${KODERA_API_DATABASE_PASSWORD:?Set the isolated API database password}@db:5432/${POSTGRES_DB:-kodera_server}
       KODERA_PROXIMITY_BROKER_SOCKET: /run/proximity/broker.sock
       KODERA_MEDIA_GATEWAY_SOCKET: /run/kodera-media/media.sock
+      KODERA_MEDIA_ROOM_VERIFIER_URL: http://room-access:8096/internal/room-member
       KODERA_IOS_APP_IDS: ${KODERA_IOS_APP_IDS:-}
       KODERA_ANDROID_ASSETLINKS_SHA256: ${KODERA_ANDROID_ASSETLINKS_SHA256:-}
     volumes:

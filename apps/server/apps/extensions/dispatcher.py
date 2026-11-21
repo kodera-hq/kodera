@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import time
 from dataclasses import dataclass
@@ -21,7 +22,15 @@ from apps.workspaces import selectors as workspaces
 from .models import Delivery, DeliveryAttempt, Installation, WorkspaceCutoff
 from .wire import ExtensionRefusedError, signed_delivery
 
-_DEFAULT_OUTBOUND_REQUEST = outbound.request
+
+def _accepts_scope_key(fn: object) -> bool:
+    try:
+        params = inspect.signature(fn).parameters.values()  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return False
+    return any(
+        param.kind == inspect.Parameter.VAR_KEYWORD or param.name == "scope_key" for param in params
+    )
 
 
 class Secrets(Protocol):
@@ -114,24 +123,15 @@ def send(endpoint: str, signed, *, scope_key: str | None = None) -> tuple[str, i
     connection = response = None
     try:
         destination = outbound.target(endpoint, https_only=True)
-        if outbound.request is _DEFAULT_OUTBOUND_REQUEST:
-            connection, response = outbound.request(
-                destination,
-                method="POST",
-                body=signed.body,
-                headers=signed.headers,
-                deadline=time.monotonic() + 5,
-                pool="webhook",
-                scope_key=scope_key,
-            )
-        else:
-            connection, response = outbound.request(
-                destination,
-                method="POST",
-                body=signed.body,
-                headers=signed.headers,
-                deadline=time.monotonic() + 5,
-            )
+        connection, response = outbound.request(
+            destination,
+            method="POST",
+            body=signed.body,
+            headers=signed.headers,
+            deadline=time.monotonic() + 5,
+            pool="webhook",
+            scope_key=scope_key,
+        )
         status = response.status
         if len(response.read(32769)) > 32768:
             return "uncertain", status
@@ -295,11 +295,13 @@ def dispatch_claim(job: Claim, secrets: Secrets | None) -> None:
     endpoint, signed_payload, scope_key = prepared
 
     # Step 2: Execute external DNS/TLS/HTTP outside any database transaction or tenant lock.
+    # Inspect `send`'s signature BEFORE invoking it so a post-transmission `TypeError` never
+    # triggers a duplicate delivery attempt.
+    accepts_scope = _accepts_scope_key(send)
     try:
-        try:
+        if accepts_scope:
             result, status = send(endpoint, signed_payload, scope_key=scope_key)
-        except TypeError:
-            # Preserve monkeypatch compatibility with 2-arg `send(endpoint, signed)` test doubles.
+        else:
             result, status = send(endpoint, signed_payload)
     except Exception:
         # Once transport begins, an unexpected failure cannot prove the receiver did not apply it.

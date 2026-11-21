@@ -102,6 +102,7 @@ def serve(
     organisation_id: UUID | None = None,
     *,
     prepare: Callable[[VerifiedAccessToken, str], Handler] | None = None,
+    replay_authorize: Callable[[VerifiedAccessToken], None] | None = None,
 ) -> HttpResponse:
     request_id = responses.request_id(request)
     method = request.method or ""
@@ -158,6 +159,16 @@ def serve(
                     etag=result.get("ETag"),
                 )
 
+            def check_authority(event: Any) -> None:
+                authorize(verified, organisation_id)
+                status = getattr(event, "status", None)
+                if (
+                    replay_authorize is not None
+                    and isinstance(status, int)
+                    and 200 <= status <= 299
+                ):
+                    replay_authorize(verified)
+
             response = respond_once(
                 request,
                 issuer=verified.issuer,
@@ -165,7 +176,7 @@ def serve(
                 request_id=request_id,
                 handler=effect,
                 policy=quota_replay_policy(),
-                authority=lambda _: authorize(verified, organisation_id),
+                authority=check_authority,
             )
             if response.status_code == 503:
                 response["Retry-After"] = "1"

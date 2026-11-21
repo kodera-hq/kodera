@@ -229,3 +229,222 @@ def test_inbox_and_device_endpoints_follow_the_contract(world, http, configured)
     assert response.status_code == 204
     row.refresh_from_db()
     assert row.revoked_at is not None
+
+
+@override_settings(ROOT_URLCONF="apps.media.api.urls")
+def test_http_complete_and_replay_enforce_live_dm_and_channel_scope(world, http, gateway, settings):
+    import threading
+    import urllib.parse
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    from apps.workspaces.models import Channel, ResourcePolicy, ResourcePolicyRule
+    from config.workspace_features import media_room_verifier_url
+    from room_access.clients import LiveKit, Matrix
+    from room_access.server import make_webhook_server
+
+    org, workspace, members, tokens = world
+    client, credentials = http
+
+    matrix_domain = "matrix.kodera.test"
+    agent_mxid = f"@kodera-agent:{matrix_domain}"
+    admin_token = "synapse-admin-" + secrets.token_hex(8)
+    dm_room = f"!dmHttpScopeRoom:{matrix_domain}"
+    uploader_mxid = f"@{tokens[3].subject.lower()}:{matrix_domain}"
+    dm_joined_mxids = {uploader_mxid}
+
+    class FakeSynapseHandler(BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            if self.headers.get("Authorization") != f"Bearer {admin_token}":
+                self._json(401, {"errcode": "M_UNKNOWN_TOKEN"})
+                return
+            prefix = "/_synapse/admin/v1/rooms/"
+            if self.path.startswith(prefix) and self.path.endswith("/state"):
+                encoded = self.path[len(prefix) : -len("/state")]
+                if urllib.parse.unquote(encoded) == dm_room:
+                    self._json(
+                        200,
+                        {
+                            "state": [
+                                {
+                                    "type": "m.room.member",
+                                    "state_key": mxid,
+                                    "sender": mxid,
+                                    "content": {"membership": "join"},
+                                }
+                                for mxid in sorted(dm_joined_mxids)
+                            ]
+                        },
+                    )
+                    return
+            self._json(404, {"errcode": "M_NOT_FOUND"})
+
+        def _json(self, status: int, payload: dict) -> None:
+            raw = json.dumps(payload).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+        def log_message(self, format: str, *args: object) -> None:  # noqa: A002
+            return
+
+    synapse_srv = ThreadingHTTPServer(("127.0.0.1", 0), FakeSynapseHandler)
+    threading.Thread(target=synapse_srv.serve_forever, daemon=True).start()
+    room_access_srv = make_webhook_server(
+        "127.0.0.1",
+        0,
+        LiveKit("http://127.0.0.1:9", "lk-key", "lk-secret-" + "x" * 32),
+        lambda _ev: None,
+        matrix=Matrix(
+            f"http://127.0.0.1:{synapse_srv.server_address[1]}", admin_token, timeout=2.0
+        ),
+        agent_user=agent_mxid,
+    )
+    threading.Thread(target=room_access_srv.serve_forever, daemon=True).start()
+    settings.KODERA_MEDIA_ROOM_VERIFIER_URL = media_room_verifier_url(
+        {
+            "KODERA_MEDIA_ROOM_VERIFIER_URL": (
+                f"http://127.0.0.1:{room_access_srv.server_address[1]}/internal/room-member"
+            )
+        }
+    )
+
+    try:
+        root = f"/api/v1/organisations/{org.id}/workspace/attachments"
+        dm_upload_body = json.dumps(
+            {
+                "filename": "dm-secret.txt",
+                "contentType": "text/plain",
+                "sizeBytes": 32,
+                "sha256": hashlib.sha256(b"dm-secret-32-byte-body-payload!!").hexdigest(),
+                "roomId": dm_room,
+            }
+        )
+        dm_upload_auth = headers(credentials[3])
+        dm_created = client.post(
+            root + "/uploads",
+            data=dm_upload_body,
+            content_type="application/json",
+            **dm_upload_auth,
+        )
+        assert dm_created.status_code == 201
+        dm_id = dm_created.json()["attachmentId"]
+
+        # 1. Prepared HTTP completion re-checks DM membership after download presigning
+        gateway.hooks["download"] = lambda _obj: dm_joined_mxids.discard(uploader_mxid)
+        mid_presign_revoked = client.post(
+            f"{root}/{dm_id}/complete",
+            data=b"",
+            content_type="application/json",
+            **headers(credentials[3]),
+        )
+        assert mid_presign_revoked.status_code == 403
+        assert "downloadUrl" not in mid_presign_revoked.content.decode()
+        gateway.hooks.pop("download", None)
+        dm_joined_mxids.add(uploader_mxid)
+
+        # 2. Successful HTTP completion caches response, and replay after DM removal returns 403
+        dm_complete_auth = headers(credentials[3])
+        dm_completed = client.post(
+            f"{root}/{dm_id}/complete",
+            data=b"",
+            content_type="application/json",
+            **dm_complete_auth,
+        )
+        assert dm_completed.status_code == 200 and "downloadUrl" in dm_completed.json()
+        dm_replay_ok = client.post(
+            f"{root}/{dm_id}/complete",
+            data=b"",
+            content_type="application/json",
+            **dm_complete_auth,
+        )
+        assert dm_replay_ok.status_code == 200 and dm_replay_ok["Idempotency-Replayed"] == "true"
+
+        dm_joined_mxids.discard(uploader_mxid)
+        dm_upload_replay_denied = client.post(
+            root + "/uploads",
+            data=dm_upload_body,
+            content_type="application/json",
+            **dm_upload_auth,
+        )
+        assert dm_upload_replay_denied.status_code == 403
+        assert "uploadUrl" not in dm_upload_replay_denied.content.decode()
+
+        dm_complete_replay_denied = client.post(
+            f"{root}/{dm_id}/complete",
+            data=b"",
+            content_type="application/json",
+            **dm_complete_auth,
+        )
+        assert dm_complete_replay_denied.status_code == 403
+        assert "downloadUrl" not in dm_complete_replay_denied.content.decode()
+
+        # 3. Private channel scope loss also blocks cached upload and completion replays
+        listed_policy = ResourcePolicy.objects.create(workspace=workspace, visibility="restricted")
+        rule = ResourcePolicyRule.objects.create(
+            policy=listed_policy,
+            kind="allow_member",
+            membership=members[3],
+        )
+        private_channel = Channel.objects.create(
+            workspace=workspace,
+            name="Restricted Replay Check",
+            kind="text",
+            lifecycle="active",
+            position=9,
+            policy_mode="explicit",
+            explicit_policy=listed_policy,
+        )
+        chan_body = json.dumps(
+            {
+                "filename": "restricted.txt",
+                "contentType": "text/plain",
+                "sizeBytes": 28,
+                "sha256": hashlib.sha256(b"restricted-28-byte-payload!!").hexdigest(),
+                "channelId": str(private_channel.id),
+            }
+        )
+        chan_upload_auth = headers(credentials[3])
+        chan_created = client.post(
+            root + "/uploads",
+            data=chan_body,
+            content_type="application/json",
+            **chan_upload_auth,
+        )
+        assert chan_created.status_code == 201
+        chan_att_id = chan_created.json()["attachmentId"]
+
+        chan_complete_auth = headers(credentials[3])
+        chan_completed = client.post(
+            f"{root}/{chan_att_id}/complete",
+            data=b"",
+            content_type="application/json",
+            **chan_complete_auth,
+        )
+        assert chan_completed.status_code == 200
+
+        rule.delete()
+        chan_upload_replay_denied = client.post(
+            root + "/uploads",
+            data=chan_body,
+            content_type="application/json",
+            **chan_upload_auth,
+        )
+        assert chan_upload_replay_denied.status_code == 403
+        assert "uploadUrl" not in chan_upload_replay_denied.content.decode()
+
+        chan_complete_replay_denied = client.post(
+            f"{root}/{chan_att_id}/complete",
+            data=b"",
+            content_type="application/json",
+            **chan_complete_auth,
+        )
+        assert chan_complete_replay_denied.status_code == 403
+        assert "downloadUrl" not in chan_complete_replay_denied.content.decode()
+    finally:
+        gateway.hooks.pop("download", None)
+        room_access_srv.shutdown()
+        room_access_srv.server_close()
+        synapse_srv.shutdown()
+        synapse_srv.server_close()

@@ -37,6 +37,7 @@ def workspace_id_for(*, organisation_id: UUID) -> UUID | None:
     """Resolve the workspace without taking a row lock."""
     return (
         Workspace.objects.filter(organisation_id=organisation_id)
+        .order_by("id")
         .values_list("id", flat=True)
         .first()
     )
@@ -47,12 +48,16 @@ def lock_workspace(*, workspace_id: UUID) -> None:
 
 
 def lock_workspace_if_present(*, workspace_id: UUID) -> bool:
-    return Workspace.objects.select_for_update().filter(id=workspace_id).first() is not None
+    return (
+        Workspace.objects.select_for_update().filter(id=workspace_id).order_by("id").first()
+        is not None
+    )
 
 
 def lock_organisation_workspace(*, organisation_id: UUID) -> UUID:
     return (
         Workspace.objects.select_for_update()
+        .order_by("id")
         .values_list("id", flat=True)
         .get(organisation_id=organisation_id)
     )
@@ -62,13 +67,14 @@ def lock_organisation_workspace_if_present(*, organisation_id: UUID) -> UUID | N
     return (
         Workspace.objects.select_for_update()
         .filter(organisation_id=organisation_id)
+        .order_by("id")
         .values_list("id", flat=True)
         .first()
     )
 
 
 def digest_workspace(*, organisation_id: UUID, membership_id: UUID) -> UUID | None:
-    workspace = Workspace.objects.filter(organisation_id=organisation_id).first()
+    workspace = Workspace.objects.filter(organisation_id=organisation_id).order_by("id").first()
     if (
         workspace is None
         or WorkspaceMemberRestriction.objects.filter(

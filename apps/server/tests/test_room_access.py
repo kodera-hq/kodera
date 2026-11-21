@@ -985,3 +985,86 @@ def test_private_audio_refusal_guard_detects_its_own_omission(world, monkeypatch
     monkeypatch.setattr(module, "_audience_allows", lambda policy, user, agent: True)
     with pytest.raises(pytest.fail.Exception, match="DID NOT RAISE"):
         check(world, "listed", [BOB])
+
+
+def test_internal_room_member_endpoint_enforces_private_peer_webhook_bind_and_rate_limit(world):
+    import ipaddress
+
+    from room_access.config import ConfigError, _webhook_bind
+    from room_access.server import GrantLimiter, _is_internal_peer, make_webhook_server
+
+    matrix, livekit, _ = world
+    dm_room = "!dmRateCheck:acme.kodera.io"
+    matrix.rooms[dm_room] = {"joined": {ALICE, BOB}, "state": {}}
+
+    def fake_admin_call(method, path, body=None, ok=(200,)):
+        return (
+            200,
+            {
+                "state": [
+                    {
+                        "type": "m.room.member",
+                        "state_key": mxid,
+                        "sender": mxid,
+                        "content": {"membership": "join"},
+                    }
+                    for mxid in sorted(matrix.rooms[dm_room]["joined"])
+                ]
+            },
+        )
+
+    matrix._call = fake_admin_call  # type: ignore[method-assign]
+
+    unspecified_v4 = str(ipaddress.IPv4Address(0))
+    assert _webhook_bind(unspecified_v4) == unspecified_v4
+    assert _webhook_bind("127.0.0.1") == "127.0.0.1"
+    assert _webhook_bind("172.18.0.5") == "172.18.0.5"
+    for unsafe_bind in ("8.8.8.8", "169.254.169.254", "0.0.0.0:8096"):
+        with pytest.raises(ConfigError):
+            _webhook_bind(unsafe_bind)
+
+    assert _is_internal_peer("127.0.0.1") is True
+    assert _is_internal_peer("172.18.0.5") is True
+    assert _is_internal_peer("8.8.8.8") is False
+    assert _is_internal_peer("169.254.169.254") is False
+    assert _is_internal_peer("fe80::1") is False
+
+    srv = make_webhook_server(
+        "127.0.0.1",
+        0,
+        livekit,
+        lambda _ev: None,
+        matrix=matrix,
+        agent_user=AGENT,
+        member_limiter=GrantLimiter(2),
+    )
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+
+        def post_check(room_id: str, subject: str) -> tuple[int, dict[str, Any], dict[str, str]]:
+            conn = http.client.HTTPConnection("127.0.0.1", srv.server_address[1], timeout=2.0)
+            try:
+                conn.request(
+                    "POST",
+                    "/internal/room-member",
+                    body=json.dumps({"room_id": room_id, "subject": subject}).encode(),
+                    headers={"Content-Type": "application/json"},
+                )
+                resp = conn.getresponse()
+                return resp.status, json.loads(resp.read().decode()), dict(resp.getheaders())
+            finally:
+                conn.close()
+
+        status1, body1, _ = post_check(dm_room, "alice")
+        assert status1 == 200 and body1 == {"allowed": True}
+        status2, body2, _ = post_check(dm_room, "alice")
+        assert status2 == 200 and body2 == {"allowed": True}
+        status3, body3, hdrs3 = post_check(dm_room, "alice")
+        assert status3 == 429 and body3["error"] == "rate_limited"
+        assert int(hdrs3["Retry-After"]) >= 1
+
+        status_outsider, body_outsider, _ = post_check(dm_room, "carol")
+        assert status_outsider == 200 and body_outsider == {"allowed": False}
+    finally:
+        srv.shutdown()
+        srv.server_close()
