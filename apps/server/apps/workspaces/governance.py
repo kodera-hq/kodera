@@ -226,14 +226,13 @@ def overrides(
     if data is not _UNSET:
         if not isinstance(data, list) or len(data) > 100:
             raise RefusalError(422)
-        channel_kind = (
+        channel_meta = (
             Channel.objects.filter(id=channel_id, workspace=workspace)
-            .values_list("kind", flat=True)
+            .values_list("kind", "policy_mode")
             .first()
         )
-        allowed_capabilities = ENFORCED_CHANNEL_OVERRIDE_CAPABILITIES.get(
-            channel_kind or "", frozenset()
-        )
+        channel_kind, channel_policy_mode = channel_meta if channel_meta is not None else ("", "")
+        allowed_capabilities = ENFORCED_CHANNEL_OVERRIDE_CAPABILITIES.get(channel_kind, frozenset())
         normalized = []
         for entry in data:
             if not isinstance(entry, dict) or entry.keys() != {"role_id", "allow", "deny"}:
@@ -256,13 +255,13 @@ def overrides(
         by_id = {str(role.id): role for role in roles}
         for entry in data:
             check_manage(workspace, caller, [], permissions=[*entry["allow"], *entry["deny"]])
-        from .channel_access import may_view, resolve
-        from .structure import WorkspaceUnavailableError
+        from .channel_access import EXPLICIT, may_view, resolve
 
-        try:
-            access = resolve(channel_id)
-        except WorkspaceUnavailableError:
-            access = None
+        access = (
+            resolve(channel_id)
+            if workspace.default_policy_id is not None or channel_policy_mode == EXPLICIT
+            else None
+        )
         caller_roles = _caller_role_ids(workspace, caller.membership_id)
         pre_overrides = [
             (str(row.role_id), tuple(row.allow), tuple(row.deny))

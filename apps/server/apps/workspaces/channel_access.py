@@ -351,6 +351,14 @@ def _channel_role_context(
         if role_id_str in role_set:
             override_allow.update(p for p in allow if p in POLICY_CAPABILITIES)
             override_deny.update(p for p in deny if p in POLICY_CAPABILITIES)
+            if "message.post" in allow:
+                override_allow.update(READ_ONLY)
+            if "message.post" in deny:
+                override_deny.update(READ_ONLY)
+            if "media.speak" in allow:
+                override_allow.update(LISTEN_ONLY)
+            if "media.speak" in deny:
+                override_deny.update(LISTEN_ONLY)
     return (
         role_ids,
         role_perms,

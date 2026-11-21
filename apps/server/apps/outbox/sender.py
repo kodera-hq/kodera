@@ -460,6 +460,7 @@ def sweep(report: RunReport) -> None:
         abandon_stale_attempts(report)
         fail_expired(report)
         _execute(_ERASE_ENDED)
+        backfill_legacy_invitation_bindings()
 
 
 # -------------------------------------------------------------------------------- claim ----
@@ -668,6 +669,29 @@ def resolve_legacy_invitation_binding(delivery_id: UUID) -> tuple[UUID, UUID, st
     except IntegrityError:
         pass
     return inv_id, org_id, recipient_sha
+
+
+def backfill_legacy_invitation_bindings() -> int:
+    """Populate `orgs_invitationoutboxbinding` for pre-upgrade sealed invitation deliveries."""
+    has_binding = _rows("SELECT to_regclass('public.orgs_invitationoutboxbinding') IS NOT NULL")
+    if not has_binding or not has_binding[0][0] or seal_key() is None:
+        return 0
+    unbound = _rows(
+        "SELECT d.id "
+        "FROM outbox_outboxdelivery d "
+        "JOIN outbox_message m ON m.delivery_id = d.id "
+        "WHERE m.template_id IN ('invitation', 'invitation_account_ready') "
+        "  AND m.sealed IS NOT NULL "
+        "  AND NOT EXISTS ("
+        "      SELECT 1 FROM orgs_invitationoutboxbinding ib WHERE ib.delivery_id = d.id"
+        "  ) "
+        "ORDER BY d.id"
+    )
+    resolved_count = 0
+    for (delivery_id,) in unbound:
+        if resolve_legacy_invitation_binding(delivery_id) is not None:
+            resolved_count += 1
+    return resolved_count
 
 
 def already_attempted(attempted: frozenset[UUID]) -> list[UUID]:

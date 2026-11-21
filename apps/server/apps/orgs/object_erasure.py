@@ -55,16 +55,20 @@ class ObjectUploadDrainVerifier(Protocol):
 @dataclass(frozen=True)
 class BoundedStreamUploadDrainVerifier:
     """Concrete upload-drain verifier backed by an enforced HTTP request-body duration ceiling
-    and optional live in-flight upload stream inspection."""
+    and mandatory authoritative live in-flight upload stream inspection."""
 
     max_stream_duration: timedelta
-    has_in_flight_uploads: Callable[[tuple[str, ...]], bool] | None = None
+    has_in_flight_uploads: Callable[[tuple[str, ...]], bool]
 
     def __post_init__(self) -> None:
         if not isinstance(
             self.max_stream_duration, timedelta
         ) or self.max_stream_duration <= timedelta(0):
             raise ValueError("max_stream_duration must be a positive timedelta")
+        if not callable(self.has_in_flight_uploads):
+            raise TypeError(
+                "has_in_flight_uploads must be a callable active-upload stream inspector"
+            )
 
     def verify_drained(
         self,
@@ -79,7 +83,10 @@ class BoundedStreamUploadDrainVerifier:
             raise ObjectUploadWindowOpenError(
                 "presigned upload or bounded stream drain window still open"
             )
-        if self.has_in_flight_uploads is not None and bool(self.has_in_flight_uploads(object_keys)):
+        in_flight = self.has_in_flight_uploads(object_keys)
+        if not isinstance(in_flight, bool):
+            raise TypeError("has_in_flight_uploads must return a bool")
+        if in_flight:
             raise ObjectUploadWindowOpenError("pre-expiry object upload stream still in flight")
         scope_binding = (
             {"organisation_id": str(scope.organisation_id)}
@@ -91,7 +98,7 @@ class BoundedStreamUploadDrainVerifier:
                 {
                     **scope_binding,
                     "cutoff_at": scope.cutoff_at.isoformat(),
-                    "in_flight_probed": self.has_in_flight_uploads is not None,
+                    "in_flight_probed": True,
                     "inventory_sha256": scope.inventory_sha256,
                     "max_stream_duration_us": int(
                         self.max_stream_duration // timedelta(microseconds=1)

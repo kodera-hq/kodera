@@ -9,9 +9,11 @@ from django.conf import settings
 from django.core.exceptions import RequestDataTooBig
 from django.http import HttpRequest, HttpResponse
 
+from apps.engine_intents.channel_sets import ChannelSetError
 from apps.workspaces import moderation as service
 from apps.workspaces.moderation_wire import link_wire, page, report_wire, tag
 from apps.workspaces.quota_http import respond_once
+from apps.workspaces.structure import WorkspaceUnavailableError
 from core.api import lanes
 from core.api.idempotency import StoredResponse
 from core.api.scopes import Operation, declares
@@ -164,6 +166,10 @@ def _serve(request: HttpRequest, handlers: dict[str, Any]) -> HttpResponse:
         response = _problem(400, request_id)
     except service.RefusalError as error:
         response = _problem(error.status, request_id, error.kind, error.current_etag)
+    except (WorkspaceUnavailableError, ChannelSetError):
+        response = responses.problem(
+            "service-unavailable", request_id, retry_after_s=responses.RETRY_AFTER_S
+        )
     return responses.finish(response, request_id)
 
 

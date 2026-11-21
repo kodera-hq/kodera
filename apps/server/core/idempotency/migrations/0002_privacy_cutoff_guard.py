@@ -10,7 +10,7 @@ CREATE OR REPLACE FUNCTION public.idempotency_privacy_cutoff_guard()
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = pg_catalog, public
+SET search_path = pg_catalog, public, pg_temp
 AS $$
 DECLARE
     org uuid;

@@ -8,7 +8,7 @@ SET LOCAL statement_timeout='30s';
 
 CREATE OR REPLACE FUNCTION docs_document_role(p_document uuid, p_organisation uuid, p_member uuid,
                                               p_identity uuid, p_issuer text, p_subject text)
-RETURNS text LANGUAGE plpgsql STABLE SET search_path = pg_catalog, public AS $$
+RETURNS text LANGUAGE plpgsql STABLE SET search_path = pg_catalog, public, pg_temp AS $$
 DECLARE actor_role text; current_id uuid := p_document; node record; policy record;
         grant_role text; result_role text := 'editor'; depth integer := 0;
         visited uuid[] := ARRAY[]::uuid[]; scope_workspace uuid;
@@ -90,7 +90,8 @@ BEGIN
                                      ON mr.role_id=o.role_id AND mr.workspace_id=o.workspace_id
                                    WHERE o.channel_id=node.channel_id
                                      AND o.workspace_id=node.workspace_id
-                                     AND mr.membership_id=p_member AND o.allow ? r.capability))
+                                     AND mr.membership_id=p_member
+                                     AND (o.allow ? r.capability OR o.allow ? 'message.post')))
       THEN result_role := 'viewer'; END IF;
     END IF;
     SELECT role INTO grant_role FROM public.docs_documentgrant
@@ -109,7 +110,7 @@ REVOKE ALL ON FUNCTION docs_document_role(uuid,uuid,uuid,uuid,text,text) FROM PU
 
 CREATE OR REPLACE FUNCTION docs_collab_fence(p_document uuid,p_organisation uuid,p_member uuid,
                                              p_identity uuid,p_issuer text,p_subject text,p_role text)
-RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public
+RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp
 SET lock_timeout='3s' SET statement_timeout='5s' AS $$
 DECLARE principal_user uuid; scope_workspace uuid;
 BEGIN
@@ -130,7 +131,7 @@ BEGIN
   IF NOT FOUND THEN RETURN NULL; END IF;
   SELECT w.id INTO scope_workspace FROM public.workspaces_workspace w
     JOIN public.docs_document d ON d.workspace_id=w.id
-    WHERE d.id=p_document AND w.organisation_id=p_organisation FOR UPDATE OF w NOWAIT;
+    WHERE d.id=p_document AND w.organisation_id=p_organisation FOR SHARE OF w NOWAIT;
   IF NOT FOUND OR p_role IS NULL OR p_role NOT IN ('editor','viewer')
      OR public.docs_document_role(p_document,p_organisation,p_member,p_identity,p_issuer,p_subject)
         IS DISTINCT FROM p_role THEN RETURN NULL; END IF;

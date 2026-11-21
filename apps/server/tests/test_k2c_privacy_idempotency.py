@@ -371,7 +371,10 @@ def test_bug_0011_0025_0027_0037_account_and_org_erasure_completeness(world, set
 
     # BUG-0025 FAIL-CLOSED PROOF: When S3 deletion raises StorageRefusedError,
     # `advance_account_erasure` & `privacy_complete_account_erasure` MUST refuse completion!
-    qualified_drain = BoundedStreamUploadDrainVerifier(max_stream_duration=timedelta(seconds=60))
+    qualified_drain = BoundedStreamUploadDrainVerifier(
+        max_stream_duration=timedelta(seconds=60),
+        has_in_flight_uploads=lambda _keys: False,
+    )
 
     def failing_deleter(_key: str):
         raise StorageRefusedError()
@@ -1064,8 +1067,10 @@ def test_bug_0027_upgrade_backfill_sends_valid_queued_invitation_and_withdraws_r
                 expires_at=now + timedelta(days=4),
             )
 
-        # Upgrade forward across `orgs/0034` and `idempotency/0002`!
+        # Upgrade forward across `orgs/0034` and `idempotency/0002` (static SQL only; outbox worker
+        # holds `KODERA_OUTBOX_SEAL_KEY` and backfills multi-invitation bindings during `sweep()` / `withdrawn()`).
         restore_leaves()
+        assert sender.backfill_legacy_invitation_bindings() == 2
 
         with connection.cursor() as cursor:
             cursor.execute(
@@ -1403,7 +1408,10 @@ def test_bug_0025_default_unix_socket_delete_rpc_without_injected_deleter(
         target=lambda: worker_server.serve_forever(poll_interval=0.01), daemon=True
     )
     worker_thread.start()
-    drain = BoundedStreamUploadDrainVerifier(max_stream_duration=timedelta(seconds=60))
+    drain = BoundedStreamUploadDrainVerifier(
+        max_stream_duration=timedelta(seconds=60),
+        has_in_flight_uploads=lambda _keys: False,
+    )
     try:
         settings.KODERA_MEDIA_GATEWAY_SOCKET = str(sock_path)
         erasure = admit_account(
@@ -1686,3 +1694,246 @@ def test_round4_concurrent_org_erasure_account_erasure_and_passport_mail_lock_or
     finally:
         executor = MigrationExecutor(connection)
         executor.migrate(executor.loader.graph.leaf_nodes())
+
+
+def test_r5_bounded_stream_upload_drain_requires_authoritative_inflight_inspector(world):
+    """Round-5 [Codex P1]: `BoundedStreamUploadDrainVerifier` rejects `None` or non-callable
+    `has_in_flight_uploads` at init and rejects non-bool return values on `verify_drained`."""
+    org, _ws, _members, _tokens = world
+    now = database_now()
+    scope = AccountErasureScope(
+        request_id=new_uuid7(),
+        user_id=new_uuid7(),
+        cutoff_at=now,
+        inventory={"required_domains": ["matrix_accounts"]},
+    )
+
+    with pytest.raises(TypeError):
+        BoundedStreamUploadDrainVerifier(max_stream_duration=timedelta(seconds=60))
+
+    for bad_inspector in (None, "not-a-callable", 123):
+        with pytest.raises(TypeError, match="callable"):
+            BoundedStreamUploadDrainVerifier(
+                max_stream_duration=timedelta(seconds=60),
+                has_in_flight_uploads=bad_inspector,
+            )
+
+    non_bool_verifier = BoundedStreamUploadDrainVerifier(
+        max_stream_duration=timedelta(seconds=1),
+        has_in_flight_uploads=lambda _keys: "still-uploading",
+    )
+    with pytest.raises(TypeError, match="bool"):
+        non_bool_verifier.verify_drained(
+            scope,
+            (f"organisations/{org.id}/attachments/{new_uuid7()}",),
+            now - timedelta(seconds=120),
+        )
+
+
+def test_r5_passport_withdrawn_and_account_admission_interleaving_and_sql_boundary(world, settings):
+    """Round-5 [Codex P2 & Opus search_path]:
+    1. `ADMISSION_FUNCTIONS` / `restricted_login('admission')` CANNOT execute the account-first
+       `privacy_begin_account_erasure` directly (`InsufficientPrivilege`) and CAN execute
+       `privacy_admit_account_erasure`.
+    2. All `SECURITY DEFINER` functions in `orgs/0034`, `idempotency/0002`, and `docs/0011`
+       place `pg_temp` last (`search_path=pg_catalog, public, pg_temp`).
+    3. Deterministic 2-connection interleaving where Conn A (`sender.withdrawn('passport_magic_link')`)
+       holds shared `privacy_account_cutoff:<person>` before requesting `identity_user FOR SHARE`
+       while Conn B runs `begin_account_erasure`: Conn B parks on `privacy_account_cutoff:<person>`
+       holding zero `identity_user` row locks, Conn A finishes cleanly, and Conn B admits cutoff
+       with zero deadlock (`40P01`)."""
+    import threading
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+    from uuid import UUID
+
+    import psycopg
+    from django.db import close_old_connections, connections
+    from test_core_erasure import operator as make_staff_operator
+    from test_erasure_review_guards import restricted_login
+
+    from apps.identity.models import PassportMagicLinkToken, PassportOutboxBinding
+    from apps.orgs.account_erasure_services import begin_account_erasure
+    from apps.orgs.privacy_models import AccountErasure
+    from apps.outbox import sender
+    from core.passport import enqueue_passport_magic_link, generate_magic_link_token
+
+    # 1. Verify SQL admission boundary refuses direct `privacy_begin_account_erasure`.
+    with restricted_login("admission") as (role_name, connect):
+        with connect() as login:
+            assert login.execute("SELECT current_user, session_user").fetchone() == (
+                role_name,
+                role_name,
+            )
+            assert (
+                login.execute(
+                    "SELECT has_function_privilege("
+                    "current_user,"
+                    "'public.privacy_begin_account_erasure(uuid,uuid,text,text,timestamptz,uuid)',"
+                    "'EXECUTE')"
+                ).fetchone()[0]
+                is False
+            )
+            assert (
+                login.execute(
+                    "SELECT has_function_privilege("
+                    "current_user,"
+                    "'public.privacy_admit_account_erasure(uuid,uuid,text,text,timestamptz,uuid)',"
+                    "'EXECUTE')"
+                ).fetchone()[0]
+                is True
+            )
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                login.execute("SELECT privacy_begin_account_erasure(NULL,NULL,NULL,NULL,NULL,NULL)")
+
+    # 2. Verify `search_path=pg_catalog, public, pg_temp` (`pg_temp` last) on all K2c SECURITY DEFINER functions.
+    expected_definer_functions = (
+        "public.invitation_outbox_cutoff_guard()",
+        "public.privacy_cutoff_guard()",
+        "public.core_erasure_completeness_hook()",
+        "public.privacy_confirm_account_attachments_erased(uuid,text)",
+        "public.privacy_complete_erasure(uuid)",
+        "public.privacy_complete_account_erasure(uuid)",
+        "public.privacy_admit_account_erasure(uuid,uuid,text,text,timestamptz,uuid)",
+        "public.idempotency_privacy_cutoff_guard()",
+        "public.docs_collab_fence(uuid,uuid,uuid,uuid,text,text,text)",
+    )
+    with connection.cursor() as cursor:
+        for sig in expected_definer_functions:
+            cursor.execute(
+                "SELECT proconfig FROM pg_catalog.pg_proc WHERE oid = %s::regprocedure", [sig]
+            )
+            proconfig = cursor.fetchone()[0] or []
+            search_entries = [item for item in proconfig if item.startswith("search_path=")]
+            assert len(search_entries) == 1, (sig, proconfig)
+            normalized = search_entries[0].replace(" ", "")
+            assert normalized == "search_path=pg_catalog,public,pg_temp", (sig, proconfig)
+
+    # 3. Deterministic 2-connection interleaving: Mail holds shared `privacy_account_cutoff:<person>`
+    #    before requesting `identity_user FOR SHARE`, while Admission enters `begin_account_erasure`.
+    org, _ws, members, tokens = world
+    person = members[3].user
+    m3_ident = Identity.objects.get(user=person, organisation=org)
+    staff_op = make_staff_operator()
+    seal_key_bytes = b"\x55" * 32
+    settings.KODERA_OUTBOX_SEAL_KEY = seal_key_bytes
+
+    now = database_now()
+    candidate_delivery_id = new_uuid7()
+    raw_tok, tok_sha256 = generate_magic_link_token()
+    with transaction.atomic():
+        PassportOutboxBinding.objects.create(
+            delivery_id=candidate_delivery_id,
+            user_id=person.id,
+            organisation_id=org.id,
+            created_at=now,
+        )
+        delivery_id = enqueue_passport_magic_link(
+            seal_key=seal_key_bytes,
+            link="https://app.localhost/passport/verify",
+            organisation_id=org.id,
+            organisation_name=org.name,
+            recipient=person.email,
+            raw_token=raw_tok,
+            expires_at=now + timedelta(minutes=15),
+            delivery_id=candidate_delivery_id,
+        )
+        PassportMagicLinkToken.objects.create(
+            token_sha256=tok_sha256,
+            user_id=person.id,
+            delivery_id=delivery_id,
+            email_normalized=person.email,
+            domain_normalized="example.org",
+            code_challenge="E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+            code_challenge_method="S256",
+            device_challenge_sha256=None,
+            expires_at=now + timedelta(minutes=15),
+        )
+
+    mail_holding_account_fence = threading.Event()
+    release_mail = threading.Event()
+    admission_pid_box: list[int] = []
+
+    def pause_after_shared_account_fence(execute, sql, params, many, context):
+        result = execute(sql, params, many, context)
+        if "pg_advisory_xact_lock_shared(hashtextextended('privacy_account_cutoff:'" in sql:
+            mail_holding_account_fence.set()
+            assert release_mail.wait(timeout=10)
+        return result
+
+    def run_mail_withdrawn() -> bool:
+        close_old_connections()
+        try:
+            with transaction.atomic(), connection.execute_wrapper(pause_after_shared_account_fence):
+                return sender.withdrawn("passport_magic_link", delivery_id)
+        finally:
+            connections.close_all()
+
+    def run_admission() -> UUID:
+        close_old_connections()
+        try:
+            with connection.cursor() as cur:
+                cur.execute("SELECT pg_backend_pid()")
+                admission_pid_box.append(cur.fetchone()[0])
+            ver = replace(
+                tokens[3],
+                issuer=org.issuer,
+                subject=m3_ident.subject,
+                issued_at=int(now.timestamp()),
+                expires_at=int((now + timedelta(minutes=10)).timestamp()),
+                auth_time=int(now.timestamp()),
+            )
+            return begin_account_erasure(
+                verified=ver,
+                confirmation="delete",
+                instruction_ref="ACC-950",
+                instruction_sha256="9" * 64,
+                purge_not_before=database_now(),
+                actor_identity_id=staff_op.id,
+            ).id
+        finally:
+            connections.close_all()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        mail_future = pool.submit(run_mail_withdrawn)
+        assert mail_holding_account_fence.wait(timeout=5)
+        admission_future = pool.submit(run_admission)
+        try:
+            # Wait until PostgreSQL `pg_locks` confirms Admission's backend is actively parked on
+            # the exclusive `privacy_account_cutoff:<person>` advisory lock BEFORE holding any
+            # exclusive/update lock on `identity_user`!
+            parked_cleanly = False
+            deadline = time.monotonic() + 4.0
+            while time.monotonic() < deadline:
+                if admission_pid_box:
+                    adm_pid = admission_pid_box[0]
+                    with connection.cursor() as cursor:
+                        cursor.execute(
+                            "SELECT EXISTS ("
+                            "  SELECT 1 FROM pg_locks"
+                            "  WHERE pid = %s AND locktype = 'advisory' AND NOT granted"
+                            "), EXISTS ("
+                            "  SELECT 1 FROM pg_locks"
+                            "  WHERE pid = %s AND relation = 'public.identity_user'::regclass"
+                            "    AND mode IN ('RowExclusiveLock', 'ShareUpdateExclusiveLock', 'ExclusiveLock')"
+                            ")",
+                            [adm_pid, adm_pid],
+                        )
+                        waiting_advisory, holding_user_update = cursor.fetchone()
+                        if waiting_advisory:
+                            assert holding_user_update is False
+                            parked_cleanly = True
+                            break
+                time.sleep(0.02)
+            assert parked_cleanly is True
+        finally:
+            release_mail.set()
+
+        # Mail acquires `identity_user FOR SHARE`, observes active person (`withdrawn == False`), and commits;
+        # Admission then immediately acquires exclusive `privacy_account_cutoff:<person>` and commits cutoff!
+        assert mail_future.result(timeout=10) is False
+        erasure_id = admission_future.result(timeout=10)
+
+    assert AccountErasure.objects.get(pk=erasure_id).status == "cutoff"
+    with transaction.atomic():
+        assert sender.withdrawn("passport_magic_link", delivery_id) is True

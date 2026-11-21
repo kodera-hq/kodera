@@ -1,9 +1,6 @@
 """Close GDPR Art. 17 erasure gaps across invitations, invitation outbox mail, idempotency records, and personal attachments."""
 
-import hashlib
-from uuid import UUID
-
-from django.db import DatabaseError, migrations, transaction
+from django.db import migrations
 
 FORWARD = r"""
 SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';
@@ -130,7 +127,7 @@ BEGIN
 END $$;
 
 CREATE FUNCTION public.invitation_outbox_cutoff_guard() RETURNS trigger LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, public AS $$
+SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
 DECLARE
     uid uuid;
 BEGIN
@@ -193,7 +190,7 @@ CREATE TRIGGER aa_invitation_outbox_cutoff
     FOR EACH ROW EXECUTE FUNCTION public.invitation_outbox_cutoff_guard();
 
 CREATE OR REPLACE FUNCTION public.privacy_cutoff_guard() RETURNS trigger LANGUAGE plpgsql
-SECURITY DEFINER SET search_path=pg_catalog,public AS $$
+SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $$
 DECLARE item jsonb:=to_jsonb(NEW); org uuid; parent uuid; uploader_person uuid; inv_uid uuid; email_sha text; check_inv_email boolean:=false;
 BEGIN
  IF TG_TABLE_NAME='identity_identity' AND TG_OP='UPDATE' THEN
@@ -327,7 +324,7 @@ END $$;
 REVOKE ALL ON FUNCTION public.privacy_cutoff_guard() FROM PUBLIC;
 
 CREATE FUNCTION public.core_erasure_completeness_hook() RETURNS trigger LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, public AS $$
+SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
 DECLARE
     person uuid;
     org uuid;
@@ -705,7 +702,7 @@ CREATE TRIGGER aa_02_core_erasure_v2
 
 CREATE FUNCTION public.privacy_confirm_account_attachments_erased(p_id uuid, p_evidence text)
 RETURNS bigint LANGUAGE plpgsql SECURITY DEFINER
-SET search_path = pg_catalog, public
+SET search_path = pg_catalog, public, pg_temp
 SET lock_timeout = '3s' SET statement_timeout = '15s' AS $$
 DECLARE
     request public.orgs_accounterasure%ROWTYPE;
@@ -794,7 +791,7 @@ END $$;
 REVOKE ALL ON FUNCTION public.privacy_confirm_account_attachments_erased(uuid, text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION privacy_complete_erasure(p_id uuid) RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER
-SET search_path=pg_catalog,public SET lock_timeout='3s' SET statement_timeout='30s' AS $$
+SET search_path=pg_catalog,public,pg_temp SET lock_timeout='3s' SET statement_timeout='30s' AS $$
 DECLARE request public.orgs_privacyerasure%ROWTYPE; org uuid; extension_pending boolean; ee_pending boolean;
 BEGIN
  -- Lock `privacy_erasure_cutoff:<org>` and `orgs_organisation` BEFORE `orgs_privacyerasure` to prevent AB-BA lock inversion.
@@ -901,7 +898,7 @@ END $$;
 REVOKE ALL ON FUNCTION privacy_complete_erasure(uuid) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.privacy_complete_account_erasure(p_id uuid) RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER
-SET search_path=pg_catalog,public SET lock_timeout='3s' SET statement_timeout='15s' AS $$
+SET search_path=pg_catalog,public,pg_temp SET lock_timeout='3s' SET statement_timeout='15s' AS $$
 DECLARE request public.orgs_accounterasure%ROWTYPE; ee_pending boolean; email_shas jsonb; max_upload_exp timestamptz := NULL;
 BEGIN
  SELECT * INTO request FROM public.orgs_accounterasure WHERE id=p_id FOR UPDATE;
@@ -1048,15 +1045,26 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION public.privacy_complete_account_erasure(uuid) FROM PUBLIC;
 
-CREATE FUNCTION public.privacy_fence_account_erasure(p_identity uuid, p_actor uuid)
-RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public
+CREATE FUNCTION public.privacy_admit_account_erasure(
+    p_id uuid,
+    p_identity uuid,
+    p_instruction text,
+    p_digest text,
+    p_not_before timestamptz,
+    p_actor uuid
+)
+RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp
 SET lock_timeout = '3s' SET statement_timeout = '15s' AS $$
 DECLARE
     person uuid;
     org_id uuid;
     initial_orgs uuid[] := ARRAY[]::uuid[];
+    post_lock_orgs uuid[] := ARRAY[]::uuid[];
 BEGIN
-    IF p_identity IS NULL OR NOT public.retention_current_operator(p_actor) THEN
+    IF p_id IS NULL OR p_identity IS NULL
+       OR p_instruction IS NULL OR p_instruction !~ '^[A-Z]{2,8}-[0-9]{1,8}$'
+       OR p_digest IS NULL OR p_digest !~ '^[0-9a-f]{64}$'
+       OR p_not_before IS NULL OR NOT public.retention_current_operator(p_actor) THEN
         RAISE EXCEPTION 'account erasure admission refused' USING ERRCODE = '23514';
     END IF;
     SELECT user_id INTO person
@@ -1076,12 +1084,17 @@ BEGIN
     ) q
     WHERE q.org_id IS NOT NULL;
 
+    -- 1. Advisory fences strictly before row locks: sorted org cutoffs -> exclusive account cutoff.
     FOREACH org_id IN ARRAY initial_orgs LOOP
         PERFORM pg_advisory_xact_lock_shared(
             hashtextextended('privacy_erasure_cutoff:' || org_id::text, 0)
         );
     END LOOP;
+    PERFORM pg_advisory_xact_lock(
+        hashtextextended('privacy_account_cutoff:' || person::text, 0)
+    );
 
+    -- 2. Row locks in canonical `identity_user -> orgs_organisation (ORDER BY id)` order.
     PERFORM 1 FROM public.identity_user
     WHERE id = person AND enabled AND deleted_at IS NULL
     FOR UPDATE;
@@ -1089,37 +1102,31 @@ BEGIN
         RAISE EXCEPTION 'account erasure person unavailable' USING ERRCODE = '23514';
     END IF;
 
-    FOR org_id IN
-        SELECT q.org_id FROM (
-            SELECT organisation_id AS org_id FROM public.orgs_membership WHERE user_id = person
-            UNION
-            SELECT organisation_id AS org_id FROM public.identity_identity
-            WHERE user_id = person AND organisation_id IS NOT NULL
-        ) q
-        WHERE q.org_id IS NOT NULL
-        ORDER BY q.org_id
-    LOOP
-        IF NOT (org_id = ANY(initial_orgs)) THEN
-            IF NOT pg_try_advisory_xact_lock_shared(
-                hashtextextended('privacy_erasure_cutoff:' || org_id::text, 0)
-            ) THEN
-                RAISE EXCEPTION 'account erasure concurrent organisation cutoff'
-                    USING ERRCODE = '55P03';
-            END IF;
-        END IF;
-    END LOOP;
-
     PERFORM 1 FROM public.orgs_organisation
-    WHERE id IN (
-        SELECT organisation_id FROM public.orgs_membership WHERE user_id = person
-        UNION
-        SELECT organisation_id FROM public.identity_identity
-        WHERE user_id = person AND organisation_id IS NOT NULL
-    )
+    WHERE id = ANY(initial_orgs)
     ORDER BY id
     FOR UPDATE;
+
+    -- 3. Verify `person`'s organisation set did not change before row locks were acquired.
+    SELECT coalesce(array_agg(q.org_id ORDER BY q.org_id), ARRAY[]::uuid[])
+    INTO post_lock_orgs
+    FROM (
+        SELECT organisation_id AS org_id FROM public.orgs_membership WHERE user_id = person
+        UNION
+        SELECT organisation_id AS org_id FROM public.identity_identity
+        WHERE user_id = person AND organisation_id IS NOT NULL
+    ) q
+    WHERE q.org_id IS NOT NULL;
+    IF post_lock_orgs IS DISTINCT FROM initial_orgs THEN
+        RAISE EXCEPTION 'account erasure concurrent organisation set changed'
+            USING ERRCODE = '40001';
+    END IF;
+
+    RETURN public.privacy_begin_account_erasure(
+        p_id, p_identity, p_instruction, p_digest, p_not_before, p_actor
+    );
 END $$;
-REVOKE ALL ON FUNCTION public.privacy_fence_account_erasure(uuid, uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.privacy_admit_account_erasure(uuid, uuid, text, text, timestamptz, uuid) FROM PUBLIC;
 """
 
 REVERSE = r"""
@@ -1329,7 +1336,7 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION public.privacy_cutoff_guard() FROM PUBLIC;
 
-DROP FUNCTION IF EXISTS public.privacy_fence_account_erasure(uuid, uuid);
+DROP FUNCTION IF EXISTS public.privacy_admit_account_erasure(uuid, uuid, text, text, timestamptz, uuid);
 DROP FUNCTION IF EXISTS public.privacy_confirm_account_attachments_erased(uuid, text);
 DROP TRIGGER IF EXISTS aa_02_core_erasure_v2 ON public.orgs_accounterasure;
 DROP TRIGGER IF EXISTS aa_02_core_erasure_v2 ON public.orgs_privacyerasure;
@@ -1341,106 +1348,6 @@ DROP TABLE IF EXISTS public.orgs_invitationoutboxbinding;
 """
 
 
-def _backfill_sealed_invitation_bindings(apps_registry, schema_editor) -> None:
-    conn = schema_editor.connection
-    with conn.cursor() as cursor:
-        cursor.execute("SET LOCAL lock_timeout='5s'")
-        cursor.execute("SET LOCAL statement_timeout='30s'")
-        cursor.execute(
-            "SELECT to_regclass('public.outbox_outboxdelivery') IS NOT NULL "
-            "AND to_regclass('public.outbox_message') IS NOT NULL "
-            "AND to_regclass('public.orgs_invitationoutboxbinding') IS NOT NULL"
-        )
-        row = cursor.fetchone()
-        if not row or not row[0]:
-            return
-        cursor.execute(
-            "SELECT d.id, d.organisation_id, m.sealed "
-            "FROM public.outbox_outboxdelivery d "
-            "JOIN public.outbox_message m ON m.delivery_id = d.id "
-            "WHERE m.template_id IN ('invitation', 'invitation_account_ready') "
-            "  AND m.sealed IS NOT NULL "
-            "  AND NOT EXISTS ("
-            "      SELECT 1 FROM public.orgs_invitationoutboxbinding ib WHERE ib.delivery_id = d.id"
-            "  ) "
-            "ORDER BY d.id"
-        )
-        unbound = cursor.fetchall()
-        if not unbound:
-            return
-        from apps.outbox.mail import seal
-        from apps.outbox.sender import seal_key
-
-        key = seal_key()
-        if key is None:
-            return
-
-        for delivery_id, org_id, raw_sealed in unbound:
-            try:
-                opened = seal.unseal(key, delivery_id, bytes(raw_sealed))
-            except seal.SealError:
-                continue
-            normalized_email = opened.recipient.strip().lower()
-            recipient_sha = hashlib.sha256(normalized_email.encode("utf-8")).hexdigest()
-            inv_id: UUID | None = None
-            if (
-                opened.secret.startswith(("inv1_", "kinv_"))
-                and len(opened.secret) >= 42
-                and opened.secret[41] == "_"
-            ):
-                try:
-                    candidate_id = UUID(opened.secret[5:41])
-                except ValueError:
-                    candidate_id = None
-                if candidate_id is not None:
-                    cursor.execute(
-                        "SELECT id FROM public.orgs_invitation WHERE id = %s AND organisation_id = %s",
-                        [candidate_id, org_id],
-                    )
-                    found = cursor.fetchone()
-                    if found is not None:
-                        inv_id = found[0]
-            if inv_id is None:
-                cursor.execute(
-                    "SELECT id FROM public.orgs_invitation "
-                    "WHERE organisation_id = %s AND lower(btrim(email)) = %s "
-                    "ORDER BY (state = 'pending') DESC, created_at DESC, id DESC LIMIT 1",
-                    [org_id, normalized_email],
-                )
-                found = cursor.fetchone()
-                if found is not None:
-                    inv_id = found[0]
-            if inv_id is None:
-                continue
-            try:
-                with transaction.atomic(using=conn.alias):
-                    cursor.execute(
-                        "INSERT INTO public.orgs_invitationoutboxbinding "
-                        "(delivery_id, invitation_id, organisation_id, recipient_email_sha256, created_at) "
-                        "VALUES (%s, %s, %s, %s, clock_timestamp()) "
-                        "ON CONFLICT (delivery_id) DO NOTHING",
-                        [delivery_id, inv_id, org_id, recipient_sha],
-                    )
-            except DatabaseError:
-                cursor.execute(
-                    "UPDATE public.outbox_message SET sealed = NULL "
-                    "WHERE delivery_id = %s AND NOT EXISTS ("
-                    "    SELECT 1 FROM public.orgs_privacyerasure WHERE organisation_reference = %s"
-                    ")",
-                    [delivery_id, org_id],
-                )
-                cursor.execute(
-                    "UPDATE public.outbox_outboxdelivery "
-                    "SET status = 'failed', "
-                    "    finished_at = COALESCE(finished_at, clock_timestamp()), "
-                    "    updated_at = clock_timestamp() "
-                    "WHERE id = %s AND status = 'pending' AND NOT EXISTS ("
-                    "    SELECT 1 FROM public.orgs_privacyerasure WHERE organisation_reference = %s"
-                    ")",
-                    [delivery_id, org_id],
-                )
-
-
 class Migration(migrations.Migration):
     dependencies = [("orgs", "0033_proximity_erasure_inventory")]
     operations = [
@@ -1449,7 +1356,6 @@ class Migration(migrations.Migration):
             reverse_sql=migrations.RunSQL.noop,
         ),
         migrations.RunSQL(FORWARD, REVERSE),
-        migrations.RunPython(_backfill_sealed_invitation_bindings, migrations.RunPython.noop),
         migrations.RunSQL(
             migrations.RunSQL.noop,
             reverse_sql="SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';",

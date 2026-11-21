@@ -16,6 +16,7 @@ from django.db.migrations.executor import MigrationExecutor
 from django.test import Client
 from django.utils import timezone
 from test_access_tokens import frozen_clock as frozen_clock
+from workspace_documents.test_services import native_engine as native_engine
 
 from apps.audit.models import AuditEvent
 from apps.docs.models import Document, DocumentSnapshot
@@ -992,3 +993,487 @@ def test_bug_0050_overrides_self_grant_notice_audit_and_metadata_bounds(world):
                 request_id=str(uuid4()),
                 metadata=bad_metadata,
             )
+
+
+def test_r5_real_postgres_yjs_concurrent_workspace_and_erasure_fence(
+    world, native_engine, settings
+):
+    """Round-5 [Opus P1]: Two editors running concurrent `Store.update` and `Store.deliver`
+    transactions on the same workspace (both same document and separate documents) against real
+    PostgreSQL 16 under the restricted `collab_role` NEVER disconnect each other with `LockBusy`,
+    while an active erasure lock (`orgs_organisation FOR UPDATE`) immediately raises `55P03` ->
+    `LockBusy` -> WebSocket `1013 'lock-busy'`."""
+    import base64
+    import os
+    import secrets
+    import shutil
+    import subprocess
+    from pathlib import Path
+    from urllib.parse import quote
+    from uuid import UUID
+
+    import time_machine
+    from psycopg import sql
+
+    from apps.docs import services as doc_services
+    from apps.docs.collab_role import grant_statements
+
+    org, _workspace, _members, tokens = world
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT clock_timestamp()")
+        real_wall_clock = cursor.fetchone()[0]
+
+    with time_machine.travel(real_wall_clock, tick=True):
+        doc1 = doc_services.create(
+            verified=tokens[2],
+            organisation_id=org.id,
+            name="Concurrent Doc One",
+            parent_id=None,
+            template_key=None,
+            request_id=str(uuid4()),
+        )
+        doc2 = doc_services.create(
+            verified=tokens[2],
+            organisation_id=org.id,
+            name="Concurrent Doc Two",
+            parent_id=None,
+            template_key=None,
+            request_id=str(uuid4()),
+        )
+        ticket_a1 = doc_services.collab_session(
+            verified=tokens[2],
+            organisation_id=org.id,
+            document_id=UUID(doc1["id"]),
+            request_id=str(uuid4()),
+        )
+        ticket_b1 = doc_services.collab_session(
+            verified=tokens[3],
+            organisation_id=org.id,
+            document_id=UUID(doc1["id"]),
+            request_id=str(uuid4()),
+        )
+        ticket_a2 = doc_services.collab_session(
+            verified=tokens[2],
+            organisation_id=org.id,
+            document_id=UUID(doc2["id"]),
+            request_id=str(uuid4()),
+        )
+        ticket_ws = doc_services.collab_session(
+            verified=tokens[2],
+            organisation_id=org.id,
+            document_id=UUID(doc1["id"]),
+            request_id=str(uuid4()),
+        )
+
+    collab_role = "collab_r5_" + uuid4().hex[:12]
+    role_password = secrets.token_urlsafe(32)
+    database = connection.settings_dict
+    with connection.cursor() as cursor:
+        cursor.execute(
+            sql.SQL(
+                "CREATE ROLE {} LOGIN CONNECTION LIMIT 5 PASSWORD {}"
+                " NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS"
+            ).format(sql.Identifier(collab_role), sql.Literal(role_password))
+        )
+        for stmt in grant_statements(collab_role):
+            cursor.execute(stmt)
+    try:
+        url = (
+            "postgresql://"
+            + quote(database["USER"], safe="")
+            + ":"
+            + quote(database["PASSWORD"], safe="")
+            + "@"
+            + database["HOST"]
+            + ":"
+            + str(database["PORT"])
+            + "/"
+            + quote(database["NAME"], safe="")
+        )
+        root = Path(__file__).resolve().parents[2] / "yjs_collab"
+        binary = shutil.which("node")
+        assert binary is not None
+        payload = json.dumps(
+            {
+                "role": collab_role,
+                "rolePassword": role_password,
+                "ticketA1": ticket_a1["token"],
+                "ticketB1": ticket_b1["token"],
+                "ticketA2": ticket_a2["token"],
+                "ticketWs": ticket_ws["token"],
+                "organisationId": str(org.id),
+            }
+        )
+        result = subprocess.run(  # noqa: S603 - fixed owned fixture and disposable test database
+            [binary, str(root / "test/concurrency-fixture.mjs")],
+            cwd=root,
+            env={
+                "PATH": os.environ["PATH"],
+                "KODERA_TEST_DATABASE_URL": url,
+                "KODERA_TEST_COLLAB_KEY": base64.urlsafe_b64encode(
+                    settings.KODERA_COLLAB_TICKET_KEY
+                ).decode(),
+            },
+            input=payload.encode("utf-8"),
+            capture_output=True,
+            timeout=60,
+        )
+        assert result.returncode == 0, result.stderr.decode("utf-8")
+        assert json.loads(result.stdout) == {
+            "concurrentWorkspaceSucceeded": True,
+            "mergedBothEditors": True,
+            "erasureImmediate55P03": True,
+            "wsClose1013": True,
+        }
+        updated_doc = Document.objects.get(pk=doc1["id"])
+        assert "Alpha-edit" in updated_doc.markdown
+        assert "Beta-edit" in updated_doc.markdown
+    finally:
+        with connection.cursor() as cursor:
+            cursor.execute(sql.SQL("DROP OWNED BY {}").format(sql.Identifier(collab_role)))
+            cursor.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(collab_role)))
+
+
+def test_r5_allow_overrides_exempt_roles_on_read_only_and_listen_only_channels(world):
+    """Round-5 [Opus P2-1]: Granting `allow: ['message.post']` on a `read_only=True` text channel
+    lifts all 4 `READ_ONLY` capabilities across `channel_access.may_perform`, `channel_sets`, and
+    SQL `docs_document_role` (`'editor'`); granting `allow: ['media.speak']` on a `listen_only=True`
+    audio channel lifts all 3 `LISTEN_ONLY` capabilities; `deny` overrides still beat `allow`."""
+    from apps.workspaces.channel_access import LISTEN_ONLY, READ_ONLY, may_perform, resolve
+
+    org, workspace, members, tokens = world
+    default_pol = ResourcePolicy.objects.create(workspace=workspace, visibility="organisation")
+    workspace.default_policy = default_pol
+    workspace.save(update_fields=["default_policy", "updated_at"])
+
+    ro_pol = ResourcePolicy.objects.create(workspace=workspace, visibility="organisation")
+    for cap in READ_ONLY:
+        ResourcePolicyRule.objects.create(policy=ro_pol, kind="deny_capability", capability=cap)
+    ro_text = Channel.objects.create(
+        workspace=workspace,
+        name="Announcements",
+        kind="text",
+        position=0,
+        lifecycle="active",
+        policy_mode="explicit",
+        explicit_policy=ro_pol,
+    )
+    ro_doc = Document.objects.create(
+        workspace=workspace,
+        channel=ro_text,
+        creator=members[0],
+        title="Release Notes",
+        title_key="release notes",
+        visibility="workspace",
+    )
+    DocumentSnapshot.objects.create(document=ro_doc, sequence=0, head_sequence=0, state=b"\x00\x00")
+
+    lo_pol = ResourcePolicy.objects.create(workspace=workspace, visibility="organisation")
+    for cap in LISTEN_ONLY:
+        ResourcePolicyRule.objects.create(policy=lo_pol, kind="deny_capability", capability=cap)
+    lo_audio = Channel.objects.create(
+        workspace=workspace,
+        name="Stage Audio",
+        kind="audio",
+        position=1,
+        lifecycle="active",
+        policy_mode="explicit",
+        explicit_policy=lo_pol,
+    )
+
+    owner_args = {"verified": tokens[0], "organisation_id": org.id}
+    speaker_role = iam.create_role(
+        **owner_args,
+        data={"name": "Speakers", "slug": "speakers", "position": 20, "permissions": []},
+        request_id=str(uuid4()),
+    )
+    muted_role = iam.create_role(
+        **owner_args,
+        data={"name": "Muted", "slug": "muted-override", "position": 10, "permissions": []},
+        request_id=str(uuid4()),
+    )
+    iam.assign_roles(
+        **owner_args,
+        membership_id=members[3].id,
+        role_ids=[speaker_role["id"]],
+        request_id=str(uuid4()),
+    )
+    m3_ident = Identity.objects.get(user=members[3].user, organisation=org)
+
+    def sql_doc_role() -> str | None:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT public.docs_document_role(%s, %s, %s, %s, %s, %s)",
+                [
+                    ro_doc.id,
+                    org.id,
+                    members[3].id,
+                    m3_ident.id,
+                    m3_ident.issuer,
+                    m3_ident.subject,
+                ],
+            )
+            return cursor.fetchone()[0]
+
+    # 1. Baseline before overrides: `members[3]` is denied all READ_ONLY & LISTEN_ONLY capabilities,
+    #    absent from `exempt_members`, and `'viewer'` on `ro_doc`.
+    org.refresh_from_db()
+    ro_access = resolve(ro_text.id)
+    lo_access = resolve(lo_audio.id)
+    assert ro_access.read_only is True
+    assert lo_access.listen_only is True
+    for cap in READ_ONLY:
+        assert (
+            may_perform(
+                ro_access,
+                action=cap,
+                organisation_id=org.id,
+                membership_id=members[3].id,
+                member_org_role=members[3].role,
+                authority_revision=org.authority_revision,
+            )
+            is False
+        )
+    for cap in LISTEN_ONLY:
+        assert (
+            may_perform(
+                lo_access,
+                action=cap,
+                organisation_id=org.id,
+                membership_id=members[3].id,
+                member_org_role=members[3].role,
+                authority_revision=org.authority_revision,
+            )
+            is False
+        )
+    assert sql_doc_role() == "viewer"
+    with transaction.atomic():
+        _, baseline_channels = channel_sets.channel_set_input(workspace.id)
+    by_cid = {entry["channel_id"]: entry for entry in baseline_channels}
+    assert m3_ident.subject not in by_cid[str(ro_text.id)]["exempt"]
+    assert m3_ident.subject not in by_cid[str(lo_audio.id)]["exempt"]
+
+    # 2. Grant `allow: ["message.post"]` on `ro_text` and `allow: ["media.speak"]` on `lo_audio`:
+    #    `members[3]` is now exempted across ALL 4 READ_ONLY and ALL 3 LISTEN_ONLY capabilities,
+    #    present in `exempt` on both channels, and `'editor'` in `docs_document_role`!
+    governance.overrides(
+        **owner_args,
+        channel_id=ro_text.id,
+        data=[{"role_id": speaker_role["id"], "allow": ["message.post"], "deny": []}],
+        request_id=str(uuid4()),
+    )
+    governance.overrides(
+        **owner_args,
+        channel_id=lo_audio.id,
+        data=[{"role_id": speaker_role["id"], "allow": ["media.speak"], "deny": []}],
+        request_id=str(uuid4()),
+    )
+    ro_access = resolve(ro_text.id)
+    lo_access = resolve(lo_audio.id)
+    for cap in READ_ONLY:
+        assert (
+            may_perform(
+                ro_access,
+                action=cap,
+                organisation_id=org.id,
+                membership_id=members[3].id,
+                member_org_role=members[3].role,
+                authority_revision=org.authority_revision,
+            )
+            is True
+        )
+    for cap in LISTEN_ONLY:
+        assert (
+            may_perform(
+                lo_access,
+                action=cap,
+                organisation_id=org.id,
+                membership_id=members[3].id,
+                member_org_role=members[3].role,
+                authority_revision=org.authority_revision,
+            )
+            is True
+        )
+    assert sql_doc_role() == "editor"
+    latest_set = (
+        EngineChannelSet.objects.filter(organisation_id=org.id).order_by("-revision").first()
+    )
+    assert latest_set is not None
+    emitted_by_cid = {entry["channel_id"]: entry for entry in latest_set.channels}
+    assert emitted_by_cid[str(ro_text.id)]["read_only"] is True
+    assert m3_ident.subject in emitted_by_cid[str(ro_text.id)]["exempt"]
+    assert emitted_by_cid[str(lo_audio.id)]["listen_only"] is True
+    assert m3_ident.subject in emitted_by_cid[str(lo_audio.id)]["exempt"]
+
+    # 3. Assign second role `muted_role` with `deny: ["message.post"]` / `deny: ["media.speak"]`:
+    #    `deny` strictly beats `allow` across all companion capabilities and SQL `docs_document_role`.
+    iam.assign_roles(
+        **owner_args,
+        membership_id=members[3].id,
+        role_ids=[speaker_role["id"], muted_role["id"]],
+        request_id=str(uuid4()),
+    )
+    governance.overrides(
+        **owner_args,
+        channel_id=ro_text.id,
+        data=[
+            {"role_id": speaker_role["id"], "allow": ["message.post"], "deny": []},
+            {"role_id": muted_role["id"], "allow": [], "deny": ["message.post"]},
+        ],
+        request_id=str(uuid4()),
+    )
+    governance.overrides(
+        **owner_args,
+        channel_id=lo_audio.id,
+        data=[
+            {"role_id": speaker_role["id"], "allow": ["media.speak"], "deny": []},
+            {"role_id": muted_role["id"], "allow": [], "deny": ["media.speak"]},
+        ],
+        request_id=str(uuid4()),
+    )
+    ro_access = resolve(ro_text.id)
+    lo_access = resolve(lo_audio.id)
+    for cap in READ_ONLY:
+        assert (
+            may_perform(
+                ro_access,
+                action=cap,
+                organisation_id=org.id,
+                membership_id=members[3].id,
+                member_org_role=members[3].role,
+                authority_revision=org.authority_revision,
+            )
+            is False
+        )
+    for cap in LISTEN_ONLY:
+        assert (
+            may_perform(
+                lo_access,
+                action=cap,
+                organisation_id=org.id,
+                membership_id=members[3].id,
+                member_org_role=members[3].role,
+                authority_revision=org.authority_revision,
+            )
+            is False
+        )
+    assert sql_doc_role() == "viewer"
+    latest_set = (
+        EngineChannelSet.objects.filter(organisation_id=org.id).order_by("-revision").first()
+    )
+    assert latest_set is not None
+    emitted_by_cid = {entry["channel_id"]: entry for entry in latest_set.channels}
+    assert m3_ident.subject not in emitted_by_cid[str(ro_text.id)]["exempt"]
+    assert m3_ident.subject not in emitted_by_cid[str(lo_audio.id)]["exempt"]
+
+
+def test_r5_iam_channel_set_failure_aborts_write_and_returns_503(
+    world, http_signer, settings, monkeypatch
+):
+    """Round-5 [Opus P2-2]: On a provisioned workspace (`default_policy_id` set), a failing
+    `channel_sets.emit_for` (`WorkspaceUnavailableError` or `ChannelSetError`) is NEVER swallowed
+    by `emit_iam_channel_set`: it rolls back the IAM/override mutation and audit event, and the
+    HTTP boundary returns `503 service-unavailable` with `Retry-After: 1`."""
+    from uuid import UUID
+
+    from apps.engine_intents.channel_sets import ChannelSetError
+    from apps.workspaces.models import WorkspaceMemberRole
+    from apps.workspaces.structure import WorkspaceUnavailableError
+
+    org, workspace, members, tokens = world
+    default_pol = ResourcePolicy.objects.create(workspace=workspace, visibility="organisation")
+    workspace.default_policy = default_pol
+    workspace.save(update_fields=["default_policy", "updated_at"])
+    chan = Channel.objects.create(
+        workspace=workspace,
+        name="General",
+        kind="text",
+        position=0,
+        lifecycle="active",
+        policy_mode="inherit",
+    )
+
+    owner_args = {"verified": tokens[0], "organisation_id": org.id}
+    role = iam.create_role(
+        **owner_args,
+        data={"name": "Contractors", "slug": "contractors", "position": 15, "permissions": []},
+        request_id=str(uuid4()),
+    )
+    role_uuid = UUID(role["id"])
+
+    def fail_unavailable(**_kwargs):
+        raise WorkspaceUnavailableError()
+
+    monkeypatch.setattr(channel_sets, "emit_for", fail_unavailable)
+
+    # 1. Service-level fail-closed rollback across all 4 IAM/override write paths:
+    override_req = str(uuid4())
+    with pytest.raises(WorkspaceUnavailableError):
+        governance.overrides(
+            **owner_args,
+            channel_id=chan.id,
+            data=[{"role_id": role["id"], "allow": [], "deny": ["channel.view"]}],
+            request_id=override_req,
+        )
+    assert not WorkspaceChannelRoleOverride.objects.filter(channel=chan).exists()
+    assert not AuditEvent.objects.filter(request_id=override_req).exists()
+
+    assign_req = str(uuid4())
+    with pytest.raises(WorkspaceUnavailableError):
+        iam.assign_roles(
+            **owner_args,
+            membership_id=members[3].id,
+            role_ids=[role["id"]],
+            request_id=assign_req,
+        )
+    assert not WorkspaceMemberRole.objects.filter(membership=members[3]).exists()
+    assert not AuditEvent.objects.filter(request_id=assign_req).exists()
+
+    update_req = str(uuid4())
+    with pytest.raises(WorkspaceUnavailableError):
+        iam.update_role(
+            **owner_args,
+            role_id=role_uuid,
+            data={"name": "RenamedWhileUnavailable"},
+            if_match="*",
+            request_id=update_req,
+        )
+    assert WorkspaceRole.objects.get(pk=role_uuid).name == "Contractors"
+    assert not AuditEvent.objects.filter(request_id=update_req).exists()
+
+    delete_req = str(uuid4())
+    with pytest.raises(WorkspaceUnavailableError):
+        iam.delete_role(**owner_args, role_id=role_uuid, request_id=delete_req)
+    assert WorkspaceRole.objects.filter(pk=role_uuid).exists()
+    assert not AuditEvent.objects.filter(request_id=delete_req).exists()
+
+    # 2. HTTP boundary translates both `WorkspaceUnavailableError` and `ChannelSetError` into 503
+    #    `service-unavailable` with `Retry-After` and zero committed DB changes!
+    configure(settings, [trust_entry(http_signer, org.issuer)])
+    settings.KODERA_CONSOLE_CLIENT_ID = "synthetic-console"
+    settings.ROOT_URLCONF = "apps.workspaces.api.moderation_urls"
+    bearer = token(http_signer, org.issuer, subject=tokens[0].subject, email_verified=True)
+    client = Client(HTTP_HOST="127.0.0.1")
+
+    for exc_cls in (WorkspaceUnavailableError, ChannelSetError):
+        monkeypatch.setattr(
+            channel_sets,
+            "emit_for",
+            lambda _cls=exc_cls, **_kw: (_ for _ in ()).throw(_cls("engine unavailable")),
+        )
+        http_req_id = f"req-r5-{uuid4().hex[:12]}"
+        resp = client.put(
+            f"/api/v1/organisations/{org.id}/workspace/channels/{chan.id}/overrides",
+            data=json.dumps(
+                {"overrides": [{"role_id": role["id"], "allow": [], "deny": ["channel.view"]}]}
+            ),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {bearer}",
+            HTTP_X_REQUEST_ID=http_req_id,
+        )
+        assert resp.status_code == 503
+        assert resp["Retry-After"] == "1"
+        body = json.loads(resp.content)
+        assert body["type"] == "https://kodera.io/problems/service-unavailable"
+        assert not WorkspaceChannelRoleOverride.objects.filter(channel=chan).exists()
+        assert not AuditEvent.objects.filter(request_id=http_req_id).exists()

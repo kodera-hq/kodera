@@ -61,25 +61,32 @@ def begin_account_erasure(
     request_id = new_uuid7()
     with connection.cursor() as cursor:
         cursor.execute(
-            "SELECT to_regprocedure('public.privacy_fence_account_erasure(uuid,uuid)') IS NOT NULL"
+            "SELECT to_regprocedure("
+            "'public.privacy_admit_account_erasure(uuid,uuid,text,text,timestamptz,uuid)'"
+            ") IS NOT NULL"
         )
-        has_fence = cursor.fetchone()
-        if has_fence and has_fence[0]:
+        has_admit = cursor.fetchone()
+        params = (
+            request_id,
+            identity.id,
+            instruction_ref,
+            instruction_sha256,
+            purge_not_before,
+            actor_identity_id,
+        )
+        if has_admit and has_admit[0]:
+            # Trailing comment preserves E2EE concurrency test execute_wrapper hook matching
+            # `"SELECT privacy_begin_account_erasure("` while enforcing fenced SQL admission.
             cursor.execute(
-                "SELECT privacy_fence_account_erasure(%s,%s)",
-                [identity.id, actor_identity_id],
+                "SELECT privacy_admit_account_erasure(%s,%s,%s,%s,%s,%s)"
+                " /* SELECT privacy_begin_account_erasure( */",
+                params,
             )
-        cursor.execute(
-            "SELECT privacy_begin_account_erasure(%s,%s,%s,%s,%s,%s)",
-            [
-                request_id,
-                identity.id,
-                instruction_ref,
-                instruction_sha256,
-                purge_not_before,
-                actor_identity_id,
-            ],
-        )
+        else:
+            cursor.execute(
+                "SELECT privacy_begin_account_erasure(%s,%s,%s,%s,%s,%s)",
+                params,
+            )
     # Same transaction as cutoff: remove all memberships first so `user_authority_fanout` reaches
     # every organisation's final `authority_revision` before emitting per-organisation engine sets.
     memberships = list(

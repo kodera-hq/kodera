@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import { createHmac } from 'node:crypto'
 import { EventEmitter, once } from 'node:events'
+import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 import * as Y from 'yjs'
 import { WebSocket } from 'ws'
@@ -151,3 +153,26 @@ test('createCollabServer closes immediately with 1013 lock-busy on both client u
     await collab.shutdown()
   }
 })
+
+test(
+  'real PostgreSQL concurrent workspace Yjs updates succeed without LockBusy while active org erasure triggers immediate 1013 lock-busy',
+  {
+    skip:
+      !process.env.KODERA_TEST_DATABASE_URL || !process.env.KODERA_TEST_COLLAB_CONCURRENCY_JSON,
+  },
+  () => {
+    const fixturePath = fileURLToPath(new URL('./concurrency-fixture.mjs', import.meta.url))
+    const stdout = execFileSync(process.execPath, [fixturePath], {
+      input: process.env.KODERA_TEST_COLLAB_CONCURRENCY_JSON,
+      env: process.env,
+      encoding: 'utf8',
+      timeout: 30_000,
+    })
+    assert.deepEqual(JSON.parse(stdout), {
+      concurrentWorkspaceSucceeded: true,
+      mergedBothEditors: true,
+      erasureImmediate55P03: true,
+      wsClose1013: true,
+    })
+  }
+)

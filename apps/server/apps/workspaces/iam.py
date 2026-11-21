@@ -35,17 +35,12 @@ def emit_iam_channel_set(workspace: Workspace, reason: str) -> None:
     if workspace.default_policy_id is None:
         return
     from .channel_sets import emit_for
-    from .structure import WorkspaceUnavailableError
 
-    try:
-        with transaction.atomic():
-            emit_for(
-                organisation_id=workspace.organisation_id,
-                workspace_id=workspace.id,
-                reason=reason,
-            )
-    except WorkspaceUnavailableError:
-        return
+    emit_for(
+        organisation_id=workspace.organisation_id,
+        workspace_id=workspace.id,
+        reason=reason,
+    )
 
 
 def capabilities(workspace: Workspace, caller: TenantCaller) -> set[str]:
