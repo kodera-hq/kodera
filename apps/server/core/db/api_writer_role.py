@@ -439,9 +439,10 @@ UPDATE_COLUMNS = (
     ("workspaces_workspaceabusereport", "resolution"),
     ("workspaces_workspaceabusereport", "resolved_by_id"),
     ("workspaces_workspaceabusereport", "updated_at"),
-    # Attachment completion, inbox read marks, and device subscription rotation/revocation;
+    # Attachment completion/cancellation, inbox read marks, and device subscription rotation/revocation;
     # checksums, sizes, MIME types, recipients, resource_ids and push outbox leases stay immutable.
     ("media_attachment", "completed_at"),
+    ("media_attachment", "cancelled_at"),
     ("media_attachment", "updated_at"),
     ("notifications_notification", "read_at"),
     ("notifications_notification", "updated_at"),

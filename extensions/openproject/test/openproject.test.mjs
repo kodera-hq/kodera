@@ -356,3 +356,45 @@ test('openproject BUG-0064 enforces durable replay retention across +301s, >24h 
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('openproject BUG-0064 default handler recreation at +90000s and multi-writer stores preserve all entries', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'kodera-op-mw-'));
+  try {
+    const storeA = createDurableReplayStore(join(dir, 'shared'));
+    const storeB = createDurableReplayStore(join(dir, 'shared'));
+    assert.equal(storeA.claim('sig:writer-a', { recordedAt: 100, expiresAt: null }, 100), true);
+    assert.equal(storeB.claim('sig:writer-b', { recordedAt: 101, expiresAt: null }, 101), true);
+    const storeRestarted = createDurableReplayStore(join(dir, 'shared'));
+    assert.equal(storeRestarted.has('sig:writer-a'), true);
+    assert.equal(storeRestarted.has('sig:writer-b'), true);
+
+    const rawBody = JSON.stringify({
+      action: 'work_package:created',
+      work_package: {
+        id: 3099,
+        subject: 'Recreate test',
+        htmlUrl: 'https://openproject.example.org/work_packages/3099',
+      },
+    });
+    const sig = signWorkWebhookPayload(TEST_SECRET, rawBody);
+    const baseNow = 1_760_100_000;
+    const h1 = createOpenprojectWebhookHandler({ secret: TEST_SECRET, defaultChannelId: 'chan_op_recreate' });
+    await h1({
+      rawBody,
+      headers: { 'x-openproject-signature': sig, 'x-openproject-delivery': 'op_recreate_1' },
+      nowUnixSeconds: baseNow,
+    });
+    const h2 = createOpenprojectWebhookHandler({ secret: TEST_SECRET, defaultChannelId: 'chan_op_recreate' });
+    await assert.rejects(
+      () =>
+        h2({
+          rawBody,
+          headers: { 'x-openproject-signature': sig, 'x-openproject-delivery': 'op_recreate_2' },
+          nowUnixSeconds: baseNow + 90_000,
+        }),
+      (err) => err instanceof WebhookVerificationError && err.code === 'REPLAY_DETECTED'
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

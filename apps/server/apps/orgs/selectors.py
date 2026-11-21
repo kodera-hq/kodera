@@ -207,6 +207,10 @@ def active_organisation(*, organisation_id: UUID) -> bool:
     ).exists()
 
 
+def organisation_exists(*, organisation_id: UUID) -> bool:
+    return Organisation.objects.filter(id=organisation_id).exists()
+
+
 def installation_admin_user(*, membership_id: UUID, organisation_id: UUID) -> UUID | None:
     """Current accepted installer authority, scoped to the installation's organisation."""
     return (

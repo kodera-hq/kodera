@@ -60,6 +60,7 @@ def test_writer_runs_media_and_notifications_and_refuses_immutable_mutations(
                 "contentType": "application/pdf",
                 "sizeBytes": 128,
                 "sha256": digest,
+                "roomId": "!writer:matrix.kodera.test",
             },
             request_id=str(uuid4()),
         )
@@ -86,13 +87,15 @@ def test_writer_runs_media_and_notifications_and_refuses_immutable_mutations(
                 "contentType": "application/pdf",
                 "sizeBytes": 64,
                 "sha256": hashlib.sha256(secrets.token_bytes(32)).hexdigest(),
+                "roomId": "!writer:matrix.kodera.test",
             },
             request_id=str(uuid4()),
         )
+        cancelled_id = UUID(cancelled_ticket["attachmentId"])
         media_service.cancel_upload(
             verified=tokens[3],
             organisation_id=org.id,
-            attachment_id=UUID(cancelled_ticket["attachmentId"]),
+            attachment_id=cancelled_id,
             request_id=str(uuid4()),
         )
 
@@ -149,9 +152,16 @@ def test_writer_runs_media_and_notifications_and_refuses_immutable_mutations(
             refused("UPDATE media_attachment SET content_type = 'text/plain'")
             == INSUFFICIENT_PRIVILEGE
         )
-        # Completed attachment rows remain protected from non-erasure DELETE by trigger (`23514`),
-        # while uncompleted tickets may be cancelled via `media_service.cancel_upload`.
+        # Both completed rows and unexpired cancelled tombstones are protected from direct DELETE
+        # (`23514`) and terminal-state rollback (`23514`).
         assert refused("DELETE FROM media_attachment") == "23514"
+        assert refused("DELETE FROM media_attachment WHERE cancelled_at IS NOT NULL") == "23514"
+        assert (
+            refused(
+                "UPDATE media_attachment SET cancelled_at = NULL WHERE cancelled_at IS NOT NULL"
+            )
+            == "23514"
+        )
         assert (
             refused("UPDATE notifications_notification SET kind = 'mention'")
             == INSUFFICIENT_PRIVILEGE
@@ -167,3 +177,67 @@ def test_writer_runs_media_and_notifications_and_refuses_immutable_mutations(
             == INSUFFICIENT_PRIVILEGE
         )
         assert refused("DELETE FROM notifications_pushoutbox") == INSUFFICIENT_PRIVILEGE
+
+    # Once `cancelled_id`'s presigned PUT window expires, `reap_expired_uploads()` purges it
+    # cleanly under `api_writer` while `attachment_id` remains protected.
+    from apps.identity.models import Identity, StaffRole, User
+    from apps.media.models import Attachment
+    from apps.orgs import account_erasure_services
+    from apps.orgs.erasure_services import begin_erasure, database_now
+    from services.identity.access_tokens import VerifiedAccessToken
+
+    Attachment.objects.filter(pk=cancelled_id).update(
+        upload_expires_at=timezone.now() - timedelta(seconds=5)
+    )
+    with acting_as(writer):
+        assert media_service.reap_expired_uploads(limit=10) == 1
+        assert refused("DELETE FROM media_attachment WHERE completed_at IS NOT NULL") == "23514"
+    assert not Attachment.objects.filter(pk=cancelled_id).exists()
+    assert Attachment.objects.filter(pk=attachment_id).exists()
+
+    # Recording an account OR organisation erasure journal row alone NEVER permits `api_writer` to
+    # delete completed `media_attachment` rows outside `retention_worker_context` (`BUG-0021` R2 #9)!
+    staff_user = User.objects.create(email=f"{uuid4()}@staff.test")
+    staff_identity = Identity.objects.create(
+        user=staff_user,
+        realm="kodera-staff",
+        issuer="https://identity.staff.test/realms/kodera-staff",
+        subject=str(uuid4()),
+        email=staff_user.email,
+    )
+    StaffRole.objects.create(identity=staff_identity, realm="kodera-staff", role="staff_operator")
+
+    now_ts = int(database_now().timestamp())
+    fresh_token = VerifiedAccessToken(
+        tokens[3].issuer,
+        tokens[3].subject,
+        tokens[3].audience,
+        now_ts,
+        now_ts + 300,
+        None,
+        None,
+        None,
+        now_ts,
+        email_verified=True,
+    )
+    account_erasure_services.begin_account_erasure(
+        verified=fresh_token,
+        confirmation="delete",
+        instruction_ref="ACC-100",
+        instruction_sha256="2" * 64,
+        purge_not_before=database_now(),
+        actor_identity_id=staff_identity.id,
+    )
+    with acting_as(writer):
+        assert refused("DELETE FROM media_attachment WHERE completed_at IS NOT NULL") == "23514"
+
+    begin_erasure(
+        organisation_id=org.id,
+        instruction_ref="DEL-100",
+        instruction_sha256="1" * 64,
+        purge_not_before=database_now(),
+        actor_identity_id=staff_identity.id,
+    )
+    with acting_as(writer):
+        assert refused("DELETE FROM media_attachment WHERE completed_at IS NOT NULL") == "23514"
+    assert Attachment.objects.filter(pk=attachment_id).exists()

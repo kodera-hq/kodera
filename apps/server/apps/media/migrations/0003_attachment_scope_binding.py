@@ -32,6 +32,13 @@ BEGIN
         RAISE EXCEPTION 'Attachment scope binding is immutable'
             USING ERRCODE = '23514', CONSTRAINT = 'media_attachment_scope_immutable';
     END IF;
+    IF TG_OP = 'UPDATE' AND (
+        (OLD.completed_at IS NOT NULL AND NEW.completed_at IS DISTINCT FROM OLD.completed_at)
+        OR (OLD.cancelled_at IS NOT NULL AND NEW.cancelled_at IS DISTINCT FROM OLD.cancelled_at)
+    ) THEN
+        RAISE EXCEPTION 'Attachment terminal state is immutable'
+            USING ERRCODE = '23514', CONSTRAINT = 'media_attachment_state_immutable';
+    END IF;
     RETURN NEW;
 END;
 $$;
@@ -39,29 +46,24 @@ $$;
 CREATE FUNCTION media_attachment_delete_guard() RETURNS trigger LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
 BEGIN
-    IF OLD.completed_at IS NULL THEN
+    IF OLD.completed_at IS NULL AND OLD.upload_expires_at <= clock_timestamp() THEN
         RETURN OLD;
     END IF;
     IF to_regprocedure('public.privacy_erasure_context(uuid)') IS NOT NULL
        AND public.privacy_erasure_context(OLD.organisation_id) THEN
         RETURN OLD;
     END IF;
-    IF to_regclass('public.orgs_privacyerasure') IS NOT NULL
+    IF to_regprocedure('public.privacy_account_context(uuid)') IS NOT NULL
        AND EXISTS (
-           SELECT 1 FROM public.orgs_privacyerasure
-           WHERE organisation_reference = OLD.organisation_id
-       ) THEN
-        RETURN OLD;
-    END IF;
-    IF to_regclass('public.orgs_accounterasure') IS NOT NULL
-       AND EXISTS (
-           SELECT 1 FROM public.orgs_accounterasure ae
-           JOIN public.orgs_membership m ON m.user_id = ae.user_reference
+           SELECT 1 FROM public.orgs_membership m
+           JOIN public.orgs_organisation o ON o.id = OLD.organisation_id
            WHERE m.id = OLD.uploader_id
+             AND o.is_default_community
+             AND public.privacy_account_context(m.user_id)
        ) THEN
         RETURN OLD;
     END IF;
-    RAISE EXCEPTION 'Completed attachment deletion requires erasure authority'
+    RAISE EXCEPTION 'Attachment deletion requires expired pending status or scoped erasure authority'
         USING ERRCODE = '23514', CONSTRAINT = 'media_attachment_completed_immutable';
 END;
 $$;
@@ -114,6 +116,11 @@ class Migration(migrations.Migration):
             name="room_id",
             field=models.TextField(blank=True, null=True),
         ),
+        migrations.AddField(
+            model_name="attachment",
+            name="cancelled_at",
+            field=models.DateTimeField(blank=True, null=True),
+        ),
         migrations.AddConstraint(
             model_name="attachment",
             constraint=models.CheckConstraint(
@@ -126,6 +133,15 @@ class Migration(migrations.Migration):
             constraint=models.CheckConstraint(
                 condition=models.Q(room_id__isnull=True) | models.Q(room_id__regex=ROOM_ID_REGEX),
                 name="media_attachment_room_id_valid",
+            ),
+        ),
+        migrations.AddConstraint(
+            model_name="attachment",
+            constraint=models.CheckConstraint(
+                condition=~(
+                    models.Q(completed_at__isnull=False) & models.Q(cancelled_at__isnull=False)
+                ),
+                name="media_attachment_completion_cancel_exclusive",
             ),
         ),
         migrations.RunSQL(FORWARD_SQL, reverse_sql=REVERSE_SQL),

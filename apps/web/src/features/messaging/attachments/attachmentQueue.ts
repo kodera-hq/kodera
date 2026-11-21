@@ -162,6 +162,14 @@ export class AttachmentQueue {
     this.#aborts.set(key, abort)
     try {
       const scope = this.#scopeOf(room)
+      if (
+        this.#upload === uploadAttachment &&
+        scope.channelId === undefined &&
+        scope.roomId === undefined
+      ) {
+        rememberFailure(named)
+        return
+      }
       const stored = await this.#upload({
         organisationId: this.#organisationId,
         file,

@@ -28,8 +28,11 @@ The worker entry point is `python -m apps.media.storage_worker --socket
 parent socket directory with the shared service owner's permissions. The worker
 creates a mode-0600 socket, refuses an existing path, and removes only its own
 socket inode on exit. Each credential file is named by the organisation UUID and
-contains `endpoint`, `bucket`, `region`, `accessKey`, `secretKey` and optional
-`sessionToken`. The endpoint is HTTPS and the bucket is private. Configure storage
+contains `endpoint`, `bucket`, `region`, `accessKey`, `secretKey`, optional
+`sessionToken`, and optional Matrix DM room-verifier coordinates (`synapseUrl`,
+`synapseToken`, `synapseAgentUser`). Single-host stacks may alternatively delegate DM
+room-membership checks to `room-access`'s internal `/internal/room-member` listener via
+`KODERA_MEDIA_ROOM_VERIFIER_URL`. The endpoint is HTTPS and the bucket is private. Configure storage
 CORS for the exact Console origin and the returned signed upload headers. The
 browser derives `Content-Length` from the uploaded file; its length must match
 the accepted descriptor. No live provider configuration is part of this change.

@@ -6,6 +6,7 @@ import socket
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
 from .outbound import target
 from .storage import (
@@ -133,6 +134,53 @@ class Gateway:
 
     def delete_object(self, target_obj: str | ObjectDescriptor | ObjectKey) -> dict[str, Any]:
         return self.call("delete", target_obj)
+
+    def verify_room_member(
+        self, *, organisation_id: UUID, room_id: str, subject: str
+    ) -> bool | None:
+        raw = json.dumps(
+            {
+                "operation": "room_member",
+                "object": {
+                    "organisationId": str(organisation_id),
+                    "roomId": room_id,
+                    "subject": subject,
+                },
+            },
+            separators=(",", ":"),
+        ).encode()
+        if len(raw) > MAX_RPC_BYTES:
+            raise StorageRefusedError()
+        connection = _Connection(self.path)
+        response = None
+        try:
+            connection.request(
+                "POST",
+                "/rpc",
+                body=raw,
+                headers={"Content-Type": "application/json", "Connection": "close"},
+            )
+            response = connection.getresponse()
+            body = response.read(MAX_RPC_BYTES + 1)
+            if len(body) > MAX_RPC_BYTES or response.status != 200:
+                raise StorageRefusedError()
+            result = json.loads(body, object_pairs_hook=unique_object)
+            if (
+                not isinstance(result, dict)
+                or set(result) != {"configured", "allowed"}
+                or not isinstance(result["configured"], bool)
+                or not isinstance(result["allowed"], bool)
+            ):
+                raise StorageRefusedError()
+            if not result["configured"]:
+                return None
+            return result["allowed"]
+        except (OSError, ValueError, TypeError, KeyError, http.client.HTTPException):
+            raise StorageRefusedError() from None
+        finally:
+            if response is not None:
+                response.close()
+            connection.close()
 
 
 def delete_object(

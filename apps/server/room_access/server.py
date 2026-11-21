@@ -26,7 +26,7 @@ from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
-from .clients import LiveKit, UpstreamError
+from .clients import LiveKit, Matrix, UpstreamError
 from .service import RateLimitedError, RefusedError, Service
 
 log = logging.getLogger("room_access.server")
@@ -358,6 +358,8 @@ def make_webhook_server(
     livekit: LiveKit,
     on_event: Callable[[dict[str, Any]], None],
     *,
+    matrix: Matrix | None = None,
+    agent_user: str = "",
     timeout_s: float = READ_TIMEOUT_S,
     workers: int = WEBHOOK_WORKERS,
 ) -> ThreadingHTTPServer:
@@ -368,12 +370,44 @@ def make_webhook_server(
             super().setup()
             self.rfile = _BoundedHeaderStream(self.rfile, self.connection, timeout_s)  # type: ignore[assignment]
 
-        def _answer(self, status: int) -> None:
+        def _answer(self, status: int, payload: dict[str, Any] | None = None) -> None:
+            raw = b"" if payload is None else json.dumps(payload, separators=(",", ":")).encode()
             self.send_response(status)
-            self.send_header("Content-Length", "0")
+            if payload is not None:
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(raw)))
             self.end_headers()
+            if raw:
+                self.wfile.write(raw)
 
         def do_POST(self) -> None:  # noqa: N802
+            if self.path == "/internal/room-member":
+                body = _read(self, MAX_TOKEN_BODY, timeout_s)
+                if isinstance(body, int):
+                    return self._answer(body)
+                if matrix is None or not agent_user:
+                    return self._answer(503, {"error": "unavailable"})
+                try:
+                    query = json.loads(body)
+                except ValueError:
+                    return self._answer(400, {"error": "malformed"})
+                if (
+                    not isinstance(query, dict)
+                    or set(query) != {"room_id", "subject"}
+                    or not isinstance(query["room_id"], str)
+                    or not isinstance(query["subject"], str)
+                ):
+                    return self._answer(400, {"error": "malformed"})
+                try:
+                    allowed = matrix.dm_member_joined(
+                        query["room_id"], query["subject"], agent_user
+                    )
+                except UpstreamError:
+                    log.warning("dm room membership check refused: upstream failed", exc_info=True)
+                    return self._answer(503, {"error": "unavailable"})
+                return self._answer(200, {"allowed": bool(allowed)})
+
             body = _read(self, MAX_WEBHOOK_BODY, timeout_s)
             if isinstance(body, int):
                 return self._answer(body)

@@ -337,3 +337,51 @@ test('release-assistant BUG-0064 blocks replays at +10s, +301s, >24h & across re
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('release-assistant BUG-0064 default handler recreation at +90000s and multi-writer stores preserve all entries', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'kodera-ra-mw-'));
+  try {
+    const storeA = createDurableReplayStore(join(dir, 'shared'));
+    const storeB = createDurableReplayStore(join(dir, 'shared'));
+    assert.equal(storeA.claim('sig:writer-a', { recordedAt: 100, expiresAt: null }, 100), true);
+    assert.equal(storeB.claim('sig:writer-b', { recordedAt: 101, expiresAt: null }, 101), true);
+    const storeRestarted = createDurableReplayStore(join(dir, 'shared'));
+    assert.equal(storeRestarted.has('sig:writer-a'), true);
+    assert.equal(storeRestarted.has('sig:writer-b'), true);
+
+    const rawBody = JSON.stringify({
+      channelId: 'chan_releases_recreate',
+      versionTag: 'v9.9.9',
+      repository: 'kodera-hq/kodera',
+      commits: ['fix(core): durable replay'],
+    });
+    const sig = signReleaseWebhookPayload(TEST_SECRET, rawBody);
+    const baseNow = 1_760_100_000;
+    const h1 = createReleaseAssistantWebhookHandler({
+      secret: TEST_SECRET,
+      defaultChannelId: 'chan_releases_recreate',
+      optInChannels: ['chan_releases_recreate'],
+    });
+    await h1({
+      rawBody,
+      headers: { 'x-release-signature-256': sig, 'x-release-delivery': 'ra_recreate_1' },
+      nowUnixSeconds: baseNow,
+    });
+    const h2 = createReleaseAssistantWebhookHandler({
+      secret: TEST_SECRET,
+      defaultChannelId: 'chan_releases_recreate',
+      optInChannels: ['chan_releases_recreate'],
+    });
+    await assert.rejects(
+      () =>
+        h2({
+          rawBody,
+          headers: { 'x-release-signature-256': sig, 'x-release-delivery': 'ra_recreate_2' },
+          nowUnixSeconds: baseNow + 90_000,
+        }),
+      (err) => err instanceof WebhookVerificationError && err.code === 'REPLAY_DETECTED'
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

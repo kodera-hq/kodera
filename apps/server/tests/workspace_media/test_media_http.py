@@ -30,15 +30,42 @@ def headers(token):
 
 @override_settings(ROOT_URLCONF="apps.media.api.urls")
 def test_upload_replay_and_completed_metadata_follow_the_contract(world, http, gateway):
-    org, _, members, _ = world
+    from apps.workspaces.models import Channel, ResourcePolicy
+
+    org, workspace, members, _ = world
     client, credentials = http
+    policy = ResourcePolicy.objects.create(workspace=workspace, visibility="organisation")
+    channel = Channel.objects.create(
+        workspace=workspace,
+        name="Uploads",
+        kind="text",
+        lifecycle="active",
+        position=0,
+        policy_mode="explicit",
+        explicit_policy=policy,
+    )
     root = f"/api/v1/organisations/{org.id}/workspace/attachments"
+    unscoped = client.post(
+        root + "/uploads",
+        data=json.dumps(
+            {
+                "filename": "example.txt",
+                "contentType": "text/plain",
+                "sizeBytes": 42,
+                "sha256": hashlib.sha256(secrets.token_bytes(42)).hexdigest(),
+            }
+        ),
+        content_type="application/json",
+        **headers(credentials[3]),
+    )
+    assert unscoped.status_code == 422
     data = json.dumps(
         {
             "filename": "example.txt",
             "contentType": "text/plain",
             "sizeBytes": 42,
             "sha256": hashlib.sha256(secrets.token_bytes(42)).hexdigest(),
+            "channelId": str(channel.id),
         }
     )
     auth = headers(credentials[3])
@@ -124,7 +151,15 @@ def test_scoped_upload_and_cancel_endpoint_enforce_scope_and_delete_ticket(world
         call(deleted, template, "delete")
     assert deleted.status_code == 204 and deleted.content == b""
     assert "X-Request-Id" in deleted.headers
-    assert not Attachment.objects.filter(pk=attachment_id).exists()
+    tombstone = Attachment.objects.get(pk=attachment_id)
+    assert tombstone.cancelled_at is not None and tombstone.completed_at is None
+    fenced_complete = client.post(
+        root + "/" + attachment_id + "/complete",
+        data=b"",
+        content_type="application/json",
+        **headers(credentials[3]),
+    )
+    assert fenced_complete.status_code == 409
 
 
 @override_settings(ROOT_URLCONF="apps.media.api.urls")

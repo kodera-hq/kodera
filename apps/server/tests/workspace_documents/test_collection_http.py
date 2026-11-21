@@ -136,6 +136,7 @@ def test_signed_upload_quota_error_rolls_back_and_usage_matches_contract(world, 
                 "contentType": "text/plain",
                 "sizeBytes": 10,
                 "sha256": "0" * 64,
+                "roomId": "!quota:matrix.example.org",
             }
         ),
         content_type="application/json",

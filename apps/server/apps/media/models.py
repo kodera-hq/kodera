@@ -20,6 +20,7 @@ class Attachment(StoredModel):
     sha256 = models.TextField()
     upload_expires_at = models.DateTimeField()
     completed_at = models.DateTimeField(null=True, blank=True)
+    cancelled_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         constraints = [
@@ -52,5 +53,11 @@ class Attachment(StoredModel):
             models.CheckConstraint(
                 condition=models.Q(room_id__isnull=True) | models.Q(room_id__regex=ROOM_ID_REGEX),
                 name="media_attachment_room_id_valid",
+            ),
+            models.CheckConstraint(
+                condition=~(
+                    models.Q(completed_at__isnull=False) & models.Q(cancelled_at__isnull=False)
+                ),
+                name="media_attachment_completion_cancel_exclusive",
             ),
         ]

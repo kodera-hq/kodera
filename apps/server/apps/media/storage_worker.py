@@ -85,11 +85,14 @@ def delete_target(data: Any) -> ObjectKey:
 
 
 class DirectorySource:
+    _S3_REQUIRED = frozenset({"endpoint", "bucket", "region", "accessKey", "secretKey"})
+    _SYNAPSE_KEYS = frozenset({"synapseUrl", "synapseToken", "synapseAgentUser"})
+    _ALLOWED_KEYS = _S3_REQUIRED | frozenset({"sessionToken"}) | _SYNAPSE_KEYS
+
     def __init__(self, directory: Path) -> None:
         self.directory = directory
 
-    @contextmanager
-    def load(self, organisation_id: UUID) -> Iterator[tuple[S3Location, S3Credential]]:
+    def _read_secret_document(self, organisation_id: UUID) -> dict[str, str]:
         # A mounted Secret Manager version may use symlinks, but cannot escape its root.
         try:
             root = self.directory.resolve(strict=True)
@@ -104,25 +107,59 @@ class DirectorySource:
             del raw
             if (
                 not isinstance(data, dict)
-                or not {"endpoint", "bucket", "region", "accessKey", "secretKey"} <= data.keys()
-                or data.keys()
-                - {"endpoint", "bucket", "region", "accessKey", "secretKey", "sessionToken"}
+                or not self._S3_REQUIRED <= data.keys()
+                or data.keys() - self._ALLOWED_KEYS
             ):
                 raise StorageRefusedError()
             if not all(isinstance(value, str) for value in data.values()):
                 raise StorageRefusedError()
+            present_synapse = data.keys() & self._SYNAPSE_KEYS
+            if present_synapse and present_synapse != self._SYNAPSE_KEYS:
+                raise StorageRefusedError()
+            return data
+        except (OSError, UnicodeError, ValueError, TypeError):
+            raise StorageRefusedError() from None
+
+    @contextmanager
+    def load(self, organisation_id: UUID) -> Iterator[tuple[S3Location, S3Credential]]:
+        data = self._read_secret_document(organisation_id)
+        try:
             location = S3Location(data["endpoint"], data["bucket"], data["region"])
             credential = S3Credential(
                 data["accessKey"], data["secretKey"], data.get("sessionToken")
             )
             del data
-        except (OSError, UnicodeError, ValueError, TypeError):
+        except (ValueError, TypeError):
             raise StorageRefusedError() from None
         try:
             yield location, credential
         finally:
             # Strings cannot be zeroed; release this request's references without caching.
             del credential
+
+    @contextmanager
+    def load_room_verifier(self, organisation_id: UUID) -> Iterator[tuple[str, str, str] | None]:
+        data = self._read_secret_document(organisation_id)
+        if not (data.keys() & self._SYNAPSE_KEYS):
+            del data
+            yield None
+            return
+        synapse_url = data["synapseUrl"].rstrip("/")
+        synapse_token = data["synapseToken"]
+        agent_user = data["synapseAgentUser"]
+        del data
+        if (
+            not synapse_url.startswith(("http://", "https://"))
+            or not synapse_token
+            or not agent_user.startswith("@")
+            or ":" not in agent_user
+        ):
+            del synapse_token
+            raise StorageRefusedError()
+        try:
+            yield synapse_url, synapse_token, agent_user
+        finally:
+            del synapse_token
 
 
 def _verify(location: S3Location, credential: S3Credential, obj: ObjectDescriptor) -> None:
@@ -194,6 +231,23 @@ def _delete(location: S3Location, credential: S3Credential, target: ObjectKey) -
         head_conn.close()
 
 
+def _room_member_target(data: Any) -> tuple[UUID, str, str]:
+    if (
+        not isinstance(data, dict)
+        or set(data) != {"organisationId", "roomId", "subject"}
+        or not isinstance(data["organisationId"], str)
+        or not isinstance(data["roomId"], str)
+        or not isinstance(data["subject"], str)
+        or not 3 <= len(data["roomId"]) <= 255
+        or not 1 <= len(data["subject"]) <= 255
+    ):
+        raise StorageRefusedError()
+    try:
+        return UUID(data["organisationId"]), data["roomId"], data["subject"]
+    except ValueError:
+        raise StorageRefusedError() from None
+
+
 class StorageWorker:
     def __init__(self, source: DirectorySource) -> None:
         self.source = source
@@ -207,8 +261,24 @@ class StorageWorker:
             "download",
             "verify",
             "delete",
+            "room_member",
         }:
             raise StorageRefusedError()
+        if operation == "room_member":
+            org_id, room_id, subject = _room_member_target(message["object"])
+            with self.source.load_room_verifier(org_id) as verifier:
+                if verifier is None:
+                    return {"configured": False, "allowed": False}
+                synapse_url, synapse_token, agent_user = verifier
+                from room_access.clients import Matrix, UpstreamError
+
+                try:
+                    allowed = Matrix(synapse_url, synapse_token, timeout=3.0).dm_member_joined(
+                        room_id, subject, agent_user
+                    )
+                except UpstreamError:
+                    raise StorageRefusedError() from None
+                return {"configured": True, "allowed": bool(allowed)}
         if operation == "delete":
             target = delete_target(message["object"])
             with self.source.load(target.organisation_id) as (location, credential):

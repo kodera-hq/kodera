@@ -807,14 +807,125 @@ def test_webhook_dispatch_releases_locks_before_slow_http_and_retries_presend_er
     assert postsend_job.state == "needs_reconciliation" and postsend_job.outcome == "uncertain"
 
 
+def test_extension_admin_digest_and_dispatch_share_canonical_user_org_workspace_lock_order(
+    world, monkeypatch
+):
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+
+    from django.db import close_old_connections
+    from test_customer_persistence_concurrency import session
+
+    org, workspace, members, tokens = world
+    installation, job = queued(world)
+    monkeypatch.setattr(dispatcher, "send", lambda *_a, **_kw: ("delivered", 200))
+
+    def run_rotate():
+        close_old_connections()
+        try:
+            return services.rotate(
+                verified=tokens[0],
+                organisation_id=org.id,
+                installation_id=installation.id,
+                grace_expires_at=timezone.now() + timedelta(minutes=5),
+            )
+        finally:
+            close_old_connections()
+
+    def run_consent():
+        close_old_connections()
+        try:
+            return digest.set_consent(
+                verified=tokens[0],
+                organisation_id=org.id,
+                enabled=True,
+                locale="en",
+            )
+        finally:
+            close_old_connections()
+
+    def run_dispatch():
+        close_old_connections()
+        try:
+            return dispatcher.dispatch_one(Secrets())
+        finally:
+            close_old_connections()
+
+    with session() as gate, ThreadPoolExecutor(max_workers=3) as pool:
+        gate.execute("BEGIN")
+        gate.execute("SET LOCAL lock_timeout = '5s'")
+        gate.execute(
+            "SELECT id FROM identity_user WHERE id = %s FOR UPDATE",
+            [members[0].user_id],
+        )
+
+        futures = [
+            pool.submit(run_rotate),
+            pool.submit(run_consent),
+            pool.submit(run_dispatch),
+        ]
+
+        deadline = time.monotonic() + 2.0
+        waiting = 0
+        while time.monotonic() < deadline:
+            row = gate.execute("SELECT count(*) FROM pg_locks WHERE NOT granted").fetchone()
+            waiting = int(row[0]) if row else 0
+            if waiting >= 3:
+                break
+            time.sleep(0.02)
+        assert waiting >= 3, f"expected all 3 writers waiting on identity_user first, got {waiting}"
+
+        # Because every writer acquires `User -> Organisation -> Workspace`, neither Organisation
+        # nor Workspace is held by any writer while queued behind `identity_user`.
+        assert gate.execute(
+            "SELECT id FROM orgs_organisation WHERE id = %s FOR UPDATE NOWAIT",
+            [org.id],
+        ).fetchone() == (org.id,)
+        assert gate.execute(
+            "SELECT id FROM workspaces_workspace WHERE id = %s FOR UPDATE NOWAIT",
+            [workspace.id],
+        ).fetchone() == (workspace.id,)
+        gate.execute("ROLLBACK")
+
+        rotated, consent_state, dispatched = [f.result(5) for f in futures]
+
+    assert rotated.previous_generation is not None
+    assert consent_state.enabled is True
+    assert dispatched is True
+    job.refresh_from_db()
+    assert job.state == "delivered"
+
+
 def test_import_parser_clean_linear_time_under_adversarial_markdown():
     import time
 
     from apps.extensions import import_parsers
 
-    for payload in ("!" + "![" * 29999, "[" * 60000):
+    class TrackedStr(str):
+        __slots__ = ("scans",)
+
+        def __new__(cls, value: str):
+            obj = super().__new__(cls, value)
+            object.__setattr__(obj, "scans", 0)
+            return obj
+
+        def find(self, sub, start=0, end=None):
+            n = len(self) if end is None else min(len(self), end)
+            s = max(0, start)
+            pos = super().find(sub, start, end)
+            scanned = (pos - s + len(sub)) if pos != -1 else max(0, n - s)
+            object.__setattr__(self, "scans", self.scans + scanned)
+            return pos
+
+    for payload in ("!" + "![" * 29999, "[" * 60000, "[]()" * 15000):
         t0 = time.perf_counter()
         result = import_parsers.clean(payload)
         elapsed = time.perf_counter() - t0
         assert elapsed < 0.05, f"import_parsers.clean took {elapsed:.4f}s (>= 50ms)"
-        assert len(result) == len(payload)
+        assert len(result) <= len(payload)
+
+    for repeats in (1000, 2000, 4000, 15000):
+        tracked = TrackedStr("[]()" * repeats)
+        cleaned = import_parsers.clean(tracked)
+        assert cleaned == ""
+        assert tracked.scans <= 4 * len(tracked)

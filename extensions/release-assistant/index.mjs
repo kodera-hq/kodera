@@ -1,6 +1,19 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import {
+  closeSync,
+  fsyncSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  unlinkSync,
+  writeSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   DEFAULT_MAX_SKEW_SECONDS,
   ExtensionSdkError,
@@ -497,66 +510,213 @@ export function signReleaseWebhookPayload(secret, rawBody, options) {
   return `sha256=${createHmac('sha256', secret).update(bodyBuf).digest('hex')}`;
 }
 
+let defaultProcessReplayRoot = null;
+
+function getDefaultProcessReplayRoot() {
+  if (defaultProcessReplayRoot === null) {
+    defaultProcessReplayRoot = mkdtempSync(join(tmpdir(), 'kodera-ra-replay-'));
+    process.once('exit', () => {
+      try {
+        rmSync(defaultProcessReplayRoot, { recursive: true, force: true });
+      } catch {
+        // Best-effort process-exit cleanup.
+      }
+    });
+  }
+  return defaultProcessReplayRoot;
+}
+
 /**
- * Creates a durable replay deduplication store (in-memory `Map` or atomic file-backed JSON).
+ * Creates a multi-writer atomic directory-backed durable replay deduplication store.
  *
  * @param {string | Map<string, { recordedAt: number, expiresAt: number | null }> | undefined} [backing]
+ * @param {{ scopeNamespace?: string }} [options]
  */
-export function createDurableReplayStore(backing) {
+export function createDurableReplayStore(backing, options = {}) {
   if (backing instanceof Map) {
-    return backing;
+    return Object.assign(backing, { durable: Boolean(backing.durable) });
   }
-  if (backing && typeof backing === 'object' && typeof backing.has === 'function' && typeof backing.set === 'function') {
-    return backing;
-  }
-  /** @type {Map<string, { recordedAt: number, expiresAt: number | null }>} */
-  const memory = new Map();
-  if (typeof backing !== 'string' || !backing.trim()) {
-    return memory;
-  }
-  const filePath = backing.trim();
-  if (existsSync(filePath)) {
-    const loaded = JSON.parse(readFileSync(filePath, 'utf8'));
-    if (loaded && typeof loaded === 'object') {
-      for (const [key, entry] of Object.entries(loaded)) {
-        if (entry && typeof entry === 'object') {
-          memory.set(key, {
-            recordedAt: Number(entry.recordedAt ?? 0),
-            expiresAt: entry.expiresAt === null || entry.expiresAt === undefined ? null : Number(entry.expiresAt),
-          });
-        }
-      }
+  if (
+    backing &&
+    typeof backing === 'object' &&
+    typeof backing.has === 'function' &&
+    typeof backing.set === 'function'
+  ) {
+    if (typeof backing.durable !== 'boolean') {
+      backing.durable = false;
     }
+    return backing;
   }
-  const flush = () => {
-    mkdirSync(dirname(filePath), { recursive: true });
-    const serialized = JSON.stringify(Object.fromEntries(memory.entries()));
-    const tmpPath = `${filePath}.tmp-${process.pid}-${Date.now()}`;
-    writeFileSync(tmpPath, serialized, { mode: 0o600 });
-    renameSync(tmpPath, filePath);
+
+  let dirPath;
+  if (typeof backing === 'string' && backing.trim()) {
+    const raw = backing.trim();
+    dirPath = raw.endsWith('.json') ? `${raw}.entries` : raw;
+  } else if (
+    typeof process.env.KODERA_WEBHOOK_REPLAY_DIR === 'string' &&
+    process.env.KODERA_WEBHOOK_REPLAY_DIR.trim()
+  ) {
+    dirPath = join(
+      process.env.KODERA_WEBHOOK_REPLAY_DIR.trim(),
+      'release-assistant',
+      options.scopeNamespace ?? 'default'
+    );
+  } else if (process.env.NODE_ENV === 'production') {
+    throw new WebhookVerificationError(
+      'REPLAY_STORE_NOT_DURABLE',
+      'Production release webhook handler requires replayStorePath, replayStoreDir, or KODERA_WEBHOOK_REPLAY_DIR.'
+    );
+  } else {
+    dirPath = join(getDefaultProcessReplayRoot(), options.scopeNamespace ?? 'default');
+  }
+
+  mkdirSync(dirPath, { recursive: true, mode: 0o700 });
+  const dirStat = lstatSync(dirPath);
+  if (!dirStat.isDirectory() || dirStat.isSymbolicLink()) {
+    throw new WebhookVerificationError(
+      'REPLAY_STORE_UNSAFE',
+      'Replay store path must be a non-symlink directory.'
+    );
+  }
+
+  const entryFile = (key) =>
+    join(dirPath, `${createHash('sha256').update(String(key)).digest('hex')}.json`);
+
+  const readRecord = (filePath) => {
+    try {
+      const parsed = JSON.parse(readFileSync(filePath, 'utf8'));
+      if (!parsed || typeof parsed !== 'object') return null;
+      return {
+        key: String(parsed.key ?? ''),
+        recordedAt: Number(parsed.recordedAt ?? 0),
+        expiresAt:
+          parsed.expiresAt === null || parsed.expiresAt === undefined
+            ? null
+            : Number(parsed.expiresAt),
+      };
+    } catch {
+      return null;
+    }
   };
+
+  const listFiles = () => {
+    try {
+      return readdirSync(dirPath).filter((name) => name.endsWith('.json'));
+    } catch {
+      return [];
+    }
+  };
+
+  const tryCreateExclusive = (key, value) => {
+    const filePath = entryFile(key);
+    const payload = Buffer.from(
+      JSON.stringify({
+        key: String(key),
+        recordedAt: Number(value?.recordedAt ?? 0),
+        expiresAt:
+          value?.expiresAt === null || value?.expiresAt === undefined
+            ? null
+            : Number(value.expiresAt),
+      }),
+      'utf8'
+    );
+    let fd;
+    try {
+      fd = openSync(filePath, 'wx', 0o600);
+    } catch (err) {
+      if (err && /** @type {NodeJS.ErrnoException} */ (err).code === 'EEXIST') {
+        return false;
+      }
+      throw err;
+    }
+    try {
+      writeSync(fd, payload, 0, payload.length, 0);
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+    return true;
+  };
+
   return {
+    durable: true,
+    dirPath,
     get size() {
-      return memory.size;
+      return listFiles().length;
     },
-    has(key) {
-      return memory.has(key);
+    has(key, nowSec = null) {
+      const rec = readRecord(entryFile(key));
+      if (!rec) return false;
+      if (rec.expiresAt !== null && nowSec !== null && nowSec > rec.expiresAt) {
+        try {
+          unlinkSync(entryFile(key));
+        } catch {
+          // Ignore concurrent unlink.
+        }
+        return false;
+      }
+      return true;
     },
     get(key) {
-      return memory.get(key);
+      const rec = readRecord(entryFile(key));
+      return rec ? { recordedAt: rec.recordedAt, expiresAt: rec.expiresAt } : undefined;
     },
     set(key, value) {
-      memory.set(key, value);
-      flush();
+      const filePath = entryFile(key);
+      if (!tryCreateExclusive(key, value)) {
+        try {
+          unlinkSync(filePath);
+        } catch {
+          // Ignore concurrent unlink.
+        }
+        tryCreateExclusive(key, value);
+      }
       return this;
     },
-    delete(key) {
-      const removed = memory.delete(key);
-      if (removed) flush();
-      return removed;
+    claim(key, value, nowSec) {
+      if (tryCreateExclusive(key, value)) {
+        return true;
+      }
+      const filePath = entryFile(key);
+      const existing = readRecord(filePath);
+      if (existing && existing.expiresAt !== null && nowSec > existing.expiresAt) {
+        try {
+          unlinkSync(filePath);
+        } catch {
+          // Ignore concurrent unlink.
+        }
+        return tryCreateExclusive(key, value);
+      }
+      return false;
     },
-    entries() {
-      return memory.entries();
+    delete(key) {
+      try {
+        unlinkSync(entryFile(key));
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    prune(nowSec) {
+      for (const name of listFiles()) {
+        const full = join(dirPath, name);
+        const rec = readRecord(full);
+        if (rec && rec.expiresAt !== null && nowSec > rec.expiresAt) {
+          try {
+            unlinkSync(full);
+          } catch {
+            // Ignore concurrent unlink.
+          }
+        }
+      }
+    },
+    *entries() {
+      for (const name of listFiles()) {
+        const rec = readRecord(join(dirPath, name));
+        if (rec) {
+          yield [rec.key, { recordedAt: rec.recordedAt, expiresAt: rec.expiresAt }];
+        }
+      }
     },
   };
 }
@@ -901,19 +1061,25 @@ export function createReleaseAssistantWebhookHandler(config) {
   }
   const requireSignedTimestamp = Boolean(config.requireSignedTimestamp);
 
-  const nativeReplayStore = createDurableReplayStore(config.replayStore ?? config.replayStorePath);
-  /** @type {Map<string, number>} */
-  const nativeSeenDeliveries = new Map();
+  const scopeNamespace = createHmac('sha256', releaseSecret)
+    .update(`release-assistant:${defaultChannelId}`)
+    .digest('hex')
+    .slice(0, 32);
+  const nativeReplayStore = createDurableReplayStore(
+    config.replayStore ?? config.replayStoreDir ?? config.replayStorePath,
+    { scopeNamespace }
+  );
 
   const pruneNativeReplay = (nowSec) => {
+    if (typeof nativeReplayStore.prune === 'function') {
+      nativeReplayStore.prune(nowSec);
+      return;
+    }
     for (const [key, entry] of Array.from(nativeReplayStore.entries())) {
       const expiresAt = typeof entry === 'number' ? null : entry?.expiresAt ?? null;
       if (expiresAt !== null && nowSec > expiresAt) {
         nativeReplayStore.delete(key);
       }
-    }
-    for (const [deliv, ts] of nativeSeenDeliveries.entries()) {
-      if (nowSec - ts > maxSkewSeconds) nativeSeenDeliveries.delete(deliv);
     }
   };
 
@@ -969,25 +1135,36 @@ export function createReleaseAssistantWebhookHandler(config) {
       requireTimestamp: requireSignedTimestamp,
     });
 
-    pruneNativeReplay(nowSec);
-    const sigKey = `sig:${signature}`;
-    const evtKey = `evt:${eventId}`;
-    if (
-      nativeReplayStore.has(sigKey) ||
-      nativeReplayStore.has(evtKey) ||
-      (deliveryId !== undefined && nativeSeenDeliveries.has(deliveryId))
-    ) {
-      throw new WebhookVerificationError('REPLAY_DETECTED', 'Duplicate release webhook delivery rejected.');
+    const expiresAt = signedTimestamp !== null ? signedTimestamp + maxSkewSeconds : null;
+    if (expiresAt === null && !nativeReplayStore.durable && !config.allowEphemeralReplayStore) {
+      throw new WebhookVerificationError(
+        'REPLAY_STORE_NOT_DURABLE',
+        'Timeless release webhook signatures require a durable replay store.'
+      );
     }
-    if (nativeReplayStore.size + 2 > maxReplayEntries * 2) {
+
+    pruneNativeReplay(nowSec);
+    const keysToClaim = [`sig:${signature}`, `evt:${eventId}`];
+    if (deliveryId !== undefined) {
+      keysToClaim.push(`deliv:${deliveryId}`);
+    }
+    if (nativeReplayStore.size + keysToClaim.length > maxReplayEntries * 3) {
       throw new WebhookVerificationError('REPLAY_CAPACITY_EXCEEDED', 'Release replay cache is full.');
     }
-    const expiresAt = signedTimestamp !== null ? signedTimestamp + maxSkewSeconds : null;
     const record = { recordedAt: nowSec, expiresAt };
-    nativeReplayStore.set(sigKey, record);
-    nativeReplayStore.set(evtKey, record);
-    if (deliveryId !== undefined) {
-      nativeSeenDeliveries.set(deliveryId, nowSec);
+    const claimed = [];
+    for (const key of keysToClaim) {
+      const ok =
+        typeof nativeReplayStore.claim === 'function'
+          ? nativeReplayStore.claim(key, record, nowSec)
+          : !nativeReplayStore.has(key) && Boolean(nativeReplayStore.set(key, record));
+      if (!ok) {
+        for (const prior of claimed) {
+          nativeReplayStore.delete(prior);
+        }
+        throw new WebhookVerificationError('REPLAY_DETECTED', 'Duplicate release webhook delivery rejected.');
+      }
+      claimed.push(key);
     }
 
     const activeClient = req.client ?? config.client;

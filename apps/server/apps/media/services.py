@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+import http.client
+import json
 import re
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -12,12 +16,11 @@ from uuid import UUID
 from django.conf import settings
 from django.core.cache import cache
 from django.core.exceptions import ObjectDoesNotExist
-from django.db import IntegrityError, connection, transaction
+from django.db import connection, transaction
 from django.utils import timezone
 
 from apps.orgs.actor_selectors import TenantCaller
 from apps.workspaces.channel_access import may_view, resolve
-from apps.workspaces.quotas import violation
 from apps.workspaces.selectors import (
     active_text_channel_id,
     undeleted_channel_id,
@@ -32,12 +35,25 @@ from .context import RefusalError as RefusalError, audit, caller, read_caller
 from .models import ROOM_ID_REGEX, Attachment
 from .storage import ObjectDescriptor, ObjectMismatchError, StorageRefusedError
 from .storage_gateway import Gateway
+from .storage_protocol import unique_object
 
 _DEFAULT_UNFURL = unfurl.unfurl
 ROOM_ID_PATTERN = re.compile(ROOM_ID_REGEX + r"\Z")
 DEFAULT_MAX_PENDING_PER_MEMBER = 10
 DEFAULT_MAX_PENDING_PER_WORKSPACE = 100
 PREVIEW_TTL = 300
+ROOM_VERIFIER_TIMEOUT_S = 3.0
+MAX_ROOM_VERIFIER_BYTES = 4096
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args: Any, **kwargs: Any) -> None:
+        return None
+
+
+_INTERNAL_VERIFIER_OPENER = urllib.request.build_opener(
+    urllib.request.ProxyHandler({}), _NoRedirect()
+)
 
 
 @dataclass(frozen=True)
@@ -57,6 +73,10 @@ class PreparedCompletion:
     attachment_id: UUID
     verified_storage: bool
     download_ticket: dict[str, Any]
+    organisation_id: UUID | None = None
+    room_id: str | None = None
+    uploader_id: UUID | None = None
+    dm_verified_membership_id: UUID | None = None
 
 
 def _descriptor(row: Attachment) -> ObjectDescriptor:
@@ -85,7 +105,9 @@ def _format_download(row: Attachment, result: dict[str, Any]) -> dict[str, Any]:
 def _parse_scope(body: dict[str, Any]) -> tuple[UUID | None, str | None]:
     raw_channel = body.get("channelId")
     raw_room = body.get("roomId")
-    if raw_channel is not None and raw_room is not None:
+    if (raw_channel is None and raw_room is None) or (
+        raw_channel is not None and raw_room is not None
+    ):
         raise RefusalError(422)
     channel_id: UUID | None = None
     room_id: str | None = None
@@ -110,56 +132,88 @@ def _parse_scope(body: dict[str, Any]) -> tuple[UUID | None, str | None]:
     return channel_id, room_id
 
 
+def _query_room_verifier_http(verifier_url: str, *, room_id: str, subject: str) -> bool:
+    payload = json.dumps({"room_id": room_id, "subject": subject}, separators=(",", ":")).encode()
+    req = urllib.request.Request(  # noqa: S310 - reviewed internal room-access URL from settings
+        verifier_url,
+        data=payload,
+        headers={"Content-Type": "application/json", "Connection": "close"},
+        method="POST",
+    )
+    try:
+        with _INTERNAL_VERIFIER_OPENER.open(req, timeout=ROOM_VERIFIER_TIMEOUT_S) as resp:
+            if resp.status != 200:
+                raise RefusalError(503, "service-unavailable")
+            raw = resp.read(MAX_ROOM_VERIFIER_BYTES + 1)
+    except urllib.error.HTTPError as exc:
+        exc.close()
+        raise RefusalError(503, "service-unavailable") from None
+    except (urllib.error.URLError, OSError, http.client.HTTPException):
+        raise RefusalError(503, "service-unavailable") from None
+
+    if not raw or len(raw) > MAX_ROOM_VERIFIER_BYTES:
+        raise RefusalError(503, "service-unavailable")
+    try:
+        parsed = json.loads(raw, object_pairs_hook=unique_object)
+    except ValueError:
+        raise RefusalError(503, "service-unavailable") from None
+    if (
+        not isinstance(parsed, dict)
+        or set(parsed) != {"allowed"}
+        or not isinstance(parsed["allowed"], bool)
+    ):
+        raise RefusalError(503, "service-unavailable")
+    return parsed["allowed"]
+
+
 def _verify_dm_room_authority(
     *,
-    principal: TenantCaller,
+    organisation_id: UUID,
+    membership_id: UUID,
     verified: VerifiedAccessToken,
     room_id: str,
     uploader_id: UUID | None,
     for_upload: bool,
 ) -> None:
-    """Verify caller authority on a Matrix DM `room_id` without disclosing private DM attachments."""
-    hook = getattr(settings, "KODERA_MEDIA_ROOM_ACCESS", None)
-    if callable(hook):
-        if not bool(hook(principal.organisation_id, room_id, principal, verified)):
+    """Verify caller authority on a Matrix DM `room_id` through serving configuration."""
+    verifier_url = getattr(settings, "KODERA_MEDIA_ROOM_VERIFIER_URL", None)
+    if isinstance(verifier_url, str) and verifier_url:
+        if not _query_room_verifier_http(verifier_url, room_id=room_id, subject=verified.subject):
             raise RefusalError(403)
         return
 
-    synapse_url = getattr(settings, "KODERA_MEDIA_SYNAPSE_URL", None)
-    synapse_token = getattr(settings, "KODERA_MEDIA_SYNAPSE_TOKEN", None)
-    agent_mxid = getattr(settings, "KODERA_MEDIA_SYNAPSE_AGENT_MXID", None)
-    if (
-        isinstance(synapse_url, str)
-        and synapse_url
-        and isinstance(synapse_token, str)
-        and synapse_token
-        and isinstance(agent_mxid, str)
-        and ":" in agent_mxid
-    ):
-        from room_access.clients import Matrix, UpstreamError
-        from room_access.rooms import POLICY
-
-        matrix_domain = agent_mxid.partition(":")[2]
-        caller_mxid = f"@{verified.subject}:{matrix_domain}"
+    socket_configured = bool(getattr(settings, "KODERA_MEDIA_GATEWAY_SOCKET", None))
+    if socket_configured or _gateway is not _DEFAULT_GATEWAY:
         try:
-            client = Matrix(synapse_url, synapse_token, timeout=3.0)
-            policy_event = client.state_event(room_id, POLICY)
-            if isinstance(policy_event, dict) and policy_event.get("sender") == agent_mxid:
-                # A workspace channel room must be addressed by `channelId`, never as a raw DM room.
-                raise RefusalError(403)
-            joined = client.joined_members(room_id)
-        except UpstreamError:
-            raise RefusalError(503, "service-unavailable") from None
-        if caller_mxid not in joined:
-            raise RefusalError(403)
-        return
+            gw = _gateway()
+        except StorageRefusedError:
+            if socket_configured:
+                raise RefusalError(503, "service-unavailable") from None
+            gw = None
+        verify_fn = getattr(gw, "verify_room_member", None) if gw is not None else None
+        if callable(verify_fn):
+            try:
+                verdict = verify_fn(
+                    organisation_id=organisation_id,
+                    room_id=room_id,
+                    subject=verified.subject,
+                )
+            except StorageRefusedError:
+                raise RefusalError(503, "service-unavailable") from None
+            if verdict is not None:
+                if not verdict:
+                    raise RefusalError(403)
+                return
 
     # When no external Matrix room verifier is configured, an admitted member may upload to their
-    # own DM session, while read access fails closed for everyone except the uploader themselves.
+    # own DM session, while read/completion fails closed for everyone except the uploader.
     if for_upload:
         return
-    if uploader_id != principal.membership_id:
+    if uploader_id != membership_id:
         raise RefusalError(403)
+
+
+_DEFAULT_GATEWAY = _gateway
 
 
 def _verify_channel_upload_authority(principal: TenantCaller, channel_id: UUID) -> None:
@@ -181,9 +235,8 @@ def _verify_channel_upload_authority(principal: TenantCaller, channel_id: UUID) 
         raise RefusalError(403)
 
 
-def _verify_attachment_read_authority(
-    principal: TenantCaller, verified: VerifiedAccessToken, row: Attachment
-) -> None:
+def _verify_db_read_authority(principal: TenantCaller, row: Attachment) -> None:
+    """Verify PostgreSQL-backed attachment scope authority without performing network I/O."""
     if row.channel_id is not None:
         ws_id = workspace_id_for(organisation_id=principal.organisation_id)
         if (
@@ -207,20 +260,11 @@ def _verify_attachment_read_authority(
         return
 
     if row.room_id is not None:
-        _verify_dm_room_authority(
-            principal=principal,
-            verified=verified,
-            room_id=row.room_id,
-            uploader_id=row.uploader_id,
-            for_upload=False,
-        )
         return
 
-    # Legacy / unscoped rows: uploader and org administrators may read; other members may read
-    # only when the workspace exists (current workspace admission already verified via read_caller).
-    if row.uploader_id == principal.membership_id or principal.role in {"org_owner", "org_admin"}:
-        return
-    if workspace_id_for(organisation_id=principal.organisation_id) is None:
+    # Legacy unscoped rows have no verified channel or DM participant list; restrict strictly to
+    # the original uploader (administrator status never grants private unscoped attachment reads).
+    if row.uploader_id != principal.membership_id:
         raise RefusalError(403)
 
 
@@ -250,19 +294,11 @@ def prepare_upload(
     *, verified: VerifiedAccessToken, organisation_id: UUID, body: dict[str, Any]
 ) -> PreparedUpload:
     """Validate authority, scope and pending caps, then presign PUT outside Workspace locks."""
-    channel_id, room_id = _parse_scope(body)
     with transaction.atomic():
         principal = read_caller(verified, organisation_id)
+        channel_id, room_id = _parse_scope(body)
         if channel_id is not None:
             _verify_channel_upload_authority(principal, channel_id)
-        elif room_id is not None:
-            _verify_dm_room_authority(
-                principal=principal,
-                verified=verified,
-                room_id=room_id,
-                uploader_id=principal.membership_id,
-                for_upload=True,
-            )
         _check_pending_limits(principal, timezone.now())
         raw_filename = body.get("filename")
         raw_content_type = body.get("contentType")
@@ -287,6 +323,18 @@ def prepare_upload(
             )
         except (ValueError, TypeError, AttributeError):
             raise RefusalError(422) from None
+        org_id = principal.organisation_id
+        membership_id = principal.membership_id
+
+    if room_id is not None:
+        _verify_dm_room_authority(
+            organisation_id=org_id,
+            membership_id=membership_id,
+            verified=verified,
+            room_id=room_id,
+            uploader_id=membership_id,
+            for_upload=True,
+        )
 
     try:
         ticket = _gateway().call("upload", obj)
@@ -314,16 +362,12 @@ def commit_upload(
     request_id: str,
 ) -> dict[str, Any]:
     principal = caller(verified, organisation_id)
+    if (prepared.channel_id is None and prepared.room_id is None) or (
+        prepared.channel_id is not None and prepared.room_id is not None
+    ):
+        raise RefusalError(422)
     if prepared.channel_id is not None:
         _verify_channel_upload_authority(principal, prepared.channel_id)
-    elif prepared.room_id is not None:
-        _verify_dm_room_authority(
-            principal=principal,
-            verified=verified,
-            room_id=prepared.room_id,
-            uploader_id=principal.membership_id,
-            for_upload=True,
-        )
     now = timezone.now()
     _check_pending_limits(principal, now)
     row = Attachment(
@@ -338,14 +382,7 @@ def commit_upload(
         sha256=prepared.sha256,
         upload_expires_at=datetime.fromisoformat(prepared.ticket["expiresAt"]),
     )
-    try:
-        with transaction.atomic():
-            row.save(force_insert=True)
-    except IntegrityError as error:
-        quota = violation(error)
-        if quota is not None:
-            raise RefusalError(int(quota.get("status", 413)), "payload-too-large") from None
-        raise RefusalError(409) from None
+    row.save(force_insert=True)
     audit(principal, "workspace.attachment.upload_created", row.id, request_id)
     return {
         "attachmentId": str(row.id),
@@ -373,7 +410,7 @@ def create_upload(
 def prepare_complete(
     *, verified: VerifiedAccessToken, organisation_id: UUID, attachment_id: UUID
 ) -> PreparedCompletion:
-    """Verify S3 object metadata via StorageWorker HEAD outside exclusive Workspace locks."""
+    """Verify scope and S3 object metadata via StorageWorker HEAD outside Workspace locks."""
     with transaction.atomic():
         principal = read_caller(verified, organisation_id)
         row = Attachment.objects.filter(
@@ -386,10 +423,27 @@ def prepare_complete(
             "org_admin",
         }:
             raise RefusalError(403)
+        _verify_db_read_authority(principal, row)
+        if row.cancelled_at is not None:
+            raise RefusalError(409)
         needs_verify = row.completed_at is None
         if needs_verify and row.upload_expires_at <= timezone.now():
             raise RefusalError(409)
         obj = _descriptor(row)
+        org_id = principal.organisation_id
+        membership_id = principal.membership_id
+        room_id = row.room_id
+        uploader_id = row.uploader_id
+
+    if room_id is not None:
+        _verify_dm_room_authority(
+            organisation_id=org_id,
+            membership_id=membership_id,
+            verified=verified,
+            room_id=room_id,
+            uploader_id=uploader_id,
+            for_upload=False,
+        )
 
     gateway = _gateway()
     if needs_verify:
@@ -408,6 +462,10 @@ def prepare_complete(
         attachment_id=attachment_id,
         verified_storage=needs_verify,
         download_ticket=download_ticket,
+        organisation_id=org_id,
+        room_id=room_id,
+        uploader_id=uploader_id,
+        dm_verified_membership_id=membership_id if room_id is not None else None,
     )
 
 
@@ -432,6 +490,14 @@ def commit_complete(
         "org_admin",
     }:
         raise RefusalError(403)
+    _verify_db_read_authority(principal, row)
+    if row.room_id is not None and (
+        prepared.room_id != row.room_id
+        or prepared.dm_verified_membership_id != principal.membership_id
+    ):
+        raise RefusalError(403)
+    if row.cancelled_at is not None:
+        raise RefusalError(409)
     if row.completed_at is None:
         if row.upload_expires_at <= timezone.now():
             raise RefusalError(409)
@@ -449,6 +515,19 @@ def complete_upload(
     prepared = prepare_complete(
         verified=verified, organisation_id=organisation_id, attachment_id=attachment_id
     )
+    if (
+        prepared.room_id is not None
+        and prepared.organisation_id is not None
+        and prepared.dm_verified_membership_id is not None
+    ):
+        _verify_dm_room_authority(
+            organisation_id=prepared.organisation_id,
+            membership_id=prepared.dm_verified_membership_id,
+            verified=verified,
+            room_id=prepared.room_id,
+            uploader_id=prepared.uploader_id,
+            for_upload=False,
+        )
     return commit_complete(
         verified=verified,
         organisation_id=organisation_id,
@@ -460,28 +539,7 @@ def complete_upload(
 def cancel_upload(
     *, verified: VerifiedAccessToken, organisation_id: UUID, attachment_id: UUID, request_id: str
 ) -> None:
-    """Cancel an uncompleted upload ticket, deleting any stray S3 object before dropping the row."""
-    with transaction.atomic():
-        principal = read_caller(verified, organisation_id)
-        row = Attachment.objects.filter(
-            id=attachment_id, organisation_id=principal.organisation_id
-        ).first()
-        if row is None:
-            raise RefusalError(404)
-        if row.uploader_id != principal.membership_id and principal.role not in {
-            "org_owner",
-            "org_admin",
-        }:
-            raise RefusalError(403)
-        if row.completed_at is not None:
-            raise RefusalError(409)
-        obj = _descriptor(row)
-
-    try:
-        _gateway().call("delete", obj)
-    except StorageRefusedError:
-        raise RefusalError(503, "service-unavailable") from None
-
+    """Atomically claim cancellation before S3 DELETE, keeping unexpired PUT tombstones for reaper."""
     with transaction.atomic():
         principal = caller(verified, organisation_id)
         locked = (
@@ -490,7 +548,7 @@ def cancel_upload(
             .first()
         )
         if locked is None:
-            return
+            raise RefusalError(404)
         if locked.uploader_id != principal.membership_id and principal.role not in {
             "org_owner",
             "org_admin",
@@ -498,13 +556,32 @@ def cancel_upload(
             raise RefusalError(403)
         if locked.completed_at is not None:
             raise RefusalError(409)
-        target_id = locked.id
-        locked.delete()
-        audit(principal, "workspace.attachment.upload_cancelled", target_id, request_id)
+        if locked.cancelled_at is None:
+            locked.cancelled_at = timezone.now()
+            locked.save(update_fields=["cancelled_at", "updated_at"])
+            audit(principal, "workspace.attachment.upload_cancelled", locked.id, request_id)
+        obj = _descriptor(locked)
+        expires_at = locked.upload_expires_at
+
+    try:
+        _gateway().call("delete", obj)
+    except StorageRefusedError:
+        raise RefusalError(503, "service-unavailable") from None
+
+    if expires_at <= timezone.now():
+        with transaction.atomic():
+            principal = caller(verified, organisation_id)
+            Attachment.objects.select_for_update().filter(
+                id=attachment_id,
+                organisation_id=principal.organisation_id,
+                completed_at__isnull=True,
+                cancelled_at__isnull=False,
+                upload_expires_at__lte=timezone.now(),
+            ).delete()
 
 
 def reap_expired_uploads(*, limit: int = 100) -> int:
-    """Bounded reaper purging expired uncompleted tickets after signed S3 DELETE + HEAD 404."""
+    """Bounded reaper purging expired uncompleted/cancelled tickets after S3 DELETE + HEAD 404."""
     if type(limit) is not int or not 1 <= limit <= 1000:
         raise ValueError("expired upload reaper limit must be between 1 and 1000")
     now = timezone.now()
@@ -549,13 +626,37 @@ def get_attachment(
         ).first()
         if row is None:
             raise RefusalError(404)
-        _verify_attachment_read_authority(principal, verified, row)
+        _verify_db_read_authority(principal, row)
         obj = _descriptor(row)
+        org_id = principal.organisation_id
+        membership_id = principal.membership_id
+        room_id = row.room_id
+        uploader_id = row.uploader_id
+
+    if room_id is not None:
+        _verify_dm_room_authority(
+            organisation_id=org_id,
+            membership_id=membership_id,
+            verified=verified,
+            room_id=room_id,
+            uploader_id=uploader_id,
+            for_upload=False,
+        )
 
     try:
         result = _gateway().call("download", obj)
     except StorageRefusedError:
         raise RefusalError(503, "service-unavailable") from None
+
+    if room_id is not None:
+        _verify_dm_room_authority(
+            organisation_id=org_id,
+            membership_id=membership_id,
+            verified=verified,
+            room_id=room_id,
+            uploader_id=uploader_id,
+            for_upload=False,
+        )
 
     with transaction.atomic():
         principal = read_caller(verified, organisation_id)
@@ -564,7 +665,7 @@ def get_attachment(
         ).first()
         if refreshed is None:
             raise RefusalError(404)
-        _verify_attachment_read_authority(principal, verified, refreshed)
+        _verify_db_read_authority(principal, refreshed)
         return _format_download(refreshed, result)
 
 

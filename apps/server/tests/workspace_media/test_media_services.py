@@ -16,6 +16,7 @@ from apps.media.context import RefusalError
 from apps.media.models import Attachment
 from apps.media.storage import ObjectMismatchError, StorageRefusedError
 from apps.orgs.models import Membership, Organisation, SlugReservation
+from apps.workspaces.models import Channel, ResourcePolicy
 
 pytestmark = pytest.mark.django_db
 
@@ -53,8 +54,27 @@ def gateway(monkeypatch):
     return result
 
 
+def default_channel(workspace):
+    existing = Channel.objects.filter(
+        workspace=workspace, kind="text", lifecycle="active", name="General Attachments"
+    ).first()
+    if existing is not None:
+        return existing
+    policy = ResourcePolicy.objects.create(workspace=workspace, visibility="organisation")
+    return Channel.objects.create(
+        workspace=workspace,
+        name="General Attachments",
+        kind="text",
+        lifecycle="active",
+        position=0,
+        policy_mode="explicit",
+        explicit_policy=policy,
+    )
+
+
 def upload(world, gateway):
-    org, _, _, tokens = world
+    org, workspace, _, tokens = world
+    channel = default_channel(workspace)
     return service.create_upload(
         verified=tokens[3],
         organisation_id=org.id,
@@ -63,6 +83,7 @@ def upload(world, gateway):
             "contentType": "text/plain",
             "sizeBytes": 42,
             "sha256": hashlib.sha256(secrets.token_bytes(42)).hexdigest(),
+            "channelId": str(channel.id),
         },
         request_id=str(uuid4()),
     )
@@ -155,8 +176,10 @@ def test_pending_upload_caps_cancel_reaper_and_expired_quota_release(world, gate
     from django.db import connection
 
     from apps.workspaces.models import WorkspaceQuota
+    from apps.workspaces.quotas import violation
 
     org, workspace, _, tokens = world
+    channel = default_channel(workspace)
     settings.KODERA_MAX_PENDING_UPLOADS_PER_MEMBER = 2
     settings.KODERA_MAX_PENDING_UPLOADS_PER_WORKSPACE = 3
 
@@ -176,6 +199,7 @@ def test_pending_upload_caps_cancel_reaper_and_expired_quota_release(world, gate
             "contentType": "text/plain",
             "sizeBytes": 16,
             "sha256": hashlib.sha256(secrets.token_bytes(16)).hexdigest(),
+            "channelId": str(channel.id),
         },
         request_id=str(uuid4()),
     )
@@ -189,6 +213,7 @@ def test_pending_upload_caps_cancel_reaper_and_expired_quota_release(world, gate
                 "contentType": "text/plain",
                 "sizeBytes": 16,
                 "sha256": hashlib.sha256(secrets.token_bytes(16)).hexdigest(),
+                "channelId": str(channel.id),
             },
             request_id=str(uuid4()),
         )
@@ -210,8 +235,33 @@ def test_pending_upload_caps_cancel_reaper_and_expired_quota_release(world, gate
         attachment_id=second["attachmentId"],
         request_id=str(uuid4()),
     )
-    assert not Attachment.objects.filter(pk=second["attachmentId"]).exists()
+    tombstone = Attachment.objects.get(pk=second["attachmentId"])
+    assert tombstone.cancelled_at is not None and tombstone.completed_at is None
     assert gateway.calls[-1][0] == "delete"
+    # While the presigned PUT capability has not expired, completion is fenced (`409`) AND the
+    # tombstone continues to hold its pending-upload slot so `create -> cancel -> PUT` cannot
+    # bypass pending-ticket accounting or escape post-expiry reaper S3 cleanup.
+    with pytest.raises(RefusalError) as cancelled_complete:
+        service.complete_upload(
+            verified=tokens[3],
+            organisation_id=org.id,
+            attachment_id=second["attachmentId"],
+            request_id=str(uuid4()),
+        )
+    assert cancelled_complete.value.status == 409
+    with pytest.raises(RefusalError) as still_capped_until_expiry:
+        upload(world, gateway)
+    assert still_capped_until_expiry.value.status == 429
+
+    # Once the presigned PUT capability expires, the reaper executes signed S3 DELETE + HEAD 404
+    # (cleaning up any delayed PUT) and removes the tombstone row, freeing the member's slot.
+    Attachment.objects.filter(pk=second["attachmentId"]).update(
+        upload_expires_at=timezone.now() - timedelta(seconds=5)
+    )
+    delete_calls_before_reap = sum(1 for op, _ in gateway.calls if op == "delete")
+    assert service.reap_expired_uploads(limit=10) == 1
+    assert sum(1 for op, _ in gateway.calls if op == "delete") == delete_calls_before_reap + 1
+    assert not Attachment.objects.filter(pk=second["attachmentId"]).exists()
 
     service.complete_upload(
         verified=tokens[3],
@@ -219,6 +269,7 @@ def test_pending_upload_caps_cancel_reaper_and_expired_quota_release(world, gate
         attachment_id=first["attachmentId"],
         request_id=str(uuid4()),
     )
+    delete_calls_before_completed_cancel = sum(1 for op, _ in gateway.calls if op == "delete")
     with pytest.raises(RefusalError) as completed_cancel:
         service.cancel_upload(
             verified=tokens[3],
@@ -227,6 +278,9 @@ def test_pending_upload_caps_cancel_reaper_and_expired_quota_release(world, gate
             request_id=str(uuid4()),
         )
     assert completed_cancel.value.status == 409
+    assert (
+        sum(1 for op, _ in gateway.calls if op == "delete") == delete_calls_before_completed_cancel
+    )
 
     Attachment.objects.filter(pk=third["attachmentId"]).update(
         upload_expires_at=timezone.now() - timedelta(seconds=5)
@@ -274,10 +328,11 @@ def test_pending_upload_caps_cancel_reaper_and_expired_quota_release(world, gate
             "contentType": "application/octet-stream",
             "sizeBytes": limit_bytes,
             "sha256": hashlib.sha256(b"archive-a").hexdigest(),
+            "channelId": str(channel.id),
         },
         request_id=str(uuid4()),
     )
-    with pytest.raises(RefusalError) as over_quota:
+    with pytest.raises(IntegrityError) as over_quota, transaction.atomic():
         service.create_upload(
             verified=tokens[3],
             organisation_id=org.id,
@@ -286,10 +341,12 @@ def test_pending_upload_caps_cancel_reaper_and_expired_quota_release(world, gate
                 "contentType": "application/octet-stream",
                 "sizeBytes": limit_bytes,
                 "sha256": hashlib.sha256(b"archive-b").hexdigest(),
+                "channelId": str(channel.id),
             },
             request_id=str(uuid4()),
         )
-    assert over_quota.value.status == 413
+    quota_detail = violation(over_quota.value)
+    assert quota_detail is not None and quota_detail["status"] == 413
 
     Attachment.objects.filter(pk=big_ticket["attachmentId"]).update(
         upload_expires_at=timezone.now() - timedelta(seconds=1)
@@ -302,10 +359,70 @@ def test_pending_upload_caps_cancel_reaper_and_expired_quota_release(world, gate
             "contentType": "application/octet-stream",
             "sizeBytes": limit_bytes,
             "sha256": hashlib.sha256(b"archive-b").hexdigest(),
+            "channelId": str(channel.id),
         },
         request_id=str(uuid4()),
     )
     assert recovered["attachmentId"] != big_ticket["attachmentId"]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_cancel_claims_cancellation_before_s3_delete_preventing_race_with_complete(world, gateway):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    from django.db import close_old_connections
+
+    org, _, _, tokens = world
+    ticket = upload(world, gateway)
+    entered_delete = Event()
+    release_delete = Event()
+    claimed_before_delete = []
+
+    def on_delete(obj):
+        row = Attachment.objects.get(pk=obj.attachment_id)
+        claimed_before_delete.append(row.cancelled_at is not None and row.completed_at is None)
+        entered_delete.set()
+        assert release_delete.wait(5)
+
+    gateway.hooks["delete"] = on_delete
+    prepared_before_cancel = service.prepare_complete(
+        verified=tokens[3],
+        organisation_id=org.id,
+        attachment_id=ticket["attachmentId"],
+    )
+
+    def run_cancel():
+        close_old_connections()
+        try:
+            service.cancel_upload(
+                verified=tokens[3],
+                organisation_id=org.id,
+                attachment_id=ticket["attachmentId"],
+                request_id=str(uuid4()),
+            )
+        finally:
+            close_old_connections()
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        cancel_future = pool.submit(run_cancel)
+        assert entered_delete.wait(2)
+        # Even a completion that already finished `prepare_complete` before `cancel_upload` started
+        # is fenced (`409`) by the committed `cancelled_at` claim while S3 DELETE is in flight.
+        with pytest.raises(RefusalError) as fenced:
+            service.commit_complete(
+                verified=tokens[3],
+                organisation_id=org.id,
+                prepared=prepared_before_cancel,
+                request_id=str(uuid4()),
+            )
+        assert fenced.value.status == 409
+        release_delete.set()
+        cancel_future.result(5)
+
+    assert claimed_before_delete == [True]
+    row = Attachment.objects.get(pk=ticket["attachmentId"])
+    assert row.cancelled_at is not None and row.completed_at is None
 
 
 @pytest.mark.django_db(transaction=True)

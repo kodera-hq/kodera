@@ -27,6 +27,15 @@ def set_consent(
 ) -> DigestConsent:
     if enabled and WorkspaceCutoff.objects.filter(organisation_id=organisation_id).exists():
         raise ExtensionRefusedError("extension_workspace_cut_off", 410)
+    documents.read_context(verified, organisation_id)
+    resolved = identities.current_identity(issuer=verified.issuer, subject=verified.subject)
+    if resolved is None:
+        raise documents.RefusalError(403, "identity-unknown")
+    person, _ = resolved
+    if not identities.lock_user(user_id=person.id):
+        raise documents.RefusalError(403, "identity-unknown")
+    if not organisations.lock_organisation(organisation_id=organisation_id):
+        raise documents.RefusalError(404)
     _, principal = documents.write_context(verified, organisation_id)
     if enabled and WorkspaceCutoff.objects.filter(organisation_id=organisation_id).exists():
         raise ExtensionRefusedError("extension_workspace_cut_off", 410)

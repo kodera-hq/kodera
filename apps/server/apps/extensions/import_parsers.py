@@ -80,41 +80,39 @@ def _replace_markdown_constructs(value: str, *, images: bool) -> str:
     out: list[str] = []
     emit_from = 0
     search_from = 0
-    close_bracket = -1
-    url_terminator = -1
+    # Each delimiter cursor is `-2` before first lookup, `-1` once exhausted, or a monotonically
+    # non-decreasing index in `value`, bounding total character scans across all cursors to <= 4*N.
+    close_bracket = -2
+    next_paren = -2
+    next_newline = -2
 
     while search_from < length:
         start = value.find(marker, search_from)
         if start == -1:
             break
         label_start = start + marker_len
-        if close_bracket < label_start:
+        if close_bracket != -1 and close_bracket < label_start:
             close_bracket = value.find("]", label_start)
-            if close_bracket == -1:
-                break
+        if close_bracket == -1:
+            break
         if close_bracket + 1 >= length or value[close_bracket + 1] != "(":
             # Every opener in [start, close_bracket) shares this exact first `]`, so none can match.
             search_from = close_bracket + 1
             continue
         url_start = close_bracket + 2
-        if url_terminator < url_start:
-            paren = value.find(")", url_start)
-            newline = value.find("\n", url_start)
-            if paren == -1 and newline == -1:
-                break
-            if paren == -1:
-                url_terminator = newline
-            elif newline == -1:
-                url_terminator = paren
-            else:
-                url_terminator = min(paren, newline)
-        if value[url_terminator] != ")":
+        if next_paren != -1 and next_paren < url_start:
+            next_paren = value.find(")", url_start)
+        if next_newline != -1 and next_newline < url_start:
+            next_newline = value.find("\n", url_start)
+        if next_paren == -1:
+            break
+        if next_newline != -1 and next_newline < next_paren:
             # A newline precedes any closing `)`, so this `](` cannot close; skip past `](`.
             search_from = url_start
             continue
         out.append(value[emit_from:start])
         out.append("[image omitted]" if images else value[label_start:close_bracket])
-        emit_from = url_terminator + 1
+        emit_from = next_paren + 1
         search_from = emit_from
 
     if not out:

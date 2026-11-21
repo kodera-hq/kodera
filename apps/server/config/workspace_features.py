@@ -2,6 +2,7 @@
 
 from collections.abc import Mapping
 from pathlib import PurePosixPath
+from urllib.parse import urlsplit
 
 from django.core.exceptions import ImproperlyConfigured
 
@@ -28,6 +29,35 @@ def media_gateway_socket(environment: Mapping[str, str]) -> str | None:
         or any(ord(char) < 32 or ord(char) == 127 for char in value)
     ):
         raise ImproperlyConfigured("media gateway requires a normalized absolute Unix socket path")
+    return value
+
+
+def media_room_verifier_url(environment: Mapping[str, str]) -> str | None:
+    value = environment.get("KODERA_MEDIA_ROOM_VERIFIER_URL", "")
+    if not value:
+        return None
+    refused = ImproperlyConfigured(
+        "media room verifier must be an exact reviewed internal HTTP(S) /internal/room-member route"
+    )
+    if len(value) > 2048 or any(ord(char) <= 32 or ord(char) == 127 for char in value):
+        raise refused
+    try:
+        parts = urlsplit(value)
+        port = parts.port
+    except ValueError:
+        raise refused from None
+    if (
+        parts.scheme not in {"http", "https"}
+        or not parts.hostname
+        or parts.username is not None
+        or parts.password is not None
+        or parts.query
+        or parts.fragment
+        or parts.path != "/internal/room-member"
+        or (port is not None and not 1 <= port <= 65535)
+        or "\\" in parts.netloc
+    ):
+        raise refused
     return value
 
 

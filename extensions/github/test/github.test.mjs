@@ -436,3 +436,73 @@ test('github BUG-0064 blocks timeless signature replays at +10s, +301s, >24h and
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('github BUG-0064 default handler recreation at +90000s and multi-writer stores preserve all entries', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'kodera-gh-mw-'));
+  try {
+    const storeA = createDurableReplayStore(join(dir, 'shared'));
+    const storeB = createDurableReplayStore(join(dir, 'shared'));
+    assert.equal(storeA.claim('sig:writer-a', { recordedAt: 100, expiresAt: null }, 100), true);
+    assert.equal(storeB.claim('sig:writer-b', { recordedAt: 101, expiresAt: null }, 101), true);
+    const storeRestarted = createDurableReplayStore(join(dir, 'shared'));
+    assert.equal(storeRestarted.has('sig:writer-a'), true);
+    assert.equal(storeRestarted.has('sig:writer-b'), true);
+    assert.equal(storeRestarted.claim('sig:writer-a', { recordedAt: 200, expiresAt: null }, 200), false);
+    assert.equal(storeRestarted.claim('sig:writer-b', { recordedAt: 200, expiresAt: null }, 200), false);
+
+    // Default handler recreation without explicit replayStorePath still rejects replay at +90,000s
+    const body = JSON.stringify({
+      action: 'opened',
+      repository: { full_name: 'kodera-hq/kodera' },
+      issue: { number: 301, title: 'Default durable check', html_url: 'https://github.com/kodera-hq/kodera/issues/301' },
+    });
+    const sig = signGithubWebhookPayload(SECRET, body);
+    const baseNow = 1_760_100_000;
+    const h1 = createGithubWebhookHandler({ secret: SECRET, defaultChannelId: 'chan_recreate_check' });
+    await h1({
+      rawBody: body,
+      headers: {
+        'x-github-event': 'issues',
+        'x-github-delivery': 'gh_deliv_recreate_1',
+        'x-hub-signature-256': sig,
+      },
+      nowUnixSeconds: baseNow,
+    });
+    const h2 = createGithubWebhookHandler({ secret: SECRET, defaultChannelId: 'chan_recreate_check' });
+    await assert.rejects(
+      () =>
+        h2({
+          rawBody: body,
+          headers: {
+            'x-github-event': 'issues',
+            'x-github-delivery': 'gh_deliv_recreate_2',
+            'x-hub-signature-256': sig,
+          },
+          nowUnixSeconds: baseNow + 90_000,
+        }),
+      (err) => err instanceof WebhookVerificationError && err.code === 'REPLAY_DETECTED'
+    );
+
+    // Non-durable Map passed explicitly is refused for timeless signatures
+    const hEphemeral = createGithubWebhookHandler({
+      secret: SECRET,
+      defaultChannelId: 'chan_ephemeral_refusal',
+      replayStore: new Map(),
+    });
+    await assert.rejects(
+      () =>
+        hEphemeral({
+          rawBody: body,
+          headers: {
+            'x-github-event': 'issues',
+            'x-github-delivery': 'gh_deliv_ephemeral',
+            'x-hub-signature-256': sig,
+          },
+          nowUnixSeconds: baseNow,
+        }),
+      (err) => err instanceof WebhookVerificationError && err.code === 'REPLAY_STORE_NOT_DURABLE'
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
