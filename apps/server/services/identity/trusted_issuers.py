@@ -18,10 +18,15 @@ MAX_CONFIGURATION_BYTES = 64 * 1024
 MAX_ISSUERS = 8
 ENTRY_FIELDS = {"lane", "issuer", "generation", "expires_at", "public_jwks"}
 # The OAuth clients whose tokens the customer lane admits when no other list is given: the web
-# console and the two native apps, each a public client of every organisation realm
+# console and the three native apps, each a public client of every organisation realm
 # (worker/vendor/keycloak/org-realm-template.json). A deployment resolves its own list from
 # KODERA_ALLOWED_OIDC_CLIENT_IDS (config.environment.allowed_oidc_client_ids).
-DEFAULT_ALLOWED_AZP: tuple[str, ...] = ("console", "kodera-ios", "kodera-android")
+DEFAULT_ALLOWED_AZP: tuple[str, ...] = (
+    "console",
+    "kodera-ios",
+    "kodera-android",
+    "kodera-desktop",
+)
 
 
 class TrustConfigurationError(Exception):

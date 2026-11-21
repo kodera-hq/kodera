@@ -50,7 +50,7 @@ from core.passport import (
     verify_device_verifier,
     verify_pkce_verifier,
 )
-from services.identity.access_tokens import VerifiedAccessToken
+from services.identity.access_tokens import TokenVerificationError, VerifiedAccessToken
 
 from .models import (
     STAFF_REALM,
@@ -238,6 +238,8 @@ class _PassportFenceResult:
     caller_identity_id: UUID | None
     memberships: tuple[PassportMembershipRow, ...]
     identities_by_org: dict[UUID, tuple[UUID, str]]
+    user_ids_by_org: dict[UUID, UUID]
+    fenced_user_ids: tuple[UUID, ...]
 
 
 def passport_secret() -> str:
@@ -360,15 +362,23 @@ def _charge_rate_limits(*, peer: str, email_normalized: str) -> PassportRateQuot
     email_limit = _configured_int("KODERA_PASSPORT_EMAIL_RATE_LIMIT", DEFAULT_EMAIL_LIMIT)
     window = timedelta(seconds=RATE_WINDOW_SECONDS)
 
+    buckets = sorted((("ip", ip_digest), ("email", email_digest)))
     with transaction.atomic():
         with connection.cursor() as cursor:
-            cursor.execute("SELECT pg_advisory_xact_lock(739184625)")
+            for b_scope, b_digest in buckets:
+                cursor.execute(
+                    "SELECT pg_advisory_xact_lock("
+                    "hashtextextended('passport_rl:' || %s || ':' || %s, 0))",
+                    [b_scope, b_digest],
+                )
         now = _database_now()
         horizon = now - window
-        PassportRateLimitEvent.objects.filter(occurred_at__lte=horizon).delete()
-        PassportMagicLinkToken.objects.filter(expires_at__lte=now).delete()
-        if PassportRateLimitEvent.objects.count() >= MAX_RATE_EVENTS:
-            raise RuntimeError("passport rate-limit capacity exhausted")
+        PassportRateLimitEvent.objects.filter(
+            scope="ip", digest=ip_digest, occurred_at__lte=horizon
+        ).delete()
+        PassportRateLimitEvent.objects.filter(
+            scope="email", digest=email_digest, occurred_at__lte=horizon
+        ).delete()
 
         ip_times = list(
             PassportRateLimitEvent.objects.filter(scope="ip", digest=ip_digest)
@@ -392,9 +402,10 @@ def _charge_rate_limits(*, peer: str, email_normalized: str) -> PassportRateQuot
             .values_list("occurred_at", flat=True)
         )
         if len(email_times) >= email_limit:
-            # Record the IP attempt so distributed email spraying still burns IP quota,
-            # and return a generic `passport` scope so email bucket state cannot enumerate users.
-            PassportRateLimitEvent.objects.create(scope="ip", digest=ip_digest, occurred_at=now)
+            # Record the IP attempt when capacity permits so distributed email spraying still
+            # burns IP quota, and return a generic `passport` scope to prevent user enumeration.
+            if PassportRateLimitEvent.objects.count() < MAX_RATE_EVENTS:
+                PassportRateLimitEvent.objects.create(scope="ip", digest=ip_digest, occurred_at=now)
             oldest_email = email_times[len(email_times) - email_limit]
             wait_email = max(1, math.ceil((oldest_email + window - now).total_seconds()))
             raise PassportRateLimitedError(
@@ -404,6 +415,41 @@ def _charge_rate_limits(*, peer: str, email_normalized: str) -> PassportRateQuot
                 reset_s=wait_email,
                 retry_after_s=wait_email,
             )
+
+        if PassportRateLimitEvent.objects.count() >= MAX_RATE_EVENTS:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "DELETE FROM identity_passportratelimitevent WHERE id IN ("
+                    " SELECT id FROM identity_passportratelimitevent"
+                    " WHERE occurred_at <= %s ORDER BY occurred_at, id"
+                    " LIMIT 512 FOR UPDATE SKIP LOCKED)",
+                    [horizon],
+                )
+                cursor.execute(
+                    "DELETE FROM identity_passportmagiclinktoken WHERE id IN ("
+                    " SELECT id FROM identity_passportmagiclinktoken"
+                    " WHERE expires_at <= %s ORDER BY expires_at, id"
+                    " LIMIT 256 FOR UPDATE SKIP LOCKED)",
+                    [now],
+                )
+            if PassportRateLimitEvent.objects.count() >= MAX_RATE_EVENTS:
+                oldest_global = (
+                    PassportRateLimitEvent.objects.order_by("occurred_at")
+                    .values_list("occurred_at", flat=True)
+                    .first()
+                )
+                wait_global = (
+                    max(1, math.ceil((oldest_global + window - now).total_seconds()))
+                    if oldest_global is not None
+                    else RATE_WINDOW_SECONDS
+                )
+                raise PassportRateLimitedError(
+                    scope="global",
+                    limit=ip_limit,
+                    remaining=0,
+                    reset_s=wait_global,
+                    retry_after_s=wait_global,
+                )
 
         PassportRateLimitEvent.objects.create(scope="ip", digest=ip_digest, occurred_at=now)
         PassportRateLimitEvent.objects.create(scope="email", digest=email_digest, occurred_at=now)
@@ -418,7 +464,7 @@ def _charge_rate_limits(*, peer: str, email_normalized: str) -> PassportRateQuot
 
 
 def _select_user_for_email(email_normalized: str) -> User | None:
-    """Resolve an enabled, undeleted User matching normalized email without cross-linking rows."""
+    """Resolve an enabled, undeleted User matching normalized email."""
     candidates = list(
         User.objects.filter(
             email__iexact=email_normalized,
@@ -436,6 +482,16 @@ def _select_user_for_email(email_normalized: str) -> User | None:
             matched.append(candidate)
     if not matched:
         return None
+    matched_ids = [u.id for u in matched]
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT user_reference FROM orgs_accounterasure WHERE user_reference = ANY(%s)",
+            [matched_ids],
+        )
+        erasing_ids = {UUID(str(r[0])) for r in cursor.fetchall() if r[0] is not None}
+    matched = [u for u in matched if u.id not in erasing_ids]
+    if not matched:
+        return None
     if len(matched) == 1:
         return matched[0]
     for candidate in matched:
@@ -444,9 +500,131 @@ def _select_user_for_email(email_normalized: str) -> User | None:
     return matched[0]
 
 
+def _resolve_verified_email_user_ids(
+    email_normalized: str,
+    *,
+    primary_user_id: UUID,
+) -> tuple[UUID, ...]:
+    """Resolve sibling per-realm `User` rows holding verified customer `Identity` rows and active
+    accepted `Membership` grants on trusted customer issuers for the same normalized email
+    (excluding any user under account erasure)."""
+    raw_trust = getattr(settings, "KODERA_AUTH_TRUST", ())
+    trusted_customer_issuers = [
+        entry.snapshot.issuer
+        for entry in raw_trust
+        if getattr(entry, "lane", None) == "customer"
+        and hasattr(entry, "snapshot")
+        and isinstance(getattr(entry.snapshot, "issuer", None), str)
+    ]
+    if not trusted_customer_issuers:
+        return (primary_user_id,)
+
+    candidates = list(
+        User.objects.filter(
+            email__iexact=email_normalized,
+            enabled=True,
+            deleted_at__isnull=True,
+        )
+        .exclude(id=primary_user_id)
+        .values_list("id", "email")
+    )
+    if not candidates:
+        return (primary_user_id,)
+    candidate_ids: list[UUID] = []
+    for cand_id, cand_email in candidates:
+        try:
+            cand_norm, _ = normalize_passport_email(cand_email)
+        except PassportInputError:
+            continue
+        if cand_norm == email_normalized:
+            candidate_ids.append(cand_id)
+    if not candidate_ids:
+        return (primary_user_id,)
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT user_reference FROM orgs_accounterasure WHERE user_reference = ANY(%s)",
+            [candidate_ids],
+        )
+        erasing_ids = {UUID(str(r[0])) for r in cursor.fetchall() if r[0] is not None}
+
+        non_erasing_ids = [uid for uid in candidate_ids if uid not in erasing_ids]
+        if not non_erasing_ids:
+            return (primary_user_id,)
+
+        cursor.execute(
+            """
+            SELECT i.user_id, i.email
+            FROM identity_identity i
+            JOIN orgs_organisation o
+              ON o.id = i.organisation_id
+             AND o.realm = i.realm
+             AND o.issuer = i.issuer
+            JOIN orgs_membership m
+              ON m.user_id = i.user_id
+             AND m.organisation_id = o.id
+            WHERE i.user_id = ANY(%s)
+              AND i.organisation_id IS NOT NULL
+              AND i.enabled = TRUE
+              AND i.deleted_at IS NULL
+              AND i.realm <> %s
+              AND o.state = 'active'
+              AND o.deleted_at IS NULL
+              AND o.realm <> %s
+              AND o.issuer = ANY(%s)
+              AND m.state = 'active'
+              AND m.accepted_at IS NOT NULL
+              AND m.deleted_at IS NULL
+              AND m.role = ANY(%s)
+            """,
+            [
+                non_erasing_ids,
+                STAFF_REALM,
+                STAFF_REALM,
+                trusted_customer_issuers,
+                list(ELIGIBLE_MEMBERSHIP_ROLES),
+            ],
+        )
+        ident_rows = cursor.fetchall()
+
+    admitted: set[UUID] = {primary_user_id}
+    for uid_raw, ident_email in ident_rows:
+        try:
+            ident_norm, _ = normalize_passport_email(str(ident_email))
+        except PassportInputError:
+            continue
+        if ident_norm == email_normalized:
+            admitted.add(UUID(str(uid_raw)))
+    return tuple(sorted(admitted, key=lambda u: u.hex))
+
+
+def _persist_workspace_context(
+    *,
+    user_ids: tuple[UUID, ...],
+    active_org_id: UUID,
+    active_ws_id: UUID | None,
+) -> None:
+    now_ts = _database_now()
+    with connection.cursor() as cursor:
+        for uid in dict.fromkeys(user_ids):
+            cursor.execute(
+                """
+                INSERT INTO identity_passportworkspacecontext
+                    (id, user_id, active_organisation_id, active_workspace_id, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT (user_id) DO UPDATE SET
+                    active_organisation_id = EXCLUDED.active_organisation_id,
+                    active_workspace_id = EXCLUDED.active_workspace_id,
+                    updated_at = EXCLUDED.updated_at
+                """,
+                [new_uuid7(), uid, active_org_id, active_ws_id, now_ts, now_ts],
+            )
+
+
 def _acquire_passport_fence(
     *,
     user_id: UUID,
+    sibling_user_ids: tuple[UUID, ...] = (),
     verified: VerifiedAccessToken | None = None,
     session_claims: PassportSessionClaims | None = None,
     extra_org_ids: tuple[UUID, ...] = (),
@@ -460,23 +638,26 @@ def _acquire_passport_fence(
     if not connection.in_atomic_block:
         raise RuntimeError("_acquire_passport_fence must execute inside transaction.atomic()")
 
+    all_user_ids = sorted({user_id, *sibling_user_ids}, key=lambda u: u.hex)
+
     try:
         with connection.cursor() as cursor:
-            cursor.execute(
-                "SELECT pg_try_advisory_xact_lock_shared("
-                "hashtextextended('privacy_account_cutoff:' || %s, 0))",
-                [str(user_id)],
-            )
-            row_lock_ok = cursor.fetchone()
-            if not row_lock_ok or not row_lock_ok[0]:
-                raise PassportConflictError()
+            for uid in all_user_ids:
+                cursor.execute(
+                    "SELECT pg_try_advisory_xact_lock_shared("
+                    "hashtextextended('privacy_account_cutoff:' || %s, 0))",
+                    [str(uid)],
+                )
+                row_lock_ok = cursor.fetchone()
+                if not row_lock_ok or not row_lock_ok[0]:
+                    raise PassportConflictError()
 
             cursor.execute(
-                "SELECT DISTINCT organisation_id FROM orgs_membership WHERE user_id = %s "
+                "SELECT DISTINCT organisation_id FROM orgs_membership WHERE user_id = ANY(%s) "
                 "UNION "
                 "SELECT DISTINCT organisation_id FROM identity_identity "
-                "WHERE user_id = %s AND organisation_id IS NOT NULL",
-                [user_id, user_id],
+                "WHERE user_id = ANY(%s) AND organisation_id IS NOT NULL",
+                [all_user_ids, all_user_ids],
             )
             discovered_org_ids = {UUID(str(r[0])) for r in cursor.fetchall() if r[0] is not None}
             candidate_org_ids = sorted(discovered_org_ids | set(extra_org_ids), key=lambda u: u.hex)
@@ -493,16 +674,27 @@ def _acquire_passport_fence(
 
             cursor.execute(
                 "SELECT id, email, display_name, enabled, deleted_at "
-                "FROM identity_user WHERE id = %s FOR SHARE NOWAIT",
-                [user_id],
+                "FROM identity_user WHERE id = ANY(%s) ORDER BY id FOR SHARE NOWAIT",
+                [all_user_ids],
             )
-            user_row = cursor.fetchone()
-            if user_row is None:
+            locked_users = cursor.fetchall()
+            cursor.execute(
+                "SELECT user_reference FROM orgs_accounterasure WHERE user_reference = ANY(%s)",
+                [all_user_ids],
+            )
+            erasing_user_ids = {UUID(str(r[0])) for r in cursor.fetchall() if r[0] is not None}
+
+            valid_users: dict[UUID, PersonSnapshot] = {}
+            for u_id_raw, u_email, u_display_name, u_enabled, u_deleted_at in locked_users:
+                uid = UUID(str(u_id_raw))
+                if not u_enabled or u_deleted_at is not None or uid in erasing_user_ids:
+                    continue
+                valid_users[uid] = PersonSnapshot(uid, str(u_email), u_display_name)
+
+            person = valid_users.get(user_id)
+            if person is None:
                 return None
-            u_id, u_email, u_display_name, u_enabled, u_deleted_at = user_row
-            if not u_enabled or u_deleted_at is not None:
-                return None
-            person = PersonSnapshot(UUID(str(u_id)), str(u_email), u_display_name)
+            admitted_user_ids = sorted(valid_users.keys(), key=lambda u: u.hex)
 
             orgs_by_id: dict[UUID, tuple[str, str, str, str, str, object]] = {}
             if candidate_org_ids:
@@ -530,17 +722,17 @@ def _acquire_passport_fence(
                     )
 
             cursor.execute(
-                "SELECT id, organisation_id, role, state, accepted_at, deleted_at "
-                "FROM orgs_membership WHERE user_id = %s ORDER BY id FOR SHARE NOWAIT",
-                [user_id],
+                "SELECT id, user_id, organisation_id, role, state, accepted_at, deleted_at "
+                "FROM orgs_membership WHERE user_id = ANY(%s) ORDER BY id FOR SHARE NOWAIT",
+                [admitted_user_ids],
             )
             locked_memberships = cursor.fetchall()
 
             cursor.execute(
-                "SELECT id, organisation_id, realm, issuer, subject, enabled, deleted_at "
-                "FROM identity_identity WHERE user_id = %s AND organisation_id IS NOT NULL "
+                "SELECT id, user_id, organisation_id, realm, issuer, subject, enabled, deleted_at "
+                "FROM identity_identity WHERE user_id = ANY(%s) AND organisation_id IS NOT NULL "
                 "ORDER BY id FOR SHARE NOWAIT",
-                [user_id],
+                [admitted_user_ids],
             )
             locked_identities = cursor.fetchall()
     except PassportConflictError:
@@ -550,12 +742,13 @@ def _acquire_passport_fence(
             raise PassportConflictError() from exc
         raise
 
-    active_identities_by_org: dict[UUID, list[tuple[UUID, str, str, str]]] = {}
+    active_identities_by_user_org: dict[tuple[UUID, UUID], list[tuple[UUID, str, str, str]]] = {}
     caller_identity_id: UUID | None = None
     origin_org_id: UUID | None = None
 
     for (
         i_id_raw,
+        i_user_raw,
         i_org_raw,
         i_realm,
         i_issuer,
@@ -566,17 +759,19 @@ def _acquire_passport_fence(
         if not i_enabled or i_deleted_at is not None or i_org_raw is None:
             continue
         i_id = UUID(str(i_id_raw))
+        i_uid = UUID(str(i_user_raw))
         i_org_id = UUID(str(i_org_raw))
         realm_str = str(i_realm)
         issuer_str = str(i_issuer)
         subject_str = str(i_subject)
         if realm_str == STAFF_REALM:
             continue
-        active_identities_by_org.setdefault(i_org_id, []).append(
+        active_identities_by_user_org.setdefault((i_uid, i_org_id), []).append(
             (i_id, realm_str, issuer_str, subject_str)
         )
         if (
             verified is not None
+            and i_uid == user_id
             and issuer_str == verified.issuer
             and subject_str == verified.subject
             and caller_identity_id is None
@@ -587,11 +782,27 @@ def _acquire_passport_fence(
     if verified is not None and caller_identity_id is None:
         return None
 
+    ordered_memberships = sorted(
+        locked_memberships,
+        key=lambda row: (0 if UUID(str(row[1])) == user_id else 1, str(row[0])),
+    )
     eligible_rows: list[PassportMembershipRow] = []
     primary_identity_by_org: dict[UUID, tuple[UUID, str]] = {}
+    user_ids_by_org: dict[UUID, UUID] = {}
 
-    for m_id_raw, m_org_raw, m_role, m_state, m_accepted_at, m_deleted_at in locked_memberships:
+    for (
+        m_id_raw,
+        m_user_raw,
+        m_org_raw,
+        m_role,
+        m_state,
+        m_accepted_at,
+        m_deleted_at,
+    ) in ordered_memberships:
+        m_uid = UUID(str(m_user_raw))
         m_org_id = UUID(str(m_org_raw))
+        if m_org_id in user_ids_by_org:
+            continue
         org_info = orgs_by_id.get(m_org_id)
         if org_info is None:
             continue
@@ -608,12 +819,15 @@ def _acquire_passport_fence(
             continue
         matching_idents = [
             (ident_id, ident_realm)
-            for ident_id, ident_realm, ident_issuer, _ in active_identities_by_org.get(m_org_id, [])
+            for ident_id, ident_realm, ident_issuer, _ in active_identities_by_user_org.get(
+                (m_uid, m_org_id), []
+            )
             if ident_realm == o_realm and ident_issuer == o_issuer
         ]
         if not matching_idents:
             continue
         primary_identity_by_org[m_org_id] = matching_idents[0]
+        user_ids_by_org[m_org_id] = m_uid
         eligible_rows.append(
             PassportMembershipRow(
                 membership_id=UUID(str(m_id_raw)),
@@ -639,11 +853,26 @@ def _acquire_passport_fence(
             raise PassportForbiddenError()
 
     if verified is None and session_claims is not None:
+        if not memberships_tuple:
+            raise TokenVerificationError()
         claimed_org = session_claims.active_organisation_id
-        if claimed_org is not None and claimed_org in primary_identity_by_org:
+        if claimed_org is not None:
+            claimed_mem = next(
+                (m for m in memberships_tuple if m.organisation_id == claimed_org),
+                None,
+            )
+            if claimed_mem is None or claimed_org not in primary_identity_by_org:
+                raise TokenVerificationError()
+            if (
+                session_claims.membership_id is not None
+                and claimed_mem.membership_id != session_claims.membership_id
+            ):
+                raise TokenVerificationError()
+            if session_claims.role is not None and claimed_mem.role != session_claims.role:
+                raise TokenVerificationError()
             origin_org_id = claimed_org
             caller_identity_id = primary_identity_by_org[claimed_org][0]
-        elif memberships_tuple:
+        else:
             first_org = memberships_tuple[0].organisation_id
             caller_identity_id = primary_identity_by_org[first_org][0]
 
@@ -653,6 +882,8 @@ def _acquire_passport_fence(
         caller_identity_id=caller_identity_id,
         memberships=memberships_tuple,
         identities_by_org=primary_identity_by_org,
+        user_ids_by_org=user_ids_by_org,
+        fenced_user_ids=tuple(admitted_user_ids),
     )
 
 
@@ -776,11 +1007,15 @@ def request_magic_link(
                 )
                 transaction.on_commit(lambda: sink(delivery))
             elif outbox_config is not None and user is not None:
-                fenced = _acquire_passport_fence(user_id=user.id)
+                sibling_ids = _resolve_verified_email_user_ids(
+                    email_normalized, primary_user_id=user.id
+                )
+                fenced = _acquire_passport_fence(user_id=user.id, sibling_user_ids=sibling_ids)
                 memberships = fenced.memberships if fenced is not None else ()
                 if memberships and fenced is not None:
                     stored_org_id = (
-                        PassportWorkspaceContext.objects.filter(user_id=user.id)
+                        PassportWorkspaceContext.objects.filter(user_id__in=fenced.fenced_user_ids)
+                        .order_by("-updated_at")
                         .values_list("active_organisation_id", flat=True)
                         .first()
                     )
@@ -788,11 +1023,12 @@ def request_magic_link(
                         (m for m in memberships if m.organisation_id == stored_org_id),
                         memberships[0],
                     )
+                    binding_user_id = fenced.user_ids_by_org.get(target.organisation_id, user.id)
                     seal_key, magic_link_url = outbox_config
                     candidate_delivery_id = new_uuid7()
                     PassportOutboxBinding.objects.create(
                         delivery_id=candidate_delivery_id,
-                        user_id=user.id,
+                        user_id=binding_user_id,
                         organisation_id=target.organisation_id,
                         created_at=now,
                     )
@@ -897,7 +1133,12 @@ def verify_magic_link(
                     if target_user_id is None:
                         refused = True
                     else:
-                        fenced = _acquire_passport_fence(user_id=target_user_id)
+                        sibling_ids = _resolve_verified_email_user_ids(
+                            row.email_normalized, primary_user_id=target_user_id
+                        )
+                        fenced = _acquire_passport_fence(
+                            user_id=target_user_id, sibling_user_ids=sibling_ids
+                        )
                         if fenced is None or not fenced.memberships:
                             refused = True
                         else:
@@ -908,18 +1149,49 @@ def verify_magic_link(
                             if person_norm != row.email_normalized:
                                 refused = True
                             else:
+                                stored_ctx = (
+                                    PassportWorkspaceContext.objects.filter(
+                                        user_id__in=fenced.fenced_user_ids
+                                    )
+                                    .order_by("-updated_at")
+                                    .first()
+                                )
                                 directory = _build_directory(
                                     person=fenced.person,
                                     memberships=fenced.memberships,
-                                    preferred_organisation_id=None,
+                                    preferred_organisation_id=(
+                                        None
+                                        if stored_ctx is None
+                                        else stored_ctx.active_organisation_id
+                                    ),
                                     persist_context=True,
                                 )
+                                active_org = directory.active_organisation_id
+                                active_mem = next(
+                                    (
+                                        m
+                                        for m in fenced.memberships
+                                        if m.organisation_id == active_org
+                                    ),
+                                    None,
+                                )
+                                session_user_id = (
+                                    fenced.user_ids_by_org.get(active_org, fenced.person.id)
+                                    if active_org is not None
+                                    else fenced.person.id
+                                )
+                                if active_org is not None and session_user_id != fenced.person.id:
+                                    _persist_workspace_context(
+                                        user_ids=(session_user_id,),
+                                        active_org_id=active_org,
+                                        active_ws_id=directory.active_workspace_id,
+                                    )
                                 audit_identity = (
-                                    fenced.identities_by_org.get(directory.active_organisation_id)
-                                    if directory.active_organisation_id is not None
+                                    fenced.identities_by_org.get(active_org)
+                                    if active_org is not None
                                     else None
                                 )
-                                if audit_identity is not None:
+                                if audit_identity is not None and active_org is not None:
                                     identity_id, realm = audit_identity
                                     amr = (
                                         ("magic_link", "pkce", "device")
@@ -928,16 +1200,24 @@ def verify_magic_link(
                                     )
                                     record_passport_login_succeeded(
                                         identity_id=identity_id,
-                                        organisation_id=directory.active_organisation_id,
+                                        organisation_id=active_org,
                                         realm=realm,
                                         amr=amr,
                                         request_id=request_id,
                                     )
+                                now_epoch = int(now.timestamp())
                                 session_token = issue_passport_session_token(
                                     secret=passport_secret(),
-                                    user_id=fenced.person.id,
-                                    active_organisation_id=directory.active_organisation_id,
-                                    now=int(now.timestamp()),
+                                    user_id=session_user_id,
+                                    active_organisation_id=active_org,
+                                    now=now_epoch,
+                                    auth_time=now_epoch,
+                                    max_expires_at=now_epoch + PASSPORT_SESSION_TTL_SECONDS,
+                                    email_verified=True,
+                                    membership_id=(
+                                        None if active_mem is None else active_mem.membership_id
+                                    ),
+                                    role=None if active_mem is None else active_mem.role,
                                 )
                                 return PassportVerifiedSession(
                                     directory=directory,
@@ -958,12 +1238,28 @@ def verify_magic_link(
     raise PassportUnauthorizedError()  # pragma: no cover
 
 
-def _resolve_initial_user_id(
+def _has_verified_matching_oidc_email(
+    verified: VerifiedAccessToken,
+    person_email: str,
+) -> str | None:
+    """Return normalized email when OIDC token explicitly proves `email_verified=True` and a
+    matching `email` claim for `person_email`, else `None`."""
+    if verified.email_verified is not True or verified.email is None:
+        return None
+    try:
+        person_norm, _ = normalize_passport_email(person_email)
+        claim_norm, _ = normalize_passport_email(verified.email)
+    except PassportInputError:
+        return None
+    return person_norm if claim_norm == person_norm else None
+
+
+def _resolve_initial_user_ids(
     *,
     verified: VerifiedAccessToken | None,
     session_claims: PassportSessionClaims | None,
-) -> UUID:
-    """Locate candidate `user_id` before entering the fenced transaction, or raise `UnknownCustomerError`."""
+) -> tuple[UUID, tuple[UUID, ...]]:
+    """Locate primary `user_id` and verified-email sibling `User` IDs before fencing."""
     if verified is not None:
         if not is_storable_subject(verified.subject):
             raise UnknownCustomerError()
@@ -971,10 +1267,34 @@ def _resolve_initial_user_id(
         if resolved is None:
             raise UnknownCustomerError()
         person, _ = resolved
-        return person.id
+        verified_norm = _has_verified_matching_oidc_email(verified, person.email)
+        if verified_norm is None:
+            return person.id, (person.id,)
+        siblings = _resolve_verified_email_user_ids(verified_norm, primary_user_id=person.id)
+        return person.id, siblings
 
     if session_claims is not None:
-        return session_claims.user_id
+        user_row = (
+            User.objects.filter(
+                id=session_claims.user_id,
+                enabled=True,
+                deleted_at__isnull=True,
+            )
+            .values_list("email", flat=True)
+            .first()
+        )
+        if user_row is None:
+            raise TokenVerificationError()
+        if not session_claims.email_verified:
+            return session_claims.user_id, (session_claims.user_id,)
+        try:
+            email_norm, _ = normalize_passport_email(user_row)
+        except PassportInputError:
+            return session_claims.user_id, (session_claims.user_id,)
+        siblings = _resolve_verified_email_user_ids(
+            email_norm, primary_user_id=session_claims.user_id
+        )
+        return session_claims.user_id, siblings
 
     raise UnknownCustomerError()
 
@@ -985,17 +1305,32 @@ def list_passport_workspaces(
     session_claims: PassportSessionClaims | None = None,
 ) -> PassportWorkspaceDirectory:
     """List active workspaces across realms under an in-transaction authority + privacy fence."""
-    user_id = _resolve_initial_user_id(verified=verified, session_claims=session_claims)
+    user_id, sibling_ids = _resolve_initial_user_ids(
+        verified=verified, session_claims=session_claims
+    )
     try:
         with transaction.atomic():
+            if session_claims is not None and session_claims.max_expires_at <= int(
+                _database_now().timestamp()
+            ):
+                raise TokenVerificationError()
             fenced = _acquire_passport_fence(
                 user_id=user_id,
+                sibling_user_ids=sibling_ids,
                 verified=verified,
                 session_claims=session_claims,
             )
-            if fenced is None or (verified is None and not fenced.memberships):
+            if fenced is None:
+                if session_claims is not None:
+                    raise TokenVerificationError()
                 raise UnknownCustomerError()
-            stored = PassportWorkspaceContext.objects.filter(user_id=fenced.person.id).first()
+            if verified is None and not fenced.memberships:
+                raise TokenVerificationError()
+            stored = (
+                PassportWorkspaceContext.objects.filter(user_id__in=fenced.fenced_user_ids)
+                .order_by("-updated_at")
+                .first()
+            )
             effective_pref = (
                 stored.active_organisation_id
                 if stored is not None
@@ -1024,7 +1359,9 @@ def switch_passport_workspace(
     request_id: str,
 ) -> PassportSwitchedWorkspace:
     """Switch active workspace context inside a single fenced authority + privacy transaction."""
-    user_id = _resolve_initial_user_id(verified=verified, session_claims=session_claims)
+    user_id, sibling_ids = _resolve_initial_user_ids(
+        verified=verified, session_claims=session_claims
+    )
     payload = _parse_json_object(raw_body, content_type=content_type)
     if set(payload) - {"organisation_id"}:
         extra = sorted(set(payload) - {"organisation_id"})[0]
@@ -1043,12 +1380,17 @@ def switch_passport_workspace(
         with transaction.atomic():
             fenced = _acquire_passport_fence(
                 user_id=user_id,
+                sibling_user_ids=sibling_ids,
                 verified=verified,
                 session_claims=session_claims,
                 extra_org_ids=(target_org_id,),
             )
-            if fenced is None or (verified is None and not fenced.memberships):
+            if fenced is None:
+                if session_claims is not None:
+                    raise TokenVerificationError()
                 raise UnknownCustomerError()
+            if verified is None and not fenced.memberships:
+                raise TokenVerificationError()
 
             matching = next(
                 (m for m in fenced.memberships if m.organisation_id == target_org_id),
@@ -1073,12 +1415,35 @@ def switch_passport_workspace(
                 denied = True
             else:
                 now = _database_now()
+                now_epoch = int(now.timestamp())
+                if session_claims is not None:
+                    auth_time_claim = session_claims.auth_time
+                    max_exp_claim = session_claims.max_expires_at
+                    if max_exp_claim <= now_epoch:
+                        raise TokenVerificationError()
+                    email_verified_claim = session_claims.email_verified
+                else:
+                    auth_time_claim = now_epoch
+                    max_exp_claim = now_epoch + PASSPORT_SESSION_TTL_SECONDS
+                    email_verified_claim = (
+                        verified is not None
+                        and _has_verified_matching_oidc_email(verified, fenced.person.email)
+                        is not None
+                    )
+
                 directory = _build_directory(
                     person=fenced.person,
                     memberships=fenced.memberships,
                     preferred_organisation_id=target_org_id,
                     persist_context=True,
                 )
+                target_uid = fenced.user_ids_by_org.get(target_org_id, fenced.person.id)
+                if target_uid != fenced.person.id:
+                    _persist_workspace_context(
+                        user_ids=(target_uid,),
+                        active_org_id=target_org_id,
+                        active_ws_id=directory.active_workspace_id,
+                    )
                 switched = next(
                     entry
                     for entry in directory.workspaces
@@ -1094,18 +1459,27 @@ def switch_passport_workspace(
                         amr=("passport_switch",),
                         request_id=request_id,
                     )
-                session_token = issue_passport_session_token(
-                    secret=passport_secret(),
-                    user_id=fenced.person.id,
-                    active_organisation_id=target_org_id,
-                    now=int(now.timestamp()),
-                )
+                try:
+                    session_token = issue_passport_session_token(
+                        secret=passport_secret(),
+                        user_id=target_uid,
+                        active_organisation_id=target_org_id,
+                        now=now_epoch,
+                        auth_time=auth_time_claim,
+                        max_expires_at=max_exp_claim,
+                        email_verified=email_verified_claim,
+                        membership_id=matching.membership_id,
+                        role=matching.role,
+                    )
+                except PassportSessionError as exc:
+                    raise TokenVerificationError() from exc
+                effective_exp = min(now_epoch + PASSPORT_SESSION_TTL_SECONDS, max_exp_claim)
                 return PassportSwitchedWorkspace(
                     active_organisation_id=target_org_id,
                     active_workspace_id=directory.active_workspace_id,
                     workspace=switched,
                     session_token=session_token,
-                    expires_in_seconds=PASSPORT_SESSION_TTL_SECONDS,
+                    expires_in_seconds=max(1, effective_exp - now_epoch),
                 )
     except PassportConflictError:
         raise
@@ -1113,6 +1487,8 @@ def switch_passport_workspace(
         if _is_lock_conflict(exc):
             raise PassportConflictError() from exc
         if _sqlstate_of(exc) == PRIVACY_REFUSAL_SQLSTATE:
+            if session_claims is not None:
+                raise TokenVerificationError() from exc
             raise UnknownCustomerError() from exc
         raise
 

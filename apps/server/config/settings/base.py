@@ -86,6 +86,7 @@ KODERA_DEFAULT_COMMUNITY_OWNER_USER_ID = os.environ.get(
 # Zero-trust /staff/v1/* C1 plane and mobile Universal/App Links (/.well-known/*); fail-closed (503) when unset.
 KODERA_STAFF_OIDC_ISSUER: str | None = None
 KODERA_STAFF_OIDC_JWKS_URL: str | None = None
+KODERA_STAFF_ADMIN_HOSTS: tuple[str, ...] = ()
 KODERA_STAFF_OPS_HOSTS: tuple[str, ...] = ()
 KODERA_STAFF_ADMIN_ORIGINS: str | None = None
 KODERA_IOS_APP_IDS: tuple[str, ...] = ()

@@ -31,6 +31,7 @@ from config.environment import (
     ios_app_ids,
     legal_text_origin,
     mutation_rate_per_minute,
+    staff_admin_hosts,
     staff_oidc_issuer,
     staff_oidc_jwks_url,
     staff_ops_hosts,
@@ -134,6 +135,7 @@ KODERA_STAFF_OIDC_ISSUER = staff_oidc_issuer(os.environ, loopback_issuers=KODERA
 KODERA_STAFF_OIDC_JWKS_URL = staff_oidc_jwks_url(
     os.environ, loopback_issuers=KODERA_LOOPBACK_ISSUERS
 )
+KODERA_STAFF_ADMIN_HOSTS = staff_admin_hosts(os.environ, loopback_issuers=KODERA_LOOPBACK_ISSUERS)
 KODERA_STAFF_OPS_HOSTS = staff_ops_hosts(os.environ, loopback_issuers=KODERA_LOOPBACK_ISSUERS)
 KODERA_STAFF_ADMIN_ORIGINS = os.environ.get("KODERA_STAFF_ADMIN_ORIGINS")
 KODERA_IOS_APP_IDS = ios_app_ids(os.environ)

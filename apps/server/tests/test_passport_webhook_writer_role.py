@@ -329,7 +329,10 @@ def test_writer_role_serves_passport_and_stripe_webhooks_under_least_privilege(
         assert ref_res.status_code == 200
         assert ref_res.json()["status"] == "applied"
 
-    assert Invoice.objects.get(id=placed.invoice.id).state == "paid"
+    inv_after = Invoice.objects.get(id=placed.invoice.id)
+    assert inv_after.state == "issued"
+    assert inv_after.amount_paid_minor == 0
+    assert inv_after.paid_at is None
     assert Order.objects.get(id=placed.order.id).state == "paid"
     assert PaymentLink.objects.get(id=link.id).state == "used"
     assert Payment.objects.get(provider="stripe", provider_ref="pi_wr_0001").state == "reversed"

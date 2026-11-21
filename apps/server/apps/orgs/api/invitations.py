@@ -258,8 +258,15 @@ def organisation_invitations(request: HttpRequest, organisation_id: UUID) -> Htt
             batch = service.parse_batch(_body(request))
             service.check_grantable(caller=caller, batch=batch)
 
+            def authority(event: object) -> None:
+                service.verify_create_replay_event(
+                    event=event, caller=caller, verified=verified, batch=batch
+                )
+
             def handler() -> StoredResponse:
-                result = service.invite(caller=caller, batch=batch, request_id=request_id)
+                result = service.invite(
+                    caller=caller, batch=batch, request_id=request_id, verified=verified
+                )
                 return StoredResponse(
                     status=201, body=_json(_batch(result)), content_type="application/json"
                 )
@@ -270,6 +277,7 @@ def organisation_invitations(request: HttpRequest, organisation_id: UUID) -> Htt
                 subject=verified.subject,
                 request_id=request_id,
                 handler=handler,
+                authority=authority,
                 policy=service.quota_replay_policy(),
             )
     except TokenVerificationError:
@@ -290,11 +298,17 @@ def invitation(request: HttpRequest, invitation_id: UUID) -> HttpResponse:
         if lane == "staff":
             # staff_operator's revocation is declared but not served yet (docs/specs/INVITATIONS.md).
             return _finish(_staff(verified, None, service.DELETE_SCOPE, request_id), request_id)
+        service.require_known_customer(verified=verified)
         organisation_id = service.invitation_organisation(invitation_id=invitation_id)
         caller = service.authorise(
             verified=verified, organisation_id=organisation_id, scope=service.DELETE_SCOPE
         )
-        service.revoke(caller=caller, invitation_id=invitation_id, request_id=request_id)
+        service.revoke(
+            caller=caller,
+            invitation_id=invitation_id,
+            request_id=request_id,
+            verified=verified,
+        )
         response = HttpResponse(status=204)
     except TokenVerificationError:
         response = _problem("unauthenticated", request_id)
@@ -315,13 +329,27 @@ def resend_invitation(request: HttpRequest, invitation_id: UUID) -> HttpResponse
             return _finish(_staff(verified, None, service.ACT_SCOPE, request_id), request_id)
         if _body(request) not in {b"", b"{}"}:
             raise service.InvitationInputError()
+        service.require_known_customer(verified=verified)
         organisation_id = service.invitation_organisation(invitation_id=invitation_id)
         caller = service.authorise(
             verified=verified, organisation_id=organisation_id, scope=service.ACT_SCOPE
         )
 
+        def authority(event: object) -> None:
+            service.verify_resend_replay_event(
+                event=event,
+                caller=caller,
+                verified=verified,
+                invitation_id=invitation_id,
+            )
+
         def handler() -> StoredResponse:
-            view = service.resend(caller=caller, invitation_id=invitation_id, request_id=request_id)
+            view = service.resend(
+                caller=caller,
+                invitation_id=invitation_id,
+                request_id=request_id,
+                verified=verified,
+            )
             return StoredResponse(
                 status=200, body=_json(_invitation(view)), content_type="application/json"
             )
@@ -332,6 +360,7 @@ def resend_invitation(request: HttpRequest, invitation_id: UUID) -> HttpResponse
             subject=verified.subject,
             request_id=request_id,
             handler=handler,
+            authority=authority,
             policy=service.quota_replay_policy(),
         )
     except TokenVerificationError:
@@ -351,6 +380,14 @@ def accept_invitation(request: HttpRequest) -> HttpResponse:
         verified, lane = _verified(request)
         accepted_request = service.parse_accept(_body(request))
 
+        def authority(event: object) -> None:
+            service.verify_accept_replay_event(
+                event=event,
+                verified=verified,
+                lane=lane,
+                request=accepted_request,
+            )
+
         def handler() -> StoredResponse:
             accepted = service.accept(
                 verified=verified, lane=lane, request=accepted_request, request_id=request_id
@@ -365,6 +402,7 @@ def accept_invitation(request: HttpRequest) -> HttpResponse:
             subject=verified.subject,
             request_id=request_id,
             handler=handler,
+            authority=authority,
             policy=service.quota_replay_policy(),
         )
     except TokenVerificationError:

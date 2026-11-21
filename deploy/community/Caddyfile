@@ -62,10 +62,12 @@
 	}
 
 	# Client API only. Federation and key routes stay closed (README.md, "Federation").
-	@matrix path /_matrix/client/* /_matrix/media/* /_synapse/client/*
+	# Legacy unauthenticated /_matrix/media/*/download/* and /thumbnail/* routes fall through to 404.
+	@matrix path /_matrix/client/* /_matrix/media/v3/upload /_matrix/media/v3/upload/* /_matrix/media/v1/create /_matrix/media/v3/config /_synapse/client/*
 	handle @matrix {
 		reverse_proxy synapse:8008 {
 			import client_address
+			header_down Access-Control-Allow-Origin "https://{$KODERA_DOMAIN}"
 			header_down -Server
 			header_down Access-Control-Expose-Headers "(?i)(?:,\s*server(\s*,|$)|^\s*server\s*,\s*|^\s*server\s*$)" "$1"
 		}

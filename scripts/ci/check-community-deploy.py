@@ -18,6 +18,7 @@ import binascii
 import contextlib
 import copy
 import io
+import ipaddress
 import json
 import os
 import re
@@ -76,6 +77,10 @@ EXPECTED_PUBLIC_ENV_DEFAULTS = {
     "KODERA_IOS_APP_IDS": "",
     "KODERA_ANDROID_ASSETLINKS_SHA256": "",
     "KODERA_MEDIA_SECRETS_SOURCE": "media_secrets",
+    "KODERA_ATTACHMENT_BASE": "",
+    "KODERA_API_INGRESS_SUBNET": "172.30.240.0/28",
+    "KODERA_CADDY_API_ADDRESS": "172.30.240.2",
+    "KODERA_SERVER_API_ADDRESS": "172.30.240.3",
     "POSTGRES_USER": "kodera",
     "POSTGRES_DB": "kodera_server",
 }
@@ -137,7 +142,14 @@ ALLOWED_PUBLIC_ROUTES: dict[str, frozenset[str]] = {
     "server:8000": frozenset({"/api/*", "/health/*", *MOBILE_ASSOCIATION_ROUTES}),
     "yjs-collab:8098": frozenset({"/documents/collab"}),
     "room-access:8095": frozenset({"/_kodera/rooms/token"}),
-    "synapse:8008": frozenset({"/_matrix/client/*", "/_matrix/media/*", "/_synapse/client/*"}),
+    "synapse:8008": frozenset({
+        "/_matrix/client/*",
+        "/_matrix/media/v3/upload",
+        "/_matrix/media/v3/upload/*",
+        "/_matrix/media/v1/create",
+        "/_matrix/media/v3/config",
+        "/_synapse/client/*",
+    }),
     "livekit:7880": frozenset({"/rtc", "/rtc/*"}),
 }
 CATCH_ALL_UPSTREAM = "web:8080"
@@ -323,7 +335,82 @@ def console_configuration_errors(environment: dict[str, str]) -> list[str]:
     return []
 
 
-def console_runtime_errors(services: dict[str, ServiceSpec]) -> list[str]:
+SINGLE_CONSOLE_ORIGINS_EXPRESSION = "https://${KODERA_DOMAIN:-chat.example.org}"
+SPLIT_CONSOLE_ORIGINS_EXPRESSION = "https://${KODERA_DOMAIN:?Set KODERA_DOMAIN to the web client host}"
+TRUSTED_EDGE_EXPRESSION = "${KODERA_CADDY_API_ADDRESS:-172.30.240.2}/32"
+CADDY_API_ADDRESS_EXPRESSION = "${KODERA_CADDY_API_ADDRESS:-172.30.240.2}"
+SERVER_API_ADDRESS_EXPRESSION = "${KODERA_SERVER_API_ADDRESS:-172.30.240.3}"
+API_INGRESS_SUBNET_EXPRESSION = "${KODERA_API_INGRESS_SUBNET:-172.30.240.0/28}"
+WEB_ATTACHMENT_ENTRYPOINT_LINE = (
+    '\'if [ -n "$${KODERA_ATTACHMENT_BASE:-}" ]; then set -- "$$@" --attachment-base "$$KODERA_ATTACHMENT_BASE"; fi; '
+    'exec node /app/static.mjs --root /srv/console --host 0.0.0.0 "$$@"\''
+)
+FRONTED_EDGE_UPSTREAMS = ("yjs-collab", "web", "room-access", "synapse", "livekit")
+REVIEWED_NETWORKS_BLOCK = (
+    "networks:\n"
+    "  default:\n"
+    "  edge:\n"
+    "    driver: bridge\n"
+    "  api_ingress:\n"
+    "    driver: bridge\n"
+    "    ipam:\n"
+    "      config:\n"
+    f"        - subnet: {API_INGRESS_SUBNET_EXPRESSION}"
+)
+
+
+def service_section_lines(service: ServiceSpec, section: str) -> list[str]:
+    """Raw body lines (stripped of 6-space base indent) inside a 4-space service section."""
+    lines: list[str] = []
+    inside = False
+    for line in service.raw_lines:
+        indent = len(line) - len(line.lstrip(" "))
+        if indent == 4:
+            inside = line.strip() == section + ":"
+        elif inside and indent >= 6:
+            lines.append(line[6:])
+    return lines
+
+
+def edge_ingress_runtime_errors(services: dict[str, ServiceSpec], compose_text: str) -> list[str]:
+    """Ensure Caddy has a dedicated static IP on api_ingress and server trusts only that proxy."""
+    errors: list[str] = []
+    server = services.get("server")
+    caddy = services.get("caddy")
+    if server is None or server.environment.get("KODERA_TRUSTED_EDGE_ADDRESSES") != TRUSTED_EDGE_EXPRESSION:
+        errors.append("server must trust X-Forwarded-For only from KODERA_CADDY_API_ADDRESS/32")
+    if caddy is None or service_section_lines(caddy, "networks") != [
+        "edge:",
+        "api_ingress:",
+        f"  ipv4_address: {CADDY_API_ADDRESS_EXPRESSION}",
+    ]:
+        errors.append("caddy must attach to edge and api_ingress with static KODERA_CADDY_API_ADDRESS only")
+    if server is None or service_section_lines(server, "networks") != [
+        "default:",
+        "api_ingress:",
+        f"  ipv4_address: {SERVER_API_ADDRESS_EXPRESSION}",
+    ]:
+        errors.append("server must attach to default and api_ingress with static KODERA_SERVER_API_ADDRESS only")
+    for name in FRONTED_EDGE_UPSTREAMS:
+        svc = services.get(name)
+        if svc is None or service_section_lines(svc, "networks") != ["default:", "edge:"]:
+            errors.append(f"service '{name}' must attach to default and edge without api_ingress")
+    for svc in services.values():
+        if svc.name in {"caddy", "server"}:
+            continue
+        if any("api_ingress" in line for line in service_section_lines(svc, "networks")):
+            errors.append("api_ingress may attach only caddy and server")
+    normalized_tail = "\n".join(
+        line.split("#", 1)[0].rstrip()
+        for line in compose_text.splitlines()
+        if line.split("#", 1)[0].strip()
+    )
+    if not normalized_tail.endswith(REVIEWED_NETWORKS_BLOCK) or normalized_tail.count("\nnetworks:\n") != 1:
+        errors.append("docker-compose.yml must declare the reviewed default, edge and api_ingress networks")
+    return errors
+
+
+def console_runtime_errors(services: dict[str, ServiceSpec], *, split: bool = False) -> list[str]:
     errors = []
     for name in ("server", "migrate"):
         service = services.get(name)
@@ -333,6 +420,9 @@ def console_runtime_errors(services: dict[str, ServiceSpec]) -> list[str]:
     if web is None or "VITE_OIDC_CLIENT_ID: ${KODERA_OIDC_CLIENT_ID:-console}" not in [line.strip() for line in web.raw_lines]:
         errors.append("web must build the same Console client from KODERA_OIDC_CLIENT_ID")
     server = services.get("server")
+    expected_origins = SPLIT_CONSOLE_ORIGINS_EXPRESSION if split else SINGLE_CONSOLE_ORIGINS_EXPRESSION
+    if server is None or server.environment.get("KODERA_CONSOLE_ORIGINS") != expected_origins:
+        errors.append("server must set KODERA_CONSOLE_ORIGINS to the configured web origin")
     for key in ("KODERA_IOS_APP_IDS", "KODERA_ANDROID_ASSETLINKS_SHA256"):
         if server is None or server.environment.get(key) != "${" + key + ":-}":
             errors.append(f"server must pass through optional {key} for mobile association")
@@ -409,17 +499,21 @@ def media_runtime_errors(services: dict[str, ServiceSpec]) -> list[str]:
 
 
 def effective_runtime_errors(compose: str, override: str) -> list[str]:
-    """The split override inherits the same media boundary and Console client binding."""
+    """The split override inherits the same media boundary, edge trust and Console client binding."""
     services = copy.deepcopy(parse_compose_services(compose))
     for name, changed in parse_compose_services(override).items():
         if name in services:
             services[name].environment.update(changed.environment)
-    return console_runtime_errors(services) + media_runtime_errors(services)
+    return (
+        console_runtime_errors(services, split=True)
+        + media_runtime_errors(services)
+        + edge_ingress_runtime_errors(services, compose)
+    )
 
 
 def replace_service_text(compose: str, name: str, old: str, new: str) -> str:
     """Mutate one named block without accidentally testing a neighbouring service."""
-    pattern = re.compile(r"(?ms)^  " + re.escape(name) + r":\n.*?(?=^  [a-z][a-z0-9-]*:|^volumes:|\Z)")
+    pattern = re.compile(r"(?ms)^  " + re.escape(name) + r":\n.*?(?=^  [a-z][a-z0-9-]*:|^volumes:|^networks:|\Z)")
     return pattern.sub(lambda match: match.group().replace(old, new, 1), compose, count=1)
 
 
@@ -463,6 +557,41 @@ def run_media_console_selftest(compose: str, env: str, caddy: str, split: str) -
     for key in ("KODERA_IOS_APP_IDS", "KODERA_ANDROID_ASSETLINKS_SHA256"):
         mutate(f"{key} removed", "server", "      " + key + ": ${" + key + ":-}", "",
                f"server must pass through optional {key} for mobile association")
+    mutate("single-origin KODERA_CONSOLE_ORIGINS removed", "server",
+           "      KODERA_CONSOLE_ORIGINS: " + SINGLE_CONSOLE_ORIGINS_EXPRESSION, "",
+           "server must set KODERA_CONSOLE_ORIGINS to the configured web origin")
+    mutate("single-origin KODERA_CONSOLE_ORIGINS wildcard", "server",
+           "      KODERA_CONSOLE_ORIGINS: " + SINGLE_CONSOLE_ORIGINS_EXPRESSION,
+           "      KODERA_CONSOLE_ORIGINS: '*'",
+           "server must set KODERA_CONSOLE_ORIGINS to the configured web origin")
+    mutate("KODERA_TRUSTED_EDGE_ADDRESSES removed", "server",
+           "      KODERA_TRUSTED_EDGE_ADDRESSES: " + TRUSTED_EDGE_EXPRESSION, "",
+           "server must trust X-Forwarded-For only from KODERA_CADDY_API_ADDRESS/32")
+    mutate("KODERA_TRUSTED_EDGE_ADDRESSES widened", "server",
+           "      KODERA_TRUSTED_EDGE_ADDRESSES: " + TRUSTED_EDGE_EXPRESSION,
+           "      KODERA_TRUSTED_EDGE_ADDRESSES: 0.0.0.0/0",
+           "server must trust X-Forwarded-For only from KODERA_CADDY_API_ADDRESS/32")
+    mutate("caddy shares default network", "caddy", "      edge:", "      default:\n      edge:",
+           "caddy must attach to edge and api_ingress with static KODERA_CADDY_API_ADDRESS only")
+    mutate("caddy loses static API ingress IP", "caddy",
+           "        ipv4_address: " + CADDY_API_ADDRESS_EXPRESSION + "\n", "",
+           "caddy must attach to edge and api_ingress with static KODERA_CADDY_API_ADDRESS only")
+    mutate("server loses api_ingress network", "server",
+           "      api_ingress:\n        ipv4_address: " + SERVER_API_ADDRESS_EXPRESSION + "\n", "",
+           "server must attach to default and api_ingress with static KODERA_SERVER_API_ADDRESS only")
+    mutate("server loses static API ingress IP", "server",
+           "        ipv4_address: " + SERVER_API_ADDRESS_EXPRESSION + "\n", "",
+           "server must attach to default and api_ingress with static KODERA_SERVER_API_ADDRESS only")
+    mutate("synapse joins api_ingress network", "synapse", "      edge:", "      edge:\n      api_ingress:",
+           "service 'synapse' must attach to default and edge without api_ingress")
+    cases.append(("api_ingress network removed", compose.replace(REVIEWED_NETWORKS_BLOCK, "networks:\n  default:\n  edge:\n    driver: bridge", 1),
+                  "docker-compose.yml must declare the reviewed default, edge and api_ingress networks"))
+    mutate("web KODERA_ATTACHMENT_BASE passthrough removed", "web",
+           "      KODERA_ATTACHMENT_BASE: ${KODERA_ATTACHMENT_BASE:-}", "",
+           "service 'web' must pass through optional KODERA_ATTACHMENT_BASE")
+    mutate("web --attachment-base entrypoint removed", "web",
+           "--attachment-base", "--unused-flag",
+           "service 'web' must forward optional KODERA_ATTACHMENT_BASE as --attachment-base")
     for name in ("media-socket-init", "media-storage-worker"):
         block = re.search(r"(?ms)^  " + name + r":\n.*?(?=^  [a-z][a-z0-9-]*:|^volumes:)", compose).group()
         cases.append((name + " absent", compose.replace(block, "", 1), "media requires the API, socket initializer and signing worker"))
@@ -514,8 +643,14 @@ def run_media_console_selftest(compose: str, env: str, caddy: str, split: str) -
         if changed == compose or expected not in check_community_deploy(changed, env, caddy):
             print(f"[FAIL] media/Console mutation '{label}' did not trigger '{expected}'", file=sys.stderr)
             return 1
-        # Topology-specific runtime errors inherit every base environment mutation.
-        if expected in console_runtime_errors(parse_compose_services(changed)) + media_runtime_errors(parse_compose_services(changed)):
+        # Topology-specific runtime errors inherit every base environment mutation except single-origin KODERA_CONSOLE_ORIGINS,
+        # which split explicitly overrides and checks separately.
+        inherited_errors = (
+            console_runtime_errors(parse_compose_services(changed))
+            + media_runtime_errors(parse_compose_services(changed))
+            + edge_ingress_runtime_errors(parse_compose_services(changed), changed)
+        )
+        if expected != "server must set KODERA_CONSOLE_ORIGINS to the configured web origin" and expected in inherited_errors:
             if expected not in effective_runtime_errors(changed, split):
                 print(f"[FAIL] split runtime accepted '{label}'", file=sys.stderr)
                 return 1
@@ -688,8 +823,10 @@ def check_community_deploy(
     errors.extend(proximity_runtime_errors(services))
     errors.extend(console_runtime_errors(services))
     errors.extend(media_runtime_errors(services))
+    errors.extend(edge_ingress_runtime_errors(services, compose_text))
+    declared_volumes = compose_text.split("\nvolumes:\n")[-1].split("\nnetworks:\n")[0]
     for volume in ("media_socket", "media_secrets"):
-        if not re.search(r"(?m)^  " + volume + r":$", compose_text.split("\nvolumes:\n")[-1]):
+        if not re.search(r"(?m)^  " + volume + r":$", declared_volumes):
             errors.append(f"media requires the declared {volume} volume")
     for svc in services.values():
         for env_key, env_value in svc.environment.items():
@@ -879,6 +1016,10 @@ def check_community_deploy(
             r'"--provider-origin"\n\s*- "\$\{KODERA_OIDC_PROVIDER_ORIGIN:\?', web_block
         ):
             errors.append("service 'web' must pass --provider-origin from KODERA_OIDC_PROVIDER_ORIGIN")
+        if web_svc.environment.get("KODERA_ATTACHMENT_BASE") != "${KODERA_ATTACHMENT_BASE:-}":
+            errors.append("service 'web' must pass through optional KODERA_ATTACHMENT_BASE")
+        if WEB_ATTACHMENT_ENTRYPOINT_LINE not in [line.strip()[2:] for line in web_svc.raw_lines if line.strip().startswith("- ")]:
+            errors.append("service 'web' must forward optional KODERA_ATTACHMENT_BASE as --attachment-base")
 
     # The module is installed exclusively from the local, read-only tree on every start.
     synapse = services.get("synapse")
@@ -1046,12 +1187,12 @@ PUBLISHING_SERVICES = frozenset({"caddy", "livekit"})
 # The Compose file is read without a YAML library (this script runs with the system Python, on
 # CI and on an operator's host), so it is held to the one shape the reader understands: block
 # mappings, two-space indentation, reviewed keys. Anything else is refused, never skipped.
-REVIEWED_TOP_LEVEL_KEYS = frozenset({"services", "volumes"})
+REVIEWED_TOP_LEVEL_KEYS = frozenset({"services", "volumes", "networks"})
 REVIEWED_SERVICE_KEYS = frozenset({
     "mem_limit", "image", "build", "restart", "ports", "environment", "volumes", "depends_on",
-    "healthcheck", "command", "entrypoint", "profiles", "user",
+    "healthcheck", "command", "entrypoint", "profiles", "user", "networks",
 })
-BLOCK_ONLY_SERVICE_KEYS = frozenset({"build", "environment", "volumes", "depends_on", "healthcheck", "ports"})
+BLOCK_ONLY_SERVICE_KEYS = frozenset({"build", "environment", "volumes", "depends_on", "healthcheck", "ports", "networks"})
 REVIEWED_BIND_MOUNTS = frozenset({
     "proximity_socket:/run/proximity:ro",
     "media_socket:/run/kodera-media:ro",
@@ -1125,7 +1266,8 @@ def compose_structure_errors(compose_text: str, file_name: str = "docker-compose
             scalar_indent = indent
         if indent == 0:
             key = stripped[:-1].strip("\"'") if stripped.endswith(":") else stripped
-            if not stripped.endswith(":") or key not in REVIEWED_TOP_LEVEL_KEYS:
+            allowed_top = REVIEWED_TOP_LEVEL_KEYS if file_name == "docker-compose.yml" else frozenset({"services", "volumes"})
+            if not stripped.endswith(":") or key not in allowed_top:
                 errors.append(f"{where(number)}: unreviewed top-level key '{key.split(':', 1)[0]}'")
                 top = None
             else:
@@ -1135,6 +1277,19 @@ def compose_structure_errors(compose_text: str, file_name: str = "docker-compose
         if top == "volumes":
             if indent != 2 or not re.fullmatch(r"[a-z][a-z0-9_]*:", stripped):
                 errors.append(f"{where(number)}: a named volume is declared as 'name:' and nothing else")
+            continue
+        if top == "networks":
+            allowed_network_lines = {
+                (2, "default:"),
+                (2, "edge:"),
+                (2, "api_ingress:"),
+                (4, "driver: bridge"),
+                (4, "ipam:"),
+                (6, "config:"),
+                (8, f"- subnet: {API_INGRESS_SUBNET_EXPRESSION}"),
+            }
+            if (indent, stripped) not in allowed_network_lines:
+                errors.append(f"{where(number)}: unreviewed network declaration in {file_name}")
             continue
         if top != "services":
             continue
@@ -1191,6 +1346,15 @@ def compose_structure_errors(compose_text: str, file_name: str = "docker-compose
         elif indent == 6 and section == "ports":
             if not re.fullmatch(r"""- ["']?[0-9][0-9:/a-z-]*["']?""", stripped):
                 errors.append(f"{where(number)}: service '{service}' ports must be short 'host:container' entries")
+        elif indent == 6 and section == "networks":
+            if stripped not in {"default:", "edge:", "api_ingress:"}:
+                errors.append(f"{where(number)}: service '{service}' joins an unreviewed network")
+        elif indent == 8 and section == "networks":
+            if not (
+                (service == "caddy" and stripped == f"ipv4_address: {CADDY_API_ADDRESS_EXPRESSION}")
+                or (service == "server" and stripped == f"ipv4_address: {SERVER_API_ADDRESS_EXPRESSION}")
+            ):
+                errors.append(f"{where(number)}: service '{service}' has an unreviewed network option")
     return errors
 
 
@@ -1295,6 +1459,7 @@ SYNAPSE_STRIP_EXPOSED_SERVER = (
 )
 SINGLE_PROXY_OPTIONS: dict[tuple[str, str], tuple[str, ...]] = {
     (REVIEWED_CADDY_SITE, "synapse:8008"): (
+        SPLIT_SYNAPSE_CORS,
         SYNAPSE_STRIP_SERVER,
         SYNAPSE_STRIP_EXPOSED_SERVER,
     ),
@@ -2130,6 +2295,44 @@ def _base64_32_bytes(value: str) -> bool:
     return len(decoded) == 32 and base64.b64encode(decoded).decode("ascii") == value
 
 
+def _valid_attachment_base(value: str, *, core_origin: str, provider_origin: str) -> bool:
+    if (
+        len(value) > 2048
+        or not value.startswith("https://")
+        or not value.endswith("/")
+        or any(ord(ch) < 32 or ord(ch) == 127 or ch in " \\'\"`;*?#" for ch in value)
+    ):
+        return False
+    parsed = urllib.parse.urlsplit(value)
+    hostname = parsed.hostname or ""
+    if (
+        parsed.scheme != "https"
+        or not hostname
+        or parsed.username
+        or parsed.password
+        or parsed.port
+        or parsed.query
+        or parsed.fragment
+        or len(hostname) > 253
+        or not PUBLIC_SERVER_NAME_RE.fullmatch(hostname)
+        or hostname.endswith((".local", ".localhost", ".internal"))
+        or hostname.rsplit(".", 1)[-1].isdigit()
+    ):
+        return False
+    path = parsed.path
+    if (
+        not path.startswith("/")
+        or not path.endswith("/")
+        or path == "/"
+        or "//" in path
+        or "%" in path
+        or any(part in {".", ".."} for part in path.split("/"))
+    ):
+        return False
+    origin = f"https://{hostname}"
+    return origin not in {core_origin.rstrip("/"), provider_origin.rstrip("/")}
+
+
 def preflight_env(env_example_text: str, env_text: str) -> list[str]:
     """Check an operator's .env against .env.example. Names keys, never values."""
     example, _ = parse_env_example(env_example_text)
@@ -2139,7 +2342,7 @@ def preflight_env(env_example_text: str, env_text: str) -> list[str]:
     synapse_issuer = actual.get(SYNAPSE_OIDC_ISSUER_ENV_NAME, "").strip("'\"")
     synapse_secret = actual.get(SYNAPSE_OIDC_ENV_NAME, "").strip("'\"")
     for key in example:
-        if key in ("KODERA_STAFF_ISSUER", FEDERATION_ENV_NAME, FEDERATION_MODE_ENV_NAME, "KODERA_MATRIX_PARTNER_CHANNELS", SYNAPSE_OIDC_ISSUER_ENV_NAME, TOPOLOGY_ENV_NAME, "KODERA_CONSOLE_CLIENT_ID", "KODERA_IOS_APP_IDS", "KODERA_ANDROID_ASSETLINKS_SHA256", "KODERA_MEDIA_SECRETS_SOURCE") and not actual.get(key, "").strip("'\""):
+        if key in ("KODERA_STAFF_ISSUER", FEDERATION_ENV_NAME, FEDERATION_MODE_ENV_NAME, "KODERA_MATRIX_PARTNER_CHANNELS", SYNAPSE_OIDC_ISSUER_ENV_NAME, TOPOLOGY_ENV_NAME, "KODERA_CONSOLE_CLIENT_ID", "KODERA_IOS_APP_IDS", "KODERA_ANDROID_ASSETLINKS_SHA256", "KODERA_MEDIA_SECRETS_SOURCE", "KODERA_ATTACHMENT_BASE", "KODERA_API_INGRESS_SUBNET", "KODERA_CADDY_API_ADDRESS", "KODERA_SERVER_API_ADDRESS") and not actual.get(key, "").strip("'\""):
             continue  # Empty optional configuration retains the reviewed Compose defaults.
         if key == SYNAPSE_OIDC_ENV_NAME and not community_enabled and synapse_issuer:
             pass  # An isolated self-host may sign members in to Synapse with its own realm.
@@ -2290,6 +2493,55 @@ def preflight_env(env_example_text: str, env_text: str) -> list[str]:
             admitted_staff = False
         if not _deployable_issuer(staff) or not staff.endswith("/realms/kodera-staff") or not admitted_staff:
             errors.append("KODERA_STAFF_ISSUER must name the exact trusted staff realm")
+    subnet_raw = actual.get("KODERA_API_INGRESS_SUBNET", "").strip().strip("'\"") or "172.30.240.0/28"
+    caddy_ip_raw = actual.get("KODERA_CADDY_API_ADDRESS", "").strip().strip("'\"") or "172.30.240.2"
+    server_ip_raw = actual.get("KODERA_SERVER_API_ADDRESS", "").strip().strip("'\"") or "172.30.240.3"
+    ingress_net: ipaddress.IPv4Network | None = None
+    try:
+        candidate_net = ipaddress.IPv4Network(subnet_raw, strict=True)
+        rfc1918_blocks = (
+            ipaddress.IPv4Network("10.0.0.0/8"),
+            ipaddress.IPv4Network("172.16.0.0/12"),
+            ipaddress.IPv4Network("192.168.0.0/16"),
+        )
+        if any(candidate_net.subnet_of(block) for block in rfc1918_blocks) and 24 <= candidate_net.prefixlen <= 29:
+            ingress_net = candidate_net
+        else:
+            errors.append("KODERA_API_INGRESS_SUBNET must be a strict private IPv4 subnet (/24 to /29)")
+    except ValueError:
+        errors.append("KODERA_API_INGRESS_SUBNET must be a strict private IPv4 subnet (/24 to /29)")
+    caddy_ip: ipaddress.IPv4Address | None = None
+    server_ip: ipaddress.IPv4Address | None = None
+    try:
+        caddy_ip = ipaddress.IPv4Address(caddy_ip_raw)
+        if ingress_net is not None and (
+            caddy_ip not in ingress_net
+            or caddy_ip in {ingress_net.network_address, ingress_net.broadcast_address, ingress_net.network_address + 1}
+        ):
+            errors.append("KODERA_CADDY_API_ADDRESS must be a usable container IPv4 address inside KODERA_API_INGRESS_SUBNET")
+    except ValueError:
+        errors.append("KODERA_CADDY_API_ADDRESS must be a usable container IPv4 address inside KODERA_API_INGRESS_SUBNET")
+    try:
+        server_ip = ipaddress.IPv4Address(server_ip_raw)
+        if ingress_net is not None and (
+            server_ip not in ingress_net
+            or server_ip in {ingress_net.network_address, ingress_net.broadcast_address, ingress_net.network_address + 1}
+        ):
+            errors.append("KODERA_SERVER_API_ADDRESS must be a usable container IPv4 address inside KODERA_API_INGRESS_SUBNET")
+    except ValueError:
+        errors.append("KODERA_SERVER_API_ADDRESS must be a usable container IPv4 address inside KODERA_API_INGRESS_SUBNET")
+    if caddy_ip is not None and server_ip is not None and caddy_ip == server_ip:
+        errors.append("KODERA_CADDY_API_ADDRESS and KODERA_SERVER_API_ADDRESS must be distinct usable container IPv4 addresses")
+    attachment_base = actual.get("KODERA_ATTACHMENT_BASE", "").strip().strip("'\"")
+    if attachment_base:
+        host_domain = actual.get("KODERA_DOMAIN", "").strip().strip("'\"")
+        matrix_domain = actual.get("KODERA_MATRIX_DOMAIN", "").strip().strip("'\"")
+        core_origin = f"https://api.{matrix_domain}" if topology == "split" else f"https://{host_domain}"
+        provider_raw = actual.get("KODERA_OIDC_PROVIDER_ORIGIN", "").strip().strip("'\"")
+        provider_parsed = urllib.parse.urlsplit(provider_raw)
+        provider_origin = f"{provider_parsed.scheme}://{provider_parsed.hostname}" if provider_parsed.scheme and provider_parsed.hostname else provider_raw
+        if not _valid_attachment_base(attachment_base, core_origin=core_origin, provider_origin=provider_origin):
+            errors.append("KODERA_ATTACHMENT_BASE must be a dedicated public https://<host>/<path>/ prefix outside the Core API and OIDC origins")
     return errors
 
 
@@ -2815,8 +3067,41 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
         ),
         (
             "federation is open by default: Caddy routes every Matrix path",
-            lambda c, e, cf: (c, e, cf.replace("/_matrix/client/* /_matrix/media/*", "/_matrix/*", 1)),
+            lambda c, e, cf: (
+                c,
+                e,
+                cf.replace(
+                    "/_matrix/client/* /_matrix/media/v3/upload /_matrix/media/v3/upload/* /_matrix/media/v1/create /_matrix/media/v3/config",
+                    "/_matrix/*",
+                    1,
+                ),
+            ),
             "federation must be closed by default: Caddyfile must route only the Matrix client API",
+        ),
+        (
+            "unauthenticated legacy Matrix media v3 download is exposed on Caddyfile",
+            lambda c, e, cf: (c, e, cf.replace("/_synapse/client/*\n", "/_synapse/client/* /_matrix/media/v3/download/*\n", 1)),
+            "never federation, key or admin routes (got '/_matrix/media/v3/download/*')",
+        ),
+        (
+            "unauthenticated legacy Matrix media r0 download is exposed on Caddyfile",
+            lambda c, e, cf: (c, e, cf.replace("/_synapse/client/*\n", "/_synapse/client/* /_matrix/media/r0/download/*\n", 1)),
+            "never federation, key or admin routes (got '/_matrix/media/r0/download/*')",
+        ),
+        (
+            "wildcard Matrix media route is re-opened on Caddyfile",
+            lambda c, e, cf: (c, e, cf.replace("/_synapse/client/*\n", "/_synapse/client/* /_matrix/media/*\n", 1)),
+            "never federation, key or admin routes (got '/_matrix/media/*')",
+        ),
+        (
+            "single-origin Synapse keeps granting wildcard CORS",
+            lambda c, e, cf: (c, e, cf.replace(f"\t\t\t{SPLIT_SYNAPSE_CORS}\n", "", 1)),
+            f"Caddyfile must set the reviewed reverse_proxy option for 'synapse:8008': '{SPLIT_SYNAPSE_CORS}'",
+        ),
+        (
+            "single-origin Synapse sets wildcard Access-Control-Allow-Origin",
+            lambda c, e, cf: (c, e, cf.replace(SPLIT_SYNAPSE_CORS, 'header_down Access-Control-Allow-Origin "*"', 1)),
+            "Caddyfile has an unreviewed reverse_proxy option for 'synapse:8008': 'header_down Access-Control-Allow-Origin'",
         ),
         (
             "federation is open by default: Caddy routes the federation API",
@@ -2849,8 +3134,8 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
                 c,
                 e,
                 cf.replace(
-                    f"reverse_proxy synapse:8008 {{\n\t\t\timport client_address\n\t\t\t{SYNAPSE_STRIP_SERVER}\n\t\t\t{SYNAPSE_STRIP_EXPOSED_SERVER}\n\t\t}}",
-                    f"reverse_proxy synapse:8008 {{\n\t\t\t{SYNAPSE_STRIP_SERVER}\n\t\t\t{SYNAPSE_STRIP_EXPOSED_SERVER}\n\t\t}}",
+                    f"reverse_proxy synapse:8008 {{\n\t\t\timport client_address\n\t\t\t{SPLIT_SYNAPSE_CORS}\n\t\t\t{SYNAPSE_STRIP_SERVER}\n\t\t\t{SYNAPSE_STRIP_EXPOSED_SERVER}\n\t\t}}",
+                    f"reverse_proxy synapse:8008 {{\n\t\t\t{SPLIT_SYNAPSE_CORS}\n\t\t\t{SYNAPSE_STRIP_SERVER}\n\t\t\t{SYNAPSE_STRIP_EXPOSED_SERVER}\n\t\t}}",
                     1,
                 ),
             ),
@@ -3059,15 +3344,62 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
             lambda env: re.sub(r"(?m)^KODERA_OIDC_PROVIDER_ORIGIN=.*$", "KODERA_OIDC_PROVIDER_ORIGIN=http://id.example.net", env),
             "KODERA_OIDC_PROVIDER_ORIGIN is not a public https origin",
         ),
+        (
+            "API ingress subnet uses a public CIDR",
+            lambda env: re.sub(r"(?m)^KODERA_API_INGRESS_SUBNET=.*$", "KODERA_API_INGRESS_SUBNET=198.51.100.0/28", env),
+            "KODERA_API_INGRESS_SUBNET must be a strict private IPv4 subnet (/24 to /29)",
+        ),
+        (
+            "Caddy API address sits outside KODERA_API_INGRESS_SUBNET",
+            lambda env: re.sub(r"(?m)^KODERA_CADDY_API_ADDRESS=.*$", "KODERA_CADDY_API_ADDRESS=172.30.241.2", env),
+            "KODERA_CADDY_API_ADDRESS must be a usable container IPv4 address inside KODERA_API_INGRESS_SUBNET",
+        ),
+        (
+            "Caddy API address collides with the bridge gateway .1",
+            lambda env: re.sub(r"(?m)^KODERA_CADDY_API_ADDRESS=.*$", "KODERA_CADDY_API_ADDRESS=172.30.240.1", env),
+            "KODERA_CADDY_API_ADDRESS must be a usable container IPv4 address inside KODERA_API_INGRESS_SUBNET",
+        ),
+        (
+            "Server API address sits outside KODERA_API_INGRESS_SUBNET",
+            lambda env: re.sub(r"(?m)^KODERA_SERVER_API_ADDRESS=.*$", "KODERA_SERVER_API_ADDRESS=172.30.241.3", env),
+            "KODERA_SERVER_API_ADDRESS must be a usable container IPv4 address inside KODERA_API_INGRESS_SUBNET",
+        ),
+        (
+            "Server API address collides with KODERA_CADDY_API_ADDRESS",
+            lambda env: re.sub(r"(?m)^KODERA_SERVER_API_ADDRESS=.*$", "KODERA_SERVER_API_ADDRESS=172.30.240.2", env),
+            "KODERA_CADDY_API_ADDRESS and KODERA_SERVER_API_ADDRESS must be distinct usable container IPv4 addresses",
+        ),
+        (
+            "KODERA_ATTACHMENT_BASE is a bare origin without bucket path",
+            lambda env: re.sub(r"(?m)^KODERA_ATTACHMENT_BASE=.*$", "KODERA_ATTACHMENT_BASE=https://media.example.net/", env),
+            "KODERA_ATTACHMENT_BASE must be a dedicated public https://<host>/<path>/ prefix outside the Core API and OIDC origins",
+        ),
+        (
+            "KODERA_ATTACHMENT_BASE reuses the OIDC provider origin",
+            lambda env: re.sub(r"(?m)^KODERA_ATTACHMENT_BASE=.*$", "KODERA_ATTACHMENT_BASE=https://id.example.net/bucket/", env),
+            "KODERA_ATTACHMENT_BASE must be a dedicated public https://<host>/<path>/ prefix outside the Core API and OIDC origins",
+        ),
+        (
+            "KODERA_ATTACHMENT_BASE reuses the single-origin Core API domain",
+            lambda env: re.sub(
+                r"(?m)^KODERA_DOMAIN=.*$",
+                "KODERA_DOMAIN=chat.example.net",
+                re.sub(r"(?m)^KODERA_ATTACHMENT_BASE=.*$", "KODERA_ATTACHMENT_BASE=https://chat.example.net/bucket/", env),
+            ),
+            "KODERA_ATTACHMENT_BASE must be a dedicated public https://<host>/<path>/ prefix outside the Core API and OIDC origins",
+        ),
     ]
     trust = '[{"lane":"customer","issuer":"https://id.example.net/realms/acme","generation":"g1","expires_at":4102444800,"public_jwks":{"keys":[]}}]'
     filled = "\n".join(
         f"{key}='{trust}'" if key == "KODERA_AUTH_TRUST"
         else f"{key}=https://id.example.net" if key == "KODERA_OIDC_PROVIDER_ORIGIN"
         else f"{key}=" if key in ("KODERA_STAFF_ISSUER", FEDERATION_ENV_NAME, FEDERATION_MODE_ENV_NAME, "KODERA_MATRIX_PARTNER_CHANNELS", SYNAPSE_OIDC_ISSUER_ENV_NAME)
-        else f"{key}=" if key in ("KODERA_CONSOLE_CLIENT_ID", "KODERA_IOS_APP_IDS", "KODERA_ANDROID_ASSETLINKS_SHA256")
+        else f"{key}=" if key in ("KODERA_CONSOLE_CLIENT_ID", "KODERA_IOS_APP_IDS", "KODERA_ANDROID_ASSETLINKS_SHA256", "KODERA_ATTACHMENT_BASE")
         else f"{key}=console" if key == "KODERA_OIDC_CLIENT_ID"
         else f"{key}=media_secrets" if key == "KODERA_MEDIA_SECRETS_SOURCE"
+        else f"{key}=172.30.240.0/28" if key == "KODERA_API_INGRESS_SUBNET"
+        else f"{key}=172.30.240.2" if key == "KODERA_CADDY_API_ADDRESS"
+        else f"{key}=172.30.240.3" if key == "KODERA_SERVER_API_ADDRESS"
         else f"{key}=single" if key == TOPOLOGY_ENV_NAME
         else f"{key}=" if key in (*COMMUNITY_KEYS, *AGENT_ENV_NAMES, SYNAPSE_OIDC_ENV_NAME)
         else f"{key}={base64.urlsafe_b64encode(bytes([i % 256]) * 32).decode('ascii')}" if "BASE64URL_32" in value
@@ -3227,6 +3559,12 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
         (
             "discovery HMAC key containing standard base64 + and / characters",
             with_values(filled, KODERA_DISCOVERY_HMAC_KEY=base64.b64encode(b"\xfb\xff" * 16).decode("ascii")),
+        )
+    )
+    hardening_accepted.append(
+        (
+            "dedicated external HTTPS attachment bucket base",
+            with_values(filled, KODERA_DOMAIN="chat.example.net", KODERA_ATTACHMENT_BASE="https://media.example.net/attachments/"),
         )
     )
     for label, value in hardening_accepted:
@@ -3405,6 +3743,10 @@ SPLIT_MUTATIONS: tuple[SplitMutation, ...] = (
      "(got '/.well-known/matrix/server')"),
     ("the Matrix origin routes the admin API", "caddy", _first("/_synapse/client/*", "/_synapse/client/* /_synapse/admin/*"),
      "(got '/_synapse/admin/*')"),
+    ("the Matrix origin exposes legacy media v3 download", "caddy", _first("/_synapse/client/*", "/_synapse/client/* /_matrix/media/v3/download/*"),
+     "(got '/_matrix/media/v3/download/*')"),
+    ("the Matrix origin exposes legacy media r0 download", "caddy", _first("/_synapse/client/*", "/_synapse/client/* /_matrix/media/r0/download/*"),
+     "(got '/_matrix/media/r0/download/*')"),
     ("Synapse keeps granting every origin", "caddy", _first("\t\t\t" + SPLIT_SYNAPSE_CORS + "\n", ""),
      f"Caddyfile.split must set the reviewed reverse_proxy option for 'synapse:8008': '{SPLIT_SYNAPSE_CORS}'"),
     ("Synapse keeps exposing its Server banner", "caddy", _first("\t\t\t" + SYNAPSE_STRIP_SERVER + "\n", ""),
@@ -3450,6 +3792,9 @@ SPLIT_MUTATIONS: tuple[SplitMutation, ...] = (
     ("a LiveKit secret reaches the server", "override",
      _first("      KODERA_CONSOLE_ORIGINS:", "      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:?Set it}\n      KODERA_CONSOLE_ORIGINS:"),
      "ADR-0003 isolation violation: forbidden secret 'LIVEKIT_API_SECRET' in service 'server' (docker-compose.split.yml)"),
+    ("split override tampers with KODERA_TRUSTED_EDGE_ADDRESSES", "override",
+     _first("      KODERA_CONSOLE_ORIGINS:", "      KODERA_TRUSTED_EDGE_ADDRESSES: 0.0.0.0/0\n      KODERA_CONSOLE_ORIGINS:"),
+     "docker-compose.split.yml sets an unreviewed variable KODERA_TRUSTED_EDGE_ADDRESSES on service 'server'"),
     ("Synapse is published around Caddy", "override", _first("  synapse:\n", '  synapse:\n    ports:\n      - "8008:8008"\n'),
      "service 'synapse' must not publish a port"),
     ("an unreviewed service is changed", "override", lambda text: text + "  db:\n    mem_limit: 4g\n",

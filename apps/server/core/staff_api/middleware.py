@@ -133,6 +133,21 @@ class StaffPlaneMiddleware:
             )
             return _attach_cors(unlisted, origin)
 
+        from .auth import _request_host, admitted_staff_hosts
+
+        admitted_hosts = admitted_staff_hosts()
+        req_host = _request_host(request)
+        if admitted_hosts and (not req_host or req_host not in admitted_hosts):
+            wrong_host = staff_problem_response(
+                request,
+                status=403,
+                code="staff_ingress_required",
+                title="Dedicated staff ingress required",
+                detail="Refused /staff/v1/* request outside configured staff Host plane",
+                type_slug="staff-ingress-required",
+            )
+            return _attach_cors(wrong_host, origin)
+
         response = self.get_response(request)
         if response.status_code == 404 and getattr(request, "resolver_match", None) is None:
             response = staff_problem_response(

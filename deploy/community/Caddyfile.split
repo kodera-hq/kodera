@@ -89,8 +89,9 @@ matrix.{$KODERA_DOMAIN} {
 	}
 
 	# Synapse answers every origin with `Access-Control-Allow-Origin: *`; here the grant names the
-	# web origin only, and Synapse's `Server` version banner is stripped from headers and CORS exposure.
-	@matrix path /_matrix/client/* /_matrix/media/* /_synapse/client/*
+	# web origin only, Synapse's `Server` version banner is stripped from headers and CORS exposure,
+	# and legacy unauthenticated /_matrix/media/*/download/* and /thumbnail/* routes fall through to 404.
+	@matrix path /_matrix/client/* /_matrix/media/v3/upload /_matrix/media/v3/upload/* /_matrix/media/v1/create /_matrix/media/v3/config /_synapse/client/*
 	handle @matrix {
 		reverse_proxy synapse:8008 {
 			import client_address

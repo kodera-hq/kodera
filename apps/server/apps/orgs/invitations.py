@@ -39,13 +39,14 @@ from apps.identity.invited import (
     known_subject,
     person_display_name,
 )
-from apps.identity.selectors import current_staff_identity, is_storable_subject
+from apps.identity.selectors import current_identity, current_staff_identity, is_storable_subject
 from apps.outbox.realm_enqueue import (
     ACCESS_ON,
     account_realm_user_ids,
     enqueue_realm_access,
     enqueue_realm_account,
 )
+from core.idempotency.store import MetadataAuthority, ReplayAuthority
 from core.sealing import seal
 from services.identity.access_tokens import VerifiedAccessToken
 
@@ -374,6 +375,76 @@ def _now() -> datetime:
     return now
 
 
+def require_known_customer(*, verified: VerifiedAccessToken) -> None:
+    """Ensure the customer token resolves an enabled identity before any invitation UUID lookup,
+    eliminating cross-tenant `404` vs `403 identity-unknown` existence oracles."""
+    if not is_storable_subject(verified.subject):
+        raise InvitationCallerUnknownError()
+    if current_identity(issuer=verified.issuer, subject=verified.subject) is None:
+        raise InvitationCallerUnknownError()
+
+
+def _is_workspace_restricted(membership_id: UUID) -> bool:
+    from django.apps import apps as django_apps
+    from django.db.models import Q
+
+    if not django_apps.is_installed("apps.workspaces"):
+        return False
+    from apps.workspaces.models import WorkspaceMemberRestriction
+
+    return (
+        WorkspaceMemberRestriction.objects.filter(membership_id=membership_id)
+        .filter(Q(banned=True) | Q(kicked=True))
+        .exists()
+    )
+
+
+def _suspended_or_removed_caller(
+    *, verified: VerifiedAccessToken, organisation_id: UUID
+) -> TenantCaller | None:
+    """Resolve a caller whose identity belongs to `organisation_id` even when their membership was
+    suspended or removed, so revocation/suspension denies with `403` rather than `404`."""
+    resolved = current_identity(issuer=verified.issuer, subject=verified.subject)
+    if resolved is None:
+        return None
+    person, ident = resolved
+    if ident.organisation_id != organisation_id:
+        return None
+    org_row = (
+        Organisation.objects.filter(
+            id=organisation_id,
+            issuer=ident.issuer,
+            realm=ident.realm,
+            deleted_at__isnull=True,
+        )
+        .values_list("state", "authority_revision")
+        .first()
+    )
+    if org_row is None:
+        return None
+    mem_row = (
+        Membership.objects.filter(
+            user_id=person.id,
+            organisation_id=organisation_id,
+            deleted_at__isnull=True,
+        )
+        .order_by("-created_at")
+        .values_list("id", "role")
+        .first()
+    )
+    if mem_row is None:
+        return None
+    return TenantCaller(
+        organisation_id=organisation_id,
+        organisation_state=str(org_row[0]),
+        issuer=ident.issuer,
+        authority_revision=int(org_row[1]),
+        identity_id=ident.id,
+        membership_id=mem_row[0],
+        role=str(mem_row[1]),
+    )
+
+
 def authorise(*, verified: VerifiedAccessToken, organisation_id: UUID, scope: str) -> TenantCaller:
     """The caller's current membership, read in a snapshot of its own before any write; an owner
     or an admin of an active organisation, or a refusal."""
@@ -387,14 +458,111 @@ def authorise(*, verified: VerifiedAccessToken, organisation_id: UUID, scope: st
         except TenantCallerUnknownError:
             raise InvitationCallerUnknownError() from None
         except TenantCallerNotFoundError:
+            inactive_caller = _suspended_or_removed_caller(
+                verified=verified, organisation_id=organisation_id
+            )
+            if inactive_caller is not None:
+                raise InvitationForbiddenError(
+                    inactive_caller,
+                    scope,
+                    f"urn:kodera:organisation:{organisation_id}",
+                ) from None
             raise InvitationNotFoundError() from None
-    if caller.role not in ADMINISTERING_ROLES or (
-        scope != READ_SCOPE and caller.organisation_state != "active"
+        restricted = _is_workspace_restricted(caller.membership_id)
+    if (
+        restricted
+        or caller.role not in ADMINISTERING_ROLES
+        or (scope != READ_SCOPE and caller.organisation_state != "active")
     ):
         raise InvitationForbiddenError(
             caller, scope, f"urn:kodera:organisation:{caller.organisation_id}"
         )
     return caller
+
+
+def reverify_caller_in_tx(
+    *,
+    caller: TenantCaller,
+    verified: VerifiedAccessToken | None,
+    scope: str,
+) -> TenantCaller:
+    """Re-verify caller authority, membership state, organisation state, and workspace moderation
+    restrictions inside the active write/replay transaction."""
+    if not connection.in_atomic_block:
+        raise RuntimeError("in-transaction caller re-verification requires an atomic block")
+    organisation_id = caller.organisation_id
+    if verified is not None:
+        try:
+            live = read_tenant_caller(verified=verified, organisation_id=organisation_id)
+        except TenantCallerUnknownError:
+            raise InvitationCallerUnknownError() from None
+        except TenantCallerNotFoundError:
+            inactive_caller = _suspended_or_removed_caller(
+                verified=verified, organisation_id=organisation_id
+            )
+            refused_caller = inactive_caller if inactive_caller is not None else caller
+            if not Organisation.objects.filter(
+                id=organisation_id, deleted_at__isnull=True
+            ).exists():
+                raise InvitationNotFoundError() from None
+            raise InvitationForbiddenError(
+                refused_caller,
+                scope,
+                f"urn:kodera:organisation:{organisation_id}",
+            ) from None
+    else:
+        from apps.identity.models import Identity
+
+        ident = (
+            Identity.objects.select_related("user")
+            .filter(
+                id=caller.identity_id,
+                enabled=True,
+                deleted_at__isnull=True,
+                user__enabled=True,
+                user__deleted_at__isnull=True,
+            )
+            .first()
+        )
+        if ident is None:
+            raise InvitationCallerUnknownError()
+        org_row = (
+            Organisation.objects.filter(id=organisation_id, deleted_at__isnull=True)
+            .values_list("state", "authority_revision", "issuer")
+            .first()
+        )
+        if org_row is None or ident.organisation_id != organisation_id:
+            raise InvitationNotFoundError()
+        mem = Membership.objects.filter(
+            user_id=ident.user_id,
+            organisation_id=organisation_id,
+            state="active",
+            accepted_at__isnull=False,
+            deleted_at__isnull=True,
+        ).first()
+        if mem is None:
+            raise InvitationForbiddenError(
+                caller, scope, f"urn:kodera:organisation:{organisation_id}"
+            )
+        live = TenantCaller(
+            organisation_id=organisation_id,
+            organisation_state=str(org_row[0]),
+            issuer=str(org_row[2]),
+            authority_revision=int(org_row[1]),
+            identity_id=ident.id,
+            membership_id=mem.id,
+            role=str(mem.role),
+        )
+
+    if (
+        _is_workspace_restricted(live.membership_id)
+        or live.role not in ADMINISTERING_ROLES
+        or (scope != READ_SCOPE and live.organisation_state != "active")
+    ):
+        raise InvitationForbiddenError(
+            live, scope, f"urn:kodera:organisation:{live.organisation_id}"
+        )
+    return live
 
 
 def invitation_organisation(*, invitation_id: UUID) -> UUID:
@@ -624,13 +792,20 @@ def check_grantable(*, caller: TenantCaller, batch: Batch) -> None:
         )
 
 
-def invite(*, caller: TenantCaller, batch: Batch, request_id: str) -> BatchResult:
+def invite(
+    *,
+    caller: TenantCaller,
+    batch: Batch,
+    request_id: str,
+    verified: VerifiedAccessToken | None = None,
+) -> BatchResult:
     """The batch, in the replay store's transaction. Every row has an outcome."""
     if not connection.in_atomic_block:
         raise RuntimeError("the invitation batch runs in the replay store's transaction")
-    check_grantable(caller=caller, batch=batch)
     key = _seal_key()
     _lock_invitations(caller.organisation_id)
+    caller = reverify_caller_in_tx(caller=caller, verified=verified, scope=CREATE_SCOPE)
+    check_grantable(caller=caller, batch=batch)
     now = _now()
     _expire_due(caller.organisation_id, now, request_id)
     members = _member_addresses(caller.organisation_id)
@@ -703,12 +878,19 @@ def _held(invitation_id: UUID, organisation_id: UUID) -> Invitation:
     return invitation
 
 
-def resend(*, caller: TenantCaller, invitation_id: UUID, request_id: str) -> InvitationView:
+def resend(
+    *,
+    caller: TenantCaller,
+    invitation_id: UUID,
+    request_id: str,
+    verified: VerifiedAccessToken | None = None,
+) -> InvitationView:
     """Same invitation, same token: one more mail requested, and the realm's own required-actions
     mail again for an account not set up yet. In the replay store's transaction."""
     if not connection.in_atomic_block:
         raise RuntimeError("a resend runs in the replay store's transaction")
     invitation = _held(invitation_id, caller.organisation_id)
+    caller = reverify_caller_in_tx(caller=caller, verified=verified, scope=ACT_SCOPE)
     _check_role_grantable(caller, invitation.role, ACT_SCOPE)
     now = _now()
     if (gone := _gone(invitation, now)) is not None:
@@ -735,11 +917,18 @@ def resend(*, caller: TenantCaller, invitation_id: UUID, request_id: str) -> Inv
     return _view(invitation, _realm(caller.organisation_id), now)
 
 
-def revoke(*, caller: TenantCaller, invitation_id: UUID, request_id: str) -> None:
+def revoke(
+    *,
+    caller: TenantCaller,
+    invitation_id: UUID,
+    request_id: str,
+    verified: VerifiedAccessToken | None = None,
+) -> None:
     """A pending invitation becomes a tombstone; revoking one already revoked is answered again.
     An accepted or expired one is a conflict."""
     with transaction.atomic():
         invitation = _held(invitation_id, caller.organisation_id)
+        caller = reverify_caller_in_tx(caller=caller, verified=verified, scope=DELETE_SCOPE)
         _check_role_grantable(caller, invitation.role, DELETE_SCOPE)
         if invitation.state == "revoked":
             return
@@ -942,6 +1131,123 @@ def preview(*, verified: VerifiedAccessToken, lane: str, token: str) -> Invitati
             role=invitation.role,
             expires_at=invitation.expires_at,
         )
+
+
+def verify_resend_authority_in_tx(
+    *,
+    caller: TenantCaller,
+    verified: VerifiedAccessToken,
+    invitation_id: UUID,
+) -> None:
+    """Re-verify caller authority and role-grant ceiling inside replay-store admission."""
+    live = reverify_caller_in_tx(caller=caller, verified=verified, scope=ACT_SCOPE)
+    role = (
+        Invitation.objects.filter(id=invitation_id, organisation_id=live.organisation_id)
+        .values_list("role", flat=True)
+        .first()
+    )
+    if role is None:
+        raise InvitationNotFoundError()
+    _check_role_grantable(live, str(role), ACT_SCOPE)
+
+
+def verify_accept_replay_authority(
+    *,
+    verified: VerifiedAccessToken,
+    lane: str,
+    request: Accept,
+    stored_status: int,
+) -> None:
+    """Re-verify caller eligibility before replaying a cached `200` acceptance response."""
+    if lane != "customer" or not is_storable_subject(verified.subject):
+        raise InvitationNotFoundError()
+    if not (200 <= stored_status <= 299):
+        return
+    parsed = parse_token(request.token)
+    if parsed is None or not verified.email_verified:
+        raise InvitationNotFoundError()
+    invitation_id, secret = parsed
+    invitation = Invitation.objects.filter(id=invitation_id).first()
+    if invitation is None or not hmac.compare_digest(
+        bytes(invitation.token_digest), digest(secret)
+    ):
+        raise InvitationNotFoundError()
+    organisation = Organisation.objects.filter(
+        id=invitation.organisation_id, deleted_at__isnull=True
+    ).first()
+    if organisation is None or organisation.issuer != verified.issuer:
+        raise InvitationNotFoundError()
+    if organisation.state != "active":
+        raise InvitationStateError()
+    known = known_subject(issuer=verified.issuer, subject=verified.subject)
+    if known is None or not known.usable:
+        raise InvitationNotFoundError()
+    mem = Membership.objects.filter(
+        user_id=known.user_id,
+        organisation_id=organisation.id,
+        deleted_at__isnull=True,
+    ).first()
+    if mem is None or mem.state != "active" or _is_workspace_restricted(mem.id):
+        caller = TenantCaller(
+            organisation_id=organisation.id,
+            organisation_state=organisation.state,
+            issuer=organisation.issuer,
+            authority_revision=organisation.authority_revision,
+            identity_id=known.identity_id,
+            membership_id=invitation.membership_id or invitation.id,
+            role=str(invitation.role),
+        )
+        raise InvitationForbiddenError(
+            caller, ACT_SCOPE, f"urn:kodera:organisation:{organisation.id}"
+        )
+
+
+def verify_create_replay_event(
+    *,
+    event: object,
+    caller: TenantCaller,
+    verified: VerifiedAccessToken,
+    batch: Batch,
+) -> None:
+    """Re-verify caller authority and role-grant ceiling on replay and metadata store events."""
+    if isinstance(event, ReplayAuthority | MetadataAuthority):
+        live = reverify_caller_in_tx(caller=caller, verified=verified, scope=CREATE_SCOPE)
+        check_grantable(caller=live, batch=batch)
+
+
+def verify_resend_replay_event(
+    *,
+    event: object,
+    caller: TenantCaller,
+    verified: VerifiedAccessToken,
+    invitation_id: UUID,
+) -> None:
+    """Re-verify caller authority and role-grant ceiling on resend replay and metadata events."""
+    if isinstance(event, ReplayAuthority | MetadataAuthority):
+        verify_resend_authority_in_tx(caller=caller, verified=verified, invitation_id=invitation_id)
+
+
+def verify_accept_replay_event(
+    *,
+    event: object,
+    verified: VerifiedAccessToken,
+    lane: str,
+    request: Accept,
+) -> None:
+    """Re-verify caller eligibility on acceptance replay and metadata store events."""
+    if isinstance(event, ReplayAuthority):
+        verify_accept_replay_authority(
+            verified=verified,
+            lane=lane,
+            request=request,
+            stored_status=event.status,
+        )
+    elif isinstance(event, MetadataAuthority):
+        if lane != "customer" or not is_storable_subject(verified.subject):
+            raise InvitationNotFoundError()
+        known = known_subject(issuer=verified.issuer, subject=verified.subject)
+        if known is not None and not known.usable:
+            raise InvitationNotFoundError()
 
 
 def quota_replay_policy():
