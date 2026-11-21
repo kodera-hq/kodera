@@ -12,10 +12,15 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import http.client
 import inspect
+import ipaddress
 import json
+import os
 import re
 import secrets
+import socket
+import ssl
 import threading
 import urllib.parse
 import zlib
@@ -26,6 +31,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4, uuid5
 
+import jwt
 from django.db import DatabaseError, IntegrityError, connection, transaction
 from uuid6 import uuid7
 
@@ -545,6 +551,196 @@ def _issue_core_passport_token(*, user_id: UUID, active_organisation_id: UUID, n
         return None
 
 
+OidcTokenExchanger = Callable[[str, Mapping[str, str]], Mapping[str, object]]
+
+
+class _PinnedHTTPSConnection(http.client.HTTPSConnection):
+    """Connects TCP directly to the SSRF-validated IP while verifying TLS SNI + cert hostname."""
+
+    def __init__(
+        self,
+        host: str,
+        *,
+        pinned_ip: str,
+        port: int,
+        timeout: float,
+        context: ssl.SSLContext,
+    ) -> None:
+        super().__init__(host, port=port, timeout=timeout, context=context)
+        self._pinned_ip = pinned_ip
+        self._tls_context = context
+
+    def connect(self) -> None:
+        raw_sock = socket.create_connection((self._pinned_ip, self.port), self.timeout)
+        self.sock = self._tls_context.wrap_socket(raw_sock, server_hostname=self.host)
+
+
+def _is_loopback_oidc_allowed() -> bool:
+    try:
+        from django.conf import settings
+
+        if settings.configured and (
+            getattr(settings, "DEBUG", False)
+            or getattr(settings, "KODERA_LOOPBACK_ISSUERS", False)
+        ):
+            return True
+    except ImportError:
+        pass
+    settings_mod = os.environ.get("DJANGO_SETTINGS_MODULE", "")
+    return settings_mod.endswith(".test")
+
+
+def _resolve_token_endpoint_url(issuer_url: str) -> str:
+    clean_issuer = issuer_url.rstrip("/")
+    try:
+        from django.conf import settings
+
+        if settings.configured:
+            endpoint_map = getattr(settings, "KODERA_SAML_OIDC_TOKEN_ENDPOINT_MAP", None)
+            if isinstance(endpoint_map, Mapping):
+                mapped = endpoint_map.get(clean_issuer)
+                if isinstance(mapped, str) and mapped.strip():
+                    return mapped.strip()
+    except ImportError:
+        pass
+    return f"{clean_issuer}/protocol/openid-connect/token"
+
+
+def _default_http_oidc_token_exchanger(
+    token_endpoint: str,
+    form_fields: Mapping[str, str],
+) -> Mapping[str, object]:
+    """Bounded, no-redirect, DNS-rebinding-pinned RFC 6749 / RFC 7636 `/token` HTTP client."""
+    parsed = urllib.parse.urlsplit(token_endpoint)
+    if (
+        not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise SamlError("oidc_code_exchange_failed", "Invalid OIDC token endpoint URL", status=403)
+
+    host_low = parsed.hostname.lower()
+    loopback_ok = _is_loopback_oidc_allowed()
+    is_loopback_host = host_low in {"127.0.0.1", "localhost", "::1"}
+    if parsed.scheme == "http":
+        if not (loopback_ok and is_loopback_host):
+            raise SamlError(
+                "oidc_code_exchange_failed",
+                "OIDC token endpoint must use https://",
+                status=403,
+            )
+    elif parsed.scheme != "https":
+        raise SamlError(
+            "oidc_code_exchange_failed",
+            "Unsupported OIDC token endpoint scheme",
+            status=403,
+        )
+
+    if loopback_ok and is_loopback_host:
+        pinned_ip = "::1" if host_low == "::1" else "127.0.0.1"
+    else:
+        try:
+            infos = socket.getaddrinfo(
+                parsed.hostname,
+                parsed.port or 443,
+                type=socket.SOCK_STREAM,
+            )
+        except OSError as exc:
+            raise SamlError(
+                "oidc_code_exchange_failed",
+                "OIDC token endpoint DNS resolution failed",
+                status=403,
+            ) from exc
+        if not infos:
+            raise SamlError(
+                "oidc_code_exchange_failed",
+                "OIDC token endpoint resolved zero addresses",
+                status=403,
+            )
+        pinned_ip = ""
+        for info in infos:
+            ip_str = str(info[4][0]).split("%", 1)[0]
+            try:
+                addr: ipaddress.IPv4Address | ipaddress.IPv6Address = ipaddress.ip_address(ip_str)
+            except ValueError as exc:
+                raise SamlError(
+                    "oidc_code_exchange_failed",
+                    "Invalid OIDC token endpoint address",
+                    status=403,
+                ) from exc
+            if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
+                addr = addr.ipv4_mapped
+            if not addr.is_global:
+                raise SamlError(
+                    "oidc_code_exchange_failed",
+                    "OIDC token endpoint resolved to non-global address",
+                    status=403,
+                )
+            if not pinned_ip:
+                pinned_ip = ip_str
+
+    encoded_form = urllib.parse.urlencode(dict(form_fields)).encode("utf-8")
+    req_path = parsed.path or "/"
+    conn: http.client.HTTPConnection
+    if parsed.scheme == "http":
+        conn = http.client.HTTPConnection(pinned_ip, port=parsed.port or 80, timeout=3.0)
+    else:
+        conn = _PinnedHTTPSConnection(
+            parsed.hostname,
+            pinned_ip=pinned_ip,
+            port=parsed.port or 443,
+            timeout=3.0,
+            context=ssl.create_default_context(),
+        )
+    try:
+        conn.request(
+            "POST",
+            req_path,
+            body=encoded_form,
+            headers={
+                "Host": parsed.netloc,
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Accept": "application/json",
+                "Content-Length": str(len(encoded_form)),
+            },
+        )
+        resp = conn.getresponse()
+        status_code = int(resp.status)
+        raw_body = resp.read(65_537)
+    except (http.client.HTTPException, ssl.SSLError, TimeoutError, OSError) as exc:
+        raise SamlError(
+            "oidc_code_exchange_failed",
+            "OIDC authorization-code exchange failed",
+            status=403,
+        ) from exc
+    finally:
+        conn.close()
+
+    if status_code != 200 or len(raw_body) > 65_536:
+        raise SamlError(
+            "oidc_code_exchange_failed",
+            "OIDC token endpoint returned non-200 or oversized response",
+            status=403,
+        )
+    try:
+        parsed_json = json.loads(raw_body.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise SamlError(
+            "oidc_code_exchange_failed",
+            "Malformed JSON from OIDC token endpoint",
+            status=403,
+        ) from exc
+    if not isinstance(parsed_json, dict) or "error" in parsed_json:
+        raise SamlError(
+            "oidc_code_exchange_failed",
+            "OIDC provider rejected authorization-code exchange",
+            status=403,
+        )
+    return parsed_json
+
+
 class SamlService:
     """Multi-IdP SAML 2.0 Service Provider engine with PostgreSQL multi-worker persistence."""
 
@@ -558,6 +754,8 @@ class SamlService:
         self._seeded_dns_txt: dict[str, list[str]] = {}
         self._verified_domains: set[tuple[str, str]] = set()
         self._dns_txt_resolver: Callable[[str], Sequence[str]] | None = None
+        self._oidc_token_exchanger: OidcTokenExchanger | None = None
+        self._oidc_public_keys: dict[tuple[str, str], tuple[str, Any]] = {}
 
     def _relay_hmac_key(self) -> bytes:
         if self._explicit_relay_secret is not None:
@@ -574,7 +772,28 @@ class SamlService:
             self._seeded_dns_txt.clear()
             self._verified_domains.clear()
             self._dns_txt_resolver = None
+            self._oidc_token_exchanger = None
+            self._oidc_public_keys.clear()
         reset_ee_tables("saml")
+
+    def set_oidc_token_exchanger(self, exchanger: OidcTokenExchanger | None) -> None:
+        """Configure a custom OIDC `/token` exchanger for isolated unit tests."""
+        with self._lock:
+            self._oidc_token_exchanger = exchanger
+
+    def register_oidc_public_key(
+        self,
+        *,
+        issuer: str,
+        kid: str,
+        algorithm: str,
+        public_key: Any,
+    ) -> None:
+        """Register an admitted OIDC ID-token verification key `(issuer, kid)` for memory tests."""
+        if algorithm not in {"RS256", "ES256"}:
+            raise ValueError("Unsupported OIDC ID-token signature algorithm")
+        with self._lock:
+            self._oidc_public_keys[(issuer.rstrip("/"), kid)] = (algorithm, public_key)
 
     def seed_dns_txt_record(self, fqdn: str, txt_value: str) -> None:
         """Seed a DNS TXT record fixture (e.g. `_kodera-challenge.<domain>`) for deterministic tests."""
@@ -785,19 +1004,21 @@ class SamlService:
             sp_base_url=norm_base,
             tenant_slug=principal.tenant_slug,
         )
-        client_pkce = principal.oidc_code_challenge
-        if client_pkce:
-            outbound_challenge = client_pkce
-        else:
-            outbound_challenge = _compute_pkce_s256(secrets.token_urlsafe(32))
+        # Always generate and retain a server-owned 64-char PKCE verifier + OIDC nonce (`BUG-0060`)
+        # so the OIDC `/oidc-handoff` callback exchanges `code` + `server_code_verifier` at `/token`
+        # per RFC 7636 §4.5 without exposing `server_code_verifier` in URLs or `state`.
+        server_code_verifier = secrets.token_urlsafe(48)
+        outbound_challenge = _compute_pkce_s256(server_code_verifier)
+        oidc_nonce = secrets.token_urlsafe(24)
+        client_pkce = principal.oidc_code_challenge or ""
 
         issued_at = principal.authenticated_at.astimezone(UTC)
         expires_at = issued_at + timedelta(seconds=ttl_seconds)
         exp_epoch = int(expires_at.timestamp())
-        nonce = secrets.token_urlsafe(24)
+        jti = secrets.token_urlsafe(24)
         payload_obj = {
             "v": 1,
-            "jti": nonce,
+            "jti": jti,
             "sub": principal.user_id,
             "tenant_slug": principal.tenant_slug,
             "idp_id": principal.idp_id,
@@ -805,7 +1026,6 @@ class SamlService:
             "return_path": principal.return_path,
             "client_id": client_id,
             "redirect_uri": redirect_uri,
-            "pkce": client_pkce or "",
             "exp": exp_epoch,
         }
         payload_b64 = (
@@ -820,20 +1040,7 @@ class SamlService:
         )
         sig = hmac.new(key, f"ksh1.{payload_b64}".encode("ascii"), hashlib.sha256).hexdigest()
         handoff_token = f"ksh1.{payload_b64}.{sig}"
-        handoff_key = f"handoff:{nonce}"
-        handoff_meta = json.dumps(
-            {
-                "sub": principal.user_id,
-                "email": principal.email,
-                "role": principal.role,
-                "return_path": principal.return_path,
-                "client_id": client_id,
-                "redirect_uri": redirect_uri,
-                "pkce": client_pkce or "",
-            },
-            sort_keys=True,
-            separators=(",", ":"),
-        )
+        handoff_key = f"handoff:{jti}"
 
         issuer_url: str | None = None
         stored_in_pg = False
@@ -851,6 +1058,25 @@ class SamlService:
                     row = cur.fetchone()
                     if row is not None and row[0]:
                         issuer_url = str(row[0]).rstrip("/")
+                    effective_issuer = issuer_url or f"https://sso.kodera.test/realms/{resolved_slug}"
+                    handoff_meta = json.dumps(
+                        {
+                            "sub": principal.user_id,
+                            "email": principal.email,
+                            "idp_id": principal.idp_id,
+                            "subject_name_id": principal.subject_name_id,
+                            "role": principal.role,
+                            "return_path": principal.return_path,
+                            "client_id": client_id,
+                            "redirect_uri": redirect_uri,
+                            "code_verifier": server_code_verifier,
+                            "oidc_nonce": oidc_nonce,
+                            "issuer": effective_issuer,
+                            "client_pkce": client_pkce,
+                        },
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
                     cur.execute(
                         "DELETE FROM public.ee_saml_pending_request WHERE expires_at <= %s",
                         [issued_at],
@@ -896,7 +1122,26 @@ class SamlService:
                     ) from exc
                 raise
 
+        effective_issuer = issuer_url or f"https://sso.kodera.test/realms/{principal.tenant_slug}"
         if not stored_in_pg:
+            handoff_meta = json.dumps(
+                {
+                    "sub": principal.user_id,
+                    "email": principal.email,
+                    "idp_id": principal.idp_id,
+                    "subject_name_id": principal.subject_name_id,
+                    "role": principal.role,
+                    "return_path": principal.return_path,
+                    "client_id": client_id,
+                    "redirect_uri": redirect_uri,
+                    "code_verifier": server_code_verifier,
+                    "oidc_nonce": oidc_nonce,
+                    "issuer": effective_issuer,
+                    "client_pkce": client_pkce,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
             with self._lock:
                 self._prune_pending_locked(issued_at)
                 self._pending_by_relay[handoff_key] = _PendingRequest(
@@ -916,37 +1161,26 @@ class SamlService:
                 "client_id": client_id,
                 "redirect_uri": redirect_uri,
                 "response_type": "code",
-                "scope": "openid",
+                "scope": "openid email",
                 "code_challenge": outbound_challenge,
                 "code_challenge_method": "S256",
+                "nonce": oidc_nonce,
                 "kc_idp_hint": principal.idp_id,
                 "login_hint": principal.email,
                 "state": handoff_token,
             }
         )
-        if issuer_url:
-            handoff_url = f"{issuer_url}/protocol/openid-connect/auth?{query}"
-        else:
-            handoff_url = f"{norm_base}/api/v1/ee/sso/saml/{principal.tenant_slug}/oidc-handoff?{query}"
+        handoff_url = f"{effective_issuer}/protocol/openid-connect/auth?{query}"
         return handoff_url, handoff_token
 
-    def consume_oidc_handoff(
+    def _verify_handoff_state_signature(
         self,
         *,
         tenant_slug: str,
         handoff_token: str,
-        sp_base_url: str,
-        code_verifier: str | None = None,
-        now: datetime | None = None,
-    ) -> SamlHandoffSession:
-        """Atomically verify & burn a single-use SAML->OIDC handoff token into session credentials."""
-        require_enterprise_edition()
-        if not _is_valid_slug(tenant_slug):
-            raise SamlError("invalid_tenant_slug", "Invalid tenant slug", status=400)
-        norm_base = _normalize_sp_base_url(sp_base_url)
-        current_time = (now or datetime.now(UTC)).astimezone(UTC)
-        now_epoch = int(current_time.timestamp())
-
+        now_epoch: int,
+        require_unexpired: bool = True,
+    ) -> dict[str, Any]:
         cleaned_token = handoff_token.strip()
         if not cleaned_token:
             raise SamlError("missing_handoff_token", "Missing SAML OIDC handoff token", status=400)
@@ -967,7 +1201,9 @@ class SamlService:
         key = derive_ee_hkdf_bytes(
             domain_info=_HANDOFF_KDF_INFO + b"\x00" + tenant_slug.encode("utf-8")
         )
-        expected_sig = hmac.new(key, f"ksh1.{payload_b64}".encode("ascii"), hashlib.sha256).hexdigest()
+        expected_sig = hmac.new(
+            key, f"ksh1.{payload_b64}".encode("ascii"), hashlib.sha256
+        ).hexdigest()
         if not supplied_sig.isascii() or not hmac.compare_digest(
             supplied_sig.encode("ascii"), expected_sig.encode("ascii")
         ):
@@ -994,7 +1230,6 @@ class SamlService:
         sub = claims.get("sub")
         claim_slug = claims.get("tenant_slug")
         ret_path = claims.get("return_path")
-        expected_pkce = claims.get("pkce", "")
         exp = claims.get("exp")
         if (
             not isinstance(jti, str)
@@ -1003,32 +1238,281 @@ class SamlService:
             or not sub
             or claim_slug != tenant_slug
             or not isinstance(ret_path, str)
-            or not isinstance(expected_pkce, str)
             or type(exp) is not int
-            or now_epoch >= exp
+            or (require_unexpired and now_epoch >= exp)
         ):
             raise SamlError(
                 "invalid_handoff_token",
                 "Invalid, tampered, or expired SAML OIDC handoff token",
                 status=403,
             )
+        return claims
 
-        # Verify PKCE BEFORE burning the DB row so wrong verifiers cannot DoS a legitimate login.
-        if expected_pkce:
-            if (
-                not isinstance(code_verifier, str)
-                or not _PKCE_VERIFIER_S256_RE.fullmatch(code_verifier.strip())
-                or not hmac.compare_digest(
-                    _compute_pkce_s256(code_verifier.strip()).encode("ascii"),
-                    expected_pkce.encode("ascii"),
-                )
-            ):
-                raise SamlError(
-                    "invalid_pkce_verifier",
-                    "PKCE code_verifier verification failed",
-                    status=403,
-                )
-        elif code_verifier is not None and code_verifier.strip():
+    def _burn_handoff_state_best_effort(self, *, tenant_slug: str, handoff_key: str) -> None:
+        if can_use_postgres():
+            try:
+                with transaction.atomic(), connection.cursor() as cur:
+                    cur.execute(
+                        "DELETE FROM public.ee_saml_pending_request "
+                        "WHERE relay_state = %s AND tenant_slug = %s",
+                        [handoff_key, tenant_slug],
+                    )
+            except DatabaseError:
+                pass
+        with self._lock:
+            self._pending_by_relay.pop(handoff_key, None)
+
+    def _resolve_oidc_verification_key(
+        self,
+        *,
+        issuer: str,
+        kid: str,
+        now_epoch: int,
+    ) -> tuple[str, Any] | None:
+        clean_issuer = issuer.rstrip("/")
+        with self._lock:
+            reg = self._oidc_public_keys.get((clean_issuer, kid))
+        if reg is not None:
+            return reg
+        try:
+            from django.conf import settings
+
+            if settings.configured:
+                trusted = getattr(settings, "KODERA_AUTH_TRUST", ())
+                for entry in trusted:
+                    snap = getattr(entry, "snapshot", None)
+                    if (
+                        getattr(entry, "lane", None) == "customer"
+                        and snap is not None
+                        and getattr(snap, "issuer", "").rstrip("/") == clean_issuer
+                        and int(getattr(snap, "expires_at", 0)) > now_epoch
+                    ):
+                        for key_entry in getattr(snap, "_keys", ()):
+                            if getattr(key_entry, "kid", None) == kid:
+                                return (str(key_entry.algorithm), key_entry.public)
+        except ImportError:
+            pass
+        return None
+
+    def _exchange_and_verify_oidc_code(
+        self,
+        *,
+        issuer: str,
+        authorization_code: str,
+        redirect_uri: str,
+        client_id: str,
+        server_code_verifier: str,
+        expected_nonce: str,
+        expected_email: str,
+        now_epoch: int,
+    ) -> tuple[str, str]:
+        """Execute RFC 7636 §4.5 `/token` exchange and verify the signed OIDC `id_token`."""
+        token_endpoint = _resolve_token_endpoint_url(issuer)
+        form_fields: dict[str, str] = {
+            "grant_type": "authorization_code",
+            "code": authorization_code,
+            "redirect_uri": redirect_uri,
+            "client_id": client_id,
+            "code_verifier": server_code_verifier,
+        }
+        client_secret = os.environ.get("KODERA_SAML_OIDC_CLIENT_SECRET", "").strip()
+        if not client_secret:
+            try:
+                from django.conf import settings
+
+                if settings.configured:
+                    cfg_sec = getattr(settings, "KODERA_SAML_OIDC_CLIENT_SECRET", None)
+                    if isinstance(cfg_sec, str) and cfg_sec.strip():
+                        client_secret = cfg_sec.strip()
+            except ImportError:
+                pass
+        if client_secret:
+            form_fields["client_secret"] = client_secret
+
+        with self._lock:
+            exchanger = self._oidc_token_exchanger
+        effective_exchanger = exchanger or _default_http_oidc_token_exchanger
+
+        token_resp = effective_exchanger(token_endpoint, form_fields)
+        if not isinstance(token_resp, Mapping) or "error" in token_resp:
+            raise SamlError(
+                "oidc_code_exchange_failed",
+                "OIDC provider rejected authorization-code exchange",
+                status=403,
+            )
+        raw_id_token = token_resp.get("id_token")
+        if not isinstance(raw_id_token, str) or not (32 <= len(raw_id_token) <= 16_384):
+            raise SamlError(
+                "oidc_code_exchange_failed",
+                "OIDC token response missing id_token",
+                status=403,
+            )
+
+        try:
+            header = jwt.get_unverified_header(raw_id_token)
+        except jwt.PyJWTError as exc:
+            raise SamlError(
+                "oidc_code_exchange_failed",
+                "Malformed OIDC id_token header",
+                status=403,
+            ) from exc
+
+        alg = header.get("alg")
+        kid = header.get("kid")
+        if alg not in {"RS256", "ES256"} or not isinstance(kid, str) or not kid:
+            raise SamlError(
+                "oidc_code_exchange_failed",
+                "Unsupported OIDC id_token algorithm or missing kid",
+                status=403,
+            )
+
+        resolved_key = self._resolve_oidc_verification_key(
+            issuer=issuer,
+            kid=kid,
+            now_epoch=now_epoch,
+        )
+        if resolved_key is None or resolved_key[0] != alg:
+            raise SamlError(
+                "oidc_code_exchange_failed",
+                "Untrusted OIDC issuer or unknown signing key",
+                status=403,
+            )
+
+        try:
+            id_claims = jwt.decode(
+                raw_id_token,
+                key=resolved_key[1],
+                algorithms=[alg],
+                audience=client_id,
+                issuer=issuer.rstrip("/"),
+                options={
+                    "require": ["iss", "sub", "aud", "exp", "iat", "nonce"],
+                    "verify_signature": True,
+                    "verify_exp": False,
+                    "verify_iat": False,
+                },
+            )
+        except jwt.PyJWTError as exc:
+            raise SamlError(
+                "oidc_identity_mismatch",
+                "OIDC id_token signature, issuer, or audience verification failed",
+                status=403,
+            ) from exc
+
+        iat_val = id_claims.get("iat")
+        exp_val = id_claims.get("exp")
+        if (
+            type(iat_val) is not int
+            or type(exp_val) is not int
+            or iat_val > now_epoch + 60
+            or now_epoch >= exp_val
+        ):
+            raise SamlError(
+                "oidc_identity_mismatch",
+                "OIDC id_token validity window rejected",
+                status=403,
+            )
+
+        nonce_val = id_claims.get("nonce")
+        if not isinstance(nonce_val, str) or not hmac.compare_digest(
+            nonce_val.encode("utf-8"),
+            expected_nonce.encode("utf-8"),
+        ):
+            raise SamlError(
+                "oidc_identity_mismatch",
+                "OIDC id_token nonce mismatch",
+                status=403,
+            )
+
+        tok_sub = id_claims.get("sub")
+        tok_email = id_claims.get("email")
+        if (
+            not isinstance(tok_sub, str)
+            or not (1 <= len(tok_sub) <= 255)
+            or any(ord(ch) < 0x21 or ord(ch) > 0x7E for ch in tok_sub)
+            or id_claims.get("email_verified") is False
+            or not isinstance(tok_email, str)
+            or tok_email.strip().lower() != expected_email.strip().lower()
+        ):
+            raise SamlError(
+                "oidc_identity_mismatch",
+                "OIDC id_token subject or email does not match SAML assertion",
+                status=403,
+            )
+        return tok_sub, tok_email.strip().lower()
+
+    def consume_oidc_handoff(
+        self,
+        *,
+        tenant_slug: str,
+        handoff_token: str,
+        sp_base_url: str,
+        authorization_code: str | None = None,
+        provider_error: str | None = None,
+        provider_error_description: str | None = None,
+        code_verifier: str | None = None,
+        now: datetime | None = None,
+    ) -> SamlHandoffSession:
+        """Complete SAML->OIDC callback via RFC 7636 PKCE `/token` exchange and single-use burn."""
+        require_enterprise_edition()
+        if not _is_valid_slug(tenant_slug):
+            raise SamlError("invalid_tenant_slug", "Invalid tenant slug", status=400)
+        norm_base = _normalize_sp_base_url(sp_base_url)
+        current_time = (now or datetime.now(UTC)).astimezone(UTC)
+        now_epoch = int(current_time.timestamp())
+
+        # 1. Reject any OAuth/OIDC provider error callback (`error=access_denied`, etc.) with 403
+        #    and immediately burn the pending `state` when authentic so it can never be replayed!
+        if provider_error is not None or provider_error_description is not None:
+            if handoff_token.strip():
+                try:
+                    err_claims = self._verify_handoff_state_signature(
+                        tenant_slug=tenant_slug,
+                        handoff_token=handoff_token,
+                        now_epoch=now_epoch,
+                        require_unexpired=False,
+                    )
+                    self._burn_handoff_state_best_effort(
+                        tenant_slug=tenant_slug,
+                        handoff_key=f"handoff:{err_claims['jti']}",
+                    )
+                except SamlError:
+                    pass
+            raise SamlError(
+                "oidc_provider_error",
+                "OIDC provider returned an authorization error",
+                status=403,
+            )
+
+        # 2. Verify `state` (`handoff_token`) HMAC signature and expiry BEFORE inspecting DB.
+        claims = self._verify_handoff_state_signature(
+            tenant_slug=tenant_slug,
+            handoff_token=handoff_token,
+            now_epoch=now_epoch,
+            require_unexpired=True,
+        )
+        jti = str(claims["jti"])
+        sub = str(claims["sub"])
+        ret_path = str(claims["return_path"])
+
+        # 3. Require a non-empty, well-formed OAuth 2.0 authorization `code` BEFORE burning state.
+        if authorization_code is None or not authorization_code.strip():
+            raise SamlError(
+                "missing_authorization_code",
+                "Missing OIDC authorization code",
+                status=400,
+            )
+        clean_code = authorization_code.strip()
+        if len(clean_code) > 1024 or any(
+            ch.isspace() or ord(ch) < 0x21 or ord(ch) > 0x7E for ch in clean_code
+        ):
+            raise SamlError(
+                "invalid_authorization_code",
+                "Malformed OIDC authorization code",
+                status=400,
+            )
+
+        if code_verifier is not None and code_verifier.strip():
             if not _PKCE_VERIFIER_S256_RE.fullmatch(code_verifier.strip()):
                 raise SamlError(
                     "invalid_pkce_verifier",
@@ -1047,6 +1531,8 @@ class SamlService:
             except ValueError as exc:
                 raise SamlError("invalid_handoff_token", "Invalid subject UUID", status=403) from exc
 
+            # Phase A: Atomically validate optional client PKCE & burn single-use `handoff:<jti>`
+            # BEFORE making the outbound OIDC `/token` HTTP call (zero DB locks held over network I/O!).
             try:
                 with transaction.atomic(), connection.cursor() as cur:
                     org_id, resolved_slug = acquire_active_tenant_fence(
@@ -1055,7 +1541,7 @@ class SamlService:
                     )
                     cur.execute(
                         """
-                        SELECT sp_base_url
+                        SELECT sp_base_url, return_path
                         FROM public.ee_saml_pending_request
                         WHERE relay_state = %s
                           AND organisation_id = %s
@@ -1078,6 +1564,24 @@ class SamlService:
                             "Service Provider origin does not match initiating handoff",
                             status=403,
                         )
+                    stored_meta = json.loads(str(pending_row[1]))
+                    stored_client_pkce = str(stored_meta.get("client_pkce", ""))
+                    if (
+                        code_verifier is not None
+                        and code_verifier.strip()
+                        and (
+                            not stored_client_pkce
+                            or not hmac.compare_digest(
+                                _compute_pkce_s256(code_verifier.strip()).encode("ascii"),
+                                stored_client_pkce.encode("ascii"),
+                            )
+                        )
+                    ):
+                        raise SamlError(
+                            "invalid_pkce_verifier",
+                            "PKCE code_verifier verification failed",
+                            status=403,
+                        )
                     cur.execute(
                         """
                         DELETE FROM public.ee_saml_pending_request
@@ -1085,7 +1589,41 @@ class SamlService:
                         """,
                         [handoff_key, org_id],
                     )
+            except TenantCutoffError as exc:
+                raise SamlError(
+                    exc.code,
+                    "Organisation is unavailable for SAML session completion",
+                    status=exc.status,
+                ) from exc
+            except DatabaseError as exc:
+                if is_retriable_lock_contention(exc):
+                    raise SamlError(
+                        "authority_fenced",
+                        "Organisation authority changed concurrently; retry request",
+                        status=409,
+                    ) from exc
+                raise
 
+            # Phase B: Exchange `code` + retained `server_code_verifier` at OIDC `/token` (RFC 7636 §4.5)
+            # and cryptographically verify `id_token` claims (`iss`, `aud`, `exp`, `nonce`, `email`, `sub`).
+            verified_oidc_sub, _verified_email = self._exchange_and_verify_oidc_code(
+                issuer=str(stored_meta["issuer"]),
+                authorization_code=clean_code,
+                redirect_uri=str(stored_meta["redirect_uri"]),
+                client_id=str(stored_meta["client_id"]),
+                server_code_verifier=str(stored_meta["code_verifier"]),
+                expected_nonce=str(stored_meta["oidc_nonce"]),
+                expected_email=str(stored_meta["email"]),
+                now_epoch=now_epoch,
+            )
+
+            # Phase C: Re-verify live active `(User, Identity, Membership)` + `sub` match in Postgres!
+            try:
+                with transaction.atomic(), connection.cursor() as cur:
+                    org_id, resolved_slug = acquire_active_tenant_fence(
+                        cur,
+                        tenant_slug=tenant_slug,
+                    )
                     cur.execute(
                         "SELECT pg_try_advisory_xact_lock_shared("
                         "hashtextextended('privacy_account_cutoff:' || %s, 0))",
@@ -1153,6 +1691,12 @@ class SamlService:
                             status=403,
                         )
                     ident_subject = str(i_row[0])
+                    if verified_oidc_sub not in {ident_subject, str(user_uuid)}:
+                        raise SamlError(
+                            "oidc_identity_mismatch",
+                            "OIDC id_token subject does not match provisioned SAML identity",
+                            status=403,
+                        )
 
                     cur.execute(
                         """
@@ -1231,16 +1775,61 @@ class SamlService:
                     "Service Provider origin does not match initiating handoff",
                     status=403,
                 )
-            del self._pending_by_relay[handoff_key]
             mem_meta = json.loads(mem_pending.return_path)
+            mem_client_pkce = str(mem_meta.get("client_pkce", ""))
+            if (
+                code_verifier is not None
+                and code_verifier.strip()
+                and (
+                    not mem_client_pkce
+                    or not hmac.compare_digest(
+                        _compute_pkce_s256(code_verifier.strip()).encode("ascii"),
+                        mem_client_pkce.encode("ascii"),
+                    )
+                )
+            ):
+                raise SamlError(
+                    "invalid_pkce_verifier",
+                    "PKCE code_verifier verification failed",
+                    status=403,
+                )
+            del self._pending_by_relay[handoff_key]
             mem_role = str(mem_meta.get("role", "org_member"))
 
+        verified_mem_sub, _ = self._exchange_and_verify_oidc_code(
+            issuer=str(mem_meta["issuer"]),
+            authorization_code=clean_code,
+            redirect_uri=str(mem_meta["redirect_uri"]),
+            client_id=str(mem_meta["client_id"]),
+            server_code_verifier=str(mem_meta["code_verifier"]),
+            expected_nonce=str(mem_meta["oidc_nonce"]),
+            expected_email=str(mem_meta["email"]),
+            now_epoch=now_epoch,
+        )
         mem_org_uuid = uuid5(_SAML_SUBJECT_NAMESPACE, f"mem-org:{tenant_slug}")
+        mem_idp_id = str(mem_meta.get("idp_id", ""))
+        mem_name_id = str(mem_meta.get("subject_name_id", ""))
+        allowed_mem_subs = {
+            sub,
+            _canonical_saml_subject_uuid(mem_org_uuid, mem_idp_id, mem_name_id),
+        }
+        with self._lock:
+            mem_idp = self._idps.get((tenant_slug, mem_idp_id))
+        if mem_idp is not None and mem_idp.organisation_id is not None:
+            allowed_mem_subs.add(
+                _canonical_saml_subject_uuid(mem_idp.organisation_id, mem_idp_id, mem_name_id)
+            )
+        if verified_mem_sub not in allowed_mem_subs:
+            raise SamlError(
+                "oidc_identity_mismatch",
+                "OIDC id_token subject does not match SAML principal",
+                status=403,
+            )
         mem_user_uuid = (
             UUID(sub) if len(sub) == 36 else uuid5(_SAML_SUBJECT_NAMESPACE, f"mem-user:{sub}")
         )
         access_token = issue_ee_saml_session_token(
-            issuer=f"{norm_base}/realms/{tenant_slug}",
+            issuer=str(mem_meta["issuer"]),
             subject=str(mem_user_uuid),
             user_id=mem_user_uuid,
             organisation_id=mem_org_uuid,

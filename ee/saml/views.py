@@ -102,6 +102,8 @@ _SAML_PUBLIC_ERRORS: Final[tuple[tuple[str, int, str], ...]] = (
         "Invalid or unsupported PKCE code_challenge (S256 required)",
     ),
     ("missing_handoff_token", 400, "Missing SAML OIDC handoff token"),
+    ("missing_authorization_code", 400, "Missing OIDC authorization code"),
+    ("invalid_authorization_code", 400, "Malformed OIDC authorization code"),
     ("invalid_saml_response", 400, "Missing or oversized SAMLResponse payload"),
     ("invalid_base64_response", 400, "SAMLResponse is not valid base64"),
     ("unsupported_saml_version", 400, "SAML Version must be 2.0"),
@@ -169,6 +171,9 @@ _SAML_PUBLIC_ERRORS: Final[tuple[tuple[str, int, str], ...]] = (
     ("invalid_handoff_token", 403, "Invalid, tampered, or expired SAML OIDC handoff token"),
     ("replayed_handoff_token", 403, "SAML OIDC handoff token has already been consumed"),
     ("invalid_pkce_verifier", 403, "PKCE code_verifier verification failed"),
+    ("oidc_provider_error", 403, "OIDC provider returned an authorization error"),
+    ("oidc_code_exchange_failed", 403, "OIDC authorization-code and PKCE exchange failed"),
+    ("oidc_identity_mismatch", 403, "OIDC ID token identity does not match SAML assertion"),
 )
 
 
@@ -644,7 +649,7 @@ def acs_view(request: HttpRequest, tenant_slug: str) -> HttpResponse:
 
 
 def oidc_handoff_view(request: HttpRequest, tenant_slug: str) -> HttpResponse:
-    """Exchange single-use SAML->OIDC `handoff_token` (`state`) + PKCE `code_verifier` for a session."""
+    """Complete SAML->OIDC callback via RFC 7636 PKCE `/token` exchange and single-use `state` burn."""
     if request.method not in {"GET", "POST"}:
         resp = _json({"detail": "Method not allowed", "code": "method_not_allowed"}, status=405)
         resp["Allow"] = "GET, POST"
@@ -653,6 +658,17 @@ def oidc_handoff_view(request: HttpRequest, tenant_slug: str) -> HttpResponse:
     handoff_token = (
         request.GET.get("handoff_token") or request.GET.get("state") or ""
     ).strip()
+    authorization_code: str | None = (
+        request.GET.get("code") if "code" in request.GET else None
+    )
+    provider_error: str | None = (
+        request.GET.get("error", "") if "error" in request.GET else None
+    )
+    provider_error_description: str | None = (
+        request.GET.get("error_description", "")
+        if "error_description" in request.GET
+        else None
+    )
     code_verifier: str | None = request.GET.get("code_verifier")
 
     if request.method == "POST":
@@ -666,9 +682,19 @@ def oidc_handoff_view(request: HttpRequest, tenant_slug: str) -> HttpResponse:
                 return _json({"detail": "Invalid JSON body", "code": "invalid_json"}, status=400)
             if not isinstance(data, dict):
                 return _json({"detail": "JSON object expected", "code": "invalid_json"}, status=400)
-            raw_tok = data.get("handoff_token") or data.get("state")
-            if isinstance(raw_tok, str):
+            raw_tok = data.get("handoff_token") if "handoff_token" in data else data.get("state")
+            if raw_tok is not None:
+                if not isinstance(raw_tok, str):
+                    return _saml_error_response("invalid_handoff_token")
                 handoff_token = raw_tok.strip()
+            if "code" in data and data["code"] is not None:
+                if not isinstance(data["code"], str):
+                    return _saml_error_response("invalid_authorization_code")
+                authorization_code = data["code"]
+            if "error" in data and data["error"] is not None:
+                provider_error = str(data["error"])
+            if "error_description" in data and data["error_description"] is not None:
+                provider_error_description = str(data["error_description"])
             raw_ver = data.get("code_verifier")
             if raw_ver is not None:
                 if not isinstance(raw_ver, str):
@@ -683,15 +709,29 @@ def oidc_handoff_view(request: HttpRequest, tenant_slug: str) -> HttpResponse:
                 )
             except (UnicodeDecodeError, ValueError):
                 return _json({"detail": "Invalid form payload", "code": "invalid_form"}, status=400)
-            handoff_token = (
-                (parsed_form.get("handoff_token") or parsed_form.get("state") or [""])[0]
-            ).strip()
+            form_tok = (
+                parsed_form.get("handoff_token") or parsed_form.get("state") or [""]
+            )[0].strip()
+            if form_tok:
+                handoff_token = form_tok
+            if "code" in parsed_form:
+                authorization_code = (parsed_form.get("code") or [""])[0]
+            if "error" in parsed_form:
+                provider_error = (parsed_form.get("error") or [""])[0]
+            if "error_description" in parsed_form:
+                provider_error_description = (parsed_form.get("error_description") or [""])[0]
             if "code_verifier" in parsed_form:
                 code_verifier = (parsed_form.get("code_verifier") or [""])[0]
         else:
             handoff_token = (
                 request.POST.get("handoff_token") or request.POST.get("state") or handoff_token
             ).strip()
+            if "code" in request.POST:
+                authorization_code = request.POST.get("code")
+            if "error" in request.POST:
+                provider_error = request.POST.get("error", "")
+            if "error_description" in request.POST:
+                provider_error_description = request.POST.get("error_description", "")
             if "code_verifier" in request.POST:
                 code_verifier = request.POST.get("code_verifier")
 
@@ -700,6 +740,9 @@ def oidc_handoff_view(request: HttpRequest, tenant_slug: str) -> HttpResponse:
             tenant_slug=tenant_slug,
             handoff_token=handoff_token,
             sp_base_url=_sp_base_url(request),
+            authorization_code=authorization_code,
+            provider_error=provider_error,
+            provider_error_description=provider_error_description,
             code_verifier=code_verifier,
         )
     except SamlError as exc:

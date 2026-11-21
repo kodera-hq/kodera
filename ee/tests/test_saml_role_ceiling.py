@@ -31,13 +31,16 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import http.server
 import json
 import os
+import secrets
 import socket
 import struct
 import subprocess
 import sys
 import threading
+import time
 import urllib.parse
 from collections.abc import Callable
 from dataclasses import replace
@@ -45,6 +48,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
+import jwt
 import psycopg
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -64,6 +68,7 @@ from ee.audit_export.ledger import (
     MAX_EVENT_METADATA_BYTES,
     _ledger_hash_fields,
     default_audit_ledger,
+    verify_ledger_sequence,
 )
 from ee.saml.service import _canonical_saml_subject_uuid, default_saml_service
 from ee.scim.schemas import (
@@ -261,8 +266,10 @@ def test_bug_0060_saml_atomic_acs_rollback_and_oidc_handoff(
     monkeypatch: pytest.MonkeyPatch,
     tenant_principal_factory: Callable[..., ProvisionedTestPrincipal],
     rsa_idp_keypair: tuple[rsa.RSAPrivateKey, str, str],
+    oidc_signing_keys: tuple[rsa.RSAPrivateKey, rsa.RSAPrivateKey, dict[str, Any]],
 ) -> None:
     priv_key, _pub_pem, cert_pem = rsa_idp_keypair
+    trusted_oidc_priv, _stranger_oidc_priv, _pub_jwk = oidc_signing_keys
     wrong_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     monkeypatch.setenv("KODERA_EDITION", "enterprise")
 
@@ -366,14 +373,16 @@ def test_bug_0060_saml_atomic_acs_rollback_and_oidc_handoff(
         "http://127.0.0.1/api/v1/ee/sso/saml/atomic-corp/oidc-handoff"
     ]
     assert parsed_q["response_type"] == ["code"]
-    assert parsed_q["scope"] == ["openid"]
+    assert parsed_q["scope"] == ["openid email"]
     assert parsed_q["code_challenge_method"] == ["S256"]
     assert len(parsed_q["code_challenge"][0]) == 43
+    assert len(parsed_q["nonce"][0]) >= 16
     assert parsed_q["kc_idp_hint"] == ["okta-atomic"]
     assert parsed_q["login_hint"] == ["claire@atomic.fr"]
     assert parsed_q["state"][0].startswith("ksh1.")
 
-    # 3. End-to-end SAML -> OIDC PKCE handoff burn -> authenticated session (`kes1.*` + `kp1.*`)!
+    # 3. End-to-end SAML -> real loopback HTTP OIDC `/protocol/openid-connect/token` RFC 7636 PKCE
+    #    exchange -> `GET` & `POST /oidc-handoff` -> authenticated session (`kes1.*` + `kp1.*`)!
     from core.passport import compute_pkce_s256
 
     other_owner = tenant_principal_factory(
@@ -381,110 +390,335 @@ def test_bug_0060_saml_atomic_acs_rollback_and_oidc_handoff(
     )
     assert other_owner.organisation_id != owner.organisation_id
 
-    # Unsupported `code_challenge_method=plain` is rejected (`400 invalid_pkce_challenge`)
-    assert (
-        client.get(
-            "/api/v1/ee/sso/saml/atomic-corp/login",
-            {
-                "idp_id": "okta-atomic",
-                "code_challenge": "a" * 43,
-                "code_challenge_method": "plain",
-            },
-        ).status_code
-        == 400
+    expected_claire_sub = _canonical_saml_subject_uuid(
+        owner.organisation_id, "okta-atomic", "claire@atomic.fr"
     )
+    issued_auth_codes: dict[str, dict[str, str]] = {}
+    token_calls_seen: list[dict[str, str]] = []
 
-    pkce_verifier = "pkce-s4-verifier-0123456789abcdef0123456789abcdef"
-    pkce_challenge = compute_pkce_s256(pkce_verifier)
-    login_pkce = client.get(
-        "/api/v1/ee/sso/saml/atomic-corp/login",
-        {
+    class _LoopbackOidcTokenHandler(http.server.BaseHTTPRequestHandler):
+        def log_message(self, format: str, *args: object) -> None:  # noqa: A002
+            return
+
+        def do_POST(self) -> None:  # noqa: N802
+            if self.path != "/realms/atomic-corp/protocol/openid-connect/token":
+                self.send_response(404)
+                self.end_headers()
+                return
+            length = int(self.headers.get("Content-Length", "0"))
+            raw_form = self.rfile.read(length).decode("utf-8")
+            parsed_form = urllib.parse.parse_qs(raw_form, keep_blank_values=True)
+            flat = {k: (v[0] if v else "") for k, v in parsed_form.items()}
+            token_calls_seen.append(flat)
+
+            code_val = flat.get("code", "")
+            rec = issued_auth_codes.pop(code_val, None)
+            verifier_val = flat.get("code_verifier", "")
+            if (
+                rec is None
+                or flat.get("grant_type") != "authorization_code"
+                or flat.get("client_id") != rec["client_id"]
+                or flat.get("redirect_uri") != rec["redirect_uri"]
+                or not verifier_val
+                or compute_pkce_s256(verifier_val) != rec["code_challenge"]
+            ):
+                err_bytes = json.dumps({"error": "invalid_grant"}).encode("utf-8")
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(err_bytes)))
+                self.end_headers()
+                self.wfile.write(err_bytes)
+                return
+
+            now_ts = int(time.time())
+            id_token = jwt.encode(
+                {
+                    "iss": "https://sso.kodera.test/realms/atomic-corp",
+                    "sub": rec["sub"],
+                    "aud": rec["client_id"],
+                    "email": rec["email"],
+                    "email_verified": True,
+                    "nonce": rec["nonce"],
+                    "iat": now_ts,
+                    "exp": now_ts + 300,
+                },
+                trusted_oidc_priv,
+                algorithm="RS256",
+                headers={"kid": "ee-test-oidc-k1"},
+            )
+            ok_bytes = json.dumps(
+                {
+                    "token_type": "Bearer",
+                    "access_token": "kc-opaque-access",
+                    "id_token": id_token,
+                    "expires_in": 300,
+                }
+            ).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(ok_bytes)))
+            self.end_headers()
+            self.wfile.write(ok_bytes)
+
+    oidc_httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _LoopbackOidcTokenHandler)
+    oidc_port = oidc_httpd.server_address[1]
+    oidc_thread = threading.Thread(target=oidc_httpd.serve_forever, daemon=True)
+    oidc_thread.start()
+
+    def _mint_saml_redirect_handoff(
+        assertion_id: str,
+        *,
+        client_pkce_challenge: str | None = None,
+    ) -> dict[str, str]:
+        login_params: dict[str, str] = {
             "idp_id": "okta-atomic",
             "return_path": "/workspace/channels",
             "client_id": "console",
             "redirect_uri": "http://127.0.0.1/api/v1/ee/sso/saml/atomic-corp/oidc-handoff",
-            "code_challenge": pkce_challenge,
-            "code_challenge_method": "S256",
-        },
-    ).json()
+        }
+        if client_pkce_challenge is not None:
+            login_params["code_challenge"] = client_pkce_challenge
+            login_params["code_challenge_method"] = "S256"
+        lg = client.get("/api/v1/ee/sso/saml/atomic-corp/login", login_params).json()
+        xml_doc = _build_saml_response_xml(
+            assertion_id=assertion_id,
+            in_response_to=str(lg["request_id"]),
+            destination="http://127.0.0.1/api/v1/ee/sso/saml/atomic-corp/acs",
+            recipient="http://127.0.0.1/api/v1/ee/sso/saml/atomic-corp/acs",
+            audience="http://127.0.0.1/api/v1/ee/sso/saml/atomic-corp/metadata",
+            idp_entity_id="https://idp.atomic.test/saml2",
+            name_id="claire@atomic.fr",
+            email_attr="claire@atomic.fr",
+            sign_key=priv_key,
+        )
+        r_redir = client.post(
+            "/api/v1/ee/sso/saml/atomic-corp/acs",
+            data={
+                "SAMLResponse": base64.b64encode(xml_doc.encode("utf-8")).decode("ascii"),
+                "RelayState": str(lg["relay_state"]),
+            },
+            HTTP_ACCEPT="text/html,application/xhtml+xml",
+        )
+        assert r_redir.status_code == 303, r_redir.content
+        q_map = urllib.parse.parse_qs(urllib.parse.urlsplit(r_redir["Location"]).query)
+        return {k: v[0] for k, v in q_map.items()}
 
-    xml_pkce = _build_saml_response_xml(
-        assertion_id="_assn_atomic_pkce_02",
-        in_response_to=str(login_pkce["request_id"]),
-        destination="http://127.0.0.1/api/v1/ee/sso/saml/atomic-corp/acs",
-        recipient="http://127.0.0.1/api/v1/ee/sso/saml/atomic-corp/acs",
-        audience="http://127.0.0.1/api/v1/ee/sso/saml/atomic-corp/metadata",
-        idp_entity_id="https://idp.atomic.test/saml2",
-        name_id="claire@atomic.fr",
-        email_attr="claire@atomic.fr",
-        sign_key=priv_key,
-    )
-    r_acs_pkce = client.post(
-        "/api/v1/ee/sso/saml/atomic-corp/acs",
-        data={
-            "SAMLResponse": base64.b64encode(xml_pkce.encode("utf-8")).decode("ascii"),
-            "RelayState": str(login_pkce["relay_state"]),
-        },
-    )
-    assert r_acs_pkce.status_code == 200, r_acs_pkce.content
-    handoff_tok = str(r_acs_pkce.json()["handoff_token"])
-    assert handoff_tok.startswith("ksh1.")
+    def _issue_oidc_code(
+        auth_query: dict[str, str],
+        *,
+        nonce_override: str | None = None,
+        sub_override: str | None = None,
+    ) -> str:
+        auth_code = f"kc-code-{secrets.token_urlsafe(18)}"
+        issued_auth_codes[auth_code] = {
+            "code_challenge": auth_query["code_challenge"],
+            "nonce": nonce_override if nonce_override is not None else auth_query["nonce"],
+            "sub": sub_override if sub_override is not None else expected_claire_sub,
+            "email": "claire@atomic.fr",
+            "redirect_uri": auth_query["redirect_uri"],
+            "client_id": auth_query["client_id"],
+        }
+        return auth_code
 
-    # Tampered signature, cross-tenant slug, and wrong PKCE verifier all return `403` WITHOUT burning!
-    tampered_tok = handoff_tok[:-4] + ("0000" if handoff_tok[-4:] != "0000" else "ffff")
-    assert (
-        client.post(
-            "/api/v1/ee/sso/saml/atomic-corp/oidc-handoff",
-            data=json.dumps({"handoff_token": tampered_tok, "code_verifier": pkce_verifier}),
-            content_type="application/json",
-        ).status_code
-        == 403
-    )
-    assert (
-        client.post(
-            "/api/v1/ee/sso/saml/atomic-other/oidc-handoff",
-            data=json.dumps({"handoff_token": handoff_tok, "code_verifier": pkce_verifier}),
-            content_type="application/json",
-        ).status_code
-        == 403
-    )
-    assert (
-        client.post(
-            "/api/v1/ee/sso/saml/atomic-corp/oidc-handoff",
-            data=json.dumps(
+    try:
+        with override_settings(
+            KODERA_SAML_OIDC_TOKEN_ENDPOINT_MAP={
+                "https://sso.kodera.test/realms/atomic-corp": (
+                    f"http://127.0.0.1:{oidc_port}/realms/atomic-corp/protocol/openid-connect/token"
+                )
+            }
+        ):
+            # 3a. Complete the browser `r_browser` (`303`) OIDC callback (`GET` without client PKCE)!
+            browser_auth_q = {k: v[0] for k, v in parsed_q.items()}
+            # Missing `code` returns `400 missing_authorization_code` without burning `state`
+            r_missing_code = client.get(
+                "/api/v1/ee/sso/saml/atomic-corp/oidc-handoff",
+                {"state": browser_auth_q["state"]},
+            )
+            assert r_missing_code.status_code == 400
+            assert r_missing_code.json()["code"] == "missing_authorization_code"
+
+            code_browser_1 = _issue_oidc_code(browser_auth_q)
+            r_get_ok_1 = client.get(
+                "/api/v1/ee/sso/saml/atomic-corp/oidc-handoff",
+                {"code": code_browser_1, "state": browser_auth_q["state"]},
+            )
+            assert r_get_ok_1.status_code == 200, r_get_ok_1.content
+            assert r_get_ok_1.json()["authenticated"] is True
+            assert len(token_calls_seen) == 1
+            assert (
+                compute_pkce_s256(token_calls_seen[0]["code_verifier"])
+                == browser_auth_q["code_challenge"]
+            )
+
+            # 3b. Provider error (`error=access_denied` + valid `state`) -> `403 oidc_provider_error`
+            #     AND atomically burns `state` so replay with a code is refused (`403`)!
+            q_err = _mint_saml_redirect_handoff("_assn_atomic_err_02")
+            code_unused = _issue_oidc_code(q_err)
+            r_idp_err = client.get(
+                "/api/v1/ee/sso/saml/atomic-corp/oidc-handoff",
                 {
-                    "handoff_token": handoff_tok,
-                    "code_verifier": "wrong-verifier-0123456789abcdef0123456789abcdef",
-                }
-            ),
-            content_type="application/json",
-        ).status_code
-        == 403
-    )
+                    "error": "access_denied",
+                    "error_description": "User denied consent",
+                    "state": q_err["state"],
+                },
+            )
+            assert r_idp_err.status_code == 403
+            assert r_idp_err.json()["code"] == "oidc_provider_error"
+            r_err_replay = client.get(
+                "/api/v1/ee/sso/saml/atomic-corp/oidc-handoff",
+                {"code": code_unused, "state": q_err["state"]},
+            )
+            assert r_err_replay.status_code == 403
+            assert r_err_replay.json()["code"] == "replayed_handoff_token"
 
-    # Legitimate single-use exchange burns `handoff_token` and mints `kes1.*` + `kp1.*`!
-    r_handoff = client.post(
-        "/api/v1/ee/sso/saml/atomic-corp/oidc-handoff",
-        data=json.dumps({"handoff_token": handoff_tok, "code_verifier": pkce_verifier}),
-        content_type="application/json",
-    )
-    assert r_handoff.status_code == 200, r_handoff.content
-    sess = r_handoff.json()
-    assert sess["authenticated"] is True
-    assert sess["return_path"] == "/workspace/channels"
-    ee_access_token = str(sess["access_token"])
-    passport_token = str(sess["passport_token"])
-    assert ee_access_token.startswith("kes1.")
-    assert passport_token.startswith("kp1.")
+            # 3c. Upstream `/token` rejection (`invalid_grant`), mismatched `nonce`, and wrong `sub`
+            #     all fail closed with `403`!
+            q_bad_code = _mint_saml_redirect_handoff("_assn_atomic_badcode_03")
+            r_bad_code = client.get(
+                "/api/v1/ee/sso/saml/atomic-corp/oidc-handoff",
+                {"code": "forged-unknown-auth-code", "state": q_bad_code["state"]},
+            )
+            assert r_bad_code.status_code == 403
+            assert r_bad_code.json()["code"] == "oidc_code_exchange_failed"
 
-    # Replaying the consumed `handoff_token` is deterministically rejected (`403`)!
-    r_replay = client.post(
-        "/api/v1/ee/sso/saml/atomic-corp/oidc-handoff",
-        data=json.dumps({"handoff_token": handoff_tok, "code_verifier": pkce_verifier}),
-        content_type="application/json",
-    )
-    assert r_replay.status_code == 403
-    assert r_replay.json()["code"] == "replayed_handoff_token"
+            q_bad_nonce = _mint_saml_redirect_handoff("_assn_atomic_badnonce_04")
+            code_bad_nonce = _issue_oidc_code(q_bad_nonce, nonce_override="wrong-nonce-value")
+            r_bad_nonce = client.get(
+                "/api/v1/ee/sso/saml/atomic-corp/oidc-handoff",
+                {"code": code_bad_nonce, "state": q_bad_nonce["state"]},
+            )
+            assert r_bad_nonce.status_code == 403
+            assert r_bad_nonce.json()["code"] == "oidc_identity_mismatch"
+
+            q_bad_sub = _mint_saml_redirect_handoff("_assn_atomic_badsub_05")
+            code_bad_sub = _issue_oidc_code(q_bad_sub, sub_override=str(other_owner.user_id))
+            r_bad_sub = client.get(
+                "/api/v1/ee/sso/saml/atomic-corp/oidc-handoff",
+                {"code": code_bad_sub, "state": q_bad_sub["state"]},
+            )
+            assert r_bad_sub.status_code == 403
+            assert r_bad_sub.json()["code"] == "oidc_identity_mismatch"
+
+            # 3d. Unsupported `code_challenge_method=plain` is rejected (`400 invalid_pkce_challenge`)
+            assert (
+                client.get(
+                    "/api/v1/ee/sso/saml/atomic-corp/login",
+                    {
+                        "idp_id": "okta-atomic",
+                        "code_challenge": "a" * 43,
+                        "code_challenge_method": "plain",
+                    },
+                ).status_code
+                == 400
+            )
+
+            # 3e. Browser `GET /oidc-handoff?code=...&state=...` WITH client PKCE on `/login`
+            #     completes cleanly (`200`) using the server-retained PKCE verifier!
+            pkce_verifier = "pkce-s4-verifier-0123456789abcdef0123456789abcdef"
+            pkce_challenge = compute_pkce_s256(pkce_verifier)
+            q_client_pkce_get = _mint_saml_redirect_handoff(
+                "_assn_atomic_pkce_get_06",
+                client_pkce_challenge=pkce_challenge,
+            )
+            code_client_pkce_get = _issue_oidc_code(q_client_pkce_get)
+            r_client_pkce_get = client.get(
+                "/api/v1/ee/sso/saml/atomic-corp/oidc-handoff",
+                {"code": code_client_pkce_get, "state": q_client_pkce_get["state"]},
+            )
+            assert r_client_pkce_get.status_code == 200, r_client_pkce_get.content
+            assert r_client_pkce_get.json()["authenticated"] is True
+
+            # 3f. `POST /oidc-handoff` checks tampered `state`, cross-tenant slug, wrong client
+            #     `code_verifier`, single-use replay, and mints live `kes1.*` + `kp1.*` tokens!
+            q_post = _mint_saml_redirect_handoff(
+                "_assn_atomic_pkce_post_07",
+                client_pkce_challenge=pkce_challenge,
+            )
+            handoff_tok = q_post["state"]
+            code_post = _issue_oidc_code(q_post)
+
+            tampered_tok = handoff_tok[:-4] + ("0000" if handoff_tok[-4:] != "0000" else "ffff")
+            assert (
+                client.post(
+                    "/api/v1/ee/sso/saml/atomic-corp/oidc-handoff",
+                    data=json.dumps(
+                        {
+                            "handoff_token": tampered_tok,
+                            "code": code_post,
+                            "code_verifier": pkce_verifier,
+                        }
+                    ),
+                    content_type="application/json",
+                ).status_code
+                == 403
+            )
+            assert (
+                client.post(
+                    "/api/v1/ee/sso/saml/atomic-other/oidc-handoff",
+                    data=json.dumps(
+                        {
+                            "handoff_token": handoff_tok,
+                            "code": code_post,
+                            "code_verifier": pkce_verifier,
+                        }
+                    ),
+                    content_type="application/json",
+                ).status_code
+                == 403
+            )
+            r_wrong_ver = client.post(
+                "/api/v1/ee/sso/saml/atomic-corp/oidc-handoff",
+                data=json.dumps(
+                    {
+                        "handoff_token": handoff_tok,
+                        "code": code_post,
+                        "code_verifier": "wrong-verifier-0123456789abcdef0123456789abcdef",
+                    }
+                ),
+                content_type="application/json",
+            )
+            assert r_wrong_ver.status_code == 403
+            assert r_wrong_ver.json()["code"] == "invalid_pkce_verifier"
+
+            r_handoff = client.post(
+                "/api/v1/ee/sso/saml/atomic-corp/oidc-handoff",
+                data=json.dumps(
+                    {
+                        "handoff_token": handoff_tok,
+                        "code": code_post,
+                        "code_verifier": pkce_verifier,
+                    }
+                ),
+                content_type="application/json",
+            )
+            assert r_handoff.status_code == 200, r_handoff.content
+            sess = r_handoff.json()
+            assert sess["authenticated"] is True
+            assert sess["return_path"] == "/workspace/channels"
+            ee_access_token = str(sess["access_token"])
+            passport_token = str(sess["passport_token"])
+            assert ee_access_token.startswith("kes1.")
+            assert passport_token.startswith("kp1.")
+
+            # Replaying the consumed `handoff_token` is deterministically rejected (`403`)!
+            r_replay = client.post(
+                "/api/v1/ee/sso/saml/atomic-corp/oidc-handoff",
+                data=json.dumps(
+                    {
+                        "handoff_token": handoff_tok,
+                        "code": code_post,
+                        "code_verifier": pkce_verifier,
+                    }
+                ),
+                content_type="application/json",
+            )
+            assert r_replay.status_code == 403
+            assert r_replay.json()["code"] == "replayed_handoff_token"
+    finally:
+        oidc_httpd.shutdown()
+        oidc_httpd.server_close()
+        oidc_thread.join(timeout=2.0)
 
     # Returned `kes1.*` Bearer token authenticates EE customer APIs; `kp1.*` authenticates Core Passport!
     r_plans = client.get(
@@ -1481,7 +1715,8 @@ def test_bug_0054_0055_0056_audit_hmac_redaction_ingestion_erasure_and_paginatio
     assert synced_count >= 1
 
     # Seed a historical pre-upgrade row in `ee_audit_ledger` acted by `owner` with `{}` metadata
-    # whose ONLY PII is legacy `target_urn = 'urn:kodera:user:victim.erase@audit-s4.fr'`!
+    # whose ONLY PII is an EMBEDDED email substring inside `target_urn`
+    # (`urn:kodera:user:legacy-victim.erase@audit-s4.fr`)!
     hist_id = uuid4()
     with transaction.atomic(), connection.cursor() as cur:
         cur.execute(
@@ -1497,7 +1732,7 @@ def test_bug_0054_0055_0056_audit_hmac_redaction_ingestion_erasure_and_paginatio
         prev_seq, prev_hash = cur.fetchone()
         hist_seq = int(prev_seq) + 1
         hist_ts = "2026-01-15T10:00:00.000000Z"
-        hist_urn = f"urn:kodera:user:{second_owner.email}"
+        hist_urn = f"urn:kodera:user:legacy-{second_owner.email}"
         hist_entry_hash = compute_domain_sha256(
             LEDGER_HASH_DOMAIN,
             _ledger_hash_fields(
@@ -1572,8 +1807,10 @@ def test_bug_0054_0055_0056_audit_hmac_redaction_ingestion_erasure_and_paginatio
         purge_not_before=database_now(),
         actor_identity_id=staff_op.id,
     )
-    # Inventory installed by `0034_ee_audit_ledger_erasure` discovers actor, metadata, AND `target_urn` rows!
+    # Inventory installed by `0034_ee_audit_ledger_erasure` discovers actor, metadata, AND
+    # embedded `target_urn` (`ee_audit_target_scrub_ids`) obligations!
     assert str(hist_id) in erasure_req.inventory["ee_audit_scrub_ids"]
+    assert str(hist_id) in erasure_req.inventory["ee_audit_target_scrub_ids"]
     assert len(erasure_req.inventory["ee_audit_scrub_ids"]) >= 3
 
     adapters: dict[str, AccountErasureAdapter] = {
@@ -1589,17 +1826,22 @@ def test_bug_0054_0055_0056_audit_hmac_redaction_ingestion_erasure_and_paginatio
 
     with connection.cursor() as cur:
         cur.execute(
-            "SELECT id, metadata_json, actor_label, target_urn, pii_scrubbed_at IS NOT NULL "
+            "SELECT id, metadata_json, actor_label, target_urn, "
+            "pii_scrubbed_at IS NOT NULL, erasure_commitment "
             "FROM public.ee_audit_ledger WHERE organisation_id = %s",
             [owner.organisation_id],
         )
         ledger_rows = cur.fetchall()
 
     hist_scrubbed_urn: str | None = None
-    for row_id, meta_txt, actor_lbl, row_urn, is_scrubbed in ledger_rows:
+    for row_id, meta_txt, actor_lbl, row_urn, is_scrubbed, erasure_seal in ledger_rows:
         assert second_owner.email not in meta_txt
         assert second_owner.email not in actor_lbl
         assert second_owner.email not in row_urn
+        if is_scrubbed:
+            assert isinstance(erasure_seal, str) and erasure_seal.startswith(
+                f"account:{erasure_req.id}:"
+            )
         if row_id == hist_id:
             hist_scrubbed_urn = str(row_urn)
             assert is_scrubbed is True
@@ -1611,9 +1853,72 @@ def test_bug_0054_0055_0056_audit_hmac_redaction_ingestion_erasure_and_paginatio
     assert hist_scrubbed_urn.startswith("urn:kodera:user:erased:")
     assert len(hist_scrubbed_urn.split(":")[-1]) == 24
 
-    # Hash chain integrity remains 100% valid after GDPR Art. 17 `target_urn` + metadata scrubbing!
+    # Completion trigger refuses `status = 'complete'` if an embedded-email `target_urn`
+    # recorded in `ee_audit_target_scrub_ids` were left unscrubbed (`23514`)!
+    with pytest.raises(IntegrityError), transaction.atomic(), connection.cursor() as cur:
+        cur.execute("SET LOCAL session_replication_role = 'replica'")
+        cur.execute(
+            "UPDATE public.ee_audit_ledger SET target_urn = %s WHERE id = %s",
+            [hist_urn, hist_id],
+        )
+        cur.execute(
+            "UPDATE public.orgs_accounterasure SET status = 'purging' WHERE id = %s",
+            [erasure_req.id],
+        )
+        cur.execute("SET LOCAL session_replication_role = 'origin'")
+        cur.execute(
+            "UPDATE public.orgs_accounterasure SET status = 'complete' WHERE id = %s",
+            [erasure_req.id],
+        )
+
+    # Hash chain + statutory erasure seals verify 100% cleanly after GDPR Art. 17 scrubbing!
     ok_chain, chain_errs = default_audit_ledger.verify_vault_integrity("audit-s4")
     assert ok_chain is True and chain_errs == []
+
+    # Tamper-detection proof (`BUG-0055` Item #3):
+    # 1) Offline `verify_ledger_sequence`: mutating `action` + `actor_id` on a scrubbed row
+    #    (while retaining `entry_hash` and `erasure_commitment`) or stripping `erasure_commitment`
+    #    MUST fail `verify_ledger_sequence()`!
+    snap_events = default_audit_ledger.snapshot_events(
+        "audit-s4", organisation_id=owner.organisation_id
+    )
+    assert verify_ledger_sequence(snap_events) == (True, [])
+    mutated_events = [
+        replace(evt, action="tampered.action", actor_id="attacker")
+        if evt.event_id == str(hist_id)
+        else evt
+        for evt in snap_events
+    ]
+    ok_mut, mut_errs = verify_ledger_sequence(mutated_events)
+    assert ok_mut is False
+    assert any("erasure_commitment mismatch" in err for err in mut_errs)
+
+    unsealed_events = [
+        replace(evt, erasure_commitment=None) if evt.event_id == str(hist_id) else evt
+        for evt in snap_events
+    ]
+    ok_unsealed, unsealed_errs = verify_ledger_sequence(unsealed_events)
+    assert ok_unsealed is False
+    assert any("missing erasure_commitment" in err for err in unsealed_errs)
+
+    # 2) PostgreSQL `verify_vault_integrity`: superuser/replica SQL tampering of `action` +
+    #    `actor_id` on the scrubbed row MUST fail `verify_vault_integrity()`!
+    try:
+        with transaction.atomic():
+            with connection.cursor() as cur:
+                cur.execute("SET LOCAL session_replication_role = 'replica'")
+                cur.execute(
+                    "UPDATE public.ee_audit_ledger "
+                    "SET action = 'tampered.action', actor_id = 'attacker' "
+                    "WHERE id = %s",
+                    [hist_id],
+                )
+            ok_db_tamper, db_tamper_errs = default_audit_ledger.verify_vault_integrity("audit-s4")
+            assert ok_db_tamper is False
+            assert any("erasure_commitment" in err for err in db_tamper_errs)
+            raise RuntimeError("rollback_tamper_probe")
+    except RuntimeError as exc:
+        assert str(exc) == "rollback_tamper_probe"
 
     # Reverse migration refuses downgrade while admitted obligations exist (`23514`)!
     with pytest.raises(IntegrityError), transaction.atomic(), connection.cursor() as cur:

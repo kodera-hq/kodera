@@ -1,8 +1,9 @@
 """Statutory personal-data scrubbing for enterprise audit ledger and SCIM contact sync.
 
 Extends account and organisation erasure inventory discovery, HMAC-SHA256 target_urn
-pseudonymisation, append-only ledger immutability exceptions, and narrow SECURITY DEFINER
-SCIM member contact synchronisation without importing ee/ in Community runtime builds.
+pseudonymisation, tamper-evident erasure_commitment seals, append-only ledger immutability
+exceptions, and narrow SECURITY DEFINER SCIM member contact synchronisation without importing
+ee/ in Community runtime builds.
 """
 
 from django.db import migrations
@@ -10,6 +11,16 @@ from django.db import migrations
 FORWARD = r"""
 SET LOCAL lock_timeout='5s';
 SET LOCAL statement_timeout='30s';
+
+ALTER TABLE public.ee_audit_ledger
+    ADD COLUMN erasure_commitment text,
+    ADD CONSTRAINT ee_audit_ledger_erasure_commitment_chk CHECK (
+        erasure_commitment IS NULL
+        OR (
+            pii_scrubbed_at IS NOT NULL
+            AND erasure_commitment ~ '^(account|org|ingest):[0-9a-f-]{36}:[0-9a-f]{64}:[0-9a-f]{64}$'
+        )
+    );
 
 CREATE FUNCTION public.ee_audit_hmac_sha256_hex(p_key bytea, p_msg bytea)
 RETURNS text
@@ -41,6 +52,72 @@ BEGIN
 END
 $$;
 REVOKE ALL ON FUNCTION public.ee_audit_hmac_sha256_hex(bytea, bytea) FROM PUBLIC;
+
+CREATE FUNCTION public.ee_audit_build_erasure_seal(
+    p_scope text,
+    p_req_id uuid,
+    p_instruction_sha256 text,
+    p_inventory_sha256 text,
+    p_seq bigint,
+    p_event_id text,
+    p_occurred_at text,
+    p_tenant_slug text,
+    p_actor_type text,
+    p_actor_id text,
+    p_actor_label text,
+    p_action text,
+    p_target_urn text,
+    p_prev_hash text,
+    p_entry_hash text
+) RETURNS text
+LANGUAGE plpgsql
+IMMUTABLE STRICT
+SET search_path = pg_catalog, public
+AS $$
+DECLARE
+    digest_hex text;
+    seal_key bytea;
+    hmac_hex text;
+BEGIN
+    digest_hex := encode(
+        sha256(
+            convert_to(
+                'kodera-ee-audit-erased-v1|'
+                || p_scope || '|'
+                || p_req_id::text || '|'
+                || p_seq::text || '|'
+                || p_event_id || '|'
+                || p_occurred_at || '|'
+                || p_tenant_slug || '|'
+                || p_actor_type || '|'
+                || p_actor_id || '|'
+                || p_actor_label || '|'
+                || p_action || '|'
+                || p_target_urn || '|'
+                || p_prev_hash || '|'
+                || p_entry_hash,
+                'UTF8'
+            )
+        ),
+        'hex'
+    );
+    seal_key := sha256(
+        convert_to(
+            'kodera-ee-audit-seal-v1:'
+            || p_scope || ':'
+            || p_req_id::text || ':'
+            || p_instruction_sha256 || ':'
+            || p_inventory_sha256,
+            'UTF8'
+        )
+    );
+    hmac_hex := public.ee_audit_hmac_sha256_hex(seal_key, convert_to(digest_hex, 'UTF8'));
+    RETURN p_scope || ':' || p_req_id::text || ':' || digest_hex || ':' || hmac_hex;
+END
+$$;
+REVOKE ALL ON FUNCTION public.ee_audit_build_erasure_seal(
+    text, uuid, text, text, bigint, text, text, text, text, text, text, text, text, text, text
+) FROM PUBLIC;
 
 CREATE FUNCTION public.ee_audit_scrub_target_urn(p_target_urn text, p_hmac_key bytea)
 RETURNS text
@@ -112,6 +189,46 @@ BEGIN
 END
 $$;
 REVOKE ALL ON FUNCTION public.ee_audit_target_urn_matches_digests(text, jsonb) FROM PUBLIC;
+
+CREATE FUNCTION public.ee_audit_row_requires_target_scrub(
+    p_row_id uuid,
+    p_row_user uuid,
+    p_target_urn text,
+    p_person uuid,
+    p_inventory jsonb
+) RETURNS boolean
+LANGUAGE plpgsql
+IMMUTABLE
+SET search_path = pg_catalog, public
+AS $$
+DECLARE
+    inv jsonb := COALESCE(p_inventory, '{}'::jsonb);
+BEGIN
+    IF p_target_urn IS NULL OR p_target_urn ~ '^urn:kodera:[A-Za-z0-9._-]+:erased:[0-9a-f]{24}$' THEN
+        RETURN false;
+    END IF;
+    IF COALESCE(inv->'ee_audit_target_scrub_ids', '[]'::jsonb) ? (p_row_id::text) THEN
+        RETURN true;
+    END IF;
+    IF public.ee_audit_target_urn_matches_digests(
+        p_target_urn,
+        COALESCE(inv->'ee_audit_subject_sha256s', '[]'::jsonb)
+    ) THEN
+        RETURN true;
+    END IF;
+    IF (
+        p_row_user = p_person
+        OR COALESCE(inv->'ee_audit_scrub_ids', '[]'::jsonb) ? (p_row_id::text)
+    ) AND (
+        strpos(p_target_urn, '@') > 0
+        OR p_target_urn !~ '^urn:kodera:[A-Za-z0-9._-]+(:[A-Za-z0-9._-]+)+$'
+    ) THEN
+        RETURN true;
+    END IF;
+    RETURN false;
+END
+$$;
+REVOKE ALL ON FUNCTION public.ee_audit_row_requires_target_scrub(uuid, uuid, text, uuid, jsonb) FROM PUBLIC;
 
 CREATE FUNCTION public.ee_audit_row_matches_erasure(
     p_org uuid,
@@ -243,8 +360,8 @@ BEGIN
                NEW.target_urn = OLD.target_urn
                OR NEW.target_urn ~ '^urn:kodera:[A-Za-z0-9._-]+:erased:[0-9a-f]{24}$'
            )
-           AND (to_jsonb(NEW) - ARRAY['actor_label', 'target_urn', 'source_ip', 'metadata_json', 'pii_scrubbed_at'])
-               IS NOT DISTINCT FROM (to_jsonb(OLD) - ARRAY['actor_label', 'target_urn', 'source_ip', 'metadata_json', 'pii_scrubbed_at'])
+           AND (to_jsonb(NEW) - ARRAY['actor_label', 'target_urn', 'source_ip', 'metadata_json', 'pii_scrubbed_at', 'erasure_commitment'])
+               IS NOT DISTINCT FROM (to_jsonb(OLD) - ARRAY['actor_label', 'target_urn', 'source_ip', 'metadata_json', 'pii_scrubbed_at', 'erasure_commitment'])
            AND (
                (public.privacy_erasure_context(OLD.organisation_id) AND NEW.actor_label = 'erased')
                OR (
@@ -331,8 +448,8 @@ BEGIN
                NEW.target_urn = OLD.target_urn
                OR NEW.target_urn ~ '^urn:kodera:[A-Za-z0-9._-]+:erased:[0-9a-f]{24}$'
            )
-           AND (to_jsonb(NEW) - ARRAY['actor_label', 'target_urn', 'source_ip', 'metadata_json', 'pii_scrubbed_at'])
-               IS NOT DISTINCT FROM (to_jsonb(OLD) - ARRAY['actor_label', 'target_urn', 'source_ip', 'metadata_json', 'pii_scrubbed_at'])
+           AND (to_jsonb(NEW) - ARRAY['actor_label', 'target_urn', 'source_ip', 'metadata_json', 'pii_scrubbed_at', 'erasure_commitment'])
+               IS NOT DISTINCT FROM (to_jsonb(OLD) - ARRAY['actor_label', 'target_urn', 'source_ip', 'metadata_json', 'pii_scrubbed_at', 'erasure_commitment'])
            AND (
                (public.privacy_erasure_context(OLD.organisation_id) AND NEW.actor_label = 'erased')
                OR (
@@ -392,6 +509,8 @@ DECLARE
     target_org_texts text[] := ARRAY[]::text[];
     subject_sha256s jsonb := '[]'::jsonb;
     scrub_ids jsonb := '[]'::jsonb;
+    target_scrub_ids jsonb := '[]'::jsonb;
+    actor_scrub_ids jsonb := '[]'::jsonb;
     scrubbed_count bigint := 0;
 BEGIN
     IF TG_TABLE_NAME = 'orgs_privacyerasure' THEN
@@ -403,16 +522,42 @@ BEGIN
             IF to_regclass('public.ee_audit_ledger') IS NOT NULL THEN
                 UPDATE public.ee_audit_ledger l
                 SET actor_label = 'erased',
-                    target_urn = public.ee_audit_scrub_target_urn(l.target_urn, hmac_key),
+                    target_urn = sub.next_target_urn,
                     source_ip = '',
                     metadata_json = '{}',
-                    pii_scrubbed_at = COALESCE(l.pii_scrubbed_at, clock_timestamp())
-                WHERE l.organisation_id = org_ref
-                  AND l.target_urn !~ '^urn:kodera:[A-Za-z0-9._-]+:erased:[0-9a-f]{24}$'
-                  AND (
-                      strpos(l.target_urn, '@') > 0
-                      OR l.target_urn !~ '^urn:kodera:[A-Za-z0-9._-]+(:[A-Za-z0-9._-]+)+$'
-                  );
+                    pii_scrubbed_at = COALESCE(l.pii_scrubbed_at, clock_timestamp()),
+                    erasure_commitment = public.ee_audit_build_erasure_seal(
+                        'org',
+                        NEW.id,
+                        NEW.instruction_sha256,
+                        NEW.inventory_sha256,
+                        l.seq,
+                        l.event_id,
+                        l.occurred_at,
+                        l.tenant_slug,
+                        l.actor_type,
+                        l.actor_id,
+                        'erased',
+                        l.action,
+                        sub.next_target_urn,
+                        l.prev_hash,
+                        l.entry_hash
+                    )
+                FROM (
+                    SELECT s.id,
+                           CASE
+                               WHEN s.target_urn !~ '^urn:kodera:[A-Za-z0-9._-]+:erased:[0-9a-f]{24}$'
+                                    AND (
+                                        strpos(s.target_urn, '@') > 0
+                                        OR s.target_urn !~ '^urn:kodera:[A-Za-z0-9._-]+(:[A-Za-z0-9._-]+)+$'
+                                    )
+                               THEN public.ee_audit_scrub_target_urn(s.target_urn, hmac_key)
+                               ELSE s.target_urn
+                           END AS next_target_urn
+                    FROM public.ee_audit_ledger s
+                    WHERE s.organisation_id = org_ref
+                ) sub
+                WHERE l.id = sub.id AND l.organisation_id = org_ref;
             END IF;
         ELSIF TG_OP = 'UPDATE' AND OLD.status <> 'complete' AND NEW.status = 'complete' THEN
             org_ref := NEW.organisation_reference;
@@ -421,10 +566,19 @@ BEGIN
                     SELECT 1
                     FROM public.ee_audit_ledger l
                     WHERE l.organisation_id = org_ref
-                      AND l.target_urn !~ '^urn:kodera:[A-Za-z0-9._-]+:erased:[0-9a-f]{24}$'
                       AND (
-                          strpos(l.target_urn, '@') > 0
-                          OR l.target_urn !~ '^urn:kodera:[A-Za-z0-9._-]+(:[A-Za-z0-9._-]+)+$'
+                          l.pii_scrubbed_at IS NULL
+                          OR l.erasure_commitment IS NULL
+                          OR l.actor_label <> 'erased'
+                          OR l.source_ip <> ''
+                          OR l.metadata_json <> '{}'
+                          OR (
+                              l.target_urn !~ '^urn:kodera:[A-Za-z0-9._-]+:erased:[0-9a-f]{24}$'
+                              AND (
+                                  strpos(l.target_urn, '@') > 0
+                                  OR l.target_urn !~ '^urn:kodera:[A-Za-z0-9._-]+(:[A-Za-z0-9._-]+)+$'
+                              )
+                          )
                       )
                 ) THEN
                     RAISE EXCEPTION 'enterprise audit ledger target_urn PII still present'
@@ -497,12 +651,21 @@ BEGIN
                                SELECT lower(btrim(u.email)) AS needle
                                FROM public.identity_user u WHERE u.id = person
                                UNION
+                               SELECT lower(btrim(u.display_name)) AS needle
+                               FROM public.identity_user u
+                               WHERE u.id = person
+                                 AND u.display_name IS NOT NULL
+                                 AND char_length(btrim(u.display_name)) >= 3
+                               UNION
                                SELECT lower(btrim(i.email)) AS needle
                                FROM public.identity_identity i WHERE i.user_id = person
                                UNION
                                SELECT lower(person::text) AS needle
                                UNION
                                SELECT lower(i.id::text) AS needle
+                               FROM public.identity_identity i WHERE i.user_id = person
+                               UNION
+                               SELECT lower(btrim(i.subject)) AS needle
                                FROM public.identity_identity i WHERE i.user_id = person
                            ) needles
                            WHERE needles.needle IS NOT NULL
@@ -517,12 +680,110 @@ BEGIN
                        )
                    )
                );
+
+            SELECT COALESCE(jsonb_agg(l.id::text ORDER BY l.id::text), '[]'::jsonb)
+            INTO target_scrub_ids
+            FROM public.ee_audit_ledger l
+            WHERE l.target_urn !~ '^urn:kodera:[A-Za-z0-9._-]+:erased:[0-9a-f]{24}$'
+              AND (
+                  (
+                      l.user_id = person
+                      AND (
+                          strpos(l.target_urn, '@') > 0
+                          OR l.target_urn !~ '^urn:kodera:[A-Za-z0-9._-]+(:[A-Za-z0-9._-]+)+$'
+                      )
+                  )
+                  OR (
+                      (l.user_id = person OR l.organisation_id = ANY(target_orgs))
+                      AND (
+                          public.ee_audit_target_urn_matches_digests(l.target_urn, subject_sha256s)
+                          OR EXISTS (
+                              SELECT 1
+                              FROM (
+                                  SELECT lower(btrim(u.email)) AS needle
+                                  FROM public.identity_user u WHERE u.id = person
+                                  UNION
+                                  SELECT lower(btrim(u.display_name)) AS needle
+                                  FROM public.identity_user u
+                                  WHERE u.id = person
+                                    AND u.display_name IS NOT NULL
+                                    AND char_length(btrim(u.display_name)) >= 3
+                                  UNION
+                                  SELECT lower(btrim(i.email)) AS needle
+                                  FROM public.identity_identity i WHERE i.user_id = person
+                                  UNION
+                                  SELECT lower(person::text) AS needle
+                                  UNION
+                                  SELECT lower(i.id::text) AS needle
+                                  FROM public.identity_identity i WHERE i.user_id = person
+                                  UNION
+                                  SELECT lower(btrim(i.subject)) AS needle
+                                  FROM public.identity_identity i WHERE i.user_id = person
+                              ) needles
+                              WHERE needles.needle IS NOT NULL
+                                AND needles.needle <> ''
+                                AND needles.needle NOT LIKE 'erased:%'
+                                AND strpos(lower(l.target_urn), needles.needle) > 0
+                          )
+                      )
+                  )
+              );
+
+            SELECT COALESCE(jsonb_agg(l.id::text ORDER BY l.id::text), '[]'::jsonb)
+            INTO actor_scrub_ids
+            FROM public.ee_audit_ledger l
+            WHERE l.actor_label <> ''
+              AND l.actor_label NOT LIKE 'erased:%'
+              AND l.actor_label <> 'erased'
+              AND (
+                  l.user_id = person
+                  OR (
+                      l.organisation_id = ANY(target_orgs)
+                      AND (
+                          subject_sha256s ? encode(sha256(convert_to(lower(btrim(l.actor_id)), 'UTF8')), 'hex')
+                          OR subject_sha256s ? encode(sha256(convert_to(lower(btrim(l.actor_label)), 'UTF8')), 'hex')
+                          OR EXISTS (
+                              SELECT 1
+                              FROM (
+                                  SELECT lower(btrim(u.email)) AS needle
+                                  FROM public.identity_user u WHERE u.id = person
+                                  UNION
+                                  SELECT lower(btrim(u.display_name)) AS needle
+                                  FROM public.identity_user u
+                                  WHERE u.id = person
+                                    AND u.display_name IS NOT NULL
+                                    AND char_length(btrim(u.display_name)) >= 3
+                                  UNION
+                                  SELECT lower(btrim(i.email)) AS needle
+                                  FROM public.identity_identity i WHERE i.user_id = person
+                                  UNION
+                                  SELECT lower(person::text) AS needle
+                                  UNION
+                                  SELECT lower(i.id::text) AS needle
+                                  FROM public.identity_identity i WHERE i.user_id = person
+                                  UNION
+                                  SELECT lower(btrim(i.subject)) AS needle
+                                  FROM public.identity_identity i WHERE i.user_id = person
+                              ) needles
+                              WHERE needles.needle IS NOT NULL
+                                AND needles.needle <> ''
+                                AND needles.needle NOT LIKE 'erased:%'
+                                AND (
+                                    strpos(lower(l.actor_label), needles.needle) > 0
+                                    OR strpos(lower(l.actor_id), needles.needle) > 0
+                                )
+                          )
+                      )
+                  )
+              );
         END IF;
 
         NEW.inventory := NEW.inventory || jsonb_build_object(
             'ee_audit_target_org_ids', to_jsonb(target_org_texts),
             'ee_audit_subject_sha256s', subject_sha256s,
-            'ee_audit_scrub_ids', scrub_ids
+            'ee_audit_scrub_ids', scrub_ids,
+            'ee_audit_target_scrub_ids', target_scrub_ids,
+            'ee_audit_actor_scrub_ids', actor_scrub_ids
         );
         NEW.inventory_sha256 := public.retention_inventory_digest(NEW.inventory);
         RETURN NEW;
@@ -536,61 +797,76 @@ BEGIN
         IF OLD.core_purged_at IS NULL AND NEW.core_purged_at IS NOT NULL THEN
             IF to_regclass('public.ee_audit_ledger') IS NOT NULL THEN
                 UPDATE public.ee_audit_ledger l
-                SET actor_label = CASE
-                        WHEN l.user_id = person
-                             OR subject_sha256s ? encode(sha256(convert_to(lower(btrim(l.actor_id)), 'UTF8')), 'hex')
-                             OR subject_sha256s ? encode(sha256(convert_to(lower(btrim(l.actor_label)), 'UTF8')), 'hex')
-                        THEN 'erased:' || person::text
-                        ELSE l.actor_label
-                    END,
-                    target_urn = CASE
-                        WHEN public.ee_audit_target_urn_matches_digests(l.target_urn, subject_sha256s)
-                             OR (
-                                 l.user_id = person
-                                 AND l.target_urn !~ '^urn:kodera:[A-Za-z0-9._-]+:erased:[0-9a-f]{24}$'
-                                 AND (
-                                     strpos(l.target_urn, '@') > 0
-                                     OR l.target_urn !~ '^urn:kodera:[A-Za-z0-9._-]+(:[A-Za-z0-9._-]+)+$'
-                                 )
-                             )
-                        THEN public.ee_audit_scrub_target_urn(l.target_urn, hmac_key)
-                        ELSE l.target_urn
-                    END,
+                SET actor_label = sub.next_actor_label,
+                    target_urn = sub.next_target_urn,
                     source_ip = '',
                     metadata_json = '{}',
-                    pii_scrubbed_at = COALESCE(l.pii_scrubbed_at, clock_timestamp())
-                WHERE public.ee_audit_row_matches_erasure(
-                    l.organisation_id,
-                    l.id,
-                    l.user_id,
-                    l.actor_id,
-                    l.actor_label,
-                    l.target_urn,
-                    l.metadata_json,
-                    person
-                )
-                AND (
-                    l.pii_scrubbed_at IS NULL
-                    OR l.metadata_json <> '{}'
-                    OR l.source_ip <> ''
-                    OR public.ee_audit_target_urn_matches_digests(l.target_urn, subject_sha256s)
-                    OR (
-                        l.user_id = person
-                        AND l.target_urn !~ '^urn:kodera:[A-Za-z0-9._-]+:erased:[0-9a-f]{24}$'
-                        AND (
-                            strpos(l.target_urn, '@') > 0
-                            OR l.target_urn !~ '^urn:kodera:[A-Za-z0-9._-]+(:[A-Za-z0-9._-]+)+$'
+                    pii_scrubbed_at = COALESCE(l.pii_scrubbed_at, clock_timestamp()),
+                    erasure_commitment = public.ee_audit_build_erasure_seal(
+                        'account',
+                        NEW.id,
+                        NEW.instruction_sha256,
+                        NEW.inventory_sha256,
+                        l.seq,
+                        l.event_id,
+                        l.occurred_at,
+                        l.tenant_slug,
+                        l.actor_type,
+                        l.actor_id,
+                        sub.next_actor_label,
+                        l.action,
+                        sub.next_target_urn,
+                        l.prev_hash,
+                        l.entry_hash
+                    )
+                FROM (
+                    SELECT s.id,
+                           CASE
+                               WHEN s.user_id = person
+                                    OR COALESCE(NEW.inventory->'ee_audit_actor_scrub_ids', '[]'::jsonb) ? (s.id::text)
+                                    OR subject_sha256s ? encode(sha256(convert_to(lower(btrim(s.actor_id)), 'UTF8')), 'hex')
+                                    OR subject_sha256s ? encode(sha256(convert_to(lower(btrim(s.actor_label)), 'UTF8')), 'hex')
+                               THEN 'erased:' || person::text
+                               ELSE s.actor_label
+                           END AS next_actor_label,
+                           CASE
+                               WHEN public.ee_audit_row_requires_target_scrub(
+                                   s.id, s.user_id, s.target_urn, person, NEW.inventory
+                               )
+                               THEN public.ee_audit_scrub_target_urn(s.target_urn, hmac_key)
+                               ELSE s.target_urn
+                           END AS next_target_urn
+                    FROM public.ee_audit_ledger s
+                    WHERE public.ee_audit_row_matches_erasure(
+                        s.organisation_id,
+                        s.id,
+                        s.user_id,
+                        s.actor_id,
+                        s.actor_label,
+                        s.target_urn,
+                        s.metadata_json,
+                        person
+                    )
+                    AND (
+                        s.pii_scrubbed_at IS NULL
+                        OR s.erasure_commitment IS NULL
+                        OR s.metadata_json <> '{}'
+                        OR s.source_ip <> ''
+                        OR public.ee_audit_row_requires_target_scrub(
+                            s.id, s.user_id, s.target_urn, person, NEW.inventory
+                        )
+                        OR (
+                            (
+                                s.user_id = person
+                                OR COALESCE(NEW.inventory->'ee_audit_actor_scrub_ids', '[]'::jsonb) ? (s.id::text)
+                                OR subject_sha256s ? encode(sha256(convert_to(lower(btrim(s.actor_id)), 'UTF8')), 'hex')
+                                OR subject_sha256s ? encode(sha256(convert_to(lower(btrim(s.actor_label)), 'UTF8')), 'hex')
+                            )
+                            AND s.actor_label IS DISTINCT FROM ('erased:' || person::text)
                         )
                     )
-                    OR (
-                        (
-                            l.user_id = person
-                            OR subject_sha256s ? encode(sha256(convert_to(lower(btrim(l.actor_id)), 'UTF8')), 'hex')
-                            OR subject_sha256s ? encode(sha256(convert_to(lower(btrim(l.actor_label)), 'UTF8')), 'hex')
-                        )
-                        AND l.actor_label IS DISTINCT FROM ('erased:' || person::text)
-                    )
-                );
+                ) sub
+                WHERE l.id = sub.id;
                 GET DIAGNOSTICS scrubbed_count = ROW_COUNT;
 
                 NEW.counts := COALESCE(NEW.counts, '{}'::jsonb) || jsonb_build_object(
@@ -616,20 +892,16 @@ BEGIN
                     )
                     AND (
                         l.pii_scrubbed_at IS NULL
+                        OR l.erasure_commitment IS NULL
                         OR l.metadata_json <> '{}'
                         OR l.source_ip <> ''
-                        OR public.ee_audit_target_urn_matches_digests(l.target_urn, subject_sha256s)
-                        OR (
-                            l.user_id = person
-                            AND l.target_urn !~ '^urn:kodera:[A-Za-z0-9._-]+:erased:[0-9a-f]{24}$'
-                            AND (
-                                strpos(l.target_urn, '@') > 0
-                                OR l.target_urn !~ '^urn:kodera:[A-Za-z0-9._-]+(:[A-Za-z0-9._-]+)+$'
-                            )
+                        OR public.ee_audit_row_requires_target_scrub(
+                            l.id, l.user_id, l.target_urn, person, NEW.inventory
                         )
                         OR (
                             (
                                 l.user_id = person
+                                OR COALESCE(NEW.inventory->'ee_audit_actor_scrub_ids', '[]'::jsonb) ? (l.id::text)
                                 OR subject_sha256s ? encode(sha256(convert_to(lower(btrim(l.actor_id)), 'UTF8')), 'hex')
                                 OR subject_sha256s ? encode(sha256(convert_to(lower(btrim(l.actor_label)), 'UTF8')), 'hex')
                             )
@@ -770,14 +1042,19 @@ BEGIN
     IF EXISTS (
         SELECT 1 FROM public.orgs_accounterasure
         WHERE jsonb_array_length(COALESCE(inventory->'ee_audit_scrub_ids', '[]'::jsonb)) > 0
+           OR jsonb_array_length(COALESCE(inventory->'ee_audit_target_scrub_ids', '[]'::jsonb)) > 0
+           OR jsonb_array_length(COALESCE(inventory->'ee_audit_actor_scrub_ids', '[]'::jsonb)) > 0
            OR COALESCE((counts->>'ee_audit_subject_scrubbed')::bigint, 0) > 0
     )
     OR (
         to_regclass('public.ee_audit_ledger') IS NOT NULL
         AND EXISTS (
             SELECT 1 FROM public.ee_audit_ledger
-            WHERE pii_scrubbed_at IS NOT NULL
-              AND target_urn ~ '^urn:kodera:[A-Za-z0-9._-]+:erased:[0-9a-f]{24}$'
+            WHERE erasure_commitment IS NOT NULL
+               OR (
+                   pii_scrubbed_at IS NOT NULL
+                   AND target_urn ~ '^urn:kodera:[A-Za-z0-9._-]+:erased:[0-9a-f]{24}$'
+               )
         )
     ) THEN
         RAISE EXCEPTION 'cannot downgrade enterprise audit erasure migration while admitted obligations exist'
@@ -862,9 +1139,16 @@ END $$;
 REVOKE ALL ON FUNCTION public.ee_audit_ledger_immutable_guard() FROM PUBLIC;
 
 DROP FUNCTION IF EXISTS public.ee_audit_row_matches_erasure(uuid, uuid, uuid, text, text, text, text, uuid);
+DROP FUNCTION IF EXISTS public.ee_audit_row_requires_target_scrub(uuid, uuid, text, uuid, jsonb);
 DROP FUNCTION IF EXISTS public.ee_audit_target_urn_matches_digests(text, jsonb);
 DROP FUNCTION IF EXISTS public.ee_audit_scrub_target_urn(text, bytea);
+DROP FUNCTION IF EXISTS public.ee_audit_build_erasure_seal(
+    text, uuid, text, text, bigint, text, text, text, text, text, text, text, text, text, text
+);
 DROP FUNCTION IF EXISTS public.ee_audit_hmac_sha256_hex(bytea, bytea);
+ALTER TABLE public.ee_audit_ledger
+    DROP CONSTRAINT IF EXISTS ee_audit_ledger_erasure_commitment_chk,
+    DROP COLUMN IF EXISTS erasure_commitment;
 """
 
 
