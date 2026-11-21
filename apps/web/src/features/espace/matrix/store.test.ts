@@ -2905,6 +2905,85 @@ describe('confidential room plaintext quarantine', () => {
     }
   })
 
+  it('refuses resend of a failed message and fences queued SDK sends after mute with zero extra network calls', async () => {
+    const fixture = snapshotFixture()
+    let release: (() => void) | undefined
+    try {
+      await fixture.start()
+
+      // 1) Initial send fails -> member becomes muted -> resend() refuses before network dispatch.
+      fixture.holdNextSend()
+      const firstSend = fixture.store
+        .send(SNAPSHOT_ROOM, 'initial attempt before mute')
+        .catch((error: unknown) => error)
+      await vi.waitFor(() =>
+        expect(fixture.store.getTimeline(SNAPSHOT_ROOM).at(-1)?.delivery).toBe('pending')
+      )
+      const pending = fixture.store.getTimeline(SNAPSHOT_ROOM).at(-1)!
+      await fixture.finishSend(403, { errcode: 'M_FORBIDDEN', error: 'Controlled send failure' })
+      await firstSend
+      await vi.waitFor(() =>
+        expect(fixture.store.getTimeline(SNAPSHOT_ROOM).at(-1)?.delivery).toBe('failed')
+      )
+      expect(fixture.requests).toHaveLength(1)
+
+      const muteState = [
+        {
+          ...snapshotMessage('$mute-after-fail', ''),
+          type: 'io.kodera.room.policy',
+          state_key: '',
+          sender: AGENT,
+          content: {
+            version: 1,
+            kind: 'text',
+            muted_until: { [SNAPSHOT_ME]: '9999-01-01T00:00:00Z' },
+          },
+        },
+      ]
+      await fixture.publishState(muteState)
+
+      await expect(fixture.store.resend(SNAPSHOT_ROOM, pending.key)).rejects.toThrow(
+        'No content was sent'
+      )
+      expect(fixture.requests).toHaveLength(1)
+      fixture.store.cancel(SNAPSHOT_ROOM, pending.key)
+
+      // 2) Unmute -> queue a send inside the SDK -> mute before transport dispatch -> transport fence blocks it.
+      await fixture.publishState([
+        {
+          ...snapshotMessage('$unmute-policy', ''),
+          type: 'io.kodera.room.policy',
+          state_key: '',
+          sender: AGENT,
+          content: {
+            version: 1,
+            kind: 'text',
+            muted_until: {},
+          },
+        },
+      ])
+      const client = matrixClientForTests(fixture.store)
+      const sdk = client as unknown as { encryptEventIfNeeded: () => Promise<void> }
+      const gate = vi.spyOn(sdk, 'encryptEventIfNeeded').mockImplementation(
+        () =>
+          new Promise<void>((resolve) => {
+            release = resolve
+          })
+      )
+      const queuedSend = fixture.store.send(SNAPSHOT_ROOM, 'queued before mute')
+      const queuedRefusal = expect(queuedSend).rejects.toThrow('No content was sent')
+      await vi.waitFor(() => expect(gate).toHaveBeenCalled())
+      await fixture.publishState(muteState)
+      release!()
+      await queuedRefusal
+      expect(fixture.requests).toHaveLength(1)
+      gate.mockRestore()
+    } finally {
+      release?.()
+      fixture.stop()
+    }
+  })
+
   async function holdTypingCleanup() {
     const fixture = snapshotFixture()
     await fixture.start()

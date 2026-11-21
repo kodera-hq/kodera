@@ -583,7 +583,7 @@ export class EspaceStore {
         init?.method ?? (input instanceof Request ? input.method : 'GET')
       ).toUpperCase()
       const timeline =
-        /^\/_matrix\/client\/(?:v3|r0|unstable)\/rooms\/([^/]+)\/(send|redact|typing|read_markers|receipt|messages|state\/m\.room\.pinned_events)(?:\/|$)/.exec(
+        /^\/_matrix\/client\/(?:v3|r0|unstable)\/rooms\/([^/]+)\/(send|redact|typing|read_markers|receipt|messages|state\/(?!m\.room\.member(?:\/|$))[^/]+)(?:\/|$)/.exec(
           url.pathname
         )
       if (timeline && (timeline[2] === 'messages' || (method !== 'GET' && method !== 'HEAD'))) {
@@ -593,18 +593,29 @@ export class EspaceStore {
           /^\/_matrix\/client\/(?:v3|r0|unstable)\/rooms\/[^/]+\/typing\/([^/]+)$/.exec(
             url.pathname
           )
-        // No Request body reads or JSON parsing: only this exact content-free stop is eligible.
-        const mayFinishTyping =
-          cleanup &&
+        const isOwnTypingStop =
           timeline[2] === 'typing' &&
           method === 'PUT' &&
           url.origin === new URL(session.baseUrl).origin &&
           url.search === '' &&
           ownTyping !== null &&
           decodeURIComponent(ownTyping[1]!) === this.#me &&
-          init?.body === '{"typing":false}' &&
-          permitsPlaintext(this.getRoomBoundary(roomId))
-        if (!mayFinishTyping) this.#requirePlaintextRoom(roomId)
+          init?.body === '{"typing":false}'
+        // No Request body reads or JSON parsing: only this exact content-free stop is eligible.
+        const mayFinishTyping =
+          cleanup && isOwnTypingStop && permitsPlaintext(this.getRoomBoundary(roomId))
+        if (!mayFinishTyping) {
+          const isContentWrite =
+            timeline[2] === 'send' ||
+            timeline[2] === 'redact' ||
+            timeline[2]!.startsWith('state/') ||
+            (timeline[2] === 'typing' && !isOwnTypingStop)
+          if (isContentWrite) {
+            this.#requireUnmutedPlaintextRoom(roomId)
+          } else {
+            this.#requirePlaintextRoom(roomId)
+          }
+        }
       }
       return base(input, init)
     }
@@ -2657,15 +2668,18 @@ export class EspaceStore {
 
   #unsent(roomId: string, key: string): { room: Room; event: MatrixEvent } | null {
     const room = this.#client.getRoom(roomId)
-    const event = room
-      ?.getPendingEvents()
-      .find((candidate) => (candidate.getTxnId() ?? candidate.getId()) === key)
+    const event =
+      room === null
+        ? undefined
+        : this.#pendingRoomEvents(room).find(
+            (candidate) => (candidate.getTxnId() ?? candidate.getId()) === key
+          )
     return room && event && event.status === EventStatus.NOT_SENT ? { room, event } : null
   }
 
   /** Sends a failed message again, by its row key. */
   async resend(roomId: string, key: string): Promise<void> {
-    this.#requirePlaintextRoom(roomId)
+    this.#requireUnmutedPlaintextRoom(roomId)
     const unsent = this.#unsent(roomId, key)
     if (unsent !== null) await this.#client.resendEvent(unsent.event, unsent.room)
   }
