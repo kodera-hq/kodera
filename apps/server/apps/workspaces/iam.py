@@ -277,14 +277,14 @@ def update_role(
 def _override_permissions(workspace: Workspace, role_ids: set[UUID]) -> list[str]:
     if not role_ids:
         return []
-    return sorted(
-        {
-            permission
-            for allow, deny in WorkspaceChannelRoleOverride.objects.filter(
-                workspace=workspace, role_id__in=role_ids
-            ).values_list("allow", "deny")
-            for permission in (*allow, *deny)
-        }
+    from .channel_access import expand_override_capabilities
+
+    return expand_override_capabilities(
+        permission
+        for allow, deny in WorkspaceChannelRoleOverride.objects.filter(
+            workspace=workspace, role_id__in=role_ids
+        ).values_list("allow", "deny")
+        for permission in (*allow, *deny)
     )
 
 

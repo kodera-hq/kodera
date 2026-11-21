@@ -751,13 +751,27 @@ def test_bug_0050_unsupported_channel_overrides_refused_and_stored_media_caps_fo
 
 
 def test_bug_0010_update_orgs_membership_vs_docs_collab_fence_nowait_no_deadlock(world):
-    """BUG-0010 Round-2: When `UPDATE orgs_membership` holds a tuple lock on `orgs_membership`
-    before firing its `BEFORE UPDATE` trigger (which locks `identity_user`), a concurrent
-    `docs_collab_fence` holding `identity_user FOR SHARE` fails fast with `55P03`
-    (`LockNotAvailable`) via `FOR SHARE NOWAIT` instead of deadlocking (`40P01`)."""
-    from django.db import DatabaseError
+    """BUG-0010 Round-6 [Opus P2 + Codex P2-3]:
+    1. Active org or account erasure advisory fences (`privacy_erasure_cutoff:<org>`,
+       `privacy_account_cutoff:<person>`) make `docs_collab_fence` fail immediately with `55P03`.
+    2. Routine non-erasure writes (`orgs_organisation FOR NO KEY UPDATE` + `workspaces_workspace FOR UPDATE`)
+       wait under the 3s `lock_timeout` and succeed without false `55P03` disconnects.
+    3. Because `docs_collab_fence` acquires both shared advisory fences BEFORE any row locks, an
+       active Yjs transaction pausing between `docs_collab_fence` and `INSERT INTO docs_documentupdate`
+       cannot deadlock (`40P01`) with concurrent `begin_account_erasure`."""
+    import time
+    from dataclasses import replace
 
-    org, workspace, members, _ = world
+    from django.db import DatabaseError
+    from test_core_erasure import operator as make_staff_operator
+
+    from apps.docs.models import DocumentUpdate
+    from apps.orgs.account_erasure_services import begin_account_erasure
+    from apps.orgs.erasure_services import database_now
+    from apps.orgs.privacy_models import AccountErasure
+    from core.db.ids import new_uuid7
+
+    org, workspace, members, tokens = world
     default_pol = ResourcePolicy.objects.create(workspace=workspace, visibility="organisation")
     workspace.default_policy = default_pol
     workspace.save(update_fields=["default_policy", "updated_at"])
@@ -770,133 +784,156 @@ def test_bug_0010_update_orgs_membership_vs_docs_collab_fence_nowait_no_deadlock
     )
     DocumentSnapshot.objects.create(document=doc, sequence=0, head_sequence=0, state=b"\x00\x00")
     ident = Identity.objects.get(user=members[3].user, organisation=org)
+    fence_args = [doc.id, org.id, members[3].id, ident.id, org.issuer, ident.subject, "editor"]
 
-    barrier = threading.Barrier(2, timeout=10)
-    b_released = threading.Event()
+    # 1. Both erasure advisory locks fail immediately with `55P03` (`LockNotAvailable`).
+    for lock_key in (
+        f"privacy_erasure_cutoff:{org.id}",
+        f"privacy_account_cutoff:{members[3].user_id}",
+    ):
+        ready_ev, release_ev = threading.Event(), threading.Event()
 
-    def membership_updater() -> str:
-        close_old_connections()
-        try:
-            with transaction.atomic(), connection.cursor() as cursor:
-                cursor.execute("SET LOCAL lock_timeout = '5s'")
-                cursor.execute(
-                    "SELECT id FROM orgs_membership WHERE id = %s FOR UPDATE",
-                    [members[3].id],
-                )
-                barrier.wait()
-                # Wait briefly or block until Connection B's NOWAIT rollback releases `identity_user`.
-                cursor.execute(
-                    "SELECT id FROM identity_user WHERE id = %s FOR UPDATE",
-                    [members[3].user_id],
-                )
-                cursor.execute(
-                    "UPDATE orgs_membership SET updated_at = clock_timestamp() WHERE id = %s",
-                    [members[3].id],
-                )
-                return "updated"
-        finally:
+        def hold_erasure_advisory(
+            key: str = lock_key,
+            ready: threading.Event = ready_ev,
+            release: threading.Event = release_ev,
+        ) -> None:
             close_old_connections()
-
-    def collab_fencer() -> str:
-        close_old_connections()
-        try:
-            with transaction.atomic(), connection.cursor() as cursor:
-                cursor.execute("SET LOCAL lock_timeout = '5s'")
-                cursor.execute(
-                    "SELECT id FROM identity_user WHERE id = %s FOR SHARE",
-                    [members[3].user_id],
-                )
-                barrier.wait()
-                try:
+            try:
+                with transaction.atomic(), connection.cursor() as cursor:
                     cursor.execute(
-                        "SELECT docs_collab_fence(%s,%s,%s,%s,%s,%s,%s)",
-                        [
-                            doc.id,
-                            org.id,
-                            members[3].id,
-                            ident.id,
-                            org.issuer,
-                            ident.subject,
-                            "editor",
-                        ],
+                        "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                        [key],
                     )
-                except DatabaseError as exc:
-                    cause = exc.__cause__
-                    pgcode = getattr(cause, "sqlstate", None) or getattr(cause, "pgcode", None)
-                    return str(pgcode)
-                return "unexpected_ok"
-        finally:
-            b_released.set()
+                    ready.set()
+                    assert release.wait(timeout=5)
+            finally:
+                close_old_connections()
+
+        def try_fence() -> tuple[str, float]:
             close_old_connections()
+            try:
+                started = time.monotonic()
+                with transaction.atomic(), connection.cursor() as cursor:
+                    try:
+                        cursor.execute("SELECT docs_collab_fence(%s,%s,%s,%s,%s,%s,%s)", fence_args)
+                    except DatabaseError as exc:
+                        cause = exc.__cause__
+                        pgcode = getattr(cause, "sqlstate", None) or getattr(cause, "pgcode", None)
+                        return str(pgcode), time.monotonic() - started
+                return "unexpected_ok", time.monotonic() - started
+            finally:
+                close_old_connections()
 
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        fut_a = pool.submit(membership_updater)
-        fut_b = pool.submit(collab_fencer)
-        code_b = fut_b.result(timeout=10)
-        res_a = fut_a.result(timeout=10)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            holder = pool.submit(hold_erasure_advisory)
+            assert ready_ev.wait(timeout=5)
+            try:
+                pgcode, elapsed = pool.submit(try_fence).result(timeout=5)
+            finally:
+                release_ev.set()
+            holder.result(timeout=5)
+        assert pgcode == "55P03"
+        assert elapsed < 1.0
 
-    assert b_released.is_set()
-    assert code_b == "55P03", f"expected immediate 55P03 LockNotAvailable, got {code_b}"
-    assert res_a == "updated"
+    # 2. Routine 150ms `orgs_organisation` + `workspaces_workspace` write waits cleanly and succeeds!
+    rest_ready = threading.Event()
 
-    # Also prove workspace-first `member_set_hooks` (`workspaces_workspace FOR UPDATE -> identity_user FOR UPDATE`)
-    # cannot deadlock with `docs_collab_fence` (`identity_user FOR SHARE NOWAIT -> workspaces_workspace FOR UPDATE OF w NOWAIT`).
-    ws_barrier = threading.Barrier(2, timeout=10)
-
-    def workspace_first_member_hook() -> str:
+    def routine_rest_writer() -> None:
         close_old_connections()
         try:
             with transaction.atomic(), connection.cursor() as cursor:
-                cursor.execute("SET LOCAL lock_timeout = '5s'")
+                cursor.execute(
+                    "SELECT id FROM orgs_organisation WHERE id = %s FOR NO KEY UPDATE",
+                    [org.id],
+                )
                 cursor.execute(
                     "SELECT id FROM workspaces_workspace WHERE id = %s FOR UPDATE",
                     [workspace.id],
                 )
-                ws_barrier.wait()
-                cursor.execute(
-                    "SELECT id FROM identity_user WHERE id = %s FOR UPDATE",
-                    [members[3].user_id],
-                )
-                return "hook_done"
+                rest_ready.set()
+                time.sleep(0.15)
         finally:
             close_old_connections()
 
-    def collab_vs_workspace_hook() -> str:
+    def waiting_collab_fence() -> object:
         close_old_connections()
         try:
+            assert rest_ready.wait(timeout=5)
             with transaction.atomic(), connection.cursor() as cursor:
-                cursor.execute("SET LOCAL lock_timeout = '5s'")
-                cursor.execute(
-                    "SELECT id FROM identity_user WHERE id = %s FOR SHARE",
-                    [members[3].user_id],
-                )
-                ws_barrier.wait()
-                try:
-                    cursor.execute(
-                        "SELECT docs_collab_fence(%s,%s,%s,%s,%s,%s,%s)",
-                        [
-                            doc.id,
-                            org.id,
-                            members[3].id,
-                            ident.id,
-                            org.issuer,
-                            ident.subject,
-                            "editor",
-                        ],
-                    )
-                except DatabaseError as exc:
-                    cause = exc.__cause__
-                    pgcode = getattr(cause, "sqlstate", None) or getattr(cause, "pgcode", None)
-                    return str(pgcode)
-                return "unexpected_ok"
+                cursor.execute("SELECT docs_collab_fence(%s,%s,%s,%s,%s,%s,%s)", fence_args)
+                return cursor.fetchone()[0]
         finally:
             close_old_connections()
 
     with ThreadPoolExecutor(max_workers=2) as pool:
-        fut_hook = pool.submit(workspace_first_member_hook)
-        fut_fence = pool.submit(collab_vs_workspace_hook)
-        assert fut_fence.result(timeout=10) == "55P03"
-        assert fut_hook.result(timeout=10) == "hook_done"
+        f_rest = pool.submit(routine_rest_writer)
+        f_collab = pool.submit(waiting_collab_fence)
+        assert f_collab.result(timeout=5) == workspace.id
+        f_rest.result(timeout=5)
+
+    # 3. [Codex P2-3] Active Yjs transaction holding `docs_collab_fence` before `INSERT INTO docs_documentupdate`
+    #    cannot deadlock (`40P01`) with concurrent `begin_account_erasure`!
+    staff_op = make_staff_operator()
+    now = database_now()
+    fenced_ev, release_yjs = threading.Event(), threading.Event()
+
+    def active_yjs_writer() -> None:
+        close_old_connections()
+        try:
+            with transaction.atomic(), connection.cursor() as cursor:
+                cursor.execute("SELECT docs_collab_fence(%s,%s,%s,%s,%s,%s,%s)", fence_args)
+                assert cursor.fetchone() == (workspace.id,)
+                fenced_ev.set()
+                assert release_yjs.wait(timeout=5)
+                cursor.execute(
+                    "SELECT sequence, head_sequence FROM docs_documentsnapshot"
+                    " WHERE document_id = %s FOR NO KEY UPDATE",
+                    [doc.id],
+                )
+                DocumentUpdate.objects.create(
+                    id=new_uuid7(),
+                    document=doc,
+                    sequence=1,
+                    actor=ident,
+                    state=b"\x01\x02",
+                )
+        finally:
+            close_old_connections()
+
+    def concurrent_account_admission():
+        close_old_connections()
+        try:
+            ver = replace(
+                tokens[3],
+                issuer=org.issuer,
+                subject=ident.subject,
+                issued_at=int(now.timestamp()),
+                expires_at=int((now + timedelta(minutes=10)).timestamp()),
+                auth_time=int(now.timestamp()),
+            )
+            return begin_account_erasure(
+                verified=ver,
+                confirmation="delete",
+                instruction_ref="ACC-960",
+                instruction_sha256="a" * 64,
+                purge_not_before=database_now(),
+                actor_identity_id=staff_op.id,
+            ).id
+        finally:
+            close_old_connections()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        yjs_fut = pool.submit(active_yjs_writer)
+        assert fenced_ev.wait(timeout=5)
+        adm_fut = pool.submit(concurrent_account_admission)
+        time.sleep(0.1)
+        release_yjs.set()
+        yjs_fut.result(timeout=10)
+        erasure_id = adm_fut.result(timeout=10)
+
+    assert DocumentUpdate.objects.filter(document=doc, sequence=1).exists()
+    assert AccountErasure.objects.get(pk=erasure_id).status == "cutoff"
 
 
 def test_bug_0050_overrides_self_grant_notice_audit_and_metadata_bounds(world):
@@ -1102,6 +1139,8 @@ def test_r5_real_postgres_yjs_concurrent_workspace_and_erasure_fence(
                 "ticketA2": ticket_a2["token"],
                 "ticketWs": ticket_ws["token"],
                 "organisationId": str(org.id),
+                "workspaceId": str(_workspace.id),
+                "userId": str(_members[2].user_id),
             }
         )
         result = subprocess.run(  # noqa: S603 - fixed owned fixture and disposable test database
@@ -1121,13 +1160,15 @@ def test_r5_real_postgres_yjs_concurrent_workspace_and_erasure_fence(
         assert result.returncode == 0, result.stderr.decode("utf-8")
         assert json.loads(result.stdout) == {
             "concurrentWorkspaceSucceeded": True,
-            "mergedBothEditors": True,
+            "reciprocalLinksSucceeded": True,
+            "restWriteWaitedWithoutDisconnect": True,
             "erasureImmediate55P03": True,
             "wsClose1013": True,
         }
         updated_doc = Document.objects.get(pk=doc1["id"])
         assert "Alpha-edit" in updated_doc.markdown
         assert "Beta-edit" in updated_doc.markdown
+        assert "Survived-200ms-REST-lock" in updated_doc.markdown
     finally:
         with connection.cursor() as cursor:
             cursor.execute(sql.SQL("DROP OWNED BY {}").format(sql.Identifier(collab_role)))
@@ -1477,3 +1518,172 @@ def test_r5_iam_channel_set_failure_aborts_write_and_returns_503(
         assert body["type"] == "https://kodera.io/problems/service-unavailable"
         assert not WorkspaceChannelRoleOverride.objects.filter(channel=chan).exists()
         assert not AuditEvent.objects.filter(request_id=http_req_id).exists()
+
+
+def test_r6_delegated_role_manager_cannot_bypass_expanded_override_ceiling(
+    world, http_signer, settings
+):
+    """Round-6 [Codex P2-1]: Because `message.post` channel overrides expand into all 4 `READ_ONLY`
+    capabilities and `media.speak` expands into all 3 `LISTEN_ONLY` capabilities, a non-admin
+    delegated `manage_roles` caller lacking any companion capability (`file.upload` or `media.video`)
+    is refused (`403`) on `governance.overrides`, `iam.assign_roles`, and `iam.delete_role`."""
+    from uuid import UUID
+
+    org, workspace, members, tokens = world
+    default_pol = ResourcePolicy.objects.create(workspace=workspace, visibility="organisation")
+    workspace.default_policy = default_pol
+    workspace.save(update_fields=["default_policy", "updated_at"])
+
+    text_chan = Channel.objects.create(
+        workspace=workspace,
+        name="TextCeiling",
+        kind="text",
+        position=0,
+        lifecycle="active",
+        policy_mode="inherit",
+    )
+    audio_chan = Channel.objects.create(
+        workspace=workspace,
+        name="AudioCeiling",
+        kind="audio",
+        position=1,
+        lifecycle="active",
+        policy_mode="inherit",
+    )
+
+    owner_args = {"verified": tokens[0], "organisation_id": org.id}
+    delegate_role = iam.create_role(
+        **owner_args,
+        data={
+            "name": "PartialDelegate",
+            "slug": "partial-delegate",
+            "position": 40,
+            "permissions": [
+                "manage_roles",
+                "channel.view",
+                "message.post",
+                "message.reply",
+                "message.edit_own",
+                "media.connect",
+                "media.speak",
+                "media.share",
+            ],
+        },
+        request_id=str(uuid4()),
+    )
+    target_role = iam.create_role(
+        **owner_args,
+        data={"name": "SubTeam", "slug": "sub-team", "position": 10, "permissions": []},
+        request_id=str(uuid4()),
+    )
+    iam.assign_roles(
+        **owner_args,
+        membership_id=members[2].id,
+        role_ids=[delegate_role["id"]],
+        request_id=str(uuid4()),
+    )
+
+    delegate_args = {"verified": tokens[2], "organisation_id": org.id}
+
+    # 1. Delegate CAN set `allow: ["channel.view"]`, but CANNOT set `allow` or `deny` for
+    #    `message.post` (missing `file.upload`) or `media.speak` (missing `media.video`)!
+    governance.overrides(
+        **delegate_args,
+        channel_id=text_chan.id,
+        data=[{"role_id": target_role["id"], "allow": ["channel.view"], "deny": []}],
+        request_id=str(uuid4()),
+    )
+    for chan_obj, cap in ((text_chan, "message.post"), (audio_chan, "media.speak")):
+        for payload_row in (
+            {"role_id": target_role["id"], "allow": [cap], "deny": []},
+            {"role_id": target_role["id"], "allow": [], "deny": [cap]},
+        ):
+            with pytest.raises(moderation.RefusalError) as err:
+                governance.overrides(
+                    **delegate_args,
+                    channel_id=chan_obj.id,
+                    data=[payload_row],
+                    request_id=str(uuid4()),
+                )
+            assert err.value.status == 403
+
+    # HTTP PUT check -> 403 forbidden!
+    configure(settings, [trust_entry(http_signer, org.issuer)])
+    settings.KODERA_CONSOLE_CLIENT_ID = "synthetic-console"
+    settings.ROOT_URLCONF = "apps.workspaces.api.moderation_urls"
+    delegate_bearer = token(http_signer, org.issuer, subject=tokens[2].subject, email_verified=True)
+    client = Client(HTTP_HOST="127.0.0.1")
+    http_resp = client.put(
+        f"/api/v1/organisations/{org.id}/workspace/channels/{text_chan.id}/overrides",
+        data=json.dumps(
+            {"overrides": [{"role_id": target_role["id"], "allow": ["message.post"], "deny": []}]}
+        ),
+        content_type="application/json",
+        HTTP_AUTHORIZATION=f"Bearer {delegate_bearer}",
+    )
+    assert http_resp.status_code == 403
+
+    # 2. When `org_owner` configures `allow: ["message.post"]` on `target_role`, partial delegate
+    #    is ALSO blocked from clearing that override, assigning `target_role`, or deleting `target_role`!
+    governance.overrides(
+        **owner_args,
+        channel_id=text_chan.id,
+        data=[{"role_id": target_role["id"], "allow": ["message.post"], "deny": []}],
+        request_id=str(uuid4()),
+    )
+    with pytest.raises(moderation.RefusalError) as clear_err:
+        governance.overrides(
+            **delegate_args,
+            channel_id=text_chan.id,
+            data=[],
+            request_id=str(uuid4()),
+        )
+    assert clear_err.value.status == 403
+
+    with pytest.raises(moderation.RefusalError) as assign_err:
+        iam.assign_roles(
+            **delegate_args,
+            membership_id=members[3].id,
+            role_ids=[target_role["id"]],
+            request_id=str(uuid4()),
+        )
+    assert assign_err.value.status == 403
+
+    with pytest.raises(moderation.RefusalError) as delete_err:
+        iam.delete_role(**delegate_args, role_id=UUID(target_role["id"]), request_id=str(uuid4()))
+    assert delete_err.value.status == 403
+
+    # 3. Granting the missing companion capabilities (`file.upload` + `media.video`) to `delegate_role`
+    #    allows the delegate to manage both `message.post` and `media.speak` overrides!
+    iam.update_role(
+        **owner_args,
+        role_id=UUID(delegate_role["id"]),
+        data={
+            "permissions": [
+                "manage_roles",
+                "channel.view",
+                "message.post",
+                "message.reply",
+                "message.edit_own",
+                "file.upload",
+                "media.connect",
+                "media.speak",
+                "media.share",
+                "media.video",
+            ]
+        },
+        if_match="*",
+        request_id=str(uuid4()),
+    )
+    governance.overrides(
+        **delegate_args,
+        channel_id=text_chan.id,
+        data=[{"role_id": target_role["id"], "allow": ["message.post"], "deny": []}],
+        request_id=str(uuid4()),
+    )
+    governance.overrides(
+        **delegate_args,
+        channel_id=audio_chan.id,
+        data=[{"role_id": target_role["id"], "allow": ["media.speak"], "deny": []}],
+        request_id=str(uuid4()),
+    )

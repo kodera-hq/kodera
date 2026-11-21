@@ -247,15 +247,26 @@ def overrides(
             if set(entry["allow"]) & set(entry["deny"]):
                 raise RefusalError(422)
             normalized.append(entry["role_id"])
+        from .channel_access import EXPLICIT, expand_override_capabilities, may_view, resolve
+
         roles = resolve_roles(workspace, normalized)
         existing = list(rows.select_related("role"))
         check_manage(workspace, caller, [row.role for row in existing] + roles)
         for row in existing:
-            check_manage(workspace, caller, [], permissions=[*row.allow, *row.deny])
+            check_manage(
+                workspace,
+                caller,
+                [],
+                permissions=expand_override_capabilities([*row.allow, *row.deny]),
+            )
         by_id = {str(role.id): role for role in roles}
         for entry in data:
-            check_manage(workspace, caller, [], permissions=[*entry["allow"], *entry["deny"]])
-        from .channel_access import EXPLICIT, may_view, resolve
+            check_manage(
+                workspace,
+                caller,
+                [],
+                permissions=expand_override_capabilities([*entry["allow"], *entry["deny"]]),
+            )
 
         access = (
             resolve(channel_id)

@@ -160,7 +160,7 @@ export function createCollabServer({key, store, origins, pollMilliseconds = 1000
       if (!room) return
       room.connections.delete(socket)
       if (socket.presenceId !== null) { room.owners.delete(socket.presenceId);removeAwarenessStates(room.awareness, [socket.presenceId], socket) }
-      if (!room.connections.size) { rooms.delete(socket.claims.document);room.doc.destroy() }
+      if (!room.connections.size) { rooms.delete(socket.claims.document);room.awareness.destroy();room.doc.destroy() }
     })
   })
   const poll = setInterval(() => {
@@ -175,6 +175,8 @@ export function createCollabServer({key, store, origins, pollMilliseconds = 1000
     async shutdown() {
       clearInterval(poll)
       for (const socket of connections) socket.terminate()
+      for (const room of rooms.values()) { room.awareness?.destroy?.();room.doc.destroy() }
+      rooms.clear()
       await new Promise(resolve => wss.close(resolve))
       server.closeAllConnections()
       await new Promise(resolve => server.close(resolve))

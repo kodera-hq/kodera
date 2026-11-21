@@ -30,6 +30,28 @@ import {
   useDraft,
 } from './shared'
 
+const READ_ONLY_BUNDLE: readonly WorkspaceCapability[] = [
+  'file.upload',
+  'message.edit_own',
+  'message.post',
+  'message.reply',
+]
+const LISTEN_ONLY_BUNDLE: readonly WorkspaceCapability[] = [
+  'media.share',
+  'media.speak',
+  'media.video',
+]
+
+export function mayOverride(authority: RoleAuthority, capability: WorkspaceCapability): boolean {
+  if (capability === 'message.post') {
+    return READ_ONLY_BUNDLE.every((item) => mayGrant(authority, item))
+  }
+  if (capability === 'media.speak') {
+    return LISTEN_ONLY_BUNDLE.every((item) => mayGrant(authority, item))
+  }
+  return mayGrant(authority, capability)
+}
+
 const STATES: readonly OverrideState[] = ['allow', 'inherit', 'deny']
 const GLYPH: Record<OverrideState, string> = { allow: '✓', inherit: '/', deny: '✕' }
 const TONE: Record<OverrideState, string> = {
@@ -174,7 +196,7 @@ export function ChannelOverridesPanel({
   const rowsBlocked = (draft ?? []).some((row) => {
     const rowRole = roleById.get(row.role_id)
     if (rowRole === undefined || !mayManage(authority, rowRole)) return true
-    return [...row.allow, ...row.deny].some((capability) => !mayGrant(authority, capability))
+    return [...row.allow, ...row.deny].some((capability) => !mayOverride(authority, capability))
   })
 
   function save() {
@@ -246,7 +268,9 @@ export function ChannelOverridesPanel({
                   <TriState
                     label={copy.capability[capability]}
                     value={overrideState(draft, role, capability)}
-                    disabled={!editable || busy || rowsBlocked || !mayGrant(authority, capability)}
+                    disabled={
+                      !editable || busy || rowsBlocked || !mayOverride(authority, capability)
+                    }
                     onChange={(state) => setDraft(withOverride(draft, role, capability, state))}
                   />
                 </div>

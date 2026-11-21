@@ -681,6 +681,7 @@ def backfill_legacy_invitation_bindings() -> int:
         "FROM outbox_outboxdelivery d "
         "JOIN outbox_message m ON m.delivery_id = d.id "
         "WHERE m.template_id IN ('invitation', 'invitation_account_ready') "
+        "  AND d.status = 'pending' "
         "  AND m.sealed IS NOT NULL "
         "  AND NOT EXISTS ("
         "      SELECT 1 FROM orgs_invitationoutboxbinding ib WHERE ib.delivery_id = d.id"

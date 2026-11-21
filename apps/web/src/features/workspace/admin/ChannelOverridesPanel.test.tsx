@@ -114,4 +114,66 @@ describe('ChannelOverridesPanel channel capability scoping', () => {
     expect(screen.queryByRole('radiogroup', { name: 'Gérer les rôles' })).not.toBeInTheDocument()
     vi.restoreAllMocks()
   })
+
+  it('requires delegated managers to hold all companion capabilities before overriding message.post or media.speak', async () => {
+    const user = userEvent.setup()
+    vi.spyOn(queries, 'useWorkspaceQuery').mockReturnValue({
+      data: WORKSPACE,
+    } as unknown as ReturnType<typeof queries.useWorkspaceQuery>)
+    vi.spyOn(api, 'listWorkspaceRoles').mockResolvedValue({
+      roles: [role({ id: 'r-builders', name: 'Builders', position: 10, permissions: [] })],
+      assignments: [],
+    })
+    vi.spyOn(api, 'getChannelOverrides').mockResolvedValue([])
+
+    // Delegate holds `manage_roles`, `channel.view`, and `message.post`, but lacks `file.upload` ->
+    // `channel.view` is enabled, while `message.post` stays disabled because it expands to READ_ONLY.
+    const partialDelegate = {
+      owner: false,
+      admin: false,
+      ceiling: 20,
+      held: new Set<api.WorkspaceCapability>([
+        'manage_roles',
+        'channel.view',
+        'message.post',
+        'message.reply',
+        'message.edit_own',
+      ]),
+    }
+    const { unmount } = renderPanel(
+      <ChannelOverridesPanel organisationId={ORG} authority={partialDelegate} />
+    )
+    const viewGroup = await screen.findByRole('radiogroup', { name: 'Voir les salons' })
+    const postGroup = screen.getByRole('radiogroup', { name: 'Envoyer des messages' })
+    expect(within(viewGroup).getByRole('radio', { name: 'Autoriser' })).not.toBeDisabled()
+    expect(within(postGroup).getByRole('radio', { name: 'Autoriser' })).toBeDisabled()
+    unmount()
+
+    // Once delegate holds the full READ_ONLY and LISTEN_ONLY bundles, both toggles are enabled.
+    const fullDelegate = {
+      owner: false,
+      admin: false,
+      ceiling: 20,
+      held: new Set<api.WorkspaceCapability>([
+        'manage_roles',
+        'channel.view',
+        'message.post',
+        'message.reply',
+        'message.edit_own',
+        'file.upload',
+        'media.connect',
+        'media.speak',
+        'media.share',
+        'media.video',
+      ]),
+    }
+    renderPanel(<ChannelOverridesPanel organisationId={ORG} authority={fullDelegate} />)
+    const enabledPost = await screen.findByRole('radiogroup', { name: 'Envoyer des messages' })
+    expect(within(enabledPost).getByRole('radio', { name: 'Autoriser' })).not.toBeDisabled()
+    await user.click(screen.getByRole('combobox', { name: 'Salon' }))
+    await user.click(await screen.findByRole('option', { name: /salon/ }))
+    const enabledSpeak = await screen.findByRole('radiogroup', { name: 'Parler' })
+    expect(within(enabledSpeak).getByRole('radio', { name: 'Autoriser' })).not.toBeDisabled()
+    vi.restoreAllMocks()
+  })
 })

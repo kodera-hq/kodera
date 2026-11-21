@@ -16,6 +16,7 @@ next channel membership set, which the tenant agent posts in the channel once (A
 The channel set's input, built from this access, is `channel_sets.channel_set_input` (§13).
 """
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
@@ -66,6 +67,19 @@ LISTEN_ONLY = ("media.share", "media.speak", "media.video")
 # The capability sets the two flags add or remove, whole, when a flag changes; every other stored
 # deny, and a partial set, is kept as it is.
 FLAGS = (("read_only", frozenset(READ_ONLY)), ("listen_only", frozenset(LISTEN_ONLY)))
+
+
+def expand_override_capabilities(capabilities: Iterable[str]) -> list[str]:
+    """Expand shorthand channel override capabilities (`message.post`, `media.speak`) into the full
+    effective capability sets they lift or deny so delegated permission ceilings cannot be bypassed."""
+    expanded = set(capabilities)
+    if "message.post" in expanded:
+        expanded.update(READ_ONLY)
+    if "media.speak" in expanded:
+        expanded.update(LISTEN_ONLY)
+    return sorted(expanded)
+
+
 FIELDS = ("mode", "visibility", "allow_members", "deny_members", "read_only", "listen_only")
 INHERIT = Channel.PolicyMode.INHERIT
 EXPLICIT = Channel.PolicyMode.EXPLICIT

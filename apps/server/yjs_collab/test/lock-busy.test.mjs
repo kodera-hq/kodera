@@ -59,7 +59,9 @@ test('Store.transaction classifies PostgreSQL lock/timeout SQLSTATEs as LockBusy
 
 test('createCollabServer closes immediately with 1013 lock-busy on both client update and refresh LockBusy without silently dropping edits', async () => {
   const key = Buffer.alloc(32, 7)
-  const docState = Y.encodeStateAsUpdate(load())
+  const initialDoc = load()
+  const docState = Y.encodeStateAsUpdate(initialDoc)
+  initialDoc.destroy()
   let mode = 'busy'
   const store = {
     async admit(_claims, consumer) {
@@ -99,8 +101,10 @@ test('createCollabServer closes immediately with 1013 lock-busy on both client u
 
     const editDoc = load()
     editDoc.getXmlFragment('content').insert(0, [new Y.XmlElement('paragraph')])
+    const editPayload = Y.encodeStateAsUpdate(editDoc)
+    editDoc.destroy()
     const closePromise = once(ws, 'close')
-    ws.send(updateFrame(Y.encodeStateAsUpdate(editDoc)))
+    ws.send(updateFrame(editPayload))
     const [updateCloseCode, updateCloseReason] = await closePromise
     assert.equal(updateCloseCode, 1013)
     assert.equal(updateCloseReason.toString('utf8'), 'lock-busy')
@@ -170,7 +174,8 @@ test(
     })
     assert.deepEqual(JSON.parse(stdout), {
       concurrentWorkspaceSucceeded: true,
-      mergedBothEditors: true,
+      reciprocalLinksSucceeded: true,
+      restWriteWaitedWithoutDisconnect: true,
       erasureImmediate55P03: true,
       wsClose1013: true,
     })

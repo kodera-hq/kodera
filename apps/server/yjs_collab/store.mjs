@@ -51,7 +51,7 @@ export class Store {
   }
   async binary(client, document) {
     const snapshot = await client.query(`SELECT s.state,s.sequence,s.head_sequence,d.revision FROM docs_documentsnapshot s
-      JOIN docs_document d ON d.id=s.document_id WHERE d.id=$1 FOR UPDATE OF d,s`, [document])
+      JOIN docs_document d ON d.id=s.document_id WHERE d.id=$1 FOR NO KEY UPDATE OF d,s`, [document])
     if (snapshot.rowCount !== 1) throw new Unavailable()
     const row = snapshot.rows[0], base = number(row.sequence), head = number(row.head_sequence)
     if (head < base || head - base > 256 || !Buffer.isBuffer(row.state) || row.state.length > 2 * 1024 * 1024) throw new Unavailable()
