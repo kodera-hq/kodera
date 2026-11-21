@@ -11,7 +11,7 @@ import hmac
 import io
 import ipaddress
 import tempfile
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Final
@@ -324,7 +324,7 @@ def canonical_export_row_input(row: Mapping[str, object]) -> dict[str, object]:
 
 
 def _iter_chained_export_rows(
-    events: Sequence[ComplianceAuditEvent],
+    events: Iterable[ComplianceAuditEvent],
     *,
     tenant_slug: str,
     organisation_id: UUID | None,
@@ -480,7 +480,7 @@ def export_compliance_bundle(
             "invalid_export_request", f"limit must be between 1 and {effective_max_rows}"
         )
 
-    filtered, has_more = ledger.query_events(
+    cursor_stream = ledger.stream_events(
         tenant_slug,
         organisation_id=organisation_id,
         from_timestamp=effective_filters.from_timestamp,
@@ -492,21 +492,31 @@ def export_compliance_bundle(
         limit=effective_filters.limit,
         max_rows=effective_max_rows,
     )
-    if has_more and effective_filters.limit is None:
-        raise AuditExportError(
-            "export_limit_exceeded",
-            f"Export exceeds {effective_max_rows}-row ceiling; pass limit and after_seq for cursor pagination",
-            status=413,
-        )
 
     ledger_head = ledger.head_hash(tenant_slug, organisation_id=organisation_id)
     head_entry_hash = GENESIS_PREV_HASH
     record_count = 0
+    first_ledger_seq: int | None = None
+    last_ledger_seq: int | None = None
+
+    def _bounded_events() -> Iterator[ComplianceAuditEvent]:
+        nonlocal first_ledger_seq, last_ledger_seq
+        for evt in cursor_stream.events:
+            if first_ledger_seq is None:
+                first_ledger_seq = evt.sequence
+            last_ledger_seq = evt.sequence
+            yield evt
+        if cursor_stream.has_more and effective_filters.limit is None:
+            raise AuditExportError(
+                "export_limit_exceeded",
+                f"Export exceeds {effective_max_rows}-row ceiling; pass limit and after_seq for cursor pagination",
+                status=413,
+            )
 
     def _tracked_rows() -> Iterator[dict[str, object]]:
         nonlocal head_entry_hash, record_count
         for row in _iter_chained_export_rows(
-            filtered,
+            _bounded_events(),
             tenant_slug=tenant_slug,
             organisation_id=organisation_id,
             framework=fw,
@@ -535,14 +545,19 @@ def export_compliance_bundle(
                 )
             hasher.update(chunk)
             spool.write(chunk)
+        if cursor_stream.has_more and effective_filters.limit is None:
+            raise AuditExportError(
+                "export_limit_exceeded",
+                f"Export exceeds {effective_max_rows}-row ceiling; pass limit and after_seq for cursor pagination",
+                status=413,
+            )
         spool.seek(0)
     except Exception:
         spool.close()
         raise
 
+    has_more = cursor_stream.has_more
     payload_sha256 = hasher.hexdigest()
-    first_ledger_seq = filtered[0].sequence if filtered else None
-    last_ledger_seq = filtered[-1].sequence if filtered else None
     next_after_seq = last_ledger_seq if (has_more and last_ledger_seq is not None) else None
 
     bundle_id = str(uuid4())

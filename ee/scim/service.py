@@ -1014,6 +1014,16 @@ def _parse_member_filter_path(path: str) -> str | None:
     return _parse_bracket_eq_literal(rest.strip(), "value")
 
 
+def _parse_role_filter_path(path: str) -> str | None:
+    """Match `roles[value eq "<role>"]` in linear O(n) time without regex."""
+    if len(path) > MAX_SCIM_PATH_LENGTH or not path.endswith("]"):
+        return None
+    prefix, sep, rest = path[:-1].partition("[")
+    if not sep or prefix.lower() != "roles" or "]" in rest:
+        return None
+    return _parse_bracket_eq_literal(rest.strip(), "value")
+
+
 def _parse_email_filter_path(path: str) -> tuple[str, str | None] | None:
     """Match `emails[type eq "<type>"][.<subattr>]` in linear O(n) time without regex."""
     if len(path) > MAX_SCIM_PATH_LENGTH:
@@ -1526,7 +1536,7 @@ class ScimService:
             user.display_name = display_name
             user.emails = _parse_emails(payload.get("emails"), new_user_name)
             user.roles = _parse_roles(payload.get("roles"))
-            mapped_role = _resolve_scim_membership_role(user.roles)
+            mapped_role = _resolve_scim_membership_role(user.roles, default_when_empty="org_member")
             ent_ext = payload.get(SCIM_ENTERPRISE_USER_SCHEMA)
             if isinstance(ent_ext, dict) and isinstance(ent_ext.get("department"), str):
                 user.department = ent_ext["department"].strip() or None
@@ -1626,6 +1636,7 @@ class ScimService:
             deprovision_triggered = False
             reactivate_triggered = False
             active_true_requested = False
+            roles_touched = False
 
             for op_entry in operations:
                 if not isinstance(op_entry, dict) or not isinstance(op_entry.get("op"), str):
@@ -1661,6 +1672,8 @@ class ScimService:
                         reactivate_triggered = reactivate_triggered or reactiv
                         if k.lower() == "active" and user.active:
                             active_true_requested = True
+                        if k.lower() == "roles":
+                            roles_touched = True
                 else:
                     deprov, reactiv = self._apply_user_field_op(
                         state, user, op=op, path=path, value=value
@@ -1669,11 +1682,20 @@ class ScimService:
                     reactivate_triggered = reactivate_triggered or reactiv
                     if path.lower() == "active" and user.active:
                         active_true_requested = True
+                    if path.lower() == "roles" or _parse_role_filter_path(path) is not None:
+                        roles_touched = True
 
             user.version += 1
             user.updated_at = timestamp
             effective_org_id = organisation_id or state.organisation_id
-            mapped_role = _resolve_scim_membership_role(user.roles) if user.roles else None
+            mapped_role = (
+                _resolve_scim_membership_role(user.roles, default_when_empty="org_member")
+                if roles_touched
+                else None
+            )
+            reactivate_role = (
+                mapped_role if roles_touched else _resolve_scim_membership_role(user.roles)
+            )
             primary_email = _primary_email_value(user.emails, user.user_name)
             if deprovision_triggered and not user.active:
                 _deprovision_user(
@@ -1694,7 +1716,7 @@ class ScimService:
                     _sync_django_scim_reactivate(
                         effective_org_id,
                         UUID(user.django_user_id),
-                        requested_role=mapped_role,
+                        requested_role=reactivate_role,
                         email=primary_email,
                         display_name=user.display_name,
                     )
@@ -1799,7 +1821,26 @@ class ScimService:
                 return False, False
 
         if low_path == "roles":
-            user.roles = [] if op == "remove" else _parse_roles(value)
+            if op == "remove":
+                if value is None:
+                    user.roles = []
+                else:
+                    remove_vals = {r.lower() for r in _parse_roles(value)}
+                    user.roles = [r for r in user.roles if r.lower() not in remove_vals]
+            elif op == "add":
+                existing_low = {r.lower() for r in user.roles}
+                for parsed_r in _parse_roles(value):
+                    if parsed_r.lower() not in existing_low:
+                        user.roles.append(parsed_r)
+                        existing_low.add(parsed_r.lower())
+            else:
+                user.roles = _parse_roles(value)
+            return False, False
+
+        role_filter_target = _parse_role_filter_path(path)
+        if role_filter_target is not None and op == "remove":
+            target_low = role_filter_target.strip().lower()
+            user.roles = [r for r in user.roles if r.lower() != target_low]
             return False, False
 
         if low_path in {
@@ -2154,10 +2195,14 @@ def _try_parse_uuid_str(value: str | None) -> str | None:
         return None
 
 
-def _resolve_scim_membership_role(roles: list[str]) -> str | None:
+def _resolve_scim_membership_role(
+    roles: list[str],
+    *,
+    default_when_empty: str | None = None,
+) -> str | None:
     """Map SCIM `roles` onto Kodera `org_member` / `org_admin`; forbid `org_owner` / `org_billing`."""
     if not roles:
-        return None
+        return default_when_empty
     has_admin = False
     for raw in roles:
         norm = raw.strip().lower()
@@ -2181,42 +2226,18 @@ def _maybe_sync_user_contact_columns(
     email: str | None,
     display_name: str | None,
 ) -> None:
-    """Update `identity_user` / `identity_identity` contact columns when role grants permit."""
-    cur.execute(
-        """
-        SELECT
-            has_column_privilege(current_user, 'public.identity_user', 'email', 'UPDATE'),
-            has_column_privilege(current_user, 'public.identity_user', 'display_name', 'UPDATE'),
-            has_column_privilege(current_user, 'public.identity_identity', 'email', 'UPDATE')
-        """
-    )
-    priv_row = cur.fetchone()
-    if priv_row is None:
+    """Synchronize `identity_identity` / `identity_user` contact columns via narrow SECURITY DEFINER."""
+    if organisation_id is None:
         return
-    can_email, can_display, can_ident_email = (
-        bool(priv_row[0]),
-        bool(priv_row[1]),
-        bool(priv_row[2]),
+    cur.execute(
+        "SELECT public.ee_scim_sync_member_contact(%s, %s, %s, %s)",
+        [
+            organisation_id,
+            user_uuid,
+            email.strip() if email else None,
+            display_name[:200] if display_name is not None else None,
+        ],
     )
-    if can_email and can_display and email and display_name is not None:
-        cur.execute(
-            "UPDATE public.identity_user SET email = %s, display_name = %s WHERE id = %s",
-            [email.strip(), display_name[:200], user_uuid],
-        )
-    elif can_display and display_name is not None:
-        cur.execute(
-            "UPDATE public.identity_user SET display_name = %s WHERE id = %s",
-            [display_name[:200], user_uuid],
-        )
-    if can_ident_email and email and organisation_id is not None:
-        cur.execute(
-            """
-            UPDATE public.identity_identity
-            SET email = %s
-            WHERE organisation_id = %s AND user_id = %s AND deleted_at IS NULL
-            """,
-            [email.strip(), organisation_id, user_uuid],
-        )
 
 
 def _lock_and_verify_scim_person(

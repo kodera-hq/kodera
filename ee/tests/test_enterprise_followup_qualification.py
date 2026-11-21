@@ -1357,18 +1357,28 @@ def test_p1_3_organisation_and_account_erasure_cutoff_purge_scrub_and_migration_
     assert vault_ok_after_org is True and errs_org == []
     assert Identity.objects.filter(organisation=target_org).exists()
 
-    # --- PART C: Migration `orgs 0031 <-> 0032` Round-Trip on isolated empty database ---
+    # --- PART C: Migration `orgs 0031 <-> 0034` Round-Trip on isolated empty database ---
     from django.db.migrations.executor import MigrationExecutor
     from test_customer_persistence_migrations import empty_database
 
     with django_db_blocker.unblock(), empty_database() as target:
         executor = MigrationExecutor(target)
-        executor.migrate([("orgs", "0032_ee_enterprise_store")])
+        executor.migrate([("orgs", "0034_ee_audit_ledger_erasure")])
         with target.cursor() as cur:
             for tbl in EE_TABLES:
                 cur.execute("SELECT to_regclass(%s)", [f"public.{tbl}"])
-                row_32 = cur.fetchone()
-                assert row_32 is not None and row_32[0] == tbl
+                row_34 = cur.fetchone()
+                assert row_34 is not None and row_34[0] == tbl
+            cur.execute("SELECT to_regprocedure('public.ee_scim_sync_member_contact(uuid,uuid,text,text)')")
+            proc_34 = cur.fetchone()
+            assert proc_34 is not None and proc_34[0] is not None
+
+        executor.loader.build_graph()
+        executor.migrate([("orgs", "0033_proximity_erasure_inventory")])
+        with target.cursor() as cur:
+            cur.execute("SELECT to_regprocedure('public.ee_scim_sync_member_contact(uuid,uuid,text,text)')")
+            proc_33 = cur.fetchone()
+            assert proc_33 is not None and proc_33[0] is None
 
         executor.loader.build_graph()
         executor.migrate([("orgs", "0031_account_erasure_completion")])
@@ -1378,7 +1388,7 @@ def test_p1_3_organisation_and_account_erasure_cutoff_purge_scrub_and_migration_
             assert row_31 is not None and row_31[0] is None
 
         executor.loader.build_graph()
-        executor.migrate([("orgs", "0032_ee_enterprise_store")])
+        executor.migrate([("orgs", "0034_ee_audit_ledger_erasure")])
         with target.cursor() as cur:
             for tbl in EE_TABLES:
                 cur.execute("SELECT to_regclass(%s)", [f"public.{tbl}"])

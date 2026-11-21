@@ -26,6 +26,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from core.db.api_writer_role import grant_statements  # noqa: E402
 from dev.accept_production_http import (  # noqa: E402
     PASSWORD,
     POSTGRES,
@@ -91,7 +92,7 @@ def run() -> None:
     enterprise_image = f"{OWNER}:enterprise"
     containers = [database, community_api, enterprise_api]
     images = [community_image, enterprise_image]
-    trust, _token = signature()
+    trust, token = signature()
 
     try:
         PHASE = "owned-network-create"
@@ -154,17 +155,20 @@ def run() -> None:
 
         PHASE = "operator-migrations"
         fixture(db_port)
-        reader_sql = "\n".join(
+        roles_sql = "\n".join(
             [
                 f"CREATE ROLE synthetic_reader LOGIN PASSWORD '{PASSWORD}'"
                 " NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT;",
                 "ALTER ROLE synthetic_reader SET default_transaction_read_only = on;",
+                f"CREATE ROLE kodera_api LOGIN PASSWORD '{PASSWORD}'"
+                " NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT;",
                 "REVOKE ALL ON DATABASE kodera_server FROM PUBLIC;",
                 "REVOKE CREATE ON SCHEMA public FROM PUBLIC;",
-                "GRANT CONNECT ON DATABASE kodera_server TO synthetic_reader;",
-                "GRANT USAGE ON SCHEMA public TO synthetic_reader;",
+                "GRANT CONNECT ON DATABASE kodera_server TO synthetic_reader, kodera_api;",
+                "GRANT USAGE ON SCHEMA public TO synthetic_reader, kodera_api;",
                 "GRANT SELECT ON TABLE identity_user, identity_identity, identity_staffrole,"
                 " orgs_organisation, orgs_membership TO synthetic_reader;",
+                *(f"{stmt};" for stmt in grant_statements("kodera_api")),
             ]
         )
         docker(
@@ -178,7 +182,7 @@ def run() -> None:
             "-v",
             "ON_ERROR_STOP=1",
             "-c",
-            reader_sql,
+            roles_sql,
         )
 
         # --- Variant 1: Community image (no ee_src override) -----------------
@@ -287,7 +291,7 @@ def run() -> None:
             "-e",
             "DJANGO_ALLOWED_HOSTS=api.synthetic.test",
             "-e",
-            f"DATABASE_URL=postgresql://synthetic_reader:{PASSWORD}@db/kodera_server",
+            f"DATABASE_URL=postgresql://kodera_api:{PASSWORD}@db/kodera_server",
             "-e",
             f"KODERA_AUTH_TRUST={trust}",
             "-e",
@@ -312,7 +316,7 @@ def run() -> None:
             "import json, pathlib;"
             " p = pathlib.Path('/app/ee');"
             " assert (p / '__init__.py').is_file();"
-            " assert (p / 'urls.py').is_file();"
+            " assert (p / 'router.py').is_file();"
             " assert (p / 'billing' / 'urls.py').is_file();"
             " assert not (p / 'tests').exists();"
             " assert not (p / 'billing' / 'tests').exists();"
@@ -321,12 +325,21 @@ def run() -> None:
         ent_fs = json.loads(docker("exec", enterprise_api, "python", "-c", ent_fs_probe).stdout)
         require(ent_fs["ee_packaged"] is True, "Enterprise image missing /app/ee modules")
 
-        # Cold-start billing probe first (`BUG-0036`) followed by `/api/v1/ee/status` (`BUG-0072`).
-        plans_status, plans_raw = http_request(ent_port, "/api/v1/ee/billing/plans")
+        # Cold-start billing probes first (`BUG-0036` + `BUG-0058`): anonymous -> 401,
+        # authenticated `kodera_api` principal -> 200, followed by `/api/v1/ee/status` (`BUG-0072`).
+        anon_status, anon_raw = http_request(ent_port, "/api/v1/ee/billing/plans")
+        anon_body = json.loads(anon_raw)
+        require(
+            anon_status == 401
+            and anon_body.get("type") == "https://kodera.io/problems/unauthenticated",
+            "Enterprise cold-start anonymous /api/v1/ee/billing/plans did not return 401",
+        )
+
+        plans_status, plans_raw = http_request(ent_port, "/api/v1/ee/billing/plans", token=token)
         plans_body = json.loads(plans_raw)
         require(
             plans_status == 200 and isinstance(plans_body.get("plans"), list),
-            "Enterprise cold-start /api/v1/ee/billing/plans did not return 200",
+            "Enterprise cold-start authenticated /api/v1/ee/billing/plans did not return 200",
         )
 
         ee_status, ee_raw = http_request(ent_port, "/api/v1/ee/status")

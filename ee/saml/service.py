@@ -12,7 +12,9 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import inspect
 import json
+import re
 import secrets
 import threading
 import urllib.parse
@@ -28,6 +30,7 @@ from django.db import DatabaseError, IntegrityError, connection, transaction
 from uuid6 import uuid7
 
 from ee.edition import require_enterprise_edition
+from ee.saml.dns_txt import query_dns_txt_records
 from ee.saml.xml_security import (
     SAML_ASSERTION_NS,
     SAML_METADATA_NS,
@@ -241,6 +244,20 @@ class ProvisionedSamlPrincipal:
     role: str
     return_path: str
     authenticated_at: datetime
+    oidc_client_id: str = "console"
+    oidc_redirect_uri: str | None = None
+    oidc_code_challenge: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SamlHandoffSession:
+    user_id: str
+    tenant_slug: str
+    role: str
+    return_path: str
+    access_token: str
+    expires_in: int
+    passport_token: str | None = None
 
 
 def _idp_from_row(row: tuple[object, ...]) -> SamlIdpConfig:
@@ -377,6 +394,12 @@ def _normalize_sp_base_url(sp_base_url: str) -> str:
     return f"{parsed.scheme}://{parsed.netloc}{parsed.path}".rstrip("/")
 
 
+_CLIENT_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}\Z")
+_PKCE_CHALLENGE_S256_RE = re.compile(r"^[A-Za-z0-9_-]{43}\Z")
+_PKCE_VERIFIER_S256_RE = re.compile(r"^[A-Za-z0-9._~-]{43,128}\Z")
+_LOOPBACK_REDIRECT_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "[::1]", "testserver"})
+
+
 def _sanitize_return_path(return_path: str) -> str:
     candidate = return_path.strip() or "/"
     if not candidate.startswith("/") or candidate.startswith("//") or "\\" in candidate:
@@ -386,6 +409,140 @@ def _sanitize_return_path(return_path: str) -> str:
     if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in candidate):
         raise SamlError("invalid_return_path", "Control characters are forbidden in return path")
     return candidate
+
+
+def _validate_oidc_client_id(raw: str | None) -> str:
+    if raw is None or not raw.strip():
+        return "console"
+    cleaned = raw.strip()
+    if not _CLIENT_ID_RE.fullmatch(cleaned):
+        raise SamlError("invalid_client_id", "Invalid OIDC client_id", status=400)
+    return cleaned
+
+
+def _validate_oidc_redirect_uri(
+    raw: str | None,
+    *,
+    sp_base_url: str,
+    tenant_slug: str,
+) -> str:
+    norm_base = _normalize_sp_base_url(sp_base_url)
+    if raw is None or not raw.strip():
+        return f"{norm_base}/api/v1/ee/sso/saml/{tenant_slug}/oidc-handoff"
+    cleaned = raw.strip()
+    if len(cleaned) > 1024 or "\\" in cleaned or any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in cleaned):
+        raise SamlError("invalid_redirect_uri", "Invalid OIDC redirect_uri", status=400)
+    parsed = urllib.parse.urlsplit(cleaned)
+    host_low = (parsed.hostname or "").lower()
+    if not parsed.netloc or parsed.fragment:
+        raise SamlError("invalid_redirect_uri", "Invalid OIDC redirect_uri", status=400)
+    if parsed.scheme == "https":
+        return cleaned
+    if parsed.scheme == "http" and host_low in _LOOPBACK_REDIRECT_HOSTS:
+        return cleaned
+    raise SamlError(
+        "invalid_redirect_uri",
+        "OIDC redirect_uri must use https:// (or loopback http:// in local tests)",
+        status=400,
+    )
+
+
+def _validate_optional_pkce(
+    code_challenge: str | None,
+    code_challenge_method: str | None,
+) -> str | None:
+    if code_challenge is None or not code_challenge.strip():
+        if code_challenge_method is not None and code_challenge_method.strip():
+            if code_challenge_method.strip() != "S256":
+                raise SamlError(
+                    "invalid_pkce_challenge",
+                    "PKCE code_challenge_method must be S256",
+                    status=400,
+                )
+        return None
+    method = (code_challenge_method or "S256").strip()
+    cleaned = code_challenge.strip()
+    if method != "S256" or not _PKCE_CHALLENGE_S256_RE.fullmatch(cleaned):
+        raise SamlError(
+            "invalid_pkce_challenge",
+            "Invalid PKCE code_challenge or unsupported method (S256 required)",
+            status=400,
+        )
+    return cleaned
+
+
+def _encode_pending_context(
+    return_path: str,
+    *,
+    client_id: str,
+    redirect_uri: str | None,
+    code_challenge: str | None,
+) -> str:
+    if client_id == "console" and redirect_uri is None and code_challenge is None:
+        return return_path
+    return json.dumps(
+        {
+            "return_path": return_path,
+            "client_id": client_id,
+            "redirect_uri": redirect_uri,
+            "code_challenge": code_challenge,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _decode_pending_context(stored: str) -> tuple[str, str, str | None, str | None]:
+    if not stored.startswith("{"):
+        return stored, "console", None, None
+    try:
+        parsed = json.loads(stored)
+    except ValueError:
+        return "/", "console", None, None
+    if not isinstance(parsed, dict):
+        return "/", "console", None, None
+    ret = parsed.get("return_path")
+    cid = parsed.get("client_id")
+    ruri = parsed.get("redirect_uri")
+    pkce = parsed.get("code_challenge")
+    return (
+        ret if isinstance(ret, str) and ret else "/",
+        cid if isinstance(cid, str) and cid else "console",
+        ruri if isinstance(ruri, str) and ruri else None,
+        pkce if isinstance(pkce, str) and pkce else None,
+    )
+
+
+def _compute_pkce_s256(verifier: str) -> str:
+    return (
+        base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest())
+        .rstrip(b"=")
+        .decode("ascii")
+    )
+
+
+def _issue_core_passport_token(*, user_id: UUID, active_organisation_id: UUID, now_epoch: int) -> str | None:
+    try:
+        from django.conf import settings
+
+        from core.passport import PASSPORT_SESSION_TTL_SECONDS, issue_passport_session_token
+
+        secret = getattr(settings, "SECRET_KEY", "")
+        if not isinstance(secret, str) or len(secret) < 16:
+            return None
+        kwargs: dict[str, Any] = {
+            "secret": secret,
+            "user_id": user_id,
+            "active_organisation_id": active_organisation_id,
+            "now": now_epoch,
+            "ttl_seconds": PASSPORT_SESSION_TTL_SECONDS,
+        }
+        sig_params = inspect.signature(issue_passport_session_token).parameters
+        if "email_verified" in sig_params:
+            kwargs["email_verified"] = True
+        return str(issue_passport_session_token(**kwargs))
+    except Exception:
+        return None
 
 
 class SamlService:
@@ -437,7 +594,9 @@ class SamlService:
         if resolver is not None:
             resolved = tuple(str(r).strip() for r in resolver(key))
             return seeded + resolved
-        return seeded
+        if seeded:
+            return seeded
+        return query_dns_txt_records(key)
 
     def domain_verification_token(
         self,
@@ -617,15 +776,36 @@ class SamlService:
         sp_base_url: str,
         ttl_seconds: int = 60,
     ) -> tuple[str, str]:
-        """Mint a short-lived HMAC-signed broker handoff token and OIDC redirect URL."""
+        """Mint a single-use DB-backed HMAC handoff token and full PKCE OIDC redirect URL."""
+        require_enterprise_edition()
         norm_base = _normalize_sp_base_url(sp_base_url)
-        exp_epoch = int((principal.authenticated_at + timedelta(seconds=ttl_seconds)).timestamp())
+        client_id = _validate_oidc_client_id(principal.oidc_client_id)
+        redirect_uri = _validate_oidc_redirect_uri(
+            principal.oidc_redirect_uri,
+            sp_base_url=norm_base,
+            tenant_slug=principal.tenant_slug,
+        )
+        client_pkce = principal.oidc_code_challenge
+        if client_pkce:
+            outbound_challenge = client_pkce
+        else:
+            outbound_challenge = _compute_pkce_s256(secrets.token_urlsafe(32))
+
+        issued_at = principal.authenticated_at.astimezone(UTC)
+        expires_at = issued_at + timedelta(seconds=ttl_seconds)
+        exp_epoch = int(expires_at.timestamp())
+        nonce = secrets.token_urlsafe(24)
         payload_obj = {
+            "v": 1,
+            "jti": nonce,
             "sub": principal.user_id,
             "tenant_slug": principal.tenant_slug,
             "idp_id": principal.idp_id,
             "assertion_id": principal.assertion_id,
             "return_path": principal.return_path,
+            "client_id": client_id,
+            "redirect_uri": redirect_uri,
+            "pkce": client_pkce or "",
             "exp": exp_epoch,
         }
         payload_b64 = (
@@ -638,28 +818,110 @@ class SamlService:
         key = derive_ee_hkdf_bytes(
             domain_info=_HANDOFF_KDF_INFO + b"\x00" + principal.tenant_slug.encode("utf-8")
         )
-        sig = hmac.new(key, payload_b64.encode("ascii"), hashlib.sha256).hexdigest()
-        handoff_token = f"{payload_b64}.{sig}"
+        sig = hmac.new(key, f"ksh1.{payload_b64}".encode("ascii"), hashlib.sha256).hexdigest()
+        handoff_token = f"ksh1.{payload_b64}.{sig}"
+        handoff_key = f"handoff:{nonce}"
+        handoff_meta = json.dumps(
+            {
+                "sub": principal.user_id,
+                "email": principal.email,
+                "role": principal.role,
+                "return_path": principal.return_path,
+                "client_id": client_id,
+                "redirect_uri": redirect_uri,
+                "pkce": client_pkce or "",
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
 
         issuer_url: str | None = None
+        stored_in_pg = False
         if can_use_postgres():
-            with connection.cursor() as cur:
-                cur.execute(
-                    "SELECT issuer FROM public.orgs_organisation WHERE slug = %s AND deleted_at IS NULL LIMIT 1",
-                    [principal.tenant_slug],
+            try:
+                with transaction.atomic(), connection.cursor() as cur:
+                    org_id, resolved_slug = acquire_active_tenant_fence(
+                        cur,
+                        tenant_slug=principal.tenant_slug,
+                    )
+                    cur.execute(
+                        "SELECT issuer FROM public.orgs_organisation WHERE id = %s LIMIT 1",
+                        [org_id],
+                    )
+                    row = cur.fetchone()
+                    if row is not None and row[0]:
+                        issuer_url = str(row[0]).rstrip("/")
+                    cur.execute(
+                        "DELETE FROM public.ee_saml_pending_request WHERE expires_at <= %s",
+                        [issued_at],
+                    )
+                    cur.execute(
+                        """
+                        INSERT INTO public.ee_saml_pending_request (
+                            relay_state, organisation_id, tenant_slug, idp_id,
+                            request_id, return_path, sp_base_url, expires_at
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        [
+                            handoff_key,
+                            org_id,
+                            resolved_slug,
+                            principal.idp_id,
+                            principal.assertion_id,
+                            handoff_meta,
+                            norm_base,
+                            expires_at,
+                        ],
+                    )
+                    stored_in_pg = True
+            except TenantCutoffError as exc:
+                if exc.code != "organisation_not_found":
+                    raise SamlError(
+                        exc.code,
+                        "Organisation is unavailable for SAML OIDC handoff",
+                        status=exc.status,
+                    ) from exc
+            except IntegrityError as exc:
+                raise SamlError(
+                    "tenant_cutoff_fenced",
+                    "SAML OIDC handoff refused by privacy cutoff",
+                    status=403,
+                ) from exc
+            except DatabaseError as exc:
+                if is_retriable_lock_contention(exc):
+                    raise SamlError(
+                        "authority_fenced",
+                        "Organisation authority changed concurrently; retry request",
+                        status=409,
+                    ) from exc
+                raise
+
+        if not stored_in_pg:
+            with self._lock:
+                self._prune_pending_locked(issued_at)
+                self._pending_by_relay[handoff_key] = _PendingRequest(
+                    tenant_slug=principal.tenant_slug,
+                    idp_id=principal.idp_id,
+                    request_id=principal.assertion_id,
+                    relay_state=handoff_key,
+                    return_path=handoff_meta,
+                    sp_base_url=norm_base,
+                    expires_at=expires_at,
                 )
-                row = cur.fetchone()
-                if row is not None and row[0]:
-                    issuer_url = str(row[0]).rstrip("/")
+                while len(self._pending_by_relay) > MAX_PENDING_REQUESTS:
+                    self._pending_by_relay.popitem(last=False)
 
         query = urllib.parse.urlencode(
             {
+                "client_id": client_id,
+                "redirect_uri": redirect_uri,
                 "response_type": "code",
                 "scope": "openid",
+                "code_challenge": outbound_challenge,
+                "code_challenge_method": "S256",
                 "kc_idp_hint": principal.idp_id,
                 "login_hint": principal.email,
                 "state": handoff_token,
-                "return_path": principal.return_path,
             }
         )
         if issuer_url:
@@ -667,6 +929,334 @@ class SamlService:
         else:
             handoff_url = f"{norm_base}/api/v1/ee/sso/saml/{principal.tenant_slug}/oidc-handoff?{query}"
         return handoff_url, handoff_token
+
+    def consume_oidc_handoff(
+        self,
+        *,
+        tenant_slug: str,
+        handoff_token: str,
+        sp_base_url: str,
+        code_verifier: str | None = None,
+        now: datetime | None = None,
+    ) -> SamlHandoffSession:
+        """Atomically verify & burn a single-use SAML->OIDC handoff token into session credentials."""
+        require_enterprise_edition()
+        if not _is_valid_slug(tenant_slug):
+            raise SamlError("invalid_tenant_slug", "Invalid tenant slug", status=400)
+        norm_base = _normalize_sp_base_url(sp_base_url)
+        current_time = (now or datetime.now(UTC)).astimezone(UTC)
+        now_epoch = int(current_time.timestamp())
+
+        cleaned_token = handoff_token.strip()
+        if not cleaned_token:
+            raise SamlError("missing_handoff_token", "Missing SAML OIDC handoff token", status=400)
+        if len(cleaned_token) > 4096 or not cleaned_token.startswith("ksh1."):
+            raise SamlError(
+                "invalid_handoff_token",
+                "Invalid, tampered, or expired SAML OIDC handoff token",
+                status=403,
+            )
+        parts = cleaned_token.split(".")
+        if len(parts) != 3 or parts[0] != "ksh1" or not parts[1] or not parts[2]:
+            raise SamlError(
+                "invalid_handoff_token",
+                "Invalid, tampered, or expired SAML OIDC handoff token",
+                status=403,
+            )
+        _, payload_b64, supplied_sig = parts
+        key = derive_ee_hkdf_bytes(
+            domain_info=_HANDOFF_KDF_INFO + b"\x00" + tenant_slug.encode("utf-8")
+        )
+        expected_sig = hmac.new(key, f"ksh1.{payload_b64}".encode("ascii"), hashlib.sha256).hexdigest()
+        if not supplied_sig.isascii() or not hmac.compare_digest(
+            supplied_sig.encode("ascii"), expected_sig.encode("ascii")
+        ):
+            raise SamlError(
+                "invalid_handoff_token",
+                "Invalid, tampered, or expired SAML OIDC handoff token",
+                status=403,
+            )
+
+        padding = "=" * (-len(payload_b64) % 4)
+        try:
+            raw_bytes = base64.urlsafe_b64decode((payload_b64 + padding).encode("ascii"))
+            claims = json.loads(raw_bytes.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            raise SamlError(
+                "invalid_handoff_token",
+                "Invalid, tampered, or expired SAML OIDC handoff token",
+                status=403,
+            ) from None
+
+        if not isinstance(claims, dict) or claims.get("v") != 1:
+            raise SamlError("invalid_handoff_token", "Malformed handoff claims", status=403)
+        jti = claims.get("jti")
+        sub = claims.get("sub")
+        claim_slug = claims.get("tenant_slug")
+        ret_path = claims.get("return_path")
+        expected_pkce = claims.get("pkce", "")
+        exp = claims.get("exp")
+        if (
+            not isinstance(jti, str)
+            or not jti
+            or not isinstance(sub, str)
+            or not sub
+            or claim_slug != tenant_slug
+            or not isinstance(ret_path, str)
+            or not isinstance(expected_pkce, str)
+            or type(exp) is not int
+            or now_epoch >= exp
+        ):
+            raise SamlError(
+                "invalid_handoff_token",
+                "Invalid, tampered, or expired SAML OIDC handoff token",
+                status=403,
+            )
+
+        # Verify PKCE BEFORE burning the DB row so wrong verifiers cannot DoS a legitimate login.
+        if expected_pkce:
+            if (
+                not isinstance(code_verifier, str)
+                or not _PKCE_VERIFIER_S256_RE.fullmatch(code_verifier.strip())
+                or not hmac.compare_digest(
+                    _compute_pkce_s256(code_verifier.strip()).encode("ascii"),
+                    expected_pkce.encode("ascii"),
+                )
+            ):
+                raise SamlError(
+                    "invalid_pkce_verifier",
+                    "PKCE code_verifier verification failed",
+                    status=403,
+                )
+        elif code_verifier is not None and code_verifier.strip():
+            if not _PKCE_VERIFIER_S256_RE.fullmatch(code_verifier.strip()):
+                raise SamlError(
+                    "invalid_pkce_verifier",
+                    "PKCE code_verifier verification failed",
+                    status=403,
+                )
+
+        clean_return = _sanitize_return_path(ret_path)
+        handoff_key = f"handoff:{jti}"
+
+        from ee.auth import EE_SAML_SESSION_TTL_SECONDS, issue_ee_saml_session_token
+
+        if can_use_postgres():
+            try:
+                user_uuid = UUID(sub)
+            except ValueError as exc:
+                raise SamlError("invalid_handoff_token", "Invalid subject UUID", status=403) from exc
+
+            try:
+                with transaction.atomic(), connection.cursor() as cur:
+                    org_id, resolved_slug = acquire_active_tenant_fence(
+                        cur,
+                        tenant_slug=tenant_slug,
+                    )
+                    cur.execute(
+                        """
+                        SELECT sp_base_url
+                        FROM public.ee_saml_pending_request
+                        WHERE relay_state = %s
+                          AND organisation_id = %s
+                          AND tenant_slug = %s
+                          AND expires_at > %s
+                        FOR UPDATE NOWAIT
+                        """,
+                        [handoff_key, org_id, resolved_slug, current_time],
+                    )
+                    pending_row = cur.fetchone()
+                    if pending_row is None:
+                        raise SamlError(
+                            "replayed_handoff_token",
+                            "SAML OIDC handoff token has already been consumed or expired",
+                            status=403,
+                        )
+                    if str(pending_row[0]) != norm_base:
+                        raise SamlError(
+                            "sp_origin_mismatch",
+                            "Service Provider origin does not match initiating handoff",
+                            status=403,
+                        )
+                    cur.execute(
+                        """
+                        DELETE FROM public.ee_saml_pending_request
+                        WHERE relay_state = %s AND organisation_id = %s
+                        """,
+                        [handoff_key, org_id],
+                    )
+
+                    cur.execute(
+                        "SELECT pg_try_advisory_xact_lock_shared("
+                        "hashtextextended('privacy_account_cutoff:' || %s, 0))",
+                        [str(user_uuid)],
+                    )
+                    lock_row = cur.fetchone()
+                    if not lock_row or not bool(lock_row[0]):
+                        raise SamlError(
+                            "authority_fenced",
+                            "Account privacy lock busy; retry request",
+                            status=409,
+                        )
+
+                    cur.execute(
+                        """
+                        SELECT u.email, u.enabled, u.deleted_at
+                        FROM public.identity_user u
+                        WHERE u.id = %s
+                        FOR SHARE OF u
+                        """,
+                        [user_uuid],
+                    )
+                    u_row = cur.fetchone()
+                    if u_row is None or u_row[2] is not None or str(u_row[0]).startswith("erased:"):
+                        raise SamlError(
+                            "account_cutoff_fenced",
+                            "Account is under privacy erasure cutoff",
+                            status=403,
+                        )
+                    if not bool(u_row[1]):
+                        raise SamlError("user_disabled", "User account is disabled", status=403)
+
+                    cur.execute(
+                        "SELECT o.issuer FROM public.orgs_organisation o WHERE o.id = %s",
+                        [org_id],
+                    )
+                    o_row = cur.fetchone()
+                    if o_row is None or not o_row[0]:
+                        raise SamlError(
+                            "organisation_not_found",
+                            "Bound organisation does not exist",
+                            status=404,
+                        )
+                    org_issuer = str(o_row[0])
+
+                    cur.execute(
+                        """
+                        SELECT i.subject
+                        FROM public.identity_identity i
+                        WHERE i.organisation_id = %s
+                          AND i.user_id = %s
+                          AND i.issuer = %s
+                          AND i.enabled = TRUE
+                          AND i.deleted_at IS NULL
+                        ORDER BY i.created_at ASC, i.id ASC
+                        LIMIT 1
+                        """,
+                        [org_id, user_uuid, org_issuer],
+                    )
+                    i_row = cur.fetchone()
+                    if i_row is None:
+                        raise SamlError(
+                            "identity_unknown",
+                            "Authenticated identity is not provisioned",
+                            status=403,
+                        )
+                    ident_subject = str(i_row[0])
+
+                    cur.execute(
+                        """
+                        SELECT m.role
+                        FROM public.orgs_membership m
+                        WHERE m.organisation_id = %s
+                          AND m.user_id = %s
+                          AND m.state = 'active'
+                          AND m.accepted_at IS NOT NULL
+                          AND m.deleted_at IS NULL
+                        ORDER BY m.id ASC
+                        LIMIT 1
+                        FOR SHARE OF m NOWAIT
+                        """,
+                        [org_id, user_uuid],
+                    )
+                    m_row = cur.fetchone()
+                    if m_row is None:
+                        raise SamlError(
+                            "tenant_membership_required",
+                            "Active tenant membership is required",
+                            status=403,
+                        )
+                    live_role = str(m_row[0])
+            except TenantCutoffError as exc:
+                raise SamlError(
+                    exc.code,
+                    "Organisation is unavailable for SAML session completion",
+                    status=exc.status,
+                ) from exc
+            except DatabaseError as exc:
+                if is_retriable_lock_contention(exc):
+                    raise SamlError(
+                        "authority_fenced",
+                        "Organisation authority changed concurrently; retry request",
+                        status=409,
+                    ) from exc
+                raise
+
+            access_token = issue_ee_saml_session_token(
+                issuer=org_issuer,
+                subject=ident_subject,
+                user_id=user_uuid,
+                organisation_id=org_id,
+                tenant_slug=resolved_slug,
+                now=now_epoch,
+                ttl_seconds=EE_SAML_SESSION_TTL_SECONDS,
+            )
+            passport_token = _issue_core_passport_token(
+                user_id=user_uuid,
+                active_organisation_id=org_id,
+                now_epoch=now_epoch,
+            )
+            return SamlHandoffSession(
+                user_id=str(user_uuid),
+                tenant_slug=resolved_slug,
+                role=live_role,
+                return_path=clean_return,
+                access_token=access_token,
+                expires_in=EE_SAML_SESSION_TTL_SECONDS,
+                passport_token=passport_token,
+            )
+
+        with self._lock:
+            self._prune_pending_locked(current_time)
+            mem_pending = self._pending_by_relay.get(handoff_key)
+            if mem_pending is None:
+                raise SamlError(
+                    "replayed_handoff_token",
+                    "SAML OIDC handoff token has already been consumed or expired",
+                    status=403,
+                )
+            if mem_pending.sp_base_url != norm_base:
+                raise SamlError(
+                    "sp_origin_mismatch",
+                    "Service Provider origin does not match initiating handoff",
+                    status=403,
+                )
+            del self._pending_by_relay[handoff_key]
+            mem_meta = json.loads(mem_pending.return_path)
+            mem_role = str(mem_meta.get("role", "org_member"))
+
+        mem_org_uuid = uuid5(_SAML_SUBJECT_NAMESPACE, f"mem-org:{tenant_slug}")
+        mem_user_uuid = (
+            UUID(sub) if len(sub) == 36 else uuid5(_SAML_SUBJECT_NAMESPACE, f"mem-user:{sub}")
+        )
+        access_token = issue_ee_saml_session_token(
+            issuer=f"{norm_base}/realms/{tenant_slug}",
+            subject=str(mem_user_uuid),
+            user_id=mem_user_uuid,
+            organisation_id=mem_org_uuid,
+            tenant_slug=tenant_slug,
+            now=now_epoch,
+            ttl_seconds=EE_SAML_SESSION_TTL_SECONDS,
+        )
+        return SamlHandoffSession(
+            user_id=sub,
+            tenant_slug=tenant_slug,
+            role=mem_role,
+            return_path=clean_return,
+            access_token=access_token,
+            expires_in=EE_SAML_SESSION_TTL_SECONDS,
+            passport_token=None,
+        )
 
     def sp_entity_id(self, tenant_slug: str, sp_base_url: str) -> str:
         if not _is_valid_slug(tenant_slug):
@@ -855,12 +1445,33 @@ class SamlService:
         idp_id: str,
         sp_base_url: str,
         return_path: str = "/",
+        client_id: str | None = None,
+        redirect_uri: str | None = None,
+        code_challenge: str | None = None,
+        code_challenge_method: str | None = None,
         now: datetime | None = None,
     ) -> AuthnRequestBundle:
         require_enterprise_edition()
         idp = self.get_idp(tenant_slug, idp_id)
         clean_return = _sanitize_return_path(return_path)
         norm_base = _normalize_sp_base_url(sp_base_url)
+        clean_client_id = _validate_oidc_client_id(client_id)
+        clean_redirect_uri = (
+            _validate_oidc_redirect_uri(
+                redirect_uri,
+                sp_base_url=norm_base,
+                tenant_slug=tenant_slug,
+            )
+            if redirect_uri is not None and redirect_uri.strip()
+            else None
+        )
+        clean_pkce = _validate_optional_pkce(code_challenge, code_challenge_method)
+        encoded_context = _encode_pending_context(
+            clean_return,
+            client_id=clean_client_id,
+            redirect_uri=clean_redirect_uri,
+            code_challenge=clean_pkce,
+        )
         entity_id = self.sp_entity_id(tenant_slug, norm_base)
         acs_url = self.sp_acs_url(tenant_slug, norm_base)
 
@@ -875,7 +1486,7 @@ class SamlService:
             tenant_slug=tenant_slug,
             idp_id=idp.idp_id,
             request_id=request_id,
-            return_path=clean_return,
+            return_path=encoded_context,
             expires_epoch=expires_epoch,
         )
 
@@ -906,7 +1517,7 @@ class SamlService:
             idp_id=idp.idp_id,
             request_id=request_id,
             relay_state=relay_state,
-            return_path=clean_return,
+            return_path=encoded_context,
             sp_base_url=norm_base,
             expires_at=expires_at,
         )
@@ -935,7 +1546,7 @@ class SamlService:
                             resolved_slug,
                             idp.idp_id,
                             request_id,
-                            clean_return,
+                            encoded_context,
                             norm_base,
                             expires_at,
                         ],
@@ -1341,6 +1952,9 @@ class SamlService:
         groups = _resolve_groups(attrs)
         role = _resolve_mapped_role(groups, idp.group_role_mapping, idp.default_role)
 
+        decoded_return, oidc_client_id, oidc_redirect_uri, oidc_code_challenge = (
+            _decode_pending_context(pending.return_path)
+        )
         replay_expiry = max(cond_noa, subj_noa) + skew
         return self._commit_verified_assertion_and_principal(
             idp=idp,
@@ -1352,7 +1966,10 @@ class SamlService:
             display_name=display_name,
             groups=groups,
             role=role,
-            return_path=pending.return_path,
+            return_path=decoded_return,
+            oidc_client_id=oidc_client_id,
+            oidc_redirect_uri=oidc_redirect_uri,
+            oidc_code_challenge=oidc_code_challenge,
             authenticated_at=current_time,
         )
 
@@ -1369,6 +1986,9 @@ class SamlService:
         groups: tuple[str, ...],
         role: str,
         return_path: str,
+        oidc_client_id: str = "console",
+        oidc_redirect_uri: str | None = None,
+        oidc_code_challenge: str | None = None,
         authenticated_at: datetime,
     ) -> ProvisionedSamlPrincipal:
         """Atomically consume `RelayState`, record assertion replay nonce, and JIT-provision member."""
@@ -1456,6 +2076,9 @@ class SamlService:
                         role=effective_role,
                         return_path=return_path,
                         authenticated_at=authenticated_at,
+                        oidc_client_id=oidc_client_id,
+                        oidc_redirect_uri=oidc_redirect_uri,
+                        oidc_code_challenge=oidc_code_challenge,
                     )
                     groups_json = json.dumps(list(record.groups), separators=(",", ":"))
                     cur.execute(
@@ -1585,6 +2208,9 @@ class SamlService:
             role=effective_role,
             return_path=return_path,
             authenticated_at=authenticated_at,
+            oidc_client_id=oidc_client_id,
+            oidc_redirect_uri=oidc_redirect_uri,
+            oidc_code_challenge=oidc_code_challenge,
         )
         with self._lock:
             self._provisioned_users[(idp.tenant_slug, email_low)] = record

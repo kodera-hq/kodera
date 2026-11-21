@@ -11,6 +11,12 @@ Governed by `ee/LICENSE` (`LicenseRef-Kodera-EE`).
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
+import json
+import re
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -29,12 +35,136 @@ from django.db import DatabaseError, connection, transaction
 from django.http import HttpRequest
 
 from core.api import lanes
-from ee.store import is_retriable_lock_contention
-from services.identity.access_tokens import MAX_TOKEN, TokenVerificationError
+from ee.store import can_use_postgres, derive_ee_hkdf_bytes, is_retriable_lock_contention
+from services.identity.access_tokens import (
+    AUDIENCE,
+    MAX_TOKEN,
+    TokenVerificationError,
+    VerifiedAccessToken,
+)
 from services.identity.trusted_issuers import TrustedIssuer, verify_configured_token
 
 ADMIN_ROLES: Final[frozenset[str]] = frozenset({Membership.Role.OWNER, Membership.Role.ADMIN})
 OWNER_ROLES: Final[frozenset[str]] = frozenset({Membership.Role.OWNER})
+EE_SAML_SESSION_PREFIX: Final[str] = "kes1."
+EE_SAML_SESSION_TTL_SECONDS: Final[int] = 900
+_EE_SAML_SESSION_KDF_INFO: Final[bytes] = b"kodera-ee-saml-session-v1"
+_EE_SESSION_SEGMENT_RE: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z0-9_-]{1,2048}\Z")
+
+
+def issue_ee_saml_session_token(
+    *,
+    issuer: str,
+    subject: str,
+    user_id: UUID,
+    organisation_id: UUID,
+    tenant_slug: str,
+    now: int | None = None,
+    ttl_seconds: int = EE_SAML_SESSION_TTL_SECONDS,
+) -> str:
+    """Issue a short-lived HMAC-SHA256 customer Bearer token after SAML->OIDC handoff burn."""
+    issued_at = int(time.time()) if now is None else int(now)
+    expires_at = issued_at + ttl_seconds
+    payload = {
+        "v": 1,
+        "iss": issuer,
+        "sub": subject,
+        "uid": str(user_id),
+        "org": str(organisation_id),
+        "slug": tenant_slug,
+        "aud": AUDIENCE,
+        "azp": "console",
+        "iat": issued_at,
+        "exp": expires_at,
+    }
+    raw_json = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    payload_b64 = base64.urlsafe_b64encode(raw_json).rstrip(b"=").decode("ascii")
+    signing_input = f"kes1.{payload_b64}".encode("ascii")
+    key = derive_ee_hkdf_bytes(domain_info=_EE_SAML_SESSION_KDF_INFO)
+    sig_b64 = (
+        base64.urlsafe_b64encode(hmac.new(key, signing_input, hashlib.sha256).digest())
+        .rstrip(b"=")
+        .decode("ascii")
+    )
+    return f"kes1.{payload_b64}.{sig_b64}"
+
+
+def verify_ee_saml_session_token(
+    compact_token: str,
+    *,
+    now: int | None = None,
+) -> VerifiedAccessToken:
+    """Verify a `kes1.<payload>.<sig>` token and return signed evidence for live DB authority lookup."""
+    if (
+        not can_use_postgres()
+        or not isinstance(compact_token, str)
+        or not compact_token.startswith(EE_SAML_SESSION_PREFIX)
+        or len(compact_token) > MAX_TOKEN
+    ):
+        raise TokenVerificationError()
+    parts = compact_token.split(".")
+    if len(parts) != 3 or parts[0] != "kes1":
+        raise TokenVerificationError()
+    _, payload_b64, sig_b64 = parts
+    if not _EE_SESSION_SEGMENT_RE.fullmatch(payload_b64) or not _EE_SESSION_SEGMENT_RE.fullmatch(
+        sig_b64
+    ):
+        raise TokenVerificationError()
+
+    signing_input = f"kes1.{payload_b64}".encode("ascii")
+    key = derive_ee_hkdf_bytes(domain_info=_EE_SAML_SESSION_KDF_INFO)
+    expected_sig = (
+        base64.urlsafe_b64encode(hmac.new(key, signing_input, hashlib.sha256).digest())
+        .rstrip(b"=")
+        .decode("ascii")
+    )
+    if not hmac.compare_digest(sig_b64.encode("ascii"), expected_sig.encode("ascii")):
+        raise TokenVerificationError()
+
+    padding = "=" * (-len(payload_b64) % 4)
+    try:
+        raw_payload = base64.urlsafe_b64decode((payload_b64 + padding).encode("ascii"))
+        claims = json.loads(raw_payload.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        raise TokenVerificationError() from None
+
+    if not isinstance(claims, dict) or claims.get("v") != 1:
+        raise TokenVerificationError()
+    iss = claims.get("iss")
+    sub = claims.get("sub")
+    aud = claims.get("aud")
+    azp = claims.get("azp")
+    iat = claims.get("iat")
+    exp = claims.get("exp")
+    if (
+        not isinstance(iss, str)
+        or not iss
+        or not isinstance(sub, str)
+        or not is_storable_subject(sub)
+        or aud != AUDIENCE
+        or azp != "console"
+        or type(iat) is not int
+        or type(exp) is not int
+    ):
+        raise TokenVerificationError()
+
+    now_epoch = int(time.time()) if now is None else int(now)
+    if iat > now_epoch + 30 or now_epoch >= exp:
+        raise TokenVerificationError()
+
+    return VerifiedAccessToken(
+        issuer=iss,
+        subject=sub,
+        audience=(AUDIENCE,),
+        issued_at=iat,
+        expires_at=exp,
+        not_before=None,
+        amr=("fed",),
+        acr=None,
+        auth_time=iat,
+        email_verified=True,
+        authorized_party="console",
+    )
 
 
 class EeAuthError(PermissionError):
@@ -94,13 +224,16 @@ def authenticate_tenant_request(
 ) -> AuthenticatedTenantPrincipal:
     """Verify Kodera customer Bearer token via a single `resolve_member_authority` snapshot."""
     compact_token = _extract_bearer_token(request)
-    trusted: tuple[TrustedIssuer, ...] = getattr(settings, "KODERA_AUTH_TRUST", ())
-    if not trusted:
-        raise EeAuthError("unauthenticated", status=401)
-
     try:
-        verified, lane = verify_configured_token(compact_token, trusted=trusted)
-        verified, lane = lanes.admit(verified, lane)
+        if compact_token.startswith(EE_SAML_SESSION_PREFIX):
+            verified = verify_ee_saml_session_token(compact_token)
+            verified, lane = lanes.admit(verified, "customer")
+        else:
+            trusted: tuple[TrustedIssuer, ...] = getattr(settings, "KODERA_AUTH_TRUST", ())
+            if not trusted:
+                raise EeAuthError("unauthenticated", status=401)
+            verified, lane = verify_configured_token(compact_token, trusted=trusted)
+            verified, lane = lanes.admit(verified, lane)
     except TokenVerificationError as exc:
         raise EeAuthError("unauthenticated", status=401) from exc
 

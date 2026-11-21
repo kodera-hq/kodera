@@ -676,6 +676,7 @@ EXECUTE_FUNCTIONS = (
     "staff_sync_identity_bridge_role(uuid, uuid, text, text, uuid)",
     "staff_reconcile_job(uuid, uuid, jsonb, text)",
     "staff_reconcile_delivery(uuid, uuid, jsonb, text)",
+    "ee_scim_sync_member_contact(uuid, uuid, text, text)",
 )
 
 

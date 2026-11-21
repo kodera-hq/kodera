@@ -33,8 +33,11 @@ import base64
 import hashlib
 import json
 import os
+import socket
+import struct
 import subprocess
 import sys
+import threading
 import urllib.parse
 from collections.abc import Callable
 from dataclasses import replace
@@ -50,12 +53,16 @@ from django.db import IntegrityError, connection, transaction
 from django.test import Client, override_settings
 from django.utils import timezone
 
-from ee.audit_export.exporter import MAX_EXPORT_ROWS, export_compliance_bundle
+from ee.audit_export.crypto import LEDGER_HASH_DOMAIN, compute_domain_sha256
+from ee.audit_export.exporter import (
+    MAX_EXPORT_ROWS,
+    AuditExportError,
+    export_compliance_bundle,
+)
 from ee.audit_export.ledger import (
-    EE_AUDIT_ERASURE_MIGRATION_0035_FORWARD_SQL,
     EE_AUDIT_ERASURE_MIGRATION_0035_REVERSE_SQL,
-    EE_AUDIT_ERASURE_RESTORE_0032_GUARDS_SQL,
     MAX_EVENT_METADATA_BYTES,
+    _ledger_hash_fields,
     default_audit_ledger,
 )
 from ee.saml.service import _canonical_saml_subject_uuid, default_saml_service
@@ -353,10 +360,147 @@ def test_bug_0060_saml_atomic_acs_rollback_and_oidc_handoff(
     assert r_browser.status_code == 303
     location = r_browser["Location"]
     assert location.startswith("https://sso.kodera.test/realms/atomic-corp/protocol/openid-connect/auth?")
-    assert "kc_idp_hint=okta-atomic" in location
     parsed_q = urllib.parse.parse_qs(urllib.parse.urlsplit(location).query)
+    assert parsed_q["client_id"] == ["console"]
+    assert parsed_q["redirect_uri"] == [
+        "http://127.0.0.1/api/v1/ee/sso/saml/atomic-corp/oidc-handoff"
+    ]
+    assert parsed_q["response_type"] == ["code"]
+    assert parsed_q["scope"] == ["openid"]
+    assert parsed_q["code_challenge_method"] == ["S256"]
+    assert len(parsed_q["code_challenge"][0]) == 43
+    assert parsed_q["kc_idp_hint"] == ["okta-atomic"]
     assert parsed_q["login_hint"] == ["claire@atomic.fr"]
-    assert "." in parsed_q["state"][0]
+    assert parsed_q["state"][0].startswith("ksh1.")
+
+    # 3. End-to-end SAML -> OIDC PKCE handoff burn -> authenticated session (`kes1.*` + `kp1.*`)!
+    from core.passport import compute_pkce_s256
+
+    other_owner = tenant_principal_factory(
+        "atomic-other", role="org_owner", email="owner@atomic-other.fr"
+    )
+    assert other_owner.organisation_id != owner.organisation_id
+
+    # Unsupported `code_challenge_method=plain` is rejected (`400 invalid_pkce_challenge`)
+    assert (
+        client.get(
+            "/api/v1/ee/sso/saml/atomic-corp/login",
+            {
+                "idp_id": "okta-atomic",
+                "code_challenge": "a" * 43,
+                "code_challenge_method": "plain",
+            },
+        ).status_code
+        == 400
+    )
+
+    pkce_verifier = "pkce-s4-verifier-0123456789abcdef0123456789abcdef"
+    pkce_challenge = compute_pkce_s256(pkce_verifier)
+    login_pkce = client.get(
+        "/api/v1/ee/sso/saml/atomic-corp/login",
+        {
+            "idp_id": "okta-atomic",
+            "return_path": "/workspace/channels",
+            "client_id": "console",
+            "redirect_uri": "http://127.0.0.1/api/v1/ee/sso/saml/atomic-corp/oidc-handoff",
+            "code_challenge": pkce_challenge,
+            "code_challenge_method": "S256",
+        },
+    ).json()
+
+    xml_pkce = _build_saml_response_xml(
+        assertion_id="_assn_atomic_pkce_02",
+        in_response_to=str(login_pkce["request_id"]),
+        destination="http://127.0.0.1/api/v1/ee/sso/saml/atomic-corp/acs",
+        recipient="http://127.0.0.1/api/v1/ee/sso/saml/atomic-corp/acs",
+        audience="http://127.0.0.1/api/v1/ee/sso/saml/atomic-corp/metadata",
+        idp_entity_id="https://idp.atomic.test/saml2",
+        name_id="claire@atomic.fr",
+        email_attr="claire@atomic.fr",
+        sign_key=priv_key,
+    )
+    r_acs_pkce = client.post(
+        "/api/v1/ee/sso/saml/atomic-corp/acs",
+        data={
+            "SAMLResponse": base64.b64encode(xml_pkce.encode("utf-8")).decode("ascii"),
+            "RelayState": str(login_pkce["relay_state"]),
+        },
+    )
+    assert r_acs_pkce.status_code == 200, r_acs_pkce.content
+    handoff_tok = str(r_acs_pkce.json()["handoff_token"])
+    assert handoff_tok.startswith("ksh1.")
+
+    # Tampered signature, cross-tenant slug, and wrong PKCE verifier all return `403` WITHOUT burning!
+    tampered_tok = handoff_tok[:-4] + ("0000" if handoff_tok[-4:] != "0000" else "ffff")
+    assert (
+        client.post(
+            "/api/v1/ee/sso/saml/atomic-corp/oidc-handoff",
+            data=json.dumps({"handoff_token": tampered_tok, "code_verifier": pkce_verifier}),
+            content_type="application/json",
+        ).status_code
+        == 403
+    )
+    assert (
+        client.post(
+            "/api/v1/ee/sso/saml/atomic-other/oidc-handoff",
+            data=json.dumps({"handoff_token": handoff_tok, "code_verifier": pkce_verifier}),
+            content_type="application/json",
+        ).status_code
+        == 403
+    )
+    assert (
+        client.post(
+            "/api/v1/ee/sso/saml/atomic-corp/oidc-handoff",
+            data=json.dumps(
+                {
+                    "handoff_token": handoff_tok,
+                    "code_verifier": "wrong-verifier-0123456789abcdef0123456789abcdef",
+                }
+            ),
+            content_type="application/json",
+        ).status_code
+        == 403
+    )
+
+    # Legitimate single-use exchange burns `handoff_token` and mints `kes1.*` + `kp1.*`!
+    r_handoff = client.post(
+        "/api/v1/ee/sso/saml/atomic-corp/oidc-handoff",
+        data=json.dumps({"handoff_token": handoff_tok, "code_verifier": pkce_verifier}),
+        content_type="application/json",
+    )
+    assert r_handoff.status_code == 200, r_handoff.content
+    sess = r_handoff.json()
+    assert sess["authenticated"] is True
+    assert sess["return_path"] == "/workspace/channels"
+    ee_access_token = str(sess["access_token"])
+    passport_token = str(sess["passport_token"])
+    assert ee_access_token.startswith("kes1.")
+    assert passport_token.startswith("kp1.")
+
+    # Replaying the consumed `handoff_token` is deterministically rejected (`403`)!
+    r_replay = client.post(
+        "/api/v1/ee/sso/saml/atomic-corp/oidc-handoff",
+        data=json.dumps({"handoff_token": handoff_tok, "code_verifier": pkce_verifier}),
+        content_type="application/json",
+    )
+    assert r_replay.status_code == 403
+    assert r_replay.json()["code"] == "replayed_handoff_token"
+
+    # Returned `kes1.*` Bearer token authenticates EE customer APIs; `kp1.*` authenticates Core Passport!
+    r_plans = client.get(
+        "/api/v1/ee/billing/plans",
+        HTTP_AUTHORIZATION=f"Bearer {ee_access_token}",
+    )
+    assert r_plans.status_code == 200
+    assert isinstance(r_plans.json().get("plans"), list)
+
+    r_passport_ws = client.get(
+        "/api/v1/auth/passport/workspaces",
+        HTTP_AUTHORIZATION=f"Bearer {passport_token}",
+    )
+    assert r_passport_ws.status_code == 200, r_passport_ws.content
+    ws_slugs = [w["organisation_slug"] for w in r_passport_ws.json()["workspaces"]]
+    assert "atomic-corp" in ws_slugs
 
 
 def test_bug_0061_saml_role_ceiling_domain_ownership_and_audit_hooks(
@@ -369,6 +513,7 @@ def test_bug_0061_saml_role_ceiling_domain_ownership_and_audit_hooks(
     from apps.identity.models import Identity, User
     from apps.orgs.models import Membership
     from apps.workspaces.models import ResourcePolicy, Workspace
+
     from tenant_agent.synapse import _LOCALPART
 
     priv_key, _pub_pem, cert_pem = rsa_idp_keypair
@@ -408,7 +553,8 @@ def test_bug_0061_saml_role_ceiling_domain_ownership_and_audit_hooks(
         )
         assert r_unver.status_code == 422, r_unver.content
 
-    # Issue (`GET`) + verify (`POST`) DNS TXT challenge via HTTP API (`.../domain-challenges`)
+    # Issue (`GET`) + verify (`POST`) DNS TXT challenge via REAL loopback UDP + TCP (`TC=1`) DNS
+    # sockets (`KODERA_SAML_DNS_NAMESERVERS`) with ZERO `seed_dns_txt_record` calls (`BUG-0061`)!
     r_chal = client.get(
         "/api/v1/ee/sso/saml/ceiling-corp/domain-challenges",
         {"domain": "ceiling.fr"},
@@ -416,18 +562,112 @@ def test_bug_0061_saml_role_ceiling_domain_ownership_and_audit_hooks(
     )
     assert r_chal.status_code == 200
     chal_data = r_chal.json()
-    default_saml_service.seed_dns_txt_record(
-        chal_data["dns_record_name"],
-        chal_data["txt_value"],
-    )
-    r_ver_chal = client.post(
+
+    r_chal_tcp = client.get(
         "/api/v1/ee/sso/saml/ceiling-corp/domain-challenges",
-        data=json.dumps({"domain": "ceiling.fr"}),
-        content_type="application/json",
+        {"domain": "ceiling-tcp.fr"},
         headers=admin.headers,
     )
-    assert r_ver_chal.status_code == 200
-    assert r_ver_chal.json()["verified"] is True
+    assert r_chal_tcp.status_code == 200
+    chal_tcp_data = r_chal_tcp.json()
+
+    dns_zone_txt: dict[str, str] = {
+        str(chal_data["dns_record_name"]).lower(): str(chal_data["txt_value"]),
+        str(chal_tcp_data["dns_record_name"]).lower(): str(chal_tcp_data["txt_value"]),
+    }
+    force_tc_names = {str(chal_tcp_data["dns_record_name"]).lower()}
+    tcp_queries_seen: list[str] = []
+
+    def _build_dns_txt_reply(req_pkt: bytes, *, force_tc: bool) -> tuple[str, bytes]:
+        from ee.saml.dns_txt import DNS_CLASS_IN, DNS_TYPE_TXT, _read_dns_name
+
+        tx_id = struct.unpack_from("!H", req_pkt, 0)[0]
+        qname, q_end = _read_dns_name(req_pkt, 12)
+        question_slice = req_pkt[12 : q_end + 4]
+        if force_tc:
+            hdr = struct.pack("!HHHHHH", tx_id, 0x8380, 1, 0, 0, 0)
+            return qname, hdr + question_slice
+        txt_str = dns_zone_txt.get(qname)
+        if not txt_str:
+            hdr = struct.pack("!HHHHHH", tx_id, 0x8183, 1, 0, 0, 0)
+            return qname, hdr + question_slice
+        txt_bytes = txt_str.encode("utf-8")
+        rdata = bytes([len(txt_bytes)]) + txt_bytes
+        rr = struct.pack("!HHHIH", 0xC00C, DNS_TYPE_TXT, DNS_CLASS_IN, 60, len(rdata)) + rdata
+        hdr = struct.pack("!HHHHHH", tx_id, 0x8180, 1, 1, 0, 0)
+        return qname, hdr + question_slice + rr
+
+    udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    tcp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    udp_sock.bind(("127.0.0.1", 0))
+    dns_port = udp_sock.getsockname()[1]
+    tcp_sock.bind(("127.0.0.1", dns_port))
+    tcp_sock.listen(4)
+    stop_dns = threading.Event()
+    udp_sock.settimeout(0.05)
+    tcp_sock.settimeout(0.05)
+
+    def _serve_udp() -> None:
+        while not stop_dns.is_set():
+            try:
+                pkt, addr = udp_sock.recvfrom(2048)
+            except TimeoutError:
+                continue
+            except OSError:
+                break
+            qname_peek, _ = _build_dns_txt_reply(pkt, force_tc=False)
+            _, reply = _build_dns_txt_reply(pkt, force_tc=(qname_peek in force_tc_names))
+            udp_sock.sendto(reply, addr)
+
+    def _serve_tcp() -> None:
+        while not stop_dns.is_set():
+            try:
+                conn_s, _ = tcp_sock.accept()
+            except TimeoutError:
+                continue
+            except OSError:
+                break
+            with conn_s:
+                conn_s.settimeout(1.0)
+                raw_len = conn_s.recv(2)
+                if len(raw_len) == 2:
+                    (qlen,) = struct.unpack("!H", raw_len)
+                    qpkt = conn_s.recv(qlen)
+                    qname_seen, reply = _build_dns_txt_reply(qpkt, force_tc=False)
+                    tcp_queries_seen.append(qname_seen)
+                    conn_s.sendall(struct.pack("!H", len(reply)) + reply)
+
+    t_udp = threading.Thread(target=_serve_udp, daemon=True)
+    t_tcp = threading.Thread(target=_serve_tcp, daemon=True)
+    t_udp.start()
+    t_tcp.start()
+    try:
+        with override_settings(KODERA_SAML_DNS_NAMESERVERS=f"127.0.0.1:{dns_port}"):
+            r_ver_chal = client.post(
+                "/api/v1/ee/sso/saml/ceiling-corp/domain-challenges",
+                data=json.dumps({"domain": "ceiling.fr"}),
+                content_type="application/json",
+                headers=admin.headers,
+            )
+            assert r_ver_chal.status_code == 200, r_ver_chal.content
+            assert r_ver_chal.json()["verified"] is True
+
+            r_ver_tcp = client.post(
+                "/api/v1/ee/sso/saml/ceiling-corp/domain-challenges",
+                data=json.dumps({"domain": "ceiling-tcp.fr"}),
+                content_type="application/json",
+                headers=admin.headers,
+            )
+            assert r_ver_tcp.status_code == 200, r_ver_tcp.content
+            assert r_ver_tcp.json()["verified"] is True
+            assert str(chal_tcp_data["dns_record_name"]).lower() in tcp_queries_seen
+    finally:
+        stop_dns.set()
+        t_udp.join(timeout=1.0)
+        t_tcp.join(timeout=1.0)
+        udp_sock.close()
+        tcp_sock.close()
 
     # Cross-tenant claim of `ceiling.fr` by `other-corp` ONCE registered on `ceiling-corp` fails (`409`)!
     r_idp_own = client.post(
@@ -613,6 +853,7 @@ def test_bug_0062_and_0063_scim_nonblocking_cutoff_tokens_attribute_sync_and_rev
     from apps.outbox.models import OutboxRealmAccess
     from apps.outbox.realm_enqueue import ACCESS_OFF
     from apps.workspaces.models import ResourcePolicy, Workspace
+
     from tenant_agent.synapse import _LOCALPART
 
     monkeypatch.setenv("KODERA_EDITION", "enterprise")
@@ -809,6 +1050,160 @@ def test_bug_0062_and_0063_scim_nonblocking_cutoff_tokens_attribute_sync_and_rev
     )
     assert bob_memb.role == Membership.Role.ADMIN
     assert EngineChannelSet.objects.filter(organisation_id=owner.organisation_id).count() > chan_before
+
+    # `BUG-0062`: Untouched `roles` on `PATCH` preserves `org_admin`, while explicit `PATCH remove`
+    # AND `PUT roles: []` revoke `org_admin -> org_member` + emit `AuditEvent` & `EngineChannelSet`,
+    # AND SCIM contact/role sync succeeds under the narrow `kodera_api` role (`SET ROLE`)!
+    from apps.audit.models import AuditEvent
+    from test_intake_writer_role import acting_as, current_user
+
+    from core.db.api_database_boundary import assert_writer_grants
+    from core.db.api_writer_role import grant_statements
+
+    scim_writer_role = f"scim_writer_{uuid4().hex[:10]}"
+    with connection.cursor() as cur_role:
+        cur_role.execute(
+            f'CREATE ROLE "{scim_writer_role}" NOLOGIN NOINHERIT NOSUPERUSER '
+            "NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"
+        )
+        for stmt in grant_statements(scim_writer_role):
+            cur_role.execute(stmt)
+        assert_writer_grants(cur_role, scim_writer_role)
+
+    try:
+        with acting_as(scim_writer_role):
+            assert current_user() == scim_writer_role
+            # 1) `PATCH` touching only `displayName` + `emails` syncs contact columns under `kodera_api`
+            #    while leaving `org_admin` untouched!
+            r_patch_contact = client.patch(
+                f"/api/v1/ee/scim/v2/tenants/scim-s4/Users/{bob_scim_id}",
+                data=json.dumps(
+                    {
+                        "schemas": [SCIM_PATCH_OP_SCHEMA],
+                        "Operations": [
+                            {"op": "replace", "path": "displayName", "value": "Bob Under KoderaApi"},
+                            {
+                                "op": "replace",
+                                "path": "emails",
+                                "value": [{"value": "bob.api@scim-s4.fr", "primary": True}],
+                            },
+                        ],
+                    }
+                ),
+                content_type="application/scim+json",
+                headers=scim_hdr,
+            )
+            assert r_patch_contact.status_code == 200, r_patch_contact.content
+            bob_ident.refresh_from_db()
+            bob_memb.refresh_from_db()
+            assert bob_ident.email == "bob.api@scim-s4.fr"
+            assert bob_ident.user.email == "bob.api@scim-s4.fr"
+            assert bob_ident.user.display_name == "Bob Under KoderaApi"
+            assert bob_memb.role == Membership.Role.ADMIN
+
+            # 2) `PATCH remove roles` under `kodera_api` revokes `org_admin -> org_member`!
+            chan_pre_rm = EngineChannelSet.objects.filter(
+                organisation_id=owner.organisation_id
+            ).count()
+            audit_pre_rm = AuditEvent.objects.filter(
+                organisation_id=owner.organisation_id,
+                action="membership.role_changed",
+            ).count()
+            r_patch_rm = client.patch(
+                f"/api/v1/ee/scim/v2/tenants/scim-s4/Users/{bob_scim_id}",
+                data=json.dumps(
+                    {
+                        "schemas": [SCIM_PATCH_OP_SCHEMA],
+                        "Operations": [{"op": "remove", "path": "roles"}],
+                    }
+                ),
+                content_type="application/scim+json",
+                headers=scim_hdr,
+            )
+            assert r_patch_rm.status_code == 200, r_patch_rm.content
+            bob_memb.refresh_from_db()
+            assert bob_memb.role == Membership.Role.MEMBER
+            assert (
+                EngineChannelSet.objects.filter(organisation_id=owner.organisation_id).count()
+                > chan_pre_rm
+            )
+            assert (
+                AuditEvent.objects.filter(
+                    organisation_id=owner.organisation_id,
+                    action="membership.role_changed",
+                ).count()
+                > audit_pre_rm
+            )
+
+            # 3) Re-elevate via `PATCH add roles`, then `PUT` with `"roles": []` revokes `org_admin -> org_member`!
+            assert (
+                client.patch(
+                    f"/api/v1/ee/scim/v2/tenants/scim-s4/Users/{bob_scim_id}",
+                    data=json.dumps(
+                        {
+                            "schemas": [SCIM_PATCH_OP_SCHEMA],
+                            "Operations": [
+                                {"op": "add", "path": "roles", "value": [{"value": "org_admin"}]}
+                            ],
+                        }
+                    ),
+                    content_type="application/scim+json",
+                    headers=scim_hdr,
+                ).status_code
+                == 200
+            )
+            bob_memb.refresh_from_db()
+            assert bob_memb.role == Membership.Role.ADMIN
+
+            chan_pre_put_empty = EngineChannelSet.objects.filter(
+                organisation_id=owner.organisation_id
+            ).count()
+            r_put_empty_roles = client.put(
+                f"/api/v1/ee/scim/v2/tenants/scim-s4/Users/{bob_scim_id}",
+                data=json.dumps(
+                    {
+                        "schemas": [SCIM_USER_SCHEMA],
+                        "userName": "bob.renamed@scim-s4.fr",
+                        "displayName": "Bob Demoted Put",
+                        "active": True,
+                        "roles": [],
+                    }
+                ),
+                content_type="application/scim+json",
+                headers=scim_hdr,
+            )
+            assert r_put_empty_roles.status_code == 200, r_put_empty_roles.content
+            bob_memb.refresh_from_db()
+            assert bob_memb.role == Membership.Role.MEMBER
+            assert (
+                EngineChannelSet.objects.filter(organisation_id=owner.organisation_id).count()
+                > chan_pre_put_empty
+            )
+
+            # Re-elevate to `org_admin` right before testing `DELETE` + re-provision (`BUG-0063`)
+            assert (
+                client.patch(
+                    f"/api/v1/ee/scim/v2/tenants/scim-s4/Users/{bob_scim_id}",
+                    data=json.dumps(
+                        {
+                            "schemas": [SCIM_PATCH_OP_SCHEMA],
+                            "Operations": [
+                                {"op": "replace", "path": "roles", "value": [{"value": "org_admin"}]}
+                            ],
+                        }
+                    ),
+                    content_type="application/scim+json",
+                    headers=scim_hdr,
+                ).status_code
+                == 200
+            )
+            bob_memb.refresh_from_db()
+            assert bob_memb.role == Membership.Role.ADMIN
+    finally:
+        with connection.cursor() as cur_cleanup:
+            cur_cleanup.execute("RESET ROLE")
+            cur_cleanup.execute(f'DROP OWNED BY "{scim_writer_role}"')
+            cur_cleanup.execute(f'DROP ROLE "{scim_writer_role}"')
 
     # Delete Bob (`Membership.State.REMOVED`), then re-provision WITHOUT explicit admin role -> resets to `org_member`!
     assert (
@@ -1033,7 +1428,42 @@ def test_bug_0054_0055_0056_audit_hmac_redaction_ingestion_erasure_and_paginatio
     assert r_429["Retry-After"] == "60"
     default_audit_ledger._export_rate_windows.clear()
 
-    # 4. `BUG-0055` end-to-end PostgreSQL test of `sync_from_django_audit` + `0035` SQL migration!
+    # Incremental streaming cursor byte-ceiling check (`BUG-0056`):
+    # Seed 300 events (`> EXPORT_CURSOR_BATCH_SIZE = 250`) and prove `max_bytes=2048` aborts on
+    # the FIRST keyset batch (`1` batch SELECT query) without materializing the remaining rows!
+    for idx in range(300):
+        default_audit_ledger.append_event(
+            tenant_slug="audit-s4",
+            organisation_id=owner.organisation_id,
+            actor_type="system",
+            actor_id="system",
+            action=f"stream.batch.{idx}",
+            target_urn=f"urn:kodera:stream:{idx}",
+        )
+    batch_queries = [0]
+
+    def _count_ledger_batch_queries(execute: Any, sql_txt: Any, params: Any, many: Any, ctx: Any) -> Any:
+        if isinstance(sql_txt, str) and "FROM public.ee_audit_ledger" in sql_txt and "ORDER BY seq ASC" in sql_txt:
+            batch_queries[0] += 1
+        return execute(sql_txt, params, many, ctx)
+
+    with connection.execute_wrapper(_count_ledger_batch_queries):
+        with pytest.raises(AuditExportError) as cap_exc:
+            export_compliance_bundle(
+                ledger=default_audit_ledger,
+                signer=default_audit_ledger.ed25519_signer_for_tenant("audit-s4"),
+                tenant_slug="audit-s4",
+                organisation_id=owner.organisation_id,
+                export_format="ndjson",
+                framework="SOC2",
+                max_bytes=2048,
+            )
+    assert cap_exc.value.status == 413
+    assert cap_exc.value.code == "export_limit_exceeded"
+    assert batch_queries[0] == 1, "Byte-capped export must abort on batch #1 without fetching batch #2!"
+
+    # 4. `BUG-0055` end-to-end PostgreSQL test of `sync_from_django_audit` + automatically installed
+    #    `0034_ee_audit_ledger_erasure` migration + historical `target_urn` PII scrubbing!
     AuditEvent.objects.create(
         action="workspace.member_updated",
         actor_type="tenant",
@@ -1049,17 +1479,63 @@ def test_bug_0054_0055_0056_audit_hmac_redaction_ingestion_erasure_and_paginatio
         tenant_slug="audit-s4",
     )
     assert synced_count >= 1
-    with connection.cursor() as cur:
-        cur.execute(
-            "SELECT count(*) FROM public.ee_audit_ledger WHERE user_id = %s",
-            [second_owner.user_id],
-        )
-        assert cur.fetchone()[0] >= 1
 
-    # Apply `EE_AUDIT_ERASURE_MIGRATION_0035_FORWARD_SQL`, verify clean reverse when empty,
-    # re-apply `FORWARD`, run `begin_account_erasure` + `advance_account_erasure` on `second_owner`,
-    # and assert BOTH actor-owned (`user_id = second_owner.user_id`) AND subject-referenced
-    # (`r_ing` acted by `owner.user_id` whose `metadata` had `second_owner.email`!) are scrubbed!
+    # Seed a historical pre-upgrade row in `ee_audit_ledger` acted by `owner` with `{}` metadata
+    # whose ONLY PII is legacy `target_urn = 'urn:kodera:user:victim.erase@audit-s4.fr'`!
+    hist_id = uuid4()
+    with transaction.atomic(), connection.cursor() as cur:
+        cur.execute(
+            """
+            SELECT seq, entry_hash
+            FROM public.ee_audit_ledger
+            WHERE organisation_id = %s
+            ORDER BY seq DESC
+            LIMIT 1
+            """,
+            [owner.organisation_id],
+        )
+        prev_seq, prev_hash = cur.fetchone()
+        hist_seq = int(prev_seq) + 1
+        hist_ts = "2026-01-15T10:00:00.000000Z"
+        hist_urn = f"urn:kodera:user:{second_owner.email}"
+        hist_entry_hash = compute_domain_sha256(
+            LEDGER_HASH_DOMAIN,
+            _ledger_hash_fields(
+                sequence=hist_seq,
+                event_id=str(hist_id),
+                occurred_at=hist_ts,
+                tenant_slug="audit-s4",
+                actor_type="customer_user",
+                actor_id=str(owner.user_id),
+                action="legacy.user.targeted",
+                target_urn=hist_urn,
+                prev_hash=str(prev_hash),
+            ),
+        )
+        cur.execute(
+            """
+            INSERT INTO public.ee_audit_ledger (
+                id, organisation_id, user_id, tenant_slug, seq, event_id, occurred_at,
+                actor_type, actor_id, actor_label, action, target_urn,
+                source_ip, metadata_json, prev_hash, entry_hash, pii_scrubbed_at
+            ) VALUES (%s, %s, %s, 'audit-s4', %s, %s, %s, 'customer_user', %s, %s,
+                      'legacy.user.targeted', %s, '', '{}', %s, %s, NULL)
+            """,
+            [
+                hist_id,
+                owner.organisation_id,
+                owner.user_id,
+                hist_seq,
+                str(hist_id),
+                hist_ts,
+                str(owner.user_id),
+                owner.email,
+                hist_urn,
+                str(prev_hash),
+                hist_entry_hash,
+            ],
+        )
+
     class _StubAccAdapter:
         revision = "audit-s4-acc-stub"
 
@@ -1081,90 +1557,92 @@ def test_bug_0054_0055_0056_audit_hmac_redaction_ingestion_erasure_and_paginatio
         def verify_proof(self, scope: AccountErasureScope, proof: AccountAbsenceProof) -> bool:
             return proof.evidence_sha256 == "a" * 64
 
-    with transaction.atomic(), connection.cursor() as cur:
-        cur.execute(EE_AUDIT_ERASURE_MIGRATION_0035_FORWARD_SQL)
+    staff_op = operator()
+    now_epoch = int(database_now().timestamp())
+    verified_raw, _ = verify_configured_token(
+        second_owner.token,
+        trusted=settings.KODERA_AUTH_TRUST,
+    )
+    verified_victim = replace(verified_raw, auth_time=now_epoch, expires_at=now_epoch + 600)
+    erasure_req = begin_account_erasure(
+        verified=verified_victim,
+        confirmation="delete",
+        instruction_ref="DEL-5501",
+        instruction_sha256="9" * 64,
+        purge_not_before=database_now(),
+        actor_identity_id=staff_op.id,
+    )
+    # Inventory installed by `0034_ee_audit_ledger_erasure` discovers actor, metadata, AND `target_urn` rows!
+    assert str(hist_id) in erasure_req.inventory["ee_audit_scrub_ids"]
+    assert len(erasure_req.inventory["ee_audit_scrub_ids"]) >= 3
+
+    adapters: dict[str, AccountErasureAdapter] = {
+        str(d): (
+            PassportAccountOutboxErasureAdapter()
+            if d == "account_message_outbox"
+            else _StubAccAdapter(str(d))
+        )
+        for d in erasure_req.inventory["required_domains"]
+    }
+    done = advance_account_erasure(erasure_req.id, adapters)
+    assert done["complete"] is True
+
+    with connection.cursor() as cur:
+        cur.execute(
+            "SELECT id, metadata_json, actor_label, target_urn, pii_scrubbed_at IS NOT NULL "
+            "FROM public.ee_audit_ledger WHERE organisation_id = %s",
+            [owner.organisation_id],
+        )
+        ledger_rows = cur.fetchall()
+
+    hist_scrubbed_urn: str | None = None
+    for row_id, meta_txt, actor_lbl, row_urn, is_scrubbed in ledger_rows:
+        assert second_owner.email not in meta_txt
+        assert second_owner.email not in actor_lbl
+        assert second_owner.email not in row_urn
+        if row_id == hist_id:
+            hist_scrubbed_urn = str(row_urn)
+            assert is_scrubbed is True
+        if str(second_owner.user_id) in actor_lbl:
+            assert actor_lbl == f"erased:{second_owner.user_id}"
+            assert is_scrubbed is True
+
+    assert hist_scrubbed_urn is not None
+    assert hist_scrubbed_urn.startswith("urn:kodera:user:erased:")
+    assert len(hist_scrubbed_urn.split(":")[-1]) == 24
+
+    # Hash chain integrity remains 100% valid after GDPR Art. 17 `target_urn` + metadata scrubbing!
+    ok_chain, chain_errs = default_audit_ledger.verify_vault_integrity("audit-s4")
+    assert ok_chain is True and chain_errs == []
+
+    # Reverse migration refuses downgrade while admitted obligations exist (`23514`)!
+    with pytest.raises(IntegrityError), transaction.atomic(), connection.cursor() as cur:
         cur.execute(EE_AUDIT_ERASURE_MIGRATION_0035_REVERSE_SQL)
-        cur.execute(EE_AUDIT_ERASURE_MIGRATION_0035_FORWARD_SQL)
 
-    try:
-        staff_op = operator()
-        now_epoch = int(database_now().timestamp())
-        verified_raw, _ = verify_configured_token(
-            second_owner.token,
-            trusted=settings.KODERA_AUTH_TRUST,
+    # Syncing a newly discovered pre-cutoff historical `AuditEvent` for the already-erased
+    # `second_owner` ingests in pre-scrubbed form instead of raising `account_cutoff_fenced`!
+    AuditEvent.objects.create(
+        action="workspace.legacy_event",
+        actor_type="tenant",
+        actor_id=second_owner.identity_id,
+        actor_label="victim.erase@audit-s4.fr",
+        organisation_id=owner.organisation_id,
+        target_urn="urn:kodera:workspace:legacy",
+        retention_class="standard",
+        metadata={"legacy_email": "victim.erase@audit-s4.fr"},
+    )
+    added_post = default_audit_ledger.sync_from_django_audit(
+        organisation_id=owner.organisation_id,
+        tenant_slug="audit-s4",
+    )
+    assert added_post >= 1
+    legacy_evts = [
+        e
+        for e in default_audit_ledger.snapshot_events(
+            "audit-s4", organisation_id=owner.organisation_id
         )
-        verified_victim = replace(verified_raw, auth_time=now_epoch, expires_at=now_epoch + 600)
-        erasure_req = begin_account_erasure(
-            verified=verified_victim,
-            confirmation="delete",
-            instruction_ref="DEL-5501",
-            instruction_sha256="9" * 64,
-            purge_not_before=database_now(),
-            actor_identity_id=staff_op.id,
-        )
-        assert len(erasure_req.inventory["ee_audit_scrub_ids"]) >= 2
-
-        adapters: dict[str, AccountErasureAdapter] = {
-            str(d): (
-                PassportAccountOutboxErasureAdapter()
-                if d == "account_message_outbox"
-                else _StubAccAdapter(str(d))
-            )
-            for d in erasure_req.inventory["required_domains"]
-        }
-        done = advance_account_erasure(erasure_req.id, adapters)
-        assert done["complete"] is True
-
-        with connection.cursor() as cur:
-            cur.execute(
-                "SELECT metadata_json, actor_label, pii_scrubbed_at IS NOT NULL "
-                "FROM public.ee_audit_ledger WHERE organisation_id = %s",
-                [owner.organisation_id],
-            )
-            ledger_rows = cur.fetchall()
-
-        for meta_txt, actor_lbl, is_scrubbed in ledger_rows:
-            assert second_owner.email not in meta_txt
-            assert second_owner.email not in actor_lbl
-            if str(second_owner.user_id) in actor_lbl:
-                assert actor_lbl == f"erased:{second_owner.user_id}"
-                assert is_scrubbed is True
-
-        # Hash chain integrity remains 100% valid after GDPR Art. 17 scrubbing!
-        ok_chain, chain_errs = default_audit_ledger.verify_vault_integrity("audit-s4")
-        assert ok_chain is True and chain_errs == []
-
-        # Reverse migration refuses downgrade while admitted obligations exist (`23514`)!
-        with pytest.raises(IntegrityError), transaction.atomic(), connection.cursor() as cur:
-            cur.execute(EE_AUDIT_ERASURE_MIGRATION_0035_REVERSE_SQL)
-
-        # Syncing a newly discovered pre-cutoff historical `AuditEvent` for the already-erased
-        # `second_owner` ingests in pre-scrubbed form instead of raising `account_cutoff_fenced`!
-        AuditEvent.objects.create(
-            action="workspace.legacy_event",
-            actor_type="tenant",
-            actor_id=second_owner.identity_id,
-            actor_label="victim.erase@audit-s4.fr",
-            organisation_id=owner.organisation_id,
-            target_urn="urn:kodera:workspace:legacy",
-            retention_class="standard",
-            metadata={"legacy_email": "victim.erase@audit-s4.fr"},
-        )
-        added_post = default_audit_ledger.sync_from_django_audit(
-            organisation_id=owner.organisation_id,
-            tenant_slug="audit-s4",
-        )
-        assert added_post >= 1
-        legacy_evts = [
-            e
-            for e in default_audit_ledger.snapshot_events(
-                "audit-s4", organisation_id=owner.organisation_id
-            )
-            if e.action == "workspace.legacy_event"
-        ]
-        assert len(legacy_evts) == 1
-        assert legacy_evts[0].actor_label == f"erased:{second_owner.user_id}"
-        assert legacy_evts[0].metadata == {}
-    finally:
-        with transaction.atomic(), connection.cursor() as cur:
-            cur.execute(EE_AUDIT_ERASURE_RESTORE_0032_GUARDS_SQL)
+        if e.action == "workspace.legacy_event"
+    ]
+    assert len(legacy_evts) == 1
+    assert legacy_evts[0].actor_label == f"erased:{second_owner.user_id}"
+    assert legacy_evts[0].metadata == {}

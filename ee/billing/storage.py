@@ -460,13 +460,13 @@ def _authorized_customer_org_ids(authority: CallerAuthority) -> tuple[str, ...]:
 def _has_postgres_paid_enterprise_entitlement(
     cursor: Any, *, organisation_id: str, checkout_id: str
 ) -> bool:
-    """Verify a settled Enterprise PO or paid Sovereign/Enterprise Core billing entitlement."""
+    """Verify a settled (`state = 'paid'`) Enterprise PO or paid Sovereign Core entitlement."""
     cursor.execute(
         """
         SELECT 1
         FROM ee_billing_purchase_orders
         WHERE organisation_id = %s
-          AND state IN ('countersigned', 'invoiced', 'paid')
+          AND state = 'paid'
           AND plan_code = 'sovereign'
           AND (
               po_id = %s
@@ -476,6 +476,7 @@ def _has_postgres_paid_enterprise_entitlement(
               OR payment_ref = %s
           )
         LIMIT 1
+        FOR SHARE
         """,
         [organisation_id, checkout_id, checkout_id, checkout_id, checkout_id, checkout_id],
     )
@@ -495,6 +496,39 @@ def _has_postgres_paid_enterprise_entitlement(
           AND i.state = 'paid'
           AND i.total_incl_vat_minor > 0
           AND i.amount_paid_minor >= i.total_incl_vat_minor
+          AND (
+              (
+                  i.order_id IS NOT NULL
+                  AND EXISTS (
+                      SELECT 1
+                      FROM billing_order o
+                      WHERE o.id = i.order_id
+                        AND o.organisation_id = %s
+                        AND o.state = 'paid'
+                        AND o.plan_code = 'sovereign'
+                  )
+              )
+              OR (
+                  i.subscription_id IS NOT NULL
+                  AND EXISTS (
+                      SELECT 1
+                      FROM billing_subscription s
+                      WHERE s.id = i.subscription_id
+                        AND s.organisation_id = %s
+                        AND s.state = 'active'
+                        AND s.plan_code = 'sovereign'
+                  )
+              )
+              OR EXISTS (
+                  SELECT 1
+                  FROM ee_billing_purchase_orders po
+                  WHERE po.organisation_id = %s
+                    AND po.state = 'paid'
+                    AND po.plan_code = 'sovereign'
+                    AND i.number IS NOT NULL
+                    AND po.invoice_ref IN (i.number, 'INV-' || i.number)
+              )
+          )
           AND (
               i.number IN (%s, %s)
               OR i.external_ref = %s
@@ -521,6 +555,9 @@ def _has_postgres_paid_enterprise_entitlement(
         """,
         [
             org_uuid,
+            org_uuid,
+            org_uuid,
+            organisation_id,
             checkout_id,
             bare_inv,
             checkout_id,
@@ -1281,6 +1318,7 @@ class PostgresWarmPoolStore:
         try:
             with transaction.atomic(), connection.cursor() as cursor:
                 _acquire_ee_caller_fence(cursor, authority, target_organisation_id=organisation_id)
+                cursor.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", [_WARM_POOL_LOCK_KEY])
                 if authority is not None and authority.lane == "customer":
                     if not _has_postgres_paid_enterprise_entitlement(
                         cursor,
@@ -1290,7 +1328,6 @@ class PostgresWarmPoolStore:
                         raise BillingAuthorityForbiddenError(
                             "warm-pool claim requires verified paid enterprise entitlement"
                         )
-                cursor.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", [_WARM_POOL_LOCK_KEY])
                 cursor.execute(
                     """
                     SELECT slot_id, sequence, region, profile_ref, state,
@@ -1494,6 +1531,7 @@ class MemoryPurchaseOrderStore:
         total_incl_vat_minor: int,
         currency: str = "EUR",
         state: str = "issued",
+        plan_code: str = "sovereign",
     ) -> None:
         """Seed a synthetic Core `billing_invoice` record for isolated memory-backend tests."""
         with self._lock:
@@ -1504,6 +1542,7 @@ class MemoryPurchaseOrderStore:
                 "amount_paid_minor": int(total_incl_vat_minor) if state == "paid" else 0,
                 "currency": currency.upper(),
                 "state": state,
+                "plan_code": plan_code.strip().lower(),
             }
 
     def register_core_payment(
@@ -1593,7 +1632,7 @@ class MemoryPurchaseOrderStore:
                 if (
                     po.organisation_id == organisation_id
                     and po.plan_code == "sovereign"
-                    and po.state in ("countersigned", "invoiced", "paid")
+                    and po.state == "paid"
                     and checkout_id
                     in (
                         po.po_id,
@@ -1608,14 +1647,22 @@ class MemoryPurchaseOrderStore:
                 if (
                     inv["organisation_id"] == organisation_id
                     and inv["state"] == "paid"
+                    and inv.get("plan_code") == "sovereign"
+                    and int(inv["total_incl_vat_minor"]) > 0
+                    and int(inv["amount_paid_minor"]) >= int(inv["total_incl_vat_minor"])
                     and inv["number"] == checkout_id
                 ):
                     return True
-            for (_, pay_ref), pay in self._core_payments.items():
+            for (inv_num, pay_ref), pay in self._core_payments.items():
+                bound_inv = self._core_invoices.get(inv_num)
                 if (
                     pay["organisation_id"] == organisation_id
                     and pay["state"] == "succeeded"
                     and pay["allocated"]
+                    and bound_inv is not None
+                    and bound_inv["organisation_id"] == organisation_id
+                    and bound_inv["state"] == "paid"
+                    and bound_inv.get("plan_code") == "sovereign"
                     and pay_ref == checkout_id
                 ):
                     return True

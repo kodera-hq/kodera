@@ -94,6 +94,14 @@ _SAML_PUBLIC_ERRORS: Final[tuple[tuple[str, int, str], ...]] = (
     ("invalid_idp_certificate", 400, "Invalid Identity Provider certificate or key"),
     ("invalid_sp_base_url", 400, "Invalid Service Provider base URL"),
     ("invalid_return_path", 400, "Invalid return path"),
+    ("invalid_client_id", 400, "Invalid OIDC client_id"),
+    ("invalid_redirect_uri", 400, "Invalid OIDC redirect_uri"),
+    (
+        "invalid_pkce_challenge",
+        400,
+        "Invalid or unsupported PKCE code_challenge (S256 required)",
+    ),
+    ("missing_handoff_token", 400, "Missing SAML OIDC handoff token"),
     ("invalid_saml_response", 400, "Missing or oversized SAMLResponse payload"),
     ("invalid_base64_response", 400, "SAMLResponse is not valid base64"),
     ("unsupported_saml_version", 400, "SAML Version must be 2.0"),
@@ -158,6 +166,9 @@ _SAML_PUBLIC_ERRORS: Final[tuple[tuple[str, int, str], ...]] = (
         403,
         "SAML email-based fallback onto a pre-existing non-SAML tenant identity is forbidden",
     ),
+    ("invalid_handoff_token", 403, "Invalid, tampered, or expired SAML OIDC handoff token"),
+    ("replayed_handoff_token", 403, "SAML OIDC handoff token has already been consumed"),
+    ("invalid_pkce_verifier", 403, "PKCE code_verifier verification failed"),
 )
 
 
@@ -455,6 +466,10 @@ def login_view(request: HttpRequest, tenant_slug: str) -> HttpResponse:
 
     idp_id = request.GET.get("idp_id", "").strip()
     return_path = request.GET.get("return_path", "/").strip() or "/"
+    client_id: str | None = request.GET.get("client_id")
+    redirect_uri: str | None = request.GET.get("redirect_uri")
+    code_challenge: str | None = request.GET.get("code_challenge")
+    code_challenge_method: str | None = request.GET.get("code_challenge_method")
     want_redirect = request.GET.get("redirect", "").strip() == "1"
 
     if request.method == "POST" and request.body:
@@ -470,6 +485,14 @@ def login_view(request: HttpRequest, tenant_slug: str) -> HttpResponse:
                 idp_id = body_obj["idp_id"].strip()
             if isinstance(body_obj.get("return_path"), str):
                 return_path = body_obj["return_path"].strip() or "/"
+            if isinstance(body_obj.get("client_id"), str):
+                client_id = body_obj["client_id"]
+            if isinstance(body_obj.get("redirect_uri"), str):
+                redirect_uri = body_obj["redirect_uri"]
+            if isinstance(body_obj.get("code_challenge"), str):
+                code_challenge = body_obj["code_challenge"]
+            if isinstance(body_obj.get("code_challenge_method"), str):
+                code_challenge_method = body_obj["code_challenge_method"]
             if body_obj.get("redirect") is True:
                 want_redirect = True
 
@@ -500,6 +523,10 @@ def login_view(request: HttpRequest, tenant_slug: str) -> HttpResponse:
             idp_id=idp_id,
             sp_base_url=_sp_base_url(request),
             return_path=return_path,
+            client_id=client_id,
+            redirect_uri=redirect_uri,
+            code_challenge=code_challenge,
+            code_challenge_method=code_challenge_method,
         )
     except SamlError as exc:
         return _saml_error_response(exc.code)
@@ -614,3 +641,84 @@ def acs_view(request: HttpRequest, tenant_slug: str) -> HttpResponse:
         },
         status=200,
     )
+
+
+def oidc_handoff_view(request: HttpRequest, tenant_slug: str) -> HttpResponse:
+    """Exchange single-use SAML->OIDC `handoff_token` (`state`) + PKCE `code_verifier` for a session."""
+    if request.method not in {"GET", "POST"}:
+        resp = _json({"detail": "Method not allowed", "code": "method_not_allowed"}, status=405)
+        resp["Allow"] = "GET, POST"
+        return resp
+
+    handoff_token = (
+        request.GET.get("handoff_token") or request.GET.get("state") or ""
+    ).strip()
+    code_verifier: str | None = request.GET.get("code_verifier")
+
+    if request.method == "POST":
+        if len(request.body) > 16_384:
+            return _json({"detail": "Invalid request body", "code": "invalid_json"}, status=400)
+        content_type = (request.content_type or "").lower()
+        if "application/json" in content_type:
+            try:
+                data = json.loads(request.body.decode("utf-8"))
+            except (UnicodeDecodeError, ValueError):
+                return _json({"detail": "Invalid JSON body", "code": "invalid_json"}, status=400)
+            if not isinstance(data, dict):
+                return _json({"detail": "JSON object expected", "code": "invalid_json"}, status=400)
+            raw_tok = data.get("handoff_token") or data.get("state")
+            if isinstance(raw_tok, str):
+                handoff_token = raw_tok.strip()
+            raw_ver = data.get("code_verifier")
+            if raw_ver is not None:
+                if not isinstance(raw_ver, str):
+                    return _saml_error_response("invalid_pkce_verifier")
+                code_verifier = raw_ver
+        elif "application/x-www-form-urlencoded" in content_type:
+            try:
+                parsed_form = parse_qs(
+                    request.body.decode("utf-8"),
+                    keep_blank_values=True,
+                    max_num_fields=16,
+                )
+            except (UnicodeDecodeError, ValueError):
+                return _json({"detail": "Invalid form payload", "code": "invalid_form"}, status=400)
+            handoff_token = (
+                (parsed_form.get("handoff_token") or parsed_form.get("state") or [""])[0]
+            ).strip()
+            if "code_verifier" in parsed_form:
+                code_verifier = (parsed_form.get("code_verifier") or [""])[0]
+        else:
+            handoff_token = (
+                request.POST.get("handoff_token") or request.POST.get("state") or handoff_token
+            ).strip()
+            if "code_verifier" in request.POST:
+                code_verifier = request.POST.get("code_verifier")
+
+    try:
+        session = default_saml_service.consume_oidc_handoff(
+            tenant_slug=tenant_slug,
+            handoff_token=handoff_token,
+            sp_base_url=_sp_base_url(request),
+            code_verifier=code_verifier,
+        )
+    except SamlError as exc:
+        return _saml_error_response(exc.code)
+    except DatabaseError as exc:
+        if is_retriable_lock_contention(exc):
+            return _saml_error_response("authority_fenced")
+        raise
+
+    body: dict[str, object] = {
+        "authenticated": True,
+        "token_type": "Bearer",
+        "access_token": session.access_token,
+        "expires_in": session.expires_in,
+        "user_id": session.user_id,
+        "tenant_slug": session.tenant_slug,
+        "role": session.role,
+        "return_path": session.return_path,
+    }
+    if session.passport_token is not None:
+        body["passport_token"] = session.passport_token
+    return _json(body, status=200)

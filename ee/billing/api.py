@@ -261,12 +261,17 @@ def authenticate_bearer_header(
         resolve_member_authority,
     )
     from core.api import lanes
+    from ee.auth import EE_SAML_SESSION_PREFIX, verify_ee_saml_session_token
     from services.identity.access_tokens import TokenVerificationError
     from services.identity.trusted_issuers import verify_configured_token
 
     try:
-        verified, lane = verify_configured_token(raw_token, trusted=settings.KODERA_AUTH_TRUST)
-        verified, lane = lanes.admit(verified, lane)
+        if raw_token.startswith(EE_SAML_SESSION_PREFIX):
+            verified = verify_ee_saml_session_token(raw_token)
+            verified, lane = lanes.admit(verified, "customer")
+        else:
+            verified, lane = verify_configured_token(raw_token, trusted=settings.KODERA_AUTH_TRUST)
+            verified, lane = lanes.admit(verified, lane)
     except TokenVerificationError as exc:
         raise BillingUnauthenticatedError() from exc
 

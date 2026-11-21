@@ -17,8 +17,9 @@ from __future__ import annotations
 import hashlib
 import ipaddress
 import json
+import re
 import threading
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
@@ -48,9 +49,11 @@ from ee.store import (
 SUPPORTED_FRAMEWORKS = frozenset({"SOC2", "ISO27001", "SECNUMCLOUD"})
 MAX_EVENT_METADATA_BYTES = 32_768
 MAX_EXPORT_QUERY_ROWS = 10_000
+EXPORT_CURSOR_BATCH_SIZE = 250
 _URN_SEGMENT_CHARS = frozenset(
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-"
 )
+_SCRUBBED_TARGET_URN_RE = re.compile(r"^urn:kodera:[A-Za-z0-9._-]+:erased:[0-9a-f]{24}\Z")
 
 FRAMEWORK_CONTROL_CATALOG: Mapping[str, tuple[str, ...]] = {
     "SOC2": ("CC6.1", "CC6.2", "CC7.2", "CC7.3"),
@@ -131,6 +134,7 @@ class ComplianceAuditEvent:
     metadata: Mapping[str, object]
     prev_hash: str
     entry_hash: str
+    pii_scrubbed: bool = False
 
     def ledger_payload(self) -> dict[str, object]:
         return _ledger_hash_fields(
@@ -144,6 +148,12 @@ class ComplianceAuditEvent:
             target_urn=self.target_urn,
             prev_hash=self.prev_hash,
         )
+
+
+@dataclass(slots=True)
+class AuditEventCursorStream:
+    events: Iterator[ComplianceAuditEvent] = iter(())
+    has_more: bool = False
 
 
 def _try_parse_uuid(raw: str) -> UUID | None:
@@ -666,7 +676,7 @@ class ComplianceAuditLedger:
                         """
                         SELECT seq, event_id, occurred_at, tenant_slug, actor_type, actor_id,
                                actor_label, action, target_urn, source_ip, metadata_json,
-                               prev_hash, entry_hash
+                               prev_hash, entry_hash, (pii_scrubbed_at IS NOT NULL)
                         FROM public.ee_audit_ledger
                         WHERE organisation_id = %s AND tenant_slug = %s
                         ORDER BY seq ASC
@@ -678,7 +688,7 @@ class ComplianceAuditLedger:
                         """
                         SELECT seq, event_id, occurred_at, tenant_slug, actor_type, actor_id,
                                actor_label, action, target_urn, source_ip, metadata_json,
-                               prev_hash, entry_hash
+                               prev_hash, entry_hash, (pii_scrubbed_at IS NOT NULL)
                         FROM public.ee_audit_ledger
                         WHERE tenant_slug = %s
                         ORDER BY seq ASC
@@ -705,12 +715,141 @@ class ComplianceAuditLedger:
                         metadata=meta_obj,
                         prev_hash=str(row[11]),
                         entry_hash=str(row[12]),
+                        pii_scrubbed=bool(row[13]),
                     )
                 )
             return tuple(out)
 
         with self._lock:
             return tuple(self._streams.get(tenant_slug, ()))
+
+    def stream_events(
+        self,
+        tenant_slug: str,
+        *,
+        organisation_id: UUID | None = None,
+        from_timestamp: datetime | None = None,
+        to_timestamp: datetime | None = None,
+        actor_id: str | None = None,
+        actor_type: str | None = None,
+        action: str | None = None,
+        after_seq: int | None = None,
+        limit: int | None = None,
+        max_rows: int = MAX_EXPORT_QUERY_ROWS,
+        batch_size: int = EXPORT_CURSOR_BATCH_SIZE,
+    ) -> AuditEventCursorStream:
+        """Stream filtered events in bounded keyset cursor batches (`seq > cursor`, `batch_size`)."""
+        require_enterprise_edition()
+        fetch_cap = limit if limit is not None else max_rows
+        if fetch_cap < 1 or fetch_cap > max_rows:
+            raise ValueError(f"limit must be in 1..{max_rows}")
+        step = max(1, min(batch_size, fetch_cap))
+        stream = AuditEventCursorStream()
+
+        def _gen() -> Iterator[ComplianceAuditEvent]:
+            yielded = 0
+            cursor_seq = after_seq
+            if can_use_postgres():
+                from_iso = format_utc_iso(from_timestamp) if from_timestamp is not None else None
+                to_iso = format_utc_iso(to_timestamp) if to_timestamp is not None else None
+                while yielded < fetch_cap:
+                    remaining = fetch_cap - yielded
+                    query_limit = min(step, remaining) + 1
+                    with connection.cursor() as cur:
+                        cur.execute(
+                            """
+                            SELECT seq, event_id, occurred_at, tenant_slug, actor_type, actor_id,
+                                   actor_label, action, target_urn, source_ip, metadata_json,
+                                   prev_hash, entry_hash, (pii_scrubbed_at IS NOT NULL)
+                            FROM public.ee_audit_ledger
+                            WHERE (%s::uuid IS NULL OR organisation_id = %s)
+                              AND tenant_slug = %s
+                              AND (%s::bigint IS NULL OR seq > %s)
+                              AND (%s::text IS NULL OR occurred_at >= %s)
+                              AND (%s::text IS NULL OR occurred_at <= %s)
+                              AND (%s::text IS NULL OR actor_id = %s)
+                              AND (%s::text IS NULL OR actor_type = %s)
+                              AND (%s::text IS NULL OR action = %s)
+                            ORDER BY seq ASC
+                            LIMIT %s
+                            """,
+                            [
+                                organisation_id,
+                                organisation_id,
+                                tenant_slug,
+                                cursor_seq,
+                                cursor_seq,
+                                from_iso,
+                                from_iso,
+                                to_iso,
+                                to_iso,
+                                actor_id,
+                                actor_id,
+                                actor_type,
+                                actor_type,
+                                action,
+                                action,
+                                query_limit,
+                            ],
+                        )
+                        batch = cur.fetchall()
+                    if not batch:
+                        return
+                    take_cap = min(step, remaining)
+                    has_extra = len(batch) > take_cap
+                    selected = batch[:take_cap] if has_extra else batch
+                    for row in selected:
+                        loaded_meta = json.loads(str(row[10]))
+                        meta_obj = loaded_meta if isinstance(loaded_meta, dict) else {}
+                        evt = ComplianceAuditEvent(
+                            sequence=int(row[0]),
+                            event_id=str(row[1]),
+                            occurred_at=str(row[2]),
+                            tenant_slug=str(row[3]),
+                            actor_type=str(row[4]),
+                            actor_id=str(row[5]),
+                            actor_label=str(row[6]),
+                            action=str(row[7]),
+                            target_urn=str(row[8]),
+                            source_ip=str(row[9]),
+                            metadata=meta_obj,
+                            prev_hash=str(row[11]),
+                            entry_hash=str(row[12]),
+                            pii_scrubbed=bool(row[13]),
+                        )
+                        cursor_seq = evt.sequence
+                        yielded += 1
+                        if yielded == fetch_cap and has_extra:
+                            stream.has_more = True
+                        yield evt
+                    if not has_extra:
+                        return
+                return
+
+            with self._lock:
+                mem_events = list(self._streams.get(tenant_slug, ()))
+            for evt in mem_events:
+                if after_seq is not None and evt.sequence <= after_seq:
+                    continue
+                evt_dt = parse_utc_iso(evt.occurred_at)
+                if from_timestamp is not None and evt_dt < from_timestamp:
+                    continue
+                if to_timestamp is not None and evt_dt > to_timestamp:
+                    continue
+                if actor_id is not None and evt.actor_id != actor_id:
+                    continue
+                if actor_type is not None and evt.actor_type != actor_type:
+                    continue
+                if action is not None and evt.action != action:
+                    continue
+                if yielded >= fetch_cap:
+                    stream.has_more = True
+                    return
+                yielded += 1
+                yield evt
+
+        stream.events = _gen()
+        return stream
 
     def query_events(
         self,
@@ -726,100 +865,21 @@ class ComplianceAuditLedger:
         limit: int | None = None,
         max_rows: int = MAX_EXPORT_QUERY_ROWS,
     ) -> tuple[tuple[ComplianceAuditEvent, ...], bool]:
-        """Query filtered audit events via SQL predicates + keyset cursor (`seq > after_seq`, `LIMIT`)."""
-        require_enterprise_edition()
-        fetch_cap = limit if limit is not None else max_rows
-        if fetch_cap < 1 or fetch_cap > max_rows:
-            raise ValueError(f"limit must be in 1..{max_rows}")
-
-        if can_use_postgres():
-            from_iso = format_utc_iso(from_timestamp) if from_timestamp is not None else None
-            to_iso = format_utc_iso(to_timestamp) if to_timestamp is not None else None
-            with connection.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT seq, event_id, occurred_at, tenant_slug, actor_type, actor_id,
-                           actor_label, action, target_urn, source_ip, metadata_json,
-                           prev_hash, entry_hash
-                    FROM public.ee_audit_ledger
-                    WHERE (%s::uuid IS NULL OR organisation_id = %s)
-                      AND tenant_slug = %s
-                      AND (%s::bigint IS NULL OR seq > %s)
-                      AND (%s::text IS NULL OR occurred_at >= %s)
-                      AND (%s::text IS NULL OR occurred_at <= %s)
-                      AND (%s::text IS NULL OR actor_id = %s)
-                      AND (%s::text IS NULL OR actor_type = %s)
-                      AND (%s::text IS NULL OR action = %s)
-                    ORDER BY seq ASC
-                    LIMIT %s
-                    """,
-                    [
-                        organisation_id,
-                        organisation_id,
-                        tenant_slug,
-                        after_seq,
-                        after_seq,
-                        from_iso,
-                        from_iso,
-                        to_iso,
-                        to_iso,
-                        actor_id,
-                        actor_id,
-                        actor_type,
-                        actor_type,
-                        action,
-                        action,
-                        fetch_cap + 1,
-                    ],
-                )
-                rows = cur.fetchall()
-            has_more = len(rows) > fetch_cap
-            selected_rows = rows[:fetch_cap] if has_more else rows
-            out: list[ComplianceAuditEvent] = []
-            for row in selected_rows:
-                loaded_meta = json.loads(str(row[10]))
-                meta_obj = loaded_meta if isinstance(loaded_meta, dict) else {}
-                out.append(
-                    ComplianceAuditEvent(
-                        sequence=int(row[0]),
-                        event_id=str(row[1]),
-                        occurred_at=str(row[2]),
-                        tenant_slug=str(row[3]),
-                        actor_type=str(row[4]),
-                        actor_id=str(row[5]),
-                        actor_label=str(row[6]),
-                        action=str(row[7]),
-                        target_urn=str(row[8]),
-                        source_ip=str(row[9]),
-                        metadata=meta_obj,
-                        prev_hash=str(row[11]),
-                        entry_hash=str(row[12]),
-                    )
-                )
-            return tuple(out), has_more
-
-        with self._lock:
-            mem_events = list(self._streams.get(tenant_slug, ()))
-        matched: list[ComplianceAuditEvent] = []
-        for evt in mem_events:
-            if after_seq is not None and evt.sequence <= after_seq:
-                continue
-            evt_dt = parse_utc_iso(evt.occurred_at)
-            if from_timestamp is not None and evt_dt < from_timestamp:
-                continue
-            if to_timestamp is not None and evt_dt > to_timestamp:
-                continue
-            if actor_id is not None and evt.actor_id != actor_id:
-                continue
-            if actor_type is not None and evt.actor_type != actor_type:
-                continue
-            if action is not None and evt.action != action:
-                continue
-            matched.append(evt)
-            if len(matched) > fetch_cap:
-                break
-        has_more = len(matched) > fetch_cap
-        return tuple(matched[:fetch_cap] if has_more else matched), has_more
+        """Query filtered audit events via bounded keyset cursor stream."""
+        stream = self.stream_events(
+            tenant_slug,
+            organisation_id=organisation_id,
+            from_timestamp=from_timestamp,
+            to_timestamp=to_timestamp,
+            actor_id=actor_id,
+            actor_type=actor_type,
+            action=action,
+            after_seq=after_seq,
+            limit=limit,
+            max_rows=max_rows,
+        )
+        items = tuple(stream.events)
+        return items, stream.has_more
 
     def head_hash(self, tenant_slug: str, *, organisation_id: UUID | None = None) -> str:
         require_enterprise_edition()
@@ -971,7 +1031,9 @@ def verify_ledger_sequence(events: Sequence[ComplianceAuditEvent]) -> tuple[bool
         if evt.prev_hash != expected_prev:
             errors.append(f"row {idx}: prev_hash mismatch")
         recomputed = compute_domain_sha256(LEDGER_HASH_DOMAIN, evt.ledger_payload())
-        if evt.entry_hash != recomputed:
+        if evt.entry_hash != recomputed and not (
+            evt.pii_scrubbed and _SCRUBBED_TARGET_URN_RE.fullmatch(evt.target_urn) is not None
+        ):
             errors.append(f"row {idx}: entry_hash mismatch")
         expected_prev = evt.entry_hash
     return (len(errors) == 0), errors
@@ -981,18 +1043,121 @@ EE_AUDIT_ERASURE_MIGRATION_0035_FORWARD_SQL = r"""
 SET LOCAL lock_timeout='5s';
 SET LOCAL statement_timeout='30s';
 
+CREATE FUNCTION public.ee_audit_hmac_sha256_hex(p_key bytea, p_msg bytea)
+RETURNS text
+LANGUAGE plpgsql
+IMMUTABLE STRICT
+SET search_path = pg_catalog
+AS $$
+DECLARE
+    key_block bytea;
+    ipad bytea := decode(repeat('36', 64), 'hex');
+    opad bytea := decode(repeat('5c', 64), 'hex');
+    idx integer;
+    kb integer;
+BEGIN
+    IF octet_length(p_key) > 64 THEN
+        key_block := sha256(p_key);
+    ELSE
+        key_block := p_key;
+    END IF;
+    IF octet_length(key_block) < 64 THEN
+        key_block := key_block || decode(repeat('00', 64 - octet_length(key_block)), 'hex');
+    END IF;
+    FOR idx IN 0..63 LOOP
+        kb := get_byte(key_block, idx);
+        ipad := set_byte(ipad, idx, kb # 54);
+        opad := set_byte(opad, idx, kb # 92);
+    END LOOP;
+    RETURN encode(sha256(opad || sha256(ipad || p_msg)), 'hex');
+END
+$$;
+REVOKE ALL ON FUNCTION public.ee_audit_hmac_sha256_hex(bytea, bytea) FROM PUBLIC;
+
+CREATE FUNCTION public.ee_audit_scrub_target_urn(p_target_urn text, p_hmac_key bytea)
+RETURNS text
+LANGUAGE plpgsql
+IMMUTABLE STRICT
+SET search_path = pg_catalog, public
+AS $$
+DECLARE
+    res_type text := 'redacted';
+    candidate_type text;
+    digest_hex text;
+BEGIN
+    IF p_target_urn LIKE 'urn:kodera:%' THEN
+        candidate_type := split_part(p_target_urn, ':', 3);
+        IF candidate_type ~ '^[A-Za-z0-9._-]{1,64}$' AND candidate_type <> 'erased' THEN
+            res_type := candidate_type;
+        END IF;
+    END IF;
+    digest_hex := substr(
+        public.ee_audit_hmac_sha256_hex(
+            p_hmac_key,
+            convert_to('target_urn:' || lower(btrim(p_target_urn)), 'UTF8')
+        ),
+        1,
+        24
+    );
+    RETURN 'urn:kodera:' || res_type || ':erased:' || digest_hex;
+END
+$$;
+REVOKE ALL ON FUNCTION public.ee_audit_scrub_target_urn(text, bytea) FROM PUBLIC;
+
+CREATE FUNCTION public.ee_audit_target_urn_matches_digests(p_target_urn text, p_digests jsonb)
+RETURNS boolean
+LANGUAGE plpgsql
+IMMUTABLE
+SET search_path = pg_catalog
+AS $$
+DECLARE
+    norm_urn text;
+    tail_val text;
+    seg text;
+BEGIN
+    IF p_target_urn IS NULL OR btrim(p_target_urn) = '' THEN
+        RETURN false;
+    END IF;
+    IF p_target_urn ~ '^urn:kodera:[A-Za-z0-9._-]+:erased:[0-9a-f]{24}$' THEN
+        RETURN false;
+    END IF;
+    IF p_digests IS NULL OR jsonb_typeof(p_digests) IS DISTINCT FROM 'array' OR jsonb_array_length(p_digests) = 0 THEN
+        RETURN false;
+    END IF;
+    norm_urn := lower(btrim(p_target_urn));
+    IF p_digests ? encode(sha256(convert_to(norm_urn, 'UTF8')), 'hex') THEN
+        RETURN true;
+    END IF;
+    IF norm_urn LIKE 'urn:kodera:%:%' THEN
+        tail_val := regexp_replace(norm_urn, '^urn:kodera:[^:]+:', '');
+        IF tail_val <> '' AND p_digests ? encode(sha256(convert_to(tail_val, 'UTF8')), 'hex') THEN
+            RETURN true;
+        END IF;
+    END IF;
+    FOR seg IN SELECT unnest(string_to_array(norm_urn, ':')) LOOP
+        IF seg <> '' AND seg NOT IN ('urn', 'kodera', 'erased')
+           AND p_digests ? encode(sha256(convert_to(seg, 'UTF8')), 'hex') THEN
+            RETURN true;
+        END IF;
+    END LOOP;
+    RETURN false;
+END
+$$;
+REVOKE ALL ON FUNCTION public.ee_audit_target_urn_matches_digests(text, jsonb) FROM PUBLIC;
+
 CREATE FUNCTION public.ee_audit_row_matches_erasure(
     p_org uuid,
     p_row_id uuid,
     p_row_user uuid,
     p_actor_id text,
     p_actor_label text,
+    p_target_urn text,
     p_metadata_json text,
     p_person uuid
 ) RETURNS boolean
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = pg_catalog, public, pg_temp
+SET search_path = pg_catalog, public
 AS $$
 DECLARE
     ae_inv jsonb;
@@ -1039,6 +1204,10 @@ BEGIN
         RETURN true;
     END IF;
 
+    IF public.ee_audit_target_urn_matches_digests(p_target_urn, digests) THEN
+        RETURN true;
+    END IF;
+
     IF p_metadata_json IS NOT NULL AND p_metadata_json <> '' AND p_metadata_json <> '{}' THEN
         BEGIN
             meta_doc := p_metadata_json::jsonb;
@@ -1080,13 +1249,13 @@ BEGIN
     RETURN false;
 END
 $$;
-REVOKE ALL ON FUNCTION public.ee_audit_row_matches_erasure(uuid, uuid, uuid, text, text, text, uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.ee_audit_row_matches_erasure(uuid, uuid, uuid, text, text, text, text, uuid) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.ee_privacy_cutoff_guard()
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = pg_catalog, public, pg_temp
+SET search_path = pg_catalog, public
 AS $$
 DECLARE
     item jsonb := to_jsonb(NEW);
@@ -1102,10 +1271,19 @@ BEGIN
         IF NEW.source_ip = ''
            AND NEW.metadata_json = '{}'
            AND NEW.pii_scrubbed_at IS NOT NULL
-           AND (to_jsonb(NEW) - ARRAY['actor_label', 'source_ip', 'metadata_json', 'pii_scrubbed_at'])
-               IS NOT DISTINCT FROM (to_jsonb(OLD) - ARRAY['actor_label', 'source_ip', 'metadata_json', 'pii_scrubbed_at'])
+           AND (
+               NEW.target_urn = OLD.target_urn
+               OR NEW.target_urn ~ '^urn:kodera:[A-Za-z0-9._-]+:erased:[0-9a-f]{24}$'
+           )
+           AND (to_jsonb(NEW) - ARRAY['actor_label', 'target_urn', 'source_ip', 'metadata_json', 'pii_scrubbed_at'])
+               IS NOT DISTINCT FROM (to_jsonb(OLD) - ARRAY['actor_label', 'target_urn', 'source_ip', 'metadata_json', 'pii_scrubbed_at'])
            AND (
                (public.privacy_erasure_context(OLD.organisation_id) AND NEW.actor_label = 'erased')
+               OR (
+                   OLD.user_id IS NOT NULL
+                   AND public.privacy_account_context(OLD.user_id)
+                   AND NEW.actor_label = 'erased:' || OLD.user_id::text
+               )
                OR EXISTS (
                    SELECT 1
                    FROM public.retention_worker_context rwc
@@ -1119,6 +1297,7 @@ BEGIN
                          OLD.user_id,
                          OLD.actor_id,
                          OLD.actor_label,
+                         OLD.target_urn,
                          OLD.metadata_json,
                          rwc.source_id
                      )
@@ -1169,7 +1348,7 @@ CREATE OR REPLACE FUNCTION public.ee_audit_ledger_immutable_guard()
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = pg_catalog, public, pg_temp
+SET search_path = pg_catalog, public
 AS $$
 BEGIN
     IF TG_OP = 'DELETE' THEN
@@ -1180,10 +1359,19 @@ BEGIN
         IF NEW.source_ip = ''
            AND NEW.metadata_json = '{}'
            AND NEW.pii_scrubbed_at IS NOT NULL
-           AND (to_jsonb(NEW) - ARRAY['actor_label', 'source_ip', 'metadata_json', 'pii_scrubbed_at'])
-               IS NOT DISTINCT FROM (to_jsonb(OLD) - ARRAY['actor_label', 'source_ip', 'metadata_json', 'pii_scrubbed_at'])
+           AND (
+               NEW.target_urn = OLD.target_urn
+               OR NEW.target_urn ~ '^urn:kodera:[A-Za-z0-9._-]+:erased:[0-9a-f]{24}$'
+           )
+           AND (to_jsonb(NEW) - ARRAY['actor_label', 'target_urn', 'source_ip', 'metadata_json', 'pii_scrubbed_at'])
+               IS NOT DISTINCT FROM (to_jsonb(OLD) - ARRAY['actor_label', 'target_urn', 'source_ip', 'metadata_json', 'pii_scrubbed_at'])
            AND (
                (public.privacy_erasure_context(OLD.organisation_id) AND NEW.actor_label = 'erased')
+               OR (
+                   OLD.user_id IS NOT NULL
+                   AND public.privacy_account_context(OLD.user_id)
+                   AND NEW.actor_label = 'erased:' || OLD.user_id::text
+               )
                OR EXISTS (
                    SELECT 1
                    FROM public.retention_worker_context rwc
@@ -1197,6 +1385,7 @@ BEGIN
                          OLD.user_id,
                          OLD.actor_id,
                          OLD.actor_label,
+                         OLD.target_urn,
                          OLD.metadata_json,
                          rwc.source_id
                      )
@@ -1225,16 +1414,59 @@ CREATE FUNCTION public.ee_audit_erasure_journal_hook()
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = pg_catalog, public, pg_temp
+SET search_path = pg_catalog, public
 AS $$
 DECLARE
     person uuid;
+    org_ref uuid;
+    hmac_key bytea;
     target_orgs uuid[] := ARRAY[]::uuid[];
     target_org_texts text[] := ARRAY[]::text[];
     subject_sha256s jsonb := '[]'::jsonb;
     scrub_ids jsonb := '[]'::jsonb;
     scrubbed_count bigint := 0;
 BEGIN
+    IF TG_TABLE_NAME = 'orgs_privacyerasure' THEN
+        IF TG_OP = 'UPDATE' AND OLD.core_purged_at IS NULL AND NEW.core_purged_at IS NOT NULL THEN
+            org_ref := NEW.organisation_reference;
+            hmac_key := sha256(
+                convert_to('kodera-ee-audit-org-erasure-v1:' || NEW.id::text || ':' || NEW.instruction_sha256, 'UTF8')
+            );
+            IF to_regclass('public.ee_audit_ledger') IS NOT NULL THEN
+                UPDATE public.ee_audit_ledger l
+                SET actor_label = 'erased',
+                    target_urn = public.ee_audit_scrub_target_urn(l.target_urn, hmac_key),
+                    source_ip = '',
+                    metadata_json = '{}',
+                    pii_scrubbed_at = COALESCE(l.pii_scrubbed_at, clock_timestamp())
+                WHERE l.organisation_id = org_ref
+                  AND l.target_urn !~ '^urn:kodera:[A-Za-z0-9._-]+:erased:[0-9a-f]{24}$'
+                  AND (
+                      strpos(l.target_urn, '@') > 0
+                      OR l.target_urn !~ '^urn:kodera:[A-Za-z0-9._-]+(:[A-Za-z0-9._-]+)+$'
+                  );
+            END IF;
+        ELSIF TG_OP = 'UPDATE' AND OLD.status <> 'complete' AND NEW.status = 'complete' THEN
+            org_ref := NEW.organisation_reference;
+            IF to_regclass('public.ee_audit_ledger') IS NOT NULL THEN
+                IF EXISTS (
+                    SELECT 1
+                    FROM public.ee_audit_ledger l
+                    WHERE l.organisation_id = org_ref
+                      AND l.target_urn !~ '^urn:kodera:[A-Za-z0-9._-]+:erased:[0-9a-f]{24}$'
+                      AND (
+                          strpos(l.target_urn, '@') > 0
+                          OR l.target_urn !~ '^urn:kodera:[A-Za-z0-9._-]+(:[A-Za-z0-9._-]+)+$'
+                      )
+                ) THEN
+                    RAISE EXCEPTION 'enterprise audit ledger target_urn PII still present'
+                        USING ERRCODE = '23514';
+                END IF;
+            END IF;
+        END IF;
+        RETURN NEW;
+    END IF;
+
     IF TG_TABLE_NAME <> 'orgs_accounterasure' THEN
         RETURN NEW;
     END IF;
@@ -1290,6 +1522,7 @@ BEGIN
                    AND (
                        subject_sha256s ? encode(sha256(convert_to(lower(btrim(l.actor_id)), 'UTF8')), 'hex')
                        OR subject_sha256s ? encode(sha256(convert_to(lower(btrim(l.actor_label)), 'UTF8')), 'hex')
+                       OR public.ee_audit_target_urn_matches_digests(l.target_urn, subject_sha256s)
                        OR EXISTS (
                            SELECT 1
                            FROM (
@@ -1311,6 +1544,7 @@ BEGIN
                                  strpos(lower(l.metadata_json), needles.needle) > 0
                                  OR strpos(lower(l.actor_label), needles.needle) > 0
                                  OR strpos(lower(l.actor_id), needles.needle) > 0
+                                 OR strpos(lower(l.target_urn), needles.needle) > 0
                              )
                        )
                    )
@@ -1327,6 +1561,9 @@ BEGIN
 
     ELSIF TG_OP = 'UPDATE' THEN
         subject_sha256s := COALESCE(NEW.inventory->'ee_audit_subject_sha256s', '[]'::jsonb);
+        hmac_key := sha256(
+            convert_to('kodera-ee-audit-erasure-v1:' || NEW.id::text || ':' || NEW.instruction_sha256, 'UTF8')
+        );
 
         IF OLD.core_purged_at IS NULL AND NEW.core_purged_at IS NOT NULL THEN
             IF to_regclass('public.ee_audit_ledger') IS NOT NULL THEN
@@ -1338,6 +1575,19 @@ BEGIN
                         THEN 'erased:' || person::text
                         ELSE l.actor_label
                     END,
+                    target_urn = CASE
+                        WHEN public.ee_audit_target_urn_matches_digests(l.target_urn, subject_sha256s)
+                             OR (
+                                 l.user_id = person
+                                 AND l.target_urn !~ '^urn:kodera:[A-Za-z0-9._-]+:erased:[0-9a-f]{24}$'
+                                 AND (
+                                     strpos(l.target_urn, '@') > 0
+                                     OR l.target_urn !~ '^urn:kodera:[A-Za-z0-9._-]+(:[A-Za-z0-9._-]+)+$'
+                                 )
+                             )
+                        THEN public.ee_audit_scrub_target_urn(l.target_urn, hmac_key)
+                        ELSE l.target_urn
+                    END,
                     source_ip = '',
                     metadata_json = '{}',
                     pii_scrubbed_at = COALESCE(l.pii_scrubbed_at, clock_timestamp())
@@ -1347,6 +1597,7 @@ BEGIN
                     l.user_id,
                     l.actor_id,
                     l.actor_label,
+                    l.target_urn,
                     l.metadata_json,
                     person
                 )
@@ -1354,6 +1605,15 @@ BEGIN
                     l.pii_scrubbed_at IS NULL
                     OR l.metadata_json <> '{}'
                     OR l.source_ip <> ''
+                    OR public.ee_audit_target_urn_matches_digests(l.target_urn, subject_sha256s)
+                    OR (
+                        l.user_id = person
+                        AND l.target_urn !~ '^urn:kodera:[A-Za-z0-9._-]+:erased:[0-9a-f]{24}$'
+                        AND (
+                            strpos(l.target_urn, '@') > 0
+                            OR l.target_urn !~ '^urn:kodera:[A-Za-z0-9._-]+(:[A-Za-z0-9._-]+)+$'
+                        )
+                    )
                     OR (
                         (
                             l.user_id = person
@@ -1382,6 +1642,7 @@ BEGIN
                         l.user_id,
                         l.actor_id,
                         l.actor_label,
+                        l.target_urn,
                         l.metadata_json,
                         person
                     )
@@ -1389,6 +1650,15 @@ BEGIN
                         l.pii_scrubbed_at IS NULL
                         OR l.metadata_json <> '{}'
                         OR l.source_ip <> ''
+                        OR public.ee_audit_target_urn_matches_digests(l.target_urn, subject_sha256s)
+                        OR (
+                            l.user_id = person
+                            AND l.target_urn !~ '^urn:kodera:[A-Za-z0-9._-]+:erased:[0-9a-f]{24}$'
+                            AND (
+                                strpos(l.target_urn, '@') > 0
+                                OR l.target_urn !~ '^urn:kodera:[A-Za-z0-9._-]+(:[A-Za-z0-9._-]+)+$'
+                            )
+                        )
                         OR (
                             (
                                 l.user_id = person
@@ -1417,17 +1687,122 @@ REVOKE ALL ON FUNCTION public.ee_audit_erasure_journal_hook() FROM PUBLIC;
 CREATE TRIGGER aa_03_ee_audit_erasure
     BEFORE INSERT OR UPDATE ON public.orgs_accounterasure
     FOR EACH ROW EXECUTE FUNCTION public.ee_audit_erasure_journal_hook();
+
+CREATE TRIGGER aa_03_ee_audit_org_erasure
+    BEFORE UPDATE ON public.orgs_privacyerasure
+    FOR EACH ROW EXECUTE FUNCTION public.ee_audit_erasure_journal_hook();
+
+CREATE FUNCTION public.ee_scim_sync_member_contact(
+    p_org uuid,
+    p_user uuid,
+    p_email text,
+    p_display_name text
+) RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $$
+DECLARE
+    clean_email text;
+    clean_display text;
+    shared_person boolean;
+BEGIN
+    IF p_org IS NULL OR p_user IS NULL THEN
+        RAISE EXCEPTION 'scim contact sync requires organisation and user' USING ERRCODE = '23514';
+    END IF;
+
+    PERFORM pg_advisory_xact_lock_shared(hashtextextended('privacy_erasure_cutoff:' || p_org::text, 0));
+    IF NOT pg_try_advisory_xact_lock_shared(hashtextextended('privacy_account_cutoff:' || p_user::text, 0)) THEN
+        RAISE EXCEPTION 'account cutoff lock busy' USING ERRCODE = '55P03';
+    END IF;
+    IF EXISTS (SELECT 1 FROM public.orgs_privacyerasure WHERE organisation_reference = p_org)
+       OR NOT EXISTS (
+           SELECT 1 FROM public.orgs_organisation
+           WHERE id = p_org AND state <> 'closed' AND deleted_at IS NULL
+       ) THEN
+        RAISE EXCEPTION 'durable erasure cutoff refuses write' USING ERRCODE = '23514';
+    END IF;
+
+    IF EXISTS (SELECT 1 FROM public.orgs_accounterasure WHERE user_reference = p_user)
+       OR NOT EXISTS (
+           SELECT 1 FROM public.identity_user
+           WHERE id = p_user AND enabled = TRUE AND deleted_at IS NULL AND email NOT LIKE 'erased:%'
+       ) THEN
+        RAISE EXCEPTION 'durable account cutoff refuses write' USING ERRCODE = '23514';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM public.identity_identity i
+        JOIN public.orgs_membership m
+          ON m.organisation_id = i.organisation_id AND m.user_id = i.user_id
+        WHERE i.organisation_id = p_org
+          AND i.user_id = p_user
+          AND i.deleted_at IS NULL
+          AND m.deleted_at IS NULL
+    ) THEN
+        RAISE EXCEPTION 'scim contact sync target membership missing' USING ERRCODE = '23503';
+    END IF;
+
+    clean_email := CASE WHEN p_email IS NULL THEN NULL ELSE btrim(p_email) END;
+    clean_display := CASE WHEN p_display_name IS NULL THEN NULL ELSE left(btrim(p_display_name), 200) END;
+
+    IF clean_email IS NOT NULL AND clean_email <> '' THEN
+        UPDATE public.identity_identity
+        SET email = clean_email,
+            updated_at = clock_timestamp()
+        WHERE organisation_id = p_org
+          AND user_id = p_user
+          AND deleted_at IS NULL
+          AND email IS DISTINCT FROM clean_email;
+    END IF;
+
+    SELECT EXISTS (
+        SELECT 1
+        FROM public.identity_identity other
+        WHERE other.user_id = p_user
+          AND other.organisation_id IS DISTINCT FROM p_org
+          AND other.deleted_at IS NULL
+    ) INTO shared_person;
+
+    IF NOT shared_person THEN
+        IF clean_email IS NOT NULL AND clean_email <> '' AND clean_display IS NOT NULL THEN
+            UPDATE public.identity_user
+            SET email = clean_email,
+                display_name = clean_display,
+                updated_at = clock_timestamp()
+            WHERE id = p_user
+              AND (email IS DISTINCT FROM clean_email OR display_name IS DISTINCT FROM clean_display);
+        ELSIF clean_email IS NOT NULL AND clean_email <> '' THEN
+            UPDATE public.identity_user
+            SET email = clean_email,
+                updated_at = clock_timestamp()
+            WHERE id = p_user
+              AND email IS DISTINCT FROM clean_email;
+        ELSIF clean_display IS NOT NULL THEN
+            UPDATE public.identity_user
+            SET display_name = clean_display,
+                updated_at = clock_timestamp()
+            WHERE id = p_user
+              AND display_name IS DISTINCT FROM clean_display;
+        END IF;
+    END IF;
+END
+$$;
+REVOKE ALL ON FUNCTION public.ee_scim_sync_member_contact(uuid, uuid, text, text) FROM PUBLIC;
 """
 
 EE_AUDIT_ERASURE_RESTORE_0032_GUARDS_SQL = r"""
+DROP TRIGGER IF EXISTS aa_03_ee_audit_org_erasure ON public.orgs_privacyerasure;
 DROP TRIGGER IF EXISTS aa_03_ee_audit_erasure ON public.orgs_accounterasure;
 DROP FUNCTION IF EXISTS public.ee_audit_erasure_journal_hook();
+DROP FUNCTION IF EXISTS public.ee_scim_sync_member_contact(uuid, uuid, text, text);
 
 CREATE OR REPLACE FUNCTION public.ee_privacy_cutoff_guard()
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = pg_catalog, public, pg_temp
+SET search_path = pg_catalog, public
 AS $$
 DECLARE item jsonb := to_jsonb(NEW); org uuid; person uuid;
 BEGIN
@@ -1471,7 +1846,7 @@ CREATE OR REPLACE FUNCTION public.ee_audit_ledger_immutable_guard()
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = pg_catalog, public, pg_temp
+SET search_path = pg_catalog, public
 AS $$
 BEGIN
  IF TG_OP = 'DELETE' THEN
@@ -1493,7 +1868,10 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION public.ee_audit_ledger_immutable_guard() FROM PUBLIC;
 
-DROP FUNCTION IF EXISTS public.ee_audit_row_matches_erasure(uuid, uuid, uuid, text, text, text, uuid);
+DROP FUNCTION IF EXISTS public.ee_audit_row_matches_erasure(uuid, uuid, uuid, text, text, text, text, uuid);
+DROP FUNCTION IF EXISTS public.ee_audit_target_urn_matches_digests(text, jsonb);
+DROP FUNCTION IF EXISTS public.ee_audit_scrub_target_urn(text, bytea);
+DROP FUNCTION IF EXISTS public.ee_audit_hmac_sha256_hex(bytea, bytea);
 """
 
 EE_AUDIT_ERASURE_MIGRATION_0035_REVERSE_SQL = r"""
@@ -1502,12 +1880,19 @@ SET LOCAL statement_timeout='30s';
 
 DO $$
 BEGIN
-    LOCK TABLE public.orgs_accounterasure IN SHARE MODE;
+    LOCK TABLE public.orgs_privacyerasure, public.orgs_accounterasure IN SHARE MODE;
     IF EXISTS (
         SELECT 1 FROM public.orgs_accounterasure
-        WHERE inventory ? 'ee_audit_scrub_ids'
-           OR inventory ? 'ee_audit_subject_sha256s'
-           OR counts ? 'ee_audit_subject_scrubbed'
+        WHERE jsonb_array_length(COALESCE(inventory->'ee_audit_scrub_ids', '[]'::jsonb)) > 0
+           OR COALESCE((counts->>'ee_audit_subject_scrubbed')::bigint, 0) > 0
+    )
+    OR (
+        to_regclass('public.ee_audit_ledger') IS NOT NULL
+        AND EXISTS (
+            SELECT 1 FROM public.ee_audit_ledger
+            WHERE pii_scrubbed_at IS NOT NULL
+              AND target_urn ~ '^urn:kodera:[A-Za-z0-9._-]+:erased:[0-9a-f]{24}$'
+        )
     ) THEN
         RAISE EXCEPTION 'cannot downgrade enterprise audit erasure migration while admitted obligations exist'
             USING ERRCODE = '23514';
@@ -1515,14 +1900,16 @@ BEGIN
 END
 $$;
 
+DROP TRIGGER IF EXISTS aa_03_ee_audit_org_erasure ON public.orgs_privacyerasure;
 DROP TRIGGER IF EXISTS aa_03_ee_audit_erasure ON public.orgs_accounterasure;
 DROP FUNCTION IF EXISTS public.ee_audit_erasure_journal_hook();
+DROP FUNCTION IF EXISTS public.ee_scim_sync_member_contact(uuid, uuid, text, text);
 
 CREATE OR REPLACE FUNCTION public.ee_privacy_cutoff_guard()
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = pg_catalog, public, pg_temp
+SET search_path = pg_catalog, public
 AS $$
 DECLARE item jsonb := to_jsonb(NEW); org uuid; person uuid;
 BEGIN
@@ -1566,7 +1953,7 @@ CREATE OR REPLACE FUNCTION public.ee_audit_ledger_immutable_guard()
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = pg_catalog, public, pg_temp
+SET search_path = pg_catalog, public
 AS $$
 BEGIN
  IF TG_OP = 'DELETE' THEN
@@ -1588,7 +1975,10 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION public.ee_audit_ledger_immutable_guard() FROM PUBLIC;
 
-DROP FUNCTION IF EXISTS public.ee_audit_row_matches_erasure(uuid, uuid, uuid, text, text, text, uuid);
+DROP FUNCTION IF EXISTS public.ee_audit_row_matches_erasure(uuid, uuid, uuid, text, text, text, text, uuid);
+DROP FUNCTION IF EXISTS public.ee_audit_target_urn_matches_digests(text, jsonb);
+DROP FUNCTION IF EXISTS public.ee_audit_scrub_target_urn(text, bytea);
+DROP FUNCTION IF EXISTS public.ee_audit_hmac_sha256_hex(bytea, bytea);
 """
 
 

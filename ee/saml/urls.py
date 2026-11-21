@@ -12,6 +12,7 @@ from ee.saml.views import (
     domain_challenges_view,
     login_view,
     metadata_view,
+    oidc_handoff_view,
     providers_view,
 )
 
@@ -25,4 +26,5 @@ urlpatterns: list[URLPattern] = [
     ),
     path("<slug:tenant_slug>/login", login_view, name="ee-saml-login"),
     path("<slug:tenant_slug>/acs", acs_view, name="ee-saml-acs"),
+    path("<slug:tenant_slug>/oidc-handoff", oidc_handoff_view, name="ee-saml-oidc-handoff"),
 ]
