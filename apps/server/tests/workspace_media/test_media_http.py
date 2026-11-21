@@ -568,3 +568,120 @@ def test_http_dm_completion_holds_zero_workspace_or_attachment_locks_during_veri
             pauses.get_nowait().set()
         verifier_srv.shutdown()
         verifier_srv.server_close()
+
+
+@override_settings(ROOT_URLCONF="apps.media.api.urls")
+def test_http_receipt_expiry_race_returns_transient_503_without_in_tx_verifier_io(
+    world, http, gateway, settings, monkeypatch
+):
+    from datetime import timedelta
+
+    from django.db import connection
+
+    from apps.media import services as media_services
+    from apps.media.api import http as media_http
+    from core.idempotency import store as idempotency_store
+
+    org, _, _, _ = world
+    client, credentials = http
+    dm_room = "!dmExpiryRaceRoom:matrix.kodera.test"
+    settings.KODERA_MEDIA_ROOM_VERIFIER_URL = "http://127.0.0.1:9/internal/room-member"
+
+    verifier_calls: list[bool] = []
+
+    def spy_verifier(verifier_url: str, *, room_id: str, subject: str) -> bool:
+        in_tx = connection.in_atomic_block
+        verifier_calls.append(in_tx)
+        assert not in_tx, "remote DM verifier HTTP I/O must never run inside a DB transaction"
+        return True
+
+    monkeypatch.setattr(media_services, "_query_room_verifier_http", spy_verifier)
+
+    root = f"/api/v1/organisations/{org.id}/workspace/attachments"
+    upload_body = json.dumps(
+        {
+            "filename": "race-check.txt",
+            "contentType": "text/plain",
+            "sizeBytes": 20,
+            "sha256": hashlib.sha256(b"race-check-20-bytes!").hexdigest(),
+            "roomId": dm_room,
+        }
+    )
+    upload_auth = headers(credentials[3])
+    initial_upload = client.post(
+        root + "/uploads",
+        data=upload_body,
+        content_type="application/json",
+        **upload_auth,
+    )
+    assert initial_upload.status_code == 201
+    attachment_id = initial_upload.json()["attachmentId"]
+
+    complete_auth = headers(credentials[3])
+    initial_complete = client.post(
+        f"{root}/{attachment_id}/complete",
+        data=b"",
+        content_type="application/json",
+        **complete_auth,
+    )
+    assert initial_complete.status_code == 200
+    assert verifier_calls and not any(verifier_calls)
+
+    orig_retention = idempotency_store.RETENTION
+    real_holds_answer = media_http.idempotency.holds_answer
+    expire_after_probe = {"active": False}
+
+    def interleaving_holds_answer(*args, **kwargs) -> bool:
+        present = real_holds_answer(*args, **kwargs)
+        if present and expire_after_probe["active"]:
+            expire_after_probe["active"] = False
+            monkeypatch.setattr(idempotency_store, "RETENTION", timedelta(seconds=-1))
+        return present
+
+    monkeypatch.setattr(media_http.idempotency, "holds_answer", interleaving_holds_answer)
+
+    # 1. Expiry race on POST /uploads returns transient 503 Retry-After: 1 with zero verifier I/O
+    calls_before_upload_race = len(verifier_calls)
+    expire_after_probe["active"] = True
+    raced_upload = client.post(
+        root + "/uploads",
+        data=upload_body,
+        content_type="application/json",
+        **upload_auth,
+    )
+    assert raced_upload.status_code == 503 and raced_upload["Retry-After"] == "1"
+    assert len(verifier_calls) == calls_before_upload_race
+
+    # Immediate retry sees expired receipt in holds_answer() == False and runs prepared autocommit path
+    retried_upload = client.post(
+        root + "/uploads",
+        data=upload_body,
+        content_type="application/json",
+        **upload_auth,
+    )
+    assert retried_upload.status_code == 201
+    assert not any(verifier_calls)
+    monkeypatch.setattr(idempotency_store, "RETENTION", orig_retention)
+
+    # 2. Expiry race on POST /complete returns transient 503 Retry-After: 1 with zero verifier I/O
+    calls_before_complete_race = len(verifier_calls)
+    expire_after_probe["active"] = True
+    raced_complete = client.post(
+        f"{root}/{attachment_id}/complete",
+        data=b"",
+        content_type="application/json",
+        **complete_auth,
+    )
+    assert raced_complete.status_code == 503 and raced_complete["Retry-After"] == "1"
+    assert len(verifier_calls) == calls_before_complete_race
+
+    # Immediate retry sees expired receipt in holds_answer() == False and runs prepared autocommit path
+    retried_complete = client.post(
+        f"{root}/{attachment_id}/complete",
+        data=b"",
+        content_type="application/json",
+        **complete_auth,
+    )
+    assert retried_complete.status_code == 200
+    assert not any(verifier_calls)
+    monkeypatch.setattr(idempotency_store, "RETENTION", orig_retention)

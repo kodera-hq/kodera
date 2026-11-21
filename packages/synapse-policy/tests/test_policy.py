@@ -588,6 +588,10 @@ def test_dm_member_joined_restricts_inspection_to_service_accounts_and_rejects_c
             ("m.room.create", ""): SimpleNamespace(sender=ALICE),
             ("m.room.member", ALICE): SimpleNamespace(sender=ALICE, content={"membership": "join"}),
         },
+        f"!missingcreator:{SERVER}": {
+            ("m.room.create", ""): SimpleNamespace(sender=None),
+            ("m.room.member", ALICE): SimpleNamespace(sender=ALICE, content={"membership": "join"}),
+        },
         chan_id: {
             ("m.room.create", ""): SimpleNamespace(sender=AGENT),
             ("io.kodera.room.policy", ""): SimpleNamespace(
@@ -626,7 +630,10 @@ def test_dm_member_joined_restricts_inspection_to_service_accounts_and_rejects_c
         assert run(configured.dm_member_joined(svc, dm_id, ALICE)) is True
         assert run(configured.dm_member_joined(svc, v12_dm_id, ALICE)) is True
         assert run(configured.dm_member_joined(svc, v12_dm_id, BOB)) is False
+        assert run(configured.dm_member_joined(svc, f"!missingcreator:{SERVER}", ALICE)) is False
         assert run(configured.dm_member_joined(svc, "!synthetic-local", ALICE)) is False
+        assert run(configured.dm_member_joined(svc, "!\x7f:acme-sa.kodera.io", ALICE)) is False
+        assert run(configured.dm_member_joined(svc, "!room:bad/domain", ALICE)) is False
         assert run(configured.dm_member_joined(svc, dm_id, BOB)) is False
         assert run(configured.dm_member_joined(svc, dm_id, CAROL)) is False
         assert run(configured.dm_member_joined(svc, f"!missing:{SERVER}", ALICE)) is False

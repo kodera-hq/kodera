@@ -28,6 +28,7 @@ posting and private-room membership when a room's power levels are accidentally 
 from __future__ import annotations
 
 from collections.abc import Mapping
+import re
 from typing import Any
 
 from synapse.module_api import NOT_SPAM, ModuleApi
@@ -332,7 +333,12 @@ class KoderaPolicy:
             ],
         )
         create = state.get(("m.room.create", ""))
-        if create is None or getattr(create, "sender", None) in {self._agent, self._room_access}:
+        creator = getattr(create, "sender", None)
+        if (
+            not isinstance(creator, str)
+            or not _is_valid_user_id(creator)
+            or creator in {self._agent, self._room_access}
+        ):
             return False
         policy_entry = state.get(("io.kodera.room.policy", ""))
         if policy_entry is not None and getattr(policy_entry, "sender", None) == self._agent:
@@ -599,19 +605,15 @@ def _asks_for_encryption(config: dict[str, Any]) -> bool:
     return any(isinstance(state, dict) and state.get("type") == "m.room.encryption" for state in initial_state)
 
 
+_ROOM_ID_RE = re.compile(r"!([!-9;-~]{1,128}:[A-Za-z0-9.:-]{1,253}|[A-Za-z0-9_-]{43})\Z")
+
+
 def _is_valid_room_id(room_id: Any) -> bool:
-    if (
-        not isinstance(room_id, str)
-        or not 1 < len(room_id) <= 255
-        or not room_id.startswith("!")
-        or any(c.isspace() for c in room_id)
-    ):
-        return False
-    body = room_id[1:]
-    if ":" in body:
-        local, sep, domain = body.partition(":")
-        return bool(sep and 1 <= len(local) <= 128 and 1 <= len(domain) <= 253 and ":" not in local)
-    return len(body) == 43 and all(c.isalnum() or c in "-_" for c in body)
+    return (
+        isinstance(room_id, str)
+        and 1 < len(room_id) <= 255
+        and _ROOM_ID_RE.fullmatch(room_id) is not None
+    )
 
 
 def _is_valid_user_id(user_id: Any) -> bool:

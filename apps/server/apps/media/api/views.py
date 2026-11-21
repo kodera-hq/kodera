@@ -35,14 +35,11 @@ def uploads(request: HttpRequest, organisation_id: UUID) -> HttpResponse:
 
         return post
 
-    def fallback(verified: VerifiedAccessToken, request_id: str) -> HttpResponse:
-        data = http.body(request, UPLOAD_FIELDS, UPLOAD_REQUIRED)
-        return http.json_response(
-            service.create_upload(
-                verified=verified, organisation_id=organisation_id, body=data, request_id=request_id
-            ),
-            201,
-        )
+    def unprepared(verified: VerifiedAccessToken, request_id: str) -> HttpResponse:
+        # An answer may expire between the preparation probe and the replay lookup.
+        # Retry in autocommit rather than performing storage or room-verifier I/O
+        # inside the replay transaction.
+        raise service.RefusalError(503, "service-unavailable")
 
     def replay_auth(verified: VerifiedAccessToken) -> None:
         data = http.body(request, UPLOAD_FIELDS, UPLOAD_REQUIRED)
@@ -56,7 +53,7 @@ def uploads(request: HttpRequest, organisation_id: UUID) -> HttpResponse:
 
     return http.serve(
         request,
-        {"POST": fallback},
+        {"POST": unprepared},
         organisation_id,
         prepare=prepare,
         replay_authorize=replay_auth,
@@ -85,17 +82,11 @@ def complete(request: HttpRequest, organisation_id: UUID, attachment_id: UUID) -
 
         return post
 
-    def fallback(verified: VerifiedAccessToken, request_id: str) -> HttpResponse:
-        if request.body:
-            http.body(request, set(), set())
-        return http.json_response(
-            service.complete_upload(
-                verified=verified,
-                organisation_id=organisation_id,
-                attachment_id=attachment_id,
-                request_id=request_id,
-            )
-        )
+    def unprepared(verified: VerifiedAccessToken, request_id: str) -> HttpResponse:
+        # An answer may expire between the preparation probe and the replay lookup.
+        # Retry in autocommit rather than performing storage or room-verifier I/O
+        # inside the replay transaction.
+        raise service.RefusalError(503, "service-unavailable")
 
     def replay_auth(verified: VerifiedAccessToken) -> None:
         service.authorize_complete(
@@ -109,7 +100,7 @@ def complete(request: HttpRequest, organisation_id: UUID, attachment_id: UUID) -
 
     return http.serve(
         request,
-        {"POST": fallback},
+        {"POST": unprepared},
         organisation_id,
         prepare=prepare,
         replay_authorize=replay_auth,

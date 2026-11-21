@@ -619,12 +619,11 @@ def complete_upload(
         prepared=prepared,
         request_id=request_id,
     )
-    if not transaction.get_connection().in_atomic_block:
-        authorize_complete_dm(
-            verified=verified,
-            organisation_id=organisation_id,
-            attachment_id=attachment_id,
-        )
+    authorize_complete_dm(
+        verified=verified,
+        organisation_id=organisation_id,
+        attachment_id=attachment_id,
+    )
     return result
 
 
