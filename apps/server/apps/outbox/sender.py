@@ -12,6 +12,7 @@ subject, the body, the link or its secret.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -28,7 +29,7 @@ from typing import Any
 from uuid import UUID
 
 from django.conf import settings
-from django.db import connection, transaction
+from django.db import IntegrityError, connection, transaction
 
 from apps.audit.services import record_delivery_event
 from core.db.ids import new_uuid7
@@ -537,8 +538,12 @@ def withdrawn(template_id: str, delivery_id: UUID) -> bool:
             [delivery_id],
         )
         if not binding_rows:
-            return True
-        bound_inv_id, bound_org_id, recipient_sha = binding_rows[0]
+            legacy = resolve_legacy_invitation_binding(delivery_id)
+            if legacy is None:
+                return True
+            bound_inv_id, bound_org_id, recipient_sha = legacy
+        else:
+            bound_inv_id, bound_org_id, recipient_sha = binding_rows[0]
         _rows(
             "SELECT pg_advisory_xact_lock_shared(hashtextextended('privacy_erasure_cutoff:' || %s, 0))",
             [str(bound_org_id)],
@@ -597,6 +602,71 @@ def withdrawn(template_id: str, delivery_id: UUID) -> bool:
         return False
     rows = _rows(statement, [delivery_id])
     return bool(rows) and rows[0][0] == "cancelled"
+
+
+def resolve_legacy_invitation_binding(delivery_id: UUID) -> tuple[UUID, UUID, str] | None:
+    """Backfill pre-upgrade `invitation` / `invitation_account_ready` deliveries by unsealing their
+    payload and matching an authoritative `orgs_invitation` row in the same organisation."""
+    key = seal_key()
+    if key is None:
+        return None
+    msg_rows = _rows(
+        "SELECT d.organisation_id, m.sealed "
+        "FROM outbox_outboxdelivery d "
+        "JOIN outbox_message m ON m.delivery_id = d.id "
+        "WHERE d.id = %s AND m.template_id IN ('invitation', 'invitation_account_ready')",
+        [delivery_id],
+    )
+    if not msg_rows or msg_rows[0][1] is None:
+        return None
+    org_id: UUID = msg_rows[0][0]
+    raw_sealed = bytes(msg_rows[0][1])
+    try:
+        opened = seal.unseal(key, delivery_id, raw_sealed)
+    except seal.SealError:
+        return None
+    normalized_email = opened.recipient.strip().lower()
+    recipient_sha = hashlib.sha256(normalized_email.encode("utf-8")).hexdigest()
+    inv_id: UUID | None = None
+    if (
+        opened.secret.startswith(("inv1_", "kinv_"))
+        and len(opened.secret) >= 42
+        and opened.secret[41] == "_"
+    ):
+        try:
+            candidate_id = UUID(opened.secret[5:41])
+        except ValueError:
+            candidate_id = None
+        if candidate_id is not None:
+            found_by_id = _rows(
+                "SELECT id FROM orgs_invitation WHERE id = %s AND organisation_id = %s",
+                [candidate_id, org_id],
+            )
+            if found_by_id:
+                inv_id = found_by_id[0][0]
+    if inv_id is None:
+        found_by_email = _rows(
+            "SELECT id FROM orgs_invitation "
+            "WHERE organisation_id = %s AND lower(btrim(email)) = %s "
+            "ORDER BY (state = 'pending') DESC, created_at DESC, id DESC LIMIT 1",
+            [org_id, normalized_email],
+        )
+        if found_by_email:
+            inv_id = found_by_email[0][0]
+    if inv_id is None:
+        return None
+    try:
+        with transaction.atomic():
+            _execute(
+                "INSERT INTO orgs_invitationoutboxbinding "
+                "(delivery_id, invitation_id, organisation_id, recipient_email_sha256, created_at) "
+                "VALUES (%s, %s, %s, %s, clock_timestamp()) "
+                "ON CONFLICT (delivery_id) DO NOTHING",
+                [delivery_id, inv_id, org_id, recipient_sha],
+            )
+    except IntegrityError:
+        pass
+    return inv_id, org_id, recipient_sha
 
 
 def already_attempted(attempted: frozenset[UUID]) -> list[UUID]:

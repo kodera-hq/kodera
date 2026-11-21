@@ -18,7 +18,6 @@ from services.identity.access_tokens import VerifiedAccessToken
 from .iam import authorize, check_manage, emit_iam_channel_set, mutation_context, resolve_roles
 from .iam_validation import validate_permissions
 from .models import (
-    POLICY_CAPABILITIES,
     Channel,
     ChannelNotice,
     Workspace,
@@ -29,6 +28,11 @@ from .moderation import ADMINS, RefusalError, _audit, _storable_text, _text
 from .moderation_wire import tag
 
 _UNSET = object()
+
+ENFORCED_CHANNEL_OVERRIDE_CAPABILITIES: dict[str, frozenset[str]] = {
+    Channel.Kind.TEXT: frozenset({"channel.view", "message.post"}),
+    Channel.Kind.AUDIO: frozenset({"channel.view", "media.connect", "media.speak"}),
+}
 
 PROFILE_TEXT = {"description", "banner_preset", "icon_mxc"}
 PROFILE_CHANNELS = {
@@ -193,6 +197,14 @@ def overrides(
     if data is not _UNSET:
         if not isinstance(data, list) or len(data) > 100:
             raise RefusalError(422)
+        channel_kind = (
+            Channel.objects.filter(id=channel_id, workspace=workspace)
+            .values_list("kind", flat=True)
+            .first()
+        )
+        allowed_capabilities = ENFORCED_CHANNEL_OVERRIDE_CAPABILITIES.get(
+            channel_kind or "", frozenset()
+        )
         normalized = []
         for entry in data:
             if not isinstance(entry, dict) or entry.keys() != {"role_id", "allow", "deny"}:
@@ -202,7 +214,7 @@ def overrides(
                 validate_permissions(entry["deny"])
             except ValidationError:
                 raise RefusalError(422) from None
-            if (set(entry["allow"]) | set(entry["deny"])) - set(POLICY_CAPABILITIES):
+            if (set(entry["allow"]) | set(entry["deny"])) - allowed_capabilities:
                 raise RefusalError(422)
             if set(entry["allow"]) & set(entry["deny"]):
                 raise RefusalError(422)

@@ -1,6 +1,9 @@
 """Close GDPR Art. 17 erasure gaps across invitations, invitation outbox mail, idempotency records, and personal attachments."""
 
-from django.db import migrations
+import hashlib
+from uuid import UUID
+
+from django.db import DatabaseError, migrations, transaction
 
 FORWARD = r"""
 SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';
@@ -23,6 +26,108 @@ CREATE TABLE public.orgs_accountattachmenterasure (
     verified_at timestamptz NOT NULL,
     CONSTRAINT account_attachment_evidence_valid CHECK (evidence_sha256 ~ '^[0-9a-f]{64}$')
 );
+
+DO $$
+BEGIN
+    IF to_regclass('public.outbox_outboxdelivery') IS NOT NULL
+       AND to_regclass('public.outbox_message') IS NOT NULL THEN
+        UPDATE public.outbox_message m
+        SET sealed = NULL
+        FROM public.outbox_outboxdelivery d
+        WHERE m.delivery_id = d.id
+          AND m.template_id IN ('invitation', 'invitation_account_ready')
+          AND m.sealed IS NOT NULL
+          AND EXISTS (
+              SELECT 1 FROM public.orgs_privacyerasure pe
+              WHERE pe.organisation_reference = d.organisation_id
+          );
+
+        UPDATE public.outbox_outboxdelivery d
+        SET status = 'failed',
+            finished_at = COALESCE(d.finished_at, clock_timestamp()),
+            updated_at = clock_timestamp()
+        FROM public.outbox_message m
+        WHERE m.delivery_id = d.id
+          AND m.template_id IN ('invitation', 'invitation_account_ready')
+          AND d.status = 'pending'
+          AND EXISTS (
+              SELECT 1 FROM public.orgs_privacyerasure pe
+              WHERE pe.organisation_reference = d.organisation_id
+          );
+
+        INSERT INTO public.orgs_invitationoutboxbinding (
+            delivery_id,
+            invitation_id,
+            organisation_id,
+            recipient_email_sha256,
+            created_at
+        )
+        SELECT
+            d.id,
+            inv.id,
+            d.organisation_id,
+            encode(sha256(convert_to(lower(btrim(inv.email)), 'UTF8')), 'hex'),
+            d.created_at
+        FROM public.outbox_outboxdelivery d
+        JOIN public.outbox_message m ON m.delivery_id = d.id
+        JOIN public.orgs_invitation inv ON inv.organisation_id = d.organisation_id
+        WHERE m.template_id IN ('invitation', 'invitation_account_ready')
+          AND inv.mail_enqueued_count > 0
+          AND inv.email NOT LIKE 'erased+%@invalid.test'
+          AND NOT EXISTS (
+              SELECT 1 FROM public.orgs_privacyerasure pe
+              WHERE pe.organisation_reference = d.organisation_id
+          )
+          AND (
+              SELECT count(*) FROM public.orgs_invitation i2
+              WHERE i2.organisation_id = d.organisation_id AND i2.mail_enqueued_count > 0
+          ) = 1
+          AND (
+              SELECT count(*) FROM public.outbox_outboxdelivery d2
+              JOIN public.outbox_message m2 ON m2.delivery_id = d2.id
+              WHERE d2.organisation_id = d.organisation_id
+                AND m2.template_id IN ('invitation', 'invitation_account_ready')
+          ) = 1
+        ON CONFLICT (delivery_id) DO NOTHING;
+
+        UPDATE public.outbox_message m
+        SET sealed = NULL
+        FROM public.orgs_invitationoutboxbinding ib
+        JOIN public.outbox_outboxdelivery d ON d.id = ib.delivery_id
+        WHERE m.delivery_id = d.id
+          AND m.sealed IS NOT NULL
+          AND EXISTS (
+              SELECT 1 FROM public.orgs_accounterasure ae
+              LEFT JOIN public.identity_user u ON u.id = ae.user_reference
+              WHERE encode(sha256(convert_to(lower(btrim(u.email)), 'UTF8')), 'hex') = ib.recipient_email_sha256
+                 OR COALESCE(ae.inventory->'person_email_sha256s', '[]'::jsonb) ? ib.recipient_email_sha256
+                 OR COALESCE(ae.inventory->'passport_email_sha256s', '[]'::jsonb) ? ib.recipient_email_sha256
+          )
+          AND NOT EXISTS (
+              SELECT 1 FROM public.orgs_privacyerasure pe
+              WHERE pe.organisation_reference = d.organisation_id
+          );
+
+        UPDATE public.outbox_outboxdelivery d
+        SET status = 'failed',
+            finished_at = COALESCE(d.finished_at, clock_timestamp()),
+            updated_at = clock_timestamp()
+        FROM public.orgs_invitationoutboxbinding ib
+        WHERE d.id = ib.delivery_id
+          AND d.status = 'pending'
+          AND EXISTS (
+              SELECT 1 FROM public.orgs_accounterasure ae
+              LEFT JOIN public.identity_user u ON u.id = ae.user_reference
+              WHERE encode(sha256(convert_to(lower(btrim(u.email)), 'UTF8')), 'hex') = ib.recipient_email_sha256
+                 OR COALESCE(ae.inventory->'person_email_sha256s', '[]'::jsonb) ? ib.recipient_email_sha256
+                 OR COALESCE(ae.inventory->'passport_email_sha256s', '[]'::jsonb) ? ib.recipient_email_sha256
+          )
+          AND NOT EXISTS (
+              SELECT 1 FROM public.orgs_privacyerasure pe
+              WHERE pe.organisation_reference = d.organisation_id
+          );
+    END IF;
+END $$;
 
 CREATE FUNCTION public.invitation_outbox_cutoff_guard() RETURNS trigger LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
@@ -207,6 +312,7 @@ DECLARE
     inv_delivery_ids jsonb := '[]'::jsonb;
     personal_attachments jsonb := '[]'::jsonb;
     b2b_attachments jsonb := '[]'::jsonb;
+    max_upload_exp timestamptz := NULL;
     c_idem bigint := 0;
     c_inv bigint := 0;
     c_b2b_att bigint := 0;
@@ -298,7 +404,11 @@ BEGIN
             IF to_regclass('public.media_attachment') IS NOT NULL THEN
                 SELECT COALESCE(
                     jsonb_agg(
-                        jsonb_build_object('id', a.id::text, 'organisation_id', a.organisation_id::text)
+                        jsonb_build_object(
+                            'id', a.id::text,
+                            'organisation_id', a.organisation_id::text,
+                            'upload_expires_at', a.upload_expires_at
+                        )
                         ORDER BY a.id
                     ),
                     '[]'::jsonb
@@ -458,6 +568,13 @@ BEGIN
                 WHERE i.organisation_id = org AND i.subject NOT LIKE 'erased:%'
             ) p;
 
+            IF to_regclass('public.media_attachment') IS NOT NULL THEN
+                SELECT max(a.upload_expires_at)
+                INTO max_upload_exp
+                FROM public.media_attachment a
+                WHERE a.organisation_id = org;
+            END IF;
+
             IF to_regclass('public.outbox_outboxdelivery') IS NOT NULL
                AND to_regclass('public.outbox_message') IS NOT NULL THEN
                 UPDATE public.outbox_message m
@@ -480,7 +597,8 @@ BEGIN
             END IF;
 
             NEW.inventory := NEW.inventory || jsonb_build_object(
-                'org_principal_sha256s', principal_sha256s
+                'org_principal_sha256s', principal_sha256s,
+                'org_attachment_max_upload_expires_at', to_jsonb(max_upload_exp)
             );
             NEW.inventory_sha256 := public.retention_inventory_digest(NEW.inventory);
             RETURN NEW;
@@ -492,6 +610,7 @@ BEGIN
                 IF to_regclass('public.idempotency_record') IS NOT NULL THEN
                     DELETE FROM public.idempotency_record r
                     WHERE r.issuer = (SELECT o.issuer FROM public.orgs_organisation o WHERE o.id = org)
+                       OR (r.issuer LIKE 'urn:kodera:webhook:%' AND r.subject = org::text)
                        OR EXISTS (
                            SELECT 1 FROM public.identity_identity i
                            WHERE i.organisation_id = org AND r.issuer = i.issuer AND r.subject = i.subject
@@ -552,6 +671,34 @@ BEGIN
     END IF;
     IF request.inventory_sha256 IS DISTINCT FROM public.retention_inventory_digest(request.inventory) THEN
         RAISE EXCEPTION 'account erasure inventory digest mismatch' USING ERRCODE = '23514';
+    END IF;
+    IF EXISTS (
+        SELECT 1
+        FROM jsonb_array_elements(COALESCE(request.inventory->'account_personal_attachments', '[]'::jsonb)) elem
+        WHERE elem->>'upload_expires_at' IS NOT NULL
+          AND (elem->>'upload_expires_at')::timestamptz > clock_timestamp()
+    ) THEN
+        RAISE EXCEPTION 'account attachment upload window still open' USING ERRCODE = '23514';
+    END IF;
+    IF to_regclass('public.media_attachment') IS NOT NULL THEN
+        IF EXISTS (
+            SELECT 1 FROM public.media_attachment a
+            WHERE (
+                a.id IN (
+                    SELECT (elem->>'id')::uuid
+                    FROM jsonb_array_elements(COALESCE(request.inventory->'account_personal_attachments', '[]'::jsonb)) elem
+                ) OR EXISTS (
+                    SELECT 1 FROM public.orgs_membership m
+                    JOIN public.orgs_organisation o ON o.id = a.organisation_id
+                    WHERE m.id = a.uploader_id
+                      AND m.user_id = request.user_reference
+                      AND o.is_default_community
+                )
+            ) AND a.upload_expires_at IS NOT NULL
+              AND a.upload_expires_at > clock_timestamp()
+        ) THEN
+            RAISE EXCEPTION 'account attachment upload window still open' USING ERRCODE = '23514';
+        END IF;
     END IF;
 
     INSERT INTO public.retention_worker_context
@@ -654,7 +801,11 @@ BEGIN
   IF EXISTS(
    SELECT 1 FROM public.idempotency_record r
    WHERE r.issuer=(SELECT o.issuer FROM public.orgs_organisation o WHERE o.id=org)
+      OR (r.issuer LIKE 'urn:kodera:webhook:%' AND r.subject=org::text)
       OR EXISTS(SELECT 1 FROM public.identity_identity i WHERE i.organisation_id=org AND r.issuer=i.issuer AND r.subject=i.subject)
+      OR encode(sha256(convert_to(r.issuer, 'UTF8') || decode('00', 'hex') || convert_to(r.subject, 'UTF8')), 'hex') IN (
+       SELECT jsonb_array_elements_text(COALESCE(request.inventory->'org_principal_sha256s', '[]'::jsonb))
+      )
   ) THEN
    RAISE EXCEPTION 'organisation idempotency records still present' USING ERRCODE='23514';
   END IF;
@@ -679,7 +830,7 @@ REVOKE ALL ON FUNCTION privacy_complete_erasure(uuid) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.privacy_complete_account_erasure(p_id uuid) RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER
 SET search_path=pg_catalog,public,pg_temp SET lock_timeout='3s' SET statement_timeout='15s' AS $$
-DECLARE request public.orgs_accounterasure%ROWTYPE; ee_pending boolean; email_shas jsonb;
+DECLARE request public.orgs_accounterasure%ROWTYPE; ee_pending boolean; email_shas jsonb; max_upload_exp timestamptz := NULL;
 BEGIN
  SELECT * INTO request FROM public.orgs_accounterasure WHERE id=p_id FOR UPDATE;
  IF NOT FOUND OR request.core_purged_at IS NULL OR request.protocol_emitted_at IS NULL
@@ -706,8 +857,16 @@ BEGIN
  SELECT 1 FROM public.orgs_accounterasurereceipt r WHERE r.erasure_id=p_id AND r.domain=d.value
  AND r.user_reference=request.user_reference AND r.inventory_sha256=request.inventory_sha256 AND r.cutoff_at=request.cutoff_at
  AND r.verified_at>=greatest(request.cutoff_at,request.purge_not_before))) THEN RETURN false; END IF;
+ SELECT max((elem->>'upload_expires_at')::timestamptz)
+ INTO max_upload_exp
+ FROM jsonb_array_elements(COALESCE(request.inventory->'account_personal_attachments', '[]'::jsonb)) elem
+ WHERE elem->>'upload_expires_at' IS NOT NULL;
  IF jsonb_array_length(COALESCE(request.inventory->'account_personal_attachments', '[]'::jsonb)) > 0
- AND NOT EXISTS(SELECT 1 FROM public.orgs_accountattachmenterasure WHERE erasure_id=p_id AND verified_at>=greatest(request.cutoff_at,request.purge_not_before))
+ AND NOT EXISTS(
+  SELECT 1 FROM public.orgs_accountattachmenterasure
+  WHERE erasure_id=p_id
+    AND verified_at>=greatest(request.cutoff_at, request.purge_not_before, COALESCE(max_upload_exp, request.cutoff_at))
+ )
  THEN RETURN false; END IF;
  IF to_regclass('public.ee_audit_ledger') IS NOT NULL THEN
   SELECT EXISTS(SELECT 1 FROM public.ee_saml_principal WHERE user_id=request.user_reference)
@@ -1005,6 +1164,106 @@ DROP TABLE IF EXISTS public.orgs_invitationoutboxbinding;
 """
 
 
+def _backfill_sealed_invitation_bindings(apps_registry, schema_editor) -> None:
+    conn = schema_editor.connection
+    with conn.cursor() as cursor:
+        cursor.execute("SET LOCAL lock_timeout='5s'")
+        cursor.execute("SET LOCAL statement_timeout='30s'")
+        cursor.execute(
+            "SELECT to_regclass('public.outbox_outboxdelivery') IS NOT NULL "
+            "AND to_regclass('public.outbox_message') IS NOT NULL "
+            "AND to_regclass('public.orgs_invitationoutboxbinding') IS NOT NULL"
+        )
+        row = cursor.fetchone()
+        if not row or not row[0]:
+            return
+        cursor.execute(
+            "SELECT d.id, d.organisation_id, m.sealed "
+            "FROM public.outbox_outboxdelivery d "
+            "JOIN public.outbox_message m ON m.delivery_id = d.id "
+            "WHERE m.template_id IN ('invitation', 'invitation_account_ready') "
+            "  AND m.sealed IS NOT NULL "
+            "  AND NOT EXISTS ("
+            "      SELECT 1 FROM public.orgs_invitationoutboxbinding ib WHERE ib.delivery_id = d.id"
+            "  ) "
+            "ORDER BY d.id"
+        )
+        unbound = cursor.fetchall()
+        if not unbound:
+            return
+        from apps.outbox.mail import seal
+        from apps.outbox.sender import seal_key
+
+        key = seal_key()
+        if key is None:
+            return
+
+        for delivery_id, org_id, raw_sealed in unbound:
+            try:
+                opened = seal.unseal(key, delivery_id, bytes(raw_sealed))
+            except seal.SealError:
+                continue
+            normalized_email = opened.recipient.strip().lower()
+            recipient_sha = hashlib.sha256(normalized_email.encode("utf-8")).hexdigest()
+            inv_id: UUID | None = None
+            if (
+                opened.secret.startswith(("inv1_", "kinv_"))
+                and len(opened.secret) >= 42
+                and opened.secret[41] == "_"
+            ):
+                try:
+                    candidate_id = UUID(opened.secret[5:41])
+                except ValueError:
+                    candidate_id = None
+                if candidate_id is not None:
+                    cursor.execute(
+                        "SELECT id FROM public.orgs_invitation WHERE id = %s AND organisation_id = %s",
+                        [candidate_id, org_id],
+                    )
+                    found = cursor.fetchone()
+                    if found is not None:
+                        inv_id = found[0]
+            if inv_id is None:
+                cursor.execute(
+                    "SELECT id FROM public.orgs_invitation "
+                    "WHERE organisation_id = %s AND lower(btrim(email)) = %s "
+                    "ORDER BY (state = 'pending') DESC, created_at DESC, id DESC LIMIT 1",
+                    [org_id, normalized_email],
+                )
+                found = cursor.fetchone()
+                if found is not None:
+                    inv_id = found[0]
+            if inv_id is None:
+                continue
+            try:
+                with transaction.atomic(using=conn.alias):
+                    cursor.execute(
+                        "INSERT INTO public.orgs_invitationoutboxbinding "
+                        "(delivery_id, invitation_id, organisation_id, recipient_email_sha256, created_at) "
+                        "VALUES (%s, %s, %s, %s, clock_timestamp()) "
+                        "ON CONFLICT (delivery_id) DO NOTHING",
+                        [delivery_id, inv_id, org_id, recipient_sha],
+                    )
+            except DatabaseError:
+                cursor.execute(
+                    "UPDATE public.outbox_message SET sealed = NULL "
+                    "WHERE delivery_id = %s AND NOT EXISTS ("
+                    "    SELECT 1 FROM public.orgs_privacyerasure WHERE organisation_reference = %s"
+                    ")",
+                    [delivery_id, org_id],
+                )
+                cursor.execute(
+                    "UPDATE public.outbox_outboxdelivery "
+                    "SET status = 'failed', "
+                    "    finished_at = COALESCE(finished_at, clock_timestamp()), "
+                    "    updated_at = clock_timestamp() "
+                    "WHERE id = %s AND status = 'pending' AND NOT EXISTS ("
+                    "    SELECT 1 FROM public.orgs_privacyerasure WHERE organisation_reference = %s"
+                    ")",
+                    [delivery_id, org_id],
+                )
+
+
 class Migration(migrations.Migration):
     dependencies = [("orgs", "0033_proximity_erasure_inventory")]
     operations = [
@@ -1013,6 +1272,7 @@ class Migration(migrations.Migration):
             reverse_sql=migrations.RunSQL.noop,
         ),
         migrations.RunSQL(FORWARD, REVERSE),
+        migrations.RunPython(_backfill_sealed_invitation_bindings, migrations.RunPython.noop),
         migrations.RunSQL(
             migrations.RunSQL.noop,
             reverse_sql="SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';",

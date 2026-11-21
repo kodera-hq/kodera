@@ -134,22 +134,13 @@ export function ChannelOverridesPanel({
   )
   const applicableGroups = useMemo(() => {
     const kind = selectedChannel?.kind ?? 'text'
+    const enforced: ReadonlySet<WorkspaceCapability> =
+      kind === 'audio'
+        ? new Set<WorkspaceCapability>(['channel.view', 'media.connect', 'media.speak'])
+        : new Set<WorkspaceCapability>(['channel.view', 'message.post'])
     return CAPABILITY_GROUPS.flatMap((group) => {
-      if (group.key === 'administration') return []
-      if (kind === 'audio') {
-        if (group.key === 'messages' || group.key === 'files') return []
-        if (group.key === 'channels')
-          return [{ key: group.key, items: group.items.filter((item) => item === 'channel.view') }]
-        if (group.key === 'moderation')
-          return [
-            { key: group.key, items: group.items.filter((item) => item === 'media.moderate') },
-          ]
-        return [group]
-      }
-      if (group.key === 'voice') return []
-      if (group.key === 'moderation')
-        return [{ key: group.key, items: group.items.filter((item) => item !== 'media.moderate') }]
-      return [group]
+      const items = group.items.filter((item) => enforced.has(item))
+      return items.length > 0 ? [{ key: group.key, items }] : []
     })
   }, [selectedChannel?.kind])
 

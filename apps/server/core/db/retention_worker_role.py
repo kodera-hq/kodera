@@ -6,6 +6,7 @@ ROLE = re.compile(r"[a-z_][a-z0-9_]{0,62}\Z")
 FUNCTIONS = (
     "privacy_purge_core(uuid)",
     "privacy_purge_account_core(uuid)",
+    "privacy_confirm_account_attachments_erased(uuid,text)",
     "privacy_record_account_absence(uuid,uuid,timestamptz,text,text,text,text,timestamptz)",
     "privacy_complete_account_erasure(uuid)",
     "privacy_record_absence(uuid,text,timestamptz,text,text,timestamptz)",
@@ -54,6 +55,7 @@ def grant_statements(role: str, *, include_extensions: bool = False) -> list[str
                 "orgs_erasurereceipt",
                 "orgs_accounterasure",
                 "orgs_accounterasurereceipt",
+                "orgs_accountattachmenterasure",
             ]
         ),
     ]

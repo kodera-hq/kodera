@@ -29,7 +29,16 @@ from apps.orgs.actor_selectors import organisation_authority_revision
 from apps.orgs.selectors import current_members
 
 from .administration import Write, tag
-from .channel_access import VIEW, Access, may_perform, may_view, resolve, resolve_all
+from .channel_access import (
+    LISTEN_ONLY,
+    READ_ONLY,
+    VIEW,
+    Access,
+    may_perform,
+    may_view,
+    resolve,
+    resolve_all,
+)
 from .models import (
     POLICY_CAPABILITIES,
     Channel,
@@ -219,24 +228,27 @@ def channel_set_input(workspace_id: UUID) -> tuple[list[str], list[dict[str, Any
         exempt_members: set[UUID] = set()
         if access.kind == Channel.Kind.TEXT and revision is not None:
             has_post_override = any(
-                "message.post" in allow or "message.post" in deny for _, allow, deny in c_overrides
+                bool((set(allow) | set(deny)) & set(READ_ONLY)) for _, allow, deny in c_overrides
             )
             if read_only or has_post_override:
                 posters = {
                     m
                     for m in admitted
-                    if may_perform(
-                        access,
-                        action="message.post",
-                        organisation_id=organisation_id,
-                        membership_id=m,
-                        member_org_role=members[m][1],
-                        authority_revision=revision,
-                        is_moderator=m in moderators,
-                        ignore_lifecycle=True,
-                        member_role_ids=role_ids_by_member.get(m, ()),
-                        member_role_permissions=perms_by_member.get(m, frozenset()),
-                        channel_overrides=c_overrides,
+                    if all(
+                        may_perform(
+                            access,
+                            action=cap,
+                            organisation_id=organisation_id,
+                            membership_id=m,
+                            member_org_role=members[m][1],
+                            authority_revision=revision,
+                            is_moderator=m in moderators,
+                            ignore_lifecycle=True,
+                            member_role_ids=role_ids_by_member.get(m, ()),
+                            member_role_permissions=perms_by_member.get(m, frozenset()),
+                            channel_overrides=c_overrides,
+                        )
+                        for cap in READ_ONLY
                     )
                 }
                 if read_only or posters != admitted:
@@ -244,24 +256,27 @@ def channel_set_input(workspace_id: UUID) -> tuple[list[str], list[dict[str, Any
                     exempt_members = posters
         elif access.kind == Channel.Kind.AUDIO and revision is not None:
             has_speak_override = any(
-                "media.speak" in allow or "media.speak" in deny for _, allow, deny in c_overrides
+                bool((set(allow) | set(deny)) & set(LISTEN_ONLY)) for _, allow, deny in c_overrides
             )
             if listen_only or has_speak_override:
                 speakers = {
                     m
                     for m in admitted
-                    if may_perform(
-                        access,
-                        action="media.speak",
-                        organisation_id=organisation_id,
-                        membership_id=m,
-                        member_org_role=members[m][1],
-                        authority_revision=revision,
-                        is_moderator=m in moderators,
-                        ignore_lifecycle=True,
-                        member_role_ids=role_ids_by_member.get(m, ()),
-                        member_role_permissions=perms_by_member.get(m, frozenset()),
-                        channel_overrides=c_overrides,
+                    if all(
+                        may_perform(
+                            access,
+                            action=cap,
+                            organisation_id=organisation_id,
+                            membership_id=m,
+                            member_org_role=members[m][1],
+                            authority_revision=revision,
+                            is_moderator=m in moderators,
+                            ignore_lifecycle=True,
+                            member_role_ids=role_ids_by_member.get(m, ()),
+                            member_role_permissions=perms_by_member.get(m, frozenset()),
+                            channel_overrides=c_overrides,
+                        )
+                        for cap in LISTEN_ONLY
                     )
                 }
                 if listen_only or speakers != admitted:

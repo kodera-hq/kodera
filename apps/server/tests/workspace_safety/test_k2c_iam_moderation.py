@@ -13,7 +13,7 @@ import pytest
 from customer_http_fixtures import configure, http_signer as http_signer, token, trust_entry
 from django.db import close_old_connections, connection, transaction
 from django.db.migrations.executor import MigrationExecutor
-from django.test import Client, override_settings
+from django.test import Client
 from django.utils import timezone
 from test_access_tokens import frozen_clock as frozen_clock
 
@@ -23,15 +23,17 @@ from apps.engine_intents.models import EngineChannelSet
 from apps.identity.models import Identity, User
 from apps.orgs import membership_lifecycle
 from apps.orgs.models import Membership
-from apps.workspaces import governance, iam, moderation, structure
+from apps.workspaces import channel_sets, governance, iam, moderation, structure
 from apps.workspaces.models import (
     Channel,
     ChannelNotice,
     ResourcePolicy,
     ResourcePolicyRule,
+    WorkspaceChannelRoleOverride,
     WorkspaceInviteLink,
     WorkspaceModerator,
     WorkspaceQuota,
+    WorkspaceRole,
 )
 from core.idempotency.models import IdempotencyRecord
 from services.identity.access_tokens import VerifiedAccessToken
@@ -152,13 +154,6 @@ def test_bug_0010_docs_collab_fence_lock_order_concurrent_with_moderation_and_mi
         executor.migrate(executor.loader.graph.leaf_nodes())
 
 
-@override_settings(
-    ROOT_URLCONF="apps.workspaces.api.moderation_urls",
-    MIDDLEWARE=[
-        "django.middleware.common.CommonMiddleware",
-        "apps.workspaces.quota_http.QuotaRefusalMiddleware",
-    ],
-)
 def test_bug_0030_redeem_workspace_invite_persists_terminal_402_seat_quota_in_idempotency_store(
     world, http_signer, frozen_clock, settings
 ):
@@ -167,6 +162,11 @@ def test_bug_0030_redeem_workspace_invite_persists_terminal_402_seat_quota_in_id
     org, workspace, _members, tokens = world
     configure(settings, [trust_entry(http_signer, org.issuer)])
     settings.KODERA_CONSOLE_CLIENT_ID = "synthetic-console"
+    settings.ROOT_URLCONF = "apps.workspaces.api.moderation_urls"
+    settings.MIDDLEWARE = [
+        "django.middleware.common.CommonMiddleware",
+        "apps.workspaces.quota_http.QuotaRefusalMiddleware",
+    ]
 
     # world already has 4 active members; cap seats at 4 so a newcomer triggers membership_seat_quota.
     WorkspaceQuota.objects.update_or_create(
@@ -243,7 +243,6 @@ def test_bug_0030_redeem_workspace_invite_persists_terminal_402_seat_quota_in_id
     assert reused.status_code == 409
 
 
-@override_settings(ROOT_URLCONF="apps.workspaces.api.moderation_urls")
 def test_bug_0031_moderator_revocation_endpoint_and_lifecycle_cleanup_with_mutation_self_test(
     world, http_signer, frozen_clock, settings, monkeypatch
 ):
@@ -257,6 +256,7 @@ def test_bug_0031_moderator_revocation_endpoint_and_lifecycle_cleanup_with_mutat
 
     configure(settings, [trust_entry(http_signer, org.issuer)])
     settings.KODERA_CONSOLE_CLIENT_ID = "synthetic-console"
+    settings.ROOT_URLCONF = "apps.workspaces.api.moderation_urls"
     client = Client(HTTP_HOST="127.0.0.1")
     creds = [
         token(http_signer, org.issuer, subject=item.subject, email_verified=True) for item in tokens
@@ -623,3 +623,204 @@ def test_bug_0050_granular_iam_role_overrides_enforced_end_to_end(world):
 
     assert by_channel[str(audio_chan.id)]["listen_only"] is True
     assert m3_ident.subject not in by_channel[str(audio_chan.id)]["exempt"]
+
+
+def test_bug_0050_unsupported_channel_overrides_refused_and_stored_media_caps_folded(world):
+    """BUG-0050 Round-2: `governance.overrides()` rejects unsupported per-channel override
+    capabilities with `422` (only `channel.view`/`message.post` on text and
+    `channel.view`/`media.connect`/`media.speak` on audio are accepted), while any pre-existing
+    stored `media.video`/`media.share`/`file.upload` denial still folds into `EngineChannelSet`
+    (`listen_only`/`read_only` enabled and `exempt` excludes the denied user)."""
+    org, workspace, members, tokens = world
+    default_pol = ResourcePolicy.objects.create(workspace=workspace, visibility="organisation")
+    workspace.default_policy = default_pol
+    workspace.save(update_fields=["default_policy", "updated_at"])
+
+    text_chan = Channel.objects.create(
+        workspace=workspace,
+        name="Announcements",
+        kind="text",
+        position=0,
+        lifecycle="active",
+        policy_mode="inherit",
+    )
+    audio_chan = Channel.objects.create(
+        workspace=workspace,
+        name="Stage Audio",
+        kind="audio",
+        position=1,
+        lifecycle="active",
+        policy_mode="inherit",
+    )
+
+    owner_args = {"verified": tokens[0], "organisation_id": org.id}
+    stage_role = iam.create_role(
+        **owner_args,
+        data={"name": "StageGuest", "slug": "stage-guest", "position": 15, "permissions": []},
+        request_id=str(uuid4()),
+    )
+    iam.assign_roles(
+        **owner_args,
+        membership_id=members[3].id,
+        role_ids=[stage_role["id"]],
+        request_id=str(uuid4()),
+    )
+
+    for unimplemented_text_cap in (
+        "message.reply",
+        "message.react",
+        "message.edit_own",
+        "message.delete_any",
+        "file.upload",
+        "media.connect",
+    ):
+        with pytest.raises(moderation.RefusalError) as text_err:
+            governance.overrides(
+                **owner_args,
+                channel_id=text_chan.id,
+                data=[
+                    {
+                        "role_id": stage_role["id"],
+                        "allow": [],
+                        "deny": [unimplemented_text_cap],
+                    }
+                ],
+                request_id=str(uuid4()),
+            )
+        assert text_err.value.status == 422
+
+    for unimplemented_audio_cap in (
+        "media.video",
+        "media.share",
+        "media.moderate",
+        "message.post",
+    ):
+        with pytest.raises(moderation.RefusalError) as audio_err:
+            governance.overrides(
+                **owner_args,
+                channel_id=audio_chan.id,
+                data=[
+                    {
+                        "role_id": stage_role["id"],
+                        "allow": [],
+                        "deny": [unimplemented_audio_cap],
+                    }
+                ],
+                request_id=str(uuid4()),
+            )
+        assert audio_err.value.status == 422
+
+    # Pre-existing stored `media.video` / `file.upload` denials in DB still fold into `EngineChannelSet`.
+    role_obj = WorkspaceRole.objects.get(pk=stage_role["id"])
+    WorkspaceChannelRoleOverride.objects.create(
+        workspace=workspace,
+        channel=audio_chan,
+        role=role_obj,
+        allow=[],
+        deny=["media.video"],
+    )
+    WorkspaceChannelRoleOverride.objects.create(
+        workspace=workspace,
+        channel=text_chan,
+        role=role_obj,
+        allow=[],
+        deny=["file.upload"],
+    )
+    m3_ident = Identity.objects.get(user=members[3].user, organisation=org)
+    with transaction.atomic():
+        _, raw_channels = channel_sets.channel_set_input(workspace.id)
+    emitted = {entry["channel_id"]: entry for entry in raw_channels}
+    assert emitted[str(audio_chan.id)]["listen_only"] is True
+    assert m3_ident.subject not in emitted[str(audio_chan.id)]["exempt"]
+    assert emitted[str(text_chan.id)]["read_only"] is True
+    assert m3_ident.subject not in emitted[str(text_chan.id)]["exempt"]
+
+
+def test_bug_0010_update_orgs_membership_vs_docs_collab_fence_nowait_no_deadlock(world):
+    """BUG-0010 Round-2: When `UPDATE orgs_membership` holds a tuple lock on `orgs_membership`
+    before firing its `BEFORE UPDATE` trigger (which locks `identity_user`), a concurrent
+    `docs_collab_fence` holding `identity_user FOR SHARE` fails fast with `55P03`
+    (`LockNotAvailable`) via `FOR SHARE NOWAIT` instead of deadlocking (`40P01`)."""
+    from django.db import DatabaseError
+
+    org, workspace, members, _ = world
+    default_pol = ResourcePolicy.objects.create(workspace=workspace, visibility="organisation")
+    workspace.default_policy = default_pol
+    workspace.save(update_fields=["default_policy", "updated_at"])
+    doc = Document.objects.create(
+        workspace=workspace,
+        creator=members[0],
+        title="Nowait Lock Spec",
+        title_key="nowait lock spec",
+        visibility="workspace",
+    )
+    DocumentSnapshot.objects.create(document=doc, sequence=0, head_sequence=0, state=b"\x00\x00")
+    ident = Identity.objects.get(user=members[3].user, organisation=org)
+
+    barrier = threading.Barrier(2, timeout=10)
+    b_released = threading.Event()
+
+    def membership_updater() -> str:
+        close_old_connections()
+        try:
+            with transaction.atomic(), connection.cursor() as cursor:
+                cursor.execute("SET LOCAL lock_timeout = '5s'")
+                cursor.execute(
+                    "SELECT id FROM orgs_membership WHERE id = %s FOR UPDATE",
+                    [members[3].id],
+                )
+                barrier.wait()
+                # Wait briefly or block until Connection B's NOWAIT rollback releases `identity_user`.
+                cursor.execute(
+                    "SELECT id FROM identity_user WHERE id = %s FOR UPDATE",
+                    [members[3].user_id],
+                )
+                cursor.execute(
+                    "UPDATE orgs_membership SET updated_at = clock_timestamp() WHERE id = %s",
+                    [members[3].id],
+                )
+                return "updated"
+        finally:
+            close_old_connections()
+
+    def collab_fencer() -> str:
+        close_old_connections()
+        try:
+            with transaction.atomic(), connection.cursor() as cursor:
+                cursor.execute("SET LOCAL lock_timeout = '5s'")
+                cursor.execute(
+                    "SELECT id FROM identity_user WHERE id = %s FOR SHARE",
+                    [members[3].user_id],
+                )
+                barrier.wait()
+                try:
+                    cursor.execute(
+                        "SELECT docs_collab_fence(%s,%s,%s,%s,%s,%s,%s)",
+                        [
+                            doc.id,
+                            org.id,
+                            members[3].id,
+                            ident.id,
+                            org.issuer,
+                            ident.subject,
+                            "editor",
+                        ],
+                    )
+                except DatabaseError as exc:
+                    cause = exc.__cause__
+                    pgcode = getattr(cause, "sqlstate", None) or getattr(cause, "pgcode", None)
+                    return str(pgcode)
+                return "unexpected_ok"
+        finally:
+            b_released.set()
+            close_old_connections()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        fut_a = pool.submit(membership_updater)
+        fut_b = pool.submit(collab_fencer)
+        code_b = fut_b.result(timeout=10)
+        res_a = fut_a.result(timeout=10)
+
+    assert b_released.is_set()
+    assert code_b == "55P03", f"expected immediate 55P03 LockNotAvailable, got {code_b}"
+    assert res_a == "updated"

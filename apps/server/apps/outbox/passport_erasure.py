@@ -72,7 +72,29 @@ class PassportAccountOutboxErasureAdapter:
         digests.update(str(row[0]) for row in cursor.fetchall())
         return sorted(digests)
 
-    def _assert_no_unbound_personal_mail(self, cursor: Any) -> None:
+    def _reconcile_legacy_invitation_mail(self, cursor: Any, email_shas: list[str]) -> set[str]:
+        cursor.execute("SELECT to_regclass('public.orgs_invitationoutboxbinding') IS NOT NULL")
+        if not cursor.fetchone()[0]:
+            return set()
+        from .sender import resolve_legacy_invitation_binding
+
+        matched_legacy_ids: set[str] = set()
+        cursor.execute(
+            "SELECT d.id FROM outbox_outboxdelivery d "
+            "JOIN outbox_message m ON m.delivery_id = d.id "
+            "WHERE m.template_id IN ('invitation', 'invitation_account_ready') "
+            "  AND NOT EXISTS ("
+            "    SELECT 1 FROM orgs_invitationoutboxbinding ib WHERE ib.delivery_id = d.id"
+            "  ) "
+            "  AND (d.status IN ('pending', 'in_flight') OR m.sealed IS NOT NULL)"
+        )
+        for (delivery_id,) in cursor.fetchall():
+            resolved = resolve_legacy_invitation_binding(delivery_id)
+            if resolved is not None and resolved[2] in email_shas:
+                matched_legacy_ids.add(str(delivery_id))
+        return matched_legacy_ids
+
+    def _assert_no_unbound_personal_mail(self, cursor: Any, matched_legacy_ids: set[str]) -> None:
         cursor.execute("SELECT to_regclass('public.orgs_invitationoutboxbinding') IS NOT NULL")
         has_inv_binding = bool(cursor.fetchone()[0])
         if not has_inv_binding:
@@ -89,13 +111,14 @@ class PassportAccountOutboxErasureAdapter:
         cursor.execute(
             "SELECT 1 FROM outbox_outboxdelivery d "
             "JOIN outbox_message m ON m.delivery_id = d.id "
-            "WHERE ("
+            "WHERE d.id::text <> ALL(%s) AND ("
             "  (m.template_id = 'passport_magic_link' "
             "   AND NOT EXISTS (SELECT 1 FROM identity_passportoutboxbinding b WHERE b.delivery_id = d.id)) "
             "  OR (m.template_id IN ('invitation', 'invitation_account_ready') "
             "   AND NOT EXISTS (SELECT 1 FROM orgs_invitationoutboxbinding ib WHERE ib.delivery_id = d.id))"
             ") AND (d.status IN ('pending', 'in_flight') OR m.sealed IS NOT NULL) "
-            "LIMIT 1"
+            "LIMIT 1",
+            [sorted(matched_legacy_ids)],
         )
         if cursor.fetchone() is not None:
             raise ValueError("unbound personal outbox message prevents absence certification")
@@ -196,9 +219,11 @@ class PassportAccountOutboxErasureAdapter:
                 [str(scope.user_id)],
             )
 
-            self._assert_no_unbound_personal_mail(cursor)
+            email_shas = self._email_sha256s(cursor, scope)
+            matched_legacy_ids = self._reconcile_legacy_invitation_mail(cursor, email_shas)
+            self._assert_no_unbound_personal_mail(cursor, matched_legacy_ids)
             delivery_ids = self._bound_delivery_ids(cursor, scope)
-            id_list = list(delivery_ids)
+            id_list = sorted(set(delivery_ids) | matched_legacy_ids)
 
             if id_list:
                 cursor.execute(
@@ -282,11 +307,14 @@ class PassportAccountOutboxErasureAdapter:
             return False
         with connection.cursor() as cursor:
             try:
-                self._assert_no_unbound_personal_mail(cursor)
+                email_shas = self._email_sha256s(cursor, scope)
+                matched_legacy_ids = self._reconcile_legacy_invitation_mail(cursor, email_shas)
+                self._assert_no_unbound_personal_mail(cursor, matched_legacy_ids)
             except ValueError:
                 return False
             delivery_ids = self._bound_delivery_ids(cursor, scope)
-            if delivery_ids:
+            id_check = sorted(set(delivery_ids) | matched_legacy_ids)
+            if id_check:
                 cursor.execute(
                     "SELECT 1 FROM outbox_outboxdelivery d "
                     "LEFT JOIN outbox_message m ON m.delivery_id = d.id "
@@ -303,7 +331,7 @@ class PassportAccountOutboxErasureAdapter:
                     "  )"
                     ") "
                     "LIMIT 1",
-                    [list(delivery_ids)],
+                    [id_check],
                 )
                 if cursor.fetchone() is not None:
                     return False

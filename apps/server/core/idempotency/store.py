@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Literal
 
-from django.db import connection, transaction
+from django.db import IntegrityError, connection, transaction
 from django.db.models import BooleanField, ExpressionWrapper, Q
 from django.db.models.functions import Now
 
@@ -327,20 +327,35 @@ def _execute(
     if disposition(response.status) == DISCARD:
         roll_back(response)
         return Executed(response=response, stored=False)
-    IdempotencyRecord.objects.create(
-        issuer=scope.issuer,
-        subject=scope.subject,
-        method=scope.method,
-        path=scope.path,
-        key_sha256=scope.key_sha256,
-        body_sha256=body_sha256,
-        status=response.status,
-        content_type=response.content_type,
-        body=response.body,
-        location=response.location,
-        etag=response.etag,
-        job_id=response.job_id,
-    )
+    try:
+        IdempotencyRecord.objects.create(
+            issuer=scope.issuer,
+            subject=scope.subject,
+            method=scope.method,
+            path=scope.path,
+            key_sha256=scope.key_sha256,
+            body_sha256=body_sha256,
+            status=response.status,
+            content_type=response.content_type,
+            body=response.body,
+            location=response.location,
+            etag=response.etag,
+            job_id=response.job_id,
+        )
+    except IntegrityError as error:
+        cause = getattr(error, "__cause__", None)
+        diag = getattr(cause, "diag", None)
+        if getattr(diag, "constraint_name", None) == "idempotency_privacy_cutoff" or (
+            "idempotency record" in str(error) and "cutoff active" in str(error)
+        ):
+            roll_back(
+                StoredResponse(
+                    status=403,
+                    body=b'{"type":"https://kodera.io/problems/forbidden","title":"Forbidden","status":403}',
+                    content_type="application/problem+json",
+                )
+            )
+        raise
     executed = Executed(response=response, stored=True)
     if final_authority is not None and 200 <= response.status <= 299:
         _invoke_final_authority(final_authority, FinalAuthority("fresh_success"))

@@ -293,8 +293,8 @@ def test_bug_0011_0025_0027_0037_account_and_org_erasure_completeness(world, set
             content_type="application/pdf",
             size_bytes=4096,
             sha256="1" * 64,
-            upload_expires_at=now + timedelta(minutes=10),
-            completed_at=now,
+            upload_expires_at=now - timedelta(minutes=1),
+            completed_at=now - timedelta(minutes=2),
         )
         b2b_att = Attachment.objects.create(
             organisation=org,
@@ -303,8 +303,8 @@ def test_bug_0011_0025_0027_0037_account_and_org_erasure_completeness(world, set
             content_type="application/pdf",
             size_bytes=8192,
             sha256="2" * 64,
-            upload_expires_at=now + timedelta(minutes=10),
-            completed_at=now,
+            upload_expires_at=now - timedelta(minutes=1),
+            completed_at=now - timedelta(minutes=2),
         )
 
     # BUG-0037: Record an IdempotencyRecord for `members[3]` carrying PII in its response body.
@@ -558,3 +558,593 @@ def test_bug_0026_collection_portability_export_enforces_workspace_restrictions_
     Identity.objects.filter(user=members[3].user, organisation=org).update(enabled=False)
     assert sources.capture("collections", req) == ()
     assert sources.permitted(req, f"collection:{col_id}") is False
+
+
+def test_bug_0025_presigned_upload_window_fence_and_replay_erasure(world, settings):
+    """BUG-0025 Round-2: Both Community account erasure and B2B organisation erasure hold
+    completion while any deleted attachment still has an unexpired presigned S3 PUT window
+    (`upload_expires_at > now`), then execute a second post-expiry `DELETE -> HEAD 404` pass
+    wiping any replayed upload before certifying completion."""
+    import time
+
+    org, _workspace, members, tokens = world
+    staff_op = operator()
+    settings.KODERA_OUTBOX_SEAL_KEY = hashlib.sha256(b"k2c-r2-seal-key").digest()
+
+    with transaction.atomic():
+        community_org = Organisation.objects.create(
+            slug="community",
+            realm="community",
+            issuer="https://identity.customer.test/realms/community",
+            name="Community",
+            state="active",
+            is_default_community=True,
+        )
+        SlugReservation.objects.create(
+            organisation=community_org,
+            namespace="organisation",
+            slug=community_org.slug,
+            state="permanent",
+            protected_at=timezone.now(),
+        )
+        Membership.objects.create(
+            user=members[0].user,
+            organisation=community_org,
+            role="org_owner",
+            state="active",
+            accepted_at=timezone.now(),
+        )
+        Identity.objects.create(
+            user=members[0].user,
+            organisation=community_org,
+            issuer=community_org.issuer,
+            realm=community_org.realm,
+            subject=f"comm-r2-owner-{members[0].user_id}",
+            email=members[0].user.email,
+        )
+        comm_member = Membership.objects.create(
+            user=members[3].user,
+            organisation=community_org,
+            role="org_member",
+            state="active",
+            accepted_at=timezone.now(),
+        )
+        Identity.objects.create(
+            user=members[3].user,
+            organisation=community_org,
+            issuer=community_org.issuer,
+            realm=community_org.realm,
+            subject=f"comm-r2-{members[3].user_id}",
+            email=members[3].user.email,
+        )
+        comm_ws = Workspace.objects.create(organisation=community_org)
+        comm_pol = ResourcePolicy.objects.create(workspace=comm_ws, visibility="organisation")
+        comm_ws.default_policy = comm_pol
+        comm_ws.save(update_fields=["default_policy"])
+
+        window_end = database_now() + timedelta(milliseconds=1200)
+        comm_att = Attachment.objects.create(
+            organisation=community_org,
+            uploader=comm_member,
+            filename="unexpired-put-ticket.pdf",
+            content_type="application/pdf",
+            size_bytes=2048,
+            sha256="a" * 64,
+            upload_expires_at=window_end,
+            completed_at=None,
+        )
+
+    comm_key = f"organisations/{community_org.id}/attachments/{comm_att.id}"
+    s3_objects: dict[str, bytes] = {comm_key: b"initial-personal-upload"}
+    comm_deletes: list[str] = []
+
+    def simulated_s3_delete(key: str) -> dict[str, object]:
+        comm_deletes.append(key)
+        s3_objects.pop(key, None)
+        return {"deleted": True}
+
+    erasure = admit_account(
+        world,
+        verified=replace(tokens[3], auth_time=int(database_now().timestamp())),
+        actor_identity_id=staff_op.id,
+        purge_not_before=database_now(),
+    )
+    account_adapters = {
+        domain: (
+            PassportAccountOutboxErasureAdapter()
+            if domain == "account_message_outbox"
+            else _AccountDomainStub(domain)
+        )
+        for domain in erasure.inventory["required_domains"]
+    }
+
+    # Pass 1 while presigned PUT window is STILL OPEN: deletes S3 object, holds completion!
+    first_pass = advance_account_erasure(
+        erasure.id,
+        account_adapters,
+        object_deleter=simulated_s3_delete,
+    )
+    assert first_pass["complete"] is False
+    assert "account_personal_objects" in first_pass["held_domains"]
+    assert comm_deletes == [comm_key]
+    assert comm_key not in s3_objects
+
+    # Direct SQL `privacy_confirm_account_attachments_erased` also refuses while window is open!
+    with pytest.raises(IntegrityError), transaction.atomic(), connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT public.privacy_confirm_account_attachments_erased(%s, %s)",
+            [erasure.id, "f" * 64],
+        )
+
+    # Simulate client replaying the unexpired presigned PUT URL to recreate the S3 object!
+    s3_objects[comm_key] = b"replayed-put-during-open-window"
+
+    # Wait until PostgreSQL `clock_timestamp()` passes `window_end`, then run pass 2!
+    while database_now() <= window_end:
+        time.sleep(0.05)
+
+    second_pass = advance_account_erasure(
+        erasure.id,
+        account_adapters,
+        object_deleter=simulated_s3_delete,
+    )
+    assert second_pass["complete"] is True
+    assert second_pass["held_domains"] == []
+    assert comm_deletes == [comm_key, comm_key]
+    assert comm_key not in s3_objects
+    assert not Attachment.objects.filter(pk=comm_att.pk).exists()
+
+    # Now verify the same presigned PUT window fence on B2B organisation erasure (`ObjectWorkspaceErasureAdapter`).
+    org_window_end = database_now() + timedelta(milliseconds=1200)
+    b2b_att = Attachment.objects.create(
+        organisation=org,
+        uploader=members[0],
+        filename="org-unexpired-put.pdf",
+        content_type="application/pdf",
+        size_bytes=4096,
+        sha256="b" * 64,
+        upload_expires_at=org_window_end,
+        completed_at=None,
+    )
+    b2b_key = f"organisations/{org.id}/attachments/{b2b_att.id}"
+    s3_objects[b2b_key] = b"initial-org-upload"
+    org_deletes: list[str] = []
+
+    def simulated_org_s3_delete(key: str) -> dict[str, object]:
+        org_deletes.append(key)
+        s3_objects.pop(key, None)
+        return {"deleted": True}
+
+    org_erasure = begin_erasure(
+        organisation_id=org.id,
+        instruction_ref="DEL-902",
+        instruction_sha256="4" * 64,
+        purge_not_before=database_now(),
+        actor_identity_id=staff_op.id,
+    )
+    org_adapters = {
+        d: (
+            ObjectWorkspaceErasureAdapter(deleter=simulated_org_s3_delete)
+            if d == "objects"
+            else _OrgDomainStub(d)
+        )
+        for d in org_erasure.inventory["required_domains"]
+    }
+    org_first = advance_erasure(org_erasure.id, org_adapters)
+    assert org_first["complete"] is False
+    assert "objects" in org_first["held_domains"]
+    assert org_deletes == [b2b_key]
+
+    # Simulate presigned PUT replay before `org_window_end`.
+    s3_objects[b2b_key] = b"replayed-org-put"
+    while database_now() <= org_window_end:
+        time.sleep(0.05)
+
+    org_second = advance_erasure(org_erasure.id, org_adapters)
+    assert org_second["complete"] is True
+    assert org_second["held_domains"] == []
+    assert org_deletes == [b2b_key] * 3  # pass 1 + pass 2 `erase_and_verify` + `verify_proof`
+    assert b2b_key not in s3_objects
+
+
+def test_bug_0037_inflight_idempotency_receipt_blocked_across_erasure_cutoff(world, settings):
+    """BUG-0037 Round-2: An in-flight `store.run_once` POST that passed entry authority before
+    account erasure cannot persist an `idempotency_record` receipt after cutoff/completion:
+    `aa_idempotency_privacy_cutoff` rejects the insert and `store.run_once` rolls back cleanly
+    with `403` (`stored=False`), leaving zero PII receipts."""
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from django.db import close_old_connections
+
+    org, _workspace, members, tokens = world
+    staff_op = operator()
+    settings.KODERA_OUTBOX_SEAL_KEY = hashlib.sha256(b"k2c-idem-cutoff-seal").digest()
+    m3_ident = Identity.objects.get(user=members[3].user, organisation=org)
+    original_subject = m3_ident.subject
+    original_email = members[3].user.email
+
+    entered_handler = threading.Event()
+    erasure_completed = threading.Event()
+
+    def inflight_post() -> store.Outcome:
+        close_old_connections()
+        try:
+
+            def paused_handler() -> store.StoredResponse:
+                entered_handler.set()
+                assert erasure_completed.wait(timeout=10)
+                return store.StoredResponse(
+                    status=200,
+                    body=json.dumps({"email": original_email}).encode("utf-8"),
+                    content_type="application/json",
+                )
+
+            return store.run_once(
+                scope=store.Scope(
+                    issuer=org.issuer,
+                    subject=original_subject,
+                    method="POST",
+                    path="/api/v1/organisations/profile",
+                    key="inflight-post-across-cutoff-0001",
+                ),
+                body_sha256="c" * 64,
+                handler=paused_handler,
+            )
+        finally:
+            close_old_connections()
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(inflight_post)
+        assert entered_handler.wait(timeout=10)
+
+        erasure = admit_account(
+            world,
+            verified=replace(tokens[3], auth_time=int(database_now().timestamp())),
+            actor_identity_id=staff_op.id,
+            purge_not_before=database_now(),
+        )
+        done = advance_account_erasure(
+            erasure.id,
+            {
+                d: (
+                    PassportAccountOutboxErasureAdapter()
+                    if d == "account_message_outbox"
+                    else _AccountDomainStub(d)
+                )
+                for d in erasure.inventory["required_domains"]
+            },
+        )
+        assert done["complete"] is True
+        erasure_completed.set()
+
+        outcome = future.result(timeout=10)
+
+    assert isinstance(outcome, store.Executed)
+    assert outcome.stored is False
+    assert outcome.response.status == 403
+    assert not IdempotencyRecord.objects.filter(
+        issuer=org.issuer, subject=original_subject
+    ).exists()
+
+    # Direct `IdempotencyRecord.objects.create` is also blocked by `aa_idempotency_privacy_cutoff`!
+    with pytest.raises(IntegrityError), transaction.atomic():
+        IdempotencyRecord.objects.create(
+            issuer=org.issuer,
+            subject=original_subject,
+            method="POST",
+            path="/api/v1/organisations/profile",
+            key_sha256="d" * 64,
+            body_sha256="e" * 64,
+            status=200,
+            content_type="application/json",
+            body=b"{}",
+        )
+
+    # Begin org erasure and verify both org issuer AND webhook (`urn:kodera:webhook:*`) inserts are blocked!
+    begin_erasure(
+        organisation_id=org.id,
+        instruction_ref="DEL-903",
+        instruction_sha256="5" * 64,
+        purge_not_before=database_now(),
+        actor_identity_id=staff_op.id,
+    )
+    for blocked_issuer, blocked_subject in (
+        (org.issuer, f"post-cutoff-{new_uuid7()}"),
+        ("urn:kodera:webhook:stripe", str(org.id)),
+    ):
+        with pytest.raises(IntegrityError), transaction.atomic():
+            IdempotencyRecord.objects.create(
+                issuer=blocked_issuer,
+                subject=blocked_subject,
+                method="POST",
+                path="/api/v1/webhooks/stripe",
+                key_sha256="1" * 64,
+                body_sha256="2" * 64,
+                status=200,
+                content_type="application/json",
+                body=b"{}",
+            )
+
+
+def test_bug_0027_upgrade_backfill_sends_valid_queued_invitation_and_withdraws_revoked(
+    transactional_db, settings
+):
+    """BUG-0027 Round-2: Upgrading across `orgs/0034` backfills `orgs_invitationoutboxbinding`
+    for pre-existing queued `invitation` and `invitation_account_ready` outbox messages (and
+    lazily resolves any unbound rows via `resolve_legacy_invitation_binding`), so valid
+    pre-upgrade invitations still send while revoked ones are withdrawn."""
+    from django.db.migrations.executor import MigrationExecutor
+
+    from apps.identity.models import User
+    from apps.orgs.invitations import format_token
+
+    settings.KODERA_OUTBOX_SEAL_KEY = hashlib.sha256(b"k2c-upgrade-seal-key").digest()
+    settings.KODERA_MAIL_LINK_ORIGINS = frozenset({"https://app.localhost"})
+
+    def restore_leaves() -> None:
+        exec_up = MigrationExecutor(connection)
+        exec_up.migrate(exec_up.loader.graph.leaf_nodes())
+
+    try:
+        executor = MigrationExecutor(connection)
+        pre_targets = [
+            ("orgs", "0033_proximity_erasure_inventory")
+            if app == "orgs"
+            else ("idempotency", "0001_initial")
+            if app == "idempotency"
+            else (app, name)
+            for app, name in executor.loader.graph.leaf_nodes()
+        ]
+        executor.migrate(pre_targets)
+
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT to_regclass('public.orgs_invitationoutboxbinding') IS NULL")
+            assert cursor.fetchone()[0] is True
+
+        with transaction.atomic():
+            upg_org = Organisation.objects.create(
+                slug="upgrade-inv-k2c",
+                realm="upgrade-inv-k2c",
+                issuer="https://identity.customer.test/realms/upgrade-inv-k2c",
+                name="Upgrade Org",
+                state="active",
+            )
+            SlugReservation.objects.create(
+                organisation=upg_org,
+                namespace="organisation",
+                slug=upg_org.slug,
+                state="permanent",
+                protected_at=timezone.now(),
+            )
+            inviter_user = User.objects.create(email="inviter-upgrade@example.org")
+            Membership.objects.create(
+                user=inviter_user,
+                organisation=upg_org,
+                role="org_owner",
+                state="active",
+                accepted_at=timezone.now(),
+            )
+            inviter_ident = Identity.objects.create(
+                user=inviter_user,
+                organisation=upg_org,
+                issuer=upg_org.issuer,
+                realm=upg_org.realm,
+                subject="inviter-upgrade-sub",
+                email=inviter_user.email,
+            )
+            now = database_now()
+            valid_inv = Invitation.objects.create(
+                organisation=upg_org,
+                email="valid-preupgrade@example.org",
+                role="org_member",
+                state="pending",
+                locale="fr",
+                token_digest=b"\xaa" * 32,
+                token_sealed=b"\xbb" * 48,
+                issued_at=now,
+                expires_at=now + timedelta(days=5),
+                sent_count=1,
+                mail_enqueued_count=1,
+                invited_by_user=inviter_user,
+                invited_by_identity=inviter_ident,
+            )
+            revoked_inv = Invitation.objects.create(
+                organisation=upg_org,
+                email="revoked-preupgrade@example.org",
+                role="org_member",
+                state="revoked",
+                revoked_at=now,
+                locale="fr",
+                token_digest=b"\xcc" * 32,
+                token_sealed=b"\xdd" * 48,
+                issued_at=now - timedelta(hours=1),
+                expires_at=now + timedelta(days=5),
+                sent_count=1,
+                mail_enqueued_count=1,
+                invited_by_user=inviter_user,
+                invited_by_identity=inviter_ident,
+            )
+            valid_delivery_id = sender.enqueue_message(
+                organisation_id=upg_org.id,
+                template_id="invitation",
+                locale="fr",
+                recipient=valid_inv.email,
+                link=f"https://app.localhost/invite/{upg_org.id}/{upg_org.slug}",
+                link_secret=format_token(valid_inv.id, "A" * 43),
+                params={
+                    "organisation_name": upg_org.name,
+                    "role": "membre",
+                    "expires_at": "soon",
+                },
+                expires_at=now + timedelta(days=4),
+            )
+            revoked_delivery_id = sender.enqueue_message(
+                organisation_id=upg_org.id,
+                template_id="invitation_account_ready",
+                locale="fr",
+                recipient=revoked_inv.email,
+                link=f"https://app.localhost/invite/{upg_org.id}/{upg_org.slug}",
+                link_secret=format_token(revoked_inv.id, "B" * 43),
+                params={
+                    "organisation_name": upg_org.name,
+                    "role": "membre",
+                    "expires_at": "soon",
+                },
+                expires_at=now + timedelta(days=4),
+            )
+
+        # Upgrade forward across `orgs/0034` and `idempotency/0002`!
+        restore_leaves()
+
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT invitation_id FROM orgs_invitationoutboxbinding WHERE delivery_id = %s",
+                [valid_delivery_id],
+            )
+            assert cursor.fetchone() == (valid_inv.id,)
+            cursor.execute(
+                "SELECT invitation_id FROM orgs_invitationoutboxbinding WHERE delivery_id = %s",
+                [revoked_delivery_id],
+            )
+            assert cursor.fetchone() == (revoked_inv.id,)
+
+        # Valid pre-upgrade queued invitation is NOT withdrawn (sends!), revoked one IS withdrawn!
+        assert sender.withdrawn("invitation", valid_delivery_id) is False
+        assert sender.withdrawn("invitation_account_ready", revoked_delivery_id) is True
+
+        # Also prove lazy `resolve_legacy_invitation_binding` if `migrate` ran without seal key:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "DELETE FROM orgs_invitationoutboxbinding WHERE delivery_id IN (%s, %s)",
+                [valid_delivery_id, revoked_delivery_id],
+            )
+        assert sender.withdrawn("invitation", valid_delivery_id) is False
+        assert sender.withdrawn("invitation_account_ready", revoked_delivery_id) is True
+    finally:
+        restore_leaves()
+
+
+def test_bug_0025_retention_worker_role_executes_account_attachment_erasure(world):
+    """BUG-0025 Round-2: A dedicated least-privilege `kodera_retention_worker_*` database login
+    can execute `privacy_confirm_account_attachments_erased` and read `orgs_accountattachmenterasure`
+    to complete account erasure without direct table privileges on `media_attachment`."""
+    import psycopg
+    from test_erasure_review_guards import restricted_login
+
+    _org, _workspace, members, tokens = world
+    staff_op = operator()
+    now = database_now()
+
+    with transaction.atomic():
+        community_org = Organisation.objects.create(
+            slug="community",
+            realm="community",
+            issuer="https://identity.customer.test/realms/community",
+            name="Community",
+            state="active",
+            is_default_community=True,
+        )
+        SlugReservation.objects.create(
+            organisation=community_org,
+            namespace="organisation",
+            slug=community_org.slug,
+            state="permanent",
+            protected_at=timezone.now(),
+        )
+        Membership.objects.create(
+            user=members[0].user,
+            organisation=community_org,
+            role="org_owner",
+            state="active",
+            accepted_at=timezone.now(),
+        )
+        Identity.objects.create(
+            user=members[0].user,
+            organisation=community_org,
+            issuer=community_org.issuer,
+            realm=community_org.realm,
+            subject=f"comm-worker-owner-{members[0].user_id}",
+            email=members[0].user.email,
+        )
+        comm_member = Membership.objects.create(
+            user=members[3].user,
+            organisation=community_org,
+            role="org_member",
+            state="active",
+            accepted_at=timezone.now(),
+        )
+        Identity.objects.create(
+            user=members[3].user,
+            organisation=community_org,
+            issuer=community_org.issuer,
+            realm=community_org.realm,
+            subject=f"comm-worker-role-{members[3].user_id}",
+            email=members[3].user.email,
+        )
+        comm_ws = Workspace.objects.create(organisation=community_org)
+        comm_pol = ResourcePolicy.objects.create(workspace=comm_ws, visibility="organisation")
+        comm_ws.default_policy = comm_pol
+        comm_ws.save(update_fields=["default_policy"])
+        comm_att = Attachment.objects.create(
+            organisation=community_org,
+            uploader=comm_member,
+            filename="worker-role-personal.pdf",
+            content_type="application/pdf",
+            size_bytes=1024,
+            sha256="9" * 64,
+            upload_expires_at=now - timedelta(minutes=5),
+            completed_at=now - timedelta(minutes=6),
+        )
+
+    row = admit_account(
+        world,
+        verified=replace(tokens[3], auth_time=int(database_now().timestamp())),
+        actor_identity_id=staff_op.id,
+        purge_not_before=database_now(),
+    )
+
+    with restricted_login("worker") as (role_name, connect):
+        with connect() as login:
+            assert login.execute("SELECT current_user, session_user").fetchone() == (
+                role_name,
+                role_name,
+            )
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                login.execute("SELECT filename FROM public.media_attachment")
+
+            login.execute("SELECT privacy_purge_account_core(%s)", [row.id])
+            for domain in row.inventory["required_domains"]:
+                login.execute(
+                    "SELECT privacy_record_account_absence(%s,%s,%s,%s,%s,%s,%s,clock_timestamp())",
+                    [
+                        row.id,
+                        row.user_reference,
+                        row.cutoff_at,
+                        row.inventory_sha256,
+                        domain,
+                        "8" * 64,
+                        "synthetic-worker-role-control",
+                    ],
+                )
+            # Still incomplete before `privacy_confirm_account_attachments_erased`!
+            assert (
+                login.execute("SELECT privacy_complete_account_erasure(%s)", [row.id]).fetchone()[0]
+                is False
+            )
+
+            deleted_count = login.execute(
+                "SELECT privacy_confirm_account_attachments_erased(%s, %s)",
+                [row.id, "7" * 64],
+            ).fetchone()[0]
+            assert deleted_count == 1
+            assert login.execute(
+                "SELECT evidence_sha256 FROM orgs_accountattachmenterasure WHERE erasure_id = %s",
+                [row.id],
+            ).fetchone() == ("7" * 64,)
+            assert (
+                login.execute("SELECT privacy_complete_account_erasure(%s)", [row.id]).fetchone()[0]
+                is True
+            )
+
+    assert not Attachment.objects.filter(pk=comm_att.pk).exists()

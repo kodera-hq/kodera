@@ -227,9 +227,11 @@ def advance_account_erasure(
         from .object_erasure import erase_account_personal_attachments
 
         try:
-            erase_account_personal_attachments(
+            confirmed = erase_account_personal_attachments(
                 scope, socket_path=socket_path, deleter=object_deleter
             )
+            if not confirmed:
+                objects_held = True
         except StorageRefusedError:
             objects_held = True
     stored_counts = (

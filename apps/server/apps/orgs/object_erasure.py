@@ -26,6 +26,10 @@ from .erasure_services import AbsenceProof, ErasureScope, database_now
 from .privacy_models import AccountErasure, PrivacyErasure
 
 
+class ObjectUploadWindowOpenError(Exception):
+    """Raised when one or more presigned PUT upload windows have not yet expired."""
+
+
 class ObjectReplicaAbsenceVerifier(Protocol):
     """Optional replica/backup absence verifier returning a 64-hex SHA-256 digest."""
 
@@ -65,6 +69,17 @@ def invoke_gateway_delete(
     return result
 
 
+def _parse_upload_expiry(value: object) -> datetime | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value:
+        raise ValueError("attachment upload_expires_at malformed")
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        raise ValueError("attachment upload_expires_at must be timezone-aware")
+    return parsed
+
+
 @dataclass(frozen=True)
 class ObjectWorkspaceErasureAdapter:
     """Concrete `objects` domain adapter for organisation-wide GDPR Art. 17 erasure."""
@@ -75,7 +90,9 @@ class ObjectWorkspaceErasureAdapter:
     domain: str = "objects"
     revision: str = "storage-gateway-erasure-v1"
 
-    def _authoritative(self, scope: ErasureScope) -> tuple[tuple[str, ...], datetime]:
+    def _authoritative(
+        self, scope: ErasureScope
+    ) -> tuple[tuple[str, ...], datetime, datetime | None]:
         row = PrivacyErasure.objects.select_for_update().get(pk=scope.request_id)
         now = database_now()
         if (
@@ -91,6 +108,9 @@ class ObjectWorkspaceErasureAdapter:
         raw_attachments = scope.inventory.get("attachments")
         if not isinstance(raw_attachments, list) or len(raw_attachments) > 100_000:
             raise ValueError("object erasure attachment inventory malformed")
+        max_upload_expiry = _parse_upload_expiry(
+            scope.inventory.get("org_attachment_max_upload_expires_at")
+        )
         keys: list[str] = []
         seen: set[str] = set()
         for item in raw_attachments:
@@ -108,7 +128,7 @@ class ObjectWorkspaceErasureAdapter:
                     organisation_id=scope.organisation_id, attachment_id=normalized
                 )
             )
-        return tuple(sorted(keys)), now
+        return tuple(sorted(keys)), now, max_upload_expiry
 
     def _evidence(self, scope: ErasureScope, object_keys: tuple[str, ...]) -> str:
         replica_digest: str | None = None
@@ -134,9 +154,12 @@ class ObjectWorkspaceErasureAdapter:
 
     @transaction.atomic
     def erase_and_verify(self, scope: ErasureScope) -> AbsenceProof:
-        object_keys, _ = self._authoritative(scope)
+        object_keys, _, max_upload_expiry = self._authoritative(scope)
         for key in object_keys:
             invoke_gateway_delete(key, socket_path=self.socket_path, deleter=self.deleter)
+        verified_at = database_now()
+        if max_upload_expiry is not None and verified_at < max_upload_expiry:
+            raise ObjectUploadWindowOpenError("presigned upload window still open")
         evidence = self._evidence(scope, object_keys)
         return AbsenceProof(
             request_id=scope.request_id,
@@ -146,13 +169,13 @@ class ObjectWorkspaceErasureAdapter:
             inventory_sha256=scope.inventory_sha256,
             evidence_sha256=evidence,
             adapter_revision=self.revision,
-            verified_at=database_now(),
+            verified_at=verified_at,
         )
 
     @transaction.atomic
     def verify_proof(self, scope: ErasureScope, proof: AbsenceProof) -> bool:
         try:
-            object_keys, now = self._authoritative(scope)
+            object_keys, now, max_upload_expiry = self._authoritative(scope)
             if (
                 proof.request_id != scope.request_id
                 or proof.organisation_id != scope.organisation_id
@@ -162,12 +185,18 @@ class ObjectWorkspaceErasureAdapter:
                 or proof.adapter_revision != self.revision
                 or proof.verified_at.tzinfo is None
                 or not (scope.cutoff_at <= proof.verified_at <= now)
+                or (max_upload_expiry is not None and proof.verified_at < max_upload_expiry)
             ):
                 return False
             for key in object_keys:
                 invoke_gateway_delete(key, socket_path=self.socket_path, deleter=self.deleter)
             return proof.evidence_sha256 == self._evidence(scope, object_keys)
-        except (ValueError, StorageRefusedError, PrivacyErasure.DoesNotExist):
+        except (
+            ValueError,
+            StorageRefusedError,
+            ObjectUploadWindowOpenError,
+            PrivacyErasure.DoesNotExist,
+        ):
             return False
 
 
@@ -177,10 +206,9 @@ def erase_account_personal_attachments(
     socket_path: str | None = None,
     deleter: ObjectDeleter | None = None,
 ) -> bool:
-    """Delete S3 objects (`DELETE` + `HEAD 404`) for Community and incomplete personal attachments,
-    then remove their `media_attachment` rows and record cryptographic verification in PostgreSQL.
-    Returns `True` when zero personal attachments remain; raises `StorageRefusedError` if any
-    gateway deletion fails so `privacy_complete_account_erasure` fails closed.
+    """Delete S3 objects (`DELETE` + `HEAD 404`) for Community personal attachments, holding final
+    confirmation until every presigned upload window (`upload_expires_at`) has elapsed, then remove
+    their `media_attachment` rows and record cryptographic verification in PostgreSQL.
     """
     raw_items = scope.inventory.get("account_personal_attachments", [])
     if not isinstance(raw_items, list):
@@ -189,17 +217,23 @@ def erase_account_personal_attachments(
         return True
 
     keys: list[str] = []
-    attachment_ids: list[str] = []
+    upload_expiries: list[datetime] = []
     for entry in raw_items:
         if not isinstance(entry, dict):
             raise ValueError("account_personal_attachments entry malformed")
         att_id = str(UUID(str(entry["id"])))
         org_id = str(UUID(str(entry["organisation_id"])))
-        attachment_ids.append(att_id)
+        expiry = _parse_upload_expiry(entry.get("upload_expires_at"))
+        if expiry is not None:
+            upload_expiries.append(expiry)
         keys.append(attachment_object_key(organisation_id=org_id, attachment_id=att_id))
 
     for key in sorted(set(keys)):
         invoke_gateway_delete(key, socket_path=socket_path, deleter=deleter)
+
+    now = database_now()
+    if any(now < exp for exp in upload_expiries):
+        return False
 
     evidence = hashlib.sha256(
         json.dumps(

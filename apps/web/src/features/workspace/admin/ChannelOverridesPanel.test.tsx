@@ -91,17 +91,23 @@ describe('ChannelOverridesPanel channel capability scoping', () => {
     renderPanel(<ChannelOverridesPanel organisationId={ORG} authority={OWNER} />)
     await screen.findByRole('radiogroup', { name: 'Voir les salons' })
     expect(screen.getByRole('radiogroup', { name: 'Envoyer des messages' })).toBeInTheDocument()
+    expect(screen.getAllByRole('radiogroup')).toHaveLength(2)
     expect(screen.queryByRole('radiogroup', { name: 'Gérer les rôles' })).not.toBeInTheDocument()
     expect(
       screen.queryByRole('radiogroup', { name: 'Consulter le journal d’audit' })
     ).not.toBeInTheDocument()
     expect(
-      screen.queryByRole('radiogroup', { name: 'Rejoindre un salon vocal' })
+      screen.queryByRole('radiogroup', { name: 'Rejoindre les salons vocaux' })
     ).not.toBeInTheDocument()
 
     await user.click(screen.getByRole('combobox', { name: 'Salon' }))
     await user.click(await screen.findByRole('option', { name: /salon/ }))
     await screen.findByRole('radiogroup', { name: 'Parler' })
+    expect(screen.getByRole('radiogroup', { name: 'Voir les salons' })).toBeInTheDocument()
+    expect(
+      screen.getByRole('radiogroup', { name: 'Rejoindre les salons vocaux' })
+    ).toBeInTheDocument()
+    expect(screen.getAllByRole('radiogroup')).toHaveLength(3)
     expect(
       screen.queryByRole('radiogroup', { name: 'Envoyer des messages' })
     ).not.toBeInTheDocument()
