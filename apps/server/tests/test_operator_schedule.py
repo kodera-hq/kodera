@@ -47,10 +47,11 @@ def test_a_pass_runs_the_revocation_first_and_the_mail_within_its_budget(closed)
         ("send_invitations", ("--once",)),
         ("send_support_tickets", ("--once",)),
         ("run_deliveries", ("--once", "--budget-s", "20")),
+        ("purge_idempotency", ("--once",)),
     ]
-    assert (report.ok, report.failed) == (4, 0)
+    assert (report.ok, report.failed) == (5, 0)
     # A connection one run broke never fails the next.
-    assert len(closed) == 4
+    assert len(closed) == 5
 
 
 def test_a_refused_run_does_not_hold_back_the_next(caplog):
@@ -58,7 +59,7 @@ def test_a_refused_run_does_not_hold_back_the_next(caplog):
     outcomes = {"send_invitations": CommandError("no contact seal key")}
     report = command().run_pass(Never(), runner(outcomes, calls))
     assert [name for name, _ in calls] == NAMES
-    assert (report.ok, report.failed) == (3, 1)
+    assert (report.ok, report.failed) == (4, 1)
     assert "send_invitations refused: no contact seal key" in caplog.text
 
 
@@ -67,8 +68,9 @@ def test_a_deployment_without_a_support_mailbox_still_delivers_the_other_mails(c
     refused = CommandError("support ticket mails refused: no support mailbox")
     report = command().run_pass(Never(), runner({"send_support_tickets": refused}, calls))
     assert [name for name, _ in calls] == NAMES
-    assert calls[-1][0] == "run_deliveries"
-    assert (report.ok, report.failed) == (3, 1)
+    assert ("run_deliveries", ("--once", "--budget-s", "20")) in calls
+    assert calls[-1] == ("purge_idempotency", ("--once",))
+    assert (report.ok, report.failed) == (4, 1)
     assert "send_support_tickets refused: support ticket mails refused" in caplog.text
 
 

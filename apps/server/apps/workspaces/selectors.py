@@ -158,3 +158,12 @@ def restricted_workspace_membership_ids(
         .filter(Q(banned=True) | Q(kicked=True))
         .values_list("membership_id", flat=True)
     )
+
+
+def is_workspace_membership_restricted(*, membership_id: UUID) -> bool:
+    """Whether `membership_id` is currently banned or kicked in its workspace."""
+    return (
+        WorkspaceMemberRestriction.objects.filter(membership_id=membership_id)
+        .filter(Q(banned=True) | Q(kicked=True))
+        .exists()
+    )

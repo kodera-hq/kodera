@@ -819,6 +819,20 @@ def record_agent_credential_event(
     )
 
 
+def _check_workspace_resource_metadata(value: object, *, depth: int = 0) -> None:
+    if depth > 4:
+        raise ValueError("workspace resource audit metadata exceeds maximum nesting depth")
+    if isinstance(value, Mapping):
+        lowered_forbidden = {k.lower() for k in STRUCTURE_FORBIDDEN_METADATA}
+        for key, item in value.items():
+            if not isinstance(key, str) or key.lower() in lowered_forbidden:
+                raise ValueError("a workspace resource event carries no name, topic or contact")
+            _check_workspace_resource_metadata(item, depth=depth + 1)
+    elif isinstance(value, list | tuple):
+        for item in value:
+            _check_workspace_resource_metadata(item, depth=depth + 1)
+
+
 def record_workspace_resource_event(
     *,
     action: str,
@@ -826,10 +840,12 @@ def record_workspace_resource_event(
     target_id: UUID,
     actor_id: UUID,
     request_id: str,
+    metadata: Mapping[str, object] | None = None,
 ) -> None:
     """Append a workspace resource action with identifiers only, in its caller's transaction."""
     import hashlib
     import hmac
+    import json
     import re
 
     from django.conf import settings
@@ -851,6 +867,10 @@ def record_workspace_resource_event(
         target_urn = f"urn:kodera:workspace-attachment:redacted:{redacted}"
     else:
         target_urn = f"urn:kodera:workspace-resource:{target_id}"
+    payload = dict(metadata or {})
+    _check_workspace_resource_metadata(payload)
+    if len(json.dumps(payload, separators=(",", ":"), default=str).encode("utf-8")) > 16_384:
+        raise ValueError("workspace resource audit metadata exceeds 16 KiB bound")
     AuditEvent.objects.create(
         action=action,
         actor_type="tenant",
@@ -860,7 +880,7 @@ def record_workspace_resource_event(
         target_urn=target_urn,
         request_id=request_id,
         retention_class="standard",
-        metadata={},
+        metadata=payload,
     )
     if action in {
         "workspace.member.kick",

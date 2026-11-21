@@ -211,6 +211,8 @@ def advance_erasure(request_id: UUID, adapters: dict[str, ErasureAdapter]) -> di
         raise ValueError("erasure required domains invalid")
     extension = _extension_store()
     counts = purge_core(request_id) if not extension else None
+    from .object_erasure import ObjectUploadWindowOpenError
+
     for domain in sorted(required):
         if (
             domain not in adapters
@@ -218,7 +220,10 @@ def advance_erasure(request_id: UUID, adapters: dict[str, ErasureAdapter]) -> di
         ):
             continue
         adapter = adapters[domain]
-        persist_absence(scope, adapter.erase_and_verify(scope), adapter)
+        try:
+            persist_absence(scope, adapter.erase_and_verify(scope), adapter)
+        except ObjectUploadWindowOpenError:
+            continue
     held = sorted(
         required - set(ErasureReceipt.objects.filter(erasure=row).values_list("domain", flat=True))
     )

@@ -15,13 +15,25 @@ from apps.audit.selectors import list_workspace_audit_events
 from apps.orgs.actor_selectors import TenantCaller
 from services.identity.access_tokens import VerifiedAccessToken
 
-from .iam import authorize, check_manage, mutation_context, resolve_roles
+from .iam import authorize, check_manage, emit_iam_channel_set, mutation_context, resolve_roles
 from .iam_validation import validate_permissions
-from .models import Channel, Workspace, WorkspaceChannelRoleOverride, WorkspaceMemberRestriction
+from .models import (
+    Channel,
+    ChannelNotice,
+    Workspace,
+    WorkspaceChannelRoleOverride,
+    WorkspaceMemberRestriction,
+    WorkspaceMemberRole,
+)
 from .moderation import ADMINS, RefusalError, _audit, _storable_text, _text
 from .moderation_wire import tag
 
 _UNSET = object()
+
+ENFORCED_CHANNEL_OVERRIDE_CAPABILITIES: dict[str, frozenset[str]] = {
+    Channel.Kind.TEXT: frozenset({"channel.view", "message.post"}),
+    Channel.Kind.AUDIO: frozenset({"channel.view", "media.connect", "media.speak"}),
+}
 
 PROFILE_TEXT = {"description", "banner_preset", "icon_mxc"}
 PROFILE_CHANNELS = {
@@ -143,6 +155,32 @@ def profile(
     )[0]
 
 
+def _caller_role_ids(workspace: Workspace, membership_id: UUID) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            {
+                str(role_id)
+                for role_id in WorkspaceMemberRole.objects.filter(
+                    workspace=workspace, membership_id=membership_id
+                ).values_list("role_id", flat=True)
+            }
+        )
+    )
+
+
+def _channel_overrides_tuples(
+    workspace: Workspace, channel_id: UUID
+) -> list[tuple[str, tuple[str, ...], tuple[str, ...]]]:
+    return [
+        (str(role_id), tuple(allow), tuple(deny))
+        for role_id, allow, deny in WorkspaceChannelRoleOverride.objects.filter(
+            workspace=workspace, channel_id=channel_id
+        )
+        .order_by("role_id")
+        .values_list("role_id", "allow", "deny")
+    ]
+
+
 def _check_channel_visible(workspace: Workspace, caller: TenantCaller, channel_id: UUID) -> None:
     if not Channel.objects.filter(
         id=channel_id, workspace=workspace, lifecycle__in=["active", "provisioning"]
@@ -161,6 +199,8 @@ def _check_channel_visible(workspace: Workspace, caller: TenantCaller, channel_i
             organisation_id=workspace.organisation_id,
             membership_id=caller.membership_id,
             authority_revision=caller.authority_revision,
+            member_role_ids=_caller_role_ids(workspace, caller.membership_id),
+            channel_overrides=_channel_overrides_tuples(workspace, channel_id),
         ):
             raise RefusalError(404)
 
@@ -186,6 +226,13 @@ def overrides(
     if data is not _UNSET:
         if not isinstance(data, list) or len(data) > 100:
             raise RefusalError(422)
+        channel_meta = (
+            Channel.objects.filter(id=channel_id, workspace=workspace)
+            .values_list("kind", "policy_mode")
+            .first()
+        )
+        channel_kind, channel_policy_mode = channel_meta if channel_meta is not None else ("", "")
+        allowed_capabilities = ENFORCED_CHANNEL_OVERRIDE_CAPABILITIES.get(channel_kind, frozenset())
         normalized = []
         for entry in data:
             if not isinstance(entry, dict) or entry.keys() != {"role_id", "allow", "deny"}:
@@ -195,37 +242,96 @@ def overrides(
                 validate_permissions(entry["deny"])
             except ValidationError:
                 raise RefusalError(422) from None
+            if (set(entry["allow"]) | set(entry["deny"])) - allowed_capabilities:
+                raise RefusalError(422)
             if set(entry["allow"]) & set(entry["deny"]):
                 raise RefusalError(422)
             normalized.append(entry["role_id"])
+        from .channel_access import EXPLICIT, expand_override_capabilities, may_view, resolve
+
         roles = resolve_roles(workspace, normalized)
         existing = list(rows.select_related("role"))
         check_manage(workspace, caller, [row.role for row in existing] + roles)
         for row in existing:
-            check_manage(workspace, caller, [], permissions=[*row.allow, *row.deny])
+            check_manage(
+                workspace,
+                caller,
+                [],
+                permissions=expand_override_capabilities([*row.allow, *row.deny]),
+            )
         by_id = {str(role.id): role for role in roles}
         for entry in data:
-            check_manage(workspace, caller, [], permissions=[*entry["allow"], *entry["deny"]])
-        rows.delete()
-        WorkspaceChannelRoleOverride.objects.bulk_create(
-            [
-                WorkspaceChannelRoleOverride(
-                    workspace=workspace,
-                    channel_id=channel_id,
-                    role=by_id[str(UUID(entry["role_id"]))],
-                    allow=entry["allow"],
-                    deny=entry["deny"],
-                )
-                for entry in data
-            ]
+            check_manage(
+                workspace,
+                caller,
+                [],
+                permissions=expand_override_capabilities([*entry["allow"], *entry["deny"]]),
+            )
+
+        access = (
+            resolve(channel_id)
+            if workspace.default_policy_id is not None or channel_policy_mode == EXPLICIT
+            else None
         )
+        caller_roles = _caller_role_ids(workspace, caller.membership_id)
+        pre_overrides = [
+            (str(row.role_id), tuple(row.allow), tuple(row.deny))
+            for row in sorted(existing, key=lambda item: str(item.role_id))
+        ]
+        viewed_before = (
+            may_view(
+                access,
+                organisation_id=workspace.organisation_id,
+                membership_id=caller.membership_id,
+                authority_revision=caller.authority_revision,
+                member_role_ids=caller_roles,
+                channel_overrides=pre_overrides,
+            )
+            if access is not None
+            else True
+        )
+        rows.delete()
+        created_rows = [
+            WorkspaceChannelRoleOverride(
+                workspace=workspace,
+                channel_id=channel_id,
+                role=by_id[str(UUID(entry["role_id"]))],
+                allow=entry["allow"],
+                deny=entry["deny"],
+            )
+            for entry in data
+        ]
+        WorkspaceChannelRoleOverride.objects.bulk_create(created_rows)
+        post_overrides = [
+            (str(row.role_id), tuple(row.allow), tuple(row.deny))
+            for row in sorted(created_rows, key=lambda item: str(item.role_id))
+        ]
+        self_grant = (
+            access is not None
+            and not viewed_before
+            and may_view(
+                access,
+                organisation_id=workspace.organisation_id,
+                membership_id=caller.membership_id,
+                authority_revision=caller.authority_revision,
+                member_role_ids=caller_roles,
+                channel_overrides=post_overrides,
+            )
+        )
+        if self_grant:
+            ChannelNotice.objects.bulk_create(
+                [ChannelNotice(channel_id=channel_id, membership_id=caller.membership_id)],
+                ignore_conflicts=True,
+            )
         _audit(
             workspace,
             caller.identity_id,
             "workspace.channel.overrides_updated",
             channel_id,
             request_id,
+            metadata={"self_grant": True} if self_grant else None,
         )
+        emit_iam_channel_set(workspace, "workspace.channel.overrides_updated")
     return {
         "data": [
             {"role_id": str(row.role_id), "allow": row.allow, "deny": row.deny}

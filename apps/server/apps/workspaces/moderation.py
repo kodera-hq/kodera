@@ -31,6 +31,7 @@ from services.identity.access_tokens import VerifiedAccessToken
 
 from .models import (
     Channel,
+    ChannelNotice,
     Workspace,
     WorkspaceAbuseReport,
     WorkspaceInviteLink,
@@ -68,7 +69,13 @@ class RefusalError(Exception):
 
 
 def _audit(
-    workspace: Workspace, actor_id: UUID, action: str, target: UUID, request_id: str
+    workspace: Workspace,
+    actor_id: UUID,
+    action: str,
+    target: UUID,
+    request_id: str,
+    *,
+    metadata: dict[str, object] | None = None,
 ) -> None:
     record_workspace_resource_event(
         action=action,
@@ -76,6 +83,7 @@ def _audit(
         organisation_id=workspace.organisation_id,
         target_id=target,
         request_id=request_id,
+        metadata=metadata,
     )
 
 
@@ -170,15 +178,54 @@ def _target_context(
     target_id: UUID,
     *,
     moderator: bool = False,
+    admin: bool = False,
 ) -> tuple[Workspace, TenantCaller, WorkspaceMembership]:
     """Acquire `organisation (FOR NO KEY UPDATE) -> workspace (FOR UPDATE)` without locking memberships."""
-    initial_workspace, _ = _context(verified, organisation_id, moderator=moderator, lock=False)
+    initial_workspace, _ = _context(
+        verified, organisation_id, moderator=moderator, admin=admin, lock=False
+    )
     _target(initial_workspace, target_id, lock=False)
     lock_organisation_fence(organisation_id=organisation_id)
     lock_workspace(workspace_id=initial_workspace.id)
-    workspace, caller = _context(verified, organisation_id, moderator=moderator, lock=False)
+    workspace, caller = _context(
+        verified, organisation_id, moderator=moderator, admin=admin, lock=False
+    )
     target = _target(workspace, target_id, lock=False)
     return workspace, caller, target
+
+
+def clear_member_moderation_authority(
+    *, workspace_id: UUID, membership_id: UUID, revoke_links: bool = True
+) -> None:
+    WorkspaceModerator.objects.filter(
+        workspace_id=workspace_id, membership_id=membership_id
+    ).delete()
+    if revoke_links:
+        now = timezone.now()
+        WorkspaceInviteLink.objects.filter(
+            workspace_id=workspace_id,
+            created_by_id=membership_id,
+            revoked_at__isnull=True,
+        ).update(revoked_at=now, updated_at=now)
+
+
+@transaction.atomic
+def revoke_moderator(
+    *,
+    verified: VerifiedAccessToken,
+    organisation_id: UUID,
+    target_id: UUID,
+    request_id: str,
+) -> None:
+    workspace, caller, target = _target_context(verified, organisation_id, target_id, admin=True)
+    if target.id == caller.membership_id or (caller.role != "org_owner" and target.role in ADMINS):
+        raise RefusalError(403)
+    deleted, _ = WorkspaceModerator.objects.filter(
+        workspace=workspace, membership_id=target.id
+    ).delete()
+    if deleted:
+        _audit(workspace, caller.identity_id, "workspace.moderator.revoked", target.id, request_id)
+        _emit(workspace, "workspace.moderator.revoked")
 
 
 def _storable_text(value: str) -> bool:
@@ -211,6 +258,43 @@ def _emit(workspace: Workspace, reason: str) -> None:
     from .channel_sets import emit_for
 
     emit_for(organisation_id=workspace.organisation_id, workspace_id=workspace.id, reason=reason)
+
+
+def _member_view_allowed(
+    workspace: Workspace,
+    channel_access: Any,
+    membership_id: UUID,
+    authority_revision: int,
+) -> bool:
+    from .channel_access import may_view
+    from .models import WorkspaceChannelRoleOverride, WorkspaceMemberRole
+
+    role_ids = tuple(
+        sorted(
+            {
+                str(role_id)
+                for role_id in WorkspaceMemberRole.objects.filter(
+                    workspace=workspace, membership_id=membership_id
+                ).values_list("role_id", flat=True)
+            }
+        )
+    )
+    overrides = [
+        (str(role_id), tuple(allow), tuple(deny))
+        for role_id, allow, deny in WorkspaceChannelRoleOverride.objects.filter(
+            workspace=workspace, channel_id=channel_access.channel_id
+        )
+        .order_by("role_id")
+        .values_list("role_id", "allow", "deny")
+    ]
+    return may_view(
+        channel_access,
+        organisation_id=workspace.organisation_id,
+        membership_id=membership_id,
+        authority_revision=authority_revision,
+        member_role_ids=role_ids,
+        channel_overrides=overrides,
+    )
 
 
 @transaction.atomic
@@ -247,6 +331,9 @@ def moderate(
         row.kicked = True
         if action == "ban":
             row.banned = True
+        clear_member_moderation_authority(
+            workspace_id=workspace.id, membership_id=target.id, revoke_links=True
+        )
     row.save(update_fields=["banned", "kicked", "muted_until", "updated_at"])
     _audit(workspace, caller.identity_id, "workspace.member." + action, target.id, request_id)
     _emit(workspace, "workspace.member." + action)
@@ -289,10 +376,21 @@ def create_link(
         raise RefusalError(422)
     channel = None
     if channel_id is not None:
+        from .channel_access import resolve
+        from .structure import WorkspaceUnavailableError
+
         channel = Channel.objects.filter(
             id=channel_id, workspace=workspace, lifecycle__in=["active", "provisioning"]
         ).first()
         if channel is None:
+            raise RefusalError(404)
+        try:
+            channel_access = resolve(channel.id)
+        except WorkspaceUnavailableError:
+            raise RefusalError(404) from None
+        if not _member_view_allowed(
+            workspace, channel_access, caller.membership_id, caller.authority_revision
+        ):
             raise RefusalError(404)
     code = secrets.token_urlsafe(32)
     link = WorkspaceInviteLink.objects.create(
@@ -351,11 +449,11 @@ def preview_link(*, verified: VerifiedAccessToken, code: str) -> WorkspaceInvite
     return link
 
 
-def _verify_invite_auto_roles(workspace: Workspace, link: WorkspaceInviteLink) -> list[Any]:
+def _verify_link_creator(
+    workspace: Workspace, link: WorkspaceInviteLink, *, check_auto_roles: bool
+) -> list[Any]:
     from .models import WorkspaceRole
 
-    if not link.auto_role_ids:
-        return []
     if link.created_by_id is None:
         raise RefusalError(403)
     creator = for_workspace(
@@ -368,6 +466,23 @@ def _verify_invite_auto_roles(workspace: Workspace, link: WorkspaceInviteLink) -
     denied, _ = member_restrictions(workspace.id, creator.id)
     if denied:
         raise RefusalError(403)
+    if link.channel_id is not None:
+        from .channel_access import resolve
+        from .structure import WorkspaceUnavailableError
+
+        try:
+            channel_access = resolve(link.channel_id)
+        except (Channel.DoesNotExist, WorkspaceUnavailableError):
+            raise RefusalError(403) from None
+        if channel_access.lifecycle not in {
+            "active",
+            "provisioning",
+        } or not _member_view_allowed(
+            workspace, channel_access, creator.id, workspace.organisation.authority_revision
+        ):
+            raise RefusalError(403)
+    if not check_auto_roles or not link.auto_role_ids:
+        return []
     roles = list(
         WorkspaceRole.objects.filter(workspace=workspace, id__in=link.auto_role_ids).order_by("id")
     )
@@ -407,28 +522,19 @@ def redeem_link(
     if existing is None:
         if initial.uses_count >= initial.max_uses:
             raise RefusalError(404)
-        if initial.auto_role_ids:
-            if initial.created_by_id is None:
-                raise RefusalError(403)
-            if (
-                for_workspace(
-                    organisation_id=organisation_id,
-                    membership_id=initial.created_by_id,
-                    lock=False,
-                )
-                is None
-            ):
-                raise RefusalError(403)
+        _verify_link_creator(
+            initial.workspace, initial, check_auto_roles=bool(initial.auto_role_ids)
+        )
         created = create_from_workspace_link(organisation_id=organisation_id, user_id=person.id)
     else:
         if existing.state != "active" or existing.accepted_at is None:
             raise RefusalError(403)
         lock_organisation_fence(organisation_id=organisation_id)
     lock_workspace(workspace_id=initial.workspace_id)
-    workspace = Workspace.objects.get(id=initial.workspace_id)
+    workspace = Workspace.objects.select_related("organisation").get(id=initial.workspace_id)
     link = _link(code, lock=True, allow_exhausted=True)
     person, identity = _identity(verified, link)
-    auto_roles = _verify_invite_auto_roles(workspace, link) if joined else []
+    auto_roles = _verify_link_creator(workspace, link, check_auto_roles=joined)
     if created is not None:
         membership = created
     else:
@@ -438,12 +544,17 @@ def redeem_link(
         if rechecked is None or rechecked.state != "active" or rechecked.accepted_at is None:
             raise RefusalError(403)
         membership = rechecked
+        is_self = membership.id == link.created_by_id
         restriction = (
             WorkspaceMemberRestriction.objects.select_for_update()
             .filter(workspace=workspace, membership_id=membership.id)
             .first()
         )
         if restriction is not None and restriction.banned:
+            raise RefusalError(403)
+        if is_self and (
+            link.role == "moderator" or (restriction is not None and restriction.kicked)
+        ):
             raise RefusalError(403)
         redeemed = WorkspaceInviteRedemption.objects.filter(
             link=link, membership_id=membership.id
@@ -478,16 +589,17 @@ def redeem_link(
                 workspace=workspace, membership_id=membership.id, role=role
             )
         _audit(workspace, identity.id, "workspace.member.roles_updated", membership.id, request_id)
-    if link.role == "moderator":
+    if link.role == "moderator" and membership.id != link.created_by_id:
         WorkspaceModerator.objects.get_or_create(workspace=workspace, membership_id=membership.id)
     if link.channel_id is not None:
-        _grant_link_channel(workspace, link.channel_id, membership)
+        self_grant = _grant_link_channel(workspace, link.channel_id, membership)
         _audit(
             workspace,
             identity.id,
             "workspace.invite_link.channel_granted",
             link.channel_id,
             request_id,
+            metadata={"self_grant": True} if self_grant else None,
         )
     _audit(workspace, identity.id, "workspace.invite_link.redeemed", link.id, request_id)
     from apps.engine_intents.services import emit_member_set
@@ -531,14 +643,11 @@ def report(
     if not isinstance(event_id, str) or len(event_id) > 512 or not _storable_text(event_id):
         raise RefusalError(422)
     if channel_id is not None:
-        from .channel_access import may_view, resolve
+        from .channel_access import resolve
 
         channel = Channel.objects.filter(id=channel_id, workspace=workspace).first()
-        if channel is None or not may_view(
-            resolve(channel.id),
-            organisation_id=workspace.organisation_id,
-            membership_id=caller.membership_id,
-            authority_revision=caller.authority_revision,
+        if channel is None or not _member_view_allowed(
+            workspace, resolve(channel.id), caller.membership_id, caller.authority_revision
         ):
             raise RefusalError(404)
     row = WorkspaceAbuseReport.objects.create(
@@ -624,7 +733,7 @@ def projection(workspace_id: UUID) -> dict[str, Any]:
 @transaction.atomic
 def admit_redemption(*, verified: VerifiedAccessToken, code: str) -> None:
     link = _link(code, allow_exhausted=True)
-    person, identity = _identity(verified, link)
+    person, _identity_row = _identity(verified, link)
     member = for_user(organisation_id=link.workspace.organisation_id, user_id=person.id, lock=False)
     if member is not None and (member.state != "active" or member.accepted_at is None):
         raise RefusalError(403)
@@ -634,13 +743,16 @@ def admit_redemption(*, verified: VerifiedAccessToken, code: str) -> None:
     )
     if not redeemed and link.uses_count >= link.max_uses:
         raise RefusalError(404)
-    if member is None:
-        _verify_invite_auto_roles(link.workspace, link)
+    _verify_link_creator(link.workspace, link, check_auto_roles=member is None)
     if member is not None:
         restriction = WorkspaceMemberRestriction.objects.filter(
             workspace_id=link.workspace_id, membership_id=member.id
         ).first()
         if restriction is not None and restriction.banned:
+            raise RefusalError(403)
+        if member.id == link.created_by_id and (
+            link.role == "moderator" or (restriction is not None and restriction.kicked)
+        ):
             raise RefusalError(403)
         if restriction is not None and restriction.kicked and redeemed:
             raise RefusalError(403)
@@ -648,8 +760,8 @@ def admit_redemption(*, verified: VerifiedAccessToken, code: str) -> None:
 
 def _grant_link_channel(
     workspace: Workspace, channel_id: UUID, membership: WorkspaceMembership
-) -> None:
-    from .channel_access import VIEW, may_view, resolve
+) -> bool:
+    from .channel_access import VIEW, resolve
     from .models import ResourcePolicy, ResourcePolicyRule
 
     channel = Channel.objects.select_for_update().get(pk=channel_id, workspace=workspace)
@@ -660,12 +772,10 @@ def _grant_link_channel(
         or membership.id in access.deny_members
     ):
         raise RefusalError(403)
-    if not may_view(
-        access,
-        organisation_id=workspace.organisation_id,
-        membership_id=membership.id,
-        authority_revision=workspace.organisation.authority_revision,
-    ):
+    already_viewable = _member_view_allowed(
+        workspace, access, membership.id, workspace.organisation.authority_revision
+    )
+    if not already_viewable:
         if channel.policy_mode == Channel.PolicyMode.INHERIT:
             policy = ResourcePolicy.objects.create(
                 workspace=workspace, visibility=access.visibility
@@ -688,6 +798,13 @@ def _grant_link_channel(
         ResourcePolicyRule.objects.get_or_create(
             policy=policy, membership_id=membership.id, kind=ResourcePolicyRule.Kind.ALLOW_MEMBER
         )
+        if membership.role in ADMINS:
+            ChannelNotice.objects.bulk_create(
+                [ChannelNotice(channel_id=channel.id, membership_id=membership.id)],
+                ignore_conflicts=True,
+            )
+            return True
+    return False
 
 
 @transaction.atomic

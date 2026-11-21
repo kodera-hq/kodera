@@ -28,34 +28,52 @@ MEMBER_ERASED = "member_erased"
 CHANNEL_SET_REASON = "membership.changed"
 
 
-def clear_departed_workspace_roles(*, organisation_id: UUID, membership_id: UUID) -> None:
+def clear_departed_workspace_roles(
+    *, organisation_id: UUID, membership_id: UUID, clear_roles: bool = True
+) -> None:
     from django.apps import apps as django_apps
 
     if not django_apps.is_installed("apps.workspaces"):
         return
     from apps.workspaces import channel_sets
     from apps.workspaces.iam import clear_member_roles
+    from apps.workspaces.moderation import clear_member_moderation_authority
 
     workspace_id = channel_sets.lock_workspace(organisation_id)
     if workspace_id is not None:
-        clear_member_roles(workspace_id=workspace_id, membership_id=membership_id)
+        if clear_roles:
+            clear_member_roles(workspace_id=workspace_id, membership_id=membership_id)
+        clear_member_moderation_authority(
+            workspace_id=workspace_id, membership_id=membership_id, revoke_links=True
+        )
 
 
 def member_left(membership: Membership, *, reason: str) -> None:
     # Imported here: apps.engine_intents.services reads this app's selectors.
     from apps.engine_intents.services import emit_member_left
     from apps.workspaces import channel_sets
+    from apps.workspaces.iam import clear_member_roles
+    from apps.workspaces.moderation import clear_member_moderation_authority
 
     from .community import refresh_community_staff_grants
 
-    # The workspace row and the channel set's input before the heads, which the member set takes
-    # first (ESPACE_STRUCTURE.md §13.5); then the member set, then the channel set.
+    # The workspace row and role/moderator cleanup run before `channel_set_input`, and before the
+    # engine heads, which the member set takes first (ESPACE_STRUCTURE.md §13.5).
     refresh_community_staff_grants(membership.organisation_id)
-    prepared = channel_sets.prepare(membership.organisation_id)
-    if prepared is not None and reason == MEMBER_REMOVED:
-        from apps.workspaces.iam import clear_member_roles
-
-        clear_member_roles(workspace_id=prepared.workspace_id, membership_id=membership.id)
+    workspace_id = channel_sets.lock_workspace(membership.organisation_id)
+    prepared: channel_sets.Prepared | None = None
+    if workspace_id is not None:
+        if reason == MEMBER_REMOVED:
+            clear_member_roles(workspace_id=workspace_id, membership_id=membership.id)
+        if reason in {MEMBER_REMOVED, MEMBER_SUSPENDED}:
+            clear_member_moderation_authority(
+                workspace_id=workspace_id, membership_id=membership.id, revoke_links=True
+            )
+        prepared = channel_sets.Prepared(
+            membership.organisation_id,
+            workspace_id,
+            channel_sets.channel_set_input(workspace_id),
+        )
     emit_member_left(membership, reason=reason)
     channel_sets.emit_prepared(prepared, reason=CHANNEL_SET_REASON)
 
@@ -66,12 +84,21 @@ def member_erased(membership: Membership) -> None:
     this hook."""
     from apps.engine_intents.services import emit_member_left, mark_erased
     from apps.workspaces import channel_sets
+    from apps.workspaces.iam import clear_member_roles
+    from apps.workspaces.moderation import clear_member_moderation_authority
 
-    prepared = channel_sets.prepare(membership.organisation_id)
-    if prepared is not None:
-        from apps.workspaces.iam import clear_member_roles
-
-        clear_member_roles(workspace_id=prepared.workspace_id, membership_id=membership.id)
+    workspace_id = channel_sets.lock_workspace(membership.organisation_id)
+    prepared: channel_sets.Prepared | None = None
+    if workspace_id is not None:
+        clear_member_roles(workspace_id=workspace_id, membership_id=membership.id)
+        clear_member_moderation_authority(
+            workspace_id=workspace_id, membership_id=membership.id, revoke_links=True
+        )
+        prepared = channel_sets.Prepared(
+            membership.organisation_id,
+            workspace_id,
+            channel_sets.channel_set_input(workspace_id),
+        )
     mark_erased(organisation_id=membership.organisation_id, user_id=membership.user_id)
     emit_member_left(membership, reason=MEMBER_ERASED)
     channel_sets.emit_prepared(prepared, reason=CHANNEL_SET_REASON)

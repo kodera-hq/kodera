@@ -248,6 +248,17 @@ def change_membership(
                 role=role, state=state, updated_at=timezone.now()
             )
             _audit(caller, view, request_id, role=role, state=state)
+            if (
+                role is not None
+                and role != view.role
+                and view.role in ADMINISTERING_ROLES
+                and role not in ADMINISTERING_ROLES
+            ):
+                member_set_hooks.clear_departed_workspace_roles(
+                    organisation_id=view.organisation_id,
+                    membership_id=view.id,
+                    clear_roles=False,
+                )
             if state != view.state:
                 _enqueue_realm_access(view, ACCESS_OFF if state == SUSPENDED else ACCESS_ON)
                 if state == SUSPENDED:

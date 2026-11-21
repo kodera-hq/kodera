@@ -58,6 +58,7 @@ INSTALLED_APPS = [
     "apps.media",
     "apps.notifications",
     "apps.e2ee",
+    "core.idempotency",
 ]
 
 KODERA_LOOPBACK_ISSUERS = False

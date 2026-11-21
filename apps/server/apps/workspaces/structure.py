@@ -25,7 +25,15 @@ from apps.orgs.actor_selectors import (
 from services.identity.access_tokens import VerifiedAccessToken
 from services.workspace_policy.projection import evaluate
 
-from .models import Category, Channel, ResourcePolicy, ResourcePolicyRule, Workspace
+from .models import (
+    Category,
+    Channel,
+    ResourcePolicy,
+    ResourcePolicyRule,
+    Workspace,
+    WorkspaceChannelRoleOverride,
+    WorkspaceMemberRole,
+)
 from .setup import Setup, read_setup
 
 # AUTHZ.md §5, row Workspace: every tenant role reads its own organisation's structure, and
@@ -168,18 +176,48 @@ def _visible_structure(
     category_defaults = {row[0]: row[3] for row in categories}
     wanted = {default_policy_id, *category_defaults.values(), *(row[8] for row in channels)}
     policies = _policies(workspace_id, {pk for pk in wanted if pk is not None})
+    caller_roles = sorted(
+        {
+            str(role_id)
+            for role_id in WorkspaceMemberRole.objects.filter(
+                workspace_id=workspace_id, membership_id=caller.membership_id
+            ).values_list("role_id", flat=True)
+        }
+    )
+    overrides_by_channel: dict[UUID, list[tuple[str, tuple[str, ...], tuple[str, ...]]]] = {}
+    for override_channel_id, role_id, allow, deny in (
+        WorkspaceChannelRoleOverride.objects.filter(workspace_id=workspace_id)
+        .order_by("role_id")
+        .values_list("channel_id", "role_id", "allow", "deny")
+    ):
+        overrides_by_channel.setdefault(override_channel_id, []).append(
+            (str(role_id), tuple(allow), tuple(deny))
+        )
 
     def policy(pk: UUID | None) -> _Policy:
         if pk is None or pk not in policies:
             raise WorkspaceUnavailableError()
         return policies[pk]
 
-    def may_view(resolved: _Policy, kind: str, lifecycle: str) -> bool:
+    def may_view(
+        resolved: _Policy,
+        kind: str,
+        lifecycle: str,
+        channel_overrides: list[tuple[str, tuple[str, ...], tuple[str, ...]]] | None = None,
+    ) -> bool:
         # An archived channel, an audio room included, is shown as archived to whoever its access
         # admits: visibility is a question of access, and the lifecycle is reported, not
         # evaluated (ESPACE_STRUCTURE.md §§3, 5). Any other lifecycle stays unavailable.
         evaluated = "active" if lifecycle == "archived" else lifecycle
-        return _allowed(caller, owner, resolved, kind=kind, lifecycle=evaluated)
+        return _allowed(
+            caller,
+            owner,
+            resolved,
+            kind=kind,
+            lifecycle=evaluated,
+            role_ids=caller_roles,
+            channel_overrides=channel_overrides or [],
+        )
 
     visible: dict[UUID | None, list[ChannelView]] = {}
     for pk, category_id, kind, name, key, topic, lifecycle, mode, explicit, room in channels:
@@ -192,7 +230,7 @@ def _visible_structure(
             resolved = policy(inherited if inherited is not None else default_policy_id)
         else:
             raise WorkspaceUnavailableError()
-        if may_view(resolved, kind, lifecycle):
+        if may_view(resolved, kind, lifecycle, overrides_by_channel.get(pk)):
             visible.setdefault(category_id, []).append(
                 ChannelView(pk, kind, name, key, topic, lifecycle, room)
             )
@@ -237,8 +275,32 @@ def _policies(workspace_id: UUID, ids: set[UUID]) -> dict[UUID, _Policy]:
 
 
 def _allowed(
-    caller: TenantCaller, owner: UUID, policy: _Policy, *, kind: str, lifecycle: str
+    caller: TenantCaller,
+    owner: UUID,
+    policy: _Policy,
+    *,
+    kind: str,
+    lifecycle: str,
+    role_ids: list[str],
+    channel_overrides: list[tuple[str, tuple[str, ...], tuple[str, ...]]],
 ) -> bool:
+    assigned = role_ids
+    assigned_set = set(assigned)
+    allow_roles: list[str] = []
+    deny_roles: list[str] = []
+    override_allow: set[str] = set()
+    override_deny: set[str] = set()
+    for role_id_str, allow, deny in channel_overrides:
+        if VIEW in allow:
+            allow_roles.append(role_id_str)
+        if VIEW in deny:
+            deny_roles.append(role_id_str)
+        if role_id_str in assigned_set:
+            if VIEW in allow:
+                override_allow.add(VIEW)
+            if VIEW in deny:
+                override_deny.add(VIEW)
+    effective_denied = (set(policy.denied) - override_allow) | override_deny
     decision = evaluate(
         {
             "actor_org": str(caller.organisation_id),
@@ -253,16 +315,16 @@ def _allowed(
             "projected_policy_revision": policy.revision,
             "projection_state": "ready",
             "eligible": [VIEW],
-            "denied": list(policy.denied),
+            "denied": sorted(effective_denied),
             "action": VIEW,
             "kind": kind,
             "lifecycle": lifecycle,
             "visibility": policy.visibility,
-            "role_ids": [],
+            "role_ids": assigned,
             "allow_members": list(policy.allow_members),
-            "allow_roles": [],
+            "allow_roles": sorted(set(allow_roles)),
             "deny_members": list(policy.deny_members),
-            "deny_roles": [],
+            "deny_roles": sorted(set(deny_roles)),
             "dm_members": [],
         }
     )

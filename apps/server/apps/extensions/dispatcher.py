@@ -187,13 +187,13 @@ def _record_delivery_outcome(row: Delivery, lease: UUID, result: str, status: in
 
 def dispatch_claim(job: Claim, secrets: Secrets | None) -> None:
     # Step 1: Verify authority, revocation and privacy cutoffs in canonical
-    # User -> Organisation -> Workspace -> Installation -> Membership -> Identity -> Delivery
+    # org_advisory -> account_advisory -> m -> i -> u -> o -> w -> installation -> delivery
     # lock order, and release ALL database locks BEFORE performing external HTTP I/O.
     prepared: tuple[str, object, str] | None = None
     with transaction.atomic():
         meta = (
             Installation.objects.filter(id=job.installation_id, workspace_id=job.workspace_id)
-            .values_list("workspace__organisation_id", "creator__user_id")
+            .values_list("workspace__organisation_id", "creator_id", "creator__user_id")
             .first()
         )
         if meta is None:
@@ -206,22 +206,27 @@ def dispatch_claim(job: Claim, secrets: Secrets | None) -> None:
                 _record_delivery_outcome(row, job.lease, "obsolete", None)
             return
 
-        organisation_id, creator_user_id = meta
-        user_exists = identities.lock_user(user_id=creator_user_id)
-        org_exists = organisations.lock_organisation(organisation_id=organisation_id)
-        ws_exists = workspaces.lock_workspace_if_present(workspace_id=job.workspace_id)
-        installation = (
-            Installation.objects.select_for_update().filter(id=job.installation_id).first()
+        organisation_id, creator_id, creator_user_id = meta
+        organisations.lock_erasure_cutoff_fences(
+            organisation_id=organisation_id, user_id=creator_user_id
         )
-        member_user_id = (
-            organisations.lock_membership_only(membership_id=installation.creator_id)
-            if installation is not None
-            else None
-        )
-        if user_exists and org_exists and member_user_id is not None:
+        member_user_id = organisations.lock_membership_fence_if_present(membership_id=creator_id)
+        if member_user_id is not None:
             identities.lock_delivery_identities(
                 user_id=member_user_id, organisation_id=organisation_id
             )
+            user_exists = identities.lock_user_fence_if_present(user_id=member_user_id)
+        else:
+            user_exists = False
+        org_exists = organisations.lock_organisation(organisation_id=organisation_id)
+        ws_exists = (
+            workspaces.lock_workspace_if_present(workspace_id=job.workspace_id)
+            if org_exists
+            else False
+        )
+        installation = (
+            Installation.objects.select_for_update().filter(id=job.installation_id).first()
+        )
         row = (
             Delivery.objects.select_for_update()
             .filter(id=job.delivery_id, state="in_flight", lease_id=job.lease)

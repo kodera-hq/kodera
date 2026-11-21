@@ -6,6 +6,7 @@ import { TicketRefused } from './tickets.mjs'
 import { titleKey } from './title-key.mjs'
 
 export class Unavailable extends Error { constructor(cause = undefined) { super('collaboration storage unavailable', {cause}) } }
+export class LockBusy extends Unavailable { constructor(cause = undefined) { super(cause); this.name = 'LockBusy' } }
 export class QuotaRefused extends Refused { constructor() { super('workspace snapshot quota exceeded'); this.name = 'QuotaRefused' } }
 export function uuid7() {
   const value = randomBytes(16)
@@ -43,13 +44,14 @@ export class Store {
       return result
     } catch (error) {
       try { await client.query('ROLLBACK') } catch { discard = true }
-      if (error.constraint === 'workspace_quota_exceeded') throw new QuotaRefused()
-      throw error instanceof TicketRefused || error instanceof Refused ? error : new Unavailable(error)
+      if (error?.constraint === 'workspace_quota_exceeded') throw new QuotaRefused()
+      const lockBusy = error && typeof error === 'object' && ['55P03', '57014', '40P01'].includes(error.code)
+      throw error instanceof TicketRefused || error instanceof Refused ? error : lockBusy ? new LockBusy(error) : new Unavailable(error)
     } finally { client.release(discard) }
   }
   async binary(client, document) {
     const snapshot = await client.query(`SELECT s.state,s.sequence,s.head_sequence,d.revision FROM docs_documentsnapshot s
-      JOIN docs_document d ON d.id=s.document_id WHERE d.id=$1 FOR UPDATE OF d,s`, [document])
+      JOIN docs_document d ON d.id=s.document_id WHERE d.id=$1 FOR NO KEY UPDATE OF d,s`, [document])
     if (snapshot.rowCount !== 1) throw new Unavailable()
     const row = snapshot.rows[0], base = number(row.sequence), head = number(row.head_sequence)
     if (head < base || head - base > 256 || !Buffer.isBuffer(row.state) || row.state.length > 2 * 1024 * 1024) throw new Unavailable()

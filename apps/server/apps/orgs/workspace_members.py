@@ -29,19 +29,27 @@ def _snapshot(row: Membership) -> WorkspaceMembership:
 def for_workspace(
     *, organisation_id: UUID, membership_id: UUID, lock: bool = True
 ) -> WorkspaceMembership | None:
-    """Read or lock one current target membership in the caller's transaction."""
+    """Read or hold a shared fence on one current target membership in the caller's transaction."""
     if not connection.in_atomic_block:
         raise RuntimeError("workspace membership is read in its operation transaction")
-    rows = Membership.objects.filter(
+    if lock:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT id FROM orgs_membership"
+                " WHERE id = %s AND organisation_id = %s"
+                " AND deleted_at IS NULL AND state = 'active' AND accepted_at IS NOT NULL"
+                " FOR SHARE",
+                [membership_id, organisation_id],
+            )
+            if cursor.fetchone() is None:
+                return None
+    row = Membership.objects.filter(
         id=membership_id,
         organisation_id=organisation_id,
         deleted_at__isnull=True,
         state="active",
         accepted_at__isnull=False,
-    )
-    if lock:
-        rows = rows.select_for_update(no_key=True)
-    row = rows.first()
+    ).first()
     return _snapshot(row) if row is not None else None
 
 
@@ -51,12 +59,23 @@ def for_user(
     """Include inactive memberships so an invitation cannot silently recreate or replay one."""
     if not connection.in_atomic_block:
         raise RuntimeError("workspace membership is read in its operation transaction")
-    rows = Membership.objects.filter(
-        organisation_id=organisation_id, user_id=user_id, deleted_at__isnull=True
-    )
     if lock:
-        rows = rows.select_for_update(no_key=True)
-    row = rows.first()
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT id FROM orgs_membership"
+                " WHERE organisation_id = %s AND user_id = %s AND deleted_at IS NULL"
+                " ORDER BY id FOR SHARE",
+                [organisation_id, user_id],
+            )
+            if cursor.fetchone() is None:
+                return None
+    row = (
+        Membership.objects.filter(
+            organisation_id=organisation_id, user_id=user_id, deleted_at__isnull=True
+        )
+        .order_by("id")
+        .first()
+    )
     return _snapshot(row) if row is not None else None
 
 

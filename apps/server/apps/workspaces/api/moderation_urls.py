@@ -14,6 +14,7 @@ urlpatterns = [
     path(ROOT + "bans", iam.bans),
     path(ROOT + "audit-logs", iam.audit_logs),
     path(ROOT + "moderation", views.moderation),
+    path(ROOT + "moderators/<uuid:membership_id>", views.moderator_detail),
     path(ROOT + "reports", views.reports),
     path(ROOT + "reports/<uuid:report_id>", views.report_detail),
     path(ROOT + "invite-links", views.links),

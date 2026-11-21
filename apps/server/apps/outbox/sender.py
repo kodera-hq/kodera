@@ -12,6 +12,7 @@ subject, the body, the link or its secret.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -28,7 +29,7 @@ from typing import Any
 from uuid import UUID
 
 from django.conf import settings
-from django.db import connection, transaction
+from django.db import IntegrityError, connection, transaction
 
 from apps.audit.services import record_delivery_event
 from core.db.ids import new_uuid7
@@ -156,6 +157,7 @@ def enqueue_message(
     link: str | None = None,
     link_secret: str | None = None,
     reply_to: str | None = None,
+    invitation_id: UUID | None = None,
 ) -> UUID:
     """A pending `message` delivery and its sealed message, in the caller's transaction (§3).
 
@@ -206,6 +208,32 @@ def enqueue_message(
             "expires_at) VALUES (%s, %s, %s, %s::jsonb, %s, %s, %s)",
             [delivery_id, template_id, locale, json.dumps(params), link, sealed, expires_at],
         )
+        if template_id in {"invitation", "invitation_account_ready"}:
+            cursor.execute("SELECT to_regclass('public.orgs_invitationoutboxbinding') IS NOT NULL")
+            if cursor.fetchone()[0]:
+                normalized_email = recipient.strip().lower()
+                recipient_sha256 = hashlib.sha256(normalized_email.encode("utf-8")).hexdigest()
+                if invitation_id is not None:
+                    bound_inv_id = invitation_id
+                else:
+                    cursor.execute(
+                        "SELECT id FROM orgs_invitation "
+                        "WHERE organisation_id = %s AND lower(btrim(email)) = %s "
+                        "ORDER BY created_at DESC, id DESC LIMIT 1",
+                        [organisation_id, normalized_email],
+                    )
+                    inv_row = cursor.fetchone()
+                    bound_inv_id = (
+                        inv_row[0]
+                        if inv_row is not None
+                        else UUID("00000000-0000-0000-0000-000000000000")
+                    )
+                cursor.execute(
+                    "INSERT INTO orgs_invitationoutboxbinding "
+                    "(delivery_id, invitation_id, organisation_id, recipient_email_sha256, created_at) "
+                    "VALUES (%s, %s, %s, %s, clock_timestamp())",
+                    [delivery_id, bound_inv_id, organisation_id, recipient_sha256],
+                )
     logger.info("message enqueued: delivery %s template %s", delivery_id, template_id)
     return delivery_id
 
@@ -432,6 +460,7 @@ def sweep(report: RunReport) -> None:
         abandon_stale_attempts(report)
         fail_expired(report)
         _execute(_ERASE_ENDED)
+        backfill_legacy_invitation_bindings()
 
 
 # -------------------------------------------------------------------------------- claim ----
@@ -480,9 +509,12 @@ def withdrawn(template_id: str, delivery_id: UUID) -> bool:
             return True
         bound_user_id, bound_org_id = binding_rows[0]
         _rows(
-            "SELECT pg_advisory_xact_lock_shared(hashtextextended('privacy_account_cutoff:' || %s, 0)),"
-            " pg_advisory_xact_lock_shared(hashtextextended('privacy_erasure_cutoff:' || %s, 0))",
-            [str(bound_user_id), str(bound_org_id)],
+            "SELECT pg_advisory_xact_lock_shared(hashtextextended('privacy_erasure_cutoff:' || %s, 0))",
+            [str(bound_org_id)],
+        )
+        _rows(
+            "SELECT pg_advisory_xact_lock_shared(hashtextextended('privacy_account_cutoff:' || %s, 0))",
+            [str(bound_user_id)],
         )
         active = _rows(
             "SELECT 1 FROM identity_user u"
@@ -498,11 +530,169 @@ def withdrawn(template_id: str, delivery_id: UUID) -> bool:
             [bound_org_id, delivery_id, bound_user_id],
         )
         return not bool(active)
+    if template_id in {"invitation", "invitation_account_ready"}:
+        has_binding = _rows("SELECT to_regclass('public.orgs_invitationoutboxbinding') IS NOT NULL")
+        if not has_binding or not has_binding[0][0]:
+            return False
+        binding_rows = _rows(
+            "SELECT invitation_id, organisation_id, recipient_email_sha256 "
+            "FROM orgs_invitationoutboxbinding WHERE delivery_id = %s FOR SHARE",
+            [delivery_id],
+        )
+        if not binding_rows:
+            legacy = resolve_legacy_invitation_binding(delivery_id)
+            if legacy is None:
+                return True
+            bound_inv_id, bound_org_id, recipient_sha = legacy
+        else:
+            bound_inv_id, bound_org_id, recipient_sha = binding_rows[0]
+        _rows(
+            "SELECT pg_advisory_xact_lock_shared(hashtextextended('privacy_erasure_cutoff:' || %s, 0))",
+            [str(bound_org_id)],
+        )
+        matched_users = _rows(
+            "SELECT DISTINCT u_id FROM ("
+            "  SELECT u.id AS u_id FROM identity_user u "
+            "  WHERE encode(sha256(convert_to(lower(btrim(u.email)), 'UTF8')), 'hex') = %s "
+            "  UNION "
+            "  SELECT i.user_id AS u_id FROM identity_identity i "
+            "  WHERE encode(sha256(convert_to(lower(btrim(i.email)), 'UTF8')), 'hex') = %s"
+            ") p ORDER BY u_id",
+            [recipient_sha, recipient_sha],
+        )
+        for (uid,) in matched_users:
+            _rows(
+                "SELECT pg_advisory_xact_lock_shared(hashtextextended('privacy_account_cutoff:' || %s, 0))",
+                [str(uid)],
+            )
+        erased = _rows(
+            "SELECT 1 WHERE EXISTS ("
+            "  SELECT 1 FROM orgs_privacyerasure WHERE organisation_reference = %s"
+            ") OR NOT EXISTS ("
+            "  SELECT 1 FROM orgs_organisation WHERE id = %s AND state = 'active' AND deleted_at IS NULL"
+            ") OR EXISTS ("
+            "  SELECT 1 FROM orgs_accounterasure ae "
+            "  WHERE ae.user_reference = ANY(%s::uuid[]) "
+            "     OR COALESCE(ae.inventory->'person_email_sha256s', '[]'::jsonb) ? %s "
+            "     OR COALESCE(ae.inventory->'passport_email_sha256s', '[]'::jsonb) ? %s "
+            "     OR COALESCE(ae.inventory->'invitation_delivery_ids', '[]'::jsonb) ? %s"
+            ")",
+            [
+                bound_org_id,
+                bound_org_id,
+                [str(r[0]) for r in matched_users],
+                recipient_sha,
+                recipient_sha,
+                str(delivery_id),
+            ],
+        )
+        if erased:
+            return True
+        sentinel_zero = UUID("00000000-0000-0000-0000-000000000000")
+        if bound_inv_id != sentinel_zero:
+            inv_ok = _rows(
+                "SELECT 1 FROM orgs_invitation "
+                "WHERE id = %s AND state = 'pending' AND expires_at > clock_timestamp() "
+                "  AND email NOT LIKE 'erased+%%@invalid.test' FOR SHARE",
+                [bound_inv_id],
+            )
+            if not inv_ok:
+                return True
+        return False
     statement = _WITHDRAWN.get(template_id)
     if statement is None:
         return False
     rows = _rows(statement, [delivery_id])
     return bool(rows) and rows[0][0] == "cancelled"
+
+
+def resolve_legacy_invitation_binding(delivery_id: UUID) -> tuple[UUID, UUID, str] | None:
+    """Backfill pre-upgrade `invitation` / `invitation_account_ready` deliveries by unsealing their
+    payload and matching an authoritative `orgs_invitation` row in the same organisation."""
+    key = seal_key()
+    if key is None:
+        return None
+    msg_rows = _rows(
+        "SELECT d.organisation_id, m.sealed "
+        "FROM outbox_outboxdelivery d "
+        "JOIN outbox_message m ON m.delivery_id = d.id "
+        "WHERE d.id = %s AND m.template_id IN ('invitation', 'invitation_account_ready')",
+        [delivery_id],
+    )
+    if not msg_rows or msg_rows[0][1] is None:
+        return None
+    org_id: UUID = msg_rows[0][0]
+    raw_sealed = bytes(msg_rows[0][1])
+    try:
+        opened = seal.unseal(key, delivery_id, raw_sealed)
+    except seal.SealError:
+        return None
+    normalized_email = opened.recipient.strip().lower()
+    recipient_sha = hashlib.sha256(normalized_email.encode("utf-8")).hexdigest()
+    inv_id: UUID | None = None
+    if (
+        opened.secret.startswith(("inv1_", "kinv_"))
+        and len(opened.secret) >= 42
+        and opened.secret[41] == "_"
+    ):
+        try:
+            candidate_id = UUID(opened.secret[5:41])
+        except ValueError:
+            candidate_id = None
+        if candidate_id is not None:
+            found_by_id = _rows(
+                "SELECT id FROM orgs_invitation WHERE id = %s AND organisation_id = %s",
+                [candidate_id, org_id],
+            )
+            if found_by_id:
+                inv_id = found_by_id[0][0]
+    if inv_id is None:
+        found_by_email = _rows(
+            "SELECT id FROM orgs_invitation "
+            "WHERE organisation_id = %s AND lower(btrim(email)) = %s "
+            "ORDER BY (state = 'pending') DESC, created_at DESC, id DESC LIMIT 1",
+            [org_id, normalized_email],
+        )
+        if found_by_email:
+            inv_id = found_by_email[0][0]
+    if inv_id is None:
+        return None
+    try:
+        with transaction.atomic():
+            _execute(
+                "INSERT INTO orgs_invitationoutboxbinding "
+                "(delivery_id, invitation_id, organisation_id, recipient_email_sha256, created_at) "
+                "VALUES (%s, %s, %s, %s, clock_timestamp()) "
+                "ON CONFLICT (delivery_id) DO NOTHING",
+                [delivery_id, inv_id, org_id, recipient_sha],
+            )
+    except IntegrityError:
+        pass
+    return inv_id, org_id, recipient_sha
+
+
+def backfill_legacy_invitation_bindings() -> int:
+    """Populate `orgs_invitationoutboxbinding` for pre-upgrade sealed invitation deliveries."""
+    has_binding = _rows("SELECT to_regclass('public.orgs_invitationoutboxbinding') IS NOT NULL")
+    if not has_binding or not has_binding[0][0] or seal_key() is None:
+        return 0
+    unbound = _rows(
+        "SELECT d.id "
+        "FROM outbox_outboxdelivery d "
+        "JOIN outbox_message m ON m.delivery_id = d.id "
+        "WHERE m.template_id IN ('invitation', 'invitation_account_ready') "
+        "  AND d.status = 'pending' "
+        "  AND m.sealed IS NOT NULL "
+        "  AND NOT EXISTS ("
+        "      SELECT 1 FROM orgs_invitationoutboxbinding ib WHERE ib.delivery_id = d.id"
+        "  ) "
+        "ORDER BY d.id"
+    )
+    resolved_count = 0
+    for (delivery_id,) in unbound:
+        if resolve_legacy_invitation_binding(delivery_id) is not None:
+            resolved_count += 1
+    return resolved_count
 
 
 def already_attempted(attempted: frozenset[UUID]) -> list[UUID]:
@@ -768,7 +958,16 @@ def _held_count(transport: MailTransport) -> int:
 
 
 def send_claimed(transport: MailTransport, claimed: Claimed) -> SendResult:
-    """Digest consent is a send-time fence; other mail keeps its existing transport path."""
+    """Digest consent and personal-mail erasure cutoffs are send-time fences."""
+    if claimed.template_id in {"passport_magic_link", "invitation", "invitation_account_ready"}:
+        with transaction.atomic():
+            if withdrawn(claimed.template_id, claimed.delivery_id):
+                return SendResult(
+                    outcome="permanent",
+                    smtp_code=None,
+                    error_class="PrivacyErasureWithdrawn",
+                )
+        return smtp.send(transport, recipient=claimed.recipient, message=claimed.message)
     if claimed.template_id != "workspace_digest":
         return smtp.send(transport, recipient=claimed.recipient, message=claimed.message)
     from django.apps import apps

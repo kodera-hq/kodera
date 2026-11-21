@@ -22,8 +22,9 @@ else:
         from django.core.exceptions import ImproperlyConfigured
     except ModuleNotFoundError:  # pragma: no cover - stdlib-only media-worker preflight
 
-        class ImproperlyConfigured(Exception):
+        class ImproperlyConfigured(Exception):  # noqa: N818 - matches Django's exception name
             pass
+
 
 if TYPE_CHECKING:
     from services.identity.trusted_issuers import TrustedIssuer

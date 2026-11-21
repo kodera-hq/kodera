@@ -386,17 +386,12 @@ def require_known_customer(*, verified: VerifiedAccessToken) -> None:
 
 def _is_workspace_restricted(membership_id: UUID) -> bool:
     from django.apps import apps as django_apps
-    from django.db.models import Q
 
     if not django_apps.is_installed("apps.workspaces"):
         return False
-    from apps.workspaces.models import WorkspaceMemberRestriction
+    from apps.workspaces.selectors import is_workspace_membership_restricted
 
-    return (
-        WorkspaceMemberRestriction.objects.filter(membership_id=membership_id)
-        .filter(Q(banned=True) | Q(kicked=True))
-        .exists()
-    )
+    return is_workspace_membership_restricted(membership_id=membership_id)
 
 
 def _suspended_or_removed_caller(
@@ -511,21 +506,12 @@ def reverify_caller_in_tx(
                 f"urn:kodera:organisation:{organisation_id}",
             ) from None
     else:
-        from apps.identity.models import Identity
+        from apps.identity.selectors import current_identity_by_id
 
-        ident = (
-            Identity.objects.select_related("user")
-            .filter(
-                id=caller.identity_id,
-                enabled=True,
-                deleted_at__isnull=True,
-                user__enabled=True,
-                user__deleted_at__isnull=True,
-            )
-            .first()
-        )
-        if ident is None:
+        resolved_caller = current_identity_by_id(identity_id=caller.identity_id)
+        if resolved_caller is None:
             raise InvitationCallerUnknownError()
+        person, ident = resolved_caller
         org_row = (
             Organisation.objects.filter(id=organisation_id, deleted_at__isnull=True)
             .values_list("state", "authority_revision", "issuer")
@@ -534,7 +520,7 @@ def reverify_caller_in_tx(
         if org_row is None or ident.organisation_id != organisation_id:
             raise InvitationNotFoundError()
         mem = Membership.objects.filter(
-            user_id=ident.user_id,
+            user_id=person.id,
             organisation_id=organisation_id,
             state="active",
             accepted_at__isnull=False,

@@ -121,20 +121,30 @@ def enqueue_digest(*, consent_id: UUID, period_start: datetime, period_end: date
         or period_end - period_start > timedelta(days=7)
     ):
         raise ExtensionRefusedError("digest_period_invalid")
-    # Canonical User -> Organisation -> Workspace -> Consent lock order prevents deadlocks
-    # against concurrent account erasure and workspace moderation mutations.
+    # Canonical org_advisory -> account_advisory -> m -> u -> o -> w -> consent lock order prevents
+    # deadlocks against concurrent org/account erasure, collab, and workspace moderation mutations.
     meta = (
         DigestConsent.objects.filter(id=consent_id)
-        .values_list("membership__user_id", "membership__organisation_id")
+        .values_list("membership_id", "membership__user_id", "membership__organisation_id")
         .first()
     )
     if meta is None:
         raise ExtensionRefusedError("digest_consent_not_current", 403)
-    user_id, organisation_id = meta
-    user_exists = identities.lock_user(user_id=user_id)
+    membership_id, user_id, organisation_id = meta
+    organisations.lock_erasure_cutoff_fences(organisation_id=organisation_id, user_id=user_id)
+    member_user = organisations.lock_membership_fence_if_present(membership_id=membership_id)
+    user_exists = (
+        identities.lock_user_fence_if_present(user_id=member_user)
+        if member_user is not None
+        else False
+    )
     org_exists = organisations.lock_organisation(organisation_id=organisation_id)
-    ws_id = workspaces.lock_organisation_workspace_if_present(organisation_id=organisation_id)
-    if not (user_exists and org_exists and ws_id is not None):
+    ws_id = (
+        workspaces.lock_organisation_workspace_if_present(organisation_id=organisation_id)
+        if org_exists
+        else None
+    )
+    if not (member_user is not None and user_exists and org_exists and ws_id is not None):
         raise ExtensionRefusedError("digest_consent_not_current", 403)
     row = DigestConsent.objects.select_for_update().filter(id=consent_id).first()
     if row is None:
@@ -200,6 +210,7 @@ def _authorize_digest_send(delivery_id: UUID, recipient: str) -> bool:
             .values(
                 "consent__membership__user_id",
                 "consent__membership__organisation_id",
+                "consent__membership__user_id",
                 "consent__membership_id",
                 "consent__identity_id",
                 "consent_id",
@@ -210,18 +221,23 @@ def _authorize_digest_send(delivery_id: UUID, recipient: str) -> bool:
             return False
         user_id = record["consent__membership__user_id"]
         org_id = record["consent__membership__organisation_id"]
-        user_exists = identities.lock_user(user_id=user_id)
+        organisations.lock_erasure_cutoff_fences(organisation_id=org_id, user_id=user_id)
+        member_user = organisations.lock_membership_fence_if_present(
+            membership_id=record["consent__membership_id"]
+        )
+        identity_exists = identities.lock_delivery_identity_if_present(
+            identity_id=record["consent__identity_id"]
+        )
+        user_exists = (
+            identities.lock_user_fence_if_present(user_id=member_user)
+            if member_user is not None
+            else False
+        )
         org_exists = organisations.lock_organisation(organisation_id=org_id)
         workspace_id = (
             workspaces.lock_organisation_workspace_if_present(organisation_id=org_id)
             if org_exists
             else None
-        )
-        member_user = organisations.lock_membership_only(
-            membership_id=record["consent__membership_id"]
-        )
-        identity_exists = identities.lock_delivery_identity_if_present(
-            identity_id=record["consent__identity_id"]
         )
         consent = DigestConsent.objects.select_for_update().filter(id=record["consent_id"]).first()
         job = DigestJob.objects.select_for_update().filter(delivery_id=delivery_id).first()
@@ -229,21 +245,21 @@ def _authorize_digest_send(delivery_id: UUID, recipient: str) -> bool:
             return False
 
         if (
-            not user_exists
+            member_user is None
+            or not identity_exists
+            or not user_exists
             or not org_exists
             or workspace_id is None
-            or member_user is None
-            or not identity_exists
             or consent is None
         ):
             if job.state != "obsolete":
                 job.state = "obsolete"
                 job.save(update_fields=["state", "updated_at"])
             return False
-
         authority = current(consent)
         allowed = (
             authority is not None
+            and consent.identity_id == record["consent__identity_id"]
             and job.state == "enqueued"
             and job.consent_version == consent.version
         )
