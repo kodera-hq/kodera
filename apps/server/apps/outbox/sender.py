@@ -569,7 +569,7 @@ def withdrawn(template_id: str, delivery_id: UUID) -> bool:
             "SELECT 1 WHERE EXISTS ("
             "  SELECT 1 FROM orgs_privacyerasure WHERE organisation_reference = %s"
             ") OR NOT EXISTS ("
-            "  SELECT 1 FROM orgs_organisation WHERE id = %s AND state = 'active' AND deleted_at IS NULL"
+            "  SELECT 1 FROM orgs_organisation WHERE id = %s AND state <> 'closed' AND deleted_at IS NULL"
             ") OR EXISTS ("
             "  SELECT 1 FROM orgs_accounterasure ae "
             "  WHERE ae.user_reference = ANY(%s::uuid[]) "

@@ -148,7 +148,7 @@ BEGIN
     );
     IF NOT EXISTS (
         SELECT 1 FROM public.orgs_organisation o
-        WHERE o.id = NEW.organisation_id AND o.state = 'active' AND o.deleted_at IS NULL
+        WHERE o.id = NEW.organisation_id AND o.state <> 'closed' AND o.deleted_at IS NULL
     ) OR EXISTS (
         SELECT 1 FROM public.orgs_privacyerasure pe
         WHERE pe.organisation_reference = NEW.organisation_id

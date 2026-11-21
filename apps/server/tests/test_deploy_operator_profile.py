@@ -35,6 +35,7 @@ APPS = [
 ]
 COMMANDS = [
     "purge_idempotency",
+    "purge_expired_uploads",
     "erase_core_workspace",
     "manage_statutory_retention",
     "dispatch_push",
