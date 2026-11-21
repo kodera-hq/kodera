@@ -826,6 +826,7 @@ def record_workspace_resource_event(
     target_id: UUID,
     actor_id: UUID,
     request_id: str,
+    metadata: Mapping[str, object] | None = None,
 ) -> None:
     """Append a workspace resource action with identifiers only, in its caller's transaction."""
     import re
@@ -836,6 +837,9 @@ def record_workspace_resource_event(
         or re.fullmatch(r"workspace(?:\.[a-z][a-z0-9_]*){1,3}", action) is None
     ):
         raise ValueError("a workspace resource event needs a bounded workspace action")
+    payload = dict(metadata or {})
+    if STRUCTURE_FORBIDDEN_METADATA & set(payload):
+        raise ValueError("a workspace resource event carries no name, topic or contact")
     AuditEvent.objects.create(
         action=action,
         actor_type="tenant",
@@ -845,7 +849,7 @@ def record_workspace_resource_event(
         target_urn=f"urn:kodera:workspace-resource:{target_id}",
         request_id=request_id,
         retention_class="standard",
-        metadata={},
+        metadata=payload,
     )
     if action in {
         "workspace.member.kick",

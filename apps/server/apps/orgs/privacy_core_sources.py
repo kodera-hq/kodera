@@ -15,7 +15,7 @@ from apps.docs import privacy_selectors as docs_privacy
 from apps.identity import privacy_selectors as identity_privacy
 from apps.workspaces import privacy_selectors as workspace_privacy
 
-from .models import Membership
+from .models import Membership, Organisation
 from .privacy_archives import (
     MAX_ARCHIVE_BYTES,
     MAX_ENTRIES,
@@ -133,22 +133,35 @@ class CoreSources:
 
     @staticmethod
     def _workspace_ids(request: Request) -> tuple[UUID, ...]:
-        organisations = (
-            (_organisation(request),)
-            if request.scope == "workspace"
-            else tuple(
+        organisations: tuple[UUID, ...]
+        if request.scope == "workspace":
+            organisations = (_organisation(request),)
+        else:
+            candidate_orgs = tuple(
                 Membership.objects.filter(
                     user_id=request.user_id,
                     state="active",
                     accepted_at__isnull=False,
                     deleted_at__isnull=True,
+                    organisation__state="active",
+                    organisation__deleted_at__isnull=True,
                 ).values_list("organisation_id", flat=True)[: MAX_ENTRIES + 1]
             )
-        )
+            require(len(candidate_orgs) <= MAX_ENTRIES, "Core export organisation binding bound")
+            organisations = tuple(
+                org_id
+                for org_id in candidate_orgs
+                if identity_privacy.disclosure_identity(
+                    user_id=request.user_id, organisation_id=org_id
+                )
+                is not None
+            )
         require(len(organisations) <= MAX_ENTRIES, "Core export organisation binding bound")
         try:
             return workspace_privacy.export_workspace_ids(
-                organisation_ids=organisations, max_entries=MAX_ENTRIES
+                organisation_ids=organisations,
+                max_entries=MAX_ENTRIES,
+                user_id=request.user_id,
             )
         except workspace_privacy.PrivacyWorkspaceRefusalError as error:
             raise ArchiveRefusalError(str(error)) from None
@@ -197,6 +210,46 @@ class CoreSources:
             subject=subject,
         )
 
+    @staticmethod
+    def _collection_allowed(request: Request, identifier: UUID) -> bool:
+        row = docs_privacy.collection_disclosure_context(identifier=identifier)
+        if row is None:
+            return False
+        org, workspace_id, creator_user = row
+        if (
+            request.scope == "workspace"
+            and str(org) != request.organisation_id
+            or request.scope == "account"
+            and str(creator_user) != request.user_id
+        ):
+            return False
+        if not Organisation.objects.filter(
+            id=org, state="active", deleted_at__isnull=True
+        ).exists():
+            return False
+        identity = identity_privacy.disclosure_identity(
+            user_id=request.user_id, organisation_id=org
+        )
+        member = Membership.objects.filter(
+            user_id=request.user_id,
+            organisation_id=org,
+            state="active",
+            accepted_at__isnull=False,
+            deleted_at__isnull=True,
+        ).first()
+        if identity is None or member is None:
+            return False
+        if workspace_privacy.workspace_member_restricted(
+            workspace_id=workspace_id, membership_id=member.id
+        ):
+            return False
+        return docs_privacy.collection_export_permitted(
+            identifier=identifier,
+            scope=request.scope,
+            user_id=request.user_id,
+            workspace_ids=(workspace_id,),
+        )
+
     @transaction.atomic
     def permitted(self, request: Request, resource: str) -> bool:
         if not CurrentAuthority().authorize(request):
@@ -220,12 +273,7 @@ class CoreSources:
         if kind == "document":
             return self._document_allowed(request, identifier)
         if kind == "collection":
-            return docs_privacy.collection_export_permitted(
-                identifier=identifier,
-                scope=request.scope,
-                user_id=request.user_id,
-                workspace_ids=self._workspace_ids(request),
-            )
+            return self._collection_allowed(request, identifier)
         if kind in {"order", "invoice", "credit_note"}:
             return billing_privacy.export_record_permitted(
                 kind=kind,
@@ -284,6 +332,7 @@ class CoreSources:
                     user_id=request.user_id,
                     workspace_ids=workspace_ids,
                     permitted=allowed,
+                    collection_permitted=partial(self._collection_allowed, request),
                 )
             )
             try:

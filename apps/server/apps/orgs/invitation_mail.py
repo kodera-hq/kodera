@@ -14,6 +14,7 @@ Nothing is enqueued where it could not be sent: without the link, the keys or th
 settings, the run refuses as a whole. It prints counts, never an address or a token.
 """
 
+import hashlib
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -162,6 +163,27 @@ def enqueue_invitation_mails(*, limit: int = 50) -> InvitationMailReport:
                 secret = unseal(key, seal_context(invitation.id), bytes(invitation.token_sealed))
                 organisation = Organisation.objects.get(id=invitation.organisation_id)
                 locale = invitation.locale
+                recipient_sha256 = hashlib.sha256(
+                    invitation.email.strip().lower().encode("utf-8")
+                ).hexdigest()
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT to_regclass('public.orgs_invitationoutboxbinding') IS NOT NULL"
+                    )
+                    has_binding_table = bool(cursor.fetchone()[0])
+                    if has_binding_table:
+                        cursor.execute(
+                            "SELECT 1 FROM orgs_accounterasure ae "
+                            "WHERE ae.status IN ('cutoff', 'core_purged') "
+                            "  AND ("
+                            "    COALESCE(ae.inventory->'person_email_sha256s', '[]'::jsonb) ? %s "
+                            "    OR COALESCE(ae.inventory->'passport_email_sha256s', '[]'::jsonb) ? %s"
+                            "  ) "
+                            "LIMIT 1",
+                            [recipient_sha256, recipient_sha256],
+                        )
+                        if cursor.fetchone() is not None:
+                            raise MessageRefusedError("invitation recipient subject to erasure")
                 enqueue_message(
                     organisation_id=invitation.organisation_id,
                     template_id=template,
@@ -175,6 +197,7 @@ def enqueue_invitation_mails(*, limit: int = 50) -> InvitationMailReport:
                     expires_at=min(invitation.expires_at, now + LIFETIME),
                     link=organisation_invitation_link(link, organisation),
                     link_secret=format_token(invitation.id, secret.decode("ascii")),
+                    invitation_id=invitation.id,
                 )
                 Invitation.objects.filter(id=invitation.id).update(
                     mail_enqueued_count=invitation.sent_count, updated_at=now

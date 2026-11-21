@@ -6,6 +6,7 @@ import { createTransformServer } from './transform-http.mjs'
 import { verify, bind, TicketRefused } from './tickets.mjs'
 import { frame, snapshotFrame, storedVectorFrame, storedDiff, updateFrame, ViewerWrite } from './protocol.mjs'
 import { Refused } from './engine.mjs'
+import { LockBusy } from './store.mjs'
 import { receive, awarenessFrame } from './presence.mjs'
 const MAX_BUFFER = 2 * 1024 * 1024 + 32
 
@@ -55,7 +56,11 @@ export function createCollabServer({key, store, origins, pollMilliseconds = 1000
       await store.deliver(socket.claims, ({state, revision}) => {
         send(socket, updateFrame(state));socket.revision = revision
       }, socket.revision)
-    } catch (error) { failure(socket, error) }
+      socket.lockBusyStreak = 0
+    } catch (error) {
+      if (error instanceof LockBusy && (socket.lockBusyStreak = (socket.lockBusyStreak ?? 0) + 1) <= 2) return
+      failure(socket, error)
+    }
   }
   async function refreshRoom(document) {
     const room = rooms.get(document)

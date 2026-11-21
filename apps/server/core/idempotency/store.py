@@ -23,6 +23,8 @@ from django.db.models.functions import Now
 from .models import MAX_BODY_BYTES, MAX_ISSUER, MAX_PATH, MAX_SUBJECT, IdempotencyRecord
 
 RETENTION = timedelta(hours=24)
+WEBHOOK_ISSUER_PREFIX = "urn:kodera:webhook:"
+WEBHOOK_RETENTION = timedelta(days=30)
 RETRY_AFTER_S = 1
 # A timeout and a rate limit say "not now", not "no": a retry must reach the handler again.
 TRANSIENT = frozenset({408, 429})
@@ -218,9 +220,31 @@ def try_lock(scope: Scope) -> bool:
     return bool(row[0])
 
 
+def retention_for_issuer(issuer: str) -> timedelta:
+    """Durable webhook signature/event deduplication outlives ordinary 24-hour HTTP key caching."""
+    if issuer.startswith(WEBHOOK_ISSUER_PREFIX):
+        return WEBHOOK_RETENTION
+    return RETENTION
+
+
+def webhook_scope(*, provider: str, subject: str, path: str, delivery_key: str) -> Scope:
+    """Construct a durable webhook deduplication scope retained for `WEBHOOK_RETENTION`."""
+    cleaned = provider.strip().lower()
+    if not cleaned or not re.fullmatch(r"[a-z0-9._-]{1,64}", cleaned):
+        raise ValueError("webhook provider identifier is invalid")
+    return Scope(
+        issuer=f"{WEBHOOK_ISSUER_PREFIX}{cleaned}",
+        subject=subject,
+        method=METHOD,
+        path=path,
+        key=delivery_key,
+    )
+
+
 def lookup(scope: Scope) -> IdempotencyRecord | None:
     """The scope's entry, annotated `expired` by the database clock, or None."""
-    expired = ExpressionWrapper(Q(created_at__lte=Now() - RETENTION), output_field=BooleanField())
+    ttl = retention_for_issuer(scope.issuer)
+    expired = ExpressionWrapper(Q(created_at__lte=Now() - ttl), output_field=BooleanField())
     found: IdempotencyRecord | None = (
         IdempotencyRecord.objects.filter(**scope_columns(scope)).annotate(expired=expired).first()
     )
@@ -374,10 +398,14 @@ def purge_cutoff() -> datetime:
 
 
 def purge_batch(cutoff: datetime, limit: int) -> int:
-    """Delete at most `limit` entries created at or before `cutoff`, oldest first, in a transaction
-    of its own. Rows another transaction holds are skipped, never waited on."""
+    """Delete at most `limit` entries created at or before their retention cutoff, oldest first,
+    in a transaction of its own. Rows another transaction holds are skipped, never waited on."""
+    webhook_cutoff = cutoff - (WEBHOOK_RETENTION - RETENTION)
     with transaction.atomic():
-        expired = IdempotencyRecord.objects.filter(created_at__lte=cutoff)
+        expired = IdempotencyRecord.objects.filter(
+            (Q(created_at__lte=cutoff) & ~Q(issuer__startswith=WEBHOOK_ISSUER_PREFIX))
+            | Q(issuer__startswith=WEBHOOK_ISSUER_PREFIX, created_at__lte=webhook_cutoff)
+        )
         chosen = list(
             expired.order_by("created_at", "id")
             .select_for_update(skip_locked=True)
@@ -385,8 +413,20 @@ def purge_batch(cutoff: datetime, limit: int) -> int:
         )
         if not chosen:
             return 0
-        deleted, _ = expired.filter(id__in=chosen).delete()
+        deleted, _ = IdempotencyRecord.objects.filter(id__in=chosen).delete()
         return deleted
+
+
+def purge_principal(*, issuer: str, subject: str) -> int:
+    """Delete all stored idempotency records for one `(issuer, subject)` principal."""
+    deleted, _ = IdempotencyRecord.objects.filter(issuer=issuer, subject=subject).delete()
+    return deleted
+
+
+def purge_issuer(*, issuer: str) -> int:
+    """Delete all stored idempotency records for one `issuer`."""
+    deleted, _ = IdempotencyRecord.objects.filter(issuer=issuer).delete()
+    return deleted
 
 
 def purge_expired(*, batch: int = PURGE_BATCH) -> Purged:

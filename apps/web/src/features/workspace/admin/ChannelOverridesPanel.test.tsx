@@ -4,8 +4,10 @@ import { useState } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import type { OverrideState } from '../iamApi'
 import '../../../i18n'
-import { TriState } from './ChannelOverridesPanel'
-import { renderPanel } from './test-support'
+import { ChannelOverridesPanel, TriState } from './ChannelOverridesPanel'
+import * as api from '../iamApi'
+import * as queries from '../queries'
+import { OWNER, ORG, WORKSPACE, renderPanel, role } from './test-support'
 
 function Harness({ initial }: { initial: OverrideState }) {
   const [value, setValue] = useState<OverrideState>(initial)
@@ -19,7 +21,10 @@ describe('TriState (allow / inherit / deny)', () => {
     renderPanel(<Harness initial="inherit" />)
     const group = screen.getByRole('radiogroup', { name: 'Envoyer des messages' })
     expect(within(group).getByRole('radio', { name: 'Hériter' })).toHaveAttribute('tabindex', '0')
-    expect(within(group).getByRole('radio', { name: 'Autoriser' })).toHaveAttribute('tabindex', '-1')
+    expect(within(group).getByRole('radio', { name: 'Autoriser' })).toHaveAttribute(
+      'tabindex',
+      '-1'
+    )
     expect(within(group).getByRole('radio', { name: 'Refuser' })).toHaveAttribute('tabindex', '-1')
   })
 
@@ -68,5 +73,39 @@ describe('TriState (allow / inherit / deny)', () => {
     expect(fireEvent.keyDown(allow, { key: 'ArrowRight' })).toBe(false)
     expect(onChange).toHaveBeenLastCalledWith('inherit')
     expect(within(group).getByRole('radio', { name: 'Hériter' })).toHaveFocus()
+  })
+})
+
+describe('ChannelOverridesPanel channel capability scoping', () => {
+  it('excludes workspace-wide administration capabilities and scopes groups by channel kind', async () => {
+    const user = userEvent.setup()
+    vi.spyOn(queries, 'useWorkspaceQuery').mockReturnValue({
+      data: WORKSPACE,
+    } as unknown as ReturnType<typeof queries.useWorkspaceQuery>)
+    vi.spyOn(api, 'listWorkspaceRoles').mockResolvedValue({
+      roles: [role({ id: 'r-builders', name: 'Builders', position: 10 })],
+      assignments: [],
+    })
+    vi.spyOn(api, 'getChannelOverrides').mockResolvedValue([])
+
+    renderPanel(<ChannelOverridesPanel organisationId={ORG} authority={OWNER} />)
+    await screen.findByRole('radiogroup', { name: 'Voir les salons' })
+    expect(screen.getByRole('radiogroup', { name: 'Envoyer des messages' })).toBeInTheDocument()
+    expect(screen.queryByRole('radiogroup', { name: 'Gérer les rôles' })).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('radiogroup', { name: 'Consulter le journal d’audit' })
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('radiogroup', { name: 'Rejoindre un salon vocal' })
+    ).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('combobox', { name: 'Salon' }))
+    await user.click(await screen.findByRole('option', { name: /salon/ }))
+    await screen.findByRole('radiogroup', { name: 'Parler' })
+    expect(
+      screen.queryByRole('radiogroup', { name: 'Envoyer des messages' })
+    ).not.toBeInTheDocument()
+    expect(screen.queryByRole('radiogroup', { name: 'Gérer les rôles' })).not.toBeInTheDocument()
+    vi.restoreAllMocks()
   })
 })

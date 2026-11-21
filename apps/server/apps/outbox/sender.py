@@ -156,6 +156,7 @@ def enqueue_message(
     link: str | None = None,
     link_secret: str | None = None,
     reply_to: str | None = None,
+    invitation_id: UUID | None = None,
 ) -> UUID:
     """A pending `message` delivery and its sealed message, in the caller's transaction (§3).
 
@@ -206,6 +207,34 @@ def enqueue_message(
             "expires_at) VALUES (%s, %s, %s, %s::jsonb, %s, %s, %s)",
             [delivery_id, template_id, locale, json.dumps(params), link, sealed, expires_at],
         )
+        if template_id in {"invitation", "invitation_account_ready"}:
+            cursor.execute("SELECT to_regclass('public.orgs_invitationoutboxbinding') IS NOT NULL")
+            if cursor.fetchone()[0]:
+                import hashlib
+
+                normalized_email = recipient.strip().lower()
+                recipient_sha256 = hashlib.sha256(normalized_email.encode("utf-8")).hexdigest()
+                if invitation_id is not None:
+                    bound_inv_id = invitation_id
+                else:
+                    cursor.execute(
+                        "SELECT id FROM orgs_invitation "
+                        "WHERE organisation_id = %s AND lower(btrim(email)) = %s "
+                        "ORDER BY created_at DESC, id DESC LIMIT 1",
+                        [organisation_id, normalized_email],
+                    )
+                    inv_row = cursor.fetchone()
+                    bound_inv_id = (
+                        inv_row[0]
+                        if inv_row is not None
+                        else UUID("00000000-0000-0000-0000-000000000000")
+                    )
+                cursor.execute(
+                    "INSERT INTO orgs_invitationoutboxbinding "
+                    "(delivery_id, invitation_id, organisation_id, recipient_email_sha256, created_at) "
+                    "VALUES (%s, %s, %s, %s, clock_timestamp())",
+                    [delivery_id, bound_inv_id, organisation_id, recipient_sha256],
+                )
     logger.info("message enqueued: delivery %s template %s", delivery_id, template_id)
     return delivery_id
 
@@ -498,6 +527,71 @@ def withdrawn(template_id: str, delivery_id: UUID) -> bool:
             [bound_org_id, delivery_id, bound_user_id],
         )
         return not bool(active)
+    if template_id in {"invitation", "invitation_account_ready"}:
+        has_binding = _rows("SELECT to_regclass('public.orgs_invitationoutboxbinding') IS NOT NULL")
+        if not has_binding or not has_binding[0][0]:
+            return False
+        binding_rows = _rows(
+            "SELECT invitation_id, organisation_id, recipient_email_sha256 "
+            "FROM orgs_invitationoutboxbinding WHERE delivery_id = %s FOR SHARE",
+            [delivery_id],
+        )
+        if not binding_rows:
+            return True
+        bound_inv_id, bound_org_id, recipient_sha = binding_rows[0]
+        _rows(
+            "SELECT pg_advisory_xact_lock_shared(hashtextextended('privacy_erasure_cutoff:' || %s, 0))",
+            [str(bound_org_id)],
+        )
+        matched_users = _rows(
+            "SELECT DISTINCT u_id FROM ("
+            "  SELECT u.id AS u_id FROM identity_user u "
+            "  WHERE encode(sha256(convert_to(lower(btrim(u.email)), 'UTF8')), 'hex') = %s "
+            "  UNION "
+            "  SELECT i.user_id AS u_id FROM identity_identity i "
+            "  WHERE encode(sha256(convert_to(lower(btrim(i.email)), 'UTF8')), 'hex') = %s"
+            ") p ORDER BY u_id",
+            [recipient_sha, recipient_sha],
+        )
+        for (uid,) in matched_users:
+            _rows(
+                "SELECT pg_advisory_xact_lock_shared(hashtextextended('privacy_account_cutoff:' || %s, 0))",
+                [str(uid)],
+            )
+        erased = _rows(
+            "SELECT 1 WHERE EXISTS ("
+            "  SELECT 1 FROM orgs_privacyerasure WHERE organisation_reference = %s"
+            ") OR NOT EXISTS ("
+            "  SELECT 1 FROM orgs_organisation WHERE id = %s AND state = 'active' AND deleted_at IS NULL"
+            ") OR EXISTS ("
+            "  SELECT 1 FROM orgs_accounterasure ae "
+            "  WHERE ae.user_reference = ANY(%s::uuid[]) "
+            "     OR COALESCE(ae.inventory->'person_email_sha256s', '[]'::jsonb) ? %s "
+            "     OR COALESCE(ae.inventory->'passport_email_sha256s', '[]'::jsonb) ? %s "
+            "     OR COALESCE(ae.inventory->'invitation_delivery_ids', '[]'::jsonb) ? %s"
+            ")",
+            [
+                bound_org_id,
+                bound_org_id,
+                [str(r[0]) for r in matched_users],
+                recipient_sha,
+                recipient_sha,
+                str(delivery_id),
+            ],
+        )
+        if erased:
+            return True
+        sentinel_zero = UUID("00000000-0000-0000-0000-000000000000")
+        if bound_inv_id != sentinel_zero:
+            inv_ok = _rows(
+                "SELECT 1 FROM orgs_invitation "
+                "WHERE id = %s AND state = 'pending' AND expires_at > clock_timestamp() "
+                "  AND email NOT LIKE 'erased+%%@invalid.test' FOR SHARE",
+                [bound_inv_id],
+            )
+            if not inv_ok:
+                return True
+        return False
     statement = _WITHDRAWN.get(template_id)
     if statement is None:
         return False
@@ -768,7 +862,16 @@ def _held_count(transport: MailTransport) -> int:
 
 
 def send_claimed(transport: MailTransport, claimed: Claimed) -> SendResult:
-    """Digest consent is a send-time fence; other mail keeps its existing transport path."""
+    """Digest consent and personal-mail erasure cutoffs are send-time fences."""
+    if claimed.template_id in {"passport_magic_link", "invitation", "invitation_account_ready"}:
+        with transaction.atomic():
+            if withdrawn(claimed.template_id, claimed.delivery_id):
+                return SendResult(
+                    outcome="permanent",
+                    smtp_code=None,
+                    error_class="PrivacyErasureWithdrawn",
+                )
+        return smtp.send(transport, recipient=claimed.recipient, message=claimed.message)
     if claimed.template_id != "workspace_digest":
         return smtp.send(transport, recipient=claimed.recipient, message=claimed.message)
     from django.apps import apps

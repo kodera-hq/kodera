@@ -15,9 +15,16 @@ from apps.audit.selectors import list_workspace_audit_events
 from apps.orgs.actor_selectors import TenantCaller
 from services.identity.access_tokens import VerifiedAccessToken
 
-from .iam import authorize, check_manage, mutation_context, resolve_roles
+from .iam import authorize, check_manage, emit_iam_channel_set, mutation_context, resolve_roles
 from .iam_validation import validate_permissions
-from .models import Channel, Workspace, WorkspaceChannelRoleOverride, WorkspaceMemberRestriction
+from .models import (
+    POLICY_CAPABILITIES,
+    Channel,
+    ChannelNotice,
+    Workspace,
+    WorkspaceChannelRoleOverride,
+    WorkspaceMemberRestriction,
+)
 from .moderation import ADMINS, RefusalError, _audit, _storable_text, _text
 from .moderation_wire import tag
 
@@ -195,6 +202,8 @@ def overrides(
                 validate_permissions(entry["deny"])
             except ValidationError:
                 raise RefusalError(422) from None
+            if (set(entry["allow"]) | set(entry["deny"])) - set(POLICY_CAPABILITIES):
+                raise RefusalError(422)
             if set(entry["allow"]) & set(entry["deny"]):
                 raise RefusalError(422)
             normalized.append(entry["role_id"])
@@ -206,6 +215,23 @@ def overrides(
         by_id = {str(role.id): role for role in roles}
         for entry in data:
             check_manage(workspace, caller, [], permissions=[*entry["allow"], *entry["deny"]])
+        from .channel_access import may_view, resolve
+        from .structure import WorkspaceUnavailableError
+
+        try:
+            access = resolve(channel_id)
+        except WorkspaceUnavailableError:
+            access = None
+        viewed_before = (
+            may_view(
+                access,
+                organisation_id=workspace.organisation_id,
+                membership_id=caller.membership_id,
+                authority_revision=caller.authority_revision,
+            )
+            if access is not None
+            else True
+        )
         rows.delete()
         WorkspaceChannelRoleOverride.objects.bulk_create(
             [
@@ -219,13 +245,30 @@ def overrides(
                 for entry in data
             ]
         )
+        self_grant = (
+            access is not None
+            and not viewed_before
+            and may_view(
+                access,
+                organisation_id=workspace.organisation_id,
+                membership_id=caller.membership_id,
+                authority_revision=caller.authority_revision,
+            )
+        )
+        if self_grant:
+            ChannelNotice.objects.bulk_create(
+                [ChannelNotice(channel_id=channel_id, membership_id=caller.membership_id)],
+                ignore_conflicts=True,
+            )
         _audit(
             workspace,
             caller.identity_id,
             "workspace.channel.overrides_updated",
             channel_id,
             request_id,
+            metadata={"self_grant": True} if self_grant else None,
         )
+        emit_iam_channel_set(workspace, "workspace.channel.overrides_updated")
     return {
         "data": [
             {"role_id": str(row.role_id), "allow": row.allow, "deny": row.deny}

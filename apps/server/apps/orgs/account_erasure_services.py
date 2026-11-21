@@ -71,14 +71,18 @@ def begin_account_erasure(
                 actor_identity_id,
             ],
         )
-    # Same transaction as cutoff: a set that fails closed rolls back every scope and the intent.
-    for member in (
+    # Same transaction as cutoff: remove all memberships first so `user_authority_fanout` reaches
+    # every organisation's final `authority_revision` before emitting per-organisation engine sets.
+    memberships = list(
         Membership.objects.filter(user_id=person.id, deleted_at__isnull=True)
         .select_related("organisation")
         .order_by("organisation_id", "id")
-    ):
-        Membership.objects.filter(pk=member.id).update(state="removed", updated_at=timezone.now())
+    )
+    removed_at = timezone.now()
+    for member in memberships:
+        Membership.objects.filter(pk=member.id).update(state="removed", updated_at=removed_at)
         member.state = "removed"
+    for member in memberships:
         if member.organisation.state != "closed":
             enqueue_realm_access(
                 organisation_id=member.organisation_id,
@@ -195,7 +199,11 @@ def persist_account_absence(
 
 
 def advance_account_erasure(
-    request_id: UUID, adapters: dict[str, AccountErasureAdapter]
+    request_id: UUID,
+    adapters: dict[str, AccountErasureAdapter],
+    *,
+    socket_path: str | None = None,
+    object_deleter: Any = None,
 ) -> dict[str, Any]:
     if set(adapters) - ACCOUNT_DOMAINS:
         raise ValueError("unknown account erasure adapter domain")
@@ -211,6 +219,19 @@ def advance_account_erasure(
     with connection.cursor() as cursor:
         cursor.execute("SELECT privacy_purge_account_core(%s)", [request_id])
         sql_counts = _json(cursor.fetchone()[0])
+    personal_attachments = scope.inventory.get("account_personal_attachments", [])
+    objects_held = False
+    if personal_attachments:
+        from apps.media.storage import StorageRefusedError
+
+        from .object_erasure import erase_account_personal_attachments
+
+        try:
+            erase_account_personal_attachments(
+                scope, socket_path=socket_path, deleter=object_deleter
+            )
+        except StorageRefusedError:
+            objects_held = True
     stored_counts = (
         AccountErasure.objects.filter(pk=request_id).values_list("counts", flat=True).first()
     )
@@ -222,10 +243,13 @@ def advance_account_erasure(
         ):
             adapter = adapters[domain]
             persist_account_absence(scope, adapter.erase_and_verify(scope), adapter)
-    held = sorted(
+    held_set = set(
         required
         - set(AccountErasureReceipt.objects.filter(erasure=row).values_list("domain", flat=True))
     )
+    if objects_held:
+        held_set.add("account_personal_objects")
+    held = sorted(held_set)
     with connection.cursor() as cursor:
         cursor.execute("SELECT privacy_complete_account_erasure(%s)", [request_id])
         complete = bool(cursor.fetchone()[0])

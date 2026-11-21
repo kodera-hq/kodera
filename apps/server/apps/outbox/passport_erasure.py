@@ -1,9 +1,10 @@
 """Person-scoped sealed-outbox absence adapter for `account_message_outbox`.
 
-Verifies and enforces that every `passport_magic_link` outbox message bound to the
-erased customer person (`identity_passportoutboxbinding`) has no in-flight sender,
-no remaining `pending` delivery, and `outbox_message.sealed IS NULL`, while leaving
-unrelated persons' and sibling tenants' pending mail untouched.
+Verifies and enforces that every personal outbox message bound to the erased customer
+person (`identity_passportoutboxbinding`, `orgs_invitationoutboxbinding`, support ticket
+deliveries, and workspace digest deliveries) has no in-flight sender, no remaining
+`pending` delivery, and `outbox_message.sealed IS NULL`, and refuses to certify the
+domain if any unbound personal-template delivery exists.
 """
 
 from __future__ import annotations
@@ -26,9 +27,15 @@ def _json_obj(value: object) -> dict[str, object]:
     return value if isinstance(value, dict) else {}
 
 
+def _str_set(value: object) -> set[str]:
+    if not isinstance(value, list):
+        return set()
+    return {str(item) for item in value if isinstance(item, str) and item}
+
+
 @dataclass
 class PassportAccountOutboxErasureAdapter:
-    """Authoritative `account_message_outbox` adapter backed by `identity_passportoutboxbinding`."""
+    """Authoritative `account_message_outbox` adapter covering Passport, invitations, and personal mail."""
 
     domain: str = "account_message_outbox"
     revision: str = "passport-outbox-v1"
@@ -50,24 +57,104 @@ class PassportAccountOutboxErasureAdapter:
         canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
+    def _email_sha256s(self, cursor: Any, scope: AccountErasureScope) -> list[str]:
+        digests = _str_set(scope.inventory.get("person_email_sha256s")) | _str_set(
+            scope.inventory.get("passport_email_sha256s")
+        )
+        cursor.execute(
+            "SELECT DISTINCT encode(sha256(convert_to(em, 'UTF8')), 'hex') FROM ("
+            "  SELECT lower(btrim(email)) AS em FROM identity_user WHERE id = %s "
+            "  UNION "
+            "  SELECT lower(btrim(email)) AS em FROM identity_identity WHERE user_id = %s"
+            ") raw WHERE em IS NOT NULL AND em <> '' AND em NOT LIKE 'erased:%%'",
+            [scope.user_id, scope.user_id],
+        )
+        digests.update(str(row[0]) for row in cursor.fetchall())
+        return sorted(digests)
+
+    def _assert_no_unbound_personal_mail(self, cursor: Any) -> None:
+        cursor.execute("SELECT to_regclass('public.orgs_invitationoutboxbinding') IS NOT NULL")
+        has_inv_binding = bool(cursor.fetchone()[0])
+        if not has_inv_binding:
+            cursor.execute(
+                "SELECT 1 FROM outbox_outboxdelivery d "
+                "JOIN outbox_message m ON m.delivery_id = d.id "
+                "WHERE m.template_id IN ('invitation', 'invitation_account_ready') "
+                "  AND (d.status IN ('pending', 'in_flight') OR m.sealed IS NOT NULL) "
+                "LIMIT 1"
+            )
+            if cursor.fetchone() is not None:
+                raise ValueError("invitation outbox binding schema absent for active mail")
+            return
+        cursor.execute(
+            "SELECT 1 FROM outbox_outboxdelivery d "
+            "JOIN outbox_message m ON m.delivery_id = d.id "
+            "WHERE ("
+            "  (m.template_id = 'passport_magic_link' "
+            "   AND NOT EXISTS (SELECT 1 FROM identity_passportoutboxbinding b WHERE b.delivery_id = d.id)) "
+            "  OR (m.template_id IN ('invitation', 'invitation_account_ready') "
+            "   AND NOT EXISTS (SELECT 1 FROM orgs_invitationoutboxbinding ib WHERE ib.delivery_id = d.id))"
+            ") AND (d.status IN ('pending', 'in_flight') OR m.sealed IS NOT NULL) "
+            "LIMIT 1"
+        )
+        if cursor.fetchone() is not None:
+            raise ValueError("unbound personal outbox message prevents absence certification")
+
     def _bound_delivery_ids(
         self,
         cursor: Any,
         scope: AccountErasureScope,
     ) -> tuple[str, ...]:
+        found = _str_set(scope.inventory.get("passport_delivery_ids")) | _str_set(
+            scope.inventory.get("invitation_delivery_ids")
+        )
         cursor.execute(
             "SELECT delivery_id::text FROM identity_passportoutboxbinding "
             "WHERE user_id = %s ORDER BY delivery_id",
             [scope.user_id],
         )
-        live_ids = {str(row[0]) for row in cursor.fetchall()}
-        raw_inv = scope.inventory.get("passport_delivery_ids", [])
-        inv_ids = (
-            {str(item) for item in raw_inv if isinstance(item, str) and item}
-            if isinstance(raw_inv, list)
-            else set()
-        )
-        return tuple(sorted(live_ids | inv_ids))
+        found.update(str(row[0]) for row in cursor.fetchall())
+
+        email_shas = self._email_sha256s(cursor, scope)
+        cursor.execute("SELECT to_regclass('public.orgs_invitationoutboxbinding') IS NOT NULL")
+        if cursor.fetchone()[0]:
+            cursor.execute(
+                "SELECT ib.delivery_id::text FROM orgs_invitationoutboxbinding ib "
+                "LEFT JOIN orgs_invitation inv ON inv.id = ib.invitation_id "
+                "LEFT JOIN orgs_membership m ON m.id = inv.membership_id "
+                "WHERE m.user_id = %s "
+                "   OR ib.recipient_email_sha256 = ANY(%s) "
+                "   OR ib.invitation_id::text = ANY(%s)",
+                [
+                    scope.user_id,
+                    email_shas,
+                    sorted(_str_set(scope.inventory.get("non_accepted_invitation_ids"))),
+                ],
+            )
+            found.update(str(row[0]) for row in cursor.fetchall())
+
+        cursor.execute("SELECT to_regclass('public.support_supportticket') IS NOT NULL")
+        if cursor.fetchone()[0]:
+            cursor.execute(
+                "SELECT t.mail_delivery_id::text FROM support_supportticket t "
+                "JOIN identity_identity i ON i.id = t.created_by_id "
+                "WHERE i.user_id = %s AND t.mail_delivery_id IS NOT NULL",
+                [scope.user_id],
+            )
+            found.update(str(row[0]) for row in cursor.fetchall())
+
+        cursor.execute("SELECT to_regclass('public.extensions_digestjob') IS NOT NULL")
+        if cursor.fetchone()[0]:
+            cursor.execute(
+                "SELECT j.delivery_id::text FROM extensions_digestjob j "
+                "JOIN extensions_digestconsent c ON c.id = j.consent_id "
+                "JOIN orgs_membership m ON m.id = c.membership_id "
+                "WHERE m.user_id = %s AND j.delivery_id IS NOT NULL",
+                [scope.user_id],
+            )
+            found.update(str(row[0]) for row in cursor.fetchall())
+
+        return tuple(sorted(found))
 
     def erase_and_verify(self, scope: AccountErasureScope) -> AccountAbsenceProof:
         if self.domain not in scope.inventory.get("required_domains", []):
@@ -109,6 +196,7 @@ class PassportAccountOutboxErasureAdapter:
                 [str(scope.user_id)],
             )
 
+            self._assert_no_unbound_personal_mail(cursor)
             delivery_ids = self._bound_delivery_ids(cursor, scope)
             id_list = list(delivery_ids)
 
@@ -119,7 +207,7 @@ class PassportAccountOutboxErasureAdapter:
                     [id_list],
                 )
                 if cursor.fetchone() is not None:
-                    raise ValueError("passport outbox delivery still in flight")
+                    raise ValueError("personal outbox delivery still in flight")
 
                 cursor.execute(
                     "UPDATE outbox_message m SET sealed = NULL "
@@ -165,7 +253,7 @@ class PassportAccountOutboxErasureAdapter:
                 )
                 if cursor.fetchone() is not None:
                     raise ValueError(
-                        "passport outbox sealed payload or active delivery still present"
+                        "personal outbox sealed payload or active delivery still present"
                     )
 
             verified_at = database_now()
@@ -193,6 +281,10 @@ class PassportAccountOutboxErasureAdapter:
         ):
             return False
         with connection.cursor() as cursor:
+            try:
+                self._assert_no_unbound_personal_mail(cursor)
+            except ValueError:
+                return False
             delivery_ids = self._bound_delivery_ids(cursor, scope)
             if delivery_ids:
                 cursor.execute(
@@ -217,3 +309,6 @@ class PassportAccountOutboxErasureAdapter:
                     return False
         expected = self._compute_evidence(scope, delivery_ids)
         return proof.evidence_sha256 == expected
+
+
+AccountMessageOutboxErasureAdapter = PassportAccountOutboxErasureAdapter

@@ -124,10 +124,34 @@ export function ChannelOverridesPanel({
     text: '',
     tone: 'neutral',
   })
+  const selectedChannel = useMemo(
+    () => channels.find((item) => item.id === channel),
+    [channels, channel]
+  )
   const selectedRole = useMemo(
     () => roles.data?.roles.find((item) => item.id === role),
     [roles.data, role]
   )
+  const applicableGroups = useMemo(() => {
+    const kind = selectedChannel?.kind ?? 'text'
+    return CAPABILITY_GROUPS.flatMap((group) => {
+      if (group.key === 'administration') return []
+      if (kind === 'audio') {
+        if (group.key === 'messages' || group.key === 'files') return []
+        if (group.key === 'channels')
+          return [{ key: group.key, items: group.items.filter((item) => item === 'channel.view') }]
+        if (group.key === 'moderation')
+          return [
+            { key: group.key, items: group.items.filter((item) => item === 'media.moderate') },
+          ]
+        return [group]
+      }
+      if (group.key === 'voice') return []
+      if (group.key === 'moderation')
+        return [{ key: group.key, items: group.items.filter((item) => item !== 'media.moderate') }]
+      return [group]
+    })
+  }, [selectedChannel?.kind])
 
   if (roles.isError)
     return isIamUnsupported(roles.error) ? (
@@ -170,6 +194,7 @@ export function ChannelOverridesPanel({
       .then(
         (saved) => {
           client.setQueryData(iamKeys.overrides(organisationId, channel), saved)
+          void client.invalidateQueries({ queryKey: ['workspace', organisationId] })
           setNotice({ text: copy.saved, tone: 'neutral' })
         },
         (error: unknown) => setNotice({ text: problemText(error, copy), tone: 'bad' })
@@ -216,7 +241,7 @@ export function ChannelOverridesPanel({
         )
       ) : (
         <div className="flex flex-col gap-4">
-          {CAPABILITY_GROUPS.map((group) => (
+          {applicableGroups.map((group) => (
             <fieldset key={group.key} className="flex flex-col gap-1">
               <legend className="mb-1 text-xs font-semibold text-c-ink-3">
                 {copy.capabilityGroup[group.key]}

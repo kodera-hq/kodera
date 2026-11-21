@@ -647,6 +647,7 @@ DELETE = (
     "workspaces_workspacerole",
     "workspaces_workspacememberrole",
     "workspaces_workspacechannelroleoverride",
+    "workspaces_workspacemoderator",
     "docs_collectionrow",
     "identity_discoveryquotaevent",
     "identity_passportmagiclinktoken",

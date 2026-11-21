@@ -31,6 +31,23 @@ ROLE_FIELDS = {
 }
 
 
+def emit_iam_channel_set(workspace: Workspace, reason: str) -> None:
+    if workspace.default_policy_id is None:
+        return
+    from .channel_sets import emit_for
+    from .structure import WorkspaceUnavailableError
+
+    try:
+        with transaction.atomic():
+            emit_for(
+                organisation_id=workspace.organisation_id,
+                workspace_id=workspace.id,
+                reason=reason,
+            )
+    except WorkspaceUnavailableError:
+        return
+
+
 def capabilities(workspace: Workspace, caller: TenantCaller) -> set[str]:
     values = WorkspaceMemberRole.objects.filter(
         workspace=workspace, membership_id=caller.membership_id
@@ -251,6 +268,7 @@ def update_role(
     except IntegrityError:
         raise RefusalError(409) from None
     _audit(workspace, caller.identity_id, "workspace.role.updated", role.id, request_id)
+    emit_iam_channel_set(workspace, "workspace.role.updated")
     active_members = WorkspaceMemberRole.objects.filter(
         workspace=workspace,
         role=role,
@@ -299,6 +317,7 @@ def delete_role(
         link.save(update_fields=["auto_role_ids", "updated_at"])
     role.delete()
     _audit(workspace, caller.identity_id, "workspace.role.deleted", role_id, request_id)
+    emit_iam_channel_set(workspace, "workspace.role.deleted")
 
 
 @transaction.atomic
@@ -341,4 +360,5 @@ def assign_roles(
         ]
     )
     _audit(workspace, caller.identity_id, "workspace.member.roles_updated", target.id, request_id)
+    emit_iam_channel_set(workspace, "workspace.member.roles_updated")
     return {"membership_id": str(target.id), "role_ids": [str(role.id) for role in roles]}
