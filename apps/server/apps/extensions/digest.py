@@ -27,16 +27,26 @@ def set_consent(
 ) -> DigestConsent:
     if enabled and WorkspaceCutoff.objects.filter(organisation_id=organisation_id).exists():
         raise ExtensionRefusedError("extension_workspace_cut_off", 410)
-    documents.read_context(verified, organisation_id)
-    resolved = identities.current_identity(issuer=verified.issuer, subject=verified.subject)
-    if resolved is None:
-        raise documents.RefusalError(403, "identity-unknown")
-    person, _ = resolved
-    if not identities.lock_user(user_id=person.id):
+    _, initial = documents.read_context(verified, organisation_id)
+    initial_user_id = organisations.membership_user_id(membership_id=initial.membership_id)
+    organisations.lock_erasure_cutoff_fences(
+        organisation_id=organisation_id, user_id=initial_user_id
+    )
+    user_id = organisations.lock_membership_fence_if_present(membership_id=initial.membership_id)
+    identity_exists = identities.lock_delivery_identity_if_present(identity_id=initial.identity_id)
+    user_exists = (
+        identities.lock_user_fence_if_present(user_id=user_id) if user_id is not None else False
+    )
+    if not (user_id is not None and identity_exists and user_exists):
         raise documents.RefusalError(403, "identity-unknown")
     if not organisations.lock_organisation(organisation_id=organisation_id):
         raise documents.RefusalError(404)
     _, principal = documents.write_context(verified, organisation_id)
+    if (
+        principal.membership_id != initial.membership_id
+        or principal.identity_id != initial.identity_id
+    ):
+        raise documents.RefusalError(403, "identity-unknown")
     if enabled and WorkspaceCutoff.objects.filter(organisation_id=organisation_id).exists():
         raise ExtensionRefusedError("extension_workspace_cut_off", 410)
     if type(enabled) is not bool or locale not in {"en", "fr"}:
@@ -210,7 +220,6 @@ def _authorize_digest_send(delivery_id: UUID, recipient: str) -> bool:
             .values(
                 "consent__membership__user_id",
                 "consent__membership__organisation_id",
-                "consent__membership__user_id",
                 "consent__membership_id",
                 "consent__identity_id",
                 "consent_id",

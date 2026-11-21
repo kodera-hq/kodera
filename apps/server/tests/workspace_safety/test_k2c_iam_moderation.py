@@ -2117,18 +2117,37 @@ def test_r8_extensions_and_notifications_interleave_cleanly_with_collab_and_memb
         finally:
             close_old_connections()
 
-    with ThreadPoolExecutor(max_workers=4) as pool:
+    def parked_set_consent() -> bool:
+        close_old_connections()
+        try:
+            with connection.cursor() as cur:
+                cur.execute("SELECT pg_backend_pid()")
+                waiter_pids["consent"] = cur.fetchone()[0]
+            updated = ext_digest.set_consent(
+                verified=tokens[2], organisation_id=org.id, enabled=True
+            )
+            return bool(updated.enabled)
+        finally:
+            close_old_connections()
+
+    with ThreadPoolExecutor(max_workers=5) as pool:
         fut_erasure = pool.submit(simulate_org_erasure_holding_cutoff_and_org)
         assert erasure_org_held.wait(timeout=5)
         fut_p_admin = pool.submit(parked_admin)
         fut_p_dispatch = pool.submit(parked_dispatch)
         fut_p_digest = pool.submit(parked_digest)
+        fut_p_consent = pool.submit(parked_set_consent)
         try:
             all_parked_on_advisory = False
             deadline = time.monotonic() + 4.0
             while time.monotonic() < deadline:
-                if len(waiter_pids) == 3:
-                    pids = [waiter_pids["admin"], waiter_pids["dispatch"], waiter_pids["digest"]]
+                if len(waiter_pids) == 4:
+                    pids = [
+                        waiter_pids["admin"],
+                        waiter_pids["dispatch"],
+                        waiter_pids["digest"],
+                        waiter_pids["consent"],
+                    ]
                     with connection.cursor() as cursor:
                         cursor.execute(
                             "SELECT COUNT(*) FROM pg_locks"
@@ -2136,7 +2155,7 @@ def test_r8_extensions_and_notifications_interleave_cleanly_with_collab_and_memb
                             [pids],
                         )
                         waiting_count = cursor.fetchone()[0]
-                        if waiting_count == 3:
+                        if waiting_count == 4:
                             cursor.execute(
                                 "SELECT EXISTS ("
                                 "  SELECT 1 FROM pg_locks"
@@ -2160,6 +2179,7 @@ def test_r8_extensions_and_notifications_interleave_cleanly_with_collab_and_memb
         assert fut_p_admin.result(timeout=5) == workspace.id
         assert fut_p_dispatch.result(timeout=5) == "dispatched"
         assert fut_p_digest.result(timeout=5) is True
+        assert fut_p_consent.result(timeout=5) is True
 
     #     Direction B: extension holds shared `privacy_erasure_cutoff:<org>` + `m -> i -> u` first
     #     (paused right before `lock_organisation`), and incoming org erasure parks on exclusive
