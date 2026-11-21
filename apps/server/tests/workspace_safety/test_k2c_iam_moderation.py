@@ -1817,12 +1817,14 @@ def test_r8_extensions_and_notifications_interleave_cleanly_with_collab_and_memb
     from uuid import UUID
 
     from cryptography.hazmat.primitives.asymmetric import ec
+    from django.db import DatabaseError
 
     from apps.extensions import (
         digest as ext_digest,
         dispatcher as ext_dispatcher,
         services as ext_services,
     )
+    from apps.extensions.wire import ExtensionRefusedError
     from apps.media import outbound
     from apps.notifications import push as notif_push, services as notif_services
     from apps.orgs import workspace_members
@@ -1863,32 +1865,89 @@ def test_r8_extensions_and_notifications_interleave_cleanly_with_collab_and_memb
         def get(self, *, installation_id: UUID, generation: UUID) -> str:
             return "s" * 64
 
-    # 1. Verify `FOR SHARE` (`RowShareLock`, never `RowExclusiveLock`) on `m, i, u` in `admin()` and `for_workspace(lock=True)`.
-    with transaction.atomic():
-        ws_id, principal = ext_services.admin(tokens[1], org.id)
-        assert ws_id == workspace.id and principal.membership_id == members[1].id
-        snap = workspace_members.for_workspace(
-            organisation_id=org.id, membership_id=members[1].id, lock=True
-        )
-        assert snap is not None and snap.id == members[1].id
-        with connection.cursor() as cursor:
-            cursor.execute(
-                "SELECT c.relname, array_agg(DISTINCT l.mode ORDER BY l.mode)"
-                " FROM pg_locks l"
-                " JOIN pg_class c ON c.oid = l.relation"
-                " WHERE l.pid = pg_backend_pid()"
-                "   AND c.relname IN ('orgs_membership', 'identity_identity', 'identity_user')"
-                " GROUP BY c.relname",
-            )
-            modes_by_table = {rel: list(modes) for rel, modes in cursor.fetchall()}
-        for table_name in ("orgs_membership", "identity_identity", "identity_user"):
-            assert "RowShareLock" in modes_by_table[table_name]
-            assert "RowExclusiveLock" not in modes_by_table[table_name]
+    # 1. Prove exact row-lock strength via a second-connection `NOWAIT` probe:
+    #    - `FOR SHARE NOWAIT` on `m, i, u` SUCCEEDS while `FOR NO KEY UPDATE NOWAIT` fails `55P03`
+    #      (proving `FOR SHARE`, neither unlocked nor `FOR NO KEY UPDATE` / `FOR UPDATE`).
+    #    - On `orgs_organisation`, `FOR KEY SHARE NOWAIT` SUCCEEDS while `FOR SHARE NOWAIT` fails `55P03`
+    #      (proving `FOR NO KEY UPDATE`, which serializes writers without blocking FK `KEY SHARE` inserts).
+    held_ready = threading.Event()
+    release_held = threading.Event()
+
+    def hold_admin_and_member_fences() -> None:
+        close_old_connections()
+        try:
+            with transaction.atomic():
+                ws_id, principal = ext_services.admin(tokens[1], org.id)
+                assert ws_id == workspace.id and principal.membership_id == members[1].id
+                snap = workspace_members.for_workspace(
+                    organisation_id=org.id, membership_id=members[1].id, lock=True
+                )
+                assert snap is not None and snap.id == members[1].id
+                held_ready.set()
+                assert release_held.wait(timeout=5)
+        finally:
+            close_old_connections()
+
+    def _sqlstate(exc: DatabaseError) -> str | None:
+        cause = exc.__cause__
+        return getattr(cause, "sqlstate", None) or getattr(cause, "pgcode", None)
+
+    with ThreadPoolExecutor(max_workers=1) as probe_pool:
+        holder_fut = probe_pool.submit(hold_admin_and_member_fences)
+        assert held_ready.wait(timeout=5)
+        try:
+            for share_sql, nokey_sql, row_id in (
+                (
+                    "SELECT id FROM public.orgs_membership WHERE id = %s FOR SHARE NOWAIT",
+                    "SELECT id FROM public.orgs_membership WHERE id = %s FOR NO KEY UPDATE NOWAIT",
+                    members[1].id,
+                ),
+                (
+                    "SELECT id FROM public.identity_identity WHERE id = %s FOR SHARE NOWAIT",
+                    "SELECT id FROM public.identity_identity WHERE id = %s FOR NO KEY UPDATE NOWAIT",
+                    admin_ident.id,
+                ),
+                (
+                    "SELECT id FROM public.identity_user WHERE id = %s FOR SHARE NOWAIT",
+                    "SELECT id FROM public.identity_user WHERE id = %s FOR NO KEY UPDATE NOWAIT",
+                    members[1].user_id,
+                ),
+            ):
+                with transaction.atomic(), connection.cursor() as cursor:
+                    cursor.execute(share_sql, [row_id])
+                    assert cursor.fetchone()[0] == row_id
+                with (
+                    pytest.raises(DatabaseError) as err_info,
+                    transaction.atomic(),
+                    connection.cursor() as cursor,
+                ):
+                    cursor.execute(nokey_sql, [row_id])
+                assert _sqlstate(err_info.value) == "55P03"
+
+            with transaction.atomic(), connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT id FROM public.orgs_organisation WHERE id = %s FOR KEY SHARE NOWAIT",
+                    [org.id],
+                )
+                assert cursor.fetchone()[0] == org.id
+            with (
+                pytest.raises(DatabaseError) as org_err,
+                transaction.atomic(),
+                connection.cursor() as cursor,
+            ):
+                cursor.execute(
+                    "SELECT id FROM public.orgs_organisation WHERE id = %s FOR SHARE NOWAIT",
+                    [org.id],
+                )
+            assert _sqlstate(org_err.value) == "55P03"
+        finally:
+            release_held.set()
+        holder_fut.result(timeout=5)
 
     # 1b. Deterministic barrier interleaving: while Conn A holds `orgs_membership FOR NO KEY UPDATE`
     #     (matching `UPDATE orgs_membership` before `orgs_organisation -> workspaces_workspace`),
     #     `ext_services.admin(tokens[1], org.id)` on Conn B parks on `orgs_membership FOR SHARE`
-    #     WITHOUT holding `orgs_organisation` or `workspaces_workspace`, then completes cleanly!
+    #     WITHOUT holding any lock on `orgs_organisation` or `workspaces_workspace`, then completes cleanly!
     m1_held = threading.Event()
     release_m1 = threading.Event()
     admin_pid_box: list[int] = []
@@ -1947,7 +2006,7 @@ def test_r8_extensions_and_notifications_interleave_cleanly_with_collab_and_memb
                             "  WHERE pid = %s AND relation IN ("
                             "    'public.orgs_organisation'::regclass,"
                             "    'public.workspaces_workspace'::regclass"
-                            "  ) AND mode = 'RowExclusiveLock'"
+                            "  ) AND mode <> 'AccessShareLock'"
                             ")",
                             [apid, apid],
                         )
@@ -1963,8 +2022,8 @@ def test_r8_extensions_and_notifications_interleave_cleanly_with_collab_and_memb
         assert fut_writer.result(timeout=5) == "writer_ok"
         assert fut_ext.result(timeout=5) == workspace.id
 
-    # Seed an installation + digest job owned by `members[1]` (`org_admin`) so every concurrent worker
-    # contends on the exact same `(members[1], admin_ident, members[1].user, org, workspace)` tuple!
+    # Seed an installation + digest job owned by `members[1]` (`org_admin`) so both the erasure
+    # interleavings and the 5-thread stress test contend on `(members[1], admin_ident, members[1].user, org, workspace)`.
     installation = ext_services.install(
         verified=tokens[1],
         organisation_id=org.id,
@@ -1980,11 +2039,219 @@ def test_r8_extensions_and_notifications_interleave_cleanly_with_collab_and_memb
     )
     assert digest_job.delivery_id is not None
 
+    # 1c. Deterministic bidirectional organisation-erasure interleavings:
+    #     Direction A: erasure holds exclusive `privacy_erasure_cutoff:<org>` + `orgs_organisation FOR UPDATE`
+    #     before updating `identity_identity` / `orgs_membership`; concurrent `admin`, `dispatch_claim`,
+    #     and `send_guard` park on shared `privacy_erasure_cutoff:<org>` WITHOUT holding `m, i, u`!
+    ext_services.enqueue(
+        verified=tokens[1],
+        organisation_id=org.id,
+        installation_id=installation.id,
+        event_key="erasure-interleave-event",
+        event_type="command.invoked",
+        data={"probe": "erasure"},
+    )
+    erasure_claim = ext_dispatcher.claim()
+    assert erasure_claim is not None
+
+    erasure_org_held = threading.Event()
+    release_erasure_org = threading.Event()
+    waiter_pids: dict[str, int] = {}
+
+    def simulate_org_erasure_holding_cutoff_and_org() -> str:
+        close_old_connections()
+        try:
+            with transaction.atomic(), connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended('privacy_erasure_cutoff:' || %s, 0))",
+                    [str(org.id)],
+                )
+                cursor.execute(
+                    "SELECT id FROM public.orgs_organisation WHERE id = %s FOR UPDATE",
+                    [org.id],
+                )
+                erasure_org_held.set()
+                assert release_erasure_org.wait(timeout=5)
+                cursor.execute(
+                    "UPDATE public.identity_identity SET updated_at = updated_at WHERE id = %s",
+                    [admin_ident.id],
+                )
+                cursor.execute(
+                    "UPDATE public.orgs_membership SET updated_at = updated_at WHERE id = %s",
+                    [members[1].id],
+                )
+                return "erasure_ok"
+        finally:
+            close_old_connections()
+
+    def parked_admin() -> UUID:
+        close_old_connections()
+        try:
+            with connection.cursor() as cur:
+                cur.execute("SELECT pg_backend_pid()")
+                waiter_pids["admin"] = cur.fetchone()[0]
+            with transaction.atomic():
+                return ext_services.admin(tokens[1], org.id)[0]
+        finally:
+            close_old_connections()
+
+    def parked_dispatch() -> str:
+        close_old_connections()
+        try:
+            with connection.cursor() as cur:
+                cur.execute("SELECT pg_backend_pid()")
+                waiter_pids["dispatch"] = cur.fetchone()[0]
+            ext_dispatcher.dispatch_claim(erasure_claim, _TestSecrets())
+            return "dispatched"
+        finally:
+            close_old_connections()
+
+    def parked_digest() -> bool:
+        close_old_connections()
+        try:
+            with connection.cursor() as cur:
+                cur.execute("SELECT pg_backend_pid()")
+                waiter_pids["digest"] = cur.fetchone()[0]
+            with ext_digest.send_guard(digest_job.delivery_id, admin_ident.email) as allowed:
+                return bool(allowed)
+        finally:
+            close_old_connections()
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        fut_erasure = pool.submit(simulate_org_erasure_holding_cutoff_and_org)
+        assert erasure_org_held.wait(timeout=5)
+        fut_p_admin = pool.submit(parked_admin)
+        fut_p_dispatch = pool.submit(parked_dispatch)
+        fut_p_digest = pool.submit(parked_digest)
+        try:
+            all_parked_on_advisory = False
+            deadline = time.monotonic() + 4.0
+            while time.monotonic() < deadline:
+                if len(waiter_pids) == 3:
+                    pids = [waiter_pids["admin"], waiter_pids["dispatch"], waiter_pids["digest"]]
+                    with connection.cursor() as cursor:
+                        cursor.execute(
+                            "SELECT COUNT(*) FROM pg_locks"
+                            " WHERE pid = ANY(%s) AND locktype = 'advisory' AND NOT granted",
+                            [pids],
+                        )
+                        waiting_count = cursor.fetchone()[0]
+                        if waiting_count == 3:
+                            cursor.execute(
+                                "SELECT EXISTS ("
+                                "  SELECT 1 FROM pg_locks"
+                                "  WHERE pid = ANY(%s) AND relation IN ("
+                                "    'public.orgs_membership'::regclass,"
+                                "    'public.identity_identity'::regclass,"
+                                "    'public.identity_user'::regclass"
+                                "  ) AND mode <> 'AccessShareLock'"
+                                ")",
+                                [pids],
+                            )
+                            held_actor_rows = cursor.fetchone()[0]
+                            assert held_actor_rows is False
+                            all_parked_on_advisory = True
+                            break
+                time.sleep(0.02)
+            assert all_parked_on_advisory is True
+        finally:
+            release_erasure_org.set()
+        assert fut_erasure.result(timeout=5) == "erasure_ok"
+        assert fut_p_admin.result(timeout=5) == workspace.id
+        assert fut_p_dispatch.result(timeout=5) == "dispatched"
+        assert fut_p_digest.result(timeout=5) is True
+
+    #     Direction B: extension holds shared `privacy_erasure_cutoff:<org>` + `m -> i -> u` first
+    #     (paused right before `lock_organisation`), and incoming org erasure parks on exclusive
+    #     `privacy_erasure_cutoff:<org>` WITHOUT holding `orgs_organisation FOR UPDATE`!
+    actor_fences_held = threading.Event()
+    release_actor_fences = threading.Event()
+    erasure_waiter_pid: list[int] = []
+    real_lock_org = ext_services.lock_organisation
+
+    def paused_lock_org(*, organisation_id: UUID) -> bool:
+        if not actor_fences_held.is_set():
+            actor_fences_held.set()
+            assert release_actor_fences.wait(timeout=5)
+        return real_lock_org(organisation_id=organisation_id)
+
+    monkeypatch.setattr(ext_services, "lock_organisation", paused_lock_org)
+    try:
+
+        def run_paused_admin() -> UUID:
+            close_old_connections()
+            try:
+                with transaction.atomic():
+                    return ext_services.admin(tokens[1], org.id)[0]
+            finally:
+                close_old_connections()
+
+        def incoming_org_erasure() -> str:
+            close_old_connections()
+            try:
+                with connection.cursor() as cur:
+                    cur.execute("SELECT pg_backend_pid()")
+                    erasure_waiter_pid.append(cur.fetchone()[0])
+                with transaction.atomic(), connection.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT pg_advisory_xact_lock(hashtextextended('privacy_erasure_cutoff:' || %s, 0))",
+                        [str(org.id)],
+                    )
+                    cursor.execute(
+                        "SELECT id FROM public.orgs_organisation WHERE id = %s FOR UPDATE",
+                        [org.id],
+                    )
+                    cursor.execute(
+                        "UPDATE public.identity_identity SET updated_at = updated_at WHERE id = %s",
+                        [admin_ident.id],
+                    )
+                    return "erasure_after_ext_ok"
+            finally:
+                close_old_connections()
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            fut_ext_first = pool.submit(run_paused_admin)
+            assert actor_fences_held.wait(timeout=5)
+            fut_erasure_second = pool.submit(incoming_org_erasure)
+            try:
+                erasure_parked = False
+                deadline = time.monotonic() + 4.0
+                while time.monotonic() < deadline:
+                    if erasure_waiter_pid:
+                        epid = erasure_waiter_pid[0]
+                        with connection.cursor() as cursor:
+                            cursor.execute(
+                                "SELECT EXISTS ("
+                                "  SELECT 1 FROM pg_locks"
+                                "  WHERE pid = %s AND locktype = 'advisory' AND NOT granted"
+                                "), EXISTS ("
+                                "  SELECT 1 FROM pg_locks"
+                                "  WHERE pid = %s AND relation = 'public.orgs_organisation'::regclass"
+                                "    AND mode <> 'AccessShareLock'"
+                                ")",
+                                [epid, epid],
+                            )
+                            waiting_adv, held_org = cursor.fetchone()
+                            if waiting_adv:
+                                assert held_org is False
+                                erasure_parked = True
+                                break
+                    time.sleep(0.02)
+                assert erasure_parked is True
+            finally:
+                release_actor_fences.set()
+            assert fut_ext_first.result(timeout=5) == workspace.id
+            assert fut_erasure_second.result(timeout=5) == "erasure_after_ext_ok"
+    finally:
+        monkeypatch.setattr(ext_services, "lock_organisation", real_lock_org)
+
+    # 2. Same-principal (`members[1]`) 5-thread concurrent execution across collab, extensions,
+    #    digest, notifications/moderation, and `membership_lifecycle.change_membership`!
     def worker_collab_fence() -> int:
         close_old_connections()
         try:
             count = 0
-            for _ in range(10):
+            for _ in range(12):
                 with transaction.atomic(), connection.cursor() as cursor:
                     cursor.execute("SELECT docs_collab_fence(%s,%s,%s,%s,%s,%s,%s)", fence_args)
                     assert cursor.fetchone()[0] == workspace.id
@@ -1996,21 +2263,25 @@ def test_r8_extensions_and_notifications_interleave_cleanly_with_collab_and_memb
     def worker_extensions_admin_and_dispatch() -> int:
         close_old_connections()
         try:
-            completed = 0
-            for idx in range(6):
-                ext_services.enqueue(
-                    verified=tokens[1],
-                    organisation_id=org.id,
-                    installation_id=installation.id,
-                    event_key=f"r8-event-{idx}",
-                    event_type="command.invoked",
-                    data={"seq": idx},
-                )
+            attempts = 0
+            for idx in range(8):
+                try:
+                    ext_services.enqueue(
+                        verified=tokens[1],
+                        organisation_id=org.id,
+                        installation_id=installation.id,
+                        event_key=f"r8-event-{idx}",
+                        event_type="command.invoked",
+                        data={"seq": idx},
+                    )
+                except ExtensionRefusedError as refused:
+                    # Expected when `worker_membership_touches` transiently demotes `members[1]` to `org_member`.
+                    assert refused.status == 403
                 claimed = ext_dispatcher.claim()
                 if claimed is not None:
                     ext_dispatcher.dispatch_claim(claimed, _TestSecrets())
-                completed += 1
-            return completed
+                attempts += 1
+            return attempts
         finally:
             close_old_connections()
 
@@ -2018,7 +2289,7 @@ def test_r8_extensions_and_notifications_interleave_cleanly_with_collab_and_memb
         close_old_connections()
         try:
             checked = 0
-            for _ in range(8):
+            for _ in range(10):
                 with ext_digest.send_guard(digest_job.delivery_id, admin_ident.email) as allowed:
                     assert isinstance(allowed, bool)
                 checked += 1
@@ -2030,7 +2301,7 @@ def test_r8_extensions_and_notifications_interleave_cleanly_with_collab_and_memb
         close_old_connections()
         try:
             device_id = uuid4()
-            for idx in range(5):
+            for idx in range(6):
                 notif_services.put_subscription(
                     verified=tokens[1],
                     device_id=device_id,
@@ -2050,28 +2321,36 @@ def test_r8_extensions_and_notifications_interleave_cleanly_with_collab_and_memb
                     expires_at=timezone.now() + timedelta(minutes=5),
                     request_id=str(uuid4()),
                 )
-            return 5
+            return 6
         finally:
             close_old_connections()
 
     def worker_membership_touches() -> int:
         close_old_connections()
         try:
-            for target_role in ("org_member", "org_admin", "org_member", "org_admin"):
+            roles = (
+                "org_member",
+                "org_admin",
+                "org_member",
+                "org_admin",
+                "org_member",
+                "org_admin",
+            )
+            for target_role in roles:
                 _, etag = membership_lifecycle.read_membership(
                     verified=tokens[0],
                     organisation_id=org.id,
-                    membership_id=members[2].id,
+                    membership_id=members[1].id,
                 )
                 membership_lifecycle.change_membership(
                     verified=tokens[0],
                     organisation_id=org.id,
-                    membership_id=members[2].id,
+                    membership_id=members[1].id,
                     patch={"role": target_role},
                     if_match=etag,
                     request_id=str(uuid4()),
                 )
-            return 4
+            return len(roles)
         finally:
             close_old_connections()
 
@@ -2081,8 +2360,8 @@ def test_r8_extensions_and_notifications_interleave_cleanly_with_collab_and_memb
         f3 = pool.submit(worker_digest_guard)
         f4 = pool.submit(worker_notifications_and_moderation)
         f5 = pool.submit(worker_membership_touches)
-        assert f1.result(timeout=20) == 10
-        assert f2.result(timeout=20) == 6
-        assert f3.result(timeout=20) == 8
-        assert f4.result(timeout=20) == 5
-        assert f5.result(timeout=20) == 4
+        assert f1.result(timeout=20) == 12
+        assert f2.result(timeout=20) == 8
+        assert f3.result(timeout=20) == 10
+        assert f4.result(timeout=20) == 6
+        assert f5.result(timeout=20) == 6

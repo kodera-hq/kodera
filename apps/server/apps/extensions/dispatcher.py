@@ -137,14 +137,18 @@ def send(endpoint: str, signed) -> tuple[str, int | None]:
 
 
 def dispatch_claim(job: Claim, secrets: Secrets | None) -> None:
-    # Acquire actor fences in canonical m -> i -> u order before o -> w -> installation -> delivery
-    # so revocation/moderation and live collaboration never invert lock order.
+    # Acquire shared erasure cutoff advisories then actor fences (m -> i -> u) before
+    # o -> w -> installation -> delivery so erasure, moderation, and collab never invert lock order.
     with transaction.atomic():
         organisation_id = workspaces.workspace_organisation(workspace_id=job.workspace_id)
         if not organisations.organisation_exists(organisation_id=organisation_id):
             raise LookupError("installation organisation absent")
         creator_id = Installation.objects.values_list("creator_id", flat=True).get(
             id=job.installation_id
+        )
+        initial_user_id = organisations.membership_user_id(membership_id=creator_id)
+        organisations.lock_erasure_cutoff_fences(
+            organisation_id=organisation_id, user_id=initial_user_id
         )
         user_id = organisations.lock_membership_fence(membership_id=creator_id)
         identities.lock_delivery_identities(user_id=user_id, organisation_id=organisation_id)

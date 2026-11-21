@@ -15,8 +15,10 @@ from apps.docs import services as documents
 from apps.identity.selectors import lock_delivery_identity, lock_user_fence
 from apps.media import outbound
 from apps.orgs.selectors import (
+    lock_erasure_cutoff_fences,
     lock_membership_fence,
     lock_organisation,
+    membership_user_id,
     organisation_exists,
 )
 from core.db.ids import new_uuid7
@@ -31,6 +33,8 @@ def admin(verified, organisation_id):
     if WorkspaceCutoff.objects.filter(organisation_id=organisation_id).exists():
         raise ExtensionRefusedError("extension_workspace_cut_off", 410)
     _, initial = documents.read_context(verified, organisation_id)
+    initial_user_id = membership_user_id(membership_id=initial.membership_id)
+    lock_erasure_cutoff_fences(organisation_id=organisation_id, user_id=initial_user_id)
     user_id = lock_membership_fence(membership_id=initial.membership_id)
     lock_delivery_identity(identity_id=initial.identity_id)
     lock_user_fence(user_id=user_id)
@@ -38,7 +42,7 @@ def admin(verified, organisation_id):
         raise ExtensionRefusedError("extension_workspace_absent", 404)
     if WorkspaceCutoff.objects.filter(organisation_id=organisation_id).exists():
         raise ExtensionRefusedError("extension_workspace_cut_off", 410)
-    # Re-read current authority after locking m -> i -> u -> o -> w so any prior revocation wins.
+    # Re-read current authority after locking advisories -> m -> i -> u -> o -> w so any prior revocation wins.
     workspace_id, principal = documents.write_context(verified, organisation_id)
     if (
         principal.membership_id != initial.membership_id

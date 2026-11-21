@@ -112,10 +112,11 @@ def enqueue_digest(*, consent_id: UUID, period_start: datetime, period_end: date
         or period_end - period_start > timedelta(days=7)
     ):
         raise ExtensionRefusedError("digest_period_invalid")
-    # Current organisation/workspace fences precede consent, matching installation dispatch.
+    # Current erasure/organisation/workspace fences precede consent, matching installation dispatch.
     organisation_id = DigestConsent.objects.values_list(
         "membership__organisation_id", flat=True
     ).get(id=consent_id)
+    organisations.lock_erasure_cutoff_fences(organisation_id=organisation_id)
     if not organisations.lock_organisation(organisation_id=organisation_id):
         raise LookupError("digest organisation absent")
     workspaces.lock_organisation_workspace(organisation_id=organisation_id)
@@ -177,6 +178,7 @@ def send_guard(delivery_id: UUID, recipient: str):
             DigestJob.objects.filter(delivery_id=delivery_id)
             .values(
                 "consent__membership__organisation_id",
+                "consent__membership__user_id",
                 "consent__membership_id",
                 "consent__identity_id",
                 "consent_id",
@@ -189,6 +191,9 @@ def send_guard(delivery_id: UUID, recipient: str):
         org_id = record["consent__membership__organisation_id"]
         if not organisations.organisation_exists(organisation_id=org_id):
             raise LookupError("digest organisation absent")
+        organisations.lock_erasure_cutoff_fences(
+            organisation_id=org_id, user_id=record["consent__membership__user_id"]
+        )
         user_id = organisations.lock_membership_fence(
             membership_id=record["consent__membership_id"]
         )

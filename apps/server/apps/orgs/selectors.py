@@ -180,6 +180,26 @@ def organisation_exists(*, organisation_id: UUID) -> bool:
     return Organisation.objects.filter(id=organisation_id).exists()
 
 
+def membership_user_id(*, membership_id: UUID) -> UUID:
+    """Resolve a membership's immutable person id without acquiring a row lock."""
+    user_id = Membership.objects.values_list("user_id", flat=True).get(id=membership_id)
+    return user_id if isinstance(user_id, UUID) else UUID(str(user_id))
+
+
+def lock_erasure_cutoff_fences(*, organisation_id: UUID, user_id: UUID | None = None) -> None:
+    """Acquire shared org/account erasure cutoff advisory fences before any actor or domain row locks."""
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT pg_advisory_xact_lock_shared(hashtextextended('privacy_erasure_cutoff:' || %s, 0))",
+            [str(organisation_id)],
+        )
+        if user_id is not None:
+            cursor.execute(
+                "SELECT pg_advisory_xact_lock_shared(hashtextextended('privacy_account_cutoff:' || %s, 0))",
+                [str(user_id)],
+            )
+
+
 def lock_organisation(*, organisation_id: UUID) -> bool:
     """Hold a non-key organisation fence until the caller's outer transaction ends."""
     return (
