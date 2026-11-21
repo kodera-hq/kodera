@@ -47,6 +47,8 @@ def _webhook_bind(value: str) -> str:
         raise ConfigError(
             "ROOM_ACCESS_WEBHOOK_BIND must be loopback, unspecified internal, or a private IP literal"
         ) from None
+    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
+        addr = addr.ipv4_mapped
     if not (addr.is_loopback or addr.is_private or addr.is_unspecified) or addr.is_link_local:
         raise ConfigError("ROOM_ACCESS_WEBHOOK_BIND must never bind a public IP address")
     return value

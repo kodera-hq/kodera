@@ -27,7 +27,7 @@ export type AttachmentUploadScope =
   | { readonly channelId?: undefined; readonly roomId?: undefined }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu
-const MATRIX_ROOM_ID = /^![!-9;-~]{1,128}:[A-Za-z0-9.:-]{1,253}$/u
+const MATRIX_ROOM_ID = /^!(?:[!-9;-~]{1,128}:[A-Za-z0-9.:-]{1,253}|[A-Za-z0-9_-]{43})$/u
 
 /** Maps a composer target room to its authoritative Core channel UUID or Matrix DM room ID. */
 export function resolveAttachmentScope(

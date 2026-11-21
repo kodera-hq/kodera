@@ -997,29 +997,25 @@ def test_internal_room_member_endpoint_enforces_private_peer_webhook_bind_and_ra
     dm_room = "!dmRateCheck:acme.kodera.io"
     matrix.rooms[dm_room] = {"joined": {ALICE, BOB}, "state": {}}
 
-    def fake_admin_call(method, path, body=None, ok=(200,)):
-        return (
-            200,
-            {
-                "state": [
-                    {
-                        "type": "m.room.member",
-                        "state_key": mxid,
-                        "sender": mxid,
-                        "content": {"membership": "join"},
-                    }
-                    for mxid in sorted(matrix.rooms[dm_room]["joined"])
-                ]
-            },
-        )
+    def fake_synapse_call(method, path, body=None, ok=(200,)):
+        import urllib.parse
 
-    matrix._call = fake_admin_call  # type: ignore[method-assign]
+        parsed = urllib.parse.urlsplit(path)
+        if parsed.path == "/_synapse/client/kodera/v1/dm_member":
+            params = urllib.parse.parse_qs(parsed.query)
+            room = params.get("room_id", [""])[0]
+            user = params.get("user_id", [""])[0]
+            joined = user in matrix.rooms.get(room, {}).get("joined", set())
+            return (200, {"joined": joined})
+        return (403, {"errcode": "M_FORBIDDEN"})
+
+    matrix._call = fake_synapse_call
 
     unspecified_v4 = str(ipaddress.IPv4Address(0))
     assert _webhook_bind(unspecified_v4) == unspecified_v4
     assert _webhook_bind("127.0.0.1") == "127.0.0.1"
     assert _webhook_bind("172.18.0.5") == "172.18.0.5"
-    for unsafe_bind in ("8.8.8.8", "169.254.169.254", "0.0.0.0:8096"):
+    for unsafe_bind in ("8.8.8.8", "169.254.169.254", "::ffff:8.8.8.8", "0.0.0.0:8096"):
         with pytest.raises(ConfigError):
             _webhook_bind(unsafe_bind)
 

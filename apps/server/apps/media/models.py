@@ -4,7 +4,7 @@ from django.db import models
 
 from core.db.models import StoredModel
 
-ROOM_ID_REGEX = r"^![!-9;-~]{1,128}:[A-Za-z0-9.:-]{1,253}$"
+ROOM_ID_REGEX = r"^!([!-9;-~]{1,128}:[A-Za-z0-9.:-]{1,253}|[A-Za-z0-9_-]{43})$"
 
 
 class Attachment(StoredModel):

@@ -247,35 +247,30 @@ def test_http_complete_and_replay_enforce_live_dm_and_channel_scope(world, http,
 
     matrix_domain = "matrix.kodera.test"
     agent_mxid = f"@kodera-agent:{matrix_domain}"
-    admin_token = "synapse-admin-" + secrets.token_hex(8)
+    room_access_token = "room-access-nonadmin-" + secrets.token_hex(8)
     dm_room = f"!dmHttpScopeRoom:{matrix_domain}"
     uploader_mxid = f"@{tokens[3].subject.lower()}:{matrix_domain}"
     dm_joined_mxids = {uploader_mxid}
 
     class FakeSynapseHandler(BaseHTTPRequestHandler):
         def do_GET(self):  # noqa: N802
-            if self.headers.get("Authorization") != f"Bearer {admin_token}":
+            if self.headers.get("Authorization") != f"Bearer {room_access_token}":
                 self._json(401, {"errcode": "M_UNKNOWN_TOKEN"})
                 return
-            prefix = "/_synapse/admin/v1/rooms/"
-            if self.path.startswith(prefix) and self.path.endswith("/state"):
-                encoded = self.path[len(prefix) : -len("/state")]
-                if urllib.parse.unquote(encoded) == dm_room:
-                    self._json(
-                        200,
-                        {
-                            "state": [
-                                {
-                                    "type": "m.room.member",
-                                    "state_key": mxid,
-                                    "sender": mxid,
-                                    "content": {"membership": "join"},
-                                }
-                                for mxid in sorted(dm_joined_mxids)
-                            ]
-                        },
-                    )
-                    return
+            parsed = urllib.parse.urlsplit(self.path)
+            if parsed.path.startswith("/_synapse/admin/") or parsed.path.endswith(
+                "/joined_members"
+            ):
+                # Shipped room-access holds a non-admin occupancy account and never joins DMs.
+                self._json(403, {"errcode": "M_FORBIDDEN"})
+                return
+            if parsed.path == "/_synapse/client/kodera/v1/dm_member":
+                params = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+                target_room = params.get("room_id", [""])[0]
+                target_user = params.get("user_id", [""])[0]
+                joined = target_room == dm_room and target_user in dm_joined_mxids
+                self._json(200, {"joined": joined})
+                return
             self._json(404, {"errcode": "M_NOT_FOUND"})
 
         def _json(self, status: int, payload: dict) -> None:
@@ -297,7 +292,7 @@ def test_http_complete_and_replay_enforce_live_dm_and_channel_scope(world, http,
         LiveKit("http://127.0.0.1:9", "lk-key", "lk-secret-" + "x" * 32),
         lambda _ev: None,
         matrix=Matrix(
-            f"http://127.0.0.1:{synapse_srv.server_address[1]}", admin_token, timeout=2.0
+            f"http://127.0.0.1:{synapse_srv.server_address[1]}", room_access_token, timeout=2.0
         ),
         agent_user=agent_mxid,
     )
@@ -448,3 +443,128 @@ def test_http_complete_and_replay_enforce_live_dm_and_channel_scope(world, http,
         room_access_srv.server_close()
         synapse_srv.shutdown()
         synapse_srv.server_close()
+
+
+@override_settings(ROOT_URLCONF="apps.media.api.urls")
+def test_http_dm_completion_holds_zero_workspace_or_attachment_locks_during_verifier_io(
+    world, http, gateway, settings
+):
+    import queue
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from typing import Any
+
+    from django.db import connections
+    from django.test import Client
+
+    from apps.workspaces.models import Workspace
+    from config.workspace_features import media_room_verifier_url
+
+    org, workspace, _, _ = world
+    client, credentials = http
+    dm_room = "!" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8S9t0U1_"
+    pauses: queue.Queue[threading.Event] = queue.Queue()
+    intercept = threading.Event()
+
+    class PausingVerifierHandler(BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802
+            length = int(self.headers.get("Content-Length", "0"))
+            _ = self.rfile.read(length)
+            if intercept.is_set():
+                resume = threading.Event()
+                pauses.put(resume)
+                assert resume.wait(timeout=5.0)
+            raw = b'{"allowed":true}'
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+        def log_message(self, format: str, *args: object) -> None:  # noqa: A002
+            return
+
+    verifier_srv = ThreadingHTTPServer(("127.0.0.1", 0), PausingVerifierHandler)
+    threading.Thread(target=verifier_srv.serve_forever, daemon=True).start()
+    settings.KODERA_MEDIA_ROOM_VERIFIER_URL = media_room_verifier_url(
+        {
+            "KODERA_MEDIA_ROOM_VERIFIER_URL": (
+                f"http://127.0.0.1:{verifier_srv.server_address[1]}/internal/room-member"
+            )
+        }
+    )
+
+    try:
+        root = f"/api/v1/organisations/{org.id}/workspace/attachments"
+        created = client.post(
+            root + "/uploads",
+            data=json.dumps(
+                {
+                    "filename": "dm-lock-check.txt",
+                    "contentType": "text/plain",
+                    "sizeBytes": 24,
+                    "sha256": hashlib.sha256(b"dm-lock-check-24-bytes!!").hexdigest(),
+                    "roomId": dm_room,
+                }
+            ),
+            content_type="application/json",
+            **headers(credentials[3]),
+        )
+        assert created.status_code == 201
+        dm_id = created.json()["attachmentId"]
+
+        complete_auth = headers(credentials[3])
+        intercept.set()
+
+        def run_post_and_probe_locks(expected_min_calls: int) -> int:
+            result_box: dict[str, Any] = {}
+
+            def worker() -> None:
+                try:
+                    worker_client = Client()
+                    result_box["resp"] = worker_client.post(
+                        f"{root}/{dm_id}/complete",
+                        data=b"",
+                        content_type="application/json",
+                        **complete_auth,
+                    )
+                except BaseException as exc:  # noqa: BLE001
+                    result_box["err"] = exc
+                finally:
+                    connections.close_all()
+
+            t = threading.Thread(target=worker)
+            t.start()
+            observed = 0
+            while t.is_alive() or not pauses.empty():
+                try:
+                    resume = pauses.get(timeout=0.05)
+                except queue.Empty:
+                    continue
+                observed += 1
+                try:
+                    with transaction.atomic():
+                        locked_ws = Workspace.objects.select_for_update(nowait=True).get(
+                            id=workspace.id
+                        )
+                        locked_att = Attachment.objects.select_for_update(nowait=True).get(id=dm_id)
+                        assert locked_ws.id == workspace.id and str(locked_att.id) == dm_id
+                finally:
+                    resume.set()
+            t.join(timeout=5.0)
+            assert "err" not in result_box, result_box.get("err")
+            resp = result_box["resp"]
+            assert resp.status_code == 200 and "downloadUrl" in resp.json()
+            assert observed >= expected_min_calls
+            return observed
+
+        # Fresh HTTP completion pauses on pre-commit AND post-commit verifier HTTP I/O with zero DB locks
+        run_post_and_probe_locks(expected_min_calls=3)
+        # Cached idempotency replay ALSO pauses on post-commit verifier HTTP I/O with zero DB locks
+        run_post_and_probe_locks(expected_min_calls=1)
+    finally:
+        intercept.clear()
+        while not pauses.empty():
+            pauses.get_nowait().set()
+        verifier_srv.shutdown()
+        verifier_srv.server_close()

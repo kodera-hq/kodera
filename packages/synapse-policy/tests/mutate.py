@@ -88,6 +88,9 @@ MUTANTS = [
     ('initial approved servers not bound immutably', 'creation["io.kodera.room.initial_partner_servers"] = list(partners)', 'creation["io.kodera.room.initial_partner_servers"] = []', 'test_explicit_partner_creation_has_pinned_mode_policy_and_server_acl'),
     ('raw DM validation skipped before local ACL injection', '        if creator != self._agent and not direct:\n            raise SynapseError(403, "Members may create only validated local direct messages", errcode=Codes.FORBIDDEN)\n', '', 'test_raw_dm_validation_precedes_injected_acl_projection'),
     ('validated DM projection omitted', '                room_config = {**room_config, "initial_state": []}', '                pass', 'test_raw_dm_validation_precedes_injected_acl_projection'),
+    ('DM membership inspection open to non-service callers', 'if requester_user_id is None or requester_user_id not in authorized:', 'if False:', 'test_dm_member_joined_restricts_inspection_to_service_accounts_and_rejects_channels'),
+    ('DM membership inspection admits governed channels', 'if policy_entry is not None and getattr(policy_entry, "sender", None) == self._agent:', 'if False:', 'test_dm_member_joined_restricts_inspection_to_service_accounts_and_rejects_channels'),
+    ('DM membership inspection ignores join state', '_membership_of(state.get(("m.room.member", subject_user_id))) == "join"', 'True', 'test_dm_member_joined_restricts_inspection_to_service_accounts_and_rejects_channels'),
 ]
 
 

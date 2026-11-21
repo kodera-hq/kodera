@@ -3,7 +3,7 @@
 import django.db.models.deletion
 from django.db import migrations, models
 
-ROOM_ID_REGEX = r"^![!-9;-~]{1,128}:[A-Za-z0-9.:-]{1,253}$"
+ROOM_ID_REGEX = r"^!([!-9;-~]{1,128}:[A-Za-z0-9.:-]{1,253}|[A-Za-z0-9_-]{43})$"
 
 FORWARD_SQL = """
 SET LOCAL lock_timeout='5s';

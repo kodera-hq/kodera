@@ -89,6 +89,10 @@ class KoderaPolicy:
         api.register_third_party_rules_callbacks(
             check_event_allowed=self.check_event_allowed, on_create_room=self.on_create_room
         )
+        if hasattr(api, "register_web_resource"):
+            resource = _make_dm_member_resource(self)
+            if resource is not None:
+                api.register_web_resource("/_synapse/client/kodera/v1/dm_member", resource)
 
     @staticmethod
     def parse_config(config: dict[str, Any]) -> dict[str, Any]:
@@ -298,6 +302,46 @@ class KoderaPolicy:
     async def user_may_publish_room(self, user_id: str, room_id: str) -> Any:
         return Codes.FORBIDDEN
 
+    async def dm_member_joined(
+        self,
+        requester_user_id: str | None,
+        room_id: str,
+        subject_user_id: str,
+    ) -> bool:
+        authorized = {self._agent, self._room_access} - {None}
+        if requester_user_id is None or requester_user_id not in authorized:
+            raise SynapseError(
+                403,
+                "Only room-access or the tenant agent may inspect DM membership",
+                errcode=Codes.FORBIDDEN,
+            )
+        if not _is_valid_room_id(room_id):
+            return False
+        if (
+            not _is_valid_user_id(subject_user_id)
+            or not self._api.is_mine(subject_user_id)
+            or subject_user_id in {self._agent, self._room_access}
+        ):
+            return False
+        state = await self._api.get_room_state(
+            room_id,
+            [
+                ("m.room.create", ""),
+                ("io.kodera.room.policy", ""),
+                ("m.room.member", subject_user_id),
+            ],
+        )
+        create = state.get(("m.room.create", ""))
+        if create is None or getattr(create, "sender", None) in {self._agent, self._room_access}:
+            return False
+        policy_entry = state.get(("io.kodera.room.policy", ""))
+        if policy_entry is not None and getattr(policy_entry, "sender", None) == self._agent:
+            return False
+        return bool(
+            _membership_of(state.get(("m.room.member", subject_user_id))) == "join"
+            and await self._active_dm_users(subject_user_id)
+        )
+
     async def check_event_allowed(self, event: Any, state_events: Any) -> tuple[bool, dict | None]:
         # Synapse asks this of every event it creates, with no admin exemption: a room's initial
         # state, encryption a server setting forces on at creation, the state an upgrade copies,
@@ -485,11 +529,89 @@ def _has_governance(content: Any) -> bool:
     )
 
 
+def _make_dm_member_resource(policy: KoderaPolicy) -> Any | None:
+    try:
+        from synapse.http.server import DirectServeJsonResource, respond_with_json
+    except ImportError:
+        return None
+
+    class _DmMemberResource(DirectServeJsonResource):
+        isLeaf = True
+
+        def __init__(self, owner: KoderaPolicy) -> None:
+            super().__init__()
+            self._policy = owner
+
+        def _send_response(self, request: Any, code: int, response_object: Any) -> None:
+            respond_with_json(
+                request,
+                code,
+                response_object,
+                send_cors=False,
+                canonical_json=self.canonical_json,
+            )
+
+        async def _async_render_GET(self, request: Any) -> tuple[int, dict[str, bool]]:
+            requester = await self._policy._api.get_user_by_req(request)
+            args = getattr(request, "args", None) or {}
+            raw_rooms = args.get(b"room_id")
+            raw_users = args.get(b"user_id")
+            if (
+                not isinstance(raw_rooms, list)
+                or len(raw_rooms) != 1
+                or not isinstance(raw_users, list)
+                or len(raw_users) != 1
+            ):
+                raise SynapseError(
+                    400,
+                    "room_id and user_id query parameters are required",
+                    errcode=getattr(Codes, "MISSING_PARAM", Codes.FORBIDDEN),
+                )
+            try:
+                room_id = (
+                    raw_rooms[0].decode("utf-8")
+                    if isinstance(raw_rooms[0], bytes)
+                    else str(raw_rooms[0])
+                )
+                user_id = (
+                    raw_users[0].decode("utf-8")
+                    if isinstance(raw_users[0], bytes)
+                    else str(raw_users[0])
+                )
+            except UnicodeDecodeError:
+                raise SynapseError(
+                    400,
+                    "Query parameters must be valid UTF-8",
+                    errcode=getattr(Codes, "INVALID_PARAM", Codes.FORBIDDEN),
+                ) from None
+            joined = await self._policy.dm_member_joined(
+                requester.user.to_string(), room_id, user_id
+            )
+            return 200, {"joined": joined}
+
+    return _DmMemberResource(policy)
+
+
 def _asks_for_encryption(config: dict[str, Any]) -> bool:
     initial_state = config.get("initial_state")
     if not isinstance(initial_state, list):
         return False
     return any(isinstance(state, dict) and state.get("type") == "m.room.encryption" for state in initial_state)
+
+
+def _is_valid_room_id(room_id: Any) -> bool:
+    if (
+        not isinstance(room_id, str)
+        or not 1 < len(room_id) <= 255
+        or not room_id.startswith("!")
+        or any(c.isspace() for c in room_id)
+    ):
+        return False
+    body = room_id[1:]
+    if ":" in body:
+        local, sep, domain = body.partition(":")
+        return bool(sep and 1 <= len(local) <= 128 and 1 <= len(domain) <= 253 and ":" not in local)
+    return len(body) == 43 and all(c.isalnum() or c in "-_" for c in body)
 
 
 def _is_valid_user_id(user_id: Any) -> bool:

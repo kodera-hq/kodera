@@ -103,6 +103,7 @@ def serve(
     *,
     prepare: Callable[[VerifiedAccessToken, str], Handler] | None = None,
     replay_authorize: Callable[[VerifiedAccessToken], None] | None = None,
+    post_commit_authorize: Callable[[VerifiedAccessToken], None] | None = None,
 ) -> HttpResponse:
     request_id = responses.request_id(request)
     method = request.method or ""
@@ -178,6 +179,8 @@ def serve(
                 policy=quota_replay_policy(),
                 authority=check_authority,
             )
+            if 200 <= response.status_code <= 299 and post_commit_authorize is not None:
+                post_commit_authorize(verified)
             if response.status_code == 503:
                 response["Retry-After"] = "1"
         else:

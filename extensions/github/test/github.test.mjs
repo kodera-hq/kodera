@@ -455,6 +455,20 @@ test('github BUG-0064 requires durable backing independently of NODE_ENV and blo
       () => createDurableReplayStore(),
       (err) => err instanceof WebhookVerificationError && err.code === 'REPLAY_STORE_NOT_DURABLE'
     );
+    const prevNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      assert.throws(
+        () => createGithubWebhookHandler({ secret: SECRET }),
+        (err) => err instanceof WebhookVerificationError && err.code === 'REPLAY_STORE_NOT_DURABLE'
+      );
+    } finally {
+      if (prevNodeEnv === undefined) {
+        delete process.env.NODE_ENV;
+      } else {
+        process.env.NODE_ENV = prevNodeEnv;
+      }
+    }
 
     const storeA = createDurableReplayStore(join(dir, 'shared'));
     const storeB = createDurableReplayStore(join(dir, 'shared'));

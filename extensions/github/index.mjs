@@ -1077,6 +1077,16 @@ export function createGithubWebhookHandler(config) {
     config.replayStore ?? config.replayStoreDir ?? config.replayStorePath,
     { scopeNamespace, allowEphemeral: true }
   );
+  if (
+    process.env.NODE_ENV === 'production' &&
+    !nativeReplayStore.durable &&
+    config.allowEphemeralReplayStore !== true
+  ) {
+    throw new WebhookVerificationError(
+      'REPLAY_STORE_NOT_DURABLE',
+      'Production GitHub webhook handler requires replayStoreDir, replayStorePath, or KODERA_WEBHOOK_REPLAY_DIR.'
+    );
+  }
 
   const pruneNativeReplay = (nowSec) => {
     if (typeof nativeReplayStore.prune === 'function') {

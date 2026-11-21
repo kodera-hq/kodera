@@ -47,6 +47,7 @@ modules:
   - module: kodera_synapse_policy.KoderaPolicy
     config:
       agent_user_id: "@kodera-agent:it.local"
+      room_access_user_id: "@kodera-rooms:it.local"
 YAML
 fi
 SECRET="$(sed -n 's/^registration_shared_secret: *"\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "$DATA/homeserver.yaml")"
@@ -66,6 +67,6 @@ register() {
     -k "$SECRET" http://localhost:8008 >/dev/null
 }
 register kodera-agent -a
-for user in alice bob carol member0 member1 member2 member3 member4 member5 member6 member7 unlisted; do register "$user" --no-admin; done
+for user in kodera-rooms alice bob carol member0 member1 member2 member3 member4 member5 member6 member7 unlisted; do register "$user" --no-admin; done
 
 docker exec "$NAME" python /proof/scenario.py 8008

@@ -18,7 +18,7 @@ import jwt
 from .rooms import POLICY
 
 _LOCALPART = re.compile(r"[a-z0-9._=\-/+]{1,255}")
-_ROOM_ID = re.compile(r"![!-9;-~]{1,128}:[A-Za-z0-9.:-]{1,253}")
+_ROOM_ID = re.compile(r"!([!-9;-~]{1,128}:[A-Za-z0-9.:-]{1,253}|[A-Za-z0-9_-]{43})")
 
 
 class UpstreamError(Exception):
@@ -144,6 +144,20 @@ class Matrix:
         if _LOCALPART.fullmatch(localpart) is None or not server_name:
             return False
         caller_mxid = f"@{localpart}:{server_name}"
+
+        mod_status, mod_answer = self._call(
+            "GET",
+            f"/_synapse/client/kodera/v1/dm_member?room_id={_q(room_id)}&user_id={_q(caller_mxid)}",
+            ok=(200, 403, 404),
+        )
+        if (
+            mod_status == 200
+            and isinstance(mod_answer, dict)
+            and isinstance(mod_answer.get("joined"), bool)
+        ):
+            return mod_answer["joined"]
+        if mod_status != 404:
+            raise UpstreamError("Synapse refused DM room membership inspection")
 
         status, answer = self._call(
             "GET",

@@ -351,6 +351,25 @@ test('release-assistant BUG-0064 requires durable backing independently of NODE_
       () => createDurableReplayStore(),
       (err) => err instanceof WebhookVerificationError && err.code === 'REPLAY_STORE_NOT_DURABLE'
     );
+    const prevNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      assert.throws(
+        () =>
+          createReleaseAssistantWebhookHandler({
+            secret: TEST_SECRET,
+            defaultChannelId: 'chan_releases_recreate',
+            optInChannels: ['chan_releases_recreate'],
+          }),
+        (err) => err instanceof WebhookVerificationError && err.code === 'REPLAY_STORE_NOT_DURABLE'
+      );
+    } finally {
+      if (prevNodeEnv === undefined) {
+        delete process.env.NODE_ENV;
+      } else {
+        process.env.NODE_ENV = prevNodeEnv;
+      }
+    }
 
     const storeA = createDurableReplayStore(join(dir, 'shared'));
     const storeB = createDurableReplayStore(join(dir, 'shared'));

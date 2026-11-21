@@ -486,19 +486,6 @@ def commit_complete(
     prepared: PreparedCompletion,
     request_id: str,
 ) -> dict[str, Any]:
-    if (
-        prepared.room_id is not None
-        and prepared.organisation_id is not None
-        and prepared.dm_verified_membership_id is not None
-    ):
-        _verify_dm_room_authority(
-            organisation_id=prepared.organisation_id,
-            membership_id=prepared.dm_verified_membership_id,
-            verified=verified,
-            room_id=prepared.room_id,
-            uploader_id=prepared.uploader_id,
-            for_upload=False,
-        )
     with transaction.atomic():
         principal = caller(verified, organisation_id)
         row = (
@@ -529,27 +516,34 @@ def commit_complete(
             row.completed_at = timezone.now()
             row.save(update_fields=["completed_at", "updated_at"])
             audit(principal, "workspace.attachment.completed", row.id, request_id)
-        org_id = principal.organisation_id
-        membership_id = principal.membership_id
-        room_id = row.room_id
-        uploader_id = row.uploader_id
-
-    if room_id is not None:
-        _verify_dm_room_authority(
-            organisation_id=org_id,
-            membership_id=membership_id,
-            verified=verified,
-            room_id=room_id,
-            uploader_id=uploader_id,
-            for_upload=False,
-        )
     return _format_download(row, prepared.download_ticket)
 
 
 def authorize_complete(
     *, verified: VerifiedAccessToken, organisation_id: UUID, attachment_id: UUID
 ) -> None:
-    """Verify current channel/DM completion & download authority before replaying cached URLs."""
+    """Verify current database channel/attachment authority inside replay transactions."""
+    with transaction.atomic():
+        principal = read_caller(verified, organisation_id)
+        row = Attachment.objects.filter(
+            id=attachment_id, organisation_id=principal.organisation_id
+        ).first()
+        if row is None:
+            raise RefusalError(404)
+        if row.uploader_id != principal.membership_id and principal.role not in {
+            "org_owner",
+            "org_admin",
+        }:
+            raise RefusalError(403)
+        _verify_db_read_authority(principal, row)
+        if row.cancelled_at is not None:
+            raise RefusalError(409)
+
+
+def authorize_complete_dm(
+    *, verified: VerifiedAccessToken, organisation_id: UUID, attachment_id: UUID
+) -> None:
+    """Verify live DM membership AFTER `respond_once` commits so zero DB locks are held."""
     with transaction.atomic():
         principal = read_caller(verified, organisation_id)
         row = Attachment.objects.filter(
@@ -584,12 +578,21 @@ def authorize_complete(
 def authorize_upload_replay(
     *, verified: VerifiedAccessToken, organisation_id: UUID, body: dict[str, Any]
 ) -> None:
-    """Verify current channel/DM upload authority before replaying a cached upload ticket."""
+    """Verify current database channel upload authority inside replay transactions."""
     with transaction.atomic():
         principal = read_caller(verified, organisation_id)
-        channel_id, room_id = _parse_scope(body)
+        channel_id, _ = _parse_scope(body)
         if channel_id is not None:
             _verify_channel_upload_authority(principal, channel_id)
+
+
+def authorize_upload_dm(
+    *, verified: VerifiedAccessToken, organisation_id: UUID, body: dict[str, Any]
+) -> None:
+    """Verify live DM membership AFTER `respond_once` commits so zero DB locks are held."""
+    with transaction.atomic():
+        principal = read_caller(verified, organisation_id)
+        _, room_id = _parse_scope(body)
         org_id = principal.organisation_id
         membership_id = principal.membership_id
 
@@ -610,25 +613,19 @@ def complete_upload(
     prepared = prepare_complete(
         verified=verified, organisation_id=organisation_id, attachment_id=attachment_id
     )
-    if (
-        prepared.room_id is not None
-        and prepared.organisation_id is not None
-        and prepared.dm_verified_membership_id is not None
-    ):
-        _verify_dm_room_authority(
-            organisation_id=prepared.organisation_id,
-            membership_id=prepared.dm_verified_membership_id,
-            verified=verified,
-            room_id=prepared.room_id,
-            uploader_id=prepared.uploader_id,
-            for_upload=False,
-        )
-    return commit_complete(
+    result = commit_complete(
         verified=verified,
         organisation_id=organisation_id,
         prepared=prepared,
         request_id=request_id,
     )
+    if not transaction.get_connection().in_atomic_block:
+        authorize_complete_dm(
+            verified=verified,
+            organisation_id=organisation_id,
+            attachment_id=attachment_id,
+        )
+    return result
 
 
 def cancel_upload(

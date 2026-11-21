@@ -50,12 +50,17 @@ def uploads(request: HttpRequest, organisation_id: UUID) -> HttpResponse:
             verified=verified, organisation_id=organisation_id, body=data
         )
 
+    def post_commit_auth(verified: VerifiedAccessToken) -> None:
+        data = http.body(request, UPLOAD_FIELDS, UPLOAD_REQUIRED)
+        service.authorize_upload_dm(verified=verified, organisation_id=organisation_id, body=data)
+
     return http.serve(
         request,
         {"POST": fallback},
         organisation_id,
         prepare=prepare,
         replay_authorize=replay_auth,
+        post_commit_authorize=post_commit_auth,
     )
 
 
@@ -97,12 +102,18 @@ def complete(request: HttpRequest, organisation_id: UUID, attachment_id: UUID) -
             verified=verified, organisation_id=organisation_id, attachment_id=attachment_id
         )
 
+    def post_commit_auth(verified: VerifiedAccessToken) -> None:
+        service.authorize_complete_dm(
+            verified=verified, organisation_id=organisation_id, attachment_id=attachment_id
+        )
+
     return http.serve(
         request,
         {"POST": fallback},
         organisation_id,
         prepare=prepare,
         replay_authorize=replay_auth,
+        post_commit_authorize=post_commit_auth,
     )
 
 
