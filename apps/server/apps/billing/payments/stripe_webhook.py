@@ -481,16 +481,17 @@ def _record_applied_refund_event(
     amount_refunded: int,
     currency: str,
     occurred_at: datetime,
-) -> None:
+) -> bool:
     with connection.cursor() as cursor:
         cursor.execute(
             "INSERT INTO billing_providerevent"
             " (id, provider, event_id, kind, payment_ref, link_ref, customer_ref,"
             " amount_minor, currency, occurred_at, outcome)"
             " VALUES (%s, 'stripe', %s, 'payment.reversed', %s, NULL, NULL, %s, %s, %s, 'applied')"
-            " ON CONFLICT (provider, event_id) DO NOTHING",
+            " ON CONFLICT (provider, event_id) DO NOTHING RETURNING id",
             [new_uuid7(), event_id, payment_ref, amount_refunded, currency, occurred_at],
         )
+        return cursor.fetchone() is not None
 
 
 def _apply_g4_refund_to_payment(
@@ -513,6 +514,10 @@ def _apply_g4_refund_to_payment(
     remain immutable while collection coverage (`amount_paid_minor`, `state`, `paid_at`) reopens
     any net underpaid invoice out of `paid` and transitions its subscription to `past_due`.
     """
+    if not connection.in_atomic_block:
+        raise RuntimeError("_apply_g4_refund_to_payment must execute inside transaction.atomic()")
+    invoice = Invoice.objects.select_for_update().get(id=invoice.id)
+    payment = Payment.objects.select_for_update().get(id=payment.id)
     organisation_id = payment.organisation_id
     mismatch_reason = _validate_bound_metadata(
         meta,
@@ -564,16 +569,23 @@ def _apply_g4_refund_to_payment(
 
     delta_refunded = amount_refunded - prev_refunded
     if deferred_event_row is not None:
-        deferred_event_row.outcome = "applied"
-        deferred_event_row.save(update_fields=["outcome"])
-    else:
-        _record_applied_refund_event(
-            event_id=event_id,
-            payment_ref=payment.provider_ref,
-            amount_refunded=amount_refunded,
-            currency=currency,
-            occurred_at=occurred_at,
+        claimed = (
+            ProviderEventRecord.objects.filter(id=deferred_event_row.id, outcome="deferred").update(
+                outcome="applied"
+            )
+            == 1
         )
+        if not claimed:
+            return "ignored"
+        deferred_event_row.outcome = "applied"
+    elif not _record_applied_refund_event(
+        event_id=event_id,
+        payment_ref=payment.provider_ref,
+        amount_refunded=amount_refunded,
+        currency=currency,
+        occurred_at=occurred_at,
+    ):
+        return "ignored"
 
     was_allocated = payment.allocated
     is_full_refund = amount_refunded == payment.amount_minor

@@ -233,6 +233,7 @@ services:
     networks:
       default:
       api_ingress:
+        ipv4_address: ${KODERA_SERVER_API_ADDRESS:-172.30.240.3}
 
   # The only public native route is /documents/collab. The signed transformer stays private.
   yjs-collab:

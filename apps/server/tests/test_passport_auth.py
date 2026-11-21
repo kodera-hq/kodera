@@ -1587,6 +1587,7 @@ def test_kp1_session_caps_lifetime_across_switches_and_revokes_on_authority_chan
             now=int(t0.timestamp()),
         )
         assert claims_0.max_expires_at == int(t0.timestamp()) + PASSPORT_SESSION_TTL_SECONDS
+        assert claims_0.email_verified is True
 
     # Advance 1500s and switch -> expires_in_seconds must shrink to 2100s (never reset to 3600s!)
     with time_machine.travel(t0 + timedelta(seconds=1500), tick=False):
@@ -1606,6 +1607,7 @@ def test_kp1_session_caps_lifetime_across_switches_and_revokes_on_authority_chan
         )
         assert claims_1.auth_time == claims_0.auth_time
         assert claims_1.max_expires_at == claims_0.max_expires_at
+        assert claims_1.email_verified is True
 
     # Advance past original `auth_time + 3600` -> switched token `tok_1` is expired (`401`)!
     with time_machine.travel(t0 + timedelta(seconds=PASSPORT_SESSION_TTL_SECONDS + 1), tick=False):
@@ -1634,16 +1636,18 @@ def test_kp1_session_caps_lifetime_across_switches_and_revokes_on_authority_chan
         )
 
 
-def test_magic_link_rate_limit_global_saturation_returns_429_never_500(passport_world, monkeypatch):
-    """BUG-0016 regression: saturating `MAX_RATE_EVENTS` returns HTTP `429` with `Retry-After`
-    instead of an unhandled `RuntimeError` (`500`)."""
+def test_magic_link_rate_limit_global_saturation_returns_429_never_500(
+    passport_world, monkeypatch, settings
+):
+    """BUG-0016 regression: saturating IP, email, or global (`MAX_RATE_EVENTS`) limits returns HTTP
+    `429` with `Retry-After >= 1` and uniform bucket-neutral detail, never an unhandled `500`."""
     import apps.identity.passport as passport_mod
 
     w = passport_world
     PassportRateLimitEvent.objects.all().delete()
     monkeypatch.setattr(passport_mod, "MAX_RATE_EVENTS", 2)
 
-    # First request writes 2 rows (ip + email), reaching MAX_RATE_EVENTS == 2
+    # 1. Global cap: first request writes 2 rows (ip + email), reaching MAX_RATE_EVENTS == 2
     r1 = _post_json(
         w.client,
         REQUEST_URL,
@@ -1652,7 +1656,6 @@ def test_magic_link_rate_limit_global_saturation_returns_429_never_500(passport_
     )
     assert r1.status_code == 202
 
-    # Second request from a distinct IP & email hits global cap -> clean 429 + Retry-After!
     r2 = _post_json(
         w.client,
         REQUEST_URL,
@@ -1662,6 +1665,54 @@ def test_magic_link_rate_limit_global_saturation_returns_429_never_500(passport_
     assert r2.status_code == 429
     assert int(r2.headers["Retry-After"]) >= 1
     assert r2.json()["type"] == "https://kodera.io/problems/rate-limited"
+    assert r2.json()["detail"] == "Rate limit exceeded."
+
+    # 2. Per-IP cap: emits 429 + Retry-After + uniform detail
+    PassportRateLimitEvent.objects.all().delete()
+    monkeypatch.setattr(passport_mod, "MAX_RATE_EVENTS", 20_000)
+    settings.KODERA_PASSPORT_IP_RATE_LIMIT = 1
+    settings.KODERA_PASSPORT_EMAIL_RATE_LIMIT = 10
+    assert (
+        _post_json(
+            w.client,
+            REQUEST_URL,
+            {"email": "ip1@acme.fr", "code_challenge": PKCE_CHALLENGE},
+            REMOTE_ADDR="198.51.100.33",
+        ).status_code
+        == 202
+    )
+    r_ip = _post_json(
+        w.client,
+        REQUEST_URL,
+        {"email": "ip2@acme.fr", "code_challenge": PKCE_CHALLENGE},
+        REMOTE_ADDR="198.51.100.33",
+    )
+    assert r_ip.status_code == 429
+    assert int(r_ip.headers["Retry-After"]) >= 1
+    assert r_ip.json()["detail"] == "Rate limit exceeded."
+
+    # 3. Per-email cap: emits 429 + Retry-After + identical uniform detail
+    PassportRateLimitEvent.objects.all().delete()
+    settings.KODERA_PASSPORT_IP_RATE_LIMIT = 10
+    settings.KODERA_PASSPORT_EMAIL_RATE_LIMIT = 1
+    assert (
+        _post_json(
+            w.client,
+            REQUEST_URL,
+            {"email": "mailcap@acme.fr", "code_challenge": PKCE_CHALLENGE},
+            REMOTE_ADDR="198.51.100.41",
+        ).status_code
+        == 202
+    )
+    r_email = _post_json(
+        w.client,
+        REQUEST_URL,
+        {"email": "mailcap@acme.fr", "code_challenge": PKCE_CHALLENGE},
+        REMOTE_ADDR="198.51.100.42",
+    )
+    assert r_email.status_code == 429
+    assert int(r_email.headers["Retry-After"]) >= 1
+    assert r_email.json()["detail"] == "Rate limit exceeded."
 
 
 @pytest.mark.usefixtures("frozen_clock")
@@ -1788,3 +1839,94 @@ def test_multi_org_distinct_per_realm_user_rows_unite_under_verified_email(
     assert res_unver_oidc.status_code == 200
     assert [e["organisation_slug"] for e in res_unver_oidc.json()["workspaces"]] == ["realm-one"]
     assert res_unver_oidc.json()["active_workspace_id"] == str(ws_one.id)
+
+    # 4. Switching to own `org_one` with `email_verified=False` mints `kp1.*` with `ev=False`,
+    #    which CANNOT pivot to `org_two` via subsequent `workspaces` or `switch-workspace`!
+    from core.passport import verify_passport_session_token
+
+    sw_unver = _post_json(
+        w.client,
+        SWITCH_URL,
+        {"organisation_id": str(org_one.id)},
+        HTTP_AUTHORIZATION=f"Bearer {oidc_unverified}",
+    )
+    assert sw_unver.status_code == 200
+    unver_kp = sw_unver.json()["session_token"]
+    unver_claims = verify_passport_session_token(
+        unver_kp,
+        secret="passport-test-hmac-secret-32bytes-minimum!!",
+        now=int(timezone.now().timestamp()),
+    )
+    assert unver_claims.email_verified is False
+
+    res_unver_kp_ws = w.client.get(WORKSPACES_URL, HTTP_AUTHORIZATION=f"Bearer {unver_kp}")
+    assert res_unver_kp_ws.status_code == 200
+    assert [e["organisation_slug"] for e in res_unver_kp_ws.json()["workspaces"]] == ["realm-one"]
+    assert (
+        _post_json(
+            w.client,
+            SWITCH_URL,
+            {"organisation_id": str(org_two.id)},
+            HTTP_AUTHORIZATION=f"Bearer {unver_kp}",
+        ).status_code
+        == 403
+    )
+
+    # 5. Unaccepted / orphaned sibling `Identity` or untrusted-issuer `Identity` never cross-links!
+    org_pending, _, _ = anchor(w.models, slug="realm-pending")
+    org_untrusted, _, _ = anchor(w.models, slug="realm-untrusted")
+    Workspace.objects.create(organisation=org_pending)
+    Workspace.objects.create(organisation=org_untrusted)
+    configure(
+        settings,
+        [
+            trust_entry(w.signer, org_one.issuer),
+            trust_entry(w.signer, org_two.issuer),
+            trust_entry(w.signer, org_pending.issuer),
+            # Note: org_untrusted.issuer intentionally NOT admitted on customer trust lane!
+        ],
+    )
+    user_pending = w.models.User.objects.create(
+        email=shared_verified_email, display_name="Lea Pending"
+    )
+    w.models.Identity.objects.create(
+        user=user_pending,
+        organisation=org_pending,
+        issuer=org_pending.issuer,
+        realm=org_pending.realm,
+        subject="lea-realm-pending-sub",
+        email=shared_verified_email,
+        enabled=True,
+    )
+    w.models.Membership.objects.create(
+        user=user_pending,
+        organisation=org_pending,
+        role="org_member",
+        state="invited",
+        accepted_at=None,
+    )
+    user_untrusted = w.models.User.objects.create(
+        email=shared_verified_email, display_name="Lea Untrusted"
+    )
+    w.models.Identity.objects.create(
+        user=user_untrusted,
+        organisation=org_untrusted,
+        issuer=org_untrusted.issuer,
+        realm=org_untrusted.realm,
+        subject="lea-realm-untrusted-sub",
+        email=shared_verified_email,
+        enabled=True,
+    )
+    w.models.Membership.objects.create(
+        user=user_untrusted,
+        organisation=org_untrusted,
+        role="org_owner",
+        state="active",
+        accepted_at=now,
+    )
+    res_filtered = w.client.get(WORKSPACES_URL, HTTP_AUTHORIZATION=f"Bearer {oidc_verified}")
+    assert res_filtered.status_code == 200
+    assert [e["organisation_slug"] for e in res_filtered.json()["workspaces"]] == [
+        "realm-one",
+        "realm-two",
+    ]

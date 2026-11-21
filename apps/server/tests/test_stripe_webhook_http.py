@@ -1677,6 +1677,31 @@ def test_charge_refunded_partial_and_full_keep_dunning_past_due_and_allow_repaym
     assert Subscription.objects.get(id=placed.subscription.id).state == "past_due"
     assert DunningCase.objects.get(subscription=placed.subscription).state == "past_due"
 
+    # Replaying or re-invoking `_apply_g4_refund_to_payment` with the same or non-advancing
+    # cumulative `amount_refunded` is idempotently ignored and NEVER double-decrements `amount_paid_minor`!
+    from django.db import transaction
+
+    from apps.billing.payments.stripe_webhook import _apply_g4_refund_to_payment
+
+    pay_1 = Payment.objects.get(provider="stripe", provider_ref=pi_1)
+    with transaction.atomic():
+        assert (
+            _apply_g4_refund_to_payment(
+                invoice=inv_reopened,
+                payment=pay_1,
+                event_id=f"evt_bug0009_{label}_ref1",
+                occurred_at=timezone.now(),
+                amount_refunded=refund_amount,
+                currency=inv.currency,
+                charge_id=f"ch_bug0009_{label}_1",
+                pi_id=pi_1,
+                meta={"core_invoice_id": str(inv.id)},
+                data_obj={},
+            )
+            == "ignored"
+        )
+    assert Invoice.objects.get(id=inv.id).amount_paid_minor == total - refund_amount
+
     # 3. Running `schedule_subscription()` BEFORE `due_at` MUST NOT auto-reactivate subscription!
     assert schedule_subscription(placed.subscription.id) is None
     assert Subscription.objects.get(id=placed.subscription.id).state == "past_due"

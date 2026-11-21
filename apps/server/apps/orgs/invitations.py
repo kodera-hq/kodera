@@ -46,6 +46,7 @@ from apps.outbox.realm_enqueue import (
     enqueue_realm_access,
     enqueue_realm_account,
 )
+from core.idempotency.store import MetadataAuthority, ReplayAuthority
 from core.sealing import seal
 from services.identity.access_tokens import VerifiedAccessToken
 
@@ -1199,6 +1200,54 @@ def verify_accept_replay_authority(
         raise InvitationForbiddenError(
             caller, ACT_SCOPE, f"urn:kodera:organisation:{organisation.id}"
         )
+
+
+def verify_create_replay_event(
+    *,
+    event: object,
+    caller: TenantCaller,
+    verified: VerifiedAccessToken,
+    batch: Batch,
+) -> None:
+    """Re-verify caller authority and role-grant ceiling on replay and metadata store events."""
+    if isinstance(event, ReplayAuthority | MetadataAuthority):
+        live = reverify_caller_in_tx(caller=caller, verified=verified, scope=CREATE_SCOPE)
+        check_grantable(caller=live, batch=batch)
+
+
+def verify_resend_replay_event(
+    *,
+    event: object,
+    caller: TenantCaller,
+    verified: VerifiedAccessToken,
+    invitation_id: UUID,
+) -> None:
+    """Re-verify caller authority and role-grant ceiling on resend replay and metadata events."""
+    if isinstance(event, ReplayAuthority | MetadataAuthority):
+        verify_resend_authority_in_tx(caller=caller, verified=verified, invitation_id=invitation_id)
+
+
+def verify_accept_replay_event(
+    *,
+    event: object,
+    verified: VerifiedAccessToken,
+    lane: str,
+    request: Accept,
+) -> None:
+    """Re-verify caller eligibility on acceptance replay and metadata store events."""
+    if isinstance(event, ReplayAuthority):
+        verify_accept_replay_authority(
+            verified=verified,
+            lane=lane,
+            request=request,
+            stored_status=event.status,
+        )
+    elif isinstance(event, MetadataAuthority):
+        if lane != "customer" or not is_storable_subject(verified.subject):
+            raise InvitationNotFoundError()
+        known = known_subject(issuer=verified.issuer, subject=verified.subject)
+        if known is not None and not known.usable:
+            raise InvitationNotFoundError()
 
 
 def quota_replay_policy():

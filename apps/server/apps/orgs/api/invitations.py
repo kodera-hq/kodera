@@ -259,11 +259,9 @@ def organisation_invitations(request: HttpRequest, organisation_id: UUID) -> Htt
             service.check_grantable(caller=caller, batch=batch)
 
             def authority(event: object) -> None:
-                if getattr(event, "status", None) is not None or hasattr(event, "kind"):
-                    live = service.reverify_caller_in_tx(
-                        caller=caller, verified=verified, scope=service.CREATE_SCOPE
-                    )
-                    service.check_grantable(caller=live, batch=batch)
+                service.verify_create_replay_event(
+                    event=event, caller=caller, verified=verified, batch=batch
+                )
 
             def handler() -> StoredResponse:
                 result = service.invite(
@@ -338,10 +336,12 @@ def resend_invitation(request: HttpRequest, invitation_id: UUID) -> HttpResponse
         )
 
         def authority(event: object) -> None:
-            if getattr(event, "status", None) is not None or hasattr(event, "kind"):
-                service.verify_resend_authority_in_tx(
-                    caller=caller, verified=verified, invitation_id=invitation_id
-                )
+            service.verify_resend_replay_event(
+                event=event,
+                caller=caller,
+                verified=verified,
+                invitation_id=invitation_id,
+            )
 
         def handler() -> StoredResponse:
             view = service.resend(
@@ -381,14 +381,12 @@ def accept_invitation(request: HttpRequest) -> HttpResponse:
         accepted_request = service.parse_accept(_body(request))
 
         def authority(event: object) -> None:
-            status = getattr(event, "status", None)
-            if isinstance(status, int):
-                service.verify_accept_replay_authority(
-                    verified=verified,
-                    lane=lane,
-                    request=accepted_request,
-                    stored_status=status,
-                )
+            service.verify_accept_replay_event(
+                event=event,
+                verified=verified,
+                lane=lane,
+                request=accepted_request,
+            )
 
         def handler() -> StoredResponse:
             accepted = service.accept(

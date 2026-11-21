@@ -54,7 +54,6 @@ from services.identity.access_tokens import TokenVerificationError, VerifiedAcce
 
 from .models import (
     STAFF_REALM,
-    Identity,
     PassportMagicLinkToken,
     PassportOutboxBinding,
     PassportRateLimitEvent,
@@ -506,8 +505,20 @@ def _resolve_verified_email_user_ids(
     *,
     primary_user_id: UUID,
 ) -> tuple[UUID, ...]:
-    """Resolve sibling per-realm `User` rows holding verified customer `Identity` rows for the
-    same normalized email (excluding any user under account erasure)."""
+    """Resolve sibling per-realm `User` rows holding verified customer `Identity` rows and active
+    accepted `Membership` grants on trusted customer issuers for the same normalized email
+    (excluding any user under account erasure)."""
+    raw_trust = getattr(settings, "KODERA_AUTH_TRUST", ())
+    trusted_customer_issuers = [
+        entry.snapshot.issuer
+        for entry in raw_trust
+        if getattr(entry, "lane", None) == "customer"
+        and hasattr(entry, "snapshot")
+        and isinstance(getattr(entry.snapshot, "issuer", None), str)
+    ]
+    if not trusted_customer_issuers:
+        return (primary_user_id,)
+
     candidates = list(
         User.objects.filter(
             email__iexact=email_normalized,
@@ -537,28 +548,53 @@ def _resolve_verified_email_user_ids(
         )
         erasing_ids = {UUID(str(r[0])) for r in cursor.fetchall() if r[0] is not None}
 
-    non_erasing_ids = [uid for uid in candidate_ids if uid not in erasing_ids]
-    if not non_erasing_ids:
-        return (primary_user_id,)
+        non_erasing_ids = [uid for uid in candidate_ids if uid not in erasing_ids]
+        if not non_erasing_ids:
+            return (primary_user_id,)
 
-    ident_rows = list(
-        Identity.objects.filter(
-            user_id__in=non_erasing_ids,
-            organisation_id__isnull=False,
-            enabled=True,
-            deleted_at__isnull=True,
+        cursor.execute(
+            """
+            SELECT i.user_id, i.email
+            FROM identity_identity i
+            JOIN orgs_organisation o
+              ON o.id = i.organisation_id
+             AND o.realm = i.realm
+             AND o.issuer = i.issuer
+            JOIN orgs_membership m
+              ON m.user_id = i.user_id
+             AND m.organisation_id = o.id
+            WHERE i.user_id = ANY(%s)
+              AND i.organisation_id IS NOT NULL
+              AND i.enabled = TRUE
+              AND i.deleted_at IS NULL
+              AND i.realm <> %s
+              AND o.state = 'active'
+              AND o.deleted_at IS NULL
+              AND o.realm <> %s
+              AND o.issuer = ANY(%s)
+              AND m.state = 'active'
+              AND m.accepted_at IS NOT NULL
+              AND m.deleted_at IS NULL
+              AND m.role = ANY(%s)
+            """,
+            [
+                non_erasing_ids,
+                STAFF_REALM,
+                STAFF_REALM,
+                trusted_customer_issuers,
+                list(ELIGIBLE_MEMBERSHIP_ROLES),
+            ],
         )
-        .exclude(realm=STAFF_REALM)
-        .values_list("user_id", "email")
-    )
+        ident_rows = cursor.fetchall()
+
     admitted: set[UUID] = {primary_user_id}
-    for uid, ident_email in ident_rows:
+    for uid_raw, ident_email in ident_rows:
         try:
-            ident_norm, _ = normalize_passport_email(ident_email)
+            ident_norm, _ = normalize_passport_email(str(ident_email))
         except PassportInputError:
             continue
         if ident_norm == email_normalized:
-            admitted.add(uid)
+            admitted.add(UUID(str(uid_raw)))
     return tuple(sorted(admitted, key=lambda u: u.hex))
 
 
@@ -1177,6 +1213,7 @@ def verify_magic_link(
                                     now=now_epoch,
                                     auth_time=now_epoch,
                                     max_expires_at=now_epoch + PASSPORT_SESSION_TTL_SECONDS,
+                                    email_verified=True,
                                     membership_id=(
                                         None if active_mem is None else active_mem.membership_id
                                     ),
@@ -1201,6 +1238,22 @@ def verify_magic_link(
     raise PassportUnauthorizedError()  # pragma: no cover
 
 
+def _has_verified_matching_oidc_email(
+    verified: VerifiedAccessToken,
+    person_email: str,
+) -> str | None:
+    """Return normalized email when OIDC token explicitly proves `email_verified=True` and a
+    matching `email` claim for `person_email`, else `None`."""
+    if verified.email_verified is not True or verified.email is None:
+        return None
+    try:
+        person_norm, _ = normalize_passport_email(person_email)
+        claim_norm, _ = normalize_passport_email(verified.email)
+    except PassportInputError:
+        return None
+    return person_norm if claim_norm == person_norm else None
+
+
 def _resolve_initial_user_ids(
     *,
     verified: VerifiedAccessToken | None,
@@ -1214,20 +1267,10 @@ def _resolve_initial_user_ids(
         if resolved is None:
             raise UnknownCustomerError()
         person, _ = resolved
-        if not verified.email_verified:
+        verified_norm = _has_verified_matching_oidc_email(verified, person.email)
+        if verified_norm is None:
             return person.id, (person.id,)
-        try:
-            person_norm, _ = normalize_passport_email(person.email)
-        except PassportInputError:
-            return person.id, (person.id,)
-        if verified.email is not None:
-            try:
-                claim_norm, _ = normalize_passport_email(verified.email)
-            except PassportInputError:
-                return person.id, (person.id,)
-            if claim_norm != person_norm:
-                return person.id, (person.id,)
-        siblings = _resolve_verified_email_user_ids(person_norm, primary_user_id=person.id)
+        siblings = _resolve_verified_email_user_ids(verified_norm, primary_user_id=person.id)
         return person.id, siblings
 
     if session_claims is not None:
@@ -1242,6 +1285,8 @@ def _resolve_initial_user_ids(
         )
         if user_row is None:
             raise TokenVerificationError()
+        if not session_claims.email_verified:
+            return session_claims.user_id, (session_claims.user_id,)
         try:
             email_norm, _ = normalize_passport_email(user_row)
         except PassportInputError:
@@ -1265,6 +1310,10 @@ def list_passport_workspaces(
     )
     try:
         with transaction.atomic():
+            if session_claims is not None and session_claims.max_expires_at <= int(
+                _database_now().timestamp()
+            ):
+                raise TokenVerificationError()
             fenced = _acquire_passport_fence(
                 user_id=user_id,
                 sibling_user_ids=sibling_ids,
@@ -1372,9 +1421,15 @@ def switch_passport_workspace(
                     max_exp_claim = session_claims.max_expires_at
                     if max_exp_claim <= now_epoch:
                         raise TokenVerificationError()
+                    email_verified_claim = session_claims.email_verified
                 else:
                     auth_time_claim = now_epoch
                     max_exp_claim = now_epoch + PASSPORT_SESSION_TTL_SECONDS
+                    email_verified_claim = (
+                        verified is not None
+                        and _has_verified_matching_oidc_email(verified, fenced.person.email)
+                        is not None
+                    )
 
                 directory = _build_directory(
                     person=fenced.person,
@@ -1412,6 +1467,7 @@ def switch_passport_workspace(
                         now=now_epoch,
                         auth_time=auth_time_claim,
                         max_expires_at=max_exp_claim,
+                        email_verified=email_verified_claim,
                         membership_id=matching.membership_id,
                         role=matching.role,
                     )

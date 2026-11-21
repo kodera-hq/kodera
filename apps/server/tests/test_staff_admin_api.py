@@ -2186,11 +2186,16 @@ def test_staff_host_allowlist_and_unknown_kid_jwks_cooldown_prevent_amplificatio
        at most 1 upstream JWKS fetch."""
     clear_jwks_cache()
     fetch_count = 0
+    fail_upstream = False
 
     class _CountingJwksHandler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
             nonlocal fetch_count
             fetch_count += 1
+            if fail_upstream:
+                self.send_response(500)
+                self.end_headers()
+                return
             payload = json.dumps({"keys": [_RSA_PUBLIC_JWK]}).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -2243,7 +2248,24 @@ def test_staff_host_allowlist_and_unknown_kid_jwks_cooldown_prevent_amplificatio
                 assert r_unk.status_code == 401
                 assert r_unk.json()["code"] == "invalid_token"
             assert fetch_count == 1
+
+            # 3. Upstream JWKS failure (500) on cold cache ALSO respects 60s cooldown -> 1 fetch!
+            clear_jwks_cache()
+            fail_upstream = True
+            for idx in range(15):
+                t_fail = _mint_staff_jwt(
+                    "staff-sub-fail",
+                    kid=f"cold-fail-kid-{idx:03d}",
+                    amr=["otp"],
+                )
+                r_fail = client.get(
+                    "/staff/v1/read/overview", **_auth_headers(t_fail, host=ADMIN_HOST)
+                )
+                assert r_fail.status_code == 503
+                assert r_fail.json()["code"] == "staff_jwks_unavailable"
+            assert fetch_count == 2
     finally:
+        clear_jwks_cache()
         server.shutdown()
         server.server_close()
         thread.join(timeout=2.0)
@@ -2375,6 +2397,17 @@ def test_c1_scrubber_and_sar_evidence_validator_cover_kodera_tokens_pem_uris_and
         "BEGIN PRIVATE KEY",
     ):
         assert leaked not in scrubbed, f"{leaked!r} leaked in {scrubbed!r}"
+
+    assert scrub_c1_text("client ::ffff:192.0.2.1 connected") == "client [REDACTED_IP] connected"
+    assert (
+        scrub_c1_text("client 0:0:0:0:0:ffff:192.0.2.1 connected")
+        == "client [REDACTED_IP] connected"
+    )
+    assert scrub_c1_text("peer [::ffff:192.0.2.1]:8443 ok") == "peer [REDACTED_IP]:8443 ok"
+    assert (
+        scrub_c1_text("peer [::1]:8443 and 2001:db8::1.")
+        == "peer [REDACTED_IP]:8443 and [REDACTED_IP]."
+    )
 
     assert validate_sar_evidence_ref("SAR-BUNDLE-0042") == "SAR-BUNDLE-0042"
     for bad_ref in (

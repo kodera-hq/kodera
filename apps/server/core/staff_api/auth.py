@@ -88,7 +88,8 @@ class _PlaneConfig:
 
 _jwks_lock = threading.Lock()
 _jwks_fetch_lock = threading.Lock()
-_jwks_cache: dict[str, tuple[float, float, dict[str, tuple[str, PublicKey]]]] = {}
+_jwks_cache: dict[str, tuple[float, dict[str, tuple[str, PublicKey]]]] = {}
+_jwks_last_attempt: dict[str, float] = {}
 _test_jwks_registry: dict[str, dict[str, Any]] = {}
 
 
@@ -121,12 +122,14 @@ def register_test_jwks(jwks_url: str, jwks_payload: dict[str, Any]) -> None:
     with _jwks_lock:
         _test_jwks_registry[jwks_url] = dict(jwks_payload)
         _jwks_cache.pop(jwks_url, None)
+        _jwks_last_attempt.pop(jwks_url, None)
 
 
 def clear_jwks_cache() -> None:
     """Clear cached and test-registered JWKS snapshots."""
     with _jwks_lock:
         _jwks_cache.clear()
+        _jwks_last_attempt.clear()
         _test_jwks_registry.clear()
 
 
@@ -305,15 +308,20 @@ def _parse_jwks_keys(doc: dict[str, Any]) -> dict[str, tuple[str, PublicKey]]:
     return parsed
 
 
-def _resolve_signing_key(jwks_url: str, kid: str) -> tuple[str, PublicKey]:
+def _check_cached_or_cooldown(jwks_url: str, kid: str) -> tuple[str, PublicKey] | None:
     now = time.monotonic()
     with _jwks_lock:
         cached = _jwks_cache.get(jwks_url)
+        last_attempt = _jwks_last_attempt.get(jwks_url)
         has_test_override = jwks_url in _test_jwks_registry
-    if cached is not None and cached[0] > now:
-        if kid in cached[2]:
-            return cached[2][kid]
-        if not has_test_override and (now - cached[1]) < JWKS_REFRESH_COOLDOWN_SEC:
+    if cached is not None and cached[0] > now and kid in cached[1]:
+        return cached[1][kid]
+    if (
+        not has_test_override
+        and last_attempt is not None
+        and (now - last_attempt) < JWKS_REFRESH_COOLDOWN_SEC
+    ):
+        if cached is not None and cached[0] > now:
             raise StaffApiError(
                 401,
                 "invalid_token",
@@ -321,27 +329,32 @@ def _resolve_signing_key(jwks_url: str, kid: str) -> tuple[str, PublicKey]:
                 "Unknown or retired signing key identifier",
                 authenticate_challenge=True,
             )
+        raise StaffApiError(
+            503,
+            "staff_jwks_unavailable",
+            "Staff JWKS unavailable",
+            "Unable to retrieve staff OIDC signing keys",
+            type_slug="c1-backend-jwks-unavailable",
+        )
+    return None
+
+
+def _resolve_signing_key(jwks_url: str, kid: str) -> tuple[str, PublicKey]:
+    hit = _check_cached_or_cooldown(jwks_url, kid)
+    if hit is not None:
+        return hit
     with _jwks_fetch_lock:
-        now = time.monotonic()
+        hit = _check_cached_or_cooldown(jwks_url, kid)
+        if hit is not None:
+            return hit
         with _jwks_lock:
-            cached = _jwks_cache.get(jwks_url)
-            has_test_override = jwks_url in _test_jwks_registry
-        if cached is not None and cached[0] > now:
-            if kid in cached[2]:
-                return cached[2][kid]
-            if not has_test_override and (now - cached[1]) < JWKS_REFRESH_COOLDOWN_SEC:
-                raise StaffApiError(
-                    401,
-                    "invalid_token",
-                    "Authentication required",
-                    "Unknown or retired signing key identifier",
-                    authenticate_challenge=True,
-                )
+            _jwks_last_attempt[jwks_url] = time.monotonic()
         doc = _fetch_jwks_document(jwks_url)
         keys = _parse_jwks_keys(doc)
         fetched_at = time.monotonic()
         with _jwks_lock:
-            _jwks_cache[jwks_url] = (fetched_at + JWKS_CACHE_TTL_SEC, fetched_at, keys)
+            _jwks_cache[jwks_url] = (fetched_at + JWKS_CACHE_TTL_SEC, keys)
+            _jwks_last_attempt[jwks_url] = fetched_at
     found = keys.get(kid)
     if found is None:
         raise StaffApiError(

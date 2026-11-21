@@ -80,6 +80,7 @@ EXPECTED_PUBLIC_ENV_DEFAULTS = {
     "KODERA_ATTACHMENT_BASE": "",
     "KODERA_API_INGRESS_SUBNET": "172.30.240.0/28",
     "KODERA_CADDY_API_ADDRESS": "172.30.240.2",
+    "KODERA_SERVER_API_ADDRESS": "172.30.240.3",
     "POSTGRES_USER": "kodera",
     "POSTGRES_DB": "kodera_server",
 }
@@ -338,6 +339,7 @@ SINGLE_CONSOLE_ORIGINS_EXPRESSION = "https://${KODERA_DOMAIN:-chat.example.org}"
 SPLIT_CONSOLE_ORIGINS_EXPRESSION = "https://${KODERA_DOMAIN:?Set KODERA_DOMAIN to the web client host}"
 TRUSTED_EDGE_EXPRESSION = "${KODERA_CADDY_API_ADDRESS:-172.30.240.2}/32"
 CADDY_API_ADDRESS_EXPRESSION = "${KODERA_CADDY_API_ADDRESS:-172.30.240.2}"
+SERVER_API_ADDRESS_EXPRESSION = "${KODERA_SERVER_API_ADDRESS:-172.30.240.3}"
 API_INGRESS_SUBNET_EXPRESSION = "${KODERA_API_INGRESS_SUBNET:-172.30.240.0/28}"
 WEB_ATTACHMENT_ENTRYPOINT_LINE = (
     '\'if [ -n "$${KODERA_ATTACHMENT_BASE:-}" ]; then set -- "$$@" --attachment-base "$$KODERA_ATTACHMENT_BASE"; fi; '
@@ -383,8 +385,12 @@ def edge_ingress_runtime_errors(services: dict[str, ServiceSpec], compose_text: 
         f"  ipv4_address: {CADDY_API_ADDRESS_EXPRESSION}",
     ]:
         errors.append("caddy must attach to edge and api_ingress with static KODERA_CADDY_API_ADDRESS only")
-    if server is None or service_section_lines(server, "networks") != ["default:", "api_ingress:"]:
-        errors.append("server must attach to default and api_ingress only")
+    if server is None or service_section_lines(server, "networks") != [
+        "default:",
+        "api_ingress:",
+        f"  ipv4_address: {SERVER_API_ADDRESS_EXPRESSION}",
+    ]:
+        errors.append("server must attach to default and api_ingress with static KODERA_SERVER_API_ADDRESS only")
     for name in FRONTED_EDGE_UPSTREAMS:
         svc = services.get(name)
         if svc is None or service_section_lines(svc, "networks") != ["default:", "edge:"]:
@@ -570,8 +576,12 @@ def run_media_console_selftest(compose: str, env: str, caddy: str, split: str) -
     mutate("caddy loses static API ingress IP", "caddy",
            "        ipv4_address: " + CADDY_API_ADDRESS_EXPRESSION + "\n", "",
            "caddy must attach to edge and api_ingress with static KODERA_CADDY_API_ADDRESS only")
-    mutate("server loses api_ingress network", "server", "      api_ingress:\n", "",
-           "server must attach to default and api_ingress only")
+    mutate("server loses api_ingress network", "server",
+           "      api_ingress:\n        ipv4_address: " + SERVER_API_ADDRESS_EXPRESSION + "\n", "",
+           "server must attach to default and api_ingress with static KODERA_SERVER_API_ADDRESS only")
+    mutate("server loses static API ingress IP", "server",
+           "        ipv4_address: " + SERVER_API_ADDRESS_EXPRESSION + "\n", "",
+           "server must attach to default and api_ingress with static KODERA_SERVER_API_ADDRESS only")
     mutate("synapse joins api_ingress network", "synapse", "      edge:", "      edge:\n      api_ingress:",
            "service 'synapse' must attach to default and edge without api_ingress")
     cases.append(("api_ingress network removed", compose.replace(REVIEWED_NETWORKS_BLOCK, "networks:\n  default:\n  edge:\n    driver: bridge", 1),
@@ -1340,7 +1350,10 @@ def compose_structure_errors(compose_text: str, file_name: str = "docker-compose
             if stripped not in {"default:", "edge:", "api_ingress:"}:
                 errors.append(f"{where(number)}: service '{service}' joins an unreviewed network")
         elif indent == 8 and section == "networks":
-            if service != "caddy" or stripped != f"ipv4_address: {CADDY_API_ADDRESS_EXPRESSION}":
+            if not (
+                (service == "caddy" and stripped == f"ipv4_address: {CADDY_API_ADDRESS_EXPRESSION}")
+                or (service == "server" and stripped == f"ipv4_address: {SERVER_API_ADDRESS_EXPRESSION}")
+            ):
                 errors.append(f"{where(number)}: service '{service}' has an unreviewed network option")
     return errors
 
@@ -2329,7 +2342,7 @@ def preflight_env(env_example_text: str, env_text: str) -> list[str]:
     synapse_issuer = actual.get(SYNAPSE_OIDC_ISSUER_ENV_NAME, "").strip("'\"")
     synapse_secret = actual.get(SYNAPSE_OIDC_ENV_NAME, "").strip("'\"")
     for key in example:
-        if key in ("KODERA_STAFF_ISSUER", FEDERATION_ENV_NAME, FEDERATION_MODE_ENV_NAME, "KODERA_MATRIX_PARTNER_CHANNELS", SYNAPSE_OIDC_ISSUER_ENV_NAME, TOPOLOGY_ENV_NAME, "KODERA_CONSOLE_CLIENT_ID", "KODERA_IOS_APP_IDS", "KODERA_ANDROID_ASSETLINKS_SHA256", "KODERA_MEDIA_SECRETS_SOURCE", "KODERA_ATTACHMENT_BASE", "KODERA_API_INGRESS_SUBNET", "KODERA_CADDY_API_ADDRESS") and not actual.get(key, "").strip("'\""):
+        if key in ("KODERA_STAFF_ISSUER", FEDERATION_ENV_NAME, FEDERATION_MODE_ENV_NAME, "KODERA_MATRIX_PARTNER_CHANNELS", SYNAPSE_OIDC_ISSUER_ENV_NAME, TOPOLOGY_ENV_NAME, "KODERA_CONSOLE_CLIENT_ID", "KODERA_IOS_APP_IDS", "KODERA_ANDROID_ASSETLINKS_SHA256", "KODERA_MEDIA_SECRETS_SOURCE", "KODERA_ATTACHMENT_BASE", "KODERA_API_INGRESS_SUBNET", "KODERA_CADDY_API_ADDRESS", "KODERA_SERVER_API_ADDRESS") and not actual.get(key, "").strip("'\""):
             continue  # Empty optional configuration retains the reviewed Compose defaults.
         if key == SYNAPSE_OIDC_ENV_NAME and not community_enabled and synapse_issuer:
             pass  # An isolated self-host may sign members in to Synapse with its own realm.
@@ -2482,6 +2495,7 @@ def preflight_env(env_example_text: str, env_text: str) -> list[str]:
             errors.append("KODERA_STAFF_ISSUER must name the exact trusted staff realm")
     subnet_raw = actual.get("KODERA_API_INGRESS_SUBNET", "").strip().strip("'\"") or "172.30.240.0/28"
     caddy_ip_raw = actual.get("KODERA_CADDY_API_ADDRESS", "").strip().strip("'\"") or "172.30.240.2"
+    server_ip_raw = actual.get("KODERA_SERVER_API_ADDRESS", "").strip().strip("'\"") or "172.30.240.3"
     ingress_net: ipaddress.IPv4Network | None = None
     try:
         candidate_net = ipaddress.IPv4Network(subnet_raw, strict=True)
@@ -2496,6 +2510,8 @@ def preflight_env(env_example_text: str, env_text: str) -> list[str]:
             errors.append("KODERA_API_INGRESS_SUBNET must be a strict private IPv4 subnet (/24 to /29)")
     except ValueError:
         errors.append("KODERA_API_INGRESS_SUBNET must be a strict private IPv4 subnet (/24 to /29)")
+    caddy_ip: ipaddress.IPv4Address | None = None
+    server_ip: ipaddress.IPv4Address | None = None
     try:
         caddy_ip = ipaddress.IPv4Address(caddy_ip_raw)
         if ingress_net is not None and (
@@ -2505,6 +2521,17 @@ def preflight_env(env_example_text: str, env_text: str) -> list[str]:
             errors.append("KODERA_CADDY_API_ADDRESS must be a usable container IPv4 address inside KODERA_API_INGRESS_SUBNET")
     except ValueError:
         errors.append("KODERA_CADDY_API_ADDRESS must be a usable container IPv4 address inside KODERA_API_INGRESS_SUBNET")
+    try:
+        server_ip = ipaddress.IPv4Address(server_ip_raw)
+        if ingress_net is not None and (
+            server_ip not in ingress_net
+            or server_ip in {ingress_net.network_address, ingress_net.broadcast_address, ingress_net.network_address + 1}
+        ):
+            errors.append("KODERA_SERVER_API_ADDRESS must be a usable container IPv4 address inside KODERA_API_INGRESS_SUBNET")
+    except ValueError:
+        errors.append("KODERA_SERVER_API_ADDRESS must be a usable container IPv4 address inside KODERA_API_INGRESS_SUBNET")
+    if caddy_ip is not None and server_ip is not None and caddy_ip == server_ip:
+        errors.append("KODERA_CADDY_API_ADDRESS and KODERA_SERVER_API_ADDRESS must be distinct usable container IPv4 addresses")
     attachment_base = actual.get("KODERA_ATTACHMENT_BASE", "").strip().strip("'\"")
     if attachment_base:
         host_domain = actual.get("KODERA_DOMAIN", "").strip().strip("'\"")
@@ -3333,6 +3360,16 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
             "KODERA_CADDY_API_ADDRESS must be a usable container IPv4 address inside KODERA_API_INGRESS_SUBNET",
         ),
         (
+            "Server API address sits outside KODERA_API_INGRESS_SUBNET",
+            lambda env: re.sub(r"(?m)^KODERA_SERVER_API_ADDRESS=.*$", "KODERA_SERVER_API_ADDRESS=172.30.241.3", env),
+            "KODERA_SERVER_API_ADDRESS must be a usable container IPv4 address inside KODERA_API_INGRESS_SUBNET",
+        ),
+        (
+            "Server API address collides with KODERA_CADDY_API_ADDRESS",
+            lambda env: re.sub(r"(?m)^KODERA_SERVER_API_ADDRESS=.*$", "KODERA_SERVER_API_ADDRESS=172.30.240.2", env),
+            "KODERA_CADDY_API_ADDRESS and KODERA_SERVER_API_ADDRESS must be distinct usable container IPv4 addresses",
+        ),
+        (
             "KODERA_ATTACHMENT_BASE is a bare origin without bucket path",
             lambda env: re.sub(r"(?m)^KODERA_ATTACHMENT_BASE=.*$", "KODERA_ATTACHMENT_BASE=https://media.example.net/", env),
             "KODERA_ATTACHMENT_BASE must be a dedicated public https://<host>/<path>/ prefix outside the Core API and OIDC origins",
@@ -3362,6 +3399,7 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
         else f"{key}=media_secrets" if key == "KODERA_MEDIA_SECRETS_SOURCE"
         else f"{key}=172.30.240.0/28" if key == "KODERA_API_INGRESS_SUBNET"
         else f"{key}=172.30.240.2" if key == "KODERA_CADDY_API_ADDRESS"
+        else f"{key}=172.30.240.3" if key == "KODERA_SERVER_API_ADDRESS"
         else f"{key}=single" if key == TOPOLOGY_ENV_NAME
         else f"{key}=" if key in (*COMMUNITY_KEYS, *AGENT_ENV_NAMES, SYNAPSE_OIDC_ENV_NAME)
         else f"{key}={base64.urlsafe_b64encode(bytes([i % 256]) * 32).decode('ascii')}" if "BASE64URL_32" in value

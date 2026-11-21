@@ -71,6 +71,7 @@ class PassportSessionClaims:
     expires_at: int
     auth_time: int
     max_expires_at: int
+    email_verified: bool = False
     membership_id: UUID | None = None
     role: str | None = None
 
@@ -202,13 +203,15 @@ def issue_passport_session_token(
     ttl_seconds: int = PASSPORT_SESSION_TTL_SECONDS,
     auth_time: int | None = None,
     max_expires_at: int | None = None,
+    email_verified: bool = False,
     membership_id: UUID | None = None,
     role: str | None = None,
 ) -> str:
     """Issue a short-lived signed `kp1.<payload>.<sig>` cross-workspace session token.
 
-    Preserves immutable `auth_time` and `max_exp` across workspace switches so switching can
-    never extend the original authentication session beyond `auth_time + ttl_seconds`.
+    Preserves immutable `auth_time`, `max_exp`, and `ev` (`email_verified`) across workspace
+    switches so switching can never extend the original authentication session beyond
+    `auth_time + ttl_seconds` or elevate an unverified OIDC session to verified-email scope.
     """
     issued_at = int(time.time()) if now is None else int(now)
     effective_auth_time = issued_at if auth_time is None else int(auth_time)
@@ -229,6 +232,7 @@ def issue_passport_session_token(
         "exp": expires_at,
         "auth_time": effective_auth_time,
         "max_exp": effective_max_exp,
+        "ev": bool(email_verified),
     }
     if membership_id is not None:
         payload["mid"] = str(membership_id)
@@ -299,6 +303,9 @@ def verify_passport_session_token(
         or iat > current + 60
     ):
         raise PassportSessionError("expired passport session token")
+    raw_ev = decoded.get("ev")
+    if not isinstance(raw_ev, bool):
+        raise PassportSessionError("invalid passport session claims")
     try:
         user_id = UUID(str(decoded["sub"]))
         raw_org = decoded.get("org")
@@ -317,6 +324,7 @@ def verify_passport_session_token(
         expires_at=exp,
         auth_time=auth_time,
         max_expires_at=max_exp,
+        email_verified=raw_ev,
         membership_id=membership_id,
         role=raw_role,
     )
