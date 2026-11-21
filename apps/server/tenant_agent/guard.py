@@ -53,11 +53,19 @@ class RosterGuard:
                 if not identities:
                     continue
                 if name.startswith("kodera-"):
-                    allowed = (
-                        self._public_audio_members(public_rooms[name])
-                        if name in public_rooms
-                        else audio.get(name, frozenset())
-                    )
+                    if name in public_rooms:
+                        try:
+                            allowed = self._public_audio_members(public_rooms[name])
+                        except (EngineError, ExecError):
+                            log.warning(
+                                "roster guard could not read public room %s members; failing closed",
+                                name,
+                                exc_info=True,
+                            )
+                            allowed = frozenset()
+                            report.failed_rooms += 1
+                    else:
+                        allowed = audio.get(name, frozenset())
                     for identity in identities:
                         user = identity.split("|", 1)[0]
                         if user not in allowed or user.split(":")[0][1:] in inactive:

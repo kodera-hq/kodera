@@ -2836,6 +2836,11 @@ describe('confidential room plaintext quarantine', () => {
       await fixture.start()
       expect(fixture.store.canSendMessage(SNAPSHOT_ROOM)).toBe(true)
       expect(fixture.store.canReact(SNAPSHOT_ROOM)).toBe(true)
+      await expect(fixture.store.react(SNAPSHOT_ROOM, '$m1', 'spoofed text')).rejects.toThrow(
+        'No content was sent'
+      )
+      expect(fixture.requests).toHaveLength(0)
+
       await fixture.publishState([
         {
           ...snapshotMessage('$mute-policy', ''),
@@ -2851,11 +2856,50 @@ describe('confidential room plaintext quarantine', () => {
       ])
       expect(fixture.store.canSendMessage(SNAPSHOT_ROOM)).toBe(false)
       expect(fixture.store.canReact(SNAPSHOT_ROOM)).toBe(false)
+      expect(fixture.store.canPin(SNAPSHOT_ROOM)).toBe(false)
+      fixture.store.setTyping(SNAPSHOT_ROOM, true, 2_000)
+      expect(fixture.typingNotices).toHaveLength(0)
+      await expect(fixture.store.send(SNAPSHOT_ROOM, 'muted send')).rejects.toThrow(
+        'No content was sent'
+      )
+      await expect(fixture.store.edit(SNAPSHOT_ROOM, '$m1', 'muted edit')).rejects.toThrow(
+        'No content was sent'
+      )
+      await expect(fixture.store.react(SNAPSHOT_ROOM, '$m1', '👍')).rejects.toThrow(
+        'No content was sent'
+      )
+      await expect(fixture.store.toggleReaction(SNAPSHOT_ROOM, '$m1', '👍')).rejects.toThrow(
+        'No content was sent'
+      )
+      await expect(fixture.store.remove(SNAPSHOT_ROOM, '$m1')).rejects.toThrow(
+        'No content was sent'
+      )
+      await expect(fixture.store.setPinned(SNAPSHOT_ROOM, '$m1', true)).rejects.toThrow(
+        'No content was sent'
+      )
+      expect(fixture.requests).toHaveLength(0)
+
       fixture.store.markConfidentialRoom(SNAPSHOT_ROOM)
       expect(fixture.store.getRoomBoundary(SNAPSHOT_ROOM)).toBe('invalid')
       await expect(fixture.store.send(SNAPSHOT_ROOM, 'blocked')).rejects.toThrow(
         'No content was sent'
       )
+      await expect(fixture.store.edit(SNAPSHOT_ROOM, '$m1', 'blocked edit')).rejects.toThrow(
+        'No content was sent'
+      )
+      await expect(fixture.store.react(SNAPSHOT_ROOM, '$m1', '👍')).rejects.toThrow(
+        'No content was sent'
+      )
+      await expect(fixture.store.toggleReaction(SNAPSHOT_ROOM, '$m1', '👍')).rejects.toThrow(
+        'No content was sent'
+      )
+      await expect(fixture.store.remove(SNAPSHOT_ROOM, '$m1')).rejects.toThrow(
+        'No content was sent'
+      )
+      await expect(fixture.store.setPinned(SNAPSHOT_ROOM, '$m1', true)).rejects.toThrow(
+        'No content was sent'
+      )
+      expect(fixture.requests).toHaveLength(0)
     } finally {
       fixture.stop()
     }

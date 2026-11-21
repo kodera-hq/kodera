@@ -73,6 +73,20 @@ def test_confidential_channel_creation_immutability_and_channel_set_emission(e):
         pytest.raises(IntegrityError, match="channel_confidential_immutable"),
         transaction.atomic(),
     ):
+        Channel.objects.filter(id=confidential["id"]).update(is_confidential=False)
+
+    with (
+        pytest.raises(IntegrityError, match="channel_confidential_immutable"),
+        transaction.atomic(),
+    ):
+        row = Channel.objects.get(id=confidential["id"])
+        row.is_confidential = False
+        row.save(update_fields=["is_confidential"])
+
+    with (
+        pytest.raises(IntegrityError, match="channel_confidential_immutable"),
+        transaction.atomic(),
+    ):
         with connection.cursor() as cursor:
             cursor.execute(
                 "UPDATE workspaces_channel SET is_confidential = false WHERE id = %s",
@@ -91,3 +105,11 @@ def test_confidential_channel_creation_immutability_and_channel_set_emission(e):
             position=99,
             is_confidential=True,
         )
+
+    from test_espace_structure import ARCHIVE
+
+    archived = send(e, e.owner, "post", ARCHIVE, channel_id=confidential["id"])
+    assert archived.status_code == 200, archived.content
+    archived_emitted = {item["channel_id"]: item for item in latest(e).channels}
+    assert archived_emitted[confidential["id"]]["archived"] is True
+    assert archived_emitted[confidential["id"]]["confidential"] == "io.kodera.mls.v1"

@@ -1962,6 +1962,35 @@ def test_roster_guard_retains_native_public_community_caller_and_evicts_banned_o
     assert livekit.rooms_[lk_name] == [f"{newcomer}|D1", f"{mx(BOB)}|D2"]
 
 
+def test_roster_guard_evicts_banned_caller_when_public_room_members_fetch_fails(
+    tmp_path, monkeypatch
+):
+    import test_tenant_agent_channels as module
+
+    monkeypatch.setattr(module, "SERVER", "community.example.org")
+    monkeypatch.setattr(module, "AGENT", "@kodera-agent:community.example.org")
+    monkeypatch.setattr(module, "ROOMS", "@kodera-rooms:community.example.org")
+    handlers, homeserver, livekit, state = build(tmp_path)
+    entry = channel(AUDIO, kind="audio", audience="all", members=[])
+    assert handlers.handle(CHANNEL_KIND, channel_set(1, entry, all_members=(BOB,))).status == (
+        "succeeded"
+    )
+    state.keep_channel_set(
+        2, [entry], [BOB], moderation={"banned_subjects": [CAROL], "muted_subjects": []}
+    )
+    room_id = state.channel_rooms()[AUDIO]
+    lk_name = livekit_room(room_id)
+    livekit.rooms_[lk_name] = [f"{mx(CAROL)}|D1", f"{mx(BOB)}|D2"]
+    homeserver.members = lambda _room_id: (_ for _ in ()).throw(
+        SynapseUnavailableError("synapse 503")
+    )
+    guard = RosterGuard(livekit, Meet(FakeRunner(), "meet-backend"), state, homeserver)
+    report = guard.enforce(lk_name)
+    assert report.failed_rooms == 1
+    assert (lk_name, f"{mx(CAROL)}|D1") in livekit.removed
+    assert livekit.rooms_[lk_name] == []
+
+
 def test_confidential_channel_binds_immutable_marker_and_initial_encryption(tmp_path):
     from tenant_agent.synapse import CONFIDENTIAL
 

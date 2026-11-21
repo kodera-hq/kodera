@@ -76,3 +76,26 @@ def test_local_member_events_in_foreign_homed_room_are_refused(mode):
     leave.state_key = ALICE
     leave.room_id = ROOM
     assert run(configured.check_event_allowed(leave, foreign)) == (True, None)
+
+
+@pytest.mark.parametrize("sender", [ALICE, AGENT, PARTNER])
+@pytest.mark.parametrize(
+    "bad_state",
+    [
+        {},
+        {("m.room.create", ""): SimpleNamespace(sender=None, content={})},
+        {("m.room.create", ""): SimpleNamespace(sender="not-a-user-id", content={})},
+        {("m.room.create", ""): SimpleNamespace(sender=AGENT, content=None)},
+    ],
+    ids=["missing-create", "null-creator", "malformed-creator", "redacted-null-content"],
+)
+def test_missing_or_malformed_room_create_state_fails_closed(sender, bad_state):
+    configured = make_policy({ROOM: bad_state}, "partner")
+    msg = event("m.room.message", sender, state=False, body="probe")
+    msg.room_id = ROOM
+    assert configured._governance_allows(msg, bad_state) is False
+    assert run(configured.check_event_allowed(msg, bad_state)) == (False, None)
+    assert run(configured.check_event_for_spam(msg)) == FORBIDDEN
+    bad_room = event("m.room.message", sender, state=False, body="probe")
+    bad_room.room_id = ""
+    assert run(configured.check_event_for_spam(bad_room)) == FORBIDDEN

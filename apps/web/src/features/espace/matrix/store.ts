@@ -54,6 +54,7 @@ import {
 import { NotRenewable, RefreshRefused, refreshingFetch } from './refresh'
 export { RefreshRefused }
 import {
+  isValidReactionKey,
   occupancyOf,
   threadView,
   roomViews,
@@ -1344,7 +1345,12 @@ export class EspaceStore {
   /** Whether the room's power levels let the member change its pins. */
   canPin = (roomId: string): boolean => {
     const room = this.#client.getRoom(roomId)
-    if (!this.#isPlaintextRoomAllowed(roomId) || room === null || room.getMyMembership() !== 'join')
+    if (
+      !this.#isPlaintextRoomAllowed(roomId) ||
+      room === null ||
+      room.getMyMembership() !== 'join' ||
+      this.#isMutedInRoom(room)
+    )
       return false
     return room.currentState.maySendStateEvent(PINNED_EVENTS, this.#me)
   }
@@ -1426,6 +1432,14 @@ export class EspaceStore {
     if (!this.#isPlaintextRoomAllowed(roomId)) throw new ConfidentialRoomUnavailable()
   }
 
+  #requireUnmutedPlaintextRoom(roomId: string): void {
+    this.#requirePlaintextRoom(roomId)
+    const room = this.#client.getRoom(roomId)
+    if (room !== null && this.#isMutedInRoom(room)) {
+      throw new Error('The member is muted in this room. No content was sent.')
+    }
+  }
+
   /** Whether the room's power levels let the member post messages (`m.room.message`). */
   canSendMessage = (roomId: string): boolean => {
     const room = this.#client.getRoom(roomId)
@@ -1457,7 +1471,7 @@ export class EspaceStore {
 
   /** Pins or unpins one event; the room's next state answers with the new list. */
   async setPinned(roomId: string, eventId: string, pinned: boolean): Promise<void> {
-    this.#requirePlaintextRoom(roomId)
+    this.#requireUnmutedPlaintextRoom(roomId)
     const current = this.getPinned(roomId)
     if (current.includes(eventId) === pinned) return
     const next = pinned ? [...current, eventId] : current.filter((id) => id !== eventId)
@@ -1573,6 +1587,8 @@ export class EspaceStore {
    */
   setTyping = (roomId: string, typing: boolean, now = Date.now()): void => {
     if (this.#stopped || !permitsPlaintext(this.getRoomBoundary(roomId))) return
+    const room = this.#client.getRoom(roomId)
+    if (typing && room !== null && this.#isMutedInRoom(room)) return
     const sent = this.#typingSent.get(roomId)
     if (typing) {
       if (sent !== undefined && now - sent < TYPING_RESEND_MS) return
@@ -1773,7 +1789,7 @@ export class EspaceStore {
   }
 
   async send(roomId: string, body: string, options: SendOptions = {}): Promise<void> {
-    this.#requirePlaintextRoom(roomId)
+    this.#requireUnmutedPlaintextRoom(roomId)
     const relatesTo =
       options.threadRootId !== undefined
         ? {
@@ -1823,7 +1839,7 @@ export class EspaceStore {
     body: string,
     options: EditOptions = {}
   ): Promise<void> {
-    this.#requirePlaintextRoom(roomId)
+    this.#requireUnmutedPlaintextRoom(roomId)
     const html = markdownToHtml(body, options.mentionTargets ?? [])
     const userIds = [...new Set(options.mentions ?? [])]
     const room = options.mentionsRoom === true
@@ -1862,12 +1878,15 @@ export class EspaceStore {
   }
 
   async remove(roomId: string, eventId: string): Promise<void> {
-    this.#requirePlaintextRoom(roomId)
+    this.#requireUnmutedPlaintextRoom(roomId)
     await this.#client.redactEvent(roomId, eventId)
   }
 
   async react(roomId: string, eventId: string, key: string): Promise<void> {
-    this.#requirePlaintextRoom(roomId)
+    this.#requireUnmutedPlaintextRoom(roomId)
+    if (!isValidReactionKey(key)) {
+      throw new Error('Invalid reaction key. No content was sent.')
+    }
     await this.#client.sendEvent(
       roomId,
       'm.reaction' as never,
@@ -1878,10 +1897,10 @@ export class EspaceStore {
   }
 
   async unreact(roomId: string, eventId: string, key: string): Promise<void> {
-    this.#requirePlaintextRoom(roomId)
+    this.#requireUnmutedPlaintextRoom(roomId)
     const room = this.#client.getRoom(roomId)
     if (room === null) return
-    const match = [...room.getLiveTimeline().getEvents(), ...room.getPendingEvents()].find(
+    const match = [...room.getLiveTimeline().getEvents(), ...this.#pendingRoomEvents(room)].find(
       (event) => {
         if (event.getType() !== 'm.reaction' || event.isRedacted()) return false
         if (event.getSender() !== this.#me) return false
@@ -1903,15 +1922,19 @@ export class EspaceStore {
   #hasOwnReaction(roomId: string, eventId: string, key: string): boolean {
     const room = this.#client.getRoom(roomId)
     if (room === null) return false
-    return [...room.getLiveTimeline().getEvents(), ...room.getPendingEvents()].some((event) => {
-      if (event.getType() !== 'm.reaction' || event.isRedacted()) return false
-      if (event.getSender() !== this.#me) return false
-      const relates = (event.getOriginalContent() as Record<string, unknown>)['m.relates_to'] as
-        { rel_type?: unknown; event_id?: unknown; key?: unknown } | undefined
-      return (
-        relates?.rel_type === 'm.annotation' && relates.event_id === eventId && relates.key === key
-      )
-    })
+    return [...room.getLiveTimeline().getEvents(), ...this.#pendingRoomEvents(room)].some(
+      (event) => {
+        if (event.getType() !== 'm.reaction' || event.isRedacted()) return false
+        if (event.getSender() !== this.#me) return false
+        const relates = (event.getOriginalContent() as Record<string, unknown>)['m.relates_to'] as
+          { rel_type?: unknown; event_id?: unknown; key?: unknown } | undefined
+        return (
+          relates?.rel_type === 'm.annotation' &&
+          relates.event_id === eventId &&
+          relates.key === key
+        )
+      }
+    )
   }
 
   async toggleReaction(roomId: string, eventId: string, key: string): Promise<void> {

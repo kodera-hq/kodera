@@ -446,7 +446,7 @@ def test_nobody_creates_an_encrypted_room(creator):
 @pytest.mark.parametrize("sender", [ALICE, AGENT])
 def test_no_event_turns_on_encryption(sender):
     # The path Synapse's server admins take too: initial state, forced encryption, upgrades.
-    assert run(policy().check_event_allowed(event("m.room.encryption", sender), {})) == (False, None)
+    assert run(policy().check_event_allowed(event("m.room.encryption", sender), state_of(AGENT, []))) == (False, None)
 
 
 MEGOLM_CIPHERTEXT = {
@@ -481,18 +481,22 @@ CIPHERTEXT_CASES = pytest.mark.parametrize(
 def test_no_event_carries_ciphertext(encrypted):
     # A client can post ciphertext in a room where encryption is off, with keys sent by to-device
     # message; refusing m.room.encryption alone would let it through.
-    assert run(policy().check_event_allowed(encrypted, {})) == (False, None)
+    assert run(policy().check_event_allowed(encrypted, state_of(AGENT, []))) == (False, None)
 
 
 @CIPHERTEXT_CASES
 def test_no_federated_event_carries_ciphertext(encrypted):
     # Synapse checks events from other servers with check_event_for_spam, not check_event_allowed.
-    assert run(policy().check_event_for_spam(encrypted)) == FORBIDDEN
+    ordinary_rooms = {"!channel": state_of(AGENT, []), "!dm": state_of(ALICE, [BOB])}
+    assert run(policy(ordinary_rooms).check_event_for_spam(encrypted)) == FORBIDDEN
 
 
 @pytest.mark.parametrize("kind", ["m.room.message", "m.room.join_rules", "m.room.member"])
 def test_rules_allow_every_other_event(kind):
-    assert run(policy().check_event_allowed(event(kind, AGENT), {})) == (True, None)
+    candidate = event(kind, AGENT)
+    if kind == "m.room.member":
+        candidate.state_key = ALICE
+    assert run(policy().check_event_allowed(candidate, state_of(AGENT, []))) == (True, None)
 
 
 def test_agent_creates_a_room_with_other_initial_state():

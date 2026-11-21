@@ -99,9 +99,12 @@ def event_allowed(event: Any, state: Any, agent: str) -> bool:
         if event.type == "m.room.create" and getattr(event, "state_key", "") == ""
         else state.get(("m.room.create", ""))
     )
-    creation = getattr(create, "content", None)
-    marker = creation.get(CONFIDENTIAL) if isinstance(creation, Mapping) else None
-    if not isinstance(creation, Mapping) or CONFIDENTIAL not in creation:
+    creator = getattr(create, "sender", None)
+    creation = getattr(create, "content", {}) if create is not None else None
+    if not isinstance(creator, str) or ":" not in creator or not creator.startswith("@") or not isinstance(creation, Mapping):
+        return False
+    marker = creation.get(CONFIDENTIAL)
+    if CONFIDENTIAL not in creation:
         if state.get(("m.room.encryption", "")) is not None:
             return False
         return event.type not in {"m.room.encryption", "m.room.encrypted"}

@@ -29,6 +29,7 @@ from apps.workspaces.moderation import (
 from apps.workspaces.selectors import (
     active_text_channel_id,
     is_confidential_text_channel,
+    is_designated_confidential_channel,
     restricted_workspace_membership_ids,
 )
 from services.identity.access_tokens import VerifiedAccessToken
@@ -295,7 +296,12 @@ def _device(identifier: Any, principal: TenantCaller, workspace: UUID) -> Device
 
 
 def _room(
-    identifier: UUID, principal: TenantCaller, workspace: UUID, device: Device
+    identifier: UUID,
+    principal: TenantCaller,
+    workspace: UUID,
+    device: Device,
+    *,
+    allow_self_retire: bool = False,
 ) -> tuple[Room, Access, dict[UUID, Device]]:
     row = (
         Room.objects.select_for_update()
@@ -311,6 +317,10 @@ def _room(
     access = resolve(row.channel_id)
     if access.lifecycle not in {"active", "archived"}:
         raise RefusalError(404)
+    if not allow_self_retire and not is_designated_confidential_channel(
+        workspace_id=workspace, channel_id=row.channel_id
+    ):
+        raise RefusalError(409)
     stored = list(
         Participant.objects.filter(room=row, left_epoch__isnull=True)
         .select_related("device__membership__user", "device__identity")
@@ -404,9 +414,14 @@ def authorize_request(
         if not is_confidential_text_channel(workspace_id=workspace, channel_id=channel_id):
             raise RefusalError(409)
     elif room_id is not None:
-        room, access, _ = _room(room_id, principal, workspace, device)
+        self_retire = operation == "retire-room-device" and body.get("targetDeviceId") == body.get(
+            "deviceId"
+        )
+        room, access, _ = _room(
+            room_id, principal, workspace, device, allow_self_retire=self_retire
+        )
         # Leaving with the current device does not publish content.
-        if operation != "retire-room-device" or body["targetDeviceId"] != body["deviceId"]:
+        if not self_retire:
             _write_allowed(principal, workspace, access)
         if operation == "claim-key-package":
             if principal.role not in ADMINS:
@@ -788,9 +803,11 @@ def retire_device(
     workspace, principal = _context(verified, organisation_id, body=body, room_id=room_id)
     device = _device(body.get("deviceId"), principal, workspace)
     _proof(bytes(device.signing_key), "retire-room-device", principal, room_id, body)
-    room, _, active = _room(room_id, principal, workspace, device)
-    _epoch(body.get("epoch"), room.epoch)
     target = _uuid(body.get("targetDeviceId"))
+    room, _, active = _room(
+        room_id, principal, workspace, device, allow_self_retire=(target == device.id)
+    )
+    _epoch(body.get("epoch"), room.epoch)
     if target not in active or (target != device.id and principal.role not in ADMINS):
         raise RefusalError(404)
     if room.epoch >= MAX_EPOCH:

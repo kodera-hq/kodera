@@ -360,7 +360,9 @@ class KoderaPolicy:
 
     async def check_event_for_spam(self, event: Any) -> Any:
         # Synapse runs this, not check_event_allowed, on events from other servers.
-        if getattr(event, "room_id", None):
+        if hasattr(event, "room_id") and event.room_id is not None:
+            if not isinstance(event.room_id, str) or not event.room_id.startswith("!"):
+                return Codes.FORBIDDEN
             state = await self._api.get_room_state(event.room_id)
             if not event_allowed(event, state, self._agent) or not self._governance_allows(event, state):
                 return Codes.FORBIDDEN
@@ -460,8 +462,10 @@ class KoderaPolicy:
             if event.type == "m.room.create" and getattr(event, "state_key", None) == ""
             else state.get(("m.room.create", ""))
         )
-        creation = getattr(create, "content", None)
+        creation = getattr(create, "content", {}) if create is not None else None
         creator = getattr(create, "sender", None)
+        if create is None or not _is_valid_user_id(creator) or not isinstance(creation, Mapping):
+            return False
         membership = event.content.get("membership") if event.type == "m.room.member" else None
         target = getattr(event, "state_key", None)
         if event.sender != self._agent:
