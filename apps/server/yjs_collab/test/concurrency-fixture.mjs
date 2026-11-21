@@ -144,7 +144,7 @@ try {
     )
     assert.ok(
       !(duringLockRow.rows[0]?.markdown ?? '').includes('Survived-200ms-REST-lock'),
-      'edit must wait on workspace FOR SHARE until REST writer commits'
+      'edit must wait on organisation/workspace FOR SHARE until writer commits'
     )
     assert.equal(ws.readyState, WebSocket.OPEN, 'socket must remain open while waiting on REST lock')
     await ownerClient.query('COMMIT')

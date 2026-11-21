@@ -187,16 +187,22 @@ def send_guard(delivery_id: UUID, recipient: str):
             yield False
             return
         org_id = record["consent__membership__organisation_id"]
+        if not organisations.organisation_exists(organisation_id=org_id):
+            raise LookupError("digest organisation absent")
+        user_id = organisations.lock_membership_fence(
+            membership_id=record["consent__membership_id"]
+        )
+        identities.lock_delivery_identity(identity_id=record["consent__identity_id"])
+        identities.lock_user_fence(user_id=user_id)
         if not organisations.lock_organisation(organisation_id=org_id):
             raise LookupError("digest organisation absent")
         workspace_id = workspaces.lock_organisation_workspace(organisation_id=org_id)
-        organisations.lock_membership_user(membership_id=record["consent__membership_id"])
-        identities.lock_delivery_identity(identity_id=record["consent__identity_id"])
         consent = DigestConsent.objects.select_for_update().get(id=record["consent_id"])
         job = DigestJob.objects.select_for_update().get(delivery_id=delivery_id)
         authority = current(consent)
         allowed = (
             authority is not None
+            and consent.identity_id == record["consent__identity_id"]
             and job.state == "enqueued"
             and job.consent_version == consent.version
         )

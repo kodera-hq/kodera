@@ -22,7 +22,11 @@ from django.db.models import Q
 from django.utils import timezone
 
 from apps.audit.services import record_channel_set_refused
-from apps.engine_intents.channel_sets import MAX_NOTICES, ChannelSetError, emit_channel_set
+from apps.engine_intents.channel_sets import (
+    MAX_NOTICES,
+    ChannelSetError as ChannelSetError,
+    emit_channel_set,
+)
 from apps.engine_intents.services import lock_heads
 from apps.identity.selectors import person_contacts, realm_subjects
 from apps.orgs.actor_selectors import organisation_authority_revision

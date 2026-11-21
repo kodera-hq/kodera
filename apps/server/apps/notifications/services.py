@@ -64,7 +64,7 @@ def public_key() -> str:
 def put_subscription(
     *, verified: VerifiedAccessToken, device_id: UUID, body: dict[str, Any], request_id: str
 ) -> None:
-    principal = caller(verified)
+    initial = read_caller(verified)
     public_key()
     key = seal_key()
     try:
@@ -72,10 +72,18 @@ def put_subscription(
     except ValueError:
         raise RefusalError(422) from None
     material = {"endpoint": endpoint, "p256dh": body["p256dh"], "auth": body["auth"]}
-    # Membership serializes initial device registration as well as replacements.
+    # Hold the shared membership fence in canonical m -> w order before locking the workspace.
+    if (
+        for_workspace(organisation_id=initial.organisation_id, membership_id=initial.membership_id)
+        is None
+    ):
+        raise RefusalError(403)
+    principal = caller(verified, initial.organisation_id)
     if (
         for_workspace(
-            organisation_id=principal.organisation_id, membership_id=principal.membership_id
+            organisation_id=principal.organisation_id,
+            membership_id=principal.membership_id,
+            lock=False,
         )
         is None
     ):
@@ -248,7 +256,10 @@ def record(
         resource_id, UUID
     ):
         raise ValueError("notification kind or resource refused")
-    if for_workspace(organisation_id=organisation_id, membership_id=membership_id) is None:
+    if (
+        for_workspace(organisation_id=organisation_id, membership_id=membership_id, lock=False)
+        is None
+    ):
         raise ValueError("notification recipient refused")
     row = Notification.objects.create(
         organisation_id=organisation_id,
@@ -279,7 +290,10 @@ def record_moderation(*, organisation_id: UUID, membership_id: UUID) -> None:
     """Explicit producer port, called in the moderation audit writer's transaction."""
     if not connection.in_atomic_block:
         raise RuntimeError("moderation notification belongs to its producer transaction")
-    if for_workspace(organisation_id=organisation_id, membership_id=membership_id) is not None:
+    if (
+        for_workspace(organisation_id=organisation_id, membership_id=membership_id, lock=False)
+        is not None
+    ):
         record(
             organisation_id=organisation_id,
             membership_id=membership_id,

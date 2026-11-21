@@ -279,15 +279,35 @@ def delivery_identity_exists(*, user_id: UUID, organisation_id: UUID) -> bool:
     ).exists()
 
 
+def lock_user_fence(*, user_id: UUID) -> None:
+    """Hold a shared person fence after membership/identity and before organisation/workspace."""
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT id FROM identity_user WHERE id = %s FOR SHARE",
+            [user_id],
+        )
+        if cursor.fetchone() is None:
+            raise User.DoesNotExist("User matching query does not exist.")
+
+
 def lock_delivery_identity(*, identity_id: UUID) -> None:
-    """Hold the named identity lock in the caller's transaction."""
-    Identity.objects.select_for_update().get(id=identity_id)
+    """Hold a shared identity fence in the caller's transaction."""
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT id FROM identity_identity WHERE id = %s FOR SHARE",
+            [identity_id],
+        )
+        if cursor.fetchone() is None:
+            raise Identity.DoesNotExist("Identity matching query does not exist.")
 
 
 def lock_delivery_identities(*, user_id: UUID, organisation_id: UUID) -> None:
-    """Evaluate all current rows before returning; no lazy query escapes the lock port."""
-    list(
-        Identity.objects.select_for_update().filter(
-            user_id=user_id, organisation_id=organisation_id
+    """Hold shared fences on all current identities in deterministic primary-key order."""
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT id FROM identity_identity"
+            " WHERE user_id = %s AND organisation_id = %s"
+            " ORDER BY id FOR SHARE",
+            [user_id, organisation_id],
         )
-    )
+        cursor.fetchall()

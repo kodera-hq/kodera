@@ -12,9 +12,13 @@ from django.utils import timezone
 
 from apps.audit.services import record_extension_event
 from apps.docs import services as documents
-from apps.identity.selectors import lock_delivery_identity
+from apps.identity.selectors import lock_delivery_identity, lock_user_fence
 from apps.media import outbound
-from apps.orgs.selectors import lock_membership_user, lock_organisation
+from apps.orgs.selectors import (
+    lock_membership_fence,
+    lock_organisation,
+    organisation_exists,
+)
 from core.db.ids import new_uuid7
 
 from .models import Delivery, Installation, WorkspaceCutoff
@@ -22,16 +26,25 @@ from .wire import EVENTS, MAX_GRACE_SECONDS, ExtensionRefusedError, event_payloa
 
 
 def admin(verified, organisation_id):
+    if not organisation_exists(organisation_id=organisation_id):
+        raise ExtensionRefusedError("extension_workspace_absent", 404)
+    if WorkspaceCutoff.objects.filter(organisation_id=organisation_id).exists():
+        raise ExtensionRefusedError("extension_workspace_cut_off", 410)
+    _, initial = documents.read_context(verified, organisation_id)
+    user_id = lock_membership_fence(membership_id=initial.membership_id)
+    lock_delivery_identity(identity_id=initial.identity_id)
+    lock_user_fence(user_id=user_id)
     if not lock_organisation(organisation_id=organisation_id):
         raise ExtensionRefusedError("extension_workspace_absent", 404)
     if WorkspaceCutoff.objects.filter(organisation_id=organisation_id).exists():
         raise ExtensionRefusedError("extension_workspace_cut_off", 410)
+    # Re-read current authority after locking m -> i -> u -> o -> w so any prior revocation wins.
     workspace_id, principal = documents.write_context(verified, organisation_id)
-    lock_membership_user(membership_id=principal.membership_id)
-    lock_delivery_identity(identity_id=principal.identity_id)
-    # A current-role read after the actor locks sees a revocation that committed first.
-    workspace_id, principal = documents.write_context(verified, organisation_id)
-    if principal.role not in {"org_owner", "org_admin"}:
+    if (
+        principal.membership_id != initial.membership_id
+        or principal.identity_id != initial.identity_id
+        or principal.role not in {"org_owner", "org_admin"}
+    ):
         raise ExtensionRefusedError("extension_owner_or_admin_required", 403)
     return workspace_id, principal
 

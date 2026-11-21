@@ -1697,7 +1697,7 @@ def test_round4_concurrent_org_erasure_account_erasure_and_passport_mail_lock_or
 
 
 def test_r5_bounded_stream_upload_drain_requires_authoritative_inflight_inspector(world):
-    """Round-5 [Codex P1]: `BoundedStreamUploadDrainVerifier` rejects `None` or non-callable
+    """Regression (BUG-0025): `BoundedStreamUploadDrainVerifier` rejects `None` or non-callable
     `has_in_flight_uploads` at init and rejects non-bool return values on `verify_drained`."""
     org, _ws, _members, _tokens = world
     now = database_now()
@@ -1731,7 +1731,7 @@ def test_r5_bounded_stream_upload_drain_requires_authoritative_inflight_inspecto
 
 
 def test_r5_passport_withdrawn_and_account_admission_interleaving_and_sql_boundary(world, settings):
-    """Round-5 [Codex P2 & Opus search_path]:
+    """Regression (`orgs/0034` & `search_path`):
     1. `ADMISSION_FUNCTIONS` / `restricted_login('admission')` CANNOT execute the account-first
        `privacy_begin_account_erasure` directly (`InsufficientPrivilege`) and CAN execute
        `privacy_admit_account_erasure`.

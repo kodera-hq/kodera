@@ -9,8 +9,8 @@ from django.conf import settings
 from django.core.exceptions import RequestDataTooBig
 from django.http import HttpRequest, HttpResponse
 
-from apps.engine_intents.channel_sets import ChannelSetError
 from apps.workspaces import moderation as service
+from apps.workspaces.channel_sets import ChannelSetError
 from apps.workspaces.moderation_wire import link_wire, page, report_wire, tag
 from apps.workspaces.quota_http import respond_once
 from apps.workspaces.structure import WorkspaceUnavailableError

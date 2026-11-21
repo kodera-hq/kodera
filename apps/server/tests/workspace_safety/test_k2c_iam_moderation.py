@@ -751,7 +751,7 @@ def test_bug_0050_unsupported_channel_overrides_refused_and_stored_media_caps_fo
 
 
 def test_bug_0010_update_orgs_membership_vs_docs_collab_fence_nowait_no_deadlock(world):
-    """BUG-0010 Round-6 [Opus P2 + Codex P2-3]:
+    """BUG-0010 collaboration advisory and row fence regression:
     1. Active org or account erasure advisory fences (`privacy_erasure_cutoff:<org>`,
        `privacy_account_cutoff:<person>`) make `docs_collab_fence` fail immediately with `55P03`.
     2. Routine non-erasure writes (`orgs_organisation FOR NO KEY UPDATE` + `workspaces_workspace FOR UPDATE`)
@@ -872,7 +872,7 @@ def test_bug_0010_update_orgs_membership_vs_docs_collab_fence_nowait_no_deadlock
         assert f_collab.result(timeout=5) == workspace.id
         f_rest.result(timeout=5)
 
-    # 2b. [Codex R6 P2] Deterministic `member_authority_user_touch` (`identity_user FOR NO KEY UPDATE ->
+    # 2b. Deterministic `member_authority_user_touch` (`identity_user FOR NO KEY UPDATE ->
     #     orgs_organisation FOR NO KEY UPDATE`) interleaving with `docs_collab_fence`: because
     #     `docs_collab_fence` locks `identity_user` BEFORE `orgs_organisation`, Conn B parks cleanly
     #     on `identity_user` without holding `orgs_organisation`, so Conn A acquires `orgs_organisation`
@@ -986,7 +986,7 @@ def test_bug_0010_update_orgs_membership_vs_docs_collab_fence_nowait_no_deadlock
         p1.result(timeout=10)
         p2.result(timeout=10)
 
-    # 3. [Codex P2-3] Active Yjs transaction holding `docs_collab_fence` before `INSERT INTO docs_documentupdate`
+    # 3. Active Yjs transaction holding `docs_collab_fence` before `INSERT INTO docs_documentupdate`
     #    cannot deadlock (`40P01`) with concurrent `begin_account_erasure`!
     staff_op = make_staff_operator()
     now = database_now()
@@ -1149,7 +1149,7 @@ def test_bug_0050_overrides_self_grant_notice_audit_and_metadata_bounds(world):
 def test_r5_real_postgres_yjs_concurrent_workspace_and_erasure_fence(
     world, native_engine, settings
 ):
-    """Round-5 [Opus P1]: Two editors running concurrent `Store.update` and `Store.deliver`
+    """Regression (BUG-0010): Two editors running concurrent `Store.update` and `Store.deliver`
     transactions on the same workspace (both same document and separate documents) against real
     PostgreSQL 16 under the restricted `collab_role` NEVER disconnect each other with `LockBusy`,
     while an active erasure lock (`orgs_organisation FOR UPDATE`) immediately raises `55P03` ->
@@ -1290,7 +1290,7 @@ def test_r5_real_postgres_yjs_concurrent_workspace_and_erasure_fence(
 
 
 def test_r5_allow_overrides_exempt_roles_on_read_only_and_listen_only_channels(world):
-    """Round-5 [Opus P2-1]: Granting `allow: ['message.post']` on a `read_only=True` text channel
+    """Regression (BUG-0050): Granting `allow: ['message.post']` on a `read_only=True` text channel
     lifts all 4 `READ_ONLY` capabilities across `channel_access.may_perform`, `channel_sets`, and
     SQL `docs_document_role` (`'editor'`); granting `allow: ['media.speak']` on a `listen_only=True`
     audio channel lifts all 3 `LISTEN_ONLY` capabilities; `deny` overrides still beat `allow`."""
@@ -1525,7 +1525,7 @@ def test_r5_allow_overrides_exempt_roles_on_read_only_and_listen_only_channels(w
 def test_r5_iam_channel_set_failure_aborts_write_and_returns_503(
     world, http_signer, settings, monkeypatch
 ):
-    """Round-5 [Opus P2-2]: On a provisioned workspace (`default_policy_id` set), a failing
+    """Regression (BUG-0030): On a provisioned workspace (`default_policy_id` set), a failing
     `channel_sets.emit_for` (`WorkspaceUnavailableError` or `ChannelSetError`) is NEVER swallowed
     by `emit_iam_channel_set`: it rolls back the IAM/override mutation and audit event, and the
     HTTP boundary returns `503 service-unavailable` with `Retry-After: 1`."""
@@ -1637,7 +1637,7 @@ def test_r5_iam_channel_set_failure_aborts_write_and_returns_503(
 def test_r6_delegated_role_manager_cannot_bypass_expanded_override_ceiling(
     world, http_signer, settings
 ):
-    """Round-6 [Codex P2-1]: Because `message.post` channel overrides expand into all 4 `READ_ONLY`
+    """Regression (BUG-0050): Because `message.post` channel overrides expand into all 4 `READ_ONLY`
     capabilities and `media.speak` expands into all 3 `LISTEN_ONLY` capabilities, a non-admin
     delegated `manage_roles` caller lacking any companion capability (`file.upload` or `media.video`)
     is refused (`403`) on `governance.overrides`, `iam.assign_roles`, and `iam.delete_role`."""
@@ -1801,3 +1801,288 @@ def test_r6_delegated_role_manager_cannot_bypass_expanded_override_ceiling(
         data=[{"role_id": target_role["id"], "allow": ["media.speak"], "deny": []}],
         request_id=str(uuid4()),
     )
+
+
+def test_r8_extensions_and_notifications_interleave_cleanly_with_collab_and_membership(
+    world, settings, monkeypatch
+):
+    """Regression (BUG-0010): `extensions.{services.admin,dispatcher.dispatch_claim,digest.send_guard}`,
+    `orgs.workspace_members.for_workspace(lock=True)`, and `notifications.services.{put_subscription,record_moderation}`
+    acquire actor/target fences in canonical `m -> i -> u -> o -> w` order using `FOR SHARE` on
+    `orgs_membership`, `identity_identity`, and `identity_user`, so concurrent execution with
+    `docs_collab_fence` and `membership_lifecycle.change_membership` on the exact same principal
+    produces zero `40P01` deadlocks."""
+    import secrets as stdlib_secrets
+    import time
+    from uuid import UUID
+
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    from apps.extensions import (
+        digest as ext_digest,
+        dispatcher as ext_dispatcher,
+        services as ext_services,
+    )
+    from apps.media import outbound
+    from apps.notifications import push as notif_push, services as notif_services
+    from apps.orgs import workspace_members
+
+    org, workspace, members, tokens = world
+    default_pol = ResourcePolicy.objects.create(workspace=workspace, visibility="organisation")
+    workspace.default_policy = default_pol
+    workspace.save(update_fields=["default_policy", "updated_at"])
+
+    doc = Document.objects.create(
+        workspace=workspace,
+        creator=members[0],
+        title="R8 Canonical Lock Order",
+        title_key="r8 canonical lock order",
+        visibility="workspace",
+    )
+    DocumentSnapshot.objects.create(document=doc, sequence=0, head_sequence=0, state=b"\x00\x00")
+    admin_ident = Identity.objects.get(user=members[1].user, organisation=org)
+    fence_args = [
+        doc.id,
+        org.id,
+        members[1].id,
+        admin_ident.id,
+        org.issuer,
+        admin_ident.subject,
+        "editor",
+    ]
+
+    monkeypatch.setattr(outbound, "addresses", lambda *args: [])
+    monkeypatch.setattr(ext_dispatcher, "send", lambda *args: ("delivered", 200))
+    monkeypatch.setattr("apps.outbox.sender._database_now", timezone.now)
+    private_vapid = ec.generate_private_key(ec.SECP256R1())
+    settings.KODERA_NOTIFICATION_SEAL_KEY = stdlib_secrets.token_bytes(32)
+    settings.KODERA_PUSH_VAPID_PUBLIC_KEY = notif_push.public_key(private_vapid)
+    settings.KODERA_OUTBOX_SEAL_KEY = b"\x11" * 32
+
+    class _TestSecrets:
+        def get(self, *, installation_id: UUID, generation: UUID) -> str:
+            return "s" * 64
+
+    # 1. Verify `FOR SHARE` (`RowShareLock`, never `RowExclusiveLock`) on `m, i, u` in `admin()` and `for_workspace(lock=True)`.
+    with transaction.atomic():
+        ws_id, principal = ext_services.admin(tokens[1], org.id)
+        assert ws_id == workspace.id and principal.membership_id == members[1].id
+        snap = workspace_members.for_workspace(
+            organisation_id=org.id, membership_id=members[1].id, lock=True
+        )
+        assert snap is not None and snap.id == members[1].id
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT c.relname, array_agg(DISTINCT l.mode ORDER BY l.mode)"
+                " FROM pg_locks l"
+                " JOIN pg_class c ON c.oid = l.relation"
+                " WHERE l.pid = pg_backend_pid()"
+                "   AND c.relname IN ('orgs_membership', 'identity_identity', 'identity_user')"
+                " GROUP BY c.relname",
+            )
+            modes_by_table = {rel: list(modes) for rel, modes in cursor.fetchall()}
+        for table_name in ("orgs_membership", "identity_identity", "identity_user"):
+            assert "RowShareLock" in modes_by_table[table_name]
+            assert "RowExclusiveLock" not in modes_by_table[table_name]
+
+    # 1b. Deterministic barrier interleaving: while Conn A holds `orgs_membership FOR NO KEY UPDATE`
+    #     (matching `UPDATE orgs_membership` before `orgs_organisation -> workspaces_workspace`),
+    #     `ext_services.admin(tokens[1], org.id)` on Conn B parks on `orgs_membership FOR SHARE`
+    #     WITHOUT holding `orgs_organisation` or `workspaces_workspace`, then completes cleanly!
+    m1_held = threading.Event()
+    release_m1 = threading.Event()
+    admin_pid_box: list[int] = []
+
+    def hold_membership_then_org_workspace() -> str:
+        close_old_connections()
+        try:
+            with transaction.atomic(), connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT id FROM orgs_membership WHERE id = %s FOR NO KEY UPDATE",
+                    [members[1].id],
+                )
+                m1_held.set()
+                assert release_m1.wait(timeout=5)
+                cursor.execute(
+                    "SELECT id FROM orgs_organisation WHERE id = %s FOR NO KEY UPDATE",
+                    [org.id],
+                )
+                cursor.execute(
+                    "SELECT id FROM workspaces_workspace WHERE id = %s FOR UPDATE",
+                    [workspace.id],
+                )
+                return "writer_ok"
+        finally:
+            close_old_connections()
+
+    def interleaved_ext_admin() -> UUID:
+        close_old_connections()
+        try:
+            with connection.cursor() as cur:
+                cur.execute("SELECT pg_backend_pid()")
+                admin_pid_box.append(cur.fetchone()[0])
+            with transaction.atomic():
+                ws_out, _ = ext_services.admin(tokens[1], org.id)
+                return ws_out
+        finally:
+            close_old_connections()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        fut_writer = pool.submit(hold_membership_then_org_workspace)
+        assert m1_held.wait(timeout=5)
+        fut_ext = pool.submit(interleaved_ext_admin)
+        try:
+            parked_cleanly = False
+            deadline = time.monotonic() + 4.0
+            while time.monotonic() < deadline:
+                if admin_pid_box:
+                    apid = admin_pid_box[0]
+                    with connection.cursor() as cursor:
+                        cursor.execute(
+                            "SELECT EXISTS ("
+                            "  SELECT 1 FROM pg_locks"
+                            "  WHERE pid = %s AND locktype IN ('transactionid', 'tuple') AND NOT granted"
+                            "), EXISTS ("
+                            "  SELECT 1 FROM pg_locks"
+                            "  WHERE pid = %s AND relation IN ("
+                            "    'public.orgs_organisation'::regclass,"
+                            "    'public.workspaces_workspace'::regclass"
+                            "  ) AND mode = 'RowExclusiveLock'"
+                            ")",
+                            [apid, apid],
+                        )
+                        waiting_on_m, held_org_or_ws = cursor.fetchone()
+                        if waiting_on_m:
+                            assert held_org_or_ws is False
+                            parked_cleanly = True
+                            break
+                time.sleep(0.02)
+            assert parked_cleanly is True
+        finally:
+            release_m1.set()
+        assert fut_writer.result(timeout=5) == "writer_ok"
+        assert fut_ext.result(timeout=5) == workspace.id
+
+    # Seed an installation + digest job owned by `members[1]` (`org_admin`) so every concurrent worker
+    # contends on the exact same `(members[1], admin_ident, members[1].user, org, workspace)` tuple!
+    installation = ext_services.install(
+        verified=tokens[1],
+        organisation_id=org.id,
+        name="R8 Hook",
+        endpoint="https://hooks.example.org/r8",
+        events=["command.invoked"],
+    )
+    consent = ext_digest.set_consent(verified=tokens[1], organisation_id=org.id, enabled=True)
+    now = timezone.now()
+    Document.objects.filter(id=doc.id).update(updated_at=now - timedelta(minutes=5))
+    digest_job = ext_digest.enqueue_digest(
+        consent_id=consent.id, period_start=now - timedelta(hours=1), period_end=now
+    )
+    assert digest_job.delivery_id is not None
+
+    def worker_collab_fence() -> int:
+        close_old_connections()
+        try:
+            count = 0
+            for _ in range(10):
+                with transaction.atomic(), connection.cursor() as cursor:
+                    cursor.execute("SELECT docs_collab_fence(%s,%s,%s,%s,%s,%s,%s)", fence_args)
+                    assert cursor.fetchone()[0] == workspace.id
+                count += 1
+            return count
+        finally:
+            close_old_connections()
+
+    def worker_extensions_admin_and_dispatch() -> int:
+        close_old_connections()
+        try:
+            completed = 0
+            for idx in range(6):
+                ext_services.enqueue(
+                    verified=tokens[1],
+                    organisation_id=org.id,
+                    installation_id=installation.id,
+                    event_key=f"r8-event-{idx}",
+                    event_type="command.invoked",
+                    data={"seq": idx},
+                )
+                claimed = ext_dispatcher.claim()
+                if claimed is not None:
+                    ext_dispatcher.dispatch_claim(claimed, _TestSecrets())
+                completed += 1
+            return completed
+        finally:
+            close_old_connections()
+
+    def worker_digest_guard() -> int:
+        close_old_connections()
+        try:
+            checked = 0
+            for _ in range(8):
+                with ext_digest.send_guard(digest_job.delivery_id, admin_ident.email) as allowed:
+                    assert isinstance(allowed, bool)
+                checked += 1
+            return checked
+        finally:
+            close_old_connections()
+
+    def worker_notifications_and_moderation() -> int:
+        close_old_connections()
+        try:
+            device_id = uuid4()
+            for idx in range(5):
+                notif_services.put_subscription(
+                    verified=tokens[1],
+                    device_id=device_id,
+                    body={
+                        "endpoint": f"https://push.example.org/r8-{idx}",
+                        "p256dh": notif_push.public_key(ec.generate_private_key(ec.SECP256R1())),
+                        "auth": notif_push.encode(stdlib_secrets.token_bytes(16)),
+                    },
+                    request_id=str(uuid4()),
+                )
+                moderation.moderate(
+                    verified=tokens[0],
+                    organisation_id=org.id,
+                    target_id=members[3].id,
+                    action="mute",
+                    reason="R8 concurrent moderation",
+                    expires_at=timezone.now() + timedelta(minutes=5),
+                    request_id=str(uuid4()),
+                )
+            return 5
+        finally:
+            close_old_connections()
+
+    def worker_membership_touches() -> int:
+        close_old_connections()
+        try:
+            for target_role in ("org_member", "org_admin", "org_member", "org_admin"):
+                _, etag = membership_lifecycle.read_membership(
+                    verified=tokens[0],
+                    organisation_id=org.id,
+                    membership_id=members[2].id,
+                )
+                membership_lifecycle.change_membership(
+                    verified=tokens[0],
+                    organisation_id=org.id,
+                    membership_id=members[2].id,
+                    patch={"role": target_role},
+                    if_match=etag,
+                    request_id=str(uuid4()),
+                )
+            return 4
+        finally:
+            close_old_connections()
+
+    with ThreadPoolExecutor(max_workers=5) as pool:
+        f1 = pool.submit(worker_collab_fence)
+        f2 = pool.submit(worker_extensions_admin_and_dispatch)
+        f3 = pool.submit(worker_digest_guard)
+        f4 = pool.submit(worker_notifications_and_moderation)
+        f5 = pool.submit(worker_membership_touches)
+        assert f1.result(timeout=20) == 10
+        assert f2.result(timeout=20) == 6
+        assert f3.result(timeout=20) == 8
+        assert f4.result(timeout=20) == 5
+        assert f5.result(timeout=20) == 4

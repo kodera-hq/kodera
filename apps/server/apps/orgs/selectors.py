@@ -4,9 +4,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
+from django.db import connection
 from django.db.models import QuerySet
 
-from apps.identity.selectors import person_identities
+from apps.identity.selectors import lock_user_fence, person_identities
 
 from .models import Membership, Organisation
 
@@ -175,9 +176,16 @@ class MembershipContact:
     organisation_name: str
 
 
+def organisation_exists(*, organisation_id: UUID) -> bool:
+    return Organisation.objects.filter(id=organisation_id).exists()
+
+
 def lock_organisation(*, organisation_id: UUID) -> bool:
-    """Hold the organisation fence until the caller's outer transaction ends."""
-    return Organisation.objects.select_for_update().filter(id=organisation_id).first() is not None
+    """Hold a non-key organisation fence until the caller's outer transaction ends."""
+    return (
+        Organisation.objects.select_for_update(no_key=True).filter(id=organisation_id).first()
+        is not None
+    )
 
 
 def lock_organisation_fence(*, organisation_id: UUID) -> None:
@@ -185,10 +193,24 @@ def lock_organisation_fence(*, organisation_id: UUID) -> None:
     Organisation.objects.select_for_update(no_key=True).filter(id=organisation_id).first()
 
 
+def lock_membership_fence(*, membership_id: UUID) -> UUID:
+    """Hold a shared membership fence before identity, user, organisation, and workspace locks."""
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT user_id FROM orgs_membership WHERE id = %s FOR SHARE",
+            [membership_id],
+        )
+        row = cursor.fetchone()
+    if row is None:
+        raise Membership.DoesNotExist("Membership matching query does not exist.")
+    return row[0] if isinstance(row[0], UUID) else UUID(str(row[0]))
+
+
 def lock_membership_user(*, membership_id: UUID) -> UUID:
-    """Lock the membership and its joined user, retaining the original lock set."""
-    row = Membership.objects.select_for_update().select_related("user").get(id=membership_id)
-    return row.user_id
+    """Hold shared fences on the membership and its joined user in canonical m -> u order."""
+    user_id = lock_membership_fence(membership_id=membership_id)
+    lock_user_fence(user_id=user_id)
+    return user_id
 
 
 def active_organisation(*, organisation_id: UUID) -> bool:

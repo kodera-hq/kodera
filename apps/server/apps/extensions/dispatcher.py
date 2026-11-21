@@ -137,16 +137,22 @@ def send(endpoint: str, signed) -> tuple[str, int | None]:
 
 
 def dispatch_claim(job: Claim, secrets: Secrets | None) -> None:
-    # Installation revocation and all workspace writers take this same first lock. The bounded
-    # request is fenced by it: a revocation committed before this transaction prevents sending.
+    # Acquire actor fences in canonical m -> i -> u order before o -> w -> installation -> delivery
+    # so revocation/moderation and live collaboration never invert lock order.
     with transaction.atomic():
         organisation_id = workspaces.workspace_organisation(workspace_id=job.workspace_id)
+        if not organisations.organisation_exists(organisation_id=organisation_id):
+            raise LookupError("installation organisation absent")
+        creator_id = Installation.objects.values_list("creator_id", flat=True).get(
+            id=job.installation_id
+        )
+        user_id = organisations.lock_membership_fence(membership_id=creator_id)
+        identities.lock_delivery_identities(user_id=user_id, organisation_id=organisation_id)
+        identities.lock_user_fence(user_id=user_id)
         if not organisations.lock_organisation(organisation_id=organisation_id):
             raise LookupError("installation organisation absent")
         workspaces.lock_workspace(workspace_id=job.workspace_id)
         installation = Installation.objects.select_for_update().get(id=job.installation_id)
-        user_id = organisations.lock_membership_user(membership_id=installation.creator_id)
-        identities.lock_delivery_identities(user_id=user_id, organisation_id=organisation_id)
         row = (
             Delivery.objects.select_for_update()
             .filter(id=job.delivery_id, state="in_flight", lease_id=job.lease)
