@@ -1354,6 +1354,50 @@ def test_bug_0062_and_0063_scim_nonblocking_cutoff_tokens_attribute_sync_and_rev
         operation=ACCESS_OFF,
     ).exists()
 
+    # `R5 P2-1`: Even when an `ee_scim_deprovision` row (`provisioned_by_scim = FALSE`) exists for a
+    # pre-existing non-SCIM member, `POST /Users` matching only by `email` (no `externalId`) MUST return `403`!
+    deprov_nonscim = tenant_principal_factory(
+        "scim-s4",
+        role="org_member",
+        email="nonscim.deprov@scim-s4.fr",
+        subject=str(uuid4()),
+    )
+    with connection.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO public.ee_scim_deprovision (
+                id, organisation_id, scim_user_id, user_id, tenant_slug,
+                user_name, reason, revoked_sessions_json, occurred_at, provisioned_by_scim
+            ) VALUES (%s, %s, %s, %s, %s, %s, 'delete_user', '[]', clock_timestamp(), FALSE)
+            """,
+            [
+                uuid4(),
+                owner.organisation_id,
+                uuid4(),
+                deprov_nonscim.user_id,
+                "scim-s4",
+                "old-alias-nonscim",
+            ],
+        )
+    r_repost_false_deprov = client.post(
+        "/api/v1/ee/scim/v2/tenants/scim-s4/Users",
+        data=json.dumps(
+            {
+                "schemas": [SCIM_USER_SCHEMA],
+                "userName": "repost-by-email-only",
+                "displayName": "Escalation Attempt",
+                "active": True,
+                "emails": [{"value": "nonscim.deprov@scim-s4.fr", "primary": True}],
+                "roles": [{"value": "org_admin", "primary": True}],
+            }
+        ),
+        content_type="application/scim+json",
+        headers=scim_hdr,
+    )
+    assert r_repost_false_deprov.status_code == 403, r_repost_false_deprov.content
+    assert r_repost_false_deprov.json()["scimType"] == "mutability"
+    assert Membership.objects.get(id=deprov_nonscim.membership_id).role == Membership.Role.MEMBER
+
     # 4. `BUG-0062` & `BUG-0063`: New SCIM user mints UUID `Identity.subject` matching `_LOCALPART`;
     #    SCIM `PATCH` syncs `roles` (`org_admin`) + `channel_set_changed`, refuses `org_billing` (`403`),
     #    and a `REMOVED` `org_admin` re-synced via SCIM resets to `org_member` (never revived as `org_admin`)!

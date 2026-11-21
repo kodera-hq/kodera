@@ -1607,12 +1607,13 @@ def test_p1_4_scim_and_saml_never_mutate_global_user_enabled_across_sibling_tena
             display_name="Claire Shared",
             enabled=True,
         )
+        claire_sub_a = str(uuid4())
         ident_a = Identity.objects.create(
             user=shared_user,
             organisation=org_a,
             realm=org_a.realm,
             issuer=org_a.issuer,
-            subject="shared.claire@corp.fr",
+            subject=claire_sub_a,
             email="shared.claire@corp.fr",
             enabled=True,
         )
@@ -1812,7 +1813,7 @@ def test_p1_4_scim_and_saml_never_mutate_global_user_enabled_across_sibling_tena
     )
     verified_a, bearer_a = _mint_verified_and_bearer(
         org_a.issuer,
-        "shared.claire@corp.fr",
+        claire_sub_a,
         "shared.claire@corp.fr",
     )
 
@@ -1886,6 +1887,7 @@ def test_p1_4_scim_and_saml_never_mutate_global_user_enabled_across_sibling_tena
                     {
                         "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
                         "userName": "shared.claire@corp.fr",
+                        "externalId": claire_sub_a,
                         "displayName": "Claire Shared",
                         "active": True,
                     }
@@ -2009,13 +2011,32 @@ def test_p1_4_scim_and_saml_never_mutate_global_user_enabled_across_sibling_tena
             assert memb_b.state == Membership.State.ACTIVE
             assert resolve_member_authority(verified=verified_b).membership_id == memb_b.id
 
-            # 1e. Re-provision Claire in Tenant A as `active: false`, then `PUT active: true`
+            # 1e. Re-`POST`ing non-SCIM Claire (`ee_scim_deprovision.provisioned_by_scim=FALSE`)
+            #     matching only by email/userName WITHOUT `externalId` MUST return `403`, while
+            #     supplying authoritative `externalId == claire_sub_a` succeeds (`201`)!
+            recreate_no_ext = client.post(
+                "/api/v1/ee/scim/v2/tenants/scim-tenant-a/Users",
+                data=json.dumps(
+                    {
+                        "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+                        "userName": "shared.claire@corp.fr",
+                        "displayName": "Claire Shared",
+                        "active": False,
+                    }
+                ),
+                content_type="application/scim+json",
+                headers=scim_a_headers,
+            )
+            assert recreate_no_ext.status_code == 403, recreate_no_ext.content
+            assert recreate_no_ext.json()["scimType"] == "mutability"
+
             recreate_claire = client.post(
                 "/api/v1/ee/scim/v2/tenants/scim-tenant-a/Users",
                 data=json.dumps(
                     {
                         "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
                         "userName": "shared.claire@corp.fr",
+                        "externalId": claire_sub_a,
                         "displayName": "Claire Shared",
                         "active": False,
                     }

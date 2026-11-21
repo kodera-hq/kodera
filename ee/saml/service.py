@@ -424,7 +424,8 @@ _DEFAULT_ALLOWED_SAML_CLIENT_IDS = frozenset(
 
 def _allowed_oidc_client_ids() -> frozenset[str]:
     configured: set[str] = set()
-    explicit_override = False
+    saml_explicit = False
+    core_explicit = False
     try:
         from django.conf import settings
 
@@ -432,37 +433,38 @@ def _allowed_oidc_client_ids() -> frozenset[str]:
             saml_ids = getattr(settings, "KODERA_SAML_ALLOWED_OIDC_CLIENT_IDS", None)
             if isinstance(saml_ids, str):
                 configured.update(c.strip() for c in saml_ids.split(",") if c.strip())
-                explicit_override = True
+                saml_explicit = True
             elif isinstance(saml_ids, Sequence | set | frozenset) and not isinstance(
                 saml_ids, bytes
             ):
                 configured.update(str(c).strip() for c in saml_ids if str(c).strip())
-                explicit_override = True
+                saml_explicit = True
 
-            if not explicit_override:
+            if not saml_explicit:
                 core_ids = getattr(settings, "KODERA_ALLOWED_OIDC_CLIENT_IDS", None)
                 if isinstance(core_ids, str):
                     configured.update(c.strip() for c in core_ids.split(",") if c.strip())
-                    explicit_override = True
+                    core_explicit = True
                 elif isinstance(core_ids, Sequence | set | frozenset) and not isinstance(
                     core_ids, bytes
                 ):
                     configured.update(str(c).strip() for c in core_ids if str(c).strip())
-                    explicit_override = True
+                    core_explicit = True
     except ImportError:
         pass
 
-    if not explicit_override and "KODERA_SAML_ALLOWED_OIDC_CLIENT_IDS" in os.environ:
+    if not saml_explicit and not core_explicit and "KODERA_SAML_ALLOWED_OIDC_CLIENT_IDS" in os.environ:
         raw_saml_env = os.environ["KODERA_SAML_ALLOWED_OIDC_CLIENT_IDS"]
         configured.update(c.strip() for c in raw_saml_env.split(",") if c.strip())
-        explicit_override = True
-    if not explicit_override and "KODERA_ALLOWED_OIDC_CLIENT_IDS" in os.environ:
+        saml_explicit = True
+    if not saml_explicit and not core_explicit and "KODERA_ALLOWED_OIDC_CLIENT_IDS" in os.environ:
         raw_core_env = os.environ["KODERA_ALLOWED_OIDC_CLIENT_IDS"]
         configured.update(c.strip() for c in raw_core_env.split(",") if c.strip())
-        explicit_override = True
+        core_explicit = True
 
-    if not explicit_override:
-        configured.update(_DEFAULT_ALLOWED_SAML_CLIENT_IDS)
+    if not saml_explicit:
+        if not core_explicit:
+            configured.update(_DEFAULT_ALLOWED_SAML_CLIENT_IDS)
         try:
             from django.conf import settings
 
@@ -499,7 +501,13 @@ def _default_oidc_client_id(allowed: frozenset[str]) -> str:
         return env_console
     if "console" in allowed:
         return "console"
-    return sorted(allowed)[0]
+    if "kodera-console" in allowed:
+        return "kodera-console"
+    raise SamlError(
+        "invalid_client_id",
+        "OIDC client_id is required when no console client_id is allow-listed",
+        status=400,
+    )
 
 
 def _validate_oidc_client_id(raw: str | None) -> str:

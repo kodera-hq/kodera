@@ -2511,23 +2511,10 @@ def _sync_django_scim_provision(
                             user_uuid=identity.user_id,
                             include_deprovisioned=True,
                         )
-                        cur.execute(
-                            """
-                            SELECT EXISTS (
-                                SELECT 1
-                                FROM public.ee_scim_deprovision sd
-                                WHERE sd.organisation_id = %s
-                                  AND sd.user_id = %s
-                            )
-                            """,
-                            [org.id, identity.user_id],
-                        )
-                        prior_deprov_row = cur.fetchone()
-                        prior_scim_deprovisioned = bool(prior_deprov_row and prior_deprov_row[0])
                     proven_external_id = (
                         ext_uuid_str is not None and identity.subject == ext_uuid_str
                     )
-                    if not scim_managed and not proven_external_id and not prior_scim_deprovisioned:
+                    if not scim_managed and not proven_external_id:
                         raise ScimError(
                             "SCIM cannot link onto a pre-existing non-SCIM identity",
                             status=403,

@@ -271,6 +271,42 @@ def test_inmemory_oidc_callback_rfc7636_pkce_exchange_and_provider_error_burn(
                 assert r_deny_cid.status_code == 400
                 assert r_deny_cid.json()["code"] == "invalid_client_id"
 
+    # 5. `R5 P2-2`: Core fallback `KODERA_ALLOWED_OIDC_CLIENT_IDS="kodera-ios,kodera-android"`
+    #    unions in `KODERA_CONSOLE_CLIENT_ID="console-prod"` (both explicit and default omitted
+    #    `client_id`), while native-only allowlists with no console client reject omitted `client_id`
+    #    (`400 invalid_client_id`) rather than picking `kodera-android`!
+    with override_settings(
+        KODERA_ALLOWED_OIDC_CLIENT_IDS="kodera-ios,kodera-android",
+        KODERA_CONSOLE_CLIENT_ID="console-prod",
+    ):
+        r_console_explicit = client.get(
+            "/api/v1/ee/sso/saml/mem-saml/login",
+            {"idp_id": "okta-mem", "client_id": "console-prod"},
+        )
+        assert r_console_explicit.status_code == 200, r_console_explicit.content
+        r_console_default = client.get(
+            "/api/v1/ee/sso/saml/mem-saml/login",
+            {"idp_id": "okta-mem"},
+        )
+        assert r_console_default.status_code == 200, r_console_default.content
+
+    with override_settings(
+        KODERA_ALLOWED_OIDC_CLIENT_IDS="kodera-ios,kodera-android",
+        KODERA_CONSOLE_CLIENT_ID=None,
+    ):
+        monkeypatch.delenv("KODERA_CONSOLE_CLIENT_ID", raising=False)
+        r_native_explicit = client.get(
+            "/api/v1/ee/sso/saml/mem-saml/login",
+            {"idp_id": "okta-mem", "client_id": "kodera-ios"},
+        )
+        assert r_native_explicit.status_code == 200, r_native_explicit.content
+        r_native_omitted = client.get(
+            "/api/v1/ee/sso/saml/mem-saml/login",
+            {"idp_id": "okta-mem"},
+        )
+        assert r_native_omitted.status_code == 400
+        assert r_native_omitted.json()["code"] == "invalid_client_id"
+
 
 def test_inmemory_erased_row_commitment_detects_actor_and_action_tampering() -> None:
     req_id = str(uuid4())
