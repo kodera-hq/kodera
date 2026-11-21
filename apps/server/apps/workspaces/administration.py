@@ -726,12 +726,19 @@ def _category_of(fields: Fields, write: Write, category_id: UUID | None) -> None
 
 
 def create_channel(*, write: Write, body: dict[str, Any]) -> ChannelRow:
-    fields = Fields(body, required=("category_id", "kind", "name"), optional=("topic", "position"))
+    fields = Fields(
+        body,
+        required=("category_id", "kind", "name"),
+        optional=("topic", "position", "confidential"),
+    )
     category_id = fields.uuid("category_id", nullable=True)
     kind = fields.choice("kind", tuple(Channel.Kind.values))
     name = fields.name()
     topic = fields.topic()
     wanted = fields.position()
+    confidential = fields.boolean("confidential")
+    if confidential and kind != Channel.Kind.TEXT:
+        fields.errors.append(("/confidential", "not_applicable"))
     fields.done()
     _category_of(fields, write, category_id)
     fields.done()
@@ -756,6 +763,7 @@ def create_channel(*, write: Write, body: dict[str, Any]) -> ChannelRow:
         position=position,
         policy_mode=Channel.PolicyMode.INHERIT,
         lifecycle=Channel.Lifecycle.ACTIVE,
+        is_confidential=confidential,
     )
     record(
         write,

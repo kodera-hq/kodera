@@ -215,6 +215,7 @@ class Channel(StoredModel):
     # The revision of the channel set whose result last set `room_state` (§13.3): an older
     # result changes nothing.
     room_state_revision = models.BigIntegerField(default=0)
+    is_confidential = models.BooleanField(default=False)
 
     class Meta:
         constraints = [
@@ -261,6 +262,10 @@ class Channel(StoredModel):
             models.CheckConstraint(
                 name="channel_room_state_valid",
                 condition=models.Q(room_state__in=["pending", "ready", "failed"]),
+            ),
+            models.CheckConstraint(
+                name="channel_confidential_text_only",
+                condition=models.Q(is_confidential=False) | models.Q(kind="text"),
             ),
             *template_key_constraints("channel"),
         ]

@@ -24,6 +24,8 @@ log = logging.getLogger("tenant_agent.synapse")
 _LOCALPART = re.compile(r"[a-z0-9._=\-/+]{1,255}")
 POLICY = "io.kodera.room.policy"
 OCCUPANCY = "io.kodera.room.occupancy"
+CONFIDENTIAL = "io.kodera.room.confidential"
+CONFIDENTIAL_ALGORITHMS = frozenset({"io.kodera.mls.v1", "m.megolm.v1.aes-sha2"})
 
 
 def livekit_room(room_id: str) -> str:
@@ -126,6 +128,7 @@ class Synapse:
         power_levels: dict[str, Any],
         *,
         federation_servers: tuple[str, ...] = (),
+        confidential: str | bool | None = None,
     ) -> str:
         try:
             federation_servers = federation.servers(federation_servers, empty=True)
@@ -133,6 +136,16 @@ class Synapse:
             raise EngineError("invalid partner homeserver names") from None
         if self.server_name in federation_servers:
             raise EngineError("a partner homeserver must be external")
+        if confidential is None or confidential is False:
+            algorithm: str | None = None
+        elif confidential is True:
+            algorithm = "io.kodera.mls.v1"
+        elif isinstance(confidential, str) and confidential in CONFIDENTIAL_ALGORITHMS:
+            algorithm = confidential
+        else:
+            raise EngineError("invalid confidential room algorithm")
+        if algorithm is not None and federation_servers:
+            raise EngineError("confidential rooms cannot enable partner federation")
         expected_acl = federation.acl(self.server_name, federation_servers)
         supplied_acl = [item for item in initial_state if item.get("type") == "m.room.server_acl"]
         if len(supplied_acl) > 1 or any(
@@ -140,16 +153,42 @@ class Synapse:
             for item in supplied_acl
         ):
             raise EngineError("initial server ACL must exactly match the room federation mode")
-        initial_state = [item for item in initial_state if item.get("type") != "m.room.server_acl"]
+        supplied_enc = [item for item in initial_state if item.get("type") == "m.room.encryption"]
+        if algorithm is None and supplied_enc:
+            raise EngineError("ordinary rooms cannot enable encryption")
+        if algorithm is not None and (
+            len(supplied_enc) > 1
+            or any(
+                item.get("state_key", "") != "" or item.get("content") != {"algorithm": algorithm}
+                for item in supplied_enc
+            )
+        ):
+            raise EngineError("initial encryption state must match confidential room algorithm")
+        initial_state = [
+            item
+            for item in initial_state
+            if item.get("type") not in ("m.room.server_acl", "m.room.encryption")
+        ]
+        creation_content: dict[str, Any] = {
+            "m.federate": bool(federation_servers),
+            federation.MODE: "partner" if federation_servers else "internal",
+        }
+        if algorithm is not None:
+            creation_content[CONFIDENTIAL] = algorithm
+            initial_state = [
+                *initial_state,
+                {
+                    "type": "m.room.encryption",
+                    "state_key": "",
+                    "content": {"algorithm": algorithm},
+                },
+            ]
         _, answer = self._call(
             "POST",
             "/_matrix/client/v3/createRoom",
             {
                 "room_alias_name": f"kodera-ch-{channel_id}",
-                "creation_content": {
-                    "m.federate": bool(federation_servers),
-                    federation.MODE: "partner" if federation_servers else "internal",
-                },
+                "creation_content": creation_content,
                 # Pinned: power_levels() relies on version 12's creator rule.
                 "room_version": "12",
                 "preset": "private_chat",
@@ -180,7 +219,9 @@ class Synapse:
         )
         return str(answer["room_id"])
 
-    def require_federation_mode(self, room_id: str, partners: tuple[str, ...]) -> None:
+    def require_federation_mode(
+        self, room_id: str, partners: tuple[str, ...], *, confidential: str | None = None
+    ) -> None:
         content = self.state(room_id, "m.room.create")
         expected = "partner" if partners else "internal"
         if (
@@ -190,6 +231,17 @@ class Synapse:
         ):
             raise EngineError(
                 "room federation mode differs; explicit replacement/migration is required"
+            )
+        if confidential is None:
+            if CONFIDENTIAL in content:
+                raise EngineError(
+                    "room confidential mode differs; explicit replacement/migration is required"
+                )
+        elif content.get(CONFIDENTIAL) != confidential or self.state(
+            room_id, "m.room.encryption"
+        ) != {"algorithm": confidential}:
+            raise EngineError(
+                "room confidential mode differs; explicit replacement/migration is required"
             )
 
     def creator(self, room_id: str) -> str | None:

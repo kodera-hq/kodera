@@ -142,7 +142,6 @@ class Matrix:
         if self._since:
             query["since"] = self._since
         _, answer = self._call("GET", "/_matrix/client/v3/sync?" + urllib.parse.urlencode(query))
-        self._since = answer.get("next_batch", self._since)
         joined = []
         for room_id, invite in answer.get("rooms", {}).get("invite", {}).items():
             events = (invite or {}).get("invite_state", {}).get("events", [])
@@ -159,6 +158,7 @@ class Matrix:
                 joined.append(room_id)
             elif senders:
                 self._call("POST", f"/_matrix/client/v3/rooms/{_q(room_id)}/leave", {})
+        self._since = answer.get("next_batch", self._since)
         return joined
 
 

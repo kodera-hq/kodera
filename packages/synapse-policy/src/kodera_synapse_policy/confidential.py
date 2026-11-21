@@ -94,10 +94,16 @@ def _bounded_string(value: Any, limit: int) -> bool:
 
 
 def event_allowed(event: Any, state: Any, agent: str) -> bool:
-    create = state.get(("m.room.create", ""))
+    create = (
+        event
+        if event.type == "m.room.create" and getattr(event, "state_key", "") == ""
+        else state.get(("m.room.create", ""))
+    )
     creation = getattr(create, "content", None)
     marker = creation.get(CONFIDENTIAL) if isinstance(creation, Mapping) else None
     if not isinstance(creation, Mapping) or CONFIDENTIAL not in creation:
+        if state.get(("m.room.encryption", "")) is not None:
+            return False
         return event.type not in {"m.room.encryption", "m.room.encrypted"}
     if (
         not isinstance(marker, str)

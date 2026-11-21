@@ -21,7 +21,7 @@ MUTANTS = [
     ("group DM immutable invite list ignored", "and invitee in invitees", "", "test_group_dm_invites_are_bound_to_immutable_creation_state"),
     ("unvalidated group DM marker trusted", 'and self._is_direct_message(inviter, {\n                    "is_direct": True, "invite": list(invitees) if isinstance(invitees, (list, tuple)) else invitees,\n                    "preset": "private_chat", "visibility": "private"\n                })', "", "test_malformed_group_dm_creation_state_fails_closed"),
     ("workspace ban native join open", "if user in content.get('banned', ()):", "if False:", "test_workspace_ban_refuses_native_public_join_and_post"),
-    ("workspace mute posting open", "if event.type in {'m.room.message', 'm.sticker', 'm.room.encrypted'} and _active_mute(content, event.sender):", "if False:", "test_workspace_mute_uses_server_time_even_for_exempt_member"),
+    ("workspace mute posting open", "if _active_mute(content, event.sender):", "if False:", "test_workspace_mute_uses_server_time_even_for_exempt_member"),
     ("archived native join open", 'if content.get("archived", False) is not False:', 'if False:', "test_archived_public_room_refuses_rejoin_and_post_but_allows_leave"),
     ("archived event posting open", 'if content.get("archived") is True:', 'if False:', "test_archived_public_room_refuses_rejoin_and_post_but_allows_leave"),
     ("public native remote join open", 'if not self._api.is_mine(user) and not self._partner_federation_allowed(state, user):', 'if False:', "test_public_local_only_room_refuses_remote_native_join"),
@@ -32,7 +32,7 @@ MUTANTS = [
     ("unbounded invite fanout", "len(invite) <= MAX_DM_INVITEES", "len(invite)", "test_member_cannot_create_anything_but_a_direct_message"),
     ("remote invitee accepted", "and self._api.is_mine(invitee)\n", "\n", "test_member_cannot_create_anything_but_a_direct_message"),
     ("initial state accepted", "and not config.get(\"initial_state\")", "", "test_member_cannot_create_anything_but_a_direct_message"),
-    ("spaces accepted", 'and creation.get("type") is None', "", "test_member_cannot_create_anything_but_a_direct_message"),
+    ("DM creation_content allowlist removed", "and set(creation) <= ALLOWED_DM_CREATION_KEYS", "", "test_member_cannot_create_anything_but_a_direct_message"),
     ("second invite accepted", "or others or", "or", "test_member_cannot_invite_otherwise"),
     ("other's room accepted", "create.sender != inviter or", "", "test_member_cannot_invite_otherwise"),
     ("e-mail invites open", "return NOT_SPAM if inviter == self._agent else Codes.FORBIDDEN", "return NOT_SPAM", "test_member_cannot_invite_by_email_or_phone"),
@@ -60,7 +60,7 @@ MUTANTS = [
     ("channel member invites ignored", 'policy_content.get("allow_member_invites") is True', "False", "test_joined_member_invites_local_user_into_policy_authorized_channel"),
     ("channel member invites open without policy", 'policy_content.get("allow_member_invites") is True', "True", "test_channel_without_allow_member_invites_refuses_member_invites"),
     ("non-joined member invites into channel", '_membership_of(state.get(("m.room.member", inviter))) != "join"', "False", "test_non_joined_member_cannot_invite_into_policy_authorized_channel"),
-    ("federated channel invites refused when allowed", 'or policy_content.get("allow_federated_invites") is True', "", "test_joined_member_invites_federated_user_when_federated_invites_allowed"),
+    ("federated channel invites refused when allowed", "if federated_invites:\n                return NOT_SPAM", "if False:\n                return NOT_SPAM", "test_joined_member_invites_federated_user_when_federated_invites_allowed"),
     ("federated channel invites open without federated policy", 'if not self._api.is_mine(invitee) and not self._partner_federation_allowed(state, invitee):', "if False:", "test_agent_cannot_invite_remote_users_into_internal_rooms"),
     ("announcement posting open", 'if content["read_only"] and (', 'if False and (', "test_announcement_member_cannot_post_or_edit_even_with_permissive_levels"),
     ("private membership open", 'if target not in content["members"]:', 'if False:', "test_private_room_refuses_unlisted_membership_even_with_invitation"),
@@ -87,7 +87,12 @@ MUTANTS = [
     ('initial ACL bootstrap untrusted creator admitted', 'if event.sender != self._agent or getattr(create, "sender", None) != self._agent or not partners or self._server in partners or not self._servers_allowed(partners):', 'if not partners:', 'test_initial_acl_bootstrap_uses_trusted_immutable_servers_without_remote_admission'),
     ('initial approved servers not bound immutably', 'creation["io.kodera.room.initial_partner_servers"] = list(partners)', 'creation["io.kodera.room.initial_partner_servers"] = []', 'test_explicit_partner_creation_has_pinned_mode_policy_and_server_acl'),
     ('raw DM validation skipped before local ACL injection', '        if creator != self._agent and not direct:\n            raise SynapseError(403, "Members may create only validated local direct messages", errcode=Codes.FORBIDDEN)\n', '', 'test_raw_dm_validation_precedes_injected_acl_projection'),
-    ('validated DM projection omitted', '                room_config = {**room_config, "initial_state": []}', '                pass', 'test_raw_dm_validation_precedes_injected_acl_projection'),
+    ('validated DM projection omitted', '                room_config = {\n                    **room_config,\n                    "initial_state": [],\n                    "creation_content": {\n                        k: v\n                        for k, v in creation.items()\n                        if k != "io.kodera.room.initial_partner_servers"\n                    },\n                }', '                pass', 'test_raw_dm_validation_precedes_injected_acl_projection'),
+    ('channel member invite active account check omitted', 'if local_users and not await self._active_dm_users(*local_users):', 'if False:', 'test_channel_member_invites_require_active_registered_local_accounts'),
+    ('partner room local member invite allowed', 'return Codes.FORBIDDEN if partner_room else NOT_SPAM', 'return NOT_SPAM', 'test_trusted_bounded_partner_room_admits_remote_invite_join_and_timeline'),
+    ('muted member channel invite allowed', 'or _active_mute(policy_content, inviter)', '', 'test_workspace_mute_uses_server_time_even_for_exempt_member'),
+    ('unknown or foreign room join allowed', 'if not state or not isinstance(creator, str) or not self._api.is_mine(creator):\n            return Codes.FORBIDDEN', 'if False:\n            return Codes.FORBIDDEN', 'test_local_member_cannot_join_unknown_or_foreign_homed_room'),
+    ('foreign room local timeline event allowed', '            if (\n                not own_leave\n                and (not isinstance(creator, str) or not self._api.is_mine(creator))\n                and not self._partner_federation_allowed(state)\n            ):\n                return False', '            if False:\n                return False', 'test_local_member_events_in_foreign_homed_room_are_refused'),
 ]
 
 
@@ -129,7 +134,7 @@ def main() -> int:
             (package / source.name).write_text(changed)
             shutil.copytree(ROOT / "tests", pathlib.Path(tmp) / "tests")
             result = subprocess.run(
-                [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests/test_policy.py", "tests/test_community.py", "tests/test_federation.py", "tests/test_confidential.py", "tests/test_open_federation.py"],
+                [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests/test_policy.py", "tests/test_community.py", "tests/test_federation.py", "tests/test_federation_boundary.py", "tests/test_confidential.py", "tests/test_open_federation.py"],
                 cwd=tmp,
                 env={"PYTHONPATH": str(pathlib.Path(tmp) / "src"), "PATH": "/usr/bin:/bin", "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1"},
                 capture_output=True,

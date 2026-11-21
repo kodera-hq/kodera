@@ -1918,3 +1918,60 @@ def test_agent_replaces_stale_acl_extra_fields_instead_of_preserving_them(tmp_pa
     parsed = parse(desired)
     assert parsed is not None and not channels.apply(parsed, full=True).failed
     assert "unexpected" not in room["state"][("m.room.server_acl", "")]
+
+
+def test_roster_guard_retains_native_public_community_caller_and_evicts_banned_or_inactive(
+    tmp_path, monkeypatch
+):
+    import test_tenant_agent_channels as module
+
+    monkeypatch.setattr(module, "SERVER", "community.example.org")
+    monkeypatch.setattr(module, "AGENT", "@kodera-agent:community.example.org")
+    monkeypatch.setattr(module, "ROOMS", "@kodera-rooms:community.example.org")
+    handlers, homeserver, livekit, state = build(tmp_path)
+    entry = channel(AUDIO, kind="audio", audience="all", members=[])
+    payload = channel_set(1, entry, all_members=(BOB,))
+    assert handlers.handle(CHANNEL_KIND, payload).status == "succeeded"
+    state.keep_channel_set(
+        2, [entry], [BOB], moderation={"banned_subjects": [CAROL], "muted_subjects": []}
+    )
+    state.keep(MemberSet(2, frozenset({BOB}), frozenset({ALICE}), frozenset()))
+    room_id = state.channel_rooms()[AUDIO]
+    lk_name = livekit_room(room_id)
+    newcomer = "@new-caller:community.example.org"
+    remote = "@visitor:remote.example.org"
+    homeserver.rooms[room_id]["members"].update(
+        {
+            newcomer: "join",
+            mx(BOB): "join",
+            mx(ALICE): "join",
+            mx(CAROL): "join",
+            remote: "join",
+        }
+    )
+    livekit.rooms_[lk_name] = [
+        f"{newcomer}|D1",
+        f"{mx(BOB)}|D2",
+        f"{mx(ALICE)}|D3",
+        f"{mx(CAROL)}|D4",
+        f"{remote}|D5",
+    ]
+    guard = RosterGuard(livekit, Meet(FakeRunner(), "meet-backend"), state, homeserver)
+    report = guard.enforce(lk_name)
+    assert report.failed_rooms == 0
+    assert livekit.rooms_[lk_name] == [f"{newcomer}|D1", f"{mx(BOB)}|D2"]
+
+
+def test_confidential_channel_binds_immutable_marker_and_initial_encryption(tmp_path):
+    from tenant_agent.synapse import CONFIDENTIAL
+
+    handlers, homeserver, _, state = build(tmp_path)
+    entry = channel(TEXT, confidential="io.kodera.mls.v1")
+    assert handlers.handle(CHANNEL_KIND, channel_set(1, entry)).status == "succeeded"
+    room = homeserver.room_of(TEXT)
+    assert room["state"][("m.room.create", "")][CONFIDENTIAL] == "io.kodera.mls.v1"
+    assert room["state"][("m.room.encryption", "")] == {"algorithm": "io.kodera.mls.v1"}
+    assert room["state"][(JOIN_RULES, "")] == {"join_rule": "invite"}
+    downgrade = channel_set(2, channel(TEXT))
+    assert handlers.handle(CHANNEL_KIND, downgrade).status == "failed"
+    assert parse(channel_set(3, channel(AUDIO, kind="audio", confidential=True))) is None

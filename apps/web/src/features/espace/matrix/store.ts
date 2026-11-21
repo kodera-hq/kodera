@@ -1349,9 +1349,44 @@ export class EspaceStore {
     return room.currentState.maySendStateEvent(PINNED_EVENTS, this.#me)
   }
 
+  /** Marks a room as confidential out-of-band so plaintext is permanently refused. */
+  markConfidentialRoom = (roomId: string): void => {
+    this.#boundaries.markProtected(roomId)
+    this.#timelines.delete(roomId)
+    this.#cached.delete(roomId)
+    this.#cache?.forget(roomId)
+    this.#threads.delete(roomId)
+    this.#pins.delete(roomId)
+    this.#eventsByRoom.delete(roomId)
+    this.#paging.delete(roomId)
+    this.#histories.delete(roomId)
+    if (!this.#stopped) {
+      this.#dirty.add(roomId)
+      this.#schedule()
+    }
+  }
+
+  #pendingRoomEvents(
+    room: NonNullable<ReturnType<MatrixClient['getRoom']>>
+  ): readonly MatrixEvent[] {
+    try {
+      return room.getPendingEvents()
+    } catch {
+      return []
+    }
+  }
+
   /** No caller can opt a marked room back into plaintext, even after a state downgrade. */
   getRoomBoundary = (roomId: string): RoomBoundary => {
     const room = this.#client.getRoom(roomId)
+    if (
+      room !== null &&
+      [...room.getLiveTimeline().getEvents(), ...this.#pendingRoomEvents(room)].some(
+        (event) => event.getType() === 'm.room.encrypted'
+      )
+    ) {
+      this.#boundaries.markProtected(roomId)
+    }
     const value = (type: string) => {
       const event = room?.currentState.getStateEvents(type as never, '')
       return event ? { sender: event.getSender(), content: event.getContent() } : undefined
@@ -1368,6 +1403,21 @@ export class EspaceStore {
     )
   }
 
+  #isMutedInRoom(room: NonNullable<ReturnType<MatrixClient['getRoom']>>): boolean {
+    const server = serverNameOf(this.#me)
+    if (server === undefined) return false
+    const policyEvent = room.currentState.getStateEvents(POLICY as never, '')
+    if (policyEvent?.getSender() !== `@kodera-agent:${server}`) return false
+    const content = policyEvent.getContent() as Record<string, unknown> | undefined
+    const muted = content?.muted_until
+    if (muted === null || typeof muted !== 'object' || Array.isArray(muted)) return false
+    if (!Object.hasOwn(muted, this.#me)) return false
+    const until = (muted as Record<string, unknown>)[this.#me]
+    if (typeof until !== 'string') return true
+    const parsed = Date.parse(until)
+    return Number.isNaN(parsed) || parsed > Date.now()
+  }
+
   #isPlaintextRoomAllowed(roomId: string): boolean {
     return !this.#stopped && permitsPlaintext(this.getRoomBoundary(roomId))
   }
@@ -1379,7 +1429,12 @@ export class EspaceStore {
   /** Whether the room's power levels let the member post messages (`m.room.message`). */
   canSendMessage = (roomId: string): boolean => {
     const room = this.#client.getRoom(roomId)
-    if (!this.#isPlaintextRoomAllowed(roomId) || room === null || room.getMyMembership() !== 'join')
+    if (
+      !this.#isPlaintextRoomAllowed(roomId) ||
+      room === null ||
+      room.getMyMembership() !== 'join' ||
+      this.#isMutedInRoom(room)
+    )
       return false
     return room.currentState.maySendEvent(EventType.RoomMessage, this.#me)
   }
@@ -1387,7 +1442,12 @@ export class EspaceStore {
   /** Whether the room's power levels let the member react to messages (`m.reaction`). */
   canReact = (roomId: string): boolean => {
     const room = this.#client.getRoom(roomId)
-    if (!this.#isPlaintextRoomAllowed(roomId) || room === null || room.getMyMembership() !== 'join')
+    if (
+      !this.#isPlaintextRoomAllowed(roomId) ||
+      room === null ||
+      room.getMyMembership() !== 'join' ||
+      this.#isMutedInRoom(room)
+    )
       return false
     return room.currentState.maySendEvent(EventType.Reaction, this.#me)
   }

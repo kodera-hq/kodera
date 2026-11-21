@@ -118,6 +118,11 @@ def channel_set_input(workspace_id: UUID) -> tuple[list[str], list[dict[str, Any
         return viewing[key]
 
     channels = []
+    confidential_ids = set(
+        Channel.objects.filter(workspace_id=workspace_id, is_confidential=True)
+        .exclude(lifecycle=DELETED)
+        .values_list("id", flat=True)
+    )
     for channel_id, (access, name, topic) in sorted(
         resolve_all(workspace_id).items(), key=lambda item: str(item[0])
     ):
@@ -130,25 +135,24 @@ def channel_set_input(workspace_id: UUID) -> tuple[list[str], list[dict[str, Any
             for notice_id, membership in pending.get(channel_id, [])
             if membership in viewers
         ][:MAX_NOTICES]
-        channels.append(
-            {
-                "channel_id": str(channel_id),
-                "kind": access.kind,
-                "name": name,
-                "topic": topic,
-                "access_etag": access.etag,
-                "archived": access.lifecycle == Channel.Lifecycle.ARCHIVED,
-                "audience": "all" if everyone_sees else "listed",
-                "members": [] if everyone_sees else of(viewers),
-                "denied": sorted(set(of(set(access.deny_members))) & everyone)
-                if everyone_sees
-                else [],
-                "read_only": access.read_only,
-                "listen_only": access.listen_only,
-                "exempt": of(administrators) if flagged else [],
-                "notices": notices,
-            }
-        )
+        entry: dict[str, Any] = {
+            "channel_id": str(channel_id),
+            "kind": access.kind,
+            "name": name,
+            "topic": topic,
+            "access_etag": access.etag,
+            "archived": access.lifecycle == Channel.Lifecycle.ARCHIVED,
+            "audience": "all" if everyone_sees else "listed",
+            "members": [] if everyone_sees else of(viewers),
+            "denied": sorted(set(of(set(access.deny_members))) & everyone) if everyone_sees else [],
+            "read_only": access.read_only,
+            "listen_only": access.listen_only,
+            "exempt": of(administrators) if flagged else [],
+            "notices": notices,
+        }
+        if channel_id in confidential_ids:
+            entry["confidential"] = "io.kodera.mls.v1"
+        channels.append(entry)
     return sorted(everyone), channels
 
 

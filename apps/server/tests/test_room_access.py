@@ -985,3 +985,53 @@ def test_private_audio_refusal_guard_detects_its_own_omission(world, monkeypatch
     monkeypatch.setattr(module, "_audience_allows", lambda policy, user, agent: True)
     with pytest.raises(pytest.fail.Exception, match="DID NOT RAISE"):
         check(world, "listed", [BOB])
+
+
+def test_transient_join_failure_does_not_advance_sync_cursor_or_strand_invite():
+    matrix = Matrix("http://synapse:8008", "room-access-token")
+    livekit = FakeLiveKit()
+    service = Service(matrix, livekit, "wss://media.acme.kodera.io", AGENT)
+    sync_queries: list[str] = []
+    join_attempts = 0
+    invite_payload = {
+        "!audio-retry:acme.kodera.io": {
+            "invite_state": {
+                "events": [
+                    {
+                        "type": "m.room.member",
+                        "state_key": ROOM_ACCESS,
+                        "sender": AGENT,
+                        "content": {"membership": "invite"},
+                    }
+                ]
+            }
+        }
+    }
+
+    def fake_request(url, method, headers, body, timeout, ok):
+        nonlocal join_attempts
+        path = url.removeprefix("http://synapse:8008")
+        if path == "/_matrix/client/v3/account/whoami":
+            return 200, {"user_id": ROOM_ACCESS, "device_id": "RA"}
+        if path.startswith("/_matrix/client/v3/sync?"):
+            sync_queries.append(path)
+            if "since=s0" in path:
+                return 200, {"next_batch": "s1", "rooms": {"invite": invite_payload}}
+            return 200, {"next_batch": "s0", "rooms": {"invite": {}}}
+        if path == "/_matrix/client/v3/rooms/%21audio-retry%3Aacme.kodera.io/join":
+            join_attempts += 1
+            if join_attempts == 1:
+                raise UpstreamError("POST join answered 503")
+            return 200, {}
+        raise AssertionError(f"unexpected {method} {path}")
+
+    with patch("room_access.clients._request", side_effect=fake_request):
+        service.reconcile_once()  # initial sync -> _since = s0
+        assert matrix._since == "s0"
+        service.reconcile_once()  # s0 -> s1 invite join fails 503; cursor must remain s0
+        assert matrix._since == "s0"
+        assert join_attempts == 1
+        service.reconcile_once()  # replays since=s0, joins room, advances cursor to s1
+        assert matrix._since == "s1"
+        assert join_attempts == 2
+        assert sum("since=s0" in q for q in sync_queries) == 2

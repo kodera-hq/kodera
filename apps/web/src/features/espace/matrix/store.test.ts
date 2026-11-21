@@ -2830,6 +2830,37 @@ describe('confidential room plaintext quarantine', () => {
     }
   })
 
+  it('quarantines pre-marked rooms, ciphertext timeline events, and muted room policies', async () => {
+    const fixture = snapshotFixture()
+    try {
+      await fixture.start()
+      expect(fixture.store.canSendMessage(SNAPSHOT_ROOM)).toBe(true)
+      expect(fixture.store.canReact(SNAPSHOT_ROOM)).toBe(true)
+      await fixture.publishState([
+        {
+          ...snapshotMessage('$mute-policy', ''),
+          type: 'io.kodera.room.policy',
+          state_key: '',
+          sender: AGENT,
+          content: {
+            version: 1,
+            kind: 'text',
+            muted_until: { [SNAPSHOT_ME]: '9999-01-01T00:00:00Z' },
+          },
+        },
+      ])
+      expect(fixture.store.canSendMessage(SNAPSHOT_ROOM)).toBe(false)
+      expect(fixture.store.canReact(SNAPSHOT_ROOM)).toBe(false)
+      fixture.store.markConfidentialRoom(SNAPSHOT_ROOM)
+      expect(fixture.store.getRoomBoundary(SNAPSHOT_ROOM)).toBe('invalid')
+      await expect(fixture.store.send(SNAPSHOT_ROOM, 'blocked')).rejects.toThrow(
+        'No content was sent'
+      )
+    } finally {
+      fixture.stop()
+    }
+  })
+
   async function holdTypingCleanup() {
     const fixture = snapshotFixture()
     await fixture.start()
@@ -3164,7 +3195,9 @@ describe('confidential room plaintext quarantine', () => {
     try {
       await store.resolveChannels([CH])
       expect(store.getSnapshot().channels.get(CH)).toBeUndefined()
-      await expect(store.openDirect([`@marina:${SERVER}`])).rejects.toThrow('Invalid Matrix room ID')
+      await expect(store.openDirect([`@marina:${SERVER}`])).rejects.toThrow(
+        'Invalid Matrix room ID'
+      )
     } finally {
       store.stop()
     }

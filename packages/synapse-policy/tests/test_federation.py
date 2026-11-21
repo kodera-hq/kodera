@@ -155,6 +155,9 @@ def test_trusted_bounded_partner_room_admits_remote_invite_join_and_timeline():
     configured = configured_partner(state)
     for inviter in (AGENT, ALICE, PARTNER):
         assert run(configured.user_may_invite(inviter, PARTNER, ROOM)) == ALLOWED
+    for inviter in (ALICE, PARTNER):
+        assert run(configured.user_may_invite(inviter, BOB, ROOM)) == FORBIDDEN
+    assert run(configured.user_may_invite(AGENT, BOB, ROOM)) == ALLOWED
     assert run(configured.user_may_join_room(PARTNER, ROOM, True)) == ALLOWED
     incoming = event("m.room.message", PARTNER, state=False)
     incoming.room_id = ROOM

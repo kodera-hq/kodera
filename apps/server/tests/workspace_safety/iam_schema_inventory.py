@@ -67,3 +67,22 @@ def without_iam(objects):
     return {
         key: value for key, value in objects.items() if key[1] not in TABLES and key not in required
     }
+
+
+CONFIDENTIAL_OBJECTS = frozenset(
+    {
+        ("column", "workspaces_channel", "is_confidential"),
+        ("constraint", "workspaces_channel", "channel_confidential_text_only"),
+        ("trigger", "workspaces_channel", "channel_confidential_immutable"),
+        ("function", "workspace_channel_confidential_immutable", ""),
+    }
+)
+
+
+def without_confidential(objects):
+    if ("column", "workspaces_channel", "is_confidential") not in objects:
+        return objects
+    assert CONFIDENTIAL_OBJECTS <= objects.keys(), (
+        "confidential channel designation inventory is incomplete"
+    )
+    return {key: value for key, value in objects.items() if key not in CONFIDENTIAL_OBJECTS}

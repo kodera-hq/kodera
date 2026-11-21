@@ -322,6 +322,7 @@ def test_room_creation_uses_real_http_proof_and_keeps_one_room_on_replay(relay, 
         position=1,
         lifecycle="active",
         room_state="ready",
+        is_confidential=True,
     )
     document = {
         "deviceId": str(relay[5][0]),
@@ -347,6 +348,27 @@ def test_room_creation_uses_real_http_proof_and_keeps_one_room_on_replay(relay, 
             index=2,
         )
         assert denied.status_code == 404
+        ordinary = Channel.objects.create(
+            workspace=relay[1],
+            kind="text",
+            name="Ordinary plaintext channel",
+            position=2,
+            lifecycle="active",
+            room_state="ready",
+            is_confidential=False,
+        )
+        refused_ordinary = post(
+            relay,
+            http,
+            "create-room",
+            "rooms",
+            {
+                "deviceId": str(relay[5][0]),
+                "channelId": str(ordinary.id),
+                "algorithm": "io.kodera.mls.v1",
+            },
+        )
+        assert refused_ordinary.status_code == 409
 
 
 def test_http_package_claim_commit_retirement_and_rekey_under_real_writer_role(relay, http, writer):

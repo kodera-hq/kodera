@@ -214,6 +214,7 @@ def test_registered_schema_matches_migrations(schema):
             "0012_quota_enforcement",
             "0013_granular_iam",
             "0014_iam_scope_guards",
+            "0015_confidential_channel_designation",
         }
 
 
@@ -363,6 +364,7 @@ def test_resource_identity_and_channel_type_are_immutable(schema):
         (item, {"id": new_uuid7()}, "channel_binding_immutable"),
         (item, {"workspace_id": second.pk}, "channel_binding_immutable"),
         (item, {"kind": "audio"}, "channel_binding_immutable"),
+        (item, {"is_confidential": True}, "channel_confidential_immutable"),
     ):
         with refused("23514", expected):
             type(row).objects.filter(pk=row.pk).update(**changes)

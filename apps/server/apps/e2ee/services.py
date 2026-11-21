@@ -26,7 +26,11 @@ from apps.workspaces.moderation import (
     authorise_workspace,
     member_restrictions,
 )
-from apps.workspaces.selectors import active_text_channel_id, restricted_workspace_membership_ids
+from apps.workspaces.selectors import (
+    active_text_channel_id,
+    is_confidential_text_channel,
+    restricted_workspace_membership_ids,
+)
 from services.identity.access_tokens import VerifiedAccessToken
 
 from .models import Device, Envelope, KeyPackage, Participant, Room
@@ -397,6 +401,8 @@ def authorize_request(
         if not _active_device(device, workspace, access, principal.authority_revision):
             raise RefusalError(404)
         _write_allowed(principal, workspace, access)
+        if not is_confidential_text_channel(workspace_id=workspace, channel_id=channel_id):
+            raise RefusalError(409)
     elif room_id is not None:
         room, access, _ = _room(room_id, principal, workspace, device)
         # Leaving with the current device does not publish content.
@@ -533,6 +539,8 @@ def create_room(
     if not _active_device(device, workspace, access, principal.authority_revision):
         raise RefusalError(404)
     _write_allowed(principal, workspace, access)
+    if not is_confidential_text_channel(workspace_id=workspace, channel_id=channel_id):
+        raise RefusalError(409)
     if body.get("algorithm") not in ("io.kodera.mls.v1", "m.megolm.v1.aes-sha2"):
         raise RefusalError(422)
     if Room.objects.filter(channel_id=channel_id).exists():

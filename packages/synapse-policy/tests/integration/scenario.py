@@ -85,6 +85,7 @@ for invites in [[], group_invitees + [BOB]]:
     check("invalid DM fanout is refused", call("POST", "/createRoom", alice, {**dm_request, "invite": invites})[0], 403)
 check("unknown local DM invitee is refused", call("POST", "/createRoom", alice, {**dm_request, "invite": ["@never-registered:it.local"]})[0], 403)
 check("trusted DM preset is refused", call("POST", "/createRoom", alice, {**dm_request, "preset": "trusted_private_chat"})[0], 403)
+check("additional_creators DM escalation is refused", call("POST", "/createRoom", alice, {**dm_request, "creation_content": {"additional_creators": [BOB]}})[0], 403)
 for invitees in ([BOB, CAROL], group_invitees):
     status, group = call("POST", "/createRoom", alice, {**dm_request, "invite": invitees})
     check("member creates bounded group DM", status, 200)

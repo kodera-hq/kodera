@@ -1551,7 +1551,7 @@ def check_synapse_policy_source(source: str) -> list[str]:
         'MODULE = "kodera_synapse_policy.KoderaPolicy"',
         '"room_access_user_id": f"@kodera-rooms:{server}"',
         '"agent_user_id": f"@kodera-agent:{server}"',
-        'version("kodera-synapse-policy") != "0.1.6"',
+        'version("kodera-synapse-policy") != "0.1.7"',
         'yaml.safe_dump(configure(document, os.environ)',
         '"pkce_method": "always"',
         '"allow_existing_users": False',
@@ -4158,7 +4158,7 @@ def main() -> int:
             print("[FAIL] " + error, file=sys.stderr)
         return 1
     if args.selftest:
-        for guard in ('kodera_synapse_policy.KoderaPolicy', 'room_access_user_id', '0.1.6'):
+        for guard in ('kodera_synapse_policy.KoderaPolicy', 'room_access_user_id', '0.1.7'):
             if not check_synapse_policy_source(policy_source.replace(guard, "removed")):
                 print("[FAIL] Synapse policy source mutation escaped", file=sys.stderr)
                 return 1

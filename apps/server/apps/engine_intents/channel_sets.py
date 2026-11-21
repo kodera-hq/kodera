@@ -30,6 +30,8 @@ _SUBJECT = re.compile(r"[\x21-\x7e]{1,255}")
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 # The workspace's reasons name the change, such as `channel.access_changed` (§13.2).
 _REASON = re.compile(r"[a-z][a-z0-9_.]{0,63}")
+_OPTIONAL_FIELDS = {"confidential"}
+_CONFIDENTIAL_ALGORITHMS = frozenset({"io.kodera.mls.v1", "m.megolm.v1.aes-sha2"})
 _FIELDS = {
     "channel_id",
     "kind",
@@ -80,7 +82,11 @@ def normalise(
     out, seen, members_total = [], set(), len(everyone)
     notice_ids: set[str] = set()
     for entry in channels:
-        if not isinstance(entry, dict) or set(entry) != _FIELDS:
+        if (
+            not isinstance(entry, dict)
+            or not _FIELDS <= set(entry)
+            or not set(entry) <= (_FIELDS | _OPTIONAL_FIELDS)
+        ):
             raise ChannelSetError("a channel carries exactly the contract's fields")
         channel_id = str(entry["channel_id"]).lower()
         if not _UUID.fullmatch(channel_id) or channel_id in seen:
@@ -89,6 +95,17 @@ def normalise(
         kind = entry["kind"]
         if kind not in ("text", "audio"):
             raise ChannelSetError("kind is text or audio")
+        raw_confidential = entry.get("confidential")
+        if raw_confidential is None or raw_confidential is False:
+            confidential_algo: str | None = None
+        elif raw_confidential is True:
+            confidential_algo = "io.kodera.mls.v1"
+        elif isinstance(raw_confidential, str) and raw_confidential in _CONFIDENTIAL_ALGORITHMS:
+            confidential_algo = raw_confidential
+        else:
+            raise ChannelSetError("confidential must be false or a supported room algorithm")
+        if confidential_algo is not None and kind != "text":
+            raise ChannelSetError("confidential rooms are for text channels")
         name, topic, etag = entry["name"], entry["topic"], entry["access_etag"]
         if not isinstance(name, str) or not 1 <= len(name) <= 100 or not name.strip():
             raise ChannelSetError("a name is 1-100 characters and not blank")
@@ -128,25 +145,26 @@ def normalise(
             if str(notice["notice_id"]).lower() in notice_ids:
                 raise ChannelSetError("a notice_id appears once in a set")
             notice_ids.add(str(notice["notice_id"]).lower())
-        out.append(
-            {
-                "channel_id": channel_id,
-                "kind": kind,
-                "name": name,
-                "topic": topic,
-                "access_etag": etag,
-                "archived": _bool(entry, "archived"),
-                "audience": audience,
-                "members": members,
-                "denied": denied,
-                "read_only": read_only,
-                "listen_only": listen_only,
-                "exempt": exempt,
-                "notices": [
-                    {"notice_id": str(n["notice_id"]).lower(), "body": n["body"]} for n in notices
-                ],
-            }
-        )
+        normalised_entry: dict[str, Any] = {
+            "channel_id": channel_id,
+            "kind": kind,
+            "name": name,
+            "topic": topic,
+            "access_etag": etag,
+            "archived": _bool(entry, "archived"),
+            "audience": audience,
+            "members": members,
+            "denied": denied,
+            "read_only": read_only,
+            "listen_only": listen_only,
+            "exempt": exempt,
+            "notices": [
+                {"notice_id": str(n["notice_id"]).lower(), "body": n["body"]} for n in notices
+            ],
+        }
+        if confidential_algo is not None:
+            normalised_entry["confidential"] = confidential_algo
+        out.append(normalised_entry)
     if members_total > MAX_MEMBERS:
         # Refused, never truncated: a set that drops a member's removal lets them stay.
         raise ChannelSetError(f"a channel set lists at most {MAX_MEMBERS} members in all")
