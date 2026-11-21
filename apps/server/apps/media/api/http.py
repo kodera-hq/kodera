@@ -39,8 +39,10 @@ def problem(failure: RefusalError, request_id: str) -> HttpResponse:
         405: "method-not-allowed",
         409: "conflict",
         412: "precondition-failed",
+        413: "payload-too-large",
         422: "validation-error",
         428: "precondition-required",
+        429: "rate-limited",
         503: "service-unavailable",
     }
     body: dict[str, Any] = {
@@ -51,7 +53,7 @@ def problem(failure: RefusalError, request_id: str) -> HttpResponse:
     }
     if failure.reason:
         body["reason"] = failure.reason
-    if failure.status == 503:
+    if failure.status in {429, 503}:
         body["retry_after_s"] = 1
     response = HttpResponse(
         json.dumps(body, separators=(",", ":")),
@@ -60,7 +62,7 @@ def problem(failure: RefusalError, request_id: str) -> HttpResponse:
     )
     if failure.status == 401:
         response["WWW-Authenticate"] = "Bearer"
-    if failure.status == 503:
+    if failure.status in {429, 503}:
         response["Retry-After"] = "1"
     return response
 
@@ -100,6 +102,8 @@ def serve(
     organisation_id: UUID | None = None,
     *,
     prepare: Callable[[VerifiedAccessToken, str], Handler] | None = None,
+    replay_authorize: Callable[[VerifiedAccessToken], None] | None = None,
+    post_commit_authorize: Callable[[VerifiedAccessToken], None] | None = None,
 ) -> HttpResponse:
     request_id = responses.request_id(request)
     method = request.method or ""
@@ -156,6 +160,16 @@ def serve(
                     etag=result.get("ETag"),
                 )
 
+            def check_authority(event: Any) -> None:
+                authorize(verified, organisation_id)
+                status = getattr(event, "status", None)
+                if (
+                    replay_authorize is not None
+                    and isinstance(status, int)
+                    and 200 <= status <= 299
+                ):
+                    replay_authorize(verified)
+
             response = respond_once(
                 request,
                 issuer=verified.issuer,
@@ -163,8 +177,10 @@ def serve(
                 request_id=request_id,
                 handler=effect,
                 policy=quota_replay_policy(),
-                authority=lambda _: authorize(verified, organisation_id),
+                authority=check_authority,
             )
+            if 200 <= response.status_code <= 299 and post_commit_authorize is not None:
+                post_commit_authorize(verified)
             if response.status_code == 503:
                 response["Retry-After"] = "1"
         else:

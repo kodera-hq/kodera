@@ -828,7 +828,11 @@ def record_workspace_resource_event(
     request_id: str,
 ) -> None:
     """Append a workspace resource action with identifiers only, in its caller's transaction."""
+    import hashlib
+    import hmac
     import re
+
+    from django.conf import settings
 
     if (
         not isinstance(action, str)
@@ -836,13 +840,24 @@ def record_workspace_resource_event(
         or re.fullmatch(r"workspace(?:\.[a-z][a-z0-9_]*){1,3}", action) is None
     ):
         raise ValueError("a workspace resource event needs a bounded workspace action")
+    if action.startswith("workspace.attachment."):
+        # Never disclose raw attachment capability UUIDs to `view_audit_log` readers (BUG-0018).
+        secret = str(getattr(settings, "SECRET_KEY", "")).encode("utf-8")
+        redacted = hmac.new(
+            secret,
+            f"kodera-attachment-audit:v1:{organisation_id}:{target_id}".encode("ascii"),
+            hashlib.sha256,
+        ).hexdigest()[:32]
+        target_urn = f"urn:kodera:workspace-attachment:redacted:{redacted}"
+    else:
+        target_urn = f"urn:kodera:workspace-resource:{target_id}"
     AuditEvent.objects.create(
         action=action,
         actor_type="tenant",
         actor_id=actor_id,
         actor_label=f"urn:kodera:identity:{actor_id}",
         organisation_id=organisation_id,
-        target_urn=f"urn:kodera:workspace-resource:{target_id}",
+        target_urn=target_urn,
         request_id=request_id,
         retention_class="standard",
         metadata={},

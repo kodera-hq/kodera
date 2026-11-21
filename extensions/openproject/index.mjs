@@ -1,5 +1,16 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import {
+  closeSync,
+  fsyncSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  unlinkSync,
+  writeSync,
+} from 'node:fs';
+import { join } from 'node:path';
 import {
   DEFAULT_MAX_SKEW_SECONDS,
   ExtensionSdkError,
@@ -25,6 +36,7 @@ const REVERSE_DNS_ID_PREFIX = 'io.kodera.ext.';
 const REVERSE_DNS_ID_PATTERN = /^io\.kodera\.ext\.([a-z0-9][a-z0-9-]{1,62})$/;
 const SLUG_ID_PATTERN = /^[a-z0-9][a-z0-9-]{1,62}$/;
 const WORK_SIG_PATTERN = /^(?:sha256=)?([0-9a-fA-F]{64})$/;
+const WORK_SIGNED_TS_PATTERN = /^t=(\d{1,12}),id=([A-Za-z0-9_-]{1,128}),v1=([0-9a-fA-F]{64})$/;
 const SAFE_WORK_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_#-]{0,47}$/;
 const DELIVERY_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 const MAX_WORK_THREADS = 1024;
@@ -409,25 +421,326 @@ export function normalizeSovereignWorkItem(eventName, payload, options = {}) {
  * @param {string | Uint8Array} rawBody
  * @returns {string}
  */
-export function signWorkWebhookPayload(secret, rawBody) {
+export function signWorkWebhookPayload(secret, rawBody, options) {
   if (typeof secret !== 'string' || secret.length < 16) {
     throw new WebhookVerificationError('INVALID_SECRET', 'Work tracker webhook secret must be at least 16 characters.');
   }
   const bodyBuf = typeof rawBody === 'string' ? Buffer.from(rawBody, 'utf8') : Buffer.from(rawBody);
+  if (options && options.timestamp !== undefined) {
+    const ts = Number(options.timestamp);
+    const eventId = String(options.eventId ?? '');
+    if (!Number.isSafeInteger(ts) || ts <= 0) {
+      throw new WebhookVerificationError('INVALID_TIMESTAMP', 'Signed work webhook timestamp must be a positive integer.');
+    }
+    if (!DELIVERY_ID_PATTERN.test(eventId)) {
+      throw new WebhookVerificationError('INVALID_DELIVERY_ID', 'Signed work webhook eventId must match DELIVERY_ID_PATTERN.');
+    }
+    const prefix = Buffer.from(`${ts}.${eventId}.`, 'utf8');
+    const mac = createHmac('sha256', secret).update(prefix).update(bodyBuf).digest('hex');
+    return `t=${ts},id=${eventId},v1=${mac}`;
+  }
   return `sha256=${createHmac('sha256', secret).update(bodyBuf).digest('hex')}`;
+}
+
+const DURABLE_STORE_BRAND = Symbol('kodera.durableReplayStore');
+
+function createEphemeralReplayMapStore(backingMap = new Map()) {
+  return {
+    get durable() {
+      return false;
+    },
+    get size() {
+      return backingMap.size;
+    },
+    has(key, nowSec = null) {
+      const rec = backingMap.get(String(key));
+      if (!rec) return false;
+      const expiresAt = typeof rec === 'number' ? null : rec?.expiresAt ?? null;
+      if (expiresAt !== null && nowSec !== null && nowSec > expiresAt) {
+        backingMap.delete(String(key));
+        return false;
+      }
+      return true;
+    },
+    get(key) {
+      return backingMap.get(String(key));
+    },
+    set(key, value) {
+      backingMap.set(String(key), {
+        recordedAt: Number(value?.recordedAt ?? 0),
+        expiresAt:
+          value?.expiresAt === null || value?.expiresAt === undefined
+            ? null
+            : Number(value.expiresAt),
+      });
+      return this;
+    },
+    claim(key, value, nowSec) {
+      if (this.has(key, nowSec)) {
+        return false;
+      }
+      this.set(key, value);
+      return true;
+    },
+    delete(key) {
+      return backingMap.delete(String(key));
+    },
+    prune(nowSec) {
+      for (const [k, rec] of Array.from(backingMap.entries())) {
+        const expiresAt = typeof rec === 'number' ? null : rec?.expiresAt ?? null;
+        if (expiresAt !== null && nowSec > expiresAt) {
+          backingMap.delete(k);
+        }
+      }
+    },
+    *entries() {
+      yield* backingMap.entries();
+    },
+  };
+}
+
+/**
+ * Creates a multi-writer atomic directory-backed durable replay deduplication store.
+ *
+ * @param {string | Map<string, { recordedAt: number, expiresAt: number | null }> | undefined} [backing]
+ * @param {{ scopeNamespace?: string, allowEphemeral?: boolean }} [options]
+ */
+export function createDurableReplayStore(backing, options = {}) {
+  if (backing instanceof Map) {
+    return createEphemeralReplayMapStore(backing);
+  }
+  if (
+    backing &&
+    typeof backing === 'object' &&
+    typeof backing.has === 'function' &&
+    typeof backing.set === 'function'
+  ) {
+    if (backing[DURABLE_STORE_BRAND] === true) {
+      return backing;
+    }
+    return {
+      get durable() {
+        return Boolean(backing[DURABLE_STORE_BRAND]);
+      },
+      get size() {
+        return typeof backing.size === 'number' ? backing.size : 0;
+      },
+      has: (...args) => backing.has(...args),
+      get: (...args) => (typeof backing.get === 'function' ? backing.get(...args) : undefined),
+      set: (...args) => backing.set(...args),
+      claim:
+        typeof backing.claim === 'function'
+          ? (...args) => backing.claim(...args)
+          : undefined,
+      delete: (...args) => (typeof backing.delete === 'function' ? backing.delete(...args) : false),
+      prune:
+        typeof backing.prune === 'function'
+          ? (...args) => backing.prune(...args)
+          : undefined,
+      entries:
+        typeof backing.entries === 'function'
+          ? (...args) => backing.entries(...args)
+          : function* empty() {},
+    };
+  }
+
+  let dirPath;
+  if (typeof backing === 'string' && backing.trim()) {
+    const raw = backing.trim();
+    dirPath = raw.endsWith('.json') ? `${raw}.entries` : raw;
+  } else if (
+    typeof process.env.KODERA_WEBHOOK_REPLAY_DIR === 'string' &&
+    process.env.KODERA_WEBHOOK_REPLAY_DIR.trim()
+  ) {
+    dirPath = join(
+      process.env.KODERA_WEBHOOK_REPLAY_DIR.trim(),
+      'openproject',
+      options.scopeNamespace ?? 'default'
+    );
+  } else if (options.allowEphemeral === true) {
+    return createEphemeralReplayMapStore(new Map());
+  } else {
+    throw new WebhookVerificationError(
+      'REPLAY_STORE_NOT_DURABLE',
+      'Durable work-tracker webhook replay store requires replayStoreDir, replayStorePath, or KODERA_WEBHOOK_REPLAY_DIR.'
+    );
+  }
+
+  mkdirSync(dirPath, { recursive: true, mode: 0o700 });
+  const dirStat = lstatSync(dirPath);
+  if (!dirStat.isDirectory() || dirStat.isSymbolicLink()) {
+    throw new WebhookVerificationError(
+      'REPLAY_STORE_UNSAFE',
+      'Replay store path must be a non-symlink directory.'
+    );
+  }
+
+  const entryFile = (key) =>
+    join(dirPath, `${createHash('sha256').update(String(key)).digest('hex')}.json`);
+
+  const readRecord = (filePath) => {
+    try {
+      const parsed = JSON.parse(readFileSync(filePath, 'utf8'));
+      if (!parsed || typeof parsed !== 'object') return null;
+      return {
+        key: String(parsed.key ?? ''),
+        recordedAt: Number(parsed.recordedAt ?? 0),
+        expiresAt:
+          parsed.expiresAt === null || parsed.expiresAt === undefined
+            ? null
+            : Number(parsed.expiresAt),
+      };
+    } catch {
+      return null;
+    }
+  };
+
+  const listFiles = () => {
+    try {
+      return readdirSync(dirPath).filter((name) => name.endsWith('.json'));
+    } catch {
+      return [];
+    }
+  };
+
+  const tryCreateExclusive = (key, value) => {
+    const filePath = entryFile(key);
+    const payload = Buffer.from(
+      JSON.stringify({
+        key: String(key),
+        recordedAt: Number(value?.recordedAt ?? 0),
+        expiresAt:
+          value?.expiresAt === null || value?.expiresAt === undefined
+            ? null
+            : Number(value.expiresAt),
+      }),
+      'utf8'
+    );
+    let fd;
+    try {
+      fd = openSync(filePath, 'wx', 0o600);
+    } catch (err) {
+      if (err && /** @type {NodeJS.ErrnoException} */ (err).code === 'EEXIST') {
+        return false;
+      }
+      throw err;
+    }
+    try {
+      writeSync(fd, payload, 0, payload.length, 0);
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+    return true;
+  };
+
+  return {
+    [DURABLE_STORE_BRAND]: true,
+    get durable() {
+      return true;
+    },
+    dirPath,
+    get size() {
+      return listFiles().length;
+    },
+    has(key, nowSec = null) {
+      const rec = readRecord(entryFile(key));
+      if (!rec) return false;
+      if (rec.expiresAt !== null && nowSec !== null && nowSec > rec.expiresAt) {
+        try {
+          unlinkSync(entryFile(key));
+        } catch {
+          // Ignore concurrent unlink.
+        }
+        return false;
+      }
+      return true;
+    },
+    get(key) {
+      const rec = readRecord(entryFile(key));
+      return rec ? { recordedAt: rec.recordedAt, expiresAt: rec.expiresAt } : undefined;
+    },
+    set(key, value) {
+      const filePath = entryFile(key);
+      if (!tryCreateExclusive(key, value)) {
+        try {
+          unlinkSync(filePath);
+        } catch {
+          // Ignore concurrent unlink.
+        }
+        tryCreateExclusive(key, value);
+      }
+      return this;
+    },
+    claim(key, value, nowSec) {
+      if (tryCreateExclusive(key, value)) {
+        return true;
+      }
+      const filePath = entryFile(key);
+      const existing = readRecord(filePath);
+      if (existing && existing.expiresAt !== null && nowSec > existing.expiresAt) {
+        try {
+          unlinkSync(filePath);
+        } catch {
+          // Ignore concurrent unlink.
+        }
+        return tryCreateExclusive(key, value);
+      }
+      return false;
+    },
+    delete(key) {
+      try {
+        unlinkSync(entryFile(key));
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    prune(nowSec) {
+      for (const name of listFiles()) {
+        const full = join(dirPath, name);
+        const rec = readRecord(full);
+        if (rec && rec.expiresAt !== null && nowSec > rec.expiresAt) {
+          try {
+            unlinkSync(full);
+          } catch {
+            // Ignore concurrent unlink.
+          }
+        }
+      }
+    },
+    *entries() {
+      for (const name of listFiles()) {
+        const rec = readRecord(join(dirPath, name));
+        if (rec) {
+          yield [rec.key, { recordedAt: rec.recordedAt, expiresAt: rec.expiresAt }];
+        }
+      }
+    },
+  };
 }
 
 /**
  * Verifies a native OpenProject (`X-OpenProject-Signature`) or Jira (`X-Hub-Signature-256`)
- * HMAC-SHA256 signature over exact raw bytes in constant time using `timingSafeEqual`.
+ * HMAC-SHA256 signature (including timestamp + eventId controlled envelopes) in constant time.
  *
  * @param {{
  *   secret: string,
  *   rawBody: string | Uint8Array,
  *   signatureHeader: string | undefined,
+ *   nowUnixSeconds?: number,
+ *   maxSkewSeconds?: number,
+ *   requireTimestamp?: boolean,
  * }} params
  */
-export function verifyWorkWebhookSignature({ secret, rawBody, signatureHeader }) {
+export function verifyWorkWebhookSignature({
+  secret,
+  rawBody,
+  signatureHeader,
+  nowUnixSeconds,
+  maxSkewSeconds = DEFAULT_MAX_SKEW_SECONDS,
+  requireTimestamp = false,
+}) {
   if (typeof secret !== 'string' || secret.length < 16) {
     throw new WebhookVerificationError('INVALID_SECRET', 'Work tracker webhook secret must be at least 16 characters.');
   }
@@ -439,15 +752,38 @@ export function verifyWorkWebhookSignature({ secret, rawBody, signatureHeader })
     throw new WebhookVerificationError('BODY_TOO_LARGE', 'Work tracker webhook body is empty or exceeds the byte limit.');
   }
 
-  const sigMatch = typeof signatureHeader === 'string' ? WORK_SIG_PATTERN.exec(signatureHeader.trim()) : null;
-  if (!sigMatch) {
-    throw new WebhookVerificationError('MISSING_SIGNATURE', 'Missing or malformed work tracker HMAC-SHA256 signature.');
-  }
+  const trimmedHeader = typeof signatureHeader === 'string' ? signatureHeader.trim() : '';
+  const tsMatch = WORK_SIGNED_TS_PATTERN.exec(trimmedHeader);
+  let actualBuf;
+  let signedTimestamp = null;
+  let signedEventId = null;
 
-  const expectedBuf = createHmac('sha256', secret).update(bodyBuf).digest();
-  const actualBuf = Buffer.from(sigMatch[1], 'hex');
-  if (expectedBuf.length !== actualBuf.length || !timingSafeEqual(expectedBuf, actualBuf)) {
-    throw new WebhookVerificationError('SIGNATURE_MISMATCH', 'Work tracker HMAC-SHA256 signature verification failed.');
+  if (tsMatch) {
+    signedTimestamp = Number(tsMatch[1]);
+    signedEventId = tsMatch[2];
+    const prefix = Buffer.from(`${signedTimestamp}.${signedEventId}.`, 'utf8');
+    const expectedBuf = createHmac('sha256', secret).update(prefix).update(bodyBuf).digest();
+    actualBuf = Buffer.from(tsMatch[3], 'hex');
+    if (expectedBuf.length !== actualBuf.length || !timingSafeEqual(expectedBuf, actualBuf)) {
+      throw new WebhookVerificationError('SIGNATURE_MISMATCH', 'Work tracker HMAC-SHA256 signature verification failed.');
+    }
+    const nowSec = nowUnixSeconds ?? Math.floor(Date.now() / 1000);
+    if (!Number.isSafeInteger(signedTimestamp) || Math.abs(nowSec - signedTimestamp) > maxSkewSeconds) {
+      throw new WebhookVerificationError('TIMESTAMP_OUT_OF_RANGE', 'Work tracker webhook timestamp outside allowed replay window.');
+    }
+  } else {
+    if (requireTimestamp) {
+      throw new WebhookVerificationError('MISSING_TIMESTAMP', 'Controlled work webhook requires a signed timestamp envelope.');
+    }
+    const sigMatch = WORK_SIG_PATTERN.exec(trimmedHeader);
+    if (!sigMatch) {
+      throw new WebhookVerificationError('MISSING_SIGNATURE', 'Missing or malformed work tracker HMAC-SHA256 signature.');
+    }
+    const expectedBuf = createHmac('sha256', secret).update(bodyBuf).digest();
+    actualBuf = Buffer.from(sigMatch[1], 'hex');
+    if (expectedBuf.length !== actualBuf.length || !timingSafeEqual(expectedBuf, actualBuf)) {
+      throw new WebhookVerificationError('SIGNATURE_MISMATCH', 'Work tracker HMAC-SHA256 signature verification failed.');
+    }
   }
 
   let payload;
@@ -468,10 +804,16 @@ export function verifyWorkWebhookSignature({ secret, rawBody, signatureHeader })
     );
   }
 
+  const eventId = signedEventId
+    ? `work:id:${signedEventId}`
+    : `work:body:${eventName}:${createHash('sha256').update(bodyBuf).digest('hex')}`;
+
   return {
     event: eventName,
     payload: /** @type {Record<string, unknown>} */ (payload),
-    signature: `sha256=${actualBuf.toString('hex')}`,
+    signature: signedTimestamp !== null ? `v1=${actualBuf.toString('hex')}` : `sha256=${actualBuf.toString('hex')}`,
+    signedTimestamp,
+    eventId,
   };
 }
 
@@ -655,20 +997,39 @@ export function createOpenprojectWebhookHandler(config) {
   const allowedHosts = config.allowedHosts ?? DEFAULT_ALLOWED_WORK_HOSTS;
   const maxSkewSeconds = config.maxSkewSeconds ?? DEFAULT_MAX_SKEW_SECONDS;
   const maxReplayEntries = config.maxReplayEntries ?? MAX_WEBHOOK_REPLAY_ENTRIES;
+  const requireSignedTimestamp = Boolean(config.requireSignedTimestamp);
 
   /** @type {Map<string, string>} */
   const workThreads = new Map();
-  /** @type {Map<string, number>} */
-  const nativeSeenSignatures = new Map();
-  /** @type {Map<string, number>} */
-  const nativeSeenDeliveries = new Map();
+  const scopeNamespace = createHmac('sha256', workSecret)
+    .update(`openproject:${defaultChannelId}`)
+    .digest('hex')
+    .slice(0, 32);
+  const nativeReplayStore = createDurableReplayStore(
+    config.replayStore ?? config.replayStoreDir ?? config.replayStorePath,
+    { scopeNamespace, allowEphemeral: true }
+  );
+  if (
+    process.env.NODE_ENV === 'production' &&
+    !nativeReplayStore.durable &&
+    config.allowEphemeralReplayStore !== true
+  ) {
+    throw new WebhookVerificationError(
+      'REPLAY_STORE_NOT_DURABLE',
+      'Production work-tracker webhook handler requires replayStoreDir, replayStorePath, or KODERA_WEBHOOK_REPLAY_DIR.'
+    );
+  }
 
   const pruneNativeReplay = (nowSec) => {
-    for (const [sig, ts] of nativeSeenSignatures.entries()) {
-      if (nowSec - ts > maxSkewSeconds) nativeSeenSignatures.delete(sig);
+    if (typeof nativeReplayStore.prune === 'function') {
+      nativeReplayStore.prune(nowSec);
+      return;
     }
-    for (const [deliv, ts] of nativeSeenDeliveries.entries()) {
-      if (nowSec - ts > maxSkewSeconds) nativeSeenDeliveries.delete(deliv);
+    for (const [key, entry] of Array.from(nativeReplayStore.entries())) {
+      const expiresAt = typeof entry === 'number' ? null : entry?.expiresAt ?? null;
+      if (expiresAt !== null && nowSec > expiresAt) {
+        nativeReplayStore.delete(key);
+      }
     }
   };
 
@@ -726,22 +1087,45 @@ export function createOpenprojectWebhookHandler(config) {
       throw new WebhookVerificationError('INVALID_DELIVERY_ID', 'Work tracker delivery identifier must be bounded ASCII.');
     }
 
-    const { event, payload, signature } = verifyWorkWebhookSignature({
+    const { event, payload, signature, signedTimestamp, eventId } = verifyWorkWebhookSignature({
       secret: workSecret,
       rawBody: req.rawBody,
       signatureHeader: nativeSig,
+      nowUnixSeconds: nowSec,
+      maxSkewSeconds,
+      requireTimestamp: requireSignedTimestamp,
     });
 
-    pruneNativeReplay(nowSec);
-    if (nativeSeenSignatures.has(signature) || (deliveryId !== undefined && nativeSeenDeliveries.has(deliveryId))) {
-      throw new WebhookVerificationError('REPLAY_DETECTED', 'Duplicate work tracker webhook delivery rejected.');
+    const expiresAt = signedTimestamp !== null ? signedTimestamp + maxSkewSeconds : null;
+    if (expiresAt === null && !nativeReplayStore.durable && config.allowEphemeralReplayStore !== true) {
+      throw new WebhookVerificationError(
+        'REPLAY_STORE_NOT_DURABLE',
+        'Timeless work-tracker webhook signatures require replayStoreDir, replayStorePath, or KODERA_WEBHOOK_REPLAY_DIR.'
+      );
     }
-    if (nativeSeenSignatures.size >= maxReplayEntries) {
+
+    pruneNativeReplay(nowSec);
+    const keysToClaim = [`sig:${signature}`, `evt:${eventId}`];
+    if (deliveryId !== undefined) {
+      keysToClaim.push(`deliv:${deliveryId}`);
+    }
+    if (nativeReplayStore.size + keysToClaim.length > maxReplayEntries * 3) {
       throw new WebhookVerificationError('REPLAY_CAPACITY_EXCEEDED', 'Work tracker replay cache is full.');
     }
-    nativeSeenSignatures.set(signature, nowSec);
-    if (deliveryId !== undefined) {
-      nativeSeenDeliveries.set(deliveryId, nowSec);
+    const record = { recordedAt: nowSec, expiresAt };
+    const claimed = [];
+    for (const key of keysToClaim) {
+      const ok =
+        typeof nativeReplayStore.claim === 'function'
+          ? nativeReplayStore.claim(key, record, nowSec)
+          : !nativeReplayStore.has(key) && Boolean(nativeReplayStore.set(key, record));
+      if (!ok) {
+        for (const prior of claimed) {
+          nativeReplayStore.delete(prior);
+        }
+        throw new WebhookVerificationError('REPLAY_DETECTED', 'Duplicate work tracker webhook delivery rejected.');
+      }
+      claimed.push(key);
     }
 
     const activeClient = req.client ?? config.client;

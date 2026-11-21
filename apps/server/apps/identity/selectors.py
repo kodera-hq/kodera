@@ -279,9 +279,19 @@ def delivery_identity_exists(*, user_id: UUID, organisation_id: UUID) -> bool:
     ).exists()
 
 
+def lock_user(*, user_id: UUID) -> bool:
+    """Acquire the canonical person-level lock first in User -> Organisation -> Workspace order."""
+    return User.objects.select_for_update().filter(id=user_id).first() is not None
+
+
 def lock_delivery_identity(*, identity_id: UUID) -> None:
     """Hold the named identity lock in the caller's transaction."""
     Identity.objects.select_for_update().get(id=identity_id)
+
+
+def lock_delivery_identity_if_present(*, identity_id: UUID) -> bool:
+    """Hold the named identity lock if the row still exists."""
+    return Identity.objects.select_for_update().filter(id=identity_id).first() is not None
 
 
 def lock_delivery_identities(*, user_id: UUID, organisation_id: UUID) -> None:

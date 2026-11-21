@@ -1,5 +1,16 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import {
+  closeSync,
+  fsyncSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  unlinkSync,
+  writeSync,
+} from 'node:fs';
+import { join } from 'node:path';
 import {
   DEFAULT_MAX_SKEW_SECONDS,
   ExtensionSdkError,
@@ -292,10 +303,293 @@ export function verifyGithubWebhookSignature({ secret, rawBody, signatureHeader,
     );
   }
 
+  const eventId = `gh:${inferred}:${createHash('sha256').update(bodyBuf).digest('hex')}`;
   return {
     event: inferred,
     payload: /** @type {Record<string, unknown>} */ (payload),
     signature: `sha256=${actualBuf.toString('hex')}`,
+    eventId,
+  };
+}
+
+const DURABLE_STORE_BRAND = Symbol('kodera.durableReplayStore');
+
+function createEphemeralReplayMapStore(backingMap = new Map()) {
+  return {
+    get durable() {
+      return false;
+    },
+    get size() {
+      return backingMap.size;
+    },
+    has(key, nowSec = null) {
+      const rec = backingMap.get(String(key));
+      if (!rec) return false;
+      const expiresAt = typeof rec === 'number' ? null : rec?.expiresAt ?? null;
+      if (expiresAt !== null && nowSec !== null && nowSec > expiresAt) {
+        backingMap.delete(String(key));
+        return false;
+      }
+      return true;
+    },
+    get(key) {
+      return backingMap.get(String(key));
+    },
+    set(key, value) {
+      backingMap.set(String(key), {
+        recordedAt: Number(value?.recordedAt ?? 0),
+        expiresAt:
+          value?.expiresAt === null || value?.expiresAt === undefined
+            ? null
+            : Number(value.expiresAt),
+      });
+      return this;
+    },
+    claim(key, value, nowSec) {
+      if (this.has(key, nowSec)) {
+        return false;
+      }
+      this.set(key, value);
+      return true;
+    },
+    delete(key) {
+      return backingMap.delete(String(key));
+    },
+    prune(nowSec) {
+      for (const [k, rec] of Array.from(backingMap.entries())) {
+        const expiresAt = typeof rec === 'number' ? null : rec?.expiresAt ?? null;
+        if (expiresAt !== null && nowSec > expiresAt) {
+          backingMap.delete(k);
+        }
+      }
+    },
+    *entries() {
+      yield* backingMap.entries();
+    },
+  };
+}
+
+/**
+ * Creates a multi-writer atomic directory-backed durable replay deduplication store.
+ * Each replay key is reserved via `openSync(entryPath, 'wx', 0o600)` (`O_CREAT | O_EXCL`),
+ * preventing cross-worker snapshot overwrites and preserving timeless (`expiresAt === null`)
+ * signatures across handler recreations and process restarts.
+ *
+ * @param {string | Map<string, { recordedAt: number, expiresAt: number | null }> | undefined} [backing]
+ * @param {{ scopeNamespace?: string, allowEphemeral?: boolean }} [options]
+ */
+export function createDurableReplayStore(backing, options = {}) {
+  if (backing instanceof Map) {
+    return createEphemeralReplayMapStore(backing);
+  }
+  if (
+    backing &&
+    typeof backing === 'object' &&
+    typeof backing.has === 'function' &&
+    typeof backing.set === 'function'
+  ) {
+    if (backing[DURABLE_STORE_BRAND] === true) {
+      return backing;
+    }
+    return {
+      get durable() {
+        return Boolean(backing[DURABLE_STORE_BRAND]);
+      },
+      get size() {
+        return typeof backing.size === 'number' ? backing.size : 0;
+      },
+      has: (...args) => backing.has(...args),
+      get: (...args) => (typeof backing.get === 'function' ? backing.get(...args) : undefined),
+      set: (...args) => backing.set(...args),
+      claim:
+        typeof backing.claim === 'function'
+          ? (...args) => backing.claim(...args)
+          : undefined,
+      delete: (...args) => (typeof backing.delete === 'function' ? backing.delete(...args) : false),
+      prune:
+        typeof backing.prune === 'function'
+          ? (...args) => backing.prune(...args)
+          : undefined,
+      entries:
+        typeof backing.entries === 'function'
+          ? (...args) => backing.entries(...args)
+          : function* empty() {},
+    };
+  }
+
+  let dirPath;
+  if (typeof backing === 'string' && backing.trim()) {
+    const raw = backing.trim();
+    dirPath = raw.endsWith('.json') ? `${raw}.entries` : raw;
+  } else if (
+    typeof process.env.KODERA_WEBHOOK_REPLAY_DIR === 'string' &&
+    process.env.KODERA_WEBHOOK_REPLAY_DIR.trim()
+  ) {
+    dirPath = join(
+      process.env.KODERA_WEBHOOK_REPLAY_DIR.trim(),
+      'github',
+      options.scopeNamespace ?? 'default'
+    );
+  } else if (options.allowEphemeral === true) {
+    return createEphemeralReplayMapStore(new Map());
+  } else {
+    throw new WebhookVerificationError(
+      'REPLAY_STORE_NOT_DURABLE',
+      'Durable GitHub webhook replay store requires replayStoreDir, replayStorePath, or KODERA_WEBHOOK_REPLAY_DIR.'
+    );
+  }
+
+  mkdirSync(dirPath, { recursive: true, mode: 0o700 });
+  const dirStat = lstatSync(dirPath);
+  if (!dirStat.isDirectory() || dirStat.isSymbolicLink()) {
+    throw new WebhookVerificationError(
+      'REPLAY_STORE_UNSAFE',
+      'Replay store path must be a non-symlink directory.'
+    );
+  }
+
+  const entryFile = (key) =>
+    join(dirPath, `${createHash('sha256').update(String(key)).digest('hex')}.json`);
+
+  const readRecord = (filePath) => {
+    try {
+      const parsed = JSON.parse(readFileSync(filePath, 'utf8'));
+      if (!parsed || typeof parsed !== 'object') return null;
+      return {
+        key: String(parsed.key ?? ''),
+        recordedAt: Number(parsed.recordedAt ?? 0),
+        expiresAt:
+          parsed.expiresAt === null || parsed.expiresAt === undefined
+            ? null
+            : Number(parsed.expiresAt),
+      };
+    } catch {
+      return null;
+    }
+  };
+
+  const listFiles = () => {
+    try {
+      return readdirSync(dirPath).filter((name) => name.endsWith('.json'));
+    } catch {
+      return [];
+    }
+  };
+
+  const tryCreateExclusive = (key, value) => {
+    const filePath = entryFile(key);
+    const payload = Buffer.from(
+      JSON.stringify({
+        key: String(key),
+        recordedAt: Number(value?.recordedAt ?? 0),
+        expiresAt:
+          value?.expiresAt === null || value?.expiresAt === undefined
+            ? null
+            : Number(value.expiresAt),
+      }),
+      'utf8'
+    );
+    let fd;
+    try {
+      fd = openSync(filePath, 'wx', 0o600);
+    } catch (err) {
+      if (err && /** @type {NodeJS.ErrnoException} */ (err).code === 'EEXIST') {
+        return false;
+      }
+      throw err;
+    }
+    try {
+      writeSync(fd, payload, 0, payload.length, 0);
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+    return true;
+  };
+
+  return {
+    [DURABLE_STORE_BRAND]: true,
+    get durable() {
+      return true;
+    },
+    dirPath,
+    get size() {
+      return listFiles().length;
+    },
+    has(key, nowSec = null) {
+      const rec = readRecord(entryFile(key));
+      if (!rec) return false;
+      if (rec.expiresAt !== null && nowSec !== null && nowSec > rec.expiresAt) {
+        try {
+          unlinkSync(entryFile(key));
+        } catch {
+          // Ignore concurrent unlink.
+        }
+        return false;
+      }
+      return true;
+    },
+    get(key) {
+      const rec = readRecord(entryFile(key));
+      return rec ? { recordedAt: rec.recordedAt, expiresAt: rec.expiresAt } : undefined;
+    },
+    set(key, value) {
+      const filePath = entryFile(key);
+      if (!tryCreateExclusive(key, value)) {
+        try {
+          unlinkSync(filePath);
+        } catch {
+          // Ignore concurrent unlink.
+        }
+        tryCreateExclusive(key, value);
+      }
+      return this;
+    },
+    claim(key, value, nowSec) {
+      if (tryCreateExclusive(key, value)) {
+        return true;
+      }
+      const filePath = entryFile(key);
+      const existing = readRecord(filePath);
+      if (existing && existing.expiresAt !== null && nowSec > existing.expiresAt) {
+        try {
+          unlinkSync(filePath);
+        } catch {
+          // Ignore concurrent unlink.
+        }
+        return tryCreateExclusive(key, value);
+      }
+      return false;
+    },
+    delete(key) {
+      try {
+        unlinkSync(entryFile(key));
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    prune(nowSec) {
+      for (const name of listFiles()) {
+        const full = join(dirPath, name);
+        const rec = readRecord(full);
+        if (rec && rec.expiresAt !== null && nowSec > rec.expiresAt) {
+          try {
+            unlinkSync(full);
+          } catch {
+            // Ignore concurrent unlink.
+          }
+        }
+      }
+    },
+    *entries() {
+      for (const name of listFiles()) {
+        const rec = readRecord(join(dirPath, name));
+        if (rec) {
+          yield [rec.key, { recordedAt: rec.recordedAt, expiresAt: rec.expiresAt }];
+        }
+      }
+    },
   };
 }
 
@@ -768,20 +1062,42 @@ export function createGithubWebhookHandler(config) {
   const includeDrafts = Boolean(config.includeDrafts);
   const maxSkewSeconds = config.maxSkewSeconds ?? DEFAULT_MAX_SKEW_SECONDS;
   const maxReplayEntries = config.maxReplayEntries ?? MAX_WEBHOOK_REPLAY_ENTRIES;
+  const maxEventAgeSeconds =
+    typeof config.maxEventAgeSeconds === 'number' && Number.isFinite(config.maxEventAgeSeconds) && config.maxEventAgeSeconds > 0
+      ? config.maxEventAgeSeconds
+      : null;
 
   /** @type {Map<string, string>} */
   const prThreads = new Map();
-  /** @type {Map<string, number>} */
-  const nativeSeenSignatures = new Map();
-  /** @type {Map<string, number>} */
-  const nativeSeenDeliveries = new Map();
+  const scopeNamespace = createHmac('sha256', githubSecret)
+    .update(`github:${defaultChannelId}`)
+    .digest('hex')
+    .slice(0, 32);
+  const nativeReplayStore = createDurableReplayStore(
+    config.replayStore ?? config.replayStoreDir ?? config.replayStorePath,
+    { scopeNamespace, allowEphemeral: true }
+  );
+  if (
+    process.env.NODE_ENV === 'production' &&
+    !nativeReplayStore.durable &&
+    config.allowEphemeralReplayStore !== true
+  ) {
+    throw new WebhookVerificationError(
+      'REPLAY_STORE_NOT_DURABLE',
+      'Production GitHub webhook handler requires replayStoreDir, replayStorePath, or KODERA_WEBHOOK_REPLAY_DIR.'
+    );
+  }
 
   const pruneNativeReplay = (nowSec) => {
-    for (const [sig, ts] of nativeSeenSignatures.entries()) {
-      if (nowSec - ts > maxSkewSeconds) nativeSeenSignatures.delete(sig);
+    if (typeof nativeReplayStore.prune === 'function') {
+      nativeReplayStore.prune(nowSec);
+      return;
     }
-    for (const [deliv, ts] of nativeSeenDeliveries.entries()) {
-      if (nowSec - ts > maxSkewSeconds) nativeSeenDeliveries.delete(deliv);
+    for (const [key, entry] of Array.from(nativeReplayStore.entries())) {
+      const expiresAt = typeof entry === 'number' ? null : entry?.expiresAt ?? null;
+      if (expiresAt !== null && nowSec > expiresAt) {
+        nativeReplayStore.delete(key);
+      }
     }
   };
 
@@ -833,22 +1149,63 @@ export function createGithubWebhookHandler(config) {
       );
     }
 
-    const { event, payload, signature } = verifyGithubWebhookSignature({
+    const { event, payload, signature, eventId } = verifyGithubWebhookSignature({
       secret: githubSecret,
       rawBody: req.rawBody,
       signatureHeader: hubSig,
       eventHeader: getHeaderValue(req.headers, 'x-github-event'),
     });
 
-    pruneNativeReplay(nowSec);
-    if (nativeSeenSignatures.has(signature) || nativeSeenDeliveries.has(deliveryId)) {
-      throw new WebhookVerificationError('REPLAY_DETECTED', 'Duplicate GitHub webhook delivery rejected.');
+    let retentionExpiresAt = null;
+    if (maxEventAgeSeconds !== null) {
+      const rawTs =
+        payload?.timestamp ??
+        payload?.pull_request?.updated_at ??
+        payload?.workflow_run?.updated_at ??
+        payload?.issue?.updated_at ??
+        payload?.release?.published_at;
+      if (rawTs === undefined || rawTs === null) {
+        throw new WebhookVerificationError('MISSING_TIMESTAMP', 'GitHub webhook payload lacks required event timestamp.');
+      }
+      const parsedMs = typeof rawTs === 'number' ? rawTs * 1000 : Date.parse(String(rawTs));
+      const eventSec = Math.floor(parsedMs / 1000);
+      if (!Number.isFinite(eventSec) || nowSec - eventSec > maxEventAgeSeconds || eventSec - nowSec > maxSkewSeconds) {
+        throw new WebhookVerificationError('TIMESTAMP_OUT_OF_RANGE', 'GitHub webhook event timestamp is outside validity policy.');
+      }
+      retentionExpiresAt = eventSec + maxEventAgeSeconds;
     }
-    if (nativeSeenSignatures.size >= maxReplayEntries) {
+
+    if (
+      retentionExpiresAt === null &&
+      !nativeReplayStore.durable &&
+      config.allowEphemeralReplayStore !== true
+    ) {
+      throw new WebhookVerificationError(
+        'REPLAY_STORE_NOT_DURABLE',
+        'Timeless native GitHub webhook signatures require replayStoreDir, replayStorePath, or KODERA_WEBHOOK_REPLAY_DIR.'
+      );
+    }
+
+    pruneNativeReplay(nowSec);
+    const keysToClaim = [`sig:${signature}`, `evt:${eventId}`, `deliv:${deliveryId}`];
+    if (nativeReplayStore.size + keysToClaim.length > maxReplayEntries * 3) {
       throw new WebhookVerificationError('REPLAY_CAPACITY_EXCEEDED', 'GitHub webhook replay cache is full.');
     }
-    nativeSeenSignatures.set(signature, nowSec);
-    nativeSeenDeliveries.set(deliveryId, nowSec);
+    const record = { recordedAt: nowSec, expiresAt: retentionExpiresAt };
+    const claimed = [];
+    for (const key of keysToClaim) {
+      const ok =
+        typeof nativeReplayStore.claim === 'function'
+          ? nativeReplayStore.claim(key, record, nowSec)
+          : !nativeReplayStore.has(key) && Boolean(nativeReplayStore.set(key, record));
+      if (!ok) {
+        for (const prior of claimed) {
+          nativeReplayStore.delete(prior);
+        }
+        throw new WebhookVerificationError('REPLAY_DETECTED', 'Duplicate GitHub webhook delivery rejected.');
+      }
+      claimed.push(key);
+    }
 
     const activeClient = req.client ?? config.client;
     const result = await processGithubEvent(event, payload, { ...stateBase, client: activeClient });

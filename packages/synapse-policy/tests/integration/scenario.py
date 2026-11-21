@@ -6,9 +6,11 @@ Called by run.sh with the port of a Synapse that loads the module. Exit 0 only i
 import json
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 
-BASE = f"http://127.0.0.1:{sys.argv[1]}/_matrix/client/v3"
+ORIGIN = f"http://127.0.0.1:{sys.argv[1]}"
+BASE = f"{ORIGIN}/_matrix/client/v3"
 ALICE, BOB, CAROL = "@alice:it.local", "@bob:it.local", "@carol:it.local"
 MEGOLM = {"algorithm": "m.megolm.v1.aes-sha2"}
 # What a client posts in a room once it has shared a Megolm session by to-device message. Synapse
@@ -65,7 +67,20 @@ def check(name, got, want):
     print(f"{'PASS' if got == want else 'FAIL'} {name}: got {got}, want {want}")
 
 
-agent, alice, bob, carol = (login(u) for u in ("kodera-agent", "alice", "bob", "carol"))
+def raw_call(path, token=None):
+    request = urllib.request.Request(ORIGIN + path, method="GET")
+    if token:
+        request.add_header("Authorization", f"Bearer {token}")
+    try:
+        with opener.open(request, timeout=15) as response:
+            return response.status, json.loads(response.read() or b"{}")
+    except urllib.error.HTTPError as error:
+        return error.code, json.loads(error.read() or b"{}")
+
+
+agent, room_access, alice, bob, carol = (
+    login(u) for u in ("kodera-agent", "kodera-rooms", "alice", "bob", "carol")
+)
 dm_request = {"is_direct": True, "invite": [BOB], "preset": "private_chat", "visibility": "private"}
 
 status, _ = call("POST", "/createRoom", alice, {"preset": "public_chat", "name": "x"})
@@ -208,6 +223,73 @@ check("unlisted user cannot join even with stale invitation", call("POST", f"/ro
 check("explicit private member can join", call("POST", f"/rooms/{private_id}/join", bob)[0], 200)
 check("private member cannot invite unlisted user", call("POST", f"/rooms/{private_id}/invite", bob, {"user_id": CAROL})[0], 403)
 check("unlisted member cannot read private state", call("GET", f"/rooms/{private_id}/state", alice)[0], 403)
+
+# Non-admin room-access inspects private DM membership through the module endpoint, while
+# Synapse admin and room-member client APIs stay closed to it and members cannot query the endpoint.
+q_dm = urllib.parse.quote(dm_id, safe="")
+q_chan = urllib.parse.quote(channel_id, safe="")
+check(
+    "non-admin room-access is refused by Synapse admin room state API",
+    raw_call(f"/_synapse/admin/v1/rooms/{q_dm}/state", room_access)[0],
+    403,
+)
+check(
+    "non-admin room-access is refused by client joined_members API on private DM",
+    call("GET", f"/rooms/{q_dm}/joined_members", room_access)[0],
+    403,
+)
+check(
+    "non-admin room-access verifies joined DM creator via module endpoint",
+    raw_call(
+        f"/_synapse/client/kodera/v1/dm_member?room_id={q_dm}&user_id={urllib.parse.quote(ALICE, safe='')}",
+        room_access,
+    ),
+    (200, {"joined": True}),
+)
+check(
+    "non-admin room-access verifies joined DM recipient via module endpoint",
+    raw_call(
+        f"/_synapse/client/kodera/v1/dm_member?room_id={q_dm}&user_id={urllib.parse.quote(BOB, safe='')}",
+        room_access,
+    ),
+    (200, {"joined": True}),
+)
+check(
+    "non-admin room-access rejects non-member on private DM via module endpoint",
+    raw_call(
+        f"/_synapse/client/kodera/v1/dm_member?room_id={q_dm}&user_id={urllib.parse.quote(CAROL, safe='')}",
+        room_access,
+    ),
+    (200, {"joined": False}),
+)
+check(
+    "module DM endpoint rejects agent-governed channel room even for joined member",
+    raw_call(
+        f"/_synapse/client/kodera/v1/dm_member?room_id={q_chan}&user_id={urllib.parse.quote(ALICE, safe='')}",
+        room_access,
+    ),
+    (200, {"joined": False}),
+)
+check(
+    "ordinary member cannot query module DM endpoint",
+    raw_call(
+        f"/_synapse/client/kodera/v1/dm_member?room_id={q_dm}&user_id={urllib.parse.quote(ALICE, safe='')}",
+        alice,
+    )[0],
+    403,
+)
+check(
+    "unauthenticated caller cannot query module DM endpoint",
+    raw_call(
+        f"/_synapse/client/kodera/v1/dm_member?room_id={q_dm}&user_id={urllib.parse.quote(ALICE, safe='')}",
+    )[0],
+    401,
+)
+check(
+    "missing query parameter on module DM endpoint returns 400",
+    raw_call(f"/_synapse/client/kodera/v1/dm_member?room_id={q_dm}", room_access)[0],
+    400,
+)
 
 print(f"{'all checks passed' if not failures else f'{failures} check(s) failed'}")
 sys.exit(1 if failures else 0)

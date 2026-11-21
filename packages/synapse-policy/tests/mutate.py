@@ -94,6 +94,9 @@ MUTANTS = [
     ('unknown or foreign room join allowed', 'if not state or not isinstance(creator, str) or not self._api.is_mine(creator):\n            return Codes.FORBIDDEN', 'if False:\n            return Codes.FORBIDDEN', 'test_local_member_cannot_join_unknown_or_foreign_homed_room'),
     ('foreign room local timeline event allowed', '            if (\n                not own_leave\n                and (not isinstance(creator, str) or not self._api.is_mine(creator))\n                and not self._partner_federation_allowed(state)\n            ):\n                return False', '            if False:\n                return False', 'test_local_member_events_in_foreign_homed_room_are_refused'),
     ('missing m.room.create admitted in federation boundary', '        if create is None or not _is_valid_user_id(creator) or not isinstance(creation, Mapping):\n            return False', '        if False:\n            return False', 'test_missing_or_malformed_room_create_state_fails_closed'),
+    ('DM membership inspection open to non-service callers', 'if requester_user_id is None or requester_user_id not in authorized:', 'if False:', 'test_dm_member_joined_restricts_inspection_to_service_accounts_and_rejects_channels'),
+    ('DM membership inspection admits governed channels', 'if policy_entry is not None and getattr(policy_entry, "sender", None) == self._agent:', 'if False:', 'test_dm_member_joined_restricts_inspection_to_service_accounts_and_rejects_channels'),
+    ('DM membership inspection ignores join state', '_membership_of(state.get(("m.room.member", subject_user_id))) == "join"', 'True', 'test_dm_member_joined_restricts_inspection_to_service_accounts_and_rejects_channels'),
 ]
 
 

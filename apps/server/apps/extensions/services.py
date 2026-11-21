@@ -12,9 +12,9 @@ from django.utils import timezone
 
 from apps.audit.services import record_extension_event
 from apps.docs import services as documents
-from apps.identity.selectors import lock_delivery_identity
+from apps.identity import selectors as identities
 from apps.media import outbound
-from apps.orgs.selectors import lock_membership_user, lock_organisation
+from apps.orgs import selectors as organisations
 from core.db.ids import new_uuid7
 
 from .models import Delivery, Installation, WorkspaceCutoff
@@ -22,15 +22,28 @@ from .wire import EVENTS, MAX_GRACE_SECONDS, ExtensionRefusedError, event_payloa
 
 
 def admin(verified, organisation_id):
-    if not lock_organisation(organisation_id=organisation_id):
+    if not organisations.organisation_exists(organisation_id=organisation_id):
+        raise ExtensionRefusedError("extension_workspace_absent", 404)
+    if WorkspaceCutoff.objects.filter(organisation_id=organisation_id).exists():
+        raise ExtensionRefusedError("extension_workspace_cut_off", 410)
+    documents.read_context(verified, organisation_id)
+    resolved = identities.current_identity(issuer=verified.issuer, subject=verified.subject)
+    if resolved is None:
+        raise documents.RefusalError(403, "identity-unknown")
+    person, _ = resolved
+    # Canonical User -> Organisation -> Workspace -> Membership -> Identity lock order matches
+    # dispatcher.py and digest.py so concurrent dispatch/digest and administration never deadlock.
+    if not identities.lock_user(user_id=person.id):
+        raise documents.RefusalError(403, "identity-unknown")
+    if not organisations.lock_organisation(organisation_id=organisation_id):
         raise ExtensionRefusedError("extension_workspace_absent", 404)
     if WorkspaceCutoff.objects.filter(organisation_id=organisation_id).exists():
         raise ExtensionRefusedError("extension_workspace_cut_off", 410)
     workspace_id, principal = documents.write_context(verified, organisation_id)
-    lock_membership_user(membership_id=principal.membership_id)
-    lock_delivery_identity(identity_id=principal.identity_id)
+    organisations.lock_membership_only(membership_id=principal.membership_id)
+    identities.lock_delivery_identity_if_present(identity_id=principal.identity_id)
     # A current-role read after the actor locks sees a revocation that committed first.
-    workspace_id, principal = documents.write_context(verified, organisation_id)
+    workspace_id, principal = documents.read_context(verified, organisation_id)
     if principal.role not in {"org_owner", "org_admin"}:
         raise ExtensionRefusedError("extension_owner_or_admin_required", 403)
     return workspace_id, principal

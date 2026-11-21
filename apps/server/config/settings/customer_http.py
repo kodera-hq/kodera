@@ -40,6 +40,7 @@ from config.environment import (
 from config.workspace_features import (
     confidential_relay_enabled,
     media_gateway_socket,
+    media_room_verifier_url,
     notification_settings,
 )
 from core.sealing import key_from_environment
@@ -124,6 +125,7 @@ KODERA_EE_AUDIT_SIGNING_SEED = ee_audit_signing_seed(os.environ)
 
 # Application keys only; the API never loads object-storage or VAPID private credentials.
 KODERA_MEDIA_GATEWAY_SOCKET = media_gateway_socket(os.environ)
+KODERA_MEDIA_ROOM_VERIFIER_URL = media_room_verifier_url(os.environ)
 (KODERA_NOTIFICATION_SEAL_KEY, KODERA_PUSH_VAPID_PUBLIC_KEY) = notification_settings(os.environ)
 (
     KODERA_COLLAB_TICKET_KEY,

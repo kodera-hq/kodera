@@ -15,6 +15,7 @@ import { Tooltip } from '../../ui/Tooltip/Tooltip'
 import { TOUCH_TARGET, TOUCH_TARGET_HEIGHT } from '../../ui/touchTarget'
 import { permitsPlaintext } from '../confidential/room-boundary'
 import { AttachmentQueue, type QueuedFile } from '../messaging/attachments/attachmentQueue'
+import { resolveAttachmentScope } from '../messaging/attachments/attachmentRefs'
 import { transformOutsideCode } from '../messaging/formatting'
 import { useMessagingOrganisation } from '../messaging/organisationContext'
 import { RichComposerInput } from '../messaging/RichComposerInput'
@@ -53,6 +54,7 @@ function useAttachmentQueue(store: EspaceStoreLike): AttachmentQueue | null {
       store.canSendMessage?.(room) !== false
     )
   }
+  const scopeOf = (room: string) => resolveAttachmentScope(room, store.getSnapshot().channels)
   const organisationId = useMessagingOrganisation()
   const [queue, setQueue] = useState<{
     organisationId: string | null
@@ -62,14 +64,18 @@ function useAttachmentQueue(store: EspaceStoreLike): AttachmentQueue | null {
     organisationId,
     store,
     queue:
-      organisationId === null ? null : new AttachmentQueue(organisationId, undefined, permitted),
+      organisationId === null
+        ? null
+        : new AttachmentQueue(organisationId, undefined, permitted, scopeOf),
   }))
   if (queue.organisationId !== organisationId || queue.store !== store) {
     setQueue({
       organisationId,
       store,
       queue:
-        organisationId === null ? null : new AttachmentQueue(organisationId, undefined, permitted),
+        organisationId === null
+          ? null
+          : new AttachmentQueue(organisationId, undefined, permitted, scopeOf),
     })
   }
   const current = queue.queue

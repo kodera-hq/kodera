@@ -14,7 +14,11 @@ import {
   type PreflightRefusal,
 } from './uploadPreflight'
 import { uploadAttachment, type Attachment, type UploadInput } from './uploadAttachment'
-import type { AttachmentRef } from './attachmentRefs'
+import {
+  resolveAttachmentScope,
+  type AttachmentRef,
+  type AttachmentUploadScope,
+} from './attachmentRefs'
 
 export type QueuedState =
   | { status: 'uploading' }
@@ -32,6 +36,7 @@ export class AttachmentQueue {
   readonly #organisationId: string
   readonly #upload: Upload
   readonly #mayUpload: (room: string) => boolean
+  readonly #scopeOf: (room: string) => AttachmentUploadScope
   #rooms = new Map<string, readonly QueuedFile[]>()
   #aborts = new Map<string, AbortController>()
   #sources = new Map<string, { room: string; file: File }>()
@@ -42,11 +47,13 @@ export class AttachmentQueue {
   constructor(
     organisationId: string,
     upload: Upload = uploadAttachment,
-    mayUpload: (room: string) => boolean = () => true
+    mayUpload: (room: string) => boolean = () => true,
+    scopeOf: (room: string) => AttachmentUploadScope = (room) => resolveAttachmentScope(room)
   ) {
     this.#organisationId = organisationId
     this.#upload = upload
     this.#mayUpload = mayUpload
+    this.#scopeOf = scopeOf
   }
 
   subscribe = (listener: () => void): (() => void) => {
@@ -154,10 +161,24 @@ export class AttachmentQueue {
     const abort = new AbortController()
     this.#aborts.set(key, abort)
     try {
+      const scope = this.#scopeOf(room)
+      if (
+        this.#upload === uploadAttachment &&
+        scope.channelId === undefined &&
+        scope.roomId === undefined
+      ) {
+        rememberFailure(named)
+        return
+      }
       const stored = await this.#upload({
         organisationId: this.#organisationId,
         file,
         checked,
+        ...(scope.channelId !== undefined
+          ? { channelId: scope.channelId }
+          : scope.roomId !== undefined
+            ? { roomId: scope.roomId }
+            : {}),
         signal: abort.signal,
         mayUpload: () => generation === this.#generation && this.#mayUpload(room),
       })
