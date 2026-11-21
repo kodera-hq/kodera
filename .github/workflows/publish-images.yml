@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "apps/server/**"
+      - "ee/**"
       - ".github/workflows/publish-images.yml"
   workflow_dispatch:
 
@@ -43,6 +44,8 @@ jobs:
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: apps/server
+          build-contexts: |
+            ee_src=ee
           file: apps/server/Dockerfile
           platforms: linux/amd64
           push: true

@@ -17,7 +17,10 @@ import subprocess
 import sys
 
 # Any change to the orchestrator, the plan or the aggregate check runs everything.
-SHARED = r"\.github/workflows/ci\.yml$|scripts/ci/ci-plan\.py$|scripts/ci/check-ci-aggregate\.py$"
+SHARED = (
+    r"\.github/workflows/ci\.yml$|scripts/ci/ci-plan\.py$"
+    r"|scripts/ci/check-ci-aggregate\.py$|scripts/ci/check-licenses\.py$"
+)
 
 AREAS: dict[str, str] = {
     "server": r"apps/server/|packages/api-contract/|packages/synapse-policy/|deploy/community/|ee/"
@@ -28,6 +31,7 @@ AREAS: dict[str, str] = {
     r"|extensions/|\.github/workflows/ci-web\.yml$",
     "rust": r"Cargo\.toml$|Cargo\.lock$|rust-toolchain(\.toml)?$|packages/kodera-rs/|apps/desktop/"
     r"|security/backports/(?:glib-0\.18\.5|openmls_basic_credential-0\.6\.0|openmls_rust_crypto-0\.6\.0)/|scripts/ci/qualify-glib-iterator\.py$"
+    r"|security/cargo-advisory-allowlist\.json$|scripts/ci/check-cargo-advisories\.py$"
     r"|apps/web/tests/wasm/|apps/web/src/features/confidential/local-state\.ts$"
     r"|apps/web/src/features/confidential/(?:native/|(?:device-http-record|device-cas-host|device-worker-protocol|device-worker-client|device\.worker)\.ts$)"
     r"|apps/web/native-generated/|apps/web/scripts/check-native-generated(\.selftest)?\.mjs$"
@@ -81,6 +85,13 @@ def selftest() -> None:
         ("unknown base runs all", None, dict.fromkeys(AREAS, True)),
         ("orchestrator runs all", [".github/workflows/ci.yml"], dict.fromkeys(AREAS, True)),
         ("plan runs all", ["scripts/ci/ci-plan.py"], dict.fromkeys(AREAS, True)),
+        ("license checker runs all", ["scripts/ci/check-licenses.py"], dict.fromkeys(AREAS, True)),
+        ("Cargo advisory checker runs Rust", ["scripts/ci/check-cargo-advisories.py"],
+         {"server": False, "web": False, "rust": True, "mobile": False}),
+        ("Cargo advisory allowlist runs Rust", ["security/cargo-advisory-allowlist.json"],
+         {"server": False, "web": False, "rust": True, "mobile": False}),
+        ("EE tree runs server", ["ee/billing/api.py"],
+         {"server": True, "web": False, "rust": False, "mobile": False}),
         ("GLib backport-only change runs Rust", ["security/backports/glib-0.18.5/src/variant_iter.rs"],
          {"server": False, "web": False, "rust": True, "mobile": False}),
         ("GLib qualifier-only change runs Rust", ["scripts/ci/qualify-glib-iterator.py"],

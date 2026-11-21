@@ -1,0 +1,19 @@
+{
+  "$comment": "Bound exceptions for scripts/ci/check-cargo-advisories.py over Cargo.lock. Every entry is bound by `advisory`, `package`, `version`, `informational`, and `reason`. Any security vulnerability (`informational` is null or `unsound`) without a bound entry fails CI; any moved version, package, or classification fails CI; any stale entry whose advisory is no longer reported fails CI.",
+  "advisories": [
+    {
+      "advisory": "RUSTSEC-2024-0370",
+      "package": "proc-macro-error",
+      "version": "1.0.4",
+      "informational": "unmaintained",
+      "reason": "Compile-time host proc-macro transitive dependency pulled in by Linux GTK/Tauri derive crates; ships zero code in runtime desktop, mobile, or browser binaries and carries no known vulnerability. Remove this entry when upstream Tauri/GTK derive crates drop proc-macro-error."
+    },
+    {
+      "advisory": "RUSTSEC-2026-0173",
+      "package": "proc-macro-error2",
+      "version": "2.0.1",
+      "informational": "unmaintained",
+      "reason": "Compile-time host proc-macro transitive dependency pulled in by Tauri v2 macros; ships zero code in runtime desktop, mobile, or browser binaries and carries no known vulnerability. Remove this entry when upstream Tauri macros migrate off proc-macro-error2."
+    }
+  ]
+}

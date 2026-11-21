@@ -6,12 +6,22 @@ Governed by `ee/LICENSE` (`LicenseRef-Kodera-EE`).
 from __future__ import annotations
 
 import json
+import os
+from datetime import UTC, datetime, timedelta
 from typing import Final
+from urllib.parse import urlsplit
 
+from django.conf import settings
 from django.db import DatabaseError
 from django.http import HttpRequest, HttpResponse
 
-from ee.scim.auth import ScimAuthError, ScimTokenRecord
+from ee.auth import (
+    ADMIN_ROLES,
+    EeAuthError,
+    authenticate_tenant_request,
+    fence_authenticated_ee_operation,
+)
+from ee.scim.auth import ALL_SCIM_SCOPES, DEFAULT_SCIM_SCOPES, ScimAuthError, ScimTokenRecord
 from ee.scim.schemas import (
     SCIM_ERROR_SCHEMA,
     SCIM_LIST_RESPONSE_SCHEMA,
@@ -25,6 +35,14 @@ from ee.store import is_retriable_lock_contention
 _SCIM_PUBLIC_ERRORS: Final[tuple[tuple[str, int, str | None, str], ...]] = (
     # Authentication & tenant authorization rejections
     ("missing_token", 401, None, "Missing SCIM Bearer token"),
+    ("unauthenticated", 401, None, "Authentication required"),
+    ("forbidden_lane", 403, None, "Customer authentication lane required"),
+    ("identity_unknown", 403, None, "Authenticated identity is not provisioned"),
+    ("tenant_membership_required", 403, None, "Active tenant membership is required"),
+    ("cross_tenant_forbidden", 403, None, "Cross-tenant SCIM administration is forbidden"),
+    ("insufficient_role", 403, None, "Organisation owner or admin role is required"),
+    ("user_disabled", 403, None, "User account is disabled"),
+    ("authority_unavailable", 503, None, "Organisation authority revision is unavailable"),
     ("malformed_auth_header", 401, None, "Malformed Authorization header"),
     ("invalid_auth_scheme", 401, None, "Authorization header must use Bearer scheme"),
     ("invalid_token", 401, None, "Invalid SCIM Bearer token"),
@@ -125,9 +143,43 @@ def _scim_error_from_code(error_code: str, *, default_status: int = 400) -> Http
     return _scim_error("Invalid SCIM request", status=400)
 
 
+_LOOPBACK_HOSTS: Final[frozenset[str]] = frozenset(
+    {"127.0.0.1", "localhost", "::1", "[::1]", "testserver"}
+)
+
+
 def _scim_base_url(request: HttpRequest, tenant_slug: str | None = None) -> str:
-    scheme = "https" if request.is_secure() else "http"
-    origin = f"{scheme}://{request.get_host()}"
+    origin: str | None = None
+    for candidate in (
+        getattr(settings, "KODERA_PUBLIC_API_ORIGIN", None),
+        getattr(settings, "KODERA_SAML_SP_BASE_URL", None),
+        os.environ.get("KODERA_PUBLIC_API_ORIGIN"),
+        os.environ.get("KODERA_SAML_SP_BASE_URL"),
+    ):
+        if isinstance(candidate, str) and candidate.strip():
+            cleaned = candidate.strip().rstrip("/")
+            parsed = urlsplit(cleaned)
+            host_low = (parsed.hostname or "").lower()
+            if not getattr(settings, "DEBUG", False) and host_low not in _LOOPBACK_HOSTS:
+                if parsed.scheme != "https":
+                    raise ScimError(
+                        "Production SCIM base URL must use https://",
+                        status=400,
+                        code="invalid_request",
+                    )
+            origin = cleaned
+            break
+
+    if origin is None:
+        host = request.get_host()
+        host_only = (urlsplit(f"//{host}").hostname or "").lower()
+        if request.is_secure() or (
+            not getattr(settings, "DEBUG", False) and host_only not in _LOOPBACK_HOSTS
+        ):
+            origin = f"https://{host}"
+        else:
+            origin = f"http://{host}"
+
     if tenant_slug is not None and f"/tenants/{tenant_slug}/" in request.path_info:
         return f"{origin}/api/v1/ee/scim/v2/tenants/{tenant_slug}"
     return f"{origin}/api/v1/ee/scim/v2"
@@ -532,3 +584,161 @@ def group_detail_view(
         if is_retriable_lock_contention(exc):
             return _scim_error_from_code("authority_fenced")
         raise
+
+
+def _serialize_scim_token_record(rec: ScimTokenRecord) -> dict[str, object]:
+    return {
+        "token_id": rec.token_id,
+        "tenant_slug": rec.tenant_slug,
+        "scopes": sorted(rec.scopes),
+        "description": rec.description,
+        "created_at": rec.created_at.isoformat(),
+        "expires_at": rec.expires_at.isoformat() if rec.expires_at is not None else None,
+        "revoked_at": rec.revoked_at.isoformat() if rec.revoked_at is not None else None,
+    }
+
+
+def tokens_collection_view(
+    request: HttpRequest,
+    tenant_slug: str | None = None,
+) -> HttpResponse:
+    """Authenticated `org_owner` / `org_admin` SCIM token issuance and listing (`BUG-0062`)."""
+    if request.method not in {"GET", "POST"}:
+        return _scim_error("Method not allowed", status=405)
+
+    try:
+        auth = authenticate_tenant_request(
+            request,
+            required_roles=ADMIN_ROLES,
+            target_tenant_slug=tenant_slug,
+        )
+    except EeAuthError as exc:
+        return _scim_error_from_code(exc.code, default_status=401)
+    except DatabaseError as exc:
+        if is_retriable_lock_contention(exc):
+            return _scim_error_from_code("authority_fenced")
+        raise
+
+    if request.method == "GET":
+        try:
+            with fence_authenticated_ee_operation(
+                auth,
+                target_tenant_slug=tenant_slug,
+            ) as fenced:
+                tokens = default_scim_service.tokens.list_tokens(
+                    tenant_slug=fenced.tenant_slug,
+                    organisation_id=fenced.organisation_id,
+                )
+        except EeAuthError as exc:
+            return _scim_error_from_code(exc.code)
+        except ScimAuthError as exc:
+            return _scim_error_from_code(exc.code)
+        except DatabaseError as exc:
+            if is_retriable_lock_contention(exc):
+                return _scim_error_from_code("authority_fenced")
+            raise
+        return _scim_response(
+            {
+                "tenant_slug": fenced.tenant_slug,
+                "tokens": [_serialize_scim_token_record(t) for t in tokens],
+            },
+            status=200,
+        )
+
+    body_obj: dict[str, object] = {}
+    if request.body:
+        try:
+            body_obj = _parse_scim_json(request)
+        except ScimError as exc:
+            return _scim_error_from_code(exc.code)
+
+    raw_desc = body_obj.get("description", "")
+    if not isinstance(raw_desc, str) or len(raw_desc) > 255:
+        return _scim_error_from_code("scim_invalidValue")
+    raw_scopes = body_obj.get("scopes")
+    if raw_scopes is None:
+        scopes = DEFAULT_SCIM_SCOPES
+    elif isinstance(raw_scopes, list) and all(isinstance(s, str) for s in raw_scopes):
+        scopes = frozenset(s.strip() for s in raw_scopes if s.strip())
+        if not scopes or not scopes <= ALL_SCIM_SCOPES:
+            return _scim_error_from_code("scim_invalidValue")
+    else:
+        return _scim_error_from_code("scim_invalidValue")
+
+    raw_ttl_days = body_obj.get("expires_in_days")
+    expires_at: datetime | None = None
+    if raw_ttl_days is not None:
+        if type(raw_ttl_days) is not int or not 1 <= raw_ttl_days <= 365:
+            return _scim_error_from_code("scim_invalidValue")
+        expires_at = datetime.now(UTC) + timedelta(days=raw_ttl_days)
+
+    try:
+        with fence_authenticated_ee_operation(
+            auth,
+            target_tenant_slug=tenant_slug,
+        ) as fenced:
+            plaintext, record = default_scim_service.tokens.issue_token(
+                tenant_slug=fenced.tenant_slug,
+                scopes=scopes,
+                expires_at=expires_at,
+                organisation_id=fenced.organisation_id,
+                description=raw_desc.strip(),
+            )
+    except EeAuthError as exc:
+        return _scim_error_from_code(exc.code)
+    except ScimAuthError as exc:
+        return _scim_error_from_code(exc.code)
+    except DatabaseError as exc:
+        if is_retriable_lock_contention(exc):
+            return _scim_error_from_code("authority_fenced")
+        raise
+
+    out = _serialize_scim_token_record(record)
+    out["token"] = plaintext
+    return _scim_response(out, status=201)
+
+
+def token_detail_view(
+    request: HttpRequest,
+    token_id: str,
+    tenant_slug: str | None = None,
+) -> HttpResponse:
+    """Authenticated `org_owner` / `org_admin` SCIM token revocation (`BUG-0062`)."""
+    if request.method != "DELETE":
+        return _scim_error("Method not allowed", status=405)
+
+    try:
+        auth = authenticate_tenant_request(
+            request,
+            required_roles=ADMIN_ROLES,
+            target_tenant_slug=tenant_slug,
+        )
+    except EeAuthError as exc:
+        return _scim_error_from_code(exc.code, default_status=401)
+    except DatabaseError as exc:
+        if is_retriable_lock_contention(exc):
+            return _scim_error_from_code("authority_fenced")
+        raise
+
+    try:
+        with fence_authenticated_ee_operation(
+            auth,
+            target_tenant_slug=tenant_slug,
+        ) as fenced:
+            revoked = default_scim_service.tokens.revoke_token(
+                token_id,
+                tenant_slug=fenced.tenant_slug,
+                organisation_id=fenced.organisation_id,
+            )
+    except EeAuthError as exc:
+        return _scim_error_from_code(exc.code)
+    except ScimAuthError as exc:
+        return _scim_error_from_code(exc.code)
+    except DatabaseError as exc:
+        if is_retriable_lock_contention(exc):
+            return _scim_error_from_code("authority_fenced")
+        raise
+
+    if not revoked:
+        return _scim_error_from_code("not_found")
+    return _scim_response(None, status=204)

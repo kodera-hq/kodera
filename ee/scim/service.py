@@ -1370,24 +1370,18 @@ class ScimService:
 
             user_id = str(uuid4())
             effective_org_id = organisation_id or state.organisation_id
+            mapped_role = _resolve_scim_membership_role(roles)
             django_uid: str | None = None
             if effective_org_id is not None and can_use_postgres():
-                primary_email = user_name
-                for em in emails:
-                    if em.primary and em.value.strip():
-                        primary_email = em.value.strip()
-                        break
-                else:
-                    for em in emails:
-                        if em.value.strip():
-                            primary_email = em.value.strip()
-                            break
+                primary_email = _primary_email_value(emails, user_name)
                 django_uid = _sync_django_scim_provision(
                     organisation_id=effective_org_id,
                     user_name=user_name,
+                    external_id=external_id,
                     email=primary_email,
                     display_name=display_name,
                     active=active,
+                    requested_role=mapped_role,
                 )
 
             user = ScimUser(
@@ -1532,6 +1526,7 @@ class ScimService:
             user.display_name = display_name
             user.emails = _parse_emails(payload.get("emails"), new_user_name)
             user.roles = _parse_roles(payload.get("roles"))
+            mapped_role = _resolve_scim_membership_role(user.roles)
             ent_ext = payload.get(SCIM_ENTERPRISE_USER_SCHEMA)
             if isinstance(ent_ext, dict) and isinstance(ent_ext.get("department"), str):
                 user.department = ent_ext["department"].strip() or None
@@ -1543,6 +1538,7 @@ class ScimService:
             user.version += 1
             user.updated_at = timestamp
             effective_org_id = organisation_id or state.organisation_id
+            primary_email = _primary_email_value(user.emails, user.user_name)
             if (
                 effective_org_id is not None
                 and user.django_user_id is not None
@@ -1565,12 +1561,30 @@ class ScimService:
                 if not was_active:
                     user.member_state = "active"
                     user.deprovisioned_at = None
-                if (
+                    if (
+                        effective_org_id is not None
+                        and user.django_user_id is not None
+                        and can_use_postgres()
+                    ):
+                        _sync_django_scim_reactivate(
+                            effective_org_id,
+                            UUID(user.django_user_id),
+                            requested_role=mapped_role,
+                            email=primary_email,
+                            display_name=user.display_name,
+                        )
+                elif (
                     effective_org_id is not None
                     and user.django_user_id is not None
                     and can_use_postgres()
                 ):
-                    _sync_django_scim_reactivate(effective_org_id, UUID(user.django_user_id))
+                    _sync_django_scim_attributes_and_role(
+                        organisation_id=effective_org_id,
+                        user_uuid=UUID(user.django_user_id),
+                        requested_role=mapped_role,
+                        email=primary_email,
+                        display_name=user.display_name,
+                    )
 
             groups = _groups_for_user(state, user.id)
             return user.to_scim_dict(base_url, groups)
@@ -1659,6 +1673,8 @@ class ScimService:
             user.version += 1
             user.updated_at = timestamp
             effective_org_id = organisation_id or state.organisation_id
+            mapped_role = _resolve_scim_membership_role(user.roles) if user.roles else None
+            primary_email = _primary_email_value(user.emails, user.user_name)
             if deprovision_triggered and not user.active:
                 _deprovision_user(
                     state,
@@ -1675,7 +1691,13 @@ class ScimService:
                     and user.django_user_id is not None
                     and can_use_postgres()
                 ):
-                    _sync_django_scim_reactivate(effective_org_id, UUID(user.django_user_id))
+                    _sync_django_scim_reactivate(
+                        effective_org_id,
+                        UUID(user.django_user_id),
+                        requested_role=mapped_role,
+                        email=primary_email,
+                        display_name=user.display_name,
+                    )
             elif (
                 effective_org_id is not None
                 and user.django_user_id is not None
@@ -1686,6 +1708,14 @@ class ScimService:
                     UUID(user.django_user_id),
                     require_globally_enabled=user.active,
                 )
+                if user.active:
+                    _sync_django_scim_attributes_and_role(
+                        organisation_id=effective_org_id,
+                        user_uuid=UUID(user.django_user_id),
+                        requested_role=mapped_role,
+                        email=primary_email,
+                        display_name=user.display_name,
+                    )
 
             groups = _groups_for_user(state, user.id)
             return user.to_scim_dict(base_url, groups)
@@ -2105,6 +2135,90 @@ class ScimService:
                 raise ScimError(f"Group {group_id!r} not found", status=404)
 
 
+def _primary_email_value(emails: list[ScimEmail], fallback: str) -> str:
+    for em in emails:
+        if em.primary and em.value.strip():
+            return em.value.strip()
+    for em in emails:
+        if em.value.strip():
+            return em.value.strip()
+    return fallback
+
+
+def _try_parse_uuid_str(value: str | None) -> str | None:
+    if not value:
+        return None
+    try:
+        return str(UUID(value.strip()))
+    except ValueError:
+        return None
+
+
+def _resolve_scim_membership_role(roles: list[str]) -> str | None:
+    """Map SCIM `roles` onto Kodera `org_member` / `org_admin`; forbid `org_owner` / `org_billing`."""
+    if not roles:
+        return None
+    has_admin = False
+    for raw in roles:
+        norm = raw.strip().lower()
+        if norm in {"org_owner", "owner", "org_billing", "billing", "billing_admin"}:
+            raise ScimError(
+                "SCIM cannot grant org_owner or org_billing roles",
+                status=403,
+                scim_type="mutability",
+                code="forbidden",
+            )
+        if norm in {"org_admin", "admin"}:
+            has_admin = True
+    return "org_admin" if has_admin else "org_member"
+
+
+def _maybe_sync_user_contact_columns(
+    cur: Any,
+    *,
+    user_uuid: UUID,
+    organisation_id: UUID | None = None,
+    email: str | None,
+    display_name: str | None,
+) -> None:
+    """Update `identity_user` / `identity_identity` contact columns when role grants permit."""
+    cur.execute(
+        """
+        SELECT
+            has_column_privilege(current_user, 'public.identity_user', 'email', 'UPDATE'),
+            has_column_privilege(current_user, 'public.identity_user', 'display_name', 'UPDATE'),
+            has_column_privilege(current_user, 'public.identity_identity', 'email', 'UPDATE')
+        """
+    )
+    priv_row = cur.fetchone()
+    if priv_row is None:
+        return
+    can_email, can_display, can_ident_email = (
+        bool(priv_row[0]),
+        bool(priv_row[1]),
+        bool(priv_row[2]),
+    )
+    if can_email and can_display and email and display_name is not None:
+        cur.execute(
+            "UPDATE public.identity_user SET email = %s, display_name = %s WHERE id = %s",
+            [email.strip(), display_name[:200], user_uuid],
+        )
+    elif can_display and display_name is not None:
+        cur.execute(
+            "UPDATE public.identity_user SET display_name = %s WHERE id = %s",
+            [display_name[:200], user_uuid],
+        )
+    if can_ident_email and email and organisation_id is not None:
+        cur.execute(
+            """
+            UPDATE public.identity_identity
+            SET email = %s
+            WHERE organisation_id = %s AND user_id = %s AND deleted_at IS NULL
+            """,
+            [email.strip(), organisation_id, user_uuid],
+        )
+
+
 def _lock_and_verify_scim_person(
     cur: Any,
     *,
@@ -2112,17 +2226,22 @@ def _lock_and_verify_scim_person(
     user_uuid: UUID,
     require_globally_enabled: bool,
 ) -> None:
-    """Lock global `identity_user` (`FOR SHARE`) and verify cutoff/global-disable invariants.
+    """Lock global `identity_user` (`FOR SHARE NOWAIT`) and verify cutoff/global-disable invariants.
 
-    Never mutates `identity_user.enabled`: global person enable/disable belongs exclusively to
-    platform account/security writers. Also verifies that any bound tenant `Identity` in
-    `organisation_id` remains enabled when `require_globally_enabled` is True (`kodera_api` holds
-    `SELECT` + `INSERT` only on `identity_identity`, as enforced by Core writer-role gates).
+    Uses non-blocking `pg_try_advisory_xact_lock_shared` (`BUG-0062`) so SCIM writes holding
+    `orgs_organisation` never deadlock against `privacy_begin_account_erasure` (`User -> Organisation`).
     """
     cur.execute(
-        "SELECT pg_advisory_xact_lock_shared(hashtextextended('privacy_account_cutoff:' || %s, 0))",
+        "SELECT pg_try_advisory_xact_lock_shared(hashtextextended('privacy_account_cutoff:' || %s, 0))",
         [str(user_uuid)],
     )
+    lock_row = cur.fetchone()
+    if not lock_row or not bool(lock_row[0]):
+        raise ScimError(
+            "Organisation authority changed concurrently; retry request",
+            status=409,
+            code="authority_fenced",
+        )
     cur.execute(
         """
         SELECT u.email, u.enabled, u.deleted_at
@@ -2194,10 +2313,14 @@ def _sync_django_scim_provision(
     *,
     organisation_id: UUID,
     user_name: str,
+    external_id: str | None = None,
     email: str,
     display_name: str,
     active: bool,
+    requested_role: str | None = None,
 ) -> str:
+    from apps.audit.models import AuditEvent
+    from apps.audit.services import record_membership_event
     from apps.identity.models import Identity, User
     from apps.orgs import member_set_hooks
     from apps.orgs.models import Membership, Organisation
@@ -2213,19 +2336,50 @@ def _sync_django_scim_provision(
             )
             if org is None:
                 raise TenantCutoffError("tenant_cutoff_fenced", status=403)
-            subj = "".join(ch if "!" <= ch <= "~" else "_" for ch in user_name.lower())[:255]
+
+            ext_uuid_str = _try_parse_uuid_str(external_id)
+            uname_uuid_str = _try_parse_uuid_str(user_name)
+            legacy_subj = "".join(ch if "!" <= ch <= "~" else "_" for ch in user_name.lower())[:255]
+            candidate_subjects = [
+                s for s in (ext_uuid_str, uname_uuid_str, legacy_subj) if s is not None
+            ]
+
             identity = (
                 Identity.objects.select_related("user")
-                .filter(organisation=org, issuer=org.issuer, subject=subj)
+                .filter(organisation=org, issuer=org.issuer, subject__in=candidate_subjects)
+                .order_by("created_at", "id")
                 .first()
             )
-            if identity is None and user_name.strip().lower() == email.strip().lower():
+            if identity is None and email.strip():
                 identity = (
                     Identity.objects.select_related("user")
-                    .filter(organisation=org, issuer=org.issuer, email__iexact=email)
+                    .filter(organisation=org, issuer=org.issuer, email__iexact=email.strip())
                     .order_by("created_at", "id")
                     .first()
                 )
+            if identity is None:
+                with connection.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT user_id
+                        FROM public.ee_scim_deprovision
+                        WHERE organisation_id = %s
+                          AND user_id IS NOT NULL
+                          AND (lower(user_name) = lower(%s) OR lower(user_name) = lower(%s))
+                        ORDER BY occurred_at DESC
+                        LIMIT 1
+                        """,
+                        [org.id, user_name.strip(), email.strip()],
+                    )
+                    deprov_row = cur.fetchone()
+                if deprov_row is not None and deprov_row[0] is not None:
+                    identity = (
+                        Identity.objects.select_related("user")
+                        .filter(organisation=org, issuer=org.issuer, user_id=deprov_row[0])
+                        .order_by("created_at", "id")
+                        .first()
+                    )
+
             if identity is not None:
                 with connection.cursor() as cur:
                     _lock_and_verify_scim_person(
@@ -2238,23 +2392,27 @@ def _sync_django_scim_provision(
             else:
                 # Never link or reuse a global `User` across tenants by contact `email` or
                 # `userName` (`CUSTOMER_PERSISTENCE.md:29` / `ADR-0024` / `owner_binding.py`).
+                # Always mint a canonical lowercase KC-02 UUID subject (`BUG-0063`).
+                minted_subject = ext_uuid_str or uname_uuid_str or str(uuid7())
                 user = User.objects.create(
                     email=email,
                     display_name=display_name[:200] if display_name else None,
                     enabled=True,
                 )
-                Identity.objects.create(
+                identity = Identity.objects.create(
                     user=user,
                     organisation=org,
                     realm=org.realm,
                     issuer=org.issuer,
-                    subject=subj,
+                    subject=minted_subject,
                     email=email,
                     enabled=True,
                 )
 
             now_ts = timezone.now()
+            req_id = f"scim-{uuid7()}"
             target_state = Membership.State.ACTIVE if active else Membership.State.SUSPENDED
+            desired_role = requested_role or Membership.Role.MEMBER
             membership = (
                 Membership.objects.select_for_update(nowait=True)
                 .filter(organisation=org, user=user)
@@ -2264,16 +2422,33 @@ def _sync_django_scim_provision(
                 created_membership = Membership.objects.create(
                     organisation=org,
                     user=user,
-                    role=Membership.Role.MEMBER,
+                    role=desired_role,
                     state=target_state,
                     accepted_at=now_ts,
                 )
-                if not active:
-                    enqueue_realm_access(
+                AuditEvent.objects.create(
+                    action="membership.created",
+                    actor_type="tenant",
+                    actor_id=identity.id,
+                    actor_label=f"urn:kodera:identity:{identity.id}",
+                    organisation_id=org.id,
+                    target_urn=f"urn:kodera:membership:{created_membership.id}",
+                    request_id=req_id,
+                    retention_class="standard",
+                    before=None,
+                    after={"role": desired_role, "state": target_state},
+                    metadata={"source": "scim"},
+                )
+                enqueue_realm_access(
+                    organisation_id=org.id,
+                    membership_id=created_membership.id,
+                    user_id=user.id,
+                    operation=ACCESS_ON if active else ACCESS_OFF,
+                )
+                if active:
+                    member_set_hooks.member_set_changed(
                         organisation_id=org.id,
-                        membership_id=created_membership.id,
-                        user_id=user.id,
-                        operation=ACCESS_OFF,
+                        reason="scim_provisioned",
                     )
             else:
                 if membership.deleted_at is not None:
@@ -2286,13 +2461,41 @@ def _sync_django_scim_provision(
                         code="owner_deprovision_forbidden",
                     )
                 prev_state = membership.state
-                if prev_state != target_state or membership.accepted_at is None:
+                prev_role = membership.role
+                # Never revive `REMOVED` `org_admin` onto `org_admin` automatically (`BUG-0063`).
+                if prev_state == Membership.State.REMOVED:
+                    effective_role = (
+                        prev_role
+                        if prev_role in {Membership.Role.OWNER, Membership.Role.BILLING}
+                        else Membership.Role.MEMBER
+                    )
+                elif prev_role in {Membership.Role.OWNER, Membership.Role.BILLING}:
+                    effective_role = prev_role
+                elif requested_role is not None:
+                    effective_role = requested_role
+                else:
+                    effective_role = prev_role
+
+                role_changed = prev_role != effective_role
+                state_changed = prev_state != target_state
+                if state_changed or role_changed or membership.accepted_at is None:
                     Membership.objects.filter(id=membership.id, organisation_id=org.id).update(
+                        role=effective_role,
                         state=target_state,
                         accepted_at=membership.accepted_at or now_ts,
                         updated_at=now_ts,
                     )
-                    if prev_state != target_state:
+                    if role_changed:
+                        record_membership_event(
+                            action="membership.role_changed",
+                            organisation_id=org.id,
+                            membership_id=membership.id,
+                            actor_id=identity.id,
+                            request_id=req_id,
+                            before={"role": prev_role},
+                            after={"role": effective_role},
+                        )
+                    if state_changed:
                         enqueue_realm_access(
                             organisation_id=org.id,
                             membership_id=membership.id,
@@ -2309,6 +2512,11 @@ def _sync_django_scim_provision(
                                 organisation_id=org.id,
                                 reason=member_set_hooks.MEMBER_REACTIVATED,
                             )
+                    elif role_changed and active:
+                        member_set_hooks.channel_set_changed(
+                            organisation_id=org.id,
+                            reason=member_set_hooks.CHANNEL_SET_REASON,
+                        )
             return str(user.id)
     except DatabaseError as exc:
         if is_retriable_lock_contention(exc):
@@ -2395,7 +2603,109 @@ def _sync_django_scim_deprovision(
         raise
 
 
-def _sync_django_scim_reactivate(organisation_id: UUID, user_uuid: UUID) -> None:
+def _sync_django_scim_attributes_and_role(
+    *,
+    organisation_id: UUID,
+    user_uuid: UUID,
+    requested_role: str | None = None,
+    email: str | None = None,
+    display_name: str | None = None,
+) -> None:
+    """Sync SCIM `PUT`/`PATCH` attribute & role mutations onto Core `Membership` + engine hooks."""
+    from apps.audit.services import record_membership_event
+    from apps.identity.models import Identity
+    from apps.orgs import member_set_hooks
+    from apps.orgs.models import Membership
+    from django.utils import timezone
+
+    try:
+        with transaction.atomic():
+            with connection.cursor() as cur:
+                _lock_and_verify_scim_person(
+                    cur,
+                    organisation_id=organisation_id,
+                    user_uuid=user_uuid,
+                    require_globally_enabled=True,
+                )
+                _maybe_sync_user_contact_columns(
+                    cur,
+                    user_uuid=user_uuid,
+                    organisation_id=organisation_id,
+                    email=email,
+                    display_name=display_name,
+                )
+
+            if requested_role is None:
+                return
+
+            identity = (
+                Identity.objects.filter(
+                    organisation_id=organisation_id,
+                    user_id=user_uuid,
+                    deleted_at__isnull=True,
+                )
+                .order_by("created_at", "id")
+                .first()
+            )
+            memberships = list(
+                Membership.objects.select_for_update(nowait=True)
+                .filter(
+                    organisation_id=organisation_id,
+                    user_id=user_uuid,
+                    deleted_at__isnull=True,
+                )
+                .order_by("id")
+            )
+            now_ts = timezone.now()
+            req_id = f"scim-{uuid7()}"
+            role_changed_any = False
+            for m in memberships:
+                if m.state != Membership.State.ACTIVE:
+                    continue
+                if m.role in {Membership.Role.OWNER, Membership.Role.BILLING}:
+                    continue
+                if m.role != requested_role:
+                    old_role = m.role
+                    Membership.objects.filter(id=m.id, organisation_id=organisation_id).update(
+                        role=requested_role,
+                        updated_at=now_ts,
+                    )
+                    if identity is not None:
+                        record_membership_event(
+                            action="membership.role_changed",
+                            organisation_id=organisation_id,
+                            membership_id=m.id,
+                            actor_id=identity.id,
+                            request_id=req_id,
+                            before={"role": old_role},
+                            after={"role": requested_role},
+                        )
+                    role_changed_any = True
+            if role_changed_any:
+                member_set_hooks.channel_set_changed(
+                    organisation_id=organisation_id,
+                    reason=member_set_hooks.CHANNEL_SET_REASON,
+                )
+    except DatabaseError as exc:
+        if is_retriable_lock_contention(exc):
+            raise ScimError(
+                "Organisation authority changed concurrently; retry request",
+                status=409,
+                code="authority_fenced",
+            ) from exc
+        raise
+
+
+def _sync_django_scim_reactivate(
+    organisation_id: UUID,
+    user_uuid: UUID,
+    *,
+    requested_role: str | None = None,
+    email: str | None = None,
+    display_name: str | None = None,
+) -> None:
+    from apps.audit.services import record_membership_event
+    from apps.identity.models import Identity
     from apps.orgs import member_set_hooks
     from apps.orgs.models import Membership
     from apps.outbox.realm_enqueue import ACCESS_ON, enqueue_realm_access
@@ -2410,6 +2720,22 @@ def _sync_django_scim_reactivate(organisation_id: UUID, user_uuid: UUID) -> None
                     user_uuid=user_uuid,
                     require_globally_enabled=True,
                 )
+                _maybe_sync_user_contact_columns(
+                    cur,
+                    user_uuid=user_uuid,
+                    organisation_id=organisation_id,
+                    email=email,
+                    display_name=display_name,
+                )
+            identity = (
+                Identity.objects.filter(
+                    organisation_id=organisation_id,
+                    user_id=user_uuid,
+                    deleted_at__isnull=True,
+                )
+                .order_by("created_at", "id")
+                .first()
+            )
             memberships = list(
                 Membership.objects.select_for_update(nowait=True)
                 .filter(
@@ -2420,15 +2746,46 @@ def _sync_django_scim_reactivate(organisation_id: UUID, user_uuid: UUID) -> None
                 .order_by("id")
             )
             now_ts = timezone.now()
+            req_id = f"scim-{uuid7()}"
             reactivated_any = False
+            role_changed_any = False
             for m in memberships:
-                if m.state != Membership.State.ACTIVE or m.accepted_at is None:
-                    was_non_active = m.state != Membership.State.ACTIVE
+                prev_state = m.state
+                prev_role = m.role
+                was_non_active = prev_state != Membership.State.ACTIVE
+                if prev_state == Membership.State.REMOVED:
+                    effective_role = (
+                        prev_role
+                        if prev_role in {Membership.Role.OWNER, Membership.Role.BILLING}
+                        else Membership.Role.MEMBER
+                    )
+                elif prev_role in {Membership.Role.OWNER, Membership.Role.BILLING}:
+                    effective_role = prev_role
+                elif requested_role is not None:
+                    effective_role = requested_role
+                else:
+                    effective_role = prev_role
+
+                role_changed = prev_role != effective_role
+                if was_non_active or role_changed or m.accepted_at is None:
                     Membership.objects.filter(id=m.id, organisation_id=organisation_id).update(
+                        role=effective_role,
                         state=Membership.State.ACTIVE,
                         accepted_at=m.accepted_at or now_ts,
                         updated_at=now_ts,
                     )
+                    if role_changed and identity is not None:
+                        record_membership_event(
+                            action="membership.role_changed",
+                            organisation_id=organisation_id,
+                            membership_id=m.id,
+                            actor_id=identity.id,
+                            request_id=req_id,
+                            before={"role": prev_role},
+                            after={"role": effective_role},
+                        )
+                    if role_changed:
+                        role_changed_any = True
                     if was_non_active:
                         enqueue_realm_access(
                             organisation_id=organisation_id,
@@ -2441,6 +2798,11 @@ def _sync_django_scim_reactivate(organisation_id: UUID, user_uuid: UUID) -> None
                 member_set_hooks.member_set_changed(
                     organisation_id=organisation_id,
                     reason=member_set_hooks.MEMBER_REACTIVATED,
+                )
+            elif role_changed_any:
+                member_set_hooks.channel_set_changed(
+                    organisation_id=organisation_id,
+                    reason=member_set_hooks.CHANNEL_SET_REASON,
                 )
     except DatabaseError as exc:
         if is_retriable_lock_contention(exc):

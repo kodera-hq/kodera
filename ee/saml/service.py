@@ -18,11 +18,11 @@ import threading
 import urllib.parse
 import zlib
 from collections import OrderedDict
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import UUID, uuid4, uuid5
 
 from django.db import DatabaseError, IntegrityError, connection, transaction
 from uuid6 import uuid7
@@ -48,7 +48,6 @@ from ee.store import (
     derive_ee_hkdf_bytes,
     is_retriable_lock_contention,
     reset_ee_tables,
-    resolve_tenant_organisation,
 )
 
 SAML_BINDING_HTTP_POST = "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"
@@ -60,6 +59,34 @@ SAML_CM_BEARER = "urn:oasis:names:tc:SAML:2.0:cm:bearer"
 VALID_ROLES = ("org_member", "org_billing", "org_admin")
 _ROLE_PRIORITY = {"org_member": 1, "org_billing": 2, "org_admin": 3}
 _RELAY_HMAC_KDF_INFO = b"kodera-ee-saml-relay-hmac-v1"
+_DOMAIN_VERIFY_KDF_INFO = b"kodera-ee-saml-domain-verify-v1"
+_HANDOFF_KDF_INFO = b"kodera-ee-saml-oidc-handoff-v1"
+_SAML_SUBJECT_NAMESPACE = UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
+_PUBLIC_FREEMAIL_DOMAINS = frozenset(
+    {
+        "gmail.com",
+        "googlemail.com",
+        "outlook.com",
+        "hotmail.com",
+        "live.com",
+        "yahoo.com",
+        "icloud.com",
+        "proton.me",
+        "protonmail.com",
+        "aol.com",
+        "gmx.com",
+        "yandex.com",
+        "mail.com",
+        "zoho.com",
+    }
+)
+
+
+def _canonical_saml_subject_uuid(organisation_id: UUID, idp_id: str, subject: str) -> str:
+    """Derive deterministic KC-02 UUID subject (`[0-9a-f-]{36}`) bound strictly to SAML IdP + NameID."""
+    return str(
+        uuid5(_SAML_SUBJECT_NAMESPACE, f"kodera-saml-v1:{organisation_id}:{idp_id}:{subject}")
+    )
 
 
 def _is_ascii_lower_alnum(ch: str) -> bool:
@@ -371,6 +398,9 @@ class SamlService:
         self._pending_by_relay: OrderedDict[str, _PendingRequest] = OrderedDict()
         self._replay_cache: OrderedDict[tuple[str, str, str], datetime] = OrderedDict()
         self._provisioned_users: dict[tuple[str, str], ProvisionedSamlPrincipal] = {}
+        self._seeded_dns_txt: dict[str, list[str]] = {}
+        self._verified_domains: set[tuple[str, str]] = set()
+        self._dns_txt_resolver: Callable[[str], Sequence[str]] | None = None
 
     def _relay_hmac_key(self) -> bytes:
         if self._explicit_relay_secret is not None:
@@ -378,13 +408,265 @@ class SamlService:
         return derive_ee_hkdf_bytes(domain_info=_RELAY_HMAC_KDF_INFO)
 
     def reset(self) -> None:
-        """Clear IdP registrations, pending requests, replay cache, and principals."""
+        """Clear IdP registrations, pending requests, replay cache, DNS fixtures, and principals."""
         with self._lock:
             self._idps.clear()
             self._pending_by_relay.clear()
             self._replay_cache.clear()
             self._provisioned_users.clear()
+            self._seeded_dns_txt.clear()
+            self._verified_domains.clear()
+            self._dns_txt_resolver = None
         reset_ee_tables("saml")
+
+    def seed_dns_txt_record(self, fqdn: str, txt_value: str) -> None:
+        """Seed a DNS TXT record fixture (e.g. `_kodera-challenge.<domain>`) for deterministic tests."""
+        key = fqdn.strip().rstrip(".").lower()
+        with self._lock:
+            self._seeded_dns_txt.setdefault(key, []).append(txt_value.strip())
+
+    def set_dns_txt_resolver(self, resolver: Callable[[str], Sequence[str]] | None) -> None:
+        with self._lock:
+            self._dns_txt_resolver = resolver
+
+    def resolve_dns_txt(self, fqdn: str) -> tuple[str, ...]:
+        key = fqdn.strip().rstrip(".").lower()
+        with self._lock:
+            seeded = tuple(self._seeded_dns_txt.get(key, ()))
+            resolver = self._dns_txt_resolver
+        if resolver is not None:
+            resolved = tuple(str(r).strip() for r in resolver(key))
+            return seeded + resolved
+        return seeded
+
+    def domain_verification_token(
+        self,
+        tenant_slug: str,
+        domain: str,
+        *,
+        organisation_id: UUID | None = None,
+    ) -> str:
+        clean_domain = domain.strip().lower()
+        if not _is_valid_domain(clean_domain):
+            raise SamlError("invalid_verified_domain", "Invalid domain format")
+        if clean_domain in _PUBLIC_FREEMAIL_DOMAINS:
+            raise SamlError(
+                "unverified_domain",
+                "Public consumer email domains cannot be claimed for SAML federation",
+                status=422,
+            )
+        scope = str(organisation_id) if organisation_id is not None else tenant_slug
+        key = derive_ee_hkdf_bytes(
+            domain_info=_DOMAIN_VERIFY_KDF_INFO + b"\x00" + scope.encode("utf-8")
+        )
+        digest = hmac.new(key, clean_domain.encode("utf-8"), hashlib.sha256).hexdigest()[:48]
+        return f"kodera-domain-verification={digest}"
+
+    def _assert_domain_not_claimed_by_other_tenant(
+        self,
+        *,
+        tenant_slug: str,
+        domain: str,
+        organisation_id: UUID | None,
+    ) -> bool:
+        """Return True if already verified for THIS tenant; raise 409 if claimed by another tenant."""
+        already_owned_by_self = False
+        if can_use_postgres():
+            with connection.cursor() as cur:
+                cur.execute(
+                    "SELECT tenant_slug, organisation_id, verified_domains_json FROM public.ee_saml_idp"
+                )
+                for row_slug, row_org_id, raw_domains_json in cur.fetchall():
+                    parsed_domains = json.loads(str(raw_domains_json))
+                    if not isinstance(parsed_domains, list) or domain not in parsed_domains:
+                        continue
+                    same_tenant = (
+                        organisation_id is not None
+                        and row_org_id is not None
+                        and str(row_org_id) == str(organisation_id)
+                    ) or str(row_slug) == tenant_slug
+                    if same_tenant:
+                        already_owned_by_self = True
+                    else:
+                        raise SamlError(
+                            "domain_already_claimed",
+                            "Domain is already claimed by another organisation",
+                            status=409,
+                        )
+        else:
+            with self._lock:
+                for (t_slug, _), cfg in self._idps.items():
+                    if domain not in cfg.verified_domains:
+                        continue
+                    if t_slug == tenant_slug:
+                        already_owned_by_self = True
+                    else:
+                        raise SamlError(
+                            "domain_already_claimed",
+                            "Domain is already claimed by another organisation",
+                            status=409,
+                        )
+        return already_owned_by_self
+
+    def build_domain_challenge(
+        self,
+        *,
+        tenant_slug: str,
+        domain: str,
+        organisation_id: UUID | None = None,
+    ) -> dict[str, object]:
+        require_enterprise_edition()
+        clean_domain = domain.strip().lower()
+        expected = self.domain_verification_token(
+            tenant_slug, clean_domain, organisation_id=organisation_id
+        )
+        self._assert_domain_not_claimed_by_other_tenant(
+            tenant_slug=tenant_slug,
+            domain=clean_domain,
+            organisation_id=organisation_id,
+        )
+        return {
+            "tenant_slug": tenant_slug,
+            "domain": clean_domain,
+            "dns_record_name": f"_kodera-challenge.{clean_domain}",
+            "dns_record_type": "TXT",
+            "txt_value": expected,
+        }
+
+    def verify_domain_challenge(
+        self,
+        *,
+        tenant_slug: str,
+        domain: str,
+        organisation_id: UUID | None = None,
+    ) -> dict[str, object]:
+        require_enterprise_edition()
+        clean_domain = domain.strip().lower()
+        expected = self.domain_verification_token(
+            tenant_slug, clean_domain, organisation_id=organisation_id
+        )
+        already_self = self._assert_domain_not_claimed_by_other_tenant(
+            tenant_slug=tenant_slug,
+            domain=clean_domain,
+            organisation_id=organisation_id,
+        )
+        fqdn = f"_kodera-challenge.{clean_domain}"
+        records = self.resolve_dns_txt(fqdn)
+        matched = already_self or any(
+            hmac.compare_digest(rec.strip().strip('"'), expected) for rec in records
+        )
+        if not matched:
+            raise SamlError(
+                "unverified_domain",
+                "DNS TXT ownership record was not found or did not match challenge",
+                status=422,
+            )
+        scope = str(organisation_id) if organisation_id is not None else tenant_slug
+        with self._lock:
+            self._verified_domains.add((scope, clean_domain))
+        return {
+            "tenant_slug": tenant_slug,
+            "domain": clean_domain,
+            "verified": True,
+        }
+
+    def require_verified_domain_ownership(
+        self,
+        *,
+        tenant_slug: str,
+        domains: Iterable[str],
+        organisation_id: UUID | None = None,
+    ) -> None:
+        domain_list = [d.strip().lower() for d in domains]
+        if not domain_list:
+            raise SamlError(
+                "missing_verified_domains",
+                "At least one verified email domain is required for SAML federation",
+            )
+        scope = str(organisation_id) if organisation_id is not None else tenant_slug
+        for clean_domain in domain_list:
+            expected = self.domain_verification_token(
+                tenant_slug, clean_domain, organisation_id=organisation_id
+            )
+            already_self = self._assert_domain_not_claimed_by_other_tenant(
+                tenant_slug=tenant_slug,
+                domain=clean_domain,
+                organisation_id=organisation_id,
+            )
+            if already_self:
+                continue
+            with self._lock:
+                already_verified = (scope, clean_domain) in self._verified_domains
+            if already_verified:
+                continue
+            records = self.resolve_dns_txt(f"_kodera-challenge.{clean_domain}")
+            if any(hmac.compare_digest(rec.strip().strip('"'), expected) for rec in records):
+                with self._lock:
+                    self._verified_domains.add((scope, clean_domain))
+                continue
+            raise SamlError(
+                "unverified_domain",
+                "Domain requires proven DNS TXT ownership before SAML IdP registration",
+                status=422,
+            )
+
+    def build_oidc_handoff(
+        self,
+        principal: ProvisionedSamlPrincipal,
+        *,
+        sp_base_url: str,
+        ttl_seconds: int = 60,
+    ) -> tuple[str, str]:
+        """Mint a short-lived HMAC-signed broker handoff token and OIDC redirect URL."""
+        norm_base = _normalize_sp_base_url(sp_base_url)
+        exp_epoch = int((principal.authenticated_at + timedelta(seconds=ttl_seconds)).timestamp())
+        payload_obj = {
+            "sub": principal.user_id,
+            "tenant_slug": principal.tenant_slug,
+            "idp_id": principal.idp_id,
+            "assertion_id": principal.assertion_id,
+            "return_path": principal.return_path,
+            "exp": exp_epoch,
+        }
+        payload_b64 = (
+            base64.urlsafe_b64encode(
+                json.dumps(payload_obj, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            )
+            .decode("ascii")
+            .rstrip("=")
+        )
+        key = derive_ee_hkdf_bytes(
+            domain_info=_HANDOFF_KDF_INFO + b"\x00" + principal.tenant_slug.encode("utf-8")
+        )
+        sig = hmac.new(key, payload_b64.encode("ascii"), hashlib.sha256).hexdigest()
+        handoff_token = f"{payload_b64}.{sig}"
+
+        issuer_url: str | None = None
+        if can_use_postgres():
+            with connection.cursor() as cur:
+                cur.execute(
+                    "SELECT issuer FROM public.orgs_organisation WHERE slug = %s AND deleted_at IS NULL LIMIT 1",
+                    [principal.tenant_slug],
+                )
+                row = cur.fetchone()
+                if row is not None and row[0]:
+                    issuer_url = str(row[0]).rstrip("/")
+
+        query = urllib.parse.urlencode(
+            {
+                "response_type": "code",
+                "scope": "openid",
+                "kc_idp_hint": principal.idp_id,
+                "login_hint": principal.email,
+                "state": handoff_token,
+                "return_path": principal.return_path,
+            }
+        )
+        if issuer_url:
+            handoff_url = f"{issuer_url}/protocol/openid-connect/auth?{query}"
+        else:
+            handoff_url = f"{norm_base}/api/v1/ee/sso/saml/{principal.tenant_slug}/oidc-handoff?{query}"
+        return handoff_url, handoff_token
 
     def sp_entity_id(self, tenant_slug: str, sp_base_url: str) -> str:
         if not _is_valid_slug(tenant_slug):
@@ -696,7 +978,7 @@ class SamlService:
         for key in expired:
             del self._replay_cache[key]
 
-    def _consume_relay_state(
+    def _peek_relay_state(
         self,
         *,
         tenant_slug: str,
@@ -704,6 +986,7 @@ class SamlService:
         sp_base_url: str,
         now: datetime,
     ) -> _PendingRequest:
+        """Validate `RelayState` without mutating DB state so unauthenticated XML cannot burn it."""
         if not relay_state or "." not in relay_state or len(relay_state) > 256:
             raise SamlError(
                 "invalid_relay_state", "Missing or malformed SAML RelayState", status=403
@@ -714,16 +997,12 @@ class SamlService:
 
         pending: _PendingRequest | None = None
         if can_use_postgres():
-            with transaction.atomic(), connection.cursor() as cur:
-                cur.execute(
-                    "DELETE FROM public.ee_saml_pending_request WHERE expires_at <= %s",
-                    [now],
-                )
+            with connection.cursor() as cur:
                 cur.execute(
                     """
-                    DELETE FROM public.ee_saml_pending_request
+                    SELECT tenant_slug, idp_id, request_id, return_path, sp_base_url, expires_at
+                    FROM public.ee_saml_pending_request
                     WHERE relay_state = %s AND expires_at > %s
-                    RETURNING tenant_slug, idp_id, request_id, return_path, sp_base_url, expires_at
                     """,
                     [relay_state, now],
                 )
@@ -747,7 +1026,7 @@ class SamlService:
         else:
             with self._lock:
                 self._prune_pending_locked(now)
-                pending = self._pending_by_relay.pop(relay_state, None)
+                pending = self._pending_by_relay.get(relay_state)
 
         if pending is None:
             raise SamlError(
@@ -879,7 +1158,7 @@ class SamlService:
                 exc.code, "SAML XML payload failed security validation", status=400
             ) from exc
 
-        pending = self._consume_relay_state(
+        pending = self._peek_relay_state(
             tenant_slug=tenant_slug,
             relay_state=relay_state,
             sp_base_url=sp_base_url,
@@ -1063,18 +1342,11 @@ class SamlService:
         role = _resolve_mapped_role(groups, idp.group_role_mapping, idp.default_role)
 
         replay_expiry = max(cond_noa, subj_noa) + skew
-        self._record_assertion_once(
-            tenant_slug=tenant_slug,
-            idp_entity_id=idp.idp_entity_id,
-            assertion_id=assertion_id,
-            expires_at=replay_expiry,
-            now=current_time,
-            organisation_id=idp.organisation_id,
-        )
-
-        return self._jit_upsert_principal(
+        return self._commit_verified_assertion_and_principal(
             idp=idp,
+            relay_state=relay_state,
             assertion_id=assertion_id,
+            replay_expiry=replay_expiry,
             subject_name_id=subject_name_id,
             email=email,
             display_name=display_name,
@@ -1084,11 +1356,13 @@ class SamlService:
             authenticated_at=current_time,
         )
 
-    def _jit_upsert_principal(
+    def _commit_verified_assertion_and_principal(
         self,
         *,
         idp: SamlIdpConfig,
+        relay_state: str,
         assertion_id: str,
+        replay_expiry: datetime,
         subject_name_id: str,
         email: str,
         display_name: str,
@@ -1097,6 +1371,7 @@ class SamlService:
         return_path: str,
         authenticated_at: datetime,
     ) -> ProvisionedSamlPrincipal:
+        """Atomically consume `RelayState`, record assertion replay nonce, and JIT-provision member."""
         email_low = email.lower()
         existing = self.get_provisioned_principal(idp.tenant_slug, email_low)
         principal_ref = existing.user_id if existing is not None else str(uuid4())
@@ -1105,42 +1380,69 @@ class SamlService:
         if can_use_postgres():
             try:
                 with transaction.atomic(), connection.cursor() as cur:
-                    if idp.organisation_id is not None:
-                        linked_person_id = _sync_django_organisation_member(
-                            organisation_id=idp.organisation_id,
-                            idp_id=idp.idp_id,
-                            subject=subject_name_id,
-                            email=email_low,
-                            display_name=display_name,
-                            role=role,
+                    org_id, resolved_slug = acquire_active_tenant_fence(
+                        cur,
+                        tenant_slug=idp.tenant_slug,
+                        organisation_id=idp.organisation_id,
+                    )
+                    cur.execute(
+                        "DELETE FROM public.ee_saml_pending_request WHERE expires_at <= %s",
+                        [authenticated_at],
+                    )
+                    cur.execute(
+                        """
+                        DELETE FROM public.ee_saml_pending_request
+                        WHERE relay_state = %s AND expires_at > %s
+                        RETURNING request_id
+                        """,
+                        [relay_state, authenticated_at],
+                    )
+                    if cur.fetchone() is None:
+                        raise SamlError(
+                            "invalid_relay_state",
+                            "Unknown, expired, or already-consumed SAML RelayState",
+                            status=403,
                         )
-                        principal_ref = str(linked_person_id)
-                    else:
-                        org_lookup = resolve_tenant_organisation(
-                            cur,
-                            tenant_slug=idp.tenant_slug,
-                            organisation_id=idp.organisation_id,
-                            require_open=False,
+
+                    cur.execute(
+                        "DELETE FROM public.ee_saml_replay_assertion WHERE expires_at <= %s",
+                        [authenticated_at],
+                    )
+                    cur.execute(
+                        """
+                        INSERT INTO public.ee_saml_replay_assertion (
+                            id, organisation_id, tenant_slug, idp_entity_id, assertion_id, expires_at
+                        ) VALUES (%s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (tenant_slug, idp_entity_id, assertion_id) DO NOTHING
+                        RETURNING assertion_id
+                        """,
+                        [
+                            uuid7(),
+                            org_id,
+                            resolved_slug,
+                            idp.idp_entity_id,
+                            assertion_id,
+                            replay_expiry,
+                        ],
+                    )
+                    if cur.fetchone() is None:
+                        raise SamlError(
+                            "replayed_assertion_id",
+                            "SAML Assertion ID has already been consumed (replay detected)",
+                            status=403,
                         )
-                        if org_lookup is not None:
-                            cur.execute(
-                                """
-                                SELECT i.user_id
-                                FROM public.identity_identity i
-                                WHERE i.organisation_id = %s
-                                  AND lower(i.email) = %s
-                                  AND i.deleted_at IS NULL
-                                ORDER BY i.created_at ASC
-                                LIMIT 1
-                                """,
-                                [org_lookup[0], email_low],
-                            )
-                            ident_row = cur.fetchone()
-                            if ident_row is not None and ident_row[0] is not None:
-                                raw_uid = ident_row[0]
-                                linked_person_id = (
-                                    raw_uid if isinstance(raw_uid, UUID) else UUID(str(raw_uid))
-                                )
+
+                    linked_person_id, effective_role = _sync_django_organisation_member(
+                        organisation_id=org_id,
+                        idp_id=idp.idp_id,
+                        subject=subject_name_id,
+                        email=email_low,
+                        display_name=display_name,
+                        role=role,
+                        assertion_id=assertion_id,
+                    )
+                    principal_ref = str(linked_person_id)
+
                     record = ProvisionedSamlPrincipal(
                         user_id=principal_ref,
                         tenant_slug=idp.tenant_slug,
@@ -1151,17 +1453,11 @@ class SamlService:
                         email=email_low,
                         display_name=display_name,
                         groups=groups,
-                        role=role,
+                        role=effective_role,
                         return_path=return_path,
                         authenticated_at=authenticated_at,
                     )
                     groups_json = json.dumps(list(record.groups), separators=(",", ":"))
-                    org_id, resolved_slug = acquire_active_tenant_fence(
-                        cur,
-                        tenant_slug=idp.tenant_slug,
-                        organisation_id=idp.organisation_id,
-                        user_id=linked_person_id,
-                    )
                     cur.execute(
                         """
                         INSERT INTO public.ee_saml_principal (
@@ -1235,16 +1531,44 @@ class SamlService:
                         status=409,
                     ) from exc
                 raise
+            except Exception as exc:
+                from apps.orgs import member_set_hooks
+
+                member_set_hooks.after_rollback(exc)
+                raise
             return record
 
+        replay_key = (idp.tenant_slug, idp.idp_entity_id, assertion_id)
+        with self._lock:
+            self._prune_pending_locked(authenticated_at)
+            if relay_state not in self._pending_by_relay:
+                raise SamlError(
+                    "invalid_relay_state",
+                    "Unknown, expired, or already-consumed SAML RelayState",
+                    status=403,
+                )
+            self._prune_replay_locked(authenticated_at)
+            if replay_key in self._replay_cache:
+                raise SamlError(
+                    "replayed_assertion_id",
+                    "SAML Assertion ID has already been consumed (replay detected)",
+                    status=403,
+                )
+            self._pending_by_relay.pop(relay_state, None)
+            self._replay_cache[replay_key] = replay_expiry
+            while len(self._replay_cache) > MAX_REPLAY_ENTRIES:
+                self._replay_cache.popitem(last=False)
+
+        effective_role = role
         if idp.organisation_id is not None:
-            linked_person_id = _sync_django_organisation_member(
+            linked_person_id, effective_role = _sync_django_organisation_member(
                 organisation_id=idp.organisation_id,
                 idp_id=idp.idp_id,
                 subject=subject_name_id,
                 email=email_low,
                 display_name=display_name,
                 role=role,
+                assertion_id=assertion_id,
             )
             principal_ref = str(linked_person_id)
 
@@ -1258,7 +1582,7 @@ class SamlService:
             email=email_low,
             display_name=display_name,
             groups=groups,
-            role=role,
+            role=effective_role,
             return_path=return_path,
             authenticated_at=authenticated_at,
         )
@@ -1409,15 +1733,22 @@ def _resolve_mapped_role(
 
 
 def _lock_and_verify_saml_person(cur: Any, *, user_id: UUID) -> None:
-    """Lock global `identity_user` (`FOR SHARE`) and refuse cutoff or globally disabled users.
+    """Lock global `identity_user` (`FOR SHARE NOWAIT`) and refuse cutoff or globally disabled users.
 
     Never mutates `identity_user.enabled`: a tenant SAML IdP must never clear a global security
     disable.
     """
     cur.execute(
-        "SELECT pg_advisory_xact_lock_shared(hashtextextended('privacy_account_cutoff:' || %s, 0))",
+        "SELECT pg_try_advisory_xact_lock_shared(hashtextextended('privacy_account_cutoff:' || %s, 0))",
         [str(user_id)],
     )
+    lock_row = cur.fetchone()
+    if not lock_row or not bool(lock_row[0]):
+        raise SamlError(
+            "authority_fenced",
+            "Organisation authority changed concurrently; retry request",
+            status=409,
+        )
     cur.execute(
         """
         SELECT u.email, u.enabled, u.deleted_at
@@ -1450,14 +1781,19 @@ def _sync_django_organisation_member(
     email: str,
     display_name: str,
     role: str,
-) -> UUID:
+    assertion_id: str = "",
+) -> tuple[UUID, str]:
     """Sync federated SAML login into Core `User`/`Identity`/`Membership` under `kodera_api` grants.
 
-    Never mutates `identity_user.enabled` or `identity_identity`, refuses globally disabled or
-    tenant-suspended/removed principals (`403`), and fences against organisation/account cutoffs.
+    Never links onto pre-existing non-SAML identities by email, mints KC-02 canonical UUID subjects,
+    protects `org_owner` and `org_billing` from JIT overwrites, and emits Core audit + engine hooks.
     """
+    from apps.audit.models import AuditEvent
+    from apps.audit.services import record_membership_event
     from apps.identity.models import Identity, User
+    from apps.orgs import member_set_hooks
     from apps.orgs.models import Membership, Organisation
+    from apps.outbox.realm_enqueue import ACCESS_ON, enqueue_realm_access
     from django.utils import timezone
 
     try:
@@ -1473,19 +1809,21 @@ def _sync_django_organisation_member(
                     "Organisation is closed or does not exist",
                     status=403,
                 )
-            raw_subject_key = f"saml:{idp_id}:{subject}"
-            subject_key = "".join(ch if "!" <= ch <= "~" else "_" for ch in raw_subject_key)[:255]
+            saml_uuid_subject = _canonical_saml_subject_uuid(org.id, idp_id, subject)
+            legacy_raw = f"saml:{idp_id}:{subject}"
+            legacy_subject_key = "".join(ch if "!" <= ch <= "~" else "_" for ch in legacy_raw)[:255]
             identity = (
                 Identity.objects.select_related("user")
                 .filter(
                     organisation=org,
                     issuer=org.issuer,
-                    subject=subject_key,
+                    subject__in=[saml_uuid_subject, legacy_subject_key],
                 )
+                .order_by("created_at", "id")
                 .first()
             )
             if identity is None:
-                identity = (
+                existing_non_saml = (
                     Identity.objects.select_related("user")
                     .filter(
                         organisation=org,
@@ -1495,6 +1833,49 @@ def _sync_django_organisation_member(
                     .order_by("created_at", "id")
                     .first()
                 )
+                if existing_non_saml is not None:
+                    if (
+                        existing_non_saml.deleted_at is not None
+                        or existing_non_saml.email.startswith("erased:")
+                    ):
+                        raise SamlError(
+                            "account_cutoff_fenced",
+                            "Account is under privacy erasure cutoff",
+                            status=403,
+                        )
+                    if not existing_non_saml.enabled:
+                        raise SamlError(
+                            "user_disabled",
+                            "User account is disabled",
+                            status=403,
+                        )
+                    with connection.cursor() as cur:
+                        _lock_and_verify_saml_person(cur, user_id=existing_non_saml.user_id)
+                    existing_memb = Membership.objects.filter(
+                        organisation=org,
+                        user_id=existing_non_saml.user_id,
+                    ).first()
+                    if existing_memb is not None:
+                        if existing_memb.deleted_at is not None:
+                            raise SamlError(
+                                "tenant_cutoff_fenced",
+                                "Tenant membership is under erasure cutoff",
+                                status=403,
+                            )
+                        if existing_memb.state in {
+                            Membership.State.SUSPENDED,
+                            Membership.State.REMOVED,
+                        }:
+                            raise SamlError(
+                                "user_disabled",
+                                "Tenant membership is suspended or removed",
+                                status=403,
+                            )
+                    raise SamlError(
+                        "email_bound_to_non_saml_identity",
+                        "SAML email-based fallback linking onto pre-existing non-SAML identity is forbidden",
+                        status=403,
+                    )
 
             if identity is not None:
                 if identity.deleted_at is not None or identity.email.startswith("erased:"):
@@ -1520,58 +1901,120 @@ def _sync_django_organisation_member(
                     display_name=display_name[:200] if display_name else None,
                     enabled=True,
                 )
-                Identity.objects.create(
+                identity = Identity.objects.create(
                     user=user,
                     organisation=org,
                     realm=org.realm,
                     issuer=org.issuer,
-                    subject=subject_key,
+                    subject=saml_uuid_subject,
                     email=email,
                     enabled=True,
                 )
 
             now_ts = timezone.now()
+            req_id = (assertion_id or f"saml-{uuid7()}")[:64]
             membership = (
                 Membership.objects.select_for_update(nowait=True)
                 .filter(organisation=org, user=user)
                 .first()
             )
             if membership is None:
-                Membership.objects.create(
+                created = Membership.objects.create(
                     organisation=org,
                     user=user,
                     role=role,
                     state=Membership.State.ACTIVE,
                     accepted_at=now_ts,
                 )
-            else:
-                if membership.deleted_at is not None:
-                    raise SamlError(
-                        "tenant_cutoff_fenced",
-                        "Tenant membership is under erasure cutoff",
-                        status=403,
-                    )
-                if membership.state in {Membership.State.SUSPENDED, Membership.State.REMOVED}:
-                    raise SamlError(
-                        "user_disabled",
-                        "Tenant membership is suspended or removed",
-                        status=403,
-                    )
-                effective_role = (
-                    membership.role if membership.role == Membership.Role.OWNER else role
+                AuditEvent.objects.create(
+                    action="membership.created",
+                    actor_type="tenant",
+                    actor_id=identity.id,
+                    actor_label=f"urn:kodera:identity:{identity.id}",
+                    organisation_id=org.id,
+                    target_urn=f"urn:kodera:membership:{created.id}",
+                    request_id=req_id,
+                    retention_class="standard",
+                    before=None,
+                    after={"role": role, "state": Membership.State.ACTIVE},
+                    metadata={"source": "saml", "idp_id": idp_id},
                 )
-                if (
-                    membership.role != effective_role
-                    or membership.state != Membership.State.ACTIVE
-                    or membership.accepted_at is None
-                ):
-                    Membership.objects.filter(id=membership.id, organisation_id=org.id).update(
-                        role=effective_role,
-                        state=Membership.State.ACTIVE,
-                        accepted_at=membership.accepted_at or now_ts,
-                        updated_at=now_ts,
+                enqueue_realm_access(
+                    organisation_id=org.id,
+                    membership_id=created.id,
+                    user_id=user.id,
+                    operation=ACCESS_ON,
+                )
+                member_set_hooks.member_set_changed(
+                    organisation_id=org.id,
+                    reason="saml_provisioned",
+                )
+                return user.id, role
+
+            if membership.deleted_at is not None:
+                raise SamlError(
+                    "tenant_cutoff_fenced",
+                    "Tenant membership is under erasure cutoff",
+                    status=403,
+                )
+            if membership.state in {Membership.State.SUSPENDED, Membership.State.REMOVED}:
+                raise SamlError(
+                    "user_disabled",
+                    "Tenant membership is suspended or removed",
+                    status=403,
+                )
+            effective_role = (
+                membership.role
+                if membership.role in {Membership.Role.OWNER, Membership.Role.BILLING}
+                else role
+            )
+            old_role = membership.role
+            old_state = membership.state
+            role_changed = old_role != effective_role
+            state_changed = old_state != Membership.State.ACTIVE
+            if role_changed or state_changed or membership.accepted_at is None:
+                Membership.objects.filter(id=membership.id, organisation_id=org.id).update(
+                    role=effective_role,
+                    state=Membership.State.ACTIVE,
+                    accepted_at=membership.accepted_at or now_ts,
+                    updated_at=now_ts,
+                )
+                if role_changed:
+                    record_membership_event(
+                        action="membership.role_changed",
+                        organisation_id=org.id,
+                        membership_id=membership.id,
+                        actor_id=identity.id,
+                        request_id=req_id,
+                        before={"role": old_role},
+                        after={"role": effective_role},
                     )
-            return user.id
+                if state_changed:
+                    record_membership_event(
+                        action="membership.reactivated",
+                        organisation_id=org.id,
+                        membership_id=membership.id,
+                        actor_id=identity.id,
+                        request_id=req_id,
+                        before={"state": old_state},
+                        after={"state": Membership.State.ACTIVE},
+                    )
+                    enqueue_realm_access(
+                        organisation_id=org.id,
+                        membership_id=membership.id,
+                        user_id=user.id,
+                        operation=ACCESS_ON,
+                    )
+                    member_set_hooks.member_set_changed(
+                        organisation_id=org.id,
+                        reason=member_set_hooks.MEMBER_REACTIVATED,
+                    )
+                elif role_changed:
+                    member_set_hooks.channel_set_changed(
+                        organisation_id=org.id,
+                        reason=member_set_hooks.CHANNEL_SET_REASON,
+                    )
+            return user.id, effective_role
     except IntegrityError as exc:
         msg = str(exc)
         if "account cutoff refuses write" in msg:

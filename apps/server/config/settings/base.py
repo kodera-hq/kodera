@@ -95,3 +95,5 @@ KODERA_ANDROID_ASSETLINKS_SHA256: tuple[str, ...] = ()
 KODERA_PASSPORT_MAGIC_LINK: str | None = None
 # Optional internal room-access endpoint verifying Matrix DM room membership for attachments.
 KODERA_MEDIA_ROOM_VERIFIER_URL: str | None = None
+KODERA_PUBLIC_API_ORIGIN: str | None = None
+KODERA_SAML_SP_BASE_URL: str | None = None

@@ -1,4 +1,9 @@
-"""Finite reviewed serving configuration; no caller-controlled forwarding trust."""
+"""Finite reviewed serving configuration; no caller-controlled forwarding trust.
+
+External protocol callback and metadata URLs (SAML SP EntityID/ACS, SCIM resource locations)
+derive canonical `https://` origins from `KODERA_PUBLIC_API_ORIGIN` / `KODERA_SAML_SP_BASE_URL`
+in `config.settings.deploy`, never from client-supplied forwarding headers.
+"""
 
 import os
 

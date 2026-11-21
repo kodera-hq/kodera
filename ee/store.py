@@ -169,15 +169,18 @@ def acquire_active_tenant_fence(
 
     if user_id is not None:
         cur.execute(
-            "SELECT pg_advisory_xact_lock_shared(hashtextextended('privacy_account_cutoff:' || %s, 0))",
+            "SELECT pg_try_advisory_xact_lock_shared(hashtextextended('privacy_account_cutoff:' || %s, 0))",
             [str(user_id)],
         )
+        u_lock = cur.fetchone()
+        if not u_lock or not bool(u_lock[0]):
+            raise TenantCutoffError("authority_fenced", status=409)
         cur.execute(
             """
             SELECT u.enabled, u.deleted_at, u.email
             FROM public.identity_user u
             WHERE u.id = %s
-            FOR SHARE OF u
+            FOR SHARE OF u NOWAIT
             """,
             [user_id],
         )
@@ -191,9 +194,12 @@ def acquire_active_tenant_fence(
             raise TenantCutoffError("account_cutoff_fenced", status=403)
 
     cur.execute(
-        "SELECT pg_advisory_xact_lock_shared(hashtextextended('privacy_erasure_cutoff:' || %s, 0))",
+        "SELECT pg_try_advisory_xact_lock_shared(hashtextextended('privacy_erasure_cutoff:' || %s, 0))",
         [str(resolved_org_id)],
     )
+    o_lock = cur.fetchone()
+    if not o_lock or not bool(o_lock[0]):
+        raise TenantCutoffError("authority_fenced", status=409)
     cur.execute(
         """
         SELECT o.id

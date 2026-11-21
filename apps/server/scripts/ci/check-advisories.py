@@ -82,6 +82,7 @@ BLOCKS_AT = ORDER.index(THRESHOLD)
 
 FILE = "advisory-allowlist.json"
 NPM_DIR = Path("contracts") / "lint"
+YJS_NPM_DIR = Path("yjs_collab")
 
 # The fields each ecosystem's entry is bound by, beyond `ecosystem`,
 # `advisory` and `reason`. A field the report cannot carry is refused rather
@@ -469,36 +470,46 @@ def npm_audit(tree, what, check_coverage):
     return list(findings.values()), deps, counts
 
 
-def audit_npm(root):
-    tree = root / NPM_DIR
+def audit_npm_tree(root, rel_dir, what="npm audit"):
+    tree = root / rel_dir
     try:
         manifest = json.loads((tree / "package.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        refuse(f"{NPM_DIR}/package.json is not readable ({exc}).")
+        refuse(f"{rel_dir}/package.json is not readable ({exc}).")
+    if not (tree / "package-lock.json").is_file():
+        refuse(f"{rel_dir}/package-lock.json is missing; cannot audit {rel_dir}.")
     declared = len(manifest.get("dependencies", {})) + len(manifest.get("devDependencies", {}))
     declared_dev = len(manifest.get("devDependencies", {}))
 
     def check_coverage(deps):
         if declared and not deps.get("total", 0):
             refuse(
-                f"npm audit audited no package at all, while {NPM_DIR}/package.json declares "
+                f"{what} audited no package at all, while {rel_dir}/package.json declares "
                 f"{declared}. An empty report is not a clean one."
             )
         # The linter is a devDependency: an audit blind to dev saw nothing.
         if declared_dev and not deps.get("dev", 0):
             refuse(
-                f"{NPM_DIR}/package.json declares {declared_dev} devDependencies and npm audit "
+                f"{rel_dir}/package.json declares {declared_dev} devDependencies and {what} "
                 "reported 0 development dependencies, so dev was omitted from the audit."
             )
 
-    findings, deps, counts = npm_audit(tree, "npm audit", check_coverage)
+    findings, deps, counts = npm_audit(tree, what, check_coverage)
     for finding in findings:
-        finding["where"] = f"{NPM_DIR}/package-lock.json"
+        finding["where"] = f"{rel_dir}/package-lock.json"
     summary = (
-        f"npm audit: {deps.get('total', 0)} packages from {NPM_DIR}/package-lock.json "
+        f"npm audit: {deps.get('total', 0)} packages from {rel_dir}/package-lock.json "
         f"({deps.get('dev', '?')} dev), {counts['total']} vulnerable"
     )
     return findings, summary
+
+
+def audit_npm(root):
+    return audit_npm_tree(root, NPM_DIR, "npm audit")
+
+
+def audit_yjs_npm(root):
+    return audit_npm_tree(root, YJS_NPM_DIR, "npm audit of yjs_collab")
 
 
 # --- Node: the libraries bundled inside @redocly/cli ------------------------
@@ -865,12 +876,13 @@ def main():
 
     python_findings, python_summary = audit_python(root, args.pip_audit)
     npm_findings, npm_summary = audit_npm(root)
+    yjs_findings, yjs_summary = audit_yjs_npm(root)
     bundled_findings, bundled_summary = audit_bundled(root)
     allowed, has_allowlist = load_allowlist(root)
 
     rank = {s: i for i, s in enumerate(ORDER)}
     findings = sorted(
-        python_findings + npm_findings + bundled_findings,
+        python_findings + npm_findings + yjs_findings + bundled_findings,
         key=lambda f: (f["ecosystem"], -rank.get(f["severity"], len(ORDER)), f["id"]),
     )
     rows, problems = judge(findings, allowed)
@@ -884,6 +896,7 @@ def main():
     print(rule)
     print(python_summary)
     print(npm_summary)
+    print(yjs_summary)
     print(bundled_summary)
     print(
         f"{FILE}: {len(allowed)} entr{'y' if len(allowed) == 1 else 'ies'}"

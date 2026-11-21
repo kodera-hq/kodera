@@ -22,6 +22,7 @@ import base64
 import json
 from typing import Final
 
+from django.conf import settings
 from django.db import DatabaseError
 from django.http import HttpRequest, HttpResponse, StreamingHttpResponse
 
@@ -32,7 +33,13 @@ from ee.audit_export.exporter import (
     export_compliance_bundle,
     stream_compliance_bundle,
 )
-from ee.audit_export.ledger import default_audit_ledger, parse_utc_iso
+from ee.audit_export.ledger import (
+    MAX_EVENT_METADATA_BYTES,
+    default_audit_ledger,
+    parse_utc_iso,
+    truncate_audit_source_ip,
+    validate_opaque_target_urn,
+)
 from ee.audit_export.verify import verify_compliance_bundle
 from ee.auth import (
     ADMIN_ROLES,
@@ -78,10 +85,17 @@ _AUDIT_PUBLIC_ERRORS: Final[tuple[tuple[str, int, str], ...]] = (
     ("unsupported_framework", 400, "Unsupported compliance framework"),
     ("unsupported_signing_algorithm", 400, "Unsupported audit manifest signing algorithm"),
     ("missing_fields", 400, "Required audit event fields are missing"),
-    ("invalid_metadata", 400, "Audit event metadata must be a JSON object"),
+    ("invalid_target_urn", 400, "target_urn must be an opaque urn:kodera:<type>:<id> without PII"),
+    ("invalid_metadata", 400, "Audit event metadata must be a bounded JSON object (<= 32 KiB)"),
     ("missing_tenant_slug", 400, "tenant_slug is invalid"),
     ("invalid_event", 400, "Invalid compliance audit event parameters"),
     ("invalid_export_request", 400, "Invalid compliance audit export parameters"),
+    (
+        "export_limit_exceeded",
+        413,
+        "Compliance export exceeds page ceiling; supply limit and after_seq for cursor pagination",
+    ),
+    ("rate_limit_exceeded", 429, "Compliance audit export rate limit exceeded; retry shortly"),
 )
 
 
@@ -101,7 +115,10 @@ def _audit_error_response(error_code: str) -> HttpResponse:
     """Resolve compliance audit error response solely from static literals."""
     for code_lit, status_lit, detail_lit in _AUDIT_PUBLIC_ERRORS:
         if error_code == code_lit:
-            return _json_response({"detail": detail_lit, "code": code_lit}, status=status_lit)
+            resp = _json_response({"detail": detail_lit, "code": code_lit}, status=status_lit)
+            if status_lit == 429:
+                resp["Retry-After"] = "60"
+            return resp
     return _json_response(
         {"detail": "Compliance audit request rejected", "code": "invalid_export_request"},
         status=400,
@@ -134,6 +151,25 @@ def _build_filters_from_mapping(source: dict[str, object]) -> AuditExportFilters
     actor_id = source.get("actor_id")
     actor_type = source.get("actor_type")
     action = source.get("action")
+    raw_after_seq = source.get("after_seq")
+    raw_limit = source.get("limit")
+    after_seq: int | None = None
+    limit: int | None = None
+    if raw_after_seq is not None and raw_after_seq != "":
+        if isinstance(raw_after_seq, bool):
+            raise AuditExportError("invalid_export_request", "Invalid after_seq")
+        try:
+            after_seq = int(str(raw_after_seq))
+        except ValueError as exc:
+            raise AuditExportError("invalid_export_request", "Invalid after_seq") from exc
+    if raw_limit is not None and raw_limit != "":
+        if isinstance(raw_limit, bool):
+            raise AuditExportError("invalid_export_request", "Invalid limit")
+        try:
+            limit = int(str(raw_limit))
+        except ValueError as exc:
+            raise AuditExportError("invalid_export_request", "Invalid limit") from exc
+
     return AuditExportFilters(
         from_timestamp=from_dt,
         to_timestamp=to_dt,
@@ -142,6 +178,8 @@ def _build_filters_from_mapping(source: dict[str, object]) -> AuditExportFilters
         if isinstance(actor_type, str) and actor_type.strip()
         else None,
         action=action.strip() if isinstance(action, str) and action.strip() else None,
+        after_seq=after_seq,
+        limit=limit,
     )
 
 
@@ -213,13 +251,22 @@ def append_audit_event_view(request: HttpRequest) -> HttpResponse:
         ):
             raise AuditExportError("missing_fields", "action and target_urn are required")
 
+        try:
+            clean_target_urn = validate_opaque_target_urn(target_urn)
+        except ValueError as exc:
+            raise AuditExportError("invalid_target_urn", "Invalid opaque target_urn") from exc
+
         metadata = body.get("metadata")
         occurred_at = body.get("occurred_at")
-        if metadata is not None and not isinstance(metadata, dict):
-            raise AuditExportError("invalid_metadata", "metadata must be a JSON object")
+        if metadata is not None:
+            if not isinstance(metadata, dict):
+                raise AuditExportError("invalid_metadata", "metadata must be a JSON object")
+            serialized_meta = json.dumps(metadata, sort_keys=True, separators=(",", ":"))
+            if len(serialized_meta.encode("utf-8")) > MAX_EVENT_METADATA_BYTES:
+                raise AuditExportError("invalid_metadata", "metadata exceeds 32 KiB limit")
 
         remote_addr = request.META.get("REMOTE_ADDR")
-        client_ip = remote_addr if isinstance(remote_addr, str) else ""
+        client_ip = truncate_audit_source_ip(remote_addr) if isinstance(remote_addr, str) else ""
 
         with fence_authenticated_ee_operation(auth, target_tenant_slug=auth.tenant_slug) as fenced:
             evt = default_audit_ledger.append_event(
@@ -230,7 +277,7 @@ def append_audit_event_view(request: HttpRequest) -> HttpResponse:
                 actor_id=expected_actor_id,
                 actor_label=fenced.actor_email,
                 action=action,
-                target_urn=target_urn,
+                target_urn=clean_target_urn,
                 source_ip=client_ip,
                 metadata=metadata,
                 occurred_at=occurred_at if isinstance(occurred_at, str) else None,
@@ -308,6 +355,13 @@ def create_audit_export_view(request: HttpRequest) -> HttpResponse | StreamingHt
         filters = _build_filters_from_mapping(params)
 
         export_required_roles = OWNER_ROLES if not requested_redact_pii else ADMIN_ROLES
+        rate_cap = int(getattr(settings, "KODERA_EE_AUDIT_EXPORT_RATE_PER_MINUTE", 30))
+        if not default_audit_ledger.check_export_rate_limit(
+            auth.tenant_slug,
+            limit_per_minute=rate_cap,
+        ):
+            raise AuditExportError("rate_limit_exceeded", "Export rate limit exceeded", status=429)
+
         with fence_authenticated_ee_operation(
             auth,
             required_roles=export_required_roles,
@@ -324,6 +378,7 @@ def create_audit_export_view(request: HttpRequest) -> HttpResponse | StreamingHt
                 framework=framework,
                 filters=filters,
                 redact_pii=redact_pii,
+                stream_mode=use_stream,
             )
     except EeAuthError as exc:
         return _audit_error_response(exc.code)
@@ -365,6 +420,8 @@ def create_audit_export_view(request: HttpRequest) -> HttpResponse | StreamingHt
             "tenant_slug": bundle.tenant_slug,
             "framework": bundle.framework,
             "format": bundle.export_format,
+            "has_more": bundle.manifest["has_more"],
+            "next_after_seq": bundle.manifest["next_after_seq"],
             "payload": bundle.payload_text,
             "manifest": bundle.manifest,
         },

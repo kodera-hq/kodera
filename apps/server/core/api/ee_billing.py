@@ -14,6 +14,8 @@ from collections.abc import Callable
 
 from django.http import HttpRequest, HttpResponse
 
+from core.api.edition import _ensure_ee_importable
+
 _EE_BILLING_ROOT = "/api/v1/ee/billing"
 _EE_BILLING_PREFIX = "/api/v1/ee/billing/"
 
@@ -41,6 +43,7 @@ class EnterpriseBillingMiddleware:
         path = request.path
         if path != _EE_BILLING_ROOT and not path.startswith(_EE_BILLING_PREFIX):
             return self.get_response(request)
+        _ensure_ee_importable()
         try:
             ee_urls = importlib.import_module("ee.billing.urls")
         except ModuleNotFoundError:

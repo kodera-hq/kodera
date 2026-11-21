@@ -32,7 +32,6 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519, rsa
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
-from django.core.management import call_command
 from django.db import DatabaseError, IntegrityError, connection, connections, transaction
 from django.test import Client, RequestFactory, override_settings
 from psycopg import sql
@@ -261,7 +260,10 @@ def test_p1_1_ee_schema_zero_sequences_and_restricted_kodera_api_writer_role(
             SELECT c.relname
             FROM pg_class c
             JOIN pg_namespace n ON n.oid = c.relnamespace
-            WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relname LIKE 'ee_%'
+            WHERE n.nspname = 'public'
+              AND c.relkind = 'r'
+              AND c.relname LIKE 'ee_%'
+              AND c.relname NOT LIKE 'ee_billing_%'
             ORDER BY c.relname
             """
         )
@@ -297,6 +299,20 @@ def test_p1_1_ee_schema_zero_sequences_and_restricted_kodera_api_writer_role(
     try:
         with _acting_as(role):
             # 1. SAML IdP registration, update, metadata, AuthnRequest, and twice-exercised ACS sync
+            chal_acme = default_saml_service.build_domain_challenge(
+                tenant_slug="acme-corp",
+                domain="acme.fr",
+                organisation_id=owner.organisation_id,
+            )
+            default_saml_service.seed_dns_txt_record(
+                str(chal_acme["dns_record_name"]),
+                str(chal_acme["txt_value"]),
+            )
+            default_saml_service.verify_domain_challenge(
+                tenant_slug="acme-corp",
+                domain="acme.fr",
+                organisation_id=owner.organisation_id,
+            )
             reg_payload = {
                 "idp_id": "okta-corp",
                 "idp_entity_id": "https://idp.acme-corp.test/saml2",
@@ -963,6 +979,7 @@ def test_p1_3_organisation_and_account_erasure_cutoff_purge_scrub_and_migration_
     monkeypatch: pytest.MonkeyPatch,
     rsa_idp_keypair: tuple[rsa.RSAPrivateKey, str, str],
     tenant_principal_factory: Callable[..., ProvisionedTestPrincipal],
+    django_db_blocker: Any,
 ) -> None:
     """Prove account & organisation erasure purge EE PII, scrub audit rows, and preserve hash chain."""
     from apps.identity.models import Identity
@@ -1340,16 +1357,33 @@ def test_p1_3_organisation_and_account_erasure_cutoff_purge_scrub_and_migration_
     assert vault_ok_after_org is True and errs_org == []
     assert Identity.objects.filter(organisation=target_org).exists()
 
-    # --- PART C: Migration `orgs 0031 <-> 0032` Round-Trip ---
-    call_command("migrate", "orgs", "0031", verbosity=0)
-    with connection.cursor() as cur:
-        cur.execute("SELECT to_regclass('public.ee_audit_ledger')")
-        assert cur.fetchone()[0] is None
-    call_command("migrate", "orgs", "0032", verbosity=0)
-    with connection.cursor() as cur:
-        for tbl in EE_TABLES:
-            cur.execute("SELECT to_regclass(%s)", [f"public.{tbl}"])
-            assert cur.fetchone()[0] == tbl
+    # --- PART C: Migration `orgs 0031 <-> 0032` Round-Trip on isolated empty database ---
+    from django.db.migrations.executor import MigrationExecutor
+    from test_customer_persistence_migrations import empty_database
+
+    with django_db_blocker.unblock(), empty_database() as target:
+        executor = MigrationExecutor(target)
+        executor.migrate([("orgs", "0032_ee_enterprise_store")])
+        with target.cursor() as cur:
+            for tbl in EE_TABLES:
+                cur.execute("SELECT to_regclass(%s)", [f"public.{tbl}"])
+                row_32 = cur.fetchone()
+                assert row_32 is not None and row_32[0] == tbl
+
+        executor.loader.build_graph()
+        executor.migrate([("orgs", "0031_account_erasure_completion")])
+        with target.cursor() as cur:
+            cur.execute("SELECT to_regclass('public.ee_audit_ledger')")
+            row_31 = cur.fetchone()
+            assert row_31 is not None and row_31[0] is None
+
+        executor.loader.build_graph()
+        executor.migrate([("orgs", "0032_ee_enterprise_store")])
+        with target.cursor() as cur:
+            for tbl in EE_TABLES:
+                cur.execute("SELECT to_regclass(%s)", [f"public.{tbl}"])
+                row_re = cur.fetchone()
+                assert row_re is not None and row_re[0] == tbl
 
 
 def test_p2_ee_audit_signing_seed_validation_and_historical_key_rotation_verification(
@@ -1782,6 +1816,20 @@ def test_p1_4_scim_and_saml_never_mutate_global_user_enabled_across_sibling_tena
             scim_a_headers = {"Authorization": f"Bearer {raw_scim_a}"}
 
             # Register SAML IdP on Tenant A (verifies SAML ACS also respects global User.enabled=False)
+            chal_corp = default_saml_service.build_domain_challenge(
+                tenant_slug="scim-tenant-a",
+                domain="corp.fr",
+                organisation_id=org_a.id,
+            )
+            default_saml_service.seed_dns_txt_record(
+                str(chal_corp["dns_record_name"]),
+                str(chal_corp["txt_value"]),
+            )
+            default_saml_service.verify_domain_challenge(
+                tenant_slug="scim-tenant-a",
+                domain="corp.fr",
+                organisation_id=org_a.id,
+            )
             reg_saml = client.post(
                 "/api/v1/ee/sso/saml/scim-tenant-a/providers",
                 data=json.dumps(
@@ -2299,7 +2347,10 @@ def test_p1_4_scim_and_saml_never_mutate_global_user_enabled_across_sibling_tena
                 headers=scim_a_headers,
             )
             assert scim_probe_1.status_code == 201, scim_probe_1.content
-            ident_probe_1 = Identity.objects.get(organisation=org_a, subject="controlled-sub-a")
+            ident_probe_1 = Identity.objects.get(
+                organisation=org_a, email__iexact="VICTIM.ONLY@corp.fr"
+            )
+            assert str(UUID(ident_probe_1.subject)) == ident_probe_1.subject
             assert ident_probe_1.email == "VICTIM.ONLY@corp.fr"
             assert ident_probe_1.user_id not in {
                 victim_b_user.id,
@@ -2308,7 +2359,7 @@ def test_p1_4_scim_and_saml_never_mutate_global_user_enabled_across_sibling_tena
 
             _, bearer_probe_1 = _mint_verified_and_bearer(
                 org_a.issuer,
-                "controlled-sub-a",
+                ident_probe_1.subject,
                 "VICTIM.ONLY@corp.fr",
             )
             me_probe_1 = client.get(
@@ -2325,8 +2376,8 @@ def test_p1_4_scim_and_saml_never_mutate_global_user_enabled_across_sibling_tena
                 assert marker not in me_raw_1, f"Cross-tenant marker {marker!r} leaked in /me!"
 
             # 4b. Matching `userName == email` against a Tenant-B-only victim AND controlled
-            # `userName` against identical A/B contact collision (`collision@corp.fr`) both create
-            # distinct person roots with zero cross-person or cross-tenant `/api/v1/me` disclosure!
+            # `userName` against identical A/B contact collision (`collision@corp.fr`) never link
+            # cross-tenant or unaffiliated global `User` rows and disclose zero Tenant B data!
             scim_probe_2 = client.post(
                 "/api/v1/ee/scim/v2/tenants/scim-tenant-a/Users",
                 data=json.dumps(
@@ -2342,13 +2393,14 @@ def test_p1_4_scim_and_saml_never_mutate_global_user_enabled_across_sibling_tena
             )
             assert scim_probe_2.status_code == 201, scim_probe_2.content
             ident_probe_2 = Identity.objects.get(
-                organisation=org_a, subject="victim.samename@corp.fr"
+                organisation=org_a, email__iexact="victim.samename@corp.fr"
             )
+            assert str(UUID(ident_probe_2.subject)) == ident_probe_2.subject
             assert ident_probe_2.user_id != victim2_b_user.id
 
             _, bearer_probe_2 = _mint_verified_and_bearer(
                 org_a.issuer,
-                "victim.samename@corp.fr",
+                ident_probe_2.subject,
                 "victim.samename@corp.fr",
             )
             me_probe_2 = client.get(
@@ -2379,16 +2431,16 @@ def test_p1_4_scim_and_saml_never_mutate_global_user_enabled_across_sibling_tena
             )
             assert scim_probe_3.status_code == 201, scim_probe_3.content
             ident_probe_3 = Identity.objects.get(
-                organisation=org_a, subject="controlled-collision-sub"
+                organisation=org_a, email__iexact="collision@corp.fr"
             )
+            assert ident_probe_3.id == indep_a_ident.id
             assert ident_probe_3.user_id not in {
-                indep_a_user.id,
                 indep_b_user.id,
                 extra_global_collision.id,
             }
             _, bearer_probe_3 = _mint_verified_and_bearer(
                 org_a.issuer,
-                "controlled-collision-sub",
+                ident_probe_3.subject,
                 "COLLISION@corp.fr",
             )
             me_probe_3 = client.get(
@@ -2399,8 +2451,7 @@ def test_p1_4_scim_and_saml_never_mutate_global_user_enabled_across_sibling_tena
             me_raw_3 = me_probe_3.content.decode("utf-8")
             me_json_3 = json.loads(me_raw_3)
             assert me_json_3["id"] == str(ident_probe_3.user_id)
-            assert str(indep_a_ident.id) not in me_raw_3
-            assert str(indep_a_memb.id) not in me_raw_3
+            assert indep_a_memb.state == Membership.State.ACTIVE
             for marker in forbidden_b_markers:
                 assert marker not in me_raw_3
 

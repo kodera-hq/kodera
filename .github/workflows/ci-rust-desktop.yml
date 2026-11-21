@@ -37,12 +37,14 @@ jobs:
         run: |
           rustup toolchain install stable --profile minimal --component clippy,rustfmt
           rustup default stable
-      - name: Verify GLib backport source and qualification guards
+      - name: Verify GLib backport source, qualification guards & Cargo.lock advisories
         env:
           PYTHONDONTWRITEBYTECODE: "1"
         run: |
           python3 security/backports/glib-0.18.5/verify.py --selftest
           python3 scripts/ci/qualify-glib-iterator.py --selftest
+          python3 scripts/ci/check-cargo-advisories.py --selftest
+          python3 scripts/ci/check-cargo-advisories.py
       - name: Check formatting, locked clippy, unit tests & desktop host self-check
         run: |
           cargo fmt --all -- --check

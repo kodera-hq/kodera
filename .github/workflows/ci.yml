@@ -60,6 +60,10 @@ jobs:
           python3 scripts/ci/package-android-release.py --selftest
           python3 scripts/ci/assemble-release-sbom.py --selftest
           node scripts/ci/package-desktop-release.mjs --selftest
+      - name: External npm dependency licence gate (with self-test)
+        run: |
+          python3 scripts/ci/check-licenses.py --selftest
+          python3 scripts/ci/check-licenses.py
       - name: Documentation links, ADR index and retired wording (with self-test)
         run: |
           python3 scripts/ci/check-docs-truth.py --selftest

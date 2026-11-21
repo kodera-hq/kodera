@@ -10,9 +10,12 @@ Pure unit tests without a database may explicitly request `backend="memory"`.
 
 from __future__ import annotations
 
+import hashlib
+import os
 import threading
+import time
 from collections.abc import Mapping
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 from uuid import UUID
@@ -414,6 +417,154 @@ def _next_sequence(cursor: Any, name: str) -> int:
     return int(row[0])
 
 
+def _new_opaque_po_id() -> str:
+    """Mint an opaque RFC 9562 UUIDv7-prefixed identifier (`po_<uuid7>`)."""
+    unix_ms = int(time.time_ns() // 1_000_000) & ((1 << 48) - 1)
+    rand = int.from_bytes(os.urandom(10), "big")
+    rand_a = (rand >> 62) & 0x0FFF
+    rand_b = rand & ((1 << 62) - 1)
+    value = (unix_ms << 80) | (0x7 << 76) | (rand_a << 64) | (0x2 << 62) | rand_b
+    return f"po_{UUID(int=value)}"
+
+
+def _encode_scoped_idempotency_key(organisation_id: str, idempotency_key: str) -> str:
+    org_hash = hashlib.sha256(organisation_id.encode("utf-8")).hexdigest()[:24]
+    prefix = f"org1:{org_hash}:"
+    if len(prefix) + len(idempotency_key) <= 255:
+        return f"{prefix}{idempotency_key}"
+    key_hash = hashlib.sha256(idempotency_key.encode("utf-8")).hexdigest()
+    return f"org1h:{org_hash}:{key_hash}"
+
+
+def _decode_scoped_idempotency_key(
+    stored_key: str | None, organisation_id: str | None
+) -> str | None:
+    if stored_key is None:
+        return None
+    if organisation_id is not None:
+        org_hash = hashlib.sha256(organisation_id.encode("utf-8")).hexdigest()[:24]
+        prefix = f"org1:{org_hash}:"
+        if stored_key.startswith(prefix):
+            return stored_key[len(prefix) :]
+    return stored_key
+
+
+def _authorized_customer_org_ids(authority: CallerAuthority) -> tuple[str, ...]:
+    return tuple(
+        org_id
+        for org_id, role in authority.static_org_roles.items()
+        if org_id and role in authority.allowed_org_roles
+    )
+
+
+def _has_postgres_paid_enterprise_entitlement(
+    cursor: Any, *, organisation_id: str, checkout_id: str
+) -> bool:
+    """Verify a settled Enterprise PO or paid Sovereign/Enterprise Core billing entitlement."""
+    cursor.execute(
+        """
+        SELECT 1
+        FROM ee_billing_purchase_orders
+        WHERE organisation_id = %s
+          AND state IN ('countersigned', 'invoiced', 'paid')
+          AND plan_code = 'sovereign'
+          AND (
+              po_id = %s
+              OR po_number = %s
+              OR customer_po_reference = %s
+              OR invoice_ref = %s
+              OR payment_ref = %s
+          )
+        LIMIT 1
+        """,
+        [organisation_id, checkout_id, checkout_id, checkout_id, checkout_id, checkout_id],
+    )
+    if cursor.fetchone() is not None:
+        return True
+
+    org_uuid = _try_uuid(organisation_id)
+    if org_uuid is None:
+        return False
+
+    bare_inv = checkout_id[4:] if checkout_id.startswith("INV-") else checkout_id
+    cursor.execute(
+        """
+        SELECT 1
+        FROM billing_invoice i
+        WHERE i.organisation_id = %s
+          AND i.state = 'paid'
+          AND i.total_incl_vat_minor > 0
+          AND i.amount_paid_minor >= i.total_incl_vat_minor
+          AND (
+              i.number IN (%s, %s)
+              OR i.external_ref = %s
+              OR i.id::text = %s
+              OR EXISTS (
+                  SELECT 1
+                  FROM billing_payment p
+                  WHERE p.invoice_id = i.id
+                    AND p.organisation_id = %s
+                    AND p.state = 'succeeded'
+                    AND p.allocated = true
+                    AND (p.provider_ref = %s OR p.id::text = %s)
+              )
+              OR EXISTS (
+                  SELECT 1
+                  FROM billing_paymentlink pl
+                  WHERE pl.invoice_id = i.id
+                    AND pl.organisation_id = %s
+                    AND pl.state = 'used'
+                    AND pl.provider_ref = %s
+              )
+          )
+        LIMIT 1
+        """,
+        [
+            org_uuid,
+            checkout_id,
+            bare_inv,
+            checkout_id,
+            checkout_id,
+            org_uuid,
+            checkout_id,
+            checkout_id,
+            org_uuid,
+            checkout_id,
+        ],
+    )
+    if cursor.fetchone() is not None:
+        return True
+
+    cursor.execute(
+        """
+        SELECT 1
+        FROM billing_order o
+        WHERE o.organisation_id = %s
+          AND o.state = 'paid'
+          AND o.plan_code = 'sovereign'
+          AND (o.id::text = %s OR o.purchase_order_ref = %s)
+        LIMIT 1
+        """,
+        [org_uuid, checkout_id, checkout_id],
+    )
+    if cursor.fetchone() is not None:
+        return True
+
+    cursor.execute(
+        """
+        SELECT 1
+        FROM billing_subscription s
+        WHERE s.organisation_id = %s
+          AND s.state = 'active'
+          AND s.plan_code = 'sovereign'
+          AND s.id::text = %s
+        LIMIT 1
+        """,
+        [org_uuid, checkout_id],
+    )
+    return cursor.fetchone() is not None
+
+
 class WarmPoolStore(Protocol):
     def counts_for_target(
         self,
@@ -450,6 +601,14 @@ class WarmPoolStore(Protocol):
         authority: CallerAuthority | None = None,
     ) -> tuple[WarmPoolSlot, ...]: ...
 
+    def release_slot(
+        self,
+        slot_id: str,
+        *,
+        reason: str = "claim_released",
+        authority: CallerAuthority | None = None,
+    ) -> WarmPoolSlot: ...
+
     def claim_slot(
         self,
         *,
@@ -477,7 +636,17 @@ class MemoryWarmPoolStore:
         self._lock = threading.RLock()
         self._seq = 0
         self._slots: dict[str, WarmPoolSlot] = {}
-        self._claims_by_key: dict[str, str] = {}
+        self._claims_by_key: dict[tuple[str, str], str] = {}
+        self._verified_entitlements: set[tuple[str, str]] = set()
+        self._po_store: MemoryPurchaseOrderStore | None = None
+
+    def bind_purchase_order_store(self, po_store: MemoryPurchaseOrderStore) -> None:
+        with self._lock:
+            self._po_store = po_store
+
+    def register_paid_entitlement(self, organisation_id: str, checkout_id: str) -> None:
+        with self._lock:
+            self._verified_entitlements.add((organisation_id, checkout_id))
 
     def counts_for_target(
         self,
@@ -611,6 +780,59 @@ class MemoryWarmPoolStore:
                 evicted.append(updated)
             return tuple(evicted)
 
+    def release_slot(
+        self,
+        slot_id: str,
+        *,
+        reason: str = "claim_released",
+        authority: CallerAuthority | None = None,
+    ) -> WarmPoolSlot:
+        from .warm_pool import WarmPoolSlot, WarmPoolTransitionError, WarmPoolValidationError
+
+        _check_static_caller_authority(authority)
+        with self._lock:
+            current = self._slots.get(slot_id)
+            if current is None:
+                raise WarmPoolValidationError(
+                    "unknown warm-pool slot identifier", code="unknown_slot_id"
+                )
+            if current.state not in ("claimed", "unhealthy"):
+                raise WarmPoolTransitionError(
+                    f"invalid slot transition {current.state} -> evicted"
+                )
+            if (
+                current.claimed_by_organisation_id is not None
+                and current.idempotency_key is not None
+            ):
+                self._claims_by_key.pop(
+                    (current.claimed_by_organisation_id, current.idempotency_key), None
+                )
+            updated = WarmPoolSlot(
+                slot_id=current.slot_id,
+                sequence=current.sequence,
+                region=current.region,
+                profile_ref=current.profile_ref,
+                state="evicted",
+                claimed_by_organisation_id=None,
+                checkout_id=None,
+                idempotency_key=None,
+                unhealthy_reason=reason,
+            )
+            self._slots[slot_id] = updated
+            return updated
+
+    def _has_memory_paid_entitlement_unlocked(
+        self, *, organisation_id: str, checkout_id: str
+    ) -> bool:
+        if (organisation_id, checkout_id) in self._verified_entitlements:
+            return True
+        if self._po_store is not None:
+            return self._po_store.has_paid_enterprise_entitlement(
+                organisation_id=organisation_id,
+                checkout_id=checkout_id,
+            )
+        return False
+
     def claim_slot(
         self,
         *,
@@ -626,11 +848,24 @@ class MemoryWarmPoolStore:
             WarmPoolExhaustedError,
             WarmPoolIdempotencyConflictError,
             WarmPoolSlot,
+            WarmPoolTenantCapExceededError,
         )
 
         _check_static_caller_authority(authority, target_organisation_id=organisation_id)
         with self._lock:
-            existing_slot_id = self._claims_by_key.get(idempotency_key)
+            if (
+                authority is not None
+                and authority.lane == "customer"
+                and not self._has_memory_paid_entitlement_unlocked(
+                    organisation_id=organisation_id, checkout_id=checkout_id
+                )
+            ):
+                raise BillingAuthorityForbiddenError(
+                    "warm-pool claim requires verified paid enterprise entitlement"
+                )
+
+            scoped_pair = (organisation_id, idempotency_key)
+            existing_slot_id = self._claims_by_key.get(scoped_pair)
             if existing_slot_id is not None:
                 existing = self._slots[existing_slot_id]
                 if (
@@ -643,6 +878,17 @@ class MemoryWarmPoolStore:
                         "idempotency_key already bound to a different warm-pool claim"
                     )
                 return existing, True, self._counts_unlocked(region=region, profile_ref=profile_ref)
+
+            for active_slot in self._slots.values():
+                if active_slot.state == "claimed":
+                    if active_slot.claimed_by_organisation_id == organisation_id:
+                        raise WarmPoolTenantCapExceededError(
+                            "organisation already holds an active warm-pool slot"
+                        )
+                    if active_slot.checkout_id == checkout_id:
+                        raise WarmPoolIdempotencyConflictError(
+                            "checkout_id already bound to an active warm-pool claim"
+                        )
 
             ready_slots = sorted(
                 (
@@ -681,7 +927,7 @@ class MemoryWarmPoolStore:
                 idempotency_key=idempotency_key,
             )
             self._slots[chosen.slot_id] = claimed
-            self._claims_by_key[idempotency_key] = chosen.slot_id
+            self._claims_by_key[scoped_pair] = chosen.slot_id
             return claimed, False, self._counts_unlocked(region=region, profile_ref=profile_ref)
 
     def get_slot(
@@ -722,15 +968,17 @@ def _row_to_slot(row: tuple[Any, ...]) -> WarmPoolSlot:
     state = _as_slot_state(str(row[4]))
     if state is None:
         raise RuntimeError(f"unexpected warm-pool slot state: {row[4]!r}")
+    claimed_org = None if row[5] is None else str(row[5])
+    raw_idem = None if row[7] is None else str(row[7])
     return WarmPoolSlot(
         slot_id=str(row[0]),
         sequence=int(row[1]),
         region=str(row[2]),
         profile_ref=str(row[3]),
         state=state,
-        claimed_by_organisation_id=None if row[5] is None else str(row[5]),
+        claimed_by_organisation_id=claimed_org,
         checkout_id=None if row[6] is None else str(row[6]),
-        idempotency_key=None if row[7] is None else str(row[7]),
+        idempotency_key=_decode_scoped_idempotency_key(raw_idem, claimed_org),
         unhealthy_reason=None if row[8] is None else str(row[8]),
     )
 
@@ -950,6 +1198,66 @@ class PostgresWarmPoolStore:
                 ) from exc
             raise
 
+    def release_slot(
+        self,
+        slot_id: str,
+        *,
+        reason: str = "claim_released",
+        authority: CallerAuthority | None = None,
+    ) -> WarmPoolSlot:
+        from django.db import DatabaseError, connection, transaction
+
+        from .warm_pool import WarmPoolTransitionError, WarmPoolValidationError
+
+        try:
+            with transaction.atomic(), connection.cursor() as cursor:
+                _acquire_ee_caller_fence(cursor, authority)
+                cursor.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", [_WARM_POOL_LOCK_KEY])
+                cursor.execute(
+                    """
+                    SELECT slot_id, sequence, region, profile_ref, state,
+                           claimed_by_organisation_id, checkout_id, idempotency_key, unhealthy_reason
+                    FROM ee_billing_warm_pool_slots
+                    WHERE slot_id = %s
+                    FOR UPDATE
+                    """,
+                    [slot_id],
+                )
+                row = cursor.fetchone()
+                if row is None:
+                    raise WarmPoolValidationError(
+                        "unknown warm-pool slot identifier", code="unknown_slot_id"
+                    )
+                current = _row_to_slot(row)
+                if current.state not in ("claimed", "unhealthy"):
+                    raise WarmPoolTransitionError(
+                        f"invalid slot transition {current.state} -> evicted"
+                    )
+                cursor.execute(
+                    """
+                    UPDATE ee_billing_warm_pool_slots
+                    SET state = 'evicted',
+                        claimed_by_organisation_id = NULL,
+                        checkout_id = NULL,
+                        idempotency_key = NULL,
+                        unhealthy_reason = %s
+                    WHERE slot_id = %s
+                    RETURNING slot_id, sequence, region, profile_ref, state,
+                              claimed_by_organisation_id, checkout_id, idempotency_key, unhealthy_reason
+                    """,
+                    [reason, slot_id],
+                )
+                updated_row = cursor.fetchone()
+                if updated_row is None:
+                    raise RuntimeError("warm-pool slot release returned no row")
+                return _row_to_slot(updated_row)
+        except DatabaseError as exc:
+            if _pg_sqlstate(exc) in _LOCK_CONFLICT_SQLSTATES:
+                raise BillingAuthorityConflictError(
+                    "concurrent authority or privacy cutoff conflict"
+                ) from exc
+            raise
+
     def claim_slot(
         self,
         *,
@@ -963,21 +1271,36 @@ class PostgresWarmPoolStore:
     ) -> tuple[WarmPoolSlot, bool, dict[SlotState, int]]:
         from django.db import DatabaseError, connection, transaction
 
-        from .warm_pool import WarmPoolExhaustedError, WarmPoolIdempotencyConflictError
+        from .warm_pool import (
+            WarmPoolExhaustedError,
+            WarmPoolIdempotencyConflictError,
+            WarmPoolTenantCapExceededError,
+        )
 
+        scoped_key = _encode_scoped_idempotency_key(organisation_id, idempotency_key)
         try:
             with transaction.atomic(), connection.cursor() as cursor:
                 _acquire_ee_caller_fence(cursor, authority, target_organisation_id=organisation_id)
+                if authority is not None and authority.lane == "customer":
+                    if not _has_postgres_paid_enterprise_entitlement(
+                        cursor,
+                        organisation_id=organisation_id,
+                        checkout_id=checkout_id,
+                    ):
+                        raise BillingAuthorityForbiddenError(
+                            "warm-pool claim requires verified paid enterprise entitlement"
+                        )
                 cursor.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", [_WARM_POOL_LOCK_KEY])
                 cursor.execute(
                     """
                     SELECT slot_id, sequence, region, profile_ref, state,
                            claimed_by_organisation_id, checkout_id, idempotency_key, unhealthy_reason
                     FROM ee_billing_warm_pool_slots
-                    WHERE idempotency_key = %s
+                    WHERE claimed_by_organisation_id = %s
+                      AND idempotency_key IN (%s, %s)
                     FOR UPDATE
                     """,
-                    [idempotency_key],
+                    [organisation_id, scoped_key, idempotency_key],
                 )
                 existing_row = cursor.fetchone()
                 if existing_row is not None:
@@ -993,6 +1316,36 @@ class PostgresWarmPoolStore:
                         )
                     counts = self._fetch_counts(cursor, region=region, profile_ref=profile_ref)
                     return existing, True, counts
+
+                cursor.execute(
+                    """
+                    SELECT slot_id
+                    FROM ee_billing_warm_pool_slots
+                    WHERE state = 'claimed' AND claimed_by_organisation_id = %s
+                    LIMIT 1
+                    FOR UPDATE
+                    """,
+                    [organisation_id],
+                )
+                if cursor.fetchone() is not None:
+                    raise WarmPoolTenantCapExceededError(
+                        "organisation already holds an active warm-pool slot"
+                    )
+
+                cursor.execute(
+                    """
+                    SELECT slot_id
+                    FROM ee_billing_warm_pool_slots
+                    WHERE state = 'claimed' AND checkout_id = %s
+                    LIMIT 1
+                    FOR UPDATE
+                    """,
+                    [checkout_id],
+                )
+                if cursor.fetchone() is not None:
+                    raise WarmPoolIdempotencyConflictError(
+                        "checkout_id already bound to an active warm-pool claim"
+                    )
 
                 cursor.execute(
                     """
@@ -1035,7 +1388,7 @@ class PostgresWarmPoolStore:
                     RETURNING slot_id, sequence, region, profile_ref, state,
                               claimed_by_organisation_id, checkout_id, idempotency_key, unhealthy_reason
                     """,
-                    [organisation_id, checkout_id, idempotency_key, chosen_id],
+                    [organisation_id, checkout_id, scoped_key, chosen_id],
                 )
                 claimed_row = cursor.fetchone()
                 if claimed_row is None:
@@ -1232,6 +1585,42 @@ class MemoryPurchaseOrderStore:
                     code="unverified_core_payment",
                 )
 
+    def has_paid_enterprise_entitlement(
+        self, *, organisation_id: str, checkout_id: str
+    ) -> bool:
+        with self._lock:
+            for po in self._orders.values():
+                if (
+                    po.organisation_id == organisation_id
+                    and po.plan_code == "sovereign"
+                    and po.state in ("countersigned", "invoiced", "paid")
+                    and checkout_id
+                    in (
+                        po.po_id,
+                        po.po_number,
+                        po.customer_po_reference,
+                        po.invoice_ref,
+                        po.payment_ref,
+                    )
+                ):
+                    return True
+            for inv in self._core_invoices.values():
+                if (
+                    inv["organisation_id"] == organisation_id
+                    and inv["state"] == "paid"
+                    and inv["number"] == checkout_id
+                ):
+                    return True
+            for (_, pay_ref), pay in self._core_payments.items():
+                if (
+                    pay["organisation_id"] == organisation_id
+                    and pay["state"] == "succeeded"
+                    and pay["allocated"]
+                    and pay_ref == checkout_id
+                ):
+                    return True
+            return False
+
     def create_draft(
         self,
         *,
@@ -1243,7 +1632,7 @@ class MemoryPurchaseOrderStore:
         _check_static_caller_authority(authority, target_organisation_id=organisation_id)
         with self._lock:
             self._seq += 1
-            po_id = f"po_{year}_{self._seq:05d}"
+            po_id = _new_opaque_po_id()
             po_number = f"PO-{year}-{self._seq:05d}"
             po: PurchaseOrder = draft_builder(po_id, po_number)
             if organisation_id is None:
@@ -1259,11 +1648,21 @@ class MemoryPurchaseOrderStore:
     ) -> PurchaseOrder:
         from .purchase_orders import PurchaseOrderNotFoundError
 
+        if authority is not None and authority.lane == "customer":
+            allowed_orgs = _authorized_customer_org_ids(authority)
+            if not allowed_orgs:
+                raise BillingAuthorityForbiddenError("insufficient organisation role")
+            with self._lock:
+                po = self._orders.get(po_id)
+                if po is None or po.organisation_id not in allowed_orgs:
+                    raise PurchaseOrderNotFoundError(f"unknown purchase order: {po_id}")
+                return po
+
+        _check_static_caller_authority(authority)
         with self._lock:
             po = self._orders.get(po_id)
             if po is None:
                 raise PurchaseOrderNotFoundError(f"unknown purchase order: {po_id}")
-            _check_static_caller_authority(authority, target_organisation_id=po.organisation_id)
             return po
 
     def mutate(
@@ -1275,13 +1674,18 @@ class MemoryPurchaseOrderStore:
     ) -> PurchaseOrder:
         from .purchase_orders import PurchaseOrderNotFoundError, PurchaseOrderValidationError
 
+        if authority is not None and authority.lane == "customer":
+            allowed_orgs = _authorized_customer_org_ids(authority)
+            if not allowed_orgs:
+                raise BillingAuthorityForbiddenError("insufficient organisation role")
+        else:
+            allowed_orgs = ()
+            _check_static_caller_authority(authority)
+
         with self._lock:
             current = self._orders.get(po_id)
-            if current is None:
+            if current is None or (allowed_orgs and current.organisation_id not in allowed_orgs):
                 raise PurchaseOrderNotFoundError(f"unknown purchase order: {po_id}")
-            _check_static_caller_authority(
-                authority, target_organisation_id=current.organisation_id
-            )
             updated, auto_expired = mutator(current)
             if auto_expired is not None:
                 expired_po, expired_exc = auto_expired
@@ -1473,7 +1877,7 @@ class PostgresPurchaseOrderStore:
                         cursor, authority, target_organisation_id=organisation_id
                     )
                 seq = _next_sequence(cursor, _PO_SEQUENCE_NAME)
-                po_id = f"po_{year}_{seq:05d}"
+                po_id = _new_opaque_po_id()
                 po_number = f"PO-{year}-{seq:05d}"
                 po: PurchaseOrder = draft_builder(po_id, po_number)
                 if organisation_id is None:
@@ -1551,6 +1955,35 @@ class PostgresPurchaseOrderStore:
 
         try:
             with transaction.atomic(), connection.cursor() as cursor:
+                if authority is not None and authority.lane == "customer":
+                    allowed_orgs = _authorized_customer_org_ids(authority)
+                    if not allowed_orgs:
+                        raise BillingAuthorityForbiddenError("insufficient organisation role")
+                    for caller_org_id in allowed_orgs:
+                        _acquire_ee_caller_fence(
+                            cursor, authority, target_organisation_id=caller_org_id
+                        )
+                    cursor.execute(
+                        """
+                        SELECT po_id, po_number, organisation_id, customer_po_reference, plan_code,
+                               billing_months, committed_seats, committed_storage_gb,
+                               subtotal_excl_vat_minor, vat_rate_bps, vat_amount_minor, total_incl_vat_minor,
+                               estimated_cogs_minor, gross_margin_bps, currency, state,
+                               created_at, expires_at, issued_at, countersigned_at, countersigned_by,
+                               countersigned_by_user_id,
+                               invoice_ref, invoiced_at, payment_ref, paid_at, expired_at
+                        FROM ee_billing_purchase_orders
+                        WHERE po_id = %s
+                          AND organisation_id = ANY(%s)
+                        """,
+                        [po_id, list(allowed_orgs)],
+                    )
+                    row = cursor.fetchone()
+                    if row is None:
+                        raise PurchaseOrderNotFoundError(f"unknown purchase order: {po_id}")
+                    return _row_to_po(row)
+
+                _acquire_ee_caller_fence(cursor, authority, target_organisation_id=None)
                 cursor.execute(
                     """
                     SELECT po_id, po_number, organisation_id, customer_po_reference, plan_code,
@@ -1568,11 +2001,7 @@ class PostgresPurchaseOrderStore:
                 row = cursor.fetchone()
                 if row is None:
                     raise PurchaseOrderNotFoundError(f"unknown purchase order: {po_id}")
-                po = _row_to_po(row)
-                _acquire_ee_caller_fence(
-                    cursor, authority, target_organisation_id=po.organisation_id
-                )
-                return po
+                return _row_to_po(row)
         except DatabaseError as exc:
             if _pg_sqlstate(exc) in _LOCK_CONFLICT_SQLSTATES:
                 raise BillingAuthorityConflictError(
@@ -1594,37 +2023,59 @@ class PostgresPurchaseOrderStore:
         expired_error: Exception | None = None
         try:
             with transaction.atomic(), connection.cursor() as cursor:
-                if authority is not None:
+                if authority is not None and authority.lane == "customer":
+                    allowed_orgs = _authorized_customer_org_ids(authority)
+                    if not allowed_orgs:
+                        raise BillingAuthorityForbiddenError("insufficient organisation role")
+                    for caller_org_id in allowed_orgs:
+                        _acquire_ee_caller_fence(
+                            cursor, authority, target_organisation_id=caller_org_id
+                        )
                     cursor.execute(
-                        "SELECT organisation_id FROM ee_billing_purchase_orders WHERE po_id = %s",
+                        """
+                        SELECT po_id, po_number, organisation_id, customer_po_reference, plan_code,
+                               billing_months, committed_seats, committed_storage_gb,
+                               subtotal_excl_vat_minor, vat_rate_bps, vat_amount_minor, total_incl_vat_minor,
+                               estimated_cogs_minor, gross_margin_bps, currency, state,
+                               created_at, expires_at, issued_at, countersigned_at, countersigned_by,
+                               countersigned_by_user_id,
+                               invoice_ref, invoiced_at, payment_ref, paid_at, expired_at
+                        FROM ee_billing_purchase_orders
+                        WHERE po_id = %s
+                          AND organisation_id = ANY(%s)
+                        FOR UPDATE
+                        """,
+                        [po_id, list(allowed_orgs)],
+                    )
+                    row = cursor.fetchone()
+                    if row is None:
+                        raise PurchaseOrderNotFoundError(f"unknown purchase order: {po_id}")
+                    current = _row_to_po(row)
+                else:
+                    _acquire_ee_caller_fence(cursor, authority, target_organisation_id=None)
+                    cursor.execute(
+                        """
+                        SELECT po_id, po_number, organisation_id, customer_po_reference, plan_code,
+                               billing_months, committed_seats, committed_storage_gb,
+                               subtotal_excl_vat_minor, vat_rate_bps, vat_amount_minor, total_incl_vat_minor,
+                               estimated_cogs_minor, gross_margin_bps, currency, state,
+                               created_at, expires_at, issued_at, countersigned_at, countersigned_by,
+                               countersigned_by_user_id,
+                               invoice_ref, invoiced_at, payment_ref, paid_at, expired_at
+                        FROM ee_billing_purchase_orders
+                        WHERE po_id = %s
+                        FOR UPDATE
+                        """,
                         [po_id],
                     )
-                    org_row = cursor.fetchone()
-                    if org_row is None:
+                    row = cursor.fetchone()
+                    if row is None:
                         raise PurchaseOrderNotFoundError(f"unknown purchase order: {po_id}")
-                    _acquire_ee_caller_fence(
-                        cursor, authority, target_organisation_id=str(org_row[0])
-                    )
-
-                cursor.execute(
-                    """
-                    SELECT po_id, po_number, organisation_id, customer_po_reference, plan_code,
-                           billing_months, committed_seats, committed_storage_gb,
-                           subtotal_excl_vat_minor, vat_rate_bps, vat_amount_minor, total_incl_vat_minor,
-                           estimated_cogs_minor, gross_margin_bps, currency, state,
-                           created_at, expires_at, issued_at, countersigned_at, countersigned_by,
-                           countersigned_by_user_id,
-                           invoice_ref, invoiced_at, payment_ref, paid_at, expired_at
-                    FROM ee_billing_purchase_orders
-                    WHERE po_id = %s
-                    FOR UPDATE
-                    """,
-                    [po_id],
-                )
-                row = cursor.fetchone()
-                if row is None:
-                    raise PurchaseOrderNotFoundError(f"unknown purchase order: {po_id}")
-                current = _row_to_po(row)
+                    current = _row_to_po(row)
+                    if authority is not None:
+                        _acquire_ee_caller_fence(
+                            cursor, authority, target_organisation_id=current.organisation_id
+                        )
                 updated, auto_expired = mutator(current)
                 if auto_expired is not None:
                     expired_po, expired_error = auto_expired
@@ -1809,6 +2260,19 @@ class _AutoWarmPoolStore:
     ) -> WarmPoolSlot:
         return self._active().get_slot(slot_id, authority=authority)
 
+    def release_slot(
+        self,
+        slot_id: str,
+        *,
+        reason: str = "operator_released",
+        authority: CallerAuthority | None = None,
+    ) -> WarmPoolSlot:
+        return self._active().release_slot(
+            slot_id,
+            reason=reason,
+            authority=authority,
+        )
+
 
 class _AutoPurchaseOrderStore:
     """Dispatches dynamically to PostgreSQL when configured, else deterministic memory."""
@@ -1914,6 +2378,5 @@ __all__ = [
     "WarmPoolStore",
     "build_purchase_order_store",
     "build_warm_pool_store",
-    "replace",
     "verify_caller_authority",
 ]

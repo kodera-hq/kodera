@@ -139,6 +139,8 @@ jobs:
         run: |
           env -i PATH="$PATH" HOME="$HOME" DATABASE_URL="$DATABASE_URL" DJANGO_SECRET_KEY="$DJANGO_SECRET_KEY" uv run ruff check .
           env -i PATH="$PATH" HOME="$HOME" DATABASE_URL="$DATABASE_URL" DJANGO_SECRET_KEY="$DJANGO_SECRET_KEY" uv run mypy .
+          env -i PATH="$PATH" HOME="$HOME" DATABASE_URL="$DATABASE_URL" DJANGO_SECRET_KEY="$DJANGO_SECRET_KEY" uv run ruff check --config ../../ee/ruff.toml ../../ee
+          env -i PATH="$PATH" HOME="$HOME" DATABASE_URL="$DATABASE_URL" DJANGO_SECRET_KEY="$DJANGO_SECRET_KEY" PYTHONPATH=".:../.." uv run mypy ../../ee
           uv run bash scripts/ci/check-authz-matrix.selftest.sh
           env -i PATH="$PATH" HOME="$HOME" DATABASE_URL="$DATABASE_URL" DJANGO_SECRET_KEY="$DJANGO_SECRET_KEY" uv run python scripts/ci/check-authz-matrix.py
           uv run bash scripts/ci/check-migrations-complete.selftest.sh
@@ -175,6 +177,10 @@ jobs:
         working-directory: apps/server
         run: |
           env -i PATH="$PATH" HOME="$HOME" DATABASE_URL="$DATABASE_URL" DJANGO_SECRET_KEY="$DJANGO_SECRET_KEY" uv run pytest
+      - name: Run Enterprise Edition test suite
+        working-directory: apps/server
+        run: |
+          env -i PATH="$PATH" HOME="$HOME" DATABASE_URL="$DATABASE_URL" DJANGO_SECRET_KEY="$DJANGO_SECRET_KEY" PYTHONPATH=".:../.." uv run pytest -c ../../ee/pytest.ini ../../ee/tests ../../ee/billing/tests
 
   advisories:
     name: Server Dependency Advisories
@@ -199,7 +205,7 @@ jobs:
       - name: Advisory gate self-test
         working-directory: apps/server
         run: bash scripts/ci/check-advisories.selftest.sh
-      - name: Advisory gate (uv.lock, contract linter and its bundled libraries)
+      - name: Advisory gate (uv.lock, yjs_collab, contract linter and its bundled libraries)
         working-directory: apps/server
         run: python3 scripts/ci/check-advisories.py --pip-audit "$RUNNER_TEMP/pip-audit/bin/pip-audit"
 
@@ -232,14 +238,17 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           python-version: "3.12"
       - name: Install locked image acceptance dependencies
         working-directory: apps/server
         run: uv sync --locked
-      - name: Qualify production and bootstrap HTTP images on owned synthetic resources
+      - name: Qualify production, bootstrap and Enterprise HTTP images on owned synthetic resources
         working-directory: apps/server
         run: |
           uv run python dev/accept_production_http.py
           uv run python dev/accept_bootstrap_http.py
+          uv run python dev/accept_enterprise_http.py

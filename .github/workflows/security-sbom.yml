@@ -71,20 +71,28 @@ jobs:
             printf '%s' "$PR_TITLE" | python3 .github/scripts/check-vendor-attribution.py --text "pull request title"
             printf '%s' "$PR_BODY" | python3 .github/scripts/check-vendor-attribution.py --text "pull request body" --allow-empty
           fi
-      - name: Refuse committed .env files or unpinned GitHub Actions
+      - name: Refuse committed .env files, unpinned GitHub Actions, disallowed licences or Cargo advisories
         run: |
           python3 scripts/ci/check-workflow-pins.py --selftest
           python3 scripts/ci/check-workflow-pins.py
+          python3 scripts/ci/check-licenses.py --selftest
+          python3 scripts/ci/check-licenses.py
+          python3 scripts/ci/check-cargo-advisories.py --selftest
+          python3 scripts/ci/check-cargo-advisories.py
       - name: Install locked npm dependencies & audit production dependency tree
         run: |
           npm ci --ignore-scripts
           npm audit --omit=dev --audit-level=high
+          (cd apps/server/yjs_collab && npm ci --ignore-scripts --engine-strict && npm audit --omit=dev --audit-level=high)
       - name: Generate CRA-ready CycloneDX SBOM & locked component inventory
         run: |
           mkdir -p sbom-out
           npm sbom --sbom-format=cyclonedx --package-lock-only --workspaces --include-workspace-root > sbom-out/kodera-npm.cdx.json
           python3 -c 'import json; d = json.load(open("sbom-out/kodera-npm.cdx.json")); assert d.get("bomFormat") == "CycloneDX"; assert len(d.get("components", [])) > 0'
           cp package-lock.json sbom-out/npm-package-lock.json
+          (cd apps/server/yjs_collab && npm sbom --sbom-format=cyclonedx --package-lock-only) > sbom-out/kodera-yjs-collab-npm.cdx.json
+          python3 -c 'import json; d = json.load(open("sbom-out/kodera-yjs-collab-npm.cdx.json")); assert d.get("bomFormat") == "CycloneDX"; assert len(d.get("components", [])) > 0'
+          cp apps/server/yjs_collab/package-lock.json sbom-out/npm-yjs-collab-package-lock.json
           cargo metadata --locked --format-version 1 > sbom-out/rust-cargo-metadata.json
           cp Cargo.lock sbom-out/rust-Cargo.lock
           cp apps/server/uv.lock sbom-out/python-server-uv.lock

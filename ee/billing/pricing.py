@@ -230,6 +230,34 @@ def list_price_excl_vat_minor(
     raise PricingValidationError(f"unknown plan_code: {plan_code!r}", code="unknown_plan_code")
 
 
+def catalog_po_subtotal_excl_vat_minor(
+    plan_code: PlanCode,
+    *,
+    seats: int,
+    billing_months: int,
+    discount_bps: int = 0,
+) -> int:
+    """Compute server-authoritative catalog subtotal (excl. VAT) for a multi-month PO."""
+    require_strict_int(seats, "committed_seats")
+    require_strict_int(billing_months, "billing_months")
+    require_strict_int(discount_bps, "discount_bps")
+    if billing_months not in (1, 12, 24, 36):
+        raise PricingValidationError(
+            "billing_months must be 1, 12, 24, or 36", code="invalid_billing_months"
+        )
+    if not 0 <= discount_bps <= BPS_DENOMINATOR:
+        raise PricingValidationError(
+            "discount_bps must be in 0..10000", code="invalid_discount_bps"
+        )
+    if billing_months == 1:
+        list_minor = list_price_excl_vat_minor(plan_code, seats=seats, billing_cycle="monthly")
+    else:
+        annual_minor = list_price_excl_vat_minor(plan_code, seats=seats, billing_cycle="annual")
+        list_minor = annual_minor * (billing_months // 12)
+    discount_minor = mul_bps_half_up(list_minor, discount_bps)
+    return list_minor - discount_minor
+
+
 def quote_plan(
     plan_code: PlanCode,
     *,
@@ -265,13 +293,18 @@ def quote_plan(
         discount_minor = mul_bps_half_up(list_minor, discount_bps)
         net_minor = list_minor - discount_minor
 
-    cogs_minor = (
-        estimate_plan_cogs_minor(plan_code, seats=seats, billing_cycle=billing_cycle)
-        if cogs_override_minor is None
-        else require_strict_int(cogs_override_minor, "cogs_override_minor")
-    )
-    if cogs_minor < 0:
-        raise PricingValidationError("cogs_minor must be non-negative", code="negative_cogs")
+    catalog_cogs = estimate_plan_cogs_minor(plan_code, seats=seats, billing_cycle=billing_cycle)
+    if cogs_override_minor is None:
+        cogs_minor = catalog_cogs
+    else:
+        cogs_minor = require_strict_int(cogs_override_minor, "cogs_override_minor")
+        if cogs_minor < 0:
+            raise PricingValidationError("cogs_minor must be non-negative", code="negative_cogs")
+        if cogs_minor < catalog_cogs:
+            raise PricingValidationError(
+                "cogs_override_minor cannot understate catalog COGS",
+                code="understated_cogs",
+            )
 
     if plan_code == "community":
         if net_minor != 0:

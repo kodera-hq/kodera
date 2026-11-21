@@ -15,8 +15,9 @@ Governed by `ee/LICENSE` (`LicenseRef-Kodera-EE`).
 from __future__ import annotations
 
 import json
+import os
 from typing import Final
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlsplit
 
 from django.conf import settings
 from django.db import DatabaseError
@@ -81,6 +82,12 @@ _SAML_PUBLIC_ERRORS: Final[tuple[tuple[str, int, str], ...]] = (
     ("invalid_idp_sso_url", 400, "Invalid Identity Provider SSO URL"),
     ("missing_verified_domains", 400, "Missing verified email domains"),
     ("invalid_verified_domain", 400, "Invalid verified email domain"),
+    (
+        "unverified_domain",
+        422,
+        "Domain requires proven DNS TXT ownership before SAML Identity Provider registration",
+    ),
+    ("domain_already_claimed", 409, "Domain is already claimed by another organisation"),
     ("invalid_default_role", 400, "Unsupported default role"),
     ("invalid_group_mapping", 400, "Unsupported group role mapping"),
     ("invalid_clock_skew", 400, "Invalid SAML clock skew configuration"),
@@ -146,6 +153,11 @@ _SAML_PUBLIC_ERRORS: Final[tuple[tuple[str, int, str], ...]] = (
     ("missing_email_claim", 403, "SAML Assertion lacks an email claim"),
     ("invalid_email_claim", 403, "Malformed email address in SAML Assertion"),
     ("unverified_email_domain", 403, "Email domain is not verified for this tenant"),
+    (
+        "email_bound_to_non_saml_identity",
+        403,
+        "SAML email-based fallback onto a pre-existing non-SAML tenant identity is forbidden",
+    ),
 )
 
 
@@ -169,12 +181,38 @@ def _saml_error_response(error_code: str) -> HttpResponse:
     return _json({"detail": "SAML request rejected", "code": "saml_error"}, status=400)
 
 
+_LOOPBACK_HOSTS: Final[frozenset[str]] = frozenset(
+    {"127.0.0.1", "localhost", "::1", "[::1]", "testserver"}
+)
+_ADMIN_GRANTABLE_SAML_ROLES: Final[frozenset[str]] = frozenset({"org_member", "org_admin"})
+
+
 def _sp_base_url(request: HttpRequest) -> str:
-    configured = getattr(settings, "KODERA_SAML_SP_BASE_URL", None)
-    if isinstance(configured, str) and configured.strip():
-        return configured.strip().rstrip("/")
-    scheme = "https" if request.is_secure() else "http"
-    return f"{scheme}://{request.get_host()}"
+    for candidate in (
+        getattr(settings, "KODERA_SAML_SP_BASE_URL", None),
+        getattr(settings, "KODERA_PUBLIC_API_ORIGIN", None),
+        os.environ.get("KODERA_SAML_SP_BASE_URL"),
+        os.environ.get("KODERA_PUBLIC_API_ORIGIN"),
+    ):
+        if isinstance(candidate, str) and candidate.strip():
+            cleaned = candidate.strip().rstrip("/")
+            parsed = urlsplit(cleaned)
+            host_low = (parsed.hostname or "").lower()
+            if not getattr(settings, "DEBUG", False) and host_low not in _LOOPBACK_HOSTS:
+                if parsed.scheme != "https":
+                    raise SamlError(
+                        "invalid_sp_base_url",
+                        "Production Service Provider base URL must use https://",
+                    )
+            return cleaned
+
+    host = request.get_host()
+    host_only = (urlsplit(f"//{host}").hostname or "").lower()
+    if request.is_secure() or (
+        not getattr(settings, "DEBUG", False) and host_only not in _LOOPBACK_HOSTS
+    ):
+        return f"https://{host}"
+    return f"http://{host}"
 
 
 def metadata_view(request: HttpRequest, tenant_slug: str) -> HttpResponse:
@@ -256,16 +294,40 @@ def providers_view(request: HttpRequest, tenant_slug: str) -> HttpResponse:
                 auth,
                 target_tenant_slug=tenant_slug,
             ) as fenced:
+                cleaned_idp_id = raw_idp_id.strip()
+                cleaned_default_role = raw_default_role.strip()
+                cleaned_mapping = {k.strip(): v.strip() for k, v in raw_mapping.items()}
+                if fenced.role != "org_owner":
+                    if cleaned_default_role not in _ADMIN_GRANTABLE_SAML_ROLES or any(
+                        mapped not in _ADMIN_GRANTABLE_SAML_ROLES
+                        for mapped in cleaned_mapping.values()
+                    ):
+                        return _saml_error_response("insufficient_role")
+                    for existing_cfg in default_saml_service.list_idps(fenced.tenant_slug):
+                        if existing_cfg.idp_id == cleaned_idp_id and (
+                            existing_cfg.default_role not in _ADMIN_GRANTABLE_SAML_ROLES
+                            or any(
+                                m not in _ADMIN_GRANTABLE_SAML_ROLES
+                                for m in existing_cfg.group_role_mapping.values()
+                            )
+                        ):
+                            return _saml_error_response("insufficient_role")
+
+                default_saml_service.require_verified_domain_ownership(
+                    tenant_slug=fenced.tenant_slug,
+                    domains=raw_domains,
+                    organisation_id=fenced.organisation_id,
+                )
                 cfg = default_saml_service.register_idp(
                     SamlIdpConfig(
                         tenant_slug=fenced.tenant_slug,
-                        idp_id=raw_idp_id.strip(),
+                        idp_id=cleaned_idp_id,
                         idp_entity_id=raw_entity_id.strip(),
                         idp_sso_url=raw_sso_url.strip(),
                         public_key_pem=raw_pub_pem,
                         verified_domains=frozenset(raw_domains),
-                        group_role_mapping=raw_mapping,
-                        default_role=raw_default_role.strip(),
+                        group_role_mapping=cleaned_mapping,
+                        default_role=cleaned_default_role,
                         organisation_id=fenced.organisation_id,
                     )
                 )
@@ -316,6 +378,72 @@ def providers_view(request: HttpRequest, tenant_slug: str) -> HttpResponse:
         },
         status=200,
     )
+
+
+def domain_challenges_view(request: HttpRequest, tenant_slug: str) -> HttpResponse:
+    """Issue (`GET`) or verify (`POST`) DNS TXT domain ownership challenges for SAML IdPs."""
+    if request.method not in {"GET", "POST"}:
+        resp = _json({"detail": "Method not allowed", "code": "method_not_allowed"}, status=405)
+        resp["Allow"] = "GET, POST"
+        return resp
+
+    try:
+        auth = authenticate_tenant_request(
+            request,
+            required_roles=ADMIN_ROLES,
+            target_tenant_slug=tenant_slug,
+        )
+    except EeAuthError as exc:
+        return _saml_error_response(exc.code)
+    except DatabaseError as exc:
+        if is_retriable_lock_contention(exc):
+            return _saml_error_response("authority_fenced")
+        raise
+
+    if request.method == "GET":
+        domain = request.GET.get("domain", "").strip()
+        try:
+            with fence_authenticated_ee_operation(auth, target_tenant_slug=tenant_slug) as fenced:
+                challenge = default_saml_service.build_domain_challenge(
+                    tenant_slug=fenced.tenant_slug,
+                    domain=domain,
+                    organisation_id=fenced.organisation_id,
+                )
+        except EeAuthError as exc:
+            return _saml_error_response(exc.code)
+        except SamlError as exc:
+            return _saml_error_response(exc.code)
+        except DatabaseError as exc:
+            if is_retriable_lock_contention(exc):
+                return _saml_error_response("authority_fenced")
+            raise
+        return _json(challenge, status=200)
+
+    if not request.body or len(request.body) > 16_384:
+        return _json({"detail": "Invalid JSON body", "code": "invalid_json"}, status=400)
+    try:
+        payload = json.loads(request.body.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return _json({"detail": "Invalid JSON body", "code": "invalid_json"}, status=400)
+    if not isinstance(payload, dict) or not isinstance(payload.get("domain"), str):
+        return _saml_error_response("invalid_verified_domain")
+
+    try:
+        with fence_authenticated_ee_operation(auth, target_tenant_slug=tenant_slug) as fenced:
+            verified = default_saml_service.verify_domain_challenge(
+                tenant_slug=fenced.tenant_slug,
+                domain=payload["domain"].strip(),
+                organisation_id=fenced.organisation_id,
+            )
+    except EeAuthError as exc:
+        return _saml_error_response(exc.code)
+    except SamlError as exc:
+        return _saml_error_response(exc.code)
+    except DatabaseError as exc:
+        if is_retriable_lock_contention(exc):
+            return _saml_error_response("authority_fenced")
+        raise
+    return _json(verified, status=200)
 
 
 def login_view(request: HttpRequest, tenant_slug: str) -> HttpResponse:
@@ -440,11 +568,16 @@ def acs_view(request: HttpRequest, tenant_slug: str) -> HttpResponse:
         relay_state = request.POST.get("RelayState", "")
 
     try:
+        sp_base = _sp_base_url(request)
         principal = default_saml_service.consume_saml_response(
             tenant_slug=tenant_slug,
             saml_response_b64=saml_response_b64,
             relay_state=relay_state,
-            sp_base_url=_sp_base_url(request),
+            sp_base_url=sp_base,
+        )
+        handoff_url, handoff_token = default_saml_service.build_oidc_handoff(
+            principal,
+            sp_base_url=sp_base,
         )
     except SamlError as exc:
         return _saml_error_response(exc.code)
@@ -452,6 +585,16 @@ def acs_view(request: HttpRequest, tenant_slug: str) -> HttpResponse:
         if is_retriable_lock_contention(exc):
             return _saml_error_response("authority_fenced")
         raise
+
+    accept_hdr = (request.META.get("HTTP_ACCEPT") or "").lower()
+    want_redirect = (
+        request.GET.get("redirect", "").strip() == "1" or "text/html" in accept_hdr
+    )
+    if want_redirect:
+        redirect_resp = HttpResponse(status=303)
+        redirect_resp["Location"] = handoff_url
+        redirect_resp["Cache-Control"] = "no-store"
+        return redirect_resp
 
     return _json(
         {
@@ -466,6 +609,8 @@ def acs_view(request: HttpRequest, tenant_slug: str) -> HttpResponse:
             "groups": list(principal.groups),
             "role": principal.role,
             "return_path": principal.return_path,
+            "handoff_url": handoff_url,
+            "handoff_token": handoff_token,
         },
         status=200,
     )

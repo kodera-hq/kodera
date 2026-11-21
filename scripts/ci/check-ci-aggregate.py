@@ -77,6 +77,16 @@ def check(orchestrator: dict, area_docs: dict[str, dict]) -> list[str]:
         for step in plan.get("steps", [])
     ):
         problems.append("native packaging and workflow refusal proofs must be mandatory in plan")
+    license_proofs = [
+        "python3 scripts/ci/check-licenses.py --selftest",
+        "python3 scripts/ci/check-licenses.py",
+    ]
+    if not any(
+        set(step) == {"name", "run"}
+        and [line.strip() for line in str(step.get("run", "")).splitlines() if line.strip()] == license_proofs
+        for step in plan.get("steps", [])
+    ):
+        problems.append("external npm dependency licence gate must be mandatory in plan")
     outputs = set((plan.get("outputs") or {}).keys())
     if outputs != AREAS:
         problems.append(f"plan outputs {sorted(outputs)} differ from the areas {sorted(AREAS)}")
@@ -111,6 +121,7 @@ def check(orchestrator: dict, area_docs: dict[str, dict]) -> list[str]:
         required = [
             "uv run python dev/accept_production_http.py",
             "uv run python dev/accept_bootstrap_http.py",
+            "uv run python dev/accept_enterprise_http.py",
         ]
         if not any(
             step.get("working-directory") == "apps/server"
@@ -119,7 +130,57 @@ def check(orchestrator: dict, area_docs: dict[str, dict]) -> list[str]:
             and [line.strip() for line in str(step.get("run", "")).splitlines() if line.strip()] == required
             for step in http_job.get("steps", [])
         ):
-            problems.append("server HTTP image acceptance must run both unmasked proofs")
+            problems.append("server HTTP image acceptance must run all three unmasked proofs")
+    server_unit = ((area_docs.get("ci-server.yml") or {}).get("jobs") or {}).get("server-static-and-unit")
+    if not isinstance(server_unit, dict):
+        problems.append("server-static-and-unit job is missing")
+    else:
+        if "if" in server_unit or server_unit.get("continue-on-error", False) is not False:
+            problems.append("server-static-and-unit must be mandatory")
+        unit_lines = [
+            line.strip()
+            for step in server_unit.get("steps", [])
+            if step.get("working-directory") == "apps/server"
+            and "if" not in step
+            and step.get("continue-on-error", False) is False
+            for line in str(step.get("run", "")).splitlines()
+            if line.strip()
+        ]
+        ee_ruff_line = (
+            'env -i PATH="$PATH" HOME="$HOME" DATABASE_URL="$DATABASE_URL"'
+            ' DJANGO_SECRET_KEY="$DJANGO_SECRET_KEY" uv run ruff check --config ../../ee/ruff.toml ../../ee'
+        )
+        ee_mypy_line = (
+            'env -i PATH="$PATH" HOME="$HOME" DATABASE_URL="$DATABASE_URL"'
+            ' DJANGO_SECRET_KEY="$DJANGO_SECRET_KEY" PYTHONPATH=".:../.." uv run mypy ../../ee'
+        )
+        ee_pytest_line = (
+            'env -i PATH="$PATH" HOME="$HOME" DATABASE_URL="$DATABASE_URL"'
+            ' DJANGO_SECRET_KEY="$DJANGO_SECRET_KEY" PYTHONPATH=".:../.." uv run pytest'
+            " -c ../../ee/pytest.ini ../../ee/tests ../../ee/billing/tests"
+        )
+        if ee_ruff_line not in unit_lines:
+            problems.append("server-static-and-unit must run unmasked ruff check across ee/")
+        if ee_mypy_line not in unit_lines:
+            problems.append("server-static-and-unit must run unmasked mypy across ee/")
+        if ee_pytest_line not in unit_lines:
+            problems.append("server-static-and-unit must run unmasked pytest across ee/")
+    rust_job = ((area_docs.get("ci-rust-desktop.yml") or {}).get("jobs") or {}).get("rust-and-desktop")
+    if not isinstance(rust_job, dict):
+        problems.append("rust-and-desktop job is missing")
+    else:
+        rust_lines = [
+            line.strip()
+            for step in rust_job.get("steps", [])
+            if "if" not in step and step.get("continue-on-error", False) is False
+            for line in str(step.get("run", "")).splitlines()
+            if line.strip()
+        ]
+        if (
+            "python3 scripts/ci/check-cargo-advisories.py --selftest" not in rust_lines
+            or "python3 scripts/ci/check-cargo-advisories.py" not in rust_lines
+        ):
+            problems.append("rust-and-desktop must run unmasked Cargo.lock advisory gate and selftest")
     coldstart = ((area_docs.get("ci-server.yml") or {}).get("jobs") or {}).get("community-coldstart")
     if not isinstance(coldstart, dict):
         problems.append("Community cold-start acceptance job is missing")
@@ -195,6 +256,39 @@ def selftest(root: Path) -> None:
     def missing_bootstrap_proof(o, a):
         a["ci-server.yml"]["jobs"]["http-image-acceptance"]["steps"][-1]["run"] = "uv run python dev/accept_production_http.py"
 
+    def missing_enterprise_http_proof(o, a):
+        step = a["ci-server.yml"]["jobs"]["http-image-acceptance"]["steps"][-1]
+        step["run"] = step["run"].replace("uv run python dev/accept_enterprise_http.py", "")
+
+    def missing_ee_ruff(o, a):
+        for step in a["ci-server.yml"]["jobs"]["server-static-and-unit"]["steps"]:
+            if "ruff check --config ../../ee/ruff.toml ../../ee" in str(step.get("run", "")):
+                step["run"] = step["run"].replace(
+                    "uv run ruff check --config ../../ee/ruff.toml ../../ee", "echo skipped"
+                )
+
+    def missing_ee_mypy(o, a):
+        for step in a["ci-server.yml"]["jobs"]["server-static-and-unit"]["steps"]:
+            if "uv run mypy ../../ee" in str(step.get("run", "")):
+                step["run"] = step["run"].replace("uv run mypy ../../ee", "echo skipped")
+
+    def missing_ee_pytest(o, a):
+        for step in a["ci-server.yml"]["jobs"]["server-static-and-unit"]["steps"]:
+            if "../../ee/pytest.ini" in str(step.get("run", "")):
+                step["run"] = "echo skipped"
+
+    def missing_plan_license_gate(o, a):
+        for step in o["jobs"]["plan"]["steps"]:
+            if "scripts/ci/check-licenses.py" in str(step.get("run", "")):
+                step["run"] = "echo skipped"
+
+    def missing_cargo_advisory_gate(o, a):
+        for step in a["ci-rust-desktop.yml"]["jobs"]["rust-and-desktop"]["steps"]:
+            if "scripts/ci/check-cargo-advisories.py" in str(step.get("run", "")):
+                step["run"] = step["run"].replace(
+                    "python3 scripts/ci/check-cargo-advisories.py", "echo skipped"
+                )
+
     def soft_http_failure(o, a):
         a["ci-server.yml"]["jobs"]["http-image-acceptance"]["continue-on-error"] = True
 
@@ -237,7 +331,13 @@ def selftest(root: Path) -> None:
         (masked_native_proof, "native packaging and workflow refusal proofs must be mandatory"),
         (skipped_native_proof, "native packaging and workflow refusal proofs must be mandatory"),
         (missing_http_job, "server HTTP image acceptance job is missing"),
-        (missing_bootstrap_proof, "server HTTP image acceptance must run both unmasked proofs"),
+        (missing_bootstrap_proof, "server HTTP image acceptance must run all three unmasked proofs"),
+        (missing_enterprise_http_proof, "server HTTP image acceptance must run all three unmasked proofs"),
+        (missing_ee_ruff, "server-static-and-unit must run unmasked ruff check across ee/"),
+        (missing_ee_mypy, "server-static-and-unit must run unmasked mypy across ee/"),
+        (missing_ee_pytest, "server-static-and-unit must run unmasked pytest across ee/"),
+        (missing_plan_license_gate, "external npm dependency licence gate must be mandatory in plan"),
+        (missing_cargo_advisory_gate, "rust-and-desktop must run unmasked Cargo.lock advisory gate and selftest"),
         (soft_http_failure, "server HTTP image acceptance must be mandatory"),
         (skipped_http_job, "server HTTP image acceptance must be mandatory"),
         (drop_need, "job `web` is not in `ci-ok` needs"),

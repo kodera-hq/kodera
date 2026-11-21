@@ -21,6 +21,8 @@ from .pricing import (
     FR_STANDARD_VAT_BPS,
     MIN_GROSS_MARGIN_BPS,
     PlanCode,
+    PricingValidationError,
+    catalog_po_subtotal_excl_vat_minor,
     compute_vat_minor,
     enforce_margin_floor,
     estimate_plan_cogs_minor,
@@ -45,8 +47,8 @@ PurchaseOrderState = Literal[
 PO_TRANSITIONS: dict[PurchaseOrderState, frozenset[PurchaseOrderState]] = {
     "draft": frozenset({"issued", "expired"}),
     "issued": frozenset({"countersigned", "expired"}),
-    "countersigned": frozenset({"invoiced", "expired"}),
-    "invoiced": frozenset({"paid", "expired"}),
+    "countersigned": frozenset({"invoiced"}),
+    "invoiced": frozenset({"paid"}),
     "paid": frozenset(),
     "expired": frozenset(),
 }
@@ -227,7 +229,8 @@ class PurchaseOrderBook:
         billing_months: int = 12,
         committed_seats: int,
         committed_storage_gb: int,
-        subtotal_excl_vat_minor: int,
+        subtotal_excl_vat_minor: int | None = None,
+        discount_bps: int = 0,
         vat_rate_bps: int = FR_STANDARD_VAT_BPS,
         estimated_cogs_minor: int | None = None,
         created_at: datetime | None = None,
@@ -236,6 +239,10 @@ class PurchaseOrderBook:
         environ: Mapping[str, str] | None = None,
     ) -> PurchaseOrder:
         require_enterprise_edition(environ)
+        if authority is not None and authority.lane == "customer":
+            raise PurchaseOrderForbiddenError(
+                "only operator or staff authority may create enterprise purchase orders"
+            )
         if not _is_org_id(organisation_id):
             raise PurchaseOrderValidationError(
                 "invalid organisation_id", code="invalid_organisation_id"
@@ -252,7 +259,7 @@ class PurchaseOrderBook:
         require_strict_int(billing_months, "billing_months")
         require_strict_int(committed_seats, "committed_seats")
         require_strict_int(committed_storage_gb, "committed_storage_gb")
-        require_strict_int(subtotal_excl_vat_minor, "subtotal_excl_vat_minor")
+        require_strict_int(discount_bps, "discount_bps")
         require_strict_int(vat_rate_bps, "vat_rate_bps")
 
         if billing_months not in (1, 12, 24, 36):
@@ -267,13 +274,29 @@ class PurchaseOrderBook:
             raise PurchaseOrderValidationError(
                 "committed_storage_gb must be in 1..1000000", code="invalid_committed_storage"
             )
-        if subtotal_excl_vat_minor <= 0:
-            raise PurchaseOrderValidationError(
-                "subtotal_excl_vat_minor must be positive", code="invalid_subtotal"
-            )
         if not 0 <= vat_rate_bps <= 10_000:
             raise PurchaseOrderValidationError(
                 "vat_rate_bps must be in 0..10000", code="invalid_vat_rate_bps"
+            )
+
+        if subtotal_excl_vat_minor is None:
+            try:
+                resolved_subtotal = catalog_po_subtotal_excl_vat_minor(
+                    plan_code,
+                    seats=committed_seats,
+                    billing_months=billing_months,
+                    discount_bps=discount_bps,
+                )
+            except PricingValidationError as exc:
+                msg = exc.args[0] if exc.args and isinstance(exc.args[0], str) else "invalid_pricing"
+                raise PurchaseOrderValidationError(msg, code=exc.code) from exc
+        else:
+            require_strict_int(subtotal_excl_vat_minor, "subtotal_excl_vat_minor")
+            resolved_subtotal = subtotal_excl_vat_minor
+
+        if resolved_subtotal <= 0:
+            raise PurchaseOrderValidationError(
+                "subtotal_excl_vat_minor must be positive", code="invalid_subtotal"
             )
 
         now = created_at or datetime.now(UTC)
@@ -282,22 +305,32 @@ class PurchaseOrderBook:
                 "expires_at must be strictly after created_at", code="invalid_expiry"
             )
 
-        if estimated_cogs_minor is None:
+        try:
             monthly_cogs = estimate_plan_cogs_minor(
                 plan_code, seats=committed_seats, billing_cycle="monthly"
             )
-            cogs = monthly_cogs * billing_months
+        except PricingValidationError as exc:
+            msg = exc.args[0] if exc.args and isinstance(exc.args[0], str) else "invalid_seats"
+            raise PurchaseOrderValidationError(msg, code=exc.code) from exc
+        catalog_cogs = monthly_cogs * billing_months
+        if estimated_cogs_minor is None:
+            cogs = catalog_cogs
         else:
             cogs = require_strict_int(estimated_cogs_minor, "estimated_cogs_minor")
             if cogs < 0:
                 raise PurchaseOrderValidationError(
                     "estimated_cogs_minor must be non-negative", code="negative_cogs"
                 )
+            if cogs < catalog_cogs:
+                raise PurchaseOrderValidationError(
+                    "estimated_cogs_minor cannot understate catalog COGS",
+                    code="understated_cogs",
+                )
 
         margin_bps = enforce_margin_floor(
-            subtotal_excl_vat_minor, cogs, floor_bps=MIN_GROSS_MARGIN_BPS
+            resolved_subtotal, cogs, floor_bps=MIN_GROSS_MARGIN_BPS
         )
-        vat_minor = compute_vat_minor(subtotal_excl_vat_minor, vat_rate_bps)
+        vat_minor = compute_vat_minor(resolved_subtotal, vat_rate_bps)
 
         def _build(po_id: str, po_number: str) -> PurchaseOrder:
             return PurchaseOrder(
@@ -309,10 +342,10 @@ class PurchaseOrderBook:
                 billing_months=billing_months,
                 committed_seats=committed_seats,
                 committed_storage_gb=committed_storage_gb,
-                subtotal_excl_vat_minor=subtotal_excl_vat_minor,
+                subtotal_excl_vat_minor=resolved_subtotal,
                 vat_rate_bps=vat_rate_bps,
                 vat_amount_minor=vat_minor,
-                total_incl_vat_minor=subtotal_excl_vat_minor + vat_minor,
+                total_incl_vat_minor=resolved_subtotal + vat_minor,
                 estimated_cogs_minor=cogs,
                 gross_margin_bps=margin_bps,
                 currency=CURRENCY_EUR,
@@ -347,6 +380,10 @@ class PurchaseOrderBook:
         environ: Mapping[str, str] | None = None,
     ) -> PurchaseOrder:
         require_enterprise_edition(environ)
+        if authority is not None and authority.lane == "customer":
+            raise PurchaseOrderForbiddenError(
+                "only operator or staff authority may issue enterprise purchase orders"
+            )
         now = at or datetime.now(UTC)
 
         def _mutate(
@@ -570,6 +607,10 @@ class PurchaseOrderBook:
         environ: Mapping[str, str] | None = None,
     ) -> PurchaseOrder:
         require_enterprise_edition(environ)
+        if authority is not None and authority.lane == "customer":
+            raise PurchaseOrderForbiddenError(
+                "only operator or staff authority may expire enterprise purchase orders"
+            )
         now = at or datetime.now(UTC)
 
         def _mutate(

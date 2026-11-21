@@ -258,18 +258,38 @@ class ScimTokenManager:
         plaintext = f"scim_{token_id}.{raw_secret}"
         return plaintext, record
 
-    def revoke_token(self, token_id: str, *, now: datetime | None = None) -> bool:
+    def revoke_token(
+        self,
+        token_id: str,
+        *,
+        now: datetime | None = None,
+        tenant_slug: str | None = None,
+        organisation_id: UUID | None = None,
+    ) -> bool:
         """Instantly revoke a SCIM bearer token by `token_id` across all workers."""
         require_enterprise_edition()
         revoked_time = (now or datetime.now(UTC)).astimezone(UTC)
         if can_use_postgres():
             try:
                 with transaction.atomic(), connection.cursor() as cur:
-                    cur.execute(
-                        "UPDATE public.ee_scim_token SET revoked_at = COALESCE(revoked_at, %s) "
-                        "WHERE token_id = %s RETURNING token_id",
-                        [revoked_time, token_id],
-                    )
+                    if organisation_id is not None:
+                        cur.execute(
+                            "UPDATE public.ee_scim_token SET revoked_at = COALESCE(revoked_at, %s) "
+                            "WHERE token_id = %s AND organisation_id = %s RETURNING token_id",
+                            [revoked_time, token_id, organisation_id],
+                        )
+                    elif tenant_slug is not None:
+                        cur.execute(
+                            "UPDATE public.ee_scim_token SET revoked_at = COALESCE(revoked_at, %s) "
+                            "WHERE token_id = %s AND tenant_slug = %s RETURNING token_id",
+                            [revoked_time, token_id, tenant_slug],
+                        )
+                    else:
+                        cur.execute(
+                            "UPDATE public.ee_scim_token SET revoked_at = COALESCE(revoked_at, %s) "
+                            "WHERE token_id = %s RETURNING token_id",
+                            [revoked_time, token_id],
+                        )
                     updated = cur.fetchone()
                 return updated is not None
             except IntegrityError as exc:
@@ -293,9 +313,75 @@ class ScimTokenManager:
             rec = self._tokens.get(token_id)
             if rec is None:
                 return False
+            if organisation_id is not None and rec.organisation_id != organisation_id:
+                return False
+            if tenant_slug is not None and rec.tenant_slug != tenant_slug:
+                return False
             if rec.revoked_at is None:
                 rec.revoked_at = revoked_time
             return True
+
+    def list_tokens(
+        self,
+        *,
+        tenant_slug: str,
+        organisation_id: UUID | None = None,
+    ) -> list[ScimTokenRecord]:
+        """List SCIM token metadata (never secrets) scoped strictly to the target tenant."""
+        require_enterprise_edition()
+        if can_use_postgres():
+            with connection.cursor() as cur:
+                if organisation_id is not None:
+                    cur.execute(
+                        """
+                        SELECT
+                            t.token_id,
+                            t.tenant_slug,
+                            t.secret_sha256,
+                            t.scopes_json,
+                            t.created_at,
+                            t.expires_at,
+                            t.revoked_at,
+                            t.organisation_id,
+                            t.description
+                        FROM public.ee_scim_token t
+                        WHERE t.organisation_id = %s
+                        ORDER BY t.created_at DESC, t.token_id ASC
+                        """,
+                        [organisation_id],
+                    )
+                else:
+                    cur.execute(
+                        """
+                        SELECT
+                            t.token_id,
+                            t.tenant_slug,
+                            t.secret_sha256,
+                            t.scopes_json,
+                            t.created_at,
+                            t.expires_at,
+                            t.revoked_at,
+                            t.organisation_id,
+                            t.description
+                        FROM public.ee_scim_token t
+                        WHERE t.tenant_slug = %s
+                        ORDER BY t.created_at DESC, t.token_id ASC
+                        """,
+                        [tenant_slug],
+                    )
+                rows = cur.fetchall()
+            return [_token_from_row(r)[0] for r in rows]
+
+        with self._lock:
+            return [
+                rec
+                for rec in self._tokens.values()
+                if (
+                    rec.organisation_id == organisation_id
+                    if organisation_id is not None
+                    else rec.tenant_slug == tenant_slug
+                )
+            ]
 
     def _lookup_token(self, token_id: str) -> tuple[ScimTokenRecord | None, bool]:
         if can_use_postgres():
