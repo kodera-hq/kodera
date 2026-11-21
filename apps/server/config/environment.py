@@ -9,8 +9,21 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
-import environ
-from django.core.exceptions import ImproperlyConfigured
+if TYPE_CHECKING:
+    import environ
+    from django.core.exceptions import ImproperlyConfigured as ImproperlyConfigured
+else:
+    try:
+        import environ
+    except ModuleNotFoundError:  # pragma: no cover - stdlib-only media-worker preflight
+        environ = None
+
+    try:
+        from django.core.exceptions import ImproperlyConfigured
+    except ModuleNotFoundError:  # pragma: no cover - stdlib-only media-worker preflight
+
+        class ImproperlyConfigured(Exception):
+            pass
 
 if TYPE_CHECKING:
     from services.identity.trusted_issuers import TrustedIssuer

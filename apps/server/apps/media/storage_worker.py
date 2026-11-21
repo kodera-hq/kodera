@@ -499,9 +499,7 @@ def main(environment: Mapping[str, str] | None = None) -> None:
     parser.add_argument("--socket", type=Path, required=True)
     parser.add_argument("--secret-directory", type=Path, required=True)
     arguments = parser.parse_args()
-    from django.core.exceptions import ImproperlyConfigured
-
-    from config.deploy_environment import _refuse_unsafe
+    from config.deploy_environment import ImproperlyConfigured, _refuse_unsafe
 
     try:
         _refuse_unsafe(os.environ if environment is None else environment, "kodera-media-worker")

@@ -3160,6 +3160,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/organisations/{organisation_id}/workspace/moderators/{membership_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Revoke workspace moderator
+         * @description Organisation is derived from the verified issuer; current active membership and resource visibility are checked on every request. Responses are Cache-Control: no-store. All mutations are audited. Only owners and admins may revoke a workspace moderator grant; only owners may revoke an admin.
+         */
+        delete: operations["revokeWorkspaceModerator"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/organisations/{organisation_id}/workspace/reports": {
         parameters: {
             query?: never;
@@ -3342,7 +3362,11 @@ export interface paths {
         get: operations["getAttachment"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Cancel pending attachment upload
+         * @description Organisation is derived from the verified issuer; current active membership and resource visibility are checked on every request. Responses are Cache-Control: no-store. All mutations are audited. Cancels an incomplete upload session initiated by the caller and releases its reserved storage quota.
+         */
+        delete: operations["cancelAttachmentUpload"];
         options?: never;
         head?: never;
         patch?: never;
@@ -4753,6 +4777,13 @@ export interface components {
             contentType: "image/jpeg" | "image/png" | "image/webp" | "image/gif" | "application/pdf" | "text/plain" | "application/octet-stream";
             sizeBytes: number;
             sha256: string;
+            /**
+             * Format: uuid
+             * @description Optional workspace channel this attachment is bound to; mutually exclusive with roomId.
+             */
+            channelId?: string;
+            /** @description Optional private direct-message Matrix room identifier; mutually exclusive with channelId. */
+            roomId?: string;
         };
         /**
          * AttachmentUploadTicket
@@ -6600,6 +6631,11 @@ export interface components {
             /** @default  */
             topic: string;
             position?: number;
+            /**
+             * @description Text channels only: designates an immutable end-to-end encrypted confidential channel at creation.
+             * @default false
+             */
+            confidential: boolean;
         };
         /**
          * ChannelPatchRequest
@@ -19103,6 +19139,35 @@ export interface operations {
             429: components["responses"]["RateLimited"];
         };
     };
+    revokeWorkspaceModerator: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                membership_id: components["parameters"]["MembershipId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful operation. */
+            204: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
     listAbuseReports: {
         parameters: {
             query?: {
@@ -19781,6 +19846,35 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["Attachment"];
                 };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    cancelAttachmentUpload: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                attachment_id: components["parameters"]["AttachmentId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful operation. */
+            204: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             400: components["responses"]["MalformedRequest"];
             401: components["responses"]["Unauthenticated"];

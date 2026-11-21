@@ -64,11 +64,6 @@ export interface UploadInput {
   put?: typeof fetch
 }
 
-type UploadRequestBody = components['schemas']['AttachmentUploadRequest'] & {
-  channelId?: string
-  roomId?: string
-}
-
 export async function uploadAttachment({
   organisationId,
   file,
@@ -84,7 +79,7 @@ export async function uploadAttachment({
   const sha256 = await sha256Hex(file)
   signal?.throwIfAborted()
   if (mayUpload?.() === false) throw new UploadRefused('ticket')
-  const requestBody: UploadRequestBody = {
+  const requestBody: components['schemas']['AttachmentUploadRequest'] = {
     filename: checked.filename,
     contentType: checked.contentType,
     sizeBytes: checked.sizeBytes,
@@ -101,7 +96,7 @@ export async function uploadAttachment({
         },
         ...(signal === undefined ? {} : { signal }),
         ...(mayUpload === undefined ? {} : { dispatchGuard: mayUpload }),
-        body: requestBody as components['schemas']['AttachmentUploadRequest'],
+        body: requestBody,
       }
     )
   )

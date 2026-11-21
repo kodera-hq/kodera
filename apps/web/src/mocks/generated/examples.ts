@@ -5001,6 +5001,19 @@ export const EXAMPLES = {
     idempotent: true,
     requiresIfMatch: false,
   },
+  "revokeWorkspaceModerator": {
+    operationId: "revokeWorkspaceModerator",
+    method: "delete",
+    path: "/organisations/{organisation_id}/workspace/moderators/{membership_id}",
+    status: 204,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: null,
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
   "listAbuseReports": {
     operationId: "listAbuseReports",
     method: "get",
@@ -5227,6 +5240,19 @@ export const EXAMPLES = {
       "expiresAt": "2026-01-01T12:00:00Z",
       "disposition": "inline"
     },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "cancelAttachmentUpload": {
+    operationId: "cancelAttachmentUpload",
+    method: "delete",
+    path: "/organisations/{organisation_id}/workspace/attachments/{attachment_id}",
+    status: 204,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: null,
     isList: false,
     idempotent: false,
     requiresIfMatch: false,
