@@ -600,7 +600,8 @@ def test_bug_0060_saml_atomic_acs_rollback_and_oidc_handoff(
             assert r_bad_sub.status_code == 403
             assert r_bad_sub.json()["code"] == "oidc_identity_mismatch"
 
-            # 3d. Unsupported `code_challenge_method=plain` is rejected (`400 invalid_pkce_challenge`)
+            # 3d. Unsupported `code_challenge_method=plain`, unconfigured `client_id` (`P2-1`), and
+            #     unconfigured `redirect_uri` (`P2-1`) are all rejected (`400`) at `/login`!
             assert (
                 client.get(
                     "/api/v1/ee/sso/saml/atomic-corp/login",
@@ -612,31 +613,59 @@ def test_bug_0060_saml_atomic_acs_rollback_and_oidc_handoff(
                 ).status_code
                 == 400
             )
+            r_bad_cid = client.get(
+                "/api/v1/ee/sso/saml/atomic-corp/login",
+                {"idp_id": "okta-atomic", "client_id": "untrusted-foreign-client"},
+            )
+            assert r_bad_cid.status_code == 400
+            assert r_bad_cid.json()["code"] == "invalid_client_id"
 
-            # 3e. Browser `GET /oidc-handoff?code=...&state=...` WITH client PKCE on `/login`
-            #     completes cleanly (`200`) using the server-retained PKCE verifier!
+            r_bad_ruri = client.get(
+                "/api/v1/ee/sso/saml/atomic-corp/login",
+                {
+                    "idp_id": "okta-atomic",
+                    "redirect_uri": "https://evil.attacker.example/oidc-steal",
+                },
+            )
+            assert r_bad_ruri.status_code == 400
+            assert r_bad_ruri.json()["code"] == "invalid_redirect_uri"
+
+            # 3e. `P1-2`: When `code_challenge` WAS registered on `/login`, omitting (`None`) or
+            #     sending blank (`""` / `"   "`) `code_verifier` at `/oidc-handoff` fails closed
+            #     (`400 missing_pkce_verifier`) without burning `state` or minting any session!
             pkce_verifier = "pkce-s4-verifier-0123456789abcdef0123456789abcdef"
             pkce_challenge = compute_pkce_s256(pkce_verifier)
-            q_client_pkce_get = _mint_saml_redirect_handoff(
-                "_assn_atomic_pkce_get_06",
-                client_pkce_challenge=pkce_challenge,
-            )
-            code_client_pkce_get = _issue_oidc_code(q_client_pkce_get)
-            r_client_pkce_get = client.get(
-                "/api/v1/ee/sso/saml/atomic-corp/oidc-handoff",
-                {"code": code_client_pkce_get, "state": q_client_pkce_get["state"]},
-            )
-            assert r_client_pkce_get.status_code == 200, r_client_pkce_get.content
-            assert r_client_pkce_get.json()["authenticated"] is True
-
-            # 3f. `POST /oidc-handoff` checks tampered `state`, cross-tenant slug, wrong client
-            #     `code_verifier`, single-use replay, and mints live `kes1.*` + `kp1.*` tokens!
             q_post = _mint_saml_redirect_handoff(
                 "_assn_atomic_pkce_post_07",
                 client_pkce_challenge=pkce_challenge,
             )
             handoff_tok = q_post["state"]
             code_post = _issue_oidc_code(q_post)
+
+            r_missing_ver_get = client.get(
+                "/api/v1/ee/sso/saml/atomic-corp/oidc-handoff",
+                {"code": code_post, "state": handoff_tok},
+            )
+            assert r_missing_ver_get.status_code == 400
+            assert r_missing_ver_get.json()["code"] == "missing_pkce_verifier"
+
+            for blank_ver in (None, "", "   "):
+                payload_blank: dict[str, object] = {
+                    "handoff_token": handoff_tok,
+                    "code": code_post,
+                }
+                if blank_ver is not None:
+                    payload_blank["code_verifier"] = blank_ver
+                r_blank_ver = client.post(
+                    "/api/v1/ee/sso/saml/atomic-corp/oidc-handoff",
+                    data=json.dumps(payload_blank),
+                    content_type="application/json",
+                )
+                assert r_blank_ver.status_code == 400
+                assert r_blank_ver.json()["code"] == "missing_pkce_verifier"
+
+            # 3f. `POST /oidc-handoff` checks tampered `state`, cross-tenant slug, wrong client
+            #     `code_verifier`, single-use replay, and mints live `kes1.*` + `kp1.*` tokens!
 
             tampered_tok = handoff_tok[:-4] + ("0000" if handoff_tok[-4:] != "0000" else "ffff")
             assert (
@@ -1092,6 +1121,10 @@ def test_bug_0062_and_0063_scim_nonblocking_cutoff_tokens_attribute_sync_and_rev
 
     monkeypatch.setenv("KODERA_EDITION", "enterprise")
     owner = tenant_principal_factory("scim-s4", role="org_owner", email="owner@scim-s4.fr")
+    admin_scim = tenant_principal_factory("scim-s4", role="org_admin", email="admin@scim-s4.fr")
+    billing_scim = tenant_principal_factory(
+        "scim-s4", role="org_billing", email="billing@scim-s4.fr"
+    )
     member = tenant_principal_factory("scim-s4", role="org_member", email="member@scim-s4.fr")
     other_owner = tenant_principal_factory("scim-other", role="org_owner", email="owner@other.fr")
     with transaction.atomic():
@@ -1118,7 +1151,7 @@ def test_bug_0062_and_0063_scim_nonblocking_cutoff_tokens_attribute_sync_and_rev
         "/api/v1/ee/scim/v2/tenants/scim-s4/Tokens",
         data=json.dumps({"description": "Okta Directory Sync"}),
         content_type="application/json",
-        headers=owner.headers,
+        headers=admin_scim.headers,
     )
     assert tok_create.status_code == 201, tok_create.content
     raw_scim_tok = str(tok_create.json()["token"])
@@ -1139,8 +1172,91 @@ def test_bug_0062_and_0063_scim_nonblocking_cutoff_tokens_attribute_sync_and_rev
         == 404
     )
 
-    # 2. `BUG-0063`: Existing OIDC-active user with `userName='jdoe'` and `email='jane@scim-s4.fr'`
-    #    (`Identity.subject` = UUID) is matched and fully revoked upon SCIM `active=false`!
+    # 1b. `P1-1`: An `org_admin` SCIM token CANNOT link onto `org_owner`, `org_billing`, or
+    #     pre-existing non-SCIM identities via `POST /Users`, and CANNOT rewrite `identity_user.email`
+    #     via `PUT`/`PATCH` even if a SCIM-provisioned member is later promoted to `org_owner`/`org_billing`!
+    from apps.identity.models import User
+
+    for protected_target in (owner, billing_scim, member):
+        r_takeover_post = client.post(
+            "/api/v1/ee/scim/v2/tenants/scim-s4/Users",
+            data=json.dumps(
+                {
+                    "schemas": [SCIM_USER_SCHEMA],
+                    "userName": f"alias-{protected_target.role}",
+                    "displayName": "Takeover Attempt",
+                    "active": True,
+                    "emails": [{"value": protected_target.email, "primary": True}],
+                }
+            ),
+            content_type="application/scim+json",
+            headers=scim_hdr,
+        )
+        assert r_takeover_post.status_code == 403, r_takeover_post.content
+        assert r_takeover_post.json()["scimType"] == "mutability"
+        assert User.objects.get(id=protected_target.user_id).email == protected_target.email
+
+    r_promo = client.post(
+        "/api/v1/ee/scim/v2/tenants/scim-s4/Users",
+        data=json.dumps(
+            {
+                "schemas": [SCIM_USER_SCHEMA],
+                "userName": "promoted.owner@scim-s4.fr",
+                "displayName": "Future Owner",
+                "active": True,
+            }
+        ),
+        content_type="application/scim+json",
+        headers=scim_hdr,
+    )
+    assert r_promo.status_code == 201, r_promo.content
+    promo_scim_id = str(r_promo.json()["id"])
+    promo_ident = Identity.objects.get(
+        organisation_id=owner.organisation_id, email="promoted.owner@scim-s4.fr"
+    )
+    for protected_role in (Membership.Role.OWNER, Membership.Role.BILLING):
+        Membership.objects.filter(
+            organisation_id=owner.organisation_id, user_id=promo_ident.user_id
+        ).update(role=protected_role)
+        r_hijack_put = client.put(
+            f"/api/v1/ee/scim/v2/tenants/scim-s4/Users/{promo_scim_id}",
+            data=json.dumps(
+                {
+                    "schemas": [SCIM_USER_SCHEMA],
+                    "userName": "promoted.owner@scim-s4.fr",
+                    "displayName": "Hijacked Owner",
+                    "active": True,
+                    "emails": [{"value": "attacker.hijack@scim-s4.fr", "primary": True}],
+                }
+            ),
+            content_type="application/scim+json",
+            headers=scim_hdr,
+        )
+        assert r_hijack_put.status_code == 403, r_hijack_put.content
+        assert r_hijack_put.json()["scimType"] == "mutability"
+        assert User.objects.get(id=promo_ident.user_id).email == "promoted.owner@scim-s4.fr"
+
+    # Direct SQL verification on `SECURITY DEFINER public.ee_scim_sync_member_contact` (`P1-1`):
+    # Owner, billing, and non-SCIM member rows are rejected directly inside PostgreSQL (`42501`).
+    from django.db import DatabaseError as DjangoDatabaseError
+
+    for sql_target in (owner, billing_scim, member):
+        with pytest.raises(DjangoDatabaseError), transaction.atomic():
+            with connection.cursor() as cur:
+                cur.execute(
+                    "SELECT public.ee_scim_sync_member_contact(%s, %s, %s, %s)",
+                    [
+                        owner.organisation_id,
+                        sql_target.user_id,
+                        "sql.bypass@scim-s4.fr",
+                        "SQL Bypass",
+                    ],
+                )
+        assert User.objects.get(id=sql_target.user_id).email == sql_target.email
+
+    # 2. `BUG-0063`: Existing OIDC-active user with `userName='jdoe'`, `externalId=jane_sub`, and
+    #    `email='jane@scim-s4.fr'` (`Identity.subject` = UUID) is matched for directory deprovisioning
+    #    (`active=false`), while contact email rewrite on non-SCIM Jane is strictly refused (`403`)!
     jane_sub = str(uuid4())
     jane = tenant_principal_factory(
         "scim-s4",
@@ -1160,6 +1276,7 @@ def test_bug_0062_and_0063_scim_nonblocking_cutoff_tokens_attribute_sync_and_rev
             {
                 "schemas": [SCIM_USER_SCHEMA],
                 "userName": "jdoe",
+                "externalId": jane_sub,
                 "displayName": "Jane Doe",
                 "active": True,
                 "emails": [{"value": "jane@scim-s4.fr", "primary": True}],
@@ -1170,6 +1287,24 @@ def test_bug_0062_and_0063_scim_nonblocking_cutoff_tokens_attribute_sync_and_rev
     )
     assert create_jane.status_code == 201, create_jane.content
     jane_scim_id = str(create_jane.json()["id"])
+
+    r_jane_email_hijack = client.put(
+        f"/api/v1/ee/scim/v2/tenants/scim-s4/Users/{jane_scim_id}",
+        data=json.dumps(
+            {
+                "schemas": [SCIM_USER_SCHEMA],
+                "userName": "jdoe",
+                "externalId": jane_sub,
+                "displayName": "Jane Hijacked",
+                "active": True,
+                "emails": [{"value": "attacker.jane@scim-s4.fr", "primary": True}],
+            }
+        ),
+        content_type="application/scim+json",
+        headers=scim_hdr,
+    )
+    assert r_jane_email_hijack.status_code == 403
+    assert User.objects.get(id=jane.user_id).email == "jane@scim-s4.fr"
 
     # 3. `BUG-0062`: Non-blocking `privacy_account_cutoff` lock on `conn2` returns immediate `409`!
     cfg = connection.settings_dict
@@ -1307,6 +1442,27 @@ def test_bug_0062_and_0063_scim_nonblocking_cutoff_tokens_attribute_sync_and_rev
     try:
         with acting_as(scim_writer_role):
             assert current_user() == scim_writer_role
+            # 0) Direct SQL call to `SECURITY DEFINER` `public.ee_scim_sync_member_contact` under
+            #    `kodera_api` against `org_owner`, `org_billing`, or non-SCIM `member` MUST fail (`42501`)!
+            from django.db import DatabaseError as DjDatabaseError
+
+            for denied_principal in (owner, billing_scim, member, jane):
+                with (
+                    pytest.raises(DjDatabaseError),
+                    transaction.atomic(),
+                    connection.cursor() as cur_deny,
+                ):
+                    cur_deny.execute(
+                        "SELECT public.ee_scim_sync_member_contact(%s, %s, %s, %s)",
+                        [
+                            owner.organisation_id,
+                            denied_principal.user_id,
+                            "sql.bypass@evil.fr",
+                            "SQL Bypass",
+                        ],
+                    )
+                assert User.objects.get(id=denied_principal.user_id).email == denied_principal.email
+
             # 1) `PATCH` touching only `displayName` + `emails` syncs contact columns under `kodera_api`
             #    while leaving `org_admin` untouched!
             r_patch_contact = client.patch(
@@ -1745,6 +1901,7 @@ def test_bug_0054_0055_0056_audit_hmac_redaction_ingestion_erasure_and_paginatio
                 action="legacy.user.targeted",
                 target_urn=hist_urn,
                 prev_hash=str(prev_hash),
+                organisation_id=str(owner.organisation_id),
             ),
         )
         cur.execute(
@@ -1875,16 +2032,22 @@ def test_bug_0054_0055_0056_audit_hmac_redaction_ingestion_erasure_and_paginatio
     ok_chain, chain_errs = default_audit_ledger.verify_vault_integrity("audit-s4")
     assert ok_chain is True and chain_errs == []
 
-    # Tamper-detection proof (`BUG-0055` Item #3):
-    # 1) Offline `verify_ledger_sequence`: mutating `action` + `actor_id` on a scrubbed row
-    #    (while retaining `entry_hash` and `erasure_commitment`) or stripping `erasure_commitment`
-    #    MUST fail `verify_ledger_sequence()`!
+    # Tamper-detection proof (`BUG-0055` / `P2-2`):
+    # 1) Offline `verify_ledger_sequence`: mutating `action`, `occurred_at`, or `actor_id` on a
+    #    scrubbed row — EVEN if the attacker recomputes plain SHA-256 and tries to forge the seal
+    #    from DB-stored `(request_id, instruction_sha256, inventory_sha256)` without the server HKDF
+    #    secret — MUST fail `verify_ledger_sequence()`!
     snap_events = default_audit_ledger.snapshot_events(
         "audit-s4", organisation_id=owner.organisation_id
     )
     assert verify_ledger_sequence(snap_events) == (True, [])
     mutated_events = [
-        replace(evt, action="tampered.action", actor_id="attacker")
+        replace(
+            evt,
+            action="tampered.action",
+            occurred_at="2026-01-15T11:59:59.000000Z",
+            actor_id="attacker",
+        )
         if evt.event_id == str(hist_id)
         else evt
         for evt in snap_events
@@ -1892,6 +2055,36 @@ def test_bug_0054_0055_0056_audit_hmac_redaction_ingestion_erasure_and_paginatio
     ok_mut, mut_errs = verify_ledger_sequence(mutated_events)
     assert ok_mut is False
     assert any("erasure_commitment mismatch" in err for err in mut_errs)
+
+    plain_sha_forged = hashlib.sha256(b"attacker-recomputed-digest").hexdigest()
+    db_only_key = hashlib.sha256(
+        f"kodera-ee-audit-seal-v1:account:{erasure_req.id}:"
+        f"{erasure_req.instruction_sha256}:{erasure_req.inventory_sha256}".encode()
+    ).digest()
+    db_only_hmac = hashlib.sha256(db_only_key + plain_sha_forged.encode("ascii")).hexdigest()
+    forged_seal = f"account:{erasure_req.id}:{plain_sha_forged}:{db_only_hmac}"
+    forged_dump_events = [
+        replace(
+            evt,
+            action="forged.from.db.dump",
+            occurred_at="2026-01-15T12:00:00.000000Z",
+            erasure_commitment=forged_seal,
+        )
+        if evt.event_id == str(hist_id)
+        else evt
+        for evt in snap_events
+    ]
+    ok_forged, forged_errs = verify_ledger_sequence(forged_dump_events)
+    assert ok_forged is False
+    assert any("erasure_commitment mismatch" in err for err in forged_errs)
+
+    with override_settings(
+        KODERA_EDITION="enterprise",
+        KODERA_EE_AUDIT_SIGNING_SEED="wrong-verifier-seed-0123456789abcdef0123456789abcdef",
+    ):
+        ok_wrong_key, wrong_key_errs = verify_ledger_sequence(snap_events)
+        assert ok_wrong_key is False
+        assert any("erasure_commitment mismatch" in err for err in wrong_key_errs)
 
     unsealed_events = [
         replace(evt, erasure_commitment=None) if evt.event_id == str(hist_id) else evt

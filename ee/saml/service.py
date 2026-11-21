@@ -417,13 +417,115 @@ def _sanitize_return_path(return_path: str) -> str:
     return candidate
 
 
-def _validate_oidc_client_id(raw: str | None) -> str:
-    if raw is None or not raw.strip():
+_DEFAULT_ALLOWED_SAML_CLIENT_IDS = frozenset(
+    {"console", "kodera-ios", "kodera-android", "kodera-desktop"}
+)
+
+
+def _allowed_oidc_client_ids() -> frozenset[str]:
+    configured: set[str] = set()
+    explicit_override = False
+    try:
+        from django.conf import settings
+
+        if settings.configured:
+            saml_ids = getattr(settings, "KODERA_SAML_ALLOWED_OIDC_CLIENT_IDS", None)
+            if isinstance(saml_ids, str) and saml_ids.strip():
+                configured.update(c.strip() for c in saml_ids.split(",") if c.strip())
+                explicit_override = True
+            elif isinstance(saml_ids, Sequence | set | frozenset) and not isinstance(saml_ids, bytes):
+                configured.update(str(c).strip() for c in saml_ids if str(c).strip())
+                explicit_override = True
+
+            if not explicit_override:
+                core_ids = getattr(settings, "KODERA_ALLOWED_OIDC_CLIENT_IDS", None)
+                if isinstance(core_ids, str) and core_ids.strip():
+                    configured.update(c.strip() for c in core_ids.split(",") if c.strip())
+                    explicit_override = True
+                elif isinstance(core_ids, Sequence | set | frozenset) and not isinstance(core_ids, bytes):
+                    configured.update(str(c).strip() for c in core_ids if str(c).strip())
+                    explicit_override = True
+
+            console_cid = getattr(settings, "KODERA_CONSOLE_CLIENT_ID", None)
+            if isinstance(console_cid, str) and console_cid.strip():
+                configured.add(console_cid.strip())
+    except ImportError:
+        pass
+
+    env_ids = os.environ.get("KODERA_ALLOWED_OIDC_CLIENT_IDS", "").strip()
+    if not explicit_override and env_ids:
+        configured.update(c.strip() for c in env_ids.split(",") if c.strip())
+        explicit_override = True
+    env_console = os.environ.get("KODERA_CONSOLE_CLIENT_ID", "").strip()
+    if env_console:
+        configured.add(env_console)
+
+    if not explicit_override:
+        configured.update(_DEFAULT_ALLOWED_SAML_CLIENT_IDS)
+    return frozenset(c for c in configured if _CLIENT_ID_RE.fullmatch(c))
+
+
+def _default_oidc_client_id(allowed: frozenset[str]) -> str:
+    try:
+        from django.conf import settings
+
+        if settings.configured:
+            console_cid = getattr(settings, "KODERA_CONSOLE_CLIENT_ID", None)
+            if isinstance(console_cid, str) and console_cid.strip() in allowed:
+                return console_cid.strip()
+    except ImportError:
+        pass
+    env_console = os.environ.get("KODERA_CONSOLE_CLIENT_ID", "").strip()
+    if env_console in allowed:
+        return env_console
+    if "console" in allowed:
         return "console"
+    return sorted(allowed)[0] if allowed else "console"
+
+
+def _validate_oidc_client_id(raw: str | None) -> str:
+    allowed = _allowed_oidc_client_ids()
+    if raw is None or not raw.strip():
+        return _default_oidc_client_id(allowed)
     cleaned = raw.strip()
-    if not _CLIENT_ID_RE.fullmatch(cleaned):
-        raise SamlError("invalid_client_id", "Invalid OIDC client_id", status=400)
+    if not _CLIENT_ID_RE.fullmatch(cleaned) or cleaned not in allowed:
+        raise SamlError(
+            "invalid_client_id",
+            "OIDC client_id is not allow-listed for SAML federation",
+            status=400,
+        )
     return cleaned
+
+
+def _allowed_oidc_redirect_uris(*, norm_base: str, tenant_slug: str) -> frozenset[str]:
+    allowed: set[str] = {f"{norm_base}/api/v1/ee/sso/saml/{tenant_slug}/oidc-handoff"}
+    raw_items: list[str] = []
+    try:
+        from django.conf import settings
+
+        if settings.configured:
+            cfg_uris = getattr(settings, "KODERA_SAML_ALLOWED_REDIRECT_URIS", None)
+            if isinstance(cfg_uris, str) and cfg_uris.strip():
+                raw_items.extend(u.strip() for u in cfg_uris.split(",") if u.strip())
+            elif isinstance(cfg_uris, Sequence | set | frozenset) and not isinstance(cfg_uris, bytes):
+                raw_items.extend(str(u).strip() for u in cfg_uris if str(u).strip())
+    except ImportError:
+        pass
+    env_uris = os.environ.get("KODERA_SAML_ALLOWED_REDIRECT_URIS", "").strip()
+    if env_uris:
+        raw_items.extend(u.strip() for u in env_uris.split(",") if u.strip())
+
+    for candidate in raw_items:
+        expanded = candidate.replace("{tenant_slug}", tenant_slug).replace("{slug}", tenant_slug)
+        parsed = urllib.parse.urlsplit(expanded)
+        host_low = (parsed.hostname or "").lower()
+        if not parsed.netloc or parsed.fragment:
+            continue
+        if parsed.scheme == "https" or (
+            parsed.scheme == "http" and host_low in _LOOPBACK_REDIRECT_HOSTS
+        ):
+            allowed.add(expanded)
+    return frozenset(allowed)
 
 
 def _validate_oidc_redirect_uri(
@@ -433,8 +535,9 @@ def _validate_oidc_redirect_uri(
     tenant_slug: str,
 ) -> str:
     norm_base = _normalize_sp_base_url(sp_base_url)
+    canonical = f"{norm_base}/api/v1/ee/sso/saml/{tenant_slug}/oidc-handoff"
     if raw is None or not raw.strip():
-        return f"{norm_base}/api/v1/ee/sso/saml/{tenant_slug}/oidc-handoff"
+        return canonical
     cleaned = raw.strip()
     if len(cleaned) > 1024 or "\\" in cleaned or any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in cleaned):
         raise SamlError("invalid_redirect_uri", "Invalid OIDC redirect_uri", status=400)
@@ -442,15 +545,52 @@ def _validate_oidc_redirect_uri(
     host_low = (parsed.hostname or "").lower()
     if not parsed.netloc or parsed.fragment:
         raise SamlError("invalid_redirect_uri", "Invalid OIDC redirect_uri", status=400)
-    if parsed.scheme == "https":
-        return cleaned
-    if parsed.scheme == "http" and host_low in _LOOPBACK_REDIRECT_HOSTS:
-        return cleaned
-    raise SamlError(
-        "invalid_redirect_uri",
-        "OIDC redirect_uri must use https:// (or loopback http:// in local tests)",
-        status=400,
-    )
+    if not (
+        parsed.scheme == "https"
+        or (parsed.scheme == "http" and host_low in _LOOPBACK_REDIRECT_HOSTS)
+    ):
+        raise SamlError(
+            "invalid_redirect_uri",
+            "OIDC redirect_uri must use https:// (or loopback http:// in local tests)",
+            status=400,
+        )
+    allowed_uris = _allowed_oidc_redirect_uris(norm_base=norm_base, tenant_slug=tenant_slug)
+    if cleaned not in allowed_uris:
+        raise SamlError(
+            "invalid_redirect_uri",
+            "OIDC redirect_uri is not allow-listed for this tenant",
+            status=400,
+        )
+    return cleaned
+
+
+def _verify_client_pkce_binding(*, stored_client_pkce: str, code_verifier: str | None) -> None:
+    """Enforce RFC 7636 §4.6 client PKCE verifier whenever `code_challenge` was bound at `/login`."""
+    if stored_client_pkce:
+        if code_verifier is None or not code_verifier.strip():
+            raise SamlError(
+                "missing_pkce_verifier",
+                "Missing PKCE code_verifier for challenge-bound OIDC handoff",
+                status=400,
+            )
+        clean_verifier = code_verifier.strip()
+        if not _PKCE_VERIFIER_S256_RE.fullmatch(clean_verifier) or not hmac.compare_digest(
+            _compute_pkce_s256(clean_verifier).encode("ascii"),
+            stored_client_pkce.encode("ascii"),
+        ):
+            raise SamlError(
+                "invalid_pkce_verifier",
+                "PKCE code_verifier verification failed",
+                status=403,
+            )
+        return
+
+    if code_verifier is not None and code_verifier.strip():
+        raise SamlError(
+            "invalid_pkce_verifier",
+            "PKCE code_verifier verification failed",
+            status=403,
+        )
 
 
 def _validate_optional_pkce(
@@ -1565,23 +1705,10 @@ class SamlService:
                             status=403,
                         )
                     stored_meta = json.loads(str(pending_row[1]))
-                    stored_client_pkce = str(stored_meta.get("client_pkce", ""))
-                    if (
-                        code_verifier is not None
-                        and code_verifier.strip()
-                        and (
-                            not stored_client_pkce
-                            or not hmac.compare_digest(
-                                _compute_pkce_s256(code_verifier.strip()).encode("ascii"),
-                                stored_client_pkce.encode("ascii"),
-                            )
-                        )
-                    ):
-                        raise SamlError(
-                            "invalid_pkce_verifier",
-                            "PKCE code_verifier verification failed",
-                            status=403,
-                        )
+                    _verify_client_pkce_binding(
+                        stored_client_pkce=str(stored_meta.get("client_pkce", "")),
+                        code_verifier=code_verifier,
+                    )
                     cur.execute(
                         """
                         DELETE FROM public.ee_saml_pending_request
@@ -1776,23 +1903,10 @@ class SamlService:
                     status=403,
                 )
             mem_meta = json.loads(mem_pending.return_path)
-            mem_client_pkce = str(mem_meta.get("client_pkce", ""))
-            if (
-                code_verifier is not None
-                and code_verifier.strip()
-                and (
-                    not mem_client_pkce
-                    or not hmac.compare_digest(
-                        _compute_pkce_s256(code_verifier.strip()).encode("ascii"),
-                        mem_client_pkce.encode("ascii"),
-                    )
-                )
-            ):
-                raise SamlError(
-                    "invalid_pkce_verifier",
-                    "PKCE code_verifier verification failed",
-                    status=403,
-                )
+            _verify_client_pkce_binding(
+                stored_client_pkce=str(mem_meta.get("client_pkce", "")),
+                code_verifier=code_verifier,
+            )
             del self._pending_by_relay[handoff_key]
             mem_role = str(mem_meta.get("role", "org_member"))
 

@@ -68,6 +68,18 @@ _SCIM_PUBLIC_ERRORS: Final[tuple[tuple[str, int, str | None, str], ...]] = (
         "mutability",
         "Organisation owner cannot be deactivated or deleted via SCIM",
     ),
+    (
+        "protected_role_scim_forbidden",
+        403,
+        "mutability",
+        "SCIM cannot link or modify org_owner or org_billing accounts",
+    ),
+    (
+        "non_scim_identity_forbidden",
+        403,
+        "mutability",
+        "SCIM cannot link or modify contact attributes of a non-SCIM identity",
+    ),
     ("organisation_not_found", 404, None, "Target organisation was not found"),
     (
         "authority_fenced",

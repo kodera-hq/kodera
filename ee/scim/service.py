@@ -2218,6 +2218,40 @@ def _resolve_scim_membership_role(
     return "org_admin" if has_admin else "org_member"
 
 
+def _is_insufficient_privilege(exc: BaseException) -> bool:
+    current: BaseException | None = exc
+    visited = 0
+    while current is not None and visited < 6:
+        if getattr(current, "sqlstate", None) == "42501":
+            return True
+        current = getattr(current, "__cause__", None) or getattr(current, "__context__", None)
+        visited += 1
+    return False
+
+
+def _is_scim_provisioned_membership(
+    cur: Any,
+    *,
+    organisation_id: UUID,
+    membership_id: UUID,
+) -> bool:
+    cur.execute(
+        """
+        SELECT EXISTS (
+            SELECT 1
+            FROM public.audit_auditevent ae
+            WHERE ae.organisation_id = %s
+              AND ae.action = 'membership.created'
+              AND ae.target_urn = %s
+              AND ae.metadata->>'source' = 'scim'
+        )
+        """,
+        [organisation_id, f"urn:kodera:membership:{membership_id}"],
+    )
+    row = cur.fetchone()
+    return bool(row and row[0])
+
+
 def _maybe_sync_user_contact_columns(
     cur: Any,
     *,
@@ -2229,15 +2263,25 @@ def _maybe_sync_user_contact_columns(
     """Synchronize `identity_identity` / `identity_user` contact columns via narrow SECURITY DEFINER."""
     if organisation_id is None:
         return
-    cur.execute(
-        "SELECT public.ee_scim_sync_member_contact(%s, %s, %s, %s)",
-        [
-            organisation_id,
-            user_uuid,
-            email.strip() if email else None,
-            display_name[:200] if display_name is not None else None,
-        ],
-    )
+    try:
+        cur.execute(
+            "SELECT public.ee_scim_sync_member_contact(%s, %s, %s, %s)",
+            [
+                organisation_id,
+                user_uuid,
+                email.strip() if email else None,
+                display_name[:200] if display_name is not None else None,
+            ],
+        )
+    except DatabaseError as exc:
+        if _is_insufficient_privilege(exc):
+            raise ScimError(
+                "SCIM contact synchronisation is forbidden for protected or non-SCIM accounts",
+                status=403,
+                scim_type="mutability",
+                code="forbidden",
+            ) from exc
+        raise
 
 
 def _lock_and_verify_scim_person(
@@ -2410,6 +2454,50 @@ def _sync_django_scim_provision(
                         require_globally_enabled=True,
                     )
                 user = identity.user
+                membership = (
+                    Membership.objects.select_for_update(nowait=True)
+                    .filter(organisation=org, user=user)
+                    .first()
+                )
+                if membership is not None:
+                    if membership.deleted_at is not None:
+                        raise TenantCutoffError("tenant_cutoff_fenced", status=403)
+                    if membership.role in {Membership.Role.OWNER, Membership.Role.BILLING}:
+                        raise ScimError(
+                            "SCIM cannot link or manage org_owner or org_billing accounts",
+                            status=403,
+                            scim_type="mutability",
+                            code="protected_role_scim_forbidden",
+                        )
+                    with connection.cursor() as cur:
+                        scim_managed = _is_scim_provisioned_membership(
+                            cur,
+                            organisation_id=org.id,
+                            membership_id=membership.id,
+                        )
+                    proven_external_id = (
+                        ext_uuid_str is not None and identity.subject == ext_uuid_str
+                    )
+                    if not scim_managed and not proven_external_id:
+                        raise ScimError(
+                            "SCIM cannot link onto a pre-existing non-SCIM identity",
+                            status=403,
+                            scim_type="mutability",
+                            code="non_scim_identity_forbidden",
+                        )
+                    if not scim_managed:
+                        wants_email_change = bool(
+                            email
+                            and email.strip()
+                            and identity.email.strip().lower() != email.strip().lower()
+                        )
+                        if wants_email_change:
+                            raise ScimError(
+                                "SCIM cannot rewrite contact attributes of a non-SCIM identity",
+                                status=403,
+                                scim_type="mutability",
+                                code="non_scim_identity_forbidden",
+                            )
             else:
                 # Never link or reuse a global `User` across tenants by contact `email` or
                 # `userName` (`CUSTOMER_PERSISTENCE.md:29` / `ADR-0024` / `owner_binding.py`).
@@ -2429,16 +2517,12 @@ def _sync_django_scim_provision(
                     email=email,
                     enabled=True,
                 )
+                membership = None
 
             now_ts = timezone.now()
             req_id = f"scim-{uuid7()}"
             target_state = Membership.State.ACTIVE if active else Membership.State.SUSPENDED
             desired_role = requested_role or Membership.Role.MEMBER
-            membership = (
-                Membership.objects.select_for_update(nowait=True)
-                .filter(organisation=org, user=user)
-                .first()
-            )
             if membership is None:
                 created_membership = Membership.objects.create(
                     organisation=org,
@@ -2579,9 +2663,12 @@ def _sync_django_scim_deprovision(
                 .order_by("id")
             )
             for m in memberships:
-                if m.role == Membership.Role.OWNER and m.state != Membership.State.REMOVED:
+                if (
+                    m.role in {Membership.Role.OWNER, Membership.Role.BILLING}
+                    and m.state != Membership.State.REMOVED
+                ):
                     raise ScimError(
-                        "Organisation owner cannot be deactivated or deleted via SCIM",
+                        "Organisation owner or billing member cannot be deactivated or deleted via SCIM",
                         status=403,
                         scim_type="mutability",
                         code="owner_deprovision_forbidden",
@@ -2624,6 +2711,60 @@ def _sync_django_scim_deprovision(
         raise
 
 
+def _enforce_scim_member_guard_and_sync_contact(
+    cur: Any,
+    *,
+    organisation_id: UUID,
+    user_uuid: UUID,
+    identity: Any,
+    memberships: list[Any],
+    email: str | None,
+    display_name: str | None,
+) -> None:
+    from apps.orgs.models import Membership
+
+    for m in memberships:
+        if m.role in {Membership.Role.OWNER, Membership.Role.BILLING}:
+            raise ScimError(
+                "SCIM cannot modify org_owner or org_billing accounts",
+                status=403,
+                scim_type="mutability",
+                code="protected_role_scim_forbidden",
+            )
+
+    scim_managed = bool(memberships) and all(
+        _is_scim_provisioned_membership(
+            cur,
+            organisation_id=organisation_id,
+            membership_id=m.id,
+        )
+        for m in memberships
+    )
+    if scim_managed:
+        _maybe_sync_user_contact_columns(
+            cur,
+            user_uuid=user_uuid,
+            organisation_id=organisation_id,
+            email=email,
+            display_name=display_name,
+        )
+        return
+
+    wants_email_change = bool(
+        email
+        and email.strip()
+        and identity is not None
+        and identity.email.strip().lower() != email.strip().lower()
+    )
+    if wants_email_change:
+        raise ScimError(
+            "SCIM cannot rewrite contact attributes of a non-SCIM identity",
+            status=403,
+            scim_type="mutability",
+            code="non_scim_identity_forbidden",
+        )
+
+
 def _sync_django_scim_attributes_and_role(
     *,
     organisation_id: UUID,
@@ -2648,10 +2789,31 @@ def _sync_django_scim_attributes_and_role(
                     user_uuid=user_uuid,
                     require_globally_enabled=True,
                 )
-                _maybe_sync_user_contact_columns(
+                identity = (
+                    Identity.objects.select_related("user")
+                    .filter(
+                        organisation_id=organisation_id,
+                        user_id=user_uuid,
+                        deleted_at__isnull=True,
+                    )
+                    .order_by("created_at", "id")
+                    .first()
+                )
+                memberships = list(
+                    Membership.objects.select_for_update(nowait=True)
+                    .filter(
+                        organisation_id=organisation_id,
+                        user_id=user_uuid,
+                        deleted_at__isnull=True,
+                    )
+                    .order_by("id")
+                )
+                _enforce_scim_member_guard_and_sync_contact(
                     cur,
-                    user_uuid=user_uuid,
                     organisation_id=organisation_id,
+                    user_uuid=user_uuid,
+                    identity=identity,
+                    memberships=memberships,
                     email=email,
                     display_name=display_name,
                 )
@@ -2659,24 +2821,6 @@ def _sync_django_scim_attributes_and_role(
             if requested_role is None:
                 return
 
-            identity = (
-                Identity.objects.filter(
-                    organisation_id=organisation_id,
-                    user_id=user_uuid,
-                    deleted_at__isnull=True,
-                )
-                .order_by("created_at", "id")
-                .first()
-            )
-            memberships = list(
-                Membership.objects.select_for_update(nowait=True)
-                .filter(
-                    organisation_id=organisation_id,
-                    user_id=user_uuid,
-                    deleted_at__isnull=True,
-                )
-                .order_by("id")
-            )
             now_ts = timezone.now()
             req_id = f"scim-{uuid7()}"
             role_changed_any = False
@@ -2741,31 +2885,34 @@ def _sync_django_scim_reactivate(
                     user_uuid=user_uuid,
                     require_globally_enabled=True,
                 )
-                _maybe_sync_user_contact_columns(
+                identity = (
+                    Identity.objects.select_related("user")
+                    .filter(
+                        organisation_id=organisation_id,
+                        user_id=user_uuid,
+                        deleted_at__isnull=True,
+                    )
+                    .order_by("created_at", "id")
+                    .first()
+                )
+                memberships = list(
+                    Membership.objects.select_for_update(nowait=True)
+                    .filter(
+                        organisation_id=organisation_id,
+                        user_id=user_uuid,
+                        deleted_at__isnull=True,
+                    )
+                    .order_by("id")
+                )
+                _enforce_scim_member_guard_and_sync_contact(
                     cur,
-                    user_uuid=user_uuid,
                     organisation_id=organisation_id,
+                    user_uuid=user_uuid,
+                    identity=identity,
+                    memberships=memberships,
                     email=email,
                     display_name=display_name,
                 )
-            identity = (
-                Identity.objects.filter(
-                    organisation_id=organisation_id,
-                    user_id=user_uuid,
-                    deleted_at__isnull=True,
-                )
-                .order_by("created_at", "id")
-                .first()
-            )
-            memberships = list(
-                Membership.objects.select_for_update(nowait=True)
-                .filter(
-                    organisation_id=organisation_id,
-                    user_id=user_uuid,
-                    deleted_at__isnull=True,
-                )
-                .order_by("id")
-            )
             now_ts = timezone.now()
             req_id = f"scim-{uuid7()}"
             reactivated_any = False

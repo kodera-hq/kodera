@@ -119,9 +119,10 @@ def test_inmemory_oidc_callback_rfc7636_pkce_exchange_and_provider_error_burn(
     default_saml_service.set_oidc_token_exchanger(_exchanger)
     client = Client(raise_request_exception=False, HTTP_HOST="127.0.0.1")
 
-    def _make_handoff(*, with_client_pkce: bool) -> tuple[str, dict[str, str]]:
+    def _make_handoff(*, with_client_pkce: bool) -> tuple[str, dict[str, str], str]:
         user_sub = str(uuid4())
-        cc = _compute_pkce_s256("client-pkce-verifier-0123456789abcdef0123456789abcdef")
+        client_ver = "client-pkce-verifier-0123456789abcdef0123456789abcdef"
+        cc = _compute_pkce_s256(client_ver)
         principal = ProvisionedSamlPrincipal(
             user_id=user_sub,
             tenant_slug="mem-saml",
@@ -144,10 +145,26 @@ def test_inmemory_oidc_callback_rfc7636_pkce_exchange_and_provider_error_burn(
             sp_base_url="http://127.0.0.1",
         )
         parsed = urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)
-        return user_sub, {k: v[0] for k, v in parsed.items()}
+        return user_sub, {k: v[0] for k, v in parsed.items()}, client_ver
+
+    # 0. `P2-1`: Unconfigured `client_id` and `redirect_uri` are rejected (`400`) at `/login`!
+    assert (
+        client.get(
+            "/api/v1/ee/sso/saml/mem-saml/login",
+            {"idp_id": "okta-mem", "client_id": "evil-client"},
+        ).status_code
+        == 400
+    )
+    assert (
+        client.get(
+            "/api/v1/ee/sso/saml/mem-saml/login",
+            {"idp_id": "okta-mem", "redirect_uri": "https://evil.example/cb"},
+        ).status_code
+        == 400
+    )
 
     # 1. `error=access_denied` + valid `state` (without client PKCE) -> `403` + burns `state`!
-    sub_err, q_err = _make_handoff(with_client_pkce=False)
+    sub_err, q_err, _ = _make_handoff(with_client_pkce=False)
     unused_code = f"code-{secrets.token_hex(8)}"
     issued_codes[unused_code] = {
         "code_challenge": q_err["code_challenge"],
@@ -171,12 +188,17 @@ def test_inmemory_oidc_callback_rfc7636_pkce_exchange_and_provider_error_burn(
     assert r_err_replay.status_code == 403
     assert r_err_replay.json()["code"] == "replayed_handoff_token"
 
-    # 2. `code` + valid `state`, WITH client PKCE on `/login`, via browser `GET` callback -> `200`!
-    sub_pkce, q_pkce = _make_handoff(with_client_pkce=True)
-    assert client.get(
-        "/api/v1/ee/sso/saml/mem-saml/oidc-handoff",
-        {"state": q_pkce["state"]},
-    ).status_code == 400
+    # 2. `P1-2`: When `code_challenge` WAS registered on `/login`, missing (`None`) or blank (`""`)
+    #    `code_verifier` fails closed (`400 missing_pkce_verifier`), while supplying the matching
+    #    `code_verifier` completes (`200`)!
+    sub_pkce, q_pkce, client_ver = _make_handoff(with_client_pkce=True)
+    assert (
+        client.get(
+            "/api/v1/ee/sso/saml/mem-saml/oidc-handoff",
+            {"state": q_pkce["state"]},
+        ).status_code
+        == 400
+    )
     valid_code = f"code-{secrets.token_hex(8)}"
     issued_codes[valid_code] = {
         "code_challenge": q_pkce["code_challenge"],
@@ -186,9 +208,27 @@ def test_inmemory_oidc_callback_rfc7636_pkce_exchange_and_provider_error_burn(
         "redirect_uri": q_pkce["redirect_uri"],
         "client_id": q_pkce["client_id"],
     }
-    r_ok = client.get(
+    r_missing_ver = client.get(
         "/api/v1/ee/sso/saml/mem-saml/oidc-handoff",
         {"code": valid_code, "state": q_pkce["state"]},
+    )
+    assert r_missing_ver.status_code == 400
+    assert r_missing_ver.json()["code"] == "missing_pkce_verifier"
+
+    r_blank_ver = client.post(
+        "/api/v1/ee/sso/saml/mem-saml/oidc-handoff",
+        data=json.dumps({"code": valid_code, "state": q_pkce["state"], "code_verifier": ""}),
+        content_type="application/json",
+    )
+    assert r_blank_ver.status_code == 400
+    assert r_blank_ver.json()["code"] == "missing_pkce_verifier"
+
+    r_ok = client.post(
+        "/api/v1/ee/sso/saml/mem-saml/oidc-handoff",
+        data=json.dumps(
+            {"code": valid_code, "state": q_pkce["state"], "code_verifier": client_ver}
+        ),
+        content_type="application/json",
     )
     assert r_ok.status_code == 200, r_ok.content
     body = r_ok.json()
@@ -197,7 +237,7 @@ def test_inmemory_oidc_callback_rfc7636_pkce_exchange_and_provider_error_burn(
     assert str(body["access_token"]).startswith("kes1.")
 
     # 3. Wrong `sub` or wrong `nonce` in `id_token` is rejected (`403 oidc_identity_mismatch`)!
-    _sub_bad, q_bad = _make_handoff(with_client_pkce=False)
+    _sub_bad, q_bad, _ = _make_handoff(with_client_pkce=False)
     bad_sub_code = f"code-{secrets.token_hex(8)}"
     issued_codes[bad_sub_code] = {
         "code_challenge": q_bad["code_challenge"],
@@ -304,11 +344,23 @@ def test_inmemory_erased_row_commitment_detects_actor_and_action_tampering() -> 
 
     assert verify_ledger_sequence((scrubbed_evt, next_evt)) == (True, [])
 
-    # Mutating `action` and `actor_id` while keeping `entry_hash` and `erasure_commitment` fails!
-    tampered_evt = replace(scrubbed_evt, action="forged.action", actor_id="mallory")
-    ok_tamp, errs_tamp = verify_ledger_sequence((tampered_evt, next_evt))
-    assert ok_tamp is False
-    assert any("erasure_commitment mismatch" in err for err in errs_tamp)
+    # Mutating `action`, `occurred_at`, or `actor_id` while keeping `entry_hash` and `erasure_commitment` fails!
+    for tampered_evt in (
+        replace(scrubbed_evt, action="forged.action", actor_id="mallory"),
+        replace(scrubbed_evt, occurred_at="2026-02-01T12:00:59.000000Z"),
+    ):
+        ok_tamp, errs_tamp = verify_ledger_sequence((tampered_evt, next_evt))
+        assert ok_tamp is False
+        assert any("erasure_commitment mismatch" in err for err in errs_tamp)
+
+    # Recomputing a plain SHA-256 + DB-only HMAC without the server HKDF secret ALSO fails!
+    forged_seal = f"account:{req_id}:{'c' * 64}:{'d' * 64}"
+    assert (
+        verify_ledger_sequence(
+            (replace(scrubbed_evt, action="forged.dump", erasure_commitment=forged_seal), next_evt)
+        )[0]
+        is False
+    )
 
     # Removing `erasure_commitment` or retaining `metadata` / `source_ip` also fails!
     assert verify_ledger_sequence((replace(scrubbed_evt, erasure_commitment=None), next_evt))[0] is False
@@ -335,6 +387,9 @@ def test_migration_0034_sql_parity_and_embedded_target_scrub_obligations() -> No
     assert mod.REVERSE == EE_AUDIT_ERASURE_MIGRATION_0035_REVERSE_SQL
     assert "ee_audit_target_scrub_ids" in mod.FORWARD
     assert "ee_audit_actor_scrub_ids" in mod.FORWARD
+    assert "ee_audit_resolve_erasure_master_key" in mod.FORWARD
+    assert "scim contact sync forbidden for protected role" in mod.FORWARD
+    assert "scim contact sync requires scim-provisioned identity" in mod.FORWARD
     assert mod.FORWARD.count("public.ee_audit_row_requires_target_scrub(") >= 3
     assert mod.FORWARD.count("public.ee_audit_build_erasure_seal(") >= 2
     # Ensure base64/json/secrets imports remain exercised cleanly without warnings

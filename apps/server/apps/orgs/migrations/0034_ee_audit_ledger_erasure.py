@@ -1,9 +1,9 @@
 """Statutory personal-data scrubbing for enterprise audit ledger and SCIM contact sync.
 
-Extends account and organisation erasure inventory discovery, HMAC-SHA256 target_urn
-pseudonymisation, tamper-evident erasure_commitment seals, append-only ledger immutability
-exceptions, and narrow SECURITY DEFINER SCIM member contact synchronisation without importing
-ee/ in Community runtime builds.
+Extends account and organisation erasure inventory discovery, HKDF-keyed HMAC-SHA256
+target_urn pseudonymisation, tamper-evident erasure_commitment seals, append-only ledger
+immutability exceptions, and narrow SECURITY DEFINER SCIM member contact synchronisation
+enforcing protected-role and SCIM-provenance guards without importing ee/ in Community builds.
 """
 
 from django.db import migrations
@@ -53,11 +53,31 @@ END
 $$;
 REVOKE ALL ON FUNCTION public.ee_audit_hmac_sha256_hex(bytea, bytea) FROM PUBLIC;
 
+CREATE FUNCTION public.ee_audit_resolve_erasure_master_key()
+RETURNS bytea
+LANGUAGE plpgsql
+STABLE
+SET search_path = pg_catalog
+AS $$
+DECLARE
+    raw_hex text := nullif(btrim(current_setting('kodera.ee_audit_erasure_key_hex', true)), '');
+BEGIN
+    IF raw_hex IS NULL OR raw_hex !~ '^[0-9a-f]{64}$' THEN
+        RAISE EXCEPTION 'enterprise audit erasure requires configured server secret key'
+            USING ERRCODE = '23514';
+    END IF;
+    RETURN decode(raw_hex, 'hex');
+END
+$$;
+REVOKE ALL ON FUNCTION public.ee_audit_resolve_erasure_master_key() FROM PUBLIC;
+
 CREATE FUNCTION public.ee_audit_build_erasure_seal(
+    p_master_key bytea,
     p_scope text,
     p_req_id uuid,
     p_instruction_sha256 text,
     p_inventory_sha256 text,
+    p_org_id uuid,
     p_seq bigint,
     p_event_id text,
     p_occurred_at text,
@@ -75,48 +95,65 @@ IMMUTABLE STRICT
 SET search_path = pg_catalog, public
 AS $$
 DECLARE
-    digest_hex text;
-    seal_key bytea;
-    hmac_hex text;
+    row_mac_key bytea;
+    row_mac_hex text;
+    journal_seal_key bytea;
+    journal_hmac_hex text;
 BEGIN
-    digest_hex := encode(
-        sha256(
+    row_mac_key := decode(
+        public.ee_audit_hmac_sha256_hex(
+            p_master_key,
             convert_to(
-                'kodera-ee-audit-erased-v1|'
-                || p_scope || '|'
-                || p_req_id::text || '|'
-                || p_seq::text || '|'
-                || p_event_id || '|'
-                || p_occurred_at || '|'
-                || p_tenant_slug || '|'
-                || p_actor_type || '|'
-                || p_actor_id || '|'
-                || p_actor_label || '|'
-                || p_action || '|'
-                || p_target_urn || '|'
-                || p_prev_hash || '|'
-                || p_entry_hash,
+                'kodera-ee-audit-row-mac-v2:' || p_scope || ':' || p_req_id::text,
                 'UTF8'
             )
         ),
         'hex'
     );
-    seal_key := sha256(
+    row_mac_hex := public.ee_audit_hmac_sha256_hex(
+        row_mac_key,
         convert_to(
-            'kodera-ee-audit-seal-v1:'
-            || p_scope || ':'
-            || p_req_id::text || ':'
-            || p_instruction_sha256 || ':'
-            || p_inventory_sha256,
+            'kodera-ee-audit-erased-v2|'
+            || p_scope || '|'
+            || p_req_id::text || '|'
+            || p_org_id::text || '|'
+            || p_seq::text || '|'
+            || p_event_id || '|'
+            || p_occurred_at || '|'
+            || p_tenant_slug || '|'
+            || p_actor_type || '|'
+            || p_actor_id || '|'
+            || p_actor_label || '|'
+            || p_action || '|'
+            || p_target_urn || '|{}|'
+            || p_prev_hash || '|'
+            || p_entry_hash,
             'UTF8'
         )
     );
-    hmac_hex := public.ee_audit_hmac_sha256_hex(seal_key, convert_to(digest_hex, 'UTF8'));
-    RETURN p_scope || ':' || p_req_id::text || ':' || digest_hex || ':' || hmac_hex;
+    journal_seal_key := decode(
+        public.ee_audit_hmac_sha256_hex(
+            p_master_key,
+            convert_to(
+                'kodera-ee-audit-journal-seal-v2:'
+                || p_scope || ':'
+                || p_req_id::text || ':'
+                || p_instruction_sha256 || ':'
+                || p_inventory_sha256,
+                'UTF8'
+            )
+        ),
+        'hex'
+    );
+    journal_hmac_hex := public.ee_audit_hmac_sha256_hex(
+        journal_seal_key,
+        convert_to(row_mac_hex, 'UTF8')
+    );
+    RETURN p_scope || ':' || p_req_id::text || ':' || row_mac_hex || ':' || journal_hmac_hex;
 END
 $$;
 REVOKE ALL ON FUNCTION public.ee_audit_build_erasure_seal(
-    text, uuid, text, text, bigint, text, text, text, text, text, text, text, text, text, text
+    bytea, text, uuid, text, text, uuid, bigint, text, text, text, text, text, text, text, text, text, text
 ) FROM PUBLIC;
 
 CREATE FUNCTION public.ee_audit_scrub_target_urn(p_target_urn text, p_hmac_key bytea)
@@ -504,6 +541,7 @@ AS $$
 DECLARE
     person uuid;
     org_ref uuid;
+    master_key bytea;
     hmac_key bytea;
     target_orgs uuid[] := ARRAY[]::uuid[];
     target_org_texts text[] := ARRAY[]::text[];
@@ -516,10 +554,21 @@ BEGIN
     IF TG_TABLE_NAME = 'orgs_privacyerasure' THEN
         IF TG_OP = 'UPDATE' AND OLD.core_purged_at IS NULL AND NEW.core_purged_at IS NOT NULL THEN
             org_ref := NEW.organisation_reference;
-            hmac_key := sha256(
-                convert_to('kodera-ee-audit-org-erasure-v1:' || NEW.id::text || ':' || NEW.instruction_sha256, 'UTF8')
-            );
-            IF to_regclass('public.ee_audit_ledger') IS NOT NULL THEN
+            IF to_regclass('public.ee_audit_ledger') IS NOT NULL
+               AND EXISTS (SELECT 1 FROM public.ee_audit_ledger WHERE organisation_id = org_ref)
+            THEN
+                master_key := public.ee_audit_resolve_erasure_master_key();
+                hmac_key := decode(
+                    public.ee_audit_hmac_sha256_hex(
+                        master_key,
+                        convert_to(
+                            'kodera-ee-audit-target-urn-v2:org:'
+                            || NEW.id::text || ':' || NEW.instruction_sha256,
+                            'UTF8'
+                        )
+                    ),
+                    'hex'
+                );
                 UPDATE public.ee_audit_ledger l
                 SET actor_label = 'erased',
                     target_urn = sub.next_target_urn,
@@ -527,10 +576,12 @@ BEGIN
                     metadata_json = '{}',
                     pii_scrubbed_at = COALESCE(l.pii_scrubbed_at, clock_timestamp()),
                     erasure_commitment = public.ee_audit_build_erasure_seal(
+                        master_key,
                         'org',
                         NEW.id,
                         NEW.instruction_sha256,
                         NEW.inventory_sha256,
+                        l.organisation_id,
                         l.seq,
                         l.event_id,
                         l.occurred_at,
@@ -790,12 +841,36 @@ BEGIN
 
     ELSIF TG_OP = 'UPDATE' THEN
         subject_sha256s := COALESCE(NEW.inventory->'ee_audit_subject_sha256s', '[]'::jsonb);
-        hmac_key := sha256(
-            convert_to('kodera-ee-audit-erasure-v1:' || NEW.id::text || ':' || NEW.instruction_sha256, 'UTF8')
-        );
 
         IF OLD.core_purged_at IS NULL AND NEW.core_purged_at IS NOT NULL THEN
-            IF to_regclass('public.ee_audit_ledger') IS NOT NULL THEN
+            IF to_regclass('public.ee_audit_ledger') IS NOT NULL
+               AND EXISTS (
+                   SELECT 1
+                   FROM public.ee_audit_ledger s
+                   WHERE public.ee_audit_row_matches_erasure(
+                       s.organisation_id,
+                       s.id,
+                       s.user_id,
+                       s.actor_id,
+                       s.actor_label,
+                       s.target_urn,
+                       s.metadata_json,
+                       person
+                   )
+               )
+            THEN
+                master_key := public.ee_audit_resolve_erasure_master_key();
+                hmac_key := decode(
+                    public.ee_audit_hmac_sha256_hex(
+                        master_key,
+                        convert_to(
+                            'kodera-ee-audit-target-urn-v2:account:'
+                            || NEW.id::text || ':' || NEW.instruction_sha256,
+                            'UTF8'
+                        )
+                    ),
+                    'hex'
+                );
                 UPDATE public.ee_audit_ledger l
                 SET actor_label = sub.next_actor_label,
                     target_urn = sub.next_target_urn,
@@ -803,10 +878,12 @@ BEGIN
                     metadata_json = '{}',
                     pii_scrubbed_at = COALESCE(l.pii_scrubbed_at, clock_timestamp()),
                     erasure_commitment = public.ee_audit_build_erasure_seal(
+                        master_key,
                         'account',
                         NEW.id,
                         NEW.instruction_sha256,
                         NEW.inventory_sha256,
+                        l.organisation_id,
                         l.seq,
                         l.event_id,
                         l.occurred_at,
@@ -984,6 +1061,38 @@ BEGIN
         RAISE EXCEPTION 'scim contact sync target membership missing' USING ERRCODE = '23503';
     END IF;
 
+    IF EXISTS (
+        SELECT 1
+        FROM public.orgs_membership m
+        WHERE m.organisation_id = p_org
+          AND m.user_id = p_user
+          AND m.deleted_at IS NULL
+          AND m.role IN ('org_owner', 'org_billing')
+    ) THEN
+        RAISE EXCEPTION 'scim contact sync forbidden for protected role' USING ERRCODE = '42501';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM public.ee_scim_user su
+        WHERE su.organisation_id = p_org
+          AND su.user_id = p_user
+    ) OR NOT EXISTS (
+        SELECT 1
+        FROM public.orgs_membership m
+        JOIN public.audit_auditevent ae
+          ON ae.organisation_id = m.organisation_id
+         AND ae.action = 'membership.created'
+         AND ae.target_urn = ('urn:kodera:membership:' || m.id::text)
+         AND ae.metadata->>'source' = 'scim'
+        WHERE m.organisation_id = p_org
+          AND m.user_id = p_user
+          AND m.deleted_at IS NULL
+    ) THEN
+        RAISE EXCEPTION 'scim contact sync requires scim-provisioned identity'
+            USING ERRCODE = '42501';
+    END IF;
+
     clean_email := CASE WHEN p_email IS NULL THEN NULL ELSE btrim(p_email) END;
     clean_display := CASE WHEN p_display_name IS NULL THEN NULL ELSE left(btrim(p_display_name), 200) END;
 
@@ -1143,8 +1252,9 @@ DROP FUNCTION IF EXISTS public.ee_audit_row_requires_target_scrub(uuid, uuid, te
 DROP FUNCTION IF EXISTS public.ee_audit_target_urn_matches_digests(text, jsonb);
 DROP FUNCTION IF EXISTS public.ee_audit_scrub_target_urn(text, bytea);
 DROP FUNCTION IF EXISTS public.ee_audit_build_erasure_seal(
-    text, uuid, text, text, bigint, text, text, text, text, text, text, text, text, text, text
+    bytea, text, uuid, text, text, uuid, bigint, text, text, text, text, text, text, text, text, text, text
 );
+DROP FUNCTION IF EXISTS public.ee_audit_resolve_erasure_master_key();
 DROP FUNCTION IF EXISTS public.ee_audit_hmac_sha256_hex(bytea, bytea);
 ALTER TABLE public.ee_audit_ledger
     DROP CONSTRAINT IF EXISTS ee_audit_ledger_erasure_commitment_chk,

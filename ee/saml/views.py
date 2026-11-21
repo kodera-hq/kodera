@@ -104,6 +104,11 @@ _SAML_PUBLIC_ERRORS: Final[tuple[tuple[str, int, str], ...]] = (
     ("missing_handoff_token", 400, "Missing SAML OIDC handoff token"),
     ("missing_authorization_code", 400, "Missing OIDC authorization code"),
     ("invalid_authorization_code", 400, "Malformed OIDC authorization code"),
+    (
+        "missing_pkce_verifier",
+        400,
+        "Missing PKCE code_verifier for challenge-bound OIDC handoff",
+    ),
     ("invalid_saml_response", 400, "Missing or oversized SAMLResponse payload"),
     ("invalid_base64_response", 400, "SAMLResponse is not valid base64"),
     ("unsupported_saml_version", 400, "SAML Version must be 2.0"),
