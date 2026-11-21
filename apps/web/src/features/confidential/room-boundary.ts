@@ -15,6 +15,10 @@ const record = (value: unknown): value is Record<string, unknown> =>
 export class RoomBoundaryTracker {
   readonly #protected = new Set<string>()
 
+  markProtected(roomId: string): void {
+    this.#protected.add(roomId)
+  }
+
   observe(
     roomId: string,
     creation: RoomStateValue | undefined,
@@ -34,6 +38,9 @@ export class RoomBoundaryTracker {
     const algorithm = content[CONFIDENTIAL_MARKER]
     const initial = encryption?.content
     if (
+      publicCommunity ||
+      !trustedCreator.startsWith('@') ||
+      !trustedCreator.includes(':') ||
       (algorithm !== 'io.kodera.mls.v1' && algorithm !== 'm.megolm.v1.aes-sha2') ||
       creation?.sender !== trustedCreator ||
       encryption?.sender !== trustedCreator ||

@@ -39,6 +39,7 @@ def relay(world):
         position=0,
         lifecycle="active",
         room_state="ready",
+        is_confidential=True,
     )
     keys = [Ed25519PrivateKey.generate() for _ in members]
 

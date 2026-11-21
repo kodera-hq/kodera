@@ -139,12 +139,12 @@ def test_only_room_access_and_the_agent_write_occupancy():
     assert run(policy().check_event_for_spam(kodera_state("io.kodera.room.occupancy", ROOM_ACCESS, occupancy))) == FORBIDDEN
 
 
-def test_version_is_0_1_6():
-    assert __version__ == "0.1.6"
+def test_version_is_0_1_7():
+    assert __version__ == "0.1.7"
     pyproject = pathlib.Path(__file__).resolve().parent.parent / "pyproject.toml"
     if pyproject.exists():
         meta = tomllib.loads(pyproject.read_text(encoding="utf-8"))
-        assert meta["project"]["version"] == "0.1.6"
+        assert meta["project"]["version"] == "0.1.7"
 
 
 @pytest.mark.parametrize(
@@ -209,11 +209,34 @@ def test_member_creates_a_direct_message():
         dm_request(preset="public_chat"),
         dm_request(initial_state=[{"type": "m.room.history_visibility", "content": {"history_visibility": "shared"}}]),
         dm_request(power_level_content_override={"invite": 0}),
+        dm_request(additional_creators=[BOB]),
         dm_request(creation_content={"type": "m.space"}),
+        dm_request(creation_content={"additional_creators": [BOB]}),
+        dm_request(creation_content={"predecessor": {"room_id": "!old:example.org", "event_id": "$1"}}),
+        dm_request(creation_content={"m.room.Predecessor": {"room_id": "!old:example.org"}}),
     ],
 )
 def test_member_cannot_create_anything_but_a_direct_message(request_body):
     assert run(policy().user_may_create_room(ALICE, request_body)) == FORBIDDEN
+
+
+@pytest.mark.parametrize(
+    "creation_content",
+    [
+        {"additional_creators": [BOB]},
+        {"predecessor": {"room_id": "!old:example.org", "event_id": "$1"}},
+        {"m.room.Predecessor": {"room_id": "!old:example.org"}},
+        {"io.kodera.room.initial_partner_servers": ["dinum.gouv.fr"]},
+    ],
+)
+def test_member_dm_creation_hook_refuses_additional_creators_and_predecessor(creation_content):
+    from synapse.module_api.errors import SynapseError
+
+    configured = policy()
+    requester = SimpleNamespace(user=SimpleNamespace(to_string=lambda: ALICE))
+    with pytest.raises(SynapseError) as refusal:
+        run(configured.on_create_room(requester, dm_request(creation_content=creation_content), False))
+    assert (refusal.value.code, refusal.value.errcode) == (403, FORBIDDEN)
 
 
 def test_member_invites_once_into_their_new_direct_message():
@@ -423,7 +446,7 @@ def test_nobody_creates_an_encrypted_room(creator):
 @pytest.mark.parametrize("sender", [ALICE, AGENT])
 def test_no_event_turns_on_encryption(sender):
     # The path Synapse's server admins take too: initial state, forced encryption, upgrades.
-    assert run(policy().check_event_allowed(event("m.room.encryption", sender), {})) == (False, None)
+    assert run(policy().check_event_allowed(event("m.room.encryption", sender), state_of(AGENT, []))) == (False, None)
 
 
 MEGOLM_CIPHERTEXT = {
@@ -458,18 +481,22 @@ CIPHERTEXT_CASES = pytest.mark.parametrize(
 def test_no_event_carries_ciphertext(encrypted):
     # A client can post ciphertext in a room where encryption is off, with keys sent by to-device
     # message; refusing m.room.encryption alone would let it through.
-    assert run(policy().check_event_allowed(encrypted, {})) == (False, None)
+    assert run(policy().check_event_allowed(encrypted, state_of(AGENT, []))) == (False, None)
 
 
 @CIPHERTEXT_CASES
 def test_no_federated_event_carries_ciphertext(encrypted):
     # Synapse checks events from other servers with check_event_for_spam, not check_event_allowed.
-    assert run(policy().check_event_for_spam(encrypted)) == FORBIDDEN
+    ordinary_rooms = {"!channel": state_of(AGENT, []), "!dm": state_of(ALICE, [BOB])}
+    assert run(policy(ordinary_rooms).check_event_for_spam(encrypted)) == FORBIDDEN
 
 
 @pytest.mark.parametrize("kind", ["m.room.message", "m.room.join_rules", "m.room.member"])
 def test_rules_allow_every_other_event(kind):
-    assert run(policy().check_event_allowed(event(kind, AGENT), {})) == (True, None)
+    candidate = event(kind, AGENT)
+    if kind == "m.room.member":
+        candidate.state_key = ALICE
+    assert run(policy().check_event_allowed(candidate, state_of(AGENT, []))) == (True, None)
 
 
 def test_agent_creates_a_room_with_other_initial_state():
@@ -565,3 +592,57 @@ def test_dm_creation_and_invites_require_active_registered_local_accounts(blocke
     configured = KoderaPolicy({"agent_user_id": AGENT}, FakeApi({"!dm": state}, users=users))
     assert run(configured.user_may_create_room(ALICE, dm_request())) == FORBIDDEN
     assert run(configured.user_may_invite(ALICE, BOB, "!dm")) == FORBIDDEN
+
+
+@pytest.mark.parametrize("blocked", [ALICE, BOB])
+@pytest.mark.parametrize(
+    "status",
+    [
+        None,
+        {"is_deactivated": True},
+        {"is_guest": True},
+        {"approved": False},
+        {"locked": True},
+        {"suspended": True},
+    ],
+)
+def test_channel_member_invites_require_active_registered_local_accounts(blocked, status):
+    users = {
+        user: SimpleNamespace(
+            is_deactivated=False, is_guest=False, approved=True, locked=False, suspended=False
+        )
+        for user in (ALICE, BOB)
+    }
+    if status is None:
+        del users[blocked]
+    else:
+        for key, value in status.items():
+            setattr(users[blocked], key, value)
+    rooms = {
+        "!ch": channel_with_policy(
+            {"version": 1, "kind": "text", "allow_member_invites": True},
+            {AGENT: "join", ALICE: "join"},
+        )
+    }
+    configured = KoderaPolicy({"agent_user_id": AGENT}, FakeApi(rooms, users=users))
+    assert run(configured.user_may_invite(ALICE, BOB, "!ch")) == FORBIDDEN
+
+
+def test_channel_member_invites_refuse_archived_banned_and_muted_participants():
+    base = {
+        "version": 1,
+        "kind": "text",
+        "read_only": False,
+        "audience": "all",
+        "members": [],
+        "exempt": [],
+        "allow_member_invites": True,
+    }
+    for extra in (
+        {"archived": True},
+        {"banned": [ALICE]},
+        {"banned": [BOB]},
+        {"muted_until": {ALICE: "9999-01-01T00:00:00Z"}},
+    ):
+        rooms = {"!ch": channel_with_policy({**base, **extra}, {AGENT: "join", ALICE: "join"})}
+        assert run(policy(rooms).user_may_invite(ALICE, BOB, "!ch")) == FORBIDDEN

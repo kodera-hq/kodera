@@ -41,10 +41,11 @@ from .confidential import (
 )
 from .federation import MODE, acl, acl_matches, creation_mode, server_list
 
-__version__ = "0.1.6"
+__version__ = "0.1.7"
 
 DM_INVITEES = "io.kodera.dm.invitees"
 MAX_DM_INVITEES = 8
+ALLOWED_DM_CREATION_KEYS = frozenset({MODE, DM_INVITEES, "m.federate"})
 # State a member may never send, whatever its content.
 LOCKED_STATE = frozenset(
     {
@@ -129,8 +130,22 @@ class KoderaPolicy:
         if isinstance(room_config, dict):
             creation = room_config.get("creation_content")
             injected = [{"type": "m.room.server_acl", "state_key": "", "content": acl(self._server)}]
-            if isinstance(creation, dict) and creation_mode(creation) == "internal" and creation.get(DM_INVITEES) == room_config.get("invite") and room_config.get("initial_state") == injected:
-                room_config = {**room_config, "initial_state": []}
+            if (
+                isinstance(creation, dict)
+                and creation_mode(creation) == "internal"
+                and creation.get(DM_INVITEES) == room_config.get("invite")
+                and creation.get("io.kodera.room.initial_partner_servers") == []
+                and room_config.get("initial_state") == injected
+            ):
+                room_config = {
+                    **room_config,
+                    "initial_state": [],
+                    "creation_content": {
+                        k: v
+                        for k, v in creation.items()
+                        if k != "io.kodera.room.initial_partner_servers"
+                    },
+                }
         # Synapse before 1.132 passes no room_config: nothing tells a direct message apart.
         if room_config is None or not self._is_direct_message(user_id, room_config):
             return Codes.FORBIDDEN
@@ -150,16 +165,20 @@ class KoderaPolicy:
             for invitee in invite
         ) or len(set(invite)) != len(invite):
             return False
-        creation = config.get("creation_content") or {}
+        raw_creation = config.get("creation_content")
+        if raw_creation is not None and not isinstance(raw_creation, Mapping):
+            return False
+        creation = raw_creation or {}
         return (
             not config.get("invite_3pid")
             and not config.get("room_alias_name")
             and not config.get("initial_state")
             and not config.get("power_level_content_override")
+            and not config.get("additional_creators")
             and config.get("visibility") == "private"
             and config.get("preset") == "private_chat"
-            and isinstance(creation, dict)
-            and creation.get("type") is None
+            and set(creation) <= ALLOWED_DM_CREATION_KEYS
+            and type(creation.get("m.federate", False)) is bool
             and creation.get(MODE) in (None, "internal")
         )
 
@@ -241,9 +260,33 @@ class KoderaPolicy:
             ):
                 return Codes.FORBIDDEN
         if isinstance(policy_content, Mapping) and policy_content.get("allow_member_invites") is True:
+            policy_sender = getattr(policy_event, "sender", None)
+            if policy_sender != self._agent:
+                return Codes.FORBIDDEN
+            if policy_content.get("archived", False) is not False:
+                return Codes.FORBIDDEN
+            banned = policy_content.get("banned", ())
+            if inviter in banned or invitee in banned or _active_mute(policy_content, inviter):
+                return Codes.FORBIDDEN
             if _membership_of(state.get(("m.room.member", inviter))) != "join":
                 return Codes.FORBIDDEN
-            if self._api.is_mine(invitee) or policy_content.get("allow_federated_invites") is True:
+            if not self._api.is_mine(inviter) and not self._partner_federation_allowed(state, inviter):
+                return Codes.FORBIDDEN
+            local_users = [u for u in (inviter, invitee) if self._api.is_mine(u)]
+            if local_users and not await self._active_dm_users(*local_users):
+                return Codes.FORBIDDEN
+            if "local_members" in policy_content:
+                allowed_locals = policy_content["local_members"]
+                if (self._api.is_mine(inviter) and inviter not in allowed_locals) or (
+                    self._api.is_mine(invitee) and invitee not in allowed_locals
+                ):
+                    return Codes.FORBIDDEN
+            create_event = state.get(("m.room.create", ""))
+            federated_invites = policy_content.get("allow_federated_invites") is True
+            partner_room = creation_mode(getattr(create_event, "content", None)) == "partner" or federated_invites
+            if self._api.is_mine(invitee):
+                return Codes.FORBIDDEN if partner_room else NOT_SPAM
+            if federated_invites:
                 return NOT_SPAM
             return Codes.FORBIDDEN
         if not self._api.is_mine(invitee) or not await self._active_dm_users(inviter, invitee):
@@ -256,6 +299,9 @@ class KoderaPolicy:
             invitees = creation_content[DM_INVITEES]
             return NOT_SPAM if (
                 create.sender == inviter
+                and "additional_creators" not in creation_content
+                and "predecessor" not in creation_content
+                and "m.room.Predecessor" not in creation_content
                 and self._is_direct_message(inviter, {
                     "is_direct": True, "invite": list(invitees) if isinstance(invitees, (list, tuple)) else invitees,
                     "preset": "private_chat", "visibility": "private"
@@ -271,9 +317,15 @@ class KoderaPolicy:
         if user == self._agent:
             return NOT_SPAM
         state = await self._api.get_room_state(room)
+        create = state.get(("m.room.create", ""))
+        creator = getattr(create, "sender", None)
+        if not state or not isinstance(creator, str) or not self._api.is_mine(creator):
+            return Codes.FORBIDDEN
         policy_event = state.get(("io.kodera.room.policy", ""))
         content = getattr(policy_event, "content", None)
         if not self._api.is_mine(user) and not self._partner_federation_allowed(state, user):
+            return Codes.FORBIDDEN
+        if self._api.is_mine(user) and user != self._room_access and not await self._active_dm_users(user):
             return Codes.FORBIDDEN
         if not _has_governance(content):
             return NOT_SPAM
@@ -284,6 +336,8 @@ class KoderaPolicy:
         if content.get("archived", False) is not False:
             return Codes.FORBIDDEN
         if content["audience"] == "listed" and user not in content["members"]:
+            return Codes.FORBIDDEN
+        if "local_members" in content and self._api.is_mine(user) and user != self._room_access and user not in content["local_members"]:
             return Codes.FORBIDDEN
         return NOT_SPAM
 
@@ -306,7 +360,9 @@ class KoderaPolicy:
 
     async def check_event_for_spam(self, event: Any) -> Any:
         # Synapse runs this, not check_event_allowed, on events from other servers.
-        if getattr(event, "room_id", None):
+        if hasattr(event, "room_id") and event.room_id is not None:
+            if not isinstance(event.room_id, str) or not event.room_id.startswith("!"):
+                return Codes.FORBIDDEN
             state = await self._api.get_room_state(event.room_id)
             if not event_allowed(event, state, self._agent) or not self._governance_allows(event, state):
                 return Codes.FORBIDDEN
@@ -343,6 +399,12 @@ class KoderaPolicy:
         for key in ("members", "exempt"):
             values = content.get(key)
             if not isinstance(values, (list, tuple)) or not all(_is_valid_user_id(value) for value in values):
+                return False
+        if "local_members" in content:
+            local_members = content.get("local_members")
+            if not isinstance(local_members, (list, tuple)) or not all(
+                _is_valid_user_id(value) for value in local_members
+            ):
                 return False
         banned, muted = content.get('banned', ()), content.get('muted_until', {})
         if not isinstance(banned, (list, tuple)) or not all(_is_valid_user_id(value) for value in banned):
@@ -395,8 +457,25 @@ class KoderaPolicy:
         # This runs before the administrative account's governance exemption. A local
         # service may reconcile local users and remove remote users, never bypass a room's
         # remote admission boundary. Matrix's native event authorization still applies.
-        create = state.get(("m.room.create", ""))
-        creation = getattr(create, "content", None)
+        create = (
+            event
+            if event.type == "m.room.create" and getattr(event, "state_key", None) == ""
+            else state.get(("m.room.create", ""))
+        )
+        creation = getattr(create, "content", {}) if create is not None else None
+        creator = getattr(create, "sender", None)
+        if create is None or not _is_valid_user_id(creator) or not isinstance(creation, Mapping):
+            return False
+        membership = event.content.get("membership") if event.type == "m.room.member" else None
+        target = getattr(event, "state_key", None)
+        if event.sender != self._agent:
+            own_leave = membership == "leave" and target == event.sender
+            if (
+                not own_leave
+                and (not isinstance(creator, str) or not self._api.is_mine(creator))
+                and not self._partner_federation_allowed(state)
+            ):
+                return False
         if event.type == "io.kodera.room.policy" and event.content.get("allow_federated_invites") is True:
             if creation_mode(creation) != "partner" or self._partner_content(event.content, allow_archived=True) is None:
                 return False
@@ -414,8 +493,6 @@ class KoderaPolicy:
                     return False
             if not acl_matches(event.content, acl(self._server, partners or ())):
                 return False
-        membership = event.content.get("membership") if event.type == "m.room.member" else None
-        target = getattr(event, "state_key", None)
         if membership in {"join", "invite", "knock"}:
             if not _is_valid_user_id(target) or not self._api.is_mine(target):
                 if not self._partner_federation_allowed(state, target):
@@ -441,8 +518,12 @@ class KoderaPolicy:
             return event.type == 'm.room.member' and getattr(event, 'state_key', None) == event.sender and event.content.get('membership') == 'leave'
         if event.type == 'm.room.member' and event.content.get('membership') in {'join', 'invite', 'knock'} and getattr(event, 'state_key', None) in content.get('banned', ()):
             return False
-        if event.type in {'m.room.message', 'm.sticker', 'm.room.encrypted'} and _active_mute(content, event.sender):
-            return False
+        if _active_mute(content, event.sender):
+            return (
+                event.type == "m.room.member"
+                and getattr(event, "state_key", None) == event.sender
+                and event.content.get("membership") == "leave"
+            )
         if content.get("archived") is True:
             own_leave = (
                 event.type == "m.room.member" and getattr(event, "state_key", None) == event.sender
@@ -457,11 +538,27 @@ class KoderaPolicy:
                     return False
                 if membership == "invite" and event.sender not in content["members"]:
                     return False
+            if (
+                membership in {"join", "invite", "knock"}
+                and "local_members" in content
+                and isinstance(target, str)
+                and self._api.is_mine(target)
+                and target != self._room_access
+                and target not in content["local_members"]
+            ):
+                return False
             # A user's own join/leave is not an announcement state edit. Matrix's
             # native membership authorization still applies after this additional gate.
             if target == event.sender and membership in {"join", "leave"}:
                 return True
         if content["audience"] == "listed" and event.sender not in content["members"]:
+            return False
+        if (
+            "local_members" in content
+            and self._api.is_mine(event.sender)
+            and event.sender != self._room_access
+            and event.sender not in content["local_members"]
+        ):
             return False
         if content["read_only"] and (
             event.is_state() or event.type in {"m.room.message", "m.sticker", "m.room.encrypted"}
@@ -481,7 +578,16 @@ class KoderaPolicy:
 
 def _has_governance(content: Any) -> bool:
     return isinstance(content, Mapping) and any(
-        key in content for key in ("read_only", "audience", "members", "exempt", "banned", "muted_until")
+        key in content
+        for key in (
+            "read_only",
+            "audience",
+            "members",
+            "exempt",
+            "banned",
+            "muted_until",
+            "local_members",
+        )
     )
 
 

@@ -174,3 +174,48 @@ def test_moderation_transport_outage_stops_after_one_room(tmp_path, monkeypatch)
     payload.update(banned_subjects=[], muted_subjects=[])
     assert handlers.handle(CHANNEL_KIND, payload).status == "failed"
     assert len(calls) == 1
+
+
+def test_native_public_audio_ban_evicts_active_call_and_persists_calls_owed_on_livekit_outage(
+    tmp_path, monkeypatch
+):
+    import test_tenant_agent_channels as fixtures
+
+    from tenant_agent.engines import LiveKitUnavailableError
+    from tenant_agent.synapse import livekit_room
+
+    monkeypatch.setattr(fixtures, "SERVER", "community.example.org")
+    monkeypatch.setattr(fixtures, "AGENT", "@kodera-agent:community.example.org")
+    monkeypatch.setattr(fixtures, "ROOMS", "@kodera-rooms:community.example.org")
+    homeserver = ModeratedHomeserver()
+    handlers, _, livekit, state = build(tmp_path, homeserver=homeserver)
+    channel_id = str(uuid4())
+    entry = channel(channel_id, kind="audio", audience="all", members=[], denied=[])
+    payload = channel_set(1, entry, all_members=(ALICE, BOB))
+    assert handlers.handle(CHANNEL_KIND, payload).status == "succeeded"
+    room = state.channel_rooms()[channel_id]
+    alice_mx = homeserver.user_id(ALICE)
+    bob_mx = homeserver.user_id(BOB)
+    homeserver.rooms[room]["members"].update({alice_mx: "join", bob_mx: "join"})
+    lk_room = livekit_room(room)
+    livekit.rooms_[lk_room] = [f"{alice_mx}|DEV1", f"{bob_mx}|DEV2"]
+
+    def unavailable(name):
+        raise LiveKitUnavailableError("livekit down")
+
+    monkeypatch.setattr(livekit, "participants", unavailable)
+    payload_ban = channel_set(2, entry, all_members=(ALICE, BOB))
+    payload_ban.update(banned_subjects=[ALICE], muted_subjects=[])
+    failed = handlers.handle(CHANNEL_KIND, payload_ban)
+    assert failed.status == "failed"
+    assert state.calls_owed() == {room}
+
+    monkeypatch.undo()
+    monkeypatch.setattr(fixtures, "SERVER", "community.example.org")
+    monkeypatch.setattr(fixtures, "AGENT", "@kodera-agent:community.example.org")
+    monkeypatch.setattr(fixtures, "ROOMS", "@kodera-rooms:community.example.org")
+    recovered = handlers.handle(CHANNEL_KIND, {**payload_ban, "revision": 3})
+    assert recovered.status == "succeeded"
+    assert state.calls_owed() == set()
+    assert livekit.rooms_[lk_room] == [f"{bob_mx}|DEV2"]
+    assert homeserver.rooms[room]["members"][alice_mx] == "ban"

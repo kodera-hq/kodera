@@ -16,8 +16,9 @@ One room's failure does not stop the others: it is counted and logged, and the n
 
 import logging
 from dataclasses import dataclass, field
+from typing import Any
 
-from .channels import room_members
+from .channels import native_public, room_members
 from .docker_exec import ExecError
 from .engines import EngineError, LiveKit, LiveKitUnavailableError, Meet
 from .state import State
@@ -43,7 +44,7 @@ class RosterGuard:
         report = GuardReport()
         current = self._state.member_set()
         inactive = current.inactive if current else frozenset()
-        audio = self._audio_members()
+        audio, public_rooms = self._audio_roster()
         names = [room] if room else self._livekit.rooms()
         for index, name in enumerate(names):
             report.rooms += 1
@@ -52,7 +53,19 @@ class RosterGuard:
                 if not identities:
                     continue
                 if name.startswith("kodera-"):
-                    allowed = audio.get(name, frozenset())
+                    if name in public_rooms:
+                        try:
+                            allowed = self._public_audio_members(public_rooms[name])
+                        except (EngineError, ExecError):
+                            log.warning(
+                                "roster guard could not read public room %s members; failing closed",
+                                name,
+                                exc_info=True,
+                            )
+                            allowed = frozenset()
+                            report.failed_rooms += 1
+                    else:
+                        allowed = audio.get(name, frozenset())
                     for identity in identities:
                         user = identity.split("|", 1)[0]
                         if user not in allowed or user.split(":")[0][1:] in inactive:
@@ -78,17 +91,58 @@ class RosterGuard:
                 log.warning("roster guard could not check room %s", name, exc_info=True)
         return report
 
-    def _audio_members(self) -> dict[str, frozenset[str]]:
-        """LiveKit room → the Matrix users the channel set in force admits to its call."""
+    def _excluded_users(self, stored: dict[str, Any] | None) -> set[str]:
         if self._synapse is None:
-            return {}
+            return set()
+        current = self._state.member_set()
+        raw_banned = (stored or {}).get("banned_subjects", [])
+        revoked_subjects = set(raw_banned) if isinstance(raw_banned, list) else set()
+        if current is not None:
+            revoked_subjects |= set(current.inactive | current.erased)
+        excluded = {
+            u
+            for s in revoked_subjects
+            if isinstance(s, str) and (u := self._synapse.user_id(s)) is not None
+        }
+        excluded |= self._state.erased_accounts()
+        return excluded
+
+    def _public_audio_members(self, entry: tuple[str, frozenset[str]]) -> frozenset[str]:
+        if self._synapse is None:
+            return frozenset()
+        room_id, excluded = entry
+        joined = {
+            user
+            for user, membership in self._synapse.members(room_id).items()
+            if membership == "join" and user.partition(":")[2] == self._synapse.server_name
+        }
+        return frozenset(joined - excluded)
+
+    def _audio_roster(
+        self,
+    ) -> tuple[dict[str, frozenset[str]], dict[str, tuple[str, frozenset[str]]]]:
+        if self._synapse is None:
+            return {}, {}
         stored, rooms = self._state.channel_set(), self._state.channel_rooms()
+        excluded = frozenset(self._excluded_users(stored))
         found: dict[str, frozenset[str]] = {}
+        public_rooms: dict[str, tuple[str, frozenset[str]]] = {}
+        everyone = frozenset((stored or {}).get("all_members", []))
         for channel in (stored or {}).get("channels", []):
             room_id = rooms.get(channel["channel_id"])
             if channel["kind"] != "audio" or room_id is None or channel["archived"]:
                 continue
-            everyone = frozenset((stored or {}).get("all_members", []))
-            users = (self._synapse.user_id(s) for s in room_members(channel, everyone))
-            found[livekit_room(room_id)] = frozenset(u for u in users if u is not None)
+            lk_name = livekit_room(room_id)
+            if native_public(channel, self._synapse):
+                public_rooms[lk_name] = (room_id, excluded)
+            else:
+                users = (self._synapse.user_id(s) for s in room_members(channel, everyone))
+                found[lk_name] = frozenset(u for u in users if u is not None) - excluded
+        return found, public_rooms
+
+    def _audio_members(self) -> dict[str, frozenset[str]]:
+        """LiveKit room → the Matrix users the channel set in force admits to its call."""
+        found, public_rooms = self._audio_roster()
+        for lk_name, entry in public_rooms.items():
+            found[lk_name] = self._public_audio_members(entry)
         return found

@@ -54,6 +54,7 @@ import {
 import { NotRenewable, RefreshRefused, refreshingFetch } from './refresh'
 export { RefreshRefused }
 import {
+  isValidReactionKey,
   occupancyOf,
   threadView,
   roomViews,
@@ -582,7 +583,7 @@ export class EspaceStore {
         init?.method ?? (input instanceof Request ? input.method : 'GET')
       ).toUpperCase()
       const timeline =
-        /^\/_matrix\/client\/(?:v3|r0|unstable)\/rooms\/([^/]+)\/(send|redact|typing|read_markers|receipt|messages|state\/m\.room\.pinned_events)(?:\/|$)/.exec(
+        /^\/_matrix\/client\/(?:v3|r0|unstable)\/rooms\/([^/]+)\/(send|redact|typing|read_markers|receipt|messages|state\/(?!m\.room\.member(?:\/|$))[^/]+)(?:\/|$)/.exec(
           url.pathname
         )
       if (timeline && (timeline[2] === 'messages' || (method !== 'GET' && method !== 'HEAD'))) {
@@ -592,18 +593,29 @@ export class EspaceStore {
           /^\/_matrix\/client\/(?:v3|r0|unstable)\/rooms\/[^/]+\/typing\/([^/]+)$/.exec(
             url.pathname
           )
-        // No Request body reads or JSON parsing: only this exact content-free stop is eligible.
-        const mayFinishTyping =
-          cleanup &&
+        const isOwnTypingStop =
           timeline[2] === 'typing' &&
           method === 'PUT' &&
           url.origin === new URL(session.baseUrl).origin &&
           url.search === '' &&
           ownTyping !== null &&
           decodeURIComponent(ownTyping[1]!) === this.#me &&
-          init?.body === '{"typing":false}' &&
-          permitsPlaintext(this.getRoomBoundary(roomId))
-        if (!mayFinishTyping) this.#requirePlaintextRoom(roomId)
+          init?.body === '{"typing":false}'
+        // No Request body reads or JSON parsing: only this exact content-free stop is eligible.
+        const mayFinishTyping =
+          cleanup && isOwnTypingStop && permitsPlaintext(this.getRoomBoundary(roomId))
+        if (!mayFinishTyping) {
+          const isContentWrite =
+            timeline[2] === 'send' ||
+            timeline[2] === 'redact' ||
+            timeline[2]!.startsWith('state/') ||
+            (timeline[2] === 'typing' && !isOwnTypingStop)
+          if (isContentWrite) {
+            this.#requireUnmutedPlaintextRoom(roomId)
+          } else {
+            this.#requirePlaintextRoom(roomId)
+          }
+        }
       }
       return base(input, init)
     }
@@ -1344,14 +1356,54 @@ export class EspaceStore {
   /** Whether the room's power levels let the member change its pins. */
   canPin = (roomId: string): boolean => {
     const room = this.#client.getRoom(roomId)
-    if (!this.#isPlaintextRoomAllowed(roomId) || room === null || room.getMyMembership() !== 'join')
+    if (
+      !this.#isPlaintextRoomAllowed(roomId) ||
+      room === null ||
+      room.getMyMembership() !== 'join' ||
+      this.#isMutedInRoom(room)
+    )
       return false
     return room.currentState.maySendStateEvent(PINNED_EVENTS, this.#me)
+  }
+
+  /** Marks a room as confidential out-of-band so plaintext is permanently refused. */
+  markConfidentialRoom = (roomId: string): void => {
+    this.#boundaries.markProtected(roomId)
+    this.#timelines.delete(roomId)
+    this.#cached.delete(roomId)
+    this.#cache?.forget(roomId)
+    this.#threads.delete(roomId)
+    this.#pins.delete(roomId)
+    this.#eventsByRoom.delete(roomId)
+    this.#paging.delete(roomId)
+    this.#histories.delete(roomId)
+    if (!this.#stopped) {
+      this.#dirty.add(roomId)
+      this.#schedule()
+    }
+  }
+
+  #pendingRoomEvents(
+    room: NonNullable<ReturnType<MatrixClient['getRoom']>>
+  ): readonly MatrixEvent[] {
+    try {
+      return room.getPendingEvents()
+    } catch {
+      return []
+    }
   }
 
   /** No caller can opt a marked room back into plaintext, even after a state downgrade. */
   getRoomBoundary = (roomId: string): RoomBoundary => {
     const room = this.#client.getRoom(roomId)
+    if (
+      room !== null &&
+      [...room.getLiveTimeline().getEvents(), ...this.#pendingRoomEvents(room)].some(
+        (event) => event.getType() === 'm.room.encrypted'
+      )
+    ) {
+      this.#boundaries.markProtected(roomId)
+    }
     const value = (type: string) => {
       const event = room?.currentState.getStateEvents(type as never, '')
       return event ? { sender: event.getSender(), content: event.getContent() } : undefined
@@ -1368,6 +1420,21 @@ export class EspaceStore {
     )
   }
 
+  #isMutedInRoom(room: NonNullable<ReturnType<MatrixClient['getRoom']>>): boolean {
+    const server = serverNameOf(this.#me)
+    if (server === undefined) return false
+    const policyEvent = room.currentState.getStateEvents(POLICY as never, '')
+    if (policyEvent?.getSender() !== `@kodera-agent:${server}`) return false
+    const content = policyEvent.getContent() as Record<string, unknown> | undefined
+    const muted = content?.muted_until
+    if (muted === null || typeof muted !== 'object' || Array.isArray(muted)) return false
+    if (!Object.hasOwn(muted, this.#me)) return false
+    const until = (muted as Record<string, unknown>)[this.#me]
+    if (typeof until !== 'string') return true
+    const parsed = Date.parse(until)
+    return Number.isNaN(parsed) || parsed > Date.now()
+  }
+
   #isPlaintextRoomAllowed(roomId: string): boolean {
     return !this.#stopped && permitsPlaintext(this.getRoomBoundary(roomId))
   }
@@ -1376,10 +1443,23 @@ export class EspaceStore {
     if (!this.#isPlaintextRoomAllowed(roomId)) throw new ConfidentialRoomUnavailable()
   }
 
+  #requireUnmutedPlaintextRoom(roomId: string): void {
+    this.#requirePlaintextRoom(roomId)
+    const room = this.#client.getRoom(roomId)
+    if (room !== null && this.#isMutedInRoom(room)) {
+      throw new Error('The member is muted in this room. No content was sent.')
+    }
+  }
+
   /** Whether the room's power levels let the member post messages (`m.room.message`). */
   canSendMessage = (roomId: string): boolean => {
     const room = this.#client.getRoom(roomId)
-    if (!this.#isPlaintextRoomAllowed(roomId) || room === null || room.getMyMembership() !== 'join')
+    if (
+      !this.#isPlaintextRoomAllowed(roomId) ||
+      room === null ||
+      room.getMyMembership() !== 'join' ||
+      this.#isMutedInRoom(room)
+    )
       return false
     return room.currentState.maySendEvent(EventType.RoomMessage, this.#me)
   }
@@ -1387,7 +1467,12 @@ export class EspaceStore {
   /** Whether the room's power levels let the member react to messages (`m.reaction`). */
   canReact = (roomId: string): boolean => {
     const room = this.#client.getRoom(roomId)
-    if (!this.#isPlaintextRoomAllowed(roomId) || room === null || room.getMyMembership() !== 'join')
+    if (
+      !this.#isPlaintextRoomAllowed(roomId) ||
+      room === null ||
+      room.getMyMembership() !== 'join' ||
+      this.#isMutedInRoom(room)
+    )
       return false
     return room.currentState.maySendEvent(EventType.Reaction, this.#me)
   }
@@ -1397,7 +1482,7 @@ export class EspaceStore {
 
   /** Pins or unpins one event; the room's next state answers with the new list. */
   async setPinned(roomId: string, eventId: string, pinned: boolean): Promise<void> {
-    this.#requirePlaintextRoom(roomId)
+    this.#requireUnmutedPlaintextRoom(roomId)
     const current = this.getPinned(roomId)
     if (current.includes(eventId) === pinned) return
     const next = pinned ? [...current, eventId] : current.filter((id) => id !== eventId)
@@ -1513,6 +1598,8 @@ export class EspaceStore {
    */
   setTyping = (roomId: string, typing: boolean, now = Date.now()): void => {
     if (this.#stopped || !permitsPlaintext(this.getRoomBoundary(roomId))) return
+    const room = this.#client.getRoom(roomId)
+    if (typing && room !== null && this.#isMutedInRoom(room)) return
     const sent = this.#typingSent.get(roomId)
     if (typing) {
       if (sent !== undefined && now - sent < TYPING_RESEND_MS) return
@@ -1713,7 +1800,7 @@ export class EspaceStore {
   }
 
   async send(roomId: string, body: string, options: SendOptions = {}): Promise<void> {
-    this.#requirePlaintextRoom(roomId)
+    this.#requireUnmutedPlaintextRoom(roomId)
     const relatesTo =
       options.threadRootId !== undefined
         ? {
@@ -1763,7 +1850,7 @@ export class EspaceStore {
     body: string,
     options: EditOptions = {}
   ): Promise<void> {
-    this.#requirePlaintextRoom(roomId)
+    this.#requireUnmutedPlaintextRoom(roomId)
     const html = markdownToHtml(body, options.mentionTargets ?? [])
     const userIds = [...new Set(options.mentions ?? [])]
     const room = options.mentionsRoom === true
@@ -1802,12 +1889,15 @@ export class EspaceStore {
   }
 
   async remove(roomId: string, eventId: string): Promise<void> {
-    this.#requirePlaintextRoom(roomId)
+    this.#requireUnmutedPlaintextRoom(roomId)
     await this.#client.redactEvent(roomId, eventId)
   }
 
   async react(roomId: string, eventId: string, key: string): Promise<void> {
-    this.#requirePlaintextRoom(roomId)
+    this.#requireUnmutedPlaintextRoom(roomId)
+    if (!isValidReactionKey(key)) {
+      throw new Error('Invalid reaction key. No content was sent.')
+    }
     await this.#client.sendEvent(
       roomId,
       'm.reaction' as never,
@@ -1818,10 +1908,10 @@ export class EspaceStore {
   }
 
   async unreact(roomId: string, eventId: string, key: string): Promise<void> {
-    this.#requirePlaintextRoom(roomId)
+    this.#requireUnmutedPlaintextRoom(roomId)
     const room = this.#client.getRoom(roomId)
     if (room === null) return
-    const match = [...room.getLiveTimeline().getEvents(), ...room.getPendingEvents()].find(
+    const match = [...room.getLiveTimeline().getEvents(), ...this.#pendingRoomEvents(room)].find(
       (event) => {
         if (event.getType() !== 'm.reaction' || event.isRedacted()) return false
         if (event.getSender() !== this.#me) return false
@@ -1843,15 +1933,19 @@ export class EspaceStore {
   #hasOwnReaction(roomId: string, eventId: string, key: string): boolean {
     const room = this.#client.getRoom(roomId)
     if (room === null) return false
-    return [...room.getLiveTimeline().getEvents(), ...room.getPendingEvents()].some((event) => {
-      if (event.getType() !== 'm.reaction' || event.isRedacted()) return false
-      if (event.getSender() !== this.#me) return false
-      const relates = (event.getOriginalContent() as Record<string, unknown>)['m.relates_to'] as
-        { rel_type?: unknown; event_id?: unknown; key?: unknown } | undefined
-      return (
-        relates?.rel_type === 'm.annotation' && relates.event_id === eventId && relates.key === key
-      )
-    })
+    return [...room.getLiveTimeline().getEvents(), ...this.#pendingRoomEvents(room)].some(
+      (event) => {
+        if (event.getType() !== 'm.reaction' || event.isRedacted()) return false
+        if (event.getSender() !== this.#me) return false
+        const relates = (event.getOriginalContent() as Record<string, unknown>)['m.relates_to'] as
+          { rel_type?: unknown; event_id?: unknown; key?: unknown } | undefined
+        return (
+          relates?.rel_type === 'm.annotation' &&
+          relates.event_id === eventId &&
+          relates.key === key
+        )
+      }
+    )
   }
 
   async toggleReaction(roomId: string, eventId: string, key: string): Promise<void> {
@@ -2574,15 +2668,18 @@ export class EspaceStore {
 
   #unsent(roomId: string, key: string): { room: Room; event: MatrixEvent } | null {
     const room = this.#client.getRoom(roomId)
-    const event = room
-      ?.getPendingEvents()
-      .find((candidate) => (candidate.getTxnId() ?? candidate.getId()) === key)
+    const event =
+      room === null
+        ? undefined
+        : this.#pendingRoomEvents(room).find(
+            (candidate) => (candidate.getTxnId() ?? candidate.getId()) === key
+          )
     return room && event && event.status === EventStatus.NOT_SENT ? { room, event } : null
   }
 
   /** Sends a failed message again, by its row key. */
   async resend(roomId: string, key: string): Promise<void> {
-    this.#requirePlaintextRoom(roomId)
+    this.#requireUnmutedPlaintextRoom(roomId)
     const unsent = this.#unsent(roomId, key)
     if (unsent !== null) await this.#client.resendEvent(unsent.event, unsent.room)
   }

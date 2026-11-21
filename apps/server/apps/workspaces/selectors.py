@@ -19,6 +19,28 @@ def active_text_channel_id(*, workspace_id: UUID, channel_id: UUID) -> UUID | No
     )
 
 
+def is_confidential_text_channel(*, workspace_id: UUID, channel_id: UUID) -> bool:
+    """Whether the active text channel carries the immutable confidential designation."""
+    return Channel.objects.filter(
+        id=channel_id,
+        workspace_id=workspace_id,
+        kind="text",
+        lifecycle="active",
+        is_confidential=True,
+    ).exists()
+
+
+def is_designated_confidential_channel(*, workspace_id: UUID, channel_id: UUID) -> bool:
+    """Whether an active or archived text channel carries the immutable confidential designation."""
+    return Channel.objects.filter(
+        id=channel_id,
+        workspace_id=workspace_id,
+        kind="text",
+        lifecycle__in=("active", "archived"),
+        is_confidential=True,
+    ).exists()
+
+
 def workspace_organisation(*, workspace_id: UUID) -> UUID:
     return Workspace.objects.values_list("organisation_id", flat=True).get(id=workspace_id)
 

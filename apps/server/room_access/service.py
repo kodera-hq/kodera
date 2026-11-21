@@ -282,6 +282,9 @@ class Service:
         try:
             for room_id in self.matrix.accept_invites(self.agent):
                 log.info("joined audio room %s", room_id)
+        except UpstreamError:
+            log.warning("invite acceptance failed; the next pass retries", exc_info=True)
+        try:
             names = set()
             for room in self.livekit.rooms():
                 name, room_id = str(room.get("name", "")), str(room.get("metadata", ""))

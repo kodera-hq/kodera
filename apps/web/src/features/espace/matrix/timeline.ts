@@ -118,6 +118,24 @@ function mentionsRoom(content: Record<string, unknown>): boolean {
   return value !== null && typeof value === 'object' && (value as { room?: unknown }).room === true
 }
 
+const REACTION_SEGMENTER = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
+const REACTION_EMOJI =
+  /\p{Extended_Pictographic}|\p{Emoji_Presentation}|\p{Regional_Indicator}|\u20E3/u
+const REACTION_FORBIDDEN =
+  // eslint-disable-next-line no-control-regex
+  /(?:\s|[\u0000-\u001f\u007f-\u009f\u00AD\u061C\u200B\u200C\u200E\u200F\u202A-\u202E\u2060-\u206F\uFEFF\u{E0000}-\u{E007F}]|\u034F)/u
+
+export function isValidReactionKey(key: unknown): key is string {
+  if (typeof key !== 'string' || key.length === 0 || key.length > 32) return false
+  if (REACTION_FORBIDDEN.test(key) || !REACTION_EMOJI.test(key)) return false
+  let count = 0
+  for (const _segment of REACTION_SEGMENTER.segment(key)) {
+    count += 1
+    if (count > 1) return false
+  }
+  return count === 1
+}
+
 const PILL = /<a\s+href="https:\/\/matrix\.to\/#\/(@[^"/?]+)"\s*>@?([^<]{1,80})<\/a>/giu
 
 function decodeEntities(text: string): string {
@@ -187,7 +205,7 @@ function collectRelations(events: readonly TimelineEvent[]) {
         edits.set(rel.event_id, { body, content, ts: event.origin_server_ts })
       }
     } else if (event.type === 'm.reaction' && rel.rel_type === 'm.annotation') {
-      if (typeof rel.key !== 'string' || rel.key === '') continue
+      if (!isValidReactionKey(rel.key)) continue
       const byKey = reactions.get(rel.event_id) ?? new Map<string, Set<string>>()
       const who = byKey.get(rel.key) ?? new Set<string>()
       who.add(event.sender)
