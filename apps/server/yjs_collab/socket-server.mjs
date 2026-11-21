@@ -39,6 +39,7 @@ export function createCollabServer({key, store, origins, pollMilliseconds = 1000
     if (room) return room
     if (rooms.size >= 32) throw new Error('room capacity reached')
     const doc = new Y.Doc(), awareness = new Awareness(doc)
+    awareness._checkInterval?.unref?.()
     awareness.setLocalState(null)
     room = {doc, awareness, connections: new Set(), owners: new Map(), refreshing: false}
     rooms.set(document, room)

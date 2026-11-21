@@ -62,6 +62,10 @@ function LiveFilesUpload({
   const copy = filesMessages[i18n.resolvedLanguage?.startsWith('en') ? 'en' : 'fr']
   const id = useId()
   const quota = useWorkspaceQuotasQuery(organisationId)
+  const snapshotRef = useRef(snapshot)
+  useEffect(() => {
+    snapshotRef.current = snapshot
+  }, [snapshot])
   const queue = useMemo(
     () =>
       new AttachmentQueue(
@@ -74,7 +78,8 @@ function LiveFilesUpload({
             store.canSendMessage?.(room) !== false
           )
         },
-        (room) => resolveAttachmentScope(room, store.getSnapshot().channels)
+        (room) =>
+          resolveAttachmentScope(room, (store.getSnapshot?.() ?? snapshotRef.current).channels)
       ),
     [organisationId, store]
   )

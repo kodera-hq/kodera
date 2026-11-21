@@ -98,6 +98,14 @@ test('createCollabServer closes immediately with 1013 lock-busy on both client u
     const initialMsg = once(ws, 'message')
     ws.send(JSON.stringify({ type: 'auth', token: signTicket(VALID_CLAIMS, key) }))
     await initialMsg
+    const admittedRoom = collab.rooms.get(VALID_CLAIMS.document)
+    assert.ok(admittedRoom, 'expected admitted room')
+    let awarenessDestroyed = false
+    const origDestroy = admittedRoom.awareness.destroy.bind(admittedRoom.awareness)
+    admittedRoom.awareness.destroy = () => {
+      awarenessDestroyed = true
+      origDestroy()
+    }
 
     const editDoc = load()
     editDoc.getXmlFragment('content').insert(0, [new Y.XmlElement('paragraph')])
@@ -108,14 +116,21 @@ test('createCollabServer closes immediately with 1013 lock-busy on both client u
     const [updateCloseCode, updateCloseReason] = await closePromise
     assert.equal(updateCloseCode, 1013)
     assert.equal(updateCloseReason.toString('utf8'), 'lock-busy')
+    const drainDeadline = Date.now() + 2000
+    while (collab.rooms.size > 0 && Date.now() < drainDeadline) {
+      await new Promise(resolve => setTimeout(resolve, 5))
+    }
+    assert.equal(collab.rooms.size, 0)
+    assert.equal(awarenessDestroyed, true)
 
     // 2. Background refresh encountering LockBusy also closes immediately with 1013 ('lock-busy').
-    const docId = VALID_CLAIMS.document
+    const docId = '00000000-0000-7000-8000-000000000099'
+    const refreshClaims = { ...VALID_CLAIMS, document: docId }
     const closed = []
     const refreshSocket = Object.assign(new EventEmitter(), {
       readyState: WebSocket.OPEN,
       bufferedAmount: 0,
-      claims: VALID_CLAIMS,
+      claims: refreshClaims,
       revision: 1,
       send() {},
       close(code, reason) {
@@ -126,7 +141,7 @@ test('createCollabServer closes immediately with 1013 lock-busy on both client u
     })
     collab.rooms.set(docId, {
       doc: { destroy() {} },
-      awareness: { getStates: () => new Map() },
+      awareness: { getStates: () => new Map(), destroy() {} },
       connections: new Set([refreshSocket]),
       owners: new Map(),
       refreshing: false,
@@ -140,7 +155,7 @@ test('createCollabServer closes immediately with 1013 lock-busy on both client u
     const revokedSocket = Object.assign(new EventEmitter(), {
       readyState: WebSocket.OPEN,
       bufferedAmount: 0,
-      claims: VALID_CLAIMS,
+      claims: refreshClaims,
       revision: 1,
       send() {},
       close(code, reason) {
