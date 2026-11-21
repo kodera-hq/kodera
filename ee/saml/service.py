@@ -430,42 +430,61 @@ def _allowed_oidc_client_ids() -> frozenset[str]:
 
         if settings.configured:
             saml_ids = getattr(settings, "KODERA_SAML_ALLOWED_OIDC_CLIENT_IDS", None)
-            if isinstance(saml_ids, str) and saml_ids.strip():
+            if isinstance(saml_ids, str):
                 configured.update(c.strip() for c in saml_ids.split(",") if c.strip())
                 explicit_override = True
-            elif isinstance(saml_ids, Sequence | set | frozenset) and not isinstance(saml_ids, bytes):
+            elif isinstance(saml_ids, Sequence | set | frozenset) and not isinstance(
+                saml_ids, bytes
+            ):
                 configured.update(str(c).strip() for c in saml_ids if str(c).strip())
                 explicit_override = True
 
             if not explicit_override:
                 core_ids = getattr(settings, "KODERA_ALLOWED_OIDC_CLIENT_IDS", None)
-                if isinstance(core_ids, str) and core_ids.strip():
+                if isinstance(core_ids, str):
                     configured.update(c.strip() for c in core_ids.split(",") if c.strip())
                     explicit_override = True
-                elif isinstance(core_ids, Sequence | set | frozenset) and not isinstance(core_ids, bytes):
+                elif isinstance(core_ids, Sequence | set | frozenset) and not isinstance(
+                    core_ids, bytes
+                ):
                     configured.update(str(c).strip() for c in core_ids if str(c).strip())
                     explicit_override = True
-
-            console_cid = getattr(settings, "KODERA_CONSOLE_CLIENT_ID", None)
-            if isinstance(console_cid, str) and console_cid.strip():
-                configured.add(console_cid.strip())
     except ImportError:
         pass
 
-    env_ids = os.environ.get("KODERA_ALLOWED_OIDC_CLIENT_IDS", "").strip()
-    if not explicit_override and env_ids:
-        configured.update(c.strip() for c in env_ids.split(",") if c.strip())
+    if not explicit_override and "KODERA_SAML_ALLOWED_OIDC_CLIENT_IDS" in os.environ:
+        raw_saml_env = os.environ["KODERA_SAML_ALLOWED_OIDC_CLIENT_IDS"]
+        configured.update(c.strip() for c in raw_saml_env.split(",") if c.strip())
         explicit_override = True
-    env_console = os.environ.get("KODERA_CONSOLE_CLIENT_ID", "").strip()
-    if env_console:
-        configured.add(env_console)
+    if not explicit_override and "KODERA_ALLOWED_OIDC_CLIENT_IDS" in os.environ:
+        raw_core_env = os.environ["KODERA_ALLOWED_OIDC_CLIENT_IDS"]
+        configured.update(c.strip() for c in raw_core_env.split(",") if c.strip())
+        explicit_override = True
 
     if not explicit_override:
         configured.update(_DEFAULT_ALLOWED_SAML_CLIENT_IDS)
+        try:
+            from django.conf import settings
+
+            if settings.configured:
+                console_cid = getattr(settings, "KODERA_CONSOLE_CLIENT_ID", None)
+                if isinstance(console_cid, str) and console_cid.strip():
+                    configured.add(console_cid.strip())
+        except ImportError:
+            pass
+        env_console = os.environ.get("KODERA_CONSOLE_CLIENT_ID", "").strip()
+        if env_console:
+            configured.add(env_console)
     return frozenset(c for c in configured if _CLIENT_ID_RE.fullmatch(c))
 
 
 def _default_oidc_client_id(allowed: frozenset[str]) -> str:
+    if not allowed:
+        raise SamlError(
+            "invalid_client_id",
+            "OIDC client_id is not allow-listed for SAML federation",
+            status=400,
+        )
     try:
         from django.conf import settings
 
@@ -480,14 +499,12 @@ def _default_oidc_client_id(allowed: frozenset[str]) -> str:
         return env_console
     if "console" in allowed:
         return "console"
-    return sorted(allowed)[0] if allowed else "console"
+    return sorted(allowed)[0]
 
 
 def _validate_oidc_client_id(raw: str | None) -> str:
     allowed = _allowed_oidc_client_ids()
-    if raw is None or not raw.strip():
-        return _default_oidc_client_id(allowed)
-    cleaned = raw.strip()
+    cleaned = _default_oidc_client_id(allowed) if (raw is None or not raw.strip()) else raw.strip()
     if not _CLIENT_ID_RE.fullmatch(cleaned) or cleaned not in allowed:
         raise SamlError(
             "invalid_client_id",

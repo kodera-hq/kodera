@@ -72,20 +72,31 @@ def seed_owned_po(relay):
     from apps.orgs.models import Membership
 
     org, _, members, tokens = relay[:4]
-    Membership.objects.filter(pk=members[2].id).update(role="org_billing")
+    staff_identity = operator()
+    staff_principal = billing.BillingPrincipal(
+        lane="staff",
+        identity_id=str(staff_identity.id),
+        user_id=str(staff_identity.user_id),
+        issuer=staff_identity.issuer,
+        subject=staff_identity.subject,
+        staff_roles=frozenset({"staff_operator"}),
+        live_authority=True,
+    )
+    Membership.objects.filter(pk=members[2].id).update(role="org_owner")
     identity = Identity.objects.get(organisation=org, user_id=members[2].user_id)
-    principal = billing.BillingPrincipal(
+    owner_principal = billing.BillingPrincipal(
         lane="customer",
         identity_id=str(identity.id),
         user_id=str(identity.user_id),
         issuer=identity.issuer,
         subject=tokens[2].subject,
-        org_roles={str(org.id): "org_billing"},
+        org_roles={str(org.id): "org_owner"},
         live_authority=True,
     )
-    router = billing.EnterpriseBillingRouter(authenticator=lambda _headers: principal)
+    staff_router = billing.EnterpriseBillingRouter(authenticator=lambda _headers: staff_principal)
+    owner_router = billing.EnterpriseBillingRouter(authenticator=lambda _headers: owner_principal)
     env = {"KODERA_EDITION": "enterprise"}
-    created = router.dispatch(
+    created = staff_router.dispatch(
         "POST",
         "/api/v1/ee/billing/purchase-orders",
         body=json.dumps(
@@ -96,27 +107,31 @@ def seed_owned_po(relay):
                 "billing_months": 12,
                 "committed_seats": 30,
                 "committed_storage_gb": 100,
-                "subtotal_excl_vat_minor": 500000,
             }
         ).encode(),
         headers={},
         environ=env,
     )
-    assert created.status_code == 201, created.content
+    assert created.status_code == 201, created.body
     identifier = created.json()["po_id"]
-    for payload in (
-        {"action": "issue"},
-        {"action": "countersign", "signatory": "Synthetic Plain Name"},
-    ):
-        response = router.dispatch(
-            "POST",
-            f"/api/v1/ee/billing/purchase-orders/{identifier}/transitions",
-            body=json.dumps(payload).encode(),
-            headers={},
-            environ=env,
-        )
-        assert response.status_code == 200, response.content
-        assert "countersigned_by_user_id" not in response.json()
+    issued = staff_router.dispatch(
+        "POST",
+        f"/api/v1/ee/billing/purchase-orders/{identifier}/transitions",
+        body=json.dumps({"action": "issue"}).encode(),
+        headers={},
+        environ=env,
+    )
+    assert issued.status_code == 200, issued.body
+    assert "countersigned_by_user_id" not in issued.json()
+    countersigned = owner_router.dispatch(
+        "POST",
+        f"/api/v1/ee/billing/purchase-orders/{identifier}/transitions",
+        body=json.dumps({"action": "countersign", "signatory": "Synthetic Plain Name"}).encode(),
+        headers={},
+        environ=env,
+    )
+    assert countersigned.status_code == 200, countersigned.body
+    assert "countersigned_by_user_id" not in countersigned.json()
     return identifier
 
 

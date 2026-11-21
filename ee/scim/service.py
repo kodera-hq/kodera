@@ -106,6 +106,7 @@ class ScimUser:
     updated_at: datetime
     deprovisioned_at: datetime | None = None
     django_user_id: str | None = None
+    provisioned_by_scim: bool = False
 
     @property
     def etag(self) -> str:
@@ -213,6 +214,7 @@ class DeprovisionRecord:
     revoked_sessions: tuple[str, ...]
     occurred_at: datetime
     django_user_id: str | None = None
+    provisioned_by_scim: bool = False
 
 
 @dataclass(slots=True)
@@ -286,6 +288,7 @@ def _user_snapshot_key(user: ScimUser) -> str:
             if user.deprovisioned_at is not None
             else None,
             "django_user_id": user.django_user_id,
+            "provisioned_by_scim": user.provisioned_by_scim,
         },
         sort_keys=True,
         separators=(",", ":"),
@@ -349,7 +352,7 @@ def _load_postgres_tenant_state(
         SELECT
             id, user_id, user_name, external_id, display_name, given_name, family_name,
             emails_json, active, roles_json, department, member_state, version,
-            created_at, updated_at, deprovisioned_at
+            created_at, updated_at, deprovisioned_at, provisioned_by_scim
         FROM public.ee_scim_user
         WHERE organisation_id = %s AND tenant_slug = %s
         ORDER BY created_at ASC, id ASC
@@ -377,6 +380,7 @@ def _load_postgres_tenant_state(
             updated_at=_coerce_utc(u_row[14]),
             deprovisioned_at=_coerce_utc(u_row[15]) if u_row[15] is not None else None,
             django_user_id=person_str,
+            provisioned_by_scim=bool(u_row[16]),
         )
         state.users[usr.id] = usr
         state.initial_user_snapshots[usr.id] = _user_snapshot_key(usr)
@@ -440,14 +444,15 @@ def _load_postgres_tenant_state(
 
     cursor.execute(
         """
-        SELECT scim_user_id, user_id, user_name, reason, revoked_sessions_json, occurred_at
+        SELECT scim_user_id, user_id, user_name, reason, revoked_sessions_json, occurred_at,
+               provisioned_by_scim
         FROM public.ee_scim_deprovision
         WHERE organisation_id = %s AND tenant_slug = %s
         ORDER BY occurred_at ASC, id ASC
         """,
         [organisation_id, tenant_slug],
     )
-    for d_uid, d_person, uname, reason, rev_json, occ in cursor.fetchall():
+    for d_uid, d_person, uname, reason, rev_json, occ, prov_scim in cursor.fetchall():
         rev_list = json.loads(str(rev_json))
         rev_tuple = tuple(str(s) for s in rev_list) if isinstance(rev_list, list) else ()
         state.deprovision_log.append(
@@ -459,6 +464,7 @@ def _load_postgres_tenant_state(
                 revoked_sessions=rev_tuple,
                 occurred_at=_coerce_utc(occ),
                 django_user_id=str(d_person) if d_person is not None else None,
+                provisioned_by_scim=bool(prov_scim),
             )
         )
     return state
@@ -527,12 +533,12 @@ def _flush_postgres_tenant_state(cur: object, state: _TenantScimState) -> None:
                     id, organisation_id, user_id, tenant_slug, user_name, user_name_lower,
                     external_id, display_name, given_name, family_name, emails_json, active,
                     roles_json, department, member_state, version, created_at, updated_at,
-                    deprovisioned_at
+                    deprovisioned_at, provisioned_by_scim
                 ) VALUES (
                     %s, %s, %s, %s, %s, %s,
                     %s, %s, %s, %s, %s, %s,
                     %s, %s, %s, %s, %s, %s,
-                    %s
+                    %s, %s
                 )
                 """,
                 [
@@ -555,6 +561,7 @@ def _flush_postgres_tenant_state(cur: object, state: _TenantScimState) -> None:
                     usr.created_at,
                     usr.updated_at,
                     usr.deprovisioned_at,
+                    usr.provisioned_by_scim,
                 ],
             )
         elif old_snap != _user_snapshot_key(usr):
@@ -702,8 +709,8 @@ def _flush_postgres_tenant_state(cur: object, state: _TenantScimState) -> None:
             """
             INSERT INTO public.ee_scim_deprovision (
                 id, organisation_id, scim_user_id, user_id, tenant_slug,
-                user_name, reason, revoked_sessions_json, occurred_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                user_name, reason, revoked_sessions_json, occurred_at, provisioned_by_scim
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             [
                 uuid7(),
@@ -715,6 +722,7 @@ def _flush_postgres_tenant_state(cur: object, state: _TenantScimState) -> None:
                 evt.reason,
                 json.dumps(list(evt.revoked_sessions), separators=(",", ":")),
                 evt.occurred_at,
+                evt.provisioned_by_scim,
             ],
         )
 
@@ -1116,6 +1124,7 @@ def _deprovision_user(
         revoked_sessions=revoked,
         occurred_at=now,
         django_user_id=user.django_user_id,
+        provisioned_by_scim=user.provisioned_by_scim,
     )
     state.deprovision_log.append(evt)
     state.new_deprovision_events.append(evt)
@@ -1382,9 +1391,10 @@ class ScimService:
             effective_org_id = organisation_id or state.organisation_id
             mapped_role = _resolve_scim_membership_role(roles)
             django_uid: str | None = None
+            provisioned_by_scim = True
             if effective_org_id is not None and can_use_postgres():
                 primary_email = _primary_email_value(emails, user_name)
-                django_uid = _sync_django_scim_provision(
+                django_uid, provisioned_by_scim = _sync_django_scim_provision(
                     organisation_id=effective_org_id,
                     user_name=user_name,
                     external_id=external_id,
@@ -1412,6 +1422,7 @@ class ScimService:
                 updated_at=timestamp,
                 deprovisioned_at=None if active else timestamp,
                 django_user_id=django_uid,
+                provisioned_by_scim=provisioned_by_scim,
             )
             state.users[user_id] = user
             if not active:
@@ -2229,25 +2240,48 @@ def _is_insufficient_privilege(exc: BaseException) -> bool:
     return False
 
 
-def _is_scim_provisioned_membership(
+def _is_scim_provisioned_user(
     cur: Any,
     *,
     organisation_id: UUID,
-    membership_id: UUID,
+    user_uuid: UUID,
+    include_deprovisioned: bool = False,
 ) -> bool:
-    cur.execute(
-        """
-        SELECT EXISTS (
-            SELECT 1
-            FROM public.audit_auditevent ae
-            WHERE ae.organisation_id = %s
-              AND ae.action = 'membership.created'
-              AND ae.target_urn = %s
-              AND ae.metadata->>'source' = 'scim'
+    if include_deprovisioned:
+        cur.execute(
+            """
+            SELECT (
+                EXISTS (
+                    SELECT 1
+                    FROM public.ee_scim_user su
+                    WHERE su.organisation_id = %s
+                      AND su.user_id = %s
+                      AND su.provisioned_by_scim = TRUE
+                )
+                OR EXISTS (
+                    SELECT 1
+                    FROM public.ee_scim_deprovision sd
+                    WHERE sd.organisation_id = %s
+                      AND sd.user_id = %s
+                      AND sd.provisioned_by_scim = TRUE
+                )
+            )
+            """,
+            [organisation_id, user_uuid, organisation_id, user_uuid],
         )
-        """,
-        [organisation_id, f"urn:kodera:membership:{membership_id}"],
-    )
+    else:
+        cur.execute(
+            """
+            SELECT EXISTS (
+                SELECT 1
+                FROM public.ee_scim_user su
+                WHERE su.organisation_id = %s
+                  AND su.user_id = %s
+                  AND su.provisioned_by_scim = TRUE
+            )
+            """,
+            [organisation_id, user_uuid],
+        )
     row = cur.fetchone()
     return bool(row and row[0])
 
@@ -2383,7 +2417,7 @@ def _sync_django_scim_provision(
     display_name: str,
     active: bool,
     requested_role: str | None = None,
-) -> str:
+) -> tuple[str, bool]:
     from apps.audit.models import AuditEvent
     from apps.audit.services import record_membership_event
     from apps.identity.models import Identity, User
@@ -2445,6 +2479,7 @@ def _sync_django_scim_provision(
                         .first()
                     )
 
+            provisioned_by_scim = False
             if identity is not None:
                 with connection.cursor() as cur:
                     _lock_and_verify_scim_person(
@@ -2470,15 +2505,29 @@ def _sync_django_scim_provision(
                             code="protected_role_scim_forbidden",
                         )
                     with connection.cursor() as cur:
-                        scim_managed = _is_scim_provisioned_membership(
+                        scim_managed = _is_scim_provisioned_user(
                             cur,
                             organisation_id=org.id,
-                            membership_id=membership.id,
+                            user_uuid=identity.user_id,
+                            include_deprovisioned=True,
                         )
+                        cur.execute(
+                            """
+                            SELECT EXISTS (
+                                SELECT 1
+                                FROM public.ee_scim_deprovision sd
+                                WHERE sd.organisation_id = %s
+                                  AND sd.user_id = %s
+                            )
+                            """,
+                            [org.id, identity.user_id],
+                        )
+                        prior_deprov_row = cur.fetchone()
+                        prior_scim_deprovisioned = bool(prior_deprov_row and prior_deprov_row[0])
                     proven_external_id = (
                         ext_uuid_str is not None and identity.subject == ext_uuid_str
                     )
-                    if not scim_managed and not proven_external_id:
+                    if not scim_managed and not proven_external_id and not prior_scim_deprovisioned:
                         raise ScimError(
                             "SCIM cannot link onto a pre-existing non-SCIM identity",
                             status=403,
@@ -2498,6 +2547,21 @@ def _sync_django_scim_provision(
                                 scim_type="mutability",
                                 code="non_scim_identity_forbidden",
                             )
+                    provisioned_by_scim = scim_managed
+                else:
+                    wants_email_change = bool(
+                        email
+                        and email.strip()
+                        and identity.email.strip().lower() != email.strip().lower()
+                    )
+                    if wants_email_change:
+                        raise ScimError(
+                            "SCIM cannot rewrite contact attributes of a non-SCIM identity",
+                            status=403,
+                            scim_type="mutability",
+                            code="non_scim_identity_forbidden",
+                        )
+                    provisioned_by_scim = False
             else:
                 # Never link or reuse a global `User` across tenants by contact `email` or
                 # `userName` (`CUSTOMER_PERSISTENCE.md:29` / `ADR-0024` / `owner_binding.py`).
@@ -2518,6 +2582,7 @@ def _sync_django_scim_provision(
                     enabled=True,
                 )
                 membership = None
+                provisioned_by_scim = True
 
             now_ts = timezone.now()
             req_id = f"scim-{uuid7()}"
@@ -2622,7 +2687,7 @@ def _sync_django_scim_provision(
                             organisation_id=org.id,
                             reason=member_set_hooks.CHANNEL_SET_REASON,
                         )
-            return str(user.id)
+            return str(user.id), provisioned_by_scim
     except DatabaseError as exc:
         if is_retriable_lock_contention(exc):
             raise ScimError(
@@ -2732,13 +2797,11 @@ def _enforce_scim_member_guard_and_sync_contact(
                 code="protected_role_scim_forbidden",
             )
 
-    scim_managed = bool(memberships) and all(
-        _is_scim_provisioned_membership(
-            cur,
-            organisation_id=organisation_id,
-            membership_id=m.id,
-        )
-        for m in memberships
+    scim_managed = bool(memberships) and _is_scim_provisioned_user(
+        cur,
+        organisation_id=organisation_id,
+        user_uuid=user_uuid,
+        include_deprovisioned=False,
     )
     if scim_managed:
         _maybe_sync_user_contact_columns(

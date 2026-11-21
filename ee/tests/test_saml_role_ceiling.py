@@ -1377,6 +1377,72 @@ def test_bug_0062_and_0063_scim_nonblocking_cutoff_tokens_attribute_sync_and_rev
     )
     assert _LOCALPART.fullmatch(bob_ident.subject) is not None
 
+    # `Mistral P2-2`: Even when `audit_auditevent.metadata` is scrubbed to `{}` by retention/erasure,
+    # durable `ee_scim_user.provisioned_by_scim = TRUE` still permits SCIM contact sync for Bob while
+    # continuing to reject pre-existing non-SCIM identities (`jane`) and `org_owner` / `org_billing`!
+    with transaction.atomic(), connection.cursor() as cur:
+        cur.execute("SET LOCAL session_replication_role = 'replica'")
+        cur.execute(
+            "UPDATE public.audit_auditevent SET metadata = '{}'::jsonb WHERE organisation_id = %s",
+            [owner.organisation_id],
+        )
+        cur.execute("SET LOCAL session_replication_role = 'origin'")
+
+    r_bob_contact_after_scrub = client.put(
+        f"/api/v1/ee/scim/v2/tenants/scim-s4/Users/{bob_scim_id}",
+        data=json.dumps(
+            {
+                "schemas": [SCIM_USER_SCHEMA],
+                "userName": "bob.admin@scim-s4.fr",
+                "displayName": "Bob Durable Provenance",
+                "active": True,
+                "emails": [{"value": "bob.durable@scim-s4.fr", "primary": True}],
+            }
+        ),
+        content_type="application/scim+json",
+        headers=scim_hdr,
+    )
+    assert r_bob_contact_after_scrub.status_code == 200, r_bob_contact_after_scrub.content
+    assert User.objects.get(id=bob_ident.user_id).email == "bob.durable@scim-s4.fr"
+    assert Identity.objects.get(id=bob_ident.id).email == "bob.durable@scim-s4.fr"
+
+    # Restore Bob's email back to `bob.admin@scim-s4.fr` (`200`) and confirm non-SCIM `jane` is still `403`!
+    assert (
+        client.put(
+            f"/api/v1/ee/scim/v2/tenants/scim-s4/Users/{bob_scim_id}",
+            data=json.dumps(
+                {
+                    "schemas": [SCIM_USER_SCHEMA],
+                    "userName": "bob.admin@scim-s4.fr",
+                    "displayName": "Bob Initial",
+                    "active": True,
+                    "emails": [{"value": "bob.admin@scim-s4.fr", "primary": True}],
+                }
+            ),
+            content_type="application/scim+json",
+            headers=scim_hdr,
+        ).status_code
+        == 200
+    )
+    assert (
+        client.put(
+            f"/api/v1/ee/scim/v2/tenants/scim-s4/Users/{jane_scim_id}",
+            data=json.dumps(
+                {
+                    "schemas": [SCIM_USER_SCHEMA],
+                    "userName": "jdoe",
+                    "externalId": jane_sub,
+                    "displayName": "Jane Still Non-SCIM",
+                    "active": True,
+                    "emails": [{"value": "attacker2.jane@scim-s4.fr", "primary": True}],
+                }
+            ),
+            content_type="application/scim+json",
+            headers=scim_hdr,
+        ).status_code
+        == 403
+    )
+
     # Refuses `org_billing` via SCIM `roles` (`403`)
     assert (
         client.put(

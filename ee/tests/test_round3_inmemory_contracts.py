@@ -22,7 +22,7 @@ from uuid import uuid4
 import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
-from django.test import Client
+from django.test import Client, override_settings
 
 from ee.audit_export.crypto import GENESIS_PREV_HASH, LEDGER_HASH_DOMAIN, compute_domain_sha256
 from ee.audit_export.ledger import (
@@ -31,6 +31,7 @@ from ee.audit_export.ledger import (
     ComplianceAuditEvent,
     _ledger_hash_fields,
     build_erasure_commitment_seal,
+    compute_erasure_row_mac,
     verify_ledger_sequence,
 )
 from ee.saml.service import (
@@ -254,6 +255,22 @@ def test_inmemory_oidc_callback_rfc7636_pkce_exchange_and_provider_error_burn(
     assert r_bad_sub.status_code == 403
     assert r_bad_sub.json()["code"] == "oidc_identity_mismatch"
 
+    # 4. `Mistral P2-1`: Explicit empty or invalid `KODERA_SAML_ALLOWED_OIDC_CLIENT_IDS` fails
+    #    closed (`400 invalid_client_id`) even when `client_id` is omitted (`None`) or `""`!
+    for empty_allowlist in ("", ["invalid client!", "   "]):
+        with override_settings(KODERA_SAML_ALLOWED_OIDC_CLIENT_IDS=empty_allowlist):
+            for candidate_params in (
+                {"idp_id": "okta-mem"},
+                {"idp_id": "okta-mem", "client_id": ""},
+                {"idp_id": "okta-mem", "client_id": "console"},
+            ):
+                r_deny_cid = client.get(
+                    "/api/v1/ee/sso/saml/mem-saml/login",
+                    candidate_params,
+                )
+                assert r_deny_cid.status_code == 400
+                assert r_deny_cid.json()["code"] == "invalid_client_id"
+
 
 def test_inmemory_erased_row_commitment_detects_actor_and_action_tampering() -> None:
     req_id = str(uuid4())
@@ -367,6 +384,95 @@ def test_inmemory_erased_row_commitment_detects_actor_and_action_tampering() -> 
     assert verify_ledger_sequence((replace(scrubbed_evt, source_ip="198.51.100.0/24"), next_evt))[0] is False
     assert verify_ledger_sequence((replace(scrubbed_evt, metadata={"leak": "x"}), next_evt))[0] is False
 
+    # `Codex P2-3`: Pipe-delimited field-boundary shifting (`actor_label="erased", action="member|targeted"`
+    # vs `actor_label="erased|member", action="targeted"`) is rejected by length-prefixed row MAC!
+    pipe_eid = str(uuid4())
+    pipe_hash = compute_domain_sha256(
+        LEDGER_HASH_DOMAIN,
+        _ledger_hash_fields(
+            sequence=1,
+            event_id=pipe_eid,
+            occurred_at=ts_1,
+            tenant_slug="acme",
+            actor_type="customer_user",
+            actor_id="owner-uuid",
+            action="member|targeted",
+            target_urn=orig_urn,
+            prev_hash=GENESIS_PREV_HASH,
+        ),
+    )
+    pipe_seal = build_erasure_commitment_seal(
+        scope="account",
+        erasure_request_id=req_id,
+        instruction_sha256="a" * 64,
+        inventory_sha256="b" * 64,
+        sequence=1,
+        event_id=pipe_eid,
+        occurred_at=ts_1,
+        tenant_slug="acme",
+        actor_type="customer_user",
+        actor_id="owner-uuid",
+        actor_label="erased",
+        action="member|targeted",
+        target_urn=scrubbed_urn,
+        prev_hash=GENESIS_PREV_HASH,
+        entry_hash=pipe_hash,
+    )
+    mac_a = compute_erasure_row_mac(
+        scope="account",
+        erasure_request_id=req_id,
+        sequence=1,
+        event_id=pipe_eid,
+        occurred_at=ts_1,
+        tenant_slug="acme",
+        actor_type="customer_user",
+        actor_id="owner-uuid",
+        actor_label="erased",
+        action="member|targeted",
+        target_urn=scrubbed_urn,
+        prev_hash=GENESIS_PREV_HASH,
+        entry_hash=pipe_hash,
+    )
+    mac_b = compute_erasure_row_mac(
+        scope="account",
+        erasure_request_id=req_id,
+        sequence=1,
+        event_id=pipe_eid,
+        occurred_at=ts_1,
+        tenant_slug="acme",
+        actor_type="customer_user",
+        actor_id="owner-uuid",
+        actor_label="erased|member",
+        action="targeted",
+        target_urn=scrubbed_urn,
+        prev_hash=GENESIS_PREV_HASH,
+        entry_hash=pipe_hash,
+    )
+    assert mac_a != mac_b
+    pipe_evt = ComplianceAuditEvent(
+        sequence=1,
+        event_id=pipe_eid,
+        occurred_at=ts_1,
+        tenant_slug="acme",
+        actor_type="customer_user",
+        actor_id="owner-uuid",
+        actor_label="erased",
+        action="member|targeted",
+        target_urn=scrubbed_urn,
+        source_ip="",
+        metadata={},
+        prev_hash=GENESIS_PREV_HASH,
+        entry_hash=pipe_hash,
+        pii_scrubbed=True,
+        erasure_commitment=pipe_seal,
+    )
+    assert verify_ledger_sequence((pipe_evt,)) == (True, [])
+    ok_shift, errs_shift = verify_ledger_sequence(
+        (replace(pipe_evt, actor_label="erased|member", action="targeted"),)
+    )
+    assert ok_shift is False
+    assert any("erasure_commitment mismatch" in err for err in errs_shift)
+
 
 def test_migration_0034_sql_parity_and_embedded_target_scrub_obligations() -> None:
     mig_file = (
@@ -390,6 +496,9 @@ def test_migration_0034_sql_parity_and_embedded_target_scrub_obligations() -> No
     assert "ee_audit_resolve_erasure_master_key" in mod.FORWARD
     assert "scim contact sync forbidden for protected role" in mod.FORWARD
     assert "scim contact sync requires scim-provisioned identity" in mod.FORWARD
+    assert "ADD COLUMN provisioned_by_scim boolean NOT NULL DEFAULT FALSE" in mod.FORWARD
+    assert "su.provisioned_by_scim = TRUE" in mod.FORWARD
+    assert "octet_length(convert_to(p_actor_label, 'UTF8'))" in mod.FORWARD
     assert mod.FORWARD.count("public.ee_audit_row_requires_target_scrub(") >= 3
     assert mod.FORWARD.count("public.ee_audit_build_erasure_seal(") >= 2
     # Ensure base64/json/secrets imports remain exercised cleanly without warnings

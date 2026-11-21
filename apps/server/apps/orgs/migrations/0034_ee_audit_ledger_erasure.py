@@ -22,6 +22,96 @@ ALTER TABLE public.ee_audit_ledger
         )
     );
 
+ALTER TABLE public.ee_scim_user
+    ADD COLUMN provisioned_by_scim boolean NOT NULL DEFAULT FALSE;
+
+ALTER TABLE public.ee_scim_deprovision
+    ADD COLUMN provisioned_by_scim boolean NOT NULL DEFAULT FALSE;
+
+DO $$
+BEGIN
+    IF to_regclass('public.audit_auditevent') IS NOT NULL THEN
+        UPDATE public.ee_scim_user su
+        SET provisioned_by_scim = TRUE
+        WHERE su.user_id IS NOT NULL
+          AND EXISTS (
+              SELECT 1
+              FROM public.orgs_organisation o
+              WHERE o.id = su.organisation_id
+                AND o.state <> 'closed'
+                AND o.deleted_at IS NULL
+          )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM public.orgs_privacyerasure pe
+              WHERE pe.organisation_reference = su.organisation_id
+          )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM public.orgs_accounterasure ae_cut
+              WHERE ae_cut.user_reference = su.user_id
+          )
+          AND EXISTS (
+              SELECT 1
+              FROM public.orgs_membership m
+              JOIN public.audit_auditevent ae
+                ON ae.organisation_id = m.organisation_id
+               AND ae.action = 'membership.created'
+               AND ae.target_urn = ('urn:kodera:membership:' || m.id::text)
+               AND ae.metadata->>'source' = 'scim'
+              WHERE m.organisation_id = su.organisation_id
+                AND m.user_id = su.user_id
+                AND m.deleted_at IS NULL
+          );
+
+        UPDATE public.ee_scim_deprovision sd
+        SET provisioned_by_scim = TRUE
+        WHERE sd.user_id IS NOT NULL
+          AND EXISTS (
+              SELECT 1
+              FROM public.orgs_organisation o
+              WHERE o.id = sd.organisation_id
+                AND o.state <> 'closed'
+                AND o.deleted_at IS NULL
+          )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM public.orgs_privacyerasure pe
+              WHERE pe.organisation_reference = sd.organisation_id
+          )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM public.orgs_accounterasure ae_cut
+              WHERE ae_cut.user_reference = sd.user_id
+          )
+          AND EXISTS (
+              SELECT 1
+              FROM public.orgs_membership m
+              JOIN public.audit_auditevent ae
+                ON ae.organisation_id = m.organisation_id
+               AND ae.action = 'membership.created'
+               AND ae.target_urn = ('urn:kodera:membership:' || m.id::text)
+               AND ae.metadata->>'source' = 'scim'
+              WHERE m.organisation_id = sd.organisation_id
+                AND m.user_id = sd.user_id
+                AND m.deleted_at IS NULL
+          );
+    END IF;
+END
+$$;
+
+DROP TRIGGER IF EXISTS a_resource_binding ON public.ee_scim_user;
+CREATE TRIGGER a_resource_binding BEFORE UPDATE ON public.ee_scim_user FOR EACH ROW
+    EXECUTE FUNCTION public.ee_resource_binding_guard(
+        'id', 'organisation_id', 'user_id', 'tenant_slug', 'created_at', 'provisioned_by_scim'
+    );
+
+DROP TRIGGER IF EXISTS a_resource_binding ON public.ee_scim_deprovision;
+CREATE TRIGGER a_resource_binding BEFORE UPDATE ON public.ee_scim_deprovision FOR EACH ROW
+    EXECUTE FUNCTION public.ee_resource_binding_guard(
+        'id', 'organisation_id', 'scim_user_id', 'user_id', 'tenant_slug', 'occurred_at', 'provisioned_by_scim'
+    );
+
 CREATE FUNCTION public.ee_audit_hmac_sha256_hex(p_key bytea, p_msg bytea)
 RETURNS text
 LANGUAGE plpgsql
@@ -114,20 +204,20 @@ BEGIN
         row_mac_key,
         convert_to(
             'kodera-ee-audit-erased-v2|'
-            || p_scope || '|'
-            || p_req_id::text || '|'
-            || p_org_id::text || '|'
-            || p_seq::text || '|'
-            || p_event_id || '|'
-            || p_occurred_at || '|'
-            || p_tenant_slug || '|'
-            || p_actor_type || '|'
-            || p_actor_id || '|'
-            || p_actor_label || '|'
-            || p_action || '|'
-            || p_target_urn || '|{}|'
-            || p_prev_hash || '|'
-            || p_entry_hash,
+            || octet_length(convert_to(p_scope, 'UTF8'))::text || ':' || p_scope || '|'
+            || octet_length(convert_to(p_req_id::text, 'UTF8'))::text || ':' || p_req_id::text || '|'
+            || octet_length(convert_to(p_org_id::text, 'UTF8'))::text || ':' || p_org_id::text || '|'
+            || octet_length(convert_to(p_seq::text, 'UTF8'))::text || ':' || p_seq::text || '|'
+            || octet_length(convert_to(p_event_id, 'UTF8'))::text || ':' || p_event_id || '|'
+            || octet_length(convert_to(p_occurred_at, 'UTF8'))::text || ':' || p_occurred_at || '|'
+            || octet_length(convert_to(p_tenant_slug, 'UTF8'))::text || ':' || p_tenant_slug || '|'
+            || octet_length(convert_to(p_actor_type, 'UTF8'))::text || ':' || p_actor_type || '|'
+            || octet_length(convert_to(p_actor_id, 'UTF8'))::text || ':' || p_actor_id || '|'
+            || octet_length(convert_to(p_actor_label, 'UTF8'))::text || ':' || p_actor_label || '|'
+            || octet_length(convert_to(p_action, 'UTF8'))::text || ':' || p_action || '|'
+            || octet_length(convert_to(p_target_urn, 'UTF8'))::text || ':' || p_target_urn || '|2:{}|'
+            || octet_length(convert_to(p_prev_hash, 'UTF8'))::text || ':' || p_prev_hash || '|'
+            || octet_length(convert_to(p_entry_hash, 'UTF8'))::text || ':' || p_entry_hash,
             'UTF8'
         )
     );
@@ -1077,17 +1167,7 @@ BEGIN
         FROM public.ee_scim_user su
         WHERE su.organisation_id = p_org
           AND su.user_id = p_user
-    ) OR NOT EXISTS (
-        SELECT 1
-        FROM public.orgs_membership m
-        JOIN public.audit_auditevent ae
-          ON ae.organisation_id = m.organisation_id
-         AND ae.action = 'membership.created'
-         AND ae.target_urn = ('urn:kodera:membership:' || m.id::text)
-         AND ae.metadata->>'source' = 'scim'
-        WHERE m.organisation_id = p_org
-          AND m.user_id = p_user
-          AND m.deleted_at IS NULL
+          AND su.provisioned_by_scim = TRUE
     ) THEN
         RAISE EXCEPTION 'scim contact sync requires scim-provisioned identity'
             USING ERRCODE = '42501';
@@ -1256,6 +1336,25 @@ DROP FUNCTION IF EXISTS public.ee_audit_build_erasure_seal(
 );
 DROP FUNCTION IF EXISTS public.ee_audit_resolve_erasure_master_key();
 DROP FUNCTION IF EXISTS public.ee_audit_hmac_sha256_hex(bytea, bytea);
+
+DROP TRIGGER IF EXISTS a_resource_binding ON public.ee_scim_user;
+CREATE TRIGGER a_resource_binding BEFORE UPDATE ON public.ee_scim_user FOR EACH ROW
+    EXECUTE FUNCTION public.ee_resource_binding_guard(
+        'id', 'organisation_id', 'user_id', 'tenant_slug', 'created_at'
+    );
+
+DROP TRIGGER IF EXISTS a_resource_binding ON public.ee_scim_deprovision;
+CREATE TRIGGER a_resource_binding BEFORE UPDATE ON public.ee_scim_deprovision FOR EACH ROW
+    EXECUTE FUNCTION public.ee_resource_binding_guard(
+        'id', 'organisation_id', 'scim_user_id', 'user_id', 'tenant_slug', 'occurred_at'
+    );
+
+ALTER TABLE public.ee_scim_deprovision
+    DROP COLUMN IF EXISTS provisioned_by_scim;
+
+ALTER TABLE public.ee_scim_user
+    DROP COLUMN IF EXISTS provisioned_by_scim;
+
 ALTER TABLE public.ee_audit_ledger
     DROP CONSTRAINT IF EXISTS ee_audit_ledger_erasure_commitment_chk,
     DROP COLUMN IF EXISTS erasure_commitment;
