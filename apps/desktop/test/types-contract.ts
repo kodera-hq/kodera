@@ -2,6 +2,7 @@ import {
   type CommunityDeployResult,
   type CommunityPreflightResult,
   type CommunityPrepareResult,
+  type CommunityStackDirSelectionResult,
   type CommunityTlsModeSlug,
   type DesktopAppMetadata,
   type DesktopDeepLinkEvent,
@@ -69,19 +70,21 @@ export async function verifyDesktopTypeContract(): Promise<void> {
   await client.loadSecureCredentialStatus('matrix-session', '@alice:kodera.io');
   await client.deleteSecureCredential('matrix-session', '@alice:kodera.io');
   await client.beginOidcPkceLoopback({
-    issuerOrigin: 'https://auth.kodera.io',
+    issuerOrigin: 'https://auth.kodera.io/realms/kodera',
     clientId: 'kodera-desktop',
     codeVerifier: 'pkce_verifier_fixture_alpha_bravo_charlie_delta_01',
     state: 'pkce_state_fixture_0001',
     loopbackPort: 51_920,
   });
   await client.completeOidcPkceCallback(
-    'http://127.0.0.1:51920/auth/callback?code=code_fixture_0001&state=pkce_state_fixture_0001',
+    'http://127.0.0.1:51920/auth/callback?code=code_fixture_0001&state=pkce_state_fixture_0001&iss=https%3A%2F%2Fauth.kodera.io%2Frealms%2Fkodera',
   );
   await client.restoreWindowBounds();
 
   const tlsModes: readonly CommunityTlsModeSlug[] = COMMUNITY_TLS_MODES;
   void tlsModes;
+  const selectedDir: CommunityStackDirSelectionResult = await client.selectCommunityStackDir();
+  void selectedDir;
   const preflight: CommunityPreflightResult = await client.preflightCommunityDeploy({
     stackDir: '/srv/kodera/community',
     domain: 'chat.example.org',

@@ -238,6 +238,12 @@ impl DesktopShellHost {
         self.session.is_some()
     }
 
+    pub fn active_organisation_id(&self) -> Option<&str> {
+        self.session
+            .as_ref()
+            .and_then(DesktopWorkspaceSession::organisation_id)
+    }
+
     pub fn clear_active_session(&mut self) {
         if let Some(session) = &mut self.session {
             session.clear_session();

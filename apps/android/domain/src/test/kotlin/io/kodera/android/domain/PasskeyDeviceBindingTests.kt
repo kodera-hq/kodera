@@ -255,4 +255,98 @@ class PasskeyDeviceBindingTests {
             assertEquals(PasskeyBindingError.SCOPE_MISMATCH, failure.reason)
         }
     }
+
+    @Test
+    fun androidCredentialManagerPackageNameBrowserTokenBindingAndCborEdExtensionsSucceedWhileDuplicateKeysFail() {
+        val ecKeyPair = generateP256KeyPair()
+        val apkFacet = "android:apk-key-hash:${PasskeyBase64Url.encodeUnpadded(ByteArray(32) { 7 })}"
+        val regChallenge = ByteArray(32) { (it + 3).toByte() }
+        val credPropsCbor = byteArrayOf(
+            0xA1.toByte(),
+            0x69,
+            'c'.code.toByte(), 'r'.code.toByte(), 'e'.code.toByte(), 'd'.code.toByte(),
+            'P'.code.toByte(), 'r'.code.toByte(), 'o'.code.toByte(), 'p'.code.toByte(), 's'.code.toByte(),
+            0xA1.toByte(),
+            0x62, 'r'.code.toByte(), 'k'.code.toByte(),
+            0xF5.toByte(),
+        )
+
+        // 1. Real Android CredentialManager registration with `androidPackageName` + `ED=0x80` credProps CBOR map.
+        val regClientJson = """{"type":"webauthn.create","challenge":"${PasskeyBase64Url.encodeUnpadded(regChallenge)}","origin":"$apkFacet","androidPackageName":"io.kodera.android"}"""
+            .toByteArray(Charsets.UTF_8)
+        val rpHash = PasskeyDeviceBinding.sha256(rpId.toByteArray(Charsets.UTF_8))
+        val regFlags = byteArrayOf((0x01 or 0x04 or 0x08 or 0x10 or 0x40 or 0x80).toByte()) // UP|UV|BE|BS|AT|ED = 0xDD
+        val zeroCounter = ByteArray(4)
+        val zeroAaguid = ByteArray(16)
+        val handleLenBe = byteArrayOf(0x00, keyHandleSample.size.toByte())
+        val regAuthData = rpHash + regFlags + zeroCounter + zeroAaguid + handleLenBe + keyHandleSample + coseEs256Key(ecKeyPair) + credPropsCbor
+
+        val verified = PasskeyDeviceBinding.verifyRegistration(
+            organisationId = orgA,
+            rpId = rpId,
+            origin = apkFacet,
+            expectedChallengeBytes = regChallenge,
+            response = PasskeyRegistrationResponse(regClientJson, regAuthData),
+        )
+        assertEquals(PasskeyResidencyPosture.MULTI_DEVICE_SYNCED, verified.residencyPosture)
+
+        // 2. Android CredentialManager assertion with `androidPackageName` + `ED=0x80` CBOR map.
+        val binding = verified.binding
+        val c1 = binding.issueChallenge(orgA, now = 600L, lifetimeSeconds = 30L)
+        val assertClientJson = """{"type":"webauthn.get","challenge":"${c1.base64Url}","origin":"$apkFacet","androidPackageName":"io.kodera.android"}"""
+            .toByteArray(Charsets.UTF_8)
+        val assertAuthData = rpHash + byteArrayOf(0x9D.toByte()) + byteArrayOf(0, 0, 0, 1) + credPropsCbor
+        val signer = Signature.getInstance("SHA256withECDSA")
+        signer.initSign(ecKeyPair.private)
+        signer.update(assertAuthData + PasskeyDeviceBinding.sha256(assertClientJson))
+        val assertDer = signer.sign()
+        val posture = binding.verifyAssertion(
+            orgA,
+            c1,
+            PasskeyAssertion(keyHandleSample, assertClientJson, assertAuthData, assertDer),
+            now = 601L,
+        )
+        assertEquals(PasskeyResidencyPosture.MULTI_DEVICE_SYNCED, posture)
+
+        // 3. Browser CollectedClientData with `tokenBinding` object + `topOrigin` succeeds, while duplicate keys fail.
+        val webBinding = PasskeyDeviceBinding.create(
+            organisationId = orgA,
+            rpId = rpId,
+            origin = webOrigin,
+            keyHandleId = keyHandleSample,
+            publicSec1Key = uncompressedSec1(ecKeyPair),
+        )
+        val c2 = webBinding.issueChallenge(orgA, now = 700L, lifetimeSeconds = 30L)
+        val dupJson = """{"type":"webauthn.get","challenge":"${c2.base64Url}","origin":"$webOrigin","\u0074ype":"webauthn.get"}"""
+            .toByteArray(Charsets.UTF_8)
+        val basicAuthData = rpHash + byteArrayOf(0x05) + byteArrayOf(0, 0, 0, 1)
+        signer.initSign(ecKeyPair.private)
+        signer.update(basicAuthData + PasskeyDeviceBinding.sha256(dupJson))
+        try {
+            webBinding.verifyAssertion(
+                orgA,
+                c2,
+                PasskeyAssertion(keyHandleSample, dupJson, basicAuthData, signer.sign()),
+                now = 701L,
+            )
+            fail("Expected duplicate key refusal")
+        } catch (failure: PasskeyBindingFailure) {
+            assertEquals(PasskeyBindingError.INVALID_INPUT, failure.reason)
+        }
+
+        val browserJson = """{"type":"webauthn.get","challenge":"${c2.base64Url}","origin":"$webOrigin","crossOrigin":false,"topOrigin":"$webOrigin","tokenBinding":{"status":"present","id":"AQIDBAUGBwgJCgsMDQ4PEA"}}"""
+            .toByteArray(Charsets.UTF_8)
+        val webAuthData = rpHash + byteArrayOf(0x85.toByte()) + byteArrayOf(0, 0, 0, 1) + credPropsCbor
+        signer.initSign(ecKeyPair.private)
+        signer.update(webAuthData + PasskeyDeviceBinding.sha256(browserJson))
+        assertEquals(
+            PasskeyResidencyPosture.SINGLE_DEVICE_BOUND,
+            webBinding.verifyAssertion(
+                orgA,
+                c2,
+                PasskeyAssertion(keyHandleSample, browserJson, webAuthData, signer.sign()),
+                now = 701L,
+            ),
+        )
+    }
 }

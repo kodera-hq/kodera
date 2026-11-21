@@ -7,9 +7,9 @@ use super::{
     DesktopWorkspaceSession, DispatchedNotification, DockBadgeSnapshot, KeychainCredentialStatus,
     KeychainError, KeychainSecretKind, KeychainSessionMetadata, NotificationError,
     OidcCallbackOutcome, OidcLoopbackError, OidcLoopbackSessionReady, PttStateSnapshot,
-    RestoredWindowPlacement, SelfHostDeploymentPlan, SelfHostDeploymentSpec, SelfHostHealthError,
-    SelfHostHealthReport, TrayCallKind, TrayMenuActionOutcome, TrayMenuItemId, TrayPttError,
-    TrayStateSnapshot, WindowStateError,
+    RedactedApiToken, RestoredWindowPlacement, SelfHostDeploymentPlan, SelfHostDeploymentSpec,
+    SelfHostHealthError, SelfHostHealthReport, TrayCallKind, TrayMenuActionOutcome, TrayMenuItemId,
+    TrayPttError, TrayStateSnapshot, WindowStateError,
 };
 use kodera_rs::{
     encode_hex, ChannelAccessDecision, ChannelPermissionPolicy, ChannelPollSnapshot, CoreError,
@@ -18,6 +18,7 @@ use kodera_rs::{
     KODERA_MONOGRAM_BG_HEX, MAX_PROXIMITY_QUEUE_CAPACITY,
 };
 use std::{collections::BTreeMap, fmt};
+use zeroize::{Zeroize, Zeroizing};
 
 /// Bound raw UTF-8 requests before parsing or allocating decoded fields.
 pub const MAX_IPC_COMMAND_BYTES: usize = 16_384;
@@ -127,7 +128,7 @@ pub enum DesktopCommandRequest {
         region: String,
         fqdn: String,
         acme_email: String,
-        raw_token: String,
+        token: RedactedApiToken,
     },
     ValidateDocsPadUrl {
         organisation_id: String,
@@ -375,20 +376,33 @@ impl DesktopCommandRequest {
                 organisation_id,
                 raw_url: take_string(&mut fields, "raw_url")?,
             },
-            "plan_self_host" => Self::PlanSelfHost {
-                organisation_id,
-                provider: match take_string(&mut fields, "provider")?.as_str() {
+            "plan_self_host" => {
+                let provider = match take_string(&mut fields, "provider")?.as_str() {
                     "scaleway" => CloudProvider::Scaleway,
                     "hetzner" => CloudProvider::Hetzner,
                     "hostinger" => CloudProvider::Hostinger,
                     "ovhcloud" => CloudProvider::OvhCloud,
                     _ => return Err(DesktopCommandError::InvalidRequest),
-                },
-                region: take_string(&mut fields, "region")?,
-                fqdn: take_string(&mut fields, "fqdn")?,
-                acme_email: take_string(&mut fields, "acme_email")?,
-                raw_token: take_string(&mut fields, "raw_token")?,
-            },
+                };
+                let region = take_string(&mut fields, "region")?;
+                let fqdn = take_string(&mut fields, "fqdn")?;
+                let acme_email = take_string(&mut fields, "acme_email")?;
+                let mut raw_token_bytes =
+                    Zeroizing::new(take_string(&mut fields, "raw_token")?.into_bytes());
+                if !fields.is_empty() {
+                    return Err(DesktopCommandError::InvalidRequest);
+                }
+                let token = RedactedApiToken::validate_and_zeroize_slice(&mut raw_token_bytes)
+                    .map_err(DesktopCommandError::Deployment)?;
+                Self::PlanSelfHost {
+                    organisation_id,
+                    provider,
+                    region,
+                    fqdn,
+                    acme_email,
+                    token,
+                }
+            }
             "validate_docs_pad_url" => Self::ValidateDocsPadUrl {
                 organisation_id,
                 raw_url: take_string(&mut fields, "raw_url")?,
@@ -707,17 +721,33 @@ enum CommandField {
     Array(Vec<CommandArrayValue>),
 }
 
+impl Drop for CommandField {
+    fn drop(&mut self) {
+        if let Self::String(s) = self {
+            s.zeroize();
+        }
+    }
+}
+
 enum CommandArrayValue {
     String(String),
     Integer(u64),
+}
+
+impl Drop for CommandArrayValue {
+    fn drop(&mut self) {
+        if let Self::String(s) = self {
+            s.zeroize();
+        }
+    }
 }
 
 fn take_string(
     fields: &mut BTreeMap<String, CommandField>,
     key: &str,
 ) -> Result<String, DesktopCommandError> {
-    match fields.remove(key) {
-        Some(CommandField::String(value)) => Ok(value),
+    match fields.remove(key).as_mut() {
+        Some(CommandField::String(value)) => Ok(core::mem::take(value)),
         _ => Err(DesktopCommandError::InvalidRequest),
     }
 }
@@ -726,9 +756,9 @@ fn take_optional_string(
     fields: &mut BTreeMap<String, CommandField>,
     key: &str,
 ) -> Result<Option<String>, DesktopCommandError> {
-    match fields.remove(key) {
+    match fields.remove(key).as_mut() {
         None => Ok(None),
-        Some(CommandField::String(value)) => Ok(Some(value)),
+        Some(CommandField::String(value)) => Ok(Some(core::mem::take(value))),
         Some(_) => Err(DesktopCommandError::InvalidRequest),
     }
 }
@@ -767,12 +797,12 @@ fn take_strings(
     fields: &mut BTreeMap<String, CommandField>,
     key: &str,
 ) -> Result<Vec<String>, DesktopCommandError> {
-    match fields.remove(key) {
-        Some(CommandField::Array(values)) => values
+    match fields.remove(key).as_mut() {
+        Some(CommandField::Array(values)) => core::mem::take(values)
             .into_iter()
-            .map(|value| match value {
-                CommandArrayValue::String(value) => Ok(value),
-                _ => Err(DesktopCommandError::InvalidRequest),
+            .map(|mut item| match &mut item {
+                CommandArrayValue::String(value) => Ok(core::mem::take(value)),
+                CommandArrayValue::Integer(_) => Err(DesktopCommandError::InvalidRequest),
             })
             .collect(),
         _ => Err(DesktopCommandError::InvalidRequest),
@@ -782,14 +812,14 @@ fn take_integers(
     fields: &mut BTreeMap<String, CommandField>,
     key: &str,
 ) -> Result<Vec<usize>, DesktopCommandError> {
-    match fields.remove(key) {
-        Some(CommandField::Array(values)) => values
+    match fields.remove(key).as_mut() {
+        Some(CommandField::Array(values)) => core::mem::take(values)
             .into_iter()
-            .map(|value| match value {
+            .map(|item| match &item {
                 CommandArrayValue::Integer(value) => {
-                    usize::try_from(value).map_err(|_| DesktopCommandError::InvalidRequest)
+                    usize::try_from(*value).map_err(|_| DesktopCommandError::InvalidRequest)
                 }
-                _ => Err(DesktopCommandError::InvalidRequest),
+                CommandArrayValue::String(_) => Err(DesktopCommandError::InvalidRequest),
             })
             .collect(),
         _ => Err(DesktopCommandError::InvalidRequest),
@@ -1172,15 +1202,15 @@ impl DesktopWorkspaceSession {
                 region,
                 fqdn,
                 acme_email,
-                raw_token,
+                token,
                 ..
             } => (|| {
-                let spec = SelfHostDeploymentSpec::validate(
+                let spec = SelfHostDeploymentSpec::from_validated_token(
                     provider,
                     &region,
                     &fqdn,
                     &acme_email,
-                    &raw_token,
+                    token,
                 )
                 .map_err(DesktopCommandError::Deployment)?;
                 let plan = SelfHostDeploymentPlan::from_spec(&spec)
@@ -1836,7 +1866,7 @@ mod tests {
             region: "fr-par-1".to_owned(),
             fqdn: "chat.example.org".to_owned(),
             acme_email: "ops@example.org".to_owned(),
-            raw_token: token.to_owned(),
+            token: RedactedApiToken::new(token).unwrap(),
         }
     }
     fn populate(session: &mut DesktopWorkspaceSession, sender: u8, time: u64) {
@@ -1878,7 +1908,7 @@ mod tests {
                 region: "fsn1".to_owned(),
                 fqdn: token.trim().to_owned(),
                 acme_email: "ops@example.org".to_owned(),
-                raw_token: token.to_owned(),
+                token: RedactedApiToken::new(token).unwrap(),
             };
             assert!(!format!("{request:?}").contains("sensitive.example.org"));
             let response = session().execute_command(request);
@@ -2267,16 +2297,38 @@ mod tests {
 
     #[test]
     fn json_strings_decode_standard_escapes_and_surrogate_pairs_without_diagnostic_leaks() {
+        let escaped_doc = json(
+            "save_docs_pad",
+            r#", "pad_id":"pad-01","channel_id":"chan-01","title":"Title","markdown_body":"quote: \" slash: \\ emoji: \ud83e\udded","actor":"alice""#,
+        );
+        let doc_req = DesktopCommandRequest::from_json(&escaped_doc).unwrap();
+        assert_eq!(format!("{doc_req:?}"), "DesktopCommandRequest([REDACTED])");
+        let DesktopCommandRequest::SaveDocsPad { markdown_body, .. } = doc_req else {
+            panic!("expected save_docs_pad")
+        };
+        assert_eq!(markdown_body, "quote: \" slash: \\ emoji: 🧭");
+
         let escaped = json(
             "plan_self_host",
-            r#", "provider":"scaleway","region":"fr-par-1","fqdn":"chat.example.org","acme_email":"ops@example.org","raw_token":"quote: \" slash: \\ emoji: \ud83e\udded""#,
+            r#", "provider":"scaleway","region":"fr-par-1","fqdn":"chat.example.org","acme_email":"ops@example.org","raw_token":"scw_quote:\"slash:\\_012345""#,
         );
         let request = DesktopCommandRequest::from_json(&escaped).unwrap();
         assert_eq!(format!("{request:?}"), "DesktopCommandRequest([REDACTED])");
-        let DesktopCommandRequest::PlanSelfHost { raw_token, .. } = request else {
+        let DesktopCommandRequest::PlanSelfHost { token, .. } = request else {
             panic!("expected plan")
         };
-        assert_eq!(raw_token, "quote: \" slash: \\ emoji: 🧭");
+        assert_eq!(
+            token.expose_for_provider_call(),
+            "scw_quote:\"slash:\\_012345"
+        );
+        assert_eq!(
+            DesktopCommandRequest::from_json(&json(
+                "plan_self_host",
+                r#", "provider":"scaleway","region":"fr-par-1","fqdn":"chat.example.org","acme_email":"ops@example.org","raw_token":"quote: \" slash: \\ emoji: \ud83e\udded""#,
+            ))
+            .unwrap_err(),
+            DesktopCommandError::Deployment(DeployValidationError::TokenContainsWhitespace)
+        );
         assert_eq!(
             session().dispatch_command(&json("set_sound_pack", r#", "sound_pack":"\u0067ivre""#)),
             DesktopCommandResponse::SoundPack(SoundPackId::Givre)
@@ -2843,6 +2895,12 @@ mod tests {
                 "Docker version 28.1.0, build 4d8c241\n"
             } else if args == ["compose", "version"] {
                 "Docker Compose version v2.36.0\n"
+            } else if args.ends_with(&[
+                "config".to_owned(),
+                "--format".to_owned(),
+                "json".to_owned(),
+            ]) {
+                r#"{"name":"community","services":{"db":{"image":"postgres:17.12-alpine@sha256:a77aa70e641402a21411b92b721c58d10f23b50ae5fdd2333efd22d166e1e5f7"}}}"#
             } else if args.ends_with(&["ps".to_owned(), "--format".to_owned(), "json".to_owned()]) {
                 r#"[{"Service":"keycloak","State":"running","Health":"healthy","MemoryMiB":256},{"Service":"db","State":"running","Health":"healthy","MemoryMiB":192},{"Service":"synapse","State":"running","Health":"healthy","KoderaPolicy":"0.1.4","MemoryMiB":420},{"Service":"server","State":"running","Health":"healthy","MemoryMiB":220},{"Service":"web","State":"running","Health":"healthy","MemoryMiB":64},{"Service":"livekit","State":"running","Health":"healthy","MemoryMiB":128}]"#
             } else {
@@ -2861,19 +2919,36 @@ mod tests {
         }
     }
 
+    fn fresh_audit_community_stack_dir(tag: &str) -> std::path::PathBuf {
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let id = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let raw_dir = crate::self_host_deploy::non_shared_test_scratch_root().join(format!(
+            "kodera-desktop-audit-{tag}-{}-{id}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&raw_dir);
+        std::fs::create_dir_all(&raw_dir).unwrap();
+        let canonical = std::fs::canonicalize(&raw_dir).unwrap();
+        std::fs::write(
+            canonical.join("docker-compose.yml"),
+            "services:\n  db:\n    image: postgres:17.12-alpine@sha256:a77aa70e641402a21411b92b721c58d10f23b50ae5fdd2333efd22d166e1e5f7\n",
+        )
+        .unwrap();
+        canonical
+    }
+
     fn audit_community_stack_dir() -> &'static str {
         static STACK_DIR: std::sync::OnceLock<String> = std::sync::OnceLock::new();
         STACK_DIR
             .get_or_init(|| {
-                let raw_dir = std::env::temp_dir().join(format!(
-                    "kodera-desktop-audit-community-{}",
-                    std::process::id()
-                ));
+                let raw_dir = crate::self_host_deploy::non_shared_test_scratch_root().join(
+                    format!("kodera-desktop-audit-community-{}", std::process::id()),
+                );
                 std::fs::create_dir_all(&raw_dir).unwrap();
                 let canonical = std::fs::canonicalize(&raw_dir).unwrap();
                 std::fs::write(
                     canonical.join("docker-compose.yml"),
-                    "services:\n  db:\n    image: postgres:17.6-alpine\n",
+                    "services:\n  db:\n    image: postgres:17.12-alpine@sha256:a77aa70e641402a21411b92b721c58d10f23b50ae5fdd2333efd22d166e1e5f7\n",
                 )
                 .unwrap();
                 let env_path = canonical.join(".env");
@@ -2936,7 +3011,7 @@ mod tests {
         state
             .begin_oidc_pkce_loopback(
                 ORG,
-                "https://auth.kodera.io",
+                "https://auth.kodera.io/realms/kodera",
                 "kodera-desktop",
                 "pkce_verifier_fixture_alpha_bravo_charlie_delta_01",
                 "audit_pkce_state_fixture_01",
@@ -3128,14 +3203,14 @@ mod tests {
                 "begin_oidc_pkce_loopback",
                 json(
                     "begin_oidc_pkce_loopback",
-                    r#","issuer_origin":"https://auth.kodera.io","client_id":"kodera-desktop","code_verifier":"pkce_verifier_fixture_echo_foxtrot_golf_hotel_002","state":"audit_pkce_state_fixture_02","loopback_port":51920"#,
+                    r#","issuer_origin":"https://auth.kodera.io/realms/kodera","client_id":"kodera-desktop","code_verifier":"pkce_verifier_fixture_echo_foxtrot_golf_hotel_002","state":"audit_pkce_state_fixture_02","loopback_port":51920"#,
                 ),
             ),
             (
                 "complete_oidc_pkce_callback",
                 json(
                     "complete_oidc_pkce_callback",
-                    r#","callback_uri":"http://127.0.0.1:49152/auth/callback?code=oidc_code_fixture_0001&state=audit_pkce_state_fixture_01""#,
+                    r#","callback_uri":"http://127.0.0.1:49152/auth/callback?code=oidc_code_fixture_0001&state=audit_pkce_state_fixture_01&iss=https%3A%2F%2Fauth.kodera.io%2Frealms%2Fkodera""#,
                 ),
             ),
             (
@@ -3154,7 +3229,9 @@ mod tests {
                     "self_host_prepare_community",
                     &format!(
                         r#","stack_dir":"{}","domain":"chat.example.org","acme_email":"ops@example.org","oidc_provider_origin":"https://id.example.org","tls_mode":"acme","http_port":80,"https_port":443"#,
-                        audit_community_stack_dir()
+                        fresh_audit_community_stack_dir("prepare-case")
+                            .to_str()
+                            .unwrap()
                     ),
                 ),
             ),
@@ -4003,10 +4080,25 @@ mod tests {
             .present
         );
 
+        assert_eq!(
+            begin_desktop_oidc_pkce_loopback(
+                &mut state,
+                ORG,
+                "https://auth.kodera.io",
+                "kodera-desktop",
+                "pkce_verifier_fixture_alpha_bravo_charlie_delta_99",
+                "pkce_state_fixture_99999",
+                52_100,
+            ),
+            Err(DesktopCommandError::OidcLoopback(
+                OidcLoopbackError::InvalidIssuerOrigin
+            ))
+        );
+
         let ready = begin_desktop_oidc_pkce_loopback(
             &mut state,
             ORG,
-            "https://auth.kodera.io",
+            "https://auth.kodera.io/realms/kodera",
             "kodera-desktop",
             "pkce_verifier_fixture_alpha_bravo_charlie_delta_99",
             "pkce_state_fixture_99999",
@@ -4018,7 +4110,7 @@ mod tests {
         let completed = complete_desktop_oidc_pkce_callback(
             &mut state,
             ORG,
-            "http://127.0.0.1:52100/auth/callback?code=auth_code_fixture_9999&state=pkce_state_fixture_99999",
+            "http://127.0.0.1:52100/auth/callback?code=auth_code_fixture_9999&state=pkce_state_fixture_99999&iss=https%3A%2F%2Fauth.kodera.io%2Frealms%2Fkodera",
         )
         .unwrap();
         assert_eq!(
@@ -4030,7 +4122,7 @@ mod tests {
             complete_desktop_oidc_pkce_callback(
                 &mut state,
                 ORG,
-                "http://127.0.0.1:52100/auth/callback?code=auth_code_fixture_9999&state=pkce_state_fixture_99999",
+                "http://127.0.0.1:52100/auth/callback?code=auth_code_fixture_9999&state=pkce_state_fixture_99999&iss=https%3A%2F%2Fauth.kodera.io%2Frealms%2Fkodera",
             ),
             Err(DesktopCommandError::OidcLoopback(
                 OidcLoopbackError::NoPendingSession
@@ -4065,6 +4157,12 @@ mod tests {
                 _timeout: std::time::Duration,
             ) -> Result<crate::CommandExecOutput, crate::DockerUnavailableReason> {
                 let stdout = if args.ends_with(&[
+                    "config".to_owned(),
+                    "--format".to_owned(),
+                    "json".to_owned(),
+                ]) {
+                    r#"{"name":"community","services":{"db":{"image":"postgres:17.12-alpine@sha256:a77aa70e641402a21411b92b721c58d10f23b50ae5fdd2333efd22d166e1e5f7"}}}"#
+                } else if args.ends_with(&[
                     "ps".to_owned(),
                     "--format".to_owned(),
                     "json".to_owned(),
@@ -4086,7 +4184,8 @@ mod tests {
         }
 
         let mut state = audit_workspace();
-        let stack_dir = audit_community_stack_dir();
+        let stack_dir_buf = fresh_audit_community_stack_dir("w9-wizard");
+        let stack_dir = stack_dir_buf.to_str().unwrap();
 
         let preflight = preflight_desktop_community_stack(
             &state,

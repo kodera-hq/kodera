@@ -50,10 +50,11 @@ pub use deeplink::{
 };
 pub use gui::{
     build_ipc_init_script, launch_desktop_gui, resolve_asset_response, validate_navigation_url,
-    AssetHttpPayload, DesktopGuiOptions, DesktopWebViewBridge, GuiWindowAction, NavigationDecision,
-    NavigationGuardError, WebViewIpcError, WebViewIpcOutcome, APPROVED_AUTH_ORIGIN_PREFIX,
-    APPROVED_DEV_ORIGINS, APPROVED_WEB_APP_ORIGINS, CUSTOM_ASSET_SCHEME, DESKTOP_WINDOW_TITLE,
-    GUI_DEFAULT_HEIGHT, GUI_DEFAULT_WIDTH, GUI_MIN_HEIGHT, GUI_MIN_WIDTH,
+    AssetHttpPayload, DesktopGuiOptions, DesktopWebViewBridge, GuiWindowAction,
+    NativeStackFolderPicker, NavigationDecision, NavigationGuardError, OsNativeStackFolderPicker,
+    WebViewIpcError, WebViewIpcOutcome, APPROVED_AUTH_ORIGIN_PREFIX, APPROVED_DEV_ORIGINS,
+    APPROVED_WEB_APP_ORIGINS, CUSTOM_ASSET_SCHEME, DESKTOP_WINDOW_TITLE, GUI_DEFAULT_HEIGHT,
+    GUI_DEFAULT_WIDTH, GUI_MIN_HEIGHT, GUI_MIN_WIDTH,
 };
 pub use keychain::{
     build_keychain_slot, metadata_exposes_secret, validate_keychain_account_id,
@@ -75,11 +76,13 @@ pub use oidc_loopback::{
     MAX_LOOPBACK_TIMEOUT_MS, MAX_OIDC_CALLBACK_URI_BYTES,
 };
 pub use self_host_deploy::{
-    self_host_deploy_community, self_host_preflight_community, self_host_prepare_community,
-    CommandExecOutput, CommunityCommandRunner, CommunityCoreService, CommunityDeployError,
-    CommunityDeployReport, CommunityDeployServiceStatus, CommunityPreflightReport,
-    CommunityPreflightSpec, CommunityPrepareReport, CommunityPrepareSpec, CommunityTlsMode,
-    StdProcessCommunityRunner, COMPOSE_CONFIG_TIMEOUT_MS, DEFAULT_DEPLOY_TIMEOUT_MS,
+    admitted_service_environment_keys, self_host_deploy_community, self_host_preflight_community,
+    self_host_prepare_community, validate_resolved_compose_config_json,
+    validate_resolved_compose_config_json_with_source, CommandExecOutput, CommunityCommandRunner,
+    CommunityCoreService, CommunityDeployError, CommunityDeployReport,
+    CommunityDeployServiceStatus, CommunityPreflightReport, CommunityPreflightSpec,
+    CommunityPrepareReport, CommunityPrepareSpec, CommunityTlsMode, StdProcessCommunityRunner,
+    COMPOSE_CONFIG_TIMEOUT_MS, DEFAULT_DEPLOY_TIMEOUT_MS, FORBIDDEN_PRIVILEGED_COMPOSE_DIRECTIVES,
     HEX_SECRET_BYTES, LIVEKIT_KEY_RANDOM_BYTES, MAX_DEPLOY_TIMEOUT_MS, MAX_DOMAIN_BYTES,
     MAX_EMAIL_BYTES, MAX_OIDC_ORIGIN_BYTES, MAX_STACK_DIR_BYTES, MIN_DEPLOY_TIMEOUT_MS,
     PREFLIGHT_COMMAND_TIMEOUT_MS, READINESS_MAX_POLL_ATTEMPTS, SEAL_KEY_BYTES,
@@ -130,6 +133,7 @@ pub use kodera_rs::{
     derive_extension_webhook_secret, ProximityOrganisationKeyGuard, ScopedWebhookVerifierRegistry,
 };
 use std::collections::{BTreeMap, HashSet};
+use zeroize::{Zeroize, Zeroizing};
 
 /// Supported 1-click self-host VPS providers executed locally from Kodera Desktop.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -161,32 +165,52 @@ impl CloudProvider {
 }
 
 /// Ephemeral provider API token wrapper whose `Debug` and `Display` implementations
-/// unconditionally redact the underlying secret material.
-#[derive(Clone)]
-pub struct RedactedApiToken(String);
+/// unconditionally redact the underlying secret material and whose backing bytes are
+/// zeroized on construction, rejection, explicit clear, and drop (`!Clone`).
+pub struct RedactedApiToken(Zeroizing<Vec<u8>>);
 
 impl RedactedApiToken {
     pub fn new(raw: impl Into<String>) -> Result<Self, DeployValidationError> {
-        let s = raw.into();
-        let trimmed = s.trim();
-        if trimmed.len() < 16 {
-            return Err(DeployValidationError::TokenTooShort);
-        }
-        if trimmed.len() > 512 {
-            return Err(DeployValidationError::TokenInvalidCharacters);
-        }
-        if trimmed.chars().any(char::is_whitespace) {
-            return Err(DeployValidationError::TokenContainsWhitespace);
-        }
-        if !trimmed.bytes().all(|b| (0x21..=0x7E).contains(&b)) {
-            return Err(DeployValidationError::TokenInvalidCharacters);
-        }
-        Ok(Self(trimmed.to_owned()))
+        let mut owned = Zeroizing::new(raw.into().into_bytes());
+        Self::validate_and_zeroize_slice(&mut owned)
+    }
+
+    /// Validates `buf` as a visible-ASCII API token, copies trimmed validated bytes into a
+    /// `Zeroizing<Vec<u8>>`, and unconditionally overwrites `buf` with zeros on both success
+    /// and validation error.
+    pub fn validate_and_zeroize_slice(buf: &mut [u8]) -> Result<Self, DeployValidationError> {
+        let result = (|| {
+            let Ok(s) = core::str::from_utf8(buf) else {
+                return Err(DeployValidationError::TokenInvalidCharacters);
+            };
+            let trimmed = s.trim();
+            if trimmed.len() < 16 {
+                return Err(DeployValidationError::TokenTooShort);
+            }
+            if trimmed.len() > 512 {
+                return Err(DeployValidationError::TokenInvalidCharacters);
+            }
+            if trimmed.chars().any(char::is_whitespace) {
+                return Err(DeployValidationError::TokenContainsWhitespace);
+            }
+            if !trimmed.bytes().all(|b| (0x21..=0x7E).contains(&b)) {
+                return Err(DeployValidationError::TokenInvalidCharacters);
+            }
+            Ok(Self(Zeroizing::new(trimmed.as_bytes().to_vec())))
+        })();
+        buf.zeroize();
+        result
+    }
+
+    /// Overwrites the backing token buffer with zeros in place and clears its length.
+    pub fn clear(&mut self) {
+        self.0.zeroize();
+        self.0.clear();
     }
 
     /// Exposes the raw token strictly for outbound HTTPS `Authorization` headers to `provider.api_origin()`.
     pub fn expose_for_provider_call(&self) -> &str {
-        &self.0
+        core::str::from_utf8(&self.0).expect("validated visible ASCII token")
     }
 }
 
@@ -213,7 +237,7 @@ pub enum DeployValidationError {
 }
 
 /// Validated specification for deploying `deploy/community` onto a user-owned VPS.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct SelfHostDeploymentSpec {
     pub provider: CloudProvider,
     pub region: String,
@@ -228,11 +252,31 @@ impl SelfHostDeploymentSpec {
         region: &str,
         fqdn: &str,
         acme_email: &str,
-        raw_token: &str,
+        raw_token: impl Into<String>,
+    ) -> Result<Self, DeployValidationError> {
+        let mut owned_token = Zeroizing::new(raw_token.into().into_bytes());
+        let public_fields = Self::validate_public_fields(region, fqdn, acme_email);
+        let token_res = RedactedApiToken::validate_and_zeroize_slice(&mut owned_token);
+        let (region_norm, fqdn_norm, email_norm) = public_fields?;
+        let token = token_res?;
+        Ok(Self {
+            provider,
+            region: region_norm,
+            fqdn: fqdn_norm,
+            acme_email: email_norm,
+            token,
+        })
+    }
+
+    pub fn from_validated_token(
+        provider: CloudProvider,
+        region: &str,
+        fqdn: &str,
+        acme_email: &str,
+        token: RedactedApiToken,
     ) -> Result<Self, DeployValidationError> {
         let (region_norm, fqdn_norm, email_norm) =
             Self::validate_public_fields(region, fqdn, acme_email)?;
-        let token = RedactedApiToken::new(raw_token)?;
         Ok(Self {
             provider,
             region: region_norm,
@@ -1894,6 +1938,58 @@ mod tests {
         assert!(!disp_str.contains("scw_secret_"));
         assert!(dbg_str.contains("REDACTED"));
         assert_eq!(spec.provider.api_origin(), "https://api.scaleway.com");
+    }
+
+    #[test]
+    fn redacted_api_token_forbids_clone_and_zeroizes_construction_and_rejection_buffers() {
+        // Compile-time negative trait check: if `RedactedApiToken` implemented `Clone`,
+        // `NotCloneCheck::IS_NOT_CLONE` would fail to resolve unambiguously.
+        trait NotCloneFallback {
+            const IS_NOT_CLONE: bool = true;
+        }
+        impl<T> NotCloneFallback for T {}
+        struct NotCloneProbe<T>(core::marker::PhantomData<T>);
+        #[allow(dead_code)]
+        impl<T: Clone> NotCloneProbe<T> {
+            const IS_NOT_CLONE: bool = false;
+        }
+        const { assert!(NotCloneProbe::<RedactedApiToken>::IS_NOT_CLONE) };
+
+        // 1. Valid construction wipes the owned input slice and clear() wipes the stored bytes.
+        let mut valid_buf = b"  scw_secret_0123456789abcdef0123456789  ".to_vec();
+        let mut token = RedactedApiToken::validate_and_zeroize_slice(&mut valid_buf).unwrap();
+        assert!(
+            valid_buf.iter().all(|&b| b == 0),
+            "owned input buffer must be zeroized on valid construction"
+        );
+        assert_eq!(
+            token.expose_for_provider_call(),
+            "scw_secret_0123456789abcdef0123456789"
+        );
+        token.clear();
+        assert_eq!(token.expose_for_provider_call(), "");
+
+        // 2. Invalid token rejections also wipe the owned input slice on every error path.
+        let mut short_buf = b"short_secret".to_vec();
+        assert_eq!(
+            RedactedApiToken::validate_and_zeroize_slice(&mut short_buf).unwrap_err(),
+            DeployValidationError::TokenTooShort
+        );
+        assert!(short_buf.iter().all(|&b| b == 0));
+
+        let mut ws_buf = b"scw_secret_with internal_space_012345".to_vec();
+        assert_eq!(
+            RedactedApiToken::validate_and_zeroize_slice(&mut ws_buf).unwrap_err(),
+            DeployValidationError::TokenContainsWhitespace
+        );
+        assert!(ws_buf.iter().all(|&b| b == 0));
+
+        let mut nul_buf = b"scw_0123456789ab\0def012345".to_vec();
+        assert_eq!(
+            RedactedApiToken::validate_and_zeroize_slice(&mut nul_buf).unwrap_err(),
+            DeployValidationError::TokenInvalidCharacters
+        );
+        assert!(nul_buf.iter().all(|&b| b == 0));
     }
 
     #[test]

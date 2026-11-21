@@ -1,3 +1,5 @@
+import type { JSONContent } from '@tiptap/core'
+import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap'
 import {
   lazy,
   Suspense,
@@ -21,11 +23,15 @@ import { getCollectionCopy } from './collectionMessages'
 import type { CollectionAssigneeMember } from './collectionSchema'
 import {
   CollabSessionController,
+  collabSessionOwnsBody,
   maySeedFromMarkdown,
+  OFFLINE_CACHE_ORIGIN,
+  REMOTE_SYNC_ORIGIN,
   type CollabSessionSnapshot,
   type ConfidentialCollabPolicy,
   type WebSocketLike,
 } from './collabSession'
+import { tiptapDocToMarkdown } from './markdownBlocks'
 import {
   DocsDriveExplorer,
   FOLDER_MARKDOWN_MARKER,
@@ -81,6 +87,11 @@ export interface WorkspacePageRecord {
 export type WorkspaceEditorSurface = 'drive' | 'blocks' | 'markdown' | 'collections'
 
 const LazyDocsCollectionView = lazy(() => import('./DocsCollectionView'))
+
+const LIVE_COLLAB_MARKDOWN_READONLY_COPY: Readonly<Record<'fr' | 'en', string>> = {
+  fr: 'Aperçu Markdown en lecture seule : la synchronisation collaborative en direct gère le contenu enrichi de cette page. Passez à l’éditeur de blocs pour modifier le document.',
+  en: 'Read-only Markdown preview: live collaborative rich-text sync owns this page’s body. Switch to the block editor to edit the document.',
+}
 
 export interface WorkspaceCollaborativeDocsProps {
   readonly organisationId?: string | undefined
@@ -583,6 +594,74 @@ export function WorkspaceCollaborativeDocs({
       ? 'viewer'
       : 'editor'
 
+  const canSeedRestMarkdown = maySeedFromMarkdown(isRemoteMode, collabSnapshot.status, confidential)
+  const liveYjsOwnsBody =
+    Boolean(sessionController) &&
+    collabSessionOwnsBody(isRemoteMode, collabSnapshot.status, confidential)
+  const isMarkdownBodyReadOnly = effectiveRole === 'viewer' || liveYjsOwnsBody
+  const markdownReadOnlyBanner =
+    effectiveRole === 'viewer'
+      ? t('console.docs.collab.banner-readonly')
+      : LIVE_COLLAB_MARKDOWN_READONLY_COPY[i18n.resolvedLanguage?.startsWith('en') ? 'en' : 'fr']
+
+  // Keep raw Markdown state synchronized with remote/offline Yjs updates when the block editor is unmounted.
+  useEffect(() => {
+    if (!sessionController || !activeDocId || editorSurface === 'blocks') return
+    const ydoc = sessionController.ydoc
+    const applyFromYdoc = () => {
+      const fragment = ydoc.getXmlFragment('content')
+      if (fragment.length === 0) return
+      const serialized = tiptapDocToMarkdown(yXmlFragmentToProsemirrorJSON(fragment) as JSONContent)
+      if (isControlledLocal) {
+        const next = docsRef.current.map((d) => {
+          if (d.id !== activeDocId) return d
+          const nextMd =
+            explicitFolderIds.has(d.id) || isExplicitFolderMarkdown(d.markdown)
+              ? ensureFolderMarker(serialized)
+              : serialized
+          return d.markdown === nextMd ? d : { ...d, markdown: nextMd }
+        })
+        onLocalDocumentsChange?.(next)
+        return
+      }
+      setInternalDocs((prev) => {
+        let changed = false
+        const next = prev.map((d) => {
+          if (d.id !== activeDocId) return d
+          const nextMd =
+            explicitFolderIds.has(d.id) || isExplicitFolderMarkdown(d.markdown)
+              ? ensureFolderMarker(serialized)
+              : serialized
+          if (d.markdown === nextMd) return d
+          changed = true
+          return { ...d, markdown: nextMd }
+        })
+        if (changed) onDocumentsLoadedRef.current?.(next)
+        return changed ? next : prev
+      })
+    }
+    if (collabSnapshot.status === 'synced') {
+      applyFromYdoc()
+    }
+    const onUpdate = (_update: Uint8Array, origin: unknown) => {
+      if (origin === REMOTE_SYNC_ORIGIN || origin === OFFLINE_CACHE_ORIGIN) {
+        applyFromYdoc()
+      }
+    }
+    ydoc.on('update', onUpdate)
+    return () => {
+      ydoc.off('update', onUpdate)
+    }
+  }, [
+    activeDocId,
+    collabSnapshot.status,
+    editorSurface,
+    explicitFolderIds,
+    isControlledLocal,
+    onLocalDocumentsChange,
+    sessionController,
+  ])
+
   const selectDocument = (id: string) => {
     setSelectedId(id)
     setTreeError(null)
@@ -1017,14 +1096,26 @@ export function WorkspaceCollaborativeDocs({
     }
   }
 
-  const handleMarkdownChange = (nextMarkdown: string) => {
+  const handleBlockMarkdownChange = (nextMarkdown: string) => {
     if (!currentDoc || effectiveRole === 'viewer') return
     const storedMarkdown = isCurrentExplicitFolder ? ensureFolderMarker(nextMarkdown) : nextMarkdown
     if (new TextEncoder().encode(storedMarkdown).length > 262_144) return
     commitDocs((prev) =>
       prev.map((d) => (d.id === currentDoc.id ? { ...d, markdown: storedMarkdown } : d))
     )
-    if (!maySeedFromMarkdown(isRemoteMode, collabSnapshot.status, confidential)) return
+    if (!canSeedRestMarkdown) return
+    scheduleRemotePatch(currentDoc.id, { markdown: storedMarkdown })
+  }
+
+  const handleRawMarkdownChange = (nextMarkdown: string) => {
+    if (!currentDoc || isMarkdownBodyReadOnly) return
+    const storedMarkdown = isCurrentExplicitFolder ? ensureFolderMarker(nextMarkdown) : nextMarkdown
+    if (new TextEncoder().encode(storedMarkdown).length > 262_144) return
+    commitDocs((prev) =>
+      prev.map((d) => (d.id === currentDoc.id ? { ...d, markdown: storedMarkdown } : d))
+    )
+    if (!canSeedRestMarkdown) return
+    resetSeededBody(currentDoc.id)
     scheduleRemotePatch(currentDoc.id, { markdown: storedMarkdown })
   }
 
@@ -1386,7 +1477,19 @@ export function WorkspaceCollaborativeDocs({
                 />
 
                 <span data-testid="docs-save-state" className="font-mono text-xs text-c-ink-3">
-                  {isSavingRemote ? driveCopy.saveStateSaving : driveCopy.saveStateSaved}
+                  {isSavingRemote
+                    ? driveCopy.saveStateSaving
+                    : !canSeedRestMarkdown && isRemoteMode
+                      ? collabSnapshot.status === 'synced'
+                        ? driveCopy.saveStateSaved
+                        : collabSnapshot.status === 'offline-buffered'
+                          ? t('console.docs.collab.status-offline')
+                          : collabSnapshot.status === 'reconnecting'
+                            ? t('console.docs.collab.status-reconnecting')
+                            : collabSnapshot.status === 'forbidden'
+                              ? t('console.docs.collab.status-readonly')
+                              : t('console.docs.collab.status-connecting')
+                      : driveCopy.saveStateSaved}
                 </span>
               </div>
             ) : (
@@ -1598,14 +1701,10 @@ export function WorkspaceCollaborativeDocs({
                   key={blockEditorKey}
                   documentId={currentDoc.id}
                   markdown={visibleCurrentMarkdown}
-                  onMarkdownChange={handleMarkdownChange}
+                  onMarkdownChange={handleBlockMarkdownChange}
                   role={effectiveRole}
                   ydoc={ydocForEditor}
-                  seedMarkdown={maySeedFromMarkdown(
-                    isRemoteMode,
-                    collabSnapshot.status,
-                    confidential
-                  )}
+                  seedMarkdown={canSeedRestMarkdown}
                   replacesSeededBody={bodyReloadEpoch > 0}
                   peers={collabSnapshot.peers}
                   onSelectionChange={(sel) => sessionController?.updateSelection(sel)}
@@ -1663,11 +1762,17 @@ export function WorkspaceCollaborativeDocs({
                         className="w-full rounded-md border border-c-border-input bg-c-surface px-3 py-2 text-xl font-bold text-c-ink read-only:bg-c-sunken read-only:text-c-ink-2 focus-visible:border-c-accent-ink focus-visible:ring focus-visible:outline-hidden"
                       />
                     </div>
+                    {isMarkdownBodyReadOnly ? (
+                      <div data-testid="docs-readonly-banner">
+                        <InlineAlert kind="info">{markdownReadOnlyBanner}</InlineAlert>
+                      </div>
+                    ) : null}
                     <textarea
                       aria-label={t('console.docs.collab.mode-markdown')}
-                      readOnly={effectiveRole === 'viewer'}
+                      readOnly={isMarkdownBodyReadOnly}
+                      aria-readonly={isMarkdownBodyReadOnly ? 'true' : 'false'}
                       value={visibleCurrentMarkdown}
-                      onChange={(event) => handleMarkdownChange(event.target.value)}
+                      onChange={(event) => handleRawMarkdownChange(event.target.value)}
                       rows={16}
                       className="w-full rounded-md border border-c-border-input bg-c-sunken p-4 font-mono text-xs leading-relaxed text-c-ink read-only:text-c-ink-2 focus-visible:border-c-accent-ink focus-visible:ring focus-visible:outline-hidden"
                     />

@@ -4,6 +4,8 @@
 // sent too, unchanged. A pure function over text: every character the member typed is escaped
 // before any tag is written, and only the tags the Matrix specification recommends are produced.
 
+import { hasMentionBoundaryAfter } from '../espace/mentions'
+
 /** The `m.room.message` fields a formatted message carries. */
 export const HTML_FORMAT = 'org.matrix.custom.html'
 
@@ -41,6 +43,78 @@ interface InlineContext {
   mentions: readonly MentionTarget[]
 }
 
+const MAX_INLINE_URL_LEN = 4096
+
+export interface ScannedMarkdownLink {
+  readonly label: string
+  readonly href: string
+  readonly end: number
+}
+
+/**
+ * Single-pass linear O(N) Markdown `[label](https://...)` link scanner over `text`.
+ * Both `bracketScan` and `stopScan` advance monotonically across `text`, so unclosed `[` or `](`
+ * runs never rescan the tail at every `[`.
+ */
+export function createMarkdownLinkScanner(
+  text: string,
+  resolveHref: (raw: string) => string | null = webHref
+): (open: number) => ScannedMarkdownLink | null {
+  let bracketScan = 0
+  let stopScan = 0
+  let closeBracket = -1
+  let closeHref: { readonly closeParen: number; readonly href: string } | null = null
+
+  return (open: number): ScannedMarkdownLink | null => {
+    if (text[open] !== '[') return null
+    if (closeBracket <= open) {
+      if (bracketScan <= open) bracketScan = open + 1
+      closeBracket = text.length
+      closeHref = null
+      while (bracketScan < text.length) {
+        if (text[bracketScan] === '\\') {
+          bracketScan += 2
+          continue
+        }
+        if (text[bracketScan] === ']') {
+          closeBracket = bracketScan
+          bracketScan += 1
+          break
+        }
+        bracketScan += 1
+      }
+      if (closeBracket < text.length && text[closeBracket + 1] === '(') {
+        const urlStart = closeBracket + 2
+        if (stopScan < urlStart) stopScan = urlStart
+        while (stopScan < text.length && text[stopScan] !== ')' && !/\s/u.test(text[stopScan]!)) {
+          stopScan += 1
+        }
+        const urlLen = stopScan - urlStart
+        if (
+          urlLen > 0 &&
+          urlLen <= MAX_INLINE_URL_LEN &&
+          stopScan < text.length &&
+          text[stopScan] === ')' &&
+          /^https?:\/\//iu.test(text.slice(urlStart, urlStart + 8))
+        ) {
+          const validated = resolveHref(text.slice(urlStart, stopScan))
+          if (validated !== null) {
+            closeHref = { closeParen: stopScan, href: validated }
+          }
+        }
+      }
+    }
+    if (closeBracket >= text.length || closeBracket === open + 1 || closeHref === null) {
+      return null
+    }
+    return {
+      label: text.slice(open + 1, closeBracket),
+      href: closeHref.href,
+      end: closeHref.closeParen + 1,
+    }
+  }
+}
+
 /** The mention starting at `at` (just after `@`), the longest label first. */
 function mentionAt(text: string, at: number, mentions: readonly MentionTarget[]) {
   if (at > 1 && !/\s/u.test(text[at - 2]!)) return undefined
@@ -48,10 +122,7 @@ function mentionAt(text: string, at: number, mentions: readonly MentionTarget[])
   return [...mentions]
     .sort((a, b) => b.label.length - a.label.length)
     .find(
-      ({ label }) =>
-        label !== '' &&
-        rest.startsWith(label) &&
-        (rest.length === label.length || /[\s\p{P}]/u.test(rest[label.length]!))
+      ({ label }) => label !== '' && rest.startsWith(label) && hasMentionBoundaryAfter(rest, label)
     )
 }
 
@@ -63,7 +134,8 @@ const EMPHASIS = [
 ] as const
 
 /** One line's inline Markdown: code, bold, italic, strike, links and mention pills. */
-function inline(text: string, context: InlineContext): string {
+function inline(text: string, context: InlineContext, allowLinks = true): string {
+  const scanLink = allowLinks && text.includes('](') ? createMarkdownLinkScanner(text) : null
   let out = ''
   let at = 0
   while (at < text.length) {
@@ -76,13 +148,12 @@ function inline(text: string, context: InlineContext): string {
         continue
       }
     }
-    if (char === '[') {
-      const link = /^\[((?:\\.|[^\]\\])+)\]\((https?:\/\/[^\s)]+)\)/u.exec(text.slice(at))
-      const href = link === null ? null : webHref(link[2]!)
-      if (link !== null && href !== null) {
-        const label = link[1]!.replace(/\\(.)/gu, '$1')
-        out += `<a href="${escape(href)}">${inline(label, context)}</a>`
-        at += link[0].length
+    if (char === '[' && scanLink !== null) {
+      const link = scanLink(at)
+      if (link !== null) {
+        const label = link.label.replace(/\\(.)/gu, '$1')
+        out += `<a href="${escape(link.href)}">${inline(label, context, false)}</a>`
+        at = link.end
         continue
       }
     }
@@ -91,7 +162,7 @@ function inline(text: string, context: InlineContext): string {
       const [marker, tag] = emphasis
       const close = text.indexOf(marker, at + marker.length)
       if (close > at + marker.length) {
-        out += `<${tag}>${inline(text.slice(at + marker.length, close), context)}</${tag}>`
+        out += `<${tag}>${inline(text.slice(at + marker.length, close), context, allowLinks)}</${tag}>`
         at = close + marker.length
         continue
       }
@@ -112,9 +183,16 @@ function inline(text: string, context: InlineContext): string {
 
 /** Whether the text holds anything HTML would draw differently from the plain body. */
 function hasMarkup(body: string, mentions: readonly MentionTarget[]): boolean {
-  if (/(\*\*|~~|`|\*[^\s*]|\[[^\]]+\]\(https?:)/u.test(body)) return true
+  if (/(\*\*|~~|`|\*[^\s*])/u.test(body)) return true
   if (/^(?:[-*] |> )/mu.test(body)) return true
-  return mentions.length > 0 && body.includes('@')
+  if (mentions.length > 0 && body.includes('@')) return true
+  if (body.includes('](')) {
+    const scanLink = createMarkdownLinkScanner(body)
+    for (let at = body.indexOf('['); at !== -1; at = body.indexOf('[', at + 1)) {
+      if (scanLink(at) !== null) return true
+    }
+  }
+  return false
 }
 
 /**
@@ -134,9 +212,10 @@ export function markdownToHtml(
     if (paragraph.length > 0) blocks.push(paragraph.join('<br>'))
     paragraph = []
   }
+  let noClosingFence = false
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index]!
-    const fence = /^```([\w+-]{0,32})\s*$/u.exec(line)
+    const fence = !noClosingFence ? /^```([\w+-]{0,32})\s*$/u.exec(line) : null
     if (fence !== null) {
       const close = lines.findIndex((candidate, at) => at > index && candidate.trim() === '```')
       if (close !== -1) {
@@ -148,6 +227,7 @@ export function markdownToHtml(
         index = close
         continue
       }
+      noClosingFence = true
     }
     if (/^[-*] /u.test(line)) {
       flush()

@@ -1,4 +1,5 @@
 import { useMemo, useSyncExternalStore } from 'react'
+import { registerLocalSessionCleanup } from '../../auth/localSession'
 
 export type ProfilePresence = 'online' | 'focused' | 'dnd' | 'offline'
 export interface LocalProfile {
@@ -52,6 +53,27 @@ export function updateLocalProfile(userId: string, patch: Partial<LocalProfile>)
   }
   window.dispatchEvent(new Event(EVENT))
 }
+export function resetLocalProfiles(): void {
+  let changed = fallback.size > 0 || blockedWrites.size > 0
+  fallback.clear()
+  blockedWrites.clear()
+  try {
+    for (const key of Object.keys(localStorage)) {
+      if (key.startsWith(PREFIX)) {
+        localStorage.removeItem(key)
+        changed = true
+      }
+    }
+  } catch {
+    // Storage unavailable.
+  }
+  if (changed && typeof window !== 'undefined') {
+    window.dispatchEvent(new Event(EVENT))
+  }
+}
+
+registerLocalSessionCleanup(resetLocalProfiles)
+
 function subscribe(listener: () => void) {
   window.addEventListener(EVENT, listener)
   window.addEventListener('storage', listener)

@@ -13,7 +13,9 @@
 //!   is consumed on first completion so replay fails closed.
 
 use crate::deeplink::{
-    route_deep_link, AdmittedDeepLink, DeepLinkAdmissionPolicy, KoderaDeepLink, RedactedOidcCode,
+    is_open_redirect_key, percent_decode_rfc3986_single_pass, route_deep_link,
+    validate_decoded_oidc_issuer_syntax, AdmittedDeepLink, DeepLinkAdmissionPolicy, DeepLinkError,
+    KoderaDeepLink, RedactedOidcCode,
 };
 use core::fmt;
 use kodera_rs::{sha256, validate_docs_host};
@@ -119,6 +121,43 @@ impl OidcIssuerAllowlist {
             return Err(OidcLoopbackError::UntrustedIssuerOrigin);
         }
         Ok(canonical)
+    }
+
+    /// Validates a full HTTPS OIDC realm issuer URL (`https://<admitted_host>/realms/<realm>`).
+    /// Origin-only strings without an explicit `/realms/<realm>` path are refused per RFC 9207.
+    pub fn validate_admitted_issuer(
+        &self,
+        raw_issuer: &str,
+    ) -> Result<(String, String), OidcLoopbackError> {
+        if raw_issuer.is_empty()
+            || raw_issuer.len() > 255
+            || !raw_issuer.is_ascii()
+            || raw_issuer
+                .bytes()
+                .any(|b| b.is_ascii_control() || b.is_ascii_whitespace())
+        {
+            return Err(OidcLoopbackError::InvalidIssuerOrigin);
+        }
+        let Some(after_https) = raw_issuer.strip_prefix("https://") else {
+            return Err(OidcLoopbackError::InvalidIssuerOrigin);
+        };
+        let Some((host_part, path_part)) = after_https.split_once('/') else {
+            return Err(OidcLoopbackError::InvalidIssuerOrigin);
+        };
+        if path_part.is_empty() {
+            return Err(OidcLoopbackError::InvalidIssuerOrigin);
+        }
+        let origin_candidate = format!("https://{host_part}");
+        let canonical_origin = canonicalize_https_origin(&origin_candidate)?;
+        let host = validate_decoded_oidc_issuer_syntax(raw_issuer)
+            .map_err(|_| OidcLoopbackError::InvalidIssuerOrigin)?;
+        if format!("https://{host}") != canonical_origin {
+            return Err(OidcLoopbackError::InvalidIssuerOrigin);
+        }
+        if !self.origins.contains(&canonical_origin) {
+            return Err(OidcLoopbackError::UntrustedIssuerOrigin);
+        }
+        Ok((canonical_origin, raw_issuer.to_owned()))
     }
 }
 
@@ -262,19 +301,7 @@ fn is_valid_client_id(raw: &str) -> bool {
 }
 
 fn is_open_redirect_param(key: &str) -> bool {
-    matches!(
-        key.to_ascii_lowercase().as_str(),
-        "redirect"
-            | "redirect_uri"
-            | "redirect_url"
-            | "next"
-            | "return_to"
-            | "returnto"
-            | "continue"
-            | "url"
-            | "target"
-            | "dest"
-    )
+    is_open_redirect_key(key)
 }
 
 /// Public, non-secret descriptor returned when a native OIDC PKCE loopback session starts.
@@ -302,6 +329,7 @@ pub struct OidcCallbackOutcome {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OidcPkceSession {
     issuer_origin: String,
+    expected_issuer: String,
     client_id: String,
     code_verifier: RedactedCodeVerifier,
     expected_state: String,
@@ -319,7 +347,8 @@ impl OidcPkceSession {
         expected_state: &str,
         loopback_port: u16,
     ) -> Result<(Self, OidcLoopbackSessionReady), OidcLoopbackError> {
-        let canonical_issuer = allowlist.validate_admitted_origin(issuer_origin)?;
+        let (canonical_issuer, expected_issuer) =
+            allowlist.validate_admitted_issuer(issuer_origin)?;
         if !is_valid_client_id(client_id) {
             return Err(OidcLoopbackError::InvalidClientId);
         }
@@ -343,6 +372,7 @@ impl OidcPkceSession {
         Ok((
             Self {
                 issuer_origin: canonical_issuer,
+                expected_issuer,
                 client_id: client_id.to_owned(),
                 code_verifier,
                 expected_state: expected_state.to_owned(),
@@ -357,6 +387,32 @@ impl OidcPkceSession {
     pub fn clear(&mut self) {
         self.code_verifier.clear();
         self.expected_state.clear();
+    }
+
+    fn verify_callback_issuer(&self, decoded_iss: Option<&str>) -> Result<(), OidcLoopbackError> {
+        let Some(actual) = decoded_iss else {
+            return Err(OidcLoopbackError::UntrustedIssuerOrigin);
+        };
+        if actual.is_empty()
+            || actual.len() > 255
+            || !actual.is_ascii()
+            || actual.contains('%')
+            || actual.bytes().any(|b| b <= 0x20 || b >= 0x7F)
+            || !actual.starts_with("https://")
+            || actual.contains('@')
+            || actual.contains('\\')
+            || actual.contains("..")
+            || actual.contains('?')
+            || actual.contains('#')
+        {
+            return Err(OidcLoopbackError::CallbackMalformed);
+        }
+        validate_decoded_oidc_issuer_syntax(actual)
+            .map_err(|_| OidcLoopbackError::UntrustedIssuerOrigin)?;
+        if !constant_time_eq_bytes(actual.as_bytes(), self.expected_issuer.as_bytes()) {
+            return Err(OidcLoopbackError::UntrustedIssuerOrigin);
+        }
+        Ok(())
     }
 
     /// Validates a `http://127.0.0.1:<port>/auth/callback?...` or `kodera://auth/callback?...` URI
@@ -391,49 +447,71 @@ impl OidcPkceSession {
             return Err(OidcLoopbackError::UnsupportedScheme);
         }
 
-        let (code, received_state, used_redirect_uri) = if callback_uri.starts_with("kodera://") {
-            if callback_uri.contains("redirect=")
-                || callback_uri.contains("redirect_uri=")
-                || callback_uri.contains("return_to=")
-                || callback_uri.contains("next=")
-            {
-                return Err(OidcLoopbackError::OpenRedirectDetected);
-            }
-            let admitted = route_deep_link(callback_uri, deep_link_policy)
-                .map_err(|_| OidcLoopbackError::CallbackMalformed)?;
-            match admitted {
-                AdmittedDeepLink::Kodera(KoderaDeepLink::AuthCallback { code, state, .. }) => {
-                    (code, state, "kodera://auth/callback".to_owned())
+        let (code, received_state, used_redirect_uri) =
+            if let Some(after_scheme) = callback_uri.strip_prefix("kodera://") {
+                let (route_path, query_opt) = match after_scheme.split_once('?') {
+                    Some((rp, q)) => (rp, Some(q)),
+                    None => (after_scheme, None),
+                };
+                if let Some(query) = query_opt {
+                    for pair in query.split('&') {
+                        let raw_key = pair.split_once('=').map_or(pair, |(k, _)| k);
+                        if is_open_redirect_param(raw_key) {
+                            return Err(OidcLoopbackError::OpenRedirectDetected);
+                        }
+                    }
                 }
-                _ => return Err(OidcLoopbackError::InvalidCallbackPath),
-            }
-        } else if let Some(after_http) = callback_uri.strip_prefix("http://") {
-            let (authority, path_and_query) = after_http
-                .split_once('/')
-                .ok_or(OidcLoopbackError::CallbackMalformed)?;
-            let (host, port_str) = authority
-                .split_once(':')
-                .ok_or(OidcLoopbackError::UntrustedCallbackHost)?;
-            if host != "127.0.0.1" {
-                return Err(OidcLoopbackError::UntrustedCallbackHost);
-            }
-            let port = port_str
-                .parse::<u16>()
-                .map_err(|_| OidcLoopbackError::InvalidLoopbackPort)?;
-            if port != self.loopback_port {
-                return Err(OidcLoopbackError::PortMismatch);
-            }
-            let (path, query) = path_and_query
-                .split_once('?')
-                .ok_or(OidcLoopbackError::CallbackMalformed)?;
-            if path != "auth/callback" {
-                return Err(OidcLoopbackError::InvalidCallbackPath);
-            }
-            let (code, state) = parse_loopback_callback_query(query)?;
-            (code, state, self.redirect_uri.clone())
-        } else {
-            return Err(OidcLoopbackError::UnsupportedScheme);
-        };
+                if route_path != "auth/callback" {
+                    return match route_deep_link(callback_uri, deep_link_policy) {
+                        Ok(_) => Err(OidcLoopbackError::InvalidCallbackPath),
+                        Err(DeepLinkError::UntrustedOrigin) => {
+                            Err(OidcLoopbackError::UntrustedIssuerOrigin)
+                        }
+                        Err(_) => Err(OidcLoopbackError::CallbackMalformed),
+                    };
+                }
+                let query = query_opt.ok_or(OidcLoopbackError::CallbackMalformed)?;
+                let (parsed_code, parsed_state) =
+                    parse_loopback_callback_query(query, &self, Some(deep_link_policy))?;
+                match route_deep_link(callback_uri, deep_link_policy) {
+                    Ok(AdmittedDeepLink::Kodera(KoderaDeepLink::AuthCallback { .. })) => (
+                        parsed_code,
+                        parsed_state,
+                        "kodera://auth/callback".to_owned(),
+                    ),
+                    Ok(_) => return Err(OidcLoopbackError::InvalidCallbackPath),
+                    Err(DeepLinkError::UntrustedOrigin) => {
+                        return Err(OidcLoopbackError::UntrustedIssuerOrigin)
+                    }
+                    Err(_) => return Err(OidcLoopbackError::CallbackMalformed),
+                }
+            } else if let Some(after_http) = callback_uri.strip_prefix("http://") {
+                let (authority, path_and_query) = after_http
+                    .split_once('/')
+                    .ok_or(OidcLoopbackError::CallbackMalformed)?;
+                let (host, port_str) = authority
+                    .split_once(':')
+                    .ok_or(OidcLoopbackError::UntrustedCallbackHost)?;
+                if host != "127.0.0.1" {
+                    return Err(OidcLoopbackError::UntrustedCallbackHost);
+                }
+                let port = port_str
+                    .parse::<u16>()
+                    .map_err(|_| OidcLoopbackError::InvalidLoopbackPort)?;
+                if port != self.loopback_port {
+                    return Err(OidcLoopbackError::PortMismatch);
+                }
+                let (path, query) = path_and_query
+                    .split_once('?')
+                    .ok_or(OidcLoopbackError::CallbackMalformed)?;
+                if path != "auth/callback" {
+                    return Err(OidcLoopbackError::InvalidCallbackPath);
+                }
+                let (code, state) = parse_loopback_callback_query(query, &self, None)?;
+                (code, state, self.redirect_uri.clone())
+            } else {
+                return Err(OidcLoopbackError::UnsupportedScheme);
+            };
 
         if !constant_time_eq_bytes(received_state.as_bytes(), self.expected_state.as_bytes()) {
             return Err(OidcLoopbackError::StateMismatch);
@@ -453,27 +531,36 @@ impl OidcPkceSession {
 
 fn parse_loopback_callback_query(
     query: &str,
+    session: &OidcPkceSession,
+    deep_link_origin_policy: Option<&DeepLinkAdmissionPolicy>,
 ) -> Result<(RedactedOidcCode, String), OidcLoopbackError> {
     if query.is_empty() {
         return Err(OidcLoopbackError::CallbackMalformed);
     }
     let mut code: Option<RedactedOidcCode> = None;
     let mut state: Option<String> = None;
+    let mut decoded_iss: Option<String> = None;
     let mut oauth_error: Option<&str> = None;
+    let mut seen_error_description = false;
+    let mut seen_error_uri = false;
+    let mut seen_session_state = false;
+    let mut seen_origin = false;
 
     for pair in query.split('&') {
+        let raw_key = pair.split_once('=').map_or(pair, |(k, _)| k);
+        if is_open_redirect_param(raw_key) {
+            return Err(OidcLoopbackError::OpenRedirectDetected);
+        }
         let Some((key, value)) = pair.split_once('=') else {
             return Err(OidcLoopbackError::CallbackMalformed);
         };
-        if key.is_empty() || value.is_empty() || value.contains('=') || value.contains('%') {
+        if key.is_empty() || key.contains('%') || key.contains('+') || value.contains('=') {
             return Err(OidcLoopbackError::CallbackMalformed);
-        }
-        if is_open_redirect_param(key) {
-            return Err(OidcLoopbackError::OpenRedirectDetected);
         }
         match key {
             "code" => {
-                if code.is_some() {
+                if code.is_some() || value.is_empty() || value.contains('%') || value.contains('+')
+                {
                     return Err(OidcLoopbackError::CallbackMalformed);
                 }
                 code = Some(
@@ -482,25 +569,105 @@ fn parse_loopback_callback_query(
                 );
             }
             "state" => {
-                if state.is_some() || !is_valid_oidc_state(value) {
+                if state.is_some() || value.contains('%') || value.contains('+') {
+                    return Err(OidcLoopbackError::CallbackMalformed);
+                }
+                if !is_valid_oidc_state(value) {
                     return Err(OidcLoopbackError::InvalidState);
                 }
                 state = Some(value.to_owned());
             }
             "error" => {
-                if oauth_error.is_some() {
+                if oauth_error.is_some()
+                    || !(1..=64).contains(&value.len())
+                    || !value
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
+                {
                     return Err(OidcLoopbackError::CallbackMalformed);
                 }
                 oauth_error = Some(value);
             }
-            "iss" | "session_state" => {}
+            "error_description" => {
+                if seen_error_description || value.len() > 512 {
+                    return Err(OidcLoopbackError::CallbackMalformed);
+                }
+                let _ = percent_decode_rfc3986_single_pass(value, true)
+                    .map_err(|_| OidcLoopbackError::CallbackMalformed)?;
+                seen_error_description = true;
+            }
+            "error_uri" => {
+                if seen_error_uri || value.len() > 512 || value.contains('+') {
+                    return Err(OidcLoopbackError::CallbackMalformed);
+                }
+                if !value.is_empty() {
+                    let uri = percent_decode_rfc3986_single_pass(value, false)
+                        .map_err(|_| OidcLoopbackError::CallbackMalformed)?;
+                    if !uri.starts_with("https://")
+                        || uri.contains('@')
+                        || uri.contains('\\')
+                        || uri.contains('#')
+                        || uri.contains("..")
+                    {
+                        return Err(OidcLoopbackError::CallbackMalformed);
+                    }
+                }
+                seen_error_uri = true;
+            }
+            "iss" => {
+                if decoded_iss.is_some() || value.is_empty() || value.contains('+') {
+                    return Err(OidcLoopbackError::CallbackMalformed);
+                }
+                let iss = percent_decode_rfc3986_single_pass(value, false)
+                    .map_err(|_| OidcLoopbackError::CallbackMalformed)?;
+                decoded_iss = Some(iss);
+            }
+            "session_state" => {
+                if seen_session_state
+                    || !(4..=128).contains(&value.len())
+                    || !value
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+                {
+                    return Err(OidcLoopbackError::CallbackMalformed);
+                }
+                seen_session_state = true;
+            }
+            "origin" if deep_link_origin_policy.is_some() => {
+                let policy = deep_link_origin_policy.expect("checked Some");
+                if seen_origin
+                    || value.is_empty()
+                    || value.contains('%')
+                    || value.contains('+')
+                    || value.contains("..")
+                {
+                    return Err(OidcLoopbackError::CallbackMalformed);
+                }
+                if !policy.is_domain_admitted(value) {
+                    return Err(OidcLoopbackError::UntrustedIssuerOrigin);
+                }
+                seen_origin = true;
+            }
             _ => return Err(OidcLoopbackError::CallbackMalformed),
         }
     }
 
     if oauth_error.is_some() {
+        if code.is_some() {
+            return Err(OidcLoopbackError::CallbackMalformed);
+        }
+        session.verify_callback_issuer(decoded_iss.as_deref())?;
+        let received_state = state.ok_or(OidcLoopbackError::InvalidState)?;
+        if !constant_time_eq_bytes(received_state.as_bytes(), session.expected_state.as_bytes()) {
+            return Err(OidcLoopbackError::StateMismatch);
+        }
         return Err(OidcLoopbackError::AuthorizationDenied);
     }
+    if seen_error_description || seen_error_uri {
+        return Err(OidcLoopbackError::CallbackMalformed);
+    }
+
+    session.verify_callback_issuer(decoded_iss.as_deref())?;
     let verified_code = code.ok_or(OidcLoopbackError::InvalidAuthorizationCode)?;
     let verified_state = state.ok_or(OidcLoopbackError::InvalidState)?;
     Ok((verified_code, verified_state))
@@ -693,11 +860,11 @@ mod tests {
         let allowlist = OidcIssuerAllowlist::kodera_default();
         let policy = DeepLinkAdmissionPolicy::kodera_default();
 
-        // Rejects untrusted / non-HTTPS / credentialed / path-bearing issuer origins.
+        // Rejects untrusted, non-HTTPS, credentialed, and origin-only (missing `/realms/<realm>`) issuers.
         assert_eq!(
             OidcPkceSession::start(
                 &allowlist,
-                "https://evil.example.org",
+                "https://evil.example.org/realms/kodera",
                 "kodera-desktop",
                 RFC7636_VERIFIER,
                 FIXTURE_STATE,
@@ -708,7 +875,18 @@ mod tests {
         assert_eq!(
             OidcPkceSession::start(
                 &allowlist,
-                "http://auth.kodera.io",
+                "http://auth.kodera.io/realms/kodera",
+                "kodera-desktop",
+                RFC7636_VERIFIER,
+                FIXTURE_STATE,
+                49152
+            ),
+            Err(OidcLoopbackError::InvalidIssuerOrigin)
+        );
+        assert_eq!(
+            OidcPkceSession::start(
+                &allowlist,
+                "https://auth.kodera.io",
                 "kodera-desktop",
                 RFC7636_VERIFIER,
                 FIXTURE_STATE,
@@ -719,7 +897,7 @@ mod tests {
 
         let (session, ready) = OidcPkceSession::start(
             &allowlist,
-            "https://auth.kodera.io",
+            "https://auth.kodera.io/realms/kodera",
             "kodera-desktop",
             RFC7636_VERIFIER,
             FIXTURE_STATE,
@@ -746,27 +924,27 @@ mod tests {
                 OidcLoopbackError::UnsupportedScheme,
             ),
             (
-                "http://localhost:51920/auth/callback?code=code_delta_echo_foxtrot_9999&state=state_alpha_bravo_charlie_0001",
+                "http://localhost:51920/auth/callback?code=code_delta_echo_foxtrot_9999&state=state_alpha_bravo_charlie_0001&iss=https%3A%2F%2Fauth.kodera.io%2Frealms%2Fkodera",
                 OidcLoopbackError::UntrustedCallbackHost,
             ),
             (
-                "http://0.0.0.0:51920/auth/callback?code=code_delta_echo_foxtrot_9999&state=state_alpha_bravo_charlie_0001",
+                "http://0.0.0.0:51920/auth/callback?code=code_delta_echo_foxtrot_9999&state=state_alpha_bravo_charlie_0001&iss=https%3A%2F%2Fauth.kodera.io%2Frealms%2Fkodera",
                 OidcLoopbackError::UntrustedCallbackHost,
             ),
             (
-                "http://127.0.0.1:51921/auth/callback?code=code_delta_echo_foxtrot_9999&state=state_alpha_bravo_charlie_0001",
+                "http://127.0.0.1:51921/auth/callback?code=code_delta_echo_foxtrot_9999&state=state_alpha_bravo_charlie_0001&iss=https%3A%2F%2Fauth.kodera.io%2Frealms%2Fkodera",
                 OidcLoopbackError::PortMismatch,
             ),
             (
-                "http://127.0.0.1:51920/auth/callback?code=code_delta_echo_foxtrot_9999&state=state_alpha_bravo_charlie_0001&redirect_uri=https://evil.example",
+                "http://127.0.0.1:51920/auth/callback?code=code_delta_echo_foxtrot_9999&state=state_alpha_bravo_charlie_0001&iss=https%3A%2F%2Fauth.kodera.io%2Frealms%2Fkodera&redirect_uri=https://evil.example",
                 OidcLoopbackError::OpenRedirectDetected,
             ),
             (
-                "kodera://auth/callback?code=code_delta_echo_foxtrot_9999&state=state_alpha_bravo_charlie_0001&next=https://evil.example",
+                "kodera://auth/callback?code=code_delta_echo_foxtrot_9999&state=state_alpha_bravo_charlie_0001&iss=https%3A%2F%2Fauth.kodera.io%2Frealms%2Fkodera&next=https://evil.example",
                 OidcLoopbackError::OpenRedirectDetected,
             ),
             (
-                "http://127.0.0.1:51920/auth/callback?code=code_delta_echo_foxtrot_9999&state=wrong_state_value_000000000",
+                "http://127.0.0.1:51920/auth/callback?code=code_delta_echo_foxtrot_9999&state=wrong_state_value_000000000&iss=https%3A%2F%2Fauth.kodera.io%2Frealms%2Fkodera",
                 OidcLoopbackError::StateMismatch,
             ),
         ] {
@@ -785,7 +963,7 @@ mod tests {
             .clone()
             .consume_callback_uri(
                 &format!(
-                    "http://127.0.0.1:51920/auth/callback?code={FIXTURE_AUTH_CODE}&state={FIXTURE_STATE}"
+                    "http://127.0.0.1:51920/auth/callback?code={FIXTURE_AUTH_CODE}&state={FIXTURE_STATE}&iss=https%3A%2F%2Fauth.kodera.io%2Frealms%2Fkodera"
                 ),
                 &policy,
             )
@@ -801,7 +979,7 @@ mod tests {
         let ok_scheme = session
             .consume_callback_uri(
                 &format!(
-                    "kodera://auth/callback?code={FIXTURE_AUTH_CODE}&state={FIXTURE_STATE}&origin=kodera.io"
+                    "kodera://auth/callback?code={FIXTURE_AUTH_CODE}&state={FIXTURE_STATE}&iss=https%3A%2F%2Fauth.kodera.io%2Frealms%2Fkodera&origin=kodera.io"
                 ),
                 &policy,
             )
@@ -819,7 +997,7 @@ mod tests {
         let port = listener.port();
         let (session, _) = OidcPkceSession::start(
             &allowlist,
-            "https://auth.kodera.io",
+            "https://auth.kodera.io/realms/kodera",
             "kodera-desktop",
             RFC7636_VERIFIER,
             FIXTURE_STATE,
@@ -830,7 +1008,7 @@ mod tests {
         let client_handle = std::thread::spawn(move || {
             let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
             let req = format!(
-                "GET /auth/callback?code={FIXTURE_AUTH_CODE}&state={FIXTURE_STATE} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+                "GET /auth/callback?code={FIXTURE_AUTH_CODE}&state={FIXTURE_STATE}&iss=https%3A%2F%2Fauth.kodera.io%2Frealms%2Fkodera HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
             );
             stream.write_all(req.as_bytes()).unwrap();
             let mut resp = String::new();
@@ -853,7 +1031,7 @@ mod tests {
         let rebind_port = listener_rebind.port();
         let (session_rebind, _) = OidcPkceSession::start(
             &allowlist,
-            "https://auth.kodera.io",
+            "https://auth.kodera.io/realms/kodera",
             "kodera-desktop",
             RFC7636_VERIFIER,
             FIXTURE_STATE,
@@ -864,7 +1042,7 @@ mod tests {
         let attacker = std::thread::spawn(move || {
             let mut stream = TcpStream::connect(("127.0.0.1", rebind_port)).unwrap();
             let req = format!(
-                "GET /auth/callback?code={FIXTURE_AUTH_CODE}&state={FIXTURE_STATE} HTTP/1.1\r\nHost: evil.rebind.test:{rebind_port}\r\n\r\n"
+                "GET /auth/callback?code={FIXTURE_AUTH_CODE}&state={FIXTURE_STATE}&iss=https%3A%2F%2Fauth.kodera.io%2Frealms%2Fkodera HTTP/1.1\r\nHost: evil.rebind.test:{rebind_port}\r\n\r\n"
             );
             stream.write_all(req.as_bytes()).unwrap();
             let mut resp = String::new();
@@ -884,7 +1062,7 @@ mod tests {
         let dup_port = listener_dup.port();
         let (session_dup, _) = OidcPkceSession::start(
             &allowlist,
-            "https://auth.kodera.io",
+            "https://auth.kodera.io/realms/kodera",
             "kodera-desktop",
             RFC7636_VERIFIER,
             FIXTURE_STATE,
@@ -895,7 +1073,7 @@ mod tests {
         let dup_client = std::thread::spawn(move || {
             let mut stream = TcpStream::connect(("127.0.0.1", dup_port)).unwrap();
             let req = format!(
-                "GET /auth/callback?code={FIXTURE_AUTH_CODE}&state={FIXTURE_STATE} HTTP/1.1\r\nHost: 127.0.0.1:{dup_port}\r\nHost: 127.0.0.1:{dup_port}\r\n\r\n"
+                "GET /auth/callback?code={FIXTURE_AUTH_CODE}&state={FIXTURE_STATE}&iss=https%3A%2F%2Fauth.kodera.io%2Frealms%2Fkodera HTTP/1.1\r\nHost: 127.0.0.1:{dup_port}\r\nHost: 127.0.0.1:{dup_port}\r\n\r\n"
             );
             stream.write_all(req.as_bytes()).unwrap();
             let mut resp = String::new();
@@ -910,5 +1088,182 @@ mod tests {
         assert_eq!(dup_err, OidcLoopbackError::UntrustedCallbackHost);
         assert!(dup_resp.starts_with("HTTP/1.1 400 Bad Request"));
         assert!(dup_resp.contains("Duplicate Host"));
+    }
+
+    #[test]
+    fn keycloak26_rfc9207_encoded_issuer_and_error_description_callbacks_verify_and_reject_mixups()
+    {
+        let allowlist = OidcIssuerAllowlist::kodera_default();
+        let policy = DeepLinkAdmissionPolicy::kodera_default();
+        let (session, _) = OidcPkceSession::start(
+            &allowlist,
+            "https://auth.kodera.io/realms/kodera",
+            "kodera-desktop",
+            RFC7636_VERIFIER,
+            FIXTURE_STATE,
+            51920,
+        )
+        .unwrap();
+
+        // 1. Valid Keycloak 26 loopback callback with percent-encoded `iss` and `session_state`.
+        let kc_loopback = format!(
+            "http://127.0.0.1:51920/auth/callback?state={FIXTURE_STATE}&session_state=8f3a1c2d-4e5b-6789&iss=https%3A%2F%2Fauth.kodera.io%2Frealms%2Fkodera&code={FIXTURE_AUTH_CODE}"
+        );
+        let outcome = session
+            .clone()
+            .consume_callback_uri(&kc_loopback, &policy)
+            .unwrap();
+        assert_eq!(outcome.issuer_origin, "https://auth.kodera.io");
+        assert_eq!(
+            outcome.authorization_code.expose_for_token_exchange(),
+            FIXTURE_AUTH_CODE
+        );
+
+        // 2. Valid Keycloak 26 custom-scheme callback (`kodera://auth/callback`) with percent-encoded `iss`.
+        let kc_scheme = format!(
+            "kodera://auth/callback?state={FIXTURE_STATE}&session_state=8f3a1c2d-4e5b-6789&iss=https%3A%2F%2Fauth.kodera.io%2Frealms%2Fkodera&code={FIXTURE_AUTH_CODE}"
+        );
+        let scheme_outcome = session
+            .clone()
+            .consume_callback_uri(&kc_scheme, &policy)
+            .unwrap();
+        assert_eq!(scheme_outcome.redirect_uri, "kodera://auth/callback");
+
+        // 3. RFC 9207 cross-realm and cross-host issuer mix-up attacks fail closed with UntrustedIssuerOrigin.
+        for mismatched_iss in [
+            "https%3A%2F%2Fauth.kodera.io%2Frealms%2Fother-tenant",
+            "https%3A%2F%2Fevil.example.org%2Frealms%2Fkodera",
+            "https%3A%2F%2Fauth.kodera.io",
+        ] {
+            let mixup = format!(
+                "http://127.0.0.1:51920/auth/callback?state={FIXTURE_STATE}&iss={mismatched_iss}&code={FIXTURE_AUTH_CODE}"
+            );
+            assert_eq!(
+                session
+                    .clone()
+                    .consume_callback_uri(&mixup, &policy)
+                    .unwrap_err(),
+                OidcLoopbackError::UntrustedIssuerOrigin
+            );
+        }
+        // Missing `iss` when session was started with an exact realm issuer also fails closed per RFC 9207 §2.4.
+        let missing_iss = format!(
+            "http://127.0.0.1:51920/auth/callback?state={FIXTURE_STATE}&code={FIXTURE_AUTH_CODE}"
+        );
+        assert_eq!(
+            session
+                .clone()
+                .consume_callback_uri(&missing_iss, &policy)
+                .unwrap_err(),
+            OidcLoopbackError::UntrustedIssuerOrigin
+        );
+
+        // Double-encoded `iss` fails single-pass RFC 3986 decoding check (`CallbackMalformed`).
+        let double_encoded = format!(
+            "http://127.0.0.1:51920/auth/callback?state={FIXTURE_STATE}&iss=https%253A%252F%252Fauth.kodera.io%252Frealms%252Fkodera&code={FIXTURE_AUTH_CODE}"
+        );
+        assert_eq!(
+            session
+                .clone()
+                .consume_callback_uri(&double_encoded, &policy)
+                .unwrap_err(),
+            OidcLoopbackError::CallbackMalformed
+        );
+
+        // 4. Keycloak 26 cancellation / denial callback with `error_description=User+cancelled%21` and `error_uri`.
+        let denied_loopback = format!(
+            "http://127.0.0.1:51920/auth/callback?error=access_denied&error_description=User+cancelled%21&error_uri=https%3A%2F%2Fauth.kodera.io%2Fdocs&state={FIXTURE_STATE}&iss=https%3A%2F%2Fauth.kodera.io%2Frealms%2Fkodera"
+        );
+        assert_eq!(
+            session
+                .clone()
+                .consume_callback_uri(&denied_loopback, &policy)
+                .unwrap_err(),
+            OidcLoopbackError::AuthorizationDenied
+        );
+        let denied_scheme = format!(
+            "kodera://auth/callback?error=access_denied&error_description=User+cancelled%21&state={FIXTURE_STATE}&iss=https%3A%2F%2Fauth.kodera.io%2Frealms%2Fkodera"
+        );
+        assert_eq!(
+            session
+                .clone()
+                .consume_callback_uri(&denied_scheme, &policy)
+                .unwrap_err(),
+            OidcLoopbackError::AuthorizationDenied
+        );
+
+        // Error responses must also enforce RFC 9207 §2.4 exact `iss` and `state` verification!
+        for (bad_error_uri, expected_err) in [
+            (
+                format!("http://127.0.0.1:51920/auth/callback?error=access_denied&state={FIXTURE_STATE}"),
+                OidcLoopbackError::UntrustedIssuerOrigin,
+            ),
+            (
+                format!("http://127.0.0.1:51920/auth/callback?error=access_denied&state={FIXTURE_STATE}&iss=https%3A%2F%2Fauth.kodera.io%2Frealms%2Fother"),
+                OidcLoopbackError::UntrustedIssuerOrigin,
+            ),
+            (
+                "http://127.0.0.1:51920/auth/callback?error=access_denied&iss=https%3A%2F%2Fauth.kodera.io%2Frealms%2Fkodera".to_owned(),
+                OidcLoopbackError::InvalidState,
+            ),
+            (
+                "http://127.0.0.1:51920/auth/callback?error=access_denied&state=wrong_state_value_000000000&iss=https%3A%2F%2Fauth.kodera.io%2Frealms%2Fkodera".to_owned(),
+                OidcLoopbackError::StateMismatch,
+            ),
+            (
+                format!("kodera://auth/callback?error=access_denied&state={FIXTURE_STATE}&iss=https%3A%2F%2Fauth.kodera.io%2Frealms%2Fother"),
+                OidcLoopbackError::UntrustedIssuerOrigin,
+            ),
+            (
+                "kodera://auth/callback?error=access_denied&state=wrong_state_value_000000000&iss=https%3A%2F%2Fauth.kodera.io%2Frealms%2Fkodera".to_owned(),
+                OidcLoopbackError::StateMismatch,
+            ),
+        ] {
+            assert_eq!(
+                session
+                    .clone()
+                    .consume_callback_uri(&bad_error_uri, &policy)
+                    .unwrap_err(),
+                expected_err,
+                "expected {expected_err:?} for {bad_error_uri}"
+            );
+        }
+
+        // Open-redirect parameters without `=`, mixed-case, or percent-encoded keys map to OpenRedirectDetected.
+        for redirect_uri in [
+            format!("http://127.0.0.1:51920/auth/callback?state={FIXTURE_STATE}&iss=https%3A%2F%2Fauth.kodera.io%2Frealms%2Fkodera&code={FIXTURE_AUTH_CODE}&redirect"),
+            format!("http://127.0.0.1:51920/auth/callback?state={FIXTURE_STATE}&iss=https%3A%2F%2Fauth.kodera.io%2Frealms%2Fkodera&code={FIXTURE_AUTH_CODE}&REDIRECT_URI=https://evil.example"),
+            format!("http://127.0.0.1:51920/auth/callback?state={FIXTURE_STATE}&iss=https%3A%2F%2Fauth.kodera.io%2Frealms%2Fkodera&code={FIXTURE_AUTH_CODE}&%72edirect=https://evil.example"),
+            "kodera://auth/callback?redirect".to_owned(),
+            "kodera://auth/callback?REDIRECT_URL=https://evil.example".to_owned(),
+        ] {
+            let (fresh_session, _) = OidcPkceSession::start(
+                &allowlist,
+                "https://auth.kodera.io/realms/kodera",
+                "kodera-desktop",
+                RFC7636_VERIFIER,
+                FIXTURE_STATE,
+                51920,
+            )
+            .unwrap();
+            assert_eq!(
+                fresh_session
+                    .consume_callback_uri(&redirect_uri, &policy)
+                    .unwrap_err(),
+                OidcLoopbackError::OpenRedirectDetected,
+                "expected OpenRedirectDetected for {redirect_uri}"
+            );
+        }
+
+        // Strict unencoded allowlists remain enforced on `code`, `state`, and `error`.
+        let encoded_code = format!(
+            "http://127.0.0.1:51920/auth/callback?state={FIXTURE_STATE}&iss=https%3A%2F%2Fauth.kodera.io%2Frealms%2Fkodera&code=code%5F0123456789"
+        );
+        assert_eq!(
+            session
+                .consume_callback_uri(&encoded_code, &policy)
+                .unwrap_err(),
+            OidcLoopbackError::CallbackMalformed
+        );
     }
 }

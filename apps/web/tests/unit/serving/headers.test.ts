@@ -336,9 +336,11 @@ function security(
   expect(csp.get('object-src')).toEqual(["'none'"])
   expect(csp.get('base-uri')).toEqual(["'none'"])
   expect(csp.get('form-action')).toEqual(["'self'"])
+  const coreCollabWs = CORE.replace(/^https:/, 'wss:') + '/documents/collab'
   expect(csp.get('connect-src')).toEqual([
     "'self'",
     CORE + '/api/v1/',
+    coreCollabWs,
     PROVIDER + '/realms/',
     // Every host under the matrix domain, on the paths the Console calls and no others
     // (ADR-0012): discovery, the client-server API, the room-access call, and LiveKit's.
@@ -348,6 +350,7 @@ function security(
     ...LIVEKIT_PATHS.map((path) => `wss://*.${MATRIX_DOMAIN}${path}`),
     ...loopback,
   ])
+  expect(csp.get('connect-src')).not.toContain(CORE.replace(/^https:/, 'wss:'))
   // A source with no path opens its whole host, and under CSP Level 3 a `wss:` source matches
   // `https:` too: every source but 'self' names a path below its host.
   for (const source of csp.get('connect-src')!.slice(1)) {
@@ -718,6 +721,7 @@ describe('actual source static-serving boundary', { concurrent: false }, () => {
       expect(directives(document.headers).get('connect-src')).toEqual([
         "'self'",
         CORE + '/api/v1/',
+        CORE.replace(/^https:/, 'wss:') + '/documents/collab',
         PROVIDER + '/realms/',
         `https://*.staging.${MATRIX_DOMAIN}/.well-known/matrix/client`,
         `https://*.staging.${MATRIX_DOMAIN}/_matrix/`,
@@ -726,6 +730,34 @@ describe('actual source static-serving boundary', { concurrent: false }, () => {
       ])
     } finally {
       await stop(staging)
+    }
+  })
+
+  it('maps a loopback http core origin behind --allow-loopback to ws /documents/collab only', async () => {
+    const arguments_ = [...args(root), '--allow-loopback']
+    arguments_[arguments_.indexOf('--core-origin') + 1] = 'http://127.0.0.1:8000'
+    const loopbackCore = await start(arguments_)
+    try {
+      const document = await http(loopbackCore.port, '/console/acme-sa/home')
+      expect(document.status).toBe(200)
+      const connectSrc = directives(document.headers).get('connect-src')!
+      expect(connectSrc).toContain('http://127.0.0.1:8000/api/v1/')
+      expect(connectSrc).toContain('ws://127.0.0.1:8000/documents/collab')
+      expect(connectSrc).not.toContain('ws://127.0.0.1:8000')
+    } finally {
+      await stop(loopbackCore)
+    }
+    const nonLoopback = [...args(root), '--allow-loopback']
+    nonLoopback[nonLoopback.indexOf('--core-origin') + 1] = 'http://core.fixture.test'
+    const invalid = child(nonLoopback, 'configuration')
+    const timer = setTimeout(() => invalid.child.kill('SIGKILL'), 3000)
+    try {
+      const terminal = await invalid.closed
+      expect(terminal.code).toBe(2)
+      expect(invalid.output().stderr.trim()).toBe('configuration-invalid')
+    } finally {
+      clearTimeout(timer)
+      await stop(invalid)
     }
   })
 
@@ -1019,11 +1051,12 @@ describe('actual source static-serving boundary', { concurrent: false }, () => {
 
 // Finite real-source controls. The production file is read and hash-checked only;
 // each executable variant is an owned temporary exact copy, never a fake server.
-const PRISTINE_SHA = '9050d7a6bd3506554eeeea4af83d020ce1dd85716d0b7364145785d1a0877515'
+const PRISTINE_SHA = '9daac4d6e01ed63a7c8395b63397ecdfb52fcf0ef65ce799b4bedd4385e8a597'
 type Scenario =
   | 'referrer'
   | 'permissions-policy'
   | 'directive'
+  | 'collab-ws'
   | 'callback'
   | 'symlink'
   | 'fallback'
@@ -1114,6 +1147,12 @@ const MUTATIONS: readonly Mutation[] = [
     scenario: 'permissions-policy',
     from: "    'Permissions-Policy': PERMISSIONS_POLICY,",
     to: "    'Permissions-Policy': 'camera=*, microphone=*',",
+  },
+  {
+    id: 'M12-collab-websocket-connect-src',
+    scenario: 'collab-ws',
+    from: "      `${config.coreOrigin.replace(/^http/u, 'ws')}/documents/collab`,\n",
+    to: '',
   },
 ]
 
@@ -1247,6 +1286,10 @@ async function phase(script: string, root: string, mutation: Mutation, changed: 
         expect(result.headers['permissions-policy']).toBe('camera=*, microphone=*')
       else if (mutation.scenario === 'directive')
         expect(directives(result.headers).has('script-src-elem')).toBe(true)
+      else if (mutation.scenario === 'collab-ws')
+        expect(directives(result.headers).get('connect-src')).not.toContain(
+          CORE.replace(/^https:/, 'wss:') + '/documents/collab'
+        )
       else if (mutation.scenario === 'callback')
         expect(directives(result.headers).get('frame-ancestors')).toEqual(["'self'"])
       else if (mutation.scenario === 'document-cache')

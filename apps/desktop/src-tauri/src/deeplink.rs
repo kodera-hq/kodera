@@ -39,6 +39,7 @@ pub enum DeepLinkError {
     UntrustedOrigin,
     MalformedUri,
     InvalidQuery,
+    AuthorizationDenied,
     CapacityExceeded,
 }
 
@@ -54,6 +55,7 @@ impl fmt::Display for DeepLinkError {
             Self::UntrustedOrigin => "untrusted_origin",
             Self::MalformedUri => "malformed_uri",
             Self::InvalidQuery => "invalid_query",
+            Self::AuthorizationDenied => "authorization_denied",
             Self::CapacityExceeded => "capacity_exceeded",
         };
         f.write_str(code)
@@ -262,6 +264,7 @@ pub enum KoderaDeepLink {
         code: RedactedOidcCode,
         state: String,
         origin: Option<String>,
+        iss: Option<String>,
         canonical_uri: String,
     },
 }
@@ -321,7 +324,20 @@ pub fn route_deep_link(
         return Err(DeepLinkError::UnsupportedScheme);
     }
 
-    inspect_forbidden_delimiters(rest)?;
+    if scheme == "kodera" && rest.starts_with("//auth/callback?") {
+        let (path_part, query_part) = rest.split_once('?').unwrap_or((rest, ""));
+        inspect_forbidden_delimiters(path_part)?;
+        for b in query_part.bytes() {
+            match b {
+                b'\\' => return Err(DeepLinkError::PathTraversal),
+                b'@' => return Err(DeepLinkError::EmbeddedCredentials),
+                b'#' => return Err(DeepLinkError::MalformedUri),
+                _ => {}
+            }
+        }
+    } else {
+        inspect_forbidden_delimiters(rest)?;
+    }
 
     match scheme {
         "matrix" => parse_matrix_deep_link(rest, policy).map(AdmittedDeepLink::Matrix),
@@ -581,7 +597,7 @@ fn parse_kodera_deep_link(
         if segments.as_slice() != ["callback"] {
             return Err(DeepLinkError::MalformedUri);
         }
-        let (code, state, origin) = parse_kodera_auth_callback_query(query_opt, policy)?;
+        let (code, state, origin, iss) = parse_kodera_auth_callback_query(query_opt, policy)?;
         let canonical_uri = match &origin {
             Some(domain) => format!("kodera://auth/callback?state={state}&origin={domain}"),
             None => format!("kodera://auth/callback?state={state}"),
@@ -590,6 +606,7 @@ fn parse_kodera_deep_link(
             code,
             state,
             origin,
+            iss,
             canonical_uri,
         });
     }
@@ -683,10 +700,122 @@ fn parse_kodera_deep_link(
     }
 }
 
+pub(crate) fn percent_decode_rfc3986_single_pass(
+    raw: &str,
+    plus_as_space: bool,
+) -> Result<String, DeepLinkError> {
+    let bytes = raw.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut idx = 0;
+    while idx < bytes.len() {
+        match bytes[idx] {
+            b'%' => {
+                if idx + 2 >= bytes.len() {
+                    return Err(DeepLinkError::InvalidQuery);
+                }
+                let Some(decoded) = decode_hex_pair(bytes[idx + 1], bytes[idx + 2]) else {
+                    return Err(DeepLinkError::InvalidQuery);
+                };
+                if decoded.is_ascii_control() {
+                    return Err(DeepLinkError::ControlCharacter);
+                }
+                out.push(decoded);
+                idx += 3;
+            }
+            b'+' if plus_as_space => {
+                out.push(b' ');
+                idx += 1;
+            }
+            b if b.is_ascii_control() => return Err(DeepLinkError::ControlCharacter),
+            b => {
+                out.push(b);
+                idx += 1;
+            }
+        }
+    }
+    String::from_utf8(out).map_err(|_| DeepLinkError::InvalidQuery)
+}
+
+fn is_valid_oidc_realm_slug(slug: &str) -> bool {
+    (1..=64).contains(&slug.len())
+        && !slug.starts_with('-')
+        && !slug.ends_with('-')
+        && slug
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
+}
+
+pub(crate) fn validate_decoded_oidc_issuer_syntax(decoded: &str) -> Result<&str, DeepLinkError> {
+    if decoded.is_empty() || decoded.len() > 255 || !decoded.is_ascii() {
+        return Err(DeepLinkError::InvalidQuery);
+    }
+    if decoded.bytes().any(|b| b <= 0x20 || b >= 0x7F) {
+        return Err(DeepLinkError::InvalidQuery);
+    }
+    if decoded.contains('@') {
+        return Err(DeepLinkError::EmbeddedCredentials);
+    }
+    if decoded.contains('\\') || decoded.contains("..") {
+        return Err(DeepLinkError::PathTraversal);
+    }
+    if decoded.contains('?') || decoded.contains('#') || decoded.ends_with('/') {
+        return Err(DeepLinkError::InvalidQuery);
+    }
+    let Some(after_https) = decoded.strip_prefix("https://") else {
+        return Err(DeepLinkError::InvalidQuery);
+    };
+    let Some((host, path)) = after_https.split_once('/') else {
+        return Err(DeepLinkError::InvalidQuery);
+    };
+    validate_admissible_public_domain(host)?;
+    let Some(realm) = path.strip_prefix("realms/") else {
+        return Err(DeepLinkError::InvalidQuery);
+    };
+    if !is_valid_oidc_realm_slug(realm) {
+        return Err(DeepLinkError::InvalidQuery);
+    }
+    Ok(host)
+}
+
+pub(crate) fn is_admitted_issuer_host(host: &str, policy: &DeepLinkAdmissionPolicy) -> bool {
+    let host_lower = host.to_ascii_lowercase();
+    policy.is_domain_admitted(&host_lower)
+        || policy.admitted_domains().iter().any(|domain| {
+            host_lower
+                .strip_suffix(domain.as_str())
+                .is_some_and(|prefix| {
+                    prefix.len() >= 2
+                        && prefix.ends_with('.')
+                        && !prefix.starts_with('.')
+                        && !prefix.contains("..")
+                })
+        })
+}
+
+pub(crate) fn is_open_redirect_key(key: &str) -> bool {
+    let candidate =
+        percent_decode_rfc3986_single_pass(key, true).unwrap_or_else(|_| key.to_owned());
+    matches!(
+        candidate.to_ascii_lowercase().as_str(),
+        "redirect"
+            | "redirect_uri"
+            | "redirect_url"
+            | "next"
+            | "return_to"
+            | "returnto"
+            | "continue"
+            | "url"
+            | "target"
+            | "dest"
+    )
+}
+
+type ParsedAuthCallbackQuery = (RedactedOidcCode, String, Option<String>, Option<String>);
+
 fn parse_kodera_auth_callback_query(
     query_opt: Option<&str>,
     policy: &DeepLinkAdmissionPolicy,
-) -> Result<(RedactedOidcCode, String, Option<String>), DeepLinkError> {
+) -> Result<ParsedAuthCallbackQuery, DeepLinkError> {
     let Some(query) = query_opt else {
         return Err(DeepLinkError::InvalidQuery);
     };
@@ -694,26 +823,37 @@ fn parse_kodera_auth_callback_query(
         return Err(DeepLinkError::InvalidQuery);
     }
     let pairs: Vec<&str> = query.split('&').collect();
-    if pairs.len() > 4 {
+    if pairs.len() > 8 {
         return Err(DeepLinkError::InvalidQuery);
     }
     let mut code: Option<RedactedOidcCode> = None;
     let mut state: Option<String> = None;
     let mut origin: Option<String> = None;
+    let mut iss: Option<String> = None;
+    let mut oauth_error: Option<&str> = None;
+    let mut seen_error_description = false;
+    let mut seen_error_uri = false;
     let mut seen_session_state = false;
 
     for pair in pairs {
+        let raw_key = pair.split_once('=').map_or(pair, |(k, _)| k);
+        if is_open_redirect_key(raw_key) {
+            return Err(DeepLinkError::InvalidQuery);
+        }
         let Some((key, value)) = pair.split_once('=') else {
             return Err(DeepLinkError::InvalidQuery);
         };
-        if key.is_empty() || value.is_empty() || value.contains('=') {
+        if key.is_empty() || key.contains('%') || key.contains('+') || value.contains('=') {
             return Err(DeepLinkError::InvalidQuery);
-        }
-        if value.contains("..") {
-            return Err(DeepLinkError::PathTraversal);
         }
         match key {
             "code" if code.is_none() => {
+                if value.is_empty() {
+                    return Err(DeepLinkError::InvalidQuery);
+                }
+                if value.contains("..") {
+                    return Err(DeepLinkError::PathTraversal);
+                }
                 code = Some(RedactedOidcCode::new(value)?);
             }
             "state" if state.is_none() => {
@@ -727,8 +867,25 @@ fn parse_kodera_auth_callback_query(
                 state = Some(value.to_owned());
             }
             "origin" if origin.is_none() => {
+                if value.is_empty() || value.contains('%') || value.contains('+') {
+                    return Err(DeepLinkError::InvalidQuery);
+                }
+                if value.contains("..") {
+                    return Err(DeepLinkError::PathTraversal);
+                }
                 ensure_admitted_domain(value, policy)?;
                 origin = Some(value.to_owned());
+            }
+            "iss" if iss.is_none() => {
+                if value.is_empty() || value.contains('+') {
+                    return Err(DeepLinkError::InvalidQuery);
+                }
+                let decoded_iss = percent_decode_rfc3986_single_pass(value, false)?;
+                let host = validate_decoded_oidc_issuer_syntax(&decoded_iss)?;
+                if !is_admitted_issuer_host(host, policy) {
+                    return Err(DeepLinkError::UntrustedOrigin);
+                }
+                iss = Some(decoded_iss);
             }
             "session_state" if !seen_session_state => {
                 if !(4..=128).contains(&value.len())
@@ -740,14 +897,62 @@ fn parse_kodera_auth_callback_query(
                 }
                 seen_session_state = true;
             }
+            "error" if oauth_error.is_none() => {
+                if !(1..=64).contains(&value.len())
+                    || !value
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
+                {
+                    return Err(DeepLinkError::InvalidQuery);
+                }
+                oauth_error = Some(value);
+            }
+            "error_description" if !seen_error_description => {
+                if value.len() > 512 {
+                    return Err(DeepLinkError::InvalidQuery);
+                }
+                let _decoded_desc = percent_decode_rfc3986_single_pass(value, true)?;
+                seen_error_description = true;
+            }
+            "error_uri" if !seen_error_uri => {
+                if value.len() > 512 || value.contains('+') {
+                    return Err(DeepLinkError::InvalidQuery);
+                }
+                if !value.is_empty() {
+                    let decoded_uri = percent_decode_rfc3986_single_pass(value, false)?;
+                    if decoded_uri.contains('@') {
+                        return Err(DeepLinkError::EmbeddedCredentials);
+                    }
+                    if decoded_uri.contains('\\') || decoded_uri.contains("..") {
+                        return Err(DeepLinkError::PathTraversal);
+                    }
+                    let Some(after_https) = decoded_uri.strip_prefix("https://") else {
+                        return Err(DeepLinkError::InvalidQuery);
+                    };
+                    let host = after_https.split(['/', '?', '#']).next().unwrap_or("");
+                    validate_admissible_public_domain(host)?;
+                }
+                seen_error_uri = true;
+            }
             _ => return Err(DeepLinkError::InvalidQuery),
         }
+    }
+
+    if oauth_error.is_some() {
+        if code.is_some() || state.is_none() || iss.is_none() {
+            return Err(DeepLinkError::InvalidQuery);
+        }
+        return Err(DeepLinkError::AuthorizationDenied);
+    }
+    if seen_error_description || seen_error_uri {
+        return Err(DeepLinkError::InvalidQuery);
     }
 
     Ok((
         code.ok_or(DeepLinkError::InvalidQuery)?,
         state.ok_or(DeepLinkError::InvalidQuery)?,
         origin,
+        iss,
     ))
 }
 
@@ -1186,5 +1391,77 @@ mod tests {
             ),
             Err(DeepLinkError::UntrustedOrigin)
         );
+
+        // Keycloak 26 RFC 9207 percent-encoded `iss` and `error_description` handling.
+        let kc_ok = route_deep_link(
+            "kodera://auth/callback?state=pkce_state_fixture_01&session_state=8f3a1c2d-4e5b&iss=https%3A%2F%2Fauth.kodera.io%2Frealms%2Fkodera&code=oidc_code_fixture_kc26",
+            &policy,
+        )
+        .unwrap();
+        let AdmittedDeepLink::Kodera(KoderaDeepLink::AuthCallback {
+            code: kc_code,
+            iss: kc_iss,
+            ..
+        }) = kc_ok
+        else {
+            panic!("expected AuthCallback");
+        };
+        assert_eq!(
+            kc_code.expose_for_token_exchange(),
+            "oidc_code_fixture_kc26"
+        );
+        assert_eq!(
+            kc_iss.as_deref(),
+            Some("https://auth.kodera.io/realms/kodera")
+        );
+
+        // Double-encoded `iss` fails single-pass RFC 3986 validation.
+        assert_eq!(
+            route_deep_link(
+                "kodera://auth/callback?state=pkce_state_fixture_01&iss=https%253A%252F%252Fauth.kodera.io%252Frealms%252Fkodera&code=oidc_code_fixture_kc26",
+                &policy,
+            ),
+            Err(DeepLinkError::InvalidQuery)
+        );
+
+        // Foreign issuer in `iss` is rejected with UntrustedOrigin.
+        assert_eq!(
+            route_deep_link(
+                "kodera://auth/callback?state=pkce_state_fixture_01&iss=https%3A%2F%2Fevil.example.org%2Frealms%2Fkodera&code=oidc_code_fixture_kc26",
+                &policy,
+            ),
+            Err(DeepLinkError::UntrustedOrigin)
+        );
+
+        // Real Keycloak 26 OAuth error callback maps cleanly to AuthorizationDenied while keeping `code`/`state`/`error` unencoded.
+        assert_eq!(
+            route_deep_link(
+                "kodera://auth/callback?error=access_denied&error_description=User+cancelled%21&error_uri=https%3A%2F%2Fauth.kodera.io%2Fdocs&state=pkce_state_fixture_01&iss=https%3A%2F%2Fauth.kodera.io%2Frealms%2Fkodera",
+                &policy,
+            ),
+            Err(DeepLinkError::AuthorizationDenied)
+        );
+        assert_eq!(
+            route_deep_link(
+                "kodera://auth/callback?error=access%5Fdenied&state=pkce_state_fixture_01",
+                &policy,
+            ),
+            Err(DeepLinkError::InvalidQuery)
+        );
+
+        // Leading-dot / empty-label issuer hosts (`.kodera.io`, `..kodera.io`) are rejected.
+        assert!(!is_admitted_issuer_host(".kodera.io", &policy));
+        assert!(!is_admitted_issuer_host("..kodera.io", &policy));
+        assert!(!is_admitted_issuer_host("a..kodera.io", &policy));
+        assert!(is_admitted_issuer_host("sso.kodera.io", &policy));
+        assert_eq!(
+            route_deep_link(
+                "kodera://auth/callback?state=pkce_state_fixture_01&iss=https%3A%2F%2F.kodera.io%2Frealms%2Fkodera&code=oidc_code_fixture_kc26",
+                &policy,
+            ),
+            Err(DeepLinkError::MalformedUri)
+        );
+        assert!(is_open_redirect_key("REDIRECT_URI"));
+        assert!(is_open_redirect_key("%72edirect"));
     }
 }

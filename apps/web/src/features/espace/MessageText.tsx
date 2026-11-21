@@ -8,6 +8,7 @@ import { useTranslation } from 'react-i18next'
 import { cx } from '../../ui/cx'
 import { withGlyphs } from './KoderaEmoji'
 import { LINK_TEXT } from '../../ui/linkText'
+import { hasMentionBoundaryAfter } from './mentions'
 import { isMatrixUserId } from './roomInvitations'
 
 export type TextSegment = { text: string } | { text: string; href: string }
@@ -80,7 +81,7 @@ export type MentionSegment =
 /** A full Matrix user id, `@localpart:server`, as other clients' plain bodies write a mention. */
 const USER_ID = /^@[a-z0-9._=\-/+]+:[a-z0-9.-]+(?::\d{1,5})?/iu
 /** The words that name the whole room. */
-const ROOM_WORD = /^@(salon|room)(?=$|[\s\p{P}])/iu
+const ROOM_WORD = /^@(salon|room)/iu
 
 /** The member a `matrix.to` permalink points at, when it is a user's; nothing for anything else. */
 export function permalinkUser(href: string): string | null {
@@ -120,22 +121,30 @@ export function mentionSegments(
     if (at < from) continue
     if (at > 0 && !/[\s([{«]/u.test(text[at - 1]!)) continue
     const rest = text.slice(at)
+    const afterAt = rest.slice(1)
     let found: MentionSegment | null = null
     const room = ROOM_WORD.exec(rest)
-    if (room !== null) found = { text: room[0], room: true }
-    if (found === null) {
-      const member = named.find(
-        ({ name }) =>
-          rest.startsWith(`@${name}`) &&
-          (rest.length === name.length + 1 || /[\s\p{P}]/u.test(rest[name.length + 1]!))
-      )
-      if (member !== undefined) found = { text: `@${member.name}`, userId: member.userId }
+    if (room !== null && hasMentionBoundaryAfter(afterAt, room[1]!)) {
+      found = { text: room[0], room: true }
     }
     if (found === null) {
       const id = USER_ID.exec(rest)
       // A trailing full stop ends the sentence, not the server name.
       const raw = id?.[0].replace(/\.+$/u, '')
-      if (raw !== undefined && raw.includes(':')) found = { text: raw, userId: raw }
+      if (
+        raw !== undefined &&
+        raw.includes(':') &&
+        hasMentionBoundaryAfter(afterAt, raw.slice(1))
+      ) {
+        const exactMember = named.find(({ name }) => name === raw.slice(1))
+        found = { text: raw, userId: exactMember ? exactMember.userId : raw }
+      }
+    }
+    if (found === null) {
+      const member = named.find(
+        ({ name }) => afterAt.startsWith(name) && hasMentionBoundaryAfter(afterAt, name)
+      )
+      if (member !== undefined) found = { text: `@${member.name}`, userId: member.userId }
     }
     if (found === null) continue
     if (at > from) segments.push({ text: text.slice(from, at) })
@@ -277,11 +286,7 @@ export function MessageText({
       <MarkdownText
         body={body}
         renderText={(blockText) => (
-          <InlineMarkdown
-            text={blockText}
-            renderLink={renderLink}
-            renderText={renderPlainRun}
-          />
+          <InlineMarkdown text={blockText} renderLink={renderLink} renderText={renderPlainRun} />
         )}
       />
       {hasExternalUrl ? (

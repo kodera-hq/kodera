@@ -1,16 +1,19 @@
 //! ES256 WebAuthn assertion verification for a trusted, pre-registered passkey credential.
 //! Registration/attestation, platform association and protected persistence remain external.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use p256::ecdsa::{signature::Verifier, Signature, VerifyingKey};
-use serde::Deserialize;
 
 use crate::{sha256, validate_docs_host, NativeCryptoError, OrganisationId};
 
 const MAX_CHALLENGES: usize = 64;
+const MAX_CLIENT_DATA_JSON_BYTES: usize = 4096;
+const MAX_AUTHENTICATOR_DATA_BYTES: usize = 2048;
+const MAX_JSON_NESTING_DEPTH: u8 = 4;
+const MAX_CBOR_EXTENSION_DEPTH: u8 = 4;
 const FLAG_UP: u8 = 0x01;
 const FLAG_UV: u8 = 0x04;
 const FLAG_BE: u8 = 0x08;
@@ -23,9 +26,10 @@ const FLAG_RFU_MASK: u8 = 0x22;
 ///
 /// - [`Self::Universal`] (default): admits single-device security keys (`0x05`), backup-eligible
 ///   local passkeys (`0x0D`), and multi-device synced passkeys (`0x1D`, including platform keychains
-///   and self-hosted software vaults) while still requiring `UP|UV` and rejecting invalid `BS=1, BE=0`
-///   (`0x15`), attested-data (`AT`), extension (`ED`), and reserved (`RFU`) bits.
-/// - [`Self::StrictNonBackupable`]: additionally requires `(flags & 0x18) == 0` (`0x05`).
+///   and self-hosted software vaults), with optional bounded CBOR extension data (`ED`, `0x80`),
+///   while still requiring `UP|UV` and rejecting invalid `BS=1, BE=0` (`0x15`), attested-data
+///   (`AT`), and reserved (`RFU`) bits.
+/// - [`Self::StrictNonBackupable`]: additionally requires `(flags & 0x18) == 0`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PasskeyBackupPolicy {
     #[default]
@@ -78,15 +82,431 @@ impl fmt::Debug for PasskeyAssertion {
     }
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct ClientData {
-    #[serde(rename = "type")]
     ceremony: String,
     challenge: String,
     origin: String,
-    #[serde(default)]
     cross_origin: bool,
+}
+
+struct StrictClientDataParser<'a> {
+    raw: &'a str,
+    offset: usize,
+}
+
+impl<'a> StrictClientDataParser<'a> {
+    fn parse(raw_bytes: &'a [u8]) -> Result<ClientData, NativeCryptoError> {
+        if raw_bytes.is_empty() || raw_bytes.len() > MAX_CLIENT_DATA_JSON_BYTES {
+            return Err(NativeCryptoError::InvalidInput);
+        }
+        let raw = core::str::from_utf8(raw_bytes).map_err(|_| NativeCryptoError::InvalidInput)?;
+        let mut parser = Self { raw, offset: 0 };
+        parser.skip_ws();
+        parser.expect_byte(b'{')?;
+        parser.skip_ws();
+
+        let mut seen_keys = BTreeSet::new();
+        let mut ceremony: Option<String> = None;
+        let mut challenge: Option<String> = None;
+        let mut origin: Option<String> = None;
+        let mut cross_origin = false;
+
+        if !parser.try_byte(b'}') {
+            loop {
+                if seen_keys.len() >= 64 {
+                    return Err(NativeCryptoError::InvalidInput);
+                }
+                parser.skip_ws();
+                let key = parser.parse_string()?;
+                if !seen_keys.insert(key.clone()) {
+                    return Err(NativeCryptoError::InvalidInput);
+                }
+                parser.skip_ws();
+                parser.expect_byte(b':')?;
+                parser.skip_ws();
+
+                match key.as_str() {
+                    "type" => ceremony = Some(parser.parse_string()?),
+                    "challenge" => challenge = Some(parser.parse_string()?),
+                    "origin" => origin = Some(parser.parse_string()?),
+                    "crossOrigin" => cross_origin = parser.parse_bool()?,
+                    _ => parser.skip_value(1)?,
+                }
+
+                parser.skip_ws();
+                if parser.try_byte(b'}') {
+                    break;
+                }
+                parser.expect_byte(b',')?;
+            }
+        }
+
+        parser.skip_ws();
+        if parser.offset != parser.raw.len() {
+            return Err(NativeCryptoError::InvalidInput);
+        }
+
+        Ok(ClientData {
+            ceremony: ceremony.ok_or(NativeCryptoError::InvalidInput)?,
+            challenge: challenge.ok_or(NativeCryptoError::InvalidInput)?,
+            origin: origin.ok_or(NativeCryptoError::InvalidInput)?,
+            cross_origin,
+        })
+    }
+
+    fn peek(&self) -> Option<u8> {
+        self.raw.as_bytes().get(self.offset).copied()
+    }
+
+    fn skip_ws(&mut self) {
+        while matches!(self.peek(), Some(b' ' | b'\t' | b'\r' | b'\n')) {
+            self.offset += 1;
+        }
+    }
+
+    fn expect_byte(&mut self, expected: u8) -> Result<(), NativeCryptoError> {
+        if self.peek() != Some(expected) {
+            return Err(NativeCryptoError::InvalidInput);
+        }
+        self.offset += 1;
+        Ok(())
+    }
+
+    fn try_byte(&mut self, expected: u8) -> bool {
+        if self.peek() == Some(expected) {
+            self.offset += 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn expect_literal(&mut self, literal: &str) -> Result<(), NativeCryptoError> {
+        if !self.raw[self.offset..].starts_with(literal) {
+            return Err(NativeCryptoError::InvalidInput);
+        }
+        self.offset += literal.len();
+        Ok(())
+    }
+
+    fn parse_bool(&mut self) -> Result<bool, NativeCryptoError> {
+        match self.peek() {
+            Some(b't') => {
+                self.expect_literal("true")?;
+                Ok(true)
+            }
+            Some(b'f') => {
+                self.expect_literal("false")?;
+                Ok(false)
+            }
+            _ => Err(NativeCryptoError::InvalidInput),
+        }
+    }
+
+    fn parse_hex_u16(&mut self) -> Result<u16, NativeCryptoError> {
+        let mut acc = 0u16;
+        for _ in 0..4 {
+            let b = self.peek().ok_or(NativeCryptoError::InvalidInput)?;
+            let digit = match b {
+                b'0'..=b'9' => u16::from(b - b'0'),
+                b'a'..=b'f' => u16::from(b - b'a' + 10),
+                b'A'..=b'F' => u16::from(b - b'A' + 10),
+                _ => return Err(NativeCryptoError::InvalidInput),
+            };
+            self.offset += 1;
+            acc = (acc << 4) | digit;
+        }
+        Ok(acc)
+    }
+
+    fn parse_string(&mut self) -> Result<String, NativeCryptoError> {
+        self.expect_byte(b'"')?;
+        let mut out = String::new();
+        loop {
+            let ch = self.raw[self.offset..]
+                .chars()
+                .next()
+                .ok_or(NativeCryptoError::InvalidInput)?;
+            self.offset += ch.len_utf8();
+            match ch {
+                '"' => return Ok(out),
+                '\\' => {
+                    let esc = self.peek().ok_or(NativeCryptoError::InvalidInput)?;
+                    self.offset += 1;
+                    match esc {
+                        b'"' => out.push('"'),
+                        b'\\' => out.push('\\'),
+                        b'/' => out.push('/'),
+                        b'b' => out.push('\u{0008}'),
+                        b'f' => out.push('\u{000C}'),
+                        b'n' => out.push('\n'),
+                        b'r' => out.push('\r'),
+                        b't' => out.push('\t'),
+                        b'u' => {
+                            let hi = u32::from(self.parse_hex_u16()?);
+                            let scalar = if (0xD800..=0xDBFF).contains(&hi) {
+                                self.expect_byte(b'\\')?;
+                                self.expect_byte(b'u')?;
+                                let lo = u32::from(self.parse_hex_u16()?);
+                                if !(0xDC00..=0xDFFF).contains(&lo) {
+                                    return Err(NativeCryptoError::InvalidInput);
+                                }
+                                0x10000 + ((hi - 0xD800) << 10) + (lo - 0xDC00)
+                            } else {
+                                hi
+                            };
+                            let decoded =
+                                char::from_u32(scalar).ok_or(NativeCryptoError::InvalidInput)?;
+                            out.push(decoded);
+                        }
+                        _ => return Err(NativeCryptoError::InvalidInput),
+                    }
+                }
+                c if (c as u32) < 0x20 => return Err(NativeCryptoError::InvalidInput),
+                other => out.push(other),
+            }
+        }
+    }
+
+    fn parse_number(&mut self) -> Result<(), NativeCryptoError> {
+        let _ = self.try_byte(b'-');
+        match self.peek() {
+            Some(b'0') => self.offset += 1,
+            Some(b'1'..=b'9') => {
+                self.offset += 1;
+                while matches!(self.peek(), Some(b'0'..=b'9')) {
+                    self.offset += 1;
+                }
+            }
+            _ => return Err(NativeCryptoError::InvalidInput),
+        }
+        if self.try_byte(b'.') {
+            if !matches!(self.peek(), Some(b'0'..=b'9')) {
+                return Err(NativeCryptoError::InvalidInput);
+            }
+            while matches!(self.peek(), Some(b'0'..=b'9')) {
+                self.offset += 1;
+            }
+        }
+        if matches!(self.peek(), Some(b'e' | b'E')) {
+            self.offset += 1;
+            if matches!(self.peek(), Some(b'+' | b'-')) {
+                self.offset += 1;
+            }
+            if !matches!(self.peek(), Some(b'0'..=b'9')) {
+                return Err(NativeCryptoError::InvalidInput);
+            }
+            while matches!(self.peek(), Some(b'0'..=b'9')) {
+                self.offset += 1;
+            }
+        }
+        Ok(())
+    }
+
+    fn skip_value(&mut self, depth: u8) -> Result<(), NativeCryptoError> {
+        if depth > MAX_JSON_NESTING_DEPTH {
+            return Err(NativeCryptoError::InvalidInput);
+        }
+        match self.peek() {
+            Some(b'"') => {
+                let _ = self.parse_string()?;
+                Ok(())
+            }
+            Some(b't') => self.expect_literal("true"),
+            Some(b'f') => self.expect_literal("false"),
+            Some(b'n') => self.expect_literal("null"),
+            Some(b'-' | b'0'..=b'9') => self.parse_number(),
+            Some(b'[') => {
+                if depth == MAX_JSON_NESTING_DEPTH {
+                    return Err(NativeCryptoError::InvalidInput);
+                }
+                self.offset += 1;
+                self.skip_ws();
+                if self.try_byte(b']') {
+                    return Ok(());
+                }
+                let mut count = 0usize;
+                loop {
+                    count += 1;
+                    if count > 64 {
+                        return Err(NativeCryptoError::InvalidInput);
+                    }
+                    self.skip_ws();
+                    self.skip_value(depth + 1)?;
+                    self.skip_ws();
+                    if self.try_byte(b']') {
+                        return Ok(());
+                    }
+                    self.expect_byte(b',')?;
+                }
+            }
+            Some(b'{') => {
+                if depth == MAX_JSON_NESTING_DEPTH {
+                    return Err(NativeCryptoError::InvalidInput);
+                }
+                self.offset += 1;
+                self.skip_ws();
+                if self.try_byte(b'}') {
+                    return Ok(());
+                }
+                let mut nested_keys = BTreeSet::new();
+                loop {
+                    if nested_keys.len() >= 64 {
+                        return Err(NativeCryptoError::InvalidInput);
+                    }
+                    self.skip_ws();
+                    let k = self.parse_string()?;
+                    if !nested_keys.insert(k) {
+                        return Err(NativeCryptoError::InvalidInput);
+                    }
+                    self.skip_ws();
+                    self.expect_byte(b':')?;
+                    self.skip_ws();
+                    self.skip_value(depth + 1)?;
+                    self.skip_ws();
+                    if self.try_byte(b'}') {
+                        return Ok(());
+                    }
+                    self.expect_byte(b',')?;
+                }
+            }
+            _ => Err(NativeCryptoError::InvalidInput),
+        }
+    }
+}
+
+fn validate_cbor_extension_map(bytes: &[u8]) -> Result<(), NativeCryptoError> {
+    if bytes.is_empty() || bytes.len() > MAX_AUTHENTICATOR_DATA_BYTES {
+        return Err(NativeCryptoError::AuthenticationFailed);
+    }
+    let mut offset = 0usize;
+    let initial = bytes[0];
+    if (initial >> 5) != 5 {
+        return Err(NativeCryptoError::AuthenticationFailed);
+    }
+    let map_len = read_cbor_definite_len(bytes, &mut offset)?;
+    if map_len == 0 || map_len > 32 {
+        return Err(NativeCryptoError::AuthenticationFailed);
+    }
+    for _ in 0..map_len {
+        skip_cbor_item(bytes, &mut offset, 1)?;
+        skip_cbor_item(bytes, &mut offset, 1)?;
+    }
+    if offset != bytes.len() {
+        return Err(NativeCryptoError::AuthenticationFailed);
+    }
+    Ok(())
+}
+
+fn read_cbor_definite_len(bytes: &[u8], offset: &mut usize) -> Result<usize, NativeCryptoError> {
+    let initial = *bytes
+        .get(*offset)
+        .ok_or(NativeCryptoError::AuthenticationFailed)?;
+    *offset += 1;
+    let info = initial & 0x1F;
+    match info {
+        0..=23 => Ok(usize::from(info)),
+        24 => {
+            let v = *bytes
+                .get(*offset)
+                .ok_or(NativeCryptoError::AuthenticationFailed)?;
+            *offset += 1;
+            if v < 24 {
+                return Err(NativeCryptoError::AuthenticationFailed);
+            }
+            Ok(usize::from(v))
+        }
+        25 => {
+            let slice = bytes
+                .get(*offset..*offset + 2)
+                .ok_or(NativeCryptoError::AuthenticationFailed)?;
+            *offset += 2;
+            let v = u16::from_be_bytes([slice[0], slice[1]]);
+            if v < 256 {
+                return Err(NativeCryptoError::AuthenticationFailed);
+            }
+            Ok(usize::from(v))
+        }
+        _ => Err(NativeCryptoError::AuthenticationFailed),
+    }
+}
+
+fn skip_cbor_item(bytes: &[u8], offset: &mut usize, depth: u8) -> Result<(), NativeCryptoError> {
+    if depth > MAX_CBOR_EXTENSION_DEPTH {
+        return Err(NativeCryptoError::AuthenticationFailed);
+    }
+    let initial = *bytes
+        .get(*offset)
+        .ok_or(NativeCryptoError::AuthenticationFailed)?;
+    let major = initial >> 5;
+    let info = initial & 0x1F;
+    match major {
+        0 | 1 => {
+            *offset += 1;
+            let extra = match info {
+                0..=23 => 0usize,
+                24 => 1,
+                25 => 2,
+                26 => 4,
+                27 => 8,
+                _ => return Err(NativeCryptoError::AuthenticationFailed),
+            };
+            if *offset + extra > bytes.len() {
+                return Err(NativeCryptoError::AuthenticationFailed);
+            }
+            *offset += extra;
+            Ok(())
+        }
+        2 => {
+            let len = read_cbor_definite_len(bytes, offset)?;
+            if *offset + len > bytes.len() {
+                return Err(NativeCryptoError::AuthenticationFailed);
+            }
+            *offset += len;
+            Ok(())
+        }
+        3 => {
+            let len = read_cbor_definite_len(bytes, offset)?;
+            let slice = bytes
+                .get(*offset..*offset + len)
+                .ok_or(NativeCryptoError::AuthenticationFailed)?;
+            core::str::from_utf8(slice).map_err(|_| NativeCryptoError::AuthenticationFailed)?;
+            *offset += len;
+            Ok(())
+        }
+        4 => {
+            if depth == MAX_CBOR_EXTENSION_DEPTH {
+                return Err(NativeCryptoError::AuthenticationFailed);
+            }
+            let len = read_cbor_definite_len(bytes, offset)?;
+            if len > 32 {
+                return Err(NativeCryptoError::AuthenticationFailed);
+            }
+            for _ in 0..len {
+                skip_cbor_item(bytes, offset, depth + 1)?;
+            }
+            Ok(())
+        }
+        5 => {
+            if depth == MAX_CBOR_EXTENSION_DEPTH {
+                return Err(NativeCryptoError::AuthenticationFailed);
+            }
+            let len = read_cbor_definite_len(bytes, offset)?;
+            if len > 32 {
+                return Err(NativeCryptoError::AuthenticationFailed);
+            }
+            for _ in 0..len {
+                skip_cbor_item(bytes, offset, depth + 1)?;
+                skip_cbor_item(bytes, offset, depth + 1)?;
+            }
+            Ok(())
+        }
+        7 if matches!(info, 20..=22) => {
+            *offset += 1;
+            Ok(())
+        }
+        _ => Err(NativeCryptoError::AuthenticationFailed),
+    }
 }
 
 struct ChallengeState {
@@ -124,7 +544,7 @@ fn validate_assertion_flags(
     if (flags & (FLAG_UP | FLAG_UV)) != (FLAG_UP | FLAG_UV) {
         return Err(NativeCryptoError::AuthenticationFailed);
     }
-    if (flags & (FLAG_RFU_MASK | FLAG_AT | FLAG_ED)) != 0 {
+    if (flags & (FLAG_RFU_MASK | FLAG_AT)) != 0 {
         return Err(NativeCryptoError::AuthenticationFailed);
     }
     let backup_bits = flags & (FLAG_BE | FLAG_BS);
@@ -310,14 +730,14 @@ impl PasskeyBinding {
         }
         if assertion.credential_id != self.credential_id
             || assertion.client_data_json.is_empty()
-            || assertion.client_data_json.len() > 4096
-            || assertion.authenticator_data.len() != 37
+            || assertion.client_data_json.len() > MAX_CLIENT_DATA_JSON_BYTES
+            || assertion.authenticator_data.len() < 37
+            || assertion.authenticator_data.len() > MAX_AUTHENTICATOR_DATA_BYTES
             || !(8..=80).contains(&assertion.signature_der.len())
         {
             return Err(NativeCryptoError::InvalidInput);
         }
-        let client: ClientData = serde_json::from_slice(&assertion.client_data_json)
-            .map_err(|_| NativeCryptoError::InvalidInput)?;
+        let client = StrictClientDataParser::parse(&assertion.client_data_json)?;
         let nonce = URL_SAFE_NO_PAD
             .decode(&client.challenge)
             .map_err(|_| NativeCryptoError::AuthenticationFailed)?;
@@ -333,7 +753,14 @@ impl PasskeyBinding {
         if data[..32] != sha256(self.rp_id.as_bytes()) {
             return Err(NativeCryptoError::AuthenticationFailed);
         }
-        let posture = validate_assertion_flags(data[32], self.backup_policy)?;
+        let flags = data[32];
+        let posture = validate_assertion_flags(flags, self.backup_policy)?;
+        let extension_slice = &data[37..];
+        if (flags & FLAG_ED) != 0 {
+            validate_cbor_extension_map(extension_slice)?;
+        } else if !extension_slice.is_empty() {
+            return Err(NativeCryptoError::InvalidInput);
+        }
         let counter = u32::from_be_bytes(
             data[33..37]
                 .try_into()
@@ -446,7 +873,10 @@ mod tests {
                 match mutation {
                     1 => client["crossOrigin"] = serde_json::json!(true),
                     2 => client["crossOrigin"] = serde_json::Value::Null,
-                    3 => client["unreviewedField"] = serde_json::json!("present"),
+                    3 => {
+                        client["deeplyNested"] =
+                            serde_json::json!({"l1":{"l2":{"l3":{"l4":{"l5":true}}}}})
+                    }
                     4 => client["challenge"] = serde_json::json!(URL_SAFE_NO_PAD.encode([9u8; 32])),
                     _ => unreachable!(),
                 }
@@ -652,5 +1082,103 @@ mod tests {
             Err(NativeCryptoError::EpochMismatch)
         );
         assert!(format!("{binding:?} {challenge:?} {good:?}").contains("[redacted]"));
+    }
+
+    #[test]
+    fn android_credential_manager_browser_token_binding_and_cbor_ed_extensions_verify_cleanly() {
+        let (_, signer) = setup();
+        let key = signer.verifying_key().to_sec1_point(false);
+
+        // 1. Real Android CredentialManager CollectedClientData with `androidPackageName` + `ED=0x80` CBOR map.
+        let facet = format!("android:apk-key-hash:{}", URL_SAFE_NO_PAD.encode([7u8; 32]));
+        let mut android_binding = PasskeyBinding::new(
+            org(),
+            "accounts.example.test",
+            &facet,
+            b"public-fixture-credential",
+            key.as_bytes(),
+        )
+        .unwrap();
+        let c1 = android_binding.issue_challenge(&org(), 200, 30).unwrap();
+        let android_client_json = serde_json::to_vec(&serde_json::json!({
+            "type": "webauthn.get",
+            "challenge": c1.base64url(),
+            "origin": facet,
+            "androidPackageName": "io.kodera.android"
+        }))
+        .unwrap();
+        let cred_props_cbor: &[u8] = &[
+            0xa1, 0x69, b'c', b'r', b'e', b'd', b'P', b'r', b'o', b'p', b's', 0xa1, 0x62, b'r',
+            b'k', 0xf5,
+        ];
+        let mut auth_data_ed = sha256(b"accounts.example.test").to_vec();
+        auth_data_ed.push(0x9d); // UP | UV | BE | BS | ED
+        auth_data_ed.extend_from_slice(&1u32.to_be_bytes());
+        auth_data_ed.extend_from_slice(cred_props_cbor);
+        let mut signed_ed = auth_data_ed.clone();
+        signed_ed.extend_from_slice(&sha256(&android_client_json));
+        let sig_ed: Signature = signer.sign(&signed_ed);
+        let android_assertion = PasskeyAssertion {
+            credential_id: b"public-fixture-credential".to_vec(),
+            client_data_json: android_client_json,
+            authenticator_data: auth_data_ed,
+            signature_der: sig_ed.to_der().as_bytes().to_vec(),
+        };
+        let posture = android_binding
+            .verify_assertion_posture(&org(), &c1, &android_assertion, 201)
+            .unwrap();
+        assert_eq!(posture, PasskeyResidencyPosture::MultiDeviceSynced);
+
+        // 2. Browser CollectedClientData with `tokenBinding` object, `topOrigin`, and `clientExtensions`.
+        let (mut web_binding, web_signer) = setup();
+        let c2 = web_binding.issue_challenge(&org(), 300, 30).unwrap();
+        let browser_client_json = serde_json::to_vec(&serde_json::json!({
+            "type": "webauthn.get",
+            "challenge": c2.base64url(),
+            "origin": "https://accounts.example.test",
+            "crossOrigin": false,
+            "topOrigin": "https://accounts.example.test",
+            "tokenBinding": {
+                "status": "present",
+                "id": "AQIDBAUGBwgJCgsMDQ4PEA"
+            },
+            "clientExtensions": {
+                "appidExclude": false,
+                "credBlob": null,
+                "uvm": [[1, 2, 3]]
+            }
+        }))
+        .unwrap();
+        let mut web_auth_data = sha256(b"accounts.example.test").to_vec();
+        web_auth_data.push(0x85); // UP | UV | ED
+        web_auth_data.extend_from_slice(&1u32.to_be_bytes());
+        web_auth_data.extend_from_slice(cred_props_cbor);
+        let mut web_signed = web_auth_data.clone();
+        web_signed.extend_from_slice(&sha256(&browser_client_json));
+        let web_sig: Signature = web_signer.sign(&web_signed);
+        let browser_assertion = PasskeyAssertion {
+            credential_id: b"public-fixture-credential".to_vec(),
+            client_data_json: browser_client_json,
+            authenticator_data: web_auth_data,
+            signature_der: web_sig.to_der().as_bytes().to_vec(),
+        };
+        let web_posture = web_binding
+            .verify_assertion_posture(&org(), &c2, &browser_assertion, 301)
+            .unwrap();
+        assert_eq!(web_posture, PasskeyResidencyPosture::SingleDeviceBound);
+
+        // 3. Malformed CBOR extension data or trailing bytes after CBOR map are rejected.
+        let c3 = web_binding.issue_challenge(&org(), 302, 30).unwrap();
+        let mut trailing_cbor =
+            assertion(&web_signer, &c3, 2, 0x85, "https://accounts.example.test");
+        trailing_cbor
+            .authenticator_data
+            .extend_from_slice(cred_props_cbor);
+        trailing_cbor.authenticator_data.push(0x00);
+        resign(&web_signer, &mut trailing_cbor);
+        assert_eq!(
+            web_binding.verify_assertion(&org(), &c3, &trailing_cbor, 303),
+            Err(NativeCryptoError::AuthenticationFailed)
+        );
     }
 }

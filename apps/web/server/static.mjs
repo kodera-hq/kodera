@@ -204,12 +204,21 @@ async function configuration(arguments_) {
   ) {
     throw new Error('Invalid configuration')
   }
-  const coreOrigin = configuredOrigin(values.get('--core-origin'))
+  const rawCoreOrigin = values.get('--core-origin')
+  const coreOrigin =
+    allowLoopback &&
+    typeof rawCoreOrigin === 'string' &&
+    rawCoreOrigin.toLowerCase().startsWith('http://')
+      ? configuredLoopbackOrigin(rawCoreOrigin, ['http'])
+      : configuredOrigin(rawCoreOrigin)
   const providerOrigin = configuredOrigin(values.get('--provider-origin'))
   // Every organisation's Synapse and LiveKit server, under one domain (ADR-0012).
   const matrixDomain = configuredDomain(values.get('--matrix-domain'))
   // `--allow-loopback` and a loopback origin come together, or neither does.
-  if (OPTIONAL.some((flag) => values.has(flag)) !== allowLoopback) {
+  if (
+    (OPTIONAL.some((flag) => values.has(flag)) || coreOrigin.startsWith('http://')) !==
+    allowLoopback
+  ) {
     throw new Error('Invalid configuration')
   }
   const homeserverOrigin = values.has('--homeserver-origin')
@@ -273,6 +282,9 @@ function headers(config, path) {
       "connect-src 'self'",
       ...(config.telemetryHost === null ? [] : [`${config.telemetryHost}/i/v0/e/`]),
       `${config.coreOrigin}/api/v1/`,
+      // CSP Level 3 never lets an `https:` source match a `wss:` URL, so Collaboration's
+      // WebSocket endpoint is named on its own, at that one path only.
+      `${config.coreOrigin.replace(/^http/u, 'ws')}/documents/collab`,
       `${config.providerOrigin}/realms/`,
       // Every source under the matrix domain names its path: a host wildcard with a bare origin
       // would open Core, the identity provider and every other host under the domain.

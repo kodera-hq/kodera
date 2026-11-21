@@ -119,9 +119,9 @@ final class PasskeyDeviceBindingTests: XCTestCase {
             XCTAssertEqual($0 as? PasskeyBindingError, .invalidInput)
         }
 
-        // 3: Unknown extra field
+        // 3: Deeply nested JSON (> depth 4) rejected
         let extraFieldJSON = Data("""
-        {"type":"webauthn.get","origin":"https://accounts.example.test","challenge":"\(challenge.base64URL)","crossOrigin":false,"unreviewedField":"present"}
+        {"type":"webauthn.get","origin":"https://accounts.example.test","challenge":"\(challenge.base64URL)","crossOrigin":false,"deep":{"l1":{"l2":{"l3":{"l4":true}}}}}
         """.utf8)
         let extraFieldAssertion = try makeAssertion(
             signer: signer,
@@ -348,5 +348,68 @@ final class PasskeyDeviceBindingTests: XCTestCase {
         XCTAssertEqual(request.userVerificationPreference, .required)
         XCTAssertEqual(request.allowedCredentials.count, 1)
         #endif
+    }
+
+    func testAndroidCredentialManagerPackageNameBrowserTokenBindingAndCBORExtensionAssertionsSucceed() throws {
+        let credPropsCBOR = Data([
+            0xA1, 0x69,
+            0x63, 0x72, 0x65, 0x64, 0x50, 0x72, 0x6F, 0x70, 0x73,
+            0xA1, 0x62, 0x72, 0x6B, 0xF5,
+        ])
+
+        // 1. Android CredentialManager payload with `androidPackageName` + `ED=0x80` CBOR extension map.
+        let apkFacet = "android:apk-key-hash:\(PasskeyBase64URL.encodeUnpadded(Data(repeating: 7, count: 32)))"
+        var (androidBinding, androidSigner) = try makeSetup(origin: apkFacet)
+        let c1 = try androidBinding.issueChallenge(organisationId: org, now: 200, lifetimeSeconds: 30)
+        let androidJSON = Data("""
+        {"type":"webauthn.get","challenge":"\(c1.base64URL)","origin":"\(apkFacet)","androidPackageName":"io.kodera.android"}
+        """.utf8)
+        var androidAuthData = Data(SHA256.hash(data: Data("accounts.example.test".utf8)))
+        androidAuthData.append(0x9D) // UP | UV | BE | BS | ED
+        androidAuthData.append(contentsOf: [0, 0, 0, 1])
+        androidAuthData.append(credPropsCBOR)
+        var androidSigned = androidAuthData
+        androidSigned.append(contentsOf: SHA256.hash(data: androidJSON))
+        let androidSig = try androidSigner.signature(for: androidSigned)
+        let androidAssertion = PasskeyAssertion(
+            credentialId: credentialID,
+            clientDataJSON: androidJSON,
+            authenticatorData: androidAuthData,
+            signatureDER: androidSig.derRepresentation
+        )
+        let androidPosture = try androidBinding.verifyAssertion(
+            organisationId: org,
+            challenge: c1,
+            assertion: androidAssertion,
+            now: 201
+        )
+        XCTAssertEqual(androidPosture, .multiDeviceSynced)
+
+        // 2. Browser payload with `tokenBinding` object, `topOrigin`, and `ED=0x80` CBOR map.
+        var (webBinding, webSigner) = try makeSetup()
+        let c2 = try webBinding.issueChallenge(organisationId: org, now: 300, lifetimeSeconds: 30)
+        let browserJSON = Data("""
+        {"type":"webauthn.get","challenge":"\(c2.base64URL)","origin":"https://accounts.example.test","crossOrigin":false,"topOrigin":"https://accounts.example.test","tokenBinding":{"status":"present","id":"AQIDBAUGBwgJCgsMDQ4PEA"}}
+        """.utf8)
+        var webAuthData = Data(SHA256.hash(data: Data("accounts.example.test".utf8)))
+        webAuthData.append(0x85) // UP | UV | ED
+        webAuthData.append(contentsOf: [0, 0, 0, 1])
+        webAuthData.append(credPropsCBOR)
+        var webSigned = webAuthData
+        webSigned.append(contentsOf: SHA256.hash(data: browserJSON))
+        let webSig = try webSigner.signature(for: webSigned)
+        let browserAssertion = PasskeyAssertion(
+            credentialId: credentialID,
+            clientDataJSON: browserJSON,
+            authenticatorData: webAuthData,
+            signatureDER: webSig.derRepresentation
+        )
+        let webPosture = try webBinding.verifyAssertion(
+            organisationId: org,
+            challenge: c2,
+            assertion: browserAssertion,
+            now: 301
+        )
+        XCTAssertEqual(webPosture, .singleDeviceBound)
     }
 }

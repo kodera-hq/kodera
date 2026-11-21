@@ -187,4 +187,171 @@ final class CallKitPushCoordinatorTests: XCTestCase {
             .ended(secondWakeup.callUUID, .organisationChanged),
         ])
     }
+
+    func testNonThrowingInitializerAndZeroForceTryInAppSources() throws {
+        let idleCoordinator = CallKitPushCoordinator()
+        XCTAssertNil(idleCoordinator.state.organisationId)
+        XCTAssertEqual(idleCoordinator.state.phase, .idle)
+
+        let appDir = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent() // KoderaClientTests
+            .deletingLastPathComponent() // Tests
+            .deletingLastPathComponent() // KoderaClient
+            .deletingLastPathComponent() // packages
+            .deletingLastPathComponent() // ios
+            .appendingPathComponent("App", isDirectory: true)
+        let enumerator = try XCTUnwrap(FileManager.default.enumerator(at: appDir, includingPropertiesForKeys: nil))
+        var swiftCount = 0
+        for case let fileURL as URL in enumerator where fileURL.pathExtension == "swift" {
+            swiftCount += 1
+            let text = try String(contentsOf: fileURL, encoding: .utf8)
+            XCTAssertFalse(text.contains("try!"), "Forbidden try! found in \(fileURL.lastPathComponent)")
+        }
+        XCTAssertGreaterThan(swiftCount, 0)
+    }
+
+    func testCallKitProviderRoutingEngineSetsDelegateRoutesActionsAndNeverReportsOutgoingForIncomingCalls() async throws {
+        final class FakeCallKitDriver: CallKitProviderDriving, @unchecked Sendable {
+            var delegateConfigured = false
+            var queueWasNil = false
+            var incomingReported: [(UUID, CallKitIncomingUpdateSnapshot)] = []
+            var updatedCalls: [(UUID, CallKitIncomingUpdateSnapshot)] = []
+            var outgoingConnectingUUIDs: [UUID] = []
+            var outgoingConnectedUUIDs: [UUID] = []
+            var endedCalls: [(UUID, CallEndReason)] = []
+
+            func didConfigureDelegate(queueIsNil: Bool) {
+                delegateConfigured = true
+                queueWasNil = queueIsNil
+            }
+
+            func reportNewIncomingCall(uuid: UUID, update: CallKitIncomingUpdateSnapshot) async throws {
+                incomingReported.append((uuid, update))
+            }
+
+            func reportCallUpdated(uuid: UUID, update: CallKitIncomingUpdateSnapshot) {
+                updatedCalls.append((uuid, update))
+            }
+
+            func reportOutgoingCallConnecting(uuid: UUID, startedConnectingAt _: Date) {
+                outgoingConnectingUUIDs.append(uuid)
+            }
+
+            func reportOutgoingCallConnected(uuid: UUID, connectedAt _: Date) {
+                outgoingConnectedUUIDs.append(uuid)
+            }
+
+            func reportCallEnded(uuid: UUID, endedAt _: Date, reason: CallEndReason) {
+                endedCalls.append((uuid, reason))
+            }
+        }
+
+        final class ActionOutcomeBox: @unchecked Sendable {
+            var fulfilled = 0
+            var failed = 0
+        }
+
+        let driver = FakeCallKitDriver()
+        let engine = CallKitProviderRoutingEngine(driver: driver)
+        XCTAssertTrue(driver.delegateConfigured)
+        XCTAssertTrue(driver.queueWasNil)
+
+        let resolver = StubCallResolver(callerLabel: "Incoming MatrixRTC Call", hasVideo: true)
+        let coordinator = try CallKitPushCoordinator(
+            organisationId: orgA,
+            admissionPolicy: .rejectCleartext,
+            resolver: resolver,
+            systemProvider: engine
+        )
+
+        let wakeup = try await coordinator.handleIncomingPushPayload([
+            "wakeup_id": wakeupA,
+            "organisation_id": orgA,
+            "sync_hint": "matrixrtc:sync_99",
+        ]).get()
+        XCTAssertEqual(driver.incomingReported.count, 1)
+        XCTAssertEqual(driver.incomingReported[0].0, wakeup.callUUID)
+        XCTAssertEqual(driver.incomingReported[0].1.localizedCallerName, "Incoming MatrixRTC Call")
+
+        // Simulated CXAnswerCallAction transitions ringing -> connecting and fulfills action.
+        let answerBox = ActionOutcomeBox()
+        engine.performAnswerCallAction(
+            uuid: wakeup.callUUID,
+            fulfill: { answerBox.fulfilled += 1 },
+            fail: { answerBox.failed += 1 }
+        )
+        XCTAssertEqual(answerBox.fulfilled, 1)
+        XCTAssertEqual(answerBox.failed, 0)
+        if case .connecting = coordinator.state.phase {} else {
+            XCTFail("Expected .connecting after system answer action")
+        }
+
+        // Reporting connecting & connected on an INCOMING call must use reportCallUpdated and NEVER reportOutgoingCall*!
+        await engine.reportConnecting(uuid: wakeup.callUUID)
+        try await coordinator.markMediaConnected(uuid: wakeup.callUUID)
+        XCTAssertTrue(driver.outgoingConnectingUUIDs.isEmpty)
+        XCTAssertTrue(driver.outgoingConnectedUUIDs.isEmpty)
+        XCTAssertEqual(driver.updatedCalls.count, 2)
+        XCTAssertEqual(driver.updatedCalls[0].0, wakeup.callUUID)
+        XCTAssertEqual(driver.updatedCalls[0].1.localizedCallerName, "Incoming MatrixRTC Call")
+
+        // Simulated CXSetMutedCallAction and CXSetHeldCallAction update active call state and fulfill.
+        let muteBox = ActionOutcomeBox()
+        engine.performSetMutedCallAction(
+            uuid: wakeup.callUUID,
+            muted: true,
+            fulfill: { muteBox.fulfilled += 1 },
+            fail: { muteBox.failed += 1 }
+        )
+        XCTAssertEqual(muteBox.fulfilled, 1)
+        XCTAssertTrue(coordinator.state.isMuted)
+
+        let holdBox = ActionOutcomeBox()
+        engine.performSetHeldCallAction(
+            uuid: wakeup.callUUID,
+            onHold: true,
+            fulfill: { holdBox.fulfilled += 1 },
+            fail: { holdBox.failed += 1 }
+        )
+        XCTAssertEqual(holdBox.fulfilled, 1)
+        XCTAssertTrue(coordinator.state.isHeld)
+
+        // Simulated CXEndCallAction ends the active call and fulfills; subsequent unknown UUID fails.
+        let endBox = ActionOutcomeBox()
+        engine.performEndCallAction(
+            uuid: wakeup.callUUID,
+            fulfill: { endBox.fulfilled += 1 },
+            fail: { endBox.failed += 1 }
+        )
+        XCTAssertEqual(endBox.fulfilled, 1)
+        XCTAssertEqual(coordinator.state.phase, .ended(.localHangup))
+
+        let staleBox = ActionOutcomeBox()
+        engine.performAnswerCallAction(
+            uuid: UUID(),
+            fulfill: { staleBox.fulfilled += 1 },
+            fail: { staleBox.failed += 1 }
+        )
+        XCTAssertEqual(staleBox.failed, 1)
+        XCTAssertEqual(staleBox.fulfilled, 0)
+
+        // Start a second incoming call and verify providerDidReset resets active call state cleanly.
+        let secondWakeup = try await coordinator.handleIncomingPushPayload([
+            "wakeup_id": wakeupB,
+            "organisation_id": orgA,
+            "sync_hint": "matrixrtc:sync_100",
+        ]).get()
+        XCTAssertEqual(coordinator.state.activeCallUUID, secondWakeup.callUUID)
+        engine.performProviderDidReset()
+        XCTAssertNil(coordinator.state.activeCallUUID)
+        XCTAssertEqual(coordinator.state.phase, .ended(.remoteEnded))
+
+        // Outgoing calls registered via `registerOutgoingCall` continue to use `reportOutgoingCall`.
+        let outgoingUUID = UUID()
+        engine.registerOutgoingCall(uuid: outgoingUUID)
+        await engine.reportConnecting(uuid: outgoingUUID)
+        await engine.reportConnected(uuid: outgoingUUID)
+        XCTAssertEqual(driver.outgoingConnectingUUIDs, [outgoingUUID])
+        XCTAssertEqual(driver.outgoingConnectedUUIDs, [outgoingUUID])
+    }
 }

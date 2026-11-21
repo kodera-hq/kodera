@@ -295,4 +295,78 @@ describe('markdown formatting and mention anti-spoofing', () => {
     await user.click(screen.getByRole('button', { name: '@bob:kodera.test' }))
     expect(await screen.findByRole('dialog', { name: '@bob:kodera.test' })).toBeInTheDocument()
   })
+
+  it('does not split @bob:two.test, @bob-smith, @bob_admin, or @room-notes into local bob or @room pills', () => {
+    const BOB = { userId: '@bob-uuid:one.test', name: 'bob' }
+    const text = 'Salut @bob ! Voir @bob:two.test, @bob-smith, @bob_admin et @room-notes.'
+    const segments = mentionSegments(text, [BOB])
+    expect(segments).toEqual([
+      { text: 'Salut ' },
+      { text: '@bob', userId: BOB.userId },
+      { text: ' ! Voir ' },
+      { text: '@bob:two.test', userId: '@bob:two.test' },
+      { text: ', @bob-smith, @bob_admin et @room-notes.' },
+    ])
+
+    const { container } = render(
+      <MessageText body={text} members={[BOB]} onMentionClick={vi.fn()} />
+    )
+    const mentionNodes = Array.from(container.querySelectorAll('[data-mention]')).map((el) => ({
+      text: el.textContent,
+      target: el.getAttribute('data-mention'),
+    }))
+    expect(mentionNodes).toEqual([
+      { text: '@bob', target: BOB.userId },
+      { text: '@bob:two.test', target: '@bob:two.test' },
+    ])
+  })
+
+  it('rejects @room123 and @salon_x as room mentions and pins @alice:server.org to its explicit MXID', () => {
+    const ALICE_LOCAL = { userId: '@alice:kodera.test', name: 'alice' }
+    const ALICE_REMOTE_NAMED = { userId: '@alice:server.org', name: 'Alice Martin' }
+    const text =
+      'Test @room123, @salon_x, @salon_ vs @room et @salon; voir @alice:server.org, @alice et @Alice Martin.'
+    const segments = mentionSegments(text, [ALICE_LOCAL, ALICE_REMOTE_NAMED])
+    expect(segments).toEqual([
+      { text: 'Test @room123, @salon_x, @salon_ vs ' },
+      { text: '@room', room: true },
+      { text: ' et ' },
+      { text: '@salon', room: true },
+      { text: '; voir ' },
+      { text: '@alice:server.org', userId: '@alice:server.org' },
+      { text: ', ' },
+      { text: '@alice', userId: ALICE_LOCAL.userId },
+      { text: ' et ' },
+      { text: '@Alice Martin', userId: ALICE_REMOTE_NAMED.userId },
+      { text: '.' },
+    ])
+
+    const { container } = render(
+      <MessageText
+        body={text}
+        members={[ALICE_LOCAL, ALICE_REMOTE_NAMED]}
+        onMentionClick={vi.fn()}
+      />
+    )
+    const mentionNodes = Array.from(container.querySelectorAll('[data-mention]')).map((el) => ({
+      text: el.textContent,
+      target: el.getAttribute('data-mention'),
+    }))
+    expect(mentionNodes).toEqual([
+      { text: '@room', target: 'room' },
+      { text: '@salon', target: 'room' },
+      { text: '@alice:server.org', target: '@alice:server.org' },
+      { text: '@alice', target: '@alice:kodera.test' },
+      { text: '@Alice Martin', target: '@alice:server.org' },
+    ])
+  })
+
+  it('renders 64 KiB adversarial unclosed bracket runs in linear time', () => {
+    const adversarial = '['.repeat(65_536)
+    const started = performance.now()
+    const { container } = render(<MessageText body={adversarial} />)
+    const elapsed = performance.now() - started
+    expect(elapsed).toBeLessThan(50)
+    expect(container.textContent).toHaveLength(65_536)
+  })
 })

@@ -543,4 +543,114 @@ class VoluntaryProximityRadioSessionTest {
         assertTrue(controller.peers.isEmpty())
         controller.close()
     }
+
+    @Test
+    fun foregroundProximitySessionTimerDispatchesTicksOntoConfiguredMainDispatcherAndMutableSnapshot() {
+        val dispatchedThreadNames = java.util.Collections.synchronizedList(mutableListOf<String>())
+        val latch = java.util.concurrent.CountDownLatch(1)
+        val mainExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+            Thread(r, "fake-main-looper").apply { isDaemon = true }
+        }
+        val ticksState = androidx.compose.runtime.mutableStateOf(0)
+        val snapshotObserver = androidx.compose.runtime.snapshots.Snapshot.registerApplyObserver { changed, _ ->
+            if (ticksState in changed) {
+                latch.countDown()
+            }
+        }
+        val timer = ForegroundProximitySessionTimer(
+            initialDelayMs = 10L,
+            periodMs = 10L,
+            mainDispatcher = { task -> mainExecutor.execute(task) },
+        )
+        try {
+            val handle = timer.schedule {
+                dispatchedThreadNames += Thread.currentThread().name
+                ticksState.value += 1
+            }
+            assertTrue(latch.await(2, java.util.concurrent.TimeUnit.SECONDS))
+            handle.close()
+            assertTrue(dispatchedThreadNames.isNotEmpty())
+            assertTrue(dispatchedThreadNames.all { it == "fake-main-looper" })
+            assertTrue(ticksState.value >= 1)
+        } finally {
+            snapshotObserver.dispose()
+            mainExecutor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun concurrentAndroidNsdDriverStartAndStopSerializeWithoutDoubleUnregisterOrLeakedListeners() {
+        class TrackingNsdBackend : NsdServiceBackend {
+            private val nextId = java.util.concurrent.atomic.AtomicInteger(1)
+            val activeRegistrations = java.util.Collections.synchronizedSet(mutableSetOf<Int>())
+            val activeDiscoveries = java.util.Collections.synchronizedSet(mutableSetOf<Int>())
+            val doubleUnregisters = java.util.concurrent.atomic.AtomicInteger(0)
+            val doubleStopDiscoveries = java.util.concurrent.atomic.AtomicInteger(0)
+
+            override fun register(
+                serviceName: String,
+                serviceType: String,
+                quicPort: Int,
+                attributes: Map<String, String>,
+                onRegistrationFailed: () -> Unit,
+            ): Any {
+                val id = nextId.getAndIncrement()
+                activeRegistrations.add(id)
+                return id
+            }
+
+            override fun discover(
+                serviceType: String,
+                onStartDiscoveryFailed: () -> Unit,
+                onResolvedAttributes: (Map<String, ByteArray?>) -> Unit,
+            ): Any {
+                val id = nextId.getAndIncrement()
+                activeDiscoveries.add(id)
+                return id
+            }
+
+            override fun unregister(token: Any) {
+                if (!activeRegistrations.remove(token as Int)) {
+                    doubleUnregisters.incrementAndGet()
+                }
+            }
+
+            override fun stopDiscovery(token: Any) {
+                if (!activeDiscoveries.remove(token as Int)) {
+                    doubleStopDiscoveries.incrementAndGet()
+                }
+            }
+        }
+
+        val backend = TrackingNsdBackend()
+        val checker = RuntimeProximityPermissionChecker({ Build.VERSION_CODES.TIRAMISU }, { true })
+        val driver = AndroidNsdMdnsProximityDriver(
+            permissionChecker = checker,
+            backendProvider = { backend },
+            postOnMain = { it.run() },
+        )
+        val token = EphemeralHkdfTokenCodec.mint(orgA, "default", masterKey, aliceSeed, 1_800_001L, 0L)
+        val attrs = MdnsProximityTxtCodec.Record(token.epoch, token.raw, 48_443).toAttributeMap()
+
+        val pool = java.util.concurrent.Executors.newFixedThreadPool(4)
+        try {
+            val futures = (0 until 64).map { idx ->
+                pool.submit {
+                    if (idx % 2 == 0) {
+                        driver.startAdvertisingAndDiscovery(attrs, 48_443)
+                    } else {
+                        driver.stopAll()
+                    }
+                }
+            }
+            futures.forEach { it.get(5, java.util.concurrent.TimeUnit.SECONDS) }
+            driver.stopAll()
+            assertEquals(0, backend.doubleUnregisters.get())
+            assertEquals(0, backend.doubleStopDiscoveries.get())
+            assertTrue(backend.activeRegistrations.isEmpty())
+            assertTrue(backend.activeDiscoveries.isEmpty())
+        } finally {
+            pool.shutdownNow()
+        }
+    }
 }

@@ -280,7 +280,11 @@ public struct CallSessionState: Equatable, Sendable {
     private var seenWakeupIds: [String] = []
     private var seenWakeupSet: Set<String> = []
 
-    public init(organisationId: String? = nil) throws {
+    public init() {
+        self.organisationId = nil
+    }
+
+    public init(organisationId: String?) throws {
         if let organisationId {
             guard TrustPolicy.canonicalNonNilUUID(organisationId) else {
                 throw CallWakeupError.invalidOrganisationId
@@ -432,6 +436,15 @@ public struct CallSessionState: Equatable, Sendable {
             phase = .idle
         case .ringing, .connecting, .active:
             throw CallWakeupError.invalidTransition
+        }
+    }
+
+    public mutating func resetAfterSystemProviderReset() {
+        switch phase {
+        case .ringing, .connecting, .active:
+            phase = .ended(.remoteEnded)
+        case .idle, .ended, .failed:
+            break
         }
     }
 

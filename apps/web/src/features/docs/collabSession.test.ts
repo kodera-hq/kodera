@@ -3,15 +3,14 @@ import * as encoding from 'lib0/encoding'
 import * as syncProtocol from 'y-protocols/sync'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as Y from 'yjs'
-import {
-  DOCS_COLLAB_REGISTRY_KEY,
-  clearLocalSessionStorage,
-} from '@/auth/localSession'
+import { DOCS_COLLAB_REGISTRY_KEY, clearLocalSessionStorage } from '@/auth/localSession'
 import {
   CollabSessionController,
   MSG_SYNC,
   buildDocsOfflineDatabaseName,
+  collabSessionOwnsBody,
   computeReconnectDelayMs,
+  maySeedFromMarkdown,
   recordDocsOfflineDatabase,
   validateCollabWebSocketUrl,
   type WebSocketLike,
@@ -332,5 +331,19 @@ describe('CollabSessionController and Yjs transport rules', () => {
     expect(deleteDatabase).toHaveBeenCalledWith(dbA)
     expect(deleteDatabase).toHaveBeenCalledWith(dbB)
     vi.unstubAllGlobals()
+  })
+
+  it('reports when a live Yjs session owns the document body instead of REST Markdown seeding', () => {
+    expect(maySeedFromMarkdown(false, 'local')).toBe(true)
+    expect(collabSessionOwnsBody(false, 'local')).toBe(false)
+    expect(maySeedFromMarkdown(true, 'local')).toBe(true)
+    expect(collabSessionOwnsBody(true, 'local')).toBe(false)
+
+    expect(maySeedFromMarkdown(true, 'connecting')).toBe(false)
+    expect(collabSessionOwnsBody(true, 'connecting')).toBe(true)
+    expect(maySeedFromMarkdown(true, 'synced')).toBe(false)
+    expect(collabSessionOwnsBody(true, 'synced')).toBe(true)
+    expect(maySeedFromMarkdown(true, 'offline-buffered')).toBe(false)
+    expect(collabSessionOwnsBody(true, 'offline-buffered')).toBe(true)
   })
 })
