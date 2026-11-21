@@ -1,5 +1,6 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 import {
   DEFAULT_MAX_SKEW_SECONDS,
   ExtensionSdkError,
@@ -25,6 +26,7 @@ const REVERSE_DNS_ID_PREFIX = 'io.kodera.ext.';
 const REVERSE_DNS_ID_PATTERN = /^io\.kodera\.ext\.([a-z0-9][a-z0-9-]{1,62})$/;
 const SLUG_ID_PATTERN = /^[a-z0-9][a-z0-9-]{1,62}$/;
 const RELEASE_SIG_PATTERN = /^(?:sha256=)?([0-9a-fA-F]{64})$/;
+const RELEASE_SIGNED_TS_PATTERN = /^t=(\d{1,12}),id=([A-Za-z0-9_-]{1,128}),v1=([0-9a-fA-F]{64})$/;
 const SAFE_TAG_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$/;
 const SAFE_REPO_PATTERN = /^[A-Za-z0-9_.-]{1,64}\/[A-Za-z0-9_.-]{1,64}$/;
 const SAFE_MODEL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:/-]{1,63}$/;
@@ -474,25 +476,112 @@ export function buildSelfHostedSummarizerRequest(options) {
  * @param {string | Uint8Array} rawBody
  * @returns {string}
  */
-export function signReleaseWebhookPayload(secret, rawBody) {
+export function signReleaseWebhookPayload(secret, rawBody, options) {
   if (typeof secret !== 'string' || secret.length < 16) {
     throw new WebhookVerificationError('INVALID_SECRET', 'Release webhook secret must be at least 16 characters.');
   }
   const bodyBuf = typeof rawBody === 'string' ? Buffer.from(rawBody, 'utf8') : Buffer.from(rawBody);
+  if (options && options.timestamp !== undefined) {
+    const ts = Number(options.timestamp);
+    const eventId = String(options.eventId ?? '');
+    if (!Number.isSafeInteger(ts) || ts <= 0) {
+      throw new WebhookVerificationError('INVALID_TIMESTAMP', 'Signed release webhook timestamp must be a positive integer.');
+    }
+    if (!DELIVERY_ID_PATTERN.test(eventId)) {
+      throw new WebhookVerificationError('INVALID_DELIVERY_ID', 'Signed release webhook eventId must match DELIVERY_ID_PATTERN.');
+    }
+    const prefix = Buffer.from(`${ts}.${eventId}.`, 'utf8');
+    const mac = createHmac('sha256', secret).update(prefix).update(bodyBuf).digest('hex');
+    return `t=${ts},id=${eventId},v1=${mac}`;
+  }
   return `sha256=${createHmac('sha256', secret).update(bodyBuf).digest('hex')}`;
 }
 
 /**
+ * Creates a durable replay deduplication store (in-memory `Map` or atomic file-backed JSON).
+ *
+ * @param {string | Map<string, { recordedAt: number, expiresAt: number | null }> | undefined} [backing]
+ */
+export function createDurableReplayStore(backing) {
+  if (backing instanceof Map) {
+    return backing;
+  }
+  if (backing && typeof backing === 'object' && typeof backing.has === 'function' && typeof backing.set === 'function') {
+    return backing;
+  }
+  /** @type {Map<string, { recordedAt: number, expiresAt: number | null }>} */
+  const memory = new Map();
+  if (typeof backing !== 'string' || !backing.trim()) {
+    return memory;
+  }
+  const filePath = backing.trim();
+  if (existsSync(filePath)) {
+    const loaded = JSON.parse(readFileSync(filePath, 'utf8'));
+    if (loaded && typeof loaded === 'object') {
+      for (const [key, entry] of Object.entries(loaded)) {
+        if (entry && typeof entry === 'object') {
+          memory.set(key, {
+            recordedAt: Number(entry.recordedAt ?? 0),
+            expiresAt: entry.expiresAt === null || entry.expiresAt === undefined ? null : Number(entry.expiresAt),
+          });
+        }
+      }
+    }
+  }
+  const flush = () => {
+    mkdirSync(dirname(filePath), { recursive: true });
+    const serialized = JSON.stringify(Object.fromEntries(memory.entries()));
+    const tmpPath = `${filePath}.tmp-${process.pid}-${Date.now()}`;
+    writeFileSync(tmpPath, serialized, { mode: 0o600 });
+    renameSync(tmpPath, filePath);
+  };
+  return {
+    get size() {
+      return memory.size;
+    },
+    has(key) {
+      return memory.has(key);
+    },
+    get(key) {
+      return memory.get(key);
+    },
+    set(key, value) {
+      memory.set(key, value);
+      flush();
+      return this;
+    },
+    delete(key) {
+      const removed = memory.delete(key);
+      if (removed) flush();
+      return removed;
+    },
+    entries() {
+      return memory.entries();
+    },
+  };
+}
+
+/**
  * Verifies a native `X-Release-Signature-256` / `X-Hub-Signature-256` HMAC-SHA256 digest
- * in constant time using `timingSafeEqual`.
+ * (including timestamp + eventId controlled envelopes) in constant time using `timingSafeEqual`.
  *
  * @param {{
  *   secret: string,
  *   rawBody: string | Uint8Array,
  *   signatureHeader: string | undefined,
+ *   nowUnixSeconds?: number,
+ *   maxSkewSeconds?: number,
+ *   requireTimestamp?: boolean,
  * }} params
  */
-export function verifyReleaseWebhookSignature({ secret, rawBody, signatureHeader }) {
+export function verifyReleaseWebhookSignature({
+  secret,
+  rawBody,
+  signatureHeader,
+  nowUnixSeconds,
+  maxSkewSeconds = DEFAULT_MAX_SKEW_SECONDS,
+  requireTimestamp = false,
+}) {
   if (typeof secret !== 'string' || secret.length < 16) {
     throw new WebhookVerificationError('INVALID_SECRET', 'Release webhook secret must be at least 16 characters.');
   }
@@ -504,15 +593,38 @@ export function verifyReleaseWebhookSignature({ secret, rawBody, signatureHeader
     throw new WebhookVerificationError('BODY_TOO_LARGE', 'Release webhook body is empty or exceeds the byte limit.');
   }
 
-  const sigMatch = typeof signatureHeader === 'string' ? RELEASE_SIG_PATTERN.exec(signatureHeader.trim()) : null;
-  if (!sigMatch) {
-    throw new WebhookVerificationError('MISSING_SIGNATURE', 'Missing or malformed X-Release-Signature-256 header.');
-  }
+  const trimmedHeader = typeof signatureHeader === 'string' ? signatureHeader.trim() : '';
+  const tsMatch = RELEASE_SIGNED_TS_PATTERN.exec(trimmedHeader);
+  let actualBuf;
+  let signedTimestamp = null;
+  let signedEventId = null;
 
-  const expectedBuf = createHmac('sha256', secret).update(bodyBuf).digest();
-  const actualBuf = Buffer.from(sigMatch[1], 'hex');
-  if (expectedBuf.length !== actualBuf.length || !timingSafeEqual(expectedBuf, actualBuf)) {
-    throw new WebhookVerificationError('SIGNATURE_MISMATCH', 'Release HMAC-SHA256 signature verification failed.');
+  if (tsMatch) {
+    signedTimestamp = Number(tsMatch[1]);
+    signedEventId = tsMatch[2];
+    const prefix = Buffer.from(`${signedTimestamp}.${signedEventId}.`, 'utf8');
+    const expectedBuf = createHmac('sha256', secret).update(prefix).update(bodyBuf).digest();
+    actualBuf = Buffer.from(tsMatch[3], 'hex');
+    if (expectedBuf.length !== actualBuf.length || !timingSafeEqual(expectedBuf, actualBuf)) {
+      throw new WebhookVerificationError('SIGNATURE_MISMATCH', 'Release HMAC-SHA256 signature verification failed.');
+    }
+    const nowSec = nowUnixSeconds ?? Math.floor(Date.now() / 1000);
+    if (!Number.isSafeInteger(signedTimestamp) || Math.abs(nowSec - signedTimestamp) > maxSkewSeconds) {
+      throw new WebhookVerificationError('TIMESTAMP_OUT_OF_RANGE', 'Release webhook timestamp outside allowed replay window.');
+    }
+  } else {
+    if (requireTimestamp) {
+      throw new WebhookVerificationError('MISSING_TIMESTAMP', 'Controlled release webhook requires a signed timestamp envelope.');
+    }
+    const sigMatch = RELEASE_SIG_PATTERN.exec(trimmedHeader);
+    if (!sigMatch) {
+      throw new WebhookVerificationError('MISSING_SIGNATURE', 'Missing or malformed X-Release-Signature-256 header.');
+    }
+    const expectedBuf = createHmac('sha256', secret).update(bodyBuf).digest();
+    actualBuf = Buffer.from(sigMatch[1], 'hex');
+    if (expectedBuf.length !== actualBuf.length || !timingSafeEqual(expectedBuf, actualBuf)) {
+      throw new WebhookVerificationError('SIGNATURE_MISMATCH', 'Release HMAC-SHA256 signature verification failed.');
+    }
   }
 
   let payload;
@@ -530,10 +642,16 @@ export function verifyReleaseWebhookSignature({ secret, rawBody, signatureHeader
     throw new WebhookVerificationError('INVALID_EVENT', `Unsupported release-assistant event "${eventName}".`);
   }
 
+  const eventId = signedEventId
+    ? `release:id:${signedEventId}`
+    : `release:body:${createHash('sha256').update(bodyBuf).digest('hex')}`;
+
   return {
     event: 'release.published',
     payload: /** @type {Record<string, unknown>} */ (payload),
-    signature: `sha256=${actualBuf.toString('hex')}`,
+    signature: signedTimestamp !== null ? `v1=${actualBuf.toString('hex')}` : `sha256=${actualBuf.toString('hex')}`,
+    signedTimestamp,
+    eventId,
   };
 }
 
@@ -781,15 +899,18 @@ export function createReleaseAssistantWebhookHandler(config) {
   if (typeof config.inferenceEndpointUrl === 'string' && config.inferenceEndpointUrl.trim()) {
     validateEndpointUrl(config.inferenceEndpointUrl, { allowLocalhostHttp: false });
   }
+  const requireSignedTimestamp = Boolean(config.requireSignedTimestamp);
 
-  /** @type {Map<string, number>} */
-  const nativeSeenSignatures = new Map();
+  const nativeReplayStore = createDurableReplayStore(config.replayStore ?? config.replayStorePath);
   /** @type {Map<string, number>} */
   const nativeSeenDeliveries = new Map();
 
   const pruneNativeReplay = (nowSec) => {
-    for (const [sig, ts] of nativeSeenSignatures.entries()) {
-      if (nowSec - ts > maxSkewSeconds) nativeSeenSignatures.delete(sig);
+    for (const [key, entry] of Array.from(nativeReplayStore.entries())) {
+      const expiresAt = typeof entry === 'number' ? null : entry?.expiresAt ?? null;
+      if (expiresAt !== null && nowSec > expiresAt) {
+        nativeReplayStore.delete(key);
+      }
     }
     for (const [deliv, ts] of nativeSeenDeliveries.entries()) {
       if (nowSec - ts > maxSkewSeconds) nativeSeenDeliveries.delete(deliv);
@@ -839,20 +960,32 @@ export function createReleaseAssistantWebhookHandler(config) {
       throw new WebhookVerificationError('INVALID_DELIVERY_ID', 'Release delivery identifier must be bounded ASCII.');
     }
 
-    const { event, payload, signature } = verifyReleaseWebhookSignature({
+    const { event, payload, signature, signedTimestamp, eventId } = verifyReleaseWebhookSignature({
       secret: releaseSecret,
       rawBody: req.rawBody,
       signatureHeader: nativeSig,
+      nowUnixSeconds: nowSec,
+      maxSkewSeconds,
+      requireTimestamp: requireSignedTimestamp,
     });
 
     pruneNativeReplay(nowSec);
-    if (nativeSeenSignatures.has(signature) || (deliveryId !== undefined && nativeSeenDeliveries.has(deliveryId))) {
+    const sigKey = `sig:${signature}`;
+    const evtKey = `evt:${eventId}`;
+    if (
+      nativeReplayStore.has(sigKey) ||
+      nativeReplayStore.has(evtKey) ||
+      (deliveryId !== undefined && nativeSeenDeliveries.has(deliveryId))
+    ) {
       throw new WebhookVerificationError('REPLAY_DETECTED', 'Duplicate release webhook delivery rejected.');
     }
-    if (nativeSeenSignatures.size >= maxReplayEntries) {
+    if (nativeReplayStore.size + 2 > maxReplayEntries * 2) {
       throw new WebhookVerificationError('REPLAY_CAPACITY_EXCEEDED', 'Release replay cache is full.');
     }
-    nativeSeenSignatures.set(signature, nowSec);
+    const expiresAt = signedTimestamp !== null ? signedTimestamp + maxSkewSeconds : null;
+    const record = { recordedAt: nowSec, expiresAt };
+    nativeReplayStore.set(sigKey, record);
+    nativeReplayStore.set(evtKey, record);
     if (deliveryId !== undefined) {
       nativeSeenDeliveries.set(deliveryId, nowSec);
     }

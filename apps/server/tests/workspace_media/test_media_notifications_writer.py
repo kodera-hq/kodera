@@ -24,6 +24,8 @@ class FakeGateway:
     def call(self, operation, obj):
         if operation == "verify":
             return {"verified": True}
+        if operation == "delete":
+            return {"deleted": True}
         return {
             "url": "https://storage.example.org/" + obj.key,
             "headers": {"Content-Type": obj.content_type},
@@ -75,6 +77,24 @@ def test_writer_runs_media_and_notifications_and_refuses_immutable_mutations(
             attachment_id=attachment_id,
         )
         assert fetched["sha256"] == digest
+
+        cancelled_ticket = media_service.create_upload(
+            verified=tokens[3],
+            organisation_id=org.id,
+            body={
+                "filename": "transient.pdf",
+                "contentType": "application/pdf",
+                "sizeBytes": 64,
+                "sha256": hashlib.sha256(secrets.token_bytes(32)).hexdigest(),
+            },
+            request_id=str(uuid4()),
+        )
+        media_service.cancel_upload(
+            verified=tokens[3],
+            organisation_id=org.id,
+            attachment_id=UUID(cancelled_ticket["attachmentId"]),
+            request_id=str(uuid4()),
+        )
 
         notification_service.put_subscription(
             verified=tokens[3],
@@ -129,7 +149,9 @@ def test_writer_runs_media_and_notifications_and_refuses_immutable_mutations(
             refused("UPDATE media_attachment SET content_type = 'text/plain'")
             == INSUFFICIENT_PRIVILEGE
         )
-        assert refused("DELETE FROM media_attachment") == INSUFFICIENT_PRIVILEGE
+        # Completed attachment rows remain protected from non-erasure DELETE by trigger (`23514`),
+        # while uncompleted tickets may be cancelled via `media_service.cancel_upload`.
+        assert refused("DELETE FROM media_attachment") == "23514"
         assert (
             refused("UPDATE notifications_notification SET kind = 'mention'")
             == INSUFFICIENT_PRIVILEGE

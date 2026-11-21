@@ -70,6 +70,64 @@ def test_upload_replay_and_completed_metadata_follow_the_contract(world, http, g
 
 
 @override_settings(ROOT_URLCONF="apps.media.api.urls")
+def test_scoped_upload_and_cancel_endpoint_enforce_scope_and_delete_ticket(world, http, gateway):
+    from test_workspace_onboarding import contract
+
+    from apps.workspaces.models import Channel, ResourcePolicy
+
+    org, workspace, _, _ = world
+    client, credentials = http
+    policy = ResourcePolicy.objects.create(workspace=workspace, visibility="organisation")
+    channel = Channel.objects.create(
+        workspace=workspace,
+        name="General",
+        kind="text",
+        lifecycle="active",
+        position=0,
+        policy_mode="explicit",
+        explicit_policy=policy,
+    )
+    root = f"/api/v1/organisations/{org.id}/workspace/attachments"
+    payload = json.dumps(
+        {
+            "filename": "draft.txt",
+            "contentType": "text/plain",
+            "sizeBytes": 24,
+            "sha256": hashlib.sha256(b"draft-payload-24-bytes!!").hexdigest(),
+            "channelId": str(channel.id),
+        }
+    )
+    created = client.post(
+        root + "/uploads",
+        data=payload,
+        content_type="application/json",
+        **headers(credentials[3]),
+    )
+    call(created, "/organisations/{organisation_id}/workspace/attachments/uploads", "post")
+    assert created.status_code == 201
+    attachment_id = created.json()["attachmentId"]
+    assert Attachment.objects.get(pk=attachment_id).channel_id == channel.id
+
+    forbidden = client.delete(
+        root + "/" + attachment_id,
+        HTTP_AUTHORIZATION="Bearer " + credentials[2],
+    )
+    assert forbidden.status_code == 403
+    assert Attachment.objects.filter(pk=attachment_id).exists()
+
+    deleted = client.delete(
+        root + "/" + attachment_id,
+        HTTP_AUTHORIZATION="Bearer " + credentials[3],
+    )
+    template = "/organisations/{organisation_id}/workspace/attachments/{attachment_id}"
+    if "delete" in contract()["paths"].get(template, {}):
+        call(deleted, template, "delete")
+    assert deleted.status_code == 204 and deleted.content == b""
+    assert "X-Request-Id" in deleted.headers
+    assert not Attachment.objects.filter(pk=attachment_id).exists()
+
+
+@override_settings(ROOT_URLCONF="apps.media.api.urls")
 def test_metadata_target_unfurl_refuses_without_a_network_connection(world, http):
     org, _, _, _ = world
     client, credentials = http

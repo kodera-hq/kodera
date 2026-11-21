@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -6,6 +9,7 @@ import {
   createExtensionTestHarness,
 } from '@kodera/extension-sdk';
 import {
+  createDurableReplayStore,
   createOpenprojectWebhookHandler,
   extensionManifest,
   handleWorkCommand,
@@ -238,4 +242,117 @@ test('Jira issue and sprint fixtures normalize into identical sovereign card con
     },
   });
   assert.equal(cmdRes.response.result.itemKey, 'OP-1042');
+});
+
+test('openproject BUG-0064 enforces durable replay retention across +301s, >24h & restarts plus signed timestamp freshness', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'kodera-op-replay-'));
+  const storePath = join(dir, 'replay.json');
+  const baseNow = 1_765_100_000;
+  const posted = [];
+  const client = {
+    async postChannelMessage(msg) {
+      posted.push(msg);
+      return { id: `msg_${posted.length}` };
+    },
+    async postThreadReply(msg) {
+      posted.push(msg);
+      return { id: `rep_${posted.length}` };
+    },
+  };
+  try {
+    let handler = createOpenprojectWebhookHandler({
+      secret: TEST_SECRET,
+      client,
+      replayStore: createDurableReplayStore(storePath),
+    });
+
+    const rawBody = JSON.stringify({
+      action: 'work_package:created',
+      work_package: {
+        id: 2048,
+        subject: 'Replay guard check',
+        htmlUrl: 'https://openproject.example.org/work_packages/2048',
+      },
+    });
+    const sig = signWorkWebhookPayload(TEST_SECRET, rawBody);
+
+    await handler({
+      rawBody,
+      headers: { 'x-openproject-signature': sig, 'x-openproject-delivery': 'op_init' },
+      nowUnixSeconds: baseNow,
+    });
+    assert.equal(posted.length, 1);
+
+    for (const delta of [10, 301, 90_000]) {
+      await assert.rejects(
+        () =>
+          handler({
+            rawBody,
+            headers: {
+              'x-openproject-signature': sig,
+              'x-openproject-delivery': `op_replay_${delta}`,
+            },
+            nowUnixSeconds: baseNow + delta,
+          }),
+        (err) => err instanceof WebhookVerificationError && err.code === 'REPLAY_DETECTED'
+      );
+    }
+
+    // Restart handler against durable store with mutated unsigned delivery ID
+    handler = createOpenprojectWebhookHandler({
+      secret: TEST_SECRET,
+      client,
+      replayStore: createDurableReplayStore(storePath),
+    });
+    await assert.rejects(
+      () =>
+        handler({
+          rawBody,
+          headers: {
+            'x-openproject-signature': sig,
+            'x-openproject-delivery': 'op_after_restart',
+          },
+          nowUnixSeconds: baseNow + 100_000,
+        }),
+      (err) => err instanceof WebhookVerificationError && err.code === 'REPLAY_DETECTED'
+    );
+    assert.equal(posted.length, 1);
+
+    // Controlled timestamp + stable eventId envelope accepts fresh and rejects stale
+    const freshBody = JSON.stringify({
+      action: 'work_package:created',
+      work_package: {
+        id: 2049,
+        subject: 'Timestamped work item',
+        htmlUrl: 'https://openproject.example.org/work_packages/2049',
+      },
+    });
+    const tsNow = baseNow + 100_010;
+    const tsSig = signWorkWebhookPayload(TEST_SECRET, freshBody, {
+      timestamp: tsNow,
+      eventId: 'evt_op_2049',
+    });
+    await handler({
+      rawBody: freshBody,
+      headers: { 'x-openproject-signature': tsSig },
+      nowUnixSeconds: tsNow + 5,
+    });
+    assert.equal(posted.length, 2);
+
+    const staleSig = signWorkWebhookPayload(TEST_SECRET, freshBody, {
+      timestamp: tsNow - 600,
+      eventId: 'evt_op_2049_stale',
+    });
+    await assert.rejects(
+      () =>
+        handler({
+          rawBody: freshBody,
+          headers: { 'x-openproject-signature': staleSig },
+          nowUnixSeconds: tsNow,
+        }),
+      (err) => err instanceof WebhookVerificationError && err.code === 'TIMESTAMP_OUT_OF_RANGE'
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

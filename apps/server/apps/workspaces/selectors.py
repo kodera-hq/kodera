@@ -19,6 +19,16 @@ def active_text_channel_id(*, workspace_id: UUID, channel_id: UUID) -> UUID | No
     )
 
 
+def undeleted_channel_id(*, workspace_id: UUID, channel_id: UUID) -> UUID | None:
+    """A non-deleted channel in the exact workspace, without exporting its model."""
+    return (
+        Channel.objects.filter(id=channel_id, workspace_id=workspace_id)
+        .exclude(lifecycle__in=["deletion_pending", "deleted"])
+        .values_list("id", flat=True)
+        .first()
+    )
+
+
 def workspace_organisation(*, workspace_id: UUID) -> UUID:
     return Workspace.objects.values_list("organisation_id", flat=True).get(id=workspace_id)
 
@@ -36,11 +46,24 @@ def lock_workspace(*, workspace_id: UUID) -> None:
     Workspace.objects.select_for_update().get(id=workspace_id)
 
 
+def lock_workspace_if_present(*, workspace_id: UUID) -> bool:
+    return Workspace.objects.select_for_update().filter(id=workspace_id).first() is not None
+
+
 def lock_organisation_workspace(*, organisation_id: UUID) -> UUID:
     return (
         Workspace.objects.select_for_update()
         .values_list("id", flat=True)
         .get(organisation_id=organisation_id)
+    )
+
+
+def lock_organisation_workspace_if_present(*, organisation_id: UUID) -> UUID | None:
+    return (
+        Workspace.objects.select_for_update()
+        .filter(organisation_id=organisation_id)
+        .values_list("id", flat=True)
+        .first()
     )
 
 

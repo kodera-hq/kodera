@@ -42,6 +42,10 @@ MAX_TTL_SECONDS = 2 * 60 * 60
 MAX_STATUS_NOTE_CHARS = 80
 MAX_HANDLE_CHARS = 32
 MAX_RESOLVE_TOKENS = 32
+MAX_ACTIVE_SCOPES_PER_PRINCIPAL = 3
+MAX_REPLAY_BINDINGS_PER_PRINCIPAL = 8
+MAX_ACTIVE_CHECKINS_PER_WORKSPACE = 512
+MAX_REPLAY_BINDINGS_PER_WORKSPACE = 1024
 MAX_ACTIVE_CHECKINS = 8192
 MAX_REPLAY_BINDINGS = MAX_ACTIVE_CHECKINS * 2
 
@@ -559,10 +563,34 @@ class ProximityBroker:
                     raise ProximityRefusalError(
                         409, kind="conflict", reason="beacon_counter_replayed"
                     )
-            elif len(self._replay_bindings) >= MAX_REPLAY_BINDINGS:
-                raise ProximityRefusalError(
-                    503, kind="service-unavailable", reason="broker_replay_capacity_reached"
+            else:
+                principal_bindings = sum(
+                    1
+                    for (b_ws, _b_scope, b_epoch, _b_pseudo), (
+                        b_owner,
+                        _,
+                    ) in self._replay_bindings.items()
+                    if b_ws == workspace_id
+                    and b_epoch == verified.epoch
+                    and b_owner == principal_key
                 )
+                if principal_bindings >= MAX_REPLAY_BINDINGS_PER_PRINCIPAL:
+                    raise ProximityRefusalError(
+                        409, kind="conflict", reason="principal_replay_capacity_reached"
+                    )
+                workspace_bindings = sum(
+                    1
+                    for (b_ws, _b_scope, _b_epoch, _b_pseudo) in self._replay_bindings
+                    if b_ws == workspace_id
+                )
+                if workspace_bindings >= MAX_REPLAY_BINDINGS_PER_WORKSPACE:
+                    raise ProximityRefusalError(
+                        503, kind="service-unavailable", reason="workspace_replay_capacity_reached"
+                    )
+                if len(self._replay_bindings) >= MAX_REPLAY_BINDINGS:
+                    raise ProximityRefusalError(
+                        503, kind="service-unavailable", reason="broker_replay_capacity_reached"
+                    )
 
             # Prevent another principal in the same workspace from reusing an already-bound token.
             existing_token_owner = self._by_token.get(token_key)
@@ -576,13 +604,27 @@ class ProximityBroker:
                     409, kind="conflict", reason="beacon_pseudonym_already_claimed"
                 )
 
-            if (
-                record_key not in self._by_principal
-                and len(self._by_principal) >= MAX_ACTIVE_CHECKINS
-            ):
-                raise ProximityRefusalError(
-                    503, kind="service-unavailable", reason="broker_capacity_reached"
+            if record_key not in self._by_principal:
+                principal_scopes = sum(
+                    1
+                    for (ws_id, _rec_scope, p_key) in self._by_principal
+                    if ws_id == workspace_id and p_key == principal_key
                 )
+                if principal_scopes >= MAX_ACTIVE_SCOPES_PER_PRINCIPAL:
+                    raise ProximityRefusalError(
+                        409, kind="conflict", reason="principal_scope_limit_reached"
+                    )
+                workspace_checkins = sum(
+                    1 for (ws_id, _rec_scope, _p_key) in self._by_principal if ws_id == workspace_id
+                )
+                if workspace_checkins >= MAX_ACTIVE_CHECKINS_PER_WORKSPACE:
+                    raise ProximityRefusalError(
+                        503, kind="service-unavailable", reason="workspace_capacity_reached"
+                    )
+                if len(self._by_principal) >= MAX_ACTIVE_CHECKINS:
+                    raise ProximityRefusalError(
+                        503, kind="service-unavailable", reason="broker_capacity_reached"
+                    )
 
             self._remove_key_locked(record_key)
             record = VoluntaryCheckInRecord(

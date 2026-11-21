@@ -1,5 +1,6 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 import {
   DEFAULT_MAX_SKEW_SECONDS,
   ExtensionSdkError,
@@ -292,10 +293,78 @@ export function verifyGithubWebhookSignature({ secret, rawBody, signatureHeader,
     );
   }
 
+  const eventId = `gh:${inferred}:${createHash('sha256').update(bodyBuf).digest('hex')}`;
   return {
     event: inferred,
     payload: /** @type {Record<string, unknown>} */ (payload),
     signature: `sha256=${actualBuf.toString('hex')}`,
+    eventId,
+  };
+}
+
+/**
+ * Creates a durable replay deduplication store (in-memory `Map` or atomic file-backed JSON).
+ * Entries with `expiresAt === null` (timeless native signatures) are never evicted solely due to
+ * elapsed wall-clock time, preventing post-300s and post-restart signature replays.
+ *
+ * @param {string | Map<string, { recordedAt: number, expiresAt: number | null }> | undefined} [backing]
+ */
+export function createDurableReplayStore(backing) {
+  if (backing instanceof Map) {
+    return backing;
+  }
+  if (backing && typeof backing === 'object' && typeof backing.has === 'function' && typeof backing.set === 'function') {
+    return backing;
+  }
+  /** @type {Map<string, { recordedAt: number, expiresAt: number | null }>} */
+  const memory = new Map();
+  if (typeof backing !== 'string' || !backing.trim()) {
+    return memory;
+  }
+  const filePath = backing.trim();
+  if (existsSync(filePath)) {
+    const loaded = JSON.parse(readFileSync(filePath, 'utf8'));
+    if (loaded && typeof loaded === 'object') {
+      for (const [key, entry] of Object.entries(loaded)) {
+        if (entry && typeof entry === 'object') {
+          memory.set(key, {
+            recordedAt: Number(entry.recordedAt ?? 0),
+            expiresAt: entry.expiresAt === null || entry.expiresAt === undefined ? null : Number(entry.expiresAt),
+          });
+        }
+      }
+    }
+  }
+  const flush = () => {
+    mkdirSync(dirname(filePath), { recursive: true });
+    const serialized = JSON.stringify(Object.fromEntries(memory.entries()));
+    const tmpPath = `${filePath}.tmp-${process.pid}-${Date.now()}`;
+    writeFileSync(tmpPath, serialized, { mode: 0o600 });
+    renameSync(tmpPath, filePath);
+  };
+  return {
+    get size() {
+      return memory.size;
+    },
+    has(key) {
+      return memory.has(key);
+    },
+    get(key) {
+      return memory.get(key);
+    },
+    set(key, value) {
+      memory.set(key, value);
+      flush();
+      return this;
+    },
+    delete(key) {
+      const removed = memory.delete(key);
+      if (removed) flush();
+      return removed;
+    },
+    entries() {
+      return memory.entries();
+    },
   };
 }
 
@@ -768,17 +837,23 @@ export function createGithubWebhookHandler(config) {
   const includeDrafts = Boolean(config.includeDrafts);
   const maxSkewSeconds = config.maxSkewSeconds ?? DEFAULT_MAX_SKEW_SECONDS;
   const maxReplayEntries = config.maxReplayEntries ?? MAX_WEBHOOK_REPLAY_ENTRIES;
+  const maxEventAgeSeconds =
+    typeof config.maxEventAgeSeconds === 'number' && Number.isFinite(config.maxEventAgeSeconds) && config.maxEventAgeSeconds > 0
+      ? config.maxEventAgeSeconds
+      : null;
 
   /** @type {Map<string, string>} */
   const prThreads = new Map();
-  /** @type {Map<string, number>} */
-  const nativeSeenSignatures = new Map();
+  const nativeReplayStore = createDurableReplayStore(config.replayStore ?? config.replayStorePath);
   /** @type {Map<string, number>} */
   const nativeSeenDeliveries = new Map();
 
   const pruneNativeReplay = (nowSec) => {
-    for (const [sig, ts] of nativeSeenSignatures.entries()) {
-      if (nowSec - ts > maxSkewSeconds) nativeSeenSignatures.delete(sig);
+    for (const [key, entry] of Array.from(nativeReplayStore.entries())) {
+      const expiresAt = typeof entry === 'number' ? null : entry?.expiresAt ?? null;
+      if (expiresAt !== null && nowSec > expiresAt) {
+        nativeReplayStore.delete(key);
+      }
     }
     for (const [deliv, ts] of nativeSeenDeliveries.entries()) {
       if (nowSec - ts > maxSkewSeconds) nativeSeenDeliveries.delete(deliv);
@@ -833,21 +908,48 @@ export function createGithubWebhookHandler(config) {
       );
     }
 
-    const { event, payload, signature } = verifyGithubWebhookSignature({
+    const { event, payload, signature, eventId } = verifyGithubWebhookSignature({
       secret: githubSecret,
       rawBody: req.rawBody,
       signatureHeader: hubSig,
       eventHeader: getHeaderValue(req.headers, 'x-github-event'),
     });
 
+    let retentionExpiresAt = null;
+    if (maxEventAgeSeconds !== null) {
+      const rawTs =
+        payload?.timestamp ??
+        payload?.pull_request?.updated_at ??
+        payload?.workflow_run?.updated_at ??
+        payload?.issue?.updated_at ??
+        payload?.release?.published_at;
+      if (rawTs === undefined || rawTs === null) {
+        throw new WebhookVerificationError('MISSING_TIMESTAMP', 'GitHub webhook payload lacks required event timestamp.');
+      }
+      const parsedMs = typeof rawTs === 'number' ? rawTs * 1000 : Date.parse(String(rawTs));
+      const eventSec = Math.floor(parsedMs / 1000);
+      if (!Number.isFinite(eventSec) || nowSec - eventSec > maxEventAgeSeconds || eventSec - nowSec > maxSkewSeconds) {
+        throw new WebhookVerificationError('TIMESTAMP_OUT_OF_RANGE', 'GitHub webhook event timestamp is outside validity policy.');
+      }
+      retentionExpiresAt = eventSec + maxEventAgeSeconds;
+    }
+
     pruneNativeReplay(nowSec);
-    if (nativeSeenSignatures.has(signature) || nativeSeenDeliveries.has(deliveryId)) {
+    const sigKey = `sig:${signature}`;
+    const evtKey = `evt:${eventId}`;
+    if (
+      nativeReplayStore.has(sigKey) ||
+      nativeReplayStore.has(evtKey) ||
+      nativeSeenDeliveries.has(deliveryId)
+    ) {
       throw new WebhookVerificationError('REPLAY_DETECTED', 'Duplicate GitHub webhook delivery rejected.');
     }
-    if (nativeSeenSignatures.size >= maxReplayEntries) {
+    if (nativeReplayStore.size + 2 > maxReplayEntries * 2) {
       throw new WebhookVerificationError('REPLAY_CAPACITY_EXCEEDED', 'GitHub webhook replay cache is full.');
     }
-    nativeSeenSignatures.set(signature, nowSec);
+    const record = { recordedAt: nowSec, expiresAt: retentionExpiresAt };
+    nativeReplayStore.set(sigKey, record);
+    nativeReplayStore.set(evtKey, record);
     nativeSeenDeliveries.set(deliveryId, nowSec);
 
     const activeClient = req.client ?? config.client;

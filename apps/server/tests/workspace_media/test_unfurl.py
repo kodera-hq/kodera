@@ -280,3 +280,94 @@ def test_tls_handshake_uses_only_the_time_left_after_tcp_connect(monkeypatch):
         assert 0 < observed[0] < 0.11
     finally:
         connection.close()
+
+
+def test_timed_out_udp_dns_lookups_release_slots_immediately_and_isolate_pools():
+    """BUG-0019 & BUG-0020: 4 timed-out UDP queries release slots on deadline so the 5th succeeds."""
+    import ipaddress
+    import struct
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    public = global_ip()
+    public_bytes = ipaddress.IPv4Address(public).packed
+
+    # Silent UDP socket simulating an unresponsive DNS server.
+    silent = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    silent.bind(("127.0.0.1", 0))
+    silent_port = silent.getsockname()[1]
+
+    # Responsive local UDP DNS stub answering A=public and AAAA=NOERROR(0 answers).
+    live = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    live.bind(("127.0.0.1", 0))
+    live_port = live.getsockname()[1]
+    stop = threading.Event()
+
+    def responder():
+        live.settimeout(0.05)
+        while not stop.is_set():
+            try:
+                packet, addr = live.recvfrom(4096)
+            except TimeoutError:
+                continue
+            except OSError:
+                break
+            if len(packet) < 12:
+                continue
+            txid = packet[:2]
+            _, offset = outbound._decode_dns_name(packet, 12)
+            qtype, _ = struct.unpack("!HH", packet[offset : offset + 4])
+            question = packet[12 : offset + 4]
+            if qtype == 1:
+                header = txid + struct.pack("!HHHHH", 0x8180, 1, 1, 0, 0)
+                answer = struct.pack("!HHHIH", 0xC00C, 1, 1, 60, 4) + public_bytes
+                live.sendto(header + question + answer, addr)
+            else:
+                header = txid + struct.pack("!HHHHH", 0x8180, 1, 0, 0, 0)
+                live.sendto(header + question, addr)
+
+    worker = threading.Thread(target=responder, daemon=True)
+    worker.start()
+    dest = outbound.target("https://example.org/")
+    try:
+        # 4 concurrent timed-out lookups in the 4-slot unfurl pool; meanwhile webhook pool succeeds!
+        def timed_out_unfurl(idx: int):
+            with pytest.raises(outbound.PreSendFetchError) as err:
+                outbound.addresses(
+                    dest,
+                    time.monotonic() + 0.35,
+                    pool="unfurl",
+                    scope_key=f"org-{idx}",
+                    nameservers=[("127.0.0.1", silent_port)],
+                )
+            return err.value.reason
+
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = [executor.submit(timed_out_unfurl, idx) for idx in range(4)]
+            # While unfurl's 4 slots are busy waiting on silent UDP, webhook pool is isolated:
+            webhook_res = outbound.addresses(
+                dest,
+                time.monotonic() + 1.0,
+                pool="webhook",
+                nameservers=[("127.0.0.1", live_port)],
+            )
+            assert webhook_res[0][4] == (public, 443)
+            reasons = [fut.result(timeout=3.0) for fut in futures]
+            assert reasons == ["timeout"] * 4
+
+        # Immediately after deadline expiry, all 4 unfurl slots are free for a 5th lookup:
+        fifth = outbound.addresses(
+            dest,
+            time.monotonic() + 1.0,
+            pool="unfurl",
+            scope_key="org-5",
+            nameservers=[("127.0.0.1", live_port)],
+        )
+        assert fifth == [
+            (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", (public, 443))
+        ]
+    finally:
+        stop.set()
+        silent.close()
+        live.close()
+        worker.join(timeout=1.0)

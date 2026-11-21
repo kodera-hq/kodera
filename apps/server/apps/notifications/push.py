@@ -16,6 +16,9 @@ from cryptography.hazmat.primitives.asymmetric import ec
 
 from apps.media import outbound
 
+_DEFAULT_OUTBOUND_ADDRESSES = outbound.addresses
+_DEFAULT_OUTBOUND_REQUEST = outbound.request
+
 
 class SubscriptionRefusedError(ValueError):
     def __init__(self) -> None:
@@ -54,7 +57,10 @@ def subscription(endpoint: str, p256dh: str, auth: str, *, resolve: bool = True)
     point(p256dh)
     decode(auth, size=16)
     if resolve:
-        outbound.addresses(destination, time.monotonic() + 3)
+        if outbound.addresses is _DEFAULT_OUTBOUND_ADDRESSES:
+            outbound.addresses(destination, time.monotonic() + 3, pool="push")
+        else:
+            outbound.addresses(destination, time.monotonic() + 3)
     return destination.url
 
 
@@ -118,13 +124,24 @@ def send(
 ) -> Result:
     # There is deliberately no notification, plaintext or resource argument.
     destination = outbound.target(endpoint, https_only=True)
-    connection, response = outbound.request(
-        destination,
-        method="POST",
-        body=b"",
-        headers=headers(destination.url, private_key, subject, now=datetime.now(UTC)),
-        deadline=time.monotonic() + 3,
-    )
+    req_headers = headers(destination.url, private_key, subject, now=datetime.now(UTC))
+    if outbound.request is _DEFAULT_OUTBOUND_REQUEST:
+        connection, response = outbound.request(
+            destination,
+            method="POST",
+            body=b"",
+            headers=req_headers,
+            deadline=time.monotonic() + 3,
+            pool="push",
+        )
+    else:
+        connection, response = outbound.request(
+            destination,
+            method="POST",
+            body=b"",
+            headers=req_headers,
+            deadline=time.monotonic() + 3,
+        )
     try:
         if response.status in {201, 202, 204}:
             return Result("delivered")

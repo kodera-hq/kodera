@@ -8,7 +8,13 @@ from pathlib import Path
 from typing import Any
 
 from .outbound import target
-from .storage import ObjectDescriptor, ObjectMismatchError, StorageRefusedError
+from .storage import (
+    ObjectDescriptor,
+    ObjectKey,
+    ObjectMismatchError,
+    StorageRefusedError,
+    parse_object_key,
+)
 from .storage_protocol import MAX_RPC_BYTES, unique_object
 
 
@@ -27,15 +33,28 @@ class _Connection(http.client.HTTPConnection):
             raise
 
 
-def message(obj: ObjectDescriptor) -> dict[str, Any]:
-    return {
-        "organisationId": str(obj.organisation_id),
-        "attachmentId": str(obj.attachment_id),
-        "filename": obj.filename,
-        "contentType": obj.content_type,
-        "sizeBytes": obj.size_bytes,
-        "sha256": obj.sha256,
-    }
+def message(obj: ObjectDescriptor | ObjectKey | str) -> dict[str, Any]:
+    if isinstance(obj, str):
+        parsed = parse_object_key(obj)
+        return {
+            "organisationId": str(parsed.organisation_id),
+            "attachmentId": str(parsed.attachment_id),
+        }
+    if isinstance(obj, ObjectKey):
+        return {
+            "organisationId": str(obj.organisation_id),
+            "attachmentId": str(obj.attachment_id),
+        }
+    if isinstance(obj, ObjectDescriptor):
+        return {
+            "organisationId": str(obj.organisation_id),
+            "attachmentId": str(obj.attachment_id),
+            "filename": obj.filename,
+            "contentType": obj.content_type,
+            "sizeBytes": obj.size_bytes,
+            "sha256": obj.sha256,
+        }
+    raise StorageRefusedError()
 
 
 class Gateway:
@@ -44,7 +63,9 @@ class Gateway:
             raise StorageRefusedError()
         self.path = socket_path
 
-    def call(self, operation: str, obj: ObjectDescriptor) -> dict[str, Any]:
+    def call(self, operation: str, obj: ObjectDescriptor | ObjectKey | str) -> dict[str, Any]:
+        if operation != "delete" and not isinstance(obj, ObjectDescriptor):
+            raise StorageRefusedError()
         raw = json.dumps(
             {"operation": operation, "object": message(obj)}, separators=(",", ":")
         ).encode()
@@ -75,6 +96,13 @@ class Gateway:
                     or result["verified"] is not True
                 ):
                     raise StorageRefusedError()
+            elif operation == "delete":
+                if (
+                    not isinstance(result, dict)
+                    or set(result) != {"deleted"}
+                    or result["deleted"] is not True
+                ):
+                    raise StorageRefusedError()
             else:
                 if not isinstance(result, dict) or set(result) != {"url", "headers", "expiresAt"}:
                     raise StorageRefusedError()
@@ -102,3 +130,18 @@ class Gateway:
             if response is not None:
                 response.close()
             connection.close()
+
+    def delete_object(self, target_obj: str | ObjectDescriptor | ObjectKey) -> dict[str, Any]:
+        return self.call("delete", target_obj)
+
+
+def delete_object(
+    target_obj: str | ObjectDescriptor | ObjectKey, *, socket_path: str | None = None
+) -> dict[str, Any]:
+    """Delete an S3 object via the private worker socket and confirm HTTP 404 via signed HEAD."""
+    resolved_socket = socket_path
+    if resolved_socket is None:
+        from django.conf import settings
+
+        resolved_socket = getattr(settings, "KODERA_MEDIA_GATEWAY_SOCKET", None)
+    return Gateway(resolved_socket).delete_object(target_obj)

@@ -119,3 +119,176 @@ def test_workspace_exclusion_refuses_presign_completion_and_download(world, gate
             operation()
         assert denied.value.status == 403
     assert len(gateway.calls) == before
+
+
+def test_scoped_channel_and_dm_attachments_refuse_non_participant_and_redact_audit_urn(
+    world, gateway, settings
+):
+    import hashlib
+    import secrets
+
+    from django.db import IntegrityError
+
+    from apps.media.models import Attachment
+    from apps.workspaces import governance, iam
+    from apps.workspaces.models import Channel, ResourcePolicy, ResourcePolicyRule
+
+    org, workspace, members, tokens = world
+    # Grant member[2] (`org_member`) `view_audit_log` so they can read the workspace audit table
+    # without being a participant of private DM rooms or restricted channels.
+    auditor_role = iam.create_role(
+        verified=tokens[0],
+        organisation_id=org.id,
+        data={
+            "name": "Auditors",
+            "slug": "auditors",
+            "position": 10,
+            "permissions": ["view_audit_log"],
+        },
+        request_id=str(uuid4()),
+    )
+    iam.assign_roles(
+        verified=tokens[0],
+        organisation_id=org.id,
+        membership_id=members[2].id,
+        role_ids=[auditor_role["id"]],
+        request_id=str(uuid4()),
+    )
+
+    policy = ResourcePolicy.objects.create(workspace=workspace, visibility="restricted")
+    ResourcePolicyRule.objects.create(policy=policy, kind="allow_member", membership=members[3])
+    private_channel = Channel.objects.create(
+        workspace=workspace,
+        name="Private board",
+        kind="text",
+        lifecycle="active",
+        position=0,
+        policy_mode="explicit",
+        explicit_policy=policy,
+    )
+
+    dm_room = "!dmSecretRoom42:matrix.kodera.test"
+    allowed_dm_members = {members[3].id, members[1].id}
+    settings.KODERA_MEDIA_ROOM_ACCESS = lambda org_id, room_id, principal, _verified: (
+        org_id == org.id and room_id == dm_room and principal.membership_id in allowed_dm_members
+    )
+
+    channel_ticket = services.create_upload(
+        verified=tokens[3],
+        organisation_id=org.id,
+        body={
+            "filename": "board-notes.pdf",
+            "contentType": "application/pdf",
+            "sizeBytes": 64,
+            "sha256": hashlib.sha256(secrets.token_bytes(64)).hexdigest(),
+            "channelId": str(private_channel.id),
+        },
+        request_id=str(uuid4()),
+    )
+    dm_ticket = services.create_upload(
+        verified=tokens[3],
+        organisation_id=org.id,
+        body={
+            "filename": "dm-contract.pdf",
+            "contentType": "application/pdf",
+            "sizeBytes": 64,
+            "sha256": hashlib.sha256(secrets.token_bytes(64)).hexdigest(),
+            "roomId": dm_room,
+        },
+        request_id=str(uuid4()),
+    )
+    services.complete_upload(
+        verified=tokens[3],
+        organisation_id=org.id,
+        attachment_id=channel_ticket["attachmentId"],
+        request_id=str(uuid4()),
+    )
+    services.complete_upload(
+        verified=tokens[3],
+        organisation_id=org.id,
+        attachment_id=dm_ticket["attachmentId"],
+        request_id=str(uuid4()),
+    )
+
+    # Uploader and allowed DM / channel participants succeed.
+    assert (
+        services.get_attachment(
+            verified=tokens[3],
+            organisation_id=org.id,
+            attachment_id=channel_ticket["attachmentId"],
+        )["id"]
+        == channel_ticket["attachmentId"]
+    )
+    assert (
+        services.get_attachment(
+            verified=tokens[1],
+            organisation_id=org.id,
+            attachment_id=dm_ticket["attachmentId"],
+        )["id"]
+        == dm_ticket["attachmentId"]
+    )
+
+    # Non-participant member[2] with `view_audit_log` reads the workspace audit log:
+    # capability UUIDs are HMAC-redacted in `target_urn`, and `get_attachment` refuses with 403.
+    audit_page = governance.admin_page(
+        verified=tokens[2], organisation_id=org.id, kind="audit", query={"limit": "50"}
+    )
+    attachment_events = [
+        entry for entry in audit_page["data"] if entry["action"].startswith("workspace.attachment.")
+    ]
+    assert len(attachment_events) == 4
+    for entry in attachment_events:
+        assert channel_ticket["attachmentId"] not in entry["target_urn"]
+        assert dm_ticket["attachmentId"] not in entry["target_urn"]
+        assert entry["target_urn"].startswith("urn:kodera:workspace-attachment:redacted:")
+
+    calls_before = len(gateway.calls)
+    for target_id in (channel_ticket["attachmentId"], dm_ticket["attachmentId"]):
+        with pytest.raises(RefusalError) as denied:
+            services.get_attachment(
+                verified=tokens[2], organisation_id=org.id, attachment_id=target_id
+            )
+        assert denied.value.status == 403
+    # Even `org_owner` (`tokens[0]`) is refused on a private DM room they are not a participant of.
+    with pytest.raises(RefusalError) as owner_dm_denied:
+        services.get_attachment(
+            verified=tokens[0], organisation_id=org.id, attachment_id=dm_ticket["attachmentId"]
+        )
+    assert owner_dm_denied.value.status == 403
+    assert len(gateway.calls) == calls_before
+
+    # Without an external Matrix verifier, DM read fails closed for everyone except the uploader.
+    settings.KODERA_MEDIA_ROOM_ACCESS = None
+    with pytest.raises(RefusalError) as fail_closed:
+        services.get_attachment(
+            verified=tokens[1], organisation_id=org.id, attachment_id=dm_ticket["attachmentId"]
+        )
+    assert fail_closed.value.status == 403
+
+    # Scope binding is immutable in PostgreSQL once persisted.
+    with pytest.raises(IntegrityError), transaction.atomic():
+        Attachment.objects.filter(pk=channel_ticket["attachmentId"]).update(channel=None)
+    with pytest.raises(IntegrityError), transaction.atomic():
+        Attachment.objects.filter(pk=dm_ticket["attachmentId"]).update(
+            room_id="!otherRoom:matrix.kodera.test"
+        )
+
+
+def test_media_0003_attachment_scope_binding_reverses_and_reapplies_cleanly(django_db_blocker):
+    from django.db.migrations.executor import MigrationExecutor
+    from test_customer_persistence_migrations import empty_database, schema_objects
+
+    with django_db_blocker.unblock(), empty_database() as target:
+        executor = MigrationExecutor(target)
+        executor.migrate([("media", "0003_attachment_scope_binding")])
+        forward_schema = schema_objects(target)
+        assert ("media_attachment", "media_attachment_delete_guard") in forward_schema[2]
+
+        executor = MigrationExecutor(target)
+        executor.migrate([("media", "0002_attachment_scope")])
+        reversed_schema = schema_objects(target)
+        assert ("media_attachment", "media_attachment_delete_guard") not in reversed_schema[2]
+
+        executor = MigrationExecutor(target)
+        executor.migrate([("media", "0003_attachment_scope_binding")])
+        assert schema_objects(target) == forward_schema

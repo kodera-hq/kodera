@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -6,6 +9,7 @@ import {
   createExtensionTestHarness,
 } from '@kodera/extension-sdk';
 import {
+  createDurableReplayStore,
   createGithubWebhookHandler,
   extensionManifest,
   ghCommand,
@@ -319,4 +323,116 @@ test('/gh slash command supports status, pr, checks, and triage subcommands and 
   assert.ok(!cleaned.includes('<'));
   assert.ok(!cleaned.includes('>'));
   assert.ok(cleaned.includes('blocked-scheme:alert(2)'));
+});
+
+test('github BUG-0064 blocks timeless signature replays at +10s, +301s, >24h and across restarts while rejecting stale Kodera timestamps', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'kodera-gh-replay-'));
+  const storePath = join(dir, 'replay.json');
+  const baseNow = 1_765_000_000;
+  try {
+    let handler = createGithubWebhookHandler({
+      secret: SECRET,
+      replayStore: createDurableReplayStore(storePath),
+    });
+    const harness = createExtensionTestHarness({ secret: SECRET, handler, initialUnixSeconds: baseNow });
+
+    const body1 = JSON.stringify({
+      action: 'opened',
+      repository: { full_name: 'kodera-hq/kodera' },
+      issue: { number: 101, title: 'Replay check', html_url: 'https://github.com/kodera-hq/kodera/issues/101' },
+    });
+    const sig1 = signGithubWebhookPayload(SECRET, body1);
+
+    await handler({
+      rawBody: body1,
+      headers: {
+        'x-github-event': 'issues',
+        'x-github-delivery': 'gh_deliv_initial',
+        'x-hub-signature-256': sig1,
+      },
+      nowUnixSeconds: baseNow,
+      client: harness.client,
+    });
+    assert.equal(harness.recordedCalls.length, 1);
+
+    for (const delta of [10, 301, 90_000]) {
+      await assert.rejects(
+        () =>
+          handler({
+            rawBody: body1,
+            headers: {
+              'x-github-event': 'issues',
+              'x-github-delivery': `gh_deliv_replay_${delta}`,
+              'x-hub-signature-256': sig1,
+            },
+            nowUnixSeconds: baseNow + delta,
+            client: harness.client,
+          }),
+        (err) => err instanceof WebhookVerificationError && err.code === 'REPLAY_DETECTED'
+      );
+    }
+
+    // Restart handler against the same durable store and rotate unsigned delivery ID
+    handler = createGithubWebhookHandler({
+      secret: SECRET,
+      replayStore: createDurableReplayStore(storePath),
+    });
+    await assert.rejects(
+      () =>
+        handler({
+          rawBody: body1,
+          headers: {
+            'x-github-event': 'issues',
+            'x-github-delivery': 'gh_deliv_after_restart',
+            'x-hub-signature-256': sig1,
+          },
+          nowUnixSeconds: baseNow + 120_000,
+          client: harness.client,
+        }),
+      (err) => err instanceof WebhookVerificationError && err.code === 'REPLAY_DETECTED'
+    );
+    assert.equal(harness.recordedCalls.length, 1);
+
+    // Genuinely new signed event still dispatches
+    const body2 = JSON.stringify({
+      action: 'opened',
+      repository: { full_name: 'kodera-hq/kodera' },
+      issue: { number: 102, title: 'Fresh event', html_url: 'https://github.com/kodera-hq/kodera/issues/102' },
+    });
+    await handler({
+      rawBody: body2,
+      headers: {
+        'x-github-event': 'issues',
+        'x-github-delivery': 'gh_deliv_fresh_102',
+        'x-hub-signature-256': signGithubWebhookPayload(SECRET, body2),
+      },
+      nowUnixSeconds: baseNow + 120_005,
+      client: harness.client,
+    });
+    assert.equal(harness.recordedCalls.length, 2);
+
+    // Canonical Kodera signed webhook still enforces stale timestamp rejection
+    const harnessRestarted = createExtensionTestHarness({
+      secret: SECRET,
+      handler,
+      nowUnixSeconds: baseNow + 120_010,
+    });
+    await assert.rejects(
+      () =>
+        harnessRestarted.sendWebhook({
+          event: 'issues',
+          deliveryId: 'kodera_stale_ts',
+          timestampSeconds: baseNow + 120_010 - 600,
+          payload: {
+            type: 'issues',
+            action: 'opened',
+            repository: { full_name: 'kodera-hq/kodera' },
+            issue: { number: 103, title: 'Stale', html_url: 'https://github.com/kodera-hq/kodera/issues/103' },
+          },
+        }),
+      (err) => err instanceof WebhookVerificationError && err.code === 'TIMESTAMP_OUT_OF_RANGE'
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

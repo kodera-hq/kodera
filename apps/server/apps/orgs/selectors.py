@@ -191,6 +191,16 @@ def lock_membership_user(*, membership_id: UUID) -> UUID:
     return row.user_id
 
 
+def lock_membership_only(*, membership_id: UUID) -> UUID | None:
+    """Lock the membership row alone once the caller has already locked `identity_user` first."""
+    return (
+        Membership.objects.select_for_update()
+        .filter(id=membership_id)
+        .values_list("user_id", flat=True)
+        .first()
+    )
+
+
 def active_organisation(*, organisation_id: UUID) -> bool:
     return Organisation.objects.filter(
         id=organisation_id, state="active", deleted_at__isnull=True

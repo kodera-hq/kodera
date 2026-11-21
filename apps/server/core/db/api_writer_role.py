@@ -662,6 +662,7 @@ DELETE = (
     "ee_scim_group",
     "ee_scim_group_member",
     "ee_scim_session",
+    "media_attachment",
 )
 EXECUTE_FUNCTIONS = (
     "workspace_iam_permissions(jsonb)",

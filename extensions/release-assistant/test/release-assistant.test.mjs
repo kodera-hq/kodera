@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -8,6 +11,7 @@ import {
 import {
   TELEMETRY_ENABLED,
   buildSelfHostedSummarizerRequest,
+  createDurableReplayStore,
   createReleaseAssistantWebhookHandler,
   extensionManifest,
   formatBilingualReleaseNotes,
@@ -221,4 +225,115 @@ test('webhook handler posts bilingual release card in opted-in room, refuses non
   assert.equal(statusRes.response.result.subcommand, 'status');
   assert.equal(statusRes.response.result.roomOptedIn, false);
   assert.equal(statusRes.response.result.telemetryEnabled, false);
+});
+
+test('release-assistant BUG-0064 blocks replays at +10s, +301s, >24h & across restarts and validates signed timestamps', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'kodera-rel-replay-'));
+  const storePath = join(dir, 'replay.json');
+  const baseNow = 1_765_200_000;
+  const posted = [];
+  const client = {
+    async postChannelMessage(msg) {
+      posted.push(msg);
+      return { id: `msg_${posted.length}` };
+    },
+  };
+  try {
+    let handler = createReleaseAssistantWebhookHandler({
+      secret: TEST_SECRET,
+      defaultChannelId: 'chan_releases',
+      optInChannels: ['chan_releases'],
+      client,
+      replayStore: createDurableReplayStore(storePath),
+    });
+
+    const rawBody = JSON.stringify({
+      type: 'release.published',
+      channelId: 'chan_releases',
+      repository: 'kodera-hq/kodera',
+      versionTag: 'v2.6.0',
+      commits: ['security(ext): durable webhook replay deduplication'],
+    });
+    const sig = signReleaseWebhookPayload(TEST_SECRET, rawBody);
+
+    await handler({
+      rawBody,
+      headers: { 'x-release-signature-256': sig, 'x-release-delivery': 'rel_init' },
+      nowUnixSeconds: baseNow,
+    });
+    assert.equal(posted.length, 1);
+
+    for (const delta of [10, 301, 90_000]) {
+      await assert.rejects(
+        () =>
+          handler({
+            rawBody,
+            headers: {
+              'x-release-signature-256': sig,
+              'x-release-delivery': `rel_replay_${delta}`,
+            },
+            nowUnixSeconds: baseNow + delta,
+          }),
+        (err) => err instanceof WebhookVerificationError && err.code === 'REPLAY_DETECTED'
+      );
+    }
+
+    // Restart handler against durable store with rotated unsigned delivery ID
+    handler = createReleaseAssistantWebhookHandler({
+      secret: TEST_SECRET,
+      defaultChannelId: 'chan_releases',
+      optInChannels: ['chan_releases'],
+      client,
+      replayStore: createDurableReplayStore(storePath),
+    });
+    await assert.rejects(
+      () =>
+        handler({
+          rawBody,
+          headers: {
+            'x-release-signature-256': sig,
+            'x-release-delivery': 'rel_after_restart',
+          },
+          nowUnixSeconds: baseNow + 100_000,
+        }),
+      (err) => err instanceof WebhookVerificationError && err.code === 'REPLAY_DETECTED'
+    );
+    assert.equal(posted.length, 1);
+
+    // Controlled signed timestamp + stable eventId envelope
+    const freshBody = JSON.stringify({
+      type: 'release.published',
+      channelId: 'chan_releases',
+      repository: 'kodera-hq/kodera',
+      versionTag: 'v2.6.1',
+      commits: ['feat(ext): signed timestamp release envelope'],
+    });
+    const tsNow = baseNow + 100_010;
+    const tsSig = signReleaseWebhookPayload(TEST_SECRET, freshBody, {
+      timestamp: tsNow,
+      eventId: 'evt_rel_261',
+    });
+    await handler({
+      rawBody: freshBody,
+      headers: { 'x-release-signature-256': tsSig },
+      nowUnixSeconds: tsNow + 5,
+    });
+    assert.equal(posted.length, 2);
+
+    const staleSig = signReleaseWebhookPayload(TEST_SECRET, freshBody, {
+      timestamp: tsNow - 600,
+      eventId: 'evt_rel_261_stale',
+    });
+    await assert.rejects(
+      () =>
+        handler({
+          rawBody: freshBody,
+          headers: { 'x-release-signature-256': staleSig },
+          nowUnixSeconds: tsNow,
+        }),
+      (err) => err instanceof WebhookVerificationError && err.code === 'TIMESTAMP_OUT_OF_RANGE'
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

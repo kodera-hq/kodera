@@ -114,7 +114,12 @@ def checkin(request: HttpRequest) -> HttpResponse:
             raise ProximityRefusalError(422, reason="invalid_beacon_token")
         transport = payload.get("transport", "hybrid")
         distance_band = payload.get("distance_band", "near")
-        if not isinstance(transport, str) or not isinstance(distance_band, str):
+        event_scope = payload.get("event_scope", "default")
+        if (
+            not isinstance(transport, str)
+            or not isinstance(distance_band, str)
+            or not isinstance(event_scope, str)
+        ):
             raise ProximityRefusalError(422, reason="invalid_transport_or_band")
 
         return _operation(
@@ -123,7 +128,7 @@ def checkin(request: HttpRequest) -> HttpResponse:
             "checkin",
             status=201,
             beacon_token_hex=beacon_token,
-            event_scope=payload.get("event_scope", "default"),
+            event_scope=event_scope,
             ttl_seconds=payload.get("ttl_seconds"),
             status_note=payload.get("status_note"),
             handle=payload.get("handle"),

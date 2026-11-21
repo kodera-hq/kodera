@@ -70,6 +70,59 @@ class PlainHTML(HTMLParser):
             self.parts.append(data)
 
 
+def _replace_markdown_constructs(value: str, *, images: bool) -> str:
+    """Linear O(N) replacement of `![alt](url)` or `[label](url)` without regex backtracking."""
+    marker = "![" if images else "["
+    marker_len = len(marker)
+    length = len(value)
+    if marker not in value:
+        return value
+    out: list[str] = []
+    emit_from = 0
+    search_from = 0
+    close_bracket = -1
+    url_terminator = -1
+
+    while search_from < length:
+        start = value.find(marker, search_from)
+        if start == -1:
+            break
+        label_start = start + marker_len
+        if close_bracket < label_start:
+            close_bracket = value.find("]", label_start)
+            if close_bracket == -1:
+                break
+        if close_bracket + 1 >= length or value[close_bracket + 1] != "(":
+            # Every opener in [start, close_bracket) shares this exact first `]`, so none can match.
+            search_from = close_bracket + 1
+            continue
+        url_start = close_bracket + 2
+        if url_terminator < url_start:
+            paren = value.find(")", url_start)
+            newline = value.find("\n", url_start)
+            if paren == -1 and newline == -1:
+                break
+            if paren == -1:
+                url_terminator = newline
+            elif newline == -1:
+                url_terminator = paren
+            else:
+                url_terminator = min(paren, newline)
+        if value[url_terminator] != ")":
+            # A newline precedes any closing `)`, so this `](` cannot close; skip past `](`.
+            search_from = url_start
+            continue
+        out.append(value[emit_from:start])
+        out.append("[image omitted]" if images else value[label_start:close_bracket])
+        emit_from = url_terminator + 1
+        search_from = emit_from
+
+    if not out:
+        return value
+    out.append(value[emit_from:])
+    return "".join(out)
+
+
 def clean(value: Any, maximum: int = 60000) -> str:
     if (
         not isinstance(value, str)
@@ -77,8 +130,8 @@ def clean(value: Any, maximum: int = 60000) -> str:
         or any(0xD800 <= ord(c) <= 0xDFFF for c in value)
     ):
         raise ExtensionRefusedError("import_text_bound")
-    value = re.sub(r"!\[[^\]]*\]\([^\n)]*\)", "[image omitted]", value)
-    value = re.sub(r"\[([^\]]*)\]\([^\n)]*\)", lambda match: match[1], value)
+    value = _replace_markdown_constructs(value, images=True)
+    value = _replace_markdown_constructs(value, images=False)
     parser = PlainHTML()
     parser.feed(value)
     parser.close()
