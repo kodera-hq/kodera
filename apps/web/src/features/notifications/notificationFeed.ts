@@ -39,6 +39,7 @@ export class NotificationFeed {
   #list: List
   #markRead: MarkRead
   #serial = 0
+  #resetGeneration = 0
 
   constructor(list: List = listFromCore, markRead: MarkRead = markReadInCore) {
     this.#list = list
@@ -52,11 +53,18 @@ export class NotificationFeed {
 
   getSnapshot = (): FeedSnapshot => this.#snapshot
 
+  reset(): void {
+    ++this.#resetGeneration
+    ++this.#serial
+    this.#publish({ status: 'loading', items: [], unread: 0 })
+  }
+
   async refresh(): Promise<void> {
+    const generation = this.#resetGeneration
     const serial = ++this.#serial
     try {
       const page = (await this.#list()) as { data?: unknown } | undefined
-      if (serial !== this.#serial) return
+      if (generation !== this.#resetGeneration || serial !== this.#serial) return
       const items = Array.isArray(page?.data)
         ? page.data.flatMap((value) => {
             const item = checked(value)
@@ -69,7 +77,7 @@ export class NotificationFeed {
         unread: items.filter((i) => i.readAt === null).length,
       })
     } catch {
-      if (serial !== this.#serial) return
+      if (generation !== this.#resetGeneration || serial !== this.#serial) return
       this.#publish({ ...this.#snapshot, status: 'unavailable' })
     }
   }
@@ -89,6 +97,8 @@ export class NotificationFeed {
       .filter((item) => item.readAt === null && asked.has(item.id))
       .map((item) => item.id)
     if (ids.length === 0) return
+    const generation = this.#resetGeneration
+    const serial = this.#serial
     const marked = new Set(ids)
     const before = this.#snapshot
     const items = before.items.map((item) =>
@@ -102,7 +112,15 @@ export class NotificationFeed {
     try {
       await this.#markRead(ids.slice(0, 200))
     } catch {
-      this.#publish(before)
+      if (generation !== this.#resetGeneration || serial !== this.#serial) return
+      const restored = this.#snapshot.items.map((item) =>
+        marked.has(item.id) ? { ...item, readAt: null } : item
+      )
+      this.#publish({
+        status: this.#snapshot.status,
+        items: restored,
+        unread: restored.filter((item) => item.readAt === null).length,
+      })
     }
   }
 

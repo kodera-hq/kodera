@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { markdownToHtml, userPermalink } from './markdownHtml'
+import { createMarkdownLinkScanner, markdownToHtml, userPermalink } from './markdownHtml'
 
 describe('the outgoing formatted_body', () => {
   it('is null for plain text, so only body is sent', () => {
@@ -13,6 +13,12 @@ describe('the outgoing formatted_body', () => {
     )
     expect(markdownToHtml('[le site](https://kodera.io/a?b=1&c=2)')).toBe(
       '<a href="https://kodera.io/a?b=1&amp;c=2">le site</a>'
+    )
+    expect(markdownToHtml('[a \\[b\\]](https://x.test/)')).toBe(
+      '<a href="https://x.test/">a [b]</a>'
+    )
+    expect(markdownToHtml('[foo\\\\](https://kodera.io)')).toBe(
+      '<a href="https://kodera.io/">foo\\</a>'
     )
   })
 
@@ -42,5 +48,41 @@ describe('the outgoing formatted_body', () => {
       `Merci <a href="${userPermalink(miguel.userId)}">@Miguel Victoria</a> !`
     )
     expect(userPermalink('@miguel:kodera.test')).toBe('https://matrix.to/#/@miguel:kodera.test')
+  })
+
+  it('does not link @bob:two.test, @bob-smith, @bob_admin, or @room-notes as member bob', () => {
+    const bob = { userId: '@bob-uuid:one.test', label: 'bob' }
+    expect(
+      markdownToHtml('Ping @bob et @bob:two.test @bob-smith @bob_admin @room-notes', [bob])
+    ).toBe(
+      `Ping <a href="${userPermalink(bob.userId)}">@bob</a> et @bob:two.test @bob-smith @bob_admin @room-notes`
+    )
+  })
+
+  it('scans 64 KiB adversarial bracket payloads in linear time', () => {
+    markdownToHtml('**warmup** [link](https://kodera.io)')
+
+    for (const payload of [
+      '['.repeat(65_536),
+      '**a**' + '['.repeat(65_531),
+      '['.repeat(32_768) + '](not-a-url)',
+      '[a](b'.repeat(13_107),
+    ]) {
+      const started = performance.now()
+      const scan = createMarkdownLinkScanner(payload)
+      for (let i = 0; i < payload.length; i += 1) {
+        if (payload[i] === '[') scan(i)
+      }
+      expect(performance.now() - started).toBeLessThan(100)
+    }
+
+    const htmlStart = performance.now()
+    const html = markdownToHtml('**a**' + '['.repeat(65_531))
+    expect(performance.now() - htmlStart).toBeLessThan(250)
+    expect(html?.startsWith('<strong>a</strong>[')).toBe(true)
+
+    const plainStart = performance.now()
+    expect(markdownToHtml('['.repeat(65_536))).toBeNull()
+    expect(performance.now() - plainStart).toBeLessThan(100)
   })
 })

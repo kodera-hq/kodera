@@ -21,9 +21,9 @@ use crate::{
     DESKTOP_PRODUCT_NAME, MAX_IPC_COMMAND_BYTES,
 };
 use core::fmt;
-use std::collections::VecDeque;
+use std::collections::{BTreeSet, VecDeque};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 /// Native desktop window title when unread count is zero.
 pub const DESKTOP_WINDOW_TITLE: &str = DESKTOP_PRODUCT_NAME;
@@ -69,6 +69,17 @@ pub fn effective_gui_min_inner_size(
 /// Custom asset protocol scheme registered on the native OS WebView.
 pub const CUSTOM_ASSET_SCHEME: &str = "kodera-asset";
 
+/// Platform-exact internal bundled asset origin trusted for custom WebView IPC.
+///
+/// Windows `WebView2` serves custom protocol assets over `https://kodera-asset.localhost` via
+/// `with_https_scheme(true)`; macOS `WKWebView` and Linux `WebKitGTK` serve custom protocol assets
+/// over `kodera-asset://localhost`.
+#[cfg(target_os = "windows")]
+pub const INTERNAL_ASSET_ORIGIN: &str = "https://kodera-asset.localhost";
+
+#[cfg(not(target_os = "windows"))]
+pub const INTERNAL_ASSET_ORIGIN: &str = "kodera-asset://localhost";
+
 /// Maximum UTF-8 byte length accepted by [`validate_navigation_url`].
 pub const MAX_NAVIGATION_URL_BYTES: usize = 2048;
 
@@ -105,6 +116,106 @@ const DANGEROUS_SCHEMES: [&str; 9] = [
     "edge",
     "view-source",
 ];
+
+const ADMITTED_WEBVIEW_IPC_COMMANDS: &[&str] = &[
+    "begin_oidc_pkce_loopback",
+    "check_app_updates",
+    "complete_oidc_pkce_callback",
+    "delete_keychain_credential",
+    "dispatch_notification",
+    "get_app_metadata",
+    "hide_window",
+    "init_session",
+    "inspect_self_host_health",
+    "load_keychain_credential",
+    "plan_self_host",
+    "plugin:event|listen",
+    "plugin:event|unlisten",
+    "plugin:window|close",
+    "plugin:window|hide",
+    "plugin:window|set_focus",
+    "plugin:window|show",
+    "plugin:window|unminimize",
+    "quit",
+    "restart_to_update",
+    "restore_window_bounds",
+    "route_deep_link",
+    "select_community_stack_dir",
+    "self_host_deploy_community",
+    "self_host_preflight_community",
+    "self_host_prepare_community",
+    "set_unread_badge",
+    "show_window",
+    "store_keychain_credential",
+    "trigger_tray_menu_action",
+    "update_tray_state",
+];
+
+const PRIVILEGED_INTERNAL_ONLY_COMMANDS: &[&str] = &[
+    "begin_oidc_pkce_loopback",
+    "complete_oidc_pkce_callback",
+    "delete_keychain_credential",
+    "load_keychain_credential",
+    "plan_self_host",
+    "restart_to_update",
+    "select_community_stack_dir",
+    "self_host_deploy_community",
+    "self_host_preflight_community",
+    "self_host_prepare_community",
+    "store_keychain_credential",
+];
+
+const APPROVED_CAPABILITY_PERMISSIONS: [&str; 6] = [
+    "core:default",
+    "core:window:allow-hide",
+    "core:window:allow-set-focus",
+    "core:window:allow-show",
+    "core:window:allow-unminimize",
+    "deep-link:default",
+];
+
+/// Verifies at startup that `capabilities/default.json` remains local-only, main-window-scoped,
+/// and restricted to the exact approved Tauri capability set.
+pub fn verify_embedded_default_capability() -> Result<(), &'static str> {
+    let raw = include_str!("../capabilities/default.json");
+    let parsed: serde_json::Map<String, serde_json::Value> =
+        serde_json::from_str(raw).map_err(|_| "capability_invalid_json")?;
+    if parsed.get("identifier").and_then(serde_json::Value::as_str) != Some("default") {
+        return Err("capability_identifier_mismatch");
+    }
+    if parsed.get("local").and_then(serde_json::Value::as_bool) != Some(true) {
+        return Err("capability_not_local_only");
+    }
+    if parsed.contains_key("remote") {
+        return Err("capability_remote_forbidden");
+    }
+    let Some(windows) = parsed.get("windows").and_then(serde_json::Value::as_array) else {
+        return Err("capability_windows_invalid");
+    };
+    if windows.len() != 1 || windows[0].as_str() != Some("main") {
+        return Err("capability_windows_scope_mismatch");
+    }
+    let Some(perms) = parsed
+        .get("permissions")
+        .and_then(serde_json::Value::as_array)
+    else {
+        return Err("capability_permissions_invalid");
+    };
+    let mut perm_set = BTreeSet::new();
+    for item in perms {
+        let Some(name) = item.as_str() else {
+            return Err("capability_permissions_invalid");
+        };
+        if !perm_set.insert(name) {
+            return Err("capability_permissions_duplicate");
+        }
+    }
+    let expected: BTreeSet<&str> = APPROVED_CAPABILITY_PERMISSIONS.iter().copied().collect();
+    if perm_set != expected {
+        return Err("capability_permissions_mismatch");
+    }
+    Ok(())
+}
 
 const BOOTSTRAP_INDEX_HTML: &str = r#"<!doctype html>
 <html lang="en">
@@ -461,6 +572,24 @@ pub fn validate_navigation_url(
     policy: &DeepLinkAdmissionPolicy,
     allow_dev_origin: bool,
 ) -> Result<NavigationDecision, NavigationGuardError> {
+    validate_navigation_url_for_os(
+        raw_url,
+        policy,
+        allow_dev_origin,
+        cfg!(target_os = "windows"),
+    )
+}
+
+/// Platform-parameterized navigation and IPC origin validator (`is_windows = true` trusts
+/// `https://kodera-asset.localhost` matching `with_https_scheme(true)`; `is_windows = false`
+/// trusts `kodera-asset://localhost`; cleartext `http://kodera-asset.localhost` is rejected on
+/// every OS).
+pub fn validate_navigation_url_for_os(
+    raw_url: &str,
+    policy: &DeepLinkAdmissionPolicy,
+    allow_dev_origin: bool,
+    is_windows: bool,
+) -> Result<NavigationDecision, NavigationGuardError> {
     if raw_url.is_empty() {
         return Err(NavigationGuardError::EmptyUrl);
     }
@@ -473,7 +602,7 @@ pub fn validate_navigation_url(
     {
         return Err(NavigationGuardError::ControlOrWhitespace);
     }
-    if contains_forbidden_percent_escape(raw_url) {
+    if contains_control_percent_escape(raw_url) {
         return Err(NavigationGuardError::PathTraversal);
     }
 
@@ -497,7 +626,15 @@ pub fn validate_navigation_url(
             .map_err(NavigationGuardError::RejectedDeepLink);
     }
 
+    let before_query_or_fragment = raw_url.split(['?', '#']).next().unwrap_or(raw_url);
+    if contains_forbidden_percent_escape(before_query_or_fragment) {
+        return Err(NavigationGuardError::PathTraversal);
+    }
+
     if scheme_lower == CUSTOM_ASSET_SCHEME {
+        if is_windows {
+            return Err(NavigationGuardError::UntrustedOrigin);
+        }
         let Some(rest) = raw_url
             .get(CUSTOM_ASSET_SCHEME.len()..)
             .and_then(|s| s.strip_prefix("://"))
@@ -522,11 +659,15 @@ pub fn validate_navigation_url(
         }
         let authority_lower = authority.to_ascii_lowercase();
 
-        // Windows WebView2 maps custom protocol `kodera-asset://localhost/...` onto
-        // `https://kodera-asset.localhost/...` or `http://kodera-asset.localhost/...`.
+        // Windows WebView2 with `with_https_scheme(true)` maps bundled custom protocol assets
+        // strictly onto `https://kodera-asset.localhost/...`. Cleartext `http://kodera-asset.localhost`
+        // is rejected on every OS, and `https://kodera-asset.localhost` is rejected on Unix.
         if authority_lower == "kodera-asset.localhost" {
-            let normalized_path = normalize_asset_path(path_and_more)?;
-            return Ok(NavigationDecision::AllowInternalAsset { normalized_path });
+            if is_windows && scheme_lower == "https" {
+                let normalized_path = normalize_asset_path(path_and_more)?;
+                return Ok(NavigationDecision::AllowInternalAsset { normalized_path });
+            }
+            return Err(NavigationGuardError::UntrustedOrigin);
         }
 
         validate_url_path_segments(path_and_more)?;
@@ -616,6 +757,22 @@ fn normalize_asset_path(tail: &str) -> Result<String, NavigationGuardError> {
         segments.push(seg);
     }
     Ok(format!("/{}", segments.join("/")))
+}
+
+fn contains_control_percent_escape(raw: &str) -> bool {
+    let bytes = raw.as_bytes();
+    let mut idx = 0;
+    while idx + 2 < bytes.len() {
+        if bytes[idx] == b'%' {
+            let hi = bytes[idx + 1].to_ascii_lowercase();
+            let lo = bytes[idx + 2].to_ascii_lowercase();
+            if (matches!(hi, b'0' | b'1') && lo.is_ascii_hexdigit()) || [hi, lo] == *b"7f" {
+                return true;
+            }
+        }
+        idx += 1;
+    }
+    false
 }
 
 fn contains_forbidden_percent_escape(raw: &str) -> bool {
@@ -826,6 +983,190 @@ struct RegisteredListener {
     callback_id: u64,
 }
 
+/// Native OS directory chooser seam used to grant explicit user consent for a local Community
+/// stack directory before any `self_host_*` IPC operation may inspect or write to it.
+pub trait NativeStackFolderPicker: Send + Sync {
+    fn pick_community_stack_dir(&self) -> Result<Option<PathBuf>, crate::CommunityDeployError>;
+}
+
+/// Out-of-process OS folder chooser (`NSOpenPanel` via `/usr/bin/osascript` on macOS,
+/// `zenity`/`kdialog` on Linux, STA `FolderBrowserDialog` on Windows) invoked with fixed static
+/// argv and zero WebView-supplied path arguments.
+pub struct OsNativeStackFolderPicker;
+
+impl OsNativeStackFolderPicker {
+    fn parse_selected_folder_stdout(
+        raw_bytes: &[u8],
+    ) -> Result<PathBuf, crate::CommunityDeployError> {
+        let raw = std::str::from_utf8(raw_bytes)
+            .map_err(|_| crate::CommunityDeployError::StackDirPickerUnavailable)?;
+        let line = raw.trim_end_matches(['\r', '\n']);
+        let normalized = if line.len() > 1 && !line.ends_with(":\\") {
+            line.trim_end_matches('/')
+        } else {
+            line
+        };
+        if normalized.is_empty() {
+            return Err(crate::CommunityDeployError::StackDirPickerUnavailable);
+        }
+        Ok(PathBuf::from(normalized))
+    }
+}
+
+impl NativeStackFolderPicker for OsNativeStackFolderPicker {
+    fn pick_community_stack_dir(&self) -> Result<Option<PathBuf>, crate::CommunityDeployError> {
+        #[cfg(target_os = "macos")]
+        {
+            let output = std::process::Command::new("/usr/bin/osascript")
+                .args([
+                    "-e",
+                    "POSIX path of (choose folder with prompt \"Select Kodera Community stack folder\")",
+                ])
+                .stdin(std::process::Stdio::null())
+                .output()
+                .map_err(|_| crate::CommunityDeployError::StackDirPickerUnavailable)?;
+            if output.status.success() {
+                return Self::parse_selected_folder_stdout(&output.stdout).map(Some);
+            }
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if stderr.contains("(-128)") || stderr.to_ascii_lowercase().contains("canceled") {
+                return Ok(None);
+            }
+            Err(crate::CommunityDeployError::StackDirPickerUnavailable)
+        }
+
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
+            match std::process::Command::new("/usr/bin/zenity")
+                .args([
+                    "--file-selection",
+                    "--directory",
+                    "--title=Select Kodera Community stack folder",
+                ])
+                .stdin(std::process::Stdio::null())
+                .output()
+            {
+                Ok(output) if output.status.success() => {
+                    return Self::parse_selected_folder_stdout(&output.stdout).map(Some);
+                }
+                Ok(output) if output.status.code() == Some(1) => return Ok(None),
+                Ok(_) => return Err(crate::CommunityDeployError::StackDirPickerUnavailable),
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(_) => return Err(crate::CommunityDeployError::StackDirPickerUnavailable),
+            }
+
+            let output = std::process::Command::new("/usr/bin/kdialog")
+                .args([
+                    "--getexistingdirectory",
+                    ".",
+                    "--title",
+                    "Select Kodera Community stack folder",
+                ])
+                .stdin(std::process::Stdio::null())
+                .output()
+                .map_err(|_| crate::CommunityDeployError::StackDirPickerUnavailable)?;
+            if output.status.success() {
+                return Self::parse_selected_folder_stdout(&output.stdout).map(Some);
+            }
+            if output.status.code() == Some(1) {
+                return Ok(None);
+            }
+            Err(crate::CommunityDeployError::StackDirPickerUnavailable)
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            let output = std::process::Command::new("powershell.exe")
+                .args([
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-STA",
+                    "-Command",
+                    "Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.FolderBrowserDialog; $d.Description = 'Select Kodera Community stack folder'; $d.ShowNewFolderButton = $false; if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::Out.WriteLine($d.SelectedPath); exit 0 } else { exit 128 }",
+                ])
+                .stdin(std::process::Stdio::null())
+                .output()
+                .map_err(|_| crate::CommunityDeployError::StackDirPickerUnavailable)?;
+            if output.status.success() {
+                return Self::parse_selected_folder_stdout(&output.stdout).map(Some);
+            }
+            if output.status.code() == Some(128) {
+                return Ok(None);
+            }
+            Err(crate::CommunityDeployError::StackDirPickerUnavailable)
+        }
+    }
+}
+
+struct ForbiddenEnvelopeKey;
+
+impl<'de> serde::Deserialize<'de> for ForbiddenEnvelopeKey {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let _ = serde::de::IgnoredAny::deserialize(deserializer)?;
+        Ok(Self)
+    }
+}
+
+const fn is_sorted_str_slice(slice: &[&str]) -> bool {
+    let mut i = 1;
+    while i < slice.len() {
+        let left = slice[i - 1].as_bytes();
+        let right = slice[i].as_bytes();
+        let min_len = if left.len() < right.len() {
+            left.len()
+        } else {
+            right.len()
+        };
+        let mut j = 0;
+        let mut decided = false;
+        while j < min_len {
+            if left[j] < right[j] {
+                decided = true;
+                break;
+            }
+            if left[j] > right[j] {
+                return false;
+            }
+            j += 1;
+        }
+        if !decided && left.len() >= right.len() {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
+fn deserialize_present_key<'de, D>(
+    deserializer: D,
+) -> Result<Option<ForbiddenEnvelopeKey>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    <ForbiddenEnvelopeKey as serde::Deserialize>::deserialize(deserializer).map(Some)
+}
+
+fn deserialize_non_null_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    <String as serde::Deserialize>::deserialize(deserializer).map(Some)
+}
+
+/// Minimal IPC JSON envelope header that skips secret fields (`raw_token`, `raw_secret`,
+/// `code_verifier`) via `serde::de::IgnoredAny` without allocating unzeroized `String` copies.
+#[derive(Default, serde::Deserialize)]
+struct IpcEnvelopeHeader {
+    #[serde(default, deserialize_with = "deserialize_non_null_string")]
+    command: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_present_key")]
+    host_op: Option<ForbiddenEnvelopeKey>,
+    #[serde(default, deserialize_with = "deserialize_present_key")]
+    op: Option<ForbiddenEnvelopeKey>,
+    #[serde(default, deserialize_with = "deserialize_non_null_string")]
+    stack_dir: Option<String>,
+}
+
 /// Stateful WebView IPC router bridging `window.__TAURI_INTERNALS__` and `window.koderaDesktop`
 /// to [`DesktopShellHost`] after strict sender-origin validation.
 pub struct DesktopWebViewBridge {
@@ -839,6 +1180,8 @@ pub struct DesktopWebViewBridge {
     document_generation: u64,
     document_capability: Option<String>,
     ready_update: Option<crate::updater::ReadyUpdate>,
+    authorized_stack_dirs: BTreeSet<PathBuf>,
+    stack_folder_picker: std::sync::Arc<dyn NativeStackFolderPicker>,
 }
 
 impl DesktopWebViewBridge {
@@ -858,7 +1201,14 @@ impl DesktopWebViewBridge {
             document_generation: 0,
             document_capability: fresh_document_capability(),
             ready_update: None,
+            authorized_stack_dirs: BTreeSet::new(),
+            stack_folder_picker: std::sync::Arc::new(OsNativeStackFolderPicker),
         }
+    }
+
+    /// Replaces the native OS folder chooser on this bridge instance (deterministic test seam).
+    pub fn set_stack_folder_picker(&mut self, picker: std::sync::Arc<dyn NativeStackFolderPicker>) {
+        self.stack_folder_picker = picker;
     }
 
     /// Discard all authority and callbacks owned by a departed top-level document.
@@ -871,6 +1221,7 @@ impl DesktopWebViewBridge {
         }
         self.host.clear_active_session();
         self.listeners.clear();
+        self.authorized_stack_dirs.clear();
         self.document_id = None;
         self.document_generation = generation;
         self.document_capability = fresh_document_capability();
@@ -878,6 +1229,21 @@ impl DesktopWebViewBridge {
 
     pub fn clear_session(&mut self) {
         self.host.clear_active_session();
+        self.authorized_stack_dirs.clear();
+    }
+
+    /// Records an explicit native OS folder-picker authorization for a canonical Community stack
+    /// directory on the current document generation. WebView JavaScript cannot call this over IPC.
+    pub fn authorize_community_stack_dir(
+        &mut self,
+        stack_dir: &Path,
+    ) -> Result<PathBuf, crate::CommunityDeployError> {
+        let raw = stack_dir
+            .to_str()
+            .ok_or(crate::CommunityDeployError::InvalidStackDir)?;
+        let canonical = crate::self_host_deploy::canonicalize_authorized_stack_dir(raw)?;
+        self.authorized_stack_dirs.insert(canonical.clone());
+        Ok(canonical)
     }
 
     /// Replaces the local `docker` CLI runner on the active host session (deterministic test seam).
@@ -913,12 +1279,20 @@ impl DesktopWebViewBridge {
         if raw_message.len() > MAX_IPC_COMMAND_BYTES {
             return Err(WebViewIpcError::MessageTooLarge);
         }
-        match validate_navigation_url(sender_url, &self.policy, self.allow_dev_origin) {
-            Ok(NavigationDecision::AllowInternalAsset { .. }) => {}
-            Ok(NavigationDecision::AllowTrustedWebOrigin { origin })
-                if origin != "https://auth.kodera.io" => {}
-            _ => return Err(WebViewIpcError::UntrustedSenderOrigin),
-        }
+        // Custom WebView IPC commands are denied to all remote web origins (`capabilities/default.json`
+        // specifies `local: true` with zero remote origins). Only bundled internal assets (and local
+        // Vite loopback strictly when `allow_dev_origin` is active, excluding privileged host ops)
+        // may address the IPC router.
+        let is_internal_asset_origin =
+            match validate_navigation_url(sender_url, &self.policy, self.allow_dev_origin) {
+                Ok(NavigationDecision::AllowInternalAsset { .. }) => true,
+                Ok(NavigationDecision::AllowTrustedWebOrigin { origin })
+                    if self.allow_dev_origin && APPROVED_DEV_ORIGINS.contains(&origin.as_str()) =>
+                {
+                    false
+                }
+                _ => return Err(WebViewIpcError::UntrustedSenderOrigin),
+            };
 
         let Some((header_line, json_body)) = raw_message.split_once('\n') else {
             return Err(WebViewIpcError::MalformedEnvelope);
@@ -937,6 +1311,9 @@ impl DesktopWebViewBridge {
             return Err(WebViewIpcError::MalformedEnvelope);
         }
         if req_id_str == "hello" && cmd_raw == "__document_generation" {
+            if json_body.trim() != "{}" {
+                return Err(WebViewIpcError::MalformedEnvelope);
+            }
             return Ok(WebViewIpcOutcome {
                 eval_scripts: vec![activate_js_document(
                     document_id,
@@ -982,9 +1359,41 @@ impl DesktopWebViewBridge {
             || !cmd_raw
                 .bytes()
                 .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b':' | b'|'))
+            || ADMITTED_WEBVIEW_IPC_COMMANDS
+                .binary_search(&cmd_raw)
+                .is_err()
         {
             return Err(WebViewIpcError::MalformedEnvelope);
         }
+        if PRIVILEGED_INTERNAL_ONLY_COMMANDS
+            .binary_search(&cmd_raw)
+            .is_ok()
+            && !is_internal_asset_origin
+        {
+            return Err(WebViewIpcError::UntrustedSenderOrigin);
+        }
+
+        const {
+            assert!(
+                is_sorted_str_slice(ADMITTED_WEBVIEW_IPC_COMMANDS),
+                "ADMITTED_WEBVIEW_IPC_COMMANDS must be sorted"
+            );
+            assert!(
+                is_sorted_str_slice(PRIVILEGED_INTERNAL_ONLY_COMMANDS),
+                "PRIVILEGED_INTERNAL_ONLY_COMMANDS must be sorted"
+            );
+        }
+
+        let envelope: IpcEnvelopeHeader =
+            serde_json::from_str(json_body).map_err(|_| WebViewIpcError::MalformedEnvelope)?;
+        if envelope.host_op.is_some() || envelope.op.is_some() {
+            return Err(WebViewIpcError::MalformedEnvelope);
+        }
+        let has_matching_body_command = match envelope.command.as_deref() {
+            Some(body_cmd) if body_cmd == cmd_raw => true,
+            Some(_) => return Err(WebViewIpcError::MalformedEnvelope),
+            None => false,
+        };
 
         self.document_id = Some(document_id.to_owned());
         let mut eval_scripts = Vec::new();
@@ -1146,7 +1555,138 @@ impl DesktopWebViewBridge {
                     ));
                 }
             }
+            "select_community_stack_dir" => {
+                if !has_matching_body_command || envelope.stack_dir.is_some() {
+                    return Err(WebViewIpcError::MalformedEnvelope);
+                }
+                let Some(org_id) = extract_json_string_field(json_body, "organisation_id") else {
+                    eval_scripts.push(resolve_js_promise(
+                        document_id,
+                        req_id,
+                        false,
+                        r#"{"ok":false,"error":"invalid_organisation"}"#,
+                    ));
+                    return Ok(WebViewIpcOutcome {
+                        eval_scripts,
+                        window_action,
+                    });
+                };
+                if !self.host.has_active_session() && self.host.provision_session(&org_id).is_err()
+                {
+                    eval_scripts.push(resolve_js_promise(
+                        document_id,
+                        req_id,
+                        false,
+                        r#"{"ok":false,"error":"invalid_organisation"}"#,
+                    ));
+                    return Ok(WebViewIpcOutcome {
+                        eval_scripts,
+                        window_action,
+                    });
+                }
+                if self.host.active_organisation_id() != Some(org_id.as_str()) {
+                    eval_scripts.push(resolve_js_promise(
+                        document_id,
+                        req_id,
+                        false,
+                        r#"{"ok":false,"error":"organisation_mismatch"}"#,
+                    ));
+                    return Ok(WebViewIpcOutcome {
+                        eval_scripts,
+                        window_action,
+                    });
+                }
+                match self.stack_folder_picker.pick_community_stack_dir() {
+                    Ok(Some(chosen_dir)) => match self.authorize_community_stack_dir(&chosen_dir) {
+                        Ok(canonical) => {
+                            let canonical_str = canonical.to_string_lossy();
+                            let payload = format!(
+                                r#"{{"ok":true,"type":"community_stack_dir_selected","selected":true,"stack_dir":"{}"}}"#,
+                                escape_js_json_str(&canonical_str)
+                            );
+                            eval_scripts.push(resolve_js_promise(
+                                document_id,
+                                req_id,
+                                true,
+                                &payload,
+                            ));
+                        }
+                        Err(err) => {
+                            let escaped_err =
+                                escape_js_json_str(&format!("community_deploy:{err}"));
+                            let payload = format!(r#"{{"ok":false,"error":"{escaped_err}"}}"#);
+                            eval_scripts.push(resolve_js_promise(
+                                document_id,
+                                req_id,
+                                false,
+                                &payload,
+                            ));
+                        }
+                    },
+                    Ok(None) => {
+                        eval_scripts.push(resolve_js_promise(
+                            document_id,
+                            req_id,
+                            true,
+                            r#"{"ok":true,"type":"community_stack_dir_selected","selected":false,"stack_dir":null}"#,
+                        ));
+                    }
+                    Err(err) => {
+                        let escaped_err = escape_js_json_str(&format!("community_deploy:{err}"));
+                        let payload = format!(r#"{{"ok":false,"error":"{escaped_err}"}}"#);
+                        eval_scripts.push(resolve_js_promise(document_id, req_id, false, &payload));
+                    }
+                }
+            }
             _ => {
+                if !has_matching_body_command {
+                    return Err(WebViewIpcError::MalformedEnvelope);
+                }
+                if matches!(
+                    cmd_raw,
+                    "self_host_preflight_community"
+                        | "self_host_prepare_community"
+                        | "self_host_deploy_community"
+                ) {
+                    let Some(raw_stack_dir) = envelope.stack_dir.as_deref() else {
+                        eval_scripts.push(resolve_js_promise(
+                            document_id,
+                            req_id,
+                            false,
+                            r#"{"ok":false,"error":"missing_field"}"#,
+                        ));
+                        return Ok(WebViewIpcOutcome {
+                            eval_scripts,
+                            window_action,
+                        });
+                    };
+                    let candidate_path = Path::new(raw_stack_dir);
+                    if !raw_stack_dir.is_empty()
+                        && raw_stack_dir.len() <= crate::MAX_STACK_DIR_BYTES
+                        && candidate_path.is_absolute()
+                        && !candidate_path
+                            .components()
+                            .any(|comp| matches!(comp, Component::ParentDir))
+                    {
+                        let authorized = !self.authorized_stack_dirs.is_empty()
+                            && crate::self_host_deploy::canonicalize_authorized_stack_dir(
+                                raw_stack_dir,
+                            )
+                            .is_ok_and(|canonical| self.authorized_stack_dirs.contains(&canonical));
+                        if !authorized {
+                            eval_scripts.push(resolve_js_promise(
+                                document_id,
+                                req_id,
+                                false,
+                                r#"{"ok":false,"error":"community_deploy:stack_dir_not_authorized"}"#,
+                            ));
+                            return Ok(WebViewIpcOutcome {
+                                eval_scripts,
+                                window_action,
+                            });
+                        }
+                    }
+                }
                 if !self.host.has_active_session() {
                     if let Some(org_id) = extract_json_string_field(json_body, "organisation_id") {
                         let _ = self.host.provision_session(&org_id);
@@ -1554,6 +2094,8 @@ mod native_runtime {
         let _ = DesktopShellHost::self_check()?;
         let embedded_csp = verify_embedded_tauri_conf_csp()
             .map_err(|_| DesktopShellError::SelfCheckFailed("csp_policy"))?;
+        verify_embedded_default_capability()
+            .map_err(|_| DesktopShellError::SelfCheckFailed("capability_policy"))?;
 
         let policy = DeepLinkAdmissionPolicy::kodera_default();
         let startup_url = if let Some(ref custom_url) = options.override_url {
@@ -1565,7 +2107,7 @@ mod native_runtime {
                 _ => return Err(DesktopShellError::UntrustedStartupUrl),
             }
         } else {
-            format!("{CUSTOM_ASSET_SCHEME}://localhost/index.html")
+            format!("{INTERNAL_ASSET_ORIGIN}/index.html")
         };
 
         let event_loop = EventLoopBuilder::<DesktopUserEvent>::with_user_event().build();
@@ -1872,24 +2414,89 @@ mod tests {
     #[test]
     fn navigation_guard_admits_internal_assets_and_approved_origins_and_intercepts_deep_links() {
         let policy = DeepLinkAdmissionPolicy::kodera_default();
+        let internal_root = format!("{INTERNAL_ASSET_ORIGIN}/");
+        let internal_js = format!("{INTERNAL_ASSET_ORIGIN}/bootstrap.js");
 
         assert_eq!(
-            validate_navigation_url("kodera-asset://localhost/", &policy, false).unwrap(),
+            validate_navigation_url(&internal_root, &policy, false).unwrap(),
             NavigationDecision::AllowInternalAsset {
                 normalized_path: "/index.html".to_owned(),
             }
         );
         assert_eq!(
-            validate_navigation_url(
+            validate_navigation_url(&internal_js, &policy, false).unwrap(),
+            NavigationDecision::AllowInternalAsset {
+                normalized_path: "/bootstrap.js".to_owned(),
+            }
+        );
+
+        // Platform-exact WebView internal asset origin checks (BUG-0003):
+        // Unix trusts `kodera-asset://localhost` ONLY; Windows trusts `https://kodera-asset.localhost` ONLY;
+        // cleartext `http://kodera-asset.localhost` is rejected on EVERY OS.
+        assert_eq!(
+            validate_navigation_url_for_os("kodera-asset://localhost/", &policy, false, false)
+                .unwrap(),
+            NavigationDecision::AllowInternalAsset {
+                normalized_path: "/index.html".to_owned(),
+            }
+        );
+        assert_eq!(
+            validate_navigation_url_for_os(
                 "https://kodera-asset.localhost/bootstrap.js",
                 &policy,
+                false,
                 false
+            ),
+            Err(NavigationGuardError::UntrustedOrigin)
+        );
+        assert_eq!(
+            validate_navigation_url_for_os(
+                "https://kodera-asset.localhost/bootstrap.js",
+                &policy,
+                false,
+                true
             )
             .unwrap(),
             NavigationDecision::AllowInternalAsset {
                 normalized_path: "/bootstrap.js".to_owned(),
             }
         );
+        assert_eq!(
+            validate_navigation_url_for_os("kodera-asset://localhost/", &policy, false, true),
+            Err(NavigationGuardError::UntrustedOrigin)
+        );
+        for is_win in [false, true] {
+            for allow_dev in [false, true] {
+                assert_eq!(
+                    validate_navigation_url_for_os(
+                        "http://kodera-asset.localhost/",
+                        &policy,
+                        allow_dev,
+                        is_win
+                    ),
+                    Err(NavigationGuardError::UntrustedOrigin)
+                );
+            }
+        }
+        assert_eq!(
+            validate_navigation_url("http://kodera-asset.localhost/", &policy, false),
+            Err(NavigationGuardError::UntrustedOrigin)
+        );
+        assert_eq!(
+            validate_navigation_url("http://kodera-asset.localhost/", &policy, true),
+            Err(NavigationGuardError::UntrustedOrigin)
+        );
+        #[cfg(not(target_os = "windows"))]
+        assert_eq!(
+            validate_navigation_url("https://kodera-asset.localhost/", &policy, false),
+            Err(NavigationGuardError::UntrustedOrigin)
+        );
+        #[cfg(target_os = "windows")]
+        assert_eq!(
+            validate_navigation_url("kodera-asset://localhost/", &policy, false),
+            Err(NavigationGuardError::UntrustedOrigin)
+        );
+
         assert_eq!(
             validate_navigation_url("https://app.kodera.io/channels/general", &policy, false)
                 .unwrap(),
@@ -1921,7 +2528,8 @@ mod tests {
             }
         );
 
-        // Valid kodera:// and matrix: deep links are intercepted rather than navigated directly.
+        // Valid kodera:// and matrix: deep links (including RFC 9207 percent-encoded `iss` query)
+        // are intercepted rather than navigated directly.
         match validate_navigation_url("kodera://workspace/acme-ops/general", &policy, false)
             .unwrap()
         {
@@ -1929,6 +2537,16 @@ mod tests {
                 assert_eq!(link.canonical_uri(), "kodera://workspace/acme-ops/general");
             }
             other => panic!("expected InterceptDeepLink, got {other:?}"),
+        }
+        match validate_navigation_url(
+            "kodera://auth/callback?code=authcode_abcdef012345&state=state_token_9876543210&iss=https%3A%2F%2Fauth.kodera.io%2Frealms%2Facme",
+            &policy,
+            false,
+        )
+        .unwrap()
+        {
+            NavigationDecision::InterceptDeepLink(_) => {}
+            other => panic!("expected InterceptDeepLink for OIDC callback, got {other:?}"),
         }
     }
 
@@ -1964,11 +2582,19 @@ mod tests {
             Err(NavigationGuardError::EmbeddedCredentials)
         );
         assert_eq!(
-            validate_navigation_url("kodera-asset://localhost/../tauri.conf.json", &policy, true),
+            validate_navigation_url(
+                &format!("{INTERNAL_ASSET_ORIGIN}/../tauri.conf.json"),
+                &policy,
+                true
+            ),
             Err(NavigationGuardError::PathTraversal)
         );
         assert_eq!(
-            validate_navigation_url("kodera-asset://localhost/%2e%2e/secret", &policy, true),
+            validate_navigation_url(
+                &format!("{INTERNAL_ASSET_ORIGIN}/%2e%2e/secret"),
+                &policy,
+                true
+            ),
             Err(NavigationGuardError::PathTraversal)
         );
         assert!(matches!(
@@ -2004,7 +2630,7 @@ mod tests {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_nanos())
                 .unwrap_or(0);
-            let dir = std::env::temp_dir().join(format!(
+            let dir = crate::self_host_deploy::non_shared_test_scratch_root().join(format!(
                 "kodera-desktop-gui-test-{tag}-{}-{nanos}",
                 std::process::id()
             ));
@@ -2120,20 +2746,28 @@ mod tests {
         let startup_link = route_deep_link("kodera://workspace/acme/general", &policy).unwrap();
         let mut bridge = DesktopWebViewBridge::new(false, Some(startup_link));
         bridge.document_capability = Some("c".repeat(64));
+        let internal_index = format!("{INTERNAL_ASSET_ORIGIN}/index.html");
 
-        // Untrusted frame origin is rejected before parsing or executing commands.
-        assert_eq!(
-            bridge.handle_ipc_request(
-                "https://evil.example/frame",
-                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:0:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc:1\tget_app_metadata\n{\"command\":\"get_app_metadata\"}"
-            ),
-            Err(WebViewIpcError::UntrustedSenderOrigin)
-        );
+        // Untrusted and remote web frame origins are rejected before parsing or executing commands.
+        for refused in [
+            "https://evil.example/frame",
+            "https://app.kodera.io/",
+            "https://staging.kodera.io/",
+            "https://community.kodera.io/",
+        ] {
+            assert_eq!(
+                bridge.handle_ipc_request(
+                    refused,
+                    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:0:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc:1\tget_app_metadata\n{\"command\":\"get_app_metadata\"}"
+                ),
+                Err(WebViewIpcError::UntrustedSenderOrigin)
+            );
+        }
 
         // Registering `kodera://deep-link` flushes the buffered startup deep link.
         let listen_out = bridge
             .handle_ipc_request(
-                "kodera-asset://localhost/index.html",
+                &internal_index,
                 "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:0:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc:1\tplugin:event|listen\n{\"event\":\"kodera://deep-link\",\"handler\":7}",
             )
             .unwrap();
@@ -2147,7 +2781,7 @@ mod tests {
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:0:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc:2\tset_unread_badge\n{{\"command\":\"set_unread_badge\",\"organisation_id\":\"{ORG}\",\"unread_count\":9}}"
         );
         let badge_out = bridge
-            .handle_ipc_request("https://app.kodera.io/", &badge_cmd)
+            .handle_ipc_request(&internal_index, &badge_cmd)
             .unwrap();
         assert_eq!(
             badge_out.window_action,
@@ -2158,7 +2792,7 @@ mod tests {
         // Quit command clears session and emits GuiWindowAction::Quit.
         let quit_out = bridge
             .handle_ipc_request(
-                "kodera-asset://localhost/index.html",
+                &internal_index,
                 "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:0:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc:3\tquit\n{\"command\":\"quit\"}",
             )
             .unwrap();
@@ -2198,41 +2832,38 @@ mod tests {
     fn document_transition_discards_listeners_sessions_and_old_document_messages() {
         let mut bridge = DesktopWebViewBridge::new(false, None);
         bridge.document_capability = Some("c".repeat(64));
+        let internal_index = format!("{INTERNAL_ASSET_ORIGIN}/index.html");
         let hello = bridge
             .handle_ipc_request(
-                "https://app.kodera.io/",
+                &internal_index,
                 "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:hello\t__document_generation\n{}",
             )
             .unwrap();
         assert!(hello.eval_scripts[0].contains("__KODERA_IPC_ACTIVATE__(0,"));
         assert!(bridge.document_id.is_none());
         let old = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:0:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc:1\tplugin:event|listen\n{\"event\":\"kodera://deep-link\",\"handler\":1}";
-        bridge
-            .handle_ipc_request("https://app.kodera.io/", old)
-            .unwrap();
+        bridge.handle_ipc_request(&internal_index, old).unwrap();
         bridge.host.provision_session(ORG).unwrap();
         bridge.begin_document(1);
         bridge.document_capability = Some("c".repeat(64));
         assert!(bridge.listeners.is_empty());
         assert!(!bridge.host.has_active_session());
         assert_eq!(
-            bridge.handle_ipc_request("https://app.kodera.io/", old),
+            bridge.handle_ipc_request(&internal_index, old),
             Err(WebViewIpcError::UntrustedSenderOrigin)
         );
         assert!(bridge.document_id.is_none());
         let new = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:1:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc:1\tplugin:event|listen\n{\"event\":\"kodera://deep-link\",\"handler\":1}";
-        bridge
-            .handle_ipc_request("https://app.kodera.io/", new)
-            .unwrap();
+        bridge.handle_ipc_request(&internal_index, new).unwrap();
         assert_eq!(
-            bridge.handle_ipc_request("https://app.kodera.io/", old),
+            bridge.handle_ipc_request(&internal_index, old),
             Err(WebViewIpcError::UntrustedSenderOrigin)
         );
         bridge.begin_document(1);
         assert_eq!(bridge.listeners.len(), 1);
         let late = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:0:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc:2\tquit\n{}";
         assert_eq!(
-            bridge.handle_ipc_request("https://app.kodera.io/", late),
+            bridge.handle_ipc_request(&internal_index, late),
             Err(WebViewIpcError::UntrustedSenderOrigin)
         );
         let link = route_deep_link(
@@ -2246,7 +2877,7 @@ mod tests {
         assert!(!scripts[0].contains("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
         let update = bridge
             .handle_ipc_request(
-                "https://app.kodera.io/",
+                &internal_index,
                 "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:1:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc:2\tcheck_app_updates\n{}",
             )
             .unwrap();
@@ -2256,13 +2887,14 @@ mod tests {
     #[test]
     fn document_capability_rotates_and_rejects_stale_and_future_generation_forgeries() {
         let mut bridge = DesktopWebViewBridge::new(false, None);
+        let internal_index = format!("{INTERNAL_ASSET_ORIGIN}/index.html");
         bridge.begin_document(1);
         let old_capability = bridge.document_capability.clone().unwrap();
         let old_message = format!(
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:1:{old_capability}:1\tget_app_metadata\n{{}}"
         );
         bridge
-            .handle_ipc_request("https://app.kodera.io/", &old_message)
+            .handle_ipc_request(&internal_index, &old_message)
             .unwrap();
         bridge.begin_document(2);
         assert!(bridge.document_id.is_none());
@@ -2271,35 +2903,33 @@ mod tests {
         let forged_current_generation =
             format!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:2:{old_capability}:2\tquit\n{{}}");
         assert_eq!(
-            bridge.handle_ipc_request("https://app.kodera.io/", &forged_current_generation),
+            bridge.handle_ipc_request(&internal_index, &forged_current_generation),
             Err(WebViewIpcError::UntrustedSenderOrigin)
         );
         assert!(bridge.document_id.is_none());
         let forged_future_generation =
             format!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:3:{capability}:2\tquit\n{{}}");
         assert_eq!(
-            bridge.handle_ipc_request("https://app.kodera.io/", &forged_future_generation),
+            bridge.handle_ipc_request(&internal_index, &forged_future_generation),
             Err(WebViewIpcError::UntrustedSenderOrigin)
         );
         assert!(bridge.document_id.is_none());
         let valid =
             format!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:2:{capability}:1\tget_app_metadata\n{{}}");
-        bridge
-            .handle_ipc_request("https://app.kodera.io/", &valid)
-            .unwrap();
+        bridge.handle_ipc_request(&internal_index, &valid).unwrap();
         bridge.begin_document(3);
         // An unavailable OS capability has no predictable or empty fallback.
         bridge.document_capability = None;
         assert_eq!(
             bridge.handle_ipc_request(
-                "https://app.kodera.io/",
+                &internal_index,
                 "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:hello\t__document_generation\n{}"
             ),
             Err(WebViewIpcError::UntrustedSenderOrigin)
         );
         let unavailable = format!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:3:{capability}:2\tquit\n{{}}");
         assert_eq!(
-            bridge.handle_ipc_request("https://app.kodera.io/", &unavailable),
+            bridge.handle_ipc_request(&internal_index, &unavailable),
             Err(WebViewIpcError::UntrustedSenderOrigin)
         );
     }
@@ -2307,11 +2937,12 @@ mod tests {
     #[test]
     fn update_response_exactly_reports_unsupported() {
         let mut bridge = DesktopWebViewBridge::new(false, None);
+        let internal_index = format!("{INTERNAL_ASSET_ORIGIN}/index.html");
         let capability = bridge.document_capability.clone().unwrap();
         let message =
             format!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:0:{capability}:1\tcheck_app_updates\n{{}}");
         let outcome = bridge
-            .handle_ipc_request("https://app.kodera.io/", &message)
+            .handle_ipc_request(&internal_index, &message)
             .unwrap();
         let payload = format!(
             r#"{{"supported":false,"updateAvailable":false,"currentVersion":"{}","latestVersion":null,"channel":"stable"}}"#,
@@ -2371,7 +3002,7 @@ mod tests {
         fs::create_dir_all(&stack_dir).unwrap();
         fs::write(
             stack_dir.join("docker-compose.yml"),
-            "services:\n  db:\n    image: postgres:17.6-alpine\n",
+            "services:\n  db:\n    image: postgres:17.12-alpine@sha256:a77aa70e641402a21411b92b721c58d10f23b50ae5fdd2333efd22d166e1e5f7\n",
         )
         .unwrap();
         let stack_dir_str = stack_dir.to_str().unwrap();
@@ -2385,6 +3016,7 @@ mod tests {
             {"Service":"livekit","State":"running","Health":"healthy","MemoryMiB":128}
         ]"#;
 
+        let resolved_compose_json = r#"{"name":"community","services":{"db":{"image":"postgres:17.12-alpine@sha256:a77aa70e641402a21411b92b721c58d10f23b50ae5fdd2333efd22d166e1e5f7"}}}"#;
         let runner = Arc::new(ScriptedRunner {
             outputs: Mutex::new(VecDeque::from([
                 CommandExecOutput {
@@ -2401,7 +3033,13 @@ mod tests {
                 },
                 CommandExecOutput {
                     status_code: Some(0),
-                    stdout: String::new(),
+                    stdout: resolved_compose_json.to_owned(),
+                    stderr: String::new(),
+                    timed_out: false,
+                },
+                CommandExecOutput {
+                    status_code: Some(0),
+                    stdout: resolved_compose_json.to_owned(),
                     stderr: String::new(),
                     timed_out: false,
                 },
@@ -2420,17 +3058,32 @@ mod tests {
             ])),
         });
 
+        struct FixedFolderPicker(PathBuf);
+        impl NativeStackFolderPicker for FixedFolderPicker {
+            fn pick_community_stack_dir(
+                &self,
+            ) -> Result<Option<PathBuf>, crate::CommunityDeployError> {
+                Ok(Some(self.0.clone()))
+            }
+        }
+
         let mut bridge = DesktopWebViewBridge::new(false, None);
+        bridge.set_stack_folder_picker(Arc::new(FixedFolderPicker(stack_dir.clone())));
+        let internal_self_host = format!("{INTERNAL_ASSET_ORIGIN}/self-host");
         let doc_id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         let cap = bridge.document_capability.clone().unwrap();
 
-        // Untrusted and auth-realm sender frames are refused before touching disk or session state.
+        // Untrusted, remote web, and auth-realm sender frames are refused before touching disk or session state.
         let untrusted_prepare = format!(
             "{doc_id}:0:{cap}:1\tself_host_prepare_community\n{{\"command\":\"self_host_prepare_community\",\"organisation_id\":\"{ORG}\",\"stack_dir\":\"{stack_dir_str}\",\"domain\":\"chat.example.org\",\"acme_email\":\"ops@example.org\",\"oidc_provider_origin\":\"https://auth.example.org\",\"tls_mode\":\"acme\",\"http_port\":80,\"https_port\":443}}"
         );
         for refused_sender in [
             "https://evil.example/wizard",
+            "https://app.kodera.io/self-host",
+            "https://staging.kodera.io/self-host",
+            "https://community.kodera.io/self-host",
             "https://auth.kodera.io/realms/kodera-staff/account",
+            "http://kodera-asset.localhost/self-host",
         ] {
             assert_eq!(
                 bridge.handle_ipc_request(refused_sender, &untrusted_prepare),
@@ -2443,17 +3096,35 @@ mod tests {
         let init_msg =
             format!("{doc_id}:0:{cap}:2\tinit_session\n{{\"organisation_id\":\"{ORG}\"}}");
         let init_out = bridge
-            .handle_ipc_request("https://app.kodera.io/self-host", &init_msg)
+            .handle_ipc_request(&internal_self_host, &init_msg)
             .unwrap();
         assert!(init_out.eval_scripts[0].contains("__KODERA_IPC_RESOLVE__(2, true,"));
         assert!(bridge.configure_community_runner(ORG, runner));
+
+        // Before native folder-picker authorization, WebView IPC refuses `stack_dir` without touching disk.
+        let unauth_out = bridge
+            .handle_ipc_request(&internal_self_host, &untrusted_prepare)
+            .unwrap();
+        assert!(unauth_out.eval_scripts[0].contains("__KODERA_IPC_RESOLVE__(1, false,"));
+        assert!(unauth_out.eval_scripts[0].contains("community_deploy:stack_dir_not_authorized"));
+        assert!(!stack_dir.join(".env").exists());
+
+        // Authorize `stack_dir` through the production `select_community_stack_dir` IPC command + native folder picker.
+        let select_msg = format!(
+            "{doc_id}:0:{cap}:20\tselect_community_stack_dir\n{{\"command\":\"select_community_stack_dir\",\"organisation_id\":\"{ORG}\"}}"
+        );
+        let select_out = bridge
+            .handle_ipc_request(&internal_self_host, &select_msg)
+            .unwrap();
+        assert!(select_out.eval_scripts[0].contains("__KODERA_IPC_RESOLVE__(20, true,"));
+        assert!(select_out.eval_scripts[0].contains(r#""selected":true"#));
 
         // 1. Preflight
         let preflight_msg = format!(
             "{doc_id}:0:{cap}:3\tself_host_preflight_community\n{{\"command\":\"self_host_preflight_community\",\"organisation_id\":\"{ORG}\",\"stack_dir\":\"{stack_dir_str}\",\"domain\":\"Chat.Example.org\",\"acme_email\":\"ops@example.org\",\"tls_mode\":\"acme\",\"http_port\":80,\"https_port\":443}}"
         );
         let preflight_out = bridge
-            .handle_ipc_request("https://app.kodera.io/self-host", &preflight_msg)
+            .handle_ipc_request(&internal_self_host, &preflight_msg)
             .unwrap();
         assert!(preflight_out.eval_scripts[0].contains("__KODERA_IPC_RESOLVE__(3, true,"));
         assert!(preflight_out.eval_scripts[0].contains(r#""type":"community_preflight""#));
@@ -2465,7 +3136,7 @@ mod tests {
             "{doc_id}:0:{cap}:4\tself_host_prepare_community\n{{\"command\":\"self_host_prepare_community\",\"organisation_id\":\"{ORG}\",\"stack_dir\":\"{stack_dir_str}\",\"domain\":\"Chat.Example.org\",\"acme_email\":\"ops@example.org\",\"oidc_provider_origin\":\"https://auth.example.org\",\"tls_mode\":\"acme\",\"http_port\":80,\"https_port\":443}}"
         );
         let prepare_out = bridge
-            .handle_ipc_request("https://app.kodera.io/self-host", &prepare_msg)
+            .handle_ipc_request(&internal_self_host, &prepare_msg)
             .unwrap();
         let prepare_js = &prepare_out.eval_scripts[0];
         assert!(prepare_js.contains("__KODERA_IPC_RESOLVE__(4, true,"));
@@ -2496,7 +3167,7 @@ mod tests {
             "{doc_id}:0:{cap}:5\tself_host_deploy_community\n{{\"command\":\"self_host_deploy_community\",\"organisation_id\":\"{ORG}\",\"stack_dir\":\"{stack_dir_str}\",\"timeout_ms\":5000}}"
         );
         let deploy_out = bridge
-            .handle_ipc_request("https://app.kodera.io/self-host", &deploy_msg)
+            .handle_ipc_request(&internal_self_host, &deploy_msg)
             .unwrap();
         let deploy_js = &deploy_out.eval_scripts[0];
         assert!(deploy_js.contains("__KODERA_IPC_RESOLVE__(5, true,"));
@@ -2531,7 +3202,7 @@ mod tests {
                 self.invocations.fetch_add(1, Ordering::SeqCst);
                 Ok(CommandExecOutput {
                     status_code: Some(0),
-                    stdout: String::new(),
+                    stdout: r#"{"name":"community","services":{"db":{"image":"postgres:17.12-alpine@sha256:a77aa70e641402a21411b92b721c58d10f23b50ae5fdd2333efd22d166e1e5f7"}}}"#.to_owned(),
                     stderr: String::new(),
                     timed_out: false,
                 })
@@ -2547,22 +3218,24 @@ mod tests {
         fs::create_dir_all(&stack_dir).unwrap();
         fs::write(
             stack_dir.join("docker-compose.yml"),
-            "services:\n  db:\n    image: postgres:17.6-alpine\n",
+            "services:\n  db:\n    image: postgres:17.12-alpine@sha256:a77aa70e641402a21411b92b721c58d10f23b50ae5fdd2333efd22d166e1e5f7\n",
         )
         .unwrap();
         let stack_dir_str = stack_dir.to_str().unwrap();
 
         let mut bridge = DesktopWebViewBridge::new(false, None);
+        let internal_self_host = format!("{INTERNAL_ASSET_ORIGIN}/self-host");
         bridge.begin_document(1);
         let old_doc = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         let old_cap = bridge.document_capability.clone().unwrap();
 
-        // Departing Document A initializes its session on https://app.kodera.io/self-host.
+        // Departing Document A initializes its session and folder grant on bundled internal asset origin.
         let init_old =
             format!("{old_doc}:1:{old_cap}:1\tinit_session\n{{\"organisation_id\":\"{ORG}\"}}");
         bridge
-            .handle_ipc_request("https://app.kodera.io/self-host", &init_old)
+            .handle_ipc_request(&internal_self_host, &init_old)
             .unwrap();
+        bridge.authorize_community_stack_dir(&stack_dir).unwrap();
 
         // Envelopes prepared by Document A before navigation (including a forged/sampled gen=2 case).
         let stale_prepare_gen1 = format!(
@@ -2575,8 +3248,10 @@ mod tests {
             "{old_doc}:2:{old_cap}:3\tself_host_deploy_community\n{{\"command\":\"self_host_deploy_community\",\"organisation_id\":\"{ORG}\",\"stack_dir\":\"{stack_dir_str}\",\"timeout_ms\":5000}}"
         );
 
-        // Same-origin reload/navigation advances to generation 2 and rotates the 256-bit capability.
+        // Same-origin reload/navigation advances to generation 2, rotates the 256-bit capability,
+        // and clears Document A's authorized_stack_dirs!
         bridge.begin_document(2);
+        assert!(bridge.authorized_stack_dirs.is_empty());
         let new_doc = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
         let new_cap = bridge.document_capability.clone().unwrap();
         assert_ne!(new_cap, old_cap);
@@ -2584,17 +3259,17 @@ mod tests {
         // Late delivery from Document A BEFORE Document B binds `document_id` must be refused with zero side effects.
         for late_msg in [&stale_prepare_gen1, &stale_prepare_gen2, &stale_deploy_gen2] {
             assert_eq!(
-                bridge.handle_ipc_request("https://app.kodera.io/self-host", late_msg),
+                bridge.handle_ipc_request(&internal_self_host, late_msg),
                 Err(WebViewIpcError::UntrustedSenderOrigin)
             );
         }
         assert!(bridge.document_id.is_none());
         assert!(!stack_dir.join(".env").exists());
 
-        // Document B activates on the same admitted origin and provisions an active session + runner.
+        // Document B activates on the internal asset origin and provisions an active session + runner + grant.
         let hello_new = bridge
             .handle_ipc_request(
-                "https://app.kodera.io/self-host",
+                &internal_self_host,
                 &format!("{new_doc}:hello\t__document_generation\n{{}}"),
             )
             .unwrap();
@@ -2604,17 +3279,18 @@ mod tests {
         let init_new =
             format!("{new_doc}:2:{new_cap}:1\tinit_session\n{{\"organisation_id\":\"{ORG}\"}}");
         bridge
-            .handle_ipc_request("https://app.kodera.io/self-host", &init_new)
+            .handle_ipc_request(&internal_self_host, &init_new)
             .unwrap();
         let counting_runner = Arc::new(CountingRunner {
             invocations: AtomicUsize::new(0),
         });
         assert!(bridge.configure_community_runner(ORG, counting_runner.clone()));
+        bridge.authorize_community_stack_dir(&stack_dir).unwrap();
 
         // Late delivery from Document A AFTER Document B's session is live must STILL be refused without running docker or writing .env.
         for late_msg in [&stale_prepare_gen1, &stale_prepare_gen2, &stale_deploy_gen2] {
             assert_eq!(
-                bridge.handle_ipc_request("https://app.kodera.io/self-host", late_msg),
+                bridge.handle_ipc_request(&internal_self_host, late_msg),
                 Err(WebViewIpcError::UntrustedSenderOrigin)
             );
         }
@@ -2626,7 +3302,7 @@ mod tests {
             "{new_doc}:2:{new_cap}:2\tself_host_prepare_community\n{{\"command\":\"self_host_prepare_community\",\"organisation_id\":\"{ORG}\",\"stack_dir\":\"{stack_dir_str}\",\"domain\":\"chat.example.org\",\"acme_email\":\"ops@example.org\",\"oidc_provider_origin\":\"https://auth.example.org\",\"tls_mode\":\"acme\",\"http_port\":80,\"https_port\":443}}"
         );
         let valid_out = bridge
-            .handle_ipc_request("https://app.kodera.io/self-host", &valid_prepare)
+            .handle_ipc_request(&internal_self_host, &valid_prepare)
             .unwrap();
         assert_eq!(counting_runner.invocations.load(Ordering::SeqCst), 1);
         assert!(stack_dir.join(".env").exists());
@@ -2634,6 +3310,236 @@ mod tests {
             "if (window.__KODERA_DOCUMENT_ID__ === \"{new_doc}\") {{"
         )));
         assert!(!valid_out.eval_scripts[0].contains(old_doc));
+    }
+
+    #[test]
+    fn webview_ipc_enforces_command_acl_envelope_body_consistency_and_preserves_existing_dotenv() {
+        verify_embedded_default_capability().unwrap();
+
+        let scratch = ScopedTempDir::new("ipc-acl-and-envelope");
+        let stack_dir = scratch.path().join("community");
+        fs::create_dir_all(&stack_dir).unwrap();
+        fs::write(
+            stack_dir.join("docker-compose.yml"),
+            "services:\n  db:\n    image: postgres:17.12-alpine@sha256:a77aa70e641402a21411b92b721c58d10f23b50ae5fdd2333efd22d166e1e5f7\n",
+        )
+        .unwrap();
+        let sentinel_env = "POSTGRES_PASSWORD=non_kodera_existing_operator_secret\n";
+        fs::write(stack_dir.join(".env"), sentinel_env).unwrap();
+        let stack_dir_str = stack_dir.to_str().unwrap();
+
+        let mut bridge = DesktopWebViewBridge::new(true, None);
+        let internal_origin = format!("{INTERNAL_ASSET_ORIGIN}/index.html");
+        let doc_id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let cap = bridge.document_capability.clone().unwrap();
+
+        // (a) Remote web origins (`staging.kodera.io`, `community.kodera.io`, `app.kodera.io`)
+        // and local Vite dev origin are denied privileged host commands (remote origins are denied all commands).
+        for remote_sender in [
+            "https://staging.kodera.io/",
+            "https://community.kodera.io/",
+            "https://app.kodera.io/",
+        ] {
+            for cmd in [
+                "self_host_prepare_community",
+                "self_host_deploy_community",
+                "store_keychain_credential",
+                "delete_keychain_credential",
+                "restart_to_update",
+                "get_app_metadata",
+            ] {
+                let msg = format!("{doc_id}:0:{cap}:1\t{cmd}\n{{\"command\":\"{cmd}\"}}");
+                assert_eq!(
+                    bridge.handle_ipc_request(remote_sender, &msg),
+                    Err(WebViewIpcError::UntrustedSenderOrigin),
+                    "remote sender {remote_sender} must be refused for {cmd}"
+                );
+            }
+        }
+        for dev_privileged in [
+            "begin_oidc_pkce_loopback",
+            "complete_oidc_pkce_callback",
+            "self_host_prepare_community",
+            "self_host_deploy_community",
+            "store_keychain_credential",
+            "load_keychain_credential",
+            "delete_keychain_credential",
+            "restart_to_update",
+        ] {
+            let msg = format!(
+                "{doc_id}:0:{cap}:1\t{dev_privileged}\n{{\"command\":\"{dev_privileged}\"}}"
+            );
+            assert_eq!(
+                bridge.handle_ipc_request("http://localhost:5173/", &msg),
+                Err(WebViewIpcError::UntrustedSenderOrigin),
+                "dev loopback must be refused privileged command {dev_privileged}"
+            );
+        }
+
+        // (b) Header `cmd_raw` mismatch against `json_body.command` or `host_op` smuggling -> MalformedEnvelope.
+        let mismatched = format!(
+            "{doc_id}:0:{cap}:2\tset_unread_badge\n{{\"command\":\"self_host_prepare_community\",\"organisation_id\":\"{ORG}\",\"stack_dir\":\"{stack_dir_str}\"}}"
+        );
+        assert_eq!(
+            bridge.handle_ipc_request(&internal_origin, &mismatched),
+            Err(WebViewIpcError::MalformedEnvelope)
+        );
+        let smuggled_host_op = format!(
+            "{doc_id}:0:{cap}:3\tset_unread_badge\n{{\"host_op\":\"init_session\",\"organisation_id\":\"{ORG}\"}}"
+        );
+        assert_eq!(
+            bridge.handle_ipc_request(&internal_origin, &smuggled_host_op),
+            Err(WebViewIpcError::MalformedEnvelope)
+        );
+        let missing_body_cmd = format!(
+            "{doc_id}:0:{cap}:4\tset_unread_badge\n{{\"organisation_id\":\"{ORG}\",\"unread_count\":1}}"
+        );
+        assert_eq!(
+            bridge.handle_ipc_request(&internal_origin, &missing_body_cmd),
+            Err(WebViewIpcError::MalformedEnvelope)
+        );
+
+        // (c) Unauthorized `stack_dir` is refused, and once authorized, pre-existing `.env` is preserved intact.
+        let prep_msg = format!(
+            "{doc_id}:0:{cap}:5\tself_host_prepare_community\n{{\"command\":\"self_host_prepare_community\",\"organisation_id\":\"{ORG}\",\"stack_dir\":\"{stack_dir_str}\",\"domain\":\"chat.example.org\",\"acme_email\":\"ops@example.org\",\"oidc_provider_origin\":\"https://auth.example.org\",\"tls_mode\":\"acme\",\"http_port\":80,\"https_port\":443}}"
+        );
+        let unauth_out = bridge
+            .handle_ipc_request(&internal_origin, &prep_msg)
+            .unwrap();
+        assert!(unauth_out.eval_scripts[0].contains("community_deploy:stack_dir_not_authorized"));
+        assert_eq!(
+            fs::read_to_string(stack_dir.join(".env")).unwrap(),
+            sentinel_env
+        );
+
+        bridge.authorize_community_stack_dir(&stack_dir).unwrap();
+        let existing_env_out = bridge
+            .handle_ipc_request(&internal_origin, &prep_msg)
+            .unwrap();
+        assert!(existing_env_out.eval_scripts[0].contains("community_deploy:env_already_exists"));
+        assert_eq!(
+            fs::read_to_string(stack_dir.join(".env")).unwrap(),
+            sentinel_env
+        );
+    }
+
+    #[test]
+    fn select_community_stack_dir_enforces_native_picker_flow_and_ipc_envelope_skips_secret_copies()
+    {
+        use std::sync::{Arc, Mutex};
+
+        struct QueuedFolderPicker {
+            outcomes: Mutex<VecDeque<Result<Option<PathBuf>, crate::CommunityDeployError>>>,
+        }
+
+        impl NativeStackFolderPicker for QueuedFolderPicker {
+            fn pick_community_stack_dir(
+                &self,
+            ) -> Result<Option<PathBuf>, crate::CommunityDeployError> {
+                self.outcomes
+                    .lock()
+                    .unwrap()
+                    .pop_front()
+                    .unwrap_or(Ok(None))
+            }
+        }
+
+        let scratch = ScopedTempDir::new("native-picker-and-envelope");
+        let valid_stack = scratch.path().join("community-valid");
+        fs::create_dir_all(&valid_stack).unwrap();
+        fs::write(
+            valid_stack.join("docker-compose.yml"),
+            "services:\n  db:\n    image: postgres:17.12-alpine@sha256:a77aa70e641402a21411b92b721c58d10f23b50ae5fdd2333efd22d166e1e5f7\n",
+        )
+        .unwrap();
+        let invalid_stack = scratch.path().join("community-missing-compose");
+        fs::create_dir_all(&invalid_stack).unwrap();
+
+        let picker = Arc::new(QueuedFolderPicker {
+            outcomes: Mutex::new(VecDeque::from([
+                Ok(None),
+                Ok(Some(invalid_stack)),
+                Ok(Some(valid_stack.clone())),
+            ])),
+        });
+
+        let mut bridge = DesktopWebViewBridge::new(true, None);
+        bridge.set_stack_folder_picker(picker);
+        let internal_origin = format!("{INTERNAL_ASSET_ORIGIN}/self-host");
+        let doc_id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let cap = bridge.document_capability.clone().unwrap();
+
+        // Remote and dev origins cannot invoke `select_community_stack_dir`.
+        let select_req = format!(
+            "{doc_id}:0:{cap}:1\tselect_community_stack_dir\n{{\"command\":\"select_community_stack_dir\",\"organisation_id\":\"{ORG}\"}}"
+        );
+        for untrusted in ["https://community.kodera.io/", "http://localhost:5173/"] {
+            assert_eq!(
+                bridge.handle_ipc_request(untrusted, &select_req),
+                Err(WebViewIpcError::UntrustedSenderOrigin)
+            );
+        }
+
+        // Caller-supplied `stack_dir` on `select_community_stack_dir` is rejected as MalformedEnvelope.
+        let smuggled_path_req = format!(
+            "{doc_id}:0:{cap}:2\tselect_community_stack_dir\n{{\"command\":\"select_community_stack_dir\",\"organisation_id\":\"{ORG}\",\"stack_dir\":\"/tmp\"}}"
+        );
+        assert_eq!(
+            bridge.handle_ipc_request(&internal_origin, &smuggled_path_req),
+            Err(WebViewIpcError::MalformedEnvelope)
+        );
+
+        // 1. User cancels native folder dialog -> selected:false, authorized_stack_dirs remains empty.
+        let cancel_out = bridge
+            .handle_ipc_request(&internal_origin, &select_req)
+            .unwrap();
+        assert!(cancel_out.eval_scripts[0].contains("__KODERA_IPC_RESOLVE__(1, true,"));
+        assert!(cancel_out.eval_scripts[0].contains(r#""selected":false"#));
+        assert!(bridge.authorized_stack_dirs.is_empty());
+
+        // 2. User picks a folder without valid `docker-compose.yml` -> error returned, nothing authorized.
+        let missing_compose_req = format!(
+            "{doc_id}:0:{cap}:3\tselect_community_stack_dir\n{{\"command\":\"select_community_stack_dir\",\"organisation_id\":\"{ORG}\"}}"
+        );
+        let invalid_out = bridge
+            .handle_ipc_request(&internal_origin, &missing_compose_req)
+            .unwrap();
+        assert!(invalid_out.eval_scripts[0].contains("__KODERA_IPC_RESOLVE__(3, false,"));
+        assert!(invalid_out.eval_scripts[0].contains("community_deploy:compose_file_missing"));
+        assert!(bridge.authorized_stack_dirs.is_empty());
+
+        // 3. User picks a valid stack directory -> canonical path authorized and returned.
+        let valid_req = format!(
+            "{doc_id}:0:{cap}:4\tselect_community_stack_dir\n{{\"command\":\"select_community_stack_dir\",\"organisation_id\":\"{ORG}\"}}"
+        );
+        let valid_out = bridge
+            .handle_ipc_request(&internal_origin, &valid_req)
+            .unwrap();
+        assert!(valid_out.eval_scripts[0].contains("__KODERA_IPC_RESOLVE__(4, true,"));
+        assert!(valid_out.eval_scripts[0].contains(r#""selected":true"#));
+        assert_eq!(bridge.authorized_stack_dirs.len(), 1);
+
+        // 4. Verify `IpcEnvelopeHeader` skips `raw_token`/`raw_secret` via `IgnoredAny` without
+        // materializing them on the header struct and still rejects `host_op: null` / `op: null`.
+        let parsed_secret_env: IpcEnvelopeHeader = serde_json::from_str(
+            r#"{"command":"plan_self_host","organisation_id":"0195f18e-52f5-7a1c-b411-94cf2ab35210","raw_token":"scw-secret-token-alpha-bravo-0001","raw_secret":"matrix-session-secret-0001"}"#,
+        )
+        .unwrap();
+        assert_eq!(parsed_secret_env.command.as_deref(), Some("plan_self_host"));
+        assert!(parsed_secret_env.host_op.is_none());
+        assert!(parsed_secret_env.op.is_none());
+        assert!(parsed_secret_env.stack_dir.is_none());
+
+        let parsed_null_host_op: IpcEnvelopeHeader =
+            serde_json::from_str(r#"{"command":"set_unread_badge","host_op":null}"#).unwrap();
+        assert!(parsed_null_host_op.host_op.is_some());
+        let null_host_op_msg = format!(
+            "{doc_id}:0:{cap}:5\tset_unread_badge\n{{\"command\":\"set_unread_badge\",\"host_op\":null}}"
+        );
+        assert_eq!(
+            bridge.handle_ipc_request(&internal_origin, &null_host_op_msg),
+            Err(WebViewIpcError::MalformedEnvelope)
+        );
     }
 
     #[test]

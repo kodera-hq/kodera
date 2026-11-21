@@ -147,6 +147,12 @@ export interface WindowPlacementResult {
   clamped: boolean;
 }
 
+export interface CommunityStackDirSelectionResult {
+  supported: boolean;
+  selected: boolean;
+  stackDir: string | null;
+}
+
 export interface CommunityPreflightInput {
   stackDir: string;
   domain: string;
@@ -239,6 +245,7 @@ export interface KoderaDesktopClient {
   beginOidcPkceLoopback(input: OidcPkceStartInput): Promise<OidcLoopbackStartResult>;
   completeOidcPkceCallback(callbackUri: string): Promise<OidcPkceCompleteResult>;
   restoreWindowBounds(savedStateJson?: string): Promise<WindowPlacementResult>;
+  selectCommunityStackDir(): Promise<CommunityStackDirSelectionResult>;
   preflightCommunityDeploy(input: CommunityPreflightInput): Promise<CommunityPreflightResult>;
   prepareCommunityDeploy(input: CommunityPrepareInput): Promise<CommunityPrepareResult>;
   deployCommunityStack(input: CommunityDeployInput): Promise<CommunityDeployResult>;

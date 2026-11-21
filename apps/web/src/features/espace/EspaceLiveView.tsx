@@ -184,13 +184,13 @@ function directChannelOf(roomId: string, name: string): WorkspaceChannel {
   } as WorkspaceChannel
 }
 
-function mutedChannelsStorageKey(org: string, workspaceId: string): string {
-  return `kodera.muted-channels.${org}:${workspaceId}`
+export function mutedChannelsStorageKey(org: string, workspaceId: string, userId: string): string {
+  return `kodera.muted-channels.${org}:${workspaceId}:${userId}`
 }
 
-function readMutedChannels(org: string, workspaceId: string): Set<string> {
+function readMutedChannels(org: string, workspaceId: string, userId: string): Set<string> {
   try {
-    const raw = window.localStorage.getItem(mutedChannelsStorageKey(org, workspaceId))
+    const raw = window.localStorage.getItem(mutedChannelsStorageKey(org, workspaceId, userId))
     if (!raw) return new Set()
     const parsed = JSON.parse(raw) as unknown
     return Array.isArray(parsed)
@@ -201,9 +201,14 @@ function readMutedChannels(org: string, workspaceId: string): Set<string> {
   }
 }
 
-function writeMutedChannels(org: string, workspaceId: string, channels: ReadonlySet<string>): void {
+function writeMutedChannels(
+  org: string,
+  workspaceId: string,
+  userId: string,
+  channels: ReadonlySet<string>
+): void {
   try {
-    const key = mutedChannelsStorageKey(org, workspaceId)
+    const key = mutedChannelsStorageKey(org, workspaceId, userId)
     if (channels.size === 0) window.localStorage.removeItem(key)
     else window.localStorage.setItem(key, JSON.stringify([...channels]))
   } catch {
@@ -1324,18 +1329,18 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
       : (activeStore.firstShownAfter?.(activeRoomId, readAtOpen.eventId) ?? null)
   useMarkRead({ room: activeRoom, newestKey: timeline.at(-1)?.key, store: activeStore })
 
-  const muteScopeKey = `${org}:${workspace.organisation_id}`
+  const muteScopeKey = `${org}:${workspace.organisation_id}:${viewerId}`
   const [mutedState, setMutedState] = useState<{
     scope: string
     channels: ReadonlySet<string>
   }>(() => ({
     scope: muteScopeKey,
-    channels: readMutedChannels(org, workspace.organisation_id),
+    channels: readMutedChannels(org, workspace.organisation_id, viewerId),
   }))
   if (mutedState.scope !== muteScopeKey) {
     setMutedState({
       scope: muteScopeKey,
-      channels: readMutedChannels(org, workspace.organisation_id),
+      channels: readMutedChannels(org, workspace.organisation_id, viewerId),
     })
   }
   const mutedChannels = mutedState.channels
@@ -1344,7 +1349,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
     const next = new Set(mutedChannels)
     if (next.has(target.channelId)) next.delete(target.channelId)
     else next.add(target.channelId)
-    writeMutedChannels(org, workspace.organisation_id, next)
+    writeMutedChannels(org, workspace.organisation_id, viewerId, next)
     setMutedState({ scope: muteScopeKey, channels: next })
   })
 

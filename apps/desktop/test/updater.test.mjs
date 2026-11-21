@@ -113,3 +113,26 @@ test('public bridge refuses a missing native capability and browser restart', as
   const browser = createDesktopClient({ globalObject: {} });
   await assert.rejects(browser.restartToUpdate(), /update_not_ready/);
 });
+
+test('updater script refuses cleartext http://kodera-asset.localhost and remote origins', async () => {
+  for (const loc of [
+    { protocol: 'http:', hostname: 'kodera-asset.localhost' },
+    { protocol: 'http:', hostname: 'localhost' },
+    { protocol: 'https:', hostname: 'localhost' },
+    { protocol: 'https:', hostname: 'app.kodera.io' },
+  ]) {
+    const calls = [], children = [];
+    const context = vm.createContext({
+      messages,
+      document: { readyState: 'complete', documentElement: { lang: 'en' }, body: { append: n => children.push(n) }, createElement: () => ({}) },
+      location: loc,
+      window: { koderaDesktop: { async invoke(cmd) { calls.push(cmd); return { supported: true, updateReady: true, verified: true }; } } },
+      setTimeout() {},
+      setInterval() {},
+    });
+    vm.runInContext(`(function(messages){ ${script} })(messages);`, context);
+    await flush();
+    assert.equal(calls.length, 0);
+    assert.equal(children.length, 0);
+  }
+});

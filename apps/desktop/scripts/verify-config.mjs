@@ -22,11 +22,13 @@ const capability = files.has('capabilities/default.json')
 
 // The desktop shell is a companion surface: it sells nothing. No pricing, plan, upgrade or
 // checkout wording, no billing SDK and no address that can reach a payment page may appear in its
-// sources or configuration. `plan` alone is not listed: here it names the self-host deployment plan.
+// sources or configuration. `plan` alone is not listed: here it names the self-host deployment plan,
+// and `KODERA_BILLING_ENABLED` alone is admitted solely so the Community Compose policy validator can
+// pin that server flag to `"false"`.
 // Stems that mean commerce wherever they stand, inside an identifier included (`open_checkout`,
 // `showPaywall`), then whole words that are only commercial on their own.
 const COMMERCIAL_WORDING = new RegExp([
-  'pricing|upgrad(?:e|es|ed|ing)|upsell|checkout|billing|invoic(?:e|es|ed|ing)|payment|purchas(?:e|es|ed|ing)',
+  String.raw`pricing|upgrad(?:e|es|ed|ing)|upsell|checkout|(?:(?<!\bkodera_)billing|(?<=\bkodera_)billing(?!_enabled\b))|invoic(?:e|es|ed|ing)|payment|purchas(?:e|es|ed|ing)`,
   'paywall|subscri(?:be|bes|bed|ber|bers|ption|ptions)|premium|tarification|abonnement|facturation|paiement',
   String.raw`(?<!\p{L})(?:priced?|prices|billed|pay\s+now|free\s+trial|trial\s+period|(?:paid|pro|business|enterprise)\s+plan`
     + String.raw`|buy(?:\s+now)?|credit\s+card|per\s+(?:seat|user|month)|tarifs?|prix|mise\s+à\s+niveau|s['’]abonner`
@@ -213,11 +215,17 @@ function selftest() {
     ['inline style elements', /style-src must use only approved sources/u, (config) => {
       config.app.security.csp = config.app.security.csp.replace("style-src 'self'", "style-src 'self' 'unsafe-inline'");
     }],
-    ['missing style attribute directive', /style-src-attr must be present exactly once/u, (config) => {
-      config.app.security.csp = config.app.security.csp.replace("style-src-attr 'unsafe-inline';", '');
+    ['missing script attribute directive', /script-src-attr must be present exactly once/u, (config) => {
+      config.app.security.csp = config.app.security.csp.replace("script-src-attr 'none';", '');
     }],
-    ['blocked inline style attributes', /style-src-attr must use only approved sources/u, (config) => {
-      config.app.security.csp = config.app.security.csp.replace("style-src-attr 'unsafe-inline'", "style-src-attr 'none'");
+    ['inline script attributes', /script-src-attr must use only approved sources/u, (config) => {
+      config.app.security.csp = config.app.security.csp.replace("script-src-attr 'none'", "script-src-attr 'unsafe-inline'");
+    }],
+    ['missing style attribute directive', /style-src-attr must be present exactly once/u, (config) => {
+      config.app.security.csp = config.app.security.csp.replace("style-src-attr 'none';", '');
+    }],
+    ['inline style attributes', /style-src-attr must use only approved sources/u, (config) => {
+      config.app.security.csp = config.app.security.csp.replace("style-src-attr 'none'", "style-src-attr 'unsafe-inline'");
     }],
     ['disabled CSP asset modification', /CSP asset modification must not be disabled/u, (config) => {
       config.app.security.dangerousDisableAssetCspModification = true;
@@ -275,7 +283,7 @@ function selftest() {
       config.plugins['deep-link'].desktop.schemes = ['Kodera', 'matrix'];
     }],
   ];
-  for (const directive of ['connect-src', 'img-src', 'style-src', 'style-src-attr', 'object-src', 'base-uri', 'form-action', 'frame-ancestors']) {
+  for (const directive of ['script-src-attr', 'connect-src', 'img-src', 'style-src', 'style-src-attr', 'object-src', 'base-uri', 'form-action', 'frame-ancestors']) {
     mutations.push([`expanded ${directive}`, new RegExp(`${directive} must use only approved sources`, 'u'), (config) => {
       config.app.security.csp = config.app.security.csp.replace(`${directive} `, `${directive} https: wss: `);
     }]);
@@ -309,6 +317,9 @@ function selftest() {
     ['a bridge commercial label', /\.\.\/src\/bridge\.mjs carries commercial wording: "pricing"/u, '../src/bridge.mjs', '\nconst LABEL = "See pricing";\n'],
     ['a pricing label', /src\/lib\.rs carries commercial wording: "pricing"/u, 'src/lib.rs', '\nconst LABEL: &str = "See pricing";\n'],
     ['a checkout route', /src\/commands\.rs carries commercial wording: "checkout"/u, 'src/commands.rs', '\n"open_checkout" => todo!(),\n'],
+    ['a billing identifier', /src\/commands\.rs carries commercial wording: "billing"/u, 'src/commands.rs', '\nconst ROUTE: &str = "open_billing";\n'],
+    ['a non-disable billing env var', /src\/lib\.rs carries commercial wording: "BILLING"/u, 'src/lib.rs', '\nconst ENV_KEY: &str = "KODERA_BILLING_URL";\n'],
+    ['a suffixed billing env var', /src\/lib\.rs carries commercial wording: "BILLING"/u, 'src/lib.rs', '\nconst ENV_KEY: &str = "KODERA_BILLING_ENABLED_EXTRA";\n'],
     ['a subscription notice', /tauri\.conf\.json carries commercial wording: "subscription"/u, 'tauri.conf.json', '\n"note": "Your subscription ends soon"\n'],
     ['a paid plan', /src\/lib\.rs carries commercial wording: "Pro plan"/u, 'src/lib.rs', '\n// Pro plan only\n'],
     ['French commercial wording', /src\/lib\.rs carries commercial wording: "abonnement"/u, 'src/lib.rs', '\n// abonnement requis\n'],

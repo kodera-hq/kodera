@@ -2,8 +2,7 @@ import { Fragment, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { composerCopy } from './composerMessages'
 import { safeLinkHref } from './formatting'
-
-const MD_LINK = /^\[((?:\\.|[^\]\\])+)\]\(([^\s)]+)\)/u
+import { createMarkdownLinkScanner } from './markdownHtml'
 
 function safeExplicitWebHref(raw: string): string | null {
   const trimmed = raw.trim()
@@ -20,11 +19,15 @@ export function InlineMarkdown({
   text,
   renderText = (run) => run,
   renderLink,
+  allowLinks = true,
 }: {
   text: string
   renderText?: (run: string) => ReactNode
   renderLink?: ((href: string, label: ReactNode) => ReactNode) | undefined
+  allowLinks?: boolean | undefined
 }) {
+  const scanLink =
+    allowLinks && text.includes('](') ? createMarkdownLinkScanner(text, safeExplicitWebHref) : null
   const nodes: ReactNode[] = []
   let cursor = 0
   let plain = 0
@@ -46,28 +49,32 @@ export function InlineMarkdown({
       cursor += 1
       continue
     }
-    if (text[cursor] === '[') {
-      const link = MD_LINK.exec(text.slice(cursor))
-      const href = link === null ? null : safeExplicitWebHref(link[2]!)
-      if (link !== null && href !== null) {
+    if (text[cursor] === '[' && scanLink !== null) {
+      const link = scanLink(cursor)
+      if (link !== null) {
         if (cursor > plain)
           nodes.push(<Fragment key={`t${plain}`}>{renderText(text.slice(plain, cursor))}</Fragment>)
-        const unescaped = link[1]!.replace(/\\([[\]\\])/gu, '$1')
+        const unescaped = link.label.replace(/\\([[\]\\])/gu, '$1')
         const inner = (
-          <InlineMarkdown text={unescaped} renderText={renderText} renderLink={renderLink} />
+          <InlineMarkdown
+            text={unescaped}
+            renderText={renderText}
+            renderLink={renderLink}
+            allowLinks={false}
+          />
         )
         nodes.push(
           <Fragment key={cursor}>
             {renderLink ? (
-              renderLink(href, inner)
+              renderLink(link.href, inner)
             ) : (
-              <a href={href} target="_blank" rel="noopener noreferrer">
+              <a href={link.href} target="_blank" rel="noopener noreferrer">
                 {inner}
               </a>
             )}
           </Fragment>
         )
-        cursor += link[0].length
+        cursor = link.end
         plain = cursor
         continue
       }
@@ -95,6 +102,7 @@ export function InlineMarkdown({
         text={text.slice(cursor + marker.length, end)}
         renderText={renderText}
         renderLink={renderLink}
+        allowLinks={allowLinks}
       />
     )
     nodes.push(

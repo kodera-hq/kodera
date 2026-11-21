@@ -21,6 +21,12 @@ import type { AuthAdapter, AuthCallbackResult, AuthSessionSnapshot, AuthUser } f
 import * as matrixAuth from './matrix'
 import { authAdapter as defaultAdapter } from './oidc'
 import { clearLocalSessionStorage } from './localSession'
+import {
+  disablePush,
+  hasStoredPushDeviceKey,
+  pushSupported,
+  readStoredPushDeviceId,
+} from '../features/notifications/push'
 
 export interface AuthContextValue {
   readonly user: AuthUser | undefined
@@ -217,7 +223,29 @@ export function AuthProvider({
   const signOut = useCallback(async () => {
     const take = matrixAuth.prepareMatrixSessionForSignOut()
     const before = lifetime.getEndedCount()
+    let outgoingAccessToken: string | undefined
+    let hadPushDeviceKey = false
+    let pushDeviceId: string | null = null
+    try {
+      outgoingAccessToken = adapter.getAccessToken()
+      hadPushDeviceKey = hasStoredPushDeviceKey()
+      pushDeviceId = readStoredPushDeviceId()
+    } catch {
+      /* Local cleanup still follows. */
+    }
     lifetime.retire()
+    let didPushTeardown = false
+    try {
+      if (hadPushDeviceKey || pushSupported()) {
+        didPushTeardown = await disablePush({
+          deviceId: pushDeviceId,
+          accessToken: outgoingAccessToken,
+          bestEffort: true,
+        })
+      }
+    } catch {
+      didPushTeardown = false
+    }
     // Observe rejection immediately, including a synchronous SDK throw, then do all local work.
     let ended: Promise<void>
     try {
@@ -241,7 +269,7 @@ export function AuthProvider({
       }
     } finally {
       try {
-        clearLocalSessionStorage()
+        clearLocalSessionStorage(didPushTeardown ? { skipBrowserPushCleanup: true } : undefined)
       } catch {
         /* SDK outcome remains truthful. */
       }

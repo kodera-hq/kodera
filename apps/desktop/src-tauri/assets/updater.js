@@ -1,6 +1,6 @@
   'use strict';
-  if (!window.koderaDesktop || !/^(kodera-asset:|https?:)$/.test(location.protocol) ||
-      !['localhost', 'kodera-asset.localhost'].includes(location.hostname)) return;
+  if (!window.koderaDesktop || !((location.protocol === 'kodera-asset:' && location.hostname === 'localhost') ||
+      (location.protocol === 'https:' && location.hostname === 'kodera-asset.localhost'))) return;
   let host, button, busy = false;
   const french = () => document.documentElement.lang.toLowerCase().startsWith('fr');
   function copy() { return messages[french() ? 'fr' : 'en']; }

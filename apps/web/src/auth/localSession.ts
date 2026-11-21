@@ -15,6 +15,7 @@ export const ESPACE_TIMELINE_DATABASE = 'kodera-espace-timelines'
 export const DOCS_COLLAB_DATABASE = 'kodera-docs-collab'
 export const DOCS_COLLAB_DATABASE_PREFIX = 'kodera-docs-yjs:'
 export const DOCS_COLLAB_REGISTRY_KEY = 'kodera.web.docs-collab-dbs'
+export const PUSH_COPY_CACHE = 'kodera-push-copy-v1'
 
 const cleanupListeners = new Set<() => void>()
 
@@ -44,7 +45,11 @@ function readRegisteredDocsDatabases(): string[] {
   }
 }
 
-export function clearLocalSessionStorage(): void {
+export interface ClearLocalSessionOptions {
+  readonly skipBrowserPushCleanup?: boolean | undefined
+}
+
+export function clearLocalSessionStorage(options?: ClearLocalSessionOptions): void {
   for (const listener of [...cleanupListeners]) {
     try {
       listener()
@@ -52,7 +57,32 @@ export function clearLocalSessionStorage(): void {
       // Never block sign-out on a cleanup listener error.
     }
   }
-  cleanupListeners.clear()
+
+  if (options?.skipBrowserPushCleanup !== true) {
+    try {
+      void globalThis.caches?.delete(PUSH_COPY_CACHE)?.catch(() => undefined)
+    } catch {
+      // Ignore restricted CacheStorage environments.
+    }
+
+    if (
+      typeof navigator !== 'undefined' &&
+      'serviceWorker' in navigator &&
+      typeof window !== 'undefined' &&
+      'PushManager' in window &&
+      'Notification' in window
+    ) {
+      try {
+        void navigator.serviceWorker
+          .getRegistration(import.meta.env.BASE_URL)
+          .then((reg) => reg?.pushManager.getSubscription())
+          .then((sub) => sub?.unsubscribe())
+          .catch(() => undefined)
+      } catch {
+        // Best-effort browser push unsubscribe.
+      }
+    }
+  }
 
   const docsDatabases = readRegisteredDocsDatabases()
 
@@ -99,6 +129,8 @@ export function clearLocalSessionStorage(): void {
       for (const key of Object.keys(storage)) {
         if (
           key.startsWith('kodera.web.') ||
+          key.startsWith('kodera.profile.') ||
+          key.startsWith('kodera.muted-channels.') ||
           key.startsWith('kodera:drafts:') ||
           key.startsWith('kodera:last-channel:') ||
           key.startsWith('order-draft:') ||

@@ -88,13 +88,14 @@ pub fn verify_desktop_csp(raw_csp: &str) -> Result<(), CspPolicyError> {
         }
     }
 
-    let expected_exact: [(&str, &[&str]); 11] = [
+    let expected_exact: [(&str, &[&str]); 12] = [
         ("default-src", &["'self'"]),
+        ("script-src-attr", &["'none'"]),
         ("img-src", &["'self'", "data:", "blob:"]),
         ("media-src", &["'self'", "blob:"]),
         ("worker-src", &["'self'", "blob:"]),
         ("style-src", &["'self'"]),
-        ("style-src-attr", &["'unsafe-inline'"]),
+        ("style-src-attr", &["'none'"]),
         ("font-src", &["'self'", "data:"]),
         ("object-src", &["'none'"]),
         ("base-uri", &["'none'"]),
@@ -187,13 +188,37 @@ mod tests {
     fn verifies_embedded_tauri_conf_csp_and_rejects_unsafe_mutations() {
         let embedded = verify_embedded_tauri_conf_csp().unwrap();
         assert!(embedded.contains("default-src 'self'"));
+        assert!(embedded.contains("script-src-attr 'none'"));
+        assert!(embedded.contains("style-src-attr 'none'"));
         assert!(!embedded.contains("unsafe-eval"));
+        assert!(!embedded.contains("unsafe-inline"));
 
         // Injecting unsafe-eval anywhere fails closed.
         let with_eval = format!("{embedded}; script-src 'self' 'unsafe-eval'");
         assert_eq!(
             verify_desktop_csp(&with_eval),
             Err(CspPolicyError::UnsafeEvalPresent)
+        );
+
+        // Reintroducing unsafe-inline on style-src-attr or script-src-attr fails closed.
+        let inline_style_attr =
+            embedded.replace("style-src-attr 'none'", "style-src-attr 'unsafe-inline'");
+        assert_eq!(
+            verify_desktop_csp(&inline_style_attr),
+            Err(CspPolicyError::InvalidDirectiveSources)
+        );
+        let inline_script_attr =
+            embedded.replace("script-src-attr 'none'", "script-src-attr 'unsafe-inline'");
+        assert_eq!(
+            verify_desktop_csp(&inline_script_attr),
+            Err(CspPolicyError::InvalidDirectiveSources)
+        );
+
+        // Removing script-src-attr or style-src-attr fails closed.
+        let missing_script_attr = embedded.replace("script-src-attr 'none'; ", "");
+        assert_eq!(
+            verify_desktop_csp(&missing_script_attr),
+            Err(CspPolicyError::MissingRequiredDirective)
         );
 
         // Adding script-src without unsafe-eval still fails closed as an unapproved directive.
@@ -225,5 +250,39 @@ mod tests {
             verify_desktop_csp(&weak_default),
             Err(CspPolicyError::InvalidDirectiveSources)
         );
+    }
+
+    #[test]
+    fn enforces_attribute_csp_parity_with_web_static_server() {
+        const WEB_STATIC_MJS: &str = include_str!("../../../web/server/static.mjs");
+        let embedded = verify_embedded_tauri_conf_csp().unwrap();
+        let desktop_directives: BTreeMap<&str, Vec<&str>> = embedded
+            .split(';')
+            .filter_map(|seg| {
+                let mut tokens = seg.split_whitespace();
+                let name = tokens.next()?;
+                Some((name, tokens.collect()))
+            })
+            .collect();
+
+        for directive in ["script-src-attr", "style-src-attr"] {
+            let prefix = format!("\"{directive} ");
+            let web_line = WEB_STATIC_MJS
+                .lines()
+                .map(str::trim)
+                .find(|line| line.starts_with(&prefix))
+                .unwrap_or_else(|| panic!("missing {directive} in apps/web/server/static.mjs"));
+            let trimmed_quote = web_line
+                .trim_end_matches(',')
+                .strip_prefix('"')
+                .and_then(|s| s.strip_suffix('"'))
+                .expect("quoted CSP directive literal in static.mjs");
+            let web_sources: Vec<&str> = trimmed_quote.split_whitespace().skip(1).collect();
+            assert_eq!(
+                desktop_directives.get(directive).map(Vec::as_slice),
+                Some(web_sources.as_slice()),
+                "desktop CSP {directive} drifted from apps/web/server/static.mjs"
+            );
+        }
     }
 }

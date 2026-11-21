@@ -24,7 +24,12 @@ function plain(value, max) {
 self.addEventListener('message', (message) => {
   // Only a page of this origin can post here; its copy is still checked before it is kept.
   const data = message.data
-  if (data === null || typeof data !== 'object' || data.type !== 'kodera-push-copy') return
+  if (data === null || typeof data !== 'object') return
+  if (data.type === 'kodera-push-forget') {
+    message.waitUntil(caches.delete(COPY_CACHE))
+    return
+  }
+  if (data.type !== 'kodera-push-copy') return
   const copy = { title: plain(data.title, 80), body: plain(data.body, 160) }
   message.waitUntil(
     caches
@@ -53,15 +58,21 @@ async function copy() {
 }
 
 self.addEventListener('push', (push) => {
+  const active = self.registration.pushManager
+    ? self.registration.pushManager.getSubscription().catch(() => null)
+    : Promise.resolve(true)
   push.waitUntil(
-    copy().then(({ title, body }) =>
-      self.registration.showNotification(title, {
-        body,
-        tag: 'kodera-activity',
-        renotify: true,
-        icon: new URL('icon-192.png', self.registration.scope).href,
-      })
-    )
+    active.then((subscription) => {
+      if (subscription === null) return undefined
+      return copy().then(({ title, body }) =>
+        self.registration.showNotification(title, {
+          body,
+          tag: 'kodera-activity',
+          renotify: true,
+          icon: new URL('icon-192.png', self.registration.scope).href,
+        })
+      )
+    })
   )
 })
 

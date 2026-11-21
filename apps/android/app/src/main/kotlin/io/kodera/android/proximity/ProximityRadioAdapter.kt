@@ -31,6 +31,7 @@ import android.os.Looper
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.Snapshot
 import androidx.core.content.ContextCompat
 import io.kodera.android.domain.TrustPolicy
 import java.nio.ByteBuffer
@@ -540,13 +541,53 @@ fun interface ProximitySessionTimer {
     fun schedule(tick: () -> Unit): AutoCloseable
 }
 
-private object ForegroundProximitySessionTimer : ProximitySessionTimer {
+internal class ForegroundProximitySessionTimer(
+    private val initialDelayMs: Long = 1_000L,
+    private val periodMs: Long = 1_000L,
+    private val mainDispatcher: (Runnable) -> Unit = ::dispatchOnMainOrMutableSnapshot,
+) : ProximitySessionTimer {
     override fun schedule(tick: () -> Unit): AutoCloseable {
+        val cancelled = java.util.concurrent.atomic.AtomicBoolean(false)
         val timer = Timer("proximity-session", true)
-        timer.scheduleAtFixedRate(object : TimerTask() {
-            override fun run() = tick()
-        }, 1_000L, 1_000L)
-        return AutoCloseable { timer.cancel() }
+        timer.scheduleAtFixedRate(
+            object : TimerTask() {
+                override fun run() {
+                    if (cancelled.get()) return
+                    mainDispatcher(
+                        Runnable {
+                            if (!cancelled.get()) {
+                                Snapshot.withMutableSnapshot { tick() }
+                            }
+                        },
+                    )
+                }
+            },
+            initialDelayMs,
+            periodMs,
+        )
+        return AutoCloseable {
+            cancelled.set(true)
+            timer.cancel()
+        }
+    }
+
+    companion object : ProximitySessionTimer {
+        private val defaultInstance = ForegroundProximitySessionTimer()
+
+        override fun schedule(tick: () -> Unit): AutoCloseable = defaultInstance.schedule(tick)
+
+        private fun dispatchOnMainOrMutableSnapshot(task: Runnable) {
+            val mainLooper = runCatching { Looper.getMainLooper() }.getOrNull()
+            if (mainLooper != null) {
+                if (Looper.myLooper() === mainLooper) {
+                    Snapshot.withMutableSnapshot { task.run() }
+                } else {
+                    Handler(mainLooper).post { Snapshot.withMutableSnapshot { task.run() } }
+                }
+            } else {
+                Snapshot.withMutableSnapshot { task.run() }
+            }
+        }
     }
 }
 
@@ -781,23 +822,116 @@ class AndroidBleGattProximityDriver(
     }
 }
 
+internal interface NsdServiceBackend {
+    fun register(
+        serviceName: String,
+        serviceType: String,
+        quicPort: Int,
+        attributes: Map<String, String>,
+        onRegistrationFailed: () -> Unit,
+    ): Any
+
+    fun discover(
+        serviceType: String,
+        onStartDiscoveryFailed: () -> Unit,
+        onResolvedAttributes: (Map<String, ByteArray?>) -> Unit,
+    ): Any
+
+    fun unregister(token: Any)
+    fun stopDiscovery(token: Any)
+}
+
+private class SystemNsdServiceBackend(private val manager: NsdManager) : NsdServiceBackend {
+    override fun register(
+        serviceName: String,
+        serviceType: String,
+        quicPort: Int,
+        attributes: Map<String, String>,
+        onRegistrationFailed: () -> Unit,
+    ): Any {
+        val serviceInfo = NsdServiceInfo().apply {
+            this.serviceName = serviceName
+            this.serviceType = serviceType
+            this.port = quicPort
+            for ((k, v) in attributes) {
+                setAttribute(k, v)
+            }
+        }
+        val regListener = object : NsdManager.RegistrationListener {
+            override fun onRegistrationFailed(serviceInfo: NsdServiceInfo, errorCode: Int) = onRegistrationFailed()
+            override fun onUnregistrationFailed(serviceInfo: NsdServiceInfo, errorCode: Int) = Unit
+            override fun onServiceRegistered(serviceInfo: NsdServiceInfo) = Unit
+            override fun onServiceUnregistered(serviceInfo: NsdServiceInfo) = Unit
+        }
+        manager.registerService(serviceInfo, NsdManager.PROTOCOL_DNS_SD, regListener)
+        return regListener
+    }
+
+    override fun discover(
+        serviceType: String,
+        onStartDiscoveryFailed: () -> Unit,
+        onResolvedAttributes: (Map<String, ByteArray?>) -> Unit,
+    ): Any {
+        val discListener = object : NsdManager.DiscoveryListener {
+            override fun onDiscoveryStarted(regType: String) = Unit
+            override fun onDiscoveryStopped(serviceType: String) = Unit
+            override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) = onStartDiscoveryFailed()
+            override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) = Unit
+            override fun onServiceLost(serviceInfo: NsdServiceInfo) = Unit
+
+            override fun onServiceFound(found: NsdServiceInfo) {
+                @Suppress("DEPRECATION")
+                manager.resolveService(
+                    found,
+                    object : NsdManager.ResolveListener {
+                        override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) = Unit
+                        override fun onServiceResolved(resolved: NsdServiceInfo) {
+                            onResolvedAttributes(resolved.attributes)
+                        }
+                    },
+                )
+            }
+        }
+        manager.discoverServices(serviceType, NsdManager.PROTOCOL_DNS_SD, discListener)
+        return discListener
+    }
+
+    override fun unregister(token: Any) {
+        (token as? NsdManager.RegistrationListener)?.let { manager.unregisterService(it) }
+    }
+
+    override fun stopDiscovery(token: Any) {
+        (token as? NsdManager.DiscoveryListener)?.let { manager.stopServiceDiscovery(it) }
+    }
+}
+
 /**
  * Production Android `NsdManager` (`_kodera-prox._udp`) mDNS LAN adapter with Android 13+
  * `NEARBY_WIFI_DEVICES` runtime permission enforcement.
  */
-class AndroidNsdMdnsProximityDriver(
-    private val context: Context,
-    private val permissionChecker: ProximityPermissionChecker = RuntimeProximityPermissionChecker(context),
+class AndroidNsdMdnsProximityDriver internal constructor(
+    private val permissionChecker: ProximityPermissionChecker,
+    private val backendProvider: () -> NsdServiceBackend?,
+    private val postOnMain: (Runnable) -> Unit,
 ) : ProximityNsdMdnsDriver {
+    constructor(
+        context: Context,
+        permissionChecker: ProximityPermissionChecker = RuntimeProximityPermissionChecker(context),
+    ) : this(
+        permissionChecker = permissionChecker,
+        backendProvider = { context.getSystemService(NsdManager::class.java)?.let(::SystemNsdServiceBackend) },
+        postOnMain = { task -> Handler(Looper.getMainLooper()).post(task) },
+    )
+
     override var onPeerTxtObserved: ((Map<String, String>) -> Unit)? = null
     override var onFailure: ((ProximityVoluntaryError) -> Unit)? = null
 
-    private var nsdManager: NsdManager? = null
-    private var registrationListener: NsdManager.RegistrationListener? = null
-    private var discoveryListener: NsdManager.DiscoveryListener? = null
+    private var activeBackend: NsdServiceBackend? = null
+    private var registrationToken: Any? = null
+    private var discoveryToken: Any? = null
     @Volatile private var generation = 0L
-    private val callbackHandler by lazy { Handler(Looper.getMainLooper()) }
 
+    @Synchronized
     override fun startAdvertisingAndDiscovery(attributes: Map<String, String>, quicPort: Int) {
         if (!permissionChecker.hasNsdPermissions()) {
             throw ProximityVoluntaryFailure(ProximityVoluntaryError.RUNTIME_PERMISSION_REQUIRED)
@@ -807,82 +941,80 @@ class AndroidNsdMdnsProximityDriver(
         val record = MdnsProximityTxtCodec.decode(attributes)
         if (record.quicPort != quicPort) throw ProximityVoluntaryFailure(ProximityVoluntaryError.MALFORMED_TXT_RECORD)
 
-        val manager = context.getSystemService(NsdManager::class.java)
+        val backend = backendProvider()
             ?: throw ProximityVoluntaryFailure(ProximityVoluntaryError.NSD_UNAVAILABLE)
-        nsdManager = manager
+        activeBackend = backend
 
-        val serviceInfo = NsdServiceInfo().apply {
-            serviceName = "kodera-prox-${EphemeralHkdfTokenCodec.toHex(record.token.copyOfRange(12, 20))}"
-            serviceType = ProximityRadioConstants.MDNS_SERVICE_TYPE
-            port = quicPort
-            for ((k, v) in attributes) {
-                setAttribute(k, v)
-            }
-        }
-        val regListener = object : NsdManager.RegistrationListener {
-            override fun onRegistrationFailed(serviceInfo: NsdServiceInfo, errorCode: Int) = reportFailure(currentGeneration)
-            override fun onUnregistrationFailed(serviceInfo: NsdServiceInfo, errorCode: Int) = Unit
-            override fun onServiceRegistered(serviceInfo: NsdServiceInfo) = Unit
-            override fun onServiceUnregistered(serviceInfo: NsdServiceInfo) = Unit
-        }
-        manager.registerService(serviceInfo, NsdManager.PROTOCOL_DNS_SD, regListener)
-        registrationListener = regListener
-
-        val discListener = object : NsdManager.DiscoveryListener {
-            override fun onDiscoveryStarted(regType: String) = Unit
-            override fun onDiscoveryStopped(serviceType: String) = Unit
-            override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) = reportFailure(currentGeneration)
-            override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) = Unit
-            override fun onServiceLost(serviceInfo: NsdServiceInfo) = Unit
-
-            override fun onServiceFound(found: NsdServiceInfo) {
-                if (generation != currentGeneration) return
-                @Suppress("DEPRECATION")
-                manager.resolveService(
-                    found,
-                    object : NsdManager.ResolveListener {
-                        override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) = Unit
-                        override fun onServiceResolved(resolved: NsdServiceInfo) {
-                            if (generation != currentGeneration || resolved.attributes.size != 5) return
-                            val decoded = LinkedHashMap<String, String>()
-                            for ((k, rawVal) in resolved.attributes) {
-                                if (rawVal != null && rawVal.size <= 128) {
-                                    decoded[k] = rawVal.toString(Charsets.UTF_8)
-                                }
-                            }
-                            if (runCatching { MdnsProximityTxtCodec.decode(decoded) }.isSuccess) {
-                                callbackHandler.post { if (generation == currentGeneration) onPeerTxtObserved?.invoke(decoded) }
+        val serviceName = "kodera-prox-${EphemeralHkdfTokenCodec.toHex(record.token.copyOfRange(12, 20))}"
+        try {
+            registrationToken = backend.register(
+                serviceName = serviceName,
+                serviceType = ProximityRadioConstants.MDNS_SERVICE_TYPE,
+                quicPort = quicPort,
+                attributes = attributes,
+                onRegistrationFailed = { reportFailure(currentGeneration) },
+            )
+            discoveryToken = backend.discover(
+                serviceType = ProximityRadioConstants.MDNS_SERVICE_TYPE,
+                onStartDiscoveryFailed = { reportFailure(currentGeneration) },
+                onResolvedAttributes = { resolvedAttributes ->
+                    if (generation == currentGeneration && resolvedAttributes.size == 5) {
+                        val decoded = LinkedHashMap<String, String>()
+                        for ((k, rawVal) in resolvedAttributes) {
+                            if (rawVal != null && rawVal.size <= 128) {
+                                decoded[k] = rawVal.toString(Charsets.UTF_8)
                             }
                         }
-                    },
-                )
-            }
+                        if (runCatching { MdnsProximityTxtCodec.decode(decoded) }.isSuccess) {
+                            postOnMain(
+                                Runnable {
+                                    if (generation == currentGeneration) {
+                                        onPeerTxtObserved?.invoke(decoded)
+                                    }
+                                },
+                            )
+                        }
+                    }
+                },
+            )
+        } catch (err: Throwable) {
+            stopAll()
+            throw err
         }
-        manager.discoverServices(ProximityRadioConstants.MDNS_SERVICE_TYPE, NsdManager.PROTOCOL_DNS_SD, discListener)
-        discoveryListener = discListener
     }
 
+    @Synchronized
     override fun stopAll() {
         generation += 1
-        val manager = nsdManager
-        registrationListener?.let { listener ->
-            runCatching { manager?.unregisterService(listener) }
+        val backend = activeBackend
+        val regToken = registrationToken
+        val discToken = discoveryToken
+        registrationToken = null
+        discoveryToken = null
+        activeBackend = null
+        regToken?.let { token ->
+            runCatching { backend?.unregister(token) }
         }
-        discoveryListener?.let { listener ->
-            runCatching { manager?.stopServiceDiscovery(listener) }
+        discToken?.let { token ->
+            runCatching { backend?.stopDiscovery(token) }
         }
-        registrationListener = null
-        discoveryListener = null
-        nsdManager = null
     }
 
     private fun reportFailure(expected: Long) {
-        callbackHandler.post {
-            if (generation == expected) {
-                stopAll()
-                onFailure?.invoke(ProximityVoluntaryError.NSD_UNAVAILABLE)
-            }
-        }
+        postOnMain(
+            Runnable {
+                var notify = false
+                synchronized(this) {
+                    if (generation == expected) {
+                        stopAll()
+                        notify = true
+                    }
+                }
+                if (notify) {
+                    onFailure?.invoke(ProximityVoluntaryError.NSD_UNAVAILABLE)
+                }
+            },
+        )
     }
 }
 
@@ -947,22 +1079,30 @@ class VoluntaryProximitySessionController(
 
     init {
         nsdDriver.onFailure = { error ->
-            synchronized(this) {
-                clearProvisioning()
-                lastError = error
+            Snapshot.withMutableSnapshot {
+                synchronized(this) {
+                    clearProvisioning()
+                    lastError = error
+                }
             }
         }
         bleDriver.onFailure = { error ->
-            synchronized(this) {
-                clearProvisioning()
-                lastError = error
+            Snapshot.withMutableSnapshot {
+                synchronized(this) {
+                    clearProvisioning()
+                    lastError = error
+                }
             }
         }
         bleDriver.onPeerTokenObserved = { tokenBytes, rssiDbm ->
-            runCatching { ingestBleObservation(tokenBytes, rssiDbm) }
+            Snapshot.withMutableSnapshot {
+                runCatching { ingestBleObservation(tokenBytes, rssiDbm) }
+            }
         }
         nsdDriver.onPeerTxtObserved = { attrs ->
-            runCatching { ingestMdnsObservation(attrs) }
+            Snapshot.withMutableSnapshot {
+                runCatching { ingestMdnsObservation(attrs) }
+            }
         }
         refreshPermissionState()
     }
@@ -1016,9 +1156,11 @@ class VoluntaryProximitySessionController(
         epochLease = EpochLease(epoch, epochExpiresAtUnixSeconds, epochMacKey.copyOf())
         val generation = sessionGeneration
         preparedLeaseTick = timer.schedule {
-            synchronized(this) {
-                if (generation == sessionGeneration && !isSessionActive) {
-                    evaluateExpiry(clockUnixSeconds())
+            Snapshot.withMutableSnapshot {
+                synchronized(this) {
+                    if (generation == sessionGeneration && !isSessionActive) {
+                        evaluateExpiry(clockUnixSeconds())
+                    }
                 }
             }
         }
@@ -1095,9 +1237,11 @@ class VoluntaryProximitySessionController(
         scheduledTick?.close()
         val generation = ++sessionGeneration
         scheduledTick = timer.schedule {
-            synchronized(this) {
-                if (generation == sessionGeneration && isSessionActive) {
-                    runCatching { refreshSession(clockUnixSeconds()) }
+            Snapshot.withMutableSnapshot {
+                synchronized(this) {
+                    if (generation == sessionGeneration && isSessionActive) {
+                        runCatching { refreshSession(clockUnixSeconds()) }
+                    }
                 }
             }
         }
@@ -1106,8 +1250,9 @@ class VoluntaryProximitySessionController(
     /** Rotates both transports without extending consent or resurrecting a stopped session. */
     @Synchronized
     fun refreshSession(nowUnixSeconds: Long) {
+        val generationBefore = sessionGeneration
         evaluateExpiry(nowUnixSeconds)
-        if (!isSessionActive || !isForegroundActive || !hasForegroundConsent) return
+        if (sessionGeneration != generationBefore || !isSessionActive || !isForegroundActive || !hasForegroundConsent) return
         val epoch = nowUnixSeconds / ProximityRadioConstants.EPOCH_ROTATION_SECONDS
         if (epoch == activeEpoch) return
         try {

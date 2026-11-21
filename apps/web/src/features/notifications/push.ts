@@ -5,9 +5,12 @@
 // console's sign-out clears; signing out of this device also forgets the subscription here.
 
 import { coreApi } from '../../api/client'
+import { PUSH_COPY_CACHE } from '../../auth/localSession'
 
+export { PUSH_COPY_CACHE }
 export const PUSH_DEVICE_KEY = 'kodera.web.push-device'
 const WORKER = 'push-sw.js'
+const SIGN_OUT_PUSH_WAIT_MS = 3_000
 
 export class PushRefused extends Error {
   constructor(readonly reason: 'unsupported' | 'denied' | 'payload' | 'subscription' | 'core') {
@@ -63,9 +66,26 @@ export function subscriptionKeys(json: PushSubscriptionJSON): PushKeys {
   return { endpoint: url.href, p256dh, auth }
 }
 
+export function readStoredPushDeviceId(): string | null {
+  try {
+    const stored = localStorage.getItem(PUSH_DEVICE_KEY)
+    return stored !== null && /^[0-9a-f-]{36}$/iu.test(stored) ? stored : null
+  } catch {
+    return null
+  }
+}
+
+export function hasStoredPushDeviceKey(): boolean {
+  try {
+    return localStorage.getItem(PUSH_DEVICE_KEY) !== null
+  } catch {
+    return false
+  }
+}
+
 function deviceId(): string {
-  const stored = localStorage.getItem(PUSH_DEVICE_KEY)
-  if (stored !== null && /^[0-9a-f-]{36}$/u.test(stored)) return stored
+  const stored = readStoredPushDeviceId()
+  if (stored !== null) return stored
   const fresh = crypto.randomUUID()
   localStorage.setItem(PUSH_DEVICE_KEY, fresh)
   return fresh
@@ -120,11 +140,132 @@ export async function enablePush(copy: { title: string; body: string }): Promise
   await teachWorker(copy)
 }
 
-export async function disablePush(): Promise<void> {
+async function forgetPushCopy(): Promise<boolean> {
+  let deleted = true
+  try {
+    if (globalThis.caches !== undefined) {
+      await globalThis.caches.delete(PUSH_COPY_CACHE)
+    }
+  } catch {
+    deleted = false
+  }
+  if (!pushSupported()) return deleted
+  try {
+    const ready = await navigator.serviceWorker.getRegistration(import.meta.env.BASE_URL)
+    ready?.active?.postMessage({ type: 'kodera-push-forget' })
+  } catch {
+    // Best-effort worker notification.
+  }
+  return deleted
+}
+
+export interface DisablePushOptions {
+  readonly deviceId?: string | null | undefined
+  readonly accessToken?: string | undefined
+  readonly bestEffort?: boolean | undefined
+  readonly timeoutMs?: number | undefined
+}
+
+async function withBoundedTimeout<T>(work: Promise<T>, timeoutMs: number): Promise<T | undefined> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      work,
+      new Promise<undefined>((resolve) => {
+        timer = setTimeout(() => resolve(undefined), timeoutMs)
+      }),
+    ])
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+  }
+}
+
+export async function disablePush(options?: DisablePushOptions): Promise<boolean> {
+  const hadDeviceKey =
+    hasStoredPushDeviceKey() || (options?.deviceId !== undefined && options.deviceId !== null)
+  const id =
+    options?.deviceId !== undefined
+      ? options.deviceId !== null && /^[0-9a-f-]{36}$/iu.test(options.deviceId)
+        ? options.deviceId
+        : null
+      : readStoredPushDeviceId()
+  const timeoutMs = options?.timeoutMs ?? SIGN_OUT_PUSH_WAIT_MS
+
+  if (options?.bestEffort === true) {
+    try {
+      if (id !== null) {
+        const abort = new AbortController()
+        const deleteTimer = setTimeout(() => abort.abort(), timeoutMs)
+        try {
+          await withBoundedTimeout(
+            coreApi()
+              .DELETE('/push/subscriptions/{device_id}', {
+                params: { path: { device_id: id } },
+                ...(options.accessToken !== undefined
+                  ? {
+                      middleware: [
+                        {
+                          onRequest({ request }) {
+                            request.headers.set('Authorization', `Bearer ${options.accessToken}`)
+                            return request
+                          },
+                        },
+                      ],
+                    }
+                  : {}),
+                signal: abort.signal,
+              })
+              .catch(() => undefined),
+            timeoutMs
+          )
+        } finally {
+          clearTimeout(deleteTimer)
+        }
+      }
+      const unsubscribed = await withBoundedTimeout(
+        currentSubscription()
+          .then(async (subscription) => {
+            if (subscription !== null) await subscription.unsubscribe()
+            return true
+          })
+          .catch(() => false),
+        timeoutMs
+      )
+      const cacheDeleted = await withBoundedTimeout(forgetPushCopy(), timeoutMs)
+      return unsubscribed === true && cacheDeleted === true
+    } finally {
+      if (hadDeviceKey) {
+        try {
+          localStorage.removeItem(PUSH_DEVICE_KEY)
+        } catch {
+          // Storage blocked.
+        }
+      }
+    }
+  }
+
+  if (id !== null) {
+    await coreApi().DELETE('/push/subscriptions/{device_id}', {
+      params: { path: { device_id: id } },
+      ...(options?.accessToken !== undefined
+        ? {
+            middleware: [
+              {
+                onRequest({ request }) {
+                  request.headers.set('Authorization', `Bearer ${options.accessToken}`)
+                  return request
+                },
+              },
+            ],
+          }
+        : {}),
+    })
+  }
   const subscription = await currentSubscription()
   await subscription?.unsubscribe()
-  const id = localStorage.getItem(PUSH_DEVICE_KEY)
-  if (id === null) return
-  await coreApi().DELETE('/push/subscriptions/{device_id}', { params: { path: { device_id: id } } })
-  localStorage.removeItem(PUSH_DEVICE_KEY)
+  const cacheDeleted = await forgetPushCopy()
+  if (hadDeviceKey) {
+    localStorage.removeItem(PUSH_DEVICE_KEY)
+  }
+  return cacheDeleted
 }

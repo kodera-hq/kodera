@@ -29,6 +29,7 @@ export {
   type CommunityPreflightResult,
   type CommunityPrepareInput,
   type CommunityPrepareResult,
+  type CommunityStackDirSelectionResult,
   type CommunityTlsModeSlug,
   type DesktopAppMetadata,
   type DesktopClientOptions,

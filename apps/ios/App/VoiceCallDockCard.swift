@@ -34,7 +34,7 @@ struct VoiceCallDockCard: View {
     let scope: VoiceCallScope?
     @Environment(\.colorScheme) private var colorScheme
     @State private var coordinator = VoiceCallCoordinator()
-    @StateObject private var callKitCoordinator = try! CallKitPushCoordinator()
+    @StateObject private var callKitCoordinator = CallKitPushCoordinator()
 
     private var palette: KoderaTokens.Palette {
         KoderaTokens.cielPalette(for: colorScheme)

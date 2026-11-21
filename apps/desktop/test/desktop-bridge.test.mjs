@@ -96,6 +96,18 @@ test('browser fallback executes safe no-ops without touching Web Storage and sti
     () => client.routeDeepLink('kodera://auth/callback?code=abcdefgh1234&state=state_0123456789abcd&redirect_uri=https://evil.test'),
     /deep_link_rejected:open_redirect_detected/u,
   );
+  await assert.rejects(
+    () => client.routeDeepLink('kodera://auth/callback?redirect'),
+    /deep_link_rejected:open_redirect_detected/u,
+  );
+  await assert.rejects(
+    () => client.routeDeepLink('kodera://auth/callback?REDIRECT_URI=https://evil.test'),
+    /deep_link_rejected:open_redirect_detected/u,
+  );
+  await assert.rejects(
+    () => client.routeDeepLink('kodera://auth/callback?%72edirect=https://evil.test'),
+    /deep_link_rejected:open_redirect_detected/u,
+  );
 
   const unlistenDeep = await client.listenDeepLinks(() => {});
   await unlistenDeep();
@@ -141,8 +153,20 @@ test('browser fallback executes safe no-ops without touching Web Storage and sti
   assert.equal(loaded.nativeKeychain, false);
   assert.equal(loaded.ephemeralProcessVault, false);
 
+  await assert.rejects(
+    () =>
+      client.beginOidcPkceLoopback({
+        issuerOrigin: 'https://auth.kodera.io',
+        clientId: 'kodera-desktop',
+        codeVerifier: 'pkce_verifier_fixture_alpha_bravo_charlie_delta_01',
+        state: 'pkce_state_fixture_0001',
+        loopbackPort: 51_920,
+      }),
+    /invalid_issuer_origin/u,
+  );
+
   const oidcStart = await client.beginOidcPkceLoopback({
-    issuerOrigin: 'https://auth.kodera.io',
+    issuerOrigin: 'https://auth.kodera.io/realms/kodera',
     clientId: 'kodera-desktop',
     codeVerifier: 'pkce_verifier_fixture_alpha_bravo_charlie_delta_01',
     state: 'pkce_state_fixture_0001',
@@ -164,6 +188,11 @@ test('Tauri IPC bridge invokes native commands, filters incoming events, and enf
   let cbSeq = 10;
 
   const mockTauriGlobal = {
+    location: {
+      protocol: 'kodera-asset:',
+      hostname: 'localhost',
+      port: '',
+    },
     __TAURI_INTERNALS__: {
       transformCallback(fn) {
         const id = cbSeq++;
@@ -314,7 +343,7 @@ test('Tauri IPC bridge invokes native commands, filters incoming events, and enf
   await stopTrayListening();
 
   const oidcReady = await client.beginOidcPkceLoopback({
-    issuerOrigin: 'https://auth.kodera.io',
+    issuerOrigin: 'https://auth.kodera.io/realms/kodera',
     clientId: 'kodera-desktop',
     codeVerifier: 'pkce_verifier_fixture_alpha_bravo_charlie_delta_01',
     state: 'pkce_state_fixture_0001',
@@ -324,7 +353,7 @@ test('Tauri IPC bridge invokes native commands, filters incoming events, and enf
   assert.equal(oidcReady.codeChallenge, 'challenge_s256_fixture');
 
   const oidcDone = await client.completeOidcPkceCallback(
-    'http://127.0.0.1:51920/auth/callback?code=code_fixture_0001&state=pkce_state_fixture_0001',
+    'http://127.0.0.1:51920/auth/callback?code=code_fixture_0001&state=pkce_state_fixture_0001&iss=https%3A%2F%2Fauth.kodera.io%2Frealms%2Fkodera',
   );
   assert.equal(oidcDone.verified, true);
 
@@ -338,6 +367,93 @@ test('Tauri IPC bridge invokes native commands, filters incoming events, and enf
   client.setOrganisationId(null);
   await assert.rejects(() => client.setUnreadCount(1), /invalid_organisation/u);
   assert.ok(calls.length >= 10);
+
+  // Missing `location` without explicit test-harness flag fails closed (zero native IPC invocations).
+  /** @type {string[]} */
+  const missingLocCalls = [];
+  const missingLocClient = createDesktopClient({
+    organisationId: ORG_ID,
+    globalObject: {
+      __TAURI_INTERNALS__: {
+        async invoke(cmd) {
+          missingLocCalls.push(cmd);
+          return {};
+        },
+      },
+    },
+  });
+  assert.equal(missingLocClient.isNativeDesktop(), false);
+  const noOpOidc = await missingLocClient.beginOidcPkceLoopback({
+    issuerOrigin: 'https://auth.kodera.io/realms/kodera',
+    clientId: 'kodera-desktop',
+    codeVerifier: 'pkce_verifier_fixture_alpha_bravo_charlie_delta_01',
+    state: 'pkce_state_fixture_0001',
+    loopbackPort: 51_920,
+  });
+  assert.equal(noOpOidc.supported, false);
+  assert.equal(missingLocCalls.length, 0);
+
+  // `http://localhost:5173` fails closed in release mode, and forged window globals cannot re-enable dev or test mode.
+  /** @type {string[]} */
+  const devCalls = [];
+  const release5173Client = createDesktopClient({
+    organisationId: ORG_ID,
+    globalObject: {
+      __KODERA_DESKTOP_TEST_ENV__: true,
+      __KODERA_DESKTOP_DEV_ORIGIN__: true,
+      location: { protocol: 'http:', hostname: 'localhost', port: '5173' },
+      __TAURI_INTERNALS__: {
+        async invoke(cmd) {
+          devCalls.push(cmd);
+          return {};
+        },
+      },
+    },
+  });
+  assert.equal(release5173Client.isNativeDesktop(), false);
+  assert.equal(
+    (
+      await release5173Client.beginOidcPkceLoopback({
+        issuerOrigin: 'https://auth.kodera.io/realms/kodera',
+        clientId: 'kodera-desktop',
+        codeVerifier: 'pkce_verifier_fixture_alpha_bravo_charlie_delta_01',
+        state: 'pkce_state_fixture_0001',
+        loopbackPort: 51_920,
+      })
+    ).supported,
+    false,
+  );
+  assert.equal(devCalls.length, 0);
+
+  // Node.js process.env test-harness gate (`KODERA_DESKTOP_BRIDGE_NODE_TEST === '1'`) enables headless
+  // missing-`location` tests only via Node's `process.env` (never via forgeable window properties).
+  const forgedWindowMissingLoc = createDesktopClient({
+    organisationId: ORG_ID,
+    globalObject: {
+      __KODERA_DESKTOP_TEST_ENV__: true,
+      __TAURI_INTERNALS__: {
+        async invoke(cmd) {
+          devCalls.push(cmd);
+          return {};
+        },
+      },
+    },
+  });
+  assert.equal(forgedWindowMissingLoc.isNativeDesktop(), false);
+  assert.equal(devCalls.length, 0);
+
+  const prevNodeTestFlag = process.env.KODERA_DESKTOP_BRIDGE_NODE_TEST;
+  process.env.KODERA_DESKTOP_BRIDGE_NODE_TEST = '1';
+  try {
+    assert.equal(forgedWindowMissingLoc.isNativeDesktop(), true);
+  } finally {
+    if (prevNodeTestFlag === undefined) {
+      delete process.env.KODERA_DESKTOP_BRIDGE_NODE_TEST;
+    } else {
+      process.env.KODERA_DESKTOP_BRIDGE_NODE_TEST = prevNodeTestFlag;
+    }
+  }
+  assert.equal(forgedWindowMissingLoc.isNativeDesktop(), false);
 });
 
 test('tauri.conf.json and capabilities/default.json satisfy security invariants and reject permissive mutations', () => {
@@ -495,6 +611,11 @@ test('Self-Host Wizard deploy/community bridge enforces injection defenses, brow
     globalObject: {},
   });
 
+  const webPicked = await webClient.selectCommunityStackDir();
+  assert.equal(webPicked.supported, false);
+  assert.equal(webPicked.selected, false);
+  assert.equal(webPicked.stackDir, null);
+
   const webPreflight = await webClient.preflightCommunityDeploy({
     stackDir: '/srv/kodera/community',
     domain: 'Chat.Example.org',
@@ -528,10 +649,21 @@ test('Self-Host Wizard deploy/community bridge enforces injection defenses, brow
   /** @type {Array<{ cmd: string, args: unknown }>} */
   const recordedCalls = [];
   const mockTauri = {
+    location: {
+      protocol: 'kodera-asset:',
+      hostname: 'localhost',
+      port: '',
+    },
     __TAURI_INTERNALS__: {
       async invoke(cmd, args) {
         recordedCalls.push({ cmd, args });
         switch (cmd) {
+          case 'select_community_stack_dir':
+            return {
+              ok: true,
+              selected: true,
+              stack_dir: '/srv/kodera/community',
+            };
           case 'self_host_preflight_community':
             return {
               docker_version: 'Docker version 28.1.0',
@@ -600,6 +732,18 @@ test('Self-Host Wizard deploy/community bridge enforces injection defenses, brow
     '/srv/kodera;id',
     '/srv/kodera$(whoami)',
     '/srv/kodera|cat',
+    '/tmp/kodera-stack',
+    '/private/tmp/kodera-stack',
+    '/var/tmp/kodera-stack',
+    '/var/folders/ab/cd/T/kodera-stack',
+    '/private/var/folders/ab/cd/T/kodera-stack',
+    '/dev/shm/kodera-stack',
+    '/private/etc/kodera',
+    '/Users/alice',
+    '/home/alice',
+    '//server/share/kodera',
+    '\\\\server\\share\\kodera',
+    '/srv/kodera/.ssh/stack',
   ]) {
     await assert.rejects(
       () =>
@@ -702,7 +846,12 @@ test('Self-Host Wizard deploy/community bridge enforces injection defenses, brow
   // Zero native IPC calls were emitted during all negative input rejections!
   assert.equal(recordedCalls.length, 0);
 
-  // 3. Valid end-to-end preflight -> prepare (0600 mode, 16 CSPRNG keys) -> deploy + health handoff.
+  // 3. Valid end-to-end selectStackDir -> preflight -> prepare (0600 mode, 16 CSPRNG keys) -> deploy + health handoff.
+  const selectedFolder = await nativeClient.selectCommunityStackDir();
+  assert.equal(selectedFolder.supported, true);
+  assert.equal(selectedFolder.selected, true);
+  assert.equal(selectedFolder.stackDir, '/srv/kodera/community');
+
   const preflight = await nativeClient.preflightCommunityDeploy({
     stackDir: '/srv/kodera/community',
     domain: 'Chat.Example.org',
@@ -741,10 +890,11 @@ test('Self-Host Wizard deploy/community bridge enforces injection defenses, brow
   assert.equal(deployed.coreServices.length, 4);
   assert.ok(deployed.coreServices.every((svc) => svc.readiness === 'ready'));
 
-  assert.equal(recordedCalls.length, 3);
-  assert.equal(recordedCalls[0].cmd, 'self_host_preflight_community');
-  assert.equal(recordedCalls[1].cmd, 'self_host_prepare_community');
-  assert.equal(recordedCalls[2].cmd, 'self_host_deploy_community');
+  assert.equal(recordedCalls.length, 4);
+  assert.equal(recordedCalls[0].cmd, 'select_community_stack_dir');
+  assert.equal(recordedCalls[1].cmd, 'self_host_preflight_community');
+  assert.equal(recordedCalls[2].cmd, 'self_host_prepare_community');
+  assert.equal(recordedCalls[3].cmd, 'self_host_deploy_community');
 
   // Clearing organisation ID blocks community deploy commands.
   nativeClient.setOrganisationId(null);

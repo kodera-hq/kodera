@@ -120,6 +120,17 @@ export function maySeedFromMarkdown(
   return confidential?.required !== true && (!remote || status === 'local')
 }
 
+/**
+ * Whether a live collaborative Yjs session owns the document body instead of raw REST Markdown.
+ */
+export function collabSessionOwnsBody(
+  remote: boolean,
+  status: CollabConnectionStatus,
+  confidential?: ConfidentialCollabPolicy
+): boolean {
+  return !maySeedFromMarkdown(remote, status, confidential)
+}
+
 export function validateCollabWebSocketUrl(rawUrl: string):
   | {
       readonly ok: true

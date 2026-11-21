@@ -32,6 +32,8 @@ const UNSAFE_INPUT_RE = /[\u0000-\u0020\u007f-\u009f;|&$`><*?()[\]{}!'"\\#~]/u;
 const UNSAFE_STACK_DIR_RE = /[\u0000-\u001f\u007f-\u009f;|&$`><*?'"\r\n]/u;
 const ABSOLUTE_PATH_RE = /^(?:\/|[A-Za-z]:[\\/])/u;
 const PARENT_SEGMENT_RE = /(?:^|[\\/])\.\.(?:[\\/]|$)/u;
+const SENSITIVE_STACK_ROOT_RE = /^(?:\/+$|[A-Za-z]:[\\/]+$|\/(?:tmp|var\/tmp|var\/folders|dev\/shm|private\/tmp|private\/var\/tmp|private\/var\/folders|private\/etc|private\/var\/root|private\/var\/run|private\/var\/db|var\/root|var\/run|var\/db|etc|usr|bin|sbin|lib|lib64|boot|proc|sys|dev|root|System|Library|Applications)(?:\/|$)|\/(?:Users|home)(?:\/[^/]+\/?|\/)?$|[A-Za-z]:[\\/]+(?:Windows|Temp|Program Files|Program Files \(x86\)|ProgramData)(?:[\\/]|$)|[A-Za-z]:[\\/]+Users(?:[\\/]+[^\\/]+[\\/]?|[\\/])?$)/iu;
+const SENSITIVE_CREDENTIAL_SEG_RE = /(?:^|[\\/])(?:\.ssh|\.gnupg|\.aws|\.kube|\.docker|Keychains)(?:[\\/]|$)/iu;
 const DNS_LABEL_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u;
 const EMAIL_LOCAL_RE = /^[A-Za-z0-9](?:[A-Za-z0-9._+-]{0,62}[A-Za-z0-9])?$/u;
 
@@ -77,9 +79,13 @@ function validateCommunityStackDir(rawDir) {
     typeof rawDir !== 'string'
     || rawDir.length === 0
     || rawDir.length > 512
+    || rawDir.startsWith('//')
+    || rawDir.startsWith('\\\\')
     || UNSAFE_STACK_DIR_RE.test(rawDir)
     || !ABSOLUTE_PATH_RE.test(rawDir)
     || PARENT_SEGMENT_RE.test(rawDir)
+    || SENSITIVE_STACK_ROOT_RE.test(rawDir)
+    || SENSITIVE_CREDENTIAL_SEG_RE.test(rawDir)
   ) {
     throw new RangeError('invalid_stack_dir');
   }
@@ -262,7 +268,49 @@ export function createDesktopClient(options = {}) {
   const globalObject = options.globalObject ?? globalThis;
   let nextCallbackId = 1;
 
-  function getInternals() {
+  function isTrustedNativeFrame(requireInternalAsset = false) {
+    if (typeof globalObject !== 'object' || globalObject === null) {
+      return false;
+    }
+    const globalRec = /** @type {Record<string, unknown>} */ (globalObject);
+    const loc = globalRec.location;
+    if (typeof loc !== 'object' || loc === null) {
+      return (
+        typeof process === 'object'
+        && process !== null
+        && Boolean(process.versions?.node)
+        && process.env?.KODERA_DESKTOP_BRIDGE_NODE_TEST === '1'
+      );
+    }
+    const protocol = /** @type {Record<string, unknown>} */ (loc).protocol;
+    const hostname = /** @type {Record<string, unknown>} */ (loc).hostname;
+    const port = /** @type {Record<string, unknown>} */ (loc).port;
+    if (typeof protocol !== 'string' || typeof hostname !== 'string') {
+      return false;
+    }
+    if (
+      (protocol === 'kodera-asset:' && hostname === 'localhost')
+      || (protocol === 'https:' && hostname === 'kodera-asset.localhost')
+    ) {
+      return true;
+    }
+    const devOriginEnabled = Boolean(/** @type {any} */ (import.meta)?.env?.DEV);
+    if (
+      devOriginEnabled
+      && !requireInternalAsset
+      && protocol === 'http:'
+      && (hostname === 'localhost' || hostname === '127.0.0.1')
+      && port === '5173'
+    ) {
+      return true;
+    }
+    return false;
+  }
+
+  function getInternals(requireInternalAsset = false) {
+    if (!isTrustedNativeFrame(requireInternalAsset)) {
+      return null;
+    }
     return resolveTauriInternals(globalObject);
   }
 
@@ -378,7 +426,7 @@ export function createDesktopClient(options = {}) {
     },
 
     async restartToUpdate() {
-      const internals = getInternals();
+      const internals = getInternals(true);
       if (!internals) throw new Error('update_not_ready');
       const response = /** @type {Record<string, unknown> | null} */ (await internals.invoke('restart_to_update', {}));
       if (response?.restarting !== true) throw new Error('update_not_ready');
@@ -662,7 +710,7 @@ export function createDesktopClient(options = {}) {
       if (input.deviceId.toLowerCase().includes(input.rawSecret.trim().toLowerCase())) {
         throw new RangeError('secret_leaked_in_metadata');
       }
-      const internals = getInternals();
+      const internals = getInternals(true);
       if (!internals) {
         // Security invariant: never fall back to localStorage/sessionStorage for keychain secrets.
         return {
@@ -708,7 +756,7 @@ export function createDesktopClient(options = {}) {
       if (!VALID_SECRET_KINDS.has(secretKind)) {
         throw new RangeError('invalid_secret_kind');
       }
-      const internals = getInternals();
+      const internals = getInternals(true);
       if (!internals) {
         return {
           present: false,
@@ -745,7 +793,7 @@ export function createDesktopClient(options = {}) {
       if (!VALID_SECRET_KINDS.has(secretKind)) {
         throw new RangeError('invalid_secret_kind');
       }
-      const internals = getInternals();
+      const internals = getInternals(true);
       if (!internals) {
         return {
           present: false,
@@ -784,7 +832,11 @@ export function createDesktopClient(options = {}) {
      * }} input
      */
     async beginOidcPkceLoopback(input) {
-      if (!input || typeof input.issuerOrigin !== 'string' || !input.issuerOrigin.startsWith('https://')) {
+      if (
+        !input
+        || typeof input.issuerOrigin !== 'string'
+        || !/^https:\/\/[^/?#@\s:]+\/realms\/[A-Za-z0-9](?:[A-Za-z0-9_-]{0,62}[A-Za-z0-9_])?$/u.test(input.issuerOrigin)
+      ) {
         throw new RangeError('invalid_issuer_origin');
       }
       if (typeof input.codeVerifier !== 'string' || input.codeVerifier.length < 43 || input.codeVerifier.length > 128) {
@@ -796,7 +848,7 @@ export function createDesktopClient(options = {}) {
       if (!Number.isInteger(input.loopbackPort) || input.loopbackPort < 1024 || input.loopbackPort > 65535) {
         throw new RangeError('invalid_loopback_port');
       }
-      const internals = getInternals();
+      const internals = getInternals(true);
       if (!internals) {
         return {
           supported: false,
@@ -840,7 +892,7 @@ export function createDesktopClient(options = {}) {
       if (!callbackUri.startsWith('http://127.0.0.1:') && !callbackUri.startsWith('kodera://auth/callback?')) {
         throw new RangeError('untrusted_callback_uri');
       }
-      const internals = getInternals();
+      const internals = getInternals(true);
       if (!internals) {
         return {
           supported: false,
@@ -892,6 +944,33 @@ export function createDesktopClient(options = {}) {
       };
     },
 
+    async selectCommunityStackDir() {
+      const internals = getInternals(true);
+      if (!internals) {
+        return {
+          supported: false,
+          selected: false,
+          stackDir: null,
+        };
+      }
+      const organisationId = requireOrganisationId(activeOrganisationId);
+      const response = /** @type {Record<string, unknown> | null} */ (
+        await internals.invoke('select_community_stack_dir', {
+          organisation_id: organisationId,
+        })
+      );
+      if (response?.ok === false) {
+        throw new Error(typeof response.error === 'string' ? response.error : 'community_deploy_failed');
+      }
+      const selected = Boolean(response?.selected);
+      const stackDir = selected && typeof response?.stack_dir === 'string' ? response.stack_dir : null;
+      return {
+        supported: true,
+        selected: stackDir !== null,
+        stackDir,
+      };
+    },
+
     /**
      * @param {{
      *   stackDir: string,
@@ -913,7 +992,7 @@ export function createDesktopClient(options = {}) {
       const { httpPort, httpsPort } = validateCommunityPorts(input.httpPort, input.httpsPort);
       const matrixBaseDomain = deriveMatrixBaseDomain(normalizedDomain);
 
-      const internals = getInternals();
+      const internals = getInternals(true);
       if (!internals) {
         return {
           supported: false,
@@ -940,6 +1019,9 @@ export function createDesktopClient(options = {}) {
           https_port: httpsPort,
         })
       );
+      if (response?.ok === false) {
+        throw new Error(typeof response.error === 'string' ? response.error : 'community_deploy_failed');
+      }
       return {
         supported: true,
         dockerVersion: typeof response?.docker_version === 'string' ? response.docker_version : null,
@@ -984,7 +1066,7 @@ export function createDesktopClient(options = {}) {
       const matrixBaseDomain = deriveMatrixBaseDomain(normalizedDomain);
       const defaultOidcIssuer = `${oidcOrigin}/realms/community`;
 
-      const internals = getInternals();
+      const internals = getInternals(true);
       if (!internals) {
         return {
           supported: false,
@@ -1013,6 +1095,9 @@ export function createDesktopClient(options = {}) {
           https_port: httpsPort,
         })
       );
+      if (response?.ok === false) {
+        throw new Error(typeof response.error === 'string' ? response.error : 'community_deploy_failed');
+      }
       const rawKeys = response?.generated_secret_keys;
       const secretKeys = Array.isArray(rawKeys)
         ? rawKeys.filter((item) => typeof item === 'string')
@@ -1060,7 +1145,7 @@ export function createDesktopClient(options = {}) {
         }
       }
 
-      const internals = getInternals();
+      const internals = getInternals(true);
       if (!internals) {
         return {
           supported: false,
@@ -1083,6 +1168,9 @@ export function createDesktopClient(options = {}) {
       const response = /** @type {Record<string, unknown> | null} */ (
         await internals.invoke('self_host_deploy_community', args)
       );
+      if (response?.ok === false) {
+        throw new Error(typeof response.error === 'string' ? response.error : 'community_deploy_failed');
+      }
       const maybeServices = response?.core_services;
       const rawServices = Array.isArray(maybeServices) ? maybeServices : [];
       const coreServices = rawServices

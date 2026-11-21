@@ -218,7 +218,7 @@ class PasskeyDeviceBinding private constructor(
         if (!MessageDigest.isEqual(assertionKeyId, keyHandleId) ||
             clientDataBytes.isEmpty() ||
             clientDataBytes.size > 4096 ||
-            authData.size != 37 ||
+            authData.size !in 37..2048 ||
             sigDer.size !in 8..80
         ) {
             throw PasskeyBindingFailure(PasskeyBindingError.INVALID_INPUT)
@@ -243,6 +243,12 @@ class PasskeyDeviceBinding private constructor(
 
         val flags = authData[32].toInt() and 0xFF
         val posture = validateAssertionFlags(flags, backupPolicy)
+        val extensionSlice = authData.copyOfRange(37, authData.size)
+        if ((flags and FLAG_ED) != 0) {
+            StrictCborExtensionMap.validate(extensionSlice)
+        } else if (extensionSlice.isNotEmpty()) {
+            throw PasskeyBindingFailure(PasskeyBindingError.INVALID_INPUT)
+        }
 
         val counter = readUnsignedBe32(authData, 33)
         if ((counter > 0L || lastCounter > 0L) && counter <= lastCounter) {
@@ -394,8 +400,13 @@ class PasskeyDeviceBinding private constructor(
                 throw PasskeyBindingFailure(PasskeyBindingError.INVALID_INPUT)
             }
             val keyHandleId = authData.copyOfRange(55, 55 + keyHandleLen)
-            val coseBytes = authData.copyOfRange(55 + keyHandleLen, authData.size)
-            val uncompressedSec1 = StrictCoseEs256Parser.parseUncompressedSec1(coseBytes)
+            val coseAndExtensions = authData.copyOfRange(55 + keyHandleLen, authData.size)
+            val (uncompressedSec1, extensionSlice) = StrictCoseEs256Parser.parseUncompressedSec1AndRemainder(coseAndExtensions)
+            if ((flags and FLAG_ED) != 0) {
+                StrictCborExtensionMap.validate(extensionSlice)
+            } else if (extensionSlice.isNotEmpty()) {
+                throw PasskeyBindingFailure(PasskeyBindingError.INVALID_INPUT)
+            }
             val verifyingKey = P256CurveSupport.parseSec1PublicKey(uncompressedSec1)
 
             val binding = PasskeyDeviceBinding(
@@ -421,8 +432,8 @@ class PasskeyDeviceBinding private constructor(
             if ((flags and (FLAG_UP or FLAG_UV)) != (FLAG_UP or FLAG_UV)) {
                 throw PasskeyBindingFailure(PasskeyBindingError.AUTHENTICATION_FAILED)
             }
-            // Refuse RFU bits (0x02, 0x20), AT (0x40), and ED (0x80): (flags & 0xE2) == 0
-            if ((flags and (FLAG_RFU_MASK or FLAG_AT or FLAG_ED)) != 0) {
+            // Refuse RFU bits (0x02, 0x20) and AT (0x40); ED (0x80) is validated against CBOR extension bytes.
+            if ((flags and (FLAG_RFU_MASK or FLAG_AT)) != 0) {
                 throw PasskeyBindingFailure(PasskeyBindingError.AUTHENTICATION_FAILED)
             }
             // WebAuthn Level 3 §6.5 invariant: BS=1 with BE=0 (0x10) is ALWAYS invalid.
@@ -443,7 +454,7 @@ class PasskeyDeviceBinding private constructor(
             if ((flags and FLAG_AT) != FLAG_AT) {
                 throw PasskeyBindingFailure(PasskeyBindingError.AUTHENTICATION_FAILED)
             }
-            if ((flags and (FLAG_RFU_MASK or FLAG_ED)) != 0) {
+            if ((flags and FLAG_RFU_MASK) != 0) {
                 throw PasskeyBindingFailure(PasskeyBindingError.AUTHENTICATION_FAILED)
             }
             val backupBits = flags and (FLAG_BE or FLAG_BS)
@@ -630,7 +641,7 @@ private object P256CurveSupport {
  * Rejects trailing bytes, duplicate labels, unknown labels, or non-ES256 parameters.
  */
 private object StrictCoseEs256Parser {
-    fun parseUncompressedSec1(coseBytes: ByteArray): ByteArray {
+    fun parseUncompressedSec1AndRemainder(coseBytes: ByteArray): Pair<ByteArray, ByteArray> {
         val cursor = CborCursor(coseBytes)
         val entryCount = cursor.readMapHeader()
         if (entryCount != 5) {
@@ -657,16 +668,16 @@ private object StrictCoseEs256Parser {
                 else -> throw PasskeyBindingFailure(PasskeyBindingError.INVALID_INPUT)
             }
         }
-        if (!cursor.isAtEnd() || kty != 2 || alg != -7 || crv != 1 || xCoord == null || yCoord == null) {
+        if (kty != 2 || alg != -7 || crv != 1 || xCoord == null || yCoord == null) {
             throw PasskeyBindingFailure(PasskeyBindingError.INVALID_INPUT)
         }
-        return byteArrayOf(0x04) + xCoord + yCoord
+        return Pair(byteArrayOf(0x04) + xCoord + yCoord, cursor.remainingBytes())
     }
 
     private class CborCursor(private val bytes: ByteArray) {
         private var offset: Int = 0
 
-        fun isAtEnd(): Boolean = offset == bytes.size
+        fun remainingBytes(): ByteArray = bytes.copyOfRange(offset, bytes.size)
 
         fun readMapHeader(): Int {
             val initial = nextByte()
@@ -727,19 +738,152 @@ private object StrictCoseEs256Parser {
     }
 }
 
+private object StrictCborExtensionMap {
+    private const val MAX_EXTENSION_BYTES: Int = 2048
+    private const val MAX_CBOR_DEPTH: Int = 4
+
+    fun validate(bytes: ByteArray) {
+        if (bytes.isEmpty() || bytes.size > MAX_EXTENSION_BYTES) {
+            throw PasskeyBindingFailure(PasskeyBindingError.AUTHENTICATION_FAILED)
+        }
+        val cursor = ExtensionCborCursor(bytes)
+        val initial = cursor.peekByte()
+        if ((initial ushr 5) != 5) {
+            throw PasskeyBindingFailure(PasskeyBindingError.AUTHENTICATION_FAILED)
+        }
+        val mapLen = cursor.readDefiniteLength()
+        if (mapLen !in 1..32) {
+            throw PasskeyBindingFailure(PasskeyBindingError.AUTHENTICATION_FAILED)
+        }
+        repeat(mapLen) {
+            cursor.skipItem(depth = 1)
+            cursor.skipItem(depth = 1)
+        }
+        if (!cursor.isAtEnd()) {
+            throw PasskeyBindingFailure(PasskeyBindingError.AUTHENTICATION_FAILED)
+        }
+    }
+
+    private class ExtensionCborCursor(private val bytes: ByteArray) {
+        private var offset: Int = 0
+
+        fun isAtEnd(): Boolean = offset == bytes.size
+
+        fun peekByte(): Int {
+            if (offset >= bytes.size) throw PasskeyBindingFailure(PasskeyBindingError.AUTHENTICATION_FAILED)
+            return bytes[offset].toInt() and 0xFF
+        }
+
+        private fun nextByte(): Int {
+            val b = peekByte()
+            offset++
+            return b
+        }
+
+        fun readDefiniteLength(): Int {
+            val initial = nextByte()
+            return when (val info = initial and 0x1F) {
+                in 0..23 -> info
+                24 -> {
+                    val v = nextByte()
+                    if (v < 24) throw PasskeyBindingFailure(PasskeyBindingError.AUTHENTICATION_FAILED)
+                    v
+                }
+                25 -> {
+                    val hi = nextByte()
+                    val lo = nextByte()
+                    val v = (hi shl 8) or lo
+                    if (v < 256) throw PasskeyBindingFailure(PasskeyBindingError.AUTHENTICATION_FAILED)
+                    v
+                }
+                else -> throw PasskeyBindingFailure(PasskeyBindingError.AUTHENTICATION_FAILED)
+            }
+        }
+
+        fun skipItem(depth: Int) {
+            if (depth > MAX_CBOR_DEPTH) {
+                throw PasskeyBindingFailure(PasskeyBindingError.AUTHENTICATION_FAILED)
+            }
+            val initial = peekByte()
+            val major = initial ushr 5
+            val info = initial and 0x1F
+            when (major) {
+                0, 1 -> {
+                    nextByte()
+                    val extra = when (info) {
+                        in 0..23 -> 0
+                        24 -> 1
+                        25 -> 2
+                        26 -> 4
+                        27 -> 8
+                        else -> throw PasskeyBindingFailure(PasskeyBindingError.AUTHENTICATION_FAILED)
+                    }
+                    if (offset + extra > bytes.size) {
+                        throw PasskeyBindingFailure(PasskeyBindingError.AUTHENTICATION_FAILED)
+                    }
+                    offset += extra
+                }
+                2 -> {
+                    val len = readDefiniteLength()
+                    if (offset + len > bytes.size) {
+                        throw PasskeyBindingFailure(PasskeyBindingError.AUTHENTICATION_FAILED)
+                    }
+                    offset += len
+                }
+                3 -> {
+                    val len = readDefiniteLength()
+                    if (offset + len > bytes.size) {
+                        throw PasskeyBindingFailure(PasskeyBindingError.AUTHENTICATION_FAILED)
+                    }
+                    try {
+                        Charsets.UTF_8.newDecoder()
+                            .onMalformedInput(CodingErrorAction.REPORT)
+                            .onUnmappableCharacter(CodingErrorAction.REPORT)
+                            .decode(ByteBuffer.wrap(bytes, offset, len))
+                    } catch (_: java.nio.charset.CharacterCodingException) {
+                        throw PasskeyBindingFailure(PasskeyBindingError.AUTHENTICATION_FAILED)
+                    }
+                    offset += len
+                }
+                4 -> {
+                    if (depth == MAX_CBOR_DEPTH) {
+                        throw PasskeyBindingFailure(PasskeyBindingError.AUTHENTICATION_FAILED)
+                    }
+                    val len = readDefiniteLength()
+                    if (len > 32) throw PasskeyBindingFailure(PasskeyBindingError.AUTHENTICATION_FAILED)
+                    repeat(len) { skipItem(depth + 1) }
+                }
+                5 -> {
+                    if (depth == MAX_CBOR_DEPTH) {
+                        throw PasskeyBindingFailure(PasskeyBindingError.AUTHENTICATION_FAILED)
+                    }
+                    val len = readDefiniteLength()
+                    if (len > 32) throw PasskeyBindingFailure(PasskeyBindingError.AUTHENTICATION_FAILED)
+                    repeat(len) {
+                        skipItem(depth + 1)
+                        skipItem(depth + 1)
+                    }
+                }
+                7 -> {
+                    if (info !in 20..22) {
+                        throw PasskeyBindingFailure(PasskeyBindingError.AUTHENTICATION_FAILED)
+                    }
+                    nextByte()
+                }
+                else -> throw PasskeyBindingFailure(PasskeyBindingError.AUTHENTICATION_FAILED)
+            }
+        }
+    }
+}
+
 private class StrictWebAuthnClientData(
     val ceremony: String,
     val challenge: String,
     val origin: String,
     val crossOrigin: Boolean,
 ) {
-    private sealed interface Scalar {
-        data class Str(val value: String) : Scalar
-        data class Bool(val value: Boolean) : Scalar
-    }
-
     companion object {
-        private val ADMITTED_KEYS = setOf("type", "challenge", "origin", "crossOrigin")
+        private const val MAX_JSON_DEPTH: Int = 4
 
         fun parse(bytes: ByteArray): StrictWebAuthnClientData {
             if (bytes.isEmpty() || bytes.size > 4096) {
@@ -754,59 +898,60 @@ private class StrictWebAuthnClientData(
             } catch (_: java.nio.charset.CharacterCodingException) {
                 throw PasskeyBindingFailure(PasskeyBindingError.INVALID_INPUT)
             }
-            val parser = ClientDataCursor(decoded)
-            val fields = parser.parseTopObject()
-            if (fields.keys.any { it !in ADMITTED_KEYS }) {
-                throw PasskeyBindingFailure(PasskeyBindingError.INVALID_INPUT)
-            }
-            val ceremony = (fields["type"] as? Scalar.Str)?.value
-                ?: throw PasskeyBindingFailure(PasskeyBindingError.INVALID_INPUT)
-            val challenge = (fields["challenge"] as? Scalar.Str)?.value
-                ?: throw PasskeyBindingFailure(PasskeyBindingError.INVALID_INPUT)
-            val origin = (fields["origin"] as? Scalar.Str)?.value
-                ?: throw PasskeyBindingFailure(PasskeyBindingError.INVALID_INPUT)
-            val crossOrigin = if (fields.containsKey("crossOrigin")) {
-                (fields["crossOrigin"] as? Scalar.Bool)?.value
-                    ?: throw PasskeyBindingFailure(PasskeyBindingError.INVALID_INPUT)
-            } else {
-                false
-            }
-            return StrictWebAuthnClientData(ceremony, challenge, origin, crossOrigin)
+            return ClientDataCursor(decoded).parseTopObject()
         }
     }
 
     private class ClientDataCursor(private val text: String) {
         private var offset: Int = 0
 
-        fun parseTopObject(): Map<String, Scalar> {
+        fun parseTopObject(): StrictWebAuthnClientData {
             skipWhitespace()
             expect('{')
             skipWhitespace()
-            val map = LinkedHashMap<String, Scalar>()
-            if (tryConsume('}')) {
-                skipWhitespace()
-                if (offset != text.length) throw PasskeyBindingFailure(PasskeyBindingError.INVALID_INPUT)
-                return map
-            }
-            while (true) {
-                skipWhitespace()
-                val key = parseString()
-                if (map.containsKey(key)) {
-                    throw PasskeyBindingFailure(PasskeyBindingError.INVALID_INPUT)
-                }
-                skipWhitespace()
-                expect(':')
-                skipWhitespace()
-                val value = parseScalar()
-                map[key] = value
-                skipWhitespace()
-                if (tryConsume('}')) {
+            val seenKeys = HashSet<String>()
+            var ceremony: String? = null
+            var challenge: String? = null
+            var origin: String? = null
+            var crossOrigin = false
+
+            if (!tryConsume('}')) {
+                while (true) {
+                    if (seenKeys.size >= 64) {
+                        throw PasskeyBindingFailure(PasskeyBindingError.INVALID_INPUT)
+                    }
                     skipWhitespace()
-                    if (offset != text.length) throw PasskeyBindingFailure(PasskeyBindingError.INVALID_INPUT)
-                    return map
+                    val key = parseString()
+                    if (!seenKeys.add(key)) {
+                        throw PasskeyBindingFailure(PasskeyBindingError.INVALID_INPUT)
+                    }
+                    skipWhitespace()
+                    expect(':')
+                    skipWhitespace()
+                    when (key) {
+                        "type" -> ceremony = parseString()
+                        "challenge" -> challenge = parseString()
+                        "origin" -> origin = parseString()
+                        "crossOrigin" -> crossOrigin = parseBoolean()
+                        else -> skipValue(depth = 1)
+                    }
+                    skipWhitespace()
+                    if (tryConsume('}')) {
+                        break
+                    }
+                    expect(',')
                 }
-                expect(',')
             }
+            skipWhitespace()
+            if (offset != text.length) {
+                throw PasskeyBindingFailure(PasskeyBindingError.INVALID_INPUT)
+            }
+            return StrictWebAuthnClientData(
+                ceremony = ceremony ?: throw PasskeyBindingFailure(PasskeyBindingError.INVALID_INPUT),
+                challenge = challenge ?: throw PasskeyBindingFailure(PasskeyBindingError.INVALID_INPUT),
+                origin = origin ?: throw PasskeyBindingFailure(PasskeyBindingError.INVALID_INPUT),
+                crossOrigin = crossOrigin,
+            )
         }
 
         private fun skipWhitespace() {
@@ -815,17 +960,95 @@ private class StrictWebAuthnClientData(
             }
         }
 
-        private fun parseScalar(): Scalar {
+        private fun parseBoolean(): Boolean {
             if (offset >= text.length) throw PasskeyBindingFailure(PasskeyBindingError.INVALID_INPUT)
             return when (text[offset]) {
-                '"' -> Scalar.Str(parseString())
                 't' -> {
                     expectLiteral("true")
-                    Scalar.Bool(true)
+                    true
                 }
                 'f' -> {
                     expectLiteral("false")
-                    Scalar.Bool(false)
+                    false
+                }
+                else -> throw PasskeyBindingFailure(PasskeyBindingError.INVALID_INPUT)
+            }
+        }
+
+        private fun parseNumber() {
+            tryConsume('-')
+            if (offset >= text.length) throw PasskeyBindingFailure(PasskeyBindingError.INVALID_INPUT)
+            when (text[offset]) {
+                '0' -> offset++
+                in '1'..'9' -> {
+                    offset++
+                    while (offset < text.length && text[offset] in '0'..'9') offset++
+                }
+                else -> throw PasskeyBindingFailure(PasskeyBindingError.INVALID_INPUT)
+            }
+            if (tryConsume('.')) {
+                if (offset >= text.length || text[offset] !in '0'..'9') {
+                    throw PasskeyBindingFailure(PasskeyBindingError.INVALID_INPUT)
+                }
+                while (offset < text.length && text[offset] in '0'..'9') offset++
+            }
+            if (offset < text.length && (text[offset] == 'e' || text[offset] == 'E')) {
+                offset++
+                if (offset < text.length && (text[offset] == '+' || text[offset] == '-')) offset++
+                if (offset >= text.length || text[offset] !in '0'..'9') {
+                    throw PasskeyBindingFailure(PasskeyBindingError.INVALID_INPUT)
+                }
+                while (offset < text.length && text[offset] in '0'..'9') offset++
+            }
+        }
+
+        private fun skipValue(depth: Int) {
+            if (depth > MAX_JSON_DEPTH || offset >= text.length) {
+                throw PasskeyBindingFailure(PasskeyBindingError.INVALID_INPUT)
+            }
+            when (text[offset]) {
+                '"' -> {
+                    parseString()
+                }
+                't' -> expectLiteral("true")
+                'f' -> expectLiteral("false")
+                'n' -> expectLiteral("null")
+                '-', in '0'..'9' -> parseNumber()
+                '[' -> {
+                    if (depth == MAX_JSON_DEPTH) throw PasskeyBindingFailure(PasskeyBindingError.INVALID_INPUT)
+                    offset++
+                    skipWhitespace()
+                    if (tryConsume(']')) return
+                    var count = 0
+                    while (true) {
+                        count++
+                        if (count > 64) throw PasskeyBindingFailure(PasskeyBindingError.INVALID_INPUT)
+                        skipWhitespace()
+                        skipValue(depth + 1)
+                        skipWhitespace()
+                        if (tryConsume(']')) return
+                        expect(',')
+                    }
+                }
+                '{' -> {
+                    if (depth == MAX_JSON_DEPTH) throw PasskeyBindingFailure(PasskeyBindingError.INVALID_INPUT)
+                    offset++
+                    skipWhitespace()
+                    if (tryConsume('}')) return
+                    val nestedKeys = HashSet<String>()
+                    while (true) {
+                        if (nestedKeys.size >= 64) throw PasskeyBindingFailure(PasskeyBindingError.INVALID_INPUT)
+                        skipWhitespace()
+                        val k = parseString()
+                        if (!nestedKeys.add(k)) throw PasskeyBindingFailure(PasskeyBindingError.INVALID_INPUT)
+                        skipWhitespace()
+                        expect(':')
+                        skipWhitespace()
+                        skipValue(depth + 1)
+                        skipWhitespace()
+                        if (tryConsume('}')) return
+                        expect(',')
+                    }
                 }
                 else -> throw PasskeyBindingFailure(PasskeyBindingError.INVALID_INPUT)
             }

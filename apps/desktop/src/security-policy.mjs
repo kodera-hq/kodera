@@ -76,6 +76,39 @@ const FORBIDDEN_SCHEMES = new Set([
 ]);
 
 /**
+ * Single-pass RFC 3986 ASCII percent-decoding (`+` mapped to space) matching Rust's deep-link key scanner.
+ *
+ * @param {string} raw
+ * @returns {string | null}
+ */
+function percentDecodeSinglePassAscii(raw) {
+  let out = '';
+  for (let i = 0; i < raw.length; i += 1) {
+    const ch = raw[i];
+    if (ch === '%') {
+      if (i + 2 >= raw.length) {
+        return null;
+      }
+      const hex = raw.slice(i + 1, i + 3);
+      if (!/^[0-9a-fA-F]{2}$/u.test(hex)) {
+        return null;
+      }
+      const byte = Number.parseInt(hex, 16);
+      if (byte <= 0x1f || byte >= 0x7f) {
+        return null;
+      }
+      out += String.fromCharCode(byte);
+      i += 2;
+    } else if (ch === '+') {
+      out += ' ';
+    } else {
+      out += ch;
+    }
+  }
+  return out;
+}
+
+/**
  * Validates an incoming `kodera://` or `matrix:` deep link on the client side before forwarding
  * to the native host or browser router. Never echoes untrusted input in thrown/returned errors.
  *
@@ -133,14 +166,16 @@ export function validateClientDeepLinkUri(
   if (query.length > 0) {
     for (const pair of query.split('&')) {
       const eq = pair.indexOf('=');
+      const rawKey = eq === -1 ? pair : pair.slice(0, eq);
+      const decodedKey = percentDecodeSinglePassAscii(rawKey) ?? rawKey;
+      if (OPEN_REDIRECT_KEYS.has(decodedKey.toLowerCase())) {
+        return { ok: false, error: 'open_redirect_detected' };
+      }
       if (eq <= 0 || eq === pair.length - 1) {
         return { ok: false, error: 'invalid_query' };
       }
-      const key = pair.slice(0, eq);
+      const key = rawKey;
       const val = pair.slice(eq + 1);
-      if (OPEN_REDIRECT_KEYS.has(key.toLowerCase())) {
-        return { ok: false, error: 'open_redirect_detected' };
-      }
       if ((key === 'origin' || key === 'via') && !domainSet.has(val)) {
         return { ok: false, error: 'untrusted_origin' };
       }
@@ -223,12 +258,13 @@ export function validateTauriSecurityInvariants(config, defaultCapability) {
 
   const expectedSources = new Map([
     ['default-src', ["'self'"]],
+    ['script-src-attr', ["'none'"]],
     ['connect-src', [...APPROVED_CONNECT_SOURCES]],
     ['img-src', ["'self'", 'data:', 'blob:']],
     ['media-src', ["'self'", 'blob:']],
     ['worker-src', ["'self'", 'blob:']],
     ['style-src', ["'self'"]],
-    ['style-src-attr', ["'unsafe-inline'"]],
+    ['style-src-attr', ["'none'"]],
     ['font-src', ["'self'", 'data:']],
     ['object-src', ["'none'"]],
     ['base-uri', ["'none'"]],

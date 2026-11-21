@@ -11,10 +11,14 @@ import { TOUCH_TARGET } from '../../ui/touchTarget'
 import type { EspaceStoreLike } from '../espace/liveViewModel'
 import type { RoomSummary } from '../espace/matrix/store'
 import { PendingInvitations } from '../espace/PendingInvitations'
+import { registerLocalSessionCleanup } from '../../auth/localSession'
 import { NotificationFeed, POLL_MS, type Notification } from './notificationFeed'
 import { currentSubscription, disablePush, enablePush, pushSupported } from './push'
 
-const feed = new NotificationFeed()
+export const defaultNotificationFeed = new NotificationFeed()
+registerLocalSessionCleanup(() => {
+  defaultNotificationFeed.reset()
+})
 const subscribeToNone = () => () => undefined
 const noSnapshot = () => undefined
 const NO_ROOMS: readonly RoomSummary[] = []
@@ -206,7 +210,7 @@ function MentionedRooms({
 }
 
 export function NotificationCenter({
-  source = feed,
+  source = defaultNotificationFeed,
   store,
   onSelectInvite,
   onOpenRoom,

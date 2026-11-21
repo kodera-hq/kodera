@@ -128,6 +128,7 @@ class SessionController internal constructor(
     private val fetchWorkspace: (CoreWorkspaceClient, String) -> WorkspaceOutcome = CoreWorkspaceClient::fetch,
     val voluntaryProximityController: VoluntaryProximitySessionController? = null,
     private val fetchProximity: (CoreProximityClient, String) -> ProximityBootstrap? = CoreProximityClient::bootstrap,
+    private val clockUnixSeconds: () -> Long = { System.currentTimeMillis() / 1_000L },
 ) : AutoCloseable {
     // Exact service-issued receipt returned by the accepted sign-in or restore.
     @Volatile private var generation: AcceptedOwner? = null
@@ -135,6 +136,7 @@ class SessionController internal constructor(
     private var targetOrganisation: String? = null
     private var loading = false
     private var proximityPermissionPause: Any? = null
+    private var proximityScope: Pair<String, String>? = null
     private var resumed = false
     private var closed = false
     /** The signed-in session's Core clients; null when signed out or when Core is not configured. */
@@ -177,6 +179,9 @@ class SessionController internal constructor(
             // The event already owns its receipt; listeners must never query/reenter the service here.
             val endedOwner = event.owner
             main.execute { if (!closed && endedOwner != null && generation === endedOwner) onSessionEnded(event) }
+        }
+        voluntaryProximityController?.onAuthenticatedRebootstrapRequired = { deadline ->
+            main.execute { rebootstrapProximityUntil(deadline) }
         }
     }
 
@@ -310,6 +315,7 @@ class SessionController internal constructor(
 
     private fun invalidateRead() {
         proximityPermissionPause = null
+        proximityScope = null
         proximityTicket = Any()
         proximityPreparing = false
         proximityMessage = null
@@ -527,9 +533,12 @@ class SessionController internal constructor(
                                         val seed = ByteArray(32).also(SecureRandom()::nextBytes)
                                         try {
                                             radio.provisionEpoch(workspaceId, material.scopeTag, material.epoch,
-                                                material.epochExpiresAtUnixSeconds, material.epochMacKey, seed)
+                                                material.epochExpiresAtUnixSeconds, material.epochMacKey, seed,
+                                                nowUnixSeconds = clockUnixSeconds())
                                             radio.grantForegroundConsent()
+                                            proximityScope = organisation to workspaceId
                                         } catch (_: Exception) {
+                                            proximityScope = null
                                             radio.clearProvisioning()
                                             proximityMessage = R.string.proximity_voluntary_bootstrap_unavailable
                                         } finally { seed.fill(0) }
@@ -541,6 +550,84 @@ class SessionController internal constructor(
                 }
             },
         )
+    }
+
+    /**
+     * Renews an active voluntary proximity session across the 15-minute epoch-lease boundary up to
+     * the member's original consent deadline (`deadlineUnixSeconds`), without extending consent or
+     * surviving backgrounding, workspace changes, or sign-out.
+     */
+    private fun rebootstrapProximityUntil(deadlineUnixSeconds: Long) {
+        if (closed || !resumed || proximityPreparing) return
+        val nowAtRequest = clockUnixSeconds()
+        if (deadlineUnixSeconds <= nowAtRequest) return
+        val radio = voluntaryProximityController ?: return
+        val snapshot = (workspace as? WorkspaceViewState.Loaded)?.snapshot ?: return
+        val workspaceId = snapshot.id ?: return
+        val owner = generation ?: return
+        val clients = core ?: return
+        val organisation = targetOrganisation ?: return
+        val binding = PublicationBinding(owner, readTicket, organisation, clients.requester)
+        if (!isCurrentPublication(binding) || snapshot.organisationId != organisation) return
+        if (proximityScope != (organisation to workspaceId)) return
+        if (radio.refreshPermissionState().isNotEmpty()) {
+            proximityScope = null
+            proximityMessage = R.string.proximity_voluntary_permissions_missing
+            return
+        }
+
+        val ticket = Any()
+        proximityTicket = ticket
+        proximityPreparing = true
+        proximityMessage = null
+        workers.execute {
+            val material = runCatching { fetchProximity(clients.proximity, workspaceId) }.getOrNull()
+            main.execute publish@{
+                try {
+                    if (proximityTicket !== ticket || !isCurrentPublication(binding) ||
+                        (workspace as? WorkspaceViewState.Loaded)?.snapshot?.id != workspaceId ||
+                        proximityScope != (organisation to workspaceId)
+                    ) {
+                        return@publish
+                    }
+                    proximityPreparing = false
+                    val now = clockUnixSeconds()
+                    if (now >= deadlineUnixSeconds || material == null || material.workspaceId != workspaceId ||
+                        radio.refreshPermissionState().isNotEmpty()
+                    ) {
+                        proximityScope = null
+                        radio.clearProvisioning()
+                        proximityMessage = R.string.proximity_voluntary_bootstrap_unavailable
+                    } else {
+                        val seed = ByteArray(32).also(SecureRandom()::nextBytes)
+                        try {
+                            radio.provisionEpoch(
+                                workspaceId,
+                                material.scopeTag,
+                                material.epoch,
+                                material.epochExpiresAtUnixSeconds,
+                                material.epochMacKey,
+                                seed,
+                                nowUnixSeconds = now,
+                            )
+                            radio.grantForegroundConsent()
+                            radio.startVoluntarySession(
+                                nowUnixSeconds = now,
+                                consentExpiresAtUnixSeconds = deadlineUnixSeconds,
+                            )
+                        } catch (_: Exception) {
+                            proximityScope = null
+                            radio.clearProvisioning()
+                            proximityMessage = R.string.proximity_voluntary_bootstrap_unavailable
+                        } finally {
+                            seed.fill(0)
+                        }
+                    }
+                } finally {
+                    material?.epochMacKey?.fill(0)
+                }
+            }
+        }
     }
 
     private fun workspaceAnswered(binding: PublicationBinding, outcome: WorkspaceOutcome) {
@@ -596,6 +683,7 @@ class SessionController internal constructor(
         endCore()
         telecomCoordinator.stop()
         proximityV2Controller.close()
+        voluntaryProximityController?.onAuthenticatedRebootstrapRequired = null
         voluntaryProximityController?.close()
         inviteCoordinator.stop()
         passkeyCoordinator.clear()

@@ -539,7 +539,8 @@ class SessionControllerTests {
 
     private inner class ChannelFixture(meSteps: List<ReadStep<MeOutcome>>, channelSteps: List<ReadStep<WorkspaceOutcome>>,
         radio: VoluntaryProximitySessionController? = null,
-        fetchProximity: (CoreProximityClient, String) -> ProximityBootstrap? = { _, _ -> null }) {
+        fetchProximity: (CoreProximityClient, String) -> ProximityBootstrap? = { _, _ -> null },
+        clockUnixSeconds: () -> Long = { 1_800_000_100L }) {
         val browser = FakeBrowser()
         val service = KoderaSignInService(configuration, InMemoryTokenStore(), browser)
         val me = ReadScript(meSteps)
@@ -559,7 +560,7 @@ class SessionControllerTests {
             },
             fetchMember = { me.read() }, fetchWorkspace = { client, id ->
                 clients.add(client); requestedIds.add(id); channels.read()
-            }, voluntaryProximityController = radio, fetchProximity = fetchProximity)
+            }, voluntaryProximityController = radio, fetchProximity = fetchProximity, clockUnixSeconds = clockUnixSeconds)
         init {
             controller.start()
             runMainUntil("restored for channels") { controller.phase == SessionPhase.SignedOut }
@@ -722,6 +723,85 @@ class SessionControllerTests {
             assertNull(radio.controller.organisationId)
             assertFalse(radio.controller.hasForegroundConsent)
         } finally { f.controller.close() }
+    }
+
+    @Test fun thirtyMinuteVoluntarySessionSurvives900SecondEpochBoundaryViaAuthenticatedRebootstrap() {
+        var now = 1_800_000_100L
+        val ticks = mutableListOf<() -> Unit>()
+        var starts = 0
+        val ble = object : ProximityBleRadioDriver {
+            override var onPeerTokenObserved: ((ByteArray, Int) -> Unit)? = null
+            override fun startAdvertisingAndScanning(ephemeralToken: ByteArray) { starts++ }
+            override fun stopAll() { }
+        }
+        val nsd = object : ProximityNsdMdnsDriver {
+            override var onPeerTxtObserved: ((Map<String, String>) -> Unit)? = null
+            override fun startAdvertisingAndDiscovery(attributes: Map<String, String>, quicPort: Int) { }
+            override fun stopAll() { }
+        }
+        val radioController = VoluntaryProximitySessionController(
+            bleDriver = ble,
+            nsdDriver = nsd,
+            permissionChecker = RuntimeProximityPermissionChecker({ 33 }, { true }),
+            timer = ProximitySessionTimer { tick -> ticks.add(tick); AutoCloseable { } },
+            clockUnixSeconds = { now },
+        )
+        val actualWorkspace = checkNotNull(tree("Current").id)
+        val bootstrapCalls = AtomicInteger()
+        val f = ChannelFixture(
+            meSteps = listOf(ReadStep<MeOutcome>(profile(organisationA))),
+            channelSteps = listOf(ReadStep<WorkspaceOutcome>(loaded("Current"))),
+            radio = radioController,
+            fetchProximity = { _, id ->
+                val seq = bootstrapCalls.incrementAndGet()
+                val epoch = now / 900L
+                val expiresAt = (epoch + 1L) * 900L
+                ProximityBootstrap(id, "default", epoch, expiresAt, ByteArray(32) { (seq + 10).toByte() })
+            },
+            clockUnixSeconds = { now },
+        )
+        try {
+            f.settled()
+            checkNotNull(f.controller.proximityConsentRequest()).complete()
+            runMainUntil("initial bootstrap provisioned") { !f.controller.proximityPreparing }
+            assertEquals(1, bootstrapCalls.get())
+
+            // Start a 30-minute (1,800s) session at t = 1,800,000,100 -> consent deadline = 1,800,001,900.
+            radioController.selectedDuration = io.kodera.android.proximity.ProximitySessionDuration.MINUTES_30
+            radioController.startVoluntarySession(now)
+            val originalDeadline = checkNotNull(radioController.expiresAtUnixSeconds)
+            assertEquals(1_800_001_900L, originalDeadline)
+            assertTrue(radioController.isSessionActive)
+            assertEquals(1, starts)
+
+            // Cross the first 900s epoch-lease boundary (t = 1,800,000,900): triggers authenticated rebootstrap!
+            now = 1_800_000_900L
+            ticks.last().invoke()
+            runMainUntil("epoch 1 rebootstrap settled") { bootstrapCalls.get() == 2 && !f.controller.proximityPreparing }
+            assertTrue(radioController.isSessionActive)
+            assertEquals(originalDeadline, radioController.expiresAtUnixSeconds)
+            assertEquals(2, starts)
+
+            // Cross the second 900s epoch-lease boundary (t = 1,800,001,800 < 1,800,001,900): renews again without extending deadline!
+            now = 1_800_001_800L
+            ticks.last().invoke()
+            runMainUntil("epoch 2 rebootstrap settled") { bootstrapCalls.get() == 3 && !f.controller.proximityPreparing }
+            assertTrue(radioController.isSessionActive)
+            assertEquals(originalDeadline, radioController.expiresAtUnixSeconds)
+            assertEquals(3, starts)
+
+            // Reach the 30-minute user consent deadline (t = 1,800,001,900): stops cleanly with zero extra rebootstrap calls.
+            now = originalDeadline
+            ticks.last().invoke()
+            runQueuedMainTasks()
+            assertFalse(radioController.isSessionActive)
+            assertFalse(radioController.hasForegroundConsent)
+            assertNull(radioController.organisationId)
+            assertEquals(3, bootstrapCalls.get())
+            assertEquals(actualWorkspace, checkNotNull((f.controller.workspace as WorkspaceViewState.Loaded).snapshot.id))
+        } finally {
+            f.controller.close()
+        }
     }
 
     /** Runs the actual queued old publication callback, not merely a wait for a fixture to return. */

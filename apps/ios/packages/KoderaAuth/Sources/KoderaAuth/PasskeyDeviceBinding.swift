@@ -116,7 +116,7 @@ public struct PasskeyDeviceBinding: Sendable, CustomDebugStringConvertible {
         guard (flags & (flagUP | flagUV)) == (flagUP | flagUV) else {
             throw PasskeyBindingError.authenticationFailed
         }
-        guard (flags & (flagRFUMask | flagAT | flagED)) == 0 else {
+        guard (flags & (flagRFUMask | flagAT)) == 0 else {
             throw PasskeyBindingError.authenticationFailed
         }
         let backupBits = flags & (flagBE | flagBS)
@@ -261,7 +261,7 @@ public struct PasskeyDeviceBinding: Sendable, CustomDebugStringConvertible {
         guard assertion.credentialId == credentialId,
               !assertion.clientDataJSON.isEmpty,
               assertion.clientDataJSON.count <= 4096,
-              assertion.authenticatorData.count == 37,
+              (37...2048).contains(assertion.authenticatorData.count),
               (8...80).contains(assertion.signatureDER.count) else {
             throw PasskeyBindingError.invalidInput
         }
@@ -283,7 +283,14 @@ public struct PasskeyDeviceBinding: Sendable, CustomDebugStringConvertible {
         guard Data(authBytes[0..<32]) == expectedRPHash else {
             throw PasskeyBindingError.authenticationFailed
         }
-        let posture = try Self.validateAssertionFlags(authBytes[32], policy: backupPolicy)
+        let flags = authBytes[32]
+        let posture = try Self.validateAssertionFlags(flags, policy: backupPolicy)
+        let extensionSlice = Array(authBytes[37..<authBytes.count])
+        if (flags & Self.flagED) != 0 {
+            try StrictCBORExtensionMap.validate(extensionSlice)
+        } else if !extensionSlice.isEmpty {
+            throw PasskeyBindingError.invalidInput
+        }
 
         let counter = (UInt32(authBytes[33]) << 24)
             | (UInt32(authBytes[34]) << 16)
@@ -383,79 +390,183 @@ enum PasskeyBase64URL {
     }
 }
 
+private enum StrictCBORExtensionMap {
+    private static let maxExtensionBytes = 2048
+    private static let maxCBORDepth = 4
+
+    static func validate(_ bytes: [UInt8]) throws {
+        guard !bytes.isEmpty, bytes.count <= maxExtensionBytes else {
+            throw PasskeyBindingError.authenticationFailed
+        }
+        var offset = 0
+        guard (bytes[0] >> 5) == 5 else {
+            throw PasskeyBindingError.authenticationFailed
+        }
+        let mapLen = try readDefiniteLength(bytes, offset: &offset)
+        guard (1...32).contains(mapLen) else {
+            throw PasskeyBindingError.authenticationFailed
+        }
+        for _ in 0..<mapLen {
+            try skipItem(bytes, offset: &offset, depth: 1)
+            try skipItem(bytes, offset: &offset, depth: 1)
+        }
+        guard offset == bytes.count else {
+            throw PasskeyBindingError.authenticationFailed
+        }
+    }
+
+    private static func readDefiniteLength(_ bytes: [UInt8], offset: inout Int) throws -> Int {
+        guard offset < bytes.count else { throw PasskeyBindingError.authenticationFailed }
+        let initial = bytes[offset]
+        offset += 1
+        let info = Int(initial & 0x1F)
+        switch info {
+        case 0...23:
+            return info
+        case 24:
+            guard offset < bytes.count else { throw PasskeyBindingError.authenticationFailed }
+            let v = Int(bytes[offset])
+            offset += 1
+            guard v >= 24 else { throw PasskeyBindingError.authenticationFailed }
+            return v
+        case 25:
+            guard bytes.count - offset >= 2 else { throw PasskeyBindingError.authenticationFailed }
+            let v = (Int(bytes[offset]) << 8) | Int(bytes[offset + 1])
+            offset += 2
+            guard v >= 256 else { throw PasskeyBindingError.authenticationFailed }
+            return v
+        default:
+            throw PasskeyBindingError.authenticationFailed
+        }
+    }
+
+    private static func skipItem(_ bytes: [UInt8], offset: inout Int, depth: Int) throws {
+        guard depth <= maxCBORDepth, offset < bytes.count else {
+            throw PasskeyBindingError.authenticationFailed
+        }
+        let initial = bytes[offset]
+        let major = initial >> 5
+        let info = initial & 0x1F
+        switch major {
+        case 0, 1:
+            offset += 1
+            let extra: Int
+            switch info {
+            case 0...23: extra = 0
+            case 24: extra = 1
+            case 25: extra = 2
+            case 26: extra = 4
+            case 27: extra = 8
+            default: throw PasskeyBindingError.authenticationFailed
+            }
+            guard bytes.count - offset >= extra else { throw PasskeyBindingError.authenticationFailed }
+            offset += extra
+        case 2:
+            let len = try readDefiniteLength(bytes, offset: &offset)
+            guard bytes.count - offset >= len else { throw PasskeyBindingError.authenticationFailed }
+            offset += len
+        case 3:
+            let len = try readDefiniteLength(bytes, offset: &offset)
+            guard bytes.count - offset >= len,
+                  String(bytes: bytes[offset..<(offset + len)], encoding: .utf8) != nil else {
+                throw PasskeyBindingError.authenticationFailed
+            }
+            offset += len
+        case 4:
+            guard depth < maxCBORDepth else { throw PasskeyBindingError.authenticationFailed }
+            let len = try readDefiniteLength(bytes, offset: &offset)
+            guard len <= 32 else { throw PasskeyBindingError.authenticationFailed }
+            for _ in 0..<len {
+                try skipItem(bytes, offset: &offset, depth: depth + 1)
+            }
+        case 5:
+            guard depth < maxCBORDepth else { throw PasskeyBindingError.authenticationFailed }
+            let len = try readDefiniteLength(bytes, offset: &offset)
+            guard len <= 32 else { throw PasskeyBindingError.authenticationFailed }
+            for _ in 0..<len {
+                try skipItem(bytes, offset: &offset, depth: depth + 1)
+                try skipItem(bytes, offset: &offset, depth: depth + 1)
+            }
+        case 7:
+            guard (20...22).contains(info) else { throw PasskeyBindingError.authenticationFailed }
+            offset += 1
+        default:
+            throw PasskeyBindingError.authenticationFailed
+        }
+    }
+}
+
 private struct StrictWebAuthnClientData {
+    private static let maxJSONDepth = 4
+
     let ceremony: String
     let challenge: String
     let origin: String
     let crossOrigin: Bool
 
     static func parse(_ data: Data) throws -> StrictWebAuthnClientData {
-        guard data.count <= 4096, String(data: data, encoding: .utf8) != nil else {
+        guard !data.isEmpty, data.count <= 4096, String(data: data, encoding: .utf8) != nil else {
             throw PasskeyBindingError.invalidInput
         }
         var parser = ObjectParser(bytes: Array(data))
-        let fields = try parser.parseTopLevelObject()
-        guard let ceremonyValue = fields["type"], case let .string(ceremony) = ceremonyValue,
-              let challengeValue = fields["challenge"], case let .string(challenge) = challengeValue,
-              let originValue = fields["origin"], case let .string(origin) = originValue else {
-            throw PasskeyBindingError.invalidInput
-        }
-        let crossOrigin: Bool
-        if let crossValue = fields["crossOrigin"] {
-            guard case let .boolean(flag) = crossValue else {
-                throw PasskeyBindingError.invalidInput
-            }
-            crossOrigin = flag
-        } else {
-            crossOrigin = false
-        }
-        for key in fields.keys where !["type", "challenge", "origin", "crossOrigin"].contains(key) {
-            throw PasskeyBindingError.invalidInput
-        }
-        return StrictWebAuthnClientData(
-            ceremony: ceremony,
-            challenge: challenge,
-            origin: origin,
-            crossOrigin: crossOrigin
-        )
-    }
-
-    private enum ScalarValue {
-        case string(String)
-        case boolean(Bool)
+        return try parser.parseTopLevelObject()
     }
 
     private struct ObjectParser {
         let bytes: [UInt8]
         var offset = 0
 
-        mutating func parseTopLevelObject() throws -> [String: ScalarValue] {
+        mutating func parseTopLevelObject() throws -> StrictWebAuthnClientData {
             skipWhitespace()
             guard take(0x7B) else { throw PasskeyBindingError.invalidInput }
             skipWhitespace()
-            var result: [String: ScalarValue] = [:]
-            if take(0x7D) {
-                skipWhitespace()
-                guard offset == bytes.count else { throw PasskeyBindingError.invalidInput }
-                return result
-            }
-            while true {
-                skipWhitespace()
-                let key = try parseString()
-                guard result[key] == nil else { throw PasskeyBindingError.invalidInput }
-                skipWhitespace()
-                guard take(0x3A) else { throw PasskeyBindingError.invalidInput }
-                skipWhitespace()
-                let value = try parseScalar()
-                result[key] = value
-                skipWhitespace()
-                if take(0x7D) {
+            var seenKeys = Set<String>()
+            var ceremony: String? = nil
+            var challenge: String? = nil
+            var origin: String? = nil
+            var crossOrigin = false
+
+            if !take(0x7D) {
+                while true {
+                    guard seenKeys.count < 64 else { throw PasskeyBindingError.invalidInput }
                     skipWhitespace()
-                    guard offset == bytes.count else { throw PasskeyBindingError.invalidInput }
-                    return result
+                    let key = try parseString()
+                    guard seenKeys.insert(key).inserted else { throw PasskeyBindingError.invalidInput }
+                    skipWhitespace()
+                    guard take(0x3A) else { throw PasskeyBindingError.invalidInput }
+                    skipWhitespace()
+                    switch key {
+                    case "type":
+                        ceremony = try parseString()
+                    case "challenge":
+                        challenge = try parseString()
+                    case "origin":
+                        origin = try parseString()
+                    case "crossOrigin":
+                        crossOrigin = try parseBoolean()
+                    default:
+                        try skipValue(depth: 1)
+                    }
+                    skipWhitespace()
+                    if take(0x7D) {
+                        break
+                    }
+                    guard take(0x2C) else { throw PasskeyBindingError.invalidInput }
                 }
-                guard take(0x2C) else { throw PasskeyBindingError.invalidInput }
             }
+            skipWhitespace()
+            guard offset == bytes.count,
+                  let unwrappedCeremony = ceremony,
+                  let unwrappedChallenge = challenge,
+                  let unwrappedOrigin = origin else {
+                throw PasskeyBindingError.invalidInput
+            }
+            return StrictWebAuthnClientData(
+                ceremony: unwrappedCeremony,
+                challenge: unwrappedChallenge,
+                origin: unwrappedOrigin,
+                crossOrigin: crossOrigin
+            )
         }
 
         private mutating func skipWhitespace() {
@@ -470,17 +581,108 @@ private struct StrictWebAuthnClientData {
             return true
         }
 
-        private mutating func parseScalar() throws -> ScalarValue {
+        private mutating func parseBoolean() throws -> Bool {
             guard offset < bytes.count else { throw PasskeyBindingError.invalidInput }
             switch bytes[offset] {
-            case 0x22:
-                return .string(try parseString())
             case 0x74:
                 try parseLiteral("true")
-                return .boolean(true)
+                return true
             case 0x66:
                 try parseLiteral("false")
-                return .boolean(false)
+                return false
+            default:
+                throw PasskeyBindingError.invalidInput
+            }
+        }
+
+        private mutating func parseNumber() throws {
+            _ = take(0x2D)
+            guard offset < bytes.count else { throw PasskeyBindingError.invalidInput }
+            if bytes[offset] == 0x30 {
+                offset += 1
+            } else if (0x31...0x39).contains(bytes[offset]) {
+                offset += 1
+                while offset < bytes.count && (0x30...0x39).contains(bytes[offset]) {
+                    offset += 1
+                }
+            } else {
+                throw PasskeyBindingError.invalidInput
+            }
+            if take(0x2E) {
+                guard offset < bytes.count && (0x30...0x39).contains(bytes[offset]) else {
+                    throw PasskeyBindingError.invalidInput
+                }
+                while offset < bytes.count && (0x30...0x39).contains(bytes[offset]) {
+                    offset += 1
+                }
+            }
+            if offset < bytes.count && (bytes[offset] == 0x65 || bytes[offset] == 0x45) {
+                offset += 1
+                if offset < bytes.count && (bytes[offset] == 0x2B || bytes[offset] == 0x2D) {
+                    offset += 1
+                }
+                guard offset < bytes.count && (0x30...0x39).contains(bytes[offset]) else {
+                    throw PasskeyBindingError.invalidInput
+                }
+                while offset < bytes.count && (0x30...0x39).contains(bytes[offset]) {
+                    offset += 1
+                }
+            }
+        }
+
+        private mutating func skipValue(depth: Int) throws {
+            guard depth <= StrictWebAuthnClientData.maxJSONDepth, offset < bytes.count else {
+                throw PasskeyBindingError.invalidInput
+            }
+            switch bytes[offset] {
+            case 0x22:
+                _ = try parseString()
+            case 0x74:
+                try parseLiteral("true")
+            case 0x66:
+                try parseLiteral("false")
+            case 0x6E:
+                try parseLiteral("null")
+            case 0x2D, 0x30...0x39:
+                try parseNumber()
+            case 0x5B:
+                guard depth < StrictWebAuthnClientData.maxJSONDepth else {
+                    throw PasskeyBindingError.invalidInput
+                }
+                offset += 1
+                skipWhitespace()
+                if take(0x5D) { return }
+                var count = 0
+                while true {
+                    count += 1
+                    guard count <= 64 else { throw PasskeyBindingError.invalidInput }
+                    skipWhitespace()
+                    try skipValue(depth: depth + 1)
+                    skipWhitespace()
+                    if take(0x5D) { return }
+                    guard take(0x2C) else { throw PasskeyBindingError.invalidInput }
+                }
+            case 0x7B:
+                guard depth < StrictWebAuthnClientData.maxJSONDepth else {
+                    throw PasskeyBindingError.invalidInput
+                }
+                offset += 1
+                skipWhitespace()
+                if take(0x7D) { return }
+                var nestedKeys = Set<String>()
+                while true {
+                    guard nestedKeys.count < 64 else { throw PasskeyBindingError.invalidInput }
+                    skipWhitespace()
+                    let k = try parseString()
+                    guard nestedKeys.insert(k).inserted else { throw PasskeyBindingError.invalidInput }
+                    skipWhitespace()
+                    guard take(0x3A) else { throw PasskeyBindingError.invalidInput }
+                    skipWhitespace()
+                    try skipValue(depth: depth + 1)
+                    skipWhitespace()
+                    if take(0x7D) { return }
+                    guard take(0x2C) else { throw PasskeyBindingError.invalidInput }
+                }
             default:
                 throw PasskeyBindingError.invalidInput
             }
