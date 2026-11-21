@@ -36,7 +36,7 @@ from services.identity.trusted_issuers import (
     verify_configured_token,
 )
 
-DEFAULT_CLIENTS = ("console", "kodera-ios", "kodera-android")
+DEFAULT_CLIENTS = ("console", "kodera-ios", "kodera-android", "kodera-desktop")
 EMPTY_REFUSED = (
     "KODERA_ALLOWED_OIDC_CLIENT_IDS names no client, so every customer token would be refused; "
     "only a local profile may run with none"

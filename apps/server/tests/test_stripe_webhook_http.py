@@ -559,16 +559,16 @@ def test_g4_payment_intent_succeeded_and_charge_refunded_preserve_facturx_invoic
     assert payment_row.state == "reversed"
     assert _audit_count(org_id, "payment.refunded") == 1
 
-    # Verify Factur-X 380 Invoice row is 100% immutable after refund reconciliation.
+    # Statutory Factur-X 380 accounting fields stay immutable while collection state reopens.
     invoice_after_refund = Invoice.objects.get(id=invoice_before.id)
-    assert invoice_after_refund.state == "paid"
+    assert invoice_after_refund.state == "issued"
     assert invoice_after_refund.number == original_number
     assert invoice_after_refund.issued_at == original_issued_at
-    assert invoice_after_refund.paid_at == paid_at_snapshot
+    assert invoice_after_refund.paid_at is None
     assert invoice_after_refund.total_excl_vat_minor == invoice_before.total_excl_vat_minor
     assert invoice_after_refund.vat_amount_minor == invoice_before.vat_amount_minor
     assert invoice_after_refund.total_incl_vat_minor == total_minor
-    assert invoice_after_refund.amount_paid_minor == total_minor
+    assert invoice_after_refund.amount_paid_minor == 0
 
     # Re-delivering `charge.refunded` (same event_id AND distinct event_id) writes no extra audit row.
     res_ref_dup = _post_webhook(client, refund_evt, url=WEBHOOK_URL)
@@ -1422,7 +1422,8 @@ def test_early_charge_refunded_before_payment_is_retained_and_drained_equivalent
     )
     snap_a1 = _snapshot(w_a1, placed_a1, inv_a1, pi_a1)
     assert snap_a1[0] == "reversed"
-    assert snap_a1[3] == "paid"  # Factur-X 380 Invoice immutable
+    assert snap_a1[3] == "issued"
+    assert snap_a1[4] == 0
     assert snap_a1[6] == "past_due"  # Reversed subscription downgraded from active
     assert snap_a1[7] == "past_due"  # DunningCase placed in past_due
     assert str(snap_a1[8]).endswith(":past_due")
@@ -1518,7 +1519,7 @@ def test_early_charge_refunded_before_payment_is_retained_and_drained_equivalent
 
     assert snap_a1 == snap_a2 == snap_b
 
-    # --- Partial early refund (`refunded=False`) drains audit without reversing subscription ---
+    # --- Partial early refund (`refunded=False`) reopens invoice & moves subscription to past_due ---
     w_p, _, placed_p, inv_p, link_p = _seed_scenario_tenant("partial")
     pi_p = "pi_early_partial_0004"
     partial_ref_evt = {
@@ -1561,10 +1562,178 @@ def test_early_charge_refunded_before_payment_is_retained_and_drained_equivalent
         == "applied"
     )
     assert Payment.objects.get(provider="stripe", provider_ref=pi_p).state == "succeeded"
-    assert Subscription.objects.get(id=placed_p.subscription.id).state == "active"
+    inv_p_after = Invoice.objects.get(id=inv_p.id)
+    assert inv_p_after.state == "issued"
+    assert inv_p_after.amount_paid_minor == inv_p.total_incl_vat_minor - 1000
+    assert Subscription.objects.get(id=placed_p.subscription.id).state == "past_due"
     with connection.cursor() as cur:
         cur.execute(
             "SELECT COUNT(*) FROM audit_auditevent WHERE organisation_id = %s AND action = %s",
             [w_p.organisation.id, "payment.refunded"],
         )
         assert int(cur.fetchone()[0]) == 1
+
+
+@pytest.mark.parametrize("refund_fraction", [(1, 2), (1, 1)])
+def test_charge_refunded_partial_and_full_keep_dunning_past_due_and_allow_repayment(
+    settings, refund_fraction
+):
+    """BUG-0009 regression: both partial (50%) and full (100%) `charge.refunded` webhooks reopen a
+    paid invoice (`issued`/`overdue`), prevent `schedule_subscription()` from auto-clearing a
+    `past_due` subscription before or after `due_at`, advance dunning proposals once overdue, and
+    allow full re-settlement of the unpaid remainder via a fresh `PaymentLink`."""
+    from datetime import timedelta
+
+    import time_machine
+    from django.utils import timezone
+
+    from apps.billing.dunning_scheduler import schedule_subscription
+    from apps.billing.models import DunningAction, DunningCase
+    from apps.billing.payments.services import effective_owed_minor
+
+    settings.KODERA_STRIPE_WEBHOOK_SECRET = WEBHOOK_SECRET
+    settings.KODERA_STRIPE_EXPECTED_LIVEMODE = None
+
+    num, den = refund_fraction
+    label = f"r{num}of{den}"
+    bw = world()
+    Workspace.objects.create(organisation=bw.organisation)
+    placed = place(bw, offer(), quantity=4)
+    inv = Invoice.objects.get(id=placed.invoice.id)
+    total = int(inv.total_incl_vat_minor)
+    refund_amount = (total * num) // den
+    assert 0 < refund_amount <= total
+
+    link_1 = PaymentLink.objects.create(
+        organisation=bw.organisation,
+        invoice=inv,
+        provider="stripe",
+        provider_ref=f"cs_test_bug0009_{label}_1",
+        url=f"https://checkout.stripe.test/c/pay/cs_test_bug0009_{label}_1",
+        state="active",
+        amount_minor=total,
+        currency=inv.currency,
+        expires_at=timezone.now() + timedelta(days=7),
+    )
+    DunningCase.objects.get_or_create(subscription=placed.subscription)
+    client = Client()
+    pi_1 = f"pi_bug0009_{label}_1"
+
+    # 1. Initial full payment settles invoice and activates subscription
+    assert (
+        _post_webhook(
+            client,
+            {
+                "id": f"evt_bug0009_{label}_cs1",
+                "type": "checkout.session.completed",
+                "created": int(time.time()),
+                "data": {
+                    "object": {
+                        "id": link_1.provider_ref,
+                        "payment_intent": pi_1,
+                        "payment_status": "paid",
+                        "amount_total": total,
+                        "currency": inv.currency.lower(),
+                        "metadata": {"core_invoice_id": str(inv.id)},
+                    }
+                },
+            },
+            url=WEBHOOK_URL,
+        ).json()["status"]
+        == "applied"
+    )
+    assert Invoice.objects.get(id=inv.id).state == "paid"
+    assert Subscription.objects.get(id=placed.subscription.id).state == "active"
+
+    # 2. Refund (50% or 100%) reopens invoice and moves subscription & dunning case to `past_due`
+    assert (
+        _post_webhook(
+            client,
+            {
+                "id": f"evt_bug0009_{label}_ref1",
+                "type": "charge.refunded",
+                "created": int(time.time()) + 5,
+                "data": {
+                    "object": {
+                        "id": f"ch_bug0009_{label}_1",
+                        "payment_intent": pi_1,
+                        "amount": total,
+                        "amount_refunded": refund_amount,
+                        "currency": inv.currency.lower(),
+                        "refunded": refund_amount == total,
+                        "metadata": {"core_invoice_id": str(inv.id)},
+                    }
+                },
+            },
+            url=WEBHOOK_URL,
+        ).json()["status"]
+        == "applied"
+    )
+    inv_reopened = Invoice.objects.get(id=inv.id)
+    assert inv_reopened.state == "issued"
+    assert inv_reopened.paid_at is None
+    assert inv_reopened.amount_paid_minor == total - refund_amount
+    assert effective_owed_minor(inv_reopened) == refund_amount
+    assert Subscription.objects.get(id=placed.subscription.id).state == "past_due"
+    assert DunningCase.objects.get(subscription=placed.subscription).state == "past_due"
+
+    # 3. Running `schedule_subscription()` BEFORE `due_at` MUST NOT auto-reactivate subscription!
+    assert schedule_subscription(placed.subscription.id) is None
+    assert Subscription.objects.get(id=placed.subscription.id).state == "past_due"
+    assert DunningCase.objects.get(subscription=placed.subscription).state == "past_due"
+
+    # 4. Once past `due_at` (+ 8 days), `schedule_subscription()` marks invoice `overdue` and prepares `reminder_1`
+    assert inv_reopened.due_at is not None
+    with time_machine.travel(inv_reopened.due_at + timedelta(days=8), tick=False):
+        action = schedule_subscription(placed.subscription.id)
+    assert action is not None
+    assert isinstance(action, DunningAction)
+    assert action.step == "reminder_1"
+    assert Invoice.objects.get(id=inv.id).state == "overdue"
+    assert Subscription.objects.get(id=placed.subscription.id).state == "past_due"
+
+    # 5. Re-settlement via a fresh `PaymentLink` for the exact unpaid remainder (`refund_amount`)
+    inv_overdue = Invoice.objects.get(id=inv.id)
+    owed_now = effective_owed_minor(inv_overdue)
+    assert owed_now == refund_amount
+    link_2 = PaymentLink.objects.create(
+        organisation=bw.organisation,
+        invoice=inv_overdue,
+        provider="stripe",
+        provider_ref=f"cs_test_bug0009_{label}_2",
+        url=f"https://checkout.stripe.test/c/pay/cs_test_bug0009_{label}_2",
+        state="active",
+        amount_minor=owed_now,
+        currency=inv_overdue.currency,
+        expires_at=timezone.now() + timedelta(days=7),
+    )
+    pi_2 = f"pi_bug0009_{label}_2"
+    assert (
+        _post_webhook(
+            client,
+            {
+                "id": f"evt_bug0009_{label}_cs2",
+                "type": "checkout.session.completed",
+                "created": int(time.time()) + 10,
+                "data": {
+                    "object": {
+                        "id": link_2.provider_ref,
+                        "payment_intent": pi_2,
+                        "payment_status": "paid",
+                        "amount_total": owed_now,
+                        "currency": inv_overdue.currency.lower(),
+                        "metadata": {"core_invoice_id": str(inv.id)},
+                    }
+                },
+            },
+            url=WEBHOOK_URL,
+        ).json()["status"]
+        == "applied"
+    )
+    inv_settled = Invoice.objects.get(id=inv.id)
+    assert inv_settled.state == "paid"
+    assert inv_settled.paid_at is not None
+    assert inv_settled.amount_paid_minor == total
+    assert effective_owed_minor(inv_settled) == 0
+    assert Subscription.objects.get(id=placed.subscription.id).state == "active"
+    assert DunningCase.objects.get(subscription=placed.subscription).state == "current"

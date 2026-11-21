@@ -91,7 +91,7 @@ The static host must:
 - publish `GET https://<KODERA_DOMAIN>/.well-known/matrix/client` returning `{"m.homeserver":{"base_url":"https://matrix.<KODERA_DOMAIN>"}}` with `Access-Control-Allow-Origin: *`, because Synapse no longer answers on the server name;
 - proxy `GET https://<KODERA_DOMAIN>/.well-known/apple-app-site-association` and `GET https://<KODERA_DOMAIN>/.well-known/assetlinks.json` to `https://api.<KODERA_MATRIX_DOMAIN>` when iOS Universal Links or Android App Links are configured for `<KODERA_DOMAIN>` (see "Mobile app association");
 - serve a web client built with `VITE_AUTH_MODE=oidc`, `VITE_ENABLE_MSW=0`, `VITE_CORE_API_URL=https://api.<KODERA_MATRIX_DOMAIN>/api/v1`, `VITE_KEYCLOAK_URL=<KODERA_OIDC_PROVIDER_ORIGIN>` and `VITE_MATRIX_DOMAIN=<KODERA_MATRIX_DOMAIN>`;
-- admit exactly those origins in its Content-Security-Policy `connect-src`: the identity provider, `https://api.<KODERA_MATRIX_DOMAIN>`, `https://matrix.<KODERA_DOMAIN>` and `wss://livekit.<KODERA_DOMAIN>`.
+- admit those exact endpoints in its Content-Security-Policy `connect-src`: the identity provider, `https://api.<KODERA_MATRIX_DOMAIN>`, `wss://api.<KODERA_MATRIX_DOMAIN>/documents/collab`, `https://matrix.<KODERA_DOMAIN>`, `wss://livekit.<KODERA_DOMAIN>`, and, when external object-storage attachments are enabled, the exact `KODERA_ATTACHMENT_BASE` bucket prefix (`https://<storage-host>/<path>/`).
 
 Register the Synapse callback of your realm's `synapse` client at the Matrix origin, `https://matrix.<KODERA_DOMAIN>/_synapse/client/oidc/callback`, and keep the `console` client's callbacks on the web origin.
 
@@ -149,12 +149,13 @@ Caddy is the only service that publishes HTTP ports. In the `single` topology it
 | Path | To |
 | :--- | :--- |
 | `/api/*`, `/health/*`, `/.well-known/apple-app-site-association`, `/.well-known/assetlinks.json` | the server API |
+| `/documents/collab` | `yjs-collab` WebSocket sync |
 | `/_kodera/rooms/token` | `room-access` |
-| `/_matrix/client/*`, `/_matrix/media/*`, `/_synapse/client/*` | Synapse's client API and its sign-in callback |
+| `/_matrix/client/*`, `/_matrix/media/v3/upload`, `/_matrix/media/v3/upload/*`, `/_matrix/media/v1/create`, `/_matrix/media/v3/config`, `/_synapse/client/*` | Synapse's client API, authenticated media upload/create/config routes and sign-in callback |
 | `/rtc`, `/rtc/*` | LiveKit signalling |
 | everything else | the web client |
 
-**Caddy alone names the client.** For every upstream it overwrites `X-Forwarded-For` with the address of the peer it accepted, and drops `X-Real-IP` and `Forwarded`: a value a client sends in those headers never reaches Synapse or the API. The `Caddyfile` declares no `trusted_proxies`, because nothing sits in front of Caddy in this profile; if you put your own proxy or load balancer in front, that is a change to review, since Caddy would then see the proxy's address as every client's. Only Caddy and LiveKit publish ports on the host. Synapse, the API and the databases are reachable on the stack's internal network only, so the listener that believes the forwarded address cannot be called around Caddy.
+**Caddy alone names the client.** For every upstream it overwrites `X-Forwarded-For` with the address of the peer it accepted, and drops `X-Real-IP` and `Forwarded`: a value a client sends in those headers never reaches Synapse or the API. Caddy and `server` share a dedicated two-member `api_ingress` bridge (`KODERA_API_INGRESS_SUBNET`, with Caddy pinned to `KODERA_CADDY_API_ADDRESS` and passed to `server` as `KODERA_TRUSTED_EDGE_ADDRESSES=<address>/32`), while Caddy reaches the other fronted upstreams over `edge`, so per-client discovery and Passport quotas trust `X-Forwarded-For` exclusively from Caddy and no sibling container can spoof that peer address. The `Caddyfile` declares no `trusted_proxies`, because nothing sits in front of Caddy in this profile; if you put your own proxy or load balancer in front, that is a change to review, since Caddy would then see the proxy's address as every client's. Only Caddy and LiveKit publish ports on the host. Synapse, the API and the databases are reachable on the stack's internal networks only, so the listener that believes the forwarded address cannot be called around Caddy.
 
 It answers `404` on `/agent/*`, `/staff/*` and on every other `/_matrix/*` and `/_synapse/*` path. The agent API (`/agent/v1/...`) is for the tenant agent, which calls `http://server:8000` on the stack's internal network; Synapse's admin API (`/_synapse/admin/*`) is likewise reached by the agent only. LiveKit also publishes its media ports (7881/tcp, 50000–50200/udp), exactly those of `livekit.yaml`.
 
@@ -535,7 +536,12 @@ readable by UID `10001` (normally owner `10001:10001`, mode `0600`). Each file i
 named by its organisation UUID and contains `endpoint`, `bucket`, `region`,
 `accessKey`, `secretKey` and optionally `sessionToken`. Use an HTTPS endpoint and a
 private bucket; the worker loads credentials per operation. These values belong
-only in the separately provisioned directory.
+only in the separately provisioned directory. When browser uploads or downloads
+target that external HTTPS bucket directly in the single-origin topology, set
+`KODERA_ATTACHMENT_BASE` in `.env` to the exact dedicated HTTPS bucket prefix
+ending in `/` (for example `https://media.example.org/bucket/`, never the Core API
+or identity-provider origin); `web` forwards it as `--attachment-base` so
+`connect-src` admits only that path prefix.
 
 After an abrupt worker termination, its `unless-stopped` restart policy does not
 rerun the initializer. The worker refuses a surviving socket file. Stop the API

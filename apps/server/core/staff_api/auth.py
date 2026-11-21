@@ -20,6 +20,8 @@ from django.conf import settings
 from django.db import connection
 from django.http import HttpRequest
 
+from services.identity.discovery_input import allowed_origins
+
 from .errors import StaffApiError
 from .models import OPS_STEP_UP_MAX_AGE_SEC, STAFF_REALM, STAFF_ROLES
 
@@ -29,8 +31,10 @@ READ_TRIAGE_AMR = frozenset({"hwk", "otp"})
 OPS_REQUIRED_AMR = "hwk"
 ALLOWED_JWT_ALGS = frozenset({"RS256", "ES256"})
 MAX_BEARER_TOKEN_BYTES = 8192
+MAX_JWT_KID_CHARS = 128
 MAX_JWKS_BYTES = 65536
 JWKS_CACHE_TTL_SEC = 300.0
+JWKS_REFRESH_COOLDOWN_SEC = 60.0
 
 ORGANISATIONS_ROLES = (
     "staff_owner",
@@ -78,11 +82,13 @@ class VerifiedStaffRequest:
 class _PlaneConfig:
     issuer: str
     jwks_url: str
+    admin_hosts: tuple[str, ...]
     ops_hosts: tuple[str, ...]
 
 
 _jwks_lock = threading.Lock()
-_jwks_cache: dict[str, tuple[float, dict[str, tuple[str, PublicKey]]]] = {}
+_jwks_fetch_lock = threading.Lock()
+_jwks_cache: dict[str, tuple[float, float, dict[str, tuple[str, PublicKey]]]] = {}
 _test_jwks_registry: dict[str, dict[str, Any]] = {}
 
 
@@ -146,10 +152,42 @@ def _resolve_ops_hosts(raw: object) -> tuple[str, ...]:
     return tuple(dict.fromkeys(entries))
 
 
+def _resolve_admin_hosts(ops_hosts: tuple[str, ...]) -> tuple[str, ...]:
+    raw_explicit = getattr(settings, "KODERA_STAFF_ADMIN_HOSTS", ()) or getattr(
+        settings, "KODERA_STAFF_API_HOSTS", ()
+    )
+    entries: list[str] = []
+    if isinstance(raw_explicit, str) and raw_explicit.strip():
+        entries = [part.strip().lower() for part in raw_explicit.split(",") if part.strip()]
+    elif isinstance(raw_explicit, Sequence) and not isinstance(raw_explicit, str):
+        entries = [
+            item.strip().lower() for item in raw_explicit if isinstance(item, str) and item.strip()
+        ]
+    if not entries:
+        origins = allowed_origins(
+            getattr(settings, "KODERA_STAFF_ADMIN_ORIGINS", None),
+            loopback_http=getattr(settings, "KODERA_LOOPBACK_ISSUERS", False) is True,
+        )
+        if origins:
+            for origin in sorted(origins):
+                parsed = urlsplit(origin)
+                if parsed.netloc:
+                    entries.append(parsed.netloc.strip().lower())
+    combined = [*entries, *ops_hosts]
+    return tuple(dict.fromkeys(combined))
+
+
+def admitted_staff_hosts() -> frozenset[str]:
+    """Union of configured staff-admin and ops-admin Host values admitted onto `/staff/*`."""
+    ops_hosts = _resolve_ops_hosts(getattr(settings, "KODERA_STAFF_OPS_HOSTS", ()))
+    return frozenset(_resolve_admin_hosts(ops_hosts))
+
+
 def _resolve_plane_config() -> _PlaneConfig:
     issuer = getattr(settings, "KODERA_STAFF_OIDC_ISSUER", None)
     jwks_url = getattr(settings, "KODERA_STAFF_OIDC_JWKS_URL", None)
     ops_hosts = _resolve_ops_hosts(getattr(settings, "KODERA_STAFF_OPS_HOSTS", ()))
+    admin_hosts = _resolve_admin_hosts(ops_hosts)
     if (
         not isinstance(issuer, str)
         or not issuer.strip()
@@ -157,15 +195,21 @@ def _resolve_plane_config() -> _PlaneConfig:
         or not isinstance(jwks_url, str)
         or not jwks_url.strip()
         or not ops_hosts
+        or not admin_hosts
     ):
         raise StaffApiError(
             503,
             "staff_plane_unconfigured",
             "Staff plane unavailable",
-            "Staff OIDC issuer, JWKS endpoint, and dedicated ops-admin hosts must be configured",
+            "Staff OIDC issuer, JWKS endpoint, and dedicated staff/ops hosts must be configured",
             type_slug="c1-backend-unconfigured",
         )
-    return _PlaneConfig(issuer=issuer.strip(), jwks_url=jwks_url.strip(), ops_hosts=ops_hosts)
+    return _PlaneConfig(
+        issuer=issuer.strip(),
+        jwks_url=jwks_url.strip(),
+        admin_hosts=admin_hosts,
+        ops_hosts=ops_hosts,
+    )
 
 
 def _fetch_jwks_document(jwks_url: str) -> dict[str, Any]:
@@ -265,12 +309,39 @@ def _resolve_signing_key(jwks_url: str, kid: str) -> tuple[str, PublicKey]:
     now = time.monotonic()
     with _jwks_lock:
         cached = _jwks_cache.get(jwks_url)
-        if cached is not None and cached[0] > now and kid in cached[1]:
-            return cached[1][kid]
-    doc = _fetch_jwks_document(jwks_url)
-    keys = _parse_jwks_keys(doc)
-    with _jwks_lock:
-        _jwks_cache[jwks_url] = (time.monotonic() + JWKS_CACHE_TTL_SEC, keys)
+        has_test_override = jwks_url in _test_jwks_registry
+    if cached is not None and cached[0] > now:
+        if kid in cached[2]:
+            return cached[2][kid]
+        if not has_test_override and (now - cached[1]) < JWKS_REFRESH_COOLDOWN_SEC:
+            raise StaffApiError(
+                401,
+                "invalid_token",
+                "Authentication required",
+                "Unknown or retired signing key identifier",
+                authenticate_challenge=True,
+            )
+    with _jwks_fetch_lock:
+        now = time.monotonic()
+        with _jwks_lock:
+            cached = _jwks_cache.get(jwks_url)
+            has_test_override = jwks_url in _test_jwks_registry
+        if cached is not None and cached[0] > now:
+            if kid in cached[2]:
+                return cached[2][kid]
+            if not has_test_override and (now - cached[1]) < JWKS_REFRESH_COOLDOWN_SEC:
+                raise StaffApiError(
+                    401,
+                    "invalid_token",
+                    "Authentication required",
+                    "Unknown or retired signing key identifier",
+                    authenticate_challenge=True,
+                )
+        doc = _fetch_jwks_document(jwks_url)
+        keys = _parse_jwks_keys(doc)
+        fetched_at = time.monotonic()
+        with _jwks_lock:
+            _jwks_cache[jwks_url] = (fetched_at + JWKS_CACHE_TTL_SEC, fetched_at, keys)
     found = keys.get(kid)
     if found is None:
         raise StaffApiError(
@@ -334,7 +405,8 @@ def _verify_jwt_claims(
     if (
         alg not in ALLOWED_JWT_ALGS
         or not isinstance(kid, str)
-        or not kid
+        or not (1 <= len(kid) <= MAX_JWT_KID_CHARS)
+        or any(ord(ch) < 0x21 or ord(ch) > 0x7E for ch in kid)
         or "crit" in header
     ):
         raise StaffApiError(
@@ -388,7 +460,9 @@ def _verify_jwt_claims(
             authenticate_challenge=True,
         )
     nbf = claims.get("nbf")
-    if nbf is not None and (isinstance(nbf, bool) or not isinstance(nbf, int | float) or now_epoch < int(nbf)):
+    if nbf is not None and (
+        isinstance(nbf, bool) or not isinstance(nbf, int | float) or now_epoch < int(nbf)
+    ):
         raise StaffApiError(
             401,
             "invalid_token",
@@ -435,7 +509,9 @@ def _verify_jwt_claims(
     return claims
 
 
-def _resolve_db_staff_identity_and_roles(issuer: str, subject: str) -> tuple[UUID, UUID, tuple[str, ...]]:
+def _resolve_db_staff_identity_and_roles(
+    issuer: str, subject: str
+) -> tuple[UUID, UUID, tuple[str, ...]]:
     with connection.cursor() as cursor:
         cursor.execute(
             """
@@ -492,10 +568,15 @@ def authenticate_staff_request(
     config = _resolve_plane_config()
     now_epoch = clock() if clock is not None else int(time.time())
 
+    host = _request_host(request)
     if plane == "ops":
-        host = _request_host(request)
         host_only, _, _ = host.partition(":")
-        if not host or host_only == "admin" or host_only.startswith("admin.") or host not in config.ops_hosts:
+        if (
+            not host
+            or host_only == "admin"
+            or host_only.startswith("admin.")
+            or host not in config.ops_hosts
+        ):
             raise StaffApiError(
                 403,
                 "ops_ingress_required",
@@ -503,6 +584,14 @@ def authenticate_staff_request(
                 "Refused /staff/v1/ops/* request outside configured ops-admin Host plane",
                 type_slug="ops-ingress-required",
             )
+    elif not host or host not in config.admin_hosts:
+        raise StaffApiError(
+            403,
+            "staff_ingress_required",
+            "Dedicated staff ingress required",
+            "Refused /staff/v1/{read,triage}/* request outside configured staff-admin Host plane",
+            type_slug="staff-ingress-required",
+        )
 
     token = _extract_bearer_token(request)
     claims = _verify_jwt_claims(token, config, now_epoch=now_epoch)
@@ -531,7 +620,11 @@ def authenticate_staff_request(
                 "WebAuthn hardware-key (hwk) authentication is mandatory for /staff/v1/ops/*; OTP-only tokens are refused",
                 type_slug="hwk-required",
             )
-        if auth_time is None or auth_time > now_epoch or (now_epoch - auth_time) > OPS_STEP_UP_MAX_AGE_SEC:
+        if (
+            auth_time is None
+            or auth_time > now_epoch
+            or (now_epoch - auth_time) > OPS_STEP_UP_MAX_AGE_SEC
+        ):
             raise StaffApiError(
                 403,
                 "step_up_expired",

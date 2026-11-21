@@ -62,6 +62,21 @@ test('refusal: a drifted, missing or unlisted asset is refused by name', () => {
       'create-kodera asset drifted from deploy/community: Caddyfile',
     ],
     [
+      'legacy Matrix media v3 download is routed in the scaffolder Caddyfile',
+      { ...assets, Caddyfile: assets.Caddyfile.replace('/_synapse/client/*', '/_synapse/client/* /_matrix/media/v3/download/*') },
+      'create-kodera asset drifted from deploy/community: Caddyfile',
+    ],
+    [
+      'legacy Matrix media r0 download is routed in the scaffolder Caddyfile',
+      { ...assets, Caddyfile: assets.Caddyfile.replace('/_synapse/client/*', '/_synapse/client/* /_matrix/media/r0/download/*') },
+      'create-kodera asset drifted from deploy/community: Caddyfile',
+    ],
+    [
+      'single-origin Synapse Access-Control-Allow-Origin pin is removed from the scaffolder Caddyfile',
+      { ...assets, Caddyfile: assets.Caddyfile.replace('\t\t\theader_down Access-Control-Allow-Origin "https://{$KODERA_DOMAIN}"\n', '') },
+      'create-kodera asset drifted from deploy/community: Caddyfile',
+    ],
+    [
       'a service is dropped from the stack',
       { ...assets, 'docker-compose.yml': assets['docker-compose.yml'].replace('  synapse-db:\n', '  synapse-cache:\n') },
       'create-kodera asset drifted from deploy/community: docker-compose.yml',

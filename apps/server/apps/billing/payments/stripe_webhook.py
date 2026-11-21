@@ -30,6 +30,7 @@ from uuid import UUID
 
 from django.conf import settings
 from django.db import connection, models, transaction
+from django.utils import timezone
 
 from apps.workspaces.services import sync_subscription_quota
 from core.db.ids import new_uuid7
@@ -46,9 +47,14 @@ from ..models import (
     StripeWebhookDelivery,
     Subscription,
 )
+from ..services import set_invoice_state
 from ..states import PAYMENT_TRANSITIONS, SUBSCRIPTION_TRANSITIONS
 from .port import ProviderEvent as PortEvent
-from .services import reconcile, subscription_has_blocking_unpaid_invoice
+from .services import (
+    effective_owed_minor,
+    reconcile,
+    subscription_has_blocking_unpaid_invoice,
+)
 from .stripe import API_VERSION, SIGNATURE_HEADER, TOLERANCE_S, _translate as translate_port_event
 
 MAX_WEBHOOK_BYTES = 65_536
@@ -353,17 +359,11 @@ def _sync_settled_subscription(
 
 
 def _sync_reversed_subscription(*, invoice: Invoice) -> None:
-    """Transition subscription and dunning to `past_due` when an invoice's payment is reversed,
-    while keeping the legal Factur-X 380 invoice record immutable."""
+    """Transition subscription and dunning to `past_due` whenever net settled invoice coverage
+    falls short of `total_incl_vat_minor` after a partial or full refund."""
     if invoice.subscription_id is None:
         return
-    allocated_total = (
-        Payment.objects.filter(invoice=invoice, state="succeeded", allocated=True).aggregate(
-            total=models.Sum("amount_minor")
-        )["total"]
-        or 0
-    )
-    if allocated_total >= invoice.total_incl_vat_minor:
+    if effective_owed_minor(invoice) == 0:
         return
     subscription = (
         Subscription.objects.select_for_update().filter(id=invoice.subscription_id).first()
@@ -462,6 +462,37 @@ def _decode_deferred_refund_context(
     return charge_id, meta, data_obj
 
 
+def _previous_applied_refund_minor(payment: Payment) -> int:
+    if payment.state == "reversed":
+        return int(payment.amount_minor)
+    raw_prev = ProviderEventRecord.objects.filter(
+        provider=payment.provider,
+        payment_ref=payment.provider_ref,
+        kind="payment.reversed",
+        outcome="applied",
+    ).aggregate(max_ref=models.Max("amount_minor"))["max_ref"]
+    return int(raw_prev) if isinstance(raw_prev, int) else 0
+
+
+def _record_applied_refund_event(
+    *,
+    event_id: str,
+    payment_ref: str,
+    amount_refunded: int,
+    currency: str,
+    occurred_at: datetime,
+) -> None:
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "INSERT INTO billing_providerevent"
+            " (id, provider, event_id, kind, payment_ref, link_ref, customer_ref,"
+            " amount_minor, currency, occurred_at, outcome)"
+            " VALUES (%s, 'stripe', %s, 'payment.reversed', %s, NULL, NULL, %s, %s, %s, 'applied')"
+            " ON CONFLICT (provider, event_id) DO NOTHING",
+            [new_uuid7(), event_id, payment_ref, amount_refunded, currency, occurred_at],
+        )
+
+
 def _apply_g4_refund_to_payment(
     *,
     invoice: Invoice,
@@ -474,9 +505,14 @@ def _apply_g4_refund_to_payment(
     pi_id: str | None,
     meta: Mapping[str, Any],
     data_obj: Mapping[str, Any],
+    deferred_event_row: ProviderEventRecord | None = None,
 ) -> str:
-    """Apply a verified G4 refund against a locked `Invoice` and `Payment` without mutating the
-    issued/paid Factur-X 380 invoice."""
+    """Apply a verified G4 partial or full refund against a locked `Invoice` and `Payment`.
+
+    Statutory Factur-X 380 accounting fields (`number`, `issued_at`, `due_at`, `lines`, `total_*`)
+    remain immutable while collection coverage (`amount_paid_minor`, `state`, `paid_at`) reopens
+    any net underpaid invoice out of `paid` and transitions its subscription to `past_due`.
+    """
     organisation_id = payment.organisation_id
     mismatch_reason = _validate_bound_metadata(
         meta,
@@ -500,9 +536,6 @@ def _apply_g4_refund_to_payment(
         )
         return "mismatch"
 
-    if payment.state == "reversed":
-        return "ignored"
-
     if (
         currency != payment.currency
         or amount_refunded <= 0
@@ -525,6 +558,24 @@ def _apply_g4_refund_to_payment(
         )
         return "mismatch"
 
+    prev_refunded = _previous_applied_refund_minor(payment)
+    if amount_refunded <= prev_refunded:
+        return "ignored"
+
+    delta_refunded = amount_refunded - prev_refunded
+    if deferred_event_row is not None:
+        deferred_event_row.outcome = "applied"
+        deferred_event_row.save(update_fields=["outcome"])
+    else:
+        _record_applied_refund_event(
+            event_id=event_id,
+            payment_ref=payment.provider_ref,
+            amount_refunded=amount_refunded,
+            currency=currency,
+            occurred_at=occurred_at,
+        )
+
+    was_allocated = payment.allocated
     is_full_refund = amount_refunded == payment.amount_minor
     if is_full_refund and "reversed" in PAYMENT_TRANSITIONS.get(payment.state, frozenset()):
         payment.state = "reversed"
@@ -535,10 +586,29 @@ def _apply_g4_refund_to_payment(
             else max(payment.last_event_at, occurred_at)
         )
         payment.save(update_fields=["state", "allocated", "last_event_at", "updated_at"])
-        _sync_reversed_subscription(invoice=invoice)
     elif payment.last_event_at is None or occurred_at > payment.last_event_at:
         payment.last_event_at = occurred_at
         payment.save(update_fields=["last_event_at", "updated_at"])
+
+    invoice_state_before = invoice.state
+    invoice_paid_at_before = None if invoice.paid_at is None else invoice.paid_at.isoformat()
+    if was_allocated:
+        invoice.amount_paid_minor = max(0, int(invoice.amount_paid_minor) - delta_refunded)
+        invoice.save(update_fields=["amount_paid_minor", "updated_at"])
+
+    net_owed = effective_owed_minor(invoice)
+    after_state = invoice.state
+    if net_owed > 0 and invoice.state == "paid":
+        overdue = invoice.due_at is not None and invoice.due_at <= timezone.now()
+        after_state = "overdue" if overdue else "issued"
+        set_invoice_state(invoice, after_state, actor=SYSTEM)
+    elif net_owed > 0 and invoice.state == "issued" and invoice.due_at is not None:
+        if invoice.due_at <= timezone.now():
+            after_state = "overdue"
+            set_invoice_state(invoice, after_state, actor=SYSTEM)
+
+    if net_owed > 0:
+        _sync_reversed_subscription(invoice=invoice)
 
     events.record(
         "payment.refunded",
@@ -552,8 +622,12 @@ def _apply_g4_refund_to_payment(
             "payment_intent": pi_id or "",
             "invoice_id": str(payment.invoice_id),
             "amount_refunded_minor": amount_refunded,
+            "delta_refunded_minor": delta_refunded,
             "currency": currency,
             "partial": not is_full_refund,
+            "invoice_state_before": invoice_state_before,
+            "invoice_state_after": after_state,
+            "invoice_paid_at": invoice_paid_at_before,
         },
     )
     return "applied"
@@ -579,9 +653,11 @@ def _drain_deferred_stripe_refunds(*, invoice: Invoice, payment: Payment) -> Non
             pi_id=payment.provider_ref,
             meta=meta,
             data_obj=data_obj,
+            deferred_event_row=row,
         )
-        row.outcome = ref_outcome
-        row.save(update_fields=["outcome"])
+        if row.outcome != ref_outcome:
+            row.outcome = ref_outcome
+            row.save(update_fields=["outcome"])
         StripeWebhookDelivery.objects.filter(stripe_event_id=row.event_id).update(
             outcome=ref_outcome,
             organisation_id=invoice.organisation_id,
@@ -816,7 +892,14 @@ def _handle_payment_intent_succeeded(
                 PaymentLink.objects.filter(
                     provider="stripe",
                     invoice_id=meta_inv_id,
-                    state__in=("active", "used"),
+                    state="active",
+                )
+                .order_by("-created_at", "-id")
+                .first()
+                or PaymentLink.objects.filter(
+                    provider="stripe",
+                    invoice_id=meta_inv_id,
+                    state="used",
                 )
                 .order_by("-created_at", "-id")
                 .first()

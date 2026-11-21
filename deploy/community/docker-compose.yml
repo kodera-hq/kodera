@@ -34,6 +34,10 @@ services:
         condition: service_started
       synapse:
         condition: service_healthy
+    networks:
+      edge:
+      api_ingress:
+        ipv4_address: ${KODERA_CADDY_API_ADDRESS:-172.30.240.2}
 
   db:
     mem_limit: 512m
@@ -190,7 +194,9 @@ services:
       KODERA_COLLAB_PUBLIC_URL: wss://${KODERA_DOMAIN:-chat.example.org}/documents/collab
       KODERA_AUTH_TRUST: ${KODERA_AUTH_TRUST:?Set KODERA_AUTH_TRUST in .env (README.md, Sign-in)}
       KODERA_STAFF_ISSUER: ${KODERA_STAFF_ISSUER:-}
+      KODERA_CONSOLE_ORIGINS: https://${KODERA_DOMAIN:-chat.example.org}
       KODERA_CONSOLE_CLIENT_ID: ${KODERA_CONSOLE_CLIENT_ID:-${KODERA_OIDC_CLIENT_ID:-console}}
+      KODERA_TRUSTED_EDGE_ADDRESSES: ${KODERA_CADDY_API_ADDRESS:-172.30.240.2}/32
       KODERA_DEFAULT_COMMUNITY_ORG_SLUG: ${KODERA_DEFAULT_COMMUNITY_ORG_SLUG:-}
       KODERA_DEFAULT_COMMUNITY_ISSUER: ${KODERA_DEFAULT_COMMUNITY_ISSUER:-}
       DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-${KODERA_DOMAIN:-chat.example.org},127.0.0.1,server}
@@ -224,6 +230,9 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+    networks:
+      default:
+      api_ingress:
 
   # The only public native route is /documents/collab. The signed transformer stays private.
   yjs-collab:
@@ -244,6 +253,9 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+    networks:
+      default:
+      edge:
 
   agent-state-init:
     profiles: [community-governance]
@@ -304,6 +316,13 @@ services:
         VITE_KEYCLOAK_URL: ${KODERA_OIDC_PROVIDER_ORIGIN:?Set KODERA_OIDC_PROVIDER_ORIGIN in .env}
         VITE_MATRIX_DOMAIN: ${KODERA_MATRIX_DOMAIN:?Set KODERA_MATRIX_DOMAIN to the tenant base domain}
         VITE_TENANT_DOMAIN: ${KODERA_MATRIX_DOMAIN:?Set KODERA_MATRIX_DOMAIN to the tenant base domain}
+    environment:
+      KODERA_ATTACHMENT_BASE: ${KODERA_ATTACHMENT_BASE:-}
+    entrypoint:
+      - "/bin/sh"
+      - "-ec"
+      - 'if [ -n "$${KODERA_ATTACHMENT_BASE:-}" ]; then set -- "$$@" --attachment-base "$$KODERA_ATTACHMENT_BASE"; fi; exec node /app/static.mjs --root /srv/console --host 0.0.0.0 "$$@"'
+      - "sh"
     command:
       - "--port"
       - "8080"
@@ -318,6 +337,9 @@ services:
       - "--matrix-domain"
       - "${KODERA_MATRIX_DOMAIN:?Set KODERA_MATRIX_DOMAIN to the tenant base domain}"
     restart: unless-stopped
+    networks:
+      default:
+      edge:
 
   room-access:
     mem_limit: 256m
@@ -343,6 +365,9 @@ services:
         condition: service_healthy
       synapse:
         condition: service_healthy
+    networks:
+      default:
+      edge:
 
   synapse-db:
     mem_limit: 512m
@@ -404,6 +429,9 @@ services:
       interval: 10s
       timeout: 5s
       retries: 12
+    networks:
+      default:
+      edge:
 
   livekit:
     mem_limit: 512m
@@ -417,6 +445,9 @@ services:
       - "50000-50200:50000-50200/udp"
     volumes:
       - ./livekit.yaml:/etc/livekit.yaml:ro
+    networks:
+      default:
+      edge:
 
 volumes:
   media_socket:
@@ -429,3 +460,13 @@ volumes:
   valkey_data:
   synapse_data:
   synapse_postgres_data:
+
+networks:
+  default:
+  edge:
+    driver: bridge
+  api_ingress:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${KODERA_API_INGRESS_SUBNET:-172.30.240.0/28}

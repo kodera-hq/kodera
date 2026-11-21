@@ -696,7 +696,9 @@ def triage_feedback_item(
             },
         )
 
-    return _serialize_feedback_item(item, redact_engineering=False)
+    full_triage_roles = {"staff_owner", "staff_operator", "staff_support"}
+    redact_engineering = not bool(set(caller.roles).intersection(full_triage_roles))
+    return _serialize_feedback_item(item, redact_engineering=redact_engineering)
 
 
 def create_feedback_github_draft(
@@ -1156,9 +1158,16 @@ def grant_staff_role_mutation(
             caller = fence_staff_caller(
                 caller, allowed_roles=ROLE_ADMIN_ROLES, required_plane="ops"
             )
+            if str(role) == "staff_owner" and "staff_owner" not in caller.roles:
+                raise StaffApiError(
+                    403,
+                    "owner_role_ceiling",
+                    "Owner authority required",
+                    "Only an active staff_owner may grant staff_owner",
+                )
             cursor.execute(
                 """
-                SELECT i.enabled AND u.enabled
+                SELECT i.user_id, i.enabled AND u.enabled
                 FROM identity_identity i
                 JOIN identity_user u ON u.id = i.user_id
                 WHERE i.id = %s
@@ -1175,7 +1184,15 @@ def grant_staff_role_mutation(
                 raise StaffApiError(
                     404, "staff_identity_not_found", "Target staff identity not found"
                 )
-            if not bool(found[0]):
+            target_user_id = found[0] if isinstance(found[0], UUID) else UUID(str(found[0]))
+            if target_user_id == caller.user_id:
+                raise StaffApiError(
+                    403,
+                    "self_role_mutation_forbidden",
+                    "Two-person rule violation",
+                    "Staff members cannot grant roles to their own user account",
+                )
+            if not bool(found[1]):
                 raise StaffApiError(
                     409,
                     "staff_identity_disabled",
@@ -1248,13 +1265,31 @@ def revoke_staff_role_mutation(
             caller = fence_staff_caller(
                 caller, allowed_roles=ROLE_ADMIN_ROLES, required_plane="ops"
             )
+            if str(role) == "staff_owner" and "staff_owner" not in caller.roles:
+                raise StaffApiError(
+                    403,
+                    "owner_role_ceiling",
+                    "Owner authority required",
+                    "Only an active staff_owner may revoke staff_owner",
+                )
             cursor.execute(
-                "SELECT id FROM identity_identity WHERE id = %s AND organisation_id IS NULL AND realm = %s AND deleted_at IS NULL",
+                "SELECT user_id FROM identity_identity WHERE id = %s AND organisation_id IS NULL AND realm = %s AND deleted_at IS NULL",
                 [target_identity_id, STAFF_REALM],
             )
-            if cursor.fetchone() is None:
+            target_row = cursor.fetchone()
+            if target_row is None:
                 raise StaffApiError(
                     404, "staff_identity_not_found", "Target staff identity not found"
+                )
+            target_user_id = (
+                target_row[0] if isinstance(target_row[0], UUID) else UUID(str(target_row[0]))
+            )
+            if target_user_id == caller.user_id:
+                raise StaffApiError(
+                    403,
+                    "self_role_mutation_forbidden",
+                    "Two-person rule violation",
+                    "Staff members cannot revoke roles from their own user account",
                 )
 
             if str(role) == "staff_owner":

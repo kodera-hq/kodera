@@ -22,6 +22,7 @@ from config.environment import (
     ios_app_ids,
     legal_text_origin,
     mutation_rate_per_minute,
+    staff_admin_hosts,
     staff_issuer,
     staff_oidc_issuer,
     staff_oidc_jwks_url,
@@ -126,6 +127,7 @@ KODERA_MEDIA_GATEWAY_SOCKET = media_gateway_socket(os.environ)
 
 KODERA_STAFF_OIDC_ISSUER = staff_oidc_issuer(os.environ)
 KODERA_STAFF_OIDC_JWKS_URL = staff_oidc_jwks_url(os.environ)
+KODERA_STAFF_ADMIN_HOSTS = staff_admin_hosts(os.environ)
 KODERA_STAFF_OPS_HOSTS = staff_ops_hosts(os.environ)
 KODERA_STAFF_ADMIN_ORIGINS = os.environ.get("KODERA_STAFF_ADMIN_ORIGINS")
 KODERA_IOS_APP_IDS = ios_app_ids(os.environ)

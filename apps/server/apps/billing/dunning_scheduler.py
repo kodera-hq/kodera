@@ -24,6 +24,8 @@ from . import events
 from .actors import Actor
 from .dunning import STEPS, Debt, DeliveredStep, DunningRefusedError, Proposal, propose
 from .models import DunningAction, DunningCase, DunningDispute, Invoice, Payment, Subscription
+from .payments.services import effective_owed_minor, invoice_has_refund_or_reversal
+from .services import set_invoice_state
 from .states import SUBSCRIPTION_TRANSITIONS, require_transition
 
 EVIDENCE = re.compile(
@@ -75,9 +77,13 @@ def _locked(subscription_id: UUID) -> tuple[Subscription, DunningCase, list[Invo
 def _debts(invoices: list[Invoice], now: datetime) -> tuple[Debt, ...]:
     debts = []
     for invoice in invoices:
-        if invoice.state not in {"issued", "overdue"} or invoice.due_at is None:
+        if invoice.due_at is None:
             continue
-        owed = max(0, invoice.total_incl_vat_minor - invoice.amount_paid_minor)
+        owed = effective_owed_minor(invoice)
+        if invoice.state not in {"issued", "overdue"} and not (
+            invoice.state == "paid" and owed > 0
+        ):
+            continue
         disputes = DunningDispute.objects.filter(
             invoice=invoice,
             closed_at__isnull=True,
@@ -123,26 +129,53 @@ def _proposal(
     )
 
 
+def _undisputed_owed_minor(debt: Debt, now: datetime) -> int:
+    active_disputed = (
+        debt.disputed_minor
+        if debt.dispute_hold_until is not None and debt.dispute_hold_until > now
+        else 0
+    )
+    return max(debt.owed_minor - active_disputed, 0)
+
+
 def schedule_subscription(subscription_id: UUID) -> DunningAction | None:
     with transaction.atomic():
         subscription, case, invoices = _locked(subscription_id)
         if subscription.state not in {"active", "past_due", "suspended"}:
             return None
         now = timezone.now()
+        reopened_from_paid_ids: set[UUID] = set()
+        for invoice in invoices:
+            if invoice.state == "paid" and effective_owed_minor(invoice) > 0:
+                overdue = invoice.due_at is not None and invoice.due_at <= now
+                set_invoice_state(invoice, "overdue" if overdue else "issued", actor=SYSTEM)
+                reopened_from_paid_ids.add(invoice.id)
         debts = _debts(invoices, now)
         proposal = _proposal(subscription, case, invoices, now, debts=debts)
+        invoice_by_id = {inv.id: inv for inv in invoices}
         undisputed_overdue_ids = {
             debt.invoice_id
             for debt in debts
-            if debt.due_at < now
-            and debt.owed_minor
-            > (
-                debt.disputed_minor
-                if debt.dispute_hold_until is not None and debt.dispute_hold_until > now
-                else 0
+            if debt.due_at < now and _undisputed_owed_minor(debt, now) > 0
+        }
+        undisputed_refund_ids = {
+            debt.invoice_id
+            for debt in debts
+            if _undisputed_owed_minor(debt, now) > 0
+            and (
+                debt.invoice_id in reopened_from_paid_ids
+                or invoice_has_refund_or_reversal(invoice_by_id[debt.invoice_id])
             )
         }
         if not undisputed_overdue_ids:
+            if undisputed_refund_ids:
+                if subscription.state == "active":
+                    subscription.state = "past_due"
+                    subscription.save(update_fields=["state", "updated_at"])
+                if case.state == "current":
+                    case.state = "past_due"
+                    case.save(update_fields=["state", "updated_at"])
+                return None
             if case.state not in {"current", "terminated"}:
                 # Resume of an actually suspended tenant needs its confirmed transition, not a
                 # scheduler write. Keep the episode until that writer has resumed the tenant.
@@ -373,7 +406,7 @@ def record_dispute(
         ).aggregate(total=Sum("amount_minor"))["total"]
         or 0
     )
-    if reserved + amount_minor > invoice.total_incl_vat_minor - invoice.amount_paid_minor:
+    if reserved + amount_minor > effective_owed_minor(invoice):
         raise DunningRefusedError("dunning_dispute_exceeds_debt")
     row = DunningDispute.objects.create(
         invoice=invoice, ticket_id=ticket_id, amount_minor=amount_minor, hold_until=hold_until

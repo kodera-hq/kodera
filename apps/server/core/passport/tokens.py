@@ -69,6 +69,10 @@ class PassportSessionClaims:
     active_organisation_id: UUID | None
     issued_at: int
     expires_at: int
+    auth_time: int
+    max_expires_at: int
+    membership_id: UUID | None = None
+    role: str | None = None
 
 
 def _b64url_encode(data: bytes) -> str:
@@ -196,17 +200,40 @@ def issue_passport_session_token(
     active_organisation_id: UUID | None,
     now: int | None = None,
     ttl_seconds: int = PASSPORT_SESSION_TTL_SECONDS,
+    auth_time: int | None = None,
+    max_expires_at: int | None = None,
+    membership_id: UUID | None = None,
+    role: str | None = None,
 ) -> str:
-    """Issue a short-lived signed `kp1.<payload>.<sig>` cross-workspace session token."""
+    """Issue a short-lived signed `kp1.<payload>.<sig>` cross-workspace session token.
+
+    Preserves immutable `auth_time` and `max_exp` across workspace switches so switching can
+    never extend the original authentication session beyond `auth_time + ttl_seconds`.
+    """
     issued_at = int(time.time()) if now is None else int(now)
-    expires_at = issued_at + ttl_seconds
-    payload = {
+    effective_auth_time = issued_at if auth_time is None else int(auth_time)
+    if effective_auth_time > issued_at:
+        raise PassportSessionError("passport session auth_time is in the future")
+    absolute_ceiling = effective_auth_time + ttl_seconds
+    effective_max_exp = (
+        absolute_ceiling if max_expires_at is None else min(int(max_expires_at), absolute_ceiling)
+    )
+    expires_at = min(issued_at + ttl_seconds, effective_max_exp)
+    if expires_at <= issued_at:
+        raise PassportSessionError("passport session max lifetime exceeded")
+    payload: dict[str, object] = {
         "v": 1,
         "sub": str(user_id),
         "org": None if active_organisation_id is None else str(active_organisation_id),
         "iat": issued_at,
         "exp": expires_at,
+        "auth_time": effective_auth_time,
+        "max_exp": effective_max_exp,
     }
+    if membership_id is not None:
+        payload["mid"] = str(membership_id)
+    if role is not None:
+        payload["role"] = str(role)
     encoded_payload = _b64url_encode(
         json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
     )
@@ -248,20 +275,39 @@ def verify_passport_session_token(
         raise PassportSessionError("unsupported passport session version")
     iat = decoded.get("iat")
     exp = decoded.get("exp")
+    auth_time = decoded.get("auth_time")
+    max_exp = decoded.get("max_exp")
     if (
         isinstance(iat, bool)
         or isinstance(exp, bool)
+        or isinstance(auth_time, bool)
+        or isinstance(max_exp, bool)
         or not isinstance(iat, int)
         or not isinstance(exp, int)
+        or not isinstance(auth_time, int)
+        or not isinstance(max_exp, int)
     ):
         raise PassportSessionError("invalid passport session timestamps")
     current = int(time.time()) if now is None else int(now)
-    if exp <= current or iat > current + 60 or exp <= iat:
+    if (
+        auth_time > iat
+        or exp <= iat
+        or exp > max_exp
+        or max_exp > auth_time + PASSPORT_SESSION_TTL_SECONDS
+        or exp <= current
+        or max_exp <= current
+        or iat > current + 60
+    ):
         raise PassportSessionError("expired passport session token")
     try:
         user_id = UUID(str(decoded["sub"]))
         raw_org = decoded.get("org")
         active_org_id = None if raw_org is None else UUID(str(raw_org))
+        raw_mid = decoded.get("mid")
+        membership_id = None if raw_mid is None else UUID(str(raw_mid))
+        raw_role = decoded.get("role")
+        if raw_role is not None and not isinstance(raw_role, str):
+            raise TypeError("invalid role claim")
     except (KeyError, ValueError, TypeError) as exc:
         raise PassportSessionError("invalid passport session claims") from exc
     return PassportSessionClaims(
@@ -269,4 +315,8 @@ def verify_passport_session_token(
         active_organisation_id=active_org_id,
         issued_at=iat,
         expires_at=exp,
+        auth_time=auth_time,
+        max_expires_at=max_exp,
+        membership_id=membership_id,
+        role=raw_role,
     )
