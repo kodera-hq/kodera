@@ -819,6 +819,20 @@ def record_agent_credential_event(
     )
 
 
+def _check_workspace_resource_metadata(value: object, *, depth: int = 0) -> None:
+    if depth > 4:
+        raise ValueError("workspace resource audit metadata exceeds maximum nesting depth")
+    if isinstance(value, Mapping):
+        lowered_forbidden = {k.lower() for k in STRUCTURE_FORBIDDEN_METADATA}
+        for key, item in value.items():
+            if not isinstance(key, str) or key.lower() in lowered_forbidden:
+                raise ValueError("a workspace resource event carries no name, topic or contact")
+            _check_workspace_resource_metadata(item, depth=depth + 1)
+    elif isinstance(value, list | tuple):
+        for item in value:
+            _check_workspace_resource_metadata(item, depth=depth + 1)
+
+
 def record_workspace_resource_event(
     *,
     action: str,
@@ -829,6 +843,7 @@ def record_workspace_resource_event(
     metadata: Mapping[str, object] | None = None,
 ) -> None:
     """Append a workspace resource action with identifiers only, in its caller's transaction."""
+    import json
     import re
 
     if (
@@ -838,8 +853,9 @@ def record_workspace_resource_event(
     ):
         raise ValueError("a workspace resource event needs a bounded workspace action")
     payload = dict(metadata or {})
-    if STRUCTURE_FORBIDDEN_METADATA & set(payload):
-        raise ValueError("a workspace resource event carries no name, topic or contact")
+    _check_workspace_resource_metadata(payload)
+    if len(json.dumps(payload, separators=(",", ":"), default=str).encode("utf-8")) > 16_384:
+        raise ValueError("workspace resource audit metadata exceeds 16 KiB bound")
     AuditEvent.objects.create(
         action=action,
         actor_type="tenant",

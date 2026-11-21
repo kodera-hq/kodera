@@ -15,8 +15,9 @@ export function createCollabServer({key, store, origins, pollMilliseconds = 1000
   const wss = new WebSocketServer({noServer: true, maxPayload: MAX_BUFFER, perMessageDeflate: false})
   const rooms = new Map(), connections = new Set()
   let unauthenticated = 0, pendingBytes = 0, polling = false
-  function close(socket, code = 4403) {
-    if (socket.readyState === WebSocket.OPEN) socket.close(code, code === 4401 ? 'ticket refused' : code === 1013 ? 'retry later' : 'operation refused')
+  function close(socket, code = 4403, reason) {
+    const label = reason ?? (code === 4401 ? 'ticket refused' : code === 1013 ? 'retry later' : 'operation refused')
+    if (socket.readyState === WebSocket.OPEN) socket.close(code, label)
     if (!socket.forcedClose) {
       socket.forcedClose = setTimeout(() => socket.terminate(), 1000)
       socket.forcedClose.unref()
@@ -28,7 +29,10 @@ export function createCollabServer({key, store, origins, pollMilliseconds = 1000
     socket.send(bytes, {binary: true}, error => { if (error) close(socket, 1013) })
   }
   function failure(socket, error) {
-    close(socket, error instanceof TicketRefused ? error.code : error instanceof Refused ? 1008 : 1013)
+    if (error instanceof TicketRefused) close(socket, error.code)
+    else if (error instanceof Refused) close(socket, 1008)
+    else if (error instanceof LockBusy) close(socket, 1013, 'lock-busy')
+    else close(socket, 1013)
   }
   function roomFor(document) {
     let room = rooms.get(document)
@@ -56,9 +60,7 @@ export function createCollabServer({key, store, origins, pollMilliseconds = 1000
       await store.deliver(socket.claims, ({state, revision}) => {
         send(socket, updateFrame(state));socket.revision = revision
       }, socket.revision)
-      socket.lockBusyStreak = 0
     } catch (error) {
-      if (error instanceof LockBusy && (socket.lockBusyStreak = (socket.lockBusyStreak ?? 0) + 1) <= 2) return
       failure(socket, error)
     }
   }

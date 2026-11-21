@@ -130,7 +130,7 @@ BEGIN
 END $$;
 
 CREATE FUNCTION public.invitation_outbox_cutoff_guard() RETURNS trigger LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+SECURITY DEFINER SET search_path = pg_catalog, public AS $$
 DECLARE
     uid uuid;
 BEGIN
@@ -149,6 +149,16 @@ BEGIN
     PERFORM pg_advisory_xact_lock_shared(
         hashtextextended('privacy_erasure_cutoff:' || NEW.organisation_id::text, 0)
     );
+    IF NOT EXISTS (
+        SELECT 1 FROM public.orgs_organisation o
+        WHERE o.id = NEW.organisation_id AND o.state = 'active' AND o.deleted_at IS NULL
+    ) OR EXISTS (
+        SELECT 1 FROM public.orgs_privacyerasure pe
+        WHERE pe.organisation_reference = NEW.organisation_id
+    ) THEN
+        RAISE EXCEPTION 'invitation outbox binding organisation cutoff active' USING ERRCODE = '23514';
+    END IF;
+
     FOR uid IN
         SELECT DISTINCT p.user_id FROM (
             SELECT u.id AS user_id FROM public.identity_user u
@@ -168,23 +178,10 @@ BEGIN
 
     IF EXISTS (
         SELECT 1 FROM public.orgs_accounterasure ae
-        WHERE ae.status IN ('cutoff', 'core_purged')
-          AND (
-              COALESCE(ae.inventory->'person_email_sha256s', '[]'::jsonb) ? NEW.recipient_email_sha256
-              OR COALESCE(ae.inventory->'passport_email_sha256s', '[]'::jsonb) ? NEW.recipient_email_sha256
-          )
+        WHERE COALESCE(ae.inventory->'person_email_sha256s', '[]'::jsonb) ? NEW.recipient_email_sha256
+           OR COALESCE(ae.inventory->'passport_email_sha256s', '[]'::jsonb) ? NEW.recipient_email_sha256
     ) THEN
         RAISE EXCEPTION 'invitation outbox binding account cutoff active' USING ERRCODE = '23514';
-    END IF;
-
-    IF NOT EXISTS (
-        SELECT 1 FROM public.orgs_organisation o
-        WHERE o.id = NEW.organisation_id AND o.state = 'active' AND o.deleted_at IS NULL
-    ) OR EXISTS (
-        SELECT 1 FROM public.orgs_privacyerasure pe
-        WHERE pe.organisation_reference = NEW.organisation_id
-    ) THEN
-        RAISE EXCEPTION 'invitation outbox binding organisation cutoff active' USING ERRCODE = '23514';
     END IF;
 
     RETURN NEW;
@@ -196,8 +193,8 @@ CREATE TRIGGER aa_invitation_outbox_cutoff
     FOR EACH ROW EXECUTE FUNCTION public.invitation_outbox_cutoff_guard();
 
 CREATE OR REPLACE FUNCTION public.privacy_cutoff_guard() RETURNS trigger LANGUAGE plpgsql
-SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $$
-DECLARE item jsonb:=to_jsonb(NEW); org uuid; parent uuid; uploader_person uuid; email_sha text;
+SECURITY DEFINER SET search_path=pg_catalog,public AS $$
+DECLARE item jsonb:=to_jsonb(NEW); org uuid; parent uuid; uploader_person uuid; inv_uid uuid; email_sha text; check_inv_email boolean:=false;
 BEGIN
  IF TG_TABLE_NAME='identity_identity' AND TG_OP='UPDATE' THEN
   IF public.privacy_account_context(OLD.user_id) AND NOT NEW.enabled
@@ -221,57 +218,42 @@ BEGIN
   AND (to_jsonb(NEW)-ARRAY['subject','body','reply_to_email','contact_email','content_erased_at','updated_at'])
    IS NOT DISTINCT FROM (to_jsonb(OLD)-ARRAY['subject','body','reply_to_email','contact_email','content_erased_at','updated_at']) THEN RETURN NEW; END IF;
  END IF;
- IF TG_TABLE_NAME='orgs_invitation' THEN
-  IF TG_OP='UPDATE' THEN
-   IF OLD.membership_id IS NOT NULL
-   AND EXISTS(SELECT 1 FROM public.orgs_membership m WHERE m.id=OLD.membership_id AND public.privacy_account_context(m.user_id))
-   AND NEW.email='erased+'||OLD.id||'@invalid.test' AND NEW.display_name IS NULL
-   AND NEW.token_digest=decode('','hex') AND NEW.token_sealed=decode('','hex')
-   AND (to_jsonb(NEW)-ARRAY['email','display_name','token_digest','token_sealed','updated_at'])
-    IS NOT DISTINCT FROM (to_jsonb(OLD)-ARRAY['email','display_name','token_digest','token_sealed','updated_at']) THEN RETURN NEW; END IF;
-   IF OLD.membership_id IS NULL
-   AND EXISTS(SELECT 1 FROM public.retention_worker_context WHERE backend=pg_backend_pid() AND transaction=txid_current() AND purpose='account')
-   AND (
-    (NEW.state='revoked' AND NEW.revoked_at IS NOT NULL
-     AND (to_jsonb(NEW)-ARRAY['state','revoked_at','updated_at']) IS NOT DISTINCT FROM (to_jsonb(OLD)-ARRAY['state','revoked_at','updated_at']))
-    OR (NEW.email='erased+'||OLD.id||'@invalid.test' AND NEW.display_name IS NULL
-     AND NEW.token_digest=decode('','hex') AND NEW.token_sealed=decode('','hex')
-     AND NEW.state IN ('revoked','expired')
-     AND (to_jsonb(NEW)-ARRAY['email','display_name','token_digest','token_sealed','state','revoked_at','updated_at'])
-      IS NOT DISTINCT FROM (to_jsonb(OLD)-ARRAY['email','display_name','token_digest','token_sealed','state','revoked_at','updated_at']))
-   ) THEN RETURN NEW; END IF;
-  END IF;
-  IF (TG_OP='INSERT' OR (TG_OP='UPDATE' AND NEW.email IS DISTINCT FROM OLD.email))
-     AND NEW.email NOT LIKE 'erased+%@invalid.test'
-     AND NOT public.privacy_erasure_context(NEW.organisation_id) THEN
-   email_sha := encode(sha256(convert_to(lower(btrim(NEW.email)), 'UTF8')), 'hex');
-   IF EXISTS(
-    SELECT 1 FROM public.orgs_accounterasure ae
-    WHERE ae.status IN ('cutoff','core_purged')
-      AND (COALESCE(ae.inventory->'person_email_sha256s','[]'::jsonb) ? email_sha
-        OR COALESCE(ae.inventory->'passport_email_sha256s','[]'::jsonb) ? email_sha)
-   ) THEN
-    RAISE EXCEPTION 'durable account cutoff refuses invitation write' USING ERRCODE='23514';
-   END IF;
-  END IF;
+ IF TG_TABLE_NAME='orgs_invitation' AND TG_OP='UPDATE' THEN
+  IF OLD.membership_id IS NOT NULL
+  AND EXISTS(SELECT 1 FROM public.orgs_membership m WHERE m.id=OLD.membership_id AND public.privacy_account_context(m.user_id))
+  AND NEW.email='erased+'||OLD.id||'@invalid.test' AND NEW.display_name IS NULL
+  AND NEW.token_digest=decode('','hex') AND NEW.token_sealed=decode('','hex')
+  AND (to_jsonb(NEW)-ARRAY['email','display_name','token_digest','token_sealed','updated_at'])
+   IS NOT DISTINCT FROM (to_jsonb(OLD)-ARRAY['email','display_name','token_digest','token_sealed','updated_at']) THEN RETURN NEW; END IF;
+  IF OLD.membership_id IS NULL
+  AND EXISTS(SELECT 1 FROM public.retention_worker_context WHERE backend=pg_backend_pid() AND transaction=txid_current() AND purpose='account')
+  AND (
+   (NEW.state='revoked' AND NEW.revoked_at IS NOT NULL
+    AND (to_jsonb(NEW)-ARRAY['state','revoked_at','updated_at']) IS NOT DISTINCT FROM (to_jsonb(OLD)-ARRAY['state','revoked_at','updated_at']))
+   OR (NEW.email='erased+'||OLD.id||'@invalid.test' AND NEW.display_name IS NULL
+    AND NEW.token_digest=decode('','hex') AND NEW.token_sealed=decode('','hex')
+    AND NEW.state IN ('revoked','expired')
+    AND (to_jsonb(NEW)-ARRAY['email','display_name','token_digest','token_sealed','state','revoked_at','updated_at'])
+     IS NOT DISTINCT FROM (to_jsonb(OLD)-ARRAY['email','display_name','token_digest','token_sealed','state','revoked_at','updated_at']))
+  ) THEN RETURN NEW; END IF;
  END IF;
  IF TG_TABLE_NAME='media_attachment' THEN
   SELECT user_id INTO uploader_person FROM public.orgs_membership WHERE id=NEW.uploader_id;
-  IF uploader_person IS NOT NULL THEN
-   IF TG_OP='UPDATE' AND public.privacy_account_context(uploader_person)
+  IF TG_OP='UPDATE' THEN
+   IF uploader_person IS NOT NULL
+      AND public.privacy_account_context(uploader_person)
       AND NEW.filename='erased-'||OLD.id||'.bin'
       AND (to_jsonb(NEW)-ARRAY['filename','updated_at']) IS NOT DISTINCT FROM (to_jsonb(OLD)-ARRAY['filename','updated_at']) THEN
     RETURN NEW;
    END IF;
-   PERFORM pg_advisory_xact_lock_shared(hashtextextended('privacy_account_cutoff:'||uploader_person::text,0));
-   IF EXISTS(SELECT 1 FROM public.orgs_accounterasure WHERE user_reference=uploader_person)
-      AND NOT public.privacy_account_context(uploader_person)
-      AND NOT public.privacy_erasure_context(NEW.organisation_id) THEN
-    RAISE EXCEPTION 'durable account cutoff refuses media write' USING ERRCODE='23514';
-   END IF;
   END IF;
  END IF;
+ IF TG_TABLE_NAME='orgs_organisation' AND TG_OP='UPDATE' THEN
+  IF (to_jsonb(NEW)-ARRAY['authority_revision','owner_guard_revision'])
+   IS NOT DISTINCT FROM (to_jsonb(OLD)-ARRAY['authority_revision','owner_guard_revision']) THEN RETURN NEW; END IF;
+ END IF;
 
+ -- Canonical advisory lock order everywhere: `privacy_erasure_cutoff:<org>` BEFORE `privacy_account_cutoff:<uid>`.
  IF item ? 'organisation_id' THEN org:=(item->>'organisation_id')::uuid;
  ELSIF TG_TABLE_NAME='orgs_organisation' THEN org:=NEW.id;
  ELSIF item ? 'workspace_id' THEN
@@ -287,9 +269,6 @@ BEGIN
  ELSIF TG_TABLE_NAME='notifications_pushoutbox' THEN
   SELECT organisation_id INTO org FROM public.notifications_pushsubscription WHERE id=NEW.subscription_id;
  END IF;
- IF TG_TABLE_NAME='orgs_organisation' AND TG_OP='UPDATE'
- AND (to_jsonb(NEW)-ARRAY['authority_revision','owner_guard_revision'])
- IS NOT DISTINCT FROM (to_jsonb(OLD)-ARRAY['authority_revision','owner_guard_revision']) THEN RETURN NEW; END IF;
  IF org IS NOT NULL THEN
   PERFORM pg_advisory_xact_lock_shared(hashtextextended('privacy_erasure_cutoff:'||org::text,0));
   IF EXISTS(SELECT 1 FROM public.orgs_privacyerasure WHERE organisation_reference=org)
@@ -297,12 +276,58 @@ BEGIN
    RAISE EXCEPTION 'durable erasure cutoff refuses write' USING ERRCODE='23514';
   END IF;
  END IF;
+
+ IF TG_TABLE_NAME='orgs_invitation' THEN
+  IF TG_OP='INSERT' THEN
+   check_inv_email := true;
+  ELSIF TG_OP='UPDATE' THEN
+   check_inv_email := (NEW.email IS DISTINCT FROM OLD.email);
+  END IF;
+  IF check_inv_email
+     AND NEW.email NOT LIKE 'erased+%@invalid.test'
+     AND NOT public.privacy_erasure_context(NEW.organisation_id) THEN
+   email_sha := encode(sha256(convert_to(lower(btrim(NEW.email)), 'UTF8')), 'hex');
+   FOR inv_uid IN
+    SELECT DISTINCT p.user_id FROM (
+     SELECT u.id AS user_id FROM public.identity_user u
+     WHERE encode(sha256(convert_to(lower(btrim(u.email)), 'UTF8')), 'hex') = email_sha
+     UNION
+     SELECT i.user_id AS user_id FROM public.identity_identity i
+     WHERE encode(sha256(convert_to(lower(btrim(i.email)), 'UTF8')), 'hex') = email_sha
+    ) p ORDER BY p.user_id
+   LOOP
+    PERFORM pg_advisory_xact_lock_shared(hashtextextended('privacy_account_cutoff:'||inv_uid::text,0));
+    IF EXISTS(SELECT 1 FROM public.orgs_accounterasure WHERE user_reference=inv_uid) THEN
+     RAISE EXCEPTION 'durable account cutoff refuses invitation write' USING ERRCODE='23514';
+    END IF;
+   END LOOP;
+   IF EXISTS(
+    SELECT 1 FROM public.orgs_accounterasure ae
+    WHERE COALESCE(ae.inventory->'person_email_sha256s','[]'::jsonb) ? email_sha
+       OR COALESCE(ae.inventory->'passport_email_sha256s','[]'::jsonb) ? email_sha
+   ) THEN
+    RAISE EXCEPTION 'durable account cutoff refuses invitation write' USING ERRCODE='23514';
+   END IF;
+  END IF;
+ END IF;
+
+ IF TG_TABLE_NAME='media_attachment' THEN
+  IF uploader_person IS NOT NULL THEN
+   PERFORM pg_advisory_xact_lock_shared(hashtextextended('privacy_account_cutoff:'||uploader_person::text,0));
+   IF EXISTS(SELECT 1 FROM public.orgs_accounterasure WHERE user_reference=uploader_person)
+      AND NOT public.privacy_account_context(uploader_person)
+      AND NOT public.privacy_erasure_context(NEW.organisation_id) THEN
+    RAISE EXCEPTION 'durable account cutoff refuses media write' USING ERRCODE='23514';
+   END IF;
+  END IF;
+ END IF;
+
  RETURN NEW;
 END $$;
 REVOKE ALL ON FUNCTION public.privacy_cutoff_guard() FROM PUBLIC;
 
 CREATE FUNCTION public.core_erasure_completeness_hook() RETURNS trigger LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+SECURITY DEFINER SET search_path = pg_catalog, public AS $$
 DECLARE
     person uuid;
     org uuid;
@@ -370,6 +395,8 @@ BEGIN
                 END IF;
 
                 IF to_regclass('public.outbox_message') IS NOT NULL THEN
+                    -- `outbox_message.sealed` holds the AES-GCM ciphertext of recipient PII and link secret;
+                    -- setting `sealed = NULL` physically destroys the encrypted PII payload at rest.
                     UPDATE public.outbox_message m
                     SET sealed = NULL
                     FROM public.outbox_outboxdelivery d
@@ -385,12 +412,17 @@ BEGIN
                     SET status = 'failed',
                         finished_at = COALESCE(d.finished_at, clock_timestamp()),
                         updated_at = clock_timestamp()
-                    WHERE d.id::text IN (SELECT jsonb_array_elements_text(inv_delivery_ids))
-                      AND d.status = 'pending'
-                      AND NOT EXISTS (
-                          SELECT 1 FROM public.orgs_privacyerasure pe
-                          WHERE pe.organisation_reference = d.organisation_id
-                      );
+                    WHERE d.id IN (
+                        SELECT d2.id FROM public.outbox_outboxdelivery d2
+                        WHERE d2.id::text IN (SELECT jsonb_array_elements_text(inv_delivery_ids))
+                          AND d2.status = 'pending'
+                          AND NOT EXISTS (
+                              SELECT 1 FROM public.orgs_privacyerasure pe
+                              WHERE pe.organisation_reference = d2.organisation_id
+                          )
+                        ORDER BY d2.id
+                        FOR UPDATE
+                    );
                 END IF;
             END IF;
 
@@ -510,21 +542,26 @@ BEGIN
                     SET status = 'failed',
                         finished_at = COALESCE(d.finished_at, clock_timestamp()),
                         updated_at = clock_timestamp()
-                    WHERE d.status = 'pending'
-                      AND (
-                          d.id::text IN (SELECT jsonb_array_elements_text(inv_delivery_ids))
-                          OR EXISTS (
-                              SELECT 1 FROM public.orgs_invitationoutboxbinding ib
-                              WHERE ib.delivery_id = d.id
-                                AND ib.recipient_email_sha256 IN (
-                                    SELECT jsonb_array_elements_text(email_sha256s)
-                                )
+                    WHERE d.id IN (
+                        SELECT d2.id FROM public.outbox_outboxdelivery d2
+                        WHERE d2.status = 'pending'
+                          AND (
+                              d2.id::text IN (SELECT jsonb_array_elements_text(inv_delivery_ids))
+                              OR EXISTS (
+                                  SELECT 1 FROM public.orgs_invitationoutboxbinding ib
+                                  WHERE ib.delivery_id = d2.id
+                                    AND ib.recipient_email_sha256 IN (
+                                        SELECT jsonb_array_elements_text(email_sha256s)
+                                    )
+                              )
                           )
-                      )
-                      AND NOT EXISTS (
-                          SELECT 1 FROM public.orgs_privacyerasure pe
-                          WHERE pe.organisation_reference = d.organisation_id
-                      );
+                          AND NOT EXISTS (
+                              SELECT 1 FROM public.orgs_privacyerasure pe
+                              WHERE pe.organisation_reference = d2.organisation_id
+                          )
+                        ORDER BY d2.id
+                        FOR UPDATE
+                    );
                 END IF;
 
                 IF to_regclass('public.media_attachment') IS NOT NULL THEN
@@ -547,6 +584,7 @@ BEGIN
                 );
             END IF;
 
+            -- Account erasure completion: delete ONLY bindings belonging to this erased person.
             IF OLD.status <> 'complete' AND NEW.status = 'complete' THEN
                 DELETE FROM public.orgs_invitationoutboxbinding
                 WHERE delivery_id::text IN (SELECT jsonb_array_elements_text(inv_delivery_ids))
@@ -577,6 +615,7 @@ BEGIN
 
             IF to_regclass('public.outbox_outboxdelivery') IS NOT NULL
                AND to_regclass('public.outbox_message') IS NOT NULL THEN
+                -- Destroy AES-GCM sealed recipient PII / token ciphertext at rest for org invitations.
                 UPDATE public.outbox_message m
                 SET sealed = NULL
                 FROM public.outbox_outboxdelivery d
@@ -589,11 +628,15 @@ BEGIN
                 SET status = 'failed',
                     finished_at = COALESCE(d.finished_at, clock_timestamp()),
                     updated_at = clock_timestamp()
-                FROM public.outbox_message m
-                WHERE d.organisation_id = org
-                  AND m.delivery_id = d.id
-                  AND m.template_id IN ('invitation', 'invitation_account_ready')
-                  AND d.status = 'pending';
+                WHERE d.id IN (
+                    SELECT d2.id FROM public.outbox_outboxdelivery d2
+                    JOIN public.outbox_message m2 ON m2.delivery_id = d2.id
+                    WHERE d2.organisation_id = org
+                      AND m2.template_id IN ('invitation', 'invitation_account_ready')
+                      AND d2.status = 'pending'
+                    ORDER BY d2.id
+                    FOR UPDATE OF d2
+                );
             END IF;
 
             NEW.inventory := NEW.inventory || jsonb_build_object(
@@ -622,11 +665,16 @@ BEGIN
                 END IF;
 
                 IF to_regclass('public.outbox_outboxdelivery') IS NOT NULL THEN
-                    UPDATE public.outbox_outboxdelivery
+                    UPDATE public.outbox_outboxdelivery d
                     SET status = 'failed',
-                        finished_at = COALESCE(finished_at, clock_timestamp()),
+                        finished_at = COALESCE(d.finished_at, clock_timestamp()),
                         updated_at = clock_timestamp()
-                    WHERE organisation_id = org AND status = 'pending';
+                    WHERE d.id IN (
+                        SELECT d2.id FROM public.outbox_outboxdelivery d2
+                        WHERE d2.organisation_id = org AND d2.status = 'pending'
+                        ORDER BY d2.id
+                        FOR UPDATE
+                    );
                 END IF;
 
                 NEW.counts := COALESCE(NEW.counts, '{}'::jsonb) || jsonb_build_object(
@@ -634,6 +682,7 @@ BEGIN
                 );
             END IF;
 
+            -- Organisation-wide erasure completion: delete all invitation bindings of this erased org.
             IF OLD.status <> 'complete' AND NEW.status = 'complete' THEN
                 DELETE FROM public.orgs_invitationoutboxbinding WHERE organisation_id = org;
             END IF;
@@ -656,7 +705,7 @@ CREATE TRIGGER aa_02_core_erasure_v2
 
 CREATE FUNCTION public.privacy_confirm_account_attachments_erased(p_id uuid, p_evidence text)
 RETURNS bigint LANGUAGE plpgsql SECURITY DEFINER
-SET search_path = pg_catalog, public, pg_temp
+SET search_path = pg_catalog, public
 SET lock_timeout = '3s' SET statement_timeout = '15s' AS $$
 DECLARE
     request public.orgs_accounterasure%ROWTYPE;
@@ -676,7 +725,7 @@ BEGIN
         SELECT 1
         FROM jsonb_array_elements(COALESCE(request.inventory->'account_personal_attachments', '[]'::jsonb)) elem
         WHERE elem->>'upload_expires_at' IS NOT NULL
-          AND (elem->>'upload_expires_at')::timestamptz > clock_timestamp()
+          AND (elem->>'upload_expires_at')::timestamptz + interval '60 seconds' > clock_timestamp()
     ) THEN
         RAISE EXCEPTION 'account attachment upload window still open' USING ERRCODE = '23514';
     END IF;
@@ -695,7 +744,7 @@ BEGIN
                       AND o.is_default_community
                 )
             ) AND a.upload_expires_at IS NOT NULL
-              AND a.upload_expires_at > clock_timestamp()
+              AND a.upload_expires_at + interval '60 seconds' > clock_timestamp()
         ) THEN
             RAISE EXCEPTION 'account attachment upload window still open' USING ERRCODE = '23514';
         END IF;
@@ -748,6 +797,12 @@ CREATE OR REPLACE FUNCTION privacy_complete_erasure(p_id uuid) RETURNS boolean L
 SET search_path=pg_catalog,public SET lock_timeout='3s' SET statement_timeout='30s' AS $$
 DECLARE request public.orgs_privacyerasure%ROWTYPE; org uuid; extension_pending boolean; ee_pending boolean;
 BEGIN
+ -- Lock `privacy_erasure_cutoff:<org>` and `orgs_organisation` BEFORE `orgs_privacyerasure` to prevent AB-BA lock inversion.
+ SELECT organisation_reference INTO org FROM public.orgs_privacyerasure WHERE id=p_id;
+ IF org IS NOT NULL THEN
+  PERFORM pg_advisory_xact_lock(hashtextextended('privacy_erasure_cutoff:'||org::text,0));
+  PERFORM 1 FROM public.orgs_organisation WHERE id=org FOR UPDATE;
+ END IF;
  SELECT * INTO request FROM public.orgs_privacyerasure WHERE id=p_id FOR UPDATE;
  IF NOT FOUND OR request.core_purged_at IS NULL THEN RAISE EXCEPTION 'Core erasure incomplete' USING ERRCODE='23514'; END IF;
  IF request.inventory_sha256 IS DISTINCT FROM public.retention_inventory_digest(request.inventory)
@@ -810,6 +865,23 @@ BEGIN
    RAISE EXCEPTION 'organisation idempotency records still present' USING ERRCODE='23514';
   END IF;
  END IF;
+ IF to_regclass('public.support_supportticket') IS NOT NULL THEN
+  IF EXISTS(
+   SELECT 1 FROM public.support_supportticket t
+   WHERE t.organisation_id=org
+     AND (t.subject<>'' OR t.body<>'' OR t.reply_to_email IS NOT NULL OR t.contact_email IS NOT NULL OR t.content_erased_at IS NULL)
+  ) THEN RAISE EXCEPTION 'organisation support ticket personal data still present' USING ERRCODE='23514'; END IF;
+ END IF;
+ IF to_regclass('public.notifications_pushsubscription') IS NOT NULL THEN
+  IF EXISTS(SELECT 1 FROM public.notifications_pushsubscription WHERE organisation_id=org)
+     OR (to_regclass('public.notifications_pushoutbox') IS NOT NULL AND EXISTS(
+      SELECT 1 FROM public.notifications_pushoutbox q
+      JOIN public.notifications_pushsubscription s ON s.id=q.subscription_id
+      WHERE s.organisation_id=org
+     )) THEN
+   RAISE EXCEPTION 'organisation push subscription personal data still present' USING ERRCODE='23514';
+  END IF;
+ END IF;
  INSERT INTO public.retention_worker_context VALUES(pg_backend_pid(),txid_current(),'erase','orgs_organisation',org,'{}');
  DELETE FROM public.engine_intents_command WHERE credential_id IN (SELECT id FROM public.engine_intents_credential WHERE organisation_id=org);
  DELETE FROM public.engine_intents_channel_set WHERE organisation_id=org;
@@ -829,7 +901,7 @@ END $$;
 REVOKE ALL ON FUNCTION privacy_complete_erasure(uuid) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.privacy_complete_account_erasure(p_id uuid) RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER
-SET search_path=pg_catalog,public,pg_temp SET lock_timeout='3s' SET statement_timeout='15s' AS $$
+SET search_path=pg_catalog,public SET lock_timeout='3s' SET statement_timeout='15s' AS $$
 DECLARE request public.orgs_accounterasure%ROWTYPE; ee_pending boolean; email_shas jsonb; max_upload_exp timestamptz := NULL;
 BEGIN
  SELECT * INTO request FROM public.orgs_accounterasure WHERE id=p_id FOR UPDATE;
@@ -865,7 +937,11 @@ BEGIN
  AND NOT EXISTS(
   SELECT 1 FROM public.orgs_accountattachmenterasure
   WHERE erasure_id=p_id
-    AND verified_at>=greatest(request.cutoff_at, request.purge_not_before, COALESCE(max_upload_exp, request.cutoff_at))
+    AND verified_at>=greatest(
+        request.cutoff_at,
+        request.purge_not_before,
+        COALESCE(max_upload_exp + interval '60 seconds', request.cutoff_at)
+    )
  )
  THEN RETURN false; END IF;
  IF to_regclass('public.ee_audit_ledger') IS NOT NULL THEN
@@ -881,6 +957,26 @@ BEGIN
  IF NOT FOUND OR EXISTS(SELECT 1 FROM public.identity_identity WHERE user_id=request.user_reference AND (enabled OR email<>'erased:'||id))
  OR EXISTS(SELECT 1 FROM public.orgs_membership WHERE user_id=request.user_reference AND state<>'removed' AND deleted_at IS NULL)
  THEN RAISE EXCEPTION 'account cutoff or personal contacts still present' USING ERRCODE='23514'; END IF;
+ IF to_regclass('public.support_supportticket') IS NOT NULL THEN
+  IF EXISTS(
+   SELECT 1 FROM public.support_supportticket t
+   JOIN public.identity_identity i ON i.id=t.created_by_id
+   WHERE i.user_id=request.user_reference
+     AND (t.subject<>'' OR t.body<>'' OR t.reply_to_email IS NOT NULL OR t.contact_email IS NOT NULL OR t.content_erased_at IS NULL)
+  ) THEN RAISE EXCEPTION 'account support ticket personal data still present' USING ERRCODE='23514'; END IF;
+ END IF;
+ IF to_regclass('public.notifications_pushsubscription') IS NOT NULL THEN
+  IF EXISTS(
+   SELECT 1 FROM public.notifications_pushsubscription s
+   JOIN public.orgs_membership m ON m.id=s.membership_id
+   WHERE m.user_id=request.user_reference
+  ) OR (to_regclass('public.notifications_pushoutbox') IS NOT NULL AND EXISTS(
+   SELECT 1 FROM public.notifications_pushoutbox q
+   JOIN public.notifications_pushsubscription s ON s.id=q.subscription_id
+   JOIN public.orgs_membership m ON m.id=s.membership_id
+   WHERE m.user_id=request.user_reference
+  )) THEN RAISE EXCEPTION 'account push subscription personal data still present' USING ERRCODE='23514'; END IF;
+ END IF;
  email_shas := COALESCE(request.inventory->'person_email_sha256s', request.inventory->'passport_email_sha256s', '[]'::jsonb);
  IF EXISTS(
   SELECT 1 FROM public.orgs_invitation inv
@@ -931,6 +1027,13 @@ BEGIN
     OR m.sealed IS NOT NULL
     OR (d.status='pending' AND NOT EXISTS(SELECT 1 FROM public.orgs_privacyerasure pe WHERE pe.organisation_reference=d.organisation_id))
    )
+  ) OR EXISTS(
+   SELECT 1 FROM public.outbox_outboxdelivery d
+   JOIN public.outbox_message m ON m.delivery_id=d.id
+   WHERE m.template_id IN ('invitation', 'invitation_account_ready')
+     AND NOT EXISTS(SELECT 1 FROM public.orgs_invitationoutboxbinding ib WHERE ib.delivery_id=d.id)
+     AND (d.status IN ('pending', 'in_flight') OR m.sealed IS NOT NULL)
+     AND NOT EXISTS(SELECT 1 FROM public.orgs_privacyerasure pe WHERE pe.organisation_reference=d.organisation_id)
   ) THEN RAISE EXCEPTION 'account invitation outbox personal data still present' USING ERRCODE='23514'; END IF;
  END IF;
  INSERT INTO public.retention_worker_context VALUES(pg_backend_pid(),txid_current(),'account','identity_user',request.user_reference,'{}');

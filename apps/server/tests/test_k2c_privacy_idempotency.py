@@ -293,8 +293,8 @@ def test_bug_0011_0025_0027_0037_account_and_org_erasure_completeness(world, set
             content_type="application/pdf",
             size_bytes=4096,
             sha256="1" * 64,
-            upload_expires_at=now - timedelta(minutes=1),
-            completed_at=now - timedelta(minutes=2),
+            upload_expires_at=now - timedelta(minutes=5),
+            completed_at=now - timedelta(minutes=6),
         )
         b2b_att = Attachment.objects.create(
             organisation=org,
@@ -303,8 +303,8 @@ def test_bug_0011_0025_0027_0037_account_and_org_erasure_completeness(world, set
             content_type="application/pdf",
             size_bytes=8192,
             sha256="2" * 64,
-            upload_expires_at=now - timedelta(minutes=1),
-            completed_at=now - timedelta(minutes=2),
+            upload_expires_at=now - timedelta(minutes=5),
+            completed_at=now - timedelta(minutes=6),
         )
 
     # BUG-0037: Record an IdempotencyRecord for `members[3]` carrying PII in its response body.
@@ -561,11 +561,14 @@ def test_bug_0026_collection_portability_export_enforces_workspace_restrictions_
 
 
 def test_bug_0025_presigned_upload_window_fence_and_replay_erasure(world, settings):
-    """BUG-0025 Round-2: Both Community account erasure and B2B organisation erasure hold
-    completion while any deleted attachment still has an unexpired presigned S3 PUT window
-    (`upload_expires_at > now`), then execute a second post-expiry `DELETE -> HEAD 404` pass
-    wiping any replayed upload before certifying completion."""
+    """BUG-0025 Round-3: Both Community account erasure and B2B organisation erasure evaluate
+    `upload_expires_at + UPLOAD_DRAIN_GRACE` (60s) *before* issuing S3 `DELETE -> HEAD 404`:
+    zero S3 deletes are issued while the presigned PUT or 60s drain window is open, a late PUT
+    finishing right after presigned expiry cannot be certified, and the post-drain pass wipes
+    the late PUT and completes erasure."""
     import time
+
+    from apps.orgs.object_erasure import UPLOAD_DRAIN_GRACE
 
     org, _workspace, members, tokens = world
     staff_op = operator()
@@ -622,7 +625,9 @@ def test_bug_0025_presigned_upload_window_fence_and_replay_erasure(world, settin
         comm_ws.default_policy = comm_pol
         comm_ws.save(update_fields=["default_policy"])
 
-        window_end = database_now() + timedelta(milliseconds=1200)
+        # Presigned URL expired ~58.8s ago, so `upload_expires_at + 60s` drain grace is STILL OPEN (~1.2s left)!
+        window_end = database_now() - UPLOAD_DRAIN_GRACE + timedelta(milliseconds=1200)
+        drain_deadline = window_end + UPLOAD_DRAIN_GRACE
         comm_att = Attachment.objects.create(
             organisation=community_org,
             uploader=comm_member,
@@ -658,7 +663,7 @@ def test_bug_0025_presigned_upload_window_fence_and_replay_erasure(world, settin
         for domain in erasure.inventory["required_domains"]
     }
 
-    # Pass 1 while presigned PUT window is STILL OPEN: deletes S3 object, holds completion!
+    # Pass 1 while 60s S3 PUT drain grace is STILL OPEN: checks fence BEFORE deleting -> ZERO S3 deletes!
     first_pass = advance_account_erasure(
         erasure.id,
         account_adapters,
@@ -666,21 +671,21 @@ def test_bug_0025_presigned_upload_window_fence_and_replay_erasure(world, settin
     )
     assert first_pass["complete"] is False
     assert "account_personal_objects" in first_pass["held_domains"]
-    assert comm_deletes == [comm_key]
-    assert comm_key not in s3_objects
+    assert comm_deletes == []
+    assert comm_key in s3_objects
 
-    # Direct SQL `privacy_confirm_account_attachments_erased` also refuses while window is open!
+    # Direct SQL `privacy_confirm_account_attachments_erased` also refuses during the 60s drain grace!
     with pytest.raises(IntegrityError), transaction.atomic(), connection.cursor() as cursor:
         cursor.execute(
             "SELECT public.privacy_confirm_account_attachments_erased(%s, %s)",
             [erasure.id, "f" * 64],
         )
 
-    # Simulate client replaying the unexpired presigned PUT URL to recreate the S3 object!
-    s3_objects[comm_key] = b"replayed-put-during-open-window"
+    # Simulate a slow PUT that started right before `upload_expires_at` completing during the drain window!
+    s3_objects[comm_key] = b"late-put-started-before-expiry"
 
-    # Wait until PostgreSQL `clock_timestamp()` passes `window_end`, then run pass 2!
-    while database_now() <= window_end:
+    # Wait until PostgreSQL `clock_timestamp()` passes `upload_expires_at + 60s`, then run pass 2!
+    while database_now() <= drain_deadline:
         time.sleep(0.05)
 
     second_pass = advance_account_erasure(
@@ -690,12 +695,13 @@ def test_bug_0025_presigned_upload_window_fence_and_replay_erasure(world, settin
     )
     assert second_pass["complete"] is True
     assert second_pass["held_domains"] == []
-    assert comm_deletes == [comm_key, comm_key]
+    assert comm_deletes == [comm_key]
     assert comm_key not in s3_objects
     assert not Attachment.objects.filter(pk=comm_att.pk).exists()
 
-    # Now verify the same presigned PUT window fence on B2B organisation erasure (`ObjectWorkspaceErasureAdapter`).
-    org_window_end = database_now() + timedelta(milliseconds=1200)
+    # Now verify the same pre-delete fence on B2B organisation erasure (`ObjectWorkspaceErasureAdapter`).
+    org_window_end = database_now() - UPLOAD_DRAIN_GRACE + timedelta(milliseconds=1200)
+    org_drain_deadline = org_window_end + UPLOAD_DRAIN_GRACE
     b2b_att = Attachment.objects.create(
         organisation=org,
         uploader=members[0],
@@ -733,17 +739,17 @@ def test_bug_0025_presigned_upload_window_fence_and_replay_erasure(world, settin
     org_first = advance_erasure(org_erasure.id, org_adapters)
     assert org_first["complete"] is False
     assert "objects" in org_first["held_domains"]
-    assert org_deletes == [b2b_key]
+    assert org_deletes == []
 
-    # Simulate presigned PUT replay before `org_window_end`.
-    s3_objects[b2b_key] = b"replayed-org-put"
-    while database_now() <= org_window_end:
+    # Simulate late PUT completing before `org_drain_deadline`.
+    s3_objects[b2b_key] = b"late-org-put-during-drain"
+    while database_now() <= org_drain_deadline:
         time.sleep(0.05)
 
     org_second = advance_erasure(org_erasure.id, org_adapters)
     assert org_second["complete"] is True
     assert org_second["held_domains"] == []
-    assert org_deletes == [b2b_key] * 3  # pass 1 + pass 2 `erase_and_verify` + `verify_proof`
+    assert org_deletes == [b2b_key, b2b_key]  # `erase_and_verify` + `verify_proof`
     assert b2b_key not in s3_objects
 
 
@@ -757,7 +763,7 @@ def test_bug_0037_inflight_idempotency_receipt_blocked_across_erasure_cutoff(wor
 
     from django.db import close_old_connections
 
-    org, _workspace, members, tokens = world
+    org, workspace, members, tokens = world
     staff_op = operator()
     settings.KODERA_OUTBOX_SEAL_KEY = hashlib.sha256(b"k2c-idem-cutoff-seal").digest()
     m3_ident = Identity.objects.get(user=members[3].user, organisation=org)
@@ -766,12 +772,18 @@ def test_bug_0037_inflight_idempotency_receipt_blocked_across_erasure_cutoff(wor
 
     entered_handler = threading.Event()
     erasure_completed = threading.Event()
+    rolled_back_title = f"InFlightRollbackProbe-{new_uuid7()}"
 
     def inflight_post() -> store.Outcome:
         close_old_connections()
         try:
 
             def paused_handler() -> store.StoredResponse:
+                Collection.objects.create(
+                    workspace=workspace,
+                    creator=members[0],
+                    title=rolled_back_title,
+                )
                 entered_handler.set()
                 assert erasure_completed.wait(timeout=10)
                 return store.StoredResponse(
@@ -823,6 +835,7 @@ def test_bug_0037_inflight_idempotency_receipt_blocked_across_erasure_cutoff(wor
     assert isinstance(outcome, store.Executed)
     assert outcome.stored is False
     assert outcome.response.status == 403
+    assert not Collection.objects.filter(title=rolled_back_title).exists()
     assert not IdempotencyRecord.objects.filter(
         issuer=org.issuer, subject=original_subject
     ).exists()
@@ -1148,3 +1161,182 @@ def test_bug_0025_retention_worker_role_executes_account_attachment_erasure(worl
             )
 
     assert not Attachment.objects.filter(pk=comm_att.pk).exists()
+
+
+def test_bug_0025_default_unix_socket_delete_rpc_without_injected_deleter(world, settings):
+    """BUG-0025 Round-3: Default production deletion path (`deleter=None`) contacts the private
+    `AF_UNIX` media worker socket (`POST /rpc` `{"operation": "delete", ...}`), failing closed on
+    worker refusal and completing both account and organisation erasures on `{"deleted": true}`."""
+    import http.server
+    import os
+    import socketserver
+    import tempfile
+    import threading
+
+    org, _workspace, members, tokens = world
+    staff_op = operator()
+    settings.KODERA_OUTBOX_SEAL_KEY = hashlib.sha256(b"k2c-sock-seal-key").digest()
+    now = database_now()
+
+    with transaction.atomic():
+        community_org = Organisation.objects.create(
+            slug="community",
+            realm="community",
+            issuer="https://identity.customer.test/realms/community",
+            name="Community",
+            state="active",
+            is_default_community=True,
+        )
+        SlugReservation.objects.create(
+            organisation=community_org,
+            namespace="organisation",
+            slug=community_org.slug,
+            state="permanent",
+            protected_at=timezone.now(),
+        )
+        Membership.objects.create(
+            user=members[0].user,
+            organisation=community_org,
+            role="org_owner",
+            state="active",
+            accepted_at=timezone.now(),
+        )
+        Identity.objects.create(
+            user=members[0].user,
+            organisation=community_org,
+            issuer=community_org.issuer,
+            realm=community_org.realm,
+            subject=f"comm-sock-owner-{members[0].user_id}",
+            email=members[0].user.email,
+        )
+        comm_member = Membership.objects.create(
+            user=members[3].user,
+            organisation=community_org,
+            role="org_member",
+            state="active",
+            accepted_at=timezone.now(),
+        )
+        Identity.objects.create(
+            user=members[3].user,
+            organisation=community_org,
+            issuer=community_org.issuer,
+            realm=community_org.realm,
+            subject=f"comm-sock-{members[3].user_id}",
+            email=members[3].user.email,
+        )
+        comm_ws = Workspace.objects.create(organisation=community_org)
+        comm_pol = ResourcePolicy.objects.create(workspace=comm_ws, visibility="organisation")
+        comm_ws.default_policy = comm_pol
+        comm_ws.save(update_fields=["default_policy"])
+        comm_att = Attachment.objects.create(
+            organisation=community_org,
+            uploader=comm_member,
+            filename="unix-socket-personal.pdf",
+            content_type="application/pdf",
+            size_bytes=2048,
+            sha256="6" * 64,
+            upload_expires_at=now - timedelta(minutes=5),
+            completed_at=now - timedelta(minutes=6),
+        )
+        b2b_att = Attachment.objects.create(
+            organisation=org,
+            uploader=members[0],
+            filename="unix-socket-org.pdf",
+            content_type="application/pdf",
+            size_bytes=4096,
+            sha256="7" * 64,
+            upload_expires_at=now - timedelta(minutes=5),
+            completed_at=now - timedelta(minutes=6),
+        )
+
+    rpc_calls: list[dict[str, object]] = []
+    worker_state = {"fail": True}
+
+    class _UnixRpcHandler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self) -> None:  # noqa: N802
+            length = int(self.headers.get("Content-Length", "0"))
+            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+            rpc_calls.append(payload)
+            if self.path != "/rpc" or worker_state["fail"]:
+                self.send_response(502)
+                self.end_headers()
+                self.wfile.write(b'{"error":"s3_unreachable"}')
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"deleted":true}')
+
+        def log_message(self, _fmt: str, *_args: object) -> None:
+            return
+
+    sock_dir = tempfile.mkdtemp(prefix="k2c-", dir="/tmp")  # noqa: S108 - macOS AF_UNIX 104-byte path limit
+    sock_path = os.path.join(sock_dir, "gw.sock")
+    server = socketserver.UnixStreamServer(sock_path, _UnixRpcHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        settings.KODERA_MEDIA_GATEWAY_SOCKET = sock_path
+        erasure = admit_account(
+            world,
+            verified=replace(tokens[3], auth_time=int(database_now().timestamp())),
+            actor_identity_id=staff_op.id,
+            purge_not_before=database_now(),
+        )
+        account_adapters = {
+            d: (
+                PassportAccountOutboxErasureAdapter()
+                if d == "account_message_outbox"
+                else _AccountDomainStub(d)
+            )
+            for d in erasure.inventory["required_domains"]
+        }
+
+        # Worker returns 502 -> default socket path fails closed (`complete=False`, held)!
+        held_res = advance_account_erasure(erasure.id, account_adapters)
+        assert held_res["complete"] is False
+        assert "account_personal_objects" in held_res["held_domains"]
+
+        # Worker returns `200 {"deleted": true}` -> default socket path (`deleter=None`) completes!
+        worker_state["fail"] = False
+        ok_res = advance_account_erasure(erasure.id, account_adapters)
+        assert ok_res["complete"] is True
+        assert ok_res["held_domains"] == []
+        assert {
+            "operation": "delete",
+            "object": {
+                "organisationId": str(community_org.id),
+                "attachmentId": str(comm_att.id),
+            },
+        } in rpc_calls
+
+        # Default socket path (`ObjectWorkspaceErasureAdapter()` with `deleter=None`) on org erasure!
+        org_erasure = begin_erasure(
+            organisation_id=org.id,
+            instruction_ref="DEL-904",
+            instruction_sha256="6" * 64,
+            purge_not_before=database_now(),
+            actor_identity_id=staff_op.id,
+        )
+        org_res = advance_erasure(
+            org_erasure.id,
+            {
+                d: (ObjectWorkspaceErasureAdapter() if d == "objects" else _OrgDomainStub(d))
+                for d in org_erasure.inventory["required_domains"]
+            },
+        )
+        assert org_res["complete"] is True
+        assert {
+            "operation": "delete",
+            "object": {
+                "organisationId": str(org.id),
+                "attachmentId": str(b2b_att.id),
+            },
+        } in rpc_calls
+    finally:
+        server.shutdown()
+        server.server_close()
+        if os.path.exists(sock_path):
+            os.unlink(sock_path)
+        if os.path.exists(sock_dir):
+            os.rmdir(sock_dir)

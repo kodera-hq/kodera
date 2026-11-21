@@ -168,19 +168,37 @@ def enqueue_invitation_mails(*, limit: int = 50) -> InvitationMailReport:
                 ).hexdigest()
                 with connection.cursor() as cursor:
                     cursor.execute(
-                        "SELECT to_regclass('public.orgs_invitationoutboxbinding') IS NOT NULL"
+                        "SELECT pg_advisory_xact_lock_shared("
+                        "hashtextextended('privacy_erasure_cutoff:' || %s, 0))",
+                        [str(organisation.id)],
                     )
-                    has_binding_table = bool(cursor.fetchone()[0])
-                    if has_binding_table:
+                    cursor.execute("SELECT to_regclass('public.orgs_accounterasure') IS NOT NULL")
+                    has_account_erasure = bool(cursor.fetchone()[0])
+                    if has_account_erasure:
                         cursor.execute(
-                            "SELECT 1 FROM orgs_accounterasure ae "
-                            "WHERE ae.status IN ('cutoff', 'core_purged') "
-                            "  AND ("
-                            "    COALESCE(ae.inventory->'person_email_sha256s', '[]'::jsonb) ? %s "
-                            "    OR COALESCE(ae.inventory->'passport_email_sha256s', '[]'::jsonb) ? %s"
-                            "  ) "
-                            "LIMIT 1",
+                            "SELECT DISTINCT p.user_id FROM ("
+                            "  SELECT u.id AS user_id FROM public.identity_user u "
+                            "  WHERE encode(sha256(convert_to(lower(btrim(u.email)), 'UTF8')), 'hex') = %s "
+                            "  UNION "
+                            "  SELECT i.user_id AS user_id FROM public.identity_identity i "
+                            "  WHERE encode(sha256(convert_to(lower(btrim(i.email)), 'UTF8')), 'hex') = %s"
+                            ") p ORDER BY p.user_id",
                             [recipient_sha256, recipient_sha256],
+                        )
+                        matched_users = [str(r[0]) for r in cursor.fetchall()]
+                        for uid in matched_users:
+                            cursor.execute(
+                                "SELECT pg_advisory_xact_lock_shared("
+                                "hashtextextended('privacy_account_cutoff:' || %s, 0))",
+                                [uid],
+                            )
+                        cursor.execute(
+                            "SELECT 1 FROM public.orgs_accounterasure ae "
+                            "WHERE ae.user_reference = ANY(%s::uuid[]) "
+                            "   OR COALESCE(ae.inventory->'person_email_sha256s', '[]'::jsonb) ? %s "
+                            "   OR COALESCE(ae.inventory->'passport_email_sha256s', '[]'::jsonb) ? %s "
+                            "LIMIT 1",
+                            [matched_users, recipient_sha256, recipient_sha256],
                         )
                         if cursor.fetchone() is not None:
                             raise MessageRefusedError("invitation recipient subject to erasure")

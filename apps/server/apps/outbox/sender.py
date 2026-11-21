@@ -211,8 +211,6 @@ def enqueue_message(
         if template_id in {"invitation", "invitation_account_ready"}:
             cursor.execute("SELECT to_regclass('public.orgs_invitationoutboxbinding') IS NOT NULL")
             if cursor.fetchone()[0]:
-                import hashlib
-
                 normalized_email = recipient.strip().lower()
                 recipient_sha256 = hashlib.sha256(normalized_email.encode("utf-8")).hexdigest()
                 if invitation_id is not None:

@@ -11,7 +11,7 @@ from uuid import uuid4
 
 import pytest
 from customer_http_fixtures import configure, http_signer as http_signer, token, trust_entry
-from django.db import close_old_connections, connection, transaction
+from django.db import OperationalError, close_old_connections, connection, transaction
 from django.db.migrations.executor import MigrationExecutor
 from django.test import Client
 from django.utils import timezone
@@ -100,19 +100,24 @@ def test_bug_0010_docs_collab_fence_lock_order_concurrent_with_moderation_and_mi
         try:
             barrier.wait(timeout=5)
             for _ in range(50):
-                with transaction.atomic(), connection.cursor() as cursor:
-                    cursor.execute(
-                        "SELECT docs_collab_fence(%s,%s,%s,%s,%s,%s,'editor')",
-                        [
-                            doc.id,
-                            org.id,
-                            members[0].id,
-                            owner_identity.id,
-                            org.issuer,
-                            owner_identity.subject,
-                        ],
-                    )
-                    assert cursor.fetchone()[0] == workspace.id
+                try:
+                    with transaction.atomic(), connection.cursor() as cursor:
+                        cursor.execute(
+                            "SELECT docs_collab_fence(%s,%s,%s,%s,%s,%s,'editor')",
+                            [
+                                doc.id,
+                                org.id,
+                                members[0].id,
+                                owner_identity.id,
+                                org.issuer,
+                                owner_identity.subject,
+                            ],
+                        )
+                        assert cursor.fetchone()[0] == workspace.id
+                except OperationalError as err:
+                    sqlstate = getattr(getattr(err, "__cause__", None), "sqlstate", None)
+                    if sqlstate != "55P03":
+                        deadlocks.append(err)
         except Exception as err:
             deadlocks.append(err)
         finally:
@@ -440,10 +445,14 @@ def test_bug_0033_and_0034_invite_creator_standing_self_redemption_and_restricte
         channel_id=None,
         request_id=str(uuid4()),
     )
-    # Self-redemption of moderator link by active admin creator is refused 403.
+    # Self-redemption of moderator link by active admin creator is refused 403 with zero side effects.
     with pytest.raises(moderation.RefusalError) as self_mod:
         moderation.redeem_link(verified=tokens[1], code=mod_code, request_id=str(uuid4()))
     assert self_mod.value.status == 403
+    assert not WorkspaceModerator.objects.filter(
+        workspace=workspace, membership=members[1]
+    ).exists()
+    assert WorkspaceInviteLink.objects.get(pk=mod_link.pk).uses_count == 0
 
     # Demote `members[1]` to `org_member`: link is automatically revoked!
     _, etag_1 = membership_lifecycle.read_membership(
@@ -623,6 +632,10 @@ def test_bug_0050_granular_iam_role_overrides_enforced_end_to_end(world):
 
     assert by_channel[str(audio_chan.id)]["listen_only"] is True
     assert m3_ident.subject not in by_channel[str(audio_chan.id)]["exempt"]
+    m0_ident = Identity.objects.get(user=members[0].user, organisation=org)
+    m1_ident = Identity.objects.get(user=members[1].user, organisation=org)
+    assert m0_ident.subject in by_channel[str(audio_chan.id)]["exempt"]
+    assert m1_ident.subject in by_channel[str(audio_chan.id)]["exempt"]
 
 
 def test_bug_0050_unsupported_channel_overrides_refused_and_stored_media_caps_folded(world):
@@ -824,3 +837,158 @@ def test_bug_0010_update_orgs_membership_vs_docs_collab_fence_nowait_no_deadlock
     assert b_released.is_set()
     assert code_b == "55P03", f"expected immediate 55P03 LockNotAvailable, got {code_b}"
     assert res_a == "updated"
+
+    # Also prove workspace-first `member_set_hooks` (`workspaces_workspace FOR UPDATE -> identity_user FOR UPDATE`)
+    # cannot deadlock with `docs_collab_fence` (`identity_user FOR SHARE NOWAIT -> workspaces_workspace FOR UPDATE OF w NOWAIT`).
+    ws_barrier = threading.Barrier(2, timeout=10)
+
+    def workspace_first_member_hook() -> str:
+        close_old_connections()
+        try:
+            with transaction.atomic(), connection.cursor() as cursor:
+                cursor.execute("SET LOCAL lock_timeout = '5s'")
+                cursor.execute(
+                    "SELECT id FROM workspaces_workspace WHERE id = %s FOR UPDATE",
+                    [workspace.id],
+                )
+                ws_barrier.wait()
+                cursor.execute(
+                    "SELECT id FROM identity_user WHERE id = %s FOR UPDATE",
+                    [members[3].user_id],
+                )
+                return "hook_done"
+        finally:
+            close_old_connections()
+
+    def collab_vs_workspace_hook() -> str:
+        close_old_connections()
+        try:
+            with transaction.atomic(), connection.cursor() as cursor:
+                cursor.execute("SET LOCAL lock_timeout = '5s'")
+                cursor.execute(
+                    "SELECT id FROM identity_user WHERE id = %s FOR SHARE",
+                    [members[3].user_id],
+                )
+                ws_barrier.wait()
+                try:
+                    cursor.execute(
+                        "SELECT docs_collab_fence(%s,%s,%s,%s,%s,%s,%s)",
+                        [
+                            doc.id,
+                            org.id,
+                            members[3].id,
+                            ident.id,
+                            org.issuer,
+                            ident.subject,
+                            "editor",
+                        ],
+                    )
+                except DatabaseError as exc:
+                    cause = exc.__cause__
+                    pgcode = getattr(cause, "sqlstate", None) or getattr(cause, "pgcode", None)
+                    return str(pgcode)
+                return "unexpected_ok"
+        finally:
+            close_old_connections()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        fut_hook = pool.submit(workspace_first_member_hook)
+        fut_fence = pool.submit(collab_vs_workspace_hook)
+        assert fut_fence.result(timeout=10) == "55P03"
+        assert fut_hook.result(timeout=10) == "hook_done"
+
+
+def test_bug_0050_overrides_self_grant_notice_audit_and_metadata_bounds(world):
+    """BUG-0050 Round-3: When an admin who cannot currently view a restricted channel grants one
+    of their own roles `channel.view` via `governance.overrides()`, `ChannelNotice` is recorded
+    and `workspace.channel.overrides_updated` carries `metadata={'self_grant': True}`; audit
+    metadata also rejects case-folded PII keys and payloads exceeding 16 KiB."""
+    from apps.audit.services import record_workspace_resource_event
+
+    org, workspace, members, tokens = world
+    default_pol = ResourcePolicy.objects.create(workspace=workspace, visibility="organisation")
+    workspace.default_policy = default_pol
+    workspace.save(update_fields=["default_policy", "updated_at"])
+
+    vault_pol = ResourcePolicy.objects.create(workspace=workspace, visibility="restricted")
+    vault_chan = Channel.objects.create(
+        workspace=workspace,
+        name="Executive Vault",
+        kind="text",
+        position=0,
+        lifecycle="active",
+        policy_mode="explicit",
+        explicit_policy=vault_pol,
+    )
+
+    owner_args = {"verified": tokens[0], "organisation_id": org.id}
+    manager_top = iam.create_role(
+        **owner_args,
+        data={
+            "name": "VaultManager",
+            "slug": "vault-manager",
+            "position": 50,
+            "permissions": ["manage_roles", "channel.view"],
+        },
+        request_id=str(uuid4()),
+    )
+    vault_reader = iam.create_role(
+        **owner_args,
+        data={
+            "name": "VaultReader",
+            "slug": "vault-reader",
+            "position": 20,
+            "permissions": ["channel.view"],
+        },
+        request_id=str(uuid4()),
+    )
+    iam.assign_roles(
+        **owner_args,
+        membership_id=members[1].id,
+        role_ids=[manager_top["id"], vault_reader["id"]],
+        request_id=str(uuid4()),
+    )
+
+    # Before override, `members[1]` (`org_admin`) is NOT in `allow_members` of `vault_chan`.
+    before_view = structure.read_workspace(verified=tokens[1], organisation_id=org.id)
+    assert [c.id for c in before_view.uncategorised_channels] == []
+
+    # `members[1]` grants `channel.view` to `vault_reader` -> `self_grant=True` + `ChannelNotice`!
+    self_grant_req = str(uuid4())
+    governance.overrides(
+        verified=tokens[1],
+        organisation_id=org.id,
+        channel_id=vault_chan.id,
+        data=[{"role_id": vault_reader["id"], "allow": ["channel.view"], "deny": []}],
+        request_id=self_grant_req,
+    )
+    assert ChannelNotice.objects.filter(
+        channel=vault_chan, membership=members[1], acknowledged_at__isnull=True
+    ).exists()
+    ev = AuditEvent.objects.get(
+        organisation_id=org.id,
+        action="workspace.channel.overrides_updated",
+        request_id=self_grant_req,
+    )
+    assert ev.metadata == {"self_grant": True}
+
+    after_view = structure.read_workspace(verified=tokens[1], organisation_id=org.id)
+    assert [c.id for c in after_view.uncategorised_channels] == [vault_chan.id]
+
+    # Case-folded PII keys and >16 KiB metadata payloads are rejected by `record_workspace_resource_event`.
+    m0_ident = Identity.objects.get(user=members[0].user, organisation=org)
+    for bad_metadata in (
+        {"Name": "MixedCaseLeak"},
+        {"EMAIL": "leak@example.org"},
+        {"nested": {"Topic": "secret"}},
+        {"oversized": "x" * 17_000},
+    ):
+        with pytest.raises(ValueError):
+            record_workspace_resource_event(
+                action="workspace.channel.overrides_updated",
+                organisation_id=org.id,
+                target_id=vault_chan.id,
+                actor_id=m0_ident.id,
+                request_id=str(uuid4()),
+                metadata=bad_metadata,
+            )

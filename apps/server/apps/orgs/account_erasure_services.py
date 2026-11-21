@@ -204,6 +204,7 @@ def advance_account_erasure(
     *,
     socket_path: str | None = None,
     object_deleter: Any = None,
+    drain_grace: Any = None,
 ) -> dict[str, Any]:
     if set(adapters) - ACCOUNT_DOMAINS:
         raise ValueError("unknown account erasure adapter domain")
@@ -224,11 +225,14 @@ def advance_account_erasure(
     if personal_attachments:
         from apps.media.storage import StorageRefusedError
 
-        from .object_erasure import erase_account_personal_attachments
+        from .object_erasure import UPLOAD_DRAIN_GRACE, erase_account_personal_attachments
 
         try:
             confirmed = erase_account_personal_attachments(
-                scope, socket_path=socket_path, deleter=object_deleter
+                scope,
+                socket_path=socket_path,
+                deleter=object_deleter,
+                drain_grace=UPLOAD_DRAIN_GRACE if drain_grace is None else drain_grace,
             )
             if not confirmed:
                 objects_held = True

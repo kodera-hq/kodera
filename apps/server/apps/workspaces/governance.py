@@ -23,6 +23,7 @@ from .models import (
     Workspace,
     WorkspaceChannelRoleOverride,
     WorkspaceMemberRestriction,
+    WorkspaceMemberRole,
 )
 from .moderation import ADMINS, RefusalError, _audit, _storable_text, _text
 from .moderation_wire import tag
@@ -154,6 +155,32 @@ def profile(
     )[0]
 
 
+def _caller_role_ids(workspace: Workspace, membership_id: UUID) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            {
+                str(role_id)
+                for role_id in WorkspaceMemberRole.objects.filter(
+                    workspace=workspace, membership_id=membership_id
+                ).values_list("role_id", flat=True)
+            }
+        )
+    )
+
+
+def _channel_overrides_tuples(
+    workspace: Workspace, channel_id: UUID
+) -> list[tuple[str, tuple[str, ...], tuple[str, ...]]]:
+    return [
+        (str(role_id), tuple(allow), tuple(deny))
+        for role_id, allow, deny in WorkspaceChannelRoleOverride.objects.filter(
+            workspace=workspace, channel_id=channel_id
+        )
+        .order_by("role_id")
+        .values_list("role_id", "allow", "deny")
+    ]
+
+
 def _check_channel_visible(workspace: Workspace, caller: TenantCaller, channel_id: UUID) -> None:
     if not Channel.objects.filter(
         id=channel_id, workspace=workspace, lifecycle__in=["active", "provisioning"]
@@ -172,6 +199,8 @@ def _check_channel_visible(workspace: Workspace, caller: TenantCaller, channel_i
             organisation_id=workspace.organisation_id,
             membership_id=caller.membership_id,
             authority_revision=caller.authority_revision,
+            member_role_ids=_caller_role_ids(workspace, caller.membership_id),
+            channel_overrides=_channel_overrides_tuples(workspace, channel_id),
         ):
             raise RefusalError(404)
 
@@ -234,29 +263,39 @@ def overrides(
             access = resolve(channel_id)
         except WorkspaceUnavailableError:
             access = None
+        caller_roles = _caller_role_ids(workspace, caller.membership_id)
+        pre_overrides = [
+            (str(row.role_id), tuple(row.allow), tuple(row.deny))
+            for row in sorted(existing, key=lambda item: str(item.role_id))
+        ]
         viewed_before = (
             may_view(
                 access,
                 organisation_id=workspace.organisation_id,
                 membership_id=caller.membership_id,
                 authority_revision=caller.authority_revision,
+                member_role_ids=caller_roles,
+                channel_overrides=pre_overrides,
             )
             if access is not None
             else True
         )
         rows.delete()
-        WorkspaceChannelRoleOverride.objects.bulk_create(
-            [
-                WorkspaceChannelRoleOverride(
-                    workspace=workspace,
-                    channel_id=channel_id,
-                    role=by_id[str(UUID(entry["role_id"]))],
-                    allow=entry["allow"],
-                    deny=entry["deny"],
-                )
-                for entry in data
-            ]
-        )
+        created_rows = [
+            WorkspaceChannelRoleOverride(
+                workspace=workspace,
+                channel_id=channel_id,
+                role=by_id[str(UUID(entry["role_id"]))],
+                allow=entry["allow"],
+                deny=entry["deny"],
+            )
+            for entry in data
+        ]
+        WorkspaceChannelRoleOverride.objects.bulk_create(created_rows)
+        post_overrides = [
+            (str(row.role_id), tuple(row.allow), tuple(row.deny))
+            for row in sorted(created_rows, key=lambda item: str(item.role_id))
+        ]
         self_grant = (
             access is not None
             and not viewed_before
@@ -265,6 +304,8 @@ def overrides(
                 organisation_id=workspace.organisation_id,
                 membership_id=caller.membership_id,
                 authority_revision=caller.authority_revision,
+                member_role_ids=caller_roles,
+                channel_overrides=post_overrides,
             )
         )
         if self_grant:

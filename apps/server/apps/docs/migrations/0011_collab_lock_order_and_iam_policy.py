@@ -116,9 +116,9 @@ BEGIN
   SELECT m.user_id INTO principal_user FROM public.orgs_membership m
     WHERE m.id=p_member AND m.organisation_id=p_organisation;
   IF NOT FOUND THEN RETURN NULL; END IF;
-  PERFORM 1 FROM public.identity_user u WHERE u.id=principal_user FOR SHARE;
+  PERFORM 1 FROM public.identity_user u WHERE u.id=principal_user FOR SHARE NOWAIT;
   IF NOT FOUND THEN RETURN NULL; END IF;
-  PERFORM 1 FROM public.orgs_organisation o WHERE o.id=p_organisation FOR SHARE;
+  PERFORM 1 FROM public.orgs_organisation o WHERE o.id=p_organisation FOR SHARE NOWAIT;
   IF NOT FOUND THEN RETURN NULL; END IF;
   PERFORM 1 FROM public.identity_identity i
     WHERE i.id=p_identity AND i.user_id=principal_user AND i.organisation_id=p_organisation
@@ -130,7 +130,7 @@ BEGIN
   IF NOT FOUND THEN RETURN NULL; END IF;
   SELECT w.id INTO scope_workspace FROM public.workspaces_workspace w
     JOIN public.docs_document d ON d.workspace_id=w.id
-    WHERE d.id=p_document AND w.organisation_id=p_organisation FOR UPDATE OF w;
+    WHERE d.id=p_document AND w.organisation_id=p_organisation FOR UPDATE OF w NOWAIT;
   IF NOT FOUND OR p_role IS NULL OR p_role NOT IN ('editor','viewer')
      OR public.docs_document_role(p_document,p_organisation,p_member,p_identity,p_issuer,p_subject)
         IS DISTINCT FROM p_role THEN RETURN NULL; END IF;

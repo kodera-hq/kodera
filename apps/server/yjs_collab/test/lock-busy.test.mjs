@@ -1,12 +1,18 @@
 import assert from 'node:assert/strict'
-import { EventEmitter } from 'node:events'
+import { createHmac } from 'node:crypto'
+import { EventEmitter, once } from 'node:events'
 import test from 'node:test'
+import * as Y from 'yjs'
 import { WebSocket } from 'ws'
-import { LockBusy, Store, Unavailable } from '../store.mjs'
+import { load } from '../engine.mjs'
+import { updateFrame } from '../protocol.mjs'
 import { createCollabServer } from '../socket-server.mjs'
+import { LockBusy, Store, Unavailable } from '../store.mjs'
 import { TicketRefused } from '../tickets.mjs'
 
+const nowSeconds = Math.floor(Date.now() / 1000)
 const VALID_CLAIMS = {
+  v: 1,
   document: '00000000-0000-7000-8000-000000000001',
   organisation: '00000000-0000-7000-8000-000000000002',
   membership: '00000000-0000-7000-8000-000000000003',
@@ -14,8 +20,14 @@ const VALID_CLAIMS = {
   issuer: 'https://identity.customer.test/realms/alpha',
   subject: 'subject-1',
   role: 'editor',
-  nonce: 'nonce-1234567890123456',
-  expires: Math.floor(Date.now() / 1000) + 300,
+  issued: nowSeconds,
+  expires: nowSeconds + 60,
+  nonce: '00000000-0000-7000-8000-000000000005',
+}
+
+function signTicket(claims, key) {
+  const body = Buffer.from(JSON.stringify(claims)).toString('base64url')
+  return body + '.' + createHmac('sha256', key).update(body).digest('base64url')
 }
 
 test('Store.transaction classifies PostgreSQL lock/timeout SQLSTATEs as LockBusy subclass of Unavailable', async () => {
@@ -43,41 +55,65 @@ test('Store.transaction classifies PostgreSQL lock/timeout SQLSTATEs as LockBusy
   }
 })
 
-test('createCollabServer background refresh tolerates up to 2 transient LockBusy ticks before closing 1013', async () => {
+test('createCollabServer closes immediately with 1013 lock-busy on both client update and refresh LockBusy without silently dropping edits', async () => {
+  const key = Buffer.alloc(32, 7)
+  const docState = Y.encodeStateAsUpdate(load())
   let mode = 'busy'
-  let deliverCalls = 0
   const store = {
     async admit(_claims, consumer) {
-      consumer({ state: Buffer.from([0, 0]), revision: 1 })
+      consumer({ state: Buffer.from(docState), revision: 1 })
     },
     async deliver(_claims, _consumer) {
-      deliverCalls += 1
-      if (mode === 'busy') throw new LockBusy(Object.assign(new Error('lock not available'), { code: '55P03' }))
+      if (mode === 'busy') {
+        throw new LockBusy(Object.assign(new Error('lock not available'), { code: '55P03' }))
+      }
       if (mode === 'refused') throw new TicketRefused(4403)
+    },
+    async update(_claims, _body) {
+      throw new LockBusy(Object.assign(new Error('lock not available'), { code: '55P03' }))
     },
     async emit(_claims, fn) {
       return fn()
     },
   }
   const collab = createCollabServer({
-    key: Buffer.alloc(32, 7),
+    key,
     store,
     origins: new Set(['https://app.localhost']),
     pollMilliseconds: 60_000,
   })
+  await new Promise(resolve => collab.server.listen(0, '127.0.0.1', resolve))
   try {
+    const { port } = collab.server.address()
+
+    // 1. Client Yjs update encountering LockBusy closes immediately with 1013 ('lock-busy'), never silently dropping the update.
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/documents/collab`, {
+      headers: { Origin: 'https://app.localhost' },
+    })
+    await once(ws, 'open')
+    const initialMsg = once(ws, 'message')
+    ws.send(JSON.stringify({ type: 'auth', token: signTicket(VALID_CLAIMS, key) }))
+    await initialMsg
+
+    const editDoc = load()
+    editDoc.getXmlFragment('content').insert(0, [new Y.XmlElement('paragraph')])
+    const closePromise = once(ws, 'close')
+    ws.send(updateFrame(Y.encodeStateAsUpdate(editDoc)))
+    const [updateCloseCode, updateCloseReason] = await closePromise
+    assert.equal(updateCloseCode, 1013)
+    assert.equal(updateCloseReason.toString('utf8'), 'lock-busy')
+
+    // 2. Background refresh encountering LockBusy also closes immediately with 1013 ('lock-busy').
     const docId = VALID_CLAIMS.document
-    const closedCodes = []
-    const fakeSocket = Object.assign(new EventEmitter(), {
+    const closed = []
+    const refreshSocket = Object.assign(new EventEmitter(), {
       readyState: WebSocket.OPEN,
       bufferedAmount: 0,
       claims: VALID_CLAIMS,
       revision: 1,
-      send(_bytes, _opts, cb) {
-        if (cb) cb()
-      },
-      close(code) {
-        closedCodes.push(code)
+      send() {},
+      close(code, reason) {
+        closed.push([code, reason])
         this.readyState = WebSocket.CLOSED
       },
       terminate() {},
@@ -85,41 +121,24 @@ test('createCollabServer background refresh tolerates up to 2 transient LockBusy
     collab.rooms.set(docId, {
       doc: { destroy() {} },
       awareness: { getStates: () => new Map() },
-      connections: new Set([fakeSocket]),
+      connections: new Set([refreshSocket]),
       owners: new Map(),
       refreshing: false,
     })
-
-    // First two LockBusy ticks during concurrent moderation lock are absorbed.
-    await collab.notify(docId)
-    await collab.notify(docId)
-    assert.equal(deliverCalls, 2)
-    assert.deepEqual(closedCodes, [])
-
-    // A successful tick resets the streak.
-    mode = 'ok'
-    await collab.notify(docId)
-    assert.equal(deliverCalls, 3)
-    assert.deepEqual(closedCodes, [])
-
-    // Three consecutive LockBusy ticks close with 1013 (retry later).
     mode = 'busy'
     await collab.notify(docId)
-    await collab.notify(docId)
-    assert.deepEqual(closedCodes, [])
-    await collab.notify(docId)
-    assert.deepEqual(closedCodes, [1013])
+    assert.deepEqual(closed, [[1013, 'lock-busy']])
 
-    // Immediate TicketRefused (e.g., kicked/banned) closes immediately with 4403 on first tick.
+    // 3. Immediate TicketRefused (e.g., kicked/banned) closes immediately with 4403.
+    const revokedClosed = []
     const revokedSocket = Object.assign(new EventEmitter(), {
       readyState: WebSocket.OPEN,
       bufferedAmount: 0,
       claims: VALID_CLAIMS,
       revision: 1,
-      closeCode: null,
       send() {},
-      close(code) {
-        this.closeCode = code
+      close(code, reason) {
+        revokedClosed.push([code, reason])
         this.readyState = WebSocket.CLOSED
       },
       terminate() {},
@@ -127,7 +146,7 @@ test('createCollabServer background refresh tolerates up to 2 transient LockBusy
     collab.rooms.get(docId).connections = new Set([revokedSocket])
     mode = 'refused'
     await collab.notify(docId)
-    assert.equal(revokedSocket.closeCode, 4403)
+    assert.deepEqual(revokedClosed, [[4403, 'operation refused']])
   } finally {
     await collab.shutdown()
   }

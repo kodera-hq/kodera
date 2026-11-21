@@ -26,7 +26,6 @@ from services.identity.access_tokens import VerifiedAccessToken
 from services.workspace_policy.projection import evaluate
 
 from .models import (
-    POLICY_CAPABILITIES,
     Category,
     Channel,
     ResourcePolicy,
@@ -282,23 +281,25 @@ def _allowed(
     *,
     kind: str,
     lifecycle: str,
-    role_ids: list[str] | None = None,
-    channel_overrides: list[tuple[str, tuple[str, ...], tuple[str, ...]]] | None = None,
+    role_ids: list[str],
+    channel_overrides: list[tuple[str, tuple[str, ...], tuple[str, ...]]],
 ) -> bool:
-    assigned = role_ids or []
+    assigned = role_ids
     assigned_set = set(assigned)
     allow_roles: list[str] = []
     deny_roles: list[str] = []
     override_allow: set[str] = set()
     override_deny: set[str] = set()
-    for role_id_str, allow, deny in channel_overrides or []:
+    for role_id_str, allow, deny in channel_overrides:
         if VIEW in allow:
             allow_roles.append(role_id_str)
         if VIEW in deny:
             deny_roles.append(role_id_str)
         if role_id_str in assigned_set:
-            override_allow.update(p for p in allow if p in POLICY_CAPABILITIES)
-            override_deny.update(p for p in deny if p in POLICY_CAPABILITIES)
+            if VIEW in allow:
+                override_allow.add(VIEW)
+            if VIEW in deny:
+                override_deny.add(VIEW)
     effective_denied = (set(policy.denied) - override_allow) | override_deny
     decision = evaluate(
         {

@@ -260,6 +260,43 @@ def _emit(workspace: Workspace, reason: str) -> None:
     emit_for(organisation_id=workspace.organisation_id, workspace_id=workspace.id, reason=reason)
 
 
+def _member_view_allowed(
+    workspace: Workspace,
+    channel_access: Any,
+    membership_id: UUID,
+    authority_revision: int,
+) -> bool:
+    from .channel_access import may_view
+    from .models import WorkspaceChannelRoleOverride, WorkspaceMemberRole
+
+    role_ids = tuple(
+        sorted(
+            {
+                str(role_id)
+                for role_id in WorkspaceMemberRole.objects.filter(
+                    workspace=workspace, membership_id=membership_id
+                ).values_list("role_id", flat=True)
+            }
+        )
+    )
+    overrides = [
+        (str(role_id), tuple(allow), tuple(deny))
+        for role_id, allow, deny in WorkspaceChannelRoleOverride.objects.filter(
+            workspace=workspace, channel_id=channel_access.channel_id
+        )
+        .order_by("role_id")
+        .values_list("role_id", "allow", "deny")
+    ]
+    return may_view(
+        channel_access,
+        organisation_id=workspace.organisation_id,
+        membership_id=membership_id,
+        authority_revision=authority_revision,
+        member_role_ids=role_ids,
+        channel_overrides=overrides,
+    )
+
+
 @transaction.atomic
 def moderate(
     *,
@@ -339,7 +376,7 @@ def create_link(
         raise RefusalError(422)
     channel = None
     if channel_id is not None:
-        from .channel_access import may_view, resolve
+        from .channel_access import resolve
         from .structure import WorkspaceUnavailableError
 
         channel = Channel.objects.filter(
@@ -351,11 +388,8 @@ def create_link(
             channel_access = resolve(channel.id)
         except WorkspaceUnavailableError:
             raise RefusalError(404) from None
-        if not may_view(
-            channel_access,
-            organisation_id=workspace.organisation_id,
-            membership_id=caller.membership_id,
-            authority_revision=caller.authority_revision,
+        if not _member_view_allowed(
+            workspace, channel_access, caller.membership_id, caller.authority_revision
         ):
             raise RefusalError(404)
     code = secrets.token_urlsafe(32)
@@ -433,18 +467,18 @@ def _verify_link_creator(
     if denied:
         raise RefusalError(403)
     if link.channel_id is not None:
-        from .channel_access import may_view, resolve
+        from .channel_access import resolve
         from .structure import WorkspaceUnavailableError
 
         try:
             channel_access = resolve(link.channel_id)
         except (Channel.DoesNotExist, WorkspaceUnavailableError):
             raise RefusalError(403) from None
-        if channel_access.lifecycle not in {"active", "provisioning"} or not may_view(
-            channel_access,
-            organisation_id=workspace.organisation_id,
-            membership_id=creator.id,
-            authority_revision=workspace.organisation.authority_revision,
+        if channel_access.lifecycle not in {
+            "active",
+            "provisioning",
+        } or not _member_view_allowed(
+            workspace, channel_access, creator.id, workspace.organisation.authority_revision
         ):
             raise RefusalError(403)
     if not check_auto_roles or not link.auto_role_ids:
@@ -609,14 +643,11 @@ def report(
     if not isinstance(event_id, str) or len(event_id) > 512 or not _storable_text(event_id):
         raise RefusalError(422)
     if channel_id is not None:
-        from .channel_access import may_view, resolve
+        from .channel_access import resolve
 
         channel = Channel.objects.filter(id=channel_id, workspace=workspace).first()
-        if channel is None or not may_view(
-            resolve(channel.id),
-            organisation_id=workspace.organisation_id,
-            membership_id=caller.membership_id,
-            authority_revision=caller.authority_revision,
+        if channel is None or not _member_view_allowed(
+            workspace, resolve(channel.id), caller.membership_id, caller.authority_revision
         ):
             raise RefusalError(404)
     row = WorkspaceAbuseReport.objects.create(
@@ -730,7 +761,7 @@ def admit_redemption(*, verified: VerifiedAccessToken, code: str) -> None:
 def _grant_link_channel(
     workspace: Workspace, channel_id: UUID, membership: WorkspaceMembership
 ) -> bool:
-    from .channel_access import VIEW, may_view, resolve
+    from .channel_access import VIEW, resolve
     from .models import ResourcePolicy, ResourcePolicyRule
 
     channel = Channel.objects.select_for_update().get(pk=channel_id, workspace=workspace)
@@ -741,11 +772,8 @@ def _grant_link_channel(
         or membership.id in access.deny_members
     ):
         raise RefusalError(403)
-    already_viewable = may_view(
-        access,
-        organisation_id=workspace.organisation_id,
-        membership_id=membership.id,
-        authority_revision=workspace.organisation.authority_revision,
+    already_viewable = _member_view_allowed(
+        workspace, access, membership.id, workspace.organisation.authority_revision
     )
     if not already_viewable:
         if channel.policy_mode == Channel.PolicyMode.INHERIT:

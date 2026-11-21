@@ -14,7 +14,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any, Literal
+from typing import Any, Literal, NoReturn
 
 from django.db import IntegrityError, connection, transaction
 from django.db.models import BooleanField, ExpressionWrapper, Q
@@ -265,7 +265,9 @@ def disposition(status: int) -> str:
     raise ValueError(f"a POST answer through the replay store is 2xx, 4xx or 5xx, not {status}")
 
 
-def roll_back(response: StoredResponse) -> None:
+def roll_back(response: StoredResponse) -> NoReturn:
+    """Abort `run_once`'s enclosing atomic block via `_DiscardedError`, returning `response`
+    directly (`stored=False`) without inserting any `IdempotencyRecord` row."""
     raise _DiscardedError(response)
 
 
