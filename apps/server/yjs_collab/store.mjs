@@ -3,6 +3,7 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import { work } from './worker.mjs'
 import { Refused } from './engine.mjs'
 import { TicketRefused } from './tickets.mjs'
+import { titleKey } from './title-key.mjs'
 
 export class Unavailable extends Error { constructor(cause = undefined) { super('collaboration storage unavailable', {cause}) } }
 export class QuotaRefused extends Refused { constructor() { super('workspace snapshot quota exceeded'); this.name = 'QuotaRefused' } }
@@ -112,11 +113,14 @@ export class Store {
         await client.query('DELETE FROM docs_documentupdate WHERE document_id=$1 AND sequence<=$2', [claims.document, sequence])
       }
       await client.query('DELETE FROM docs_documentlink WHERE source_id=$1', [claims.document])
-      for (const title of result.links) {
+      // One statement on locale-free title keys, shared with the REST path's resolution.
+      const keys = [...new Set(result.links.map(titleKey))].sort()
+      if (keys.length) {
         await client.query(`INSERT INTO docs_documentlink(id,created_at,updated_at,source_id,target_id,target_title)
-          SELECT $1,clock_timestamp(),clock_timestamp(),$2,
-            (SELECT id FROM docs_document WHERE workspace_id=$3 AND deleted_at IS NULL AND lower(title)=lower($4)),lower($4)
-          ON CONFLICT(source_id,target_title) DO NOTHING`, [uuid7(), claims.document, workspace, title])
+          SELECT l.id,clock_timestamp(),clock_timestamp(),$2,
+            (SELECT d.id FROM docs_document d WHERE d.workspace_id=$3 AND d.deleted_at IS NULL AND d.title_key=l.key),l.key
+          FROM unnest($1::uuid[],$4::text[]) AS l(id,key)
+          ON CONFLICT(source_id,target_title) DO NOTHING`, [keys.map(() => uuid7()), claims.document, workspace, keys])
       }
       await this.audit(client, claims, 'workspace.document.collab_updated')
       await client.query("SELECT pg_notify('kodera_docs',$1)", [claims.document])

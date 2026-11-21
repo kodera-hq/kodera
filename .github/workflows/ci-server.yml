@@ -95,6 +95,8 @@ jobs:
           POSTGRES_DB: kodera_server
           POSTGRES_USER: kodera
           POSTGRES_PASSWORD: kodera
+          # The community profile and the local compose run a `C` ctype; CI must too.
+          POSTGRES_INITDB_ARGS: "--locale=C --encoding=UTF8"
         ports:
           - 5432:5432
         options: >-

@@ -52,6 +52,9 @@ def empty_database():
             finally:
                 # The generated identifier belongs only to this invocation. No
                 # FORCE option, broad teardown, or shared test-database mutation.
+                # Dropping a fully migrated database outlasts 30s under parallel CI I/O;
+                # a cancelled drop would leak it, so teardown gets its own bound.
+                coordinator.execute("SET statement_timeout='120s'")
                 coordinator.execute(sql.SQL("DROP DATABASE {}").format(sql.Identifier(name)))
                 del connections[alias]
                 del connections.databases[alias]

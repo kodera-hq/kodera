@@ -21,7 +21,7 @@ from apps.workspaces.moderation import RefusalError as WorkspaceRefusal, authori
 from apps.workspaces.selectors import workspace_id_for
 from services.identity.access_tokens import VerifiedAccessToken
 
-from . import engine, tickets, tree
+from . import engine, tickets, titles, tree
 from .errors import RefusalError as RefusalError
 from .models import Document, DocumentLink, DocumentSnapshot, DocumentUpdate
 from .templates import TEMPLATES
@@ -146,27 +146,18 @@ def validate_tree(value: dict[UUID, UUID | None]) -> None:
 
 
 def links(row: Document, names: tuple[str, ...]) -> None:
-    """Replace outgoing references with bounded batched resolution using PostgreSQL casing."""
+    """Replace outgoing references with bounded batched resolution on locale-free title keys."""
     DocumentLink.objects.filter(source=row).delete()
     if not names:
         return
-    with connection.cursor() as cursor:
-        cursor.execute(
-            """SELECT DISTINCT lower(name) FROM unnest(%s::text[]) AS names(name)""",
-            [[unicodedata.normalize("NFC", value) for value in names]],
-        )
-        normalized = [value[0] for value in cursor.fetchall()]
-        cursor.execute(
-            """SELECT lower(title),id FROM docs_document
-            WHERE workspace_id=%s AND deleted_at IS NULL AND lower(title)=ANY(%s::text[])""",
-            [row.workspace_id, normalized],
-        )
-        targets = dict(cursor.fetchall())
+    keys = sorted({titles.key(value) for value in names})
+    targets = dict(
+        Document.objects.filter(
+            workspace_id=row.workspace_id, deleted_at__isnull=True, title_key__in=keys
+        ).values_list("title_key", "id")
+    )
     DocumentLink.objects.bulk_create(
-        [
-            DocumentLink(source=row, target_id=targets.get(name), target_title=name)
-            for name in normalized
-        ]
+        [DocumentLink(source=row, target_id=targets.get(key), target_title=key) for key in keys]
     )
 
 
@@ -176,11 +167,16 @@ def resolve_incoming(row: Document, old_title: str | None = None) -> None:
         cursor.execute(
             """UPDATE docs_documentlink l SET target_id=(
               SELECT t.id FROM docs_document t WHERE t.workspace_id=%s
-              AND t.deleted_at IS NULL AND lower(t.title)=l.target_title
+              AND t.deleted_at IS NULL AND t.title_key=l.target_title
             ),updated_at=clock_timestamp()
             FROM docs_document s WHERE l.source_id=s.id AND s.workspace_id=%s
-            AND l.target_title IN (lower(%s),lower(%s))""",
-            [row.workspace_id, row.workspace_id, old_title or row.title, row.title],
+            AND l.target_title IN (%s,%s)""",
+            [
+                row.workspace_id,
+                row.workspace_id,
+                titles.key(old_title or row.title),
+                titles.key(row.title),
+            ],
         )
 
 

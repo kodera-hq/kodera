@@ -1,6 +1,6 @@
 """Read-only transactions and bounded link maintenance against disposable PostgreSQL."""
 
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from django.db import IntegrityError, connection, transaction
@@ -141,11 +141,48 @@ def test_link_resolution_batches_and_deduplicates_database_case(world, document,
     names = tuple(f"Target {index}" for index in range(size))
     with CaptureQueriesContext(connection) as captured, transaction.atomic():
         services.links(document, (*names, "EXAMPLE", "Example", "E\u0301", "É"))
-    # BEGIN/COMMIT, one delete, two batched selects, and one bulk insert, independent of K.
-    assert len(captured) <= 6
+    # BEGIN/COMMIT, one delete, one batched select, and one bulk insert, independent of K:
+    # titles fold in the application, never through the cluster's LC_CTYPE.
+    assert len(captured) <= 5
     links = dict(DocumentLink.objects.values_list("target_title", "target_id"))
     assert len(links) == size + 2
     assert links["example"] == document.id and links["é"] is None
+
+
+def test_accented_titles_fold_regardless_of_database_ctype(world, document):
+    org, workspace, members, tokens = world
+    # Under a `C` ctype PostgreSQL's lower('É') is 'É'; the stored key never depends on it.
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT datctype FROM pg_database WHERE datname=current_database()")
+        ctype = cursor.fetchone()[0]
+    team = services.create(
+        verified=tokens[3],
+        organisation_id=org.id,
+        name="Équipe",
+        parent_id=None,
+        template_key=None,
+        request_id=str(uuid4()),
+    )
+    assert Document.objects.get(pk=team["id"]).title_key == "équipe", ctype
+    services.links(document, ("équipe", "E\u0301QUIPE", "ÉQUIPE"))
+    assert dict(DocumentLink.objects.values_list("target_title", "target_id")) == {
+        "équipe": UUID(team["id"])
+    }
+    for duplicate in ("équipe", "E\u0301QUIPE"):
+        with pytest.raises(RefusalError) as refused:
+            services.create(
+                verified=tokens[3],
+                organisation_id=org.id,
+                name=duplicate,
+                parent_id=None,
+                template_key=None,
+                request_id=str(uuid4()),
+            )
+        assert refused.value.status == 409
+    patch(world, Document.objects.get(pk=team["id"]), {"title": "Straße"})
+    assert DocumentLink.objects.get(source=document).target_id is None
+    services.links(document, ("STRASSE",))
+    assert DocumentLink.objects.get(source=document).target_id == UUID(team["id"])
 
 
 def test_rename_only_reresolves_old_and_new_title_buckets(world, document):
