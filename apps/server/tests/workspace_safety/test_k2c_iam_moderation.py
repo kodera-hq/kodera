@@ -872,6 +872,120 @@ def test_bug_0010_update_orgs_membership_vs_docs_collab_fence_nowait_no_deadlock
         assert f_collab.result(timeout=5) == workspace.id
         f_rest.result(timeout=5)
 
+    # 2b. [Codex R6 P2] Deterministic `member_authority_user_touch` (`identity_user FOR NO KEY UPDATE ->
+    #     orgs_organisation FOR NO KEY UPDATE`) interleaving with `docs_collab_fence`: because
+    #     `docs_collab_fence` locks `identity_user` BEFORE `orgs_organisation`, Conn B parks cleanly
+    #     on `identity_user` without holding `orgs_organisation`, so Conn A acquires `orgs_organisation`
+    #     and commits with zero deadlock (`40P01`), plus concurrent real `change_membership` PATCHes!
+    user_locked_ev = threading.Event()
+    release_member_touch = threading.Event()
+    collab_pid_box: list[int] = []
+
+    def member_touch_writer() -> str:
+        close_old_connections()
+        try:
+            with transaction.atomic(), connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT id FROM identity_user WHERE id = %s FOR NO KEY UPDATE",
+                    [members[3].user_id],
+                )
+                user_locked_ev.set()
+                assert release_member_touch.wait(timeout=5)
+                cursor.execute(
+                    "SELECT id FROM orgs_organisation WHERE id = %s FOR UPDATE",
+                    [org.id],
+                )
+                cursor.execute(
+                    "UPDATE identity_user SET enabled = enabled WHERE id = %s",
+                    [members[3].user_id],
+                )
+                return "member_touched"
+        finally:
+            close_old_connections()
+
+    def interleaved_collab_fence() -> object:
+        close_old_connections()
+        try:
+            with connection.cursor() as cur:
+                cur.execute("SELECT pg_backend_pid()")
+                collab_pid_box.append(cur.fetchone()[0])
+            with transaction.atomic(), connection.cursor() as cursor:
+                cursor.execute("SELECT docs_collab_fence(%s,%s,%s,%s,%s,%s,%s)", fence_args)
+                return cursor.fetchone()[0]
+        finally:
+            close_old_connections()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        fut_touch = pool.submit(member_touch_writer)
+        assert user_locked_ev.wait(timeout=5)
+        fut_collab = pool.submit(interleaved_collab_fence)
+        try:
+            parked_on_user = False
+            deadline = time.monotonic() + 4.0
+            while time.monotonic() < deadline:
+                if collab_pid_box:
+                    cpid = collab_pid_box[0]
+                    with connection.cursor() as cursor:
+                        cursor.execute(
+                            "SELECT EXISTS ("
+                            "  SELECT 1 FROM pg_locks"
+                            "  WHERE pid = %s AND locktype IN ('transactionid', 'tuple') AND NOT granted"
+                            "), EXISTS ("
+                            "  SELECT 1 FROM pg_locks"
+                            "  WHERE pid = %s AND relation = 'public.orgs_organisation'::regclass"
+                            "    AND mode = 'RowShareLock'"
+                            ")",
+                            [cpid, cpid],
+                        )
+                        waiting_on_user, already_locked_org = cursor.fetchone()
+                        if waiting_on_user:
+                            assert already_locked_org is False
+                            parked_on_user = True
+                            break
+                time.sleep(0.02)
+            assert parked_on_user is True
+        finally:
+            release_member_touch.set()
+        assert fut_touch.result(timeout=5) == "member_touched"
+        assert fut_collab.result(timeout=5) == workspace.id
+
+    # Concurrent real `membership_lifecycle.change_membership` PATCH vs `docs_collab_fence`:
+    def run_real_membership_patches() -> None:
+        close_old_connections()
+        try:
+            for target_role in ("org_admin", "org_member"):
+                _, etag = membership_lifecycle.read_membership(
+                    verified=tokens[0],
+                    organisation_id=org.id,
+                    membership_id=members[3].id,
+                )
+                membership_lifecycle.change_membership(
+                    verified=tokens[0],
+                    organisation_id=org.id,
+                    membership_id=members[3].id,
+                    patch={"role": target_role},
+                    if_match=etag,
+                    request_id=str(uuid4()),
+                )
+        finally:
+            close_old_connections()
+
+    def run_parallel_collab_fences() -> None:
+        close_old_connections()
+        try:
+            for _ in range(6):
+                with transaction.atomic(), connection.cursor() as cursor:
+                    cursor.execute("SELECT docs_collab_fence(%s,%s,%s,%s,%s,%s,%s)", fence_args)
+                    assert cursor.fetchone() == (workspace.id,)
+        finally:
+            close_old_connections()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        p1 = pool.submit(run_real_membership_patches)
+        p2 = pool.submit(run_parallel_collab_fences)
+        p1.result(timeout=10)
+        p2.result(timeout=10)
+
     # 3. [Codex P2-3] Active Yjs transaction holding `docs_collab_fence` before `INSERT INTO docs_documentupdate`
     #    cannot deadlock (`40P01`) with concurrent `begin_account_erasure`!
     staff_op = make_staff_operator()

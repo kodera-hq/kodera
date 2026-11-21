@@ -124,17 +124,17 @@ BEGIN
   ) THEN
     RAISE EXCEPTION 'collaboration erasure fence busy' USING ERRCODE='55P03';
   END IF;
-  PERFORM 1 FROM public.orgs_organisation o WHERE o.id=p_organisation FOR SHARE;
-  IF NOT FOUND THEN RETURN NULL; END IF;
-  PERFORM 1 FROM public.identity_user u WHERE u.id=principal_user FOR SHARE;
+  PERFORM 1 FROM public.orgs_membership m
+    WHERE m.id=p_member AND m.user_id=principal_user AND m.organisation_id=p_organisation
+    FOR SHARE;
   IF NOT FOUND THEN RETURN NULL; END IF;
   PERFORM 1 FROM public.identity_identity i
     WHERE i.id=p_identity AND i.user_id=principal_user AND i.organisation_id=p_organisation
     FOR SHARE;
   IF NOT FOUND THEN RETURN NULL; END IF;
-  PERFORM 1 FROM public.orgs_membership m
-    WHERE m.id=p_member AND m.user_id=principal_user AND m.organisation_id=p_organisation
-    FOR SHARE;
+  PERFORM 1 FROM public.identity_user u WHERE u.id=principal_user FOR SHARE;
+  IF NOT FOUND THEN RETURN NULL; END IF;
+  PERFORM 1 FROM public.orgs_organisation o WHERE o.id=p_organisation FOR SHARE;
   IF NOT FOUND THEN RETURN NULL; END IF;
   SELECT w.id INTO scope_workspace FROM public.workspaces_workspace w
     JOIN public.docs_document d ON d.workspace_id=w.id

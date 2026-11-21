@@ -124,7 +124,8 @@ try {
     ws.send(JSON.stringify({ type: 'auth', token: input.ticketWs }))
     await initialMsg
 
-    // 3a. Hold `orgs_organisation FOR NO KEY UPDATE` + `workspaces_workspace FOR UPDATE` for 200ms
+    // 3a. Hold `workspaces_workspace FOR UPDATE` across an active edit: prove the edit is genuinely
+    //     held back while locked, the socket stays OPEN, and the edit persists once committed!
     await ownerClient.query('BEGIN')
     await ownerClient.query(
       'SELECT 1 FROM public.orgs_organisation WHERE id = $1 FOR NO KEY UPDATE',
@@ -133,14 +134,20 @@ try {
     await ownerClient.query('SELECT 1 FROM public.workspaces_workspace WHERE id = $1 FOR UPDATE', [
       input.workspaceId,
     ])
-    const releaseRestWrite = (async () => {
-      await delay(200)
-      await ownerClient.query('COMMIT')
-    })()
 
     const restWaitDelta = buildParagraphAppend(cur1, ' Survived-200ms-REST-lock')
     ws.send(updateFrame(restWaitDelta))
-    await releaseRestWrite
+    await delay(120)
+    const duringLockRow = await owner.query(
+      'SELECT markdown FROM public.docs_document WHERE id = $1',
+      [claimsA1.document]
+    )
+    assert.ok(
+      !(duringLockRow.rows[0]?.markdown ?? '').includes('Survived-200ms-REST-lock'),
+      'edit must wait on workspace FOR SHARE until REST writer commits'
+    )
+    assert.equal(ws.readyState, WebSocket.OPEN, 'socket must remain open while waiting on REST lock')
+    await ownerClient.query('COMMIT')
 
     let persistedDuringRest = false
     for (let attempt = 0; attempt < 40; attempt += 1) {
