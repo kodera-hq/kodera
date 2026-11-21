@@ -25,6 +25,7 @@ ALLOWED_TYPES = frozenset(
 )
 MAX_BYTES = 25 * 1024 * 1024
 EXPIRY_SECONDS = 300
+OBJECT_KEY_RE = re.compile(r"organisations/([0-9a-fA-F-]{36})/attachments/([0-9a-fA-F-]{36})\Z")
 
 
 class StorageRefusedError(ValueError):
@@ -52,6 +53,37 @@ def disposition(value: str) -> str:
     return "attachment; filename=\"attachment\"; filename*=UTF-8''" + quote(
         filename(value), safe=""
     )
+
+
+@dataclass(frozen=True)
+class ObjectKey:
+    organisation_id: UUID
+    attachment_id: UUID
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.organisation_id, UUID) or not isinstance(self.attachment_id, UUID):
+            raise StorageRefusedError()
+
+    @property
+    def key(self) -> str:
+        return f"organisations/{self.organisation_id}/attachments/{self.attachment_id}"
+
+
+def parse_object_key(value: str) -> ObjectKey:
+    if not isinstance(value, str):
+        raise StorageRefusedError()
+    match = OBJECT_KEY_RE.fullmatch(value)
+    if match is None:
+        raise StorageRefusedError()
+    try:
+        org_id = UUID(match.group(1))
+        att_id = UUID(match.group(2))
+    except ValueError:
+        raise StorageRefusedError() from None
+    key_obj = ObjectKey(org_id, att_id)
+    if key_obj.key != value:
+        raise StorageRefusedError()
+    return key_obj
 
 
 @dataclass(frozen=True)
@@ -122,12 +154,16 @@ def _sign(key: bytes, value: str) -> bytes:
 def presign(
     location: S3Location,
     credential: S3Credential,
-    descriptor: ObjectDescriptor,
+    descriptor: ObjectDescriptor | ObjectKey,
     *,
     method: str,
     now: datetime,
 ) -> tuple[str, dict[str, str]]:
-    if method not in {"PUT", "GET", "HEAD"} or now.tzinfo is None:
+    if method not in {"PUT", "GET", "HEAD", "DELETE"} or now.tzinfo is None:
+        raise StorageRefusedError()
+    if method in {"PUT", "GET"} and not isinstance(descriptor, ObjectDescriptor):
+        raise StorageRefusedError()
+    if not isinstance(descriptor, ObjectDescriptor | ObjectKey):
         raise StorageRefusedError()
     if (
         not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", credential.access_key)
@@ -149,6 +185,8 @@ def presign(
     host = urlsplit(location.endpoint).netloc
     headers = {"host": host}
     if method == "PUT":
+        if not isinstance(descriptor, ObjectDescriptor):
+            raise StorageRefusedError()
         headers.update(
             {
                 "content-type": descriptor.content_type,
@@ -157,7 +195,7 @@ def presign(
                 "content-disposition": disposition(descriptor.filename),
             }
         )
-    if method == "HEAD":
+    if method == "HEAD" and isinstance(descriptor, ObjectDescriptor):
         headers["x-amz-checksum-mode"] = "ENABLED"
     signed_headers = ";".join(sorted(headers))
     parameters = {
@@ -170,6 +208,8 @@ def presign(
     if credential.session_token:
         parameters["X-Amz-Security-Token"] = credential.session_token
     if method == "GET":
+        if not isinstance(descriptor, ObjectDescriptor):
+            raise StorageRefusedError()
         parameters.update(
             {
                 "response-content-type": descriptor.content_type,

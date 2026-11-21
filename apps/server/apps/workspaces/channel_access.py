@@ -83,6 +83,9 @@ class Access:
     allow_members: tuple[UUID, ...]
     deny_members: tuple[UUID, ...]
     denied: frozenset[str]
+    channel_overrides: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...] = ()
+    override_member_roles: tuple[tuple[UUID, tuple[str, ...]], ...] = ()
+    overrides_loaded: bool = False
 
     @property
     def read_only(self) -> bool:
@@ -148,6 +151,26 @@ def resolve(channel_id: UUID, *, inherit: bool = False) -> Access:
             denied.add(capability)
         else:
             raise WorkspaceUnavailableError()
+    channel_overrides = tuple(
+        (str(role_id), tuple(allow_caps), tuple(deny_caps))
+        for role_id, allow_caps, deny_caps in WorkspaceChannelRoleOverride.objects.filter(
+            channel_id=channel.id
+        )
+        .order_by("role_id")
+        .values_list("role_id", "allow", "deny")
+    )
+    override_member_roles: tuple[tuple[UUID, tuple[str, ...]], ...] = ()
+    if channel_overrides:
+        override_role_ids = [UUID(role_id_str) for role_id_str, _, _ in channel_overrides]
+        by_member: dict[UUID, set[str]] = {}
+        for membership_id, role_id in WorkspaceMemberRole.objects.filter(
+            workspace_id=channel.workspace_id, role_id__in=override_role_ids
+        ).values_list("membership_id", "role_id"):
+            by_member.setdefault(membership_id, set()).add(str(role_id))
+        override_member_roles = tuple(
+            (m_id, tuple(sorted(r_ids)))
+            for m_id, r_ids in sorted(by_member.items(), key=lambda item: str(item[0]))
+        )
     return Access(
         channel_id=channel.id,
         kind=channel.kind,
@@ -159,6 +182,9 @@ def resolve(channel_id: UUID, *, inherit: bool = False) -> Access:
         allow_members=_members(allow),
         deny_members=_members(deny),
         denied=frozenset(denied),
+        channel_overrides=channel_overrides,
+        override_member_roles=override_member_roles,
+        overrides_loaded=True,
     )
 
 
@@ -220,6 +246,27 @@ def resolve_all(workspace_id: UUID) -> dict[UUID, tuple[Access, str, str]]:
         ).values_list("id", "revision", "visibility")
     }
     rules = _rules(set(policies))
+    channel_ids = [pk for pk, *_ in channels]
+    overrides_by_channel: dict[UUID, list[tuple[str, tuple[str, ...], tuple[str, ...]]]] = {}
+    referenced_role_ids: set[UUID] = set()
+    if channel_ids:
+        for ch_id, role_id, allow_caps, deny_caps in (
+            WorkspaceChannelRoleOverride.objects.filter(
+                workspace_id=workspace_id, channel_id__in=channel_ids
+            )
+            .order_by("channel_id", "role_id")
+            .values_list("channel_id", "role_id", "allow", "deny")
+        ):
+            overrides_by_channel.setdefault(ch_id, []).append(
+                (str(role_id), tuple(allow_caps), tuple(deny_caps))
+            )
+            referenced_role_ids.add(role_id)
+    roles_by_member: dict[UUID, set[str]] = {}
+    if referenced_role_ids:
+        for membership_id, role_id in WorkspaceMemberRole.objects.filter(
+            workspace_id=workspace_id, role_id__in=referenced_role_ids
+        ).values_list("membership_id", "role_id"):
+            roles_by_member.setdefault(membership_id, set()).add(str(role_id))
     found = {}
     for pk, kind, lifecycle, mode, _, _, name, topic in channels:
         policy_id = chosen[pk]
@@ -227,6 +274,15 @@ def resolve_all(workspace_id: UUID) -> dict[UUID, tuple[Access, str, str]]:
             raise WorkspaceUnavailableError()
         revision, visibility = policies[policy_id]
         rule = rules[policy_id]
+        ch_overrides = tuple(overrides_by_channel.get(pk, ()))
+        ch_member_roles: tuple[tuple[UUID, tuple[str, ...]], ...] = ()
+        if ch_overrides:
+            ch_role_set = {role_id_str for role_id_str, _, _ in ch_overrides}
+            ch_member_roles = tuple(
+                (m_id, tuple(sorted(r_ids & ch_role_set)))
+                for m_id, r_ids in sorted(roles_by_member.items(), key=lambda item: str(item[0]))
+                if r_ids & ch_role_set
+            )
         access = Access(
             channel_id=pk,
             kind=kind,
@@ -238,6 +294,9 @@ def resolve_all(workspace_id: UUID) -> dict[UUID, tuple[Access, str, str]]:
             allow_members=_members(rule.allow),
             deny_members=_members(rule.deny),
             denied=frozenset(rule.denied),
+            channel_overrides=ch_overrides,
+            override_member_roles=ch_member_roles,
+            overrides_loaded=True,
         )
         found[pk] = (access, name, topic)
     return found
@@ -316,12 +375,22 @@ def may_view(
     (AUTHZ.md §6 rule 8). The lifecycle is not part of the question: an archived channel, an audio
     room included, keeps the viewers its access gives it, so a self-grant on it is a self-grant and
     its room is not emptied (ESPACE_STRUCTURE.md §§2.1, 9)."""
+    resolved_overrides = (
+        list(access.channel_overrides)
+        if channel_overrides is None and access.overrides_loaded
+        else channel_overrides
+    )
+    resolved_role_ids = (
+        dict(access.override_member_roles).get(membership_id, ())
+        if member_role_ids is None and channel_overrides is None and access.overrides_loaded
+        else member_role_ids
+    )
     role_ids, _, allow_roles, deny_roles, override_allow, override_deny = _channel_role_context(
         channel_id=access.channel_id,
         membership_id=membership_id,
-        member_role_ids=member_role_ids,
+        member_role_ids=resolved_role_ids,
         member_role_permissions=frozenset(),
-        channel_overrides=channel_overrides,
+        channel_overrides=resolved_overrides,
     )
     effective_denied = (set(access.denied) - override_allow) | override_deny
     decision = evaluate(

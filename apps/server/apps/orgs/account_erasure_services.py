@@ -61,6 +61,15 @@ def begin_account_erasure(
     request_id = new_uuid7()
     with connection.cursor() as cursor:
         cursor.execute(
+            "SELECT to_regprocedure('public.privacy_fence_account_erasure(uuid,uuid)') IS NOT NULL"
+        )
+        has_fence = cursor.fetchone()
+        if has_fence and has_fence[0]:
+            cursor.execute(
+                "SELECT privacy_fence_account_erasure(%s,%s)",
+                [identity.id, actor_identity_id],
+            )
+        cursor.execute(
             "SELECT privacy_begin_account_erasure(%s,%s,%s,%s,%s,%s)",
             [
                 request_id,
@@ -204,7 +213,7 @@ def advance_account_erasure(
     *,
     socket_path: str | None = None,
     object_deleter: Any = None,
-    drain_grace: Any = None,
+    upload_drain: Any = None,
 ) -> dict[str, Any]:
     if set(adapters) - ACCOUNT_DOMAINS:
         raise ValueError("unknown account erasure adapter domain")
@@ -225,14 +234,14 @@ def advance_account_erasure(
     if personal_attachments:
         from apps.media.storage import StorageRefusedError
 
-        from .object_erasure import UPLOAD_DRAIN_GRACE, erase_account_personal_attachments
+        from .object_erasure import erase_account_personal_attachments
 
         try:
             confirmed = erase_account_personal_attachments(
                 scope,
                 socket_path=socket_path,
                 deleter=object_deleter,
-                drain_grace=UPLOAD_DRAIN_GRACE if drain_grace is None else drain_grace,
+                upload_drain=upload_drain,
             )
             if not confirmed:
                 objects_held = True

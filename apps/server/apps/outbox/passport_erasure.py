@@ -213,17 +213,31 @@ class PassportAccountOutboxErasureAdapter:
             ):
                 raise ValueError("account erasure outbox authority binding mismatch")
 
-            cursor.execute(
-                "SELECT pg_advisory_xact_lock_shared("
-                "hashtextextended('privacy_account_cutoff:' || %s, 0))",
-                [str(scope.user_id)],
-            )
-
             email_shas = self._email_sha256s(cursor, scope)
             matched_legacy_ids = self._reconcile_legacy_invitation_mail(cursor, email_shas)
             self._assert_no_unbound_personal_mail(cursor, matched_legacy_ids)
             delivery_ids = self._bound_delivery_ids(cursor, scope)
             id_list = sorted(set(delivery_ids) | matched_legacy_ids)
+
+            if id_list:
+                cursor.execute(
+                    "SELECT DISTINCT d.organisation_id FROM outbox_outboxdelivery d "
+                    "WHERE d.id::text = ANY(%s) AND d.organisation_id IS NOT NULL "
+                    "ORDER BY d.organisation_id",
+                    [id_list],
+                )
+                for (org_id,) in cursor.fetchall():
+                    cursor.execute(
+                        "SELECT pg_advisory_xact_lock_shared("
+                        "hashtextextended('privacy_erasure_cutoff:' || %s, 0))",
+                        [str(org_id)],
+                    )
+
+            cursor.execute(
+                "SELECT pg_advisory_xact_lock_shared("
+                "hashtextextended('privacy_account_cutoff:' || %s, 0))",
+                [str(scope.user_id)],
+            )
 
             if id_list:
                 cursor.execute(

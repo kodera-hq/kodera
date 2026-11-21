@@ -269,3 +269,58 @@ def test_gateway_distinguishes_object_mismatch_from_unavailable_or_invalid_reply
     with pytest.raises(StorageRefusedError) as failure:
         Gateway(str(tmp_path / "signer.sock")).call("verify", obj())
     assert isinstance(failure.value, ObjectMismatchError) is mismatch
+
+
+def test_worker_delete_executes_signed_delete_then_verifies_head_404(
+    tmp_path, socket_directory, monkeypatch
+):
+    """BUG-0021 & BUG-0025: delete_object performs signed DELETE followed by signed HEAD == 404."""
+    import threading
+
+    from apps.media import storage_gateway
+
+    upload = obj()
+    directory = tmp_path / "mounted"
+    directory.mkdir()
+    (directory / str(upload.organisation_id)).write_text(
+        json.dumps(
+            {
+                "endpoint": "https://storage.example.org",
+                "bucket": "example-bucket",
+                "region": "fr-par",
+                "accessKey": secrets.token_hex(12),
+                "secretKey": secrets.token_urlsafe(32),
+            }
+        )
+    )
+    methods_seen: list[str] = []
+    head_status = [404]
+
+    def fake_request(destination, **kwargs):
+        methods_seen.append(kwargs["method"])
+        status = 204 if kwargs["method"] == "DELETE" else head_status[0]
+        return SimpleNamespace(close=lambda: None), SimpleNamespace(
+            status=status, close=lambda: None
+        )
+
+    monkeypatch.setattr(storage_worker.outbound, "request", fake_request)
+    socket_path = socket_directory / "delete.sock"
+    server = storage_worker.bind(socket_path, storage_worker.DirectorySource(directory))
+    thread = threading.Thread(target=lambda: server.serve_forever(poll_interval=0.01), daemon=True)
+    thread.start()
+    try:
+        assert storage_gateway.delete_object(upload.key, socket_path=str(socket_path)) == {
+            "deleted": True
+        }
+        assert methods_seen == ["DELETE", "HEAD"]
+
+        # Fail closed when post-DELETE HEAD still sees 200 OK instead of 404!
+        methods_seen.clear()
+        head_status[0] = 200
+        with pytest.raises(StorageRefusedError):
+            storage_gateway.delete_object(upload, socket_path=str(socket_path))
+        assert methods_seen == ["DELETE", "HEAD"]
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)

@@ -508,9 +508,12 @@ def withdrawn(template_id: str, delivery_id: UUID) -> bool:
             return True
         bound_user_id, bound_org_id = binding_rows[0]
         _rows(
-            "SELECT pg_advisory_xact_lock_shared(hashtextextended('privacy_account_cutoff:' || %s, 0)),"
-            " pg_advisory_xact_lock_shared(hashtextextended('privacy_erasure_cutoff:' || %s, 0))",
-            [str(bound_user_id), str(bound_org_id)],
+            "SELECT pg_advisory_xact_lock_shared(hashtextextended('privacy_erasure_cutoff:' || %s, 0))",
+            [str(bound_org_id)],
+        )
+        _rows(
+            "SELECT pg_advisory_xact_lock_shared(hashtextextended('privacy_account_cutoff:' || %s, 0))",
+            [str(bound_user_id)],
         )
         active = _rows(
             "SELECT 1 FROM identity_user u"

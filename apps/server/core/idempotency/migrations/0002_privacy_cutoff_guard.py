@@ -113,10 +113,12 @@ SET LOCAL statement_timeout='30s';
 
 DO $$
 BEGIN
-    IF EXISTS (
-        SELECT 1 FROM public.orgs_accounterasure WHERE status <> 'complete'
-    ) OR EXISTS (
-        SELECT 1 FROM public.orgs_privacyerasure WHERE status <> 'complete'
+    IF EXISTS (SELECT 1 FROM public.idempotency_record) AND (
+        EXISTS (
+            SELECT 1 FROM public.orgs_accounterasure WHERE status <> 'complete'
+        ) OR EXISTS (
+            SELECT 1 FROM public.orgs_privacyerasure WHERE status <> 'complete'
+        )
     ) THEN
         RAISE EXCEPTION 'cannot reverse idempotency privacy cutoff guard while incomplete erasure exists'
             USING ERRCODE = '23514';

@@ -725,7 +725,7 @@ BEGIN
         SELECT 1
         FROM jsonb_array_elements(COALESCE(request.inventory->'account_personal_attachments', '[]'::jsonb)) elem
         WHERE elem->>'upload_expires_at' IS NOT NULL
-          AND (elem->>'upload_expires_at')::timestamptz + interval '60 seconds' > clock_timestamp()
+          AND (elem->>'upload_expires_at')::timestamptz > clock_timestamp()
     ) THEN
         RAISE EXCEPTION 'account attachment upload window still open' USING ERRCODE = '23514';
     END IF;
@@ -744,7 +744,7 @@ BEGIN
                       AND o.is_default_community
                 )
             ) AND a.upload_expires_at IS NOT NULL
-              AND a.upload_expires_at + interval '60 seconds' > clock_timestamp()
+              AND a.upload_expires_at > clock_timestamp()
         ) THEN
             RAISE EXCEPTION 'account attachment upload window still open' USING ERRCODE = '23514';
         END IF;
@@ -940,7 +940,7 @@ BEGIN
     AND verified_at>=greatest(
         request.cutoff_at,
         request.purge_not_before,
-        COALESCE(max_upload_exp + interval '60 seconds', request.cutoff_at)
+        COALESCE(max_upload_exp, request.cutoff_at)
     )
  )
  THEN RETURN false; END IF;
@@ -1047,6 +1047,79 @@ BEGIN
  RETURN true;
 END $$;
 REVOKE ALL ON FUNCTION public.privacy_complete_account_erasure(uuid) FROM PUBLIC;
+
+CREATE FUNCTION public.privacy_fence_account_erasure(p_identity uuid, p_actor uuid)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public
+SET lock_timeout = '3s' SET statement_timeout = '15s' AS $$
+DECLARE
+    person uuid;
+    org_id uuid;
+    initial_orgs uuid[] := ARRAY[]::uuid[];
+BEGIN
+    IF p_identity IS NULL OR NOT public.retention_current_operator(p_actor) THEN
+        RAISE EXCEPTION 'account erasure admission refused' USING ERRCODE = '23514';
+    END IF;
+    SELECT user_id INTO person
+    FROM public.identity_identity
+    WHERE id = p_identity AND organisation_id IS NOT NULL;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'account erasure identity absent' USING ERRCODE = '23514';
+    END IF;
+
+    SELECT coalesce(array_agg(q.org_id ORDER BY q.org_id), ARRAY[]::uuid[])
+    INTO initial_orgs
+    FROM (
+        SELECT organisation_id AS org_id FROM public.orgs_membership WHERE user_id = person
+        UNION
+        SELECT organisation_id AS org_id FROM public.identity_identity
+        WHERE user_id = person AND organisation_id IS NOT NULL
+    ) q
+    WHERE q.org_id IS NOT NULL;
+
+    FOREACH org_id IN ARRAY initial_orgs LOOP
+        PERFORM pg_advisory_xact_lock_shared(
+            hashtextextended('privacy_erasure_cutoff:' || org_id::text, 0)
+        );
+    END LOOP;
+
+    PERFORM 1 FROM public.identity_user
+    WHERE id = person AND enabled AND deleted_at IS NULL
+    FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'account erasure person unavailable' USING ERRCODE = '23514';
+    END IF;
+
+    FOR org_id IN
+        SELECT q.org_id FROM (
+            SELECT organisation_id AS org_id FROM public.orgs_membership WHERE user_id = person
+            UNION
+            SELECT organisation_id AS org_id FROM public.identity_identity
+            WHERE user_id = person AND organisation_id IS NOT NULL
+        ) q
+        WHERE q.org_id IS NOT NULL
+        ORDER BY q.org_id
+    LOOP
+        IF NOT (org_id = ANY(initial_orgs)) THEN
+            IF NOT pg_try_advisory_xact_lock_shared(
+                hashtextextended('privacy_erasure_cutoff:' || org_id::text, 0)
+            ) THEN
+                RAISE EXCEPTION 'account erasure concurrent organisation cutoff'
+                    USING ERRCODE = '55P03';
+            END IF;
+        END IF;
+    END LOOP;
+
+    PERFORM 1 FROM public.orgs_organisation
+    WHERE id IN (
+        SELECT organisation_id FROM public.orgs_membership WHERE user_id = person
+        UNION
+        SELECT organisation_id FROM public.identity_identity
+        WHERE user_id = person AND organisation_id IS NOT NULL
+    )
+    ORDER BY id
+    FOR UPDATE;
+END $$;
+REVOKE ALL ON FUNCTION public.privacy_fence_account_erasure(uuid, uuid) FROM PUBLIC;
 """
 
 REVERSE = r"""
@@ -1256,6 +1329,7 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION public.privacy_cutoff_guard() FROM PUBLIC;
 
+DROP FUNCTION IF EXISTS public.privacy_fence_account_erasure(uuid, uuid);
 DROP FUNCTION IF EXISTS public.privacy_confirm_account_attachments_erased(uuid, text);
 DROP TRIGGER IF EXISTS aa_02_core_erasure_v2 ON public.orgs_accounterasure;
 DROP TRIGGER IF EXISTS aa_02_core_erasure_v2 ON public.orgs_privacyerasure;

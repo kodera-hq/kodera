@@ -2,45 +2,108 @@
 
 Delegates physical S3 `DELETE` + `HEAD 404` verification to `apps.media.storage_gateway` over the
 private Unix-domain worker socket (never holding object-storage credentials in Core), failing closed
-on any `StorageRefusedError`, open presigned upload/drain window, or unverified object key.
+on any `StorageRefusedError`, missing or unverified upload-drain proof, or unverified object key.
 """
 
 from __future__ import annotations
 
 import hashlib
-import http.client
 import json
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from pathlib import Path
 from typing import Any, Protocol
 from uuid import UUID
 
 from django.conf import settings
 from django.db import connection, transaction
 
+from apps.media import storage_gateway
 from apps.media.storage import StorageRefusedError
-from apps.media.storage_protocol import MAX_RPC_BYTES, unique_object
 
 from .account_erasure_services import AccountErasureScope
 from .erasure_services import AbsenceProof, ErasureScope, database_now
 from .privacy_models import AccountErasure, PrivacyErasure
 
-# S3 evaluates presigned URL expiration when the HTTP PUT request starts, not when it finishes.
-# Hold final deletion and absence certification until `upload_expires_at + UPLOAD_DRAIN_GRACE`.
-UPLOAD_DRAIN_GRACE = timedelta(seconds=60)
-
 
 class ObjectUploadWindowOpenError(Exception):
-    """Raised when one or more presigned PUT upload or drain windows have not yet elapsed."""
+    """Raised when a presigned PUT window or in-flight upload stream has not yet drained."""
 
 
 class ObjectReplicaAbsenceVerifier(Protocol):
     """Optional replica/backup absence verifier returning a 64-hex SHA-256 digest."""
 
     def verify_absent(self, scope: ErasureScope, object_keys: tuple[str, ...]) -> str: ...
+
+
+class ObjectUploadDrainVerifier(Protocol):
+    """Trusted ingress/provider upload-drain verifier returning a 64-hex SHA-256 digest.
+
+    Must prove both that `database_now() >= max_upload_expiry` and that every pre-expiry upload
+    stream on the storage ingress/provider for `object_keys` has terminated or drained.
+    """
+
+    def verify_drained(
+        self,
+        scope: ErasureScope | AccountErasureScope,
+        object_keys: tuple[str, ...],
+        max_upload_expiry: datetime,
+    ) -> str: ...
+
+
+@dataclass(frozen=True)
+class BoundedStreamUploadDrainVerifier:
+    """Concrete upload-drain verifier backed by an enforced HTTP request-body duration ceiling
+    and optional live in-flight upload stream inspection."""
+
+    max_stream_duration: timedelta
+    has_in_flight_uploads: Callable[[tuple[str, ...]], bool] | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(
+            self.max_stream_duration, timedelta
+        ) or self.max_stream_duration <= timedelta(0):
+            raise ValueError("max_stream_duration must be a positive timedelta")
+
+    def verify_drained(
+        self,
+        scope: ErasureScope | AccountErasureScope,
+        object_keys: tuple[str, ...],
+        max_upload_expiry: datetime,
+    ) -> str:
+        if max_upload_expiry.tzinfo is None:
+            raise ValueError("max_upload_expiry must be timezone-aware")
+        now = database_now()
+        if now < max_upload_expiry or now < max_upload_expiry + self.max_stream_duration:
+            raise ObjectUploadWindowOpenError(
+                "presigned upload or bounded stream drain window still open"
+            )
+        if self.has_in_flight_uploads is not None and bool(self.has_in_flight_uploads(object_keys)):
+            raise ObjectUploadWindowOpenError("pre-expiry object upload stream still in flight")
+        scope_binding = (
+            {"organisation_id": str(scope.organisation_id)}
+            if isinstance(scope, ErasureScope)
+            else {"user_id": str(scope.user_id)}
+        )
+        return hashlib.sha256(
+            json.dumps(
+                {
+                    **scope_binding,
+                    "cutoff_at": scope.cutoff_at.isoformat(),
+                    "in_flight_probed": self.has_in_flight_uploads is not None,
+                    "inventory_sha256": scope.inventory_sha256,
+                    "max_stream_duration_us": int(
+                        self.max_stream_duration // timedelta(microseconds=1)
+                    ),
+                    "max_upload_expiry": max_upload_expiry.isoformat(),
+                    "object_keys": list(object_keys),
+                    "request_id": str(scope.request_id),
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
 
 
 ObjectDeleter = Callable[[str], dict[str, Any]]
@@ -50,94 +113,22 @@ def attachment_object_key(*, organisation_id: UUID | str, attachment_id: UUID | 
     return f"organisations/{UUID(str(organisation_id))}/attachments/{UUID(str(attachment_id))}"
 
 
-_OBJECT_KEY_RE = re.compile(
-    r"\Aorganisations/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"
-    r"/attachments/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\Z"
-)
-
-
-def _parse_attachment_object_key(target_key: str) -> tuple[UUID, UUID]:
-    if not isinstance(target_key, str):
-        raise StorageRefusedError()
-    matched = _OBJECT_KEY_RE.fullmatch(target_key)
-    if matched is None:
-        raise StorageRefusedError()
-    org_id = UUID(matched.group(1))
-    att_id = UUID(matched.group(2))
-    if f"organisations/{org_id}/attachments/{att_id}" != target_key:
-        raise StorageRefusedError()
-    return org_id, att_id
-
-
-def _delete_over_worker_socket(target_key: str, socket_path: str | None) -> dict[str, Any]:
-    if not socket_path or not Path(socket_path).is_absolute():
-        raise StorageRefusedError()
-    org_id, att_id = _parse_attachment_object_key(target_key)
-    raw = json.dumps(
-        {
-            "operation": "delete",
-            "object": {
-                "organisationId": str(org_id),
-                "attachmentId": str(att_id),
-            },
-        },
-        separators=(",", ":"),
-    ).encode("utf-8")
-    if len(raw) > MAX_RPC_BYTES:
-        raise StorageRefusedError()
-    from apps.media.storage_gateway import _Connection
-
-    conn = _Connection(socket_path)
-    response = None
-    try:
-        conn.request(
-            "POST",
-            "/rpc",
-            body=raw,
-            headers={"Content-Type": "application/json", "Connection": "close"},
-        )
-        response = conn.getresponse()
-        body = response.read(MAX_RPC_BYTES + 1)
-        if len(body) > MAX_RPC_BYTES or response.status != 200:
-            raise StorageRefusedError()
-        result = json.loads(body, object_pairs_hook=unique_object)
-        if (
-            not isinstance(result, dict)
-            or set(result) != {"deleted"}
-            or result["deleted"] is not True
-        ):
-            raise StorageRefusedError()
-        return result
-    except (OSError, ValueError, TypeError, KeyError, http.client.HTTPException):
-        raise StorageRefusedError() from None
-    finally:
-        if response is not None:
-            response.close()
-        conn.close()
-
-
 def invoke_gateway_delete(
     target_key: str,
     *,
     socket_path: str | None = None,
     deleter: ObjectDeleter | None = None,
 ) -> dict[str, Any]:
-    """Invoke `storage_gateway.delete_object` (or direct `/rpc` `delete` socket call), failing closed."""
+    """Invoke `storage_gateway.delete_object` (or injected test deleter), failing closed."""
     if deleter is not None:
         result = deleter(target_key)
     else:
-        from apps.media import storage_gateway
-
         resolved_socket = (
             socket_path
             if socket_path is not None
             else getattr(settings, "KODERA_MEDIA_GATEWAY_SOCKET", None)
         )
-        delete_fn = getattr(storage_gateway, "delete_object", None)
-        if delete_fn is not None:
-            result = delete_fn(target_key, socket_path=resolved_socket)
-        else:
-            result = _delete_over_worker_socket(target_key, resolved_socket)
+        result = storage_gateway.delete_object(target_key, socket_path=resolved_socket)
     if not isinstance(result, dict) or result.get("deleted") is not True:
         raise StorageRefusedError()
     return result
@@ -154,6 +145,28 @@ def _parse_upload_expiry(value: object) -> datetime | None:
     return parsed
 
 
+def _check_upload_drain(
+    upload_drain: ObjectUploadDrainVerifier | None,
+    scope: ErasureScope | AccountErasureScope,
+    object_keys: tuple[str, ...],
+    max_upload_expiry: datetime | None,
+) -> str | None:
+    if max_upload_expiry is None:
+        return None
+    if database_now() < max_upload_expiry:
+        raise ObjectUploadWindowOpenError("presigned upload window still open")
+    if upload_drain is None:
+        raise ObjectUploadWindowOpenError(
+            "qualified upload drain verifier required for presigned attachment inventory"
+        )
+    digest = upload_drain.verify_drained(scope, object_keys, max_upload_expiry)
+    if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+        raise ValueError("object upload drain evidence invalid")
+    if database_now() < max_upload_expiry:
+        raise ObjectUploadWindowOpenError("presigned upload window still open")
+    return digest
+
+
 @dataclass(frozen=True)
 class ObjectWorkspaceErasureAdapter:
     """Concrete `objects` domain adapter for organisation-wide GDPR Art. 17 erasure."""
@@ -161,7 +174,7 @@ class ObjectWorkspaceErasureAdapter:
     socket_path: str | None = None
     deleter: ObjectDeleter | None = None
     replicas: ObjectReplicaAbsenceVerifier | None = None
-    drain_grace: timedelta = UPLOAD_DRAIN_GRACE
+    upload_drain: ObjectUploadDrainVerifier | None = None
     domain: str = "objects"
     revision: str = "storage-gateway-erasure-v1"
 
@@ -205,7 +218,13 @@ class ObjectWorkspaceErasureAdapter:
             )
         return tuple(sorted(keys)), now, max_upload_expiry
 
-    def _evidence(self, scope: ErasureScope, object_keys: tuple[str, ...]) -> str:
+    def _evidence(
+        self,
+        scope: ErasureScope,
+        object_keys: tuple[str, ...],
+        *,
+        drain_digest: str | None = None,
+    ) -> str:
         replica_digest: str | None = None
         if self.replicas is not None:
             replica_digest = self.replicas.verify_absent(scope, object_keys)
@@ -224,20 +243,22 @@ class ObjectWorkspaceErasureAdapter:
         }
         if replica_digest is not None:
             payload["replica_evidence_sha256"] = replica_digest
+        if drain_digest is not None:
+            payload["upload_drain_evidence_sha256"] = drain_digest
         canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
     @transaction.atomic
     def erase_and_verify(self, scope: ErasureScope) -> AbsenceProof:
-        object_keys, now, max_upload_expiry = self._authoritative(scope)
-        if max_upload_expiry is not None and now < max_upload_expiry + self.drain_grace:
-            raise ObjectUploadWindowOpenError("presigned upload or drain window still open")
+        object_keys, _now, max_upload_expiry = self._authoritative(scope)
+        pre_drain = _check_upload_drain(self.upload_drain, scope, object_keys, max_upload_expiry)
         for key in object_keys:
             invoke_gateway_delete(key, socket_path=self.socket_path, deleter=self.deleter)
+        post_drain = _check_upload_drain(self.upload_drain, scope, object_keys, max_upload_expiry)
+        if pre_drain != post_drain:
+            raise ValueError("object upload drain evidence changed across deletion")
         verified_at = database_now()
-        if max_upload_expiry is not None and verified_at < max_upload_expiry + self.drain_grace:
-            raise ObjectUploadWindowOpenError("presigned upload or drain window still open")
-        evidence = self._evidence(scope, object_keys)
+        evidence = self._evidence(scope, object_keys, drain_digest=post_drain)
         return AbsenceProof(
             request_id=scope.request_id,
             organisation_id=scope.organisation_id,
@@ -253,7 +274,6 @@ class ObjectWorkspaceErasureAdapter:
     def verify_proof(self, scope: ErasureScope, proof: AbsenceProof) -> bool:
         try:
             object_keys, now, max_upload_expiry = self._authoritative(scope)
-            fence = max_upload_expiry + self.drain_grace if max_upload_expiry is not None else None
             if (
                 proof.request_id != scope.request_id
                 or proof.organisation_id != scope.organisation_id
@@ -263,12 +283,25 @@ class ObjectWorkspaceErasureAdapter:
                 or proof.adapter_revision != self.revision
                 or proof.verified_at.tzinfo is None
                 or not (scope.cutoff_at <= proof.verified_at <= now)
-                or (fence is not None and (now < fence or proof.verified_at < fence))
+                or (
+                    max_upload_expiry is not None
+                    and (now < max_upload_expiry or proof.verified_at < max_upload_expiry)
+                )
             ):
                 return False
+            pre_drain = _check_upload_drain(
+                self.upload_drain, scope, object_keys, max_upload_expiry
+            )
             for key in object_keys:
                 invoke_gateway_delete(key, socket_path=self.socket_path, deleter=self.deleter)
-            return proof.evidence_sha256 == self._evidence(scope, object_keys)
+            post_drain = _check_upload_drain(
+                self.upload_drain, scope, object_keys, max_upload_expiry
+            )
+            if pre_drain != post_drain:
+                return False
+            return proof.evidence_sha256 == self._evidence(
+                scope, object_keys, drain_digest=post_drain
+            )
         except (
             ValueError,
             StorageRefusedError,
@@ -283,11 +316,13 @@ def erase_account_personal_attachments(
     *,
     socket_path: str | None = None,
     deleter: ObjectDeleter | None = None,
-    drain_grace: timedelta = UPLOAD_DRAIN_GRACE,
+    upload_drain: ObjectUploadDrainVerifier | None = None,
 ) -> bool:
-    """Hold final deletion until every presigned upload window plus `drain_grace` has elapsed,
-    then delete S3 objects (`DELETE` + `HEAD 404`), remove `media_attachment` rows, and record
-    verification in PostgreSQL.
+    """Verify presigned PUT stream drainage via `upload_drain` before and after physical S3
+    `DELETE` + `HEAD 404`, remove `media_attachment` rows, and record verification in PostgreSQL.
+
+    Fails closed (`False`, zero deletions, zero SQL confirmation) when any attachment carried an
+    `upload_expires_at` window and either `upload_drain` is `None` or `verify_drained(...)` refuses.
     """
     raw_items = scope.inventory.get("account_personal_attachments", [])
     if not isinstance(raw_items, list):
@@ -307,26 +342,37 @@ def erase_account_personal_attachments(
             upload_expiries.append(expiry)
         keys.append(attachment_object_key(organisation_id=org_id, attachment_id=att_id))
 
-    now = database_now()
-    if any(now < exp + drain_grace for exp in upload_expiries):
+    sorted_keys = tuple(sorted(set(keys)))
+    max_upload_expiry = max(upload_expiries) if upload_expiries else None
+
+    try:
+        pre_drain = _check_upload_drain(upload_drain, scope, sorted_keys, max_upload_expiry)
+    except ObjectUploadWindowOpenError:
         return False
 
-    for key in sorted(set(keys)):
+    for key in sorted_keys:
         invoke_gateway_delete(key, socket_path=socket_path, deleter=deleter)
 
-    post_delete_now = database_now()
-    if any(post_delete_now < exp + drain_grace for exp in upload_expiries):
+    try:
+        post_drain = _check_upload_drain(upload_drain, scope, sorted_keys, max_upload_expiry)
+    except ObjectUploadWindowOpenError:
         return False
+    if pre_drain != post_drain:
+        raise ValueError("account attachment upload drain evidence changed across deletion")
+
+    evidence_payload: dict[str, Any] = {
+        "absent_object_keys": list(sorted_keys),
+        "cutoff_at": scope.cutoff_at.isoformat(),
+        "inventory_sha256": scope.inventory_sha256,
+        "request_id": str(scope.request_id),
+        "user_id": str(scope.user_id),
+    }
+    if post_drain is not None:
+        evidence_payload["upload_drain_evidence_sha256"] = post_drain
 
     evidence = hashlib.sha256(
         json.dumps(
-            {
-                "absent_object_keys": sorted(set(keys)),
-                "cutoff_at": scope.cutoff_at.isoformat(),
-                "inventory_sha256": scope.inventory_sha256,
-                "request_id": str(scope.request_id),
-                "user_id": str(scope.user_id),
-            },
+            evidence_payload,
             sort_keys=True,
             separators=(",", ":"),
         ).encode("utf-8")

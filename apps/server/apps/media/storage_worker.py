@@ -26,10 +26,12 @@ from . import outbound
 from .storage import (
     EXPIRY_SECONDS,
     ObjectDescriptor,
+    ObjectKey,
     ObjectMismatchError,
     S3Credential,
     S3Location,
     StorageRefusedError,
+    parse_object_key,
     presign,
 )
 from .storage_protocol import MAX_RPC_BYTES, unique_object
@@ -58,6 +60,22 @@ def descriptor(data: Any) -> ObjectDescriptor:
         )
     except (ValueError, TypeError, AttributeError):
         raise StorageRefusedError() from None
+
+
+def delete_target(data: Any) -> ObjectKey:
+    if not isinstance(data, dict):
+        raise StorageRefusedError()
+    if set(data) == {"key"} and isinstance(data["key"], str):
+        return parse_object_key(data["key"])
+    if set(data) == {"organisationId", "attachmentId"}:
+        if not isinstance(data["organisationId"], str) or not isinstance(data["attachmentId"], str):
+            raise StorageRefusedError()
+        try:
+            return ObjectKey(UUID(data["organisationId"]), UUID(data["attachmentId"]))
+        except ValueError:
+            raise StorageRefusedError() from None
+    desc = descriptor(data)
+    return ObjectKey(desc.organisation_id, desc.attachment_id)
 
 
 class DirectorySource:
@@ -132,6 +150,41 @@ def _verify(location: S3Location, credential: S3Credential, obj: ObjectDescripto
         connection.close()
 
 
+def _delete(location: S3Location, credential: S3Credential, target: ObjectKey) -> None:
+    delete_url, delete_headers = presign(
+        location, credential, target, method="DELETE", now=datetime.now(UTC)
+    )
+    del_conn, del_resp = outbound.request(
+        outbound.target(delete_url, https_only=True),
+        method="DELETE",
+        headers=delete_headers,
+        deadline=time.monotonic() + 10,
+    )
+    try:
+        if del_resp.status not in {200, 204, 404}:
+            raise StorageRefusedError()
+    finally:
+        del_resp.close()
+        del_conn.close()
+
+    # Confirm complete absence via signed S3 HEAD returning HTTP 404 (BUG-0021, BUG-0025).
+    head_url, head_headers = presign(
+        location, credential, target, method="HEAD", now=datetime.now(UTC)
+    )
+    head_conn, head_resp = outbound.request(
+        outbound.target(head_url, https_only=True),
+        method="HEAD",
+        headers=head_headers,
+        deadline=time.monotonic() + 10,
+    )
+    try:
+        if head_resp.status != 404:
+            raise StorageRefusedError()
+    finally:
+        head_resp.close()
+        head_conn.close()
+
+
 class StorageWorker:
     def __init__(self, source: DirectorySource) -> None:
         self.source = source
@@ -139,9 +192,20 @@ class StorageWorker:
     def execute(self, message: Any) -> dict[str, Any]:
         if not isinstance(message, dict) or set(message) != {"operation", "object"}:
             raise StorageRefusedError()
-        operation, obj = message["operation"], descriptor(message["object"])
-        if not isinstance(operation, str) or operation not in {"upload", "download", "verify"}:
+        operation = message["operation"]
+        if not isinstance(operation, str) or operation not in {
+            "upload",
+            "download",
+            "verify",
+            "delete",
+        }:
             raise StorageRefusedError()
+        if operation == "delete":
+            target = delete_target(message["object"])
+            with self.source.load(target.organisation_id) as (location, credential):
+                _delete(location, credential, target)
+            return {"deleted": True}
+        obj = descriptor(message["object"])
         with self.source.load(obj.organisation_id) as (location, credential):
             if operation == "verify":
                 _verify(location, credential, obj)

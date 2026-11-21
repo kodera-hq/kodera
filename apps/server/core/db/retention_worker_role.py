@@ -15,6 +15,7 @@ FUNCTIONS = (
 )
 ADMISSION_FUNCTIONS = (
     "privacy_begin_erasure(uuid,uuid,text,text,timestamptz,uuid)",
+    "privacy_fence_account_erasure(uuid,uuid)",
     "privacy_begin_account_erasure(uuid,uuid,text,text,timestamptz,uuid)",
     "privacy_account_protocol_recorded(uuid)",
     "billing_close_contract(uuid,timestamptz,text,text,uuid)",
