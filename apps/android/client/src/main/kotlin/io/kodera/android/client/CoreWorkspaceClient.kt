@@ -77,7 +77,7 @@ class CoreWorkspaceClient(private val requester: CoreRequester) {
         private fun unavailable(failure: WorkspaceFailure) = WorkspaceOutcome.Unavailable(failure)
 
         fun decode(data: ByteArray, organisationId: String): WorkspaceSnapshot {
-            val root = StrictJson.parse(data).objectValue()
+            val root = StrictJson.parse(data, CoreRequester.BODY_LIMIT).objectValue()
             fields(root, "organisation_id", "state", "setup", "can_initialise", "id", "categories", "uncategorised_channels")
             val returnedOrganisation = uuid(root.getValue("organisation_id"))
             if (!TrustPolicy.canonicalNonNilUUID(organisationId) || returnedOrganisation != organisationId) refused()

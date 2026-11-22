@@ -7,6 +7,17 @@ from core.db.models import StoredModel
 ROOM_ID_REGEX = r"^!([!-9;-~]{1,128}:[A-Za-z0-9.:-]{1,253}|[A-Za-z0-9_-]{43})$"
 
 
+class PreviewAdmission(models.Model):
+    """Short-lived hashed principal budgets and origin timeout records, shared across workers."""
+
+    key = models.TextField(primary_key=True)
+    expires_at = models.DateTimeField(db_index=True)
+    hits = models.PositiveIntegerField(default=0)
+
+    def __str__(self) -> str:
+        return self.key
+
+
 class Attachment(StoredModel):
     organisation = models.ForeignKey("orgs.Organisation", on_delete=models.RESTRICT)
     uploader = models.ForeignKey("orgs.Membership", on_delete=models.RESTRICT)

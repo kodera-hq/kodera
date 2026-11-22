@@ -315,6 +315,7 @@ config/settings/deploy_worker.py
 !apps/media/context.py
 !apps/media/outbound.py
 !apps/media/unfurl.py
+!apps/media/preview_guard.py
 !apps/media/storage.py
 !apps/media/storage_gateway.py
 !apps/media/storage_protocol.py

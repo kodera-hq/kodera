@@ -30,6 +30,14 @@ jobs:
           python-version: "3.12"
       - name: Prove runtime controller refusals
         run: uv run --no-project --python 3.12 python -m unittest discover -s deploy/community -p test_coldstart_acceptance.py
+      - name: Install locked server runtime for real Gunicorn ingress smoke
+        working-directory: apps/server
+        run: uv sync --frozen --no-dev
+      - name: Exercise pinned Caddy with bounded real Gunicorn workers
+        run: |
+          image=$(sed -n 's/^    image: \(caddy:[^ ]*\)$/\1/p' deploy/community/docker-compose.yml)
+          docker pull "$image"
+          PYTHONDONTWRITEBYTECODE=1 apps/server/.venv/bin/python scripts/ci/smoke-community-ingress.py --fast
       - name: Measure exact-source Community with fresh volumes and synthetic trust
         run: uv run --no-project --python 3.12 python deploy/community/accept_coldstart.py
 

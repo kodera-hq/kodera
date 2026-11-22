@@ -382,6 +382,7 @@ def assert_image_boundary(ignore):
         "!apps/media/context.py",
         "!apps/media/outbound.py",
         "!apps/media/unfurl.py",
+        "!apps/media/preview_guard.py",
         "!apps/media/storage.py",
         "!apps/media/storage_gateway.py",
         "!apps/media/storage_protocol.py",
@@ -1072,3 +1073,18 @@ def test_extension_parent_directory_exception_is_not_an_inert_allowlist():
     ignore = [*ignore, "!apps/extensions/"]
     with pytest.raises(AssertionError, match="exact runtime allowlist"):
         assert_image_boundary(ignore)
+
+
+@pytest.mark.parametrize("dockerfile", ["Dockerfile", "Dockerfile.migrator", "Dockerfile.worker"])
+def test_every_docker_context_admits_upload_limits_and_required_preview_module(dockerfile):
+    from dev.worker_boundary import worker_image_refusals
+
+    files = image_files(ROOT, dockerfile)
+    if "config/settings/base.py" in files:
+        assert "config/upload_limits.py" in files
+    if "config/deploy_wsgi.py" in files:
+        assert "config/body_guard.py" in files
+    if "apps/media/unfurl.py" in files:
+        assert "apps/media/preview_guard.py" in files
+    if dockerfile == "Dockerfile.worker":
+        assert worker_image_refusals(files) == []

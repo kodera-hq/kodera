@@ -22,7 +22,7 @@ struct StrictJSON {
     private let bytes: [UInt8]
     private var offset = 0
 
-    static func parse(_ data: Data) throws -> StrictJSONValue {
+    static func parse(_ data: Data, byteLimit: Int = byteLimit) throws -> StrictJSONValue {
         guard data.count <= byteLimit, String(data: data, encoding: .utf8) != nil else {
             throw DiscoveryFailure.protocolViolation
         }

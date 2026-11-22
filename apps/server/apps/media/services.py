@@ -9,7 +9,7 @@ import re
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -27,10 +27,11 @@ from apps.workspaces.selectors import (
     workspace_id_for,
 )
 from apps.workspaces.structure import WorkspaceUnavailableError
+from config.upload_limits import UPLOAD_STREAM_DRAIN_SECONDS
 from core.db.ids import new_uuid7
 from services.identity.access_tokens import VerifiedAccessToken
 
-from . import outbound, unfurl
+from . import outbound, preview_guard, unfurl
 from .context import RefusalError as RefusalError, audit, caller, read_caller
 from .models import ROOM_ID_REGEX, Attachment
 from .storage import ObjectDescriptor, ObjectMismatchError, StorageRefusedError
@@ -42,6 +43,7 @@ ROOM_ID_PATTERN = re.compile(ROOM_ID_REGEX + r"\Z")
 DEFAULT_MAX_PENDING_PER_MEMBER = 10
 DEFAULT_MAX_PENDING_PER_WORKSPACE = 100
 PREVIEW_TTL = 300
+PREVIEW_TIMEOUT_TTL = 10
 ROOM_VERIFIER_TIMEOUT_S = 3.0
 MAX_ROOM_VERIFIER_BYTES = 4096
 
@@ -630,7 +632,7 @@ def complete_upload(
 def cancel_upload(
     *, verified: VerifiedAccessToken, organisation_id: UUID, attachment_id: UUID, request_id: str
 ) -> None:
-    """Atomically claim cancellation before S3 DELETE, keeping unexpired PUT tombstones for reaper."""
+    """Atomically claim cancellation before S3 DELETE, keeping PUT tombstones until the upload stream window drains."""
     with transaction.atomic():
         principal = caller(verified, organisation_id)
         locked = (
@@ -654,12 +656,15 @@ def cancel_upload(
         obj = _descriptor(locked)
         expires_at = locked.upload_expires_at
 
+    # The drain window must close before DELETE starts, not merely before row removal.
+    # An early DELETE may be followed by a late PUT; its tombstone always needs another pass.
+    purge_allowed = expires_at <= _upload_purge_before()
     try:
         _gateway().call("delete", obj)
     except StorageRefusedError:
         raise RefusalError(503, "service-unavailable") from None
 
-    if expires_at <= timezone.now():
+    if purge_allowed:
         with transaction.atomic():
             principal = caller(verified, organisation_id)
             Attachment.objects.select_for_update().filter(
@@ -667,15 +672,22 @@ def cancel_upload(
                 organisation_id=principal.organisation_id,
                 completed_at__isnull=True,
                 cancelled_at__isnull=False,
-                upload_expires_at__lte=timezone.now(),
+                upload_expires_at__lte=_upload_purge_before(),
             ).delete()
 
 
+def _upload_purge_before() -> datetime:
+    # Quota SQL uses the same fixed fence; S3 does not enforce stream duration.
+    if settings.KODERA_MEDIA_MAX_UPLOAD_STREAM_S != UPLOAD_STREAM_DRAIN_SECONDS:
+        raise RuntimeError("media upload drain window must be 300 seconds")
+    return timezone.now() - timedelta(seconds=UPLOAD_STREAM_DRAIN_SECONDS)
+
+
 def reap_expired_uploads(*, limit: int = 100) -> int:
-    """Bounded reaper purging expired uncompleted/cancelled tickets after S3 DELETE + HEAD 404."""
+    """Purge uncompleted tickets after the PUT stream window and S3 DELETE + HEAD 404."""
     if type(limit) is not int or not 1 <= limit <= 1000:
         raise ValueError("expired upload reaper limit must be between 1 and 1000")
-    now = timezone.now()
+    now = _upload_purge_before()
     candidates = list(
         Attachment.objects.filter(completed_at__isnull=True, upload_expires_at__lte=now).order_by(
             "upload_expires_at", "id"
@@ -692,7 +704,7 @@ def reap_expired_uploads(*, limit: int = 100) -> int:
                 .filter(
                     id=row.id,
                     completed_at__isnull=True,
-                    upload_expires_at__lte=timezone.now(),
+                    upload_expires_at__lte=_upload_purge_before(),
                 )
                 .first()
             )
@@ -714,7 +726,7 @@ def reap_expired_uploads(*, limit: int = 100) -> int:
                     id=row.id,
                     completed_at__isnull=True,
                     cancelled_at__isnull=False,
-                    upload_expires_at__lte=timezone.now(),
+                    upload_expires_at__lte=_upload_purge_before(),
                 )
                 .delete()
             )
@@ -783,7 +795,7 @@ def prepare_preview(
     if connection.in_atomic_block:
         raise RuntimeError("URL preview fetch requires no enclosing transaction")
     with transaction.atomic():
-        read_caller(verified, organisation_id)
+        principal = read_caller(verified, organisation_id)
         if not isinstance(url, str) or len(url) > 8192:
             raise RefusalError(422)
         try:
@@ -792,8 +804,22 @@ def prepare_preview(
             raise RefusalError(422) from None
         key = "media-preview:" + str(organisation_id) + ":" + digest
         cached = cache.get(key)
+    # Commit the charge outside the authorization transaction, including refused fetches.
+    principal_key = "principal:" + hashlib.sha256(str(principal.identity_id).encode()).hexdigest()
+    if not preview_guard.charge(principal_key):
+        raise RefusalError(429, "rate-limited", "unfurl-rate-limited")
+    try:
+        origin = outbound.target(url)
+    except outbound.BlockedTargetError as failure:
+        raise RefusalError(403, "forbidden", failure.reason) from None
+    host_key = (
+        "host:"
+        + hashlib.sha256(json.dumps([origin.scheme, origin.host, origin.port]).encode()).hexdigest()
+    )
     if cached is not None:
         return cached
+    if preview_guard.timed_out(host_key):
+        raise RefusalError(503, "service-unavailable", "timeout")
     try:
         if unfurl.unfurl is _DEFAULT_UNFURL:
             result = unfurl.unfurl(url, scope_key=str(organisation_id))
@@ -802,8 +828,10 @@ def prepare_preview(
     except outbound.BlockedTargetError as failure:
         raise RefusalError(403, "forbidden", failure.reason) from None
     except outbound.FetchError as failure:
+        if failure.reason == "timeout":
+            preview_guard.remember_timeout(host_key, PREVIEW_TIMEOUT_TTL)
         if failure.reason in {"timeout", "unavailable", "resolver-busy"}:
-            raise RefusalError(503, "service-unavailable") from None
+            raise RefusalError(503, "service-unavailable", failure.reason) from None
         raise RefusalError(422) from None
     with transaction.atomic():
         read_caller(verified, organisation_id)
@@ -840,3 +868,10 @@ def quota_replay_policy():
     from apps.workspaces.services import quota_replay_policy as workspace_policy
 
     return workspace_policy()
+
+
+def has_in_flight_attachment_uploads(*, attachment_ids: list[UUID], cutoff: datetime) -> bool:
+    """Whether any listed attachment still has an upload window open after `cutoff`."""
+    if not attachment_ids:
+        return False
+    return Attachment.objects.filter(id__in=attachment_ids, upload_expires_at__gt=cutoff).exists()

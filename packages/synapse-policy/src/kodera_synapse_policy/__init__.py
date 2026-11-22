@@ -42,7 +42,7 @@ from .confidential import (
 )
 from .federation import MODE, acl, acl_matches, creation_mode, server_list
 
-__version__ = "0.1.7"
+__version__ = "0.1.8"
 
 DM_INVITEES = "io.kodera.dm.invitees"
 MAX_DM_INVITEES = 8
@@ -244,6 +244,22 @@ class KoderaPolicy:
             request_content["creation_content"] = creation
 
     async def user_may_invite(self, inviter: str, invitee: str, room_id: str) -> Any:
+        # The agent's audio-room reconciliation may invite the service before it exists.
+        # Bind this exception to current, agent-authored audio policy; never to a DM/text room.
+        if self._room_access is not None and inviter == self._agent and invitee == self._room_access and self._api.is_mine(invitee):
+            state = await self._api.get_room_state(room_id)
+            policy = state.get(("io.kodera.room.policy", ""))
+            content = getattr(policy, "content", None)
+            if (
+                isinstance(content, Mapping)
+                and _has_governance(content)
+                and self._governance_valid(policy)
+                and content.get("kind") == "audio"
+                and content.get("archived", False) is False
+                and invitee not in content.get("banned", ())
+            ):
+                return NOT_SPAM
+            return Codes.FORBIDDEN
         if inviter == self._room_access or invitee in {self._agent, self._room_access}:
             return Codes.FORBIDDEN
         if not _is_valid_user_id(invitee):
@@ -340,9 +356,9 @@ class KoderaPolicy:
             return Codes.FORBIDDEN
         if content.get("archived", False) is not False:
             return Codes.FORBIDDEN
-        if content["audience"] == "listed" and user not in content["members"]:
+        if content["audience"] == "listed" and not (user == self._room_access and content.get("kind") == "audio") and user not in content["members"]:
             return Codes.FORBIDDEN
-        if "local_members" in content and self._api.is_mine(user) and user != self._room_access and user not in content["local_members"]:
+        if "local_members" in content and self._api.is_mine(user) and not (user == self._room_access and content.get("kind") == "audio") and user not in content["local_members"]:
             return Codes.FORBIDDEN
         return NOT_SPAM
 
@@ -584,7 +600,7 @@ class KoderaPolicy:
             membership = event.content.get("membership")
             target = getattr(event, "state_key", None)
             if membership in {"join", "invite", "knock"} and content["audience"] == "listed":
-                if target not in content["members"]:
+                if target not in content["members"] and not (target == self._room_access and membership == "join" and content.get("kind") == "audio"):
                     return False
                 if membership == "invite" and event.sender not in content["members"]:
                     return False
@@ -593,7 +609,7 @@ class KoderaPolicy:
                 and "local_members" in content
                 and isinstance(target, str)
                 and self._api.is_mine(target)
-                and target != self._room_access
+                and not (target == self._room_access and membership == "join" and content.get("kind") == "audio")
                 and target not in content["local_members"]
             ):
                 return False
@@ -601,6 +617,15 @@ class KoderaPolicy:
             # native membership authorization still applies after this additional gate.
             if target == event.sender and membership in {"join", "leave"}:
                 return True
+        # Only the service's canonical audio occupancy state bypasses audience/posting gates.
+        if event.type == OCCUPANCY:
+            return (
+                self._room_access is not None
+                and event.sender == self._room_access
+                and event.is_state()
+                and getattr(event, "state_key", None) == ""
+                and content.get("kind") == "audio"
+            )
         if content["audience"] == "listed" and event.sender not in content["members"]:
             return False
         if (

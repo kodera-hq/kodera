@@ -30,7 +30,13 @@ from apps.outbox.mail.links import origins_from_environment, setup_redirect_from
 from apps.outbox.mail.seal import key_from_environment
 from apps.outbox.mail.transport import transport_from_environment
 from apps.outbox.realm.keycloak import origins_from_environment as realm_origins_from_environment
-from config.environment import auth_trust, billing_enabled, intake_admitted, legal_text_origin
+from config.environment import (
+    auth_trust,
+    billing_enabled,
+    ee_audit_signing_seed,
+    intake_admitted,
+    legal_text_origin,
+)
 from config.workspace_features import (
     media_gateway_socket,
     media_room_verifier_url,
@@ -119,3 +125,5 @@ KODERA_MEDIA_ROOM_VERIFIER_URL = media_room_verifier_url(os.environ)
     KODERA_COLLAB_ENGINE_URL,
     KODERA_COLLAB_PUBLIC_URL,
 ) = collaboration_settings(os.environ)
+
+KODERA_EE_AUDIT_SIGNING_SEED = ee_audit_signing_seed(os.environ)

@@ -388,3 +388,130 @@ def test_sixteen_concurrent_worker_rpcs_succeed_while_one_s3_head_blocks_3s(
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)
+
+
+def test_prefix_listing_signs_only_the_organisation_attachment_namespace():
+    from apps.media.storage import presign_prefix_request
+
+    organisation_id = uuid4()
+    location = S3Location("https://storage.example.org", "synthetic-bucket", "fr-par")
+    credential = S3Credential("synthetic", "synthetic-secret")
+    url, headers = presign_prefix_request(
+        location, credential, organisation_id, now=datetime.now(UTC), continuation="page-two"
+    )
+    parsed = urlsplit(url)
+    query = parse_qs(parsed.query)
+    assert parsed.path == "/synthetic-bucket"
+    assert query["prefix"] == [f"organisations/{organisation_id}/attachments/"]
+    assert query["continuation-token"] == ["page-two"]
+    assert query["max-keys"] == ["10"]
+    assert headers == {}
+    with pytest.raises(StorageRefusedError):
+        presign_prefix_request(
+            location,
+            credential,
+            organisation_id,
+            now=datetime.now(UTC),
+            key=f"organisations/{uuid4()}/attachments/{uuid4()}",
+        )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["foreign-prefix", "foreign-key", "missing-token", "doctype", "utf16", "dot", "dotdot"],
+)
+def test_prefix_listing_refuses_untrusted_xml_and_namespace_escape(monkeypatch, mutation):
+    organisation_id = uuid4()
+    prefix = f"organisations/{organisation_id}/attachments/"
+    key = prefix + str(uuid4())
+    prefix_text = "organisations/elsewhere/attachments/" if mutation == "foreign-prefix" else prefix
+    key_text = "organisations/elsewhere/attachments/key" if mutation == "foreign-key" else key
+    if mutation in {"dot", "dotdot"}:
+        key_text = prefix + ("./key" if mutation == "dot" else "../key")
+    truncated = "true" if mutation == "missing-token" else "false"
+    document = (
+        f'<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">'
+        f"<Prefix>{prefix_text}</Prefix><IsTruncated>{truncated}</IsTruncated>"
+        f"<Contents><Key>{key_text}</Key></Contents></ListBucketResult>"
+    )
+    if mutation == "doctype":
+        document = '<!DOCTYPE x [<!ENTITY x "expanded">]>' + document
+    raw = document.encode("utf-16" if mutation == "utf16" else "utf-8")
+    closed = []
+    monkeypatch.setattr(
+        storage_worker.outbound,
+        "request",
+        lambda *args, **kwargs: (
+            SimpleNamespace(close=lambda: closed.append("connection")),
+            SimpleNamespace(
+                status=200, read=lambda size: raw, close=lambda: closed.append("response")
+            ),
+        ),
+    )
+    with pytest.raises(StorageRefusedError):
+        storage_worker._prefix_request(
+            S3Location("https://storage.example.org", "synthetic-bucket", "fr-par"),
+            S3Credential("synthetic", "synthetic-secret"),
+            organisation_id,
+        )
+    assert closed == ["response", "connection"]
+
+
+@pytest.mark.parametrize("segment", ["./key", "../key", "key/.", "key/.."])
+def test_prefix_delete_refuses_dot_segments(segment):
+    from apps.media.storage import presign_prefix_request
+
+    org = uuid4()
+    with pytest.raises(StorageRefusedError):
+        presign_prefix_request(
+            S3Location("https://storage.example.org", "synthetic-bucket", "fr-par"),
+            S3Credential("synthetic", "synthetic-secret"),
+            org,
+            now=datetime.now(UTC),
+            key=f"organisations/{org}/attachments/{segment}",
+        )
+
+
+def test_prefix_worker_refuses_malformed_organisation_before_loading_credentials():
+    source = SimpleNamespace(load=lambda org: pytest.fail("invalid ID reached credentials"))
+    with pytest.raises(StorageRefusedError):
+        storage_worker.StorageWorker(source).execute(
+            {
+                "operation": "attachment_prefix",
+                "object": {"organisationId": "invalid", "continuation": None, "key": None},
+            }
+        )
+
+
+@pytest.mark.parametrize("count", [10, 11])
+def test_prefix_listing_page_limit_is_ten(monkeypatch, count):
+    organisation_id = uuid4()
+    prefix = f"organisations/{organisation_id}/attachments/"
+    keys = [prefix + str(uuid4()) for _ in range(count)]
+    contents = "".join(f"<Contents><Key>{key}</Key></Contents>" for key in keys)
+    raw = (
+        f'<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">'
+        f"<Prefix>{prefix}</Prefix><IsTruncated>false</IsTruncated>{contents}"
+        "</ListBucketResult>"
+    ).encode()
+    monkeypatch.setattr(
+        storage_worker.outbound,
+        "request",
+        lambda *a, **k: (
+            SimpleNamespace(close=lambda: None),
+            SimpleNamespace(status=200, read=lambda n: raw, close=lambda: None),
+        ),
+    )
+
+    def listing():
+        return storage_worker._prefix_request(
+            S3Location("https://storage.example.org", "synthetic-bucket", "fr-par"),
+            S3Credential("synthetic", "synthetic-secret"),
+            organisation_id,
+        )
+
+    if count == 10:
+        assert listing() == (keys, None)
+    else:
+        with pytest.raises(StorageRefusedError):
+            listing()

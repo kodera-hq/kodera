@@ -148,7 +148,9 @@ def test_bug_0064_webhook_idempotency_retention_outlives_24h_http_window():
     assert not IdempotencyRecord.objects.filter(issuer=hook_scope.issuer).exists()
 
 
-def test_bug_0011_0025_0027_0037_account_and_org_erasure_completeness(world, settings, tmp_path):
+def test_bug_0011_0025_0027_0037_account_and_org_erasure_completeness(
+    world, settings, tmp_path, monkeypatch
+):
     """Covers BUG-0011 (non-accepted invitations), BUG-0025 (`ObjectWorkspaceErasureAdapter` +
     Community/B2B account attachments + fail-closed `privacy_complete_account_erasure` when S3
     deletion fails), BUG-0027 (`orgs_invitationoutboxbinding` + send-time withdrawal + outbox
@@ -456,6 +458,10 @@ def test_bug_0011_0025_0027_0037_account_and_org_erasure_completeness(world, set
     assert str(b2b_att.id) in org_erasure.inventory["attachments"]
 
     # Failing gateway deleter blocks `ObjectWorkspaceErasureAdapter` fail-closed.
+    monkeypatch.setattr(
+        "apps.media.storage_gateway.attachment_prefix",
+        lambda *args, **kwargs: {"keys": [], "continuation": None},
+    )
     org_object_adapter_bad = ObjectWorkspaceErasureAdapter(
         deleter=failing_deleter,
         upload_drain=qualified_drain,
@@ -574,7 +580,7 @@ def test_bug_0026_collection_portability_export_enforces_workspace_restrictions_
     assert sources.permitted(req, f"collection:{col_id}") is False
 
 
-def test_bug_0025_presigned_upload_window_fence_and_replay_erasure(world, settings):
+def test_bug_0025_presigned_upload_window_fence_and_replay_erasure(world, settings, monkeypatch):
     """BUG-0025 Round-4: Both Community account erasure and B2B organisation erasure require a
     qualified `ObjectUploadDrainVerifier` (`BoundedStreamUploadDrainVerifier`) whenever any
     attachment carries `upload_expires_at`:
@@ -725,7 +731,7 @@ def test_bug_0025_presigned_upload_window_fence_and_replay_erasure(world, settin
 
     # Now verify BOTH `upload_drain=None` refusal, `max_stream_duration` ceiling, AND `has_in_flight_uploads`
     # on B2B organisation erasure (`ObjectWorkspaceErasureAdapter`) + SQL `upload_expires_at` window!
-    stream_ceiling = timedelta(seconds=60)
+    stream_ceiling = timedelta(seconds=300)
     org_window_end = database_now() - stream_ceiling + timedelta(milliseconds=900)
     org_drain_deadline = org_window_end + stream_ceiling
     b2b_att = Attachment.objects.create(
@@ -760,6 +766,10 @@ def test_bug_0025_presigned_upload_window_fence_and_replay_erasure(world, settin
         actor_identity_id=staff_op.id,
     )
 
+    monkeypatch.setattr(
+        "apps.media.storage_gateway.attachment_prefix",
+        lambda *args, **kwargs: {"keys": [], "continuation": None},
+    )
     # Without `upload_drain`, `ObjectWorkspaceErasureAdapter` holds `"objects"` (`0` deletes)!
     org_no_verifier = advance_erasure(
         org_erasure.id,
@@ -1327,6 +1337,11 @@ def test_bug_0025_default_unix_socket_delete_rpc_without_injected_deleter(
         comm_path: b"personal-s3-bytes",
         b2b_path: b"org-s3-bytes",
     }
+    orphan_paths = [
+        f"/k2c-bucket/organisations/{org.id}/attachments/{new_uuid7()}" for _ in range(6)
+    ]
+    for orphan in orphan_paths:
+        s3_objects[orphan] = b"late PUT without an attachment row"
     s3_requests: list[tuple[str, str]] = []
     s3_mode = {"sticky_head_200": True}
 
@@ -1352,6 +1367,47 @@ def test_bug_0025_default_unix_socket_delete_rpc_without_injected_deleter(
                 s3_objects.pop(parsed.path, None)
             self.send_response(204)
             self.end_headers()
+
+        def do_GET(self) -> None:  # noqa: N802
+            from urllib.parse import parse_qs
+            from xml.sax.saxutils import escape
+
+            parsed = urlsplit(self.path)
+            if not self._verify_sigv4_query():
+                self.send_response(403)
+                self.end_headers()
+                return
+            query = parse_qs(parsed.query)
+            prefix = query["prefix"][0]
+            after = query.get("continuation-token", [""])[0]
+            keys = sorted(
+                key.split("/", 2)[-1]
+                for key in s3_objects
+                if key.startswith("/k2c-bucket/" + prefix)
+            )
+            keys = [key for key in keys if key > after]
+            page = keys[: int(query["max-keys"][0])]
+            more = len(keys) > len(page)
+            s3_requests.append(("LIST", prefix))
+            raw = (
+                '<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">'
+                + "<Prefix>"
+                + escape(prefix)
+                + "</Prefix><IsTruncated>"
+                + str(more).lower()
+                + "</IsTruncated>"
+                + (
+                    "<NextContinuationToken>" + escape(page[-1]) + "</NextContinuationToken>"
+                    if more
+                    else ""
+                )
+                + "".join("<Contents><Key>" + escape(key) + "</Key></Contents>" for key in page)
+                + "</ListBucketResult>"
+            ).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
 
         def do_HEAD(self) -> None:  # noqa: N802
             parsed = urlsplit(self.path)
@@ -1477,6 +1533,10 @@ def test_bug_0025_default_unix_socket_delete_rpc_without_injected_deleter(
         assert ("DELETE", b2b_path) in s3_requests
         assert ("HEAD", b2b_path) in s3_requests
         assert b2b_path not in s3_objects
+        for orphan in orphan_paths:
+            assert ("DELETE", orphan) in s3_requests
+            assert orphan not in s3_objects
+        assert s3_requests.count(("LIST", f"organisations/{org.id}/attachments/")) >= 3
     finally:
         worker_server.shutdown()
         worker_server.server_close()
@@ -1728,7 +1788,7 @@ def test_r5_bounded_stream_upload_drain_requires_authoritative_inflight_inspecto
         non_bool_verifier.verify_drained(
             scope,
             (f"organisations/{org.id}/attachments/{new_uuid7()}",),
-            now - timedelta(seconds=120),
+            now - timedelta(seconds=301),
         )
 
 

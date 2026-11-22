@@ -24,6 +24,7 @@ MIDDLEWARE = [
     "core.api.edition.EnterpriseEditionMiddleware",
 ]
 REST_FRAMEWORK = {
+    "UNICODE_JSON": True,
     "DEFAULT_AUTHENTICATION_CLASSES": [],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
     "DEFAULT_RENDERER_CLASSES": ["rest_framework.renderers.JSONRenderer"],
@@ -102,3 +103,20 @@ from core.db.ee_erasure import install_ee_erasure_key_sync as _install_ee_erasur
 
 _install_ee_erasure_key_sync()
 del _install_ee_erasure_key_sync
+
+# Keep application cleanup and migration 0016's quota fence identical.
+from config.upload_limits import UPLOAD_STREAM_DRAIN_SECONDS  # noqa: E402
+
+KODERA_MEDIA_MAX_UPLOAD_STREAM_S = UPLOAD_STREAM_DRAIN_SECONDS
+if os.environ.get("KODERA_MEDIA_MAX_UPLOAD_STREAM_S", str(UPLOAD_STREAM_DRAIN_SECONDS)) != str(
+    UPLOAD_STREAM_DRAIN_SECONDS
+):
+    raise ValueError("media upload drain window must be 300 seconds")
+
+# Session advisory leases require direct PostgreSQL. Explicit transaction-pooler mode uses
+# transaction-scoped leases on a separate connection so pooled sessions retain no lock.
+_pooler = os.environ.get("KODERA_DATABASE_TRANSACTION_POOLER", "0")
+if _pooler not in {"0", "1"}:
+    raise ValueError("KODERA_DATABASE_TRANSACTION_POOLER must be 0 or 1")
+KODERA_DATABASE_TRANSACTION_POOLER = _pooler == "1"
+del _pooler

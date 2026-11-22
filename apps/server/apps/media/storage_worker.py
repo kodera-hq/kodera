@@ -25,6 +25,7 @@ from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Any
 from uuid import UUID
+from xml.etree import ElementTree
 
 from . import outbound
 from .storage import (
@@ -37,6 +38,7 @@ from .storage import (
     StorageRefusedError,
     parse_object_key,
     presign,
+    presign_prefix_request,
 )
 from .storage_protocol import MAX_RPC_BYTES, unique_object
 
@@ -231,6 +233,66 @@ def _delete(location: S3Location, credential: S3Credential, target: ObjectKey) -
         head_conn.close()
 
 
+def _prefix_request(location, credential, organisation_id, *, continuation=None, key=None):
+    url, headers = presign_prefix_request(
+        location,
+        credential,
+        organisation_id,
+        now=datetime.now(UTC),
+        continuation=continuation,
+        key=key,
+    )
+    conn, response = outbound.request(
+        outbound.target(url, https_only=True),
+        method="GET" if key is None else "DELETE",
+        headers=headers,
+        deadline=time.monotonic() + 10,
+        pool="storage",
+    )
+    try:
+        if key is not None:
+            if response.status not in {200, 204, 404}:
+                raise StorageRefusedError()
+            return None
+        raw = response.read(256 * 1024 + 1)
+        if response.status != 200 or len(raw) > 256 * 1024 or b"<!" in raw:
+            raise StorageRefusedError()
+        try:
+            text = raw.decode("utf-8")
+            if "<!" in text:
+                raise StorageRefusedError()
+            document = ElementTree.fromstring(text)  # noqa: S314 - bounded UTF-8 with all DTD/entity declarations refused
+        except (UnicodeError, ElementTree.ParseError):
+            raise StorageRefusedError() from None
+        ns = "{http://s3.amazonaws.com/doc/2006-03-01/}"
+        if document.tag != ns + "ListBucketResult":
+            raise StorageRefusedError()
+        prefix = f"organisations/{organisation_id}/attachments/"
+        if document.findtext(ns + "Prefix") != prefix:
+            raise StorageRefusedError()
+        keys = [item.findtext(ns + "Key") for item in document.findall(ns + "Contents")]
+        if len(keys) > 10 or any(
+            not key
+            or not key.startswith(prefix)
+            or len(key.encode("utf-8")) > 1024
+            or any(part in {".", ".."} for part in key.split("/"))
+            for key in keys
+        ):
+            raise StorageRefusedError()
+        truncated = document.findtext(ns + "IsTruncated")
+        if truncated not in {"true", "false"}:
+            raise StorageRefusedError()
+        token = document.findtext(ns + "NextContinuationToken") if truncated == "true" else None
+        if truncated == "true" and (
+            not token or token == continuation or len(token) > 4096 or not token.isascii()
+        ):
+            raise StorageRefusedError()
+        return keys, token
+    finally:
+        response.close()
+        conn.close()
+
+
 def _room_member_target(data: Any) -> tuple[UUID, str, str]:
     if (
         not isinstance(data, dict)
@@ -262,8 +324,31 @@ class StorageWorker:
             "verify",
             "delete",
             "room_member",
+            "attachment_prefix",
         }:
             raise StorageRefusedError()
+        if operation == "attachment_prefix":
+            data = message["object"]
+            if (
+                not isinstance(data, dict)
+                or set(data) != {"organisationId", "continuation", "key"}
+                or not isinstance(data["organisationId"], str)
+                or (data["continuation"] is not None and not isinstance(data["continuation"], str))
+                or (data["key"] is not None and not isinstance(data["key"], str))
+            ):
+                raise StorageRefusedError()
+            try:
+                org_id = UUID(data["organisationId"])
+            except ValueError:
+                raise StorageRefusedError() from None
+            with self.source.load(org_id) as (location, credential):
+                result = _prefix_request(
+                    location, credential, org_id, continuation=data["continuation"], key=data["key"]
+                )
+            if data["key"] is not None:
+                return {"deleted": True}
+            keys, token = result
+            return {"keys": keys, "continuation": token}
         if operation == "room_member":
             org_id, room_id, subject = _room_member_target(message["object"])
             with self.source.load_room_verifier(org_id) as verifier:

@@ -19,16 +19,23 @@ from config.deploy_environment import operator_deployment
 from config.environment import (
     auth_trust,
     billing_enabled,
+    ee_audit_signing_seed,
     intake_admitted,
     staff_issuer,
     tenant_app_urls,
 )
 from core.sealing import key_from_environment as contact_key_from_environment
 
-from .base import APPEND_SLASH as APPEND_SLASH, TIME_ZONE as TIME_ZONE, USE_TZ as USE_TZ
+from .base import (
+    APPEND_SLASH as APPEND_SLASH,
+    KODERA_MEDIA_MAX_UPLOAD_STREAM_S as KODERA_MEDIA_MAX_UPLOAD_STREAM_S,
+    TIME_ZONE as TIME_ZONE,
+    USE_TZ as USE_TZ,
+)
 
 _validated = operator_deployment(os.environ)
 SECRET_KEY = _validated["SECRET_KEY"]
+KODERA_EE_AUDIT_SIGNING_SEED = ee_audit_signing_seed(os.environ)
 ALLOWED_HOSTS = _validated["ALLOWED_HOSTS"]
 DATABASES = _validated["DATABASES"]
 DEBUG = False

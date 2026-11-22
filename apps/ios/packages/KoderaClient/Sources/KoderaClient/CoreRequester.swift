@@ -1,4 +1,7 @@
 import Foundation
+
+// Covers 500 channels with 1,024 four-byte UTF-8 topic scalars and bounded metadata.
+let coreResponseByteLimit = 4 * 1024 * 1024
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif
@@ -58,9 +61,9 @@ public protocol AccessTokenProvider: Sendable {
 
 /// What one authorised Core request came to, before its caller reads the body.
 enum CoreReply: Equatable, Sendable {
-    /// Core answered with a status other than 401 or 403, and a body within `StrictJSON.byteLimit`.
+    /// Core answered with a status other than 401 or 403, and a body within `coreResponseByteLimit`.
     case answered(status: Int, body: Data)
-    /// Core's answer was over `StrictJSON.byteLimit`; nothing of it is handed on.
+    /// Core's answer was over `coreResponseByteLimit`; nothing of it is handed on.
     case tooLarge
     /// The path could leave the Core origin. It was refused before any token was asked for, and nothing
     /// was sent.
@@ -338,7 +341,7 @@ private final class BearerTransport: NSObject, URLSessionDataDelegate, @unchecke
                   response.url?.absoluteString == expectedURL?.absoluteString else {
                 return (nil, selectLocked(.redirected), false)
             }
-            guard response.expectedContentLength <= Int64(StrictJSON.byteLimit) else {
+            guard response.expectedContentLength <= Int64(coreResponseByteLimit) else {
                 let observation = eventLocked(.headerRejected)
                 return (observation, selectLocked(.tooLarge), false)
             }
@@ -353,7 +356,7 @@ private final class BearerTransport: NSObject, URLSessionDataDelegate, @unchecke
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
         let action: (Delivery?, Finish?) = lock.withLock {
             guard !selected else { return (nil, nil) }
-            guard data.count <= StrictJSON.byteLimit - body.count else {
+            guard data.count <= coreResponseByteLimit - body.count else {
                 let observation = eventLocked(.overflow, incoming: data.count)
                 return (observation, selectLocked(.tooLarge))
             }

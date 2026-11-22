@@ -5,12 +5,19 @@ import ipaddress
 import secrets
 import socket
 import time
+from contextlib import nullcontext
 from email.message import Message
 from types import SimpleNamespace
 
 import pytest
 
-from apps.media import outbound, unfurl
+from apps.media import outbound, preview_guard, unfurl
+
+
+@pytest.fixture(autouse=True)
+def isolated_transport(monkeypatch):
+    # Lease integration is exercised with independent PostgreSQL sessions in test_media_unfurl_capacity.
+    monkeypatch.setattr(preview_guard, "cluster_lane", nullcontext)
 
 
 def global_ip():

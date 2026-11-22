@@ -77,6 +77,31 @@ final class CoreWorkspaceClientTests: XCTestCase {
         return body
     }
 
+    func testFullWorkspaceWithMaximumUTF8TopicsThroughTransport() async throws {
+        let topic = String(repeating: "😀", count: 1024)
+        let ids = (0..<500).map { String(format: "0192f3a4-5b6c-7d8e-9f01-%012d", $0) }
+        let body = try changed { root in
+            var template: Object = [:]
+            channel(&root) { template = $0 }
+            root["categories"] = []
+            root["uncategorised_channels"] = ids.enumerated().map { index, id in
+                var value = template
+                value["id"] = id; value["name"] = "Channel \(index)"; value["topic"] = topic
+                value["template_key"] = NSNull()
+                return value
+            }
+        }
+        XCTAssertGreaterThan(body.count, 2 * 1024 * 1024)
+        for declared in [false, true] {
+            var headers = Self.headers
+            if declared { headers["Content-Length"] = String(body.count) }
+            let result = try await fetch(.body(status: 200, headers: headers, chunks: [body]))
+            guard case let .loaded(workspace) = result else { return XCTFail("\(result)") }
+            XCTAssertEqual(workspace.uncategorisedChannels.map(\.id), ids)
+            XCTAssertEqual(workspace.uncategorisedChannels.map(\.topic), Array(repeating: topic, count: 500))
+        }
+    }
+
     func testTheReadPreservesTheFilteredTreeWithoutProviderAuthority() throws {
         let workspace = try decode(Data(Self.raw.utf8))
         XCTAssertEqual(workspace.organisationId, Self.organisation)
@@ -212,8 +237,8 @@ final class CoreWorkspaceClientTests: XCTestCase {
     }
 
     func testValidWorkspaceByteBoundaryIsEnforcedByTheDecoder() throws {
-        let lower = paddedWorkspace(65_536), upper = paddedWorkspace(65_537)
-        XCTAssertEqual(lower.count, 65_536); XCTAssertEqual(upper.count, 65_537)
+        let lower = paddedWorkspace(coreResponseByteLimit), upper = paddedWorkspace(coreResponseByteLimit + 1)
+        XCTAssertEqual(lower.count, coreResponseByteLimit); XCTAssertEqual(upper.count, coreResponseByteLimit + 1)
         let workspace = try decode(lower)
         XCTAssertEqual(workspace.organisationId, Self.organisation)
         XCTAssertEqual(workspace.categories[0].channels[0].topic, "UTF-8: é 😀")
@@ -221,12 +246,12 @@ final class CoreWorkspaceClientTests: XCTestCase {
     }
 
     func testValidWorkspaceByteBoundaryIsEnforcedThroughTransport() async throws {
-        for size in [65_536, 65_537] {
+        for size in [coreResponseByteLimit, coreResponseByteLimit + 1] {
             let body = paddedWorkspace(size)
             XCTAssertEqual(body.count, size)
             let outcome = try await fetch(response(200, body: body))
             XCTAssertEqual(URLProtocolFixture.requests.count, 1)
-            if size == 65_536 {
+            if size == coreResponseByteLimit {
                 guard case let .loaded(workspace) = outcome else { return XCTFail("\(outcome)") }
                 XCTAssertEqual(workspace.organisationId, Self.organisation)
                 XCTAssertEqual(workspace.categories[0].channels[0].topic, "UTF-8: é 😀")

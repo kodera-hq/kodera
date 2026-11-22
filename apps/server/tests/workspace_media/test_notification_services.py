@@ -154,3 +154,18 @@ def test_moderation_audit_atomically_creates_the_recipients_inbox_entry(world, c
     entry = Notification.objects.get()
     assert entry.membership_id == members[3].id and entry.resource_id == members[3].id
     assert PushOutbox.objects.count() == 1
+
+
+@pytest.mark.django_db(transaction=True)
+def test_subscription_dns_resolution_runs_in_autocommit(world, configured, monkeypatch):
+    from django.db import connection
+
+    observed = []
+
+    def resolve(*args):
+        observed.append(connection.in_atomic_block)
+        return []
+
+    monkeypatch.setattr(outbound, "addresses", resolve)
+    register(world)
+    assert observed == [False]

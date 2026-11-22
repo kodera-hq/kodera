@@ -12,9 +12,12 @@ every area runs: a plan that cannot look must not skip.
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import subprocess
 import sys
+import tempfile
+from unittest.mock import patch
 
 # Any change to the orchestrator, the plan or the aggregate check runs everything.
 SHARED = (
@@ -24,13 +27,13 @@ SHARED = (
 
 AREAS: dict[str, str] = {
     "server": r"apps/server/|packages/api-contract/|packages/synapse-policy/|deploy/community/|ee/"
-    r"|scripts/ci/check-community-deploy\.py$|scripts/ci/check-publish-images-workflow\.py$"
+    r"|scripts/ci/smoke-community-ingress\.py$|scripts/ci/check-community-deploy\.py$|scripts/ci/check-publish-images-workflow\.py$"
     r"|\.github/workflows/(ci-server|publish-images)\.yml$|\.nvmrc$",
     "web": r"\.nvmrc$|package\.json$|package-lock\.json$|apps/web/|apps/server/|packages/design-tokens/"
     r"|packages/api-contract/|packages/create-kodera/|packages/extension-sdk/|packages/kodera-rs/vectors/"
     r"|extensions/|\.github/workflows/ci-web\.yml$",
     "rust": r"Cargo\.toml$|Cargo\.lock$|rust-toolchain(\.toml)?$|packages/kodera-rs/|apps/desktop/"
-    r"|security/backports/(?:glib-0\.18\.5|openmls_basic_credential-0\.6\.0|openmls_rust_crypto-0\.6\.0)/|scripts/ci/qualify-glib-iterator\.py$"
+    r"|security/|scripts/ci/qualify-glib-iterator\.py$"
     r"|security/cargo-advisory-allowlist\.json$|scripts/ci/check-cargo-advisories\.py$"
     r"|apps/web/tests/wasm/|apps/web/src/features/confidential/local-state\.ts$"
     r"|apps/web/src/features/confidential/(?:native/|(?:device-http-record|device-cas-host|device-worker-protocol|device-worker-client|device\.worker)\.ts$)"
@@ -67,15 +70,92 @@ def changed_paths(base: str, head: str) -> list[str] | None:
         if probe.returncode != 0:
             return None
     diff = subprocess.run(
-        ["git", "diff", "--name-only", base, head], capture_output=True, text=True, check=False
+        ["git", "diff", "--name-only", "--no-renames", "-z", base, head], capture_output=True, check=False
     )
     if diff.returncode != 0:
         return None
-    return [line for line in diff.stdout.splitlines() if line]
+    return [os.fsdecode(path) for path in diff.stdout.split(b"\0") if path]
 
 
 def selftest() -> None:
+    # Exercise Git's actual quoting defaults, including deletes, tabs, newlines and Unicode.
+    with tempfile.TemporaryDirectory() as folder:
+        def git(*args):
+            return subprocess.run(["git", "-C", folder, *args], check=True, capture_output=True).stdout
+        git("init", "-q", "--initial-branch=fix/path-fixture")
+        names = ["apps/server/migrations/0099_é\t\n.py", "apps/web/é.ts",
+                 "packages/kodera-rs/é.rs", "apps/ios/é.swift", "apps/android/é.kt"]
+        for name in names:
+            path = os.path.join(folder, name)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "wb") as stream:
+                stream.write(b"before")
+        git("add", "--all")
+        git("-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "fixture")
+        base = git("rev-parse", "HEAD").decode().strip()
+        os.unlink(os.path.join(folder, names[0]))
+        for name in names[1:]:
+            with open(os.path.join(folder, name), "wb") as stream:
+                stream.write(b"after")
+        added = "apps/server/migrations/0100_新.py"
+        with open(os.path.join(folder, added), "wb") as stream:
+            stream.write(b"added")
+        git("add", "--all")
+        git("-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "change")
+        head = git("rev-parse", "HEAD").decode().strip()
+        original_run = subprocess.run
+        with patch.object(subprocess, "run", side_effect=lambda args, **kw: original_run(
+            ["git", "-C", folder, *args[1:]], **kw
+        )):
+            paths = changed_paths(base, head)
+        if paths is None or set(paths) != set(names + [added]):
+            raise SystemExit(f"ci-plan path fixture failed: {paths!r}")
+        if not all(plan(paths).values()):
+            raise SystemExit("ci-plan missed an area")
+        if not plan([names[0]])["server"]:
+            raise SystemExit("ci-plan missed deleted server file")
+
+    with tempfile.TemporaryDirectory() as folder:
+        def git(*args):
+            return subprocess.run(["git", "-C", folder, *args], check=True, capture_output=True).stdout
+        git("init", "-q", "--initial-branch=fix/rename-fixture")
+        source = "apps/server/migrations/0099_move.py"
+        destination = "notes/moved.py"
+        os.makedirs(os.path.join(folder, "apps/server/migrations"))
+        os.makedirs(os.path.join(folder, "notes"))
+        with open(os.path.join(folder, source), "w") as stream:
+            stream.write("migration fixture")
+        def commit(message):
+            git("add", "--all")
+            git("-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null",
+                "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test",
+                "commit", "-qm", message)
+            return git("rev-parse", "HEAD").decode().strip()
+        base = commit("source")
+        git("mv", source, destination)
+        head = commit("move")
+        original_run = subprocess.run
+        with patch.object(subprocess, "run", side_effect=lambda args, **kw: original_run(
+            ["git", "-C", folder, *args[1:]], **kw
+        )):
+            paths = changed_paths(base, head)
+        if paths is None or set(paths) != {source, destination}:
+            raise SystemExit(f"ci-plan rename fixture failed: {paths!r}")
+        if not plan(paths)["server"]:
+            raise SystemExit("cross-area rename skipped source checks")
+
+    raw = b"apps/server/migrations/invalid-\xff.py"
+    with patch.object(subprocess, "run", side_effect=[
+        subprocess.CompletedProcess([], 0), subprocess.CompletedProcess([], 0),
+        subprocess.CompletedProcess([], 0, stdout=raw + b"\0"),
+    ]):
+        paths = changed_paths("base", "head")
+    if not paths or os.fsencode(paths[0]) != raw or not plan(paths)["server"]:
+        raise SystemExit("ci-plan raw path fixture failed")
+
     cases: list[tuple[str, list[str] | None, dict[str, bool]]] = [
+        ("ingress smoke reaches server", ["scripts/ci/smoke-community-ingress.py"],
+         {"server": True, "web": False, "rust": False, "mobile": False}),
         ("scaffolder reaches web", ["packages/create-kodera/index.mjs"],
          {"server": False, "web": True, "rust": False, "mobile": False}),
         ("canonical contract reaches server and web", ["packages/api-contract/core-api.openapi.yaml"],
@@ -93,6 +173,8 @@ def selftest() -> None:
         ("EE tree runs server", ["ee/billing/api.py"],
          {"server": True, "web": False, "rust": False, "mobile": False}),
         ("GLib backport-only change runs Rust", ["security/backports/glib-0.18.5/src/variant_iter.rs"],
+         {"server": False, "web": False, "rust": True, "mobile": False}),
+        ("new security backport runs Rust", ["security/backports/future-crate/verify.py"],
          {"server": False, "web": False, "rust": True, "mobile": False}),
         ("GLib qualifier-only change runs Rust", ["scripts/ci/qualify-glib-iterator.py"],
          {"server": False, "web": False, "rust": True, "mobile": False}),

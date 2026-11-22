@@ -93,7 +93,7 @@ public actor CoreWorkspaceClient {
     }
 
     static func decode(_ data: Data, organisationId: String) throws -> WorkspaceSnapshot {
-        let root = try object(StrictJSON.parse(data), fields: ["organisation_id", "state", "setup", "can_initialise", "id", "categories", "uncategorised_channels"])
+        let root = try object(StrictJSON.parse(data, byteLimit: coreResponseByteLimit), fields: ["organisation_id", "state", "setup", "can_initialise", "id", "categories", "uncategorised_channels"])
         let returnedOrganisation = try uuid(root["organisation_id"])
         guard TrustPolicy.canonicalNonNilUUID(organisationId), returnedOrganisation == organisationId,
               let state = WorkspaceState(rawValue: try text(root["state"])),

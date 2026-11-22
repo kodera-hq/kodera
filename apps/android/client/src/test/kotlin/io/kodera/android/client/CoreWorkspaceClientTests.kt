@@ -62,6 +62,28 @@ class CoreWorkspaceClientTests {
             }
         }
 
+    @Test fun testFullWorkspaceWithMaximumUTF8TopicsThroughTransport() {
+        val topic = "😀".repeat(1024)
+        val ids = (0 until 500).map { "0192f3a4-5b6c-7d8e-9f01-%012d".format(it) }
+        val root = tree()
+        val template = root.firstChannel().deepCopy()
+        root.add("categories", JsonArray())
+        root.add("uncategorised_channels", JsonArray().apply {
+            ids.forEachIndexed { index, id -> add(template.deepCopy().apply {
+                addProperty("id", id); addProperty("name", "Channel $index")
+                addProperty("topic", topic); add("template_key", com.google.gson.JsonNull.INSTANCE)
+            }) }
+        })
+        val body = root.toString().toByteArray(Charsets.UTF_8)
+        assertTrue(body.size > 2 * 1024 * 1024)
+        for (chunked in listOf(false, true)) {
+            val (outcome, _) = fetch { WireReply(200, body, headers, chunked = chunked) }
+            val workspace = (outcome as WorkspaceOutcome.Loaded).workspace
+            assertEquals(ids, workspace.uncategorisedChannels.map { it.id })
+            assertEquals(List(500) { topic }, workspace.uncategorisedChannels.map { it.topic })
+        }
+    }
+
     @Test fun testTheReadPreservesTheFilteredTreeWithoutProviderAuthority() {
         val tree = decode(tree())
         assertEquals(organisation, tree.organisationId)
@@ -202,10 +224,10 @@ class CoreWorkspaceClientTests {
     }
 
     @Test fun testValidWorkspaceByteBoundaryIsEnforcedByTheDecoder() {
-        val withinLimit = paddedWorkspace(65_536)
-        val overLimit = paddedWorkspace(65_537)
-        assertEquals(65_536, withinLimit.size)
-        assertEquals(65_537, overLimit.size)
+        val withinLimit = paddedWorkspace(CoreRequester.BODY_LIMIT)
+        val overLimit = paddedWorkspace(CoreRequester.BODY_LIMIT + 1)
+        assertEquals(CoreRequester.BODY_LIMIT, withinLimit.size)
+        assertEquals(CoreRequester.BODY_LIMIT + 1, overLimit.size)
         val result = CoreWorkspaceClient.decode(withinLimit, organisation)
         assertEquals(organisation, result.organisationId)
         assertEquals(channelId, result.categories.single().channels.first().id)
@@ -216,12 +238,12 @@ class CoreWorkspaceClientTests {
     }
 
     @Test fun testValidWorkspaceByteBoundaryIsEnforcedThroughTransport() {
-        for (size in listOf(65_536, 65_537)) {
+        for (size in listOf(CoreRequester.BODY_LIMIT, CoreRequester.BODY_LIMIT + 1)) {
             val body = paddedWorkspace(size)
             assertEquals(size, body.size)
             val (outcome, requests) = fetch { WireReply(200, body, headers, chunked = true) }
             assertEquals(1, requests.size)
-            if (size == 65_536) {
+            if (size == CoreRequester.BODY_LIMIT) {
                 val workspace = (outcome as WorkspaceOutcome.Loaded).workspace
                 assertEquals(organisation, workspace.organisationId)
                 assertEquals(channelId, workspace.categories.single().channels.first().id)

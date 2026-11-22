@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Load complete 500-channel workspaces with maximum-length UTF-8 topics within a bounded 4 MiB response.
+
 - Align the community blueprint with server provisioning, including general discussion, member arrivals and the private repository activity room.
 
 - Retain only the original owner/workspace receipt across a visible system permission dialog while stopping radios on focus loss; cancel it on stop, recreation or revalidation. Validate canonical event scope grammar before direct epoch MAC use. Expire prepared epoch material before a scan starts, bound peer/replay/RSSI state to 256 entries, and refuse self-beacons across both transports.

@@ -1,5 +1,12 @@
 {
 	email {$KODERA_ACME_EMAIL}
+	servers {
+		timeouts {
+			read_header 10s
+			read_body 300s
+			idle 120s
+		}
+	}
 }
 
 # Caddy is the only proxy of this profile, so the client address an upstream reads is the peer
@@ -32,6 +39,9 @@
 
 	@api path /api/* /health/*
 	handle @api {
+		request_body {
+			max_size 1MiB
+		}
 		reverse_proxy server:8000 {
 			import client_address
 		}
@@ -40,6 +50,9 @@
 	# Exact mobile association routes only; /.well-known/matrix/* stays on web:8080.
 	@mobile_association path /.well-known/apple-app-site-association /.well-known/assetlinks.json
 	handle @mobile_association {
+		request_body {
+			max_size 1MiB
+		}
 		reverse_proxy server:8000 {
 			import client_address
 		}

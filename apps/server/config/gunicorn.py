@@ -12,7 +12,9 @@ from config.deploy_environment import deployment
 deployment(os.environ)
 bind = "0.0.0.0:8000"
 workers = 2
-worker_class = "sync"
+worker_class = "gthread"
+threads = 4
+worker_connections = 32
 timeout = 30
 graceful_timeout = 30
 keepalive = 2

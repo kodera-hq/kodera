@@ -71,6 +71,21 @@ class PreSendFetchError(FetchError):
     """DNS, concurrency-gate, TCP connect or TLS handshake failure before sending any HTTP byte."""
 
 
+# One whole request-side outbound operation per process, including DNS and body reads.
+# Resolver slots alone end before the HTTP response body is consumed.
+_REQUEST_LANE = threading.BoundedSemaphore(1)
+
+
+@contextmanager
+def request_lane() -> Iterator[None]:
+    if not _REQUEST_LANE.acquire(blocking=False):
+        raise FetchError("resolver-busy")
+    try:
+        yield
+    finally:
+        _REQUEST_LANE.release()
+
+
 class _ResolverPool:
     """Isolated concurrency gate per transport lane with optional per-principal/org fairness."""
 

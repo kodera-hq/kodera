@@ -67,6 +67,7 @@ SELECT = (
     "workspaces_workspaceabusereport",
     # Media attachment metadata, notification inbox and sealed push subscriptions/outbox enqueue.
     "media_attachment",
+    "media_previewadmission",
     "notifications_notification",
     "notifications_pushsubscription",
     "notifications_pushoutbox",
@@ -192,6 +193,7 @@ INSERT = (
     "workspaces_workspaceabusereport",
     # Media attachment sessions, notification inbox entries, push subscriptions and wakeup outbox.
     "media_attachment",
+    "media_previewadmission",
     "notifications_notification",
     "notifications_pushsubscription",
     "notifications_pushoutbox",
@@ -441,6 +443,8 @@ UPDATE_COLUMNS = (
     ("workspaces_workspaceabusereport", "updated_at"),
     # Attachment completion/cancellation, inbox read marks, and device subscription rotation/revocation;
     # checksums, sizes, MIME types, recipients, resource_ids and push outbox leases stay immutable.
+    ("media_previewadmission", "expires_at"),
+    ("media_previewadmission", "hits"),
     ("media_attachment", "completed_at"),
     ("media_attachment", "cancelled_at"),
     ("media_attachment", "updated_at"),
@@ -665,6 +669,7 @@ DELETE = (
     "ee_scim_group_member",
     "ee_scim_session",
     "media_attachment",
+    "media_previewadmission",
 )
 EXECUTE_FUNCTIONS = (
     "workspace_iam_permissions(jsonb)",

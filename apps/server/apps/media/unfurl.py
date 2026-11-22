@@ -10,7 +10,8 @@ import unicodedata
 from html.parser import HTMLParser
 from urllib.parse import urljoin
 
-from .outbound import BlockedTargetError, FetchError, remaining, request, target
+from . import preview_guard
+from .outbound import BlockedTargetError, FetchError, remaining, request, request_lane, target
 
 _DEFAULT_OUTBOUND_REQUEST = request
 
@@ -82,6 +83,11 @@ class Metadata(HTMLParser):
 
 
 def unfurl(url: str, *, scope_key: str | None = None) -> dict[str, str]:
+    with request_lane(), preview_guard.cluster_lane():
+        return _unfurl(url, scope_key=scope_key)
+
+
+def _unfurl(url: str, *, scope_key: str | None = None) -> dict[str, str]:
     deadline = time.monotonic() + MAX_SECONDS
     original = target(url)
     current = original
@@ -144,6 +150,8 @@ def unfurl(url: str, *, scope_key: str | None = None) -> dict[str, str]:
                 raise FetchError("truncated")
             body = b"".join(chunks)
             break
+        except TimeoutError:
+            raise FetchError("timeout") from None
         except (OSError, http.client.HTTPException):
             raise FetchError() from None
         finally:

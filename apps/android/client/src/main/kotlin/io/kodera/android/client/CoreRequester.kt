@@ -141,7 +141,7 @@ class CoreRequester private constructor(coreApiOrigin: String, loopback: Loopbac
 
     /** Bounded JSON POST through the same accepted-owner and response policy as GET. */
     internal fun <T> post(path: String, jsonBody: ByteArray, read: (Response) -> T): CoreReply<T> {
-        if (jsonBody.size > BODY_LIMIT) return CoreReply.Unsendable
+        if (jsonBody.size > REQUEST_BODY_LIMIT) return CoreReply.Unsendable
         return send(path, jsonBody.copyOf(), read)
     }
 
@@ -233,7 +233,8 @@ class CoreRequester private constructor(coreApiOrigin: String, loopback: Loopbac
     }
 
     internal companion object {
-        const val BODY_LIMIT = 65536
+        const val BODY_LIMIT = 4 * 1024 * 1024
+        private const val REQUEST_BODY_LIMIT = 65536
 
         /**
          * A path is `/` and one or more segments of unreserved characters (RFC 3986: letters, digits,
