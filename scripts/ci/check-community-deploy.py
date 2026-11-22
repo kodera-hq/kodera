@@ -2970,7 +2970,7 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
                    "Caddyfile has an unreviewed directive in a handle: 'rewrite'"),
         caddy_case("the reviewed rewrite moved to the API", "\thandle @api {\n", "\thandle @api {\n\t\trewrite * /token\n",
                    "Caddyfile rewrites a path in a handle that is not the reviewed one"),
-        caddy_case("a prefix-stripping handle", "\thandle @api {\n\n\t\trequest_body {\n\t\t\tmax_size 1MiB\n\t\t}\n" + api_proxy + "\t}\n", "\thandle_path /internal/* {\n" + api_proxy + "\t}\n",
+        caddy_case("a prefix-stripping handle", "\thandle @api {\n\t\trequest_body {\n\t\t\tmax_size 1MiB\n\t\t}\n" + api_proxy + "\t}\n", "\thandle_path /internal/* {\n" + api_proxy + "\t}\n",
                    "Caddyfile has an unreviewed block in a site block: 'handle_path'"),
         caddy_case("an upstream option that was not reviewed", api_proxy,
                    api_proxy.replace("import client_address", "import client_address\n\t\t\theader_up Host internal.example.org"),
@@ -3258,7 +3258,6 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
                     "\t# Exact mobile association routes only; /.well-known/matrix/* stays on web:8080.\n"
                     "\t@mobile_association path /.well-known/apple-app-site-association /.well-known/assetlinks.json\n"
                     "\thandle @mobile_association {\n"
-                    "\n"
                     "\t\trequest_body {\n\t\t\tmax_size 1MiB\n\t\t}\n"
                     "\t\treverse_proxy server:8000 {\n"
                     "\t\t\timport client_address\n"
