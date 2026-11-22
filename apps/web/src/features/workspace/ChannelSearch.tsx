@@ -23,6 +23,10 @@ export interface ChannelSearchEntry {
   kind: 'text' | 'audio' | 'command'
   /** The category's label, read after the name to tell two channels of the same name apart. */
   category?: string
+  /** Optional 1-line context excerpt (matched message or collection properties). */
+  snippet?: string | undefined
+  /** Optional direct action handler for dynamic omnibox entries. */
+  open?: (() => HTMLElement | null | void) | undefined
 }
 
 export interface ChannelSearchProps {
@@ -35,6 +39,8 @@ export interface ChannelSearchProps {
   recentLabel?: string
   legend?: string
   entries: readonly ChannelSearchEntry[]
+  /** Dynamic query-evaluated entries (messages, collection records) merged when typing. */
+  dynamicEntries?: ((query: string) => readonly ChannelSearchEntry[]) | undefined
   /** Opens the entry, and answers where focus goes once the dialog has closed: `null` keeps it
    * on « Rechercher ». */
   onChoose: (entry: ChannelSearchEntry) => HTMLElement | null
@@ -95,6 +101,7 @@ export function ChannelSearch({
   recentLabel,
   legend,
   entries,
+  dynamicEntries,
   onChoose,
   shortcut,
   title,
@@ -118,8 +125,10 @@ export function ChannelSearch({
   const optionId = (index: number) => `${listId}-${index}`
   const found = useMemo(() => {
     const matches = match(entries, query)
-    if (!palette || query.trim()) return matches
-    return [...matches].sort((a, b) => {
+    const extra = dynamicEntries ? dynamicEntries(query) : []
+    const combined = extra.length > 0 ? [...matches, ...extra] : matches
+    if (!palette || query.trim()) return combined
+    return [...combined].sort((a, b) => {
       const ar = recent.indexOf(a.id),
         br = recent.indexOf(b.id)
       if (ar >= 0 || br >= 0) return (ar < 0 ? Infinity : ar) - (br < 0 ? Infinity : br)
@@ -128,7 +137,7 @@ export function ChannelSearch({
         (groupOrder?.indexOf(b.category ?? groupLabel ?? '') ?? 0)
       )
     })
-  }, [entries, query, match, palette, recent, groupLabel, groupOrder])
+  }, [entries, query, match, dynamicEntries, palette, recent, groupLabel, groupOrder])
   const highlighted = Math.min(active, Math.max(found.length - 1, 0))
 
   function show(opener: Element | null) {
@@ -168,7 +177,7 @@ export function ChannelSearch({
     // A place that cannot take focus — a disabled control, or one no longer in the page — would
     // leave focus on `body`; « Rechercher » takes it instead.
     setRecent((previous) => [entry.id, ...previous.filter((id) => id !== entry.id)].slice(0, 6))
-    const target = onChoose(entry)
+    const target = entry.open ? (entry.open() ?? null) : onChoose(entry)
     returnFocusTo.current =
       target !== null && target.isConnected && !target.matches(':disabled')
         ? target
@@ -326,18 +335,37 @@ export function ChannelSearch({
                     name={
                       entry.kind === 'audio'
                         ? 'calls'
-                        : entry.id.includes(':doc:')
-                          ? 'docs'
-                          : entry.id.includes(':dm:')
-                            ? 'directs'
-                            : entry.id.includes(':settings:')
-                              ? 'settings'
-                              : entry.kind === 'command'
-                                ? 'command'
-                                : 'messages'
+                        : entry.id.startsWith('omnibox:collection:')
+                          ? 'grid'
+                          : entry.id.startsWith('omnibox:message:')
+                            ? 'messages'
+                            : entry.id.includes(':doc:')
+                              ? 'docs'
+                              : entry.id.includes(':dm:')
+                                ? 'directs'
+                                : entry.id.includes(':settings:')
+                                  ? 'settings'
+                                  : entry.kind === 'command'
+                                    ? 'command'
+                                    : 'messages'
                     }
                   />
-                  <span className="min-w-0 flex-1 truncate font-medium">{entry.label}</span>
+                  {entry.snippet ? (
+                    <span className="flex min-w-0 flex-1 flex-col">
+                      <span className="truncate font-medium">{entry.label}</span>
+                      <span
+                        data-testid="channel-search-snippet"
+                        className={cx(
+                          'truncate text-xs',
+                          index === highlighted ? 'text-c-accent-ink' : 'text-c-ink-3'
+                        )}
+                      >
+                        {entry.snippet}
+                      </span>
+                    </span>
+                  ) : (
+                    <span className="min-w-0 flex-1 truncate font-medium">{entry.label}</span>
+                  )}
                   <span className="shrink-0 truncate text-xs text-c-ink-2">
                     {entry.kind === 'audio'
                       ? t('console.workspace.search.label-audio')

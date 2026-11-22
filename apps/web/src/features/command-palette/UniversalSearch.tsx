@@ -1,5 +1,5 @@
 import { useRouter } from '@tanstack/react-router'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import {
   OPEN_PALETTE,
   usePaletteSource,
@@ -30,6 +30,7 @@ export interface PaletteTarget {
 }
 function SearchContents({
   entries,
+  dynamicEntries,
   onChoose,
   shortcut,
   documents = [],
@@ -121,6 +122,8 @@ function SearchContents({
           copy.actions,
           copy.channels,
           copy.direct,
+          copy.messages,
+          copy.collections,
           copy.docs,
           copy.files,
           copy.settings,
@@ -131,6 +134,7 @@ function SearchContents({
         recentLabel={copy.recent}
         legend={copy.legend}
         entries={[...entries.map((entry) => ({ ...entry, category: copy.channels })), ...commands]}
+        {...(dynamicEntries === undefined ? {} : { dynamicEntries })}
         shortcut={shortcut}
         title={copy.title}
         emptyLabel={copy.empty}
@@ -183,18 +187,25 @@ export function UniversalSearch(props: PaletteSource) {
 }
 
 const SHOW_PALETTE = 'kodera:show-palette'
+const subscribeNoop = () => () => undefined
+const snapshotNull = () => null
 export function GlobalUniversalSearch({ org, request }: { org?: string; request: number }) {
   const router = useRouter({ warn: false })
   const { i18n } = useTranslation()
   const copy = paletteCopy(i18n.resolvedLanguage)
   const registry = usePaletteSource()
-  const [source, setSource] = useState<PaletteSource | null>(null)
+  const [active, setActive] = useState(false)
+  const source = useSyncExternalStore(
+    active && registry !== null ? registry.subscribe : subscribeNoop,
+    active && registry !== null ? registry.read : snapshotNull,
+    snapshotNull
+  )
   const root = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (request === 0) return
     let frame = requestAnimationFrame(() => {
       if (withdrawn(root.current) || document.querySelector('[role="dialog"]')) return
-      setSource(registry?.read() ?? null)
+      setActive(true)
       frame = requestAnimationFrame(() => window.dispatchEvent(new Event(SHOW_PALETTE)))
     })
     return () => cancelAnimationFrame(frame)
@@ -218,7 +229,7 @@ export function GlobalUniversalSearch({ org, request }: { org?: string; request:
               ]
             : [],
         })}
-        onDismiss={() => setSource(null)}
+        onDismiss={() => setActive(false)}
         shortcut={false}
         hiddenTrigger
         openEvent={SHOW_PALETTE}

@@ -23,7 +23,14 @@ import { cx } from '../../ui/cx'
 import { Drawer } from '../../ui/Drawer/Drawer'
 import { InlineAlert } from '../../ui/InlineAlert/InlineAlert'
 import { cleanText } from '../../ui/safeText'
-import { WorkspacePaletteRegistration } from '../command-palette/WorkspacePaletteRegistration'
+import {
+  WorkspacePaletteRegistration,
+  useWorkspaceOmniboxDynamicEntries,
+} from '../command-palette/WorkspacePaletteRegistration'
+import type {
+  ConfidentialChannelFlags,
+  OmniboxCollectionDescriptor,
+} from '../command-palette/omniboxIndex'
 import { permitsPlaintext } from '../confidential/room-boundary'
 import type { ChannelDoc } from '../docs/ChannelDocsEditor'
 import { MessagingOrganisation } from '../messaging/organisationContext'
@@ -42,6 +49,15 @@ import { isArrivalsChannel } from './ArrivalCard'
 import { arrivalInserts } from './ArrivalInsert'
 import type { ChannelMenuTarget } from './ChannelContextMenu'
 import { ChannelSidebar } from './ChannelSidebar'
+import { SimpleMessagingSidebar } from './SimpleMessagingSidebar'
+import {
+  favoriteChannelsStorageKey,
+  setUiMode,
+  toggleUiMode,
+  useFavoriteChannels,
+  useWorkspaceUiMode,
+  type WorkspaceUiMode,
+} from './uiModePreference'
 import { createCommittedValue } from './committedValue'
 import { confidentialMessages } from './confidentialMessages'
 import { createLocalDrafts, useDraftChannel, useDraftSlice } from './draftChannel'
@@ -90,7 +106,7 @@ import { VoiceCallDock, type CallPlacement } from './VoiceCallDock'
 // The view's public names stay this module's, wherever their definitions live.
 export { isProximityChannel, mergeTimelineInserts } from './liveViewModel'
 export type { AudioCallLike, EspaceStoreLike, TimelineInsert } from './liveViewModel'
-export { mutedChannelsStorageKey }
+export { mutedChannelsStorageKey, favoriteChannelsStorageKey }
 
 const NO_DOCUMENTS: readonly ChannelDoc[] = []
 const NO_INSERTS: readonly TimelineInsert[] = []
@@ -123,7 +139,7 @@ export interface EspaceLiveViewProps {
    * Makes a channel the address. Given, the view shows the channel the address names, and only
    * that one: a click asks for the channel, and the router's commit shows it.
    */
-  onNavigateChannel?: (channelId: string) => void | Promise<void>
+  onNavigateChannel?: (channelId: string) => void | boolean | Promise<void | boolean>
   /** Whether the router is between two addresses: nothing is sent until it has settled. */
   navigationPending?: boolean
   onReconnect?: () => void
@@ -138,7 +154,9 @@ export interface EspaceLiveViewProps {
   readonly activeCanvasMode?: CanvasMode | undefined
   readonly onChangeCanvasMode?: ((mode: CanvasMode) => void) | undefined
   readonly documents?: readonly ChannelDoc[]
+  readonly collections?: readonly OmniboxCollectionDescriptor[] | undefined
   readonly onOpenDocument?: ((doc: ChannelDoc) => void) | undefined
+  readonly onOpenCollection?: ((id: string) => void) | undefined
   readonly docsCanvasSlot?: ReactNode | undefined
   /** Channels the server flags as the proximity room; see `isProximityChannel`. */
   readonly proximityChannelIds?: ReadonlySet<string> | undefined
@@ -243,7 +261,9 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
   onChangeCanvasMode,
   docsCanvasSlot,
   documents = NO_DOCUMENTS,
+  collections,
   onOpenDocument,
+  onOpenCollection,
   proximityChannelIds,
   renderProximityPanel,
   onCreateInCategory,
@@ -332,6 +352,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
   const navigationUnsettled =
     navigationPending || (requestedChannelId !== null && requestedChannelId !== addressedChannel)
 
+  const uiMode = useWorkspaceUiMode()
   const [direct, setDirect] = useState<{ roomId: string; over: string | null | undefined } | null>(
     null
   )
@@ -345,8 +366,18 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
       if (direct !== null) setDirect(null)
     }
   }
-  const effectiveCanvasMode: CanvasMode =
+  const [observedUiMode, setObservedUiMode] = useState(uiMode)
+  if (observedUiMode !== uiMode) {
+    setObservedUiMode(uiMode)
+    if (uiMode === 'simple' && localCallsOpen) setLocalCallsOpen(false)
+  }
+  const rawCanvasMode: CanvasMode =
     onChangeCanvasMode === undefined && localCallsOpen ? 'calls' : activeCanvasMode
+  const effectiveCanvasMode: CanvasMode = uiMode === 'simple' ? 'chat' : rawCanvasMode
+  useEffect(() => {
+    if (uiMode !== 'simple' || activeCanvasMode === 'chat') return
+    onChangeCanvasMode?.('chat')
+  }, [uiMode, activeCanvasMode, onChangeCanvasMode])
   const directRoomId =
     direct !== null && direct.over === selectedChannelId && effectiveCanvasMode === 'chat'
       ? direct.roomId
@@ -375,13 +406,36 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
         : undefined),
     [directRoom, activeChannel, snapshot.channels, snapshot.rooms]
   )
+  const pendingMessageJump = useRef<{
+    readonly roomId: string
+    readonly eventId: string
+    readonly targetChannelId: string | null
+    readonly token: symbol
+  } | null>(null)
+  const navigationStateRef = useRef({ addressedChannel, navigationPending })
+  useLayoutEffect(() => {
+    navigationStateRef.current = { addressedChannel, navigationPending }
+  })
+  const selectDirectWithJump = useStableHandler(
+    (roomId: string, jumpTarget?: { readonly roomId: string; readonly eventId: string }) => {
+      pendingMessageJump.current = jumpTarget
+        ? {
+            roomId: jumpTarget.roomId,
+            eventId: jumpTarget.eventId,
+            targetChannelId: null,
+            token: Symbol(),
+          }
+        : null
+      closeChannelChooser()
+      setViewingCallStage(false)
+      setFullStage(false)
+      setLocalCallsOpen(false)
+      onChangeCanvasMode?.('chat')
+      setDirect({ roomId, over: selectedChannelId })
+    }
+  )
   const selectDirect = useStableHandler((roomId: string) => {
-    closeChannelChooser()
-    setViewingCallStage(false)
-    setFullStage(false)
-    setLocalCallsOpen(false)
-    onChangeCanvasMode?.('chat')
-    setDirect({ roomId, over: selectedChannelId })
+    selectDirectWithJump(roomId)
   })
   const activeRoomId = activeRoom?.roomId ?? null
   const roomBoundary =
@@ -407,6 +461,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
   const membersTrigger = useRef<HTMLButtonElement>(null)
   const sidebarDrag = useRef<AbortController | null>(null)
   const routeFocusTimers = useRef<Map<ReturnType<typeof setTimeout>, string>>(new Map())
+  const jumpCheckTimers = useRef<Set<ReturnType<typeof setTimeout>>>(new Set())
   useEffect(
     () => () => {
       sidebarDrag.current?.abort()
@@ -415,6 +470,8 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
         releaseRouteFocus(path)
       }
       routeFocusTimers.current.clear()
+      for (const timer of jumpCheckTimers.current) clearTimeout(timer)
+      jumpCheckTimers.current.clear()
     },
     []
   )
@@ -629,6 +686,11 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
     workspace.organisation_id,
     viewerId
   )
+  const { favoriteChannels, isChannelFavorite, toggleChannelFavorite } = useFavoriteChannels(
+    org,
+    workspace.organisation_id,
+    viewerId
+  )
 
   const messageCues = useRef<{ store: EspaceStoreLike; tracker: MessageCueTracker } | null>(null)
   useEffect(() => {
@@ -652,32 +714,74 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
     )
   }, [activeStore, snapshot, timeline, activeRoomId, effectiveCanvasMode, mutedChannels])
 
-  const selectTextChannel = useStableHandler((nextChannelId: string, keepFocus = false) => {
-    closeChannelChooser()
-    setDirect(null)
-    setViewingCallStage(false)
-    setFullStage(false)
-    setLocalCallsOpen(false)
-    onChangeCanvasMode?.('chat')
-    if (onNavigateChannel === undefined) {
-      setClickedChannelId(nextChannelId)
-      return
-    }
-    setRequestedChannelId(nextChannelId)
-    const path = `/${encodeURIComponent(org)}/workspace/${encodeURIComponent(nextChannelId)}`
-    if (keepFocus) keepFocusOnRouteTo(path)
-    const settled = () => {
-      setRequestedChannelId((current) => (current === nextChannelId ? null : current))
-      if (keepFocus) {
-        const timer = setTimeout(() => {
-          routeFocusTimers.current.delete(timer)
-          releaseRouteFocus(path)
-        }, 0)
-        routeFocusTimers.current.set(timer, path)
+  const selectTextChannel = useStableHandler(
+    (
+      nextChannelId: string,
+      keepFocus = false,
+      jumpTarget?: { readonly roomId: string; readonly eventId: string }
+    ) => {
+      const jumpToken = Symbol()
+      pendingMessageJump.current = jumpTarget
+        ? {
+            roomId: jumpTarget.roomId,
+            eventId: jumpTarget.eventId,
+            targetChannelId: nextChannelId,
+            token: jumpToken,
+          }
+        : null
+      closeChannelChooser()
+      setDirect(null)
+      setViewingCallStage(false)
+      setFullStage(false)
+      setLocalCallsOpen(false)
+      onChangeCanvasMode?.('chat')
+      if (onNavigateChannel === undefined) {
+        setClickedChannelId(nextChannelId)
+        return
       }
+      setRequestedChannelId(nextChannelId)
+      const path = `/${encodeURIComponent(org)}/workspace/${encodeURIComponent(nextChannelId)}`
+      if (keepFocus) keepFocusOnRouteTo(path)
+      const settled = () => {
+        setRequestedChannelId((current) => (current === nextChannelId ? null : current))
+        if (keepFocus) {
+          const timer = setTimeout(() => {
+            routeFocusTimers.current.delete(timer)
+            releaseRouteFocus(path)
+          }, 0)
+          routeFocusTimers.current.set(timer, path)
+        }
+      }
+      const clearIfAborted = (outcome?: unknown) => {
+        if (outcome === false) {
+          if (pendingMessageJump.current?.token === jumpToken) pendingMessageJump.current = null
+          return
+        }
+        if (!jumpTarget) return
+        const checkTimer = setTimeout(() => {
+          jumpCheckTimers.current.delete(checkTimer)
+          if (pendingMessageJump.current?.token !== jumpToken) return
+          if (
+            !navigationStateRef.current.navigationPending &&
+            navigationStateRef.current.addressedChannel !== nextChannelId
+          ) {
+            pendingMessageJump.current = null
+          }
+        }, 0)
+        jumpCheckTimers.current.add(checkTimer)
+      }
+      void Promise.resolve(onNavigateChannel(nextChannelId)).then(
+        (outcome) => {
+          settled()
+          clearIfAborted(outcome)
+        },
+        () => {
+          settled()
+          clearIfAborted(false)
+        }
+      )
     }
-    void Promise.resolve(onNavigateChannel(nextChannelId)).then(settled, settled)
-  })
+  )
 
   const [announcement, setAnnouncementState] = useState({ count: 0, text: '' })
   const setAnnouncement = useCallback(
@@ -797,6 +901,62 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
     () => searchEntries.filter((entry) => entry.kind === 'audio'),
     [searchEntries]
   )
+  const channelsById = useMemo<ReadonlyMap<string, ConfidentialChannelFlags>>(
+    () =>
+      new Map(
+        [
+          ...workspace.categories.flatMap((category) => category.channels),
+          ...workspace.uncategorised_channels,
+        ].map((channel) => [channel.id, channel as WorkspaceChannel & ConfidentialChannelFlags])
+      ),
+    [workspace]
+  )
+
+  const pendingModeFocus = useRef<{
+    readonly mode: WorkspaceUiMode
+    readonly force: boolean
+  } | null>(null)
+  useEffect(() => {
+    const req = pendingModeFocus.current
+    if (req === null || req.mode !== uiMode) return
+    pendingModeFocus.current = null
+    const focusToggle = () => {
+      const candidates = document.querySelectorAll<HTMLButtonElement>(
+        `[data-testid="workspace-ui-mode-${req.mode}"]`
+      )
+      const target = [...candidates].find((el) => !withdrawn(el)) ?? candidates[0]
+      target?.focus()
+    }
+    if (req.force) {
+      focusToggle()
+      return
+    }
+    const frame = requestAnimationFrame(() => {
+      if (document.activeElement === null || document.activeElement === document.body) {
+        focusToggle()
+      }
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [uiMode])
+
+  const handleSelectUiMode = useStableHandler(
+    (next: WorkspaceUiMode, options?: { fromToggle?: boolean }) => {
+      pendingModeFocus.current = { mode: next, force: options?.fromToggle === true }
+      setUiMode(next)
+      if (next === 'simple') {
+        setLocalCallsOpen(false)
+        onChangeCanvasMode?.('chat')
+      }
+    }
+  )
+  const handleToggleUiMode = useStableHandler(() => {
+    const next = toggleUiMode()
+    pendingModeFocus.current = { mode: next, force: false }
+    if (next === 'simple') {
+      setLocalCallsOpen(false)
+      onChangeCanvasMode?.('chat')
+    }
+  })
 
   const openFromSearch = useStableHandler((entry: ChannelSearchEntry): HTMLElement | null => {
     if (entry.kind === 'text') {
@@ -809,6 +969,8 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
       : null
   })
   const changeCanvas = useStableHandler((mode: CanvasMode) => {
+    pendingMessageJump.current = null
+    if (mode !== 'chat' && uiMode === 'simple') setUiMode('pro')
     if (mode !== 'chat') {
       setDirect(null)
       setViewingCallStage(false)
@@ -818,6 +980,8 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
     onChangeCanvasMode?.(mode)
   })
   const openDocument = useStableHandler((doc: ChannelDoc) => {
+    pendingMessageJump.current = null
+    if (uiMode === 'simple') setUiMode('pro')
     setDirect(null)
     setViewingCallStage(false)
     setFullStage(false)
@@ -828,6 +992,25 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
     return headingRef.current
   })
   const openStudioDocument = onOpenDocument ? openDocument : undefined
+  const openCollectionFromOmnibox = useStableHandler((id: string): HTMLElement | null => {
+    pendingMessageJump.current = null
+    if (onOpenCollection !== undefined) {
+      if (uiMode === 'simple') setUiMode('pro')
+      setDirect(null)
+      setViewingCallStage(false)
+      setFullStage(false)
+      setLocalCallsOpen(false)
+      onOpenCollection(id)
+      requestAnimationFrame(() => headingRef.current?.focus())
+      leaveChannelChooser()
+      return headingRef.current
+    }
+    const matched = documents.find((doc) => doc.id === id)
+    if (matched !== undefined && openStudioDocument !== undefined) {
+      return openStudioDocument(matched)
+    }
+    return null
+  })
   const openStudioChannel = useStableHandler((entry: ChannelSearchEntry) => {
     setLocalCallsOpen(false)
     if (entry.kind === 'text') onChangeCanvasMode?.('chat')
@@ -836,6 +1019,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
   const [docsEverOpened, setDocsEverOpened] = useState(effectiveCanvasMode === 'docs')
   if (effectiveCanvasMode === 'docs' && !docsEverOpened) setDocsEverOpened(true)
   const switchCanvas = useStableHandler((mode: CanvasMode) => {
+    pendingMessageJump.current = null
     if (mode !== 'chat') {
       setDirect(null)
       setViewingCallStage(false)
@@ -951,6 +1135,67 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
   const showMessage = useStableHandler(
     (eventId: string): boolean => timelineHandle.current?.showMessage(eventId) ?? false
   )
+  useEffect(() => {
+    const pending = pendingMessageJump.current
+    if (pending === null || pending.targetChannelId === null) return
+    if (
+      !navigationPending &&
+      requestedChannelId === null &&
+      addressedChannel !== pending.targetChannelId
+    ) {
+      pendingMessageJump.current = null
+    }
+  }, [addressedChannel, navigationPending, requestedChannelId])
+
+  useEffect(() => {
+    const pending = pendingMessageJump.current
+    if (pending === null || activeRoomId !== pending.roomId || effectiveCanvasMode !== 'chat')
+      return
+    pendingMessageJump.current = null
+    showMessage(pending.eventId)
+    const frame = requestAnimationFrame(() => {
+      showMessage(pending.eventId)
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [activeRoomId, effectiveCanvasMode, showMessage])
+
+  const onJumpToMessage = useStableHandler(
+    (
+      roomId: string,
+      targetId: string,
+      isDirectTarget: boolean,
+      eventId: string
+    ): HTMLElement | null => {
+      if (activeRoomId === roomId && effectiveCanvasMode === 'chat') {
+        pendingMessageJump.current = null
+        showMessage(eventId)
+        requestAnimationFrame(() => {
+          showMessage(eventId)
+        })
+        const shown = document.querySelector('[data-shown="true"]')
+        return shown instanceof HTMLElement ? shown : headingRef.current
+      }
+      if (isDirectTarget) selectDirectWithJump(targetId, { roomId, eventId })
+      else selectTextChannel(targetId, false, { roomId, eventId })
+      return headingRef.current
+    }
+  )
+
+  const dynamicEntries = useWorkspaceOmniboxDynamicEntries({
+    store: activeStore,
+    snapshot,
+    entries: searchEntries,
+    channelsById,
+    documents,
+    collections,
+    openDocument: openStudioDocument,
+    onOpenCollection:
+      onOpenCollection !== undefined || openStudioDocument !== undefined
+        ? openCollectionFromOmnibox
+        : undefined,
+    onJumpToMessage,
+    simulation,
+  })
   const rowActions = useMemo<MessageRowActions>(
     () => ({
       onRetry: retryMessage,
@@ -1172,60 +1417,139 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
         ? 'stage'
         : 'sidebar'
 
-  const sidebar = (
-    <ChannelSidebar
-      store={activeStore}
-      call={activeCall}
-      workspace={workspace}
-      org={org}
-      organisationName={organisationName}
-      narrow={narrow}
-      simulation={simulation}
-      headingId={sidebarHeadingId}
-      width={leftSidebarWidth}
-      activeChannelId={activeChannel?.id}
-      canvasMode={effectiveCanvasMode}
-      categoryDescriptions={categoryDescriptions}
-      proximityChannelIds={proximityChannelIds}
-      documents={documents}
-      searchEntries={searchEntries}
-      mentionCandidates={mentionCandidates}
-      canInvite={canInvite}
-      speakingRef={micActivity.speakingRef}
-      insertRef={insertInComposer}
-      organisationActionSlot={organisationActionSlot}
-      sidebarActionSlot={sidebarActionSlot}
-      sidebarFooterSlot={sidebarFooterSlot}
-      onInvite={openInvitation}
-      onChooseFromSearch={openFromSearch}
-      onOpenChannel={openStudioChannel}
-      onOpenDocument={openStudioDocument}
-      onChangeCanvasMode={onChangeCanvasMode ? changeCanvas : undefined}
-      onSwitchCanvas={onChangeCanvasMode ? switchCanvas : undefined}
-      onOpenCalls={openCallsSurface}
-      className={
-        narrow
-          ? undefined
-          : callPlacement === 'sidebar' && inLiveCall
-            ? 'col-start-1 row-span-2 row-start-1'
-            : 'col-start-1 row-span-3 row-start-1'
+  const startQuickCall = useStableHandler(
+    (target: {
+      readonly kind: 'direct' | 'text' | 'audio'
+      readonly channel?: WorkspaceChannel | undefined
+      readonly direct?: { readonly roomId: string; readonly name: string } | undefined
+      readonly room?: RoomSummary | undefined
+      readonly categoryName?: string | undefined
+    }) => {
+      if (target.kind === 'direct' && target.direct !== undefined) {
+        const dmChannel = directChannelOf(target.direct.roomId, target.direct.name)
+        const dmRoom =
+          target.room ?? snapshot.rooms.find((room) => room.roomId === target.direct!.roomId)
+        joinAudioRoom(dmChannel, dmRoom, undefined)
+        return
       }
-      onSelectTextChannel={selectTextChannel}
-      activeDirectRoomId={directRoomId}
-      onSelectDirect={selectDirect}
-      onJoinAudioRoom={joinAudioRoom}
-      onCreateInCategory={onCreateInCategory === undefined ? undefined : createInCategory}
-      onChannelContextMenu={onChannelContextMenu}
-      onChannelSettings={openChannelSettings}
-      onChannelToggleMute={toggleChannelMute}
-      isChannelMuted={isChannelMuted}
-      onChannelInvite={inviteFromChannelMenu}
-      onChannelCopyLink={copyChannelLink}
-      onChannelPermissions={openChannelPermissions}
-      canManageChannel={canManageChannel}
-      onOpenNotification={simulation ? undefined : openNotification}
-    />
+      if (target.channel !== undefined) {
+        const targetRoom =
+          target.room ?? roomForChannel(target.channel, snapshot.channels, snapshot.rooms)
+        joinAudioRoom(target.channel, targetRoom, target.categoryName)
+      }
+    }
   )
+
+  const startHeaderQuickCall = useStableHandler(() => {
+    if (directRoomId !== null && activeDirect !== undefined) {
+      startQuickCall({ kind: 'direct', direct: activeDirect, room: activeRoom })
+    } else if (activeChannel != null) {
+      startQuickCall({ kind: activeChannel.kind, channel: activeChannel, room: activeRoom })
+    }
+  })
+
+  const sidebarGridClass = narrow
+    ? undefined
+    : callPlacement === 'sidebar' && inLiveCall
+      ? 'col-start-1 row-span-2 row-start-1'
+      : 'col-start-1 row-span-3 row-start-1'
+
+  const sidebar =
+    uiMode === 'simple' ? (
+      <SimpleMessagingSidebar
+        store={activeStore}
+        workspace={workspace}
+        org={org}
+        organisationName={organisationName}
+        narrow={narrow}
+        simulation={simulation}
+        headingId={sidebarHeadingId}
+        width={leftSidebarWidth}
+        uiMode={uiMode}
+        onChangeUiMode={handleSelectUiMode}
+        activeChannelId={activeChannel?.id}
+        activeDirectRoomId={directRoomId}
+        favoriteChannels={favoriteChannels}
+        proximityChannelIds={proximityChannelIds}
+        documents={documents}
+        searchEntries={searchEntries}
+        dynamicEntries={dynamicEntries}
+        mentionCandidates={mentionCandidates}
+        insertRef={insertInComposer}
+        organisationActionSlot={organisationActionSlot}
+        sidebarActionSlot={sidebarActionSlot}
+        sidebarFooterSlot={sidebarFooterSlot}
+        className={sidebarGridClass}
+        onChooseFromSearch={openFromSearch}
+        onOpenDocument={openStudioDocument}
+        onSelectTextChannel={selectTextChannel}
+        onSelectDirect={selectDirect}
+        onStartQuickCall={startQuickCall}
+        onChannelContextMenu={onChannelContextMenu}
+        onChannelSettings={openChannelSettings}
+        onChannelToggleFavorite={toggleChannelFavorite}
+        isChannelFavorite={isChannelFavorite}
+        onChannelToggleMute={toggleChannelMute}
+        isChannelMuted={isChannelMuted}
+        onChannelInvite={inviteFromChannelMenu}
+        onChannelCopyLink={copyChannelLink}
+        onChannelPermissions={openChannelPermissions}
+        canManageChannel={canManageChannel}
+        onOpenNotification={simulation ? undefined : openNotification}
+      />
+    ) : (
+      <ChannelSidebar
+        store={activeStore}
+        call={activeCall}
+        workspace={workspace}
+        org={org}
+        organisationName={organisationName}
+        narrow={narrow}
+        simulation={simulation}
+        headingId={sidebarHeadingId}
+        width={leftSidebarWidth}
+        activeChannelId={activeChannel?.id}
+        canvasMode={effectiveCanvasMode}
+        categoryDescriptions={categoryDescriptions}
+        proximityChannelIds={proximityChannelIds}
+        documents={documents}
+        searchEntries={searchEntries}
+        dynamicEntries={dynamicEntries}
+        uiMode={uiMode}
+        onChangeUiMode={handleSelectUiMode}
+        mentionCandidates={mentionCandidates}
+        canInvite={canInvite}
+        speakingRef={micActivity.speakingRef}
+        insertRef={insertInComposer}
+        organisationActionSlot={organisationActionSlot}
+        sidebarActionSlot={sidebarActionSlot}
+        sidebarFooterSlot={sidebarFooterSlot}
+        onInvite={openInvitation}
+        onChooseFromSearch={openFromSearch}
+        onOpenChannel={openStudioChannel}
+        onOpenDocument={openStudioDocument}
+        onChangeCanvasMode={onChangeCanvasMode ? changeCanvas : undefined}
+        onSwitchCanvas={onChangeCanvasMode ? switchCanvas : undefined}
+        onOpenCalls={openCallsSurface}
+        className={sidebarGridClass}
+        onSelectTextChannel={selectTextChannel}
+        activeDirectRoomId={directRoomId}
+        onSelectDirect={selectDirect}
+        onJoinAudioRoom={joinAudioRoom}
+        onCreateInCategory={onCreateInCategory === undefined ? undefined : createInCategory}
+        onChannelContextMenu={onChannelContextMenu}
+        onChannelSettings={openChannelSettings}
+        onChannelToggleFavorite={toggleChannelFavorite}
+        isChannelFavorite={isChannelFavorite}
+        onChannelToggleMute={toggleChannelMute}
+        isChannelMuted={isChannelMuted}
+        onChannelInvite={inviteFromChannelMenu}
+        onChannelCopyLink={copyChannelLink}
+        onChannelPermissions={openChannelPermissions}
+        canManageChannel={canManageChannel}
+        onOpenNotification={simulation ? undefined : openNotification}
+      />
+    )
 
   return (
     <PassportContext.Provider value={passportServices}>
@@ -1249,11 +1573,22 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
         <WorkspacePaletteRegistration
           store={activeStore}
           entries={searchEntries}
+          channelsById={channelsById}
           documents={documents}
+          collections={collections}
           openDocument={openStudioDocument}
+          onOpenCollection={
+            onOpenCollection !== undefined || openStudioDocument !== undefined
+              ? openCollectionFromOmnibox
+              : undefined
+          }
+          onJumpToMessage={onJumpToMessage}
           onChoose={openFromSearch}
           onSelectDirect={selectDirect}
           onChangeCanvasMode={onChangeCanvasMode ? changeCanvas : undefined}
+          uiMode={uiMode}
+          onToggleUiMode={handleToggleUiMode}
+          dynamicEntries={dynamicEntries}
           simulation={simulation}
           snapshot={snapshot}
         />
@@ -1342,6 +1677,8 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
               inviteTrigger={inviteTrigger}
               membersTrigger={membersTrigger}
               audioRooms={audioRooms}
+              simpleMode={uiMode === 'simple'}
+              onStartQuickCall={startHeaderQuickCall}
               onShowMessage={showMessage}
               onToggleMembers={() => setMembersOpen((open) => !open)}
               onOpenCalls={openCallsSurface}

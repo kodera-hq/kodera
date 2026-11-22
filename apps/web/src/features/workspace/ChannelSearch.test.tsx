@@ -279,4 +279,39 @@ describe('ChannelSearch', () => {
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(screen.getByRole('button', { name: 'Rechercher' })).toHaveFocus()
   })
+
+  it('merges dynamicEntries with snippet previews and activates entry.open when provided', async () => {
+    const user = userEvent.setup()
+    const openDynamic = vi.fn(() => null)
+    render(
+      <ChannelSearch
+        palette
+        entries={ENTRIES}
+        shortcut
+        onChoose={() => null}
+        dynamicEntries={(query) =>
+          query.trim().length < 2
+            ? []
+            : [
+                {
+                  id: 'omnibox:message:!r1:$e1',
+                  label: '#général · Nadia',
+                  kind: 'command',
+                  category: 'Messages',
+                  snippet: 'Déploiement terminé avec succès',
+                  open: openDynamic,
+                },
+              ]
+        }
+      />
+    )
+
+    await user.keyboard('{Control>}k{/Control}')
+    await user.type(field(), 'deploiement')
+    expect(screen.getByTestId('channel-search-snippet')).toHaveTextContent(
+      'Déploiement terminé avec succès'
+    )
+    await user.keyboard('{Enter}')
+    expect(openDynamic).toHaveBeenCalledOnce()
+  })
 })

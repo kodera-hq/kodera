@@ -1,13 +1,18 @@
 import { Fragment, useEffect } from 'react'
 import type { RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { RoomBoundary } from '../confidential/room-boundary'
+import { Button } from '../../ui/Button/Button'
+import { KoderaIcon } from '../../ui/icons/KoderaIcons'
+import { PersonIcon } from '../../ui/icons/Person'
+import { cleanText } from '../../ui/safeText'
+import {
+  isRoomSearchPermitted,
+  type ConfidentialChannelFlags,
+} from '../command-palette/omniboxIndex'
+import { permitsPlaintext, type RoomBoundary } from '../confidential/room-boundary'
 import type { ChannelSearchEntry } from '../workspace/ChannelSearch'
 import { StudioNavigation } from '../workspace/StudioNavigation'
 import type { WorkspaceChannel } from '../workspace/workspace'
-import { Button } from '../../ui/Button/Button'
-import { PersonIcon } from '../../ui/icons/Person'
-import { cleanText } from '../../ui/safeText'
 import { AntennaIcon } from './AntennaIcon'
 import { ChannelInviteDialog } from './ChannelInviteDialog'
 import { confidentialMessages } from './confidentialMessages'
@@ -23,6 +28,7 @@ import { HEADER_FACES, type RoomSummary } from './matrix/store'
 import { MemberAvatar } from './MemberAvatar'
 import { MessageSearch } from './MessageSearch'
 import { PinnedMessages } from './PinnedMessages'
+import { uiModeCopy } from './uiModePreference'
 
 export interface EspaceChannelHeaderProps {
   org: string
@@ -49,6 +55,8 @@ export interface EspaceChannelHeaderProps {
   inviteTrigger: RefObject<HTMLButtonElement | null>
   membersTrigger: RefObject<HTMLButtonElement | null>
   audioRooms: readonly ChannelSearchEntry[]
+  simpleMode?: boolean | undefined
+  onStartQuickCall?: (() => void) | undefined
   onShowMessage: (eventId: string) => boolean
   onToggleMembers: () => void
   onOpenCalls: () => void
@@ -80,6 +88,8 @@ export function EspaceChannelHeader({
   inviteTrigger,
   membersTrigger,
   audioRooms,
+  simpleMode = false,
+  onStartQuickCall,
   onShowMessage,
   onToggleMembers,
   onOpenCalls,
@@ -87,6 +97,7 @@ export function EspaceChannelHeader({
 }: EspaceChannelHeaderProps) {
   const { t, i18n } = useTranslation()
   const protectionCopy = confidentialMessages[i18n.resolvedLanguage === 'en' ? 'en' : 'fr']
+  const modeCopy = uiModeCopy(i18n.resolvedLanguage)
 
   const memberCount =
     activeRoom?.joined === undefined
@@ -104,18 +115,34 @@ export function EspaceChannelHeader({
       ? directPresence === undefined
         ? []
         : [{ key: 'presence', text: directPresence }]
-      : [
-          ...(activeChannel !== null && activeChannel !== undefined && activeChannel.topic !== ''
-            ? [{ key: 'topic', text: activeChannel.topic }]
-            : []),
-          ...(memberCount === null ? [] : [{ key: 'members', text: memberCount }]),
-        ]
+      : simpleMode
+        ? memberCount === null
+          ? []
+          : [{ key: 'members', text: memberCount }]
+        : [
+            ...(activeChannel !== null && activeChannel !== undefined && activeChannel.topic !== ''
+              ? [{ key: 'topic', text: activeChannel.topic }]
+              : []),
+            ...(memberCount === null ? [] : [{ key: 'members', text: memberCount }]),
+          ]
   const faces = activeRoom?.faces ?? []
   const facesMissing =
-    activeRoom?.joined !== undefined && faces.length < Math.min(HEADER_FACES, activeRoom.joined - 1)
+    !simpleMode &&
+    activeRoom?.joined !== undefined &&
+    faces.length < Math.min(HEADER_FACES, activeRoom.joined - 1)
   useEffect(() => {
     if (activeRoomId !== null && facesMissing) activeStore.loadMembers?.(activeRoomId)
   }, [activeStore, activeRoomId, facesMissing])
+
+  const channelFlags = activeChannel as
+    (WorkspaceChannel & ConfidentialChannelFlags) | null | undefined
+  const searchPermitted =
+    activeRoomId !== null &&
+    (simpleMode || activeStore.getRoomBoundary !== undefined
+      ? isRoomSearchPermitted(activeStore, activeRoomId, channelFlags)
+      : (roomBoundary === undefined || permitsPlaintext(roomBoundary)) &&
+        channelFlags?.isConfidential !== true &&
+        channelFlags?.is_confidential !== true)
 
   return (
     <header
@@ -189,7 +216,7 @@ export function EspaceChannelHeader({
                 </Fragment>
               ))}
             </p>
-            {memberCount !== null && faces.length > 0 ? (
+            {!simpleMode && memberCount !== null && faces.length > 0 ? (
               <span className="flex shrink-0 gap-1 narrow:hidden">
                 {faces.map((face) => {
                   const named = isNamedProfile(cleanText(face.name, 80), face.userId)
@@ -217,7 +244,8 @@ export function EspaceChannelHeader({
           </div>
         ) : null}
       </div>
-      {directRoomId === null &&
+      {!simpleMode &&
+      directRoomId === null &&
       activeRoom !== undefined &&
       activeChannel != null &&
       !focusedDocs &&
@@ -234,8 +262,12 @@ export function EspaceChannelHeader({
       ) : null}
       {activeRoomId === null || focusedDocs || effectiveCanvasMode !== 'chat' ? null : (
         <>
-          <MessageSearch store={activeStore} roomId={activeRoomId} onShow={onShowMessage} />
-          <PinnedMessages store={activeStore} roomId={activeRoomId} onShow={onShowMessage} />
+          {searchPermitted ? (
+            <MessageSearch store={activeStore} roomId={activeRoomId} onShow={onShowMessage} />
+          ) : null}
+          {simpleMode ? null : (
+            <PinnedMessages store={activeStore} roomId={activeRoomId} onShow={onShowMessage} />
+          )}
         </>
       )}
       {activeRoomId === null || focusedDocs ? null : (
@@ -251,15 +283,30 @@ export function EspaceChannelHeader({
           onClick={onToggleMembers}
         />
       )}
-      <StudioNavigation
-        compact={narrow}
-        section="call-entry"
-        mode={effectiveCanvasMode}
-        onOpenCalls={onOpenCalls}
-        rooms={audioRooms}
-        onChoose={onChooseAudioRoom}
-      />
-      {effectiveCanvasMode === 'docs' ? (
+      {simpleMode ? (
+        <Button
+          variant="tertiary"
+          size="sm"
+          icon={<KoderaIcon name="calls" />}
+          iconOnly
+          data-testid="espace-header-quick-call"
+          aria-label={modeCopy.callAction.replace(
+            '{name}',
+            activeChannelName || t('console.workspace._.title')
+          )}
+          onClick={onStartQuickCall ?? onOpenCalls}
+        />
+      ) : (
+        <StudioNavigation
+          compact={narrow}
+          section="call-entry"
+          mode={effectiveCanvasMode}
+          onOpenCalls={onOpenCalls}
+          rooms={audioRooms}
+          onChoose={onChooseAudioRoom}
+        />
+      )}
+      {!simpleMode && effectiveCanvasMode === 'docs' ? (
         <span className="text-sm font-bold text-c-ink">
           {t('console.workspace.canvas.mode-docs')}
         </span>

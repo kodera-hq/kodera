@@ -63,6 +63,31 @@ describe('ChannelContextMenu', () => {
     expect(screen.queryByRole('menu')).not.toBeInTheDocument()
   })
 
+  it('offers pin and unpin favorite actions when onToggleFavorite is provided', async () => {
+    const user = userEvent.setup()
+    const onToggleFavorite = vi.fn()
+    const view = render(
+      <ChannelContextMenu
+        target={target}
+        onClose={vi.fn()}
+        onToggleFavorite={onToggleFavorite}
+        isFavorite={() => false}
+      />
+    )
+    await user.click(screen.getByRole('menuitem', { name: 'Épingler aux favoris' }))
+    expect(onToggleFavorite).toHaveBeenCalledWith(target)
+
+    view.rerender(
+      <ChannelContextMenu
+        target={target}
+        onClose={vi.fn()}
+        onToggleFavorite={onToggleFavorite}
+        isFavorite={() => true}
+      />
+    )
+    expect(screen.getByRole('menuitem', { name: 'Retirer des favoris' })).toBeInTheDocument()
+  })
+
   it('places a keyboard-opened menu under its row', () => {
     const row = document.createElement('a')
     row.getBoundingClientRect = () => ({ left: 10, bottom: 50 }) as DOMRect
@@ -177,9 +202,7 @@ describe('ChannelContextMenu', () => {
 
     await user.click(screen.getByRole('menuitem', { name: 'Copier le lien' }))
     await waitFor(() =>
-      expect(writeText).toHaveBeenCalledWith(
-        `${window.location.origin}/acme/workspace/${GENERAL}`
-      )
+      expect(writeText).toHaveBeenCalledWith(`${window.location.origin}/acme/workspace/${GENERAL}`)
     )
     expect(await screen.findByText('Lien de #général copié')).toBeInTheDocument()
 
@@ -195,7 +218,10 @@ describe('ChannelContextMenu', () => {
     // Selecting a DM renders @person chrome and conversation welcome copy — never "#Marina Loiseau".
     await user.click(screen.getByRole('button', { name: /Marina Loiseau/ }))
     expect(
-      await screen.findByRole('heading', { level: 2, name: 'Conversation privée avec Marina Loiseau' })
+      await screen.findByRole('heading', {
+        level: 2,
+        name: 'Conversation privée avec Marina Loiseau',
+      })
     ).toBeInTheDocument()
     expect(view.container.textContent).not.toContain('#Marina Loiseau')
 

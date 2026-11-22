@@ -25,6 +25,8 @@ import { categoryLabel, channelLabel } from '../workspace/workspace'
 import type { Workspace, WorkspaceCategory, WorkspaceChannel } from '../workspace/workspace'
 import { AntennaIcon } from './AntennaIcon'
 import { ChannelContextMenu as ChannelMenu, type ChannelMenuTarget } from './ChannelContextMenu'
+import { WorkspaceUiModeToggle } from './SimpleMessagingSidebar'
+import type { WorkspaceUiMode } from './uiModePreference'
 import type { CallSnapshot } from './audio/call'
 import {
   isProximityChannel,
@@ -229,6 +231,9 @@ export interface ChannelSidebarProps {
   proximityChannelIds: ReadonlySet<string> | undefined
   documents: readonly ChannelDoc[]
   searchEntries: readonly ChannelSearchEntry[]
+  dynamicEntries?: ((query: string) => readonly ChannelSearchEntry[]) | undefined
+  uiMode?: WorkspaceUiMode | undefined
+  onChangeUiMode?: ((mode: WorkspaceUiMode, options?: { fromToggle?: boolean }) => void) | undefined
   mentionCandidates: readonly MentionCandidate[]
   canInvite: boolean
   /** The member's own face in the room they are in rings from this (`useMicActivity`). */
@@ -260,6 +265,8 @@ export interface ChannelSidebarProps {
    * draws the menu itself when any is given; each absent one is left out of it.
    */
   onChannelSettings?: ((target: ChannelMenuTarget) => void) | undefined
+  onChannelToggleFavorite?: ((target: ChannelMenuTarget) => void) | undefined
+  isChannelFavorite?: ((channelId: string) => boolean) | undefined
   onChannelToggleMute?: ((target: ChannelMenuTarget) => void) | undefined
   isChannelMuted?: ((channelId: string) => boolean) | undefined
   onChannelInvite?: ((target: ChannelMenuTarget) => void) | undefined
@@ -286,6 +293,9 @@ function ChannelSidebarView({
   proximityChannelIds,
   documents,
   searchEntries,
+  dynamicEntries,
+  uiMode,
+  onChangeUiMode,
   mentionCandidates,
   canInvite,
   speakingRef,
@@ -308,6 +318,8 @@ function ChannelSidebarView({
   onCreateInCategory,
   onChannelContextMenu,
   onChannelSettings,
+  onChannelToggleFavorite,
+  isChannelFavorite,
   onChannelToggleMute,
   isChannelMuted,
   onChannelInvite,
@@ -330,6 +342,7 @@ function ChannelSidebarView({
   const [menuTarget, setMenuTarget] = useState<ChannelMenuTarget | null>(null)
   const ownsMenu =
     onChannelSettings !== undefined ||
+    onChannelToggleFavorite !== undefined ||
     onChannelToggleMute !== undefined ||
     onChannelInvite !== undefined ||
     onChannelCopyLink !== undefined ||
@@ -515,11 +528,30 @@ function ChannelSidebarView({
         <h2 id={headingId} className="sr-only">
           {t('console.workspace.sidebar.title')}
         </h2>
+        {onChangeUiMode === undefined ? null : (
+          <WorkspaceUiModeToggle
+            mode={uiMode ?? 'pro'}
+            onSelect={(next) => onChangeUiMode(next, { fromToggle: true })}
+          />
+        )}
         <UniversalSearch
           entries={searchEntries}
+          {...(dynamicEntries === undefined ? {} : { dynamicEntries })}
           onChoose={onChooseFromSearch}
           shortcut={!narrow}
           actions={[
+            ...(onChangeUiMode
+              ? [
+                  {
+                    id: 'ui-mode',
+                    label:
+                      (uiMode ?? 'pro') === 'simple'
+                        ? paletteCopy(i18n.resolvedLanguage).switchToPro
+                        : paletteCopy(i18n.resolvedLanguage).switchToSimple,
+                    open: () => onChangeUiMode((uiMode ?? 'pro') === 'simple' ? 'pro' : 'simple'),
+                  },
+                ]
+              : []),
             ...(onChangeCanvasMode
               ? [
                   { id: 'docs', label: 'Docs', open: () => onChangeCanvasMode('docs') },
@@ -630,6 +662,8 @@ function ChannelSidebarView({
         target={menuTarget}
         onClose={() => setMenuTarget(null)}
         onSettings={onChannelSettings}
+        onToggleFavorite={onChannelToggleFavorite}
+        isFavorite={isChannelFavorite}
         onToggleMute={onChannelToggleMute}
         isMuted={isChannelMuted}
         onInvite={onChannelInvite}
