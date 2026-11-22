@@ -15,6 +15,7 @@
 !core/db/ids.py
 !core/db/models.py
 !core/db/functions.py
+!core/db/ee_erasure.py
 # Inert outside the test profile: the runner's out-of-process fault control (core/faults.py).
 !core/faults.py
 !apps/__init__.py

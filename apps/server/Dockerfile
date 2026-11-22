@@ -5,10 +5,9 @@ COPY --from=uv /uv /usr/local/bin/uv
 WORKDIR /build
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv UV_PYTHON_DOWNLOADS=never UV_NO_CACHE=1
 COPY pyproject.toml uv.lock ./
-RUN uv sync --locked --no-dev --python python3.12 && mkdir -p /build/ee_empty
+RUN uv sync --locked --no-dev --python python3.12
 
 FROM scratch AS ee_src
-COPY --from=dependencies /build/ee_empty/ /
 
 FROM python:3.12.16-slim-bookworm@sha256:935c3c5b12357a7e10caa9c1e6ca5692344d97cf229832ef584be2cec9fc03df AS runtime
 ENV PATH="/opt/venv/bin:$PATH" PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1

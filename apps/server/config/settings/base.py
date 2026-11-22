@@ -98,7 +98,7 @@ KODERA_MEDIA_ROOM_VERIFIER_URL: str | None = None
 KODERA_PUBLIC_API_ORIGIN: str | None = None
 KODERA_SAML_SP_BASE_URL: str | None = None
 
-from core.api.edition import install_ee_erasure_key_sync as _install_ee_erasure_key_sync  # noqa: E402
+from core.db.ee_erasure import install_ee_erasure_key_sync as _install_ee_erasure_key_sync  # noqa: E402
 
 _install_ee_erasure_key_sync()
 del _install_ee_erasure_key_sync
