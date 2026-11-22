@@ -29,7 +29,7 @@ const VARIANT: Record<ButtonVariant, string> = {
   primary: 'bg-c-action text-c-on-inverse hover:bg-c-action-hover',
   secondary: 'border border-c-border-input bg-c-surface text-c-ink hover:bg-c-muted',
   tertiary: LINK_TEXT.standalone,
-  destructive: 'border border-red-500/40 bg-c-surface text-c-bad-ink hover:bg-c-bad-soft',
+  destructive: 'border border-c-bad bg-c-surface text-c-bad-ink hover:bg-c-bad-soft',
 }
 
 // The same inactive look as `Button` (see there).

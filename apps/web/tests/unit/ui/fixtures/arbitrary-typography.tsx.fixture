@@ -1,0 +1,9 @@
+// Not a source file: the extension keeps it out of the token guard's own scan
+// of `src/`, out of the TypeScript projects, and out of the Vitest suite. It
+// exists only to be fed to the scanner by tests/unit/ui/tokens.test.ts, which
+// asserts the guard reports arbitrary pixel typography classes off the preset scale.
+export const Broken = () => (
+  <p className="text-[13px] leading-[20px] narrow:text-[11.5px] text-[length:15px] text-sm/[20px] text-[0.875rem]/[18px]">
+    Off-scale typography
+  </p>
+)

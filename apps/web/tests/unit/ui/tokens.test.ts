@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 import preset from '@kodera/design-tokens/tailwind-preset'
 import {
   DEFAULT_PREFIXES,
@@ -172,6 +172,49 @@ function arbitraryColour(files: string[]): Finding[] {
 
 // ---------------------------------------------------------------------------
 
+// Raw CSS colour functions (`rgb()`, `rgba()`, `hsl()`, `hsla()`, `oklch()`) bypass
+// `INLINE_HEX` while still baking unthemed channel literals into UI code or CSS.
+// Only the three `kodera-theme:v1:` wire-codec modules legitimately serialize or
+// validate canonical `rgb(r, g, b)` channel payloads, pinned below so a retired
+// allowlist entry fails the run.
+const INLINE_COLOUR_FUNCTION = /(?<![a-zA-Z0-9_-])(?:rgba?|hsla?|oklch)\s*\([^)]*\)/gi
+const COLOUR_FUNCTION_ALLOWLIST = new Set([
+  'features/appearance/ThemeStudioModal.tsx',
+  'features/appearance/themeCodec.ts',
+  'features/appearance/themeContrast.ts',
+])
+const scannedProduction = (): string[] => [
+  ...sourceFiles(SRC).filter((file) => !/\.(?:test|stories)\.tsx?$/.test(file)),
+  INDEX_CSS,
+]
+
+function inlineColourFunction(files: string[]): Finding[] {
+  const findings: Finding[] = []
+  for (const file of files) {
+    for (const match of readFileSync(file, 'utf8').matchAll(INLINE_COLOUR_FUNCTION)) {
+      findings.push({ file, found: match[0] })
+    }
+  }
+  return findings
+}
+
+// Arbitrary pixel font-size and line-height utilities (`text-[13px]`, `leading-[20px]`,
+// `text-[length:15px]`, `text-sm/[20px]`) step off the `@kodera/design-tokens` typography scale.
+const ARBITRARY_PIXEL_TYPOGRAPHY =
+  /(?<![\w-])(?:(?:text|leading)-\[[^\]\s]*\d+(?:\.\d+)?px[^\]\s]*\](?:\/\[[^\]\s]*\])?|text-(?:[\w-]+|\[[^\]\s]+\])\/\[[^\]\s]*\d+(?:\.\d+)?px[^\]\s]*\])/gi
+
+function arbitraryPixelTypography(files: string[]): Finding[] {
+  const findings: Finding[] = []
+  for (const file of files) {
+    for (const match of readFileSync(file, 'utf8').matchAll(ARBITRARY_PIXEL_TYPOGRAPHY)) {
+      findings.push({ file, found: match[0] })
+    }
+  }
+  return findings
+}
+
+// ---------------------------------------------------------------------------
+
 describe('design tokens', () => {
   it('every colour class in src/ names a token the preset actually declares', () => {
     const result = assertClassesResolve({
@@ -261,6 +304,46 @@ describe('design tokens', () => {
     expect(arbitraryColour([fixture]).map(({ found }) => found)).toEqual([
       'bg-[#ff0000]',
       'text-[#00ff00]',
+    ])
+  })
+
+  it('no production source file carries raw rgb/rgba/hsl/hsla/oklch literals outside the wire codec', () => {
+    const findings = inlineColourFunction(scannedProduction())
+    const excused = new Set<string>()
+    const offending: Finding[] = []
+    for (const finding of findings) {
+      const rel = relative(SRC, finding.file).split('\\').join('/')
+      if (COLOUR_FUNCTION_ALLOWLIST.has(rel)) excused.add(rel)
+      else offending.push(finding)
+    }
+    expect(report(offending)).toEqual([])
+    expect([...COLOUR_FUNCTION_ALLOWLIST].filter((entry) => !excused.has(entry))).toEqual([])
+  })
+
+  it('reports raw rgb/rgba/hsl/hsla/oklch colour functions in component source', () => {
+    const fixture = join(FIXTURES, 'inline-colour-function.tsx.fixture')
+    expect(inlineColourFunction([fixture]).map(({ found }) => found)).toEqual([
+      'rgb(1, 2, 3)',
+      'rgba(1, 2, 3, 0.5)',
+      'hsl(220, 80%, 50%)',
+      'hsla(220, 80%, 50%, 0.5)',
+      'oklch(0.6 0.15 250)',
+    ])
+  })
+
+  it('no source file carries arbitrary pixel typography classes off the token scale', () => {
+    expect(report(arbitraryPixelTypography(scanned()))).toEqual([])
+  })
+
+  it('reports arbitrary pixel text-[...px], leading-[...px], and slash line-height classes', () => {
+    const fixture = join(FIXTURES, 'arbitrary-typography.tsx.fixture')
+    expect(arbitraryPixelTypography([fixture]).map(({ found }) => found)).toEqual([
+      'text-[13px]',
+      'leading-[20px]',
+      'text-[11.5px]',
+      'text-[length:15px]',
+      'text-sm/[20px]',
+      'text-[0.875rem]/[18px]',
     ])
   })
 })

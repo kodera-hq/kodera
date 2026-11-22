@@ -64,7 +64,7 @@ const COLOUR_CLASS = new RegExp(String.raw`${PREFIX}([a-z][a-z0-9-]*)(\/\d+)?`, 
 // it (`bg-[red]`, `shadow-[0_0_0_1px_navy]`), or a variable that is not a
 // `--c-*` role, written `var(--x)` or in Tailwind's `[--x]` shorthand. A type
 // hint other than `color:` (`text-[length:…]`) says the value is not a colour.
-// `text-[13px]`, `bg-[url(…)]` and `shadow-[0_0_0_1px_var(--c-border)]` pass.
+// `text-[length:var(--radix-size)]`, `bg-[url(…)]` and `shadow-[0_0_0_1px_var(--c-border)]` pass.
 const ARBITRARY_CLASS = new RegExp(String.raw`${PREFIX}\[([^\]\s]+)\]`, 'g')
 const COLOUR_LITERAL =
   /#[0-9a-fA-F]{3,8}\b|(?<![a-zA-Z-])(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color-mix|color|theme)\(|var\(--(?!c-)/
@@ -125,17 +125,10 @@ const SHORTHANDS = new Set([
   'textShadow',
 ])
 
-/** No themed role exists for these yet: `c-ok-border` has no bad or warning
- * sibling (kodera-hq/kodera#5, item 3). Bound to the file,
- * and an entry that matches nothing fails, so an excuse cannot outlive its
- * reason. */
-const NO_ROLE_YET = new Set([
-  'ui/Banner/Banner.tsx border-red-500/40',
-  'ui/Banner/Banner.tsx border-amber-500/40',
-  'ui/Button/TextButton.tsx border-red-500/40',
-  'ui/LinkButton/LinkButton.tsx border-red-500/40',
-  'ui/Table/Table.tsx bg-red-100/60',
-])
+/** No dedicated `c-bad-border` role exists yet (`kodera-hq/kodera#5`, item 3), and
+ * `Banner` `kind="incident"` is pixel-pinned by `tests/visual/screens.spec.ts`
+ * (`invoices-*`). Bound to the file so an entry that matches nothing fails. */
+const NO_ROLE_YET = new Set(['ui/Banner/Banner.tsx border-red-500/40'])
 
 // Floors (docs/dev/TESTING.md §4): a walker that finds nothing, or a matcher that
 // matches nothing, would pass every assertion below vacuously. Measured at 483
@@ -239,7 +232,7 @@ describe('theme roles', () => {
     expect(
       problems(
         [
-          '<b className="bg-transparent border-current text-inherit ring-offset-2 ring-offset-c-surface outline-offset-2 outline-c-action divide-c-border-soft text-[13px] bg-[url(/a.svg)] shadow-[0_0_0_1px_var(--c-border)]" />',
+          '<b className="bg-transparent border-current text-inherit ring-offset-2 ring-offset-c-surface outline-offset-2 outline-c-action divide-c-border-soft bg-[url(/a.svg)] shadow-[0_0_0_1px_var(--c-border)]" />',
           "<b style={{ width: `${percent}%`, color: 'var(--c-ink)', background: 'transparent', border: '1px solid var(--c-border)' }} />",
           // A role referenced through `var(--c-…)` is not the class it spells.
           '<b style={{ color: \'var(--c-accent-ink)\' }} className="shadow-[0_0_0_1px_var(--c-accent-ink)] bg-[--c-surface] text-[length:var(--radix-size)]" />',

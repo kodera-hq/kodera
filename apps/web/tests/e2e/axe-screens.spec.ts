@@ -10,16 +10,25 @@
 // Browser-evaluated callbacks need DOM types in the Node-side test project.
 /// <reference lib="dom" />
 
+import { mkdtempSync, realpathSync, rmSync } from 'node:fs'
+import type { AddressInfo } from 'node:net'
+import { tmpdir } from 'node:os'
+import { resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import AxeBuilder from '@axe-core/playwright'
 import { expect, test, type Page } from '@playwright/test'
-import { signIn } from './support/signIn'
+import { createServer, type ViteDevServer } from 'vite'
+import { signIn, signInToOrg } from './support/signIn'
 import { useScenario } from './support/useScenario'
 
+test.use({ reducedMotion: 'reduce' })
+
 const SHELL = 'shell.single-organisation'
+const WCAG_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa', 'best-practice'] as const
 
 /** Rule ids and the nodes they name: what a failure should print. */
 async function violations(page: Page): Promise<string[]> {
-  const results = await new AxeBuilder({ page }).analyze()
+  const results = await new AxeBuilder({ page }).withTags([...WCAG_TAGS]).analyze()
   return results.violations.flatMap((violation) =>
     violation.nodes.map((node) => `${violation.id}: ${node.target.join(' ')}`)
   )
@@ -183,4 +192,121 @@ test('shell/not-found: the unknown-organisation page passes axe', async ({ page 
   ).toBeVisible()
 
   expect(await violations(page)).toEqual([])
+})
+
+// ── Launch & workspace WCAG 2.2 AA (`wcag22aa` + 24×24 `target-size`) ─────
+
+test('login/discovery: passes axe on the realm discovery screen', async ({ page }) => {
+  await page.goto('/login')
+  await settled(page)
+
+  expect(await violations(page)).toEqual([])
+})
+
+test('home/overview: passes axe on the organisation home', async ({ page }) => {
+  await useScenario(page, [SHELL, 'home.default'])
+  await signInToOrg(page, 'acme-sa')
+  await settled(page)
+
+  expect(await violations(page)).toEqual([])
+})
+
+test('appearance/themes: passes axe on the appearance page', async ({ page }) => {
+  await useScenario(page, [SHELL, 'home.default'])
+  await signIn(page, 'acme-sa', '/appearance')
+  await settled(page)
+
+  expect(await violations(page)).toEqual([])
+})
+
+test('workspace/ready: passes axe on the ready workspace', async ({ page }) => {
+  await useScenario(page, [SHELL, 'home.default', 'workspace.ready'])
+  await signIn(page, 'acme-sa', '/workspace')
+  await settled(page)
+
+  expect(await violations(page)).toEqual([])
+})
+
+test.describe('CommunityWelcome (OIDC entry)', () => {
+  let server: ViteDevServer
+  let origin = ''
+  let cacheDir = ''
+  const envKeys = [
+    'VITE_AUTH_MODE',
+    'VITE_ENABLE_MSW',
+    'VITE_CORE_API_URL',
+    'VITE_KEYCLOAK_URL',
+    'VITE_OIDC_CLIENT_ID',
+  ] as const
+  let previousEnv: Record<string, string | undefined> = {}
+
+  test.beforeAll(async () => {
+    previousEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]))
+    process.env.VITE_AUTH_MODE = 'oidc'
+    process.env.VITE_ENABLE_MSW = '0'
+    process.env.VITE_CORE_API_URL = 'http://127.0.0.1:4199/api/v1'
+    process.env.VITE_KEYCLOAK_URL = 'https://identity.example.test'
+    process.env.VITE_OIDC_CLIENT_ID = 'console'
+    const root = fileURLToPath(new URL('../..', import.meta.url))
+    cacheDir = mkdtempSync(resolve(tmpdir(), 'kodera-axe-community-welcome-'))
+    server = await createServer({
+      root,
+      envDir: false,
+      cacheDir,
+      server: {
+        host: '127.0.0.1',
+        port: 0,
+        fs: {
+          allow: [
+            resolve(root, '../..'),
+            realpathSync(resolve(root, '../../node_modules')),
+            realpathSync(resolve(root, '../../node_modules/@kodera/design-tokens')),
+          ],
+        },
+      },
+    })
+    await server.listen()
+    const address = server.httpServer?.address() as AddressInfo
+    origin = `http://127.0.0.1:${address.port}`
+  })
+
+  test.afterAll(async () => {
+    try {
+      await server?.close()
+    } finally {
+      if (cacheDir) rmSync(cacheDir, { recursive: true, force: true })
+      for (const key of envKeys) {
+        if (previousEnv[key] === undefined) delete process.env[key]
+        else process.env[key] = previousEnv[key]
+      }
+    }
+  })
+
+  test('login/community-welcome: passes axe and separates the surface card from the page canvas', async ({
+    page,
+  }, testInfo) => {
+    await page
+      .context()
+      .route('**/*', (route) =>
+        new URL(route.request().url()).origin === origin ? route.continue() : route.abort()
+      )
+    await page.goto(`${origin}/login?org=community`)
+    await expect(page.getByRole('heading', { level: 1, name: 'Kodera Community' })).toBeVisible({
+      timeout: 20_000,
+    })
+    await page.evaluate(() => document.fonts.ready)
+
+    const main = page.getByRole('main')
+    await expect(main).toHaveClass(/\bbg-c-page\b/)
+    if (testInfo.project.name.includes('dark')) {
+      const mainBg = await main.evaluate((el) => getComputedStyle(el).backgroundColor)
+      const cardBg = await main
+        .locator('> *')
+        .first()
+        .evaluate((el) => getComputedStyle(el).backgroundColor)
+      expect(mainBg).not.toBe(cardBg)
+    }
+
+    expect(await violations(page)).toEqual([])
+  })
 })

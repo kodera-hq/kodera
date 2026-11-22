@@ -88,3 +88,11 @@ it('marks the language in use as pressed with a visible, non-colour cue and unde
   const dedicated = screen.getByRole('link')
   expect(dedicated.className.split(' ')).toContain('underline')
 })
+it('renders the surface card over the page canvas rather than flattening onto bg-c-surface', async () => {
+  await renderWelcome()
+  const main = screen.getByRole('main')
+  expect(main).toHaveClass('bg-c-page')
+  expect(main).not.toHaveClass('bg-c-surface')
+  const card = main.firstElementChild
+  expect(card).toHaveClass('bg-c-surface', 'border-c-border')
+})

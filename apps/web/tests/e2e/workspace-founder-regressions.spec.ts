@@ -46,7 +46,7 @@ test('founder surfaces: profile, audio controls, connector target and settings E
     (
       await new AxeBuilder({ page })
         .include('[role="dialog"]')
-        .withTags(['wcag2a', 'wcag2aa', 'wcag21aa'])
+        .withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa'])
         .analyze()
     ).violations
   ).toEqual([])
@@ -55,9 +55,7 @@ test('founder surfaces: profile, audio controls, connector target and settings E
     animations: 'disabled',
   })
 
-  await settings
-    .getByRole('button', { name: 'Administration de l’espace', exact: true })
-    .click()
+  await settings.getByRole('button', { name: 'Administration de l’espace', exact: true }).click()
   const admin = page.getByRole('dialog', { name: 'Administration de l’espace', exact: true })
   await admin.getByRole('tab', { name: 'Intégrations & extensions', exact: true }).click()
   await admin
@@ -70,10 +68,9 @@ test('founder surfaces: profile, audio controls, connector target and settings E
   await target.selectOption({ index: 1 })
   await expect(target).not.toHaveValue('')
   await expect(
-    admin.getByText(
-      'Ce choix prépare la configuration. Aucune connexion n’est encore activée.',
-      { exact: true }
-    )
+    admin.getByText('Ce choix prépare la configuration. Aucune connexion n’est encore activée.', {
+      exact: true,
+    })
   ).toBeVisible()
   const disclosure = admin.getByText('Détails techniques & sécurité', { exact: true })
   await expect(disclosure.locator('..')).not.toHaveAttribute('open', '')
@@ -83,9 +80,7 @@ test('founder surfaces: profile, audio controls, connector target and settings E
   ).not.toBeVisible()
   await disclosure.click()
   await expect(admin.getByText('Schéma v1 vérifié', { exact: true })).toBeVisible()
-  await expect(
-    admin.getByRole('textbox', { name: /URL de destination du webhook/ })
-  ).toBeVisible()
+  await expect(admin.getByRole('textbox', { name: /URL de destination du webhook/ })).toBeVisible()
   await page.screenshot({
     path: info.outputPath('workspace-connector-target.png'),
     animations: 'disabled',
@@ -120,8 +115,11 @@ test('founder canvases: Docs and Files mount, channel selection restores chat, r
   expect(cardBounds!.height).toBeLessThanOrEqual(160)
 
   expect(
-    (await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze())
-      .violations
+    (
+      await new AxeBuilder({ page })
+        .withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa'])
+        .analyze()
+    ).violations
   ).toEqual([])
   await page.screenshot({ path: info.outputPath('workspace-files.png'), animations: 'disabled' })
   await page.getByRole('link', { name: 'announcements', exact: true }).click()

@@ -1,0 +1,15 @@
+// Not a source file: the extension keeps it out of the token guard's own scan
+// of `src/`, out of the TypeScript projects, and out of the Vitest suite. It
+// exists only to be fed to the scanner by tests/unit/ui/tokens.test.ts, which
+// asserts the guard reports every raw CSS colour function below.
+export const Broken = () => (
+  <div
+    style={{
+      color: 'rgb(1, 2, 3)',
+      backgroundColor: 'rgba(1, 2, 3, 0.5)',
+      borderColor: 'hsl(220, 80%, 50%)',
+      outlineColor: 'hsla(220, 80%, 50%, 0.5)',
+      textDecorationColor: 'oklch(0.6 0.15 250)',
+    }}
+  />
+)

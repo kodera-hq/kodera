@@ -88,7 +88,7 @@ export const TableRow = forwardRef<HTMLTableRowElement, TableRowProps>(function 
       ref={ref}
       className={cx(
         'border-b border-c-hairline last:border-b-0',
-        tone === 'danger' && 'border-l-2 border-l-c-bad bg-red-100/60',
+        tone === 'danger' && 'border-l-2 border-l-c-bad bg-c-bad-soft',
         className
       )}
       {...rest}
