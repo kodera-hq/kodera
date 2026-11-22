@@ -93,7 +93,9 @@ def error_to_response(request: HttpRequest, error: StaffApiError) -> HttpRespons
     )
 
 
-def staff_json_response(request: HttpRequest, payload: object, *, status: int = 200) -> HttpResponse:
+def staff_json_response(
+    request: HttpRequest, payload: object, *, status: int = 200
+) -> HttpResponse:
     request_id = request_correlation_id(request)
     response = HttpResponse(
         json.dumps(payload),
@@ -145,4 +147,3 @@ def staff_command_transaction() -> Iterator[None]:
         if mapped is not None:
             raise mapped from None
         raise
-

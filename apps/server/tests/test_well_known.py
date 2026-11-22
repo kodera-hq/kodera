@@ -73,10 +73,7 @@ def test_android_assetlinks_sha256_validator_uppercases_and_deduplicates() -> No
         "AA:BB:CC",  # too short
         SAMPLE_ANDROID_SHA256.replace(":", ""),  # missing colons
         SAMPLE_ANDROID_SHA256[:-1] + "G",  # non-hex character
-        ",".join(
-            f"{i:02X}:" + ":".join(["11"] * 31)
-            for i in range(17)
-        ),  # > 16 entries
+        ",".join(f"{i:02X}:" + ":".join(["11"] * 31) for i in range(17)),  # > 16 entries
     ],
 )
 def test_android_assetlinks_validator_rejects_malformed_values_without_echoing_input(

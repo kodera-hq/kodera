@@ -139,10 +139,3 @@ class RosterGuard:
                 users = (self._synapse.user_id(s) for s in room_members(channel, everyone))
                 found[lk_name] = frozenset(u for u in users if u is not None) - excluded
         return found, public_rooms
-
-    def _audio_members(self) -> dict[str, frozenset[str]]:
-        """LiveKit room → the Matrix users the channel set in force admits to its call."""
-        found, public_rooms = self._audio_roster()
-        for lk_name, entry in public_rooms.items():
-            found[lk_name] = self._public_audio_members(entry)
-        return found
