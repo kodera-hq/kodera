@@ -37,6 +37,27 @@ IMAGE_TAG_RE = re.compile(
 )
 
 
+def _has_ee_src_build_context(block: str) -> bool:
+    header_indent: int | None = None
+    for line in block.splitlines():
+        stripped = line.lstrip(" ")
+        if not stripped:
+            continue
+        indent = len(line) - len(stripped)
+        if header_indent is not None:
+            if indent > header_indent:
+                if stripped.rstrip() == "ee_src=ee":
+                    return True
+                continue
+            header_indent = None
+        if (
+            stripped.startswith("build-contexts:")
+            and stripped[len("build-contexts:") :].strip() == "|"
+        ):
+            header_indent = indent
+    return False
+
+
 def check_build_steps(text: str, root: Path) -> list[str]:
     """Each publish step must match EXPECTED_BUILDS and name a Dockerfile (and stage) that exists."""
     errors: list[str] = []
@@ -66,10 +87,7 @@ def check_build_steps(text: str, root: Path) -> list[str]:
         ):
             errors.append(f"build target '{stage}' is not a stage of '{file_name}'")
         if image_name == "kodera-core" and stage is None:
-            if not re.search(
-                r"(?m)^\s*build-contexts:\s*\|\s*\n(?:\s+.*\n)*?\s+ee_src=ee\s*$",
-                block,
-            ):
+            if not _has_ee_src_build_context(block):
                 errors.append("kodera-core image build must pass 'ee_src=ee' in build-contexts")
             if not (root / "ee" / "__init__.py").is_file():
                 errors.append("named build context 'ee' is missing ee/__init__.py")
