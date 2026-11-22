@@ -518,9 +518,9 @@ def test_migration_0034_sql_parity_and_embedded_target_scrub_obligations() -> No
         / "apps"
         / "orgs"
         / "migrations"
-        / "0034_ee_audit_ledger_erasure.py"
+        / "0035_ee_audit_ledger_erasure.py"
     )
-    spec = importlib.util.spec_from_file_location("mig_0034", mig_file)
+    spec = importlib.util.spec_from_file_location("mig_0035", mig_file)
     assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)

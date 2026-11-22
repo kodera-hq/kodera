@@ -1362,7 +1362,7 @@ ALTER TABLE public.ee_audit_ledger
 
 
 class Migration(migrations.Migration):
-    dependencies = [("orgs", "0033_proximity_erasure_inventory")]
+    dependencies = [("orgs", "0034_erasure_completeness_and_invitation_outbox")]
     operations = [
         migrations.RunSQL(
             "SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';",

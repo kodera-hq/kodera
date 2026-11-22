@@ -1378,13 +1378,13 @@ def test_p1_3_organisation_and_account_erasure_cutoff_purge_scrub_and_migration_
     assert vault_ok_after_org is True and errs_org == []
     assert Identity.objects.filter(organisation=target_org).exists()
 
-    # --- PART C: Migration `orgs 0031 <-> 0034` Round-Trip on isolated empty database ---
+    # --- PART C: Migration `orgs 0031 <-> 0035` Round-Trip on isolated empty database ---
     from django.db.migrations.executor import MigrationExecutor
     from test_customer_persistence_migrations import empty_database
 
     with django_db_blocker.unblock(), empty_database() as target:
         executor = MigrationExecutor(target)
-        executor.migrate([("orgs", "0034_ee_audit_ledger_erasure")])
+        executor.migrate([("orgs", "0035_ee_audit_ledger_erasure")])
         with target.cursor() as cur:
             for tbl in EE_TABLES:
                 cur.execute("SELECT to_regclass(%s)", [f"public.{tbl}"])
@@ -1395,7 +1395,7 @@ def test_p1_3_organisation_and_account_erasure_cutoff_purge_scrub_and_migration_
             assert proc_34 is not None and proc_34[0] is not None
 
         executor.loader.build_graph()
-        executor.migrate([("orgs", "0033_proximity_erasure_inventory")])
+        executor.migrate([("orgs", "0034_erasure_completeness_and_invitation_outbox")])
         with target.cursor() as cur:
             cur.execute("SELECT to_regprocedure('public.ee_scim_sync_member_contact(uuid,uuid,text,text)')")
             proc_33 = cur.fetchone()
@@ -1409,7 +1409,7 @@ def test_p1_3_organisation_and_account_erasure_cutoff_purge_scrub_and_migration_
             assert row_31 is not None and row_31[0] is None
 
         executor.loader.build_graph()
-        executor.migrate([("orgs", "0034_ee_audit_ledger_erasure")])
+        executor.migrate([("orgs", "0035_ee_audit_ledger_erasure")])
         with target.cursor() as cur:
             for tbl in EE_TABLES:
                 cur.execute("SELECT to_regclass(%s)", [f"public.{tbl}"])
