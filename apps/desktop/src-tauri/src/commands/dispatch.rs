@@ -7,8 +7,8 @@ use super::{
 use crate::{
     CommunityDeployError, CommunityPreflightSpec, CommunityPrepareSpec, CommunityTlsMode,
     DesktopNotificationRequest, DesktopWorkspaceSession, KeychainSecretKind, NotificationError,
-    OidcLoopbackError, SelfHostDeploymentPlan, SelfHostDeploymentSpec, TrayCallKind,
-    TrayMenuItemId, TrayPttError,
+    OidcLoopbackError, ScreenShareSurface, SelfHostDeploymentPlan, SelfHostDeploymentSpec,
+    TrayCallKind, TrayMenuItemId, TrayPttError,
 };
 use kodera_rs::{encode_hex, KODERA_MONOGRAM_BG_HEX, MAX_PROXIMITY_QUEUE_CAPACITY};
 
@@ -25,6 +25,236 @@ fn public_plan_exposes_token(plan: &SelfHostDeploymentPlan, token: &str) -> bool
             .iter()
             .any(|(key, value)| exposes(key) || exposes(value))
         || exposes(&format!("{plan:?}"))
+}
+
+impl DesktopCommandRequest {
+    /// Side-effect-free semantic validation executed by the WebView IPC bridge BEFORE committing
+    /// an automatic organisation switch so invalid domain parameters carrying another
+    /// organisation's UUID never wipe the currently active session.
+    pub(crate) fn prevalidate_webview_semantics(
+        &self,
+        deep_link_policy: &crate::DeepLinkAdmissionPolicy,
+        cross_org: bool,
+    ) -> Result<(), DesktopCommandError> {
+        kodera_rs::OrganisationId::parse(self.organisation_id())
+            .map_err(DesktopCommandError::Core)?;
+        match self {
+            Self::ConfigureMediaCapture {
+                preferred_surface,
+                system_audio_loopback,
+                noise_suppression,
+                preferred_audio_input_id,
+                preferred_audio_output_id,
+                ..
+            } => {
+                let surface = ScreenShareSurface::parse(preferred_surface)
+                    .map_err(DesktopCommandError::MediaCapture)?;
+                crate::MediaCaptureController::new()
+                    .configure(
+                        surface,
+                        *system_audio_loopback,
+                        *noise_suppression,
+                        preferred_audio_input_id.as_deref(),
+                        preferred_audio_output_id.as_deref(),
+                    )
+                    .map(|_| ())
+                    .map_err(DesktopCommandError::MediaCapture)
+            }
+            Self::ConfigurePtt {
+                opt_in, raw_chord, ..
+            } => crate::PttController::new()
+                .configure(*opt_in, raw_chord.as_deref())
+                .map(|_| ())
+                .map_err(DesktopCommandError::TrayPtt),
+            Self::SetPttPressed { pressed, .. } => {
+                if cross_org && *pressed {
+                    return Err(DesktopCommandError::TrayPtt(TrayPttError::PttNotOptedIn));
+                }
+                Ok(())
+            }
+            Self::UpdateTrayState {
+                unread_count,
+                call_state,
+                muted,
+                self_host_degraded,
+                ..
+            } => {
+                let count = u32::try_from(*unread_count).map_err(|_| {
+                    DesktopCommandError::TrayPtt(TrayPttError::UnreadCountOutOfRange)
+                })?;
+                let active_call = TrayCallKind::parse_optional(call_state)
+                    .map_err(DesktopCommandError::TrayPtt)?;
+                crate::TrayController::new()
+                    .update_all(count, active_call, *muted, *self_host_degraded)
+                    .map_err(DesktopCommandError::TrayPtt)
+            }
+            Self::TriggerTrayMenuAction { action, .. } => TrayMenuItemId::parse(action)
+                .map(|_| ())
+                .map_err(DesktopCommandError::TrayPtt),
+            Self::SetUnreadBadge { unread_count, .. } => {
+                let count = u32::try_from(*unread_count).map_err(|_| {
+                    DesktopCommandError::Notification(NotificationError::UnreadCountOutOfRange)
+                })?;
+                crate::NotificationCenter::new()
+                    .set_unread_count(count)
+                    .map(|_| ())
+                    .map_err(DesktopCommandError::Notification)
+            }
+            Self::DispatchNotification {
+                title,
+                body,
+                route_uri,
+                redact_preview,
+                ..
+            } => crate::NotificationCenter::new()
+                .dispatch(
+                    &DesktopNotificationRequest {
+                        title: title.clone(),
+                        body: body.clone(),
+                        route_uri: route_uri.clone(),
+                        redact_preview: *redact_preview,
+                    },
+                    deep_link_policy,
+                )
+                .map(|_| ())
+                .map_err(DesktopCommandError::Notification),
+            Self::RouteDeepLink { raw_uri, .. } => {
+                crate::deeplink::route_deep_link(raw_uri, deep_link_policy)
+                    .map(|_| ())
+                    .map_err(DesktopCommandError::DeepLink)
+            }
+            Self::RestoreWindowBounds {
+                saved_state_json, ..
+            } => {
+                let parsed = match saved_state_json.as_deref() {
+                    Some(raw) => Some(
+                        crate::SavedWindowState::from_json(raw)
+                            .map_err(DesktopCommandError::WindowState)?,
+                    ),
+                    None => None,
+                };
+                crate::sanitize_and_clamp_window_state(
+                    parsed.as_ref(),
+                    &[crate::MonitorWorkArea::fallback_primary()],
+                )
+                .map(|_| ())
+                .map_err(DesktopCommandError::WindowState)
+            }
+            Self::InspectSelfHostHealth {
+                compose_ps_json, ..
+            } => crate::inspect_community_compose_ps(
+                compose_ps_json,
+                &std::collections::BTreeMap::new(),
+            )
+            .map(|_| ())
+            .map_err(DesktopCommandError::SelfHostHealth),
+            Self::StoreKeychainCredential {
+                organisation_id,
+                secret_kind,
+                matrix_user_id,
+                device_id,
+                issued_at_unix_secs,
+                expires_at_unix_secs,
+                raw_secret,
+            } => {
+                let kind = KeychainSecretKind::parse(secret_kind)
+                    .map_err(DesktopCommandError::Keychain)?;
+                crate::KeychainSessionMetadata::validate_with_secret(
+                    kind,
+                    organisation_id,
+                    matrix_user_id,
+                    device_id,
+                    *issued_at_unix_secs,
+                    *expires_at_unix_secs,
+                    Some(raw_secret),
+                )
+                .map(|_| ())
+                .map_err(DesktopCommandError::Keychain)
+            }
+            Self::LoadKeychainCredential {
+                organisation_id,
+                secret_kind,
+                matrix_user_id,
+            }
+            | Self::DeleteKeychainCredential {
+                organisation_id,
+                secret_kind,
+                matrix_user_id,
+            } => {
+                let kind = KeychainSecretKind::parse(secret_kind)
+                    .map_err(DesktopCommandError::Keychain)?;
+                crate::build_keychain_slot(kind, organisation_id, matrix_user_id)
+                    .map(|_| ())
+                    .map_err(DesktopCommandError::Keychain)
+            }
+            Self::BeginOidcPkceLoopback {
+                issuer_origin,
+                client_id,
+                code_verifier,
+                state,
+                loopback_port,
+                ..
+            } => {
+                let port = u16::try_from(*loopback_port).map_err(|_| {
+                    DesktopCommandError::OidcLoopback(OidcLoopbackError::InvalidLoopbackPort)
+                })?;
+                let (mut session, _) = crate::OidcPkceSession::start(
+                    &crate::OidcIssuerAllowlist::kodera_default(),
+                    issuer_origin,
+                    client_id,
+                    code_verifier,
+                    state,
+                    port,
+                )
+                .map_err(DesktopCommandError::OidcLoopback)?;
+                session.clear();
+                Ok(())
+            }
+            Self::CompleteOidcPkceCallback { .. } => {
+                if cross_org {
+                    return Err(DesktopCommandError::OidcLoopback(
+                        OidcLoopbackError::NoPendingSession,
+                    ));
+                }
+                Ok(())
+            }
+            Self::PlanSelfHost {
+                region,
+                fqdn,
+                acme_email,
+                ..
+            } => SelfHostDeploymentSpec::validate_public_fields(region, fqdn, acme_email)
+                .map(|_| ())
+                .map_err(DesktopCommandError::Deployment),
+            Self::SelfHostPreflightCommunity {
+                tls_mode,
+                http_port,
+                https_port,
+                ..
+            }
+            | Self::SelfHostPrepareCommunity {
+                tls_mode,
+                http_port,
+                https_port,
+                ..
+            } => {
+                CommunityTlsMode::parse(tls_mode).map_err(DesktopCommandError::CommunityDeploy)?;
+                let http = u16::try_from(*http_port).map_err(|_| {
+                    DesktopCommandError::CommunityDeploy(CommunityDeployError::InvalidPort)
+                })?;
+                let https = u16::try_from(*https_port).map_err(|_| {
+                    DesktopCommandError::CommunityDeploy(CommunityDeployError::InvalidPort)
+                })?;
+                if http == 0 || https == 0 || http == https {
+                    return Err(DesktopCommandError::CommunityDeploy(
+                        CommunityDeployError::InvalidPort,
+                    ));
+                }
+                Ok(())
+            }
+            _ => Ok(()),
+        }
+    }
 }
 
 impl DesktopWorkspaceSession {
@@ -45,7 +275,7 @@ impl DesktopWorkspaceSession {
         }
     }
 
-    pub(super) fn execute_command(
+    pub(crate) fn execute_command(
         &mut self,
         request: DesktopCommandRequest,
     ) -> DesktopCommandResponse {
@@ -311,6 +541,30 @@ impl DesktopWorkspaceSession {
                 .ptt_state(&organisation_id)
                 .map(DesktopCommandResponse::PttState)
                 .map_err(DesktopCommandError::Core),
+            DesktopCommandRequest::ConfigureMediaCapture {
+                organisation_id,
+                preferred_surface,
+                system_audio_loopback,
+                noise_suppression,
+                preferred_audio_input_id,
+                preferred_audio_output_id,
+            } => (|| {
+                let surface = ScreenShareSurface::parse(&preferred_surface)
+                    .map_err(DesktopCommandError::MediaCapture)?;
+                self.configure_media_capture(
+                    &organisation_id,
+                    surface,
+                    system_audio_loopback,
+                    noise_suppression,
+                    preferred_audio_input_id.as_deref(),
+                    preferred_audio_output_id.as_deref(),
+                )
+                .map(DesktopCommandResponse::MediaCaptureState)
+            })(),
+            DesktopCommandRequest::GetMediaCaptureState { organisation_id } => self
+                .media_capture_state(&organisation_id)
+                .map(DesktopCommandResponse::MediaCaptureState)
+                .map_err(DesktopCommandError::Core),
             DesktopCommandRequest::ValidateKeychainMetadata {
                 organisation_id,
                 secret_kind,
@@ -401,7 +655,7 @@ impl DesktopWorkspaceSession {
                     expires_at_unix_secs,
                     &raw_secret,
                 )
-                .map(DesktopCommandResponse::KeychainMetadata)
+                .map(DesktopCommandResponse::KeychainStored)
             })(),
             DesktopCommandRequest::LoadKeychainCredential {
                 organisation_id,

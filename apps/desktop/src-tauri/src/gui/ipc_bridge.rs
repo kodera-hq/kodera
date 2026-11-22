@@ -8,8 +8,8 @@ use super::{
     MAX_REGISTERED_EVENT_LISTENERS, PRIVILEGED_INTERNAL_ONLY_COMMANDS,
 };
 use crate::{
-    AdmittedDeepLink, DeepLinkAdmissionPolicy, DesktopShellHost, RestoredWindowPlacement,
-    MAX_IPC_COMMAND_BYTES,
+    AdmittedDeepLink, DeepLinkAdmissionPolicy, DesktopShellHost, PttModifier, PttTriggerKey,
+    RestoredWindowPlacement, MAX_IPC_COMMAND_BYTES,
 };
 use core::fmt;
 use std::collections::{BTreeSet, VecDeque};
@@ -147,6 +147,8 @@ pub struct DesktopWebViewBridge {
     pub(super) ready_update: Option<crate::updater::ReadyUpdate>,
     pub(super) authorized_stack_dirs: BTreeSet<PathBuf>,
     pub(super) stack_folder_picker: std::sync::Arc<dyn NativeStackFolderPicker>,
+    pub(super) active_modifiers: BTreeSet<PttModifier>,
+    pub(super) window_focused: bool,
 }
 
 impl DesktopWebViewBridge {
@@ -168,6 +170,8 @@ impl DesktopWebViewBridge {
             ready_update: None,
             authorized_stack_dirs: BTreeSet::new(),
             stack_folder_picker: std::sync::Arc::new(OsNativeStackFolderPicker),
+            active_modifiers: BTreeSet::new(),
+            window_focused: true,
         }
     }
 
@@ -187,6 +191,7 @@ impl DesktopWebViewBridge {
         self.host.clear_active_session();
         self.listeners.clear();
         self.authorized_stack_dirs.clear();
+        self.active_modifiers.clear();
         self.document_id = None;
         self.document_generation = generation;
         self.document_capability = fresh_document_capability();
@@ -195,6 +200,72 @@ impl DesktopWebViewBridge {
     pub fn clear_session(&mut self) {
         self.host.clear_active_session();
         self.authorized_stack_dirs.clear();
+        self.active_modifiers.clear();
+    }
+
+    /// Updates tracked OS window focus state; when `focused` is `false`, clears modifiers,
+    /// force-releases any active Push-to-Talk gate, and emits `"kodera://ptt-state"`.
+    pub fn set_window_focused(&mut self, focused: bool) -> Vec<String> {
+        self.window_focused = focused;
+        if focused {
+            return Vec::new();
+        }
+        self.active_modifiers.clear();
+        match self.host.force_release_ptt_on_focus_loss() {
+            Some(ptt_json) => self.dispatch_event_scripts("kodera://ptt-state", &ptt_json),
+            None => Vec::new(),
+        }
+    }
+
+    pub const fn is_window_focused(&self) -> bool {
+        self.window_focused
+    }
+
+    /// Releases any active Push-to-Talk microphone gate on OS window focus loss and emits
+    /// `"kodera://ptt-state"` to registered WebView listeners so an open PTT mic can never stick.
+    pub fn handle_window_focus_lost(&mut self) -> Vec<String> {
+        self.set_window_focused(false)
+    }
+
+    /// Updates tracked keyboard modifiers and releases PTT if a required chord modifier was lifted.
+    pub fn handle_modifiers_changed(&mut self, modifiers: BTreeSet<PttModifier>) -> Vec<String> {
+        self.active_modifiers = modifiers;
+        match self
+            .host
+            .handle_ptt_modifiers_changed(&self.active_modifiers)
+        {
+            Some(ptt_json) => self.dispatch_event_scripts("kodera://ptt-state", &ptt_json),
+            None => Vec::new(),
+        }
+    }
+
+    /// Evaluates a physical trigger-key press or release against the configured Push-to-Talk chord.
+    /// Rejects new `pressed == true` transitions while `!self.window_focused`.
+    pub fn handle_key_chord_event(
+        &mut self,
+        trigger: PttTriggerKey,
+        pressed: bool,
+        now_ms: u64,
+    ) -> Vec<String> {
+        if pressed && !self.window_focused {
+            return Vec::new();
+        }
+        match self
+            .host
+            .handle_ptt_key_event(&self.active_modifiers, trigger, pressed, now_ms)
+        {
+            Some(ptt_json) => self.dispatch_event_scripts("kodera://ptt-state", &ptt_json),
+            None => Vec::new(),
+        }
+    }
+
+    /// Toggles native tray microphone mute and emits `"kodera://tray-action"` (`"toggle_mute"`).
+    pub fn handle_native_mute_toggle(&mut self) -> Vec<String> {
+        if self.host.toggle_tray_mute().is_some() {
+            self.dispatch_event_scripts("kodera://tray-action", "toggle_mute")
+        } else {
+            Vec::new()
+        }
     }
 
     /// Records an explicit native OS folder-picker authorization for a canonical Community stack
@@ -394,7 +465,8 @@ impl DesktopWebViewBridge {
                 }
             }
             "plugin:event|listen" => {
-                let Some(event_name) = extract_json_string_field(json_body, "event") else {
+                let parsed_listen = serde_json::from_str::<EventListenArgs>(json_body).ok();
+                let Some(event_name) = parsed_listen.as_ref().and_then(|p| p.event.clone()) else {
                     eval_scripts.push(resolve_js_promise(
                         document_id,
                         req_id,
@@ -406,7 +478,7 @@ impl DesktopWebViewBridge {
                         window_action,
                     });
                 };
-                let Some(callback_id) = extract_json_u64_field(json_body, "handler") else {
+                let Some(callback_id) = parsed_listen.and_then(|p| p.handler) else {
                     eval_scripts.push(resolve_js_promise(
                         document_id,
                         req_id,
@@ -453,8 +525,10 @@ impl DesktopWebViewBridge {
                 }
             }
             "plugin:event|unlisten" => {
-                if let Some(event_id) = extract_json_u64_field(json_body, "eventId") {
-                    self.listeners.retain(|entry| entry.event_id != event_id);
+                if let Ok(parsed_unlisten) = serde_json::from_str::<EventUnlistenArgs>(json_body) {
+                    if let Some(event_id) = parsed_unlisten.event_id {
+                        self.listeners.retain(|entry| entry.event_id != event_id);
+                    }
                 }
                 eval_scripts.push(resolve_js_promise(document_id, req_id, true, "null"));
             }
@@ -462,6 +536,7 @@ impl DesktopWebViewBridge {
             | "plugin:window|set_focus"
             | "plugin:window|unminimize"
             | "show_window" => {
+                self.window_focused = true;
                 window_action = Some(GuiWindowAction::ShowAndFocus);
                 eval_scripts.push(resolve_js_promise(
                     document_id,
@@ -471,6 +546,7 @@ impl DesktopWebViewBridge {
                 ));
             }
             "plugin:window|hide" | "hide_window" => {
+                let release_scripts = self.handle_window_focus_lost();
                 window_action = Some(GuiWindowAction::Hide);
                 eval_scripts.push(resolve_js_promise(
                     document_id,
@@ -478,9 +554,10 @@ impl DesktopWebViewBridge {
                     true,
                     r#"{"ok":true}"#,
                 ));
+                eval_scripts.extend(release_scripts);
             }
             "plugin:window|close" | "quit" => {
-                self.host.clear_active_session();
+                self.clear_session();
                 window_action = Some(GuiWindowAction::Quit);
                 eval_scripts.push(resolve_js_promise(
                     document_id,
@@ -490,10 +567,15 @@ impl DesktopWebViewBridge {
                 ));
             }
             "init_session" => {
-                if let Some(org_id) = extract_json_string_field(json_body, "organisation_id") {
+                let was_ptt_transmitting = self.host.is_ptt_transmitting();
+                self.authorized_stack_dirs.clear();
+                self.active_modifiers.clear();
+                self.host.clear_active_session();
+                window_action = Some(GuiWindowAction::SetTitle(DESKTOP_WINDOW_TITLE.to_owned()));
+                if let Ok(parsed_init) = serde_json::from_str::<InitSessionArgs>(json_body) {
                     let init_line = format!(
                         r#"{{"host_op":"init_session","organisation_id":"{}"}}"#,
-                        escape_js_json_str(&org_id)
+                        escape_js_json_str(&parsed_init.organisation_id)
                     );
                     let (reply, _) = self.host.handle_stdio_line(&init_line);
                     let ok = reply.starts_with(r#"{"ok":true"#);
@@ -506,24 +588,37 @@ impl DesktopWebViewBridge {
                         r#"{"ok":false,"error":"invalid_organisation"}"#,
                     ));
                 }
+                if was_ptt_transmitting {
+                    eval_scripts.extend(
+                        self.dispatch_event_scripts("kodera://ptt-state", RESET_PTT_STATE_JSON),
+                    );
+                }
             }
             "select_community_stack_dir" => {
                 if !has_matching_body_command || envelope.stack_dir.is_some() {
                     return Err(WebViewIpcError::MalformedEnvelope);
                 }
-                let Some(org_id) = extract_json_string_field(json_body, "organisation_id") else {
-                    eval_scripts.push(resolve_js_promise(
-                        document_id,
-                        req_id,
-                        false,
-                        r#"{"ok":false,"error":"invalid_organisation"}"#,
-                    ));
-                    return Ok(WebViewIpcOutcome {
-                        eval_scripts,
-                        window_action,
-                    });
-                };
-                if !self.host.has_active_session() && self.host.provision_session(&org_id).is_err()
+                let org_id =
+                    match crate::DesktopCommandRequest::parse_select_stack_dir_org_id(json_body) {
+                        Ok(id) => id,
+                        Err(err) => {
+                            let err_json = crate::shell::serialize_command_error_json(&err);
+                            eval_scripts.push(resolve_js_promise(
+                                document_id,
+                                req_id,
+                                false,
+                                &err_json,
+                            ));
+                            return Ok(WebViewIpcOutcome {
+                                eval_scripts,
+                                window_action,
+                            });
+                        }
+                    };
+                let mut switch_events = Vec::new();
+                if self
+                    .ensure_webview_session_for_org(&org_id, &mut switch_events, &mut window_action)
+                    .is_err()
                 {
                     eval_scripts.push(resolve_js_promise(
                         document_id,
@@ -536,18 +631,7 @@ impl DesktopWebViewBridge {
                         window_action,
                     });
                 }
-                if self.host.active_organisation_id() != Some(org_id.as_str()) {
-                    eval_scripts.push(resolve_js_promise(
-                        document_id,
-                        req_id,
-                        false,
-                        r#"{"ok":false,"error":"organisation_mismatch"}"#,
-                    ));
-                    return Ok(WebViewIpcOutcome {
-                        eval_scripts,
-                        window_action,
-                    });
-                }
+                eval_scripts.extend(switch_events);
                 match self.stack_folder_picker.pick_community_stack_dir() {
                     Ok(Some(chosen_dir)) => match self.authorize_community_stack_dir(&chosen_dir) {
                         Ok(canonical) => {
@@ -594,24 +678,114 @@ impl DesktopWebViewBridge {
                 if !has_matching_body_command {
                     return Err(WebViewIpcError::MalformedEnvelope);
                 }
-                if matches!(
-                    cmd_raw,
-                    "self_host_preflight_community"
-                        | "self_host_prepare_community"
-                        | "self_host_deploy_community"
-                ) {
-                    let Some(raw_stack_dir) = envelope.stack_dir.as_deref() else {
+                // (a) Parse & validate both JSON schema AND domain semantics FIRST (refusing
+                //     unknown/duplicate fields, type mismatches, unicode-escaped key tricks, and
+                //     invalid semantic parameters before any organisation switch occurs!).
+                let parsed_request = match crate::DesktopCommandRequest::from_json(json_body) {
+                    Ok(req) => req,
+                    Err(err) => {
+                        let err_json = crate::shell::serialize_command_error_json(&err);
                         eval_scripts.push(resolve_js_promise(
                             document_id,
                             req_id,
                             false,
-                            r#"{"ok":false,"error":"missing_field"}"#,
+                            &err_json,
                         ));
                         return Ok(WebViewIpcOutcome {
                             eval_scripts,
                             window_action,
                         });
-                    };
+                    }
+                };
+                let is_cross_org =
+                    self.host.active_organisation_id() != Some(parsed_request.organisation_id());
+                if let Err(err) =
+                    parsed_request.prevalidate_webview_semantics(&self.policy, is_cross_org)
+                {
+                    let err_json = crate::shell::serialize_command_error_json(&err);
+                    eval_scripts.push(resolve_js_promise(document_id, req_id, false, &err_json));
+                    return Ok(WebViewIpcOutcome {
+                        eval_scripts,
+                        window_action,
+                    });
+                }
+                if is_cross_org
+                    && matches!(
+                        parsed_request,
+                        crate::DesktopCommandRequest::SetPttPressed { pressed: false, .. }
+                    )
+                {
+                    // Late/cleanup PTT release for an already-inactive or switched-away organisation
+                    // succeeds as an idempotent no-op without provisioning or wiping the active org!
+                    eval_scripts.push(resolve_js_promise(
+                        document_id,
+                        req_id,
+                        true,
+                        RESET_PTT_STATE_JSON,
+                    ));
+                    return Ok(WebViewIpcOutcome {
+                        eval_scripts,
+                        window_action,
+                    });
+                }
+
+                // (b) Switch/provision the session for `parsed_request.organisation_id()` SECOND
+                //     (clearing `self.authorized_stack_dirs` and `self.active_modifiers` on org change
+                //     BEFORE any authorization or focus check runs!).
+                let mut switch_events = Vec::new();
+                if self
+                    .ensure_webview_session_for_org(
+                        parsed_request.organisation_id(),
+                        &mut switch_events,
+                        &mut window_action,
+                    )
+                    .is_err()
+                {
+                    eval_scripts.push(resolve_js_promise(
+                        document_id,
+                        req_id,
+                        false,
+                        r#"{"ok":false,"error":"invalid_organisation"}"#,
+                    ));
+                    return Ok(WebViewIpcOutcome {
+                        eval_scripts,
+                        window_action,
+                    });
+                }
+
+                // (c) Enforce `!self.window_focused` (`SetPttPressed { pressed: true }`) and
+                //     `self.authorized_stack_dirs` on the switched session THIRD!
+                if !self.window_focused
+                    && matches!(
+                        parsed_request,
+                        crate::DesktopCommandRequest::SetPttPressed { pressed: true, .. }
+                    )
+                {
+                    eval_scripts.extend(switch_events);
+                    eval_scripts.push(resolve_js_promise(
+                        document_id,
+                        req_id,
+                        false,
+                        r#"{"ok":false,"error":"tray_ptt:window_not_focused"}"#,
+                    ));
+                    return Ok(WebViewIpcOutcome {
+                        eval_scripts,
+                        window_action,
+                    });
+                }
+                if let crate::DesktopCommandRequest::SelfHostPreflightCommunity {
+                    stack_dir: ref raw_stack_dir,
+                    ..
+                }
+                | crate::DesktopCommandRequest::SelfHostPrepareCommunity {
+                    stack_dir: ref raw_stack_dir,
+                    ..
+                }
+                | crate::DesktopCommandRequest::SelfHostDeployCommunity {
+                    stack_dir: ref raw_stack_dir,
+                    ..
+                } = parsed_request
+                {
                     let candidate_path = Path::new(raw_stack_dir);
                     if !raw_stack_dir.is_empty()
                         && raw_stack_dir.len() <= crate::MAX_STACK_DIR_BYTES
@@ -626,6 +800,7 @@ impl DesktopWebViewBridge {
                             )
                             .is_ok_and(|canonical| self.authorized_stack_dirs.contains(&canonical));
                         if !authorized {
+                            eval_scripts.extend(switch_events);
                             eval_scripts.push(resolve_js_promise(
                                 document_id,
                                 req_id,
@@ -639,19 +814,19 @@ impl DesktopWebViewBridge {
                         }
                     }
                 }
-                if !self.host.has_active_session() {
-                    if let Some(org_id) = extract_json_string_field(json_body, "organisation_id") {
-                        let _ = self.host.provision_session(&org_id);
-                    }
-                }
-                let (reply, should_quit) = self.host.handle_stdio_line(json_body);
+
+                // (d) Execute the validated typed request on the active session.
+                let was_ptt_transmitting = self.host.is_ptt_transmitting();
+                let (reply, should_quit) = self.host.execute_active_webview_command(parsed_request);
+                eval_scripts.extend(switch_events);
                 let ok = reply.starts_with(r#"{"ok":true"#);
                 if ok {
+                    let reply_meta =
+                        serde_json::from_str::<ReplyMetadata>(&reply).unwrap_or_default();
                     if should_quit {
                         window_action = Some(GuiWindowAction::Quit);
                     } else if cmd_raw == "set_unread_badge" || cmd_raw == "update_tray_state" {
-                        let badge = extract_json_string_field(&reply, "badge_label")
-                            .or_else(|| extract_json_string_field(&reply, "unread_badge"));
+                        let badge = reply_meta.badge_label.or(reply_meta.unread_badge);
                         let title = match badge {
                             Some(label) if !label.is_empty() => {
                                 format!("{DESKTOP_WINDOW_TITLE} ({label})")
@@ -659,15 +834,29 @@ impl DesktopWebViewBridge {
                             _ => DESKTOP_WINDOW_TITLE.to_owned(),
                         };
                         window_action = Some(GuiWindowAction::SetTitle(title));
+                        if cmd_raw == "update_tray_state"
+                            && was_ptt_transmitting
+                            && !self.host.is_ptt_transmitting()
+                        {
+                            if let Some(ptt_json) = self.host.current_ptt_state_json() {
+                                eval_scripts.extend(
+                                    self.dispatch_event_scripts("kodera://ptt-state", &ptt_json),
+                                );
+                            }
+                        }
                     } else if cmd_raw == "trigger_tray_menu_action" {
-                        if let Some(action_slug) = extract_json_string_field(&reply, "action") {
+                        if let Some(action_slug) = reply_meta.action {
                             eval_scripts.extend(
                                 self.dispatch_event_scripts("kodera://tray-action", &action_slug),
                             );
                             if action_slug == "open_kodera" {
+                                self.window_focused = true;
                                 window_action = Some(GuiWindowAction::ShowAndFocus);
                             }
                         }
+                    } else if cmd_raw == "configure_ptt" || cmd_raw == "set_ptt_pressed" {
+                        eval_scripts
+                            .extend(self.dispatch_event_scripts("kodera://ptt-state", &reply));
                     } else if cmd_raw == "restore_window_bounds" {
                         window_action = Some(GuiWindowAction::ApplyPlacement(
                             self.host.window_placement().clone(),
@@ -682,6 +871,35 @@ impl DesktopWebViewBridge {
             eval_scripts,
             window_action,
         })
+    }
+
+    fn ensure_webview_session_for_org(
+        &mut self,
+        org_id: &str,
+        switch_events: &mut Vec<String>,
+        window_action: &mut Option<GuiWindowAction>,
+    ) -> Result<(), ()> {
+        if self.host.active_organisation_id() == Some(org_id) {
+            return Ok(());
+        }
+        let Ok(parsed_org) = kodera_rs::OrganisationId::parse(org_id) else {
+            return Err(());
+        };
+        let had_prior_session = self.host.has_active_session();
+        let was_ptt_transmitting = self.host.is_ptt_transmitting();
+        if had_prior_session {
+            self.authorized_stack_dirs.clear();
+            self.active_modifiers.clear();
+            *window_action = Some(GuiWindowAction::SetTitle(DESKTOP_WINDOW_TITLE.to_owned()));
+        }
+        self.host
+            .provision_session(parsed_org.as_str())
+            .map_err(|_| ())?;
+        if had_prior_session && was_ptt_transmitting {
+            switch_events
+                .extend(self.dispatch_event_scripts("kodera://ptt-state", RESET_PTT_STATE_JSON));
+        }
+        Ok(())
     }
 
     fn dispatch_event_scripts(&self, event_name: &str, str_payload: &str) -> Vec<String> {
@@ -716,40 +934,38 @@ fn same_document_capability(expected: &str, supplied: &str) -> bool {
         == 0
 }
 
-fn extract_json_string_field(raw_json: &str, key: &str) -> Option<String> {
-    let needle = format!("\"{key}\":");
-    let idx = raw_json.find(&needle)?;
-    let rest = raw_json[idx + needle.len()..].trim_start();
-    let after_quote = rest.strip_prefix('"')?;
-    let mut out = String::new();
-    let mut chars = after_quote.chars();
-    loop {
-        match chars.next()? {
-            '"' => return Some(out),
-            '\\' => match chars.next()? {
-                '"' => out.push('"'),
-                '\\' => out.push('\\'),
-                '/' => out.push('/'),
-                'n' => out.push('\n'),
-                'r' => out.push('\r'),
-                't' => out.push('\t'),
-                _ => return None,
-            },
-            c if c.is_control() => return None,
-            c => out.push(c),
-        }
-    }
+const RESET_PTT_STATE_JSON: &str = r#"{"ok":true,"type":"ptt_state","opt_in_enabled":false,"binding":null,"transmitting":false,"transmitting_since_ms":null}"#;
+
+#[derive(serde::Deserialize)]
+struct EventListenArgs {
+    event: Option<String>,
+    handler: Option<u64>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    target: Option<serde::de::IgnoredAny>,
 }
 
-fn extract_json_u64_field(raw_json: &str, key: &str) -> Option<u64> {
-    let needle = format!("\"{key}\":");
-    let idx = raw_json.find(&needle)?;
-    let rest = raw_json[idx + needle.len()..].trim_start();
-    let end = rest
-        .find(|c: char| !c.is_ascii_digit())
-        .unwrap_or(rest.len());
-    if end == 0 {
-        return None;
-    }
-    rest[..end].parse().ok()
+#[derive(serde::Deserialize)]
+struct EventUnlistenArgs {
+    #[serde(rename = "eventId")]
+    event_id: Option<u64>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    event: Option<serde::de::IgnoredAny>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct InitSessionArgs {
+    #[serde(default)]
+    #[allow(dead_code)]
+    command: Option<String>,
+    organisation_id: String,
+}
+
+#[derive(Default, serde::Deserialize)]
+struct ReplyMetadata {
+    badge_label: Option<String>,
+    unread_badge: Option<String>,
+    action: Option<String>,
 }

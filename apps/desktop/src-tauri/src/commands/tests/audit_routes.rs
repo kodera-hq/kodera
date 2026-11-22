@@ -117,6 +117,17 @@ fn audit_command_cases() -> Vec<(&'static str, String)> {
         ),
         ("get_ptt_state", json("get_ptt_state", "")),
         (
+            "configure_media_capture",
+            json(
+                "configure_media_capture",
+                r#","preferred_surface":"window","system_audio_loopback":true,"noise_suppression":false,"preferred_audio_input_id":"usb-mic-01","preferred_audio_output_id":"studio-out-01""#,
+            ),
+        ),
+        (
+            "get_media_capture_state",
+            json("get_media_capture_state", ""),
+        ),
+        (
             "validate_keychain_metadata",
             json(
                 "validate_keychain_metadata",
@@ -355,6 +366,26 @@ fn complete_twenty_route_json_flow_reaches_each_typed_result() {
                 assert!(ptt.opt_in_enabled);
                 assert_eq!(ptt.binding.as_deref(), Some("Ctrl+Shift+Space"));
             }
+            ("configure_media_capture", DesktopCommandResponse::MediaCaptureState(media)) => {
+                assert_eq!(media.preferred_surface, crate::ScreenShareSurface::Window);
+                assert!(media.system_audio_loopback);
+                assert!(!media.noise_suppression);
+                assert_eq!(
+                    media.preferred_audio_input_id.as_deref(),
+                    Some("usb-mic-01")
+                );
+                assert_eq!(
+                    media.preferred_audio_output_id.as_deref(),
+                    Some("studio-out-01")
+                );
+            }
+            ("get_media_capture_state", DesktopCommandResponse::MediaCaptureState(media)) => {
+                assert_eq!(media.preferred_surface, crate::ScreenShareSurface::Monitor);
+                assert!(!media.system_audio_loopback);
+                assert!(media.noise_suppression);
+                assert!(media.preferred_audio_input_id.is_none());
+                assert!(media.preferred_audio_output_id.is_none());
+            }
             ("validate_keychain_metadata", DesktopCommandResponse::KeychainMetadata(metadata)) => {
                 assert_eq!(
                     metadata.slot.service_name,
@@ -396,9 +427,9 @@ fn complete_twenty_route_json_flow_reaches_each_typed_result() {
                     Some("kodera://workspace/acme-ops/ops")
                 );
             }
-            ("store_keychain_credential", DesktopCommandResponse::KeychainMetadata(metadata)) => {
+            ("store_keychain_credential", DesktopCommandResponse::KeychainStored(outcome)) => {
                 assert_eq!(
-                    metadata.slot.service_name,
+                    outcome.slot.service_name,
                     "io.kodera.desktop.matrix-session"
                 );
             }
@@ -466,6 +497,7 @@ fn every_json_route_refuses_foreign_duplicate_unknown_and_wrong_typed_scope_with
             (
                 state.window_placement(ORG).unwrap(),
                 state.dock_badge(ORG).unwrap(),
+                state.media_capture_state(ORG).unwrap(),
                 state.keychain_store.metadata_snapshot(),
                 state.pending_oidc.is_some(),
             ),

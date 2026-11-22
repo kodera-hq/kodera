@@ -11,7 +11,9 @@ import {
   APPROVED_CONNECT_SOURCES,
   COMMUNITY_TLS_MODES,
   DESKTOP_APP_IDENTIFIER,
+  MAX_MEDIA_DEVICE_ID_BYTES,
   REDACTED_NOTIFICATION_PREVIEW,
+  SCREEN_SHARE_SURFACES,
   TRAY_MENU_ITEM_IDS,
   createDesktopClient,
   formatUnreadBadgeLabel,
@@ -600,6 +602,646 @@ test('compiled kodera-desktop binary passes --self-check and --ipc-stdio round-t
   assert.equal(replies[2].ok, false);
   assert.equal(replies[2].error, 'community_deploy:invalid_stack_dir');
   assert.equal(replies[3].quit, true);
+
+  // Cross-process persistent keychain restart + PTT/media serialization verification:
+  // Process 1 stores credential (`native_keychain: true`), exercises PTT & media capture, and quits (`clear_session`).
+  // Process 2 starts fresh, reloads credential (`present: true, native_keychain: true`), deletes it, and verifies `present: false`.
+  const vaultScratch = mkdtempSync(join(tmpdir(), 'kodera-keychain-restart-'));
+  try {
+    const vaultPath = join(vaultScratch, 'debug-keychain-vault.json');
+    const nowUnix = Math.floor(Date.now() / 1000);
+    const proc1Input = [
+      JSON.stringify({ host_op: 'init_session', organisation_id: ORG_ID }),
+      JSON.stringify({
+        command: 'store_keychain_credential',
+        organisation_id: ORG_ID,
+        secret_kind: 'matrix-session',
+        matrix_user_id: '@alice:kodera.io',
+        device_id: 'MACBOOK_RESTART_01',
+        issued_at_unix_secs: nowUnix,
+        expires_at_unix_secs: nowUnix + 3600,
+        raw_secret: SAMPLE_SECRET,
+      }),
+      JSON.stringify({
+        command: 'configure_ptt',
+        organisation_id: ORG_ID,
+        opt_in: true,
+        chord: 'Ctrl+Shift+Space',
+      }),
+      JSON.stringify({
+        command: 'set_ptt_pressed',
+        organisation_id: ORG_ID,
+        pressed: true,
+        now_ms: 9100,
+      }),
+      JSON.stringify({
+        command: 'configure_media_capture',
+        organisation_id: ORG_ID,
+        preferred_surface: 'window',
+        system_audio_loopback: true,
+        noise_suppression: true,
+        preferred_audio_input_id: 'usb-mic-01',
+      }),
+      JSON.stringify({ host_op: 'quit' }),
+    ].join('\n') + '\n';
+
+    const proc1 = spawnSync(binPath, ['--ipc-stdio'], {
+      input: proc1Input,
+      encoding: 'utf8',
+      env: { ...process.env, KODERA_DESKTOP_DEBUG_KEYCHAIN_VAULT: vaultPath },
+    });
+    assert.equal(proc1.status, 0, proc1.stderr);
+    assert.ok(!proc1.stdout.includes(SAMPLE_SECRET), 'stdout must never echo raw keychain secret');
+    const p1Replies = proc1.stdout.trim().split('\n').map((line) => JSON.parse(line));
+    assert.equal(p1Replies.length, 6);
+    assert.equal(p1Replies[1].ok, true);
+    assert.equal(p1Replies[1].type, 'keychain_metadata');
+    assert.equal(p1Replies[1].native_keychain, true);
+    assert.equal(p1Replies[2].type, 'ptt_state');
+    assert.equal(p1Replies[2].binding, 'Ctrl+Shift+Space');
+    assert.equal(p1Replies[3].type, 'ptt_state');
+    assert.equal(p1Replies[3].transmitting, true);
+    assert.equal(p1Replies[3].transmitting_since_ms, 9100);
+    assert.equal(p1Replies[4].type, 'media_capture_state');
+    assert.equal(p1Replies[4].preferred_surface, 'window');
+    assert.equal(p1Replies[4].system_audio_loopback, true);
+    assert.equal(p1Replies[5].quit, true);
+
+    const proc2Input = [
+      JSON.stringify({ host_op: 'init_session', organisation_id: ORG_ID }),
+      JSON.stringify({
+        command: 'load_keychain_credential',
+        organisation_id: ORG_ID,
+        secret_kind: 'matrix-session',
+        matrix_user_id: '@alice:kodera.io',
+      }),
+      JSON.stringify({
+        command: 'delete_keychain_credential',
+        organisation_id: ORG_ID,
+        secret_kind: 'matrix-session',
+        matrix_user_id: '@alice:kodera.io',
+      }),
+      JSON.stringify({
+        command: 'load_keychain_credential',
+        organisation_id: ORG_ID,
+        secret_kind: 'matrix-session',
+        matrix_user_id: '@alice:kodera.io',
+      }),
+      JSON.stringify({ host_op: 'quit' }),
+    ].join('\n') + '\n';
+
+    const proc2 = spawnSync(binPath, ['--ipc-stdio'], {
+      input: proc2Input,
+      encoding: 'utf8',
+      env: { ...process.env, KODERA_DESKTOP_DEBUG_KEYCHAIN_VAULT: vaultPath },
+    });
+    assert.equal(proc2.status, 0, proc2.stderr);
+    assert.ok(!proc2.stdout.includes(SAMPLE_SECRET));
+    const p2Replies = proc2.stdout.trim().split('\n').map((line) => JSON.parse(line));
+    assert.equal(p2Replies.length, 5);
+    assert.equal(p2Replies[1].ok, true);
+    assert.equal(p2Replies[1].type, 'keychain_status');
+    assert.equal(p2Replies[1].present, true);
+    assert.equal(p2Replies[1].native_keychain, true);
+    assert.equal(p2Replies[2].ok, true);
+    assert.equal(p2Replies[2].present, true);
+    assert.equal(p2Replies[2].native_keychain, true);
+    assert.equal(p2Replies[3].ok, true);
+    assert.equal(p2Replies[3].present, false);
+    assert.equal(p2Replies[3].native_keychain, false);
+    assert.equal(p2Replies[4].quit, true);
+  } finally {
+    rmSync(vaultScratch, { recursive: true, force: true });
+  }
+});
+
+test('Push-to-Talk, media capture, and native keychain status bridge enforce validation, fallback, and live events', async () => {
+  assert.deepEqual([...SCREEN_SHARE_SURFACES], ['monitor', 'window', 'browser_tab']);
+  assert.equal(MAX_MEDIA_DEVICE_ID_BYTES, 128);
+
+  const webClient = createDesktopClient({
+    organisationId: ORG_ID,
+    globalObject: {},
+  });
+
+  const webPttCfg = await webClient.configurePushToTalk({
+    optIn: true,
+    chord: 'option+shift+space',
+  });
+  assert.equal(webPttCfg.supported, false);
+  assert.equal(webPttCfg.optInEnabled, true);
+  assert.equal(webPttCfg.binding, 'Alt+Shift+Space');
+  assert.equal((await webClient.setPushToTalkPressed(true, 1200)).supported, false);
+  assert.equal((await webClient.getPushToTalkState()).supported, false);
+  const stopWebPtt = await webClient.listenPushToTalk(() => {});
+  await stopWebPtt();
+
+  const webMedia = await webClient.configureMediaCapture({
+    preferredSurface: 'browser_tab',
+    systemAudioLoopback: true,
+    noiseSuppression: false,
+    preferredAudioInputId: 'mic-usb-01',
+  });
+  assert.equal(webMedia.supported, false);
+  assert.equal(webMedia.preferredSurface, 'browser_tab');
+  assert.equal(webMedia.systemAudioLoopback, true);
+  assert.equal(webMedia.noiseSuppression, false);
+  assert.equal((await webClient.getMediaCaptureState()).supported, false);
+
+  // Typing-hijack and reserved system chords fail closed before any native IPC call.
+  for (const unsafeChord of ['Space', 'A', 'Shift+A', 'F5']) {
+    await assert.rejects(
+      () => webClient.configurePushToTalk({ optIn: true, chord: unsafeChord }),
+      /unsafe_typing_key_without_modifier/u,
+    );
+  }
+  for (const reservedChord of ['Alt+F4', 'Ctrl+Q', 'Super+Q', 'Super+L', 'Ctrl+W', 'Ctrl+Enter', 'Ctrl+Escape']) {
+    await assert.rejects(
+      () => webClient.configurePushToTalk({ optIn: true, chord: reservedChord }),
+      /reserved_system_chord/u,
+    );
+  }
+  await assert.rejects(
+    () => webClient.configurePushToTalk({ optIn: false, chord: 'Ctrl+Space' }),
+    /ptt_not_opted_in/u,
+  );
+  await assert.rejects(
+    // @ts-expect-error negative test for invalid surface
+    () => webClient.configureMediaCapture({ preferredSurface: 'entire_gpu' }),
+    /invalid_screen_share_surface/u,
+  );
+  await assert.rejects(
+    () => webClient.configureMediaCapture({ preferredAudioInputId: 'x'.repeat(129) }),
+    /invalid_audio_input_device_id/u,
+  );
+  await assert.rejects(
+    () => webClient.configureMediaCapture({ preferredAudioOutputId: ' bad-padding ' }),
+    /invalid_audio_output_device_id/u,
+  );
+
+  /** @type {Map<number, (payload: unknown) => void>} */
+  const callbacks = new Map();
+  let nextCb = 1;
+  const nativeClient = createDesktopClient({
+    organisationId: ORG_ID,
+    globalObject: {
+      location: { protocol: 'kodera-asset:', hostname: 'localhost', port: '' },
+      __TAURI_INTERNALS__: {
+        transformCallback(fn) {
+          const id = nextCb++;
+          callbacks.set(id, fn);
+          return id;
+        },
+        async invoke(cmd, args) {
+          switch (cmd) {
+            case 'plugin:event|listen':
+              return 88;
+            case 'plugin:event|unlisten':
+              return null;
+            case 'store_keychain_credential':
+              return {
+                ok: true,
+                type: 'keychain_metadata',
+                service_name: `io.kodera.desktop.${args?.secret_kind}`,
+                native_keychain: true,
+              };
+            case 'load_keychain_credential':
+              return {
+                ok: true,
+                type: 'keychain_status',
+                service_name: `io.kodera.desktop.${args?.secret_kind}`,
+                present: true,
+                native_keychain: true,
+              };
+            case 'configure_ptt':
+              return {
+                ok: true,
+                type: 'ptt_state',
+                opt_in_enabled: args?.opt_in,
+                binding: args?.chord ?? null,
+                transmitting: false,
+                transmitting_since_ms: null,
+              };
+            case 'set_ptt_pressed':
+              return {
+                ok: true,
+                type: 'ptt_state',
+                opt_in_enabled: true,
+                binding: 'Ctrl+Shift+Space',
+                transmitting: args?.pressed,
+                transmitting_since_ms: args?.pressed ? args?.now_ms : null,
+              };
+            case 'get_ptt_state':
+              return {
+                ok: true,
+                type: 'ptt_state',
+                opt_in_enabled: true,
+                binding: 'Ctrl+Shift+Space',
+                transmitting: false,
+                transmitting_since_ms: null,
+              };
+            case 'configure_media_capture':
+              return {
+                ok: true,
+                type: 'media_capture_state',
+                preferred_surface: args?.preferred_surface,
+                system_audio_loopback: args?.system_audio_loopback,
+                noise_suppression: args?.noise_suppression,
+                preferred_audio_input_id: args?.preferred_audio_input_id ?? null,
+                preferred_audio_output_id: args?.preferred_audio_output_id ?? null,
+              };
+            case 'get_media_capture_state':
+              return {
+                ok: true,
+                type: 'media_capture_state',
+                preferred_surface: 'window',
+                system_audio_loopback: true,
+                noise_suppression: true,
+                preferred_audio_input_id: 'usb-mic-01',
+                preferred_audio_output_id: null,
+              };
+            default:
+              return { ok: true };
+          }
+        },
+      },
+    },
+  });
+
+  const nativeStored = await nativeClient.storeSecureCredential({
+    secretKind: 'matrix-session',
+    matrixUserId: '@alice:kodera.io',
+    deviceId: 'MAC_NATIVE_01',
+    issuedAtUnixSecs: 1_762_520_000,
+    rawSecret: SAMPLE_SECRET,
+  });
+  assert.equal(nativeStored.stored, true);
+  assert.equal(nativeStored.nativeKeychain, true);
+  assert.equal(nativeStored.ephemeralProcessVault, false);
+
+  const nativeLoaded = await nativeClient.loadSecureCredentialStatus(
+    'matrix-session',
+    '@alice:kodera.io',
+  );
+  assert.equal(nativeLoaded.present, true);
+  assert.equal(nativeLoaded.nativeKeychain, true);
+  assert.equal(nativeLoaded.ephemeralProcessVault, false);
+
+  const pttCfg = await nativeClient.configurePushToTalk({
+    optIn: true,
+    chord: 'ctrl+shift+space',
+  });
+  assert.equal(pttCfg.supported, true);
+  assert.equal(pttCfg.binding, 'Ctrl+Shift+Space');
+
+  const pttDown = await nativeClient.setPushToTalkPressed(true, 4500);
+  assert.equal(pttDown.transmitting, true);
+  assert.equal(pttDown.transmittingSinceMs, 4500);
+
+  const pttCur = await nativeClient.getPushToTalkState();
+  assert.equal(pttCur.optInEnabled, true);
+  assert.equal(pttCur.transmitting, false);
+
+  /** @type {Array<{ transmitting: boolean, transmittingSinceMs: number | null }>} */
+  const pttEvents = [];
+  const unlistenPtt = await nativeClient.listenPushToTalk((ev) => {
+    pttEvents.push({
+      transmitting: ev.transmitting,
+      transmittingSinceMs: ev.transmittingSinceMs,
+    });
+  });
+  const pttHandler = [...callbacks.values()][0];
+  pttHandler({ payload: 'not-valid-json' });
+  pttHandler({
+    payload: JSON.stringify({
+      ok: true,
+      type: 'ptt_state',
+      opt_in_enabled: true,
+      binding: 'Ctrl+Shift+Space',
+      transmitting: true,
+      transmitting_since_ms: 7700,
+    }),
+  });
+  pttHandler({
+    payload: JSON.stringify({
+      ok: true,
+      type: 'ptt_state',
+      opt_in_enabled: true,
+      binding: 'Ctrl+Shift+Space',
+      transmitting: false,
+      transmitting_since_ms: null,
+    }),
+  });
+  assert.deepEqual(pttEvents, [
+    { transmitting: true, transmittingSinceMs: 7700 },
+    { transmitting: false, transmittingSinceMs: null },
+  ]);
+  await unlistenPtt();
+
+  const mediaCfg = await nativeClient.configureMediaCapture({
+    preferredSurface: 'window',
+    systemAudioLoopback: true,
+    noiseSuppression: true,
+    preferredAudioInputId: 'usb-mic-01',
+  });
+  assert.equal(mediaCfg.supported, true);
+  assert.equal(mediaCfg.preferredSurface, 'window');
+  assert.equal(mediaCfg.preferredAudioInputId, 'usb-mic-01');
+
+  const mediaGet = await nativeClient.getMediaCaptureState();
+  assert.equal(mediaGet.supported, true);
+  assert.equal(mediaGet.preferredSurface, 'window');
+  assert.equal(mediaGet.systemAudioLoopback, true);
+});
+
+test('WebView keyboard responder drives PTT chords, filters editable targets, and releases unconditionally on keyup, blur, and visibilitychange', async () => {
+  /** @type {Map<string, Set<(ev: any) => void>>} */
+  const winListeners = new Map();
+  /** @type {Map<string, Set<(ev: any) => void>>} */
+  const docListeners = new Map();
+  /** @type {Array<{ cmd: string, args: Record<string, unknown> | undefined }>} */
+  const calls = [];
+
+  const mockDocument = {
+    visibilityState: 'visible',
+    hidden: false,
+    focused: true,
+    hasFocus() {
+      return this.focused;
+    },
+    addEventListener(type, fn) {
+      if (!docListeners.has(type)) docListeners.set(type, new Set());
+      docListeners.get(type)?.add(fn);
+    },
+    removeEventListener(type, fn) {
+      docListeners.get(type)?.delete(fn);
+    },
+  };
+
+  const mockWindow = {
+    location: { protocol: 'kodera-asset:', hostname: 'localhost', port: '' },
+    document: mockDocument,
+    addEventListener(type, fn) {
+      if (!winListeners.has(type)) winListeners.set(type, new Set());
+      winListeners.get(type)?.add(fn);
+    },
+    removeEventListener(type, fn) {
+      winListeners.get(type)?.delete(fn);
+    },
+    __TAURI_INTERNALS__: {
+      transformCallback() {
+        return 42;
+      },
+      async invoke(cmd, args) {
+        calls.push({ cmd, args });
+        if (cmd === 'plugin:event|listen') return 99;
+        if (cmd === 'plugin:event|unlisten') return null;
+        if (cmd === 'load_keychain_credential' || cmd === 'delete_keychain_credential') {
+          return { ok: true, present: false, native_keychain: false, service_name: 'io.kodera.desktop.matrix-session' };
+        }
+        if (cmd === 'configure_ptt') {
+          return {
+            ok: true,
+            type: 'ptt_state',
+            opt_in_enabled: args?.opt_in,
+            binding: args?.chord ?? null,
+            transmitting: false,
+            transmitting_since_ms: null,
+          };
+        }
+        if (cmd === 'set_ptt_pressed') {
+          return {
+            ok: true,
+            type: 'ptt_state',
+            opt_in_enabled: true,
+            binding: 'Ctrl+Shift+Space',
+            transmitting: Boolean(args?.pressed),
+            transmitting_since_ms: args?.pressed ? args?.now_ms : null,
+          };
+        }
+        return { ok: true };
+      },
+    },
+  };
+
+  /**
+   * @param {Map<string, Set<(ev: any) => void>>} table
+   * @param {string} type
+   * @param {Record<string, unknown>} [ev]
+   */
+  const emit = (table, type, ev = {}) => {
+    for (const fn of table.get(type) ?? []) {
+      fn(ev);
+    }
+  };
+
+  const client = createDesktopClient({
+    organisationId: ORG_ID,
+    globalObject: mockWindow,
+  });
+
+  // Absent keychain slot reports `present: false, nativeKeychain: false, ephemeralProcessVault: false`.
+  const absentLoad = await client.loadSecureCredentialStatus('matrix-session', '@alice:kodera.io');
+  assert.equal(absentLoad.present, false);
+  assert.equal(absentLoad.nativeKeychain, false);
+  assert.equal(absentLoad.ephemeralProcessVault, false);
+  const absentDel = await client.deleteSecureCredential('matrix-session', '@alice:kodera.io');
+  assert.equal(absentDel.present, false);
+  assert.equal(absentDel.nativeKeychain, false);
+  assert.equal(absentDel.ephemeralProcessVault, false);
+
+  const unlisten = await client.listenPushToTalk(() => {});
+  await client.configurePushToTalk({ optIn: true, chord: 'F13' });
+
+  const pttCalls = () => calls.filter((c) => c.cmd === 'set_ptt_pressed').map((c) => Boolean(c.args?.pressed));
+
+  // Non-modifier chord (`F13`) is ignored inside `<input>`, `<textarea>`, and `[contenteditable]`.
+  emit(winListeners, 'keydown', { code: 'F13', target: { tagName: 'INPUT' } });
+  emit(winListeners, 'keydown', { code: 'F13', target: { tagName: 'TEXTAREA' } });
+  emit(winListeners, 'keydown', { code: 'F13', target: { tagName: 'DIV', isContentEditable: true } });
+  assert.deepEqual(pttCalls(), []);
+
+  // Non-editable target triggers `F13` press, and `keyup` releases even if focus moved to `<input>`.
+  emit(winListeners, 'keydown', { code: 'F13', target: { tagName: 'DIV' } });
+  await new Promise((r) => setTimeout(r, 0));
+  emit(winListeners, 'keyup', { code: 'F13', target: { tagName: 'INPUT' } });
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(pttCalls(), [true, false]);
+
+  // Command-modifier chord (`Ctrl+Shift+Space`) works even on `<input>`, prevents default, ignores repeat,
+  // and releases unconditionally on modifier lift, window blur, and document visibilitychange!
+  await client.configurePushToTalk({ optIn: true, chord: 'Ctrl+Shift+Space' });
+  calls.length = 0;
+
+  let prevented = 0;
+  emit(winListeners, 'keydown', {
+    code: 'Space',
+    ctrlKey: true,
+    shiftKey: true,
+    target: { tagName: 'INPUT' },
+    preventDefault() {
+      prevented += 1;
+    },
+  });
+  emit(winListeners, 'keydown', {
+    code: 'Space',
+    ctrlKey: true,
+    shiftKey: true,
+    repeat: true,
+    target: { tagName: 'INPUT' },
+  });
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(prevented, 1);
+  assert.deepEqual(pttCalls(), [true]);
+
+  // Lifting `ShiftLeft` mid-hold releases PTT immediately.
+  emit(winListeners, 'keyup', { code: 'ShiftLeft', ctrlKey: true, shiftKey: false });
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(pttCalls(), [true, false]);
+
+  // Window `blur` releases PTT unconditionally.
+  emit(winListeners, 'keydown', { code: 'Space', ctrlKey: true, shiftKey: true });
+  await new Promise((r) => setTimeout(r, 0));
+  emit(winListeners, 'blur', {});
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(pttCalls(), [true, false, true, false]);
+
+  // Document `visibilitychange` (`hidden`) releases PTT unconditionally and blocks new presses while hidden.
+  emit(winListeners, 'keydown', { code: 'Space', ctrlKey: true, shiftKey: true });
+  await new Promise((r) => setTimeout(r, 0));
+  mockDocument.visibilityState = 'hidden';
+  mockDocument.hidden = true;
+  emit(docListeners, 'visibilitychange', {});
+  await new Promise((r) => setTimeout(r, 0));
+  emit(winListeners, 'keydown', { code: 'Space', ctrlKey: true, shiftKey: true });
+  assert.deepEqual(pttCalls(), [true, false, true, false, true, false]);
+
+  await client.configurePushToTalk({ optIn: false });
+
+  // Regression: pressing `F13` then calling `setOrganisationId(null)` MUST send `set_ptt_pressed(false)`
+  // for the previous organisation BEFORE clearing `activeOrganisationId`, and ignore stale replies!
+  mockDocument.visibilityState = 'visible';
+  mockDocument.hidden = false;
+  await client.configurePushToTalk({ optIn: true, chord: 'F13' });
+  calls.length = 0;
+  emit(winListeners, 'keydown', { code: 'F13', target: { tagName: 'DIV' } });
+  client.setOrganisationId(null);
+  await new Promise((r) => setTimeout(r, 0));
+  const orgSwitchPttCalls = calls
+    .filter((c) => c.cmd === 'set_ptt_pressed')
+    .map((c) => ({ org: c.args?.organisation_id, pressed: Boolean(c.args?.pressed) }));
+  assert.deepEqual(orgSwitchPttCalls, [
+    { org: ORG_ID, pressed: true },
+    { org: ORG_ID, pressed: false },
+    { org: ORG_ID, pressed: false },
+  ]);
+
+  // Regression: starting public `setPushToTalkPressed(true)` with a delayed native reply and calling
+  // `setOrganisationId(null)` BEFORE the reply resolves MUST release `prevOrgId` both on teardown
+  // and upon delayed resolution!
+  /** @type {((val: unknown) => void) | null} */
+  let resolveDelayedPress = null;
+  /** @type {Array<{ org: unknown, pressed: boolean }>} */
+  const delayedCalls = [];
+  const delayedClient = createDesktopClient({
+    organisationId: ORG_ID,
+    globalObject: {
+      location: { protocol: 'kodera-asset:', hostname: 'localhost', port: '' },
+      __TAURI_INTERNALS__: {
+        async invoke(cmd, args) {
+          if (cmd === 'set_ptt_pressed') {
+            delayedCalls.push({ org: args?.organisation_id, pressed: Boolean(args?.pressed) });
+            if (args?.pressed === true) {
+              return new Promise((resolve) => {
+                resolveDelayedPress = resolve;
+              });
+            }
+          }
+          return { ok: true, opt_in_enabled: true, binding: 'F13', transmitting: false };
+        },
+      },
+    },
+  });
+  const pendingPress = delayedClient.setPushToTalkPressed(true, 9000);
+  delayedClient.setOrganisationId(null);
+  assert.ok(
+    delayedCalls.some((c) => c.org === ORG_ID && c.pressed === false),
+    'setOrganisationId(null) must release in-flight PTT press for prevOrgId immediately',
+  );
+  resolveDelayedPress?.({
+    ok: true,
+    opt_in_enabled: true,
+    binding: 'F13',
+    transmitting: true,
+    transmitting_since_ms: 9000,
+  });
+  await pendingPress;
+  assert.equal(delayedCalls[delayedCalls.length - 1]?.org, ORG_ID);
+  assert.equal(delayedCalls[delayedCalls.length - 1]?.pressed, false);
+
+  // Regression: pending press in Org A -> switch to Org B -> configure Org B `Ctrl+Space` ->
+  // resolve Org A's delayed press reply MUST NOT clobber Org B's active `Ctrl+Space` binding!
+  const otherOrg = '019a5e62-6ca0-7303-8303-030303030399';
+  /** @type {((val: unknown) => void) | null} */
+  let resolveOrgADelayed = null;
+  let activeHostOrg = ORG_ID;
+  /** @type {string | null} */
+  let activeHostBinding = 'F13';
+  const crossSwitchClient = createDesktopClient({
+    organisationId: ORG_ID,
+    globalObject: {
+      location: { protocol: 'kodera-asset:', hostname: 'localhost', port: '' },
+      __TAURI_INTERNALS__: {
+        async invoke(cmd, args) {
+          const reqOrg = typeof args?.organisation_id === 'string' ? args.organisation_id : null;
+          if (cmd === 'set_ptt_pressed') {
+            if (args?.pressed === true && reqOrg === ORG_ID) {
+              return new Promise((resolve) => {
+                resolveOrgADelayed = resolve;
+              });
+            }
+            if (args?.pressed === false && reqOrg !== activeHostOrg) {
+              return { ok: true, opt_in_enabled: false, binding: null, transmitting: false };
+            }
+            return { ok: true, opt_in_enabled: true, binding: activeHostBinding, transmitting: false };
+          }
+          if (cmd === 'configure_ptt') {
+            activeHostOrg = reqOrg ?? activeHostOrg;
+            activeHostBinding = typeof args?.chord === 'string' ? args.chord : null;
+            return { ok: true, opt_in_enabled: Boolean(args?.opt_in), binding: activeHostBinding, transmitting: false };
+          }
+          if (cmd === 'get_ptt_state') {
+            return {
+              ok: true,
+              opt_in_enabled: activeHostOrg === reqOrg && activeHostBinding !== null,
+              binding: activeHostOrg === reqOrg ? activeHostBinding : null,
+              transmitting: false,
+            };
+          }
+          return { ok: true };
+        },
+      },
+    },
+  });
+  const pendingOrgAPress = crossSwitchClient.setPushToTalkPressed(true, 9500);
+  crossSwitchClient.setOrganisationId(otherOrg);
+  await crossSwitchClient.configurePushToTalk({ optIn: true, chord: 'Ctrl+Space' });
+  resolveOrgADelayed?.({
+    ok: true,
+    opt_in_enabled: true,
+    binding: 'F13',
+    transmitting: true,
+    transmitting_since_ms: 9500,
+  });
+  await pendingOrgAPress;
+  const orgBState = await crossSwitchClient.getPushToTalkState();
+  assert.equal(orgBState.binding, 'Ctrl+Space');
+
+  await unlisten();
+  assert.equal(winListeners.get('keydown')?.size ?? 0, 0);
+  assert.equal(winListeners.get('keyup')?.size ?? 0, 0);
+  assert.equal(winListeners.get('blur')?.size ?? 0, 0);
+  assert.equal(docListeners.get('visibilitychange')?.size ?? 0, 0);
 });
 
 test('Self-Host Wizard deploy/community bridge enforces injection defenses, browser fallback, and Tauri IPC handoff', async () => {
@@ -910,11 +1552,16 @@ test('.env.example documents code-signing variables with blank/safe values and C
   const envText = readFileSync(envExamplePath, 'utf8');
   for (const requiredKey of [
     'APPLE_SIGNING_IDENTITY=',
+    'APPLE_KEYCHAIN_PROFILE=',
+    'APPLE_KEYCHAIN_PATH=',
+    'APPLE_API_KEY_PATH=',
+    'APPLE_API_KEY_ID=',
+    'APPLE_API_ISSUER=',
     'APPLE_TEAM_ID=',
     'APPLE_ID=',
     'APPLE_PASSWORD=',
     'WINDOWS_CERTIFICATE_THUMBPRINT=',
-    'WINDOWS_TIMESTAMP_URL=',
+    'WINDOWS_TIMESTAMP_URL=https://timestamp.digicert.com',
     'TAURI_SIGNING_PRIVATE_KEY=',
   ]) {
     assert.ok(envText.includes(requiredKey), `.env.example must document ${requiredKey}`);

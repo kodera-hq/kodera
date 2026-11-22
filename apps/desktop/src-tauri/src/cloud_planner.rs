@@ -158,7 +158,7 @@ impl SelfHostDeploymentSpec {
         })
     }
 
-    fn validate_public_fields(
+    pub(crate) fn validate_public_fields(
         region: &str,
         fqdn: &str,
         acme_email: &str,

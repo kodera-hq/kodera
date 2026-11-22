@@ -1,4 +1,4 @@
-//! OS Keychain session slot naming and non-secret metadata contract.
+//! OS Keychain session slot naming, non-secret metadata contract, and persistent backend bridge.
 //!
 //! Security invariants:
 //! - Every OS keychain item is scoped under `io.kodera.desktop.<kind>` and an organisation-bound
@@ -6,13 +6,28 @@
 //!   never collide or bleed across organisations.
 //! - Raw session tokens wrapped in [`RedactedSessionSecret`] unconditionally format as
 //!   `[REDACTED]` in `Debug` and `Display`, overwrite their backing byte buffer on drop, and are
-//!   never echoed in [`KeychainError`] diagnostics.
+//!   never echoed in [`KeychainError`] diagnostics or passed on CLI `argv`.
 //! - Metadata validation refuses any payload where a caller accidentally copied secret material
 //!   into public metadata fields (`device_id`, `matrix_user_id`, or slot identifiers).
+//! - Window close and process exit (`clear_ram_cache`) zeroize in-RAM cached secrets while
+//!   preserving persistent OS keychain slots; explicit logout (`delete_credential` or
+//!   `clear_organisation`) removes persistent OS keychain entries and index records.
 
 use core::fmt;
 use kodera_rs::{validate_docs_host, OrganisationId};
 use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
+use zeroize::Zeroize;
+
+mod os_backend;
+#[cfg(test)]
+mod tests;
+
+pub use os_backend::{
+    default_keychain_index_path, OsKeychainExecOutput, OsKeychainProcessRunner,
+    OsNativeKeychainBackend, StdOsKeychainProcessRunner, DEFAULT_OS_KEYCHAIN_TIMEOUT_MS,
+    MAX_KEYCHAIN_INDEX_BYTES, MAX_MACOS_SECURITY_INTERACTIVE_LINE_BYTES,
+};
 
 /// Canonical reverse-DNS prefix for all Kodera Desktop keychain services.
 pub const KEYCHAIN_SERVICE_NAMESPACE: &str = "io.kodera.desktop";
@@ -20,8 +35,9 @@ pub const KEYCHAIN_SERVICE_NAMESPACE: &str = "io.kodera.desktop";
 /// Minimum byte length for session tokens admitted to OS keychain storage.
 pub const MIN_KEYCHAIN_SECRET_BYTES: usize = 16;
 
-/// Maximum byte length for session tokens admitted to OS keychain storage.
-pub const MAX_KEYCHAIN_SECRET_BYTES: usize = 4096;
+/// Maximum byte length for session tokens admitted to OS keychain storage (bounded safely below
+/// Apple `security -i` interactive line limits).
+pub const MAX_KEYCHAIN_SECRET_BYTES: usize = 3584;
 
 /// Maximum UTF-8 byte length of a keychain `service` identifier.
 pub const MAX_KEYCHAIN_SERVICE_BYTES: usize = 128;
@@ -32,8 +48,8 @@ pub const MAX_KEYCHAIN_ACCOUNT_BYTES: usize = 255;
 /// Upper bound on stored credential slots per organisation session.
 pub const MAX_KEYCHAIN_SLOTS_PER_ORG: usize = 32;
 
-/// Closed refusal codes for keychain slot naming, secret wrapping, and metadata validation.
-/// Carries zero raw token or untrusted input excerpts.
+/// Closed refusal codes for keychain slot naming, secret wrapping, metadata validation, and
+/// OS keychain backend operations. Carries zero raw token or untrusted input excerpts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeychainError {
     InvalidOrganisation,
@@ -49,6 +65,9 @@ pub enum KeychainError {
     SecretInvalidCharacters,
     SecretLeakedInMetadata,
     CapacityExceeded,
+    BackendTimeout,
+    BackendUnavailable,
+    BackendFailure,
 }
 
 impl fmt::Display for KeychainError {
@@ -67,6 +86,9 @@ impl fmt::Display for KeychainError {
             Self::SecretInvalidCharacters => "secret_invalid_characters",
             Self::SecretLeakedInMetadata => "secret_leaked_in_metadata",
             Self::CapacityExceeded => "capacity_exceeded",
+            Self::BackendTimeout => "backend_timeout",
+            Self::BackendUnavailable => "backend_unavailable",
+            Self::BackendFailure => "backend_failure",
         };
         f.write_str(code)
     }
@@ -102,6 +124,19 @@ impl KeychainSecretKind {
 
     pub fn service_name(self) -> String {
         format!("{KEYCHAIN_SERVICE_NAMESPACE}.{}", self.as_slug())
+    }
+}
+
+/// Storage durability tier achieved by a [`KeychainBackend`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeychainPersistence {
+    NativeOsKeychain,
+    EphemeralFallback,
+}
+
+impl KeychainPersistence {
+    pub const fn is_native_keychain(self) -> bool {
+        matches!(self, Self::NativeOsKeychain)
     }
 }
 
@@ -179,10 +214,7 @@ pub fn build_keychain_slot(
 }
 
 /// Ephemeral session token wrapper whose `Debug` and `Display` implementations are unconditionally
-/// redacted, and whose backing byte buffer is overwritten on drop.
-///
-/// Note: logical overwrite clears this Vec's bytes on teardown; it is not a guarantee against OS
-/// pagefile swap or prior caller-owned string copies.
+/// redacted, and whose backing byte buffer is zeroized on drop.
 pub struct RedactedSessionSecret(Vec<u8>);
 
 impl Clone for RedactedSessionSecret {
@@ -212,7 +244,7 @@ impl RedactedSessionSecret {
     }
 
     pub fn clear(&mut self) {
-        self.0.fill(0);
+        self.0.zeroize();
         self.0.clear();
     }
 }
@@ -323,11 +355,15 @@ impl KeychainSessionMetadata {
 
 /// Checks whether a secret string was copied (even with altered ASCII case) into public metadata.
 pub fn metadata_exposes_secret(metadata: &KeychainSessionMetadata, raw_secret: &str) -> bool {
-    let needle = raw_secret.trim().to_ascii_lowercase();
-    if needle.is_empty() {
+    let trimmed = raw_secret.trim();
+    if trimmed.is_empty() {
         return false;
     }
-    let contains_secret = |field: &str| field.to_ascii_lowercase().contains(&needle);
+    let mut needle = zeroize::Zeroizing::new(String::with_capacity(trimmed.len()));
+    for ch in trimmed.chars() {
+        needle.push(ch.to_ascii_lowercase());
+    }
+    let contains_secret = |field: &str| field.to_ascii_lowercase().contains(needle.as_str());
     contains_secret(&metadata.slot.service_name)
         || contains_secret(&metadata.slot.account_name)
         || contains_secret(&metadata.organisation_id)
@@ -374,7 +410,7 @@ fn is_valid_device_id(device_id: &str) -> bool {
 pub enum OsKeychainPlatform {
     MacOsSecurity,
     LinuxSecretTool,
-    WindowsCmdKey,
+    WindowsPasswordVault,
 }
 
 impl OsKeychainPlatform {
@@ -385,7 +421,7 @@ impl OsKeychainPlatform {
         }
         #[cfg(target_os = "windows")]
         {
-            Self::WindowsCmdKey
+            Self::WindowsPasswordVault
         }
         #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         {
@@ -396,17 +432,57 @@ impl OsKeychainPlatform {
 
 /// Safe, `unsafe`-free OS keychain CLI specification for validated `(service, account)` slots.
 ///
-/// Secrets are never placed in public `args` on platforms supporting standard-input streaming
-/// (`secret-tool store`) and are never formatted in `Debug` or `Display`.
+/// Secrets are never placed in public `args` (`secret_via_stdin` streams secret payloads over
+/// `Stdio::piped()`) and are never formatted in `Debug` or `Display`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OsKeychainCommandSpec {
     pub platform: OsKeychainPlatform,
-    pub program: &'static str,
+    pub program: String,
     pub args: Vec<String>,
     pub secret_via_stdin: bool,
 }
 
 impl OsKeychainCommandSpec {
+    pub fn build_store(
+        platform: OsKeychainPlatform,
+        slot: &KeychainSlotDescriptor,
+    ) -> Result<Self, KeychainError> {
+        validate_keychain_service_id(&slot.service_name)?;
+        validate_keychain_account_id(&slot.account_name)?;
+        Ok(match platform {
+            OsKeychainPlatform::MacOsSecurity => Self {
+                platform,
+                program: "/usr/bin/security".to_owned(),
+                args: vec!["-i".to_owned()],
+                secret_via_stdin: true,
+            },
+            OsKeychainPlatform::LinuxSecretTool => Self {
+                platform,
+                program: os_backend::resolve_linux_secret_tool_program(),
+                args: vec![
+                    "store".to_owned(),
+                    "--label=Kodera".to_owned(),
+                    "service".to_owned(),
+                    slot.service_name.clone(),
+                    "account".to_owned(),
+                    slot.account_name.clone(),
+                ],
+                secret_via_stdin: true,
+            },
+            OsKeychainPlatform::WindowsPasswordVault => Self {
+                platform,
+                program: os_backend::resolve_windows_powershell_program(),
+                args: vec![
+                    "-NoProfile".to_owned(),
+                    "-NonInteractive".to_owned(),
+                    "-Command".to_owned(),
+                    os_backend::WINDOWS_PASSWORD_VAULT_COMMAND.to_owned(),
+                ],
+                secret_via_stdin: true,
+            },
+        })
+    }
+
     pub fn build_lookup(
         platform: OsKeychainPlatform,
         slot: &KeychainSlotDescriptor,
@@ -416,7 +492,7 @@ impl OsKeychainCommandSpec {
         Ok(match platform {
             OsKeychainPlatform::MacOsSecurity => Self {
                 platform,
-                program: "security",
+                program: "/usr/bin/security".to_owned(),
                 args: vec![
                     "find-generic-password".to_owned(),
                     "-s".to_owned(),
@@ -429,7 +505,7 @@ impl OsKeychainCommandSpec {
             },
             OsKeychainPlatform::LinuxSecretTool => Self {
                 platform,
-                program: "secret-tool",
+                program: os_backend::resolve_linux_secret_tool_program(),
                 args: vec![
                     "lookup".to_owned(),
                     "service".to_owned(),
@@ -439,11 +515,16 @@ impl OsKeychainCommandSpec {
                 ],
                 secret_via_stdin: false,
             },
-            OsKeychainPlatform::WindowsCmdKey => Self {
+            OsKeychainPlatform::WindowsPasswordVault => Self {
                 platform,
-                program: "cmdkey",
-                args: vec![format!("/list:{}/{}", slot.service_name, slot.account_name)],
-                secret_via_stdin: false,
+                program: os_backend::resolve_windows_powershell_program(),
+                args: vec![
+                    "-NoProfile".to_owned(),
+                    "-NonInteractive".to_owned(),
+                    "-Command".to_owned(),
+                    os_backend::WINDOWS_PASSWORD_VAULT_COMMAND.to_owned(),
+                ],
+                secret_via_stdin: true,
             },
         })
     }
@@ -457,7 +538,7 @@ impl OsKeychainCommandSpec {
         Ok(match platform {
             OsKeychainPlatform::MacOsSecurity => Self {
                 platform,
-                program: "security",
+                program: "/usr/bin/security".to_owned(),
                 args: vec![
                     "delete-generic-password".to_owned(),
                     "-s".to_owned(),
@@ -469,7 +550,7 @@ impl OsKeychainCommandSpec {
             },
             OsKeychainPlatform::LinuxSecretTool => Self {
                 platform,
-                program: "secret-tool",
+                program: os_backend::resolve_linux_secret_tool_program(),
                 args: vec![
                     "clear".to_owned(),
                     "service".to_owned(),
@@ -479,57 +560,294 @@ impl OsKeychainCommandSpec {
                 ],
                 secret_via_stdin: false,
             },
-            OsKeychainPlatform::WindowsCmdKey => Self {
+            OsKeychainPlatform::WindowsPasswordVault => Self {
                 platform,
-                program: "cmdkey",
-                args: vec![format!(
-                    "/delete:{}/{}",
-                    slot.service_name, slot.account_name
-                )],
-                secret_via_stdin: false,
+                program: os_backend::resolve_windows_powershell_program(),
+                args: vec![
+                    "-NoProfile".to_owned(),
+                    "-NonInteractive".to_owned(),
+                    "-Command".to_owned(),
+                    os_backend::WINDOWS_PASSWORD_VAULT_COMMAND.to_owned(),
+                ],
+                secret_via_stdin: true,
             },
         })
     }
 }
 
-/// Non-secret lookup result returned across IPC when inspecting or loading a keychain slot.
+/// Non-secret outcome returned when storing a session credential.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeychainStoreOutcome {
+    pub slot: KeychainSlotDescriptor,
+    pub metadata: KeychainSessionMetadata,
+    pub persistence: KeychainPersistence,
+    pub native_keychain: bool,
+}
+
+/// Non-secret lookup or deletion status returned across IPC.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeychainCredentialStatus {
     pub slot: KeychainSlotDescriptor,
     pub present: bool,
+    pub native_keychain: bool,
     pub metadata: Option<KeychainSessionMetadata>,
 }
 
-/// Organisation-isolated bounded credential bridge store.
+/// Pluggable credential storage adapter backing [`KeychainCredentialStore`].
+pub trait KeychainBackend: Send + Sync {
+    fn store(
+        &self,
+        metadata: &KeychainSessionMetadata,
+        secret: &RedactedSessionSecret,
+    ) -> Result<KeychainPersistence, KeychainError>;
+
+    fn load_status(
+        &self,
+        slot: &KeychainSlotDescriptor,
+    ) -> Result<KeychainCredentialStatus, KeychainError>;
+
+    fn load_secret(
+        &self,
+        slot: &KeychainSlotDescriptor,
+    ) -> Result<Option<(KeychainSessionMetadata, RedactedSessionSecret)>, KeychainError>;
+
+    fn delete(
+        &self,
+        slot: &KeychainSlotDescriptor,
+    ) -> Result<KeychainCredentialStatus, KeychainError>;
+
+    /// Deletes every persisted credential slot belonging to `organisation_id`.
+    fn clear_organisation(&self, organisation_id: &str) -> Result<usize, KeychainError>;
+
+    /// Zeroizes non-persistent fallback RAM caches on session teardown while leaving persistent
+    /// OS keychain entries intact.
+    fn clear_ephemeral_cache(&self) {}
+}
+
+type SlotKey = (String, String);
+type EphemeralEntry = (KeychainSessionMetadata, RedactedSessionSecret);
+type CachedEntry = (
+    KeychainSessionMetadata,
+    RedactedSessionSecret,
+    KeychainPersistence,
+);
+type EphemeralClockFn = dyn Fn() -> u64 + Send + Sync;
+
+/// Zeroized in-RAM fallback backend (`native_keychain: false`) with clock-enforced expiration.
+pub struct EphemeralKeychainBackend {
+    entries: Mutex<BTreeMap<SlotKey, EphemeralEntry>>,
+    clock: Arc<EphemeralClockFn>,
+}
+
+impl Default for EphemeralKeychainBackend {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl EphemeralKeychainBackend {
+    pub fn new() -> Self {
+        Self::with_clock(Arc::new(kodera_rs::system_unix_secs))
+    }
+
+    pub fn with_clock(clock: Arc<EphemeralClockFn>) -> Self {
+        Self {
+            entries: Mutex::new(BTreeMap::new()),
+            clock,
+        }
+    }
+
+    fn purge_expired_locked(entries: &mut BTreeMap<SlotKey, EphemeralEntry>, now_secs: u64) {
+        entries.retain(|_, (m, s)| {
+            if m.is_expired(now_secs) {
+                s.clear();
+                false
+            } else {
+                true
+            }
+        });
+    }
+}
+
+impl KeychainBackend for EphemeralKeychainBackend {
+    fn store(
+        &self,
+        metadata: &KeychainSessionMetadata,
+        secret: &RedactedSessionSecret,
+    ) -> Result<KeychainPersistence, KeychainError> {
+        if metadata_exposes_secret(metadata, secret.expose_for_keychain_write()) {
+            return Err(KeychainError::SecretLeakedInMetadata);
+        }
+        let now = (self.clock)();
+        let mut guard = self
+            .entries
+            .lock()
+            .map_err(|_| KeychainError::BackendFailure)?;
+        Self::purge_expired_locked(&mut guard, now);
+        let key = (
+            metadata.slot.service_name.clone(),
+            metadata.slot.account_name.clone(),
+        );
+        if !guard.contains_key(&key) {
+            let org_count = guard
+                .values()
+                .filter(|(m, _)| m.organisation_id == metadata.organisation_id)
+                .count();
+            if org_count >= MAX_KEYCHAIN_SLOTS_PER_ORG {
+                return Err(KeychainError::CapacityExceeded);
+            }
+        }
+        if let Some((_, mut prev)) = guard.insert(key, (metadata.clone(), secret.clone())) {
+            prev.clear();
+        }
+        Ok(KeychainPersistence::EphemeralFallback)
+    }
+
+    fn load_status(
+        &self,
+        slot: &KeychainSlotDescriptor,
+    ) -> Result<KeychainCredentialStatus, KeychainError> {
+        validate_keychain_service_id(&slot.service_name)?;
+        validate_keychain_account_id(&slot.account_name)?;
+        let now = (self.clock)();
+        let mut guard = self
+            .entries
+            .lock()
+            .map_err(|_| KeychainError::BackendFailure)?;
+        Self::purge_expired_locked(&mut guard, now);
+        let key = (slot.service_name.clone(), slot.account_name.clone());
+        let metadata = guard.get(&key).map(|(m, _)| m.clone());
+        Ok(KeychainCredentialStatus {
+            slot: slot.clone(),
+            present: metadata.is_some(),
+            native_keychain: false,
+            metadata,
+        })
+    }
+
+    fn load_secret(
+        &self,
+        slot: &KeychainSlotDescriptor,
+    ) -> Result<Option<(KeychainSessionMetadata, RedactedSessionSecret)>, KeychainError> {
+        validate_keychain_service_id(&slot.service_name)?;
+        validate_keychain_account_id(&slot.account_name)?;
+        let now = (self.clock)();
+        let mut guard = self
+            .entries
+            .lock()
+            .map_err(|_| KeychainError::BackendFailure)?;
+        Self::purge_expired_locked(&mut guard, now);
+        let key = (slot.service_name.clone(), slot.account_name.clone());
+        Ok(guard.get(&key).cloned())
+    }
+
+    fn delete(
+        &self,
+        slot: &KeychainSlotDescriptor,
+    ) -> Result<KeychainCredentialStatus, KeychainError> {
+        validate_keychain_service_id(&slot.service_name)?;
+        validate_keychain_account_id(&slot.account_name)?;
+        let mut guard = self
+            .entries
+            .lock()
+            .map_err(|_| KeychainError::BackendFailure)?;
+        let key = (slot.service_name.clone(), slot.account_name.clone());
+        let existed = if let Some((_, mut secret)) = guard.remove(&key) {
+            secret.clear();
+            true
+        } else {
+            false
+        };
+        Ok(KeychainCredentialStatus {
+            slot: slot.clone(),
+            present: existed,
+            native_keychain: false,
+            metadata: None,
+        })
+    }
+
+    fn clear_organisation(&self, organisation_id: &str) -> Result<usize, KeychainError> {
+        let org = OrganisationId::parse(organisation_id)
+            .map_err(|_| KeychainError::InvalidOrganisation)?;
+        let target = org.as_str();
+        let mut guard = self
+            .entries
+            .lock()
+            .map_err(|_| KeychainError::BackendFailure)?;
+        let keys: Vec<(String, String)> = guard
+            .iter()
+            .filter(|(_, (meta, _))| meta.organisation_id == target)
+            .map(|(k, _)| k.clone())
+            .collect();
+        let count = keys.len();
+        for key in keys {
+            if let Some((_, mut secret)) = guard.remove(&key) {
+                secret.clear();
+            }
+        }
+        Ok(count)
+    }
+
+    fn clear_ephemeral_cache(&self) {
+        if let Ok(mut guard) = self.entries.lock() {
+            for (_, (_, mut secret)) in core::mem::take(&mut *guard) {
+                secret.clear();
+            }
+        }
+    }
+}
+
+/// Organisation-isolated bounded credential bridge store with pluggable [`KeychainBackend`].
 ///
-/// Backing [`RedactedSessionSecret`] buffers are overwritten on overwrite, deletion, organisation
-/// switch, and drop, and `Debug` never prints secret material.
-#[derive(Default)]
+/// In-RAM cached [`RedactedSessionSecret`] buffers are zeroized on overwrite, deletion,
+/// `clear_ram_cache` (window close / session teardown), and drop, while persistent OS keychain
+/// slots remain intact until explicit logout (`delete_credential` or `clear_organisation`).
 pub struct KeychainCredentialStore {
-    entries: BTreeMap<(String, String), (KeychainSessionMetadata, RedactedSessionSecret)>,
+    ram_cache: BTreeMap<SlotKey, CachedEntry>,
+    backend: Arc<dyn KeychainBackend>,
+}
+
+impl Default for KeychainCredentialStore {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl fmt::Debug for KeychainCredentialStore {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("KeychainCredentialStore")
-            .field("slot_count", &self.entries.len())
+            .field("slot_count", &self.ram_cache.len())
             .finish()
     }
 }
 
 impl KeychainCredentialStore {
     pub fn new() -> Self {
-        Self::default()
+        #[cfg(test)]
+        {
+            Self::with_backend(Arc::new(EphemeralKeychainBackend::new()))
+        }
+        #[cfg(not(test))]
+        {
+            Self::with_backend(os_backend::default_runtime_keychain_backend())
+        }
+    }
+
+    pub fn with_backend(backend: Arc<dyn KeychainBackend>) -> Self {
+        Self {
+            ram_cache: BTreeMap::new(),
+            backend,
+        }
     }
 
     pub fn slot_count(&self) -> usize {
-        self.entries.len()
+        self.ram_cache.len()
     }
 
     pub fn metadata_snapshot(&self) -> Vec<KeychainSessionMetadata> {
-        self.entries
+        self.ram_cache
             .values()
-            .map(|(meta, _)| meta.clone())
+            .map(|(meta, _, _)| meta.clone())
             .collect()
     }
 
@@ -543,7 +861,7 @@ impl KeychainCredentialStore {
         issued_at_unix_secs: u64,
         expires_at_unix_secs: Option<u64>,
         raw_secret: &str,
-    ) -> Result<KeychainSessionMetadata, KeychainError> {
+    ) -> Result<KeychainStoreOutcome, KeychainError> {
         let (metadata, wrapped) = KeychainSessionMetadata::validate_with_secret(
             secret_kind,
             organisation_id,
@@ -558,21 +876,29 @@ impl KeychainCredentialStore {
             metadata.slot.service_name.clone(),
             metadata.slot.account_name.clone(),
         );
-        if !self.entries.contains_key(&key) {
+        if !self.ram_cache.contains_key(&key) {
             let org_count = self
-                .entries
+                .ram_cache
                 .values()
-                .filter(|(m, _)| m.organisation_id == metadata.organisation_id)
+                .filter(|(m, _, _)| m.organisation_id == metadata.organisation_id)
                 .count();
             if org_count >= MAX_KEYCHAIN_SLOTS_PER_ORG {
                 return Err(KeychainError::CapacityExceeded);
             }
         }
-        if let Some((_, mut previous_secret)) = self.entries.insert(key, (metadata.clone(), secret))
+        let persistence = self.backend.store(&metadata, &secret)?;
+        if let Some((_, mut previous_secret, _)) = self
+            .ram_cache
+            .insert(key, (metadata.clone(), secret, persistence))
         {
             previous_secret.clear();
         }
-        Ok(metadata)
+        Ok(KeychainStoreOutcome {
+            slot: metadata.slot.clone(),
+            metadata,
+            persistence,
+            native_keychain: persistence.is_native_keychain(),
+        })
     }
 
     /// Loads validated metadata and the redacted secret handle strictly for the matching org.
@@ -583,8 +909,7 @@ impl KeychainCredentialStore {
         matrix_user_id: &str,
     ) -> Result<Option<(KeychainSessionMetadata, RedactedSessionSecret)>, KeychainError> {
         let slot = build_keychain_slot(secret_kind, organisation_id, matrix_user_id)?;
-        let key = (slot.service_name, slot.account_name);
-        Ok(self.entries.get(&key).cloned())
+        self.backend.load_secret(&slot)
     }
 
     /// Loads non-secret slot presence and metadata across the IPC boundary without exposing tokens.
@@ -595,16 +920,10 @@ impl KeychainCredentialStore {
         matrix_user_id: &str,
     ) -> Result<KeychainCredentialStatus, KeychainError> {
         let slot = build_keychain_slot(secret_kind, organisation_id, matrix_user_id)?;
-        let key = (slot.service_name.clone(), slot.account_name.clone());
-        let metadata = self.entries.get(&key).map(|(meta, _)| meta.clone());
-        Ok(KeychainCredentialStatus {
-            slot,
-            present: metadata.is_some(),
-            metadata,
-        })
+        self.backend.load_status(&slot)
     }
 
-    /// Deletes a single organisation-scoped credential slot, overwriting its secret bytes.
+    /// Deletes a single organisation-scoped credential slot from RAM and the OS keychain.
     pub fn delete_credential(
         &mut self,
         secret_kind: KeychainSecretKind,
@@ -613,214 +932,57 @@ impl KeychainCredentialStore {
     ) -> Result<KeychainCredentialStatus, KeychainError> {
         let slot = build_keychain_slot(secret_kind, organisation_id, matrix_user_id)?;
         let key = (slot.service_name.clone(), slot.account_name.clone());
-        let existed = if let Some((_, mut secret)) = self.entries.remove(&key) {
+        let cached_existed = if let Some((_, mut secret, _)) = self.ram_cache.remove(&key) {
             secret.clear();
             true
         } else {
             false
         };
-        Ok(KeychainCredentialStatus {
-            slot,
-            present: existed,
-            metadata: None,
-        })
+        let mut status = self.backend.delete(&slot)?;
+        if cached_existed && !status.present {
+            status.present = true;
+        }
+        Ok(status)
     }
 
-    /// Removes and overwrites every credential belonging to `organisation_id`.
+    /// Explicitly deletes every credential belonging to `organisation_id` from RAM and the OS keychain.
     pub fn clear_organisation(&mut self, organisation_id: &str) -> Result<usize, KeychainError> {
         let org = OrganisationId::parse(organisation_id)
             .map_err(|_| KeychainError::InvalidOrganisation)?;
         let target = org.as_str();
         let keys_to_remove: Vec<(String, String)> = self
-            .entries
+            .ram_cache
             .iter()
-            .filter(|(_, (meta, _))| meta.organisation_id == target)
+            .filter(|(_, (meta, _, _))| meta.organisation_id == target)
             .map(|(k, _)| k.clone())
             .collect();
-        let count = keys_to_remove.len();
+        let ram_removed = keys_to_remove.len();
         for key in keys_to_remove {
-            if let Some((_, mut secret)) = self.entries.remove(&key) {
+            if let Some((_, mut secret, _)) = self.ram_cache.remove(&key) {
                 secret.clear();
             }
         }
-        Ok(count)
+        let backend_removed = self.backend.clear_organisation(target)?;
+        Ok(backend_removed.max(ram_removed))
     }
 
-    pub fn clear_all(&mut self) {
-        for (_, (_, mut secret)) in core::mem::take(&mut self.entries) {
+    /// Zeroizes only in-RAM cached secret bytes (and ephemeral fallback maps) without deleting
+    /// persistent OS keychain entries. Invoked on window close, process exit, and session teardown.
+    pub fn clear_ram_cache(&mut self) {
+        for (_, (_, mut secret, _)) in core::mem::take(&mut self.ram_cache) {
             secret.clear();
         }
+        self.backend.clear_ephemeral_cache();
+    }
+
+    /// Alias for [`Self::clear_ram_cache`] preserving in-memory zeroization semantics.
+    pub fn clear_all(&mut self) {
+        self.clear_ram_cache();
     }
 }
 
 impl Drop for KeychainCredentialStore {
     fn drop(&mut self) {
-        self.clear_all();
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    const ORG: &str = "019a5e62-6ca0-7303-8303-030303030303";
-    const SAMPLE_OPAQUE_PAYLOAD: &str = "syt_sample_opaque_fixture_0123456789";
-
-    #[test]
-    fn builds_and_validates_org_scoped_keychain_slots() {
-        let slot = build_keychain_slot(KeychainSecretKind::MatrixSession, ORG, "@alice:kodera.io")
-            .unwrap();
-        assert!(slot.service_name == "io.kodera.desktop.matrix-session");
-        let expected_slot = format!("org:{ORG}:user:@alice:kodera.io");
-        assert!(slot.account_name == expected_slot);
-        assert!(matches!(
-            validate_keychain_service_id(&slot.service_name),
-            Ok(KeychainSecretKind::MatrixSession)
-        ));
-        let (parsed_org, parsed_user, parsed_domain) =
-            validate_keychain_account_id(&slot.account_name).unwrap();
-        assert_eq!(parsed_org.as_str(), ORG);
-        assert_eq!(parsed_user, "@alice:kodera.io");
-        assert_eq!(parsed_domain, "kodera.io");
-    }
-
-    #[test]
-    fn rejects_invalid_service_and_account_identifiers() {
-        for invalid_svc_candidate in [
-            "",
-            "io.kodera.desktop",
-            "io.kodera.desktop.unknown",
-            "com.other.app.matrix-session",
-            "io.kodera.desktop.matrix-session\0",
-            "io.kodera.desktop.matrix session",
-        ] {
-            assert!(matches!(
-                validate_keychain_service_id(invalid_svc_candidate),
-                Err(KeychainError::InvalidServiceIdentifier)
-            ));
-        }
-
-        for invalid_slot_candidate in [
-            "",
-            "@alice:kodera.io",
-            "org:00000000-0000-0000-0000-000000000000:user:@alice:kodera.io",
-            "org:019a5e62-6ca0-7303-8303-030303030303:user:alice:kodera.io",
-            "org:019a5e62-6ca0-7303-8303-030303030303:user:@alice:localhost",
-            "org:019a5e62-6ca0-7303-8303-030303030303:user:@../alice:kodera.io",
-            "org:019a5e62-6ca0-7303-8303-030303030303/user:@alice:kodera.io",
-        ] {
-            assert!(matches!(
-                validate_keychain_account_id(invalid_slot_candidate),
-                Err(KeychainError::InvalidAccountIdentifier)
-            ));
-        }
-    }
-
-    #[test]
-    fn redacts_secret_in_debug_display_errors_and_blocks_metadata_leaks() {
-        let (meta, wrapped) = KeychainSessionMetadata::validate_with_secret(
-            KeychainSecretKind::OidcRefresh,
-            ORG,
-            "@zxxma:community.kodera.io",
-            "DEV_MACBOOK_01",
-            1_762_520_000,
-            Some(1_762_523_600),
-            Some(SAMPLE_OPAQUE_PAYLOAD),
-        )
-        .unwrap();
-        let mut redacted_box = wrapped.unwrap();
-        let debug_repr = format!("{redacted_box:?}");
-        let display_repr = format!("{redacted_box}");
-        assert!(!debug_repr.contains(SAMPLE_OPAQUE_PAYLOAD));
-        assert!(!display_repr.contains(SAMPLE_OPAQUE_PAYLOAD));
-        assert!(debug_repr.contains("REDACTED"));
-        assert!(!meta.device_id.contains(SAMPLE_OPAQUE_PAYLOAD));
-        assert!(!meta.is_expired(1_762_523_599));
-        assert!(meta.is_expired(1_762_523_600));
-
-        redacted_box.clear();
-        assert!(redacted_box.expose_for_keychain_write().is_empty());
-
-        // Copying the opaque value (or case-folded variant) into device_id is refused.
-        let leaked = KeychainSessionMetadata::validate_with_secret(
-            KeychainSecretKind::MatrixSession,
-            ORG,
-            "@zxxma:community.kodera.io",
-            &SAMPLE_OPAQUE_PAYLOAD.to_ascii_uppercase(),
-            1_762_520_000,
-            None,
-            Some(SAMPLE_OPAQUE_PAYLOAD),
-        );
-        assert!(matches!(leaked, Err(KeychainError::SecretLeakedInMetadata)));
-
-        // Error formatting never echoes malformed inputs.
-        let malformed_fixture = format!("{SAMPLE_OPAQUE_PAYLOAD}\0injected");
-        let err = RedactedSessionSecret::new(&malformed_fixture).unwrap_err();
-        assert!(matches!(err, KeychainError::SecretInvalidCharacters));
-        assert!(!err.to_string().contains("syt_sample"));
-    }
-
-    #[test]
-    fn credential_store_isolates_organisations_redacts_debug_and_builds_os_specs() {
-        const OTHER_ORG: &str = "019a5e62-6ca0-7303-8303-030303030304";
-        let mut store = KeychainCredentialStore::new();
-        let stored = store
-            .store_credential(
-                KeychainSecretKind::MatrixSession,
-                ORG,
-                "@alice:kodera.io",
-                "MACBOOK_PRO_01",
-                1_762_520_000,
-                Some(1_762_523_600),
-                SAMPLE_OPAQUE_PAYLOAD,
-            )
-            .unwrap();
-        assert_eq!(store.slot_count(), 1);
-        assert!(!format!("{store:?}").contains(SAMPLE_OPAQUE_PAYLOAD));
-
-        // Other organisation cannot see Alice's credential.
-        let other_status = store
-            .load_credential_status(
-                KeychainSecretKind::MatrixSession,
-                OTHER_ORG,
-                "@alice:kodera.io",
-            )
-            .unwrap();
-        assert!(!other_status.present);
-        assert!(other_status.metadata.is_none());
-
-        // Matching organisation sees metadata via status and redacted secret via internal handle.
-        let own_status = store
-            .load_credential_status(KeychainSecretKind::MatrixSession, ORG, "@alice:kodera.io")
-            .unwrap();
-        assert!(own_status.present);
-        assert_eq!(own_status.metadata.as_ref(), Some(&stored));
-
-        let (_, loaded_secret) = store
-            .load_credential_secret(KeychainSecretKind::MatrixSession, ORG, "@alice:kodera.io")
-            .unwrap()
-            .unwrap();
-        assert_eq!(
-            loaded_secret.expose_for_keychain_write(),
-            SAMPLE_OPAQUE_PAYLOAD
-        );
-
-        // OS command specs validate slot IDs across all three desktop OS backends.
-        for platform in [
-            OsKeychainPlatform::MacOsSecurity,
-            OsKeychainPlatform::LinuxSecretTool,
-            OsKeychainPlatform::WindowsCmdKey,
-        ] {
-            let lookup = OsKeychainCommandSpec::build_lookup(platform, &stored.slot).unwrap();
-            let delete = OsKeychainCommandSpec::build_delete(platform, &stored.slot).unwrap();
-            assert!(!lookup.args.is_empty());
-            assert!(!delete.args.is_empty());
-        }
-
-        let deleted = store
-            .delete_credential(KeychainSecretKind::MatrixSession, ORG, "@alice:kodera.io")
-            .unwrap();
-        assert!(deleted.present);
-        assert_eq!(store.slot_count(), 0);
+        self.clear_ram_cache();
     }
 }

@@ -4,10 +4,11 @@ use super::{
     AdmittedDeepLink, CloudProvider, CommunityDeployError, CommunityDeployReport,
     CommunityPreflightReport, CommunityPrepareReport, DeepLinkError, DeployValidationError,
     DispatchedNotification, DockBadgeSnapshot, KeychainCredentialStatus, KeychainError,
-    KeychainSessionMetadata, NotificationError, OidcCallbackOutcome, OidcLoopbackError,
-    OidcLoopbackSessionReady, PttStateSnapshot, RedactedApiToken, RestoredWindowPlacement,
-    SelfHostDeploymentPlan, SelfHostHealthError, SelfHostHealthReport, TrayMenuActionOutcome,
-    TrayPttError, TrayStateSnapshot, WindowStateError,
+    KeychainSessionMetadata, KeychainStoreOutcome, MediaCaptureError, MediaCaptureStateSnapshot,
+    NotificationError, OidcCallbackOutcome, OidcLoopbackError, OidcLoopbackSessionReady,
+    PttStateSnapshot, RedactedApiToken, RestoredWindowPlacement, SelfHostDeploymentPlan,
+    SelfHostHealthError, SelfHostHealthReport, TrayMenuActionOutcome, TrayPttError,
+    TrayStateSnapshot, WindowStateError,
 };
 use kodera_rs::{
     ChannelAccessDecision, ChannelPermissionPolicy, ChannelPollSnapshot, CoreError, CoreThemeMode,
@@ -28,7 +29,7 @@ pub use seams::*;
 pub const MAX_IPC_COMMAND_BYTES: usize = 16_384;
 
 /// Canonical desktop command names admitted by the dispatcher.
-pub const REGISTERED_DESKTOP_COMMANDS: [&str; 40] = [
+pub const REGISTERED_DESKTOP_COMMANDS: [&str; 42] = [
     "plan_self_host",
     "validate_docs_pad_url",
     "proximity_current_beacon",
@@ -55,6 +56,8 @@ pub const REGISTERED_DESKTOP_COMMANDS: [&str; 40] = [
     "configure_ptt",
     "set_ptt_pressed",
     "get_ptt_state",
+    "configure_media_capture",
+    "get_media_capture_state",
     "validate_keychain_metadata",
     "inspect_self_host_health",
     "restore_window_bounds",
@@ -207,6 +210,17 @@ pub enum DesktopCommandRequest {
     GetPttState {
         organisation_id: String,
     },
+    ConfigureMediaCapture {
+        organisation_id: String,
+        preferred_surface: String,
+        system_audio_loopback: bool,
+        noise_suppression: bool,
+        preferred_audio_input_id: Option<String>,
+        preferred_audio_output_id: Option<String>,
+    },
+    GetMediaCaptureState {
+        organisation_id: String,
+    },
     ValidateKeychainMetadata {
         organisation_id: String,
         secret_kind: String,
@@ -297,7 +311,7 @@ pub enum DesktopCommandRequest {
 }
 
 impl DesktopCommandRequest {
-    fn organisation_id(&self) -> &str {
+    pub fn organisation_id(&self) -> &str {
         match self {
             Self::CreateChannelPoll {
                 organisation_id, ..
@@ -365,6 +379,10 @@ impl DesktopCommandRequest {
                 organisation_id, ..
             }
             | Self::GetPttState { organisation_id }
+            | Self::ConfigureMediaCapture {
+                organisation_id, ..
+            }
+            | Self::GetMediaCaptureState { organisation_id }
             | Self::ValidateKeychainMetadata {
                 organisation_id, ..
             }
@@ -447,6 +465,7 @@ pub enum DesktopCommandError {
     SecretInPublicPlan,
     DeepLink(DeepLinkError),
     TrayPtt(TrayPttError),
+    MediaCapture(MediaCaptureError),
     Keychain(KeychainError),
     SelfHostHealth(SelfHostHealthError),
     WindowState(WindowStateError),
@@ -482,7 +501,9 @@ pub enum DesktopCommandResponse {
     TrayState(TrayStateSnapshot),
     TrayMenuAction(TrayMenuActionOutcome),
     PttState(PttStateSnapshot),
+    MediaCaptureState(MediaCaptureStateSnapshot),
     KeychainMetadata(KeychainSessionMetadata),
+    KeychainStored(KeychainStoreOutcome),
     KeychainStatus(KeychainCredentialStatus),
     SelfHostHealth(SelfHostHealthReport),
     WindowPlacement(RestoredWindowPlacement),

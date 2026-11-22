@@ -8,8 +8,11 @@ export declare const MAX_UNREAD_BADGE_COUNT: 99999;
 export declare const MAX_DIRECT_BADGE_COUNT: 99;
 export declare const REDACTED_NOTIFICATION_PREVIEW: 'New message in Kodera';
 export declare const COMMUNITY_TLS_MODES: readonly ['acme', 'internal', 'off'];
+export declare const SCREEN_SHARE_SURFACES: readonly ['monitor', 'window', 'browser_tab'];
+export declare const MAX_MEDIA_DEVICE_ID_BYTES: 128;
 
 export type CommunityTlsModeSlug = (typeof COMMUNITY_TLS_MODES)[number];
+export type ScreenShareSurfaceSlug = (typeof SCREEN_SHARE_SURFACES)[number];
 
 export declare function formatUnreadBadgeLabel(unreadCount: number): string | null;
 
@@ -78,6 +81,39 @@ export interface DesktopTrayActionResult {
   applied: boolean;
   action: TrayMenuActionId;
   muted?: boolean;
+}
+
+export interface PushToTalkConfigInput {
+  optIn: boolean;
+  chord?: string | null;
+}
+
+export interface PushToTalkStateEvent {
+  optInEnabled: boolean;
+  binding: string | null;
+  transmitting: boolean;
+  transmittingSinceMs: number | null;
+}
+
+export interface PushToTalkStateResult extends PushToTalkStateEvent {
+  supported: boolean;
+}
+
+export interface MediaCaptureConfigInput {
+  preferredSurface?: ScreenShareSurfaceSlug;
+  systemAudioLoopback?: boolean;
+  noiseSuppression?: boolean;
+  preferredAudioInputId?: string | null;
+  preferredAudioOutputId?: string | null;
+}
+
+export interface MediaCaptureStateResult {
+  supported: boolean;
+  preferredSurface: ScreenShareSurfaceSlug;
+  systemAudioLoopback: boolean;
+  noiseSuppression: boolean;
+  preferredAudioInputId: string | null;
+  preferredAudioOutputId: string | null;
 }
 
 export interface DesktopNotificationInput {
@@ -232,6 +268,14 @@ export interface KoderaDesktopClient {
   updateTrayState(state: DesktopTrayUpdateInput): Promise<DesktopTrayStateResult>;
   triggerTrayAction(action: TrayMenuActionId): Promise<DesktopTrayActionResult>;
   listenTrayActions(listener: (action: TrayMenuActionId) => void): Promise<() => Promise<void>>;
+  configurePushToTalk(input: PushToTalkConfigInput): Promise<PushToTalkStateResult>;
+  setPushToTalkPressed(pressed: boolean, nowMs?: number): Promise<PushToTalkStateResult>;
+  getPushToTalkState(): Promise<PushToTalkStateResult>;
+  listenPushToTalk(
+    listener: (event: PushToTalkStateEvent) => void,
+  ): Promise<() => Promise<void>>;
+  configureMediaCapture(input: MediaCaptureConfigInput): Promise<MediaCaptureStateResult>;
+  getMediaCaptureState(): Promise<MediaCaptureStateResult>;
   sendNotification(request: DesktopNotificationInput): Promise<DesktopNotificationResult>;
   storeSecureCredential(input: SecureCredentialStoreInput): Promise<SecureCredentialMetadataResult>;
   loadSecureCredentialStatus(

@@ -7,14 +7,16 @@ use crate::{
     AdmittedDeepLink, CommunityCommandRunner, CommunityDeployError, CommunityDeployReport,
     CommunityPreflightReport, CommunityPreflightSpec, CommunityPrepareReport, CommunityPrepareSpec,
     DeepLinkAdmissionPolicy, DesktopCommandError, DesktopNotificationRequest,
-    DispatchedNotification, DockBadgeSnapshot, KeychainCredentialStatus, KeychainSecretKind,
-    KeychainSessionMetadata, MonitorWorkArea, OidcCallbackOutcome, OidcIssuerAllowlist,
-    OidcLoopbackError, OidcLoopbackSessionReady, OidcPkceSession, PttStateSnapshot,
-    RestoredWindowPlacement, SavedWindowState, SelfHostHealthReport, TrayCallKind,
-    TrayMenuActionOutcome, TrayMenuItemId, TrayMenuModel, TrayStateSnapshot,
+    DispatchedNotification, DockBadgeSnapshot, KeychainBackend, KeychainCredentialStatus,
+    KeychainCredentialStore, KeychainSecretKind, KeychainSessionMetadata, KeychainStoreOutcome,
+    MediaCaptureStateSnapshot, MonitorWorkArea, OidcCallbackOutcome, OidcIssuerAllowlist,
+    OidcLoopbackError, OidcLoopbackSessionReady, OidcPkceSession, PttModifier, PttStateSnapshot,
+    PttTriggerKey, RestoredWindowPlacement, SavedWindowState, ScreenShareSurface,
+    SelfHostHealthReport, TrayCallKind, TrayMenuActionOutcome, TrayMenuItemId, TrayMenuModel,
+    TrayStateSnapshot,
 };
 use kodera_rs::CoreError;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 impl DesktopWorkspaceSession {
     /// Trusted session configuration adding tenant Matrix/workspace domains to the default
@@ -180,6 +182,18 @@ impl DesktopWorkspaceSession {
             .map_err(DesktopCommandError::Notification)
     }
 
+    /// Trusted adapter or test seam replacing the keychain backend for this session.
+    pub fn configure_keychain_backend(
+        &mut self,
+        organisation_id: &str,
+        backend: std::sync::Arc<dyn KeychainBackend>,
+    ) -> Result<(), CoreError> {
+        self.check_organisation(organisation_id)?;
+        self.keychain_store.clear_ram_cache();
+        self.keychain_store = KeychainCredentialStore::with_backend(backend);
+        Ok(())
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn store_keychain_credential(
         &mut self,
@@ -190,7 +204,7 @@ impl DesktopWorkspaceSession {
         issued_at_unix_secs: u64,
         expires_at_unix_secs: Option<u64>,
         raw_secret: &str,
-    ) -> Result<KeychainSessionMetadata, DesktopCommandError> {
+    ) -> Result<KeychainStoreOutcome, DesktopCommandError> {
         self.check_organisation(organisation_id)
             .map_err(DesktopCommandError::Core)?;
         self.keychain_store
@@ -229,6 +243,17 @@ impl DesktopWorkspaceSession {
             .map_err(DesktopCommandError::Core)?;
         self.keychain_store
             .delete_credential(secret_kind, organisation_id, matrix_user_id)
+            .map_err(DesktopCommandError::Keychain)
+    }
+
+    pub fn clear_organisation_keychain(
+        &mut self,
+        organisation_id: &str,
+    ) -> Result<usize, DesktopCommandError> {
+        self.check_organisation(organisation_id)
+            .map_err(DesktopCommandError::Core)?;
+        self.keychain_store
+            .clear_organisation(organisation_id)
             .map_err(DesktopCommandError::Keychain)
     }
 
@@ -325,6 +350,90 @@ impl DesktopWorkspaceSession {
     pub fn ptt_state(&self, organisation_id: &str) -> Result<PttStateSnapshot, CoreError> {
         self.check_organisation(organisation_id)?;
         Ok(self.ptt.snapshot())
+    }
+
+    pub(crate) fn force_release_ptt_if_transmitting(&mut self) -> Option<PttStateSnapshot> {
+        let was_transmitting = self.ptt.is_transmitting();
+        self.ptt.force_release();
+        if was_transmitting && self.organisation_id.is_some() {
+            Some(self.ptt.snapshot())
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn handle_ptt_modifiers_changed(
+        &mut self,
+        active_modifiers: &BTreeSet<PttModifier>,
+    ) -> Option<PttStateSnapshot> {
+        if self.organisation_id.is_none() || !self.ptt.is_transmitting() {
+            return None;
+        }
+        let still_held = self
+            .ptt
+            .binding()
+            .is_some_and(|chord| chord.modifiers().is_subset(active_modifiers));
+        if !still_held {
+            self.ptt.force_release();
+            return Some(self.ptt.snapshot());
+        }
+        None
+    }
+
+    pub(crate) fn handle_ptt_key_event(
+        &mut self,
+        active_modifiers: &BTreeSet<PttModifier>,
+        trigger: PttTriggerKey,
+        pressed: bool,
+        now_ms: u64,
+    ) -> Option<PttStateSnapshot> {
+        if self.organisation_id.is_none() || !self.ptt.is_opted_in() {
+            return None;
+        }
+        let binding = self.ptt.binding()?.clone();
+        if binding.trigger() != trigger {
+            return None;
+        }
+        if pressed {
+            if binding.modifiers() != active_modifiers || self.ptt.is_transmitting() {
+                return None;
+            }
+            self.ptt.press(now_ms).ok()
+        } else if self.ptt.is_transmitting() {
+            self.ptt.release().ok()
+        } else {
+            None
+        }
+    }
+
+    pub fn configure_media_capture(
+        &mut self,
+        organisation_id: &str,
+        preferred_surface: ScreenShareSurface,
+        system_audio_loopback: bool,
+        noise_suppression: bool,
+        preferred_audio_input_id: Option<&str>,
+        preferred_audio_output_id: Option<&str>,
+    ) -> Result<MediaCaptureStateSnapshot, DesktopCommandError> {
+        self.check_organisation(organisation_id)
+            .map_err(DesktopCommandError::Core)?;
+        self.media_capture
+            .configure(
+                preferred_surface,
+                system_audio_loopback,
+                noise_suppression,
+                preferred_audio_input_id,
+                preferred_audio_output_id,
+            )
+            .map_err(DesktopCommandError::MediaCapture)
+    }
+
+    pub fn media_capture_state(
+        &self,
+        organisation_id: &str,
+    ) -> Result<MediaCaptureStateSnapshot, CoreError> {
+        self.check_organisation(organisation_id)?;
+        Ok(self.media_capture.snapshot())
     }
 
     #[allow(clippy::too_many_arguments)]
