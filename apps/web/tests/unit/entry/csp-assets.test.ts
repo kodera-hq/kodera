@@ -15,7 +15,7 @@ it('emits a small real bundled font as a same-origin file under the production a
       '<link rel="stylesheet" href="/font.css"><p>Font fixture</p>'
     )
     const input = createRequire(import.meta.url).resolve(
-      '@fontsource/plus-jakarta-sans/files/plus-jakarta-sans-cyrillic-ext-400-normal.woff2'
+      '@fontsource-variable/inter/files/inter-greek-ext-wght-italic.woff2'
     )
     await copyFile(input, join(root, 'fixture.woff2'))
     await writeFile(

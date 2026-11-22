@@ -27,14 +27,12 @@ function cards() {
 }
 
 describe('AppearanceScreen', () => {
-  it('offers the six themes in order, « Automatique » chosen when nothing is stored', () => {
+  it('offers the four themes in order, « Automatique » chosen when nothing is stored', () => {
     render(<AppearanceScreen />)
 
     expect(screen.getByRole('heading', { level: 1, name: 'Apparence' })).toBeInTheDocument()
     expect(cards()).toEqual(
-      ['Automatique', 'Ciel', 'Ciel nuit', 'Clair', 'Sombre', 'Noir'].map((name) =>
-        screen.getByRole('radio', { name })
-      )
+      ['Automatique', 'Clair', 'Sombre', 'Noir'].map((name) => screen.getByRole('radio', { name }))
     )
     expect(screen.getByRole('radio', { name: 'Automatique' })).toHaveAttribute(
       'aria-checked',
@@ -64,6 +62,31 @@ describe('AppearanceScreen', () => {
     )
   })
 
+  it('leaves primary cards unchecked for legacy stored Ciel values and migrates in one click', async () => {
+    const user = userEvent.setup()
+    for (const [legacy, targetLabel, targetId] of [
+      ['ciel', 'Clair', 'light'],
+      ['ciel-nuit', 'Sombre', 'dark'],
+    ] as const) {
+      localStorage.setItem(THEME_STORAGE_KEY, legacy)
+      const announced = vi.fn()
+      window.addEventListener(THEME_CHANGE_EVENT, announced)
+      const { unmount } = render(<AppearanceScreen />)
+      for (const radio of cards()) {
+        expect(radio).toHaveAttribute('aria-checked', 'false')
+      }
+      await user.click(screen.getByRole('radio', { name: targetLabel }))
+      window.removeEventListener(THEME_CHANGE_EVENT, announced)
+      expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe(targetId)
+      expect(announced.mock.calls[0]?.[0]).toMatchObject({ detail: targetId })
+      expect(screen.getByRole('radio', { name: targetLabel })).toHaveAttribute(
+        'aria-checked',
+        'true'
+      )
+      unmount()
+    }
+  })
+
   it('stores and announces a choice at once, and edges the chosen card', async () => {
     const user = userEvent.setup()
     const announced = vi.fn()
@@ -82,7 +105,7 @@ describe('AppearanceScreen', () => {
     expect(screen.getByRole('status')).toBeEmptyDOMElement()
   })
 
-  it('drops a studio theme\'s colours from the document when an official theme is chosen', async () => {
+  it("drops a studio theme's colours from the document when an official theme is chosen", async () => {
     const user = userEvent.setup()
     // A dark studio theme applied on the page (`themeOverrides.ts`), as « Ciel nuit » surfaces.
     document.documentElement.style.setProperty('--c-surface', 'rgb(20, 26, 45)')
@@ -168,7 +191,7 @@ describe('AppearanceScreen', () => {
     expect(screen.getByRole('radio', { name: 'Sombre' })).toHaveAttribute('aria-checked', 'true')
   })
 
-  it('previews each theme with its own roles, « Automatique » half Ciel and half true black', () => {
+  it('previews each theme with its own roles, « Automatique » half Light Givre and half Dark Precision', () => {
     render(<AppearanceScreen />)
 
     const previews = cards().map((card) =>
@@ -176,14 +199,7 @@ describe('AppearanceScreen', () => {
         node.getAttribute('data-theme')
       )
     )
-    expect(previews).toEqual([
-      ['ciel', 'black'],
-      ['ciel'],
-      ['ciel-nuit'],
-      ['light'],
-      ['dark'],
-      ['black'],
-    ])
+    expect(previews).toEqual([['light', 'dark'], ['light'], ['dark'], ['black']])
   })
 })
 
@@ -225,7 +241,7 @@ describe('AppearanceScreen with the boot script', () => {
 
     // And « Automatique » is a choice again, not the checked card that does nothing.
     await user.click(screen.getByRole('radio', { name: 'Automatique' }))
-    expect(html()).toBe('ciel')
+    expect(html()).toBe('light')
     expect(screen.getByRole('radio', { name: 'Automatique' })).toHaveAttribute(
       'aria-checked',
       'true'

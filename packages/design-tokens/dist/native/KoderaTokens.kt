@@ -1,6 +1,6 @@
 // GENERATED FILE — DO NOT EDIT. kodera-native-tokens/1
 // Public source checksum (SHA-256)
-// cdf9e7a299fb260a9aacd87c39cac82a7cec644e01a3a50757a92d5174ddee5a
+// a295a7bea9919b0bb2d41e3221f4073792c0f5d447eacaa283e26dac3177a1fb
 // Source file: tokens.json
 
 package io.kodera.tokens
@@ -172,28 +172,28 @@ public object KoderaTokens {
         tag6Fg = Color(red = 0.24705882352941178f, green = 0.3411764705882353f, blue = 0.10588235294117647f, alpha = 1.0f),
     )
     public val dark = Palette(
-        page = Color(red = 0.043137254901960784f, green = 0.054901960784313725f, blue = 0.0784313725490196f, alpha = 1.0f),
-        surface = Color(red = 0.07450980392156863f, green = 0.09411764705882353f, blue = 0.13725490196078433f, alpha = 1.0f),
-        sunken = Color(red = 0.054901960784313725f, green = 0.07058823529411765f, blue = 0.09803921568627451f, alpha = 1.0f),
-        muted = Color(red = 0.11372549019607843f, green = 0.1411764705882353f, blue = 0.2f, alpha = 1.0f),
-        muted2 = Color(red = 0.14901960784313725f, green = 0.1803921568627451f, blue = 0.24313725490196078f, alpha = 1.0f),
-        hairline = Color(red = 0.08627450980392157f, green = 0.10588235294117647f, blue = 0.1450980392156863f, alpha = 1.0f),
-        border = Color(red = 0.14901960784313725f, green = 0.1803921568627451f, blue = 0.23529411764705882f, alpha = 1.0f),
-        borderSoft = Color(red = 0.11372549019607843f, green = 0.1411764705882353f, blue = 0.18823529411764706f, alpha = 1.0f),
-        borderStrong = Color(red = 0.20392156862745098f, green = 0.25098039215686274f, blue = 0.33725490196078434f, alpha = 1.0f),
-        inverse = Color(red = 0.027450980392156862f, green = 0.03529411764705882f, blue = 0.050980392156862744f, alpha = 1.0f),
-        inverse2 = Color(red = 0.08627450980392157f, green = 0.10588235294117647f, blue = 0.14901960784313725f, alpha = 1.0f),
-        railLine = Color(red = 0.16470588235294117f, green = 0.19607843137254902f, blue = 0.25882352941176473f, alpha = 1.0f),
-        ink = Color(red = 0.9294117647058824f, green = 0.9450980392156862f, blue = 0.9686274509803922f, alpha = 1.0f),
-        ink2 = Color(red = 0.7215686274509804f, green = 0.7607843137254902f, blue = 0.8196078431372549f, alpha = 1.0f),
-        ink3 = Color(red = 0.592156862745098f, green = 0.6392156862745098f, blue = 0.7098039215686275f, alpha = 1.0f),
-        ink4 = Color(red = 0.49019607843137253f, green = 0.5411764705882353f, blue = 0.615686274509804f, alpha = 1.0f),
-        onInverse = Color(red = 0.9529411764705882f, green = 0.9686274509803922f, blue = 0.984313725490196f, alpha = 1.0f),
-        onInverseDim = Color(red = 0.6313725490196078f, green = 0.6784313725490196f, blue = 0.7450980392156863f, alpha = 1.0f),
+        page = Color(red = 0.03137254901960784f, green = 0.03529411764705882f, blue = 0.0392156862745098f, alpha = 1.0f),
+        surface = Color(red = 0.0784313725490196f, green = 0.08235294117647059f, blue = 0.08627450980392157f, alpha = 1.0f),
+        sunken = Color(red = 0.058823529411764705f, green = 0.06274509803921569f, blue = 0.06666666666666667f, alpha = 1.0f),
+        muted = Color(red = 0.11764705882352941f, green = 0.12549019607843137f, blue = 0.13725490196078433f, alpha = 1.0f),
+        muted2 = Color(red = 0.15294117647058825f, green = 0.16470588235294117f, blue = 0.1803921568627451f, alpha = 1.0f),
+        hairline = Color(red = 0.10588235294117647f, green = 0.11372549019607843f, blue = 0.12549019607843137f, alpha = 1.0f),
+        border = Color(red = 0.1568627450980392f, green = 0.16862745098039217f, blue = 0.18823529411764706f, alpha = 1.0f),
+        borderSoft = Color(red = 0.12156862745098039f, green = 0.12941176470588237f, blue = 0.1411764705882353f, alpha = 1.0f),
+        borderStrong = Color(red = 0.22745098039215686f, green = 0.24313725490196078f, blue = 0.27058823529411763f, alpha = 1.0f),
+        inverse = Color(red = 0.0196078431372549f, green = 0.023529411764705882f, blue = 0.027450980392156862f, alpha = 1.0f),
+        inverse2 = Color(red = 0.08627450980392157f, green = 0.09411764705882353f, blue = 0.10588235294117647f, alpha = 1.0f),
+        railLine = Color(red = 0.14901960784313725f, green = 0.1607843137254902f, blue = 0.1803921568627451f, alpha = 1.0f),
+        ink = Color(red = 0.9686274509803922f, green = 0.9725490196078431f, blue = 0.9725490196078431f, alpha = 1.0f),
+        ink2 = Color(red = 0.788235294117647f, green = 0.803921568627451f, blue = 0.8274509803921568f, alpha = 1.0f),
+        ink3 = Color(red = 0.6196078431372549f, green = 0.6392156862745098f, blue = 0.6745098039215687f, alpha = 1.0f),
+        ink4 = Color(red = 0.5411764705882353f, green = 0.5607843137254902f, blue = 0.596078431372549f, alpha = 1.0f),
+        onInverse = Color(red = 0.9686274509803922f, green = 0.9725490196078431f, blue = 0.9725490196078431f, alpha = 1.0f),
+        onInverseDim = Color(red = 0.6470588235294118f, green = 0.6666666666666666f, blue = 0.7019607843137254f, alpha = 1.0f),
         action = Color(red = 0.2627450980392157f, green = 0.3803921568627451f, blue = 0.9333333333333333f, alpha = 1.0f),
         actionHover = Color(red = 0.22745098039215686f, green = 0.34901960784313724f, blue = 0.9098039215686274f, alpha = 1.0f),
-        accentSoft = Color(red = 0.10196078431372549f, green = 0.13725490196078433f, blue = 0.3137254901960784f, alpha = 1.0f),
-        accentInk = Color(red = 0.6823529411764706f, green = 0.7450980392156863f, blue = 1.0f, alpha = 1.0f),
+        accentSoft = Color(red = 0.09411764705882353f, green = 0.12549019607843137f, blue = 0.25882352941176473f, alpha = 1.0f),
+        accentInk = Color(red = 0.7058823529411765f, green = 0.7607843137254902f, blue = 1.0f, alpha = 1.0f),
         okOnDark = Color(red = 0.4980392156862745f, green = 0.8196078431372549f, blue = 0.6392156862745098f, alpha = 1.0f),
         badOnDark = Color(red = 0.9450980392156862f, green = 0.5686274509803921f, blue = 0.5137254901960784f, alpha = 1.0f),
         ok = Color(red = 0.20784313725490197f, green = 0.6627450980392157f, blue = 0.41568627450980394f, alpha = 1.0f),
@@ -220,12 +220,12 @@ public object KoderaTokens {
         t5Fg = Color(red = 0.7254901960784313f, green = 0.7764705882352941f, blue = 0.8313725490196079f, alpha = 1.0f),
         t6Bg = Color(red = 0.14901960784313725f, green = 0.18823529411764706f, blue = 0.22745098039215686f, alpha = 1.0f),
         t6Fg = Color(red = 0.9098039215686274f, green = 0.9372549019607843f, blue = 0.9647058823529412f, alpha = 1.0f),
-        elevated = Color(red = 0.10588235294117647f, green = 0.12941176470588237f, blue = 0.18823529411764706f, alpha = 1.0f),
+        elevated = Color(red = 0.09803921568627451f, green = 0.10196078431372549f, blue = 0.10980392156862745f, alpha = 1.0f),
         scrim = Color(red = 0.0f, green = 0.0f, blue = 0.0f, alpha = 0.6f),
-        borderInput = Color(red = 0.43137254901960786f, green = 0.49019607843137253f, blue = 0.5803921568627451f, alpha = 1.0f),
-        placeholder = Color(red = 0.5607843137254902f, green = 0.6078431372549019f, blue = 0.6823529411764706f, alpha = 1.0f),
-        disabled = Color(red = 0.14901960784313725f, green = 0.1803921568627451f, blue = 0.24313725490196078f, alpha = 1.0f),
-        onDisabled = Color(red = 0.592156862745098f, green = 0.6392156862745098f, blue = 0.7098039215686275f, alpha = 1.0f),
+        borderInput = Color(red = 0.4588235294117647f, green = 0.47843137254901963f, blue = 0.5098039215686274f, alpha = 1.0f),
+        placeholder = Color(red = 0.5725490196078431f, green = 0.592156862745098f, blue = 0.6274509803921569f, alpha = 1.0f),
+        disabled = Color(red = 0.15294117647058825f, green = 0.16470588235294117f, blue = 0.1803921568627451f, alpha = 1.0f),
+        onDisabled = Color(red = 0.6196078431372549f, green = 0.6392156862745098f, blue = 0.6745098039215687f, alpha = 1.0f),
         cursor1 = Color(red = 0.08627450980392157f, green = 0.44313725490196076f, blue = 0.7294117647058823f, alpha = 1.0f),
         cursor1Soft = Color(red = 0.06666666666666667f, green = 0.1450980392156863f, blue = 0.21176470588235294f, alpha = 1.0f),
         cursor2 = Color(red = 0.48627450980392156f, green = 0.3215686274509804f, blue = 0.8627450980392157f, alpha = 1.0f),
@@ -495,9 +495,9 @@ public object KoderaTokens {
     public enum class ThemeMode(public val id: String) { Light("light"), Dark("dark"), Black("black") }
     public enum class Theme(public val id: String, public val family: ThemeFamily, public val mode: ThemeMode, public val isDark: Boolean, public val isDefault: Boolean) {
         Light("light", ThemeFamily.Givre, ThemeMode.Light, false, false),
-        Dark("dark", ThemeFamily.Givre, ThemeMode.Dark, true, false),
+        Dark("dark", ThemeFamily.Givre, ThemeMode.Dark, true, true),
         Black("black", ThemeFamily.Givre, ThemeMode.Black, true, false),
-        Ciel("ciel", ThemeFamily.Ciel, ThemeMode.Light, false, true),
+        Ciel("ciel", ThemeFamily.Ciel, ThemeMode.Light, false, false),
         CielNuit("ciel-nuit", ThemeFamily.Ciel, ThemeMode.Dark, true, false);
         public val palette: Palette
             get() = when (this) {
@@ -526,10 +526,10 @@ public object KoderaTokens {
             dialog = Material(tint = Color(red = 1.0f, green = 1.0f, blue = 1.0f, alpha = 1.0f), alpha = 1.0f, blur = 0.dp, saturation = 1.0f, border = Color(red = 0.8509803921568627f, green = 0.8823529411764706f, blue = 0.9176470588235294f, alpha = 1.0f), fallback = Color(red = 1.0f, green = 1.0f, blue = 1.0f, alpha = 1.0f)),
         )
         public val dark = Materials(
-            bar = Material(tint = Color(red = 0.07450980392156863f, green = 0.09411764705882353f, blue = 0.13725490196078433f, alpha = 1.0f), alpha = 1.0f, blur = 0.dp, saturation = 1.0f, border = Color(red = 0.14901960784313725f, green = 0.1803921568627451f, blue = 0.23529411764705882f, alpha = 1.0f), fallback = Color(red = 0.07450980392156863f, green = 0.09411764705882353f, blue = 0.13725490196078433f, alpha = 1.0f)),
-            panel = Material(tint = Color(red = 0.07450980392156863f, green = 0.09411764705882353f, blue = 0.13725490196078433f, alpha = 1.0f), alpha = 1.0f, blur = 0.dp, saturation = 1.0f, border = Color(red = 0.14901960784313725f, green = 0.1803921568627451f, blue = 0.23529411764705882f, alpha = 1.0f), fallback = Color(red = 0.07450980392156863f, green = 0.09411764705882353f, blue = 0.13725490196078433f, alpha = 1.0f)),
-            popover = Material(tint = Color(red = 0.10588235294117647f, green = 0.12941176470588237f, blue = 0.18823529411764706f, alpha = 1.0f), alpha = 1.0f, blur = 0.dp, saturation = 1.0f, border = Color(red = 0.14901960784313725f, green = 0.1803921568627451f, blue = 0.23529411764705882f, alpha = 1.0f), fallback = Color(red = 0.10588235294117647f, green = 0.12941176470588237f, blue = 0.18823529411764706f, alpha = 1.0f)),
-            dialog = Material(tint = Color(red = 0.10588235294117647f, green = 0.12941176470588237f, blue = 0.18823529411764706f, alpha = 1.0f), alpha = 1.0f, blur = 0.dp, saturation = 1.0f, border = Color(red = 0.14901960784313725f, green = 0.1803921568627451f, blue = 0.23529411764705882f, alpha = 1.0f), fallback = Color(red = 0.10588235294117647f, green = 0.12941176470588237f, blue = 0.18823529411764706f, alpha = 1.0f)),
+            bar = Material(tint = Color(red = 0.0784313725490196f, green = 0.08235294117647059f, blue = 0.08627450980392157f, alpha = 1.0f), alpha = 1.0f, blur = 0.dp, saturation = 1.0f, border = Color(red = 0.1568627450980392f, green = 0.16862745098039217f, blue = 0.18823529411764706f, alpha = 1.0f), fallback = Color(red = 0.0784313725490196f, green = 0.08235294117647059f, blue = 0.08627450980392157f, alpha = 1.0f)),
+            panel = Material(tint = Color(red = 0.0784313725490196f, green = 0.08235294117647059f, blue = 0.08627450980392157f, alpha = 1.0f), alpha = 1.0f, blur = 0.dp, saturation = 1.0f, border = Color(red = 0.1568627450980392f, green = 0.16862745098039217f, blue = 0.18823529411764706f, alpha = 1.0f), fallback = Color(red = 0.0784313725490196f, green = 0.08235294117647059f, blue = 0.08627450980392157f, alpha = 1.0f)),
+            popover = Material(tint = Color(red = 0.09803921568627451f, green = 0.10196078431372549f, blue = 0.10980392156862745f, alpha = 1.0f), alpha = 1.0f, blur = 0.dp, saturation = 1.0f, border = Color(red = 0.1568627450980392f, green = 0.16862745098039217f, blue = 0.18823529411764706f, alpha = 1.0f), fallback = Color(red = 0.09803921568627451f, green = 0.10196078431372549f, blue = 0.10980392156862745f, alpha = 1.0f)),
+            dialog = Material(tint = Color(red = 0.09803921568627451f, green = 0.10196078431372549f, blue = 0.10980392156862745f, alpha = 1.0f), alpha = 1.0f, blur = 0.dp, saturation = 1.0f, border = Color(red = 0.1568627450980392f, green = 0.16862745098039217f, blue = 0.18823529411764706f, alpha = 1.0f), fallback = Color(red = 0.09803921568627451f, green = 0.10196078431372549f, blue = 0.10980392156862745f, alpha = 1.0f)),
         )
         public val black = Materials(
             bar = Material(tint = Color(red = 0.043137254901960784f, green = 0.047058823529411764f, blue = 0.054901960784313725f, alpha = 1.0f), alpha = 1.0f, blur = 0.dp, saturation = 1.0f, border = Color(red = 0.1411764705882353f, green = 0.1568627450980392f, blue = 0.17647058823529413f, alpha = 1.0f), fallback = Color(red = 0.043137254901960784f, green = 0.047058823529411764f, blue = 0.054901960784313725f, alpha = 1.0f)),
@@ -602,7 +602,7 @@ public object KoderaTokens {
         public val extrabold = ComposeFontWeight(800)
     }
     public object FontFamily {
-        public val sans = Family(primary = "Plus Jakarta Sans", fallbacks = listOf("system-ui", "-apple-system", "Segoe UI", "sans-serif"))
+        public val sans = Family(primary = "Inter Variable", fallbacks = listOf("Inter", "system-ui", "-apple-system", "Segoe UI", "sans-serif"))
         public val mono = Family(primary = "IBM Plex Mono", fallbacks = listOf("ui-monospace", "SF Mono", "Menlo", "monospace"))
         public val display = Family(primary = "Inter Variable", fallbacks = listOf("Inter", "system-ui", "-apple-system", "Segoe UI", "sans-serif"))
     }

@@ -61,7 +61,7 @@ for (const [theme, label] of [
     }
     const fontLoaded = await page.evaluate(async () => {
       await document.fonts.ready
-      const faces = await document.fonts.load('400 16px "Plus Jakarta Sans"')
+      const faces = await document.fonts.load('400 16px "Inter Variable"')
       return faces.length > 0 && faces.every((face) => face.status === 'loaded')
     })
     expect(fontLoaded).toBe(true)

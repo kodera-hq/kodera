@@ -3,7 +3,7 @@ import UIKit
 import KoderaClient
 import KoderaDomain
 
-/// Universal Matrix invitation sheet consuming `KoderaTokens` (`ciel` / `cielNuit`).
+/// Universal Matrix invitation sheet consuming `KoderaTokens` (`dark` / `light`).
 /// Copies canonical `matrix.to`, `matrix:` URI, and `#alias:domain` targets to the clipboard
 /// without opening external web pages, and validates `@user:domain` MXIDs locally.
 @MainActor
@@ -17,7 +17,7 @@ struct ChannelInviteSheet: View {
     @State private var recipientInput = ""
 
     private var palette: KoderaTokens.Palette {
-        KoderaTokens.cielPalette(for: colorScheme)
+        KoderaTokens.activePalette(for: colorScheme)
     }
 
     var body: some View {

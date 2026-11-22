@@ -67,7 +67,7 @@ test('appearance themes remain accessible and nested studio closes before settin
   test.setTimeout(60000)
   const settings = await openSettings(page)
   await settings.getByRole('tab', { name: 'Apparence & thèmes', exact: true }).click()
-  for (const label of ['Automatique', 'Ciel', 'Ciel nuit', 'Clair', 'Sombre', 'Noir']) {
+  for (const label of ['Automatique', 'Clair', 'Sombre', 'Noir']) {
     await expect(settings.getByRole('button', { name: label, exact: true })).toBeVisible()
   }
   await settings.getByRole('button', { name: 'Automatique', exact: true }).click()
@@ -76,8 +76,6 @@ test('appearance themes remain accessible and nested studio closes before settin
     'true'
   )
   for (const [name, mode] of [
-    ['Ciel', 'ciel'],
-    ['Ciel nuit', 'ciel-nuit'],
     ['Clair', 'light'],
     ['Sombre', 'dark'],
     ['Noir', 'black'],
@@ -109,9 +107,7 @@ test('appearance themes remain accessible and nested studio closes before settin
 
 test('extensions signs and verifies locally and rejects a modified body', async ({ page }) => {
   const settings = await openSettings(page)
-  await settings
-    .getByRole('button', { name: 'Administration de l’espace', exact: true })
-    .click()
+  await settings.getByRole('button', { name: 'Administration de l’espace', exact: true }).click()
   const admin = page.getByRole('dialog', { name: 'Administration de l’espace', exact: true })
   await admin.getByRole('tab', { name: 'Intégrations & extensions', exact: true }).click()
   await expect(admin.getByText('22 implémentations de référence', { exact: true })).toBeVisible()
@@ -135,9 +131,7 @@ test('extensions signs and verifies locally and rejects a modified body', async 
   await expect(page.getByRole('dialog')).toHaveCount(0)
   await page.getByRole('button', { name: 'Réglages', exact: true }).click()
   const reopened = page.getByRole('dialog', { name: 'Paramètres personnels', exact: true })
-  await reopened
-    .getByRole('button', { name: 'Administration de l’espace', exact: true })
-    .click()
+  await reopened.getByRole('button', { name: 'Administration de l’espace', exact: true }).click()
   const adminAgain = page.getByRole('dialog', { name: 'Administration de l’espace', exact: true })
   await adminAgain.getByRole('tab', { name: 'Intégrations & extensions', exact: true }).click()
   await expect(
@@ -148,9 +142,9 @@ test('extensions signs and verifies locally and rejects a modified body', async 
     .first()
     .click()
   await adminAgain.locator('summary').filter({ hasText: 'Détails techniques & sécurité' }).click()
-  await expect(
-    adminAgain.getByLabel('Secret de signature de test', { exact: true })
-  ).toHaveValue('')
+  await expect(adminAgain.getByLabel('Secret de signature de test', { exact: true })).toHaveValue(
+    ''
+  )
 })
 
 test('mobile settings keeps every section in the viewport and returns focus to the module bar', async ({

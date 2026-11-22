@@ -13,7 +13,7 @@ async function openHub(page: Page) {
   expect(
     await page.evaluate(async () => {
       await document.fonts.ready
-      return document.fonts.check('400 14px "Plus Jakarta Sans"')
+      return document.fonts.check('400 14px "Inter Variable"')
     })
   ).toBe(true)
 }

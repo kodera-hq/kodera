@@ -14,7 +14,7 @@ organisation's setting. Most never open this page, because the console already f
 light or dark setting of their device. The one who does has a reason: the device is dark and they
 want the console light, or they want the black theme on a phone.
 
-**Alone test: pass.** The page is one choice between six cards, each drawn in the theme it names,
+**Alone test: pass.** The page is one choice between four cards, each drawn in the theme it names,
 and the choice applies at once, so the person sees the result before leaving the page. Nothing
 needs saving and nothing can be lost.
 
@@ -24,11 +24,11 @@ The page says so. Keeping the choice with the account is planned after launch (�
 
 ## 3. Entry points
 
-| Entry | URL |
-|---|---|
-| Account menu, wide layout: « Apparence », after « Sécurité et connexion » | `/{org}/appearance` |
+| Entry                                                                         | URL                 |
+| ----------------------------------------------------------------------------- | ------------------- |
+| Account menu, wide layout: « Apparence », after « Sécurité et connexion »     | `/{org}/appearance` |
 | « Plus » sheet, narrow layout: « Apparence », after « Sécurité et connexion » | `/{org}/appearance` |
-| Deep link | `/{org}/appearance` |
+| Deep link                                                                     | `/{org}/appearance` |
 
 The entry is one item of the account list both layouts draw from (`src/app/accountItems.ts`,
 [`00-shell-and-login.md`](00-shell-and-login.md) §4.5). On a phone it is a place, so it goes to
@@ -53,26 +53,26 @@ itself is not the organisation's.
 │  ║ suit le       ║ │ bureau, plein │ │ faible lumi-  │ │ écrans OLED,  │  │
 │  ║ réglage …     ║ │ jour          │ │ nosité, …     │ │ usage nocturne│  │
 │  └═══════════════┘ └───────────────┘ └───────────────┘ └───────────────┘  │
-│  (« Ciel » and « Ciel nuit » sit between « Automatique » and « Clair »)   │
 │  (warning, only when the browser refused to keep the choice)              │
 └───────────────────────────────────────────────────────────────────────────┘
 ```
 
 The delivered design's Réglages › Vous › Apparence pane, its theme cards only.
 
-- **Six cards, one choice**, in this order: « Automatique » (the default), « Ciel », « Ciel nuit »,
-  « Clair », « Sombre », « Noir ». « Automatique » follows the device: « Ciel » on a light device
-  and « Noir » (`noir`, rendered as `data-theme="black"`) on a dark one. « Ciel nuit » and the Givre
-  themes stay one click away. The mock draws the last three; « Automatique », which follows the device, is an owner-approved deviation from
-  the mock (plan D4), and the two Ciel cards follow the same decision.
+- **Four cards, one choice**, in this order: « Automatique » (the default), « Clair », « Sombre »
+  (_Dark Precision_, `defaultTheme = "dark"`), « Noir ». « Automatique » follows the device:
+  « Clair » (`light`) on a light device and « Sombre » (`dark`, rendered as `data-theme="dark"`) on
+  a dark one. Legacy `ciel` and `ciel-nuit` values remain accepted as backward-compatible token and
+  storage IDs so previously stored preferences continue to apply until the member picks one of the
+  four active cards.
 - **A card:** a 56 px preview, the theme's name (13 px, 600) and the mock's hint (`text-xs`, the
   type scale's smallest step). The preview draws the theme's own page strip, surface and primary
   action colour, scoped with `data-theme` on the preview, so it cannot drift from the theme it
-  names; « Automatique »'s preview is half « Ciel », half « Noir ».
+  names; « Automatique »'s preview is half « Clair », half « Sombre ».
 - **The chosen card** has a 2 px `c-accent-ink` edge and a `c-accent-ink` name; the others a 1 px
   `c-border` edge. The mock draws the chosen edge in `c-action`; `c-accent-ink` follows the
   owner-approved chosen-edge ruling of the plan cards , taken when `action` was
-  2.88 : 1 against the dark card, under WCAG 1.4.11. Tokens v0.5.0 raise it to 3.54 : 1, and the
+  2.88 : 1 against the dark card, under WCAG 1.4.11. Tokens v0.8.0 raise it to 3.64 : 1, and the
   ruling stands until the owner revisits it.
 - **Layout:** as many columns of at least 220 px as fit; one column in the narrow layout.
 - **Not drawn:** the mock pane's density and text-size rows, and its « Enregistrer » action — the
@@ -85,16 +85,16 @@ dot and a label rather than a card.
 
 ## 5. State matrix
 
-| State | `appearance` |
-|---|---|
-| Default | The six cards; the stored choice checked, or « Automatique » when none is stored or the stored value is not a theme. |
-| Loading | Not reachable: the page reads nothing from the network, only this browser's storage. |
-| Empty | Not reachable: there are always five themes and « Automatique ». |
-| Error | The browser refuses to store the choice (private mode, a policy, a full storage): the choice still applies to this page until the next load, and an `InlineAlert` (`warning`) under the cards says it will not be kept, then how to keep it. Opened again before that load, the page shows the same choice checked and the same warning: it shows the choice the page wears, never an older stored one. |
-| Success | The page changes theme at once and the chosen card is checked; no `Toast`, the page itself is the confirmation. |
-| Partial failure | The error row above is the one partial case: applied, not kept. |
-| Permission denied | Not reachable: every role has an account and chooses its own theme. |
-| Offline | The page works unchanged; it makes no request. |
+| State             | `appearance`                                                                                                                                                                                                                                                                                                                                                                                            |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Default           | The four cards; the stored active choice checked, « Automatique » checked when none is stored or the stored value is unknown, and all four cards unchecked when legacy `ciel` / `ciel-nuit` is stored so choosing any active card migrates in one click.                                                                                                                                                |
+| Loading           | Not reachable: the page reads nothing from the network, only this browser's storage.                                                                                                                                                                                                                                                                                                                    |
+| Empty             | Not reachable: there are always three selectable Givre themes and « Automatique ».                                                                                                                                                                                                                                                                                                                      |
+| Error             | The browser refuses to store the choice (private mode, a policy, a full storage): the choice still applies to this page until the next load, and an `InlineAlert` (`warning`) under the cards says it will not be kept, then how to keep it. Opened again before that load, the page shows the same choice checked and the same warning: it shows the choice the page wears, never an older stored one. |
+| Success           | The page changes theme at once and the chosen card is checked; no `Toast`, the page itself is the confirmation.                                                                                                                                                                                                                                                                                         |
+| Partial failure   | The error row above is the one partial case: applied, not kept.                                                                                                                                                                                                                                                                                                                                         |
+| Permission denied | Not reachable: every role has an account and chooses its own theme.                                                                                                                                                                                                                                                                                                                                     |
+| Offline           | The page works unchanged; it makes no request.                                                                                                                                                                                                                                                                                                                                                          |
 
 ## 6. Core API calls
 
@@ -107,9 +107,11 @@ None of its own. The tests sign in with `shell.single-organisation` and `home.de
 
 ## 8. Validation rules
 
-None: the only input is a choice between six cards. A stored value that is not one of the five
-themes — an old version's, another tool's, a hand edit — is read as « Automatique », on this page
-and by `public/theme.js` before the ordinary application is released after verified URL cleanup.
+None: the only input is a choice between four cards (`system`, `light`, `dark`, `black`). Legacy
+`ciel` and `ciel-nuit` values remain recognized as backward-compatible stored themes. Any stored
+value that is none of those — an old version's, another tool's, a hand edit — is read as
+« Automatique », on this page and by `public/theme.js` before the ordinary application is released
+after verified URL cleanup.
 
 ## 9. Error copy rules
 
@@ -123,9 +125,9 @@ to this page only; to keep it, allow the site to store data in the browser's set
   `public/theme.js` as a classic script and awaits its successful load/application before
   importing the real main module and calling `boot`. It sets `data-theme` on `html` from the
   stored choice or the device's `prefers-color-scheme`, and follows the device's changes while
-  « Automatique » is chosen: « Ciel » on a light device, « Noir » (`black`) on a dark one. The
-  browser's own parts (scrollbars, native controls) follow with `color-scheme: dark` in dark,
-  black and « Ciel nuit ». Before any stylesheet loads, the same script sets the
+  « Automatique » is chosen: « Clair » (`light`) on a light device, « Sombre » (`dark`, _Dark
+  Precision_) on a dark one. The browser's own parts (scrollbars, native controls) follow with
+  `color-scheme: dark` in dark, black and « Ciel nuit ». Before any stylesheet loads, the same script sets the
   `<meta name="color-scheme">` content to `dark` or `light` for the resolved theme, so the
   browser canvas of a dark theme on a light device (a return through `/auth/callback`) is never
   painted white first; it is a meta attribute, never an inline style.
@@ -142,13 +144,13 @@ to this page only; to keep it, allow the site to store data in the browser's set
 - **Every theme passes axe, contrast included**, on this page and on every launch view
   (`tests/visual/screens.spec.ts`), without rule exclusions. The end-to-end suite runs twice, on a light
   device and on a dark one (`playwright.config.ts`), so every axe check it carries is also a check
-  of « Noir », the theme a dark device gets by default. The visual baselines choose Givre
-  light explicitly, so they keep guarding the Givre themes with the automatic light and dark defaults. The unit test `tests/unit/e2e-projects.test.ts`
+  of « Sombre » (`dark`, _Dark Precision_), the theme a dark device gets by default. The visual baselines choose Givre
+  light explicitly, so they keep guarding the Givre themes with the automatic light (`light`) and dark (`dark`) defaults. The unit test `tests/unit/e2e-projects.test.ts`
   fails if the dark project is dropped or turned light, if a test runs in one project only, or if
   `npm run test:e2e` or the CI step calling it filters the suite. The chosen state is carried by more than colour
   (edge width and `aria-checked`).
 - **Inverse cards keep their shape.** In black the inverse ground is the page's own colour
-  (`#000000`) and in dark nearly so (`#0C1116` on `#10151B`), so the contract and support cards on
+  (`#000000`) and in dark nearly so (`#050607` on `#08090A`), so the contract and support cards on
   Accueil, and every other `Card` in the inverse tone, draw a 1 px `c-border` edge in dark and
   black. Light draws none, and no light screen moves (`inverse-edge` in `src/index.css`;
   owner-approved deviation from the mock).
@@ -162,7 +164,7 @@ counting it would be the one request this page makes.
 
 1. **Given** a device set to dark, then to light, then a stored choice of black on a dark device,
    **when** the console loads and the same page is reloaded for each changed preference,
-   **then** `data-theme` is `black`, `ciel`, then `black` while the real main module response is still
+   **then** `data-theme` is `dark`, `light`, then `black` while the real main module response is still
    withheld; the real theme resource completes before main is requested, and the original main
    response is then continued and the application boots.
    `appearance/boot: applies the selected theme before the real main response, from the choice or the device`
@@ -170,17 +172,17 @@ counting it would be the one request this page makes.
 2. **Given** a device set to dark and no theme chosen,
    **when** the device turns light, the person chooses « Sombre », the device changes twice, and
    the person chooses « Automatique »,
-   **then** the page follows the device (`black`, then `ciel`), holds dark while « Sombre » is
+   **then** the page follows the device (`dark`, then `light`), holds `dark` while « Sombre » is
    chosen whatever the device says, and follows the device again once « Automatique » is chosen.
    `appearance/page: follows the device only while Automatique is chosen`
 
 3. **Given** a stored theme the console does not know (`sepia`) on a dark device,
    **when** the page loads,
-   **then** « Automatique » is checked and the page is `black`.
+   **then** « Automatique » is checked and the page is `dark`.
    `appearance/page: reads an unknown stored theme as Automatique`
 
 4. **Given** the Apparence page and a light device,
-   **when** the person uses the keyboard alone: `Tab` to the group, then `→` five times, then `Tab`,
+   **when** the person uses the keyboard alone: `Tab` to the group, then `→` three times, then `Tab`,
    **then** focus lands on the checked « Automatique » with a visible ring, each arrow checks the
    next card and applies its theme at once, the next `Tab` leaves the group, and « Noir » is still
    chosen and applied after a reload.
@@ -189,14 +191,14 @@ counting it would be the one request this page makes.
 5. **Given** a browser that refuses to store the choice,
    **when** the person chooses « Noir »,
    **then** the page turns black, a warning says the choice will not be kept and how to keep it,
-   the page passes axe, and after a reload the page follows the device (`ciel`) with
+   the page passes axe, and after a reload the page follows the device (`light`) with
    « Automatique » checked.
    `appearance/page: says the choice is not kept when the browser refuses to store it`
 
 6. **Given** the Apparence page,
-   **when** it is shown in each of the five themes with the chosen card focused from the keyboard,
+   **when** it is shown in each of the five themes (`light`, `dark`, `black`, and backward-compatible `ciel` and `ciel-nuit`) with the focused card reached from the keyboard (`Automatique` when legacy Ciel leaves all primary cards unchecked),
    **then** it passes axe in each, contrast included, the focus ring is drawn, and the page's
-   `color-scheme` is `normal` in « Ciel » and light and `dark` in « Ciel nuit », dark and black.
+   `color-scheme` is `light` in `light` and `ciel` and `dark` in `dark`, `black` and `ciel-nuit`.
    `appearance/page: passes axe in every theme`
 
 7. **Given** a signed-in person on a desktop, then on a 390 × 780 screen,

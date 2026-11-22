@@ -5,7 +5,7 @@ Status: Implementation specification
 ## Scope and design
 
 Keep channel-scoped team pads as the default Docs view and preserve their drafts when
-switching to a developer reference. Use existing Plus Jakarta Sans and IBM Plex Mono
+switching to a developer reference. Use existing Inter Variable and IBM Plex Mono
 roles, semantic surface/ink/accent/border tokens, and the existing spacing scale.
 The palette inherits black, white, slate 100/300/600/900 (token values #000000,
 #FFFFFF, #EEF2F6, #C9D3DE, #5A6672, #2F3A45); the selected application theme remains

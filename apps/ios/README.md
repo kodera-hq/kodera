@@ -41,7 +41,7 @@ Frames are signed plaintext, not encrypted. The v1 signature does not bind an or
 
 ## Community workspace, Matrix invitations, CallKit wakeup and passkey binding
 
-Status: Domain models, client coordinators and `ciel` / `cielNuit` SwiftUI surfaces verified in unit and simulator suites; live homeserver and VoIP PushKit relay remain external. Associated domains are declared in source; signed-device association and link handling remain unqualified.
+Status: Domain models, client coordinators and `dark` / `light` (`@kodera/design-tokens`) SwiftUI surfaces verified in unit and simulator suites; live homeserver and VoIP PushKit relay remain external. Associated domains are declared in source; signed-device association and link handling remain unqualified.
 
 `App/Kodera.entitlements` declares only `webcredentials:auth.kodera.io`, `applinks:community.kodera.io` and `applinks:app.kodera.io`. The application target binds this plist through `CODE_SIGN_ENTITLEMENTS` and the public team identifier `UF5852SF57`; it excludes the plist from copied App sources. Resource checks refuse altered domains, capabilities, entitlement binding and team identity. This source configuration does not establish a signed provisioning profile, deployed Apple association document, inbound `onOpenURL` routing, TestFlight upload or installed-device Universal Links. No push entitlement or background mode is admitted.
 

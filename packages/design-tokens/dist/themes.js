@@ -6,9 +6,9 @@
 /** Every theme, in the order tokens.css declares its `[data-theme]` block. */
 export const themes = Object.freeze([
   Object.freeze({ id: "light", family: "givre", mode: "light", scheme: "light", default: false }),
-  Object.freeze({ id: "dark", family: "givre", mode: "dark", scheme: "dark", default: false }),
+  Object.freeze({ id: "dark", family: "givre", mode: "dark", scheme: "dark", default: true }),
   Object.freeze({ id: "black", family: "givre", mode: "black", scheme: "dark", default: false }),
-  Object.freeze({ id: "ciel", family: "ciel", mode: "light", scheme: "light", default: true }),
+  Object.freeze({ id: "ciel", family: "ciel", mode: "light", scheme: "light", default: false }),
   Object.freeze({ id: "ciel-nuit", family: "ciel", mode: "dark", scheme: "dark", default: false }),
 ]);
 
@@ -16,7 +16,7 @@ export const themes = Object.freeze([
 export const themeIds = Object.freeze(themes.map((theme) => theme.id));
 
 /** The theme an unthemed document renders in: its block also carries `:root`. */
-export const defaultTheme = "ciel";
+export const defaultTheme = "dark";
 
 /** What each family allows, and the themes it holds. */
 export const themeFamilies = Object.freeze({

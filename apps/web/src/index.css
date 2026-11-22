@@ -14,25 +14,19 @@
    console is not allowed to talk to (ADR-0003), and it leaks a page view to it
    on every load.
 
-   The family NAME is a contract with the tokens preset, which asks for "Plus
-   Jakarta Sans" and "IBM Plex Mono" by name. A face declared under any other
-   name is matched by nothing, and the page draws system-ui without an error:
-   `@fontsource-variable/plus-jakarta-sans` declares "Plus Jakarta Sans
-   Variable", and that is how every sans string once rendered in the fallback.
-   The static package declares the preset's name, one file per weight, for the
-   established weights plus the collective-studio 800 heading weight.
+   The family NAME is a contract with the tokens preset, which asks for "Inter
+   Variable" and "IBM Plex Mono" by name. A face declared under any other
+   name is matched by nothing, and the page draws system-ui without an error.
+   `@fontsource-variable/inter` declares "Inter Variable" across weights 100–900
+   in both normal (`wght.css`) and italic (`wght-italic.css`) styles.
 
    The mono is only used for values that are copied or compared, and 500 is its
    heaviest weight: the design of record never draws mono above 500. A
    `font-semibold` on a mono value is a 500 the browser thickens itself.
    `tests/e2e/fonts.spec.ts` fails on a wrong family name and on a weight with
    no face. */
-@import '@fontsource/plus-jakarta-sans/400.css';
-@import '@fontsource/plus-jakarta-sans/500.css';
-@import '@fontsource/plus-jakarta-sans/600.css';
-@import '@fontsource/plus-jakarta-sans/700.css';
-@import '@fontsource/plus-jakarta-sans/800.css';
-@import '@fontsource/plus-jakarta-sans/400-italic.css';
+@import '@fontsource-variable/inter/wght.css';
+@import '@fontsource-variable/inter/wght-italic.css';
 @import '@fontsource/ibm-plex-mono/400.css';
 @import '@fontsource/ibm-plex-mono/500.css';
 
@@ -118,16 +112,10 @@
     font-family: theme(fontFamily.sans);
   }
 
-  /* Plus Jakarta Sans draws a narrow space: 0.178 em in every weight, measured in the font files.
-     Under the page title's tight tracking (−0.045 em) it was 4 px at 30 px, and « Bonjour » and the first name
-     read as one word on staging (2026-11-07); a 600-weight button read « Voirles applications ».
-     This widens the space alone, for the font, not a size of any control: 0.08 em brings it near a
-     usual 0.25 em. It belongs in the tokens package with the font family, as a word-spacing token,
-     and moves there when one is published. Set on every element, not on `html`: an `em` length is
-     resolved where it is declared and inherited as pixels, so 0.08 em of the root's 16 px gave the
-     30 px title 1.3 px. A user stylesheet's own `word-spacing` loses to it as to any author rule,
-     and one marked `!important` on `body` no longer reaches the children; a WCAG 1.4.12 override
-     on `*` with `!important` still wins over it.
+  /* Tight display tracking (−0.045 em) narrows inter-word advances on headings and 600-weight
+     actions; this widens the space alone by 0.08 em on every element so that it scales with each
+     element's own size (an `em` length set on `html` is inherited as pixels). A WCAG 1.4.12
+     override on `*` with `!important` still wins over it.
      Monospaced text keeps the font's own space, so columns of code and identifiers stay aligned. */
   *,
   ::before,
@@ -189,6 +177,7 @@
     color-scheme: light;
   }
 
+  :root:where(:not([data-theme='light'], [data-theme='ciel'])),
   [data-theme='dark'],
   [data-theme='black'],
   [data-theme='ciel-nuit'] {
@@ -397,6 +386,7 @@
      the edge, and no screen nests one around an inverse card.
      `tests/e2e/10-appearance.spec.ts` measures it in a browser. Every dark theme is named here,
      as in the `color-scheme` rule above: a theme added to one list belongs in both. */
+  :root:where(:not([data-theme='light'], [data-theme='ciel'])) .inverse-edge,
   [data-theme='dark'] .inverse-edge,
   [data-theme='black'] .inverse-edge,
   [data-theme='ciel-nuit'] .inverse-edge {
@@ -407,6 +397,7 @@
      nothing on a dark page and its edge already shapes it. Raised grounds are for overlays. Only
      the shadow layer is zeroed: Tailwind 4 draws rings in `box-shadow` too, so `box-shadow: none`
      would also erase a ring on a card. */
+  :root:where(:not([data-theme='light'], [data-theme='ciel'])) .card-flat-dark,
   [data-theme='dark'] .card-flat-dark,
   [data-theme='black'] .card-flat-dark,
   [data-theme='ciel-nuit'] .card-flat-dark {

@@ -171,7 +171,7 @@ export function assertFontScan(scan: FontScan, requireMono = true) {
   guard(scan.scanned > 20, 'R6_FONT_VACUOUS_SCAN')
   guard(!scan.negativeFacePresent, 'R6_CHECK_NOT_DISCRIMINATING')
   guard(
-    scan.sans === 'Plus Jakarta Sans' && (!requireMono || scan.mono === 'IBM Plex Mono'),
+    scan.sans === 'Inter Variable' && (!requireMono || scan.mono === 'IBM Plex Mono'),
     'R6_FONT_FAMILY_RENAMED'
   )
   guard(
@@ -188,11 +188,11 @@ export function scanFontsInDocument(origin: VisualCell['origin']): FontScan {
   })
   const missing = new Set<string>()
   const required: [string, number, string][] = [400, 500, 600, 700, 800].map((weight) => [
-    'Plus Jakarta Sans',
+    'Inter Variable',
     weight,
     'normal',
   ])
-  if (origin === 'web') required.push(['Plus Jakarta Sans', 400, 'italic'])
+  if (origin === 'web') required.push(['Inter Variable', 400, 'italic'])
   if (origin !== 'auth')
     required.push(['IBM Plex Mono', 400, 'normal'], ['IBM Plex Mono', 500, 'normal'])
   for (const [family, weight, style] of required)
@@ -284,9 +284,9 @@ export async function verifyFonts(
   try {
     await page.evaluate(async (origin) => {
       const descriptors = [400, 500, 600, 700, 800].map(
-        (weight) => `${weight} 16px "Plus Jakarta Sans"`
+        (weight) => `${weight} 16px "Inter Variable"`
       )
-      if (origin === 'web') descriptors.push('italic 400 16px "Plus Jakarta Sans"')
+      if (origin === 'web') descriptors.push('italic 400 16px "Inter Variable"')
       if (origin !== 'auth')
         descriptors.push('400 16px "IBM Plex Mono"', '500 16px "IBM Plex Mono"')
       await Promise.all(
@@ -298,7 +298,7 @@ export async function verifyFonts(
     throw new Error('R6_FONT_ASSET_MISSING')
   }
   const scan = await page.evaluate(scanFontsInDocument, origin)
-  assertRenderedFont(await renderedFonts(page, sans), 'Plus Jakarta Sans')
+  assertRenderedFont(await renderedFonts(page, sans), 'Inter')
   if (origin !== 'auth') {
     guard(mono, 'R6_MONO_SAMPLE_MISSING')
     assertRenderedFont(await renderedFonts(page, mono), 'IBM Plex Mono')
@@ -308,7 +308,7 @@ export async function verifyFonts(
   try {
     assertRenderedFont(
       await renderedFonts(page, page.locator('[data-wave2-glyph-probe="sans"]')),
-      'Plus Jakarta Sans'
+      'Inter'
     )
     if (origin !== 'auth')
       assertRenderedFont(

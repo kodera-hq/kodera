@@ -19,8 +19,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Dp
 import io.kodera.tokens.KoderaTokens
 
-internal val LocalKoderaPalette = staticCompositionLocalOf { KoderaTokens.ciel }
-internal val LocalKoderaMaterials = staticCompositionLocalOf { KoderaTokens.MaterialSet.ciel }
+internal val LocalKoderaPalette = staticCompositionLocalOf { KoderaTokens.dark }
+internal val LocalKoderaMaterials = staticCompositionLocalOf { KoderaTokens.MaterialSet.dark }
+
+internal fun resolveActiveTheme(darkTheme: Boolean): KoderaTokens.Theme =
+    if (darkTheme) KoderaTokens.Theme.Dark else KoderaTokens.Theme.Light
 
 internal fun resolveCielTheme(darkTheme: Boolean): KoderaTokens.Theme =
     if (darkTheme) KoderaTokens.Theme.CielNuit else KoderaTokens.Theme.Ciel
@@ -31,7 +34,7 @@ fun KoderaTheme(
     themeOverride: KoderaTokens.Theme? = null,
     content: @Composable () -> Unit,
 ) {
-    val activeTheme = themeOverride ?: resolveCielTheme(darkTheme)
+    val activeTheme = themeOverride ?: resolveActiveTheme(darkTheme)
     val palette = activeTheme.palette
     val materials = activeTheme.materials
     val base = if (activeTheme.isDark) darkColorScheme() else lightColorScheme()
@@ -93,8 +96,8 @@ fun KoderaTheme(
 }
 
 /**
- * Cobalt × Kodera — verre `ciel` translucent glass card consuming generated `KoderaTokens` panel
- * material, hairline border, and frost legibility in both light (`ciel`) and dark (`ciel-nuit`) modes.
+ * Cobalt × Kodera translucent glass card consuming generated `KoderaTokens` panel material,
+ * hairline border, and legibility in both `light` (Light Givre) and `dark` (Dark Precision) modes.
  */
 @Composable
 internal fun CielGlassCard(

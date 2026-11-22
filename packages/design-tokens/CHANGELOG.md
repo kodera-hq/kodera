@@ -8,6 +8,16 @@ One section per tag, newest first, no dates: the tag and the commit it points at
 
 Nothing yet.
 
+## v0.8.0
+
+App-wide "Dark Precision" alignment and typography unification, decided by zôÖma: `dark` becomes the default product theme on the neutral `color.noir` carbon ramp (`#08090A` / `#0F1011` / `#141516` / `#191A1C`), `font.family.sans` unifies on `Inter Variable` alongside `IBM Plex Mono`, and `ciel` / `ciel-nuit` remain registered in the token and contract vocabulary for backward compatibility while leaving primary user pickers.
+
+### Changed
+
+- **`dark` is the default theme (`defaultTheme = "dark"`)**: `scripts/lib/themes.mjs` moves `default: true` from `ciel` to `dark`; `tokens.css` root claim, `themes.js`, `manifest.json`, Swift `KoderaTokens.Theme.defaultTheme` and Compose `Theme.Dark.isDefault` follow.
+- **`color.theme-dark` ("Linear Dark Precision")**: aligns product dark surfaces and inks with `color.noir` (`inverse` `#050607`, `page` `#08090A`, `sunken` `#0F1011`, `surface` `#141516`, `elevated` `#191A1C`, `muted` `#1E2023`, `muted-2` `#272A2E`, `hairline` `#1B1D20`, `border-soft` `#1F2124`, `border` `#282B30`, `border-strong` `#3A3E45`, `border-input` `#757A82`, `ink` `#F7F8F8`, `ink-2` `#C9CDD3`, `ink-3` `#9EA3AC`, `ink-4` `#8A8F98`, `placeholder` `#9297A0`, `on-inverse` `#F7F8F8`, `on-inverse-dim` `#A5AAB3`, `accent-soft` `#182042`, `accent-ink` `#B4C2FF`), preserving strict monotonic dark-step luminance and every WCAG AA / 3:1 contrast gate.
+- **`font.family.sans`**: unified on `Inter Variable`, `Inter`, `system-ui`, `-apple-system`, `Segoe UI`, `sans-serif` across CSS, Tailwind preset, and generated Swift/Compose bindings.
+
 ## v0.7.0
 
 "Dark Precision", the landing scale, on top of everything carried over from `Unreleased` below (the Apache-2.0 relicence, `ciel` as the default theme, and the "Ethereal Sky Glass" engine). Additive: every token name, CSS variable, preset key and native member a consumer uses today still resolves to the same value, and every name below is new, so this is a minor (`RELEASE.md`, step 5). `apps/web` moves its workspace pin to `0.7.0` in the same change, so the workspace link holds.

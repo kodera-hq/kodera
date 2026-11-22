@@ -12,7 +12,11 @@ final class Wave5ParitySurfaceTests: XCTestCase {
     private let orgId = "11111111-1111-4111-8111-111111111111"
 
     func testCielThemeAndPaletteMappingResolvesLightAndDarkTokens() {
-        XCTAssertEqual(KoderaTokens.Theme.defaultTheme, .ciel)
+        XCTAssertEqual(KoderaTokens.Theme.defaultTheme, .dark)
+        XCTAssertEqual(KoderaTokens.activeTheme(for: .light), .light)
+        XCTAssertEqual(KoderaTokens.activeTheme(for: .dark), .dark)
+        XCTAssertEqual(KoderaTokens.activePalette(for: .dark).page, KoderaTokens.dark.page)
+        XCTAssertEqual(KoderaTokens.activePalette(for: .light).page, KoderaTokens.light.page)
         XCTAssertEqual(KoderaTokens.cielTheme(for: .light), .ciel)
         XCTAssertEqual(KoderaTokens.cielTheme(for: .dark), .cielNuit)
         XCTAssertFalse(KoderaTokens.cielTheme(for: .light).isDark)

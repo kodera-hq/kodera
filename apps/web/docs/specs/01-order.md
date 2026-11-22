@@ -172,7 +172,7 @@ non-blocking `InlineAlert` explaining what happens when the cap is reached.
   discounted amount is displayed rounded to the euro — 671,50 € is written 672 € — and the
   console renders whichever price the catalogue returns for that eligibility; it does not apply
   a percentage itself.
-- Amounts use the sans face (Plus Jakarta Sans) with tabular figures, through `PlanPrice`, with
+- Amounts use the sans face (Inter Variable) with tabular figures, through `PlanPrice`, with
   a thin space as the thousands separator and a comma decimal separator, so two cards can be
   compared column by column. No longer monospace: the design system keeps IBM Plex Mono for
   technical values, and in it the euro sign sat a cell away from the number (the P01 reference

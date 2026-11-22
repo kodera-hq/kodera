@@ -260,7 +260,7 @@ fresh; printf 'x' >> "$work/App/Resources/Fonts/IBMPlexMono-Regular.ttf"
 expect_refusal "a font that drifted from its manifest" 1 \
   "font IBMPlexMono-Regular.ttf differs from its manifest hash"
 
-fresh; rm -- "$work/App/Resources/Licenses/OFL-plus-jakarta-sans.txt"
+fresh; rm -- "$work/App/Resources/Licenses/OFL-inter.txt"
 expect_refusal "a missing licence notice" 1 \
   "expected 2 OFL font licence notices in Resources/Licenses, found 1"
 

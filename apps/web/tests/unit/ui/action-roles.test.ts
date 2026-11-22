@@ -102,7 +102,7 @@ describe('the roles that replace action as text and edge', () => {
     // The ratio this change exists for: under 4.5 : 1 as text. If the tokens
     // move it again, this fails and the entries below can be reconsidered.
     const dark = roles('dark')
-    expect(ratio(dark.get('action') ?? '', dark.get('surface') ?? '')).toBeCloseTo(3.54, 2)
+    expect(ratio(dark.get('action') ?? '', dark.get('surface') ?? '')).toBeCloseTo(3.64, 2)
   })
 })
 

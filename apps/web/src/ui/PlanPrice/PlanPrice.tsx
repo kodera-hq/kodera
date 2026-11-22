@@ -19,7 +19,7 @@ export interface PlanPriceProps extends Omit<HTMLAttributes<HTMLDivElement>, 'ch
  * `design specification` `design/reference/`): the amount large and bold, the
  * period beside it, a note under it.
  *
- * Plus Jakarta Sans, not the mono face: the design system keeps IBM Plex Mono
+ * Inter Variable, not the mono face: the design system keeps IBM Plex Mono
  * for technical values (addresses, hosts, keys), and in the mono face the euro
  * sign sat a whole cell away from the number. Tabular figures, as
  * docs/specs/01-order.md §4.1 asks (« monospace with tabular figures »), keep

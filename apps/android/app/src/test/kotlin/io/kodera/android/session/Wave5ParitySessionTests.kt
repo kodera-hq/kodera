@@ -31,6 +31,7 @@ import io.kodera.android.domain.PushRelayTransport
 import io.kodera.android.domain.TelecomCallPhase
 import io.kodera.android.domain.VerifiedCallDescriptor
 import io.kodera.android.domain.VerifiedPasskeyRegistration
+import io.kodera.android.ui.theme.resolveActiveTheme
 import io.kodera.android.ui.theme.resolveCielTheme
 import io.kodera.tokens.KoderaTokens
 import org.junit.Assert.assertEquals
@@ -57,6 +58,22 @@ class Wave5ParitySessionTests {
     private val roomHashHex = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
     // ── 1. Cobalt × Kodera — verre ciel theme parity ───────────────────────
+
+    @Test
+    fun activeThemeResolvesDarkPrecisionAndLightGivre() {
+        assertTrue(KoderaTokens.Theme.Dark.isDefault)
+        assertFalse(KoderaTokens.Theme.Ciel.isDefault)
+
+        val lightTheme = resolveActiveTheme(darkTheme = false)
+        assertEquals(KoderaTokens.Theme.Light, lightTheme)
+        assertFalse(lightTheme.isDark)
+        assertSame(KoderaTokens.light, lightTheme.palette)
+
+        val darkTheme = resolveActiveTheme(darkTheme = true)
+        assertEquals(KoderaTokens.Theme.Dark, darkTheme)
+        assertTrue(darkTheme.isDark)
+        assertSame(KoderaTokens.dark, darkTheme.palette)
+    }
 
     @Test
     fun cielThemeResolvesLightAndDarkVariants() {

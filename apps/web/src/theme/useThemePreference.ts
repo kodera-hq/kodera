@@ -4,12 +4,13 @@ import {
   saveThemePreference,
   THEME_CHANGE_EVENT,
   THEME_STORAGE_KEY,
+  type StoredThemePreference,
   type ThemePreference,
 } from './theme'
 
 /** Follow the same preference and events as the before-paint theme script. */
 export function useThemePreference() {
-  const [preference, setPreference] = useState(readThemePreference)
+  const [preference, setPreference] = useState<StoredThemePreference>(readThemePreference)
   useEffect(() => {
     const follow = () => setPreference(readThemePreference())
     const storage = (event: StorageEvent) => {

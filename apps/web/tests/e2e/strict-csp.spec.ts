@@ -27,27 +27,23 @@ test.beforeAll(async ({ playwright }, info) => {
   const env = Object.fromEntries(
     Object.entries(process.env).filter(([key]) => !key.startsWith('VITE_'))
   )
-  await run(
-    process.execPath,
-    [viteBin, 'build', '--outDir', join(root, 'dist')],
-    {
-      env: {
-        ...env,
-        VITE_AUTH_MODE: 'oidc',
-        VITE_ENABLE_MSW: '0',
-        VITE_FIRST_OWNER_JOURNEY: '0',
-        VITE_CORE_API_URL: 'https://api.fixture.test/api/v1',
-        VITE_KEYCLOAK_URL: 'https://id.fixture.test',
-        VITE_OIDC_CLIENT_ID: 'console',
-        NODE_OPTIONS: '--max-old-space-size=1536',
-        RAYON_NUM_THREADS: '1',
-        TOKIO_WORKER_THREADS: '1',
-        UV_THREADPOOL_SIZE: '1',
-      },
-      timeout: 120_000,
-      maxBuffer: 4 * 1024 * 1024,
-    }
-  )
+  await run(process.execPath, [viteBin, 'build', '--outDir', join(root, 'dist')], {
+    env: {
+      ...env,
+      VITE_AUTH_MODE: 'oidc',
+      VITE_ENABLE_MSW: '0',
+      VITE_FIRST_OWNER_JOURNEY: '0',
+      VITE_CORE_API_URL: 'https://api.fixture.test/api/v1',
+      VITE_KEYCLOAK_URL: 'https://id.fixture.test',
+      VITE_OIDC_CLIENT_ID: 'console',
+      NODE_OPTIONS: '--max-old-space-size=1536',
+      RAYON_NUM_THREADS: '1',
+      TOKIO_WORKER_THREADS: '1',
+      UV_THREADPOOL_SIZE: '1',
+    },
+    timeout: 120_000,
+    maxBuffer: 4 * 1024 * 1024,
+  })
   server = spawn(
     process.execPath,
     [
@@ -261,9 +257,9 @@ test('strict CSP loads every bundled font face from real files', async () => {
         })
       )
     })
-    expect(fonts.length).toBeGreaterThan(5)
+    expect(fonts.length).toBeGreaterThanOrEqual(4)
     expect(fonts.filter((face) => !face.loaded)).toEqual([])
-    expect(fonts.some((face) => face.family.includes('Plus Jakarta Sans'))).toBe(true)
+    expect(fonts.some((face) => face.family.includes('Inter Variable'))).toBe(true)
     expect(fonts.some((face) => face.family.includes('IBM Plex Mono'))).toBe(true)
     expect((await violations(page)).filter((event) => event.directive === 'font-src')).toEqual([])
     expect(unexpected).toEqual([])

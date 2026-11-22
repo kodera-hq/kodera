@@ -10,10 +10,10 @@ import io.kodera.tokens.KoderaTokens
 /** Resource bindings preserve the pinned font identities and generated weight/size values. */
 internal object NativeTypography {
     private val sans = FontFamily(
-        Font(R.font.plus_jakarta_sans_regular, KoderaTokens.FontWeight.regular),
-        Font(R.font.plus_jakarta_sans_medium, KoderaTokens.FontWeight.medium),
-        Font(R.font.plus_jakarta_sans_semibold, KoderaTokens.FontWeight.semibold),
-        Font(R.font.plus_jakarta_sans_bold, KoderaTokens.FontWeight.bold),
+        Font(R.font.inter_regular, KoderaTokens.FontWeight.regular),
+        Font(R.font.inter_medium, KoderaTokens.FontWeight.medium),
+        Font(R.font.inter_semibold, KoderaTokens.FontWeight.semibold),
+        Font(R.font.inter_bold, KoderaTokens.FontWeight.bold),
     )
     private val mono = FontFamily(
         Font(R.font.ibm_plex_mono_regular, KoderaTokens.FontWeight.regular),

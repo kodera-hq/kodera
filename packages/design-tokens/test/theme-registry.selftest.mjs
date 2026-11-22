@@ -39,9 +39,9 @@ const tree = JSON.parse(read('tokens.json'));
 /** The registry, restated. Changing the themes means changing this too. */
 const EXPECTED = [
   { id: 'light', family: 'givre', mode: 'light', scheme: 'light', default: false },
-  { id: 'dark', family: 'givre', mode: 'dark', scheme: 'dark', default: false },
+  { id: 'dark', family: 'givre', mode: 'dark', scheme: 'dark', default: true },
   { id: 'black', family: 'givre', mode: 'black', scheme: 'dark', default: false },
-  { id: 'ciel', family: 'ciel', mode: 'light', scheme: 'light', default: true },
+  { id: 'ciel', family: 'ciel', mode: 'light', scheme: 'light', default: false },
   { id: 'ciel-nuit', family: 'ciel', mode: 'dark', scheme: 'dark', default: false },
 ];
 const EXPECTED_FAMILIES = {
@@ -57,7 +57,7 @@ test('the registry lists every theme once, as a family in a mode', () => {
   assert.deepEqual(THEME_REGISTRY.map((theme) => ({ ...theme })), EXPECTED);
   assert.deepEqual(JSON.parse(JSON.stringify(THEME_FAMILIES)), EXPECTED_FAMILIES);
   assert.deepEqual([...THEMES], EXPECTED.map((theme) => theme.id));
-  assert.equal(DEFAULT_THEME, 'ciel');
+  assert.equal(DEFAULT_THEME, 'dark');
   assert.deepEqual(themesOfFamily('givre'), ['light', 'dark', 'black']);
   assert.deepEqual(themesOfFamily('ciel'), ['ciel', 'ciel-nuit']);
   assert.equal(themeSelector('ciel-nuit'), '[data-theme="ciel-nuit"]');
@@ -65,11 +65,11 @@ test('the registry lists every theme once, as a family in a mode', () => {
   assert.equal(published.themeFor('ciel', 'dark').id, 'ciel-nuit');
   assert.equal(published.themeFor('ciel', 'black'), undefined, 'a family has no theme in a mode it does not declare');
   assert.equal(themeSelector('light'), '[data-theme="light"]');
+  assert.equal(themeSelector('ciel'), '[data-theme="ciel"]');
   assert.equal(
-    themeSelector('ciel'),
-    ':root:where(:not([data-theme="light"], [data-theme="dark"], [data-theme="black"], [data-theme="ciel-nuit"])), [data-theme="ciel"]',
+    themeSelector('dark'),
+    ':root:where(:not([data-theme="light"], [data-theme="black"], [data-theme="ciel"], [data-theme="ciel-nuit"])), [data-theme="dark"]',
   );
-  assert.equal(themeSelector('dark'), '[data-theme="dark"]');
   assert.deepEqual(familyRules('black'), EXPECTED_FAMILIES.givre);
   assert.ok(Object.isFrozen(THEME_REGISTRY) && Object.isFrozen(THEME_REGISTRY[0]), 'the registry is not mutable at run time');
 });

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Sync generated `@kodera/design-tokens` `0.8.0` bindings (`Dark` *Dark Precision* default theme and `Light` *Light Givre*), unify bundled sans font resources and `OFL-inter.txt` on `Inter`, and retire `Plus Jakarta Sans`.
+
 - Load complete 500-channel workspaces with maximum-length UTF-8 topics within a bounded 4 MiB response.
 
 - Align the community blueprint with server provisioning, including general discussion, member arrivals and the private repository activity room.

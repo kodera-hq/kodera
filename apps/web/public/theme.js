@@ -6,17 +6,17 @@
 // module lists, so a theme added there alone fails a test.
 ;(() => {
   const KEY = 'console:theme'
-  const THEMES = ['ciel', 'ciel-nuit', 'light', 'dark', 'black']
-  // « Automatique » follows the device: Ciel, the default family's light theme, or the
-  // neutral true-black theme when the device asks for dark (owner directive: the default
-  // dark is a carbon black, not Ciel's blue night). Ciel nuit stays one click away.
-  const DEVICE_LIGHT = 'ciel'
-  const DEVICE_DARK = 'black'
+  const THEMES = ['light', 'dark', 'black', 'ciel', 'ciel-nuit']
+  // « Automatique » follows the device: Light Givre on a light device, or Dark Precision
+  // (`dark`, the tokens package default) on a dark device or when `matchMedia` is unavailable.
+  // Stored legacy `ciel` and `ciel-nuit` values remain accepted without breaking.
+  const DEVICE_LIGHT = 'light'
+  const DEVICE_DARK = 'dark'
   let device = null
   try {
     device = window.matchMedia('(prefers-color-scheme: dark)')
   } catch {
-    // No `matchMedia`: the device cannot be asked, so « Automatique » is Ciel light.
+    // No `matchMedia`: the device cannot be asked, so « Automatique » falls back to `dark`.
   }
   let chosen = null
   try {
@@ -30,7 +30,7 @@
   const apply = () => {
     const theme = THEMES.includes(chosen)
       ? chosen
-      : device !== null && device.matches
+      : device === null || device.matches
         ? DEVICE_DARK
         : DEVICE_LIGHT
     window.document.documentElement.dataset.theme = theme

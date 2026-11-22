@@ -473,9 +473,9 @@ test('home/navigation: focuses a home with failed fallback discovery', async ({ 
 })
 
 // The first space in an element's text, as drawn: its width over the element's font size, with the
-// page's word spacing and with `word-spacing: normal` set on the text's own element. Plus Jakarta
-// Sans's space is narrow (0.178 em), and a negative tracking took more off it, so « Bonjour Julie »
-// read as one word (docs/specs/icon-only-controls.md, second slice).
+// page's word spacing and with `word-spacing: normal` set on the text's own element. Tight display
+// tracking (−0.045 em) narrows inter-word advances, so `src/index.css` adds 0.08 em on non-mono text
+// (docs/specs/icon-only-controls.md, second slice).
 async function spaceWidthEm(
   page: Page,
   name: string,

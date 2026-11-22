@@ -60,8 +60,9 @@ function checkFamily() {
   // Promoted by owner decision B2 once both gates stood: WCAG AA over the
   // worst-case backdrop (this package) and the frame-rate guard (the console's
   // end-to-end suite, at most three blurred surfaces on screen).
-  assert.equal(DEFAULT_THEME, 'ciel', 'the default theme is Ciel light');
-  assert.equal(themeInfo('ciel-nuit').default, false, 'ciel-nuit is the dark side of the default family, not a second default');
+  assert.equal(DEFAULT_THEME, 'dark', 'the default theme is Dark Precision (dark)');
+  assert.equal(themeInfo('ciel').default, false, 'ciel remains registered for backward compatibility, not the default');
+  assert.equal(themeInfo('ciel-nuit').default, false, 'ciel-nuit remains registered for backward compatibility, not a second default');
   assert.deepEqual(themesOfFamily('givre'), ['light', 'dark', 'black'], 'the givre family stays selectable, complete');
 }
 

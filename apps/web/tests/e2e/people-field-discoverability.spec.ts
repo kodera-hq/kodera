@@ -520,7 +520,7 @@ async function openPeople(page: Page, theme: string) {
       await document.fonts.ready
       const faces = (
         await Promise.all(
-          [400, 500].map((weight) => document.fonts.load(`${weight} 16px "Plus Jakarta Sans"`))
+          [400, 500].map((weight) => document.fonts.load(`${weight} 16px "Inter Variable"`))
         )
       ).flat()
       return faces.length > 0 && faces.every((face) => face.status === 'loaded')

@@ -6,7 +6,12 @@ import { Button } from '../../ui/Button/Button'
 import { StatusPill } from '../../ui/StatusPill/StatusPill'
 import { cx } from '../../ui/cx'
 import { WorkspaceDialog, WorkspaceDialogTitle } from '../../ui/WorkspaceDialog'
-import { THEME_PREFERENCES, themeMode, type AppliedTheme } from '../../theme/theme'
+import {
+  THEME_PREFERENCES,
+  themeMode,
+  type AppliedTheme,
+  type ThemePreference,
+} from '../../theme/theme'
 import { applyCustomTokensToDocument } from './themeOverrides'
 import { hasReadableTheme } from './themeContrast'
 import { themeStudioMessages } from './themeStudioMessages'
@@ -83,9 +88,11 @@ export const CURATED_COMMUNITY_PRESETS: readonly CommunityThemeDefinition[] = [
   },
 ] as const
 
-/** The official themes, in the order the Apparence page lists them: Ciel first, then Givre. */
+type SelectableCoreTheme = Exclude<ThemePreference, 'system'>
+
+/** The official themes offered in primary pickers: Clair, Sombre (Dark Precision) and Noir. */
 const OFFICIAL_THEMES = THEME_PREFERENCES.filter(
-  (preference): preference is AppliedTheme => preference !== 'system'
+  (preference): preference is SelectableCoreTheme => preference !== 'system'
 )
 
 const COLOR_PREFIX = String.fromCharCode(35)
@@ -181,7 +188,7 @@ export interface ThemeStudioModalProps {
   readonly open: boolean
   /** The theme on the page: a share code records only its mode (`themeMode`). */
   readonly currentThemeMode: AppliedTheme
-  readonly onSelectCoreTheme: (theme: AppliedTheme) => void
+  readonly onSelectCoreTheme: (theme: SelectableCoreTheme) => void
   readonly onShareToChannel?: ((themeName: string, shareCode: string) => Promise<void>) | undefined
   readonly returnFocusTo?: RefObject<HTMLElement | null> | undefined
   readonly onClose: () => void
@@ -243,7 +250,7 @@ export function ThemeStudioModal({
     setStatusMessageText(t(REFUSAL_MESSAGE[reason]))
   }
 
-  const handleChooseCoreMode = (mode: AppliedTheme) => {
+  const handleChooseCoreMode = (mode: SelectableCoreTheme) => {
     setImportedId(null)
     setCustomTokens(null)
     applyCustomTokensToDocument(null)

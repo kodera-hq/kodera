@@ -18,9 +18,8 @@ import { useScenario } from './support/useScenario'
 const ORG = 'acme-sa'
 const KEY = 'console:theme'
 const SCENARIOS = ['shell.single-organisation', 'home.default'] as const
-/** The theme « Automatique » paints on each device: Ciel, the default, in its light or dark mode. */
-// « Automatique » on a dark device is the neutral true black, not Ciel nuit (owner directive).
-const DEVICE_THEME = { light: 'ciel', dark: 'black' } as const
+/** The theme « Automatique » paints on each device: Light Givre or Dark Precision (`dark`). */
+const DEVICE_THEME = { light: 'light', dark: 'dark' } as const
 
 function html(page: Page) {
   return page.locator('html')
@@ -518,7 +517,7 @@ test('appearance/page: follows the device only while Automatique is chosen', asy
   await expect(html(page)).toHaveAttribute('data-theme', DEVICE_THEME.dark)
 
   await page.emulateMedia({ colorScheme: 'light' })
-  await expect(html(page)).toHaveAttribute('data-theme', 'ciel')
+  await expect(html(page)).toHaveAttribute('data-theme', DEVICE_THEME.light)
 
   await card(page, 'Sombre').click()
   await expect(card(page, 'Sombre')).toHaveAttribute('aria-checked', 'true')
@@ -529,7 +528,7 @@ test('appearance/page: follows the device only while Automatique is chosen', asy
   await expect(html(page)).toHaveAttribute('data-theme', 'dark')
 
   await card(page, 'Automatique').click()
-  await expect(html(page)).toHaveAttribute('data-theme', 'ciel')
+  await expect(html(page)).toHaveAttribute('data-theme', DEVICE_THEME.light)
   await page.emulateMedia({ colorScheme: 'dark' })
   await expect(html(page)).toHaveAttribute('data-theme', DEVICE_THEME.dark)
 })
@@ -560,12 +559,6 @@ test('appearance/page: chooses a theme with the keyboard alone and keeps it afte
   // Visible focus: the ring is drawn, not only the browser's default outline removed.
   await expect(card(page, 'Automatique')).not.toHaveCSS('box-shadow', 'none')
 
-  await arrowTo(page, 'Ciel')
-  await expect(card(page, 'Ciel')).toHaveAttribute('aria-checked', 'true')
-  await expect(html(page)).toHaveAttribute('data-theme', 'ciel')
-  await arrowTo(page, 'Ciel nuit')
-  await expect(card(page, 'Ciel nuit')).toHaveAttribute('aria-checked', 'true')
-  await expect(html(page)).toHaveAttribute('data-theme', 'ciel-nuit')
   await arrowTo(page, 'Clair')
   await expect(card(page, 'Clair')).toHaveAttribute('aria-checked', 'true')
   await expect(html(page)).toHaveAttribute('data-theme', 'light')
@@ -650,7 +643,7 @@ test('appearance/page: says the choice is not kept when the browser refuses to s
 
   // Nothing was kept: the next load follows the device again.
   await reloadSignedIn(page)
-  await expect(html(page)).toHaveAttribute('data-theme', 'ciel')
+  await expect(html(page)).toHaveAttribute('data-theme', DEVICE_THEME.light)
   await expect(card(page, 'Automatique')).toHaveAttribute('aria-checked', 'true')
 })
 
@@ -803,11 +796,11 @@ test('appearance/page: passes axe in every theme', async ({ page }) => {
   await useScenario(page, SCENARIOS)
   await openAppearance(page)
   for (const [theme, scheme, label] of [
-    ['ciel', 'light', 'Ciel'],
-    ['ciel-nuit', 'dark', 'Ciel nuit'],
     ['light', 'light', 'Clair'],
     ['dark', 'dark', 'Sombre'],
     ['black', 'dark', 'Noir'],
+    ['ciel', 'light', 'Automatique'],
+    ['ciel-nuit', 'dark', 'Automatique'],
   ] as const) {
     await page.evaluate(({ key, value }) => window.localStorage.setItem(key, value), {
       key: KEY,

@@ -16,7 +16,7 @@ struct SignedInView: View {
     @ObservedObject var session: AppSessionModel
 
     private var palette: KoderaTokens.Palette {
-        KoderaTokens.cielPalette(for: colorScheme)
+        KoderaTokens.activePalette(for: colorScheme)
     }
 
     var body: some View {

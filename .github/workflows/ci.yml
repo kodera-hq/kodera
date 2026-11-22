@@ -68,6 +68,8 @@ jobs:
         run: |
           python3 scripts/ci/check-docs-truth.py --selftest
           python3 scripts/ci/check-docs-truth.py
+          python3 scripts/ci/check-active-typography.py --selftest
+          python3 scripts/ci/check-active-typography.py
       - name: Decide which areas run
         id: plan
         env:
