@@ -53,8 +53,8 @@ from xml.parsers.expat import ExpatError
 # The qualified token producer. Regenerating the tokens from another revision
 # is a deliberate act: update this pin in the same change.
 TOKEN_FORMAT = "kodera-native-tokens/1"
-PRODUCER_COMMIT_PIN = "e4d3a65c0770c8fd6f36bf2e46a5778b6656e792"
-SOURCE_SHA256_PIN = "cdf9e7a299fb260a9aacd87c39cac82a7cec644e01a3a50757a92d5174ddee5a"
+PRODUCER_COMMIT_PIN = "17ea28a38ae3ed23a9d670d063e0992f8196e4d4"
+SOURCE_SHA256_PIN = "a295a7bea9919b0bb2d41e3221f4073792c0f5d447eacaa283e26dac3177a1fb"
 
 LANGUAGES = ("fr", "en")
 SOURCE_LANGUAGE = "fr"
