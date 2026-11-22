@@ -132,7 +132,7 @@ const SHORTHANDS = new Set([
 const NO_ROLE_YET = new Set([
   'ui/Banner/Banner.tsx border-red-500/40',
   'ui/Banner/Banner.tsx border-amber-500/40',
-  'ui/Button/Button.tsx border-red-500/40',
+  'ui/Button/TextButton.tsx border-red-500/40',
   'ui/LinkButton/LinkButton.tsx border-red-500/40',
   'ui/Table/Table.tsx bg-red-100/60',
 ])

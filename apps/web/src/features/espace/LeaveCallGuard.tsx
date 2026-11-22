@@ -15,7 +15,7 @@ function workspaceOf(pathname: string): string | null {
  * Anything else, another Console page or another organisation, unmounts the view and so ends
  * its call.
  */
-export function staysInWorkspace(currentPathname: string, nextPathname: string): boolean {
+function staysInWorkspace(currentPathname: string, nextPathname: string): boolean {
   const here = workspaceOf(currentPathname)
   return here !== null && workspaceOf(nextPathname) === here
 }

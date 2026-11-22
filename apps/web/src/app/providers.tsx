@@ -7,10 +7,8 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { useState } from 'react'
 import type { ReactNode } from 'react'
-import { useTranslation } from 'react-i18next'
 import { AuthProvider } from '../auth/AuthProvider'
 import { SessionExpiryProvider } from '../auth/sessionExpiry'
-import { ToastProvider } from '../ui/Toast/Toast'
 import { clearWorkspaceSettingsRuntime } from '../features/workspace/settingsRuntime'
 
 /**
@@ -35,19 +33,6 @@ export function createQueryClient(): QueryClient {
   })
 }
 
-function ToastProviderWithCopy({ children }: { children: ReactNode }) {
-  const { t } = useTranslation()
-  return (
-    <ToastProvider
-      label={t('console.common.a11y-notification')}
-      viewportLabel={t('console.common.a11y-notifications-region')}
-      closeLabel={t('console.common.action-close')}
-    >
-      {children}
-    </ToastProvider>
-  )
-}
-
 export interface AppProvidersProps {
   children: ReactNode
   /** Overrides the default client — tests render against one they control
@@ -69,9 +54,7 @@ export function AppProviders({ children, queryClient }: AppProvidersProps) {
           client.removeQueries({ queryKey: ['me'] })
         }}
       >
-        <SessionExpiryProvider>
-          <ToastProviderWithCopy>{children}</ToastProviderWithCopy>
-        </SessionExpiryProvider>
+        <SessionExpiryProvider>{children}</SessionExpiryProvider>
       </AuthProvider>
     </QueryClientProvider>
   )

@@ -1,4 +1,3 @@
-import '../../validation-policy'
 import { z } from '@/validation-policy'
 import { documentCommentSchema } from '../docs/documentComments'
 import { readDemoView } from '../../app/interactiveDemo'

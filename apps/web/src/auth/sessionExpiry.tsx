@@ -25,37 +25,6 @@ const RENEWAL_COOLDOWN_MS = 2_000
 /** `setTimeout` overflows above this delay; longer lifetimes are waited for in steps. */
 const LONGEST_TIMER_MS = 2 ** 31 - 1
 
-export type StashedFormState = Record<string, unknown>
-
-// §4.7's own re-authentication round trip is a FULL page navigation to
-// `id.kodera.io` and back (the same one `src/auth/oidc.ts`'s
-// `signIn`/`handleCallback` drive) — the entire JS heap, this provider's
-// React state included, is torn down and rebuilt from nothing partway
-// through it. A plain in-memory `Map` cannot survive that; `sessionStorage`
-// can, and is the SAME tier `src/auth/return-to.ts` and oidc-client-ts's own
-// PKCE interaction state already trust for exactly this reason. It is not
-// `localStorage` — the one store §4.7 rules out, because it outlives the
-// browser session rather than ending with it — so "never in localStorage"
-// and "must survive the redirect" are both satisfied at once.
-const STASH_STORAGE_KEY = 'kodera.web.session.formStash'
-
-function readStash(): Record<string, StashedFormState> {
-  const raw = window.sessionStorage.getItem(STASH_STORAGE_KEY)
-  if (raw === null) return {}
-  try {
-    const parsed: unknown = JSON.parse(raw)
-    return typeof parsed === 'object' && parsed !== null
-      ? (parsed as Record<string, StashedFormState>)
-      : {}
-  } catch {
-    return {}
-  }
-}
-
-function writeStash(all: Record<string, StashedFormState>): void {
-  window.sessionStorage.setItem(STASH_STORAGE_KEY, JSON.stringify(all))
-}
-
 interface SessionExpiryContextValue {
   /** Whether the countdown dialog should be showing. */
   expiring: boolean
@@ -77,17 +46,10 @@ interface SessionExpiryContextValue {
    * the URL is all that is left. Returns false when no realm is known and
    * nothing was started. */
   reauthenticate: (realmHint?: string) => boolean
-  /** Stores arbitrary form values under a screen-chosen key, read back once
-   * by `useFormStash` after the round trip — `sessionStorage`-backed so it
-   * survives the full-page redirect (never `localStorage`, which §4.7
-   * rules out; see the module comment on `STASH_STORAGE_KEY`). */
-  stash: (key: string, values: StashedFormState) => void
-  takeStashed: (key: string) => StashedFormState | undefined
   /** Registers a callback fired synchronously, just before `signInAgain`
    * starts the round trip — the mounted screen's own last chance to read
-   * its current field values (off the DOM, not off `Form`'s own state,
-   * which nothing outside a `Form` can reach) and `stash` them. Returns an
-   * unsubscribe function, the same shape `AuthAdapter.onExpiring` uses. */
+   * its current field values and persist them. Returns an unsubscribe
+   * function, the same shape `AuthAdapter.onExpiring` uses. */
   onBeforeSignInAgain: (callback: () => void) => () => void
 }
 
@@ -313,21 +275,6 @@ export function SessionExpiryProvider({ children }: { children: ReactNode }) {
     reauthenticate()
   }, [reauthenticate])
 
-  const stash = useCallback((key: string, values: StashedFormState) => {
-    const all = readStash()
-    all[key] = values
-    writeStash(all)
-  }, [])
-
-  const takeStashed = useCallback((key: string) => {
-    const all = readStash()
-    const value = all[key]
-    if (value === undefined) return undefined
-    delete all[key]
-    writeStash(all)
-    return value
-  }, [])
-
   const onBeforeSignInAgain = onBeforeSignIn
 
   const value = useMemo<SessionExpiryContextValue>(
@@ -343,8 +290,6 @@ export function SessionExpiryProvider({ children }: { children: ReactNode }) {
       signOutNow,
       signInAgain,
       reauthenticate,
-      stash,
-      takeStashed,
       onBeforeSignInAgain,
     }),
     [
@@ -359,8 +304,6 @@ export function SessionExpiryProvider({ children }: { children: ReactNode }) {
       signOutNow,
       signInAgain,
       reauthenticate,
-      stash,
-      takeStashed,
       onBeforeSignInAgain,
     ]
   )
@@ -395,22 +338,10 @@ export function useSessionExpiryDialog() {
   return { expiring, remainingS, extend, dismiss, signOutNow, signInAgain }
 }
 
-/** A screen stashes its own form values under a key it chooses (its route
- * path is a reasonable one) before the round trip, and reads them back once
- * mounted again — never through `localStorage` (§4.7). Registers its
- * `onSave` with `onBeforeSignInAgain` for the caller, and cleans up on
- * unmount, so a screen only has to say what to save, not when. */
+/** Registers `onSave` with `onBeforeSignInAgain` and cleans up on unmount, so
+ * a screen only has to say what to save before a re-authentication redirect,
+ * never through `localStorage` (§4.7). */
 export function useFormStash(onSave: () => void): void {
   const { onBeforeSignInAgain } = useSessionExpiryContext()
   useEffect(() => onBeforeSignInAgain(onSave), [onBeforeSignInAgain, onSave])
-}
-
-export function useTakeStashed(key: string): StashedFormState | undefined {
-  const { takeStashed } = useSessionExpiryContext()
-  const [value] = useState(() => takeStashed(key))
-  return value
-}
-
-export function useStash(): (key: string, values: StashedFormState) => void {
-  return useSessionExpiryContext().stash
 }

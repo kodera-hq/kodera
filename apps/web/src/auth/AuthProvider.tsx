@@ -22,11 +22,10 @@ import * as matrixAuth from './matrix'
 import { authAdapter as defaultAdapter } from './oidc'
 import { clearLocalSessionStorage } from './localSession'
 import {
-  disablePush,
   hasStoredPushDeviceKey,
   pushSupported,
   readStoredPushDeviceId,
-} from '../features/notifications/push'
+} from '../features/notifications/pushState'
 
 export interface AuthContextValue {
   readonly user: AuthUser | undefined
@@ -41,9 +40,39 @@ export interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null)
 
+export const PUSH_MODULE_LOAD_TIMEOUT_MS = 1_500
+
+// eslint-disable-next-line @typescript-eslint/consistent-type-imports
+type PushTeardownModule = Pick<typeof import('../features/notifications/push'), 'disablePush'>
+
+const defaultLoadPushModule = (): Promise<PushTeardownModule> =>
+  import('../features/notifications/push')
+
+async function loadPushModuleBounded(
+  load: () => Promise<PushTeardownModule>,
+  timeoutMs = PUSH_MODULE_LOAD_TIMEOUT_MS
+): Promise<PushTeardownModule | undefined> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    const pending = Promise.resolve(load())
+    void pending.catch(() => undefined)
+    return await Promise.race([
+      pending,
+      new Promise<undefined>((resolve) => {
+        timer = setTimeout(() => resolve(undefined), timeoutMs)
+      }),
+    ])
+  } catch {
+    return undefined
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+  }
+}
+
 export interface AuthProviderProps {
   children: ReactNode
   adapter?: AuthAdapter
+  loadPushModule?: () => Promise<PushTeardownModule>
   onSessionEnded?: () => void
   onCredentialChanged?: () => void
 }
@@ -194,6 +223,7 @@ function createAuthLifetime(
 export function AuthProvider({
   children,
   adapter: adapterProp,
+  loadPushModule = defaultLoadPushModule,
   onSessionEnded,
   onCredentialChanged,
 }: AuthProviderProps) {
@@ -237,11 +267,14 @@ export function AuthProvider({
     let didPushTeardown = false
     try {
       if (hadPushDeviceKey || pushSupported()) {
-        didPushTeardown = await disablePush({
-          deviceId: pushDeviceId,
-          accessToken: outgoingAccessToken,
-          bestEffort: true,
-        })
+        const pushModule = await loadPushModuleBounded(loadPushModule)
+        if (pushModule !== undefined) {
+          didPushTeardown = await pushModule.disablePush({
+            deviceId: pushDeviceId,
+            accessToken: outgoingAccessToken,
+            bestEffort: true,
+          })
+        }
       }
     } catch {
       didPushTeardown = false
@@ -276,7 +309,7 @@ export function AuthProvider({
     }
     const settled = await outcome
     if (!settled.ok) throw settled.error
-  }, [adapter, lifetime])
+  }, [adapter, lifetime, loadPushModule])
 
   const value = useMemo<AuthContextValue>(
     () => ({

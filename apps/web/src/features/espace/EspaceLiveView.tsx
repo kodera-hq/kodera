@@ -1,23 +1,4 @@
-import { WorkspacePaletteRegistration } from '../command-palette/WorkspacePaletteRegistration'
-import { MessageCueTracker } from './messageCues'
-// Espace's live view: one organisation's channels, the channel shown with its messages, its
-// composer and its members, an open thread, and the audio room the member is in. This module is
-// the view's owner: it decides which channel and which room are shown, holds the lease on the
-// member's drafts, and hands each part what it needs. The parts draw themselves, each from its
-// own slice of the store, of the call or of the draft, so each is drawn again only for what it
-// reads: `ChannelSidebar`, `MessageTimeline` and its `MessageRow`s, `MessageComposer`,
-// `VoiceCallDock`. What they share lives in `liveViewModel.ts`.
-
-import { confidentialMessages } from './confidentialMessages'
-import { permitsPlaintext } from '../confidential/room-boundary'
-import { MessagingOrganisation } from '../messaging/organisationContext'
-import { cleanText } from '../../ui/safeText'
-import { demoMessages } from '../../app/demoMessages'
-import type { ChannelDoc } from '../docs/ChannelDocsEditor'
-import { StudioNavigation } from '../workspace/StudioNavigation'
 import {
-  Fragment,
-  lazy,
   memo,
   useCallback,
   useEffect,
@@ -28,149 +9,92 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
-  Suspense,
 } from 'react'
 import type { KeyboardEvent, MouseEvent, ReactNode } from 'react'
 import { useRouter } from '@tanstack/react-router'
 import type { AnyRouter } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
+import { demoMessages } from '../../app/demoMessages'
+import { keepFocusOnRouteTo, releaseRouteFocus } from '../../app/routeFocusHold'
+import { useNarrowViewport } from '../../app/useNarrowViewport'
 import { getMatrixRegistrationStamp, type MatrixSession } from '../../auth/matrix'
+import { Button } from '../../ui/Button/Button'
+import { cx } from '../../ui/cx'
+import { Drawer } from '../../ui/Drawer/Drawer'
+import { InlineAlert } from '../../ui/InlineAlert/InlineAlert'
+import { cleanText } from '../../ui/safeText'
+import { WorkspacePaletteRegistration } from '../command-palette/WorkspacePaletteRegistration'
+import { permitsPlaintext } from '../confidential/room-boundary'
+import type { ChannelDoc } from '../docs/ChannelDocsEditor'
+import { MessagingOrganisation } from '../messaging/organisationContext'
+import type { Notification } from '../notifications/notificationFeed'
+import { KoderaPassportModal } from '../profile/KoderaPassportModal'
+import { isPlaceholderName } from '../profile/passport'
+import { PassportContext } from '../profile/passportContext'
+import type { MemberProfile } from '../profile/UserProfilePopover'
+import { soundEngine } from '../sounds/SoundEngine'
+import { withdrawn, type ChannelSearchEntry } from '../workspace/ChannelSearch'
+import { OrganisationHeader } from '../workspace/OrganisationHeader'
+import { categoryLabel, channelLabel, currentChannel } from '../workspace/workspace'
+import type { Workspace, WorkspaceCategory, WorkspaceChannel } from '../workspace/workspace'
+import { WORKSPACE_COMMAND_EVENT } from '../workspace/WorkspaceMenu'
+import { isArrivalsChannel } from './ArrivalCard'
+import { arrivalInserts } from './ArrivalInsert'
+import type { ChannelMenuTarget } from './ChannelContextMenu'
+import { ChannelSidebar } from './ChannelSidebar'
+import { createCommittedValue } from './committedValue'
+import { confidentialMessages } from './confidentialMessages'
+import { createLocalDrafts, useDraftChannel, useDraftSlice } from './draftChannel'
+import { EspaceCanvasPanes } from './EspaceCanvasPanes'
+import { EspaceChannelHeader } from './EspaceChannelHeader'
 import {
   useEspaceDraftMemory,
   type ChannelDraft,
   type DraftLease,
   type RoomTarget,
 } from './EspaceDraftProvider'
-import { Button } from '../../ui/Button/Button'
-import { Drawer } from '../../ui/Drawer/Drawer'
-import { ChannelInviteDialog } from './ChannelInviteDialog'
-import { useLocalProfile } from '../profile/localProfile'
-import { UserProfilePopover, type MemberProfile } from '../profile/UserProfilePopover'
-import { profileMessages } from '../profile/profileMessages'
-import {
-  getWorkspaceSettingsEpoch,
-  registerWorkspaceSettingsRuntime,
-  type WorkspaceSettingsProfile,
-} from '../workspace/settingsRuntime'
-import { PersonIcon } from '../../ui/icons/Person'
-import { CloseIcon } from '../../ui/icons/Close'
-import { InlineAlert } from '../../ui/InlineAlert/InlineAlert'
-import { Skeleton } from '../../ui/Skeleton/Skeleton'
-import { ThreadPanel } from '../../ui/ThreadPanel/ThreadPanel'
-import { useNarrowViewport } from '../../app/useNarrowViewport'
-import { withdrawn } from '../workspace/ChannelSearch'
-import type { ChannelSearchEntry } from '../workspace/ChannelSearch'
-import { OrganisationHeader } from '../workspace/OrganisationHeader'
-import { categoryLabel, channelLabel, currentChannel } from '../workspace/workspace'
-import type { Workspace, WorkspaceCategory, WorkspaceChannel } from '../workspace/workspace'
-import { createCallController, type CallSnapshot } from './audio/call'
-import {
-  createEspaceStore,
-  HEADER_FACES,
-  type ArrivalView,
-  type MemberView,
-  type RoomSummary,
-} from './matrix/store'
-import { isArrivalsChannel } from './ArrivalCard'
-import { arrivalInserts } from './ArrivalInsert'
-import { serverNameOf } from './homeserver'
+import { EspaceMembersPanel, EspaceSidebarResizer } from './EspaceMembersPanel'
+import { EspaceThreadPane } from './EspaceThreadPane'
 import { LeaveCallGuard } from './LeaveCallGuard'
-import { useTimelineScroll } from './useTimelineScroll'
-import type { MentionCandidate } from './mentions'
-import { useMarkRead } from './useMarkRead'
-import { useTabTitle } from './useTabTitle'
-import { useMicActivity } from './useMicActivity'
-import type { AudioSettingsCall } from './AudioSettings'
-import { channelAfter, channelMove } from './shortcuts'
-import { keepFocusOnRouteTo, releaseRouteFocus } from '../../app/routeFocusHold'
-import { soundEngine } from '../sounds/SoundEngine'
-import type { MessageView } from './matrix/timeline'
-import { AntennaIcon } from './AntennaIcon'
-import { ChannelSidebar } from './ChannelSidebar'
-import { createLocalDrafts, useDraftChannel, useDraftSlice } from './draftChannel'
 import {
-  activeJoinTargetIds,
   composing,
-  displayNameOf,
-  isNamedProfile,
-  safeDisplayName,
   isProximityChannel,
-  LIVE_CALL,
   NO_MESSAGES,
-  noCallSnapshot,
   profileRoleIn,
-  readyChannelIds,
   roomForChannel,
   roomResolved,
   roomRowId,
-  subscribeToNoCall,
   type AudioCallLike,
   type CallChannel,
   type CanvasMode,
   type EspaceStoreLike,
   type TimelineInsert,
 } from './liveViewModel'
-import {
-  historicalMentionCandidates,
-  inRoom,
-  MessageComposer,
-  ThreadComposer,
-} from './MessageComposer'
-import { MessageRow, type MessageRowActions } from './MessageRow'
-import { MessageSearch } from './MessageSearch'
+import { isMatrixRoomId } from './matrix/directs'
+import type { ArrivalView, RoomSummary } from './matrix/store'
+import type { MessageView } from './matrix/timeline'
+import { historicalMentionCandidates, inRoom, MessageComposer } from './MessageComposer'
+import { MessageCueTracker } from './messageCues'
+import type { MessageRowActions } from './MessageRow'
 import { MessageTimeline, type MessageTimelineHandle } from './MessageTimeline'
-import { PinnedMessages } from './PinnedMessages'
+import { mutedChannelsStorageKey, useMutedChannels } from './mutedChannels'
+import { channelAfter, channelMove } from './shortcuts'
+import { useEspaceJoinSync } from './useEspaceJoinSync'
+import { useEspacePassportAndProfile } from './useEspacePassportAndProfile'
+import { useEspaceRuntime } from './useEspaceRuntime'
+import { useMarkRead } from './useMarkRead'
 import { useStableHandler, useStoreSlice } from './useStoreSlice'
+import { useTimelineScroll } from './useTimelineScroll'
 import { VoiceCallDock, type CallPlacement } from './VoiceCallDock'
-import { cssProperty } from '../../ui/cssom'
-import { cx } from '../../ui/cx'
-import { squareAvatarPng } from '../profile/avatarImage'
-import { KoderaPassportModal, type PassportDraft } from '../profile/KoderaPassportModal'
-import { EMPTY_PASSPORT, isPlaceholderName } from '../profile/passport'
-import { PassportContext, type PassportServices } from '../profile/passportContext'
-import { useAvatarSrc } from './useAvatarSrc'
-import { MemberAvatar } from './MemberAvatar'
-import { publishRailDirects } from '../../app/railDirectsStore'
-import { isMatrixRoomId, type DirectSummary } from './matrix/directs'
-import { WORKSPACE_COMMAND_EVENT } from '../workspace/WorkspaceMenu'
-import type { ChannelMenuTarget } from './ChannelContextMenu'
-import type { Notification } from '../notifications/notificationFeed'
 
 // The view's public names stay this module's, wherever their definitions live.
 export { isProximityChannel, mergeTimelineInserts } from './liveViewModel'
 export type { AudioCallLike, EspaceStoreLike, TimelineInsert } from './liveViewModel'
+export { mutedChannelsStorageKey }
 
-const NO_CANDIDATES: readonly MentionCandidate[] = []
 const NO_DOCUMENTS: readonly ChannelDoc[] = []
 const NO_INSERTS: readonly TimelineInsert[] = []
 const NO_ARRIVALS: readonly ArrivalView[] = []
-
-/** The member's own microphone is on, in a call that is through. */
-const microphoneOn = (call: CallSnapshot) =>
-  call.status === 'connected' && !call.muted && call.muting !== true && !call.listenOnly
-const callIsLive = (call: CallSnapshot) => LIVE_CALL.has(call.status)
-
-/** The call, when it can choose the member's devices: what « Réglages audio » drives. */
-function deviceSettingsOf(call: AudioCallLike): AudioSettingsCall | null {
-  const { getDeviceChoice, chooseInput, chooseOutput } = call
-  if (getDeviceChoice === undefined || chooseInput === undefined || chooseOutput === undefined)
-    return null
-  const { setNoiseSuppression } = call
-  return {
-    getDeviceChoice,
-    chooseInput: (input) => chooseInput.call(call, input),
-    chooseOutput: (output) => chooseOutput.call(call, output),
-    ...(setNoiseSuppression === undefined
-      ? {}
-      : { setNoiseSuppression: (on: boolean) => setNoiseSuppression.call(call, on) }),
-  }
-}
-
-/**
- * A direct conversation, drawn as a channel is: its room is the summary itself, never one Core
- * resolves, so its id is marked as no channel id Core issues.
- */
-const NO_DIRECTS: readonly DirectSummary[] = []
 
 function directChannelOf(roomId: string, name: string): WorkspaceChannel {
   return {
@@ -183,52 +107,6 @@ function directChannelOf(roomId: string, name: string): WorkspaceChannel {
     room_state: 'ready',
   } as WorkspaceChannel
 }
-
-export function mutedChannelsStorageKey(org: string, workspaceId: string, userId: string): string {
-  return `kodera.muted-channels.${org}:${workspaceId}:${userId}`
-}
-
-function readMutedChannels(org: string, workspaceId: string, userId: string): Set<string> {
-  try {
-    const raw = window.localStorage.getItem(mutedChannelsStorageKey(org, workspaceId, userId))
-    if (!raw) return new Set()
-    const parsed = JSON.parse(raw) as unknown
-    return Array.isArray(parsed)
-      ? new Set(parsed.filter((item): item is string => typeof item === 'string'))
-      : new Set()
-  } catch {
-    return new Set()
-  }
-}
-
-function writeMutedChannels(
-  org: string,
-  workspaceId: string,
-  userId: string,
-  channels: ReadonlySet<string>
-): void {
-  try {
-    const key = mutedChannelsStorageKey(org, workspaceId, userId)
-    if (channels.size === 0) window.localStorage.removeItem(key)
-    else window.localStorage.setItem(key, JSON.stringify([...channels]))
-  } catch {
-    // Storage unavailable: keep session mute state in memory.
-  }
-}
-
-// Drawn only once « Fichiers » is chosen: the hub and its aggregation never weigh on opening a
-// channel, and the chunk is fetched on the click that needs it.
-const LazyExtensionsCatalogPanel = lazy(() =>
-  import('../extensions/ExtensionsCatalogPanel').then((module) => ({
-    default: module.ExtensionsCatalogPanel,
-  }))
-)
-const LazyWorkspaceFilesPanel = lazy(() =>
-  import('./WorkspaceFilesPanel').then((module) => ({ default: module.WorkspaceFilesPanel }))
-)
-const LazyCallsSurfaceView = lazy(() =>
-  import('./CallsSurfaceView').then((module) => ({ default: module.CallsSurfaceView }))
-)
 
 export interface EspaceLiveViewProps {
   /** Optional presentation metadata; never an access grant. */
@@ -283,41 +161,6 @@ export interface EspaceLiveViewProps {
     | undefined
 }
 
-/**
- * The view's own store, for one session. A stopped store never syncs again, and in development
- * React mounts, unmounts and remounts the view's effects: the unmount stops the store, so the
- * remount asks for `live()` and gets a new one, which the view then reads. A store syncs only once
- * started, so one built and never started is inert.
- */
-class OwnedStoreSlot {
-  #store: EspaceStoreLike
-  readonly #make: () => EspaceStoreLike
-  readonly #listeners = new Set<() => void>()
-
-  constructor(make: () => EspaceStoreLike) {
-    this.#make = make
-    this.#store = make()
-  }
-
-  subscribe = (listener: () => void): (() => void) => {
-    this.#listeners.add(listener)
-    return () => this.#listeners.delete(listener)
-  }
-
-  getSnapshot = (): EspaceStoreLike => this.#store
-
-  /** The store to start: the current one, or a new one in place of a stopped one. */
-  live(): EspaceStoreLike {
-    if (this.#store.getSnapshot().status === 'stopped') {
-      this.#store = this.#make()
-      for (const listener of this.#listeners) listener()
-    }
-    return this.#store
-  }
-}
-const subscribeToNoSlot = () => () => undefined
-const noSlotStore = () => null
-
 /** A message the member acts on, in the room it was shown in: never another room's. */
 interface ThreadOpener extends RoomTarget {
   store: EspaceStoreLike
@@ -328,33 +171,6 @@ interface ThreadOpener extends RoomTarget {
 
 const subscribeToNoDraft = () => () => undefined
 const noDraftSnapshot = () => 0
-
-/** A view-local external store: only committed lifecycle work publishes values. */
-function createCommittedValue<T>(initial: T) {
-  let current = initial
-  const listeners = new Set<() => void>()
-  return {
-    getSnapshot: () => current,
-    subscribe: (listener: () => void) => {
-      listeners.add(listener)
-      return () => {
-        listeners.delete(listener)
-      }
-    },
-    commit(next: T) {
-      if (Object.is(current, next)) return
-      current = next
-      for (const listener of [...listeners]) {
-        if (!listeners.has(listener)) continue
-        try {
-          listener()
-        } catch {
-          /* A removed/throwing observer cannot skip another. */
-        }
-      }
-    },
-  }
-}
 
 interface CommittedView {
   session: MatrixSession | undefined
@@ -400,7 +216,6 @@ export function EspaceLiveView(props: EspaceLiveViewProps) {
   if (!allowed)
     return <InlineAlert kind="error">{t('console.workspace.live.problem-unavailable')}</InlineAlert>
   return (
-    // A simulation has no organisation to store a file in or to preview a link through.
     <MessagingOrganisation
       value={props.store?.simulation === true ? null : props.workspace.organisation_id}
     >
@@ -409,11 +224,6 @@ export function EspaceLiveView(props: EspaceLiveViewProps) {
   )
 }
 
-/**
- * The view itself. Memoised: the outer view follows every change of the draft memory, a keystroke
- * included, to decide whether it may still be shown; this one is drawn again only for what it
- * reads.
- */
 const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
   categoryDescriptions,
   org,
@@ -450,7 +260,6 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
   const simulation = injectedStore?.simulation === true
   const demoGuidanceId = useId()
   const composerInputId = useId()
-  /** « Mentionner »: writes « @ » in the channel's composer and opens its member list. */
   const startMention = useRef<() => void>(null)
   const insertInComposer = useRef<(text: string) => void>(null)
   const threadInputId = useId()
@@ -468,121 +277,23 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
     channelChooserReturnFocus.current = headingRef.current
     setChannelsOpen(false)
   })
-  /** On a phone, the chooser gives way to what was chosen, and the heading takes the focus. */
   const leaveChannelChooser = useStableHandler(() => {
     if (!narrow) return
     channelChooserReturnFocus.current = headingRef.current
     setChannelsOpen(false)
   })
-  // The Console always mounts the view under its router; a view rendered on its own has no
-  // navigation to guard. Outside one, the hook gives `null`, whatever its type says.
   const inRouter = Boolean(useRouter({ warn: false }) as AnyRouter | null)
 
-  const ownedSlot = useMemo<OwnedStoreSlot | null>(() => {
-    if (injectedStore !== undefined) return null
-    if (session === undefined) return null
-    return new OwnedStoreSlot(() =>
-      createEspaceStore({
-        baseUrl: session.baseUrl,
-        userId: session.userId,
-        deviceId: session.deviceId,
-        accessToken: session.accessToken,
-        refreshToken: session.refreshToken,
-        refresh: session.refresh,
-      })
-    )
-  }, [injectedStore, session])
-  const ownedStore = useSyncExternalStore(
-    ownedSlot?.subscribe ?? subscribeToNoSlot,
-    ownedSlot?.getSnapshot ?? noSlotStore
-  )
-
-  useEffect(() => {
-    if (ownedSlot === null) return
-    const store = ownedSlot.live()
-    void store.start?.()?.catch(() => undefined)
-    return () => {
-      store.stop?.()
-    }
-  }, [ownedSlot])
-
-  const resolvedStore = injectedStore ?? ownedStore
-  if (resolvedStore === null) {
-    throw new Error('EspaceLiveView requires either a store or a MatrixSession')
-  }
-  const activeStore: EspaceStoreLike = resolvedStore
-  const settingsEpoch = useMemo(() => {
-    void activeStore
-    return getWorkspaceSettingsEpoch()
-  }, [activeStore])
-
-  const snapshot = useSyncExternalStore(activeStore.subscribe, activeStore.getSnapshot)
-  useTabTitle(snapshot.rooms)
-
-  // The store asks the directory; the view only says which channels it shows.
-  const readyChannels = readyChannelIds(workspace).join(' ')
-  useEffect(() => {
-    void activeStore.resolveChannels?.(readyChannels === '' ? [] : readyChannels.split(' '))
-  }, [activeStore, readyChannels])
-
-  // One call per view, on the homeserver the session names, with the store's own token.
-  const ownedCall = useMemo<AudioCallLike | null>(() => {
-    if (injectedCall !== undefined || activeStore.audioCall !== undefined || session === undefined)
-      return null
-    const { accessToken, renewAccessToken } = activeStore
-    if (accessToken === undefined || renewAccessToken === undefined) return null
-    return createCallController({
-      homeserver: session.baseUrl,
-      // Signed in as `@{sub}:{server name}` (`src/auth/matrix.ts`); an ID without one fails closed.
-      serverName: serverNameOf(session.userId) ?? '',
-      tokens: { current: accessToken, renew: renewAccessToken },
-      ...(activeStore.getRoomBoundary
-        ? {
-            roomBoundary: (roomId: string) => activeStore.getRoomBoundary?.(roomId) ?? 'unknown',
-            subscribeRoomBoundary: activeStore.subscribe,
-          }
-        : {}),
-      mediaEncryption: (roomId: string) =>
-        activeStore.getConfidentialMediaSession?.(roomId) ?? null,
-    })
-  }, [injectedCall, session, activeStore])
-
-  useEffect(() => {
-    if (ownedCall === null) return
-    // Leaving, not disposing: React mounts, unmounts and remounts an effect in development.
-    return () => {
-      void ownedCall.leave()
-    }
-  }, [ownedCall])
-
-  const activeCall = injectedCall ?? activeStore.audioCall ?? ownedCall
-  useEffect(() => {
-    if (!activeStore.audioCall) return
-    const call = activeStore.audioCall
-    return () => {
-      void call.leave()
-    }
-  }, [activeStore])
-  // The view reads two facts of the call, and is drawn again only when one of them changes: the
-  // dock and the room the member is in read the rest themselves (who is speaking, most of all).
-  const subscribeToCall = activeCall?.subscribe ?? subscribeToNoCall
-  const getCallSnapshot = activeCall?.getSnapshot ?? noCallSnapshot
-  // The member's own microphone, read only while it is on in a call that is through.
-  const micActivity = useMicActivity(
-    activeCall?.micLevel,
-    useStoreSlice(subscribeToCall, getCallSnapshot, microphoneOn)
-  )
-  const inLiveCall = useStoreSlice(subscribeToCall, getCallSnapshot, callIsLive)
-  const deviceSettings = useMemo(
-    () => (activeCall === null ? null : deviceSettingsOf(activeCall)),
-    [activeCall]
-  )
-
-  // A member signed out of the workspace's homeserver is no longer in its calls either.
-  const signedOut = snapshot.status === 'signed-out'
-  useEffect(() => {
-    if (signedOut && activeCall !== null) void activeCall.leave()
-  }, [signedOut, activeCall])
+  const {
+    activeStore,
+    settingsEpoch,
+    snapshot,
+    activeCall,
+    micActivity,
+    inLiveCall,
+    deviceSettings,
+    signedOut,
+  } = useEspaceRuntime({ injectedStore, injectedCall, session, workspace })
 
   const [viewingCallStage, setViewingCallStage] = useState(false)
   const [callDetached, setCallDetached] = useState(false)
@@ -600,11 +311,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
 
   const initialChannel = currentChannel(workspace, channelId)
   const addressedChannel = channelId ?? initialChannel?.id
-  // With a router, the channel shown is the one the committed address names, never the one a
-  // click asked for: a navigation given up on the way (Back before it commits) shows nothing else.
-  // Without one, a click chooses in place, until the address changes.
   const [clickedChannelId, setClickedChannelId] = useState<string | null>(null)
-  // The channel a click asked the router for, until its navigation settles.
   const [requestedChannelId, setRequestedChannelId] = useState<string | null>(null)
   const [addressedChannelId, setAddressedChannelId] = useState(channelId)
   if (addressedChannelId !== channelId) {
@@ -622,12 +329,9 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
   }
   const selectedChannelId =
     (onNavigateChannel === undefined ? clickedChannelId : null) ?? addressedChannel
-  // Between two addresses, the channel the member means is not known: nothing is sent.
   const navigationUnsettled =
     navigationPending || (requestedChannelId !== null && requestedChannelId !== addressedChannel)
 
-  // A direct conversation chosen in the sidebar stands in for the addressed channel until the
-  // address changes or another channel is chosen (docs/specs/messaging-media-and-notifications.md).
   const [direct, setDirect] = useState<{ roomId: string; over: string | null | undefined } | null>(
     null
   )
@@ -679,164 +383,28 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
     onChangeCanvasMode?.('chat')
     setDirect({ roomId, over: selectedChannelId })
   })
-  // No room, no messages and nowhere to send them: never a channel id taken for a room id.
   const activeRoomId = activeRoom?.roomId ?? null
   const roomBoundary =
     activeRoomId === null ? undefined : activeStore.getRoomBoundary?.(activeRoomId)
   const protectionUnavailable = roomBoundary !== undefined && !permitsPlaintext(roomBoundary)
-  const joinTargets = useMemo(
-    () => activeJoinTargetIds(workspace, snapshot.channels, activeChannel),
-    [workspace, snapshot.channels, activeChannel]
-  )
-  const joinTargetsKey = joinTargets.join(' ')
-  const fallbackJoinRuntime = useRef<{
-    store: EspaceStoreLike | null
-    attempted: Set<string>
-    seenInvites: Set<string>
-    targets: readonly string[]
-    running: boolean
-    cancelled: boolean
-  }>({
-    store: null,
-    attempted: new Set(),
-    seenInvites: new Set(),
-    targets: [],
-    running: false,
-    cancelled: false,
-  })
-  const [fallbackRefused, setFallbackRefused] = useState<{
-    store: EspaceStoreLike
-    rooms: ReadonlySet<string>
-  }>(() => ({ store: activeStore, rooms: new Set() }))
-  if (fallbackRefused.store !== activeStore) {
-    setFallbackRefused({ store: activeStore, rooms: new Set() })
-  }
-  const joinedRoomIdsKey = useMemo(
-    () => snapshot.rooms.map((item) => item.roomId).join(' '),
-    [snapshot.rooms]
-  )
-  const invitedRoomIdsKey = useMemo(
-    () => snapshot.invites.map((item) => item.roomId).join(' '),
-    [snapshot.invites]
-  )
-  useEffect(() => {
-    return () => {
-      if (fallbackJoinRuntime.current.store === activeStore) {
-        fallbackJoinRuntime.current.cancelled = true
-      }
-    }
-  }, [activeStore])
-  useEffect(() => {
-    const targets = joinTargetsKey === '' ? [] : joinTargetsKey.split(' ')
-    if (activeStore.ensureJoined !== undefined) {
-      activeStore.ensureJoined(targets)
-      return
-    }
-    const { join } = activeStore
-    if (join === undefined || snapshot.status !== 'live') return
-    if (fallbackJoinRuntime.current.store !== activeStore) {
-      fallbackJoinRuntime.current = {
-        store: activeStore,
-        attempted: new Set(),
-        seenInvites: new Set(),
-        targets: [],
-        running: false,
-        cancelled: false,
-      }
-    }
-    const runtime = fallbackJoinRuntime.current
-    runtime.cancelled = false
-    runtime.targets = targets
-    const joined = new Set(joinedRoomIdsKey === '' ? [] : joinedRoomIdsKey.split(' '))
-    for (const roomId of joined) runtime.attempted.add(roomId)
-    const currentInvites = new Set(invitedRoomIdsKey === '' ? [] : invitedRoomIdsKey.split(' '))
-    for (const seenId of runtime.seenInvites) {
-      if (!currentInvites.has(seenId)) runtime.seenInvites.delete(seenId)
-    }
-    for (const inviteId of currentInvites) {
-      if (!runtime.seenInvites.has(inviteId)) {
-        runtime.seenInvites.add(inviteId)
-        runtime.attempted.delete(inviteId)
-      }
-    }
-    if (runtime.running) return
-    runtime.running = true
-    void (async () => {
-      try {
-        while (!runtime.cancelled && runtime.store === activeStore) {
-          const currentSnap = activeStore.getSnapshot()
-          if (currentSnap.status !== 'live') break
-          const nextRoomId = runtime.targets.find(
-            (roomId) =>
-              !runtime.attempted.has(roomId) && !currentSnap.rooms.some((r) => r.roomId === roomId)
-          )
-          if (nextRoomId === undefined) break
-          runtime.attempted.add(nextRoomId)
-          try {
-            await join.call(activeStore, nextRoomId)
-          } catch (error: unknown) {
-            const err = error as { errcode?: unknown; httpStatus?: unknown } | null
-            if (!runtime.cancelled && (err?.errcode === 'M_FORBIDDEN' || err?.httpStatus === 403)) {
-              setFallbackRefused((current) => {
-                if (current.store !== activeStore || current.rooms.has(nextRoomId)) return current
-                const next = new Set(current.rooms)
-                next.add(nextRoomId)
-                return { store: activeStore, rooms: next }
-              })
-            }
-          }
-        }
-      } finally {
-        runtime.running = false
-      }
-    })()
-  }, [activeStore, joinTargetsKey, snapshot.status, joinedRoomIdsKey, invitedRoomIdsKey])
-  /** « 18 membres »: a text channel's people (`RoomSummary.joined`). */
-  const memberCount =
-    activeRoom?.joined === undefined
-      ? null
-      : t('console.workspace.channel.members-count', { count: activeRoom.joined })
-  /** Under the channel's name: its topic, then its member count (p02 « topic · 18 membres »). */
-  // A one-to-one conversation's other person: their presence is the header's line, where a
-  // channel says its topic and its count.
   const activeDirect =
     directRoomId === null
       ? undefined
       : activeStore.getDirects?.().find((item) => item.roomId === directRoomId)
-  const directPeer = activeDirect?.userIds
-  const directPresence =
-    directPeer?.length === 1
-      ? activeStore.isOnline?.(directPeer[0]!)
-        ? t('console.workspace.presence.online')
-        : t('console.workspace.directs.header-offline')
-      : undefined
-  const headerLine =
-    directRoomId !== null
-      ? directPresence === undefined
-        ? []
-        : [{ key: 'presence', text: directPresence }]
-      : [
-          ...(activeChannel !== null && activeChannel !== undefined && activeChannel.topic !== ''
-            ? [{ key: 'topic', text: activeChannel.topic }]
-            : []),
-          ...(memberCount === null ? [] : [{ key: 'members', text: memberCount }]),
-        ]
-  /** Beside it, a few of those members' faces, drawn only with the count they illustrate. */
-  const faces = activeRoom?.faces ?? []
-  // The first sync lazy-loads only the people who wrote lately: when the header shows fewer faces
-  // than the people it counts, the room's member list is asked for, once, to fill them in.
-  const facesMissing =
-    activeRoom?.joined !== undefined && faces.length < Math.min(HEADER_FACES, activeRoom.joined - 1)
-  useEffect(() => {
-    if (activeRoomId !== null && facesMissing) activeStore.loadMembers?.(activeRoomId)
-  }, [activeStore, activeRoomId, facesMissing])
+
+  const { joinRefused } = useEspaceJoinSync({
+    activeStore,
+    workspace,
+    snapshot,
+    activeChannel,
+    activeRoomId,
+  })
+
   const [membersOpen, setMembersOpen] = useState<boolean>(defaultMembersOpen)
   const [leftSidebarWidth, setLeftSidebarWidth] = useState<number>(256)
   const [rightSidebarWidth, setRightSidebarWidth] = useState<number>(280)
   const membersPanelId = useId()
   const membersTrigger = useRef<HTMLButtonElement>(null)
-  // The sidebar drag in progress, and the route-focus releases still waiting their task: neither
-  // outlives the view.
   const sidebarDrag = useRef<AbortController | null>(null)
   const routeFocusTimers = useRef<Map<ReturnType<typeof setTimeout>, string>>(new Map())
   useEffect(
@@ -844,7 +412,6 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
       sidebarDrag.current?.abort()
       for (const [timer, path] of routeFocusTimers.current) {
         clearTimeout(timer)
-        // The hold is the view's to let go: the timer going away must not keep it.
         releaseRouteFocus(path)
       }
       routeFocusTimers.current.clear()
@@ -855,10 +422,6 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
     setMembersOpen(false)
     membersTrigger.current?.focus()
   }
-  /**
-   * One drag at a time: its window listeners end on its mouseup, on a blur, when a newer drag
-   * starts, or when the view goes away, so a drag never leaks them.
-   */
   function startSidebarResize(event: MouseEvent<HTMLDivElement>, resize: (delta: number) => void) {
     event.preventDefault()
     sidebarDrag.current?.abort()
@@ -882,293 +445,39 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
       setRightSidebarWidth(Math.max(220, Math.min(560, rightSidebarWidth - delta)))
     )
   }
-  const viewerId = activeStore.getUserId()
-  const { profile: localProfile, hasProfile } = useLocalProfile(viewerId)
-  // The profile the homeserver holds for the member, re-read whenever the sync moves: a name or a
-  // picture set on another device arrives here without a request of its own.
-  void snapshot
-  const ownProfileRead = activeStore.getOwnProfile?.()
-  // The homeserver answers with a fresh object every time; what changes is the name and the
-  // address inside it. Memoised on those, so the settings panel's avatar is fetched when the
-  // avatar changes and not once per sync.
-  const ownDisplayName = ownProfileRead?.displayName
-  const ownAvatarUrl = ownProfileRead?.avatarUrl
-  const ownMatrixProfile = useMemo(
-    () =>
-      ownDisplayName === undefined && ownAvatarUrl === undefined
-        ? undefined
-        : { displayName: ownDisplayName, avatarUrl: ownAvatarUrl },
-    [ownDisplayName, ownAvatarUrl]
-  )
-  const settingsProfile = useMemo((): WorkspaceSettingsProfile | undefined => {
-    const { setProfileDisplayName, setProfileAvatar, clearProfileAvatar, fetchOwnAvatar } =
-      activeStore
-    if (!setProfileDisplayName || !setProfileAvatar || !clearProfileAvatar || !fetchOwnAvatar) {
-      return undefined
-    }
-    return {
-      // Cleaned before judged, as everywhere else: the settings panel seeds its field from this.
-      matrixDisplayName: isNamedProfile(cleanText(ownMatrixProfile?.displayName, 80), viewerId)
-        ? cleanText(ownMatrixProfile?.displayName, 80)
-        : undefined,
-      avatarKey: ownMatrixProfile?.avatarUrl,
-      fetchAvatar: (size) => fetchOwnAvatar.call(activeStore, size),
-      setDisplayName: (displayName) => setProfileDisplayName.call(activeStore, displayName),
-      setAvatar: async (file, filename) => {
-        await setProfileAvatar.call(activeStore, file, filename)
-      },
-      clearAvatar: () => clearProfileAvatar.call(activeStore),
-    }
-  }, [activeStore, ownMatrixProfile, viewerId])
-  const profileCopy = profileMessages(i18n.resolvedLanguage)
-  // What a profile card reads beyond its member (`passportContext.ts`): avatars, passports, and
-  // a direct message written from the card. The demo has none of them.
-  const passportServices = useMemo((): PassportServices | null => {
-    if (simulation) return null
-    const { openDirect } = activeStore
-    return {
-      avatars: activeStore.getAvatarCache?.(),
-      subscribe: activeStore.subscribe,
-      getSnapshot: activeStore.getSnapshot,
-      getPassport: activeStore.getPassport?.bind(activeStore),
-      sendDirect:
-        openDirect === undefined
-          ? undefined
-          : async (userId: string, text: string) => {
-              const roomId = await openDirect.call(activeStore, [userId])
-              await activeStore.send(roomId, text)
-            },
-    }
-  }, [activeStore, simulation])
-  // The rail's direct conversations (`app/railDirectsStore.ts`): published while this view is live, so
-  // the shell's rail pops the faces of the people with unread messages under its DM button.
-  const railDirectsOf = useCallback(() => activeStore.getDirects?.() ?? NO_DIRECTS, [activeStore])
-  const railDirectList = useStoreSlice(
-    activeStore.subscribe,
-    activeStore.getSnapshot,
-    railDirectsOf
-  )
-  const railAvatars = passportServices?.avatars
-  useEffect(() => {
-    if (simulation || activeStore.getDirects === undefined) {
-      publishRailDirects(null)
-      return
-    }
-    publishRailDirects({
-      items: railDirectList.map((item) => ({
-        roomId: item.roomId,
-        name: item.name,
-        userId: item.userIds.length === 1 ? item.userIds[0] : undefined,
-        avatarMxc: item.avatarMxc,
-        unread: item.unread,
-        active: item.roomId === directRoomId,
-      })),
-      avatars: railAvatars,
-      onOpen: selectDirect,
-      onOpenAll: () => {
-        const heading = document.querySelector<HTMLElement>('[data-directs-section] h3')
-        heading?.scrollIntoView({ block: 'nearest' })
-        heading?.focus()
-      },
-    })
-  }, [activeStore, simulation, railDirectList, railAvatars, directRoomId, selectDirect])
-  useEffect(() => () => publishRailDirects(null), [])
-  const ownAvatarSrc = useAvatarSrc(passportServices?.avatars, ownMatrixProfile?.avatarUrl)
-  // The first-run passport (`KoderaPassportModal`): offered once the member is live, while the
-  // name their homeserver holds is no name they chose and they have neither saved nor dismissed it.
-  const ownPassport = useStoreSlice(
-    activeStore.subscribe,
-    activeStore.getSnapshot,
-    useCallback(
-      () => activeStore.getPassport?.(viewerId) ?? EMPTY_PASSPORT,
-      [activeStore, viewerId]
-    )
-  )
-  const [closedPassport, setClosedPassport] = useState<{
-    store: EspaceStoreLike
-    viewerId: string
-  } | null>(null)
-  const passportClosed =
-    closedPassport?.store === activeStore && closedPassport.viewerId === viewerId
-  const passportOffered =
-    !simulation &&
-    !passportClosed &&
-    snapshot.status === 'live' &&
-    settingsProfile !== undefined &&
-    activeStore.setPassport !== undefined &&
-    !ownPassport.onboarded &&
-    isPlaceholderName(ownMatrixProfile?.displayName, viewerId)
-  const savePassport = useStableHandler(async (draft: PassportDraft) => {
-    if (settingsProfile === undefined || activeStore.setPassport === undefined) return
-    if (draft.avatar !== null) {
-      await settingsProfile.setAvatar(await squareAvatarPng(draft.avatar), 'avatar.png')
-    }
-    await settingsProfile.setDisplayName(draft.displayName)
-    await activeStore.setPassport(draft.passport)
-    setClosedPassport({ store: activeStore, viewerId })
-  })
-  const dismissPassport = useStableHandler(() => {
-    setClosedPassport({ store: activeStore, viewerId })
-    void activeStore.setPassport?.({ ...ownPassport, onboarded: true }).catch(() => undefined)
-  })
-  const roomMembers = useMemo(() => {
-    void snapshot
-    return activeRoomId === null ? undefined : activeStore.getMembers?.(activeRoomId)
-  }, [activeRoomId, activeStore, snapshot])
-  const rawRoster = useMemo(() => {
-    void snapshot
-    return activeRoomId === null ? [] : (activeStore.getRoster?.(activeRoomId) ?? roomMembers ?? [])
-  }, [activeRoomId, activeStore, roomMembers, snapshot])
-  // The word this language has for a member no name is held for; `displayNameOf` adds the few
-  // characters that tell two of them apart.
-  const unnamedMember = t('console.workspace.members.unnamed')
-  const nameOfMember = (member: MemberView) =>
-    safeDisplayName(member.name, member.userId, unnamedMember)
-  /**
-   * The member's own name, from the closest thing to a name there is: what they set on this
-   * device, then what their homeserver holds, then what a room holds for them, then the name
-   * their console account carries. Only when none of those says anything does the id stand in.
-   */
-  const viewerName =
-    localProfile.displayName ||
-    [
-      ownMatrixProfile?.displayName,
-      roomMembers?.find((member) => member.userId === viewerId)?.name,
-      rawRoster.find((member) => member.userId === viewerId)?.name,
-    ]
-      // Cleaned before judged, as `safeDisplayName` does: the name a screen draws is the one
-      // that has to hold up, not the one that arrived.
-      .map((name) => cleanText(name, 80))
-      .filter((name) => isNamedProfile(name, viewerId))[0] ||
-    accountName ||
-    displayNameOf(viewerId, unnamedMember)
-  const roster =
-    rawRoster.some((member) => member.userId === viewerId) || !hasProfile
-      ? rawRoster
-      : [...rawRoster, { userId: viewerId, name: viewerName }]
-  function memberProfile(member: MemberView): MemberProfile {
-    return {
-      userId: member.userId,
-      name: member.userId === viewerId ? viewerName : nameOfMember(member),
-      presence:
-        member.userId === viewerId && hasProfile
-          ? localProfile.presence
-          : activeStore.isOnline?.(member.userId)
-            ? 'online'
-            : 'offline',
-      role: profileRoleIn(activeStore, activeRoomId, member.userId),
-      ...(member.userId === viewerId ? { status: localProfile.status } : {}),
-      ...(member.avatarMxc === undefined ? {} : { avatarMxc: member.avatarMxc }),
-    }
-  }
-  const resolveMember = useStableHandler((userId: string): MemberProfile => {
-    if (userId === viewerId) {
-      return memberProfile({
-        userId: viewerId,
-        name: viewerName,
-        ...(ownMatrixProfile?.avatarUrl === undefined
-          ? {}
-          : { avatarMxc: ownMatrixProfile.avatarUrl }),
-      })
-    }
-    const found =
-      rawRoster.find((member) => member.userId === userId) ??
-      roomMembers?.find((member) => member.userId === userId)
-    if (found !== undefined) return memberProfile(found)
-    return {
-      userId,
-      name: userId,
-      presence: activeStore.isOnline?.(userId) ? 'online' : 'offline',
-      role: profileRoleIn(activeStore, activeRoomId, userId),
-    }
-  })
-  const mentionMembers = useMemo(() => {
-    const source = rawRoster.length > 0 ? rawRoster : roomMembers
-    if (source === undefined) return undefined
-    const unnamed = t('console.workspace.members.unnamed')
-    return source.map(({ userId, name }) => ({
-      userId,
-      name: safeDisplayName(name, userId, unnamed),
-    }))
-  }, [rawRoster, roomMembers, t])
-  const connectorChannels = useMemo(
-    () =>
-      [
-        ...workspace.categories.flatMap((category) => category.channels),
-        ...workspace.uncategorised_channels,
-      ]
-        .filter((channel) => {
-          const room = snapshot.channels.get(channel.id)
-          return (
-            channel.kind === 'text' &&
-            room?.state === 'resolved' &&
-            snapshot.rooms.some((joined) => joined.roomId === room.roomId) &&
-            activeStore.canSendMessage?.(room.roomId) !== false
-          )
-        })
-        .map((channel) => ({ id: channel.id, label: channelLabel(channel, t) })),
-    [workspace, snapshot, activeStore, t]
-  )
-  useEffect(
-    () =>
-      registerWorkspaceSettingsRuntime(
-        {
-          org,
-          userId: viewerId,
-          displayName: viewerName,
-          ...(accountName === undefined ? {} : { accountName }),
-          channels: connectorChannels,
-          members: [
-            ...rawRoster.filter((member) => member.userId !== viewerId),
-            { userId: viewerId, name: viewerName },
-          ],
-          call: deviceSettings,
-          ...(settingsProfile === undefined ? {} : { profile: settingsProfile }),
-          invite:
-            activeRoomId !== null && activeStore.inviteToRoom
-              ? (userId) => activeStore.inviteToRoom!(activeRoomId, userId)
-              : undefined,
-          memberRole: (userId) =>
-            activeRoomId === null
-              ? 'member'
-              : (activeStore.getMemberRole?.(activeRoomId, userId) ?? 'member'),
-        },
-        settingsEpoch
-      ),
-    [
-      org,
-      viewerId,
-      viewerName,
-      accountName,
-      rawRoster,
-      settingsEpoch,
-      deviceSettings,
-      settingsProfile,
-      connectorChannels,
-      activeRoomId,
-      activeStore,
-    ]
-  )
-  useEffect(() => {
-    if (membersOpen && activeRoomId !== null) activeStore.loadMembers?.(activeRoomId)
-  }, [membersOpen, activeRoomId, activeStore])
-  // Leaving the room, or the view, says the member no longer types there.
-  useEffect(() => {
-    if (activeRoomId === null) return
-    return () => activeStore.setTyping?.(activeRoomId, false)
-  }, [activeStore, activeRoomId])
-  const mentionCandidates = useMemo(() => {
-    const unnamed = t('console.workspace.members.unnamed')
-    return (
-      roomMembers?.map(({ userId, name }) => ({
-        userId,
-        label: safeDisplayName(name, userId, unnamed),
-      })) ?? NO_CANDIDATES
-    )
-  }, [roomMembers, t])
 
-  // The memory's epoch: a new one is a new lease to ask for. Read here, since the outer view's
-  // own reading of the memory no longer draws this one.
+  const {
+    viewerId,
+    ownMatrixProfile,
+    profileCopy,
+    passportServices,
+    ownAvatarSrc,
+    ownPassport,
+    passportOffered,
+    savePassport,
+    dismissPassport,
+    unnamedMember,
+    nameOfMember,
+    roster,
+    memberProfile,
+    resolveMember,
+    mentionMembers,
+    mentionCandidates,
+  } = useEspacePassportAndProfile({
+    org,
+    workspace,
+    activeStore,
+    snapshot,
+    simulation,
+    activeRoomId,
+    directRoomId,
+    selectDirect,
+    accountName,
+    deviceSettings,
+    settingsEpoch,
+    membersOpen,
+  })
+
   const viewEpoch = useSyncExternalStore(
     memory?.subscribe ?? subscribeToNoDraft,
     memory?.getViewEpoch ?? noDraftSnapshot
@@ -1192,7 +501,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
       if (committedLease.getSnapshot() === next) committedLease.commit(null)
     }
   }, [memory, activeStore, draftOrganisationId, activeRoomId, viewEpoch, committedLease])
-  // Another store is another session, perhaps another member's: it starts with no draft.
+
   const [draftContext, setDraftContext] = useState(() => ({
     store: activeStore,
     generation: 0,
@@ -1205,11 +514,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
       drafts: createLocalDrafts(),
     })
   }
-  // A draft belongs to the room it was typed for and to the member who typed it.
   const draftKey = activeRoomId === null ? null : `${viewerId}\n${activeRoomId}`
-  // What the member has started in the channel shown. The view reads one slice of it, the open
-  // thread; the composer and the thread's field read their own text (`MessageComposer`), so a
-  // keystroke draws neither this view nor the message log.
   const draft = useDraftChannel(memory, lease, draftContext.drafts, draftKey)
   const mentionMember = useStableHandler((member: MemberProfile) => {
     activeStore.loadMembers?.(activeRoomId!)
@@ -1242,8 +547,6 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
     )
   }
 
-  // Read only at explicit close. ThreadPanel calls onClose before reading this
-  // target; the following commit retires the record after that focus handoff.
   const threadFocusTarget = {
     get current() {
       const opener = threadOpener.current
@@ -1270,7 +573,6 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
     []
   )
 
-  /** Opens a message's thread; a reply typed under another thread is not carried to it. */
   const openThread = useStableHandler((eventId: string, element: HTMLButtonElement) => {
     if (activeRoomId === null || draftKey === null) return
     setMembersOpen(false)
@@ -1304,11 +606,6 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
     history,
     loadOlder: activeStore.loadOlder,
   })
-  // Where the member had read up to when this room opened. Noted before `useMarkRead` moves the
-  // marker (it runs after this draw), and kept for the visit: « Nouveaux messages » stays where it
-  // was while the member reads, instead of vanishing as soon as the room is marked read. Noted
-  // only for a room that counted something unread: in a room already read, a message that
-  // arrives while the member is on it is not one they missed.
   const readMarkerOf = (room: RoomSummary | undefined) =>
     room === undefined || (room.unread === 0 && room.mentions === 0)
       ? null
@@ -1321,37 +618,17 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
   if (readAtOpen.store !== activeStore || readAtOpen.roomId !== activeRoomId) {
     setReadAtOpen({ store: activeStore, roomId: activeRoomId, eventId: readMarkerOf(activeRoom) })
   }
-  // Resolved on every draw, so a marker older than the loaded messages is found once older
-  // messages bring it in. A walk over the loaded events: about a millisecond for 500 messages.
   const unreadFrom =
     activeRoomId === null || readAtOpen.eventId === null
       ? null
       : (activeStore.firstShownAfter?.(activeRoomId, readAtOpen.eventId) ?? null)
   useMarkRead({ room: activeRoom, newestKey: timeline.at(-1)?.key, store: activeStore })
 
-  const muteScopeKey = `${org}:${workspace.organisation_id}:${viewerId}`
-  const [mutedState, setMutedState] = useState<{
-    scope: string
-    channels: ReadonlySet<string>
-  }>(() => ({
-    scope: muteScopeKey,
-    channels: readMutedChannels(org, workspace.organisation_id, viewerId),
-  }))
-  if (mutedState.scope !== muteScopeKey) {
-    setMutedState({
-      scope: muteScopeKey,
-      channels: readMutedChannels(org, workspace.organisation_id, viewerId),
-    })
-  }
-  const mutedChannels = mutedState.channels
-  const isChannelMuted = useCallback((id: string) => mutedChannels.has(id), [mutedChannels])
-  const toggleChannelMute = useStableHandler((target: ChannelMenuTarget) => {
-    const next = new Set(mutedChannels)
-    if (next.has(target.channelId)) next.delete(target.channelId)
-    else next.add(target.channelId)
-    writeMutedChannels(org, workspace.organisation_id, viewerId, next)
-    setMutedState({ scope: muteScopeKey, channels: next })
-  })
+  const { mutedChannels, isChannelMuted, toggleChannelMute } = useMutedChannels(
+    org,
+    workspace.organisation_id,
+    viewerId
+  )
 
   const messageCues = useRef<{ store: EspaceStoreLike; tracker: MessageCueTracker } | null>(null)
   useEffect(() => {
@@ -1375,15 +652,12 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
     )
   }, [activeStore, snapshot, timeline, activeRoomId, effectiveCanvasMode, mutedChannels])
 
-  /** `keepFocus`: the new address leaves the focus where it is (`RouteFocus`), as a click does not. */
   const selectTextChannel = useStableHandler((nextChannelId: string, keepFocus = false) => {
     closeChannelChooser()
     setDirect(null)
     setViewingCallStage(false)
     setFullStage(false)
     setLocalCallsOpen(false)
-    // A conversation chosen is a conversation asked for: the canvas comes back to the chat, or the
-    // member would stay in the documents with both the channel and « Docs » drawn as current.
     onChangeCanvasMode?.('chat')
     if (onNavigateChannel === undefined) {
       setClickedChannelId(nextChannelId)
@@ -1394,8 +668,6 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
     if (keepFocus) keepFocusOnRouteTo(path)
     const settled = () => {
       setRequestedChannelId((current) => (current === nextChannelId ? null : current))
-      // Once the navigation is over, the address it reached has been drawn, and one it never
-      // reached (superseded, refused) holds nothing. A task later, after that draw.
       if (keepFocus) {
         const timer = setTimeout(() => {
           routeFocusTimers.current.delete(timer)
@@ -1407,7 +679,6 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
     void Promise.resolve(onNavigateChannel(nextChannelId)).then(settled, settled)
   })
 
-  // Polite announcements cover keyboard actions and refused protection-sensitive actions.
   const [announcement, setAnnouncementState] = useState({ count: 0, text: '' })
   const setAnnouncement = useCallback(
     (text: string) => setAnnouncementState((current) => ({ count: current.count + 1, text })),
@@ -1440,7 +711,6 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
         roomName: channelLabel(channel, t),
         categoryName,
       })
-      // Called from the click: the call unlocks audio playback while the gesture still counts.
       void activeCall.join(room.roomId)
     }
   )
@@ -1528,15 +798,11 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
     [searchEntries]
   )
 
-  // A text channel opens, and focus goes to its heading. An audio room is not joined: focus goes
-  // to its row, whose own action joins it — unless its category is folded away or the room cannot
-  // be joined yet, when the search keeps focus.
   const openFromSearch = useStableHandler((entry: ChannelSearchEntry): HTMLElement | null => {
     if (entry.kind === 'text') {
       selectTextChannel(entry.id)
       return headingRef.current
     }
-    // A room that cannot be joined yet draws a disabled row, which cannot take focus either.
     const row = document.getElementById(roomRowId(sidebarHeadingId, entry.id))
     return row instanceof HTMLButtonElement && !row.disabled && row.closest('[hidden]') === null
       ? row
@@ -1567,7 +833,6 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
     if (entry.kind === 'text') onChangeCanvasMode?.('chat')
     return openFromSearch(entry)
   })
-  // Whether « Docs » has been opened in this view's life; see the pane below.
   const [docsEverOpened, setDocsEverOpened] = useState(effectiveCanvasMode === 'docs')
   if (effectiveCanvasMode === 'docs' && !docsEverOpened) setDocsEverOpened(true)
   const switchCanvas = useStableHandler((mode: CanvasMode) => {
@@ -1588,18 +853,6 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
   const activeChannelName =
     activeChannel !== null && activeChannel !== undefined ? channelLabel(activeChannel, t) : ''
   const isArchivedChannel = activeChannel?.lifecycle === 'archived'
-  const resolvedActiveChannel =
-    activeChannel !== null && activeChannel !== undefined
-      ? snapshot.channels.get(activeChannel.id)
-      : undefined
-  const resolvedActiveRoomId =
-    resolvedActiveChannel?.state === 'resolved' ? resolvedActiveChannel.roomId : null
-  const joinRefused =
-    activeRoomId === null &&
-    resolvedActiveRoomId !== null &&
-    !snapshot.invites.some((invite) => invite.roomId === resolvedActiveRoomId) &&
-    (activeStore.getJoinState?.(resolvedActiveRoomId) === 'refused' ||
-      (fallbackRefused.store === activeStore && fallbackRefused.rooms.has(resolvedActiveRoomId)))
   const canSendInRoom =
     activeRoomId !== null && (activeStore.canSendMessage?.(activeRoomId) ?? true)
   const canWrite = !isArchivedChannel && !protectionUnavailable && canSendInRoom
@@ -1608,7 +861,6 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
     !protectionUnavailable &&
     activeRoomId !== null &&
     (activeStore.canReact?.(activeRoomId) ?? true)
-  // The welcome channel (`#arrivées`): each newcomer's join is a card with a 👋 to wave at them.
   const welcomeRoomId =
     directRoomId === null && activeRoomId !== null && isArrivalsChannel(activeChannelName)
       ? activeRoomId
@@ -1630,10 +882,8 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
         activeStore.toggleReaction(welcomeRoomId, eventId, emoji)
       ),
     ].sort((a, b) => a.ts - b.ts)
-    // `nameOfMember` reads the language's word for an unnamed member, which `t` changes with.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [timelineInserts, welcomeRoomId, arrivals, canReact, activeStore, t])
-  // In place of the composer, why the member cannot write here; nothing while the sync starts.
+  }, [timelineInserts, welcomeRoomId, arrivals, nameOfMember, canReact, activeStore])
+
   const paneNotice = protectionUnavailable
     ? roomBoundary === 'unknown'
       ? protectionCopy.checking
@@ -1652,8 +902,6 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
                 ? t('console.workspace.channel.label-arriving')
                 : undefined
 
-  // What a message's controls do. Each keeps its identity, and acts on the room shown when it is
-  // used: a message is not drawn again because the view was.
   const retryMessage = useStableHandler((msg: MessageView) => {
     if (!canWrite || activeRoomId === null) return
     draft.command(() => {
@@ -1681,7 +929,6 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
 
   const editMessage = useStableHandler((msg: MessageView) => {
     if (!canWrite) return
-    // The new message being written gives way to the edit, which the room is not told about.
     if (activeRoomId !== null) activeStore.setTyping?.(activeRoomId, false)
     const target = targetInShownRoom(msg.eventId)
     const retained = historicalMentionCandidates(msg, mentionCandidates)
@@ -1700,7 +947,6 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
       })
   })
 
-  // The log's handle: pinned messages and search results bring a message into sight through it.
   const timelineHandle = useRef<MessageTimelineHandle>(null)
   const showMessage = useStableHandler(
     (eventId: string): boolean => timelineHandle.current?.showMessage(eventId) ?? false
@@ -1726,9 +972,6 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
       ? activeStore.getThread(activeRoomId, openThreadRootId)
       : []
   const channelColumn = useRef<HTMLElement>(null)
-  // A key moved the channel. The focus stays where it was, but a channel with no composer (archived,
-  // still being prepared) takes the composer away: the focus would fall to the page, with
-  // `RouteFocus` held from rescuing it, so the channel's heading takes it instead.
   const movedByKey = useRef(false)
   const shownChannelId = activeChannel?.id
   useEffect(() => {
@@ -1747,12 +990,9 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
         .map((channel) => channel.id),
     [workspace]
   )
-  // Read at the key press, so the listener is not added again on every render.
   const onChannelKey = useEffectEvent((event: globalThis.KeyboardEvent) => {
     const move = channelMove(event)
     if (move === null || event.defaultPrevented || withdrawn(channelColumn.current)) return
-    // From the thread panel or a popover (the reaction or emoji palette), the channel's change
-    // would take away the very thing the focus is in: the key is theirs.
     const from = event.target instanceof Element ? event.target : null
     if (from?.closest('aside, [data-popover]')) return
     event.preventDefault()
@@ -1764,8 +1004,6 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
           : roomForChannel(channel, snapshot.channels, snapshot.rooms)
       return room !== undefined && (room.unread > 0 || room.mentions > 0)
     }
-    // From the channel already asked for, while the address has not caught up: two quick presses
-    // go two channels on.
     const next = channelAfter(
       textChannelIds,
       requestedChannelId ?? activeChannel?.id,
@@ -1790,18 +1028,15 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
     return () => window.removeEventListener('keydown', listen)
   }, [])
 
-  /** `Escape` in the channel's column: the edit, else the reply, else the unread, given up. */
   function columnKeyDown(event: KeyboardEvent<HTMLElement>) {
     if (event.key !== 'Escape' || event.defaultPrevented || composing(event)) return
     if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
-    // Read at the key press: what the member types does not draw this view again.
     const current = draft.read()
     if (current.editing !== null) {
       event.preventDefault()
       draft.update({ editing: null, text: '' })
       return
     }
-    // A reply is under way only while its banner shows: to a loaded message of this room.
     const replyToEventId = inRoom(current.replyTo, activeRoomId)
     if (
       replyToEventId !== null &&
@@ -1928,8 +1163,6 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
     }
   })
 
-  // Leaving the view ends the call, so leaving it asks first. Not while signed out: the call is
-  // already left then, and « Se reconnecter » leaves the page on purpose.
   const guardCall = inLiveCall && !signedOut
   const callPlacement: CallPlacement = !inLiveCall
     ? 'stage'
@@ -2051,33 +1284,19 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
           ) : null}
           {inRouter ? <LeaveCallGuard live={guardCall} /> : null}
           {narrow ? null : (
-            // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
-            <div
-              data-testid="espace-sidebar-primary-resizer"
-              role="separator"
-              aria-orientation="vertical"
-              aria-label={t('console.workspace.layout.resize-channels')}
-              aria-valuenow={leftSidebarWidth}
-              aria-valuemin={180}
-              aria-valuemax={420}
-              // A focusable splitter (role="separator" with a value) is interactive in WAI-ARIA.
-              // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
-              tabIndex={0}
+            <EspaceSidebarResizer
+              testId="espace-sidebar-primary-resizer"
+              ariaLabel={t('console.workspace.layout.resize-channels')}
+              value={leftSidebarWidth}
+              min={180}
+              max={420}
+              defaultWidth={256}
+              direction="left"
               onMouseDown={startLeftSidebarResize}
-              onDoubleClick={() => setLeftSidebarWidth(256)}
-              onKeyDown={(event) => {
-                if (event.key === 'ArrowLeft') {
-                  event.preventDefault()
-                  setLeftSidebarWidth((w) => Math.max(180, w - 16))
-                } else if (event.key === 'ArrowRight') {
-                  event.preventDefault()
-                  setLeftSidebarWidth((w) => Math.min(420, w + 16))
-                }
-              }}
+              onChangeWidth={setLeftSidebarWidth}
               className="col-start-2 row-span-3 row-start-1 w-1 shrink-0 cursor-col-resize bg-c-border-soft transition-colors hover:bg-c-action focus-visible:bg-c-action focus-visible:outline-hidden"
             />
           )}
-          {/* `Escape` from anything in the column that did not use it (spec « Keyboard shortcuts »). */}
           {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions */}
           <section
             ref={channelColumn}
@@ -2098,250 +1317,67 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
                 <span key={announcement.count}>{announcement.text}</span>
               )}
             </p>
-            <header
-              hidden={effectiveCanvasMode === 'files' || effectiveCanvasMode === 'integrations'}
-              className="flex items-center gap-3 border-b border-c-border-soft pb-4 narrow:flex-wrap narrow:gap-2 narrow:pb-2"
-            >
-              <div className="flex min-w-0 flex-1 flex-col gap-1 narrow:basis-full">
-                {activeChannel === null || activeChannel === undefined ? (
-                  <h1
-                    ref={headingRef}
-                    tabIndex={-1}
-                    data-route-heading=""
-                    className="text-lg font-semibold text-c-ink"
-                  >
-                    {t(
-                      activeChannel === null
-                        ? 'console.workspace.channel.title-not-found'
-                        : 'console.workspace._.title'
-                    )}
-                  </h1>
-                ) : (
-                  <h1
-                    ref={headingRef}
-                    tabIndex={-1}
-                    data-route-heading=""
-                    className="flex min-w-0 items-center gap-2 text-lg font-semibold text-c-ink"
-                  >
-                    {directRoomId !== null ? (
-                      // A direct conversation is a person, not a channel: their avatar and « @Name », never « # ».
-                      <>
-                        <span aria-hidden="true" className="inline-flex shrink-0">
-                          <MemberAvatar
-                            mxc={activeDirect?.avatarMxc}
-                            name={activeChannelName}
-                            identity={activeDirect?.userIds[0] ?? directRoomId}
-                            size="xs"
-                          />
-                        </span>
-                        <span aria-hidden="true" className="font-medium text-c-ink-3">
-                          @
-                        </span>
-                      </>
-                    ) : isProximityChannel(activeChannel, proximityChannelIds) ? (
-                      <span aria-hidden="true" className="text-c-ink-3">
-                        <AntennaIcon />
-                      </span>
-                    ) : (
-                      <span aria-hidden="true" className="font-mono font-medium text-c-ink-3">
-                        #
-                      </span>
-                    )}
-                    <span className="min-w-0 truncate">{activeChannelName}</span>
-                  </h1>
-                )}
-                {roomBoundary === undefined ? null : (
-                  <p role="status" className="text-xs text-c-ink-3">
-                    {protectionCopy[roomBoundary]}
-                  </p>
-                )}
-                {headerLine.length > 0 ? (
-                  <div className="flex min-w-0 items-center gap-2">
-                    <p className="min-w-0 text-sm text-c-ink-3">
-                      {headerLine.map((part, index) => (
-                        <Fragment key={part.key}>
-                          {index > 0 ? (
-                            <>
-                              {' '}
-                              <span aria-hidden="true">·</span>{' '}
-                            </>
-                          ) : null}
-                          <span>{part.text}</span>
-                        </Fragment>
-                      ))}
-                    </p>
-                    {/* Reference screen p02: who is here, at a glance, beside the count that says it
-                    in words, so the faces are not read. Someone with no name gets a person
-                    glyph, never a character of their id. */}
-                    {memberCount !== null && faces.length > 0 ? (
-                      <span className="flex shrink-0 gap-1 narrow:hidden">
-                        {faces.map((face) => {
-                          const named = isNamedProfile(cleanText(face.name, 80), face.userId)
-                          return (
-                            <MemberAvatar
-                              key={face.userId}
-                              mxc={face.avatarMxc}
-                              name={safeDisplayName(face.name, face.userId, unnamedMember)}
-                              identity={face.userId}
-                              onlineLabel={
-                                activeStore.isOnline?.(face.userId)
-                                  ? simulation
-                                    ? demoCopy.presence
-                                    : t('console.workspace.presence.online')
-                                  : undefined
-                              }
-                              anonymous={!named}
-                              size="xs"
-                              className="ring-2 ring-c-surface"
-                            />
-                          )
-                        })}
-                      </span>
-                    ) : null}
-                  </div>
-                ) : null}
-              </div>
-              {directRoomId === null &&
-              activeRoom !== undefined &&
-              activeChannel != null &&
-              !focusedDocs &&
-              effectiveCanvasMode === 'chat' ? (
-                <ChannelInviteDialog
-                  key={`${org}:${activeRoom.roomId}`}
-                  triggerRef={inviteTrigger}
-                  org={org}
-                  channel={activeChannel}
-                  room={activeRoom}
-                  store={activeStore}
-                  unavailable={navigationUnsettled || signedOut}
-                />
-              ) : null}
-              {activeRoomId === null || focusedDocs || effectiveCanvasMode !== 'chat' ? null : (
-                <>
-                  <MessageSearch store={activeStore} roomId={activeRoomId} onShow={showMessage} />
-                  <PinnedMessages store={activeStore} roomId={activeRoomId} onShow={showMessage} />
-                </>
-              )}
-              {activeRoomId === null || focusedDocs ? null : (
-                <Button
-                  variant="tertiary"
-                  size="sm"
-                  icon={<PersonIcon />}
-                  iconOnly
-                  aria-label={t('console.workspace.members.title')}
-                  ref={membersTrigger}
-                  aria-controls={membersPanelId}
-                  aria-expanded={membersOpen}
-                  onClick={() => setMembersOpen((open) => !open)}
-                />
-              )}
-              <StudioNavigation
-                compact={narrow}
-                section="call-entry"
-                mode={effectiveCanvasMode}
-                onOpenCalls={openCallsSurface}
-                rooms={audioRooms}
-                onChoose={(entry) => {
-                  if (narrow) {
-                    setChannelsOpen(true)
-                    return null
-                  }
-                  return openFromSearch(entry)
-                }}
-              />
-              {effectiveCanvasMode === 'docs' ? (
-                <span className="text-sm font-bold text-c-ink">
-                  {t('console.workspace.canvas.mode-docs')}
-                </span>
-              ) : null}
-            </header>
-
-            {snapshot.status === 'signed-out' ? (
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <InlineAlert kind="warning">
-                  {t('console.workspace.message.session-expired')}
-                </InlineAlert>
-                {onReconnect === undefined ? null : (
-                  <Button variant="secondary" size="sm" onClick={onReconnect}>
-                    {t('console.workspace.message.action-reconnect')}
-                  </Button>
-                )}
-              </div>
-            ) : null}
-
-            {/* The documents pane stays mounted once it has been opened, so coming back to it is
-              instant — but not before: mounting it on every visit to a channel loads the
-              collaborative editor's chunk and reads the workspace's documents for a member who
-              never opens « Docs ». */}
-            {docsEverOpened &&
-            activeChannel != null &&
-            directRoomId === null &&
-            docsCanvasSlot !== undefined ? (
-              <div
-                hidden={effectiveCanvasMode !== 'docs'}
-                data-testid="espace-inline-docs-canvas"
-                className={
-                  effectiveCanvasMode === 'docs' ? 'canvas-enter flex min-h-0 flex-1 flex-col' : ''
+            <EspaceChannelHeader
+              org={org}
+              activeStore={activeStore}
+              activeChannel={activeChannel}
+              activeChannelName={activeChannelName}
+              activeRoom={activeRoom}
+              activeRoomId={activeRoomId}
+              directRoomId={directRoomId}
+              activeDirect={activeDirect}
+              proximityChannelIds={proximityChannelIds}
+              roomBoundary={roomBoundary}
+              effectiveCanvasMode={effectiveCanvasMode}
+              focusedDocs={focusedDocs}
+              navigationUnsettled={navigationUnsettled}
+              signedOut={signedOut}
+              simulation={simulation}
+              demoPresenceLabel={demoCopy.presence}
+              unnamedMember={unnamedMember}
+              narrow={narrow}
+              membersOpen={membersOpen}
+              membersPanelId={membersPanelId}
+              headingRef={headingRef}
+              inviteTrigger={inviteTrigger}
+              membersTrigger={membersTrigger}
+              audioRooms={audioRooms}
+              onShowMessage={showMessage}
+              onToggleMembers={() => setMembersOpen((open) => !open)}
+              onOpenCalls={openCallsSurface}
+              onChooseAudioRoom={(entry) => {
+                if (narrow) {
+                  setChannelsOpen(true)
+                  return null
                 }
-              >
-                {docsCanvasSlot}
-              </div>
-            ) : null}
-            {effectiveCanvasMode === 'integrations' ? (
-              <Suspense fallback={<Skeleton shape="block" />}>
-                <LazyExtensionsCatalogPanel channels={searchEntries} />
-              </Suspense>
-            ) : null}
-            {effectiveCanvasMode === 'files' ? (
-              <div
-                data-testid="espace-files-canvas"
-                className="canvas-enter flex min-h-0 flex-1 flex-col"
-              >
-                <Suspense
-                  fallback={
-                    // The page's own ground, so the canvas does not blink a different colour on
-                    // the way in.
-                    <div className="flex min-h-0 flex-1 flex-col gap-3 bg-c-surface p-4">
-                      <Skeleton shape="text" />
-                      <Skeleton shape="block" />
-                    </div>
-                  }
-                >
-                  <LazyWorkspaceFilesPanel
-                    activeChannelId={activeChannel?.id}
-                    store={activeStore}
-                    snapshot={snapshot}
-                    searchEntries={searchEntries}
-                    documents={documents}
-                    {...(openStudioDocument === undefined ? {} : { onOpenDocument })}
-                    onOpenChannel={(channelId) => selectTextChannel(channelId)}
-                    onOpenDirect={selectDirect}
-                  />
-                </Suspense>
-              </div>
-            ) : null}
-            {effectiveCanvasMode === 'calls' ? (
-              <div className="canvas-enter flex min-h-0 flex-1 flex-col">
-                <Suspense
-                  fallback={
-                    <div className="flex min-h-0 flex-1 flex-col gap-3 bg-c-surface p-4">
-                      <Skeleton shape="text" />
-                      <Skeleton shape="block" />
-                    </div>
-                  }
-                >
-                  <LazyCallsSurfaceView
-                    workspace={workspace}
-                    store={activeStore}
-                    call={activeCall}
-                    callChannel={callChannel}
-                    deviceSettings={deviceSettings}
-                    onJoinRoom={joinAudioRoom}
-                    onOpenStage={openCallStage}
-                  />
-                </Suspense>
-              </div>
-            ) : null}
+                return openFromSearch(entry)
+              }}
+            />
+
+            <EspaceCanvasPanes
+              signedOut={signedOut}
+              onReconnect={onReconnect}
+              docsEverOpened={docsEverOpened}
+              activeChannel={activeChannel}
+              directRoomId={directRoomId}
+              docsCanvasSlot={docsCanvasSlot}
+              effectiveCanvasMode={effectiveCanvasMode}
+              searchEntries={searchEntries}
+              activeStore={activeStore}
+              snapshot={snapshot}
+              documents={documents}
+              openStudioDocument={openStudioDocument}
+              onOpenDocument={onOpenDocument}
+              onSelectTextChannel={(nextId) => selectTextChannel(nextId)}
+              onSelectDirect={selectDirect}
+              workspace={workspace}
+              activeCall={activeCall}
+              callChannel={callChannel}
+              deviceSettings={deviceSettings}
+              onJoinAudioRoom={joinAudioRoom}
+              onOpenCallStage={openCallStage}
+            />
+
             {activeChannel == null || effectiveCanvasMode !== 'chat' ? null : (
               <>
                 {isProximityChannel(activeChannel, proximityChannelIds) &&
@@ -2420,235 +1456,69 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
           </section>
 
           {!narrow && !focusedDocs && membersOpen && activeRoomId !== null ? (
-            // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
-            <div
-              data-testid="espace-sidebar-secondary-resizer"
-              role="separator"
-              aria-orientation="vertical"
-              aria-label={t('console.workspace.layout.resize-side-panel')}
-              aria-valuenow={rightSidebarWidth}
-              aria-valuemin={220}
-              aria-valuemax={560}
-              // A focusable splitter (role="separator" with a value) is interactive in WAI-ARIA.
-              // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
-              tabIndex={0}
+            <EspaceSidebarResizer
+              testId="espace-sidebar-secondary-resizer"
+              ariaLabel={t('console.workspace.layout.resize-side-panel')}
+              value={rightSidebarWidth}
+              min={220}
+              max={560}
+              defaultWidth={280}
+              direction="right"
               onMouseDown={startRightSidebarResize}
-              onDoubleClick={() => setRightSidebarWidth(280)}
-              onKeyDown={(event) => {
-                if (event.key === 'ArrowLeft') {
-                  event.preventDefault()
-                  setRightSidebarWidth((w) => Math.min(560, w + 16))
-                } else if (event.key === 'ArrowRight') {
-                  event.preventDefault()
-                  setRightSidebarWidth((w) => Math.max(220, w - 16))
-                }
-              }}
+              onChangeWidth={setRightSidebarWidth}
               className="row-span-3 row-start-1 w-1 shrink-0 cursor-col-resize bg-c-border-soft transition-colors hover:bg-c-action focus-visible:bg-c-action focus-visible:outline-hidden"
             />
           ) : null}
 
           {!focusedDocs && membersOpen && activeRoomId !== null ? (
-            // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
-            <aside
+            <EspaceMembersPanel
               id={membersPanelId}
-              onKeyDown={(event) => {
-                if (event.key === 'Escape' && !event.defaultPrevented) {
-                  event.preventDefault()
-                  closeMembers()
-                }
-              }}
-              aria-label={t('console.workspace.members.title')}
-              ref={cssProperty('width', narrow ? undefined : `${rightSidebarWidth}px`)}
-              className="material-panel row-span-3 row-start-1 flex w-shell-sidebar-width shrink-0 flex-col gap-3 overflow-y-auto border-l border-c-border-soft p-4 narrow:w-full"
-            >
-              <div className="flex items-center justify-between gap-2">
-                <h2 className="text-sm font-semibold text-c-ink">
-                  {t('console.workspace.members.title')}
-                </h2>
-                <Button
-                  variant="tertiary"
-                  size="sm"
-                  icon={<CloseIcon />}
-                  iconOnly
-                  aria-label={t('console.common.action-close')}
-                  onClick={closeMembers}
-                />
-              </div>
-              <div
-                data-testid="espace-members-presence-summary"
-                className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-c-border-soft bg-c-surface px-3 py-2 text-xs font-medium text-c-ink-2"
-              >
-                <span className="text-c-ok-ink">
-                  {simulation
-                    ? demoCopy.roster
-                    : t('console.workspace.members.online-count', {
-                        count: roster.filter(
-                          (member) => memberProfile(member).presence !== 'offline'
-                        ).length,
-                      })}
-                </span>
-                <span className="text-c-ink-3">
-                  {simulation ? demoCopy.presence : profileCopy.offline} (
-                  {roster.filter((member) => memberProfile(member).presence === 'offline').length})
-                </span>
-              </div>
-              {(['maintainer', 'core', 'admin', 'partner', 'member', 'offline'] as const).map(
-                (group) => {
-                  const members = roster
-                    .map(memberProfile)
-                    .filter((member) =>
-                      group === 'offline'
-                        ? member.presence === 'offline'
-                        : member.presence !== 'offline' && member.role === group
-                    )
-                  if (members.length === 0) return null
-                  const label =
-                    group === 'offline'
-                      ? profileCopy.offlineGroup
-                      : group === 'admin'
-                        ? t('console.workspace.members.admins')
-                        : profileCopy[group]
-                  return (
-                    <section key={group} aria-label={label} className="flex flex-col gap-2">
-                      <h3 className="text-xs font-semibold text-c-ink-3">
-                        {label} · {members.length}
-                      </h3>
-                      <ul className="flex flex-col gap-1">
-                        {members.map((member) => (
-                          <li key={member.userId}>
-                            <UserProfilePopover
-                              member={member}
-                              onMention={
-                                !canWrite || navigationUnsettled || member.userId === viewerId
-                                  ? undefined
-                                  : mentionMember
-                              }
-                              trigger={
-                                <button
-                                  type="button"
-                                  className="flex w-full min-w-0 items-center gap-3 rounded-lg p-2 text-left hover:bg-c-muted focus-visible:ring focus-visible:outline-hidden"
-                                >
-                                  <MemberAvatar
-                                    mxc={member.avatarMxc}
-                                    name={member.name}
-                                    identity={member.userId}
-                                    size="lg"
-                                    presenceGround="sunken"
-                                    onlineLabel={
-                                      member.presence === 'offline'
-                                        ? undefined
-                                        : member.presence === 'online'
-                                          ? simulation
-                                            ? demoCopy.presence
-                                            : t('console.workspace.presence.online')
-                                          : profileCopy[member.presence]
-                                    }
-                                  />
-                                  <span className="flex min-w-0 flex-1 flex-col gap-1">
-                                    <span className="truncate text-sm font-medium text-c-ink-2">
-                                      {member.name}
-                                    </span>
-                                    <span className="truncate text-xs text-c-ink-3">
-                                      {member.status || profileCopy[member.presence]}
-                                    </span>
-                                  </span>
-                                </button>
-                              }
-                            />
-                          </li>
-                        ))}
-                      </ul>
-                    </section>
-                  )
-                }
-              )}
-            </aside>
+              narrow={narrow}
+              width={rightSidebarWidth}
+              simulation={simulation}
+              demoRosterLabel={demoCopy.roster}
+              demoPresenceLabel={demoCopy.presence}
+              profileCopy={profileCopy}
+              roster={roster}
+              memberProfile={memberProfile}
+              viewerId={viewerId}
+              canWrite={canWrite}
+              navigationUnsettled={navigationUnsettled}
+              onMention={mentionMember}
+              onClose={closeMembers}
+            />
           ) : null}
           {threadRootMessage !== undefined &&
           activeChannel !== null &&
           activeChannel !== undefined ? (
-            <div className="row-span-3 row-start-1 flex min-h-0 narrow:contents">
-              <ThreadPanel
-                label={t('console.workspace.thread.title')}
-                title={t('console.workspace.thread.title')}
-                channel={directRoomId === null ? `# ${activeChannelName}` : `@${activeChannelName}`}
-                closeLabel={t('console.common.action-close')}
-                onClose={() => draft.update({ threadRoot: null })}
-                returnFocusTo={threadFocusTarget}
-                parent={
-                  <MessageRow
-                    profileRole={profileRoleIn(activeStore, activeRoomId, threadRootMessage.sender)}
-                    onMention={!canWrite || navigationUnsettled ? undefined : mentionMember}
-                    mentionMembers={mentionMembers}
-                    resolveMember={resolveMember}
-                    key={threadRootMessage.key}
-                    onlineLabel={
-                      activeStore.isOnline?.(threadRootMessage.sender)
-                        ? simulation
-                          ? demoCopy.presence
-                          : t('console.workspace.presence.online')
-                        : undefined
-                    }
-                    message={threadRootMessage}
-                    placement="thread"
-                    viewerId={viewerId}
-                    archived={isArchivedChannel}
-                    canWrite={canWrite}
-                    canReact={canReact}
-                    expanded={false}
-                    repliedMessage={undefined}
-                    threadReplies={NO_MESSAGES}
-                    menuContextKey={`${draftContext.generation}:${viewerId}:${activeRoomId}:${threadRootMessage.key}`}
-                    {...rowActions}
-                  />
-                }
-                repliesLabel={t('console.workspace.thread.label-replies')}
-                composer={
-                  !canWrite || activeRoomId === null || openThreadRootId === null ? undefined : (
-                    <ThreadComposer
-                      store={activeStore}
-                      roomId={activeRoomId}
-                      rootEventId={openThreadRootId}
-                      draft={draft}
-                      simulation={simulation}
-                      navigationUnsettled={navigationUnsettled}
-                      inputId={threadInputId}
-                      guidanceId={demoGuidanceId}
-                      members={mentionCandidates}
-                      onMentionStart={loadMembers}
-                    />
-                  )
-                }
-              >
-                {activeThreadReplies.map((reply) => (
-                  <MessageRow
-                    profileRole={profileRoleIn(activeStore, activeRoomId, reply.sender)}
-                    onMention={!canWrite || navigationUnsettled ? undefined : mentionMember}
-                    mentionMembers={mentionMembers}
-                    resolveMember={resolveMember}
-                    key={reply.key}
-                    onlineLabel={
-                      activeStore.isOnline?.(reply.sender)
-                        ? simulation
-                          ? demoCopy.presence
-                          : t('console.workspace.presence.online')
-                        : undefined
-                    }
-                    message={reply}
-                    placement="thread"
-                    viewerId={viewerId}
-                    archived={isArchivedChannel}
-                    canWrite={canWrite}
-                    canReact={canReact}
-                    expanded={false}
-                    repliedMessage={undefined}
-                    threadReplies={NO_MESSAGES}
-                    menuContextKey={`${draftContext.generation}:${viewerId}:${activeRoomId}:${reply.key}`}
-                    {...rowActions}
-                  />
-                ))}
-              </ThreadPanel>
-            </div>
+            <EspaceThreadPane
+              activeStore={activeStore}
+              activeRoomId={activeRoomId}
+              directRoomId={directRoomId}
+              activeChannelName={activeChannelName}
+              threadRootMessage={threadRootMessage}
+              activeThreadReplies={activeThreadReplies}
+              openThreadRootId={openThreadRootId}
+              draft={draft}
+              draftGeneration={draftContext.generation}
+              viewerId={viewerId}
+              isArchivedChannel={isArchivedChannel}
+              canWrite={canWrite}
+              canReact={canReact}
+              simulation={simulation}
+              demoPresenceLabel={demoCopy.presence}
+              navigationUnsettled={navigationUnsettled}
+              threadInputId={threadInputId}
+              demoGuidanceId={demoGuidanceId}
+              mentionCandidates={mentionCandidates}
+              mentionMembers={mentionMembers}
+              resolveMember={resolveMember}
+              onMention={!canWrite || navigationUnsettled ? undefined : mentionMember}
+              onLoadMembers={loadMembers}
+              onClose={() => draft.update({ threadRoot: null })}
+              returnFocusTo={threadFocusTarget}
+              rowActions={rowActions}
+            />
           ) : null}
 
           {narrow ? null : sidebar}

@@ -44,7 +44,7 @@ import { ApiProblem } from '../api/client'
 import type { ProblemType } from '../api/generated/problems'
 import { useAuth } from '../auth/AuthProvider'
 import { useReauthenticate } from '../auth/sessionExpiry'
-import { Button } from '../ui/Button/Button'
+import { TextButton as Button } from '../ui/Button/TextButton'
 import { LinkButton } from '../ui/LinkButton/LinkButton'
 import {
   clearReauthenticationFromError,

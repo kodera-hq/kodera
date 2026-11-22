@@ -1,18 +1,27 @@
 import { createRoute, lazyRouteComponent } from '@tanstack/react-router'
-import { z } from '@/validation-policy'
 import { onCommunityHost } from '../../app/communityHost'
 import { rootRoute } from '../../app/root-route'
+
+export interface LoginSearch {
+  org?: string | undefined
+  mode?: 'tenant' | undefined
+}
 
 // `/login` and `/login?org={slug}` (docs/specs/00-shell-and-login.md §3):
 // realm discovery, top-level rather than under `/{org}` — there is no
 // organisation yet at this point in the flow. `org` pre-fills the
 // organisation-identifier fallback for a link sent from the welcome email or
-// the hub's "Se connecter"; zod-validated so a malformed query string is a
-// typed absence rather than a value the screen has to sniff (ADR-0005).
-export const loginSearchSchema = z.object({
-  org: z.string().optional(),
-  mode: z.enum(['tenant']).optional().catch(undefined),
-})
+// the hub's "Se connecter"; validated here so a malformed query string is a
+// typed absence rather than a value the screen has to sniff (ADR-0005),
+// without pulling the full schema library into the sign-in entry bundle.
+export const loginSearchSchema = {
+  parse(search: Record<string, unknown>): LoginSearch {
+    return {
+      org: typeof search['org'] === 'string' ? search['org'] : undefined,
+      mode: search['mode'] === 'tenant' ? 'tenant' : undefined,
+    }
+  },
+}
 
 export function shouldRenderCommunityWelcome(
   org: string | undefined,

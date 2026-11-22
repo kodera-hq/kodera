@@ -17,7 +17,9 @@ import {
 } from '@tanstack/react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useLayoutEffect, useRef } from 'react'
+import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
+import { ToastProvider } from '../ui/Toast/Toast'
 import { trackOrganisationSwitched } from './analytics'
 import type { components } from '../api/schema'
 import { useAuth, useAuthLifetime } from '../auth/AuthProvider'
@@ -234,6 +236,19 @@ function useMfaGuard(
   )
 }
 
+function ToastProviderWithCopy({ children }: { children: ReactNode }) {
+  const { t } = useTranslation()
+  return (
+    <ToastProvider
+      label={t('console.common.a11y-notification')}
+      viewportLabel={t('console.common.a11y-notifications-region')}
+      closeLabel={t('console.common.action-close')}
+    >
+      {children}
+    </ToastProvider>
+  )
+}
+
 function OrgLayout() {
   const { membership, meGeneration, meCredentialGeneration } = orgRoute.useLoaderData()
   const client = useQueryClient()
@@ -242,15 +257,17 @@ function OrgLayout() {
     [client]
   )
   return (
-    <EspaceDraftProvider
-      tenantSlugFor={tenantSlugFor}
-      org={membership.organisation.slug}
-      organisationId={membership.organisation.id}
-      meGeneration={meGeneration}
-      meCredentialGeneration={meCredentialGeneration}
-    >
-      <OrgLayoutContent />
-    </EspaceDraftProvider>
+    <ToastProviderWithCopy>
+      <EspaceDraftProvider
+        tenantSlugFor={tenantSlugFor}
+        org={membership.organisation.slug}
+        organisationId={membership.organisation.id}
+        meGeneration={meGeneration}
+        meCredentialGeneration={meCredentialGeneration}
+      >
+        <OrgLayoutContent />
+      </EspaceDraftProvider>
+    </ToastProviderWithCopy>
   )
 }
 

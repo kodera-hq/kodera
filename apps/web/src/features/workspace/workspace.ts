@@ -3,7 +3,6 @@
 // and which `Idempotency-Key` the next creation attempt sends. No React, no client: each rule is
 // tested on its own (`workspace.test.ts`).
 
-import '../../validation-policy'
 import type { TFunction } from 'i18next'
 import { z } from '@/validation-policy'
 import { ApiProblem } from '../../api/client'
@@ -264,7 +263,7 @@ export function channelLabel(channel: WorkspaceChannel, t: TFunction): string {
 }
 
 /** Text channels only: audio channels are listed by a later slice. */
-export function listedChannels(channels: readonly WorkspaceChannel[]): WorkspaceChannel[] {
+function listedChannels(channels: readonly WorkspaceChannel[]): WorkspaceChannel[] {
   return channels.filter((entry) => entry.kind === 'text')
 }
 

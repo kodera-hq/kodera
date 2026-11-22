@@ -6,9 +6,20 @@
 
 import { coreApi } from '../../api/client'
 import { PUSH_COPY_CACHE } from '../../auth/localSession'
+import {
+  PUSH_DEVICE_KEY,
+  hasStoredPushDeviceKey,
+  pushSupported,
+  readStoredPushDeviceId,
+} from './pushState'
 
-export { PUSH_COPY_CACHE }
-export const PUSH_DEVICE_KEY = 'kodera.web.push-device'
+export {
+  PUSH_COPY_CACHE,
+  PUSH_DEVICE_KEY,
+  hasStoredPushDeviceKey,
+  pushSupported,
+  readStoredPushDeviceId,
+}
 const WORKER = 'push-sw.js'
 const SIGN_OUT_PUSH_WAIT_MS = 3_000
 
@@ -17,16 +28,6 @@ export class PushRefused extends Error {
     super(`push refused: ${reason}`)
     this.name = 'PushRefused'
   }
-}
-
-export function pushSupported(): boolean {
-  return (
-    typeof navigator !== 'undefined' &&
-    'serviceWorker' in navigator &&
-    typeof window !== 'undefined' &&
-    'PushManager' in window &&
-    'Notification' in window
-  )
 }
 
 /** The VAPID key Core signs with, as the bytes `PushManager.subscribe` wants. */
@@ -64,23 +65,6 @@ export function subscriptionKeys(json: PushSubscriptionJSON): PushKeys {
     throw new PushRefused('subscription')
   }
   return { endpoint: url.href, p256dh, auth }
-}
-
-export function readStoredPushDeviceId(): string | null {
-  try {
-    const stored = localStorage.getItem(PUSH_DEVICE_KEY)
-    return stored !== null && /^[0-9a-f-]{36}$/iu.test(stored) ? stored : null
-  } catch {
-    return null
-  }
-}
-
-export function hasStoredPushDeviceKey(): boolean {
-  try {
-    return localStorage.getItem(PUSH_DEVICE_KEY) !== null
-  } catch {
-    return false
-  }
 }
 
 function deviceId(): string {

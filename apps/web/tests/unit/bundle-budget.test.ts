@@ -9,7 +9,7 @@ import {
   ALWAYS_ENFORCED,
   BUDGETS,
   CEILINGS,
-  ENTRY_REGRESSION_LIMITS,
+  ENTRY_BUDGETS,
   FORBIDDEN_ENTRY_VENDORS,
   RULES,
   budgetsFor,
@@ -184,10 +184,7 @@ describe('the entry', () => {
   })
 })
 
-// The entry does not meet its 180 kB target (the gate's status note says why), so a second,
-// separate number stops it getting worse. These hold the two apart: the limit is never the
-// target, never replaces it, and cannot be switched off the way the target's failure is.
-describe('the entry regression limit', () => {
+describe('the per-profile entry budgets and optional regression limit', () => {
   // The fixture's entry weighs 141 000 bytes.
   const withLimit = (limit: number, target = 100_000) => ({
     entryGzip: target,
@@ -195,22 +192,25 @@ describe('the entry regression limit', () => {
     entryRegressionGzip: limit,
   })
 
-  it('is a number per profile, a few kilobytes above what that profile measures', () => {
-    expect(ENTRY_REGRESSION_LIMITS).toEqual({
-      production: 210_500,
-      'production-telemetry': 211_000,
-      staging: 212_500,
+  it('enforces per-profile entry budgets well below the 180 kB ceiling, with no regression limit needed', () => {
+    expect(ENTRY_BUDGETS).toEqual({
+      production: 158_000,
+      'production-telemetry': 158_500,
+      staging: 160_000,
     })
-    expect(budgetsFor('production')).toEqual({ ...BUDGETS, entryRegressionGzip: 210_500 })
-    expect(budgetsFor('production-telemetry')).toEqual({ ...BUDGETS, entryRegressionGzip: 211_000 })
-    expect(budgetsFor('staging')).toEqual({ ...BUDGETS, entryRegressionGzip: 212_500 })
+    expect(ENTRY_BUDGETS.production).toBeLessThanOrEqual(CEILINGS.entryGzip)
+    expect(ENTRY_BUDGETS['production-telemetry']).toBeLessThanOrEqual(CEILINGS.entryGzip)
+    expect(ENTRY_BUDGETS.staging).toBeLessThanOrEqual(CEILINGS.entryGzip)
+    expect(budgetsFor('production')).toEqual({ ...BUDGETS, entryGzip: 158_000 })
+    expect(budgetsFor('production-telemetry')).toEqual({ ...BUDGETS, entryGzip: 158_500 })
+    expect(budgetsFor('staging')).toEqual({ ...BUDGETS, entryGzip: 160_000 })
     expect(() => budgetsFor('preview')).toThrow('unknown profile "preview"')
   })
 
   it('only ever goes down: raising one means changing this line, and saying why', () => {
-    expect(ENTRY_REGRESSION_LIMITS.production).toBeLessThanOrEqual(210_500)
-    expect(ENTRY_REGRESSION_LIMITS['production-telemetry']).toBeLessThanOrEqual(211_000)
-    expect(ENTRY_REGRESSION_LIMITS.staging).toBeLessThanOrEqual(212_500)
+    expect(ENTRY_BUDGETS.production).toBeLessThanOrEqual(158_000)
+    expect(ENTRY_BUDGETS['production-telemetry']).toBeLessThanOrEqual(158_500)
+    expect(ENTRY_BUDGETS.staging).toBeLessThanOrEqual(160_000)
   })
 
   it('holds at the limit and is refused one byte over it, by its own name', () => {
@@ -249,14 +249,13 @@ describe('the entry regression limit', () => {
     }
   )
 
-  it('is applied when no budgets are given, as the production profile has it', () => {
+  it('enforces the production entry budget when no budgets are given', () => {
     const input = build({
-      'assets/main.js': { gzip: 210_500 - 41_000 + 1 },
+      'assets/main.js': { gzip: ENTRY_BUDGETS.production - 41_000 + 1 },
       'assets/vendor-matrix.js': { gzip: 1 },
     })
     expect((measure(input) as Result).violations).toEqual([
-      'ENTRY_OVER_BUDGET: the entry JavaScript is 210501 bytes gzip, over its budget of 180000',
-      'ENTRY_REGRESSION: the entry JavaScript is 210501 bytes gzip, over its regression limit of 210500 (the limit is not the target: the target is 180000)',
+      `ENTRY_OVER_BUDGET: the entry JavaScript is ${ENTRY_BUDGETS.production + 1} bytes gzip, over its budget of ${ENTRY_BUDGETS.production}`,
     ])
   })
 })
@@ -386,7 +385,7 @@ describe('reported-only rules', () => {
 
 // The gate and its self-test each run real builds, so they are a CI step of their own and not part
 // of this suite (as `scripts/check-production-bundle.sh` is). What stays here is cheap: that CI
-// does call them, on both release profiles, and holds no rule but the one known not to be met.
+// does call them across all release profiles and holds no rule at all.
 describe('the CI wiring', () => {
   const workflow = readFileSync(
     join(import.meta.dirname, '..', '..', '..', '..', '.github', 'workflows', 'ci-web.yml'),
@@ -397,21 +396,20 @@ describe('the CI wiring', () => {
     .map((line) => line.trim())
     .filter((line) => line.startsWith('node scripts/check-bundle-budget'))
 
-  it('runs the self-test, then the gate on the production, telemetry and staging profiles', () => {
+  it('runs the self-test, then enforces the gate on the production, telemetry and staging profiles', () => {
     expect(runs).toEqual([
       'node scripts/check-bundle-budget.selftest.mjs',
-      'node scripts/check-bundle-budget.mjs --report-only entry-size',
-      'node scripts/check-bundle-budget.mjs --profile production-telemetry --report-only entry-size',
-      'node scripts/check-bundle-budget.mjs --profile staging --report-only entry-size',
+      'node scripts/check-bundle-budget.mjs',
+      'node scripts/check-bundle-budget.mjs --profile production-telemetry',
+      'node scripts/check-bundle-budget.mjs --profile staging',
     ])
   })
 
-  it('holds the entry-size rule and no other, the regression limit least of all', () => {
+  it('holds no rule in CI, enforcing entry-size alongside every other budget rule', () => {
     const held = runs.flatMap((line) =>
       [...line.matchAll(/--report-only\s+(\S+)/g)].map(([, rule]) => rule)
     )
-    expect(new Set(held)).toEqual(new Set(['entry-size']))
-    expect(held).not.toContain('entry-regression')
+    expect(held).toEqual([])
     expect(Object.keys(RULES)).toContain('entry-size')
     // Nothing in the workflow may quieten the step either.
     expect(workflow).not.toMatch(/check-bundle-budget[^\n]*\|\|/)

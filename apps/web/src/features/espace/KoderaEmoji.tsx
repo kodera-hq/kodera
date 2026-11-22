@@ -4,7 +4,6 @@
 
 import { Component, lazy, Suspense } from 'react'
 import type { ReactNode } from 'react'
-import { InlineMarkdown } from '../messaging/MarkdownText'
 import { koderaSegments, shortcodeOf, type KoderaEmojiName } from './koderaShortcodes'
 
 const Glyph = lazy(() => import('./KoderaEmojiGlyphs'))
@@ -46,9 +45,4 @@ export function withGlyphs(run: string): ReactNode {
   return segments.map((segment, index) =>
     'emoji' in segment ? <KoderaEmoji key={index} name={segment.emoji} /> : segment.text
   )
-}
-
-/** Text with its inline Markdown, its known Kodera codes drawn as glyphs outside inline code. */
-export function EmojiText({ text }: { text: string }) {
-  return <InlineMarkdown text={text} renderText={withGlyphs} />
 }
