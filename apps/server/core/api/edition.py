@@ -19,6 +19,11 @@ from typing import Protocol, cast
 from django.conf import settings
 from django.http import HttpRequest, HttpResponse
 
+from core.db.ee_erasure import (
+    derive_server_ee_audit_erasure_key_hex as derive_server_ee_audit_erasure_key_hex,
+    install_ee_erasure_key_sync as install_ee_erasure_key_sync,
+)
+
 COMMUNITY_EDITION = "community"
 ENTERPRISE_EDITION = "enterprise"
 EE_PATH_PREFIX = "/api/v1/ee"

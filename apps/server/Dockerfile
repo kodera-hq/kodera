@@ -7,6 +7,8 @@ ENV UV_PROJECT_ENVIRONMENT=/opt/venv UV_PYTHON_DOWNLOADS=never UV_NO_CACHE=1
 COPY pyproject.toml uv.lock ./
 RUN uv sync --locked --no-dev --python python3.12
 
+FROM scratch AS ee_src
+
 FROM python:3.12.16-slim-bookworm@sha256:935c3c5b12357a7e10caa9c1e6ca5692344d97cf229832ef584be2cec9fc03df AS runtime
 ENV PATH="/opt/venv/bin:$PATH" PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /app
@@ -20,5 +22,7 @@ COPY services/ ./services/
 COPY tenant_agent/ ./tenant_agent/
 # So does the room-access service of Espace's audio rooms (ADR-0018): `python -m room_access`.
 COPY room_access/ ./room_access/
+# Enterprise Edition named context (`--build-context ee_src=ee`); empty in Community builds.
+COPY --from=ee_src / /app/ee/
 USER 10001:10001
 CMD ["gunicorn", "--config", "config/gunicorn.py", "config.deploy_wsgi:application"]

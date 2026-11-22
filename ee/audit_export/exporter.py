@@ -7,10 +7,12 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import hmac
 import io
 import ipaddress
-from collections.abc import Iterator, Mapping, Sequence
-from dataclasses import dataclass
+import tempfile
+from collections.abc import Iterable, Iterator, Mapping
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Final
 from uuid import UUID, uuid4
@@ -24,16 +26,20 @@ from ee.audit_export.crypto import (
 )
 from ee.audit_export.ledger import (
     FRAMEWORK_CONTROL_CATALOG,
+    MAX_EXPORT_QUERY_ROWS,
     SUPPORTED_FRAMEWORKS,
     ComplianceAuditEvent,
     ComplianceAuditLedger,
     format_utc_iso,
-    parse_utc_iso,
 )
 from ee.edition import require_enterprise_edition
+from ee.store import derive_ee_hkdf_bytes
 
 EXPORT_SCHEMA_VERSION = "kodera.compliance.audit-export.v1"
 SUPPORTED_EXPORT_FORMATS = frozenset({"ndjson", "csv"})
+MAX_EXPORT_ROWS = MAX_EXPORT_QUERY_ROWS
+MAX_EXPORT_BYTES = 16 * 1024 * 1024
+_PII_REDACT_KDF_INFO = b"kodera-ee-audit-pii-pepper-v1"
 
 CSV_COLUMNS = (
     "export_seq",
@@ -61,7 +67,27 @@ _EMAIL_DOMAIN_CHARS: Final[frozenset[str]] = frozenset(
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.-"
 )
 _SENSITIVE_META_KEYS = frozenset(
-    {"email", "mail", "full_name", "display_name", "phone", "ip", "source_ip", "user_agent"}
+    {
+        "email",
+        "mail",
+        "contact_email",
+        "reply_to_email",
+        "full_name",
+        "display_name",
+        "given_name",
+        "family_name",
+        "first_name",
+        "last_name",
+        "name",
+        "user_name",
+        "username",
+        "subject_name_id",
+        "signatory",
+        "phone",
+        "ip",
+        "source_ip",
+        "user_agent",
+    }
 )
 
 
@@ -81,9 +107,11 @@ class AuditExportFilters:
     actor_id: str | None = None
     actor_type: str | None = None
     action: str | None = None
+    after_seq: int | None = None
+    limit: int | None = None
 
-    def to_manifest_dict(self) -> dict[str, str | None]:
-        return {
+    def to_manifest_dict(self) -> dict[str, str | int | None]:
+        out: dict[str, str | int | None] = {
             "from_timestamp": format_utc_iso(self.from_timestamp)
             if self.from_timestamp is not None
             else None,
@@ -94,27 +122,69 @@ class AuditExportFilters:
             "actor_type": self.actor_type,
             "action": self.action,
         }
+        if self.after_seq is not None:
+            out["after_seq"] = self.after_seq
+        if self.limit is not None:
+            out["limit"] = self.limit
+        return out
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class ExportedComplianceBundle:
     bundle_id: str
     tenant_slug: str
     framework: str
     export_format: str
-    payload_bytes: bytes
     manifest: dict[str, object]
+    _payload_bytes: bytes | None = None
+    _spool: tempfile.SpooledTemporaryFile[bytes] | None = field(
+        default=None, repr=False, compare=False
+    )
+
+    @property
+    def payload_bytes(self) -> bytes:
+        if self._payload_bytes is not None:
+            return self._payload_bytes
+        spool = self._spool
+        if spool is None:
+            return b""
+        try:
+            spool.seek(0)
+            data = spool.read()
+        finally:
+            spool.close()
+            self._spool = None
+        self._payload_bytes = data
+        return data
 
     @property
     def payload_text(self) -> str:
         return self.payload_bytes.decode("utf-8")
 
+    def close(self) -> None:
+        if self._spool is not None:
+            self._spool.close()
+            self._spool = None
 
-def _pseudonymize_email_str(raw_email: str, tenant_slug: str) -> str:
-    raw = raw_email.lower().encode("utf-8")
-    digest = hashlib.sha256(
-        b"kodera-pii-redact-v1\x00" + tenant_slug.encode("utf-8") + b"\x00" + raw
-    ).hexdigest()[:12]
+    def __del__(self) -> None:
+        self.close()
+
+
+def _derive_pii_pepper(tenant_slug: str, organisation_id: UUID | None = None) -> bytes:
+    scope = str(organisation_id) if organisation_id is not None else tenant_slug
+    return derive_ee_hkdf_bytes(domain_info=_PII_REDACT_KDF_INFO + b"\x00" + scope.encode("utf-8"))
+
+
+def _hmac_pii_token(pepper: bytes, context_label: bytes, raw_value: str) -> str:
+    return hmac.new(
+        pepper,
+        context_label + b"\x00" + raw_value.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()[:16]
+
+
+def _pseudonymize_email_str(raw_email: str, pepper: bytes) -> str:
+    digest = _hmac_pii_token(pepper, b"email", raw_email.strip().lower())
     return f"redacted-{digest}@redacted.invalid"
 
 
@@ -126,6 +196,18 @@ def _looks_like_redactable_domain(domain: str) -> bool:
         return False
     tld = parts[-1]
     return 2 <= len(tld) <= 24 and tld.isalpha()
+
+
+def _is_exact_email_address(candidate: str) -> bool:
+    cleaned = candidate.strip()
+    local, sep, domain = cleaned.partition("@")
+    if not sep or "@" in domain or not (1 <= len(local) <= 64):
+        return False
+    if any(ch not in _EMAIL_LOCAL_CHARS for ch in local):
+        return False
+    if any(ch not in _EMAIL_DOMAIN_CHARS for ch in domain):
+        return False
+    return _looks_like_redactable_domain(domain)
 
 
 def _redact_ip(raw_ip: str) -> str:
@@ -145,8 +227,8 @@ def _redact_ip(raw_ip: str) -> str:
     return str(net6)
 
 
-def _redact_string(value: str, tenant_slug: str) -> str:
-    """Scan and pseudonymize email addresses in O(n) linear time without regular expressions."""
+def _redact_string(value: str, pepper: bytes) -> str:
+    """Scan and pseudonymize email addresses using keyed HMAC-SHA256 in O(n) linear time."""
     if "@" not in value:
         return value
     out: list[str] = []
@@ -170,7 +252,7 @@ def _redact_string(value: str, tenant_slug: str) -> str:
 
         if local_part and _looks_like_redactable_domain(domain_part):
             out.append(value[cursor:l_pos])
-            out.append(_pseudonymize_email_str(f"{local_part}@{domain_part}", tenant_slug))
+            out.append(_pseudonymize_email_str(f"{local_part}@{domain_part}", pepper))
             cursor = r_pos
         else:
             out.append(value[cursor : at_idx + 1])
@@ -181,11 +263,20 @@ def _redact_string(value: str, tenant_slug: str) -> str:
     return "".join(out)
 
 
-def _redact_metadata(value: object, tenant_slug: str) -> object:
+def _redact_target_urn(target_urn: str, pepper: bytes) -> str:
+    redacted = _redact_string(target_urn, pepper)
+    stripped_valid_redactions = redacted.replace("@redacted.invalid", "")
+    if "@" in stripped_valid_redactions or any(ch.isspace() for ch in redacted):
+        digest = _hmac_pii_token(pepper, b"target_urn", target_urn)
+        return f"urn:kodera:redacted:{digest}"
+    return redacted
+
+
+def _redact_metadata(value: object, pepper: bytes) -> object:
     if isinstance(value, str):
-        return _redact_string(value, tenant_slug)
+        return _redact_string(value, pepper)
     if isinstance(value, list):
-        return [_redact_metadata(item, tenant_slug) for item in value]
+        return [_redact_metadata(item, pepper) for item in value]
     if isinstance(value, dict):
         redacted_dict: dict[str, object] = {}
         for k, v in value.items():
@@ -194,18 +285,17 @@ def _redact_metadata(value: object, tenant_slug: str) -> object:
             if low_k in {"ip", "source_ip"} and isinstance(v, str):
                 redacted_dict[key_str] = _redact_ip(v)
             elif low_k in _SENSITIVE_META_KEYS:
-                if isinstance(v, str) and "@" in v:
-                    redacted_dict[key_str] = _redact_string(v, tenant_slug)
+                if isinstance(v, str) and _is_exact_email_address(v):
+                    redacted_dict[key_str] = _pseudonymize_email_str(v, pepper)
                 else:
-                    digest = hashlib.sha256(
-                        b"kodera-pii-field-v1\x00"
-                        + tenant_slug.encode("utf-8")
-                        + b"\x00"
-                        + str(v).encode("utf-8")
-                    ).hexdigest()[:12]
+                    digest = _hmac_pii_token(
+                        pepper,
+                        b"field:" + low_k.encode("utf-8"),
+                        str(v),
+                    )
                     redacted_dict[key_str] = f"[REDACTED:{digest}]"
             else:
-                redacted_dict[key_str] = _redact_metadata(v, tenant_slug)
+                redacted_dict[key_str] = _redact_metadata(v, pepper)
         return redacted_dict
     return value
 
@@ -233,66 +323,47 @@ def canonical_export_row_input(row: Mapping[str, object]) -> dict[str, object]:
     }
 
 
-def _filter_events(
-    events: Sequence[ComplianceAuditEvent],
-    filters: AuditExportFilters,
-) -> list[ComplianceAuditEvent]:
-    if (
-        filters.from_timestamp is not None
-        and filters.to_timestamp is not None
-        and filters.from_timestamp > filters.to_timestamp
-    ):
-        raise AuditExportError(
-            "invalid_time_range",
-            "from_timestamp must not be after to_timestamp",
-        )
-    matched: list[ComplianceAuditEvent] = []
-    for evt in events:
-        evt_dt = parse_utc_iso(evt.occurred_at)
-        if filters.from_timestamp is not None and evt_dt < filters.from_timestamp:
-            continue
-        if filters.to_timestamp is not None and evt_dt > filters.to_timestamp:
-            continue
-        if filters.actor_id is not None and evt.actor_id != filters.actor_id:
-            continue
-        if filters.actor_type is not None and evt.actor_type != filters.actor_type:
-            continue
-        if filters.action is not None and evt.action != filters.action:
-            continue
-        matched.append(evt)
-    return matched
-
-
-def _build_chained_export_rows(
-    events: Sequence[ComplianceAuditEvent],
+def _iter_chained_export_rows(
+    events: Iterable[ComplianceAuditEvent],
     *,
     tenant_slug: str,
+    organisation_id: UUID | None,
     framework: str,
     redact_pii: bool,
-) -> list[dict[str, object]]:
+) -> Iterator[dict[str, object]]:
     controls = list(FRAMEWORK_CONTROL_CATALOG[framework])
-    rows: list[dict[str, object]] = []
     prev_hash = GENESIS_PREV_HASH
+    pepper = _derive_pii_pepper(tenant_slug, organisation_id) if redact_pii else b""
 
     for export_seq, evt in enumerate(events, start=1):
-        actor_label = (
-            _redact_string(evt.actor_label, tenant_slug)
-            if redact_pii and evt.actor_label
-            else evt.actor_label
-        )
-        if redact_pii and actor_label and "@" not in evt.actor_label:
-            digest = hashlib.sha256(
-                b"kodera-pii-actor-v1\x00"
-                + tenant_slug.encode("utf-8")
-                + b"\x00"
-                + evt.actor_label.encode("utf-8")
-            ).hexdigest()[:12]
-            actor_label = f"redacted-actor-{digest}"
+        if redact_pii:
+            raw_label = evt.actor_label
+            if not raw_label or raw_label == "erased" or raw_label.startswith("erased:"):
+                actor_label = raw_label
+            elif _is_exact_email_address(raw_label):
+                actor_label = _pseudonymize_email_str(raw_label, pepper)
+            else:
+                email_scrubbed = _redact_string(raw_label, pepper)
+                if email_scrubbed != raw_label:
+                    actor_label = email_scrubbed
+                else:
+                    digest = _hmac_pii_token(pepper, b"actor_label", raw_label)
+                    actor_label = f"redacted-actor-{digest}"
 
-        source_ip = _redact_ip(evt.source_ip) if redact_pii else evt.source_ip
-        meta = (
-            _redact_metadata(dict(evt.metadata), tenant_slug) if redact_pii else dict(evt.metadata)
-        )
+            actor_id = (
+                f"redacted-actor-id-{_hmac_pii_token(pepper, b'actor_id', evt.actor_id)}"
+                if "@" in evt.actor_id
+                else evt.actor_id
+            )
+            target_urn = _redact_target_urn(evt.target_urn, pepper)
+            source_ip = _redact_ip(evt.source_ip)
+            meta = _redact_metadata(dict(evt.metadata), pepper)
+        else:
+            actor_label = evt.actor_label
+            actor_id = evt.actor_id
+            target_urn = evt.target_urn
+            source_ip = evt.source_ip
+            meta = dict(evt.metadata)
 
         draft: dict[str, object] = {
             "export_seq": export_seq,
@@ -303,10 +374,10 @@ def _build_chained_export_rows(
             "framework": framework,
             "framework_controls": controls,
             "actor_type": evt.actor_type,
-            "actor_id": evt.actor_id,
+            "actor_id": actor_id,
             "actor_label": actor_label,
             "action": evt.action,
-            "target_urn": evt.target_urn,
+            "target_urn": target_urn,
             "source_ip": source_ip,
             "metadata": meta,
             "prev_hash": prev_hash,
@@ -316,18 +387,16 @@ def _build_chained_export_rows(
             canonical_export_row_input(draft),
         )
         draft["entry_hash"] = entry_hash
-        rows.append(draft)
         prev_hash = entry_hash
+        yield draft
 
-    return rows
 
-
-def _render_ndjson_chunks(rows: Sequence[dict[str, object]]) -> Iterator[bytes]:
+def _render_ndjson_chunks(rows: Iterable[dict[str, object]]) -> Iterator[bytes]:
     for row in rows:
         yield canonical_json_bytes(row) + b"\n"
 
 
-def _render_csv_chunks(rows: Sequence[dict[str, object]]) -> Iterator[bytes]:
+def _render_csv_chunks(rows: Iterable[dict[str, object]]) -> Iterator[bytes]:
     header_buf = io.StringIO()
     writer = csv.writer(header_buf, lineterminator="\n")
     writer.writerow(CSV_COLUMNS)
@@ -372,9 +441,14 @@ def export_compliance_bundle(
     redact_pii: bool = False,
     exported_at: datetime | None = None,
     organisation_id: UUID | None = None,
+    max_rows: int | None = None,
+    max_bytes: int | None = None,
+    stream_mode: bool = False,
 ) -> ExportedComplianceBundle:
     """Export and cryptographically sign a tamper-evident NDJSON or CSV compliance bundle."""
     require_enterprise_edition()
+    effective_max_rows = MAX_EXPORT_ROWS if max_rows is None else max_rows
+    effective_max_bytes = MAX_EXPORT_BYTES if max_bytes is None else max_bytes
     fmt = export_format.strip().lower()
     if fmt not in SUPPORTED_EXPORT_FORMATS:
         raise AuditExportError(
@@ -388,22 +462,103 @@ def export_compliance_bundle(
         )
 
     effective_filters = filters or AuditExportFilters()
-    vault_events = ledger.snapshot_events(tenant_slug, organisation_id=organisation_id)
-    ledger_head = vault_events[-1].entry_hash if vault_events else GENESIS_PREV_HASH
-    filtered = _filter_events(vault_events, effective_filters)
-    rows = _build_chained_export_rows(
-        filtered,
-        tenant_slug=tenant_slug,
-        framework=fw,
-        redact_pii=redact_pii,
+    if (
+        effective_filters.from_timestamp is not None
+        and effective_filters.to_timestamp is not None
+        and effective_filters.from_timestamp > effective_filters.to_timestamp
+    ):
+        raise AuditExportError(
+            "invalid_time_range",
+            "from_timestamp must not be after to_timestamp",
+        )
+    if effective_filters.after_seq is not None and effective_filters.after_seq < 0:
+        raise AuditExportError("invalid_export_request", "after_seq must be >= 0")
+    if effective_filters.limit is not None and (
+        effective_filters.limit < 1 or effective_filters.limit > effective_max_rows
+    ):
+        raise AuditExportError(
+            "invalid_export_request", f"limit must be between 1 and {effective_max_rows}"
+        )
+
+    cursor_stream = ledger.stream_events(
+        tenant_slug,
+        organisation_id=organisation_id,
+        from_timestamp=effective_filters.from_timestamp,
+        to_timestamp=effective_filters.to_timestamp,
+        actor_id=effective_filters.actor_id,
+        actor_type=effective_filters.actor_type,
+        action=effective_filters.action,
+        after_seq=effective_filters.after_seq,
+        limit=effective_filters.limit,
+        max_rows=effective_max_rows,
     )
 
-    chunks = list(_render_ndjson_chunks(rows) if fmt == "ndjson" else _render_csv_chunks(rows))
-    payload_bytes = b"".join(chunks)
-    payload_sha256 = hashlib.sha256(payload_bytes).hexdigest()
-    head_entry_hash = str(rows[-1]["entry_hash"]) if rows else GENESIS_PREV_HASH
-    first_ledger_seq = filtered[0].sequence if filtered else None
-    last_ledger_seq = filtered[-1].sequence if filtered else None
+    ledger_head = ledger.head_hash(tenant_slug, organisation_id=organisation_id)
+    head_entry_hash = GENESIS_PREV_HASH
+    record_count = 0
+    first_ledger_seq: int | None = None
+    last_ledger_seq: int | None = None
+
+    def _bounded_events() -> Iterator[ComplianceAuditEvent]:
+        nonlocal first_ledger_seq, last_ledger_seq
+        for evt in cursor_stream.events:
+            if first_ledger_seq is None:
+                first_ledger_seq = evt.sequence
+            last_ledger_seq = evt.sequence
+            yield evt
+        if cursor_stream.has_more and effective_filters.limit is None:
+            raise AuditExportError(
+                "export_limit_exceeded",
+                f"Export exceeds {effective_max_rows}-row ceiling; pass limit and after_seq for cursor pagination",
+                status=413,
+            )
+
+    def _tracked_rows() -> Iterator[dict[str, object]]:
+        nonlocal head_entry_hash, record_count
+        for row in _iter_chained_export_rows(
+            _bounded_events(),
+            tenant_slug=tenant_slug,
+            organisation_id=organisation_id,
+            framework=fw,
+            redact_pii=redact_pii,
+        ):
+            record_count += 1
+            head_entry_hash = str(row["entry_hash"])
+            yield row
+
+    spool = tempfile.SpooledTemporaryFile(max_size=262_144)  # noqa: SIM115
+    hasher = hashlib.sha256()
+    written_bytes = 0
+    try:
+        chunk_iter = (
+            _render_ndjson_chunks(_tracked_rows())
+            if fmt == "ndjson"
+            else _render_csv_chunks(_tracked_rows())
+        )
+        for chunk in chunk_iter:
+            written_bytes += len(chunk)
+            if written_bytes > effective_max_bytes:
+                raise AuditExportError(
+                    "export_limit_exceeded",
+                    f"Export exceeds {effective_max_bytes}-byte ceiling; narrow filters or pass limit/after_seq",
+                    status=413,
+                )
+            hasher.update(chunk)
+            spool.write(chunk)
+        if cursor_stream.has_more and effective_filters.limit is None:
+            raise AuditExportError(
+                "export_limit_exceeded",
+                f"Export exceeds {effective_max_rows}-row ceiling; pass limit and after_seq for cursor pagination",
+                status=413,
+            )
+        spool.seek(0)
+    except Exception:
+        spool.close()
+        raise
+
+    has_more = cursor_stream.has_more
+    payload_sha256 = hasher.hexdigest()
+    next_after_seq = last_ledger_seq if (has_more and last_ledger_seq is not None) else None
 
     bundle_id = str(uuid4())
     created_ts = format_utc_iso(exported_at or datetime.now(UTC))
@@ -418,9 +573,11 @@ def export_compliance_bundle(
         "exported_at": created_ts,
         "filters": effective_filters.to_manifest_dict(),
         "pii_redacted": redact_pii,
-        "record_count": len(rows),
+        "record_count": record_count,
         "first_ledger_sequence": first_ledger_seq,
         "last_ledger_sequence": last_ledger_seq,
+        "has_more": has_more,
+        "next_after_seq": next_after_seq,
         "genesis_prev_hash": GENESIS_PREV_HASH,
         "head_entry_hash": head_entry_hash,
         "vault_head_hash": ledger_head,
@@ -432,9 +589,6 @@ def export_compliance_bundle(
     signature = signer.sign_manifest(unsigned_manifest)
     manifest: dict[str, object] = {**unsigned_manifest, "signature": signature}
 
-    # Record server-governed Ed25519 verification keys in `ee_audit_signing_key` so historical
-    # bundles continue verifying after `KODERA_EE_AUDIT_SIGNING_SEED` / `SECRET_KEY` rotation,
-    # while never registering arbitrary caller/offline keys.
     if (
         signer.algorithm == "ed25519"
         and signer.public_key_pem is not None
@@ -446,13 +600,28 @@ def export_compliance_bundle(
             organisation_id=organisation_id,
         )
 
+    if not stream_mode:
+        try:
+            spool.seek(0)
+            eager_bytes = spool.read()
+        finally:
+            spool.close()
+        return ExportedComplianceBundle(
+            bundle_id=bundle_id,
+            tenant_slug=tenant_slug,
+            framework=fw,
+            export_format=fmt,
+            manifest=manifest,
+            _payload_bytes=eager_bytes,
+        )
+
     return ExportedComplianceBundle(
         bundle_id=bundle_id,
         tenant_slug=tenant_slug,
         framework=fw,
         export_format=fmt,
-        payload_bytes=payload_bytes,
         manifest=manifest,
+        _spool=spool,
     )
 
 
@@ -461,7 +630,21 @@ def stream_compliance_bundle(
     *,
     chunk_size: int = 16_384,
 ) -> Iterator[bytes]:
-    """Yield exported compliance payload in bounded byte chunks for `StreamingHttpResponse`."""
+    """Yield exported compliance payload from temporary spool in bounded byte chunks."""
+    spool = bundle._spool
+    if spool is not None:
+        try:
+            spool.seek(0)
+            while True:
+                chunk = spool.read(chunk_size)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            spool.close()
+            bundle._spool = None
+        return
+
     data = bundle.payload_bytes
     if not data:
         return

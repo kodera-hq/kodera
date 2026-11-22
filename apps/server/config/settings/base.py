@@ -95,3 +95,10 @@ KODERA_ANDROID_ASSETLINKS_SHA256: tuple[str, ...] = ()
 KODERA_PASSPORT_MAGIC_LINK: str | None = None
 # Optional internal room-access endpoint verifying Matrix DM room membership for attachments.
 KODERA_MEDIA_ROOM_VERIFIER_URL: str | None = None
+KODERA_PUBLIC_API_ORIGIN: str | None = None
+KODERA_SAML_SP_BASE_URL: str | None = None
+
+from core.db.ee_erasure import install_ee_erasure_key_sync as _install_ee_erasure_key_sync  # noqa: E402
+
+_install_ee_erasure_key_sync()
+del _install_ee_erasure_key_sync

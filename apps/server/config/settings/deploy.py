@@ -1,7 +1,9 @@
 """Fixed deployable API profile; no local secret/database/issuer fallback."""
 
 import os
+from urllib.parse import urlsplit
 
+import config.deploy_environment as _deploy_env
 from apps.billing.configuration import (
     PAYMENT_TERMS_DAYS,
     issuer_from_environment as billing_issuer,
@@ -102,12 +104,51 @@ KODERA_BILLING_ISSUER = billing_issuer(os.environ)
 KODERA_INVOICE_SERIES = billing_series(os.environ)
 KODERA_INVOICE_PAYMENT_TERMS_DAYS = PAYMENT_TERMS_DAYS
 # Header trust and TLS termination belong to the operator's separately qualified proxy.
-# Gunicorn trusts no forwarded source by default. Never infer https from arbitrary headers.
+# Gunicorn trusts no forwarded source by default. Never infer https from arbitrary headers;
+# external protocol metadata and callbacks derive https:// origins from validated settings below.
 SECURE_PROXY_SSL_HEADER = None
 USE_X_FORWARDED_HOST = False
 SESSION_COOKIE_SECURE = True
 CSRF_COOKIE_SECURE = True
 SECURE_CONTENT_TYPE_NOSNIFF = True
+
+
+def _public_https_origin(raw: str | None, *, fallback: str | None = None) -> str | None:
+    if raw is None or raw == "":
+        return fallback
+    if len(raw) > 255 or any(ch.isspace() for ch in raw):
+        _deploy_env.refuse()
+    parsed = urlsplit(raw)
+    try:
+        port = parsed.port
+    except ValueError:
+        _deploy_env.refuse()
+        return None
+    if (
+        parsed.scheme != "https"
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.hostname is None
+        or parsed.netloc.lower() != parsed.netloc
+        or not _deploy_env.HOST.fullmatch(parsed.hostname)
+        or parsed.path not in ("", "/")
+        or parsed.query
+        or parsed.fragment
+        or (port is not None and not 1 <= port <= 65535)
+    ):
+        _deploy_env.refuse()
+    port_suffix = "" if port in (None, 443) else f":{port}"
+    return f"https://{parsed.hostname}{port_suffix}"
+
+
+KODERA_PUBLIC_API_ORIGIN = _public_https_origin(
+    os.environ.get("KODERA_PUBLIC_API_ORIGIN"),
+    fallback=f"https://{ALLOWED_HOSTS[0]}" if len(ALLOWED_HOSTS) == 1 else None,
+)
+KODERA_SAML_SP_BASE_URL = _public_https_origin(
+    os.environ.get("KODERA_SAML_SP_BASE_URL"),
+    fallback=KODERA_PUBLIC_API_ORIGIN,
+)
 
 # The payment provider: Stripe when both of its keys are in the environment, none otherwise, so a
 # payment link is refused rather than faked (apps/billing/configuration.py).

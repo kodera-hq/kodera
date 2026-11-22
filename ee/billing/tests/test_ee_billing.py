@@ -275,10 +275,20 @@ class TestWarmPoolController:
         assert replay.slot.slot_id == created[1].slot_id
         assert pool.sizing_snapshot().ready_count == 1
 
+        # Cross-tenant reuse of same Idempotency-Key (`E02-003` / `BUG-0057`) is isolated:
+        claim_beta = pool.claim_slot(
+            idempotency_key="idem-checkout-0001",
+            organisation_id="org_beta",
+            checkout_id="cs_live_9999",
+        )
+        assert claim_beta.replayed is False
+        assert claim_beta.slot.slot_id == created[2].slot_id
+
+        # Same-tenant reuse with mismatched checkout_id raises conflict:
         with pytest.raises(WarmPoolIdempotencyConflictError):
             pool.claim_slot(
                 idempotency_key="idem-checkout-0001",
-                organisation_id="org_beta",
+                organisation_id="org_alpha",
                 checkout_id="cs_live_9999",
             )
 
@@ -288,7 +298,7 @@ class TestWarmPoolController:
         assert len(replenished) == 2
 
         with pytest.raises(WarmPoolTransitionError):
-            pool.mark_unhealthy(claim1.slot.slot_id, reason="cannot-unhealthy-claimed")
+            pool.mark_ready(claim1.slot.slot_id)
 
     def test_exhausted_pool_and_concurrent_claims_never_double_allocate(self) -> None:
         pool = WarmPoolController(
@@ -640,35 +650,6 @@ class TestEnterpriseBillingHttpRouter:
         first_slot_id = rep_resp.json()["created_slots"][0]["slot_id"]
         router.warm_pool.mark_ready(first_slot_id)
 
-        claim_body = json.dumps(
-            {"organisation_id": "org_acme", "checkout_id": "cs_test_123"}
-        ).encode()
-        claim_resp = router.dispatch(
-            "POST",
-            "/api/v1/ee/billing/warm-pool/claim",
-            body=claim_body,
-            headers={
-                "Authorization": "Bearer test-owner-acme",
-                "Idempotency-Key": "idem-http-claim-01",
-            },
-            environ=env,
-        )
-        assert claim_resp.status_code == 201
-        assert claim_resp.json()["replayed"] is False
-
-        replay_resp = router.dispatch(
-            "POST",
-            "/api/v1/ee/billing/warm-pool/claim",
-            body=claim_body,
-            headers={
-                "Authorization": "Bearer test-owner-acme",
-                "Idempotency-Key": "idem-http-claim-01",
-            },
-            environ=env,
-        )
-        assert replay_resp.status_code == 200
-        assert replay_resp.json()["replayed"] is True
-
         po_create = router.dispatch(
             "POST",
             "/api/v1/ee/billing/purchase-orders",
@@ -683,24 +664,42 @@ class TestEnterpriseBillingHttpRouter:
                     "subtotal_excl_vat_minor": 600_000,
                 }
             ).encode(),
-            headers={"Authorization": "Bearer test-owner-acme"},
+            headers=staff_hdr,
             environ=env,
         )
         assert po_create.status_code == 201
         po_id = po_create.json()["po_id"]
 
-        for payload in (
-            {"action": "issue"},
-            {"action": "countersign", "signatory": "VP Finance"},
+        for step_hdr, payload in (
+            (staff_hdr, {"action": "issue"}),
+            ({"Authorization": "Bearer test-owner-acme"}, {"action": "countersign", "signatory": "VP Finance"}),
         ):
             step = router.dispatch(
                 "POST",
                 f"/api/v1/ee/billing/purchase-orders/{po_id}/transitions",
                 body=json.dumps(payload).encode(),
-                headers={"Authorization": "Bearer test-owner-acme"},
+                headers=step_hdr,
                 environ=env,
             )
             assert step.status_code == 200
+
+        claim_body = json.dumps(
+            {"organisation_id": "org_acme", "checkout_id": po_id}
+        ).encode()
+        # Unpaid `countersigned` PO MUST NOT unlock warm-pool claim (`403`, `BUG-0057`)
+        assert (
+            router.dispatch(
+                "POST",
+                "/api/v1/ee/billing/warm-pool/claim",
+                body=claim_body,
+                headers={
+                    "Authorization": "Bearer test-owner-acme",
+                    "Idempotency-Key": "idem-http-unpaid-cs",
+                },
+                environ=env,
+            ).status_code
+            == 403
+        )
 
         # Customer `org_owner` MUST be refused (403) on `invoice` and `pay` settlement actions
         assert (
@@ -730,6 +729,21 @@ class TestEnterpriseBillingHttpRouter:
             environ=env,
         )
         assert inv_step.status_code == 200
+
+        # Unpaid `invoiced` PO MUST ALSO NOT unlock warm-pool claim (`403`, `BUG-0057`)
+        assert (
+            router.dispatch(
+                "POST",
+                "/api/v1/ee/billing/warm-pool/claim",
+                body=claim_body,
+                headers={
+                    "Authorization": "Bearer test-owner-acme",
+                    "Idempotency-Key": "idem-http-unpaid-inv",
+                },
+                environ=env,
+            ).status_code
+            == 403
+        )
 
         assert (
             router.dispatch(
@@ -771,6 +785,32 @@ class TestEnterpriseBillingHttpRouter:
             environ=env,
         )
         assert pay_step.status_code == 200
+
+        claim_resp = router.dispatch(
+            "POST",
+            "/api/v1/ee/billing/warm-pool/claim",
+            body=claim_body,
+            headers={
+                "Authorization": "Bearer test-owner-acme",
+                "Idempotency-Key": "idem-http-claim-01",
+            },
+            environ=env,
+        )
+        assert claim_resp.status_code == 201
+        assert claim_resp.json()["replayed"] is False
+
+        replay_resp = router.dispatch(
+            "POST",
+            "/api/v1/ee/billing/warm-pool/claim",
+            body=claim_body,
+            headers={
+                "Authorization": "Bearer test-owner-acme",
+                "Idempotency-Key": "idem-http-claim-01",
+            },
+            environ=env,
+        )
+        assert replay_resp.status_code == 200
+        assert replay_resp.json()["replayed"] is True
 
         paid_po = router.dispatch(
             "GET",
@@ -829,7 +869,7 @@ class TestEnterpriseBillingHttpRouter:
                     "subtotal_excl_vat_minor": 900_000,
                 }
             ).encode(),
-            headers=owner_hdr,
+            headers=staff_hdr,
             environ=env,
         )
         assert created.status_code == 201
@@ -840,7 +880,7 @@ class TestEnterpriseBillingHttpRouter:
                 "POST",
                 f"/api/v1/ee/billing/purchase-orders/{po_id}/transitions",
                 body=json.dumps({"action": "issue"}).encode(),
-                headers=owner_hdr,
+                headers=staff_hdr,
                 environ=env,
             ).status_code
             == 200
@@ -1230,20 +1270,32 @@ class TestEnterpriseBillingPostgresAuthAndDurability:
             == 403
         )
 
-        # 5. Same-tenant `org_admin` (`org_alpha`) can create draft PO & issue,
-        #    but is refused (403) on settlement transitions (`countersign`, `invoice`, `pay`)
-        admin_po = router.dispatch(
+        # 5. All customer roles (`org_owner`, `org_billing`, `org_admin`) are refused (403) on
+        #    PO draft creation and `issue` (`BUG-0058` / `E02-003`); only staff may create & issue.
+        for cust_tok in (w.alpha_owner_token, w.alpha_billing_token, w.alpha_admin_token):
+            assert (
+                router.dispatch(
+                    "POST",
+                    "/api/v1/ee/billing/purchase-orders",
+                    body=json.dumps(po_payload).encode(),
+                    headers=hdr(cust_tok),
+                    environ=env,
+                ).status_code
+                == 403
+            )
+
+        staff_po = router.dispatch(
             "POST",
             "/api/v1/ee/billing/purchase-orders",
             body=json.dumps(po_payload).encode(),
-            headers=hdr(w.alpha_admin_token),
+            headers=hdr(w.staff_token),
             environ=env,
         )
-        assert admin_po.status_code == 201
-        po_id = admin_po.json()["po_id"]
+        assert staff_po.status_code == 201
+        po_id = staff_po.json()["po_id"]
 
         # Cross-tenant `bravo_admin` & same-tenant `alpha_member` cannot read or transition `po_id`
-        for denied_tok in (w.bravo_admin_token, w.alpha_member_token):
+        for denied_tok in (w.bravo_admin_token, w.alpha_member_token, w.alpha_admin_token):
             assert (
                 router.dispatch(
                     "GET",
@@ -1264,27 +1316,41 @@ class TestEnterpriseBillingPostgresAuthAndDurability:
                 == 403
             )
 
-        # Same-tenant `alpha_admin` issues PO (200), then refused (403) on `countersign`
+        # Customer `org_owner` and `org_billing` also get 403 on `issue`; `staff` issues cleanly (200)
+        for cust_tok in (w.alpha_owner_token, w.alpha_billing_token):
+            assert (
+                router.dispatch(
+                    "POST",
+                    f"/api/v1/ee/billing/purchase-orders/{po_id}/transitions",
+                    body=json.dumps({"action": "issue"}).encode(),
+                    headers=hdr(cust_tok),
+                    environ=env,
+                ).status_code
+                == 403
+            )
         assert (
             router.dispatch(
                 "POST",
                 f"/api/v1/ee/billing/purchase-orders/{po_id}/transitions",
                 body=json.dumps({"action": "issue"}).encode(),
-                headers=hdr(w.alpha_admin_token),
+                headers=hdr(w.staff_token),
                 environ=env,
             ).status_code
             == 200
         )
-        assert (
-            router.dispatch(
-                "POST",
-                f"/api/v1/ee/billing/purchase-orders/{po_id}/transitions",
-                body=json.dumps({"action": "countersign", "signatory": "Admin Try"}).encode(),
-                headers=hdr(w.alpha_admin_token),
-                environ=env,
-            ).status_code
-            == 403
-        )
+
+        # Both `org_admin` AND `org_billing` are refused (403) on `countersign` (`E02-003`!)
+        for non_owner_tok in (w.alpha_admin_token, w.alpha_billing_token):
+            assert (
+                router.dispatch(
+                    "POST",
+                    f"/api/v1/ee/billing/purchase-orders/{po_id}/transitions",
+                    body=json.dumps({"action": "countersign", "signatory": "Non-Owner Try"}).encode(),
+                    headers=hdr(non_owner_tok),
+                    environ=env,
+                ).status_code
+                == 403
+            )
 
         # Same-tenant `org_owner` countersigns (200), while ALL customer roles (`org_owner`,
         # `org_billing`, `org_admin`) are refused (403) on `invoice` and `pay`!
@@ -1522,24 +1588,13 @@ class TestEnterpriseBillingPostgresAuthAndDurability:
         slot_id = rep.json()["created_slots"][0]["slot_id"]
         worker_a.warm_pool.mark_ready(slot_id)
 
-        claim_payload = json.dumps(
-            {
-                "organisation_id": w.org_alpha_id,
-                "checkout_id": "cs_pg_worker_a_01",
-                "region": "fr-par-pg",
-                "profile_ref": "pg-durable-v1",
-            }
-        ).encode()
-        claim_a = worker_a.dispatch(
-            "POST",
-            "/api/v1/ee/billing/warm-pool/claim",
-            body=claim_payload,
-            headers={**owner_hdr, "Idempotency-Key": "idem-pg-multiworker-01"},
-            environ=env,
+        inv_955 = self._seed_core_invoice(
+            organisation_id=w.org_alpha_id,
+            number="KODERA-2026-00955",
+            subtotal_excl_vat_minor=500_000,
+            vat_amount_minor=100_000,
         )
-        assert claim_a.status_code == 201
-        assert claim_a.json()["slot"]["slot_id"] == slot_id
-        assert claim_a.json()["replayed"] is False
+        self._settle_core_invoice(inv_955, payment_ref="WIRE-PG-955")
 
         po_created = worker_a.dispatch(
             "POST",
@@ -1555,7 +1610,7 @@ class TestEnterpriseBillingPostgresAuthAndDurability:
                     "subtotal_excl_vat_minor": 500_000,
                 }
             ).encode(),
-            headers=owner_hdr,
+            headers=staff_hdr,
             environ=env,
         )
         assert po_created.status_code == 201
@@ -1565,7 +1620,7 @@ class TestEnterpriseBillingPostgresAuthAndDurability:
             "POST",
             f"/api/v1/ee/billing/purchase-orders/{po_id}/transitions",
             body=json.dumps({"action": "issue"}).encode(),
-            headers=owner_hdr,
+            headers=staff_hdr,
             environ=env,
         )
         assert issued_a.status_code == 200
@@ -1577,18 +1632,6 @@ class TestEnterpriseBillingPostgresAuthAndDurability:
         assert worker_b.purchase_orders is not worker_a.purchase_orders
         assert worker_b.warm_pool is not worker_a.warm_pool
 
-        # Worker B replays exact same Idempotency-Key warm-pool claim -> 200 replayed=True, same slot_id
-        claim_b = worker_b.dispatch(
-            "POST",
-            "/api/v1/ee/billing/warm-pool/claim",
-            body=claim_payload,
-            headers={**owner_hdr, "Idempotency-Key": "idem-pg-multiworker-01"},
-            environ=env,
-        )
-        assert claim_b.status_code == 200
-        assert claim_b.json()["replayed"] is True
-        assert claim_b.json()["slot"]["slot_id"] == slot_id
-
         # Worker B reads PO created on Worker A; customer owner countersigns, staff binds & settles
         fetched_b = worker_b.dispatch(
             "GET",
@@ -1598,14 +1641,6 @@ class TestEnterpriseBillingPostgresAuthAndDurability:
         )
         assert fetched_b.status_code == 200
         assert fetched_b.json()["state"] == "issued"
-
-        inv_955 = self._seed_core_invoice(
-            organisation_id=w.org_alpha_id,
-            number="KODERA-2026-00955",
-            subtotal_excl_vat_minor=500_000,
-            vat_amount_minor=100_000,
-        )
-        self._settle_core_invoice(inv_955, payment_ref="WIRE-PG-955")
 
         for step_hdr, step_payload in (
             (owner_hdr, {"action": "countersign", "signatory": "Worker B CFO"}),
@@ -1629,7 +1664,7 @@ class TestEnterpriseBillingPostgresAuthAndDurability:
             )
             assert step_b.status_code == 200
 
-        # Worker A sees paid state written by Worker B!
+        # Worker A sees paid state written by Worker B and claims warm-pool slot (`201`)!
         final_a = worker_a.dispatch(
             "GET",
             f"/api/v1/ee/billing/purchase-orders/{po_id}",
@@ -1638,6 +1673,37 @@ class TestEnterpriseBillingPostgresAuthAndDurability:
         )
         assert final_a.status_code == 200
         assert final_a.json()["state"] == "paid"
+
+        claim_payload = json.dumps(
+            {
+                "organisation_id": w.org_alpha_id,
+                "checkout_id": "WIRE-PG-955",
+                "region": "fr-par-pg",
+                "profile_ref": "pg-durable-v1",
+            }
+        ).encode()
+        claim_a = worker_a.dispatch(
+            "POST",
+            "/api/v1/ee/billing/warm-pool/claim",
+            body=claim_payload,
+            headers={**owner_hdr, "Idempotency-Key": "idem-pg-multiworker-01"},
+            environ=env,
+        )
+        assert claim_a.status_code == 201
+        assert claim_a.json()["slot"]["slot_id"] == slot_id
+        assert claim_a.json()["replayed"] is False
+
+        # Worker B replays exact same Idempotency-Key warm-pool claim -> 200 replayed=True, same slot_id
+        claim_b = worker_b.dispatch(
+            "POST",
+            "/api/v1/ee/billing/warm-pool/claim",
+            body=claim_payload,
+            headers={**owner_hdr, "Idempotency-Key": "idem-pg-multiworker-01"},
+            environ=env,
+        )
+        assert claim_b.status_code == 200
+        assert claim_b.json()["replayed"] is True
+        assert claim_b.json()["slot"]["slot_id"] == slot_id
 
         # Auto-expiry persists in PostgreSQL across workers even when issue() raises
         t0 = datetime(2026, 11, 14, 12, 0, tzinfo=UTC)
@@ -1710,22 +1776,6 @@ class TestEnterpriseBillingPostgresAuthAndDurability:
                 slot_id = rep.json()["created_slots"][0]["slot_id"]
                 router.warm_pool.mark_ready(slot_id)
 
-                claimed = router.dispatch(
-                    "POST",
-                    "/api/v1/ee/billing/warm-pool/claim",
-                    body=json.dumps(
-                        {
-                            "organisation_id": w.org_alpha_id,
-                            "checkout_id": "cs_wr_ee_01",
-                            "region": "fr-par-wr",
-                            "profile_ref": "wr-v1",
-                        }
-                    ).encode(),
-                    headers={**owner_hdr, "Idempotency-Key": "idem-wr-ee-claim-01"},
-                    environ=env,
-                )
-                assert claimed.status_code == 201
-
                 po_res = router.dispatch(
                     "POST",
                     "/api/v1/ee/billing/purchase-orders",
@@ -1740,14 +1790,14 @@ class TestEnterpriseBillingPostgresAuthAndDurability:
                             "subtotal_excl_vat_minor": 500_000,
                         }
                     ).encode(),
-                    headers=owner_hdr,
+                    headers=staff_hdr,
                     environ=env,
                 )
                 assert po_res.status_code == 201
                 po_id = po_res.json()["po_id"]
 
                 for step_hdr, step_payload in (
-                    (owner_hdr, {"action": "issue"}),
+                    (staff_hdr, {"action": "issue"}),
                     (owner_hdr, {"action": "countersign", "signatory": "Alpha CFO"}),
                 ):
                     step_res = router.dispatch(
@@ -1803,6 +1853,22 @@ class TestEnterpriseBillingPostgresAuthAndDurability:
                     ).status_code
                     == 200
                 )
+
+                claimed = router.dispatch(
+                    "POST",
+                    "/api/v1/ee/billing/warm-pool/claim",
+                    body=json.dumps(
+                        {
+                            "organisation_id": w.org_alpha_id,
+                            "checkout_id": "WIRE-WR-977",
+                            "region": "fr-par-wr",
+                            "profile_ref": "wr-v1",
+                        }
+                    ).encode(),
+                    headers={**owner_hdr, "Idempotency-Key": "idem-wr-ee-claim-01"},
+                    environ=env,
+                )
+                assert claimed.status_code == 201
 
                 assert refused("CREATE TABLE ee_forbidden_probe (x int)") == INSUFFICIENT_PRIVILEGE
                 assert (
@@ -1873,20 +1939,20 @@ class TestEnterpriseBillingPostgresAuthAndDurability:
                 }
             ).encode("utf-8"),
             content_type="application/json",
-            HTTP_AUTHORIZATION=f"Bearer {w.alpha_owner_token}",
+            HTTP_AUTHORIZATION=f"Bearer {w.staff_token}",
         )
         assert r_po.status_code == 201
         po_id = r_po.json()["po_id"]
 
-        for payload in (
-            {"action": "issue"},
-            {"action": "countersign", "signatory": "WSGI Customer Owner"},
+        for step_tok, payload in (
+            (w.staff_token, {"action": "issue"}),
+            (w.alpha_owner_token, {"action": "countersign", "signatory": "WSGI Customer Owner"}),
         ):
             r_step = client.post(
                 f"/api/v1/ee/billing/purchase-orders/{po_id}/transitions",
                 data=json.dumps(payload).encode("utf-8"),
                 content_type="application/json",
-                HTTP_AUTHORIZATION=f"Bearer {w.alpha_owner_token}",
+                HTTP_AUTHORIZATION=f"Bearer {step_tok}",
             )
             assert r_step.status_code == 200
 
@@ -2023,7 +2089,7 @@ class TestEnterpriseBillingPostgresAuthAndDurability:
                     "subtotal_excl_vat_minor": 500_000,
                 }
             ).encode(),
-            headers={"Authorization": f"Bearer {w.alpha_owner_token}"},
+            headers={"Authorization": f"Bearer {w.staff_token}"},
             environ=env,
         )
         assert po_res.status_code == 201
@@ -2033,7 +2099,7 @@ class TestEnterpriseBillingPostgresAuthAndDurability:
                 "POST",
                 f"/api/v1/ee/billing/purchase-orders/{po_id}/transitions",
                 body=json.dumps({"action": "issue"}).encode(),
-                headers={"Authorization": f"Bearer {w.alpha_owner_token}"},
+                headers={"Authorization": f"Bearer {w.staff_token}"},
                 environ=env,
             ).status_code
             == 200
@@ -2465,41 +2531,6 @@ class TestEnterpriseBillingPostgresAuthAndDurability:
         router.warm_pool.mark_ready(slot_alpha)
         router.warm_pool.mark_ready(slot_bravo)
 
-        assert (
-            router.dispatch(
-                "POST",
-                "/api/v1/ee/billing/warm-pool/claim",
-                body=json.dumps(
-                    {
-                        "organisation_id": w.org_alpha_id,
-                        "checkout_id": "cs_priv_alpha_01",
-                        "region": "fr-par-priv",
-                        "profile_ref": "priv-v1",
-                    }
-                ).encode(),
-                headers={**cfo_hdr, "Idempotency-Key": "idem-priv-alpha-01"},
-                environ=env,
-            ).status_code
-            == 201
-        )
-        assert (
-            router.dispatch(
-                "POST",
-                "/api/v1/ee/billing/warm-pool/claim",
-                body=json.dumps(
-                    {
-                        "organisation_id": w.org_bravo_id,
-                        "checkout_id": "cs_priv_bravo_01",
-                        "region": "fr-par-priv",
-                        "profile_ref": "priv-v1",
-                    }
-                ).encode(),
-                headers={**bravo_owner_hdr, "Idempotency-Key": "bbbb-bbbb-0001"},
-                environ=env,
-            ).status_code
-            == 201
-        )
-
         def _make_po(org_id: str, hdr: dict[str, str], ref: str) -> str:
             res = router.dispatch(
                 "POST",
@@ -2515,7 +2546,7 @@ class TestEnterpriseBillingPostgresAuthAndDurability:
                         "subtotal_excl_vat_minor": 600_000,
                     }
                 ).encode(),
-                headers=hdr,
+                headers=staff_hdr,
                 environ=env,
             )
             assert res.status_code == 201
@@ -2527,13 +2558,13 @@ class TestEnterpriseBillingPostgresAuthAndDurability:
         po_paid_id = _make_po(w.org_alpha_id, cfo_hdr, "BDC-ALPHA-PAID-JOHN-DOE")
         po_bravo_id = _make_po(w.org_bravo_id, bravo_owner_hdr, "BDC-BRAVO-LIVE-01")
 
-        for pid in (po_issued_id, po_cs_id, po_paid_id):
+        for pid in (po_issued_id, po_cs_id, po_paid_id, po_bravo_id):
             assert (
                 router.dispatch(
                     "POST",
                     f"/api/v1/ee/billing/purchase-orders/{pid}/transitions",
                     body=json.dumps({"action": "issue"}).encode(),
-                    headers=cfo_hdr,
+                    headers=staff_hdr,
                     environ=env,
                 ).status_code
                 == 200
@@ -2553,6 +2584,16 @@ class TestEnterpriseBillingPostgresAuthAndDurability:
                 ).status_code
                 == 200
             )
+        assert (
+            router.dispatch(
+                "POST",
+                f"/api/v1/ee/billing/purchase-orders/{po_bravo_id}/transitions",
+                body=json.dumps({"action": "countersign", "signatory": "Bravo CFO"}).encode(),
+                headers=bravo_owner_hdr,
+                environ=env,
+            ).status_code
+            == 200
+        )
 
         inv_paid = self._seed_core_invoice(
             organisation_id=w.org_alpha_id,
@@ -2589,6 +2630,78 @@ class TestEnterpriseBillingPostgresAuthAndDurability:
                 environ=env,
             ).status_code
             == 200
+        )
+
+        inv_bravo_priv = self._seed_core_invoice(
+            organisation_id=w.org_bravo_id,
+            number="KODERA-2026-00992",
+            subtotal_excl_vat_minor=600_000,
+            vat_amount_minor=120_000,
+        )
+        self._settle_core_invoice(inv_bravo_priv, payment_ref="WIRE-PRIV-992")
+        assert (
+            router.dispatch(
+                "POST",
+                f"/api/v1/ee/billing/purchase-orders/{po_bravo_id}/transitions",
+                body=json.dumps(
+                    {"action": "invoice", "invoice_ref": "INV-KODERA-2026-00992"}
+                ).encode(),
+                headers=staff_hdr,
+                environ=env,
+            ).status_code
+            == 200
+        )
+        assert (
+            router.dispatch(
+                "POST",
+                f"/api/v1/ee/billing/purchase-orders/{po_bravo_id}/transitions",
+                body=json.dumps(
+                    {
+                        "action": "pay",
+                        "invoice_ref": "INV-KODERA-2026-00992",
+                        "payment_ref": "WIRE-PRIV-992",
+                        "amount_paid_minor": 720_000,
+                    }
+                ).encode(),
+                headers=internal_hdr,
+                environ=env,
+            ).status_code
+            == 200
+        )
+
+        assert (
+            router.dispatch(
+                "POST",
+                "/api/v1/ee/billing/warm-pool/claim",
+                body=json.dumps(
+                    {
+                        "organisation_id": w.org_alpha_id,
+                        "checkout_id": po_paid_id,
+                        "region": "fr-par-priv",
+                        "profile_ref": "priv-v1",
+                    }
+                ).encode(),
+                headers={**cfo_hdr, "Idempotency-Key": "idem-priv-alpha-01"},
+                environ=env,
+            ).status_code
+            == 201
+        )
+        assert (
+            router.dispatch(
+                "POST",
+                "/api/v1/ee/billing/warm-pool/claim",
+                body=json.dumps(
+                    {
+                        "organisation_id": w.org_bravo_id,
+                        "checkout_id": po_bravo_id,
+                        "region": "fr-par-priv",
+                        "profile_ref": "priv-v1",
+                    }
+                ).encode(),
+                headers={**bravo_owner_hdr, "Idempotency-Key": "bbbb-bbbb-0001"},
+                environ=env,
+            ).status_code
+            == 201
         )
 
         # --- 1. Account Privacy Erasure on `cfo_user` ---
@@ -3280,6 +3393,7 @@ class TestEnterpriseBillingPostgresAuthAndDurability:
         hdr_q = {"Authorization": f"Bearer {tok_q}"}
 
         def _create_and_countersign(hdr: dict[str, str], ref: str, sig: str) -> str:
+            staff_hdr_local = {"Authorization": f"Bearer {w.staff_token}"}
             r_new = router.dispatch(
                 "POST",
                 "/api/v1/ee/billing/purchase-orders",
@@ -3294,7 +3408,7 @@ class TestEnterpriseBillingPostgresAuthAndDurability:
                         "subtotal_excl_vat_minor": 500_000,
                     }
                 ).encode("utf-8"),
-                headers=hdr,
+                headers=staff_hdr_local,
                 environ=env,
             )
             assert r_new.status_code == 201
@@ -3305,7 +3419,7 @@ class TestEnterpriseBillingPostgresAuthAndDurability:
                     "POST",
                     f"/api/v1/ee/billing/purchase-orders/{pid}/transitions",
                     body=json.dumps({"action": "issue"}).encode("utf-8"),
-                    headers=hdr,
+                    headers=staff_hdr_local,
                     environ=env,
                 ).status_code
                 == 200
@@ -3403,3 +3517,586 @@ class TestEnterpriseBillingPostgresAuthAndDurability:
         )
         assert r_get_q.status_code == 200
         assert "countersigned_by_user_id" not in r_get_q.json()
+
+    def test_stage4_bug_0058_0057_0059_and_e02_003_regressions(
+        self,
+        ee_billing_pg_world,
+    ) -> None:
+        """Regression suite for `BUG-0058` (`E02-003`), `BUG-0057`, and `BUG-0059` on PostgreSQL."""
+        import psycopg
+        from django.db import connection
+        from django.utils import timezone
+        from test_customer_persistence_models import anchor_models, identity
+
+        w = ee_billing_pg_world
+        env = {"KODERA_EDITION": "enterprise"}
+        router = EnterpriseBillingRouter()
+        staff_hdr = {"Authorization": f"Bearer {w.staff_token}"}
+        alpha_owner_hdr = {"Authorization": f"Bearer {w.alpha_owner_token}"}
+        alpha_billing_hdr = {"Authorization": f"Bearer {w.alpha_billing_token}"}
+        alpha_admin_hdr = {"Authorization": f"Bearer {w.alpha_admin_token}"}
+
+        models = anchor_models()
+        now = timezone.now()
+        bravo_owner = models.User.objects.create(
+            email=f"bravo-s4-{uuid.uuid4().hex[:6]}@bravo-corp.fr",
+            display_name="Bravo Owner S4",
+        )
+        bravo_sub = "sub-bravo-s4-" + uuid.uuid4().hex[:8]
+        identity(models, w.org_bravo, bravo_owner, subject=bravo_sub)
+        models.Membership.objects.create(
+            user=bravo_owner,
+            organisation=w.org_bravo,
+            role="org_owner",
+            state="active",
+            accepted_at=now,
+        )
+        bravo_owner_hdr = {
+            "Authorization": f"Bearer {w.mint_jwt(w.org_bravo.issuer, bravo_sub)}"
+        }
+
+        # --- BUG-0058 & E02-003: Quote override ceiling + server-authoritative catalog COGS/subtotal ---
+        for bad_quote_override in (
+            {"cogs_override_minor": 1},
+            {"custom_net_excl_vat_minor": 999_999},
+            {"discount_bps": 1000},
+            {"vat_rate_bps": 0},
+        ):
+            r_override = router.dispatch(
+                "POST",
+                "/api/v1/ee/billing/quotes",
+                body=json.dumps(
+                    {
+                        "organisation_id": w.org_alpha_id,
+                        "plan_code": "sovereign",
+                        "seats": 50,
+                        **bad_quote_override,
+                    }
+                ).encode(),
+                headers=alpha_owner_hdr,
+                environ=env,
+            )
+            assert r_override.status_code == 403, bad_quote_override
+
+        # Even staff cannot understate COGS below catalog COGS (`understated_cogs` -> 422)!
+        r_understated_q = router.dispatch(
+            "POST",
+            "/api/v1/ee/billing/quotes",
+            body=json.dumps(
+                {
+                    "plan_code": "sovereign",
+                    "seats": 50,
+                    "billing_cycle": "annual",
+                    "cogs_override_minor": 100,
+                }
+            ).encode(),
+            headers=staff_hdr,
+            environ=env,
+        )
+        assert r_understated_q.status_code == 422
+
+        # Staff creates PO omitting `subtotal_excl_vat_minor` -> computed from server catalog!
+        r_catalog_po = router.dispatch(
+            "POST",
+            "/api/v1/ee/billing/purchase-orders",
+            body=json.dumps(
+                {
+                    "organisation_id": w.org_alpha_id,
+                    "customer_po_reference": "BDC-S4-CAT-01",
+                    "plan_code": "sovereign",
+                    "billing_months": 12,
+                    "committed_seats": 25,
+                    "committed_storage_gb": 100,
+                }
+            ).encode(),
+            headers=staff_hdr,
+            environ=env,
+        )
+        assert r_catalog_po.status_code == 201
+        po_cat_id = str(r_catalog_po.json()["po_id"])
+        assert po_cat_id.startswith("po_") and len(po_cat_id) == 39  # `po_<uuid7>` (`BUG-0059`)
+        assert r_catalog_po.json()["subtotal_excl_vat_minor"] == 348_000
+        assert r_catalog_po.json()["vat_amount_minor"] == 69_600
+        assert r_catalog_po.json()["total_incl_vat_minor"] == 417_600
+
+        # Staff PO with understated `estimated_cogs_minor` or below-44%-margin `subtotal_excl_vat_minor` -> 422!
+        for bad_po_fields in (
+            {"subtotal_excl_vat_minor": 200_000},
+            {"subtotal_excl_vat_minor": 348_000, "estimated_cogs_minor": 100},
+        ):
+            r_bad_po = router.dispatch(
+                "POST",
+                "/api/v1/ee/billing/purchase-orders",
+                body=json.dumps(
+                    {
+                        "organisation_id": w.org_alpha_id,
+                        "customer_po_reference": "BDC-S4-BAD",
+                        "plan_code": "sovereign",
+                        "billing_months": 12,
+                        "committed_seats": 25,
+                        "committed_storage_gb": 100,
+                        **bad_po_fields,
+                    }
+                ).encode(),
+                headers=staff_hdr,
+                environ=env,
+            )
+            assert r_bad_po.status_code == 422
+
+        # --- BUG-0057: Unpaid warm-pool claim refused (403), paid claim capped at 1, release frees cap ---
+        rep = router.dispatch(
+            "POST",
+            "/api/v1/ee/billing/warm-pool/replenish",
+            body=json.dumps({"region": "fr-par-s4", "profile_ref": "s4-v1"}).encode(),
+            headers=staff_hdr,
+            environ=env,
+        )
+        assert rep.status_code == 200
+        created_ids = [s["slot_id"] for s in rep.json()["created_slots"]]
+        assert len(created_ids) >= 3
+        for sid in created_ids:
+            router.warm_pool.mark_ready(sid)
+
+        # Unpaid `org_alpha` cannot claim warm-pool slot (`403`)!
+        r_unpaid_claim = router.dispatch(
+            "POST",
+            "/api/v1/ee/billing/warm-pool/claim",
+            body=json.dumps(
+                {
+                    "organisation_id": w.org_alpha_id,
+                    "checkout_id": "cs_unpaid_s4",
+                    "region": "fr-par-s4",
+                    "profile_ref": "s4-v1",
+                }
+            ).encode(),
+            headers={**alpha_owner_hdr, "Idempotency-Key": "idem-s4-shared-key"},
+            environ=env,
+        )
+        assert r_unpaid_claim.status_code == 403
+
+        # Staff issues `po_cat_id`; `org_billing` & `org_admin` get 403 on `countersign`, `org_owner` gets 200!
+        assert (
+            router.dispatch(
+                "POST",
+                f"/api/v1/ee/billing/purchase-orders/{po_cat_id}/transitions",
+                body=json.dumps({"action": "issue"}).encode(),
+                headers=staff_hdr,
+                environ=env,
+            ).status_code
+            == 200
+        )
+        for denied_hdr in (alpha_billing_hdr, alpha_admin_hdr):
+            assert (
+                router.dispatch(
+                    "POST",
+                    f"/api/v1/ee/billing/purchase-orders/{po_cat_id}/transitions",
+                    body=json.dumps(
+                        {"action": "countersign", "signatory": "Billing Attempt"}
+                    ).encode(),
+                    headers=denied_hdr,
+                    environ=env,
+                ).status_code
+                == 403
+            )
+        assert (
+            router.dispatch(
+                "POST",
+                f"/api/v1/ee/billing/purchase-orders/{po_cat_id}/transitions",
+                body=json.dumps({"action": "countersign", "signatory": "Alpha Owner"}).encode(),
+                headers=alpha_owner_hdr,
+                environ=env,
+            ).status_code
+            == 200
+        )
+
+        # Expiring a `countersigned` or `invoiced` PO is strictly forbidden (`409`) even for staff (`BUG-0058`)!
+        assert (
+            router.dispatch(
+                "POST",
+                f"/api/v1/ee/billing/purchase-orders/{po_cat_id}/transitions",
+                body=json.dumps({"action": "expire"}).encode(),
+                headers=staff_hdr,
+                environ=env,
+            ).status_code
+            == 409
+        )
+        # `BUG-0057`: Unpaid `countersigned` Sovereign PO MUST be refused (`403`) on warm-pool claim!
+        assert (
+            router.dispatch(
+                "POST",
+                "/api/v1/ee/billing/warm-pool/claim",
+                body=json.dumps(
+                    {
+                        "organisation_id": w.org_alpha_id,
+                        "checkout_id": po_cat_id,
+                        "region": "fr-par-s4",
+                        "profile_ref": "s4-v1",
+                    }
+                ).encode(),
+                headers={**alpha_owner_hdr, "Idempotency-Key": "idem-s4-unpaid-cs"},
+                environ=env,
+            ).status_code
+            == 403
+        )
+
+        inv_s4 = self._seed_core_invoice(
+            organisation_id=w.org_alpha_id,
+            number="KODERA-2026-09401",
+            subtotal_excl_vat_minor=348_000,
+            vat_amount_minor=69_600,
+        )
+        assert (
+            router.dispatch(
+                "POST",
+                f"/api/v1/ee/billing/purchase-orders/{po_cat_id}/transitions",
+                body=json.dumps(
+                    {"action": "invoice", "invoice_ref": "INV-KODERA-2026-09401"}
+                ).encode(),
+                headers=staff_hdr,
+                environ=env,
+            ).status_code
+            == 200
+        )
+        assert (
+            router.dispatch(
+                "POST",
+                f"/api/v1/ee/billing/purchase-orders/{po_cat_id}/transitions",
+                body=json.dumps({"action": "expire"}).encode(),
+                headers=staff_hdr,
+                environ=env,
+            ).status_code
+            == 409
+        )
+        assert inv_s4.number == "KODERA-2026-09401"
+
+        # `BUG-0057`: Unpaid `invoiced` Sovereign PO MUST ALSO be refused (`403`) on warm-pool claim!
+        assert (
+            router.dispatch(
+                "POST",
+                "/api/v1/ee/billing/warm-pool/claim",
+                body=json.dumps(
+                    {
+                        "organisation_id": w.org_alpha_id,
+                        "checkout_id": po_cat_id,
+                        "region": "fr-par-s4",
+                        "profile_ref": "s4-v1",
+                    }
+                ).encode(),
+                headers={**alpha_owner_hdr, "Idempotency-Key": "idem-s4-unpaid-inv"},
+                environ=env,
+            ).status_code
+            == 403
+        )
+
+        # `BUG-0057`: A settled (`paid`) NON-Enterprise `team` PO / Core invoice MUST ALSO return `403`!
+        r_team_po = router.dispatch(
+            "POST",
+            "/api/v1/ee/billing/purchase-orders",
+            body=json.dumps(
+                {
+                    "organisation_id": w.org_alpha_id,
+                    "customer_po_reference": "BDC-TEAM-NON-EE-01",
+                    "plan_code": "team",
+                    "billing_months": 12,
+                    "committed_seats": 25,
+                    "committed_storage_gb": 50,
+                }
+            ).encode(),
+            headers=staff_hdr,
+            environ=env,
+        )
+        assert r_team_po.status_code == 201
+        team_po_id = str(r_team_po.json()["po_id"])
+        team_total = int(r_team_po.json()["total_incl_vat_minor"])
+        team_sub = int(r_team_po.json()["subtotal_excl_vat_minor"])
+        team_vat = int(r_team_po.json()["vat_amount_minor"])
+        inv_team = self._seed_core_invoice(
+            organisation_id=w.org_alpha_id,
+            number="KODERA-2026-09402",
+            subtotal_excl_vat_minor=team_sub,
+            vat_amount_minor=team_vat,
+        )
+        self._settle_core_invoice(inv_team, payment_ref="WIRE-TEAM-9402")
+        for hdr_t, pay_t in (
+            (staff_hdr, {"action": "issue"}),
+            (alpha_owner_hdr, {"action": "countersign", "signatory": "Alpha Owner"}),
+            (staff_hdr, {"action": "invoice", "invoice_ref": "INV-KODERA-2026-09402"}),
+            (
+                staff_hdr,
+                {
+                    "action": "pay",
+                    "invoice_ref": "INV-KODERA-2026-09402",
+                    "payment_ref": "WIRE-TEAM-9402",
+                    "amount_paid_minor": team_total,
+                },
+            ),
+        ):
+            assert (
+                router.dispatch(
+                    "POST",
+                    f"/api/v1/ee/billing/purchase-orders/{team_po_id}/transitions",
+                    body=json.dumps(pay_t).encode(),
+                    headers=hdr_t,
+                    environ=env,
+                ).status_code
+                == 200
+            )
+        for non_ee_ref in (team_po_id, "INV-KODERA-2026-09402", "WIRE-TEAM-9402"):
+            assert (
+                router.dispatch(
+                    "POST",
+                    "/api/v1/ee/billing/warm-pool/claim",
+                    body=json.dumps(
+                        {
+                            "organisation_id": w.org_alpha_id,
+                            "checkout_id": non_ee_ref,
+                            "region": "fr-par-s4",
+                            "profile_ref": "s4-v1",
+                        }
+                    ).encode(),
+                    headers={**alpha_owner_hdr, "Idempotency-Key": f"idem-team-{non_ee_ref[-8:]}"},
+                    environ=env,
+                ).status_code
+                == 403
+            )
+
+        # Settle `po_cat_id` (`sovereign`) to `paid` via `WIRE-S4-9401`
+        self._settle_core_invoice(inv_s4, payment_ref="WIRE-S4-9401")
+        assert (
+            router.dispatch(
+                "POST",
+                f"/api/v1/ee/billing/purchase-orders/{po_cat_id}/transitions",
+                body=json.dumps(
+                    {
+                        "action": "pay",
+                        "invoice_ref": "INV-KODERA-2026-09401",
+                        "payment_ref": "WIRE-S4-9401",
+                        "amount_paid_minor": 417_600,
+                    }
+                ).encode(),
+                headers=staff_hdr,
+                environ=env,
+            ).status_code
+            == 200
+        )
+
+        # Even with a paid Sovereign PO, a fabricated `checkout_id` is refused (`403`)!
+        r_fab_claim = router.dispatch(
+            "POST",
+            "/api/v1/ee/billing/warm-pool/claim",
+            body=json.dumps(
+                {
+                    "organisation_id": w.org_alpha_id,
+                    "checkout_id": "cs_fabricated_999",
+                    "region": "fr-par-s4",
+                    "profile_ref": "s4-v1",
+                }
+            ).encode(),
+            headers={**alpha_owner_hdr, "Idempotency-Key": "idem-s4-fab-key"},
+            environ=env,
+        )
+        assert r_fab_claim.status_code == 403
+
+        # Now `org_alpha` claims with its paid Sovereign PO ref -> warm-pool claim #1 succeeds (201),
+        # claim #2 with its bound invoice ref hits per-tenant cap (`409`), and `org_bravo` with paid PO
+        # reusing the EXACT SAME `Idempotency-Key` (`idem-s4-shared-key`) succeeds (`E02-003`)!
+        r_claim1 = router.dispatch(
+            "POST",
+            "/api/v1/ee/billing/warm-pool/claim",
+            body=json.dumps(
+                {
+                    "organisation_id": w.org_alpha_id,
+                    "checkout_id": po_cat_id,
+                    "region": "fr-par-s4",
+                    "profile_ref": "s4-v1",
+                }
+            ).encode(),
+            headers={**alpha_owner_hdr, "Idempotency-Key": "idem-s4-shared-key"},
+            environ=env,
+        )
+        assert r_claim1.status_code == 201
+        claimed_slot_alpha = str(r_claim1.json()["slot"]["slot_id"])
+
+        r_claim2_cap = router.dispatch(
+            "POST",
+            "/api/v1/ee/billing/warm-pool/claim",
+            body=json.dumps(
+                {
+                    "organisation_id": w.org_alpha_id,
+                    "checkout_id": "INV-KODERA-2026-09401",
+                    "region": "fr-par-s4",
+                    "profile_ref": "s4-v1",
+                }
+            ).encode(),
+            headers={**alpha_owner_hdr, "Idempotency-Key": "idem-s4-second-key"},
+            environ=env,
+        )
+        assert r_claim2_cap.status_code == 409
+
+        # Cross-tenant idempotency isolation: `org_bravo` with paid Sovereign PO reuses `idem-s4-shared-key`!
+        r_bravo_po = router.dispatch(
+            "POST",
+            "/api/v1/ee/billing/purchase-orders",
+            body=json.dumps(
+                {
+                    "organisation_id": w.org_bravo_id,
+                    "customer_po_reference": "BDC-BRAVO-S4-01",
+                    "plan_code": "sovereign",
+                    "billing_months": 12,
+                    "committed_seats": 25,
+                    "committed_storage_gb": 100,
+                }
+            ).encode(),
+            headers=staff_hdr,
+            environ=env,
+        )
+        bravo_po_id = str(r_bravo_po.json()["po_id"])
+        bravo_total = int(r_bravo_po.json()["total_incl_vat_minor"])
+        bravo_po_sub = int(r_bravo_po.json()["subtotal_excl_vat_minor"])
+        bravo_vat = int(r_bravo_po.json()["vat_amount_minor"])
+        inv_bravo_s4 = self._seed_core_invoice(
+            organisation_id=w.org_bravo_id,
+            number="KODERA-2026-09403",
+            subtotal_excl_vat_minor=bravo_po_sub,
+            vat_amount_minor=bravo_vat,
+        )
+        self._settle_core_invoice(inv_bravo_s4, payment_ref="WIRE-BRAVO-9403")
+        for b_hdr, b_pay in (
+            (staff_hdr, {"action": "issue"}),
+            (bravo_owner_hdr, {"action": "countersign", "signatory": "Bravo Owner"}),
+            (staff_hdr, {"action": "invoice", "invoice_ref": "INV-KODERA-2026-09403"}),
+            (
+                staff_hdr,
+                {
+                    "action": "pay",
+                    "invoice_ref": "INV-KODERA-2026-09403",
+                    "payment_ref": "WIRE-BRAVO-9403",
+                    "amount_paid_minor": bravo_total,
+                },
+            ),
+        ):
+            assert (
+                router.dispatch(
+                    "POST",
+                    f"/api/v1/ee/billing/purchase-orders/{bravo_po_id}/transitions",
+                    body=json.dumps(b_pay).encode(),
+                    headers=b_hdr,
+                    environ=env,
+                ).status_code
+                == 200
+            )
+        r_bravo_claim = router.dispatch(
+            "POST",
+            "/api/v1/ee/billing/warm-pool/claim",
+            body=json.dumps(
+                {
+                    "organisation_id": w.org_bravo_id,
+                    "checkout_id": bravo_po_id,
+                    "region": "fr-par-s4",
+                    "profile_ref": "s4-v1",
+                }
+            ).encode(),
+            headers={**bravo_owner_hdr, "Idempotency-Key": "idem-s4-shared-key"},
+            environ=env,
+        )
+        assert r_bravo_claim.status_code == 201
+        assert r_bravo_claim.json()["slot"]["slot_id"] != claimed_slot_alpha
+
+        # Customer cannot release warm-pool slot (403); staff operator releases it (200), freeing cap!
+        assert (
+            router.dispatch(
+                "POST",
+                "/api/v1/ee/billing/warm-pool/release",
+                body=json.dumps(
+                    {"slot_id": claimed_slot_alpha, "reason": "customer_try"}
+                ).encode(),
+                headers=alpha_owner_hdr,
+                environ=env,
+            ).status_code
+            == 403
+        )
+        r_release = router.dispatch(
+            "POST",
+            "/api/v1/ee/billing/warm-pool/release",
+            body=json.dumps(
+                {"slot_id": claimed_slot_alpha, "reason": "checkout_cancelled"}
+            ).encode(),
+            headers=staff_hdr,
+            environ=env,
+        )
+        assert r_release.status_code == 200
+        assert r_release.json()["slot"]["state"] == "evicted"
+
+        r_claim_after_release = router.dispatch(
+            "POST",
+            "/api/v1/ee/billing/warm-pool/claim",
+            body=json.dumps(
+                {
+                    "organisation_id": w.org_alpha_id,
+                    "checkout_id": po_cat_id,
+                    "region": "fr-par-s4",
+                    "profile_ref": "s4-v1",
+                }
+            ).encode(),
+            headers={**alpha_owner_hdr, "Idempotency-Key": "idem-s4-third-key"},
+            environ=env,
+        )
+        assert r_claim_after_release.status_code == 201
+
+        # --- BUG-0059: Zero cross-tenant PO existence or lock-contention oracle ---
+        cfg = connection.settings_dict
+        with psycopg.connect(
+            host=cfg["HOST"],
+            port=cfg["PORT"],
+            dbname=cfg["NAME"],
+            user=cfg["USER"],
+            password=cfg["PASSWORD"],
+            autocommit=False,
+        ) as conn2:
+            # Hold exclusive row lock on `org_alpha` AND `po_cat_id` on `conn2`!
+            conn2.execute(
+                "SELECT 1 FROM orgs_organisation WHERE id = %s FOR UPDATE",
+                [w.org_alpha_id],
+            )
+            conn2.execute(
+                "SELECT 1 FROM ee_billing_purchase_orders WHERE po_id = %s FOR UPDATE",
+                [po_cat_id],
+            )
+
+            # `bravo_owner` probing `po_cat_id` MUST get 404 (NEVER 409 lock contention or 403),
+            # identical to probing a non-existent `po_00000000-0000-7000-8000-000000000000`!
+            missing_id = "po_00000000-0000-7000-8000-000000000000"
+            r_foreign_get = router.dispatch(
+                "GET",
+                f"/api/v1/ee/billing/purchase-orders/{po_cat_id}",
+                headers=bravo_owner_hdr,
+                environ=env,
+            )
+            r_missing_get = router.dispatch(
+                "GET",
+                f"/api/v1/ee/billing/purchase-orders/{missing_id}",
+                headers=bravo_owner_hdr,
+                environ=env,
+            )
+            assert r_foreign_get.status_code == 404
+            assert r_missing_get.status_code == 404
+            assert r_foreign_get.json() == r_missing_get.json()
+
+            r_foreign_mut = router.dispatch(
+                "POST",
+                f"/api/v1/ee/billing/purchase-orders/{po_cat_id}/transitions",
+                body=json.dumps({"action": "countersign", "signatory": "Bravo Probe"}).encode(),
+                headers=bravo_owner_hdr,
+                environ=env,
+            )
+            r_missing_mut = router.dispatch(
+                "POST",
+                f"/api/v1/ee/billing/purchase-orders/{missing_id}/transitions",
+                body=json.dumps({"action": "countersign", "signatory": "Bravo Probe"}).encode(),
+                headers=bravo_owner_hdr,
+                environ=env,
+            )
+            assert r_foreign_mut.status_code == 404
+            assert r_missing_mut.status_code == 404
+            assert r_foreign_mut.json() == r_missing_mut.json()
+            conn2.rollback()

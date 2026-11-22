@@ -36,7 +36,7 @@ from ee.audit_export.verify import (
     verify_compliance_bundle,
     verify_export_bundle,
 )
-from ee.saml.service import SamlError, SamlIdpConfig, SamlService
+from ee.saml.service import SamlError, SamlIdpConfig, SamlService, default_saml_service
 from ee.scim.auth import ScimAuthError
 from ee.scim.schemas import SCIM_PATCH_OP_SCHEMA
 from ee.scim.service import ScimService
@@ -193,6 +193,20 @@ def test_w2_1_lane_identity_membership_and_role_checks_enforced(
             assert json.loads(resp_post.content)["code"] == "insufficient_role"
 
         # Active org_admin succeeds in registering and listing SAML IdPs for their own tenant
+        chal = default_saml_service.build_domain_challenge(
+            tenant_slug="audit-victim",
+            domain="audit-victim.fr",
+            organisation_id=valid_admin.organisation_id,
+        )
+        default_saml_service.seed_dns_txt_record(
+            str(chal["dns_record_name"]),
+            str(chal["txt_value"]),
+        )
+        default_saml_service.verify_domain_challenge(
+            tenant_slug="audit-victim",
+            domain="audit-victim.fr",
+            organisation_id=valid_admin.organisation_id,
+        )
         reg_resp = enterprise_client.post(
             "/api/v1/ee/sso/saml/audit-victim/providers",
             data=json.dumps(

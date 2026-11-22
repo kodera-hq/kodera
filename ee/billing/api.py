@@ -31,6 +31,7 @@ from typing import Any, Literal, cast
 
 from . import is_enterprise_edition
 from .pricing import (
+    FR_STANDARD_VAT_BPS,
     MarginFloorViolationError,
     PricingValidationError,
     commercial_schedule_summary,
@@ -49,6 +50,8 @@ from .storage import (
     BillingAuthorityConflictError,
     BillingAuthorityForbiddenError,
     CallerAuthority,
+    MemoryPurchaseOrderStore,
+    MemoryWarmPoolStore,
     StorageBackend,
     verify_caller_authority,
 )
@@ -57,6 +60,7 @@ from .warm_pool import (
     WarmPoolController,
     WarmPoolExhaustedError,
     WarmPoolIdempotencyConflictError,
+    WarmPoolTenantCapExceededError,
     WarmPoolTransitionError,
     WarmPoolValidationError,
 )
@@ -66,10 +70,9 @@ MAX_BEARER_HEADER_BYTES = 8 * 1024
 _PO_PREFIX = "/api/v1/ee/billing/purchase-orders/"
 _PO_ID_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-")
 
-_ORG_COMMERCIAL_ROLES = frozenset(
-    {"org_owner", "org_admin", "org_billing", "owner", "admin", "billing_admin"}
-)
-_ORG_SETTLEMENT_ROLES = frozenset({"org_owner", "org_billing", "owner", "billing_admin"})
+_ORG_COMMERCIAL_ROLES = frozenset({"org_owner", "org_billing", "owner", "billing_admin"})
+_ORG_COUNTERSIGN_ROLES = frozenset({"org_owner", "owner"})
+_ORG_CLAIM_ROLES = frozenset({"org_owner", "owner"})
 _ALL_ORG_MEMBER_ROLES = frozenset(
     {
         "org_owner",
@@ -91,6 +94,7 @@ _VALIDATION_MESSAGES: dict[str, str] = {
     "negative_amount": "Monetary amount must be non-negative.",
     "invalid_bps": "Basis-point rate must be between 0 and 10000.",
     "negative_cogs": "Estimated COGS amount must be non-negative.",
+    "understated_cogs": "Estimated COGS cannot understate server catalog COGS.",
     "invalid_seats": "Seat count must be between 1 and 100000.",
     "unknown_plan_code": "Unsupported commercial plan code.",
     "invalid_billing_cycle": "Billing cycle must be monthly or annual.",
@@ -104,6 +108,7 @@ _VALIDATION_MESSAGES: dict[str, str] = {
     "invalid_max_total": "Warm-pool maximum capacity must be at least target_ready.",
     "invalid_identifier": "Identifier format is invalid.",
     "invalid_unhealthy_reason": "Unhealthy quarantine reason must be 1 to 200 characters.",
+    "invalid_release_reason": "Warm-pool release reason must be 1 to 200 characters.",
     "invalid_idempotency_key": "Idempotency-Key must be 8 to 255 printable ASCII characters.",
     "unknown_slot_id": "Unknown warm-pool slot identifier.",
     "purchase_order_validation_error": "Purchase order payload failed validation.",
@@ -130,6 +135,7 @@ _CONFLICT_MESSAGES: dict[str, str] = {
     "purchase_order_invalid_transition": "Purchase order transition is not permitted from its current state.",
     "purchase_order_commitment_exceeded": "Active seat or storage usage exceeds contracted purchase order commitments.",
     "warm_pool_idempotency_conflict": "Idempotency-Key is already bound to a different warm-pool claim.",
+    "warm_pool_tenant_cap_exceeded": "Organisation already holds an active warm-pool slot.",
     "warm_pool_invalid_transition": "Warm-pool slot state transition is not permitted.",
     "authority_conflict": "Concurrent authority or privacy cutoff transition in progress.",
 }
@@ -255,12 +261,17 @@ def authenticate_bearer_header(
         resolve_member_authority,
     )
     from core.api import lanes
+    from ee.auth import EE_SAML_SESSION_PREFIX, verify_ee_saml_session_token
     from services.identity.access_tokens import TokenVerificationError
     from services.identity.trusted_issuers import verify_configured_token
 
     try:
-        verified, lane = verify_configured_token(raw_token, trusted=settings.KODERA_AUTH_TRUST)
-        verified, lane = lanes.admit(verified, lane)
+        if raw_token.startswith(EE_SAML_SESSION_PREFIX):
+            verified = verify_ee_saml_session_token(raw_token)
+            verified, lane = lanes.admit(verified, "customer")
+        else:
+            verified, lane = verify_configured_token(raw_token, trusted=settings.KODERA_AUTH_TRUST)
+            verified, lane = lanes.admit(verified, lane)
     except TokenVerificationError as exc:
         raise BillingUnauthenticatedError() from exc
 
@@ -422,6 +433,7 @@ def _require_org_commercial(
     principal: BillingPrincipal,
     organisation_id: object,
     *,
+    allowed_org_roles: frozenset[str] = _ORG_COMMERCIAL_ROLES,
     allowed_staff_roles: frozenset[str] = _STAFF_MUTATION_ROLES,
 ) -> None:
     if principal.lane == "internal":
@@ -431,13 +443,13 @@ def _require_org_commercial(
             raise BillingForbiddenError()
         return
     if not isinstance(organisation_id, str) or not principal.has_org_role(
-        organisation_id, _ORG_COMMERCIAL_ROLES
+        organisation_id, allowed_org_roles
     ):
         raise BillingForbiddenError()
 
 
 def _require_customer_signatory(principal: BillingPrincipal) -> None:
-    """Restrict PO countersignature exclusively to an authenticated customer signatory."""
+    """Restrict PO countersignature exclusively to an authenticated customer `org_owner`."""
     if principal.lane != "customer":
         raise BillingForbiddenError()
     if principal.live_authority and not principal.user_id:
@@ -460,6 +472,14 @@ class EnterpriseBillingRouter:
             backend=backend,
         )
         self.purchase_orders = purchase_orders or PurchaseOrderBook(backend=backend)
+        wp_store = getattr(self.warm_pool, "_store", None)
+        po_store = getattr(self.purchase_orders, "_store", None)
+        wp_mem = wp_store if isinstance(wp_store, MemoryWarmPoolStore) else getattr(wp_store, "_mem", None)
+        po_mem = po_store if isinstance(po_store, MemoryPurchaseOrderStore) else getattr(po_store, "_mem", None)
+        if isinstance(wp_mem, MemoryWarmPoolStore) and isinstance(
+            po_mem, MemoryPurchaseOrderStore
+        ):
+            wp_mem.bind_purchase_order_store(po_mem)
         self._authenticator: Authenticator = (
             authenticator if authenticator is not None else authenticate_bearer_header
         )
@@ -515,6 +535,13 @@ class EnterpriseBillingRouter:
                 _require_org_commercial(
                     principal, target_org, allowed_staff_roles=_STAFF_READ_ROLES
                 )
+                if principal.lane == "customer" and (
+                    data.get("cogs_override_minor") is not None
+                    or data.get("custom_net_excl_vat_minor") is not None
+                    or data.get("discount_bps", 0) != 0
+                    or data.get("vat_rate_bps", FR_STANDARD_VAT_BPS) != FR_STANDARD_VAT_BPS
+                ):
+                    raise BillingForbiddenError()
                 verify_caller_authority(
                     _to_caller_authority(
                         principal, _ORG_COMMERCIAL_ROLES, allowed_staff_roles=_STAFF_READ_ROLES
@@ -526,7 +553,7 @@ class EnterpriseBillingRouter:
                     seats=data.get("seats"),  # type: ignore[arg-type]
                     billing_cycle=data.get("billing_cycle", "annual"),
                     discount_bps=data.get("discount_bps", 0),
-                    vat_rate_bps=data.get("vat_rate_bps", 2000),
+                    vat_rate_bps=data.get("vat_rate_bps", FR_STANDARD_VAT_BPS),
                     cogs_override_minor=data.get("cogs_override_minor"),
                     custom_net_excl_vat_minor=data.get("custom_net_excl_vat_minor"),
                 )
@@ -577,13 +604,30 @@ class EnterpriseBillingRouter:
                     {"evicted_slots": [asdict(slot) for slot in evicted], "count": len(evicted)},
                 )
 
+            if path == "/api/v1/ee/billing/warm-pool/release":
+                if verb != "POST":
+                    return _problem_response(405, "method-not-allowed", "Method not allowed")
+                _require_staff_capability(principal, _STAFF_MUTATION_ROLES)
+                data = _parse_json_object(body)
+                released = self.warm_pool.release_slot(
+                    data.get("slot_id", ""),
+                    reason=data.get("reason", "claim_released"),
+                    authority=_to_caller_authority(
+                        principal, frozenset(), allowed_staff_roles=_STAFF_MUTATION_ROLES
+                    ),
+                )
+                return _json_response(200, {"slot": asdict(released)})
+
             if path == "/api/v1/ee/billing/warm-pool/claim":
                 if verb != "POST":
                     return _problem_response(405, "method-not-allowed", "Method not allowed")
                 data = _parse_json_object(body)
                 org_id = data.get("organisation_id", "")
                 _require_org_commercial(
-                    principal, org_id, allowed_staff_roles=_STAFF_MUTATION_ROLES
+                    principal,
+                    org_id,
+                    allowed_org_roles=_ORG_CLAIM_ROLES,
+                    allowed_staff_roles=_STAFF_MUTATION_ROLES,
                 )
                 idem_key = req_headers.get("idempotency-key") or data.get("idempotency_key", "")
                 claimed = self.warm_pool.claim_slot(
@@ -593,7 +637,7 @@ class EnterpriseBillingRouter:
                     region=data.get("region"),
                     profile_ref=data.get("profile_ref"),
                     authority=_to_caller_authority(
-                        principal, _ORG_COMMERCIAL_ROLES, allowed_staff_roles=_STAFF_MUTATION_ROLES
+                        principal, _ORG_CLAIM_ROLES, allowed_staff_roles=_STAFF_MUTATION_ROLES
                     ),
                 )
                 return _json_response(
@@ -609,11 +653,9 @@ class EnterpriseBillingRouter:
             if path == "/api/v1/ee/billing/purchase-orders":
                 if verb != "POST":
                     return _problem_response(405, "method-not-allowed", "Method not allowed")
+                _require_staff_capability(principal, _STAFF_MUTATION_ROLES)
                 data = _parse_json_object(body)
                 org_id = data.get("organisation_id", "")
-                _require_org_commercial(
-                    principal, org_id, allowed_staff_roles=_STAFF_MUTATION_ROLES
-                )
                 now = datetime.now(UTC)
                 validity_days = data.get("validity_days", 30)
                 if type(validity_days) is not int or not 1 <= validity_days <= 365:
@@ -630,13 +672,14 @@ class EnterpriseBillingRouter:
                     billing_months=data.get("billing_months", 12),
                     committed_seats=data.get("committed_seats"),  # type: ignore[arg-type]
                     committed_storage_gb=data.get("committed_storage_gb"),  # type: ignore[arg-type]
-                    subtotal_excl_vat_minor=data.get("subtotal_excl_vat_minor"),  # type: ignore[arg-type]
-                    vat_rate_bps=data.get("vat_rate_bps", 2000),
+                    subtotal_excl_vat_minor=data.get("subtotal_excl_vat_minor"),
+                    discount_bps=data.get("discount_bps", 0),
+                    vat_rate_bps=data.get("vat_rate_bps", FR_STANDARD_VAT_BPS),
                     estimated_cogs_minor=data.get("estimated_cogs_minor"),
                     created_at=now,
                     expires_at=now + timedelta(days=validity_days),
                     authority=_to_caller_authority(
-                        principal, _ORG_COMMERCIAL_ROLES, allowed_staff_roles=_STAFF_MUTATION_ROLES
+                        principal, frozenset(), allowed_staff_roles=_STAFF_MUTATION_ROLES
                     ),
                     environ=environ,
                 )
@@ -667,13 +710,12 @@ class EnterpriseBillingRouter:
                     data = _parse_json_object(body)
                     action = data.get("action")
                     if action == "issue":
-                        if principal.lane == "staff":
-                            _require_staff_capability(principal, _STAFF_MUTATION_ROLES)
+                        _require_staff_capability(principal, _STAFF_MUTATION_ROLES)
                         po = self.purchase_orders.issue(
                             po_id,
                             authority=_to_caller_authority(
                                 principal,
-                                _ORG_COMMERCIAL_ROLES,
+                                frozenset(),
                                 allowed_staff_roles=_STAFF_MUTATION_ROLES,
                             ),
                             environ=environ,
@@ -685,7 +727,7 @@ class EnterpriseBillingRouter:
                             signatory=data.get("signatory", ""),
                             authority=_to_caller_authority(
                                 principal,
-                                _ORG_SETTLEMENT_ROLES,
+                                _ORG_COUNTERSIGN_ROLES,
                                 allowed_staff_roles=frozenset(),
                             ),
                             environ=environ,
@@ -715,33 +757,26 @@ class EnterpriseBillingRouter:
                             environ=environ,
                         )
                     elif action == "expire":
-                        if principal.lane == "staff":
-                            _require_staff_capability(principal, _STAFF_MUTATION_ROLES)
+                        _require_staff_capability(principal, _STAFF_MUTATION_ROLES)
                         po = self.purchase_orders.expire(
                             po_id,
                             authority=_to_caller_authority(
                                 principal,
-                                _ORG_COMMERCIAL_ROLES,
+                                frozenset(),
                                 allowed_staff_roles=_STAFF_MUTATION_ROLES,
                             ),
                             environ=environ,
                         )
                     else:
-                        if principal.lane == "staff":
-                            _require_staff_capability(principal, _STAFF_MUTATION_ROLES)
-                        existing_po = self.purchase_orders.get(
+                        _require_staff_capability(principal, _STAFF_MUTATION_ROLES)
+                        self.purchase_orders.get(
                             po_id,
                             authority=_to_caller_authority(
                                 principal,
-                                _ORG_COMMERCIAL_ROLES,
+                                frozenset(),
                                 allowed_staff_roles=_STAFF_MUTATION_ROLES,
                             ),
                             environ=environ,
-                        )
-                        _require_org_commercial(
-                            principal,
-                            existing_po.organisation_id,
-                            allowed_staff_roles=_STAFF_MUTATION_ROLES,
                         )
                         return _problem_response(
                             422,
@@ -803,6 +838,7 @@ class EnterpriseBillingRouter:
             InvalidPurchaseOrderTransitionError,
             CommitmentExceededError,
             WarmPoolIdempotencyConflictError,
+            WarmPoolTenantCapExceededError,
             WarmPoolTransitionError,
             BillingAuthorityConflictError,
         ) as exc:

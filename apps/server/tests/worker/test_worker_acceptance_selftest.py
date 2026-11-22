@@ -393,6 +393,8 @@ def test_the_built_image_comparison_names_each_difference():
 
 # The worker image's own stages: kcadm for realm_create, which the API image never carries.
 WORKER_ONLY_STAGES = ("keycloak", "kcadm")
+# The API image's named build-context stage for Enterprise Edition, which the worker never carries.
+API_ONLY_STAGES = ("ee_src",)
 
 
 def dependency_stages(dockerfile: str, *, without: tuple[str, ...] = ()) -> list[str]:
@@ -414,12 +416,17 @@ def test_the_worker_image_is_built_on_the_api_images_pins():
     # One Dependabot bump moves both images: a worker on a stale base would pass every check here.
     api = (ROOT / "Dockerfile").read_text()
     worker = (ROOT / "Dockerfile.worker").read_text()
-    # Only the named kcadm stages may differ, so no other stage hides behind them.
+    # Only the named kcadm and ee_src stages may differ, so no other stage hides behind them.
     assert sorted(set(stage_names(worker)) - set(stage_names(api))) == sorted(WORKER_ONLY_STAGES)
-    assert dependency_stages(worker, without=WORKER_ONLY_STAGES) == dependency_stages(api)
+    assert sorted(set(stage_names(api)) - set(stage_names(worker))) == sorted(API_ONLY_STAGES)
+    assert dependency_stages(worker, without=WORKER_ONLY_STAGES) == dependency_stages(
+        api, without=API_ONLY_STAGES
+    )
     assert worker.split("\nFROM ")[-1].splitlines()[0] == api.split("\nFROM ")[-1].splitlines()[0]
     bumped = api.replace("uv:0.12.10@", "uv:0.12.11@")
-    assert dependency_stages(worker) != dependency_stages(bumped)
+    assert dependency_stages(worker, without=WORKER_ONLY_STAGES) != dependency_stages(
+        bumped, without=API_ONLY_STAGES
+    )
 
 
 def test_the_worker_image_runs_unprivileged_and_only_the_worker():

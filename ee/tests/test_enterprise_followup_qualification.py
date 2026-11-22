@@ -32,7 +32,6 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519, rsa
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
-from django.core.management import call_command
 from django.db import DatabaseError, IntegrityError, connection, connections, transaction
 from django.test import Client, RequestFactory, override_settings
 from psycopg import sql
@@ -205,7 +204,7 @@ def _create_erasure_world() -> tuple[Any, list[Any], list[Any]]:
         Workspace.objects.create(organisation=org)
         members: list[Any] = []
         tokens: list[Any] = []
-        for role in ("org_owner", "org_owner", "org_member"):
+        for role in ("org_owner", "org_owner", "org_member", "org_member"):
             subject = str(uuid4())
             user = User.objects.create(email=f"{subject}@erasure.test")
             Identity.objects.create(
@@ -261,7 +260,10 @@ def test_p1_1_ee_schema_zero_sequences_and_restricted_kodera_api_writer_role(
             SELECT c.relname
             FROM pg_class c
             JOIN pg_namespace n ON n.oid = c.relnamespace
-            WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relname LIKE 'ee_%'
+            WHERE n.nspname = 'public'
+              AND c.relkind = 'r'
+              AND c.relname LIKE 'ee_%'
+              AND c.relname NOT LIKE 'ee_billing_%'
             ORDER BY c.relname
             """
         )
@@ -297,6 +299,20 @@ def test_p1_1_ee_schema_zero_sequences_and_restricted_kodera_api_writer_role(
     try:
         with _acting_as(role):
             # 1. SAML IdP registration, update, metadata, AuthnRequest, and twice-exercised ACS sync
+            chal_acme = default_saml_service.build_domain_challenge(
+                tenant_slug="acme-corp",
+                domain="acme.fr",
+                organisation_id=owner.organisation_id,
+            )
+            default_saml_service.seed_dns_txt_record(
+                str(chal_acme["dns_record_name"]),
+                str(chal_acme["txt_value"]),
+            )
+            default_saml_service.verify_domain_challenge(
+                tenant_slug="acme-corp",
+                domain="acme.fr",
+                organisation_id=owner.organisation_id,
+            )
             reg_payload = {
                 "idp_id": "okta-corp",
                 "idp_entity_id": "https://idp.acme-corp.test/saml2",
@@ -963,6 +979,7 @@ def test_p1_3_organisation_and_account_erasure_cutoff_purge_scrub_and_migration_
     monkeypatch: pytest.MonkeyPatch,
     rsa_idp_keypair: tuple[rsa.RSAPrivateKey, str, str],
     tenant_principal_factory: Callable[..., ProvisionedTestPrincipal],
+    django_db_blocker: Any,
 ) -> None:
     """Prove account & organisation erasure purge EE PII, scrub audit rows, and preserve hash chain."""
     from apps.identity.models import Identity
@@ -1053,15 +1070,31 @@ def test_p1_3_organisation_and_account_erasure_cutoff_purge_scrub_and_migration_
         default_scim_service.tokens.issue_token(
             tenant_slug=slug, description="SCIM Sync", organisation_id=org_id
         )
+        ident_a = Identity.objects.select_related("user").get(
+            organisation_id=org_id, user_id=user_a_id
+        )
+        ident_b = Identity.objects.select_related("user").get(
+            organisation_id=org_id, user_id=user_b_id
+        )
         su_a = default_scim_service.create_user(
             tenant_slug=slug,
-            payload={"userName": user_a_email, "displayName": "Member Alpha", "active": True},
+            payload={
+                "userName": user_a_email,
+                "externalId": ident_a.subject,
+                "displayName": ident_a.user.display_name or "",
+                "active": True,
+            },
             base_url="http://127.0.0.1/api/v1/ee/scim/v2",
             organisation_id=org_id,
         )
         su_b = default_scim_service.create_user(
             tenant_slug=slug,
-            payload={"userName": user_b_email, "displayName": "Member Beta", "active": True},
+            payload={
+                "userName": user_b_email,
+                "externalId": ident_b.subject,
+                "displayName": ident_b.user.display_name or "",
+                "active": True,
+            },
             base_url="http://127.0.0.1/api/v1/ee/scim/v2",
             organisation_id=org_id,
         )
@@ -1143,22 +1176,27 @@ def test_p1_3_organisation_and_account_erasure_cutoff_purge_scrub_and_migration_
             redact_pii=True,
         )
 
-    sibling_second = tenant_principal_factory("sibling-corp", role="org_member")
+    sibling_second = tenant_principal_factory(
+        "sibling-corp", role="org_member", subject=str(uuid4())
+    )
+    sibling_third = tenant_principal_factory(
+        "sibling-corp", role="org_member", subject=str(uuid4())
+    )
     _seed_ee_for_org(
         org_id=target_org.id,
         slug=target_org.slug,
         user_a_id=members[2].user_id,
         user_a_email=members[2].user.email,
-        user_b_id=members[1].user_id,
-        user_b_email=members[1].user.email,
+        user_b_id=members[3].user_id,
+        user_b_email=members[3].user.email,
     )
     _seed_ee_for_org(
         org_id=sibling_owner.organisation_id,
         slug="sibling-corp",
         user_a_id=sibling_second.user_id,
         user_a_email=sibling_second.email,
-        user_b_id=sibling_owner.user_id,
-        user_b_email=sibling_owner.email,
+        user_b_id=sibling_third.user_id,
+        user_b_email=sibling_third.email,
     )
 
     # --- PART A: Individual Account Erasure for `members[2]` (`org_member`) ---
@@ -1222,7 +1260,7 @@ def test_p1_3_organisation_and_account_erasure_cutoff_purge_scrub_and_migration_
             assert row_erased is not None and row_erased[0] == 0, (
                 f"{tbl} must have 0 rows for erased person"
             )
-            cur.execute(person_count_q, [members[1].user_id])
+            cur.execute(person_count_q, [members[3].user_id])
             row_colleague = cur.fetchone()
             assert row_colleague is not None
             if tbl != "ee_scim_deprovision":
@@ -1340,16 +1378,43 @@ def test_p1_3_organisation_and_account_erasure_cutoff_purge_scrub_and_migration_
     assert vault_ok_after_org is True and errs_org == []
     assert Identity.objects.filter(organisation=target_org).exists()
 
-    # --- PART C: Migration `orgs 0031 <-> 0032` Round-Trip ---
-    call_command("migrate", "orgs", "0031", verbosity=0)
-    with connection.cursor() as cur:
-        cur.execute("SELECT to_regclass('public.ee_audit_ledger')")
-        assert cur.fetchone()[0] is None
-    call_command("migrate", "orgs", "0032", verbosity=0)
-    with connection.cursor() as cur:
-        for tbl in EE_TABLES:
-            cur.execute("SELECT to_regclass(%s)", [f"public.{tbl}"])
-            assert cur.fetchone()[0] == tbl
+    # --- PART C: Migration `orgs 0031 <-> 0035` Round-Trip on isolated empty database ---
+    from django.db.migrations.executor import MigrationExecutor
+    from test_customer_persistence_migrations import empty_database
+
+    with django_db_blocker.unblock(), empty_database() as target:
+        executor = MigrationExecutor(target)
+        executor.migrate([("orgs", "0035_ee_audit_ledger_erasure")])
+        with target.cursor() as cur:
+            for tbl in EE_TABLES:
+                cur.execute("SELECT to_regclass(%s)", [f"public.{tbl}"])
+                row_34 = cur.fetchone()
+                assert row_34 is not None and row_34[0] == tbl
+            cur.execute("SELECT to_regprocedure('public.ee_scim_sync_member_contact(uuid,uuid,text,text)')")
+            proc_34 = cur.fetchone()
+            assert proc_34 is not None and proc_34[0] is not None
+
+        executor.loader.build_graph()
+        executor.migrate([("orgs", "0034_erasure_completeness_and_invitation_outbox")])
+        with target.cursor() as cur:
+            cur.execute("SELECT to_regprocedure('public.ee_scim_sync_member_contact(uuid,uuid,text,text)')")
+            proc_33 = cur.fetchone()
+            assert proc_33 is not None and proc_33[0] is None
+
+        executor.loader.build_graph()
+        executor.migrate([("orgs", "0031_account_erasure_completion")])
+        with target.cursor() as cur:
+            cur.execute("SELECT to_regclass('public.ee_audit_ledger')")
+            row_31 = cur.fetchone()
+            assert row_31 is not None and row_31[0] is None
+
+        executor.loader.build_graph()
+        executor.migrate([("orgs", "0035_ee_audit_ledger_erasure")])
+        with target.cursor() as cur:
+            for tbl in EE_TABLES:
+                cur.execute("SELECT to_regclass(%s)", [f"public.{tbl}"])
+                row_re = cur.fetchone()
+                assert row_re is not None and row_re[0] == tbl
 
 
 def test_p2_ee_audit_signing_seed_validation_and_historical_key_rotation_verification(
@@ -1542,12 +1607,13 @@ def test_p1_4_scim_and_saml_never_mutate_global_user_enabled_across_sibling_tena
             display_name="Claire Shared",
             enabled=True,
         )
+        claire_sub_a = str(uuid4())
         ident_a = Identity.objects.create(
             user=shared_user,
             organisation=org_a,
             realm=org_a.realm,
             issuer=org_a.issuer,
-            subject="shared.claire@corp.fr",
+            subject=claire_sub_a,
             email="shared.claire@corp.fr",
             enabled=True,
         )
@@ -1747,7 +1813,7 @@ def test_p1_4_scim_and_saml_never_mutate_global_user_enabled_across_sibling_tena
     )
     verified_a, bearer_a = _mint_verified_and_bearer(
         org_a.issuer,
-        "shared.claire@corp.fr",
+        claire_sub_a,
         "shared.claire@corp.fr",
     )
 
@@ -1782,6 +1848,20 @@ def test_p1_4_scim_and_saml_never_mutate_global_user_enabled_across_sibling_tena
             scim_a_headers = {"Authorization": f"Bearer {raw_scim_a}"}
 
             # Register SAML IdP on Tenant A (verifies SAML ACS also respects global User.enabled=False)
+            chal_corp = default_saml_service.build_domain_challenge(
+                tenant_slug="scim-tenant-a",
+                domain="corp.fr",
+                organisation_id=org_a.id,
+            )
+            default_saml_service.seed_dns_txt_record(
+                str(chal_corp["dns_record_name"]),
+                str(chal_corp["txt_value"]),
+            )
+            default_saml_service.verify_domain_challenge(
+                tenant_slug="scim-tenant-a",
+                domain="corp.fr",
+                organisation_id=org_a.id,
+            )
             reg_saml = client.post(
                 "/api/v1/ee/sso/saml/scim-tenant-a/providers",
                 data=json.dumps(
@@ -1807,6 +1887,7 @@ def test_p1_4_scim_and_saml_never_mutate_global_user_enabled_across_sibling_tena
                     {
                         "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
                         "userName": "shared.claire@corp.fr",
+                        "externalId": claire_sub_a,
                         "displayName": "Claire Shared",
                         "active": True,
                     }
@@ -1930,13 +2011,32 @@ def test_p1_4_scim_and_saml_never_mutate_global_user_enabled_across_sibling_tena
             assert memb_b.state == Membership.State.ACTIVE
             assert resolve_member_authority(verified=verified_b).membership_id == memb_b.id
 
-            # 1e. Re-provision Claire in Tenant A as `active: false`, then `PUT active: true`
+            # 1e. Re-`POST`ing non-SCIM Claire (`ee_scim_deprovision.provisioned_by_scim=FALSE`)
+            #     matching only by email/userName WITHOUT `externalId` MUST return `403`, while
+            #     supplying authoritative `externalId == claire_sub_a` succeeds (`201`)!
+            recreate_no_ext = client.post(
+                "/api/v1/ee/scim/v2/tenants/scim-tenant-a/Users",
+                data=json.dumps(
+                    {
+                        "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+                        "userName": "shared.claire@corp.fr",
+                        "displayName": "Claire Shared",
+                        "active": False,
+                    }
+                ),
+                content_type="application/scim+json",
+                headers=scim_a_headers,
+            )
+            assert recreate_no_ext.status_code == 403, recreate_no_ext.content
+            assert recreate_no_ext.json()["scimType"] == "mutability"
+
             recreate_claire = client.post(
                 "/api/v1/ee/scim/v2/tenants/scim-tenant-a/Users",
                 data=json.dumps(
                     {
                         "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
                         "userName": "shared.claire@corp.fr",
+                        "externalId": claire_sub_a,
                         "displayName": "Claire Shared",
                         "active": False,
                     }
@@ -2168,8 +2268,9 @@ def test_p1_4_scim_and_saml_never_mutate_global_user_enabled_across_sibling_tena
             assert post_owner_off.status_code == 403, post_owner_off.content
             assert post_owner_off.json()["scimType"] == "mutability"
 
-            # 3b. Provision SCIM entry for Tenant A's `org_owner` with `active: true`, then attempt
-            # `PATCH active: false`, `PUT active: false`, and `DELETE` — all MUST refuse 403 atomically!
+            # 3b. Direct `POST /Users` (`active: true`) against Tenant A's existing `org_owner`
+            # ALSO refuses `403` (`P1-1` anti-takeover), and if a SCIM-provisioned member is
+            # subsequently promoted to `org_owner`, `PATCH`, `PUT`, and `DELETE` all refuse `403`!
             post_owner_on = client.post(
                 "/api/v1/ee/scim/v2/tenants/scim-tenant-a/Users",
                 data=json.dumps(
@@ -2183,8 +2284,31 @@ def test_p1_4_scim_and_saml_never_mutate_global_user_enabled_across_sibling_tena
                 content_type="application/scim+json",
                 headers=scim_a_headers,
             )
-            assert post_owner_on.status_code == 201, post_owner_on.content
-            owner_scim_id = str(post_owner_on.json()["id"])
+            assert post_owner_on.status_code == 403, post_owner_on.content
+            assert post_owner_on.json()["scimType"] == "mutability"
+
+            post_co_owner = client.post(
+                "/api/v1/ee/scim/v2/tenants/scim-tenant-a/Users",
+                data=json.dumps(
+                    {
+                        "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+                        "userName": "co.owner@scim-a.fr",
+                        "displayName": "Tenant A Co-Owner",
+                        "active": True,
+                    }
+                ),
+                content_type="application/scim+json",
+                headers=scim_a_headers,
+            )
+            assert post_co_owner.status_code == 201, post_co_owner.content
+            owner_scim_id = str(post_co_owner.json()["id"])
+
+        co_owner_ident = Identity.objects.get(organisation=org_a, email="co.owner@scim-a.fr")
+        Membership.objects.filter(organisation=org_a, user_id=co_owner_ident.user_id).update(
+            role=Membership.Role.OWNER
+        )
+
+        with _acting_as(role):
             rev_owner_pre = Organisation.objects.values_list("authority_revision", flat=True).get(
                 id=org_a.id
             )
@@ -2210,7 +2334,7 @@ def test_p1_4_scim_and_saml_never_mutate_global_user_enabled_across_sibling_tena
                 data=json.dumps(
                     {
                         "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
-                        "userName": "owner@scim-a.fr",
+                        "userName": "co.owner@scim-a.fr",
                         "displayName": "Tenant A Owner Mutated",
                         "active": False,
                     }
@@ -2256,7 +2380,7 @@ def test_p1_4_scim_and_saml_never_mutate_global_user_enabled_across_sibling_tena
             )
             assert owner_scim_get.status_code == 200
             assert owner_scim_get.json()["active"] is True
-            assert owner_scim_get.json()["displayName"] == "Tenant A Owner"
+            assert owner_scim_get.json()["displayName"] == "Tenant A Co-Owner"
             assert bearer_a  # sanity check minted JWT non-empty
 
             # --- Scenario 4: Cross-Tenant Unverified Email Isolation & `GET /api/v1/me` ---
@@ -2299,7 +2423,10 @@ def test_p1_4_scim_and_saml_never_mutate_global_user_enabled_across_sibling_tena
                 headers=scim_a_headers,
             )
             assert scim_probe_1.status_code == 201, scim_probe_1.content
-            ident_probe_1 = Identity.objects.get(organisation=org_a, subject="controlled-sub-a")
+            ident_probe_1 = Identity.objects.get(
+                organisation=org_a, email__iexact="VICTIM.ONLY@corp.fr"
+            )
+            assert str(UUID(ident_probe_1.subject)) == ident_probe_1.subject
             assert ident_probe_1.email == "VICTIM.ONLY@corp.fr"
             assert ident_probe_1.user_id not in {
                 victim_b_user.id,
@@ -2308,7 +2435,7 @@ def test_p1_4_scim_and_saml_never_mutate_global_user_enabled_across_sibling_tena
 
             _, bearer_probe_1 = _mint_verified_and_bearer(
                 org_a.issuer,
-                "controlled-sub-a",
+                ident_probe_1.subject,
                 "VICTIM.ONLY@corp.fr",
             )
             me_probe_1 = client.get(
@@ -2325,8 +2452,8 @@ def test_p1_4_scim_and_saml_never_mutate_global_user_enabled_across_sibling_tena
                 assert marker not in me_raw_1, f"Cross-tenant marker {marker!r} leaked in /me!"
 
             # 4b. Matching `userName == email` against a Tenant-B-only victim AND controlled
-            # `userName` against identical A/B contact collision (`collision@corp.fr`) both create
-            # distinct person roots with zero cross-person or cross-tenant `/api/v1/me` disclosure!
+            # `userName` against identical A/B contact collision (`collision@corp.fr`) never link
+            # cross-tenant or unaffiliated global `User` rows and disclose zero Tenant B data!
             scim_probe_2 = client.post(
                 "/api/v1/ee/scim/v2/tenants/scim-tenant-a/Users",
                 data=json.dumps(
@@ -2342,13 +2469,14 @@ def test_p1_4_scim_and_saml_never_mutate_global_user_enabled_across_sibling_tena
             )
             assert scim_probe_2.status_code == 201, scim_probe_2.content
             ident_probe_2 = Identity.objects.get(
-                organisation=org_a, subject="victim.samename@corp.fr"
+                organisation=org_a, email__iexact="victim.samename@corp.fr"
             )
+            assert str(UUID(ident_probe_2.subject)) == ident_probe_2.subject
             assert ident_probe_2.user_id != victim2_b_user.id
 
             _, bearer_probe_2 = _mint_verified_and_bearer(
                 org_a.issuer,
-                "victim.samename@corp.fr",
+                ident_probe_2.subject,
                 "victim.samename@corp.fr",
             )
             me_probe_2 = client.get(
@@ -2377,32 +2505,17 @@ def test_p1_4_scim_and_saml_never_mutate_global_user_enabled_across_sibling_tena
                 content_type="application/scim+json",
                 headers=scim_a_headers,
             )
-            assert scim_probe_3.status_code == 201, scim_probe_3.content
-            ident_probe_3 = Identity.objects.get(
-                organisation=org_a, subject="controlled-collision-sub"
-            )
-            assert ident_probe_3.user_id not in {
-                indep_a_user.id,
-                indep_b_user.id,
-                extra_global_collision.id,
-            }
-            _, bearer_probe_3 = _mint_verified_and_bearer(
-                org_a.issuer,
-                "controlled-collision-sub",
-                "COLLISION@corp.fr",
-            )
-            me_probe_3 = client.get(
-                "/api/v1/me",
-                headers={"Authorization": f"Bearer {bearer_probe_3}"},
-            )
-            assert me_probe_3.status_code == 200, me_probe_3.content
-            me_raw_3 = me_probe_3.content.decode("utf-8")
-            me_json_3 = json.loads(me_raw_3)
-            assert me_json_3["id"] == str(ident_probe_3.user_id)
-            assert str(indep_a_ident.id) not in me_raw_3
-            assert str(indep_a_memb.id) not in me_raw_3
+            assert scim_probe_3.status_code == 403, scim_probe_3.content
+            assert scim_probe_3.json()["scimType"] == "mutability"
+            assert str(extra_global_collision.id) not in scim_probe_3.content.decode("utf-8")
             for marker in forbidden_b_markers:
-                assert marker not in me_raw_3
+                assert marker not in scim_probe_3.content.decode("utf-8")
+            indep_a_user.refresh_from_db()
+            indep_a_ident.refresh_from_db()
+            indep_a_memb.refresh_from_db()
+            assert indep_a_user.email == "collision@corp.fr"
+            assert indep_a_ident.subject == "indep-a-sub"
+            assert indep_a_memb.state == Membership.State.ACTIVE
 
             # Verify pre-existing independent A person's `/api/v1/me` also never discloses B!
             _, bearer_indep_a = _mint_verified_and_bearer(

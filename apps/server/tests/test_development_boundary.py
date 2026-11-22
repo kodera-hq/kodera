@@ -132,6 +132,7 @@ def assert_image_boundary(ignore):
         "!core/db/ids.py",
         "!core/db/models.py",
         "!core/db/functions.py",
+        "!core/db/ee_erasure.py",
         "!core/db/api_writer_role.py",
         "!core/db/api_database_boundary.py",
         "!core/db/role_acl.py",

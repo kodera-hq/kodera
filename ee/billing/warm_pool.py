@@ -58,6 +58,13 @@ class WarmPoolIdempotencyConflictError(WarmPoolError):
         super().__init__(message, code="warm_pool_idempotency_conflict")
 
 
+class WarmPoolTenantCapExceededError(WarmPoolError):
+    """Raised when an organisation attempts to hold more than one active warm-pool slot."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message, code="warm_pool_tenant_cap_exceeded")
+
+
 class WarmPoolTransitionError(WarmPoolError):
     """Raised when an illegal slot state transition is attempted."""
 
@@ -130,7 +137,7 @@ class ClaimResult:
 VALID_SLOT_TRANSITIONS: dict[SlotState, frozenset[SlotState]] = {
     "provisioning": frozenset({"ready", "unhealthy"}),
     "ready": frozenset({"claimed", "unhealthy"}),
-    "claimed": frozenset(),
+    "claimed": frozenset({"unhealthy", "evicted"}),
     "unhealthy": frozenset({"evicted"}),
     "evicted": frozenset(),
 }
@@ -295,6 +302,25 @@ class WarmPoolController:
         return self._store.evict_unhealthy(
             region=target_region,
             profile_ref=target_profile,
+            authority=authority,
+        )
+
+    def release_slot(
+        self,
+        slot_id: str,
+        *,
+        reason: str = "claim_released",
+        authority: CallerAuthority | None = None,
+    ) -> WarmPoolSlot:
+        """Release a `claimed` or `unhealthy` slot (`-> evicted`), freeing per-tenant and pool capacity."""
+        _check_identifier(slot_id, "slot_id")
+        if not isinstance(reason, str) or not (1 <= len(reason.strip()) <= 200):
+            raise WarmPoolValidationError(
+                "release reason must be 1..200 chars", code="invalid_release_reason"
+            )
+        return self._store.release_slot(
+            slot_id,
+            reason=reason.strip(),
             authority=authority,
         )
 

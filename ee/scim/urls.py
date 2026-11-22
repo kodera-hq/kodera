@@ -13,6 +13,8 @@ from ee.scim.views import (
     resource_types_view,
     schemas_view,
     service_provider_config_view,
+    token_detail_view,
+    tokens_collection_view,
     user_detail_view,
     users_collection_view,
 )
@@ -27,6 +29,8 @@ urlpatterns: list[URLPattern] = [
         resource_types_view,
         name="ee-scim-resource-type-detail",
     ),
+    path("Tokens", tokens_collection_view, name="ee-scim-tokens"),
+    path("Tokens/<str:token_id>", token_detail_view, name="ee-scim-token-detail"),
     path("Users", users_collection_view, name="ee-scim-users"),
     path("Users/<str:user_id>", user_detail_view, name="ee-scim-user-detail"),
     path("Groups", groups_collection_view, name="ee-scim-groups"),
@@ -46,6 +50,16 @@ urlpatterns: list[URLPattern] = [
         "tenants/<slug:tenant_slug>/ResourceTypes",
         resource_types_view,
         name="ee-scim-tenant-resource-types",
+    ),
+    path(
+        "tenants/<slug:tenant_slug>/Tokens",
+        tokens_collection_view,
+        name="ee-scim-tenant-tokens",
+    ),
+    path(
+        "tenants/<slug:tenant_slug>/Tokens/<str:token_id>",
+        token_detail_view,
+        name="ee-scim-tenant-token-detail",
     ),
     path(
         "tenants/<slug:tenant_slug>/Users",

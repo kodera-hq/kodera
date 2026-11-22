@@ -220,7 +220,7 @@ TEXT
 # replaces whatever it is about.
 fixture() {
   local dir="$work/$1" tool
-  mkdir -p "$dir/bin" "$dir/contracts/lint"
+  mkdir -p "$dir/bin" "$dir/contracts/lint" "$dir/yjs_collab"
   for tool in uv pip-audit npm; do
     cat > "$dir/bin/$tool" <<STUB
 #!/usr/bin/env bash
@@ -237,13 +237,14 @@ STUB
     chmod +x "$dir/bin/$tool"
     echo 0 > "$dir/$tool.status"
   done
-  # npm answers for the lockfile from contracts/lint, and for a throwaway
-  # lockfile of bundled libraries from anywhere else.
+  # npm answers for contracts/lint, yjs_collab, or throwaway bundled lockfiles.
   cat > "$dir/bin/npm" <<STUB
 #!/usr/bin/env bash
 here="\$(pwd -P)"
 if [ "\$here" = "\$(cd "$dir/contracts/lint" && pwd -P)" ]; then
   as=npm
+elif [ "\$here" = "\$(cd "$dir/yjs_collab" 2>/dev/null && pwd -P)" ]; then
+  as=npm-yjs
 else
   as="npm-\$(basename "\$here")"
   cp package-lock.json "$dir/\$as.lock.json"
@@ -257,6 +258,8 @@ STUB
   export_ok > "$dir/uv.out"
   pip_clean > "$dir/pip-audit.out"
   npm_clean > "$dir/npm.out"
+  npm_clean > "$dir/npm-yjs.out"
+  echo 0 > "$dir/npm-yjs.status"
   bundled_report 3 > "$dir/npm-bundled-1.out"
   bundled_report 1 > "$dir/npm-bundled-2.out"
   echo 0 > "$dir/npm-bundled-1.status"
@@ -264,6 +267,9 @@ STUB
   printf '{ "devDependencies": { "@redocly/cli": "9.9.9" } }\n' > "$dir/contracts/lint/package.json"
   printf '{ "lockfileVersion": 3, "packages": { "": {}, "node_modules/@redocly/cli": { "version": "9.9.9" } } }\n' \
     > "$dir/contracts/lint/package-lock.json"
+  printf '{ "dependencies": { "yjs": "13.6.33" } }\n' > "$dir/yjs_collab/package.json"
+  printf '{ "lockfileVersion": 3, "packages": { "": {}, "node_modules/yjs": { "version": "13.6.33" } } }\n' \
+    > "$dir/yjs_collab/package-lock.json"
   mkdir -p "$dir/contracts/lint/node_modules/@redocly/cli"
   printf '{ "name": "@redocly/cli", "version": "9.9.9" }\n' \
     > "$dir/contracts/lint/node_modules/@redocly/cli/package.json"
@@ -751,6 +757,24 @@ fixture bundled-no-code
 rm -r "$work/bundled-no-code/contracts/lint/node_modules/@redocly/cli/lib"
 expect bundled-no-code 1 '@redocly/cli 9.9.9 ships no JavaScript under lib/ or bin/' \
   'a package with no code to look in is not a bundle that omits nothing'
+
+# --- 54-56. yjs_collab/package-lock.json runtime advisory gate ----------------
+fixture yjs-collab-unlisted
+npm_report high > "$work/yjs-collab-unlisted/npm-yjs.out"
+status yjs-collab-unlisted 1 npm-yjs
+expect yjs-collab-unlisted 1 'in: yjs_collab/package-lock.json
+is `high` and is not in advisory-allowlist.json' \
+  'a blocking npm advisory in yjs_collab/package-lock.json with no entry fails'
+
+fixture yjs-collab-missing-lock
+rm "$work/yjs-collab-missing-lock/yjs_collab/package-lock.json"
+expect yjs-collab-missing-lock 1 'yjs_collab/package-lock.json is missing; cannot audit yjs_collab' \
+  'a missing yjs_collab/package-lock.json refuses rather than passing silently'
+
+fixture yjs-collab-empty
+npm_clean | sed 's/"total": 41/"total": 0/' > "$work/yjs-collab-empty/npm-yjs.out"
+expect yjs-collab-empty 1 'npm audit of yjs_collab audited no package at all' \
+  'an empty yjs_collab npm audit report is refused'
 
 echo
 if [ "$fails" -ne 0 ]; then

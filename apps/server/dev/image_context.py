@@ -36,8 +36,10 @@ def pattern_matches(pattern: str, path: str) -> bool:
 def runtime_copies(dockerfile: str) -> list[str]:
     """The paths the Dockerfile's last stage copies from the build context."""
     stage = dockerfile.split("\nFROM ")[-1].splitlines()
-    copies = [line.split()[1:-1] for line in stage if line.startswith("COPY ")]
-    return [source.strip("/") for sources in copies for source in sources if "--from" not in source]
+    copies = [
+        line.split()[1:-1] for line in stage if line.startswith("COPY ") and "--from=" not in line
+    ]
+    return [source.strip("/") for sources in copies for source in sources]
 
 
 def ignore_file(root: Path, dockerfile: str = "Dockerfile") -> Path:

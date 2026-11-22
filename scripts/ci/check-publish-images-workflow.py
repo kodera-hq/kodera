@@ -37,6 +37,27 @@ IMAGE_TAG_RE = re.compile(
 )
 
 
+def _has_ee_src_build_context(block: str) -> bool:
+    header_indent: int | None = None
+    for line in block.splitlines():
+        stripped = line.lstrip(" ")
+        if not stripped:
+            continue
+        indent = len(line) - len(stripped)
+        if header_indent is not None:
+            if indent > header_indent:
+                if stripped.rstrip() == "ee_src=ee":
+                    return True
+                continue
+            header_indent = None
+        if (
+            stripped.startswith("build-contexts:")
+            and stripped[len("build-contexts:") :].strip() == "|"
+        ):
+            header_indent = indent
+    return False
+
+
 def check_build_steps(text: str, root: Path) -> list[str]:
     """Each publish step must match EXPECTED_BUILDS and name a Dockerfile (and stage) that exists."""
     errors: list[str] = []
@@ -53,16 +74,27 @@ def check_build_steps(text: str, root: Path) -> list[str]:
             continue
         file_name = dockerfile.group(1)
         stage = target.group(1) if target else None
-        found.add((file_name, stage, image.group(1)))
+        image_name = image.group(1)
+        found.add((file_name, stage, image_name))
         path = root / file_name
         if not path.is_file():
             errors.append(f"build file '{file_name}' does not exist in the repository")
             continue
+        dockerfile_text = path.read_text(encoding="utf-8")
         if stage is not None and not re.search(
             r"(?im)^FROM\s+\S+\s+AS\s+" + re.escape(stage) + r"\s*$",
-            path.read_text(encoding="utf-8"),
+            dockerfile_text,
         ):
             errors.append(f"build target '{stage}' is not a stage of '{file_name}'")
+        if image_name == "kodera-core" and stage is None:
+            if not _has_ee_src_build_context(block):
+                errors.append("kodera-core image build must pass 'ee_src=ee' in build-contexts")
+            if not (root / "ee" / "__init__.py").is_file():
+                errors.append("named build context 'ee' is missing ee/__init__.py")
+            if "FROM scratch AS ee_src" not in dockerfile_text or "COPY --from=ee_src / /app/ee/" not in dockerfile_text:
+                errors.append(
+                    "apps/server/Dockerfile must declare 'FROM scratch AS ee_src' and 'COPY --from=ee_src / /app/ee/'"
+                )
     for missing in sorted(EXPECTED_BUILDS - found, key=str):
         errors.append(f"missing docker build {missing[0]} target={missing[1]} image={missing[2]}")
     for extra in sorted(found - EXPECTED_BUILDS, key=str):
@@ -85,8 +117,14 @@ def check_workflow_text(text: str, root: Path = ROOT) -> list[str]:
     if not re.search(r"(?m)^  push:\s*$", text) or "branches: [main]" not in text:
         errors.append("workflow must trigger on push to branches: [main]")
 
-    if '"apps/server/**"' not in text or '".github/workflows/publish-images.yml"' not in text:
-        errors.append("push trigger must watch 'apps/server/**' and '.github/workflows/publish-images.yml'")
+    if (
+        '"apps/server/**"' not in text
+        or '"ee/**"' not in text
+        or '".github/workflows/publish-images.yml"' not in text
+    ):
+        errors.append(
+            "push trigger must watch 'apps/server/**', 'ee/**', and '.github/workflows/publish-images.yml'"
+        )
 
     if not re.search(r"(?m)^  workflow_dispatch:\s*$", text):
         errors.append("workflow must support workflow_dispatch")
@@ -257,6 +295,16 @@ def run_selftest(baseline: str) -> int:
             "missing GITHUB_STEP_SUMMARY output",
             lambda s: s.replace("$GITHUB_STEP_SUMMARY", "/dev/null", 1),
             "workflow must record digest summary to $GITHUB_STEP_SUMMARY",
+        ),
+        (
+            "missing ee/** watch path on push trigger",
+            lambda s: s.replace('      - "ee/**"\n', "", 1),
+            "push trigger must watch 'apps/server/**', 'ee/**', and '.github/workflows/publish-images.yml'",
+        ),
+        (
+            "missing ee_src=ee build-context on kodera-core",
+            lambda s: s.replace("          build-contexts: |\n            ee_src=ee\n", "", 1),
+            "kodera-core image build must pass 'ee_src=ee' in build-contexts",
         ),
     ]
 
