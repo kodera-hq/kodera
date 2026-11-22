@@ -209,7 +209,7 @@ CASES = (
             method,
             ids,
             INVITATION_SERVICE + ".InvitationCallerUnknownError",
-            (INVITATION_SERVICE + ".authorise",),
+            (INVITATION_SERVICE + ".require_known_customer", INVITATION_SERVICE + ".authorise"),
             also={INVITATION_SERVICE + ".invitation_organisation": lambda **k: ORGANISATION},
         )
         for operation, view, method, ids in (

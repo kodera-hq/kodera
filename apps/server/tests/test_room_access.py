@@ -985,3 +985,132 @@ def test_private_audio_refusal_guard_detects_its_own_omission(world, monkeypatch
     monkeypatch.setattr(module, "_audience_allows", lambda policy, user, agent: True)
     with pytest.raises(pytest.fail.Exception, match="DID NOT RAISE"):
         check(world, "listed", [BOB])
+
+
+def test_transient_join_failure_does_not_advance_sync_cursor_or_strand_invite():
+    matrix = Matrix("http://synapse:8008", "room-access-token")
+    livekit = FakeLiveKit()
+    service = Service(matrix, livekit, "wss://media.acme.kodera.io", AGENT)
+    sync_queries: list[str] = []
+    join_attempts = 0
+    invite_payload = {
+        "!audio-retry:acme.kodera.io": {
+            "invite_state": {
+                "events": [
+                    {
+                        "type": "m.room.member",
+                        "state_key": ROOM_ACCESS,
+                        "sender": AGENT,
+                        "content": {"membership": "invite"},
+                    }
+                ]
+            }
+        }
+    }
+
+    def fake_request(url, method, headers, body, timeout, ok):
+        nonlocal join_attempts
+        path = url.removeprefix("http://synapse:8008")
+        if path == "/_matrix/client/v3/account/whoami":
+            return 200, {"user_id": ROOM_ACCESS, "device_id": "RA"}
+        if path.startswith("/_matrix/client/v3/sync?"):
+            sync_queries.append(path)
+            if "since=s0" in path:
+                return 200, {"next_batch": "s1", "rooms": {"invite": invite_payload}}
+            return 200, {"next_batch": "s0", "rooms": {"invite": {}}}
+        if path == "/_matrix/client/v3/rooms/%21audio-retry%3Aacme.kodera.io/join":
+            join_attempts += 1
+            if join_attempts == 1:
+                raise UpstreamError("POST join answered 503")
+            return 200, {}
+        raise AssertionError(f"unexpected {method} {path}")
+
+    with patch("room_access.clients._request", side_effect=fake_request):
+        service.reconcile_once()  # initial sync -> _since = s0
+        assert matrix._since == "s0"
+        service.reconcile_once()  # s0 -> s1 invite join fails 503; cursor must remain s0
+        assert matrix._since == "s0"
+        assert join_attempts == 1
+        service.reconcile_once()  # replays since=s0, joins room, advances cursor to s1
+        assert matrix._since == "s1"
+        assert join_attempts == 2
+        assert sum("since=s0" in q for q in sync_queries) == 2
+
+
+def test_internal_room_member_endpoint_enforces_private_peer_webhook_bind_and_rate_limit(world):
+    import ipaddress
+
+    from room_access.config import ConfigError, _webhook_bind
+    from room_access.server import GrantLimiter, _is_internal_peer, make_webhook_server
+
+    matrix, livekit, _ = world
+    dm_room = "!dmRateCheck:acme.kodera.io"
+    matrix.rooms[dm_room] = {"joined": {ALICE, BOB}, "state": {}}
+
+    def fake_synapse_call(method, path, body=None, ok=(200,)):
+        import urllib.parse
+
+        parsed = urllib.parse.urlsplit(path)
+        if parsed.path == "/_synapse/client/kodera/v1/dm_member":
+            params = urllib.parse.parse_qs(parsed.query)
+            room = params.get("room_id", [""])[0]
+            user = params.get("user_id", [""])[0]
+            joined = user in matrix.rooms.get(room, {}).get("joined", set())
+            return (200, {"joined": joined})
+        return (403, {"errcode": "M_FORBIDDEN"})
+
+    matrix._call = fake_synapse_call
+
+    unspecified_v4 = str(ipaddress.IPv4Address(0))
+    assert _webhook_bind(unspecified_v4) == unspecified_v4
+    assert _webhook_bind("127.0.0.1") == "127.0.0.1"
+    assert _webhook_bind("172.18.0.5") == "172.18.0.5"
+    for unsafe_bind in ("8.8.8.8", "169.254.169.254", "::ffff:8.8.8.8", "0.0.0.0:8096"):
+        with pytest.raises(ConfigError):
+            _webhook_bind(unsafe_bind)
+
+    assert _is_internal_peer("127.0.0.1") is True
+    assert _is_internal_peer("172.18.0.5") is True
+    assert _is_internal_peer("8.8.8.8") is False
+    assert _is_internal_peer("169.254.169.254") is False
+    assert _is_internal_peer("fe80::1") is False
+
+    srv = make_webhook_server(
+        "127.0.0.1",
+        0,
+        livekit,
+        lambda _ev: None,
+        matrix=matrix,
+        agent_user=AGENT,
+        member_limiter=GrantLimiter(2),
+    )
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+
+        def post_check(room_id: str, subject: str) -> tuple[int, dict[str, Any], dict[str, str]]:
+            conn = http.client.HTTPConnection("127.0.0.1", srv.server_address[1], timeout=2.0)
+            try:
+                conn.request(
+                    "POST",
+                    "/internal/room-member",
+                    body=json.dumps({"room_id": room_id, "subject": subject}).encode(),
+                    headers={"Content-Type": "application/json"},
+                )
+                resp = conn.getresponse()
+                return resp.status, json.loads(resp.read().decode()), dict(resp.getheaders())
+            finally:
+                conn.close()
+
+        status1, body1, _ = post_check(dm_room, "alice")
+        assert status1 == 200 and body1 == {"allowed": True}
+        status2, body2, _ = post_check(dm_room, "alice")
+        assert status2 == 200 and body2 == {"allowed": True}
+        status3, body3, hdrs3 = post_check(dm_room, "alice")
+        assert status3 == 429 and body3["error"] == "rate_limited"
+        assert int(hdrs3["Retry-After"]) >= 1
+
+        status_outsider, body_outsider, _ = post_check(dm_room, "carol")
+        assert status_outsider == 200 and body_outsider == {"allowed": False}
+    finally:
+        srv.shutdown()
+        srv.server_close()

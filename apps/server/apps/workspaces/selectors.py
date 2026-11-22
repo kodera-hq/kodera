@@ -19,6 +19,38 @@ def active_text_channel_id(*, workspace_id: UUID, channel_id: UUID) -> UUID | No
     )
 
 
+def is_confidential_text_channel(*, workspace_id: UUID, channel_id: UUID) -> bool:
+    """Whether the active text channel carries the immutable confidential designation."""
+    return Channel.objects.filter(
+        id=channel_id,
+        workspace_id=workspace_id,
+        kind="text",
+        lifecycle="active",
+        is_confidential=True,
+    ).exists()
+
+
+def is_designated_confidential_channel(*, workspace_id: UUID, channel_id: UUID) -> bool:
+    """Whether an active or archived text channel carries the immutable confidential designation."""
+    return Channel.objects.filter(
+        id=channel_id,
+        workspace_id=workspace_id,
+        kind="text",
+        lifecycle__in=("active", "archived"),
+        is_confidential=True,
+    ).exists()
+
+
+def undeleted_channel_id(*, workspace_id: UUID, channel_id: UUID) -> UUID | None:
+    """A non-deleted channel in the exact workspace, without exporting its model."""
+    return (
+        Channel.objects.filter(id=channel_id, workspace_id=workspace_id)
+        .exclude(lifecycle__in=["deletion_pending", "deleted"])
+        .values_list("id", flat=True)
+        .first()
+    )
+
+
 def workspace_organisation(*, workspace_id: UUID) -> UUID:
     return Workspace.objects.values_list("organisation_id", flat=True).get(id=workspace_id)
 
@@ -27,6 +59,7 @@ def workspace_id_for(*, organisation_id: UUID) -> UUID | None:
     """Resolve the workspace without taking a row lock."""
     return (
         Workspace.objects.filter(organisation_id=organisation_id)
+        .order_by("id")
         .values_list("id", flat=True)
         .first()
     )
@@ -36,16 +69,34 @@ def lock_workspace(*, workspace_id: UUID) -> None:
     Workspace.objects.select_for_update().get(id=workspace_id)
 
 
+def lock_workspace_if_present(*, workspace_id: UUID) -> bool:
+    return (
+        Workspace.objects.select_for_update().filter(id=workspace_id).order_by("id").first()
+        is not None
+    )
+
+
 def lock_organisation_workspace(*, organisation_id: UUID) -> UUID:
     return (
         Workspace.objects.select_for_update()
+        .order_by("id")
         .values_list("id", flat=True)
         .get(organisation_id=organisation_id)
     )
 
 
+def lock_organisation_workspace_if_present(*, organisation_id: UUID) -> UUID | None:
+    return (
+        Workspace.objects.select_for_update()
+        .filter(organisation_id=organisation_id)
+        .order_by("id")
+        .values_list("id", flat=True)
+        .first()
+    )
+
+
 def digest_workspace(*, organisation_id: UUID, membership_id: UUID) -> UUID | None:
-    workspace = Workspace.objects.filter(organisation_id=organisation_id).first()
+    workspace = Workspace.objects.filter(organisation_id=organisation_id).order_by("id").first()
     if (
         workspace is None
         or WorkspaceMemberRestriction.objects.filter(
@@ -106,4 +157,13 @@ def restricted_workspace_membership_ids(
         )
         .filter(Q(banned=True) | Q(kicked=True))
         .values_list("membership_id", flat=True)
+    )
+
+
+def is_workspace_membership_restricted(*, membership_id: UUID) -> bool:
+    """Whether `membership_id` is currently banned or kicked in its workspace."""
+    return (
+        WorkspaceMemberRestriction.objects.filter(membership_id=membership_id)
+        .filter(Q(banned=True) | Q(kicked=True))
+        .exists()
     )

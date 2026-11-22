@@ -8,11 +8,16 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from django.core.exceptions import ImproperlyConfigured
 
 from apps.notifications.push import public_key
-from config.workspace_features import media_gateway_socket, notification_settings
+from config.workspace_features import (
+    media_gateway_socket,
+    media_room_verifier_url,
+    notification_settings,
+)
 
 
 def test_optional_workers_are_disabled_by_default():
     assert media_gateway_socket({}) is None
+    assert media_room_verifier_url({}) is None
     assert notification_settings({}) == (None, None)
 
 
@@ -49,3 +54,31 @@ def test_application_key_and_public_point_are_explicit():
         notification_settings({"KODERA_PUSH_VAPID_PUBLIC_KEY": "invalid"})
     with pytest.raises(ImproperlyConfigured):
         notification_settings({"KODERA_NOTIFICATION_SEAL_KEY": "invalid"})
+
+
+@pytest.mark.parametrize(
+    "valid",
+    [
+        "http://room-access:8096/internal/room-member",
+        "https://room-access.internal:8443/internal/room-member",
+    ],
+)
+def test_media_room_verifier_url_accepts_exact_internal_route(valid):
+    assert media_room_verifier_url({"KODERA_MEDIA_ROOM_VERIFIER_URL": valid}) == valid
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        "ws://room-access:8096/internal/room-member",
+        "http://user:pass@room-access:8096/internal/room-member",
+        "http://room-access:8096/livekit/webhook",
+        "http://room-access:8096/internal/room-member?extra=1",
+        "http://room-access:8096/internal/room-member#frag",
+        "http://room-access:99999/internal/room-member",
+        "http://room-access:8096/internal/room-member\n",
+    ],
+)
+def test_media_room_verifier_url_refuses_unsafe_endpoints(invalid):
+    with pytest.raises(ImproperlyConfigured):
+        media_room_verifier_url({"KODERA_MEDIA_ROOM_VERIFIER_URL": invalid})

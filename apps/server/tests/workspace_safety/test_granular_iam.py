@@ -530,7 +530,7 @@ def test_delegated_role_manager_cannot_strip_unheld_override_capabilities_or_del
             {
                 "role_id": target["id"],
                 "allow": ["channel.view"],
-                "deny": ["message.delete_any"],
+                "deny": ["message.post"],
             }
         ],
     )
@@ -794,7 +794,7 @@ def test_delegated_role_manager_cannot_assign_or_strip_role_with_unheld_override
             {
                 "role_id": overridden["id"],
                 "allow": ["channel.view"],
-                "deny": ["message.delete_any"],
+                "deny": ["message.post"],
             }
         ],
     )

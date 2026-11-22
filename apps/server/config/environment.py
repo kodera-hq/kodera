@@ -9,8 +9,22 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
-import environ
-from django.core.exceptions import ImproperlyConfigured
+if TYPE_CHECKING:
+    import environ
+    from django.core.exceptions import ImproperlyConfigured as ImproperlyConfigured
+else:
+    try:
+        import environ
+    except ModuleNotFoundError:  # pragma: no cover - stdlib-only media-worker preflight
+        environ = None
+
+    try:
+        from django.core.exceptions import ImproperlyConfigured
+    except ModuleNotFoundError:  # pragma: no cover - stdlib-only media-worker preflight
+
+        class ImproperlyConfigured(Exception):  # noqa: N818 - matches Django's exception name
+            pass
+
 
 if TYPE_CHECKING:
     from services.identity.trusted_issuers import TrustedIssuer
@@ -124,14 +138,14 @@ def console_client_id(environment: Mapping[str, str]) -> str | None:
     return value
 
 
-ALLOWED_OIDC_CLIENT_IDS_DEFAULT = "console,kodera-ios,kodera-android"
+ALLOWED_OIDC_CLIENT_IDS_DEFAULT = "console,kodera-ios,kodera-android,kodera-desktop"
 
 
 def allowed_oidc_client_ids(
     environment: Mapping[str, str], *, local_profile: bool = False
 ) -> tuple[str, ...]:
     """The OAuth clients whose tokens the customer lane admits, as the `azp` claim: the
-    comma-separated KODERA_ALLOWED_OIDC_CLIENT_IDS (unset: the web console and the two native
+    comma-separated KODERA_ALLOWED_OIDC_CLIENT_IDS (unset: the web console and the three native
     apps, ALLOWED_OIDC_CLIENT_IDS_DEFAULT), with KODERA_CONSOLE_CLIENT_ID added when it is set.
     Each entry is an exact client identifier, no normalization. A list that resolves to no client
     would refuse every customer token, so it stops the process unless the profile is a local one
@@ -668,6 +682,39 @@ def staff_ops_hosts(
         if not loopback_issuers and is_loopback_host(host_only):
             raise ImproperlyConfigured(
                 "KODERA_STAFF_OPS_HOSTS names a loopback host, which only a local profile admits"
+            )
+        validated.append(entry)
+    return tuple(dict.fromkeys(validated))
+
+
+def staff_admin_hosts(
+    environment: Mapping[str, str], *, loopback_issuers: bool = False
+) -> tuple[str, ...]:
+    """Dedicated `/staff/v1/{read,triage}/*` Host allowlist, from KODERA_STAFF_ADMIN_HOSTS
+    (or KODERA_STAFF_API_HOSTS)."""
+    raw = (
+        environment.get("KODERA_STAFF_ADMIN_HOSTS", "").strip()
+        or environment.get("KODERA_STAFF_API_HOSTS", "").strip()
+    )
+    if not raw:
+        return ()
+    entries = [item.strip().lower() for item in raw.split(",")]
+    if not entries or len(entries) > STAFF_OPS_HOSTS_MAX:
+        raise ImproperlyConfigured(
+            "KODERA_STAFF_ADMIN_HOSTS must list 1 to 16 comma-separated staff-admin hostnames"
+        )
+    validated: list[str] = []
+    for entry in entries:
+        if not entry or STAFF_OPS_HOST_NAME.fullmatch(entry) is None:
+            raise ImproperlyConfigured(
+                "KODERA_STAFF_ADMIN_HOSTS entries must be valid lowercase DNS hostnames"
+            )
+        host_only, sep, port_str = entry.partition(":")
+        if sep and not (1 <= int(port_str) <= 65535):
+            raise ImproperlyConfigured("KODERA_STAFF_ADMIN_HOSTS port must be between 1 and 65535")
+        if not loopback_issuers and is_loopback_host(host_only):
+            raise ImproperlyConfigured(
+                "KODERA_STAFF_ADMIN_HOSTS names a loopback host, which only a local profile admits"
             )
         validated.append(entry)
     return tuple(dict.fromkeys(validated))

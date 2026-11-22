@@ -3,16 +3,22 @@
 import ipaddress
 import re
 from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
-import environ
-from django.core.exceptions import ImproperlyConfigured
+if TYPE_CHECKING:
+    import environ
+else:
+    try:
+        import environ
+    except ModuleNotFoundError:  # pragma: no cover - stdlib-only media-worker preflight
+        environ = None
 
 from config.environment import (
     INFRASTRUCTURE_NAMES,
     INFRASTRUCTURE_PREFIXES,
     NONCREDENTIAL_METADATA_NAMES,
+    ImproperlyConfigured as ImproperlyConfigured,
     unadmitted_secret_names,
 )
 

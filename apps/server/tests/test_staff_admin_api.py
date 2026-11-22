@@ -819,15 +819,15 @@ def test_triage_finops_roles_issuer_snapshots_and_hash_chain_tamper_detection() 
         assert r_op_floor.status_code == 409
         assert r_op_floor.json()["code"] == "role_floor_violation"
 
-        # Owner floor: revoking sole owner -> 409
-        r_owner_floor = client.post(
+        # Role ceiling: staff_operator without staff_owner cannot grant or revoke staff_owner -> 403
+        r_op_revoke_owner = client.post(
             "/staff/v1/ops/staff-roles/revoke",
             data=json.dumps({"identity_id": str(owner.id), "role": "staff_owner"}),
             content_type="application/json",
             **_auth_headers(t_op1_hwk, host=OPS_HOST),
         )
-        assert r_owner_floor.status_code == 409
-        assert r_owner_floor.json()["code"] == "role_floor_violation"
+        assert r_op_revoke_owner.status_code == 403
+        assert r_op_revoke_owner.json()["code"] == "owner_role_ceiling"
 
         # Grant staff_security to candidate, then revoke it
         r_grant = client.post(
@@ -2175,3 +2175,252 @@ def test_finops_http_projection_fences_subscription_and_provider_identifiers() -
                 provider_invoice_sentinel,
             ):
                 assert secret_value not in raw_text
+
+
+@pytest.mark.django_db
+def test_staff_host_allowlist_and_unknown_kid_jwks_cooldown_prevent_amplification() -> None:
+    """BUG-0035 & BUG-0040 regression:
+    1. Customer `Host` headers (`api.kodera.io`, `testserver`, `127.0.0.1`) are rejected with `403`
+       on `/staff/v1/{read,triage,ops}/*` BEFORE any JWT parsing or JWKS fetch.
+    2. 50 consecutive unauthenticated requests with distinct unknown JWT `kid`s within 60s trigger
+       at most 1 upstream JWKS fetch."""
+    clear_jwks_cache()
+    fetch_count = 0
+    fail_upstream = False
+
+    class _CountingJwksHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            nonlocal fetch_count
+            fetch_count += 1
+            if fail_upstream:
+                self.send_response(500)
+                self.end_headers()
+                return
+            payload = json.dumps({"keys": [_RSA_PUBLIC_JWK]}).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, format: str, *args: object) -> None:  # noqa: A002
+            return
+
+    server = HTTPServer(("127.0.0.1", 0), _CountingJwksHandler)
+    port = server.server_port
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        live_jwks_url = f"http://127.0.0.1:{port}/realms/kodera-staff/protocol/openid-connect/certs"
+        custom_settings = {
+            **STAFF_PLANE_SETTINGS,
+            "ALLOWED_HOSTS": [*ALLOWED_TEST_HOSTS, "api.kodera.io"],
+            "KODERA_LOOPBACK_ISSUERS": True,
+            "KODERA_STAFF_OIDC_JWKS_URL": live_jwks_url,
+            "KODERA_STAFF_ADMIN_HOSTS": (ADMIN_HOST,),
+        }
+        with override_settings(**custom_settings):
+            client = Client()
+            # 1. Customer Host rejected across read, triage, and ops with zero JWKS fetches
+            bogus_tok = _mint_staff_jwt(
+                "staff-sub-customer-host", kid="unknown-customer-kid", amr=["hwk"]
+            )
+            for path in (
+                "/staff/v1/read/overview",
+                "/staff/v1/triage/deals",
+                "/staff/v1/ops/audit-chain/verify",
+            ):
+                r_cust = client.get(path, **_auth_headers(bogus_tok, host="api.kodera.io"))
+                assert r_cust.status_code == 403, path
+                assert r_cust.json()["code"] == "staff_ingress_required"
+            assert fetch_count == 0
+
+            # 2. 50 consecutive requests on ADMIN_HOST with 50 distinct unknown kids -> <= 1 fetch!
+            for idx in range(50):
+                t_unknown = _mint_staff_jwt(
+                    "staff-sub-amp",
+                    kid=f"unknown-kid-{idx:03d}",
+                    amr=["otp"],
+                )
+                r_unk = client.get(
+                    "/staff/v1/read/overview", **_auth_headers(t_unknown, host=ADMIN_HOST)
+                )
+                assert r_unk.status_code == 401
+                assert r_unk.json()["code"] == "invalid_token"
+            assert fetch_count == 1
+
+            # 3. Upstream JWKS failure (500) on cold cache ALSO respects 60s cooldown -> 1 fetch!
+            clear_jwks_cache()
+            fail_upstream = True
+            for idx in range(15):
+                t_fail = _mint_staff_jwt(
+                    "staff-sub-fail",
+                    kid=f"cold-fail-kid-{idx:03d}",
+                    amr=["otp"],
+                )
+                r_fail = client.get(
+                    "/staff/v1/read/overview", **_auth_headers(t_fail, host=ADMIN_HOST)
+                )
+                assert r_fail.status_code == 503
+                assert r_fail.json()["code"] == "staff_jwks_unavailable"
+            assert fetch_count == 2
+    finally:
+        clear_jwks_cache()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2.0)
+
+
+@pytest.mark.django_db
+def test_operator_cannot_escalate_or_revoke_owner_and_engineering_triage_redacts_pii() -> None:
+    """BUG-0039 & BUG-0040 regression:
+    1. `staff_operator` without `staff_owner` receives `403 owner_role_ceiling` when granting or
+       revoking `staff_owner`, and same-user secondary identities cannot bypass the two-person rule.
+    2. `POST /staff/v1/triage/feedback/{id}` by `staff_backend` or `staff_frontend` returns
+       scrubbed `summary` and `details`, matching `GET /staff/v1/read/feedback`."""
+    org, _ = _seed_customer_org_and_tenant()
+    owner = _seed_staff_member(roles=("staff_owner",))
+    operator = _seed_staff_member(roles=("staff_operator",))
+    backend = _seed_staff_member(roles=("staff_backend",))
+    frontend = _seed_staff_member(roles=("staff_frontend",))
+    candidate = _seed_staff_member(roles=())
+    same_user_second_ident = Identity.objects.create(
+        user=owner.user,
+        organisation=None,
+        issuer="https://legacy.staff.test/realms/kodera-staff",
+        realm=STAFF_REALM,
+        subject=f"staff-sub-second-{uuid.uuid4().hex[:8]}",
+        email=owner.email,
+        enabled=True,
+    )
+
+    inv_secret = (
+        "inv1_0196ed00-0000-7000-8000-000000000001_SecretTokenPartAbcdefghijklmnopqrstuvwxyz12"
+    )
+    fb = StaffFeedbackItem.objects.create(
+        organisation_id=org.id,
+        organisation_slug=org.slug,
+        kind="bug",
+        source="console_drawer",
+        severity="p1",
+        status="new",
+        surface="console",
+        summary="Reported by jean.dupont@client.fr from 2001:db8::1",
+        details=f"Leaked invite {inv_secret} and db postgresql://app:supersecret@db.internal/core",
+        reporter_pseudonym="rep-39",
+    )
+
+    now = int(time.time())
+    t_op = _mint_staff_jwt(operator.subject, amr=["hwk"], auth_time=now)
+    t_owner = _mint_staff_jwt(owner.subject, amr=["hwk"], auth_time=now)
+    t_be = _mint_staff_jwt(backend.subject, amr=["otp"], auth_time=now)
+    t_fe = _mint_staff_jwt(frontend.subject, amr=["otp"], auth_time=now)
+
+    with override_settings(**STAFF_PLANE_SETTINGS):
+        client = Client()
+        # Operator cannot grant staff_owner -> 403
+        r_grant_owner = client.post(
+            "/staff/v1/ops/staff-roles/grant",
+            data=json.dumps({"identity_id": str(candidate.id), "role": "staff_owner"}),
+            content_type="application/json",
+            **_auth_headers(t_op, host=OPS_HOST),
+        )
+        assert r_grant_owner.status_code == 403
+        assert r_grant_owner.json()["code"] == "owner_role_ceiling"
+
+        # Operator cannot revoke staff_owner -> 403
+        r_rev_owner = client.post(
+            "/staff/v1/ops/staff-roles/revoke",
+            data=json.dumps({"identity_id": str(owner.id), "role": "staff_owner"}),
+            content_type="application/json",
+            **_auth_headers(t_op, host=OPS_HOST),
+        )
+        assert r_rev_owner.status_code == 403
+        assert r_rev_owner.json()["code"] == "owner_role_ceiling"
+
+        # Owner cannot grant to a second identity belonging to their own User account -> 403
+        r_same_user = client.post(
+            "/staff/v1/ops/staff-roles/grant",
+            data=json.dumps(
+                {"identity_id": str(same_user_second_ident.id), "role": "staff_security"}
+            ),
+            content_type="application/json",
+            **_auth_headers(t_owner, host=OPS_HOST),
+        )
+        assert r_same_user.status_code == 403
+        assert r_same_user.json()["code"] == "self_role_mutation_forbidden"
+
+        # Engineering roles (`staff_backend`, `staff_frontend`) receive scrubbed feedback on triage POST
+        for eng_tok in (t_be, t_fe):
+            r_tri = client.post(
+                f"/staff/v1/triage/feedback/{fb.id}",
+                data=json.dumps({"status": "triaged", "vote_delta": 1}),
+                content_type="application/json",
+                **_auth_headers(eng_tok, host=ADMIN_HOST),
+            )
+            assert r_tri.status_code == 200
+            raw_out = json.dumps(r_tri.json())
+            assert "jean.dupont@client.fr" not in raw_out
+            assert "2001:db8::1" not in raw_out
+            assert "SecretTokenPart" not in raw_out
+            assert "supersecret" not in raw_out
+
+
+def test_c1_scrubber_and_sar_evidence_validator_cover_kodera_tokens_pem_uris_and_compressed_ipv6() -> (
+    None
+):
+    """BUG-0038 regression: `scrub_c1_text` and `validate_sar_evidence_ref` scrub/reject Kodera
+    first-party tokens (`inv1_`, `kp1.`, `KoderaTransform`), `Basic` auth, URI credentials, PEM
+    private keys, and RFC 5952 compressed / IPv4-mapped IPv6 literals."""
+    from core.staff_api.scrubber import scrub_c1_text, validate_sar_evidence_ref
+
+    sample = (
+        "Invite inv1_0196ed00-0000-7000-8000-000000000001_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_-abcde "
+        "Passport kp1.eyJ2IjoxfQ.sigValue12345 "
+        "Auth Basic dXNlcjpzZWNyZXRwYXNz "
+        "Transform KoderaTransform hmac_sig_secret_987654321 "
+        "DB postgresql://dbadmin:hunter2pass@10.0.0.5:5432/kodera "
+        "IPv6 2001:db8::1 loopback ::1 mapped ::ffff:192.0.2.1 "
+        "Key -----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASC\n-----END PRIVATE KEY-----"
+    )
+    scrubbed = scrub_c1_text(sample)
+    for leaked in (
+        "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789",
+        "kp1.eyJ2IjoxfQ",
+        "dXNlcjpzZWNyZXRwYXNz",
+        "hmac_sig_secret_987654321",
+        "hunter2pass",
+        "2001:db8::1",
+        "::ffff:192.0.2.1",
+        "192.0.2.1",
+        "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC",
+        "BEGIN PRIVATE KEY",
+    ):
+        assert leaked not in scrubbed, f"{leaked!r} leaked in {scrubbed!r}"
+
+    assert scrub_c1_text("client ::ffff:192.0.2.1 connected") == "client [REDACTED_IP] connected"
+    assert (
+        scrub_c1_text("client 0:0:0:0:0:ffff:192.0.2.1 connected")
+        == "client [REDACTED_IP] connected"
+    )
+    assert scrub_c1_text("peer [::ffff:192.0.2.1]:8443 ok") == "peer [REDACTED_IP]:8443 ok"
+    assert (
+        scrub_c1_text("peer [::1]:8443 and 2001:db8::1.")
+        == "peer [REDACTED_IP]:8443 and [REDACTED_IP]."
+    )
+
+    assert validate_sar_evidence_ref("SAR-BUNDLE-0042") == "SAR-BUNDLE-0042"
+    for bad_ref in (
+        "inv1_0196ed00-0000-7000-8000-000000000001_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_-abcde",
+        "kp1.eyJ2IjoxfQ.sigValue12345",
+        "Basic dXNlcjpzZWNyZXRwYXNz",
+        "KoderaTransform hmac_sig_secret_987654321",
+        "-----BEGIN RSA PRIVATE KEY-----",
+        "ref-2001:db8::1",
+        "ref-::ffff:192.0.2.1",
+        "https://example.org/bundle?token=secret123",
+    ):
+        with pytest.raises(StaffApiError) as exc_info:
+            validate_sar_evidence_ref(bad_ref)
+        assert exc_info.value.status == 400
+        assert exc_info.value.code == "invalid_evidence_ref"

@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { ATTACHMENTS_FIELD, attachmentRefsOf, attachmentsFallback } from './attachmentRefs'
+import {
+  ATTACHMENTS_FIELD,
+  attachmentRefsOf,
+  attachmentsFallback,
+  resolveAttachmentScope,
+} from './attachmentRefs'
 
 const id = () => crypto.randomUUID()
 
@@ -48,5 +53,26 @@ describe('attachment references in a message', () => {
         { id: id(), filename: 'b.png', contentType: 'image/png', sizeBytes: 1 },
       ])
     ).toBe('📎 a.pdf\n📎 b.png')
+  })
+
+  it('resolves channel UUIDs and Matrix DM room IDs for upload ticket scope binding', () => {
+    const channelId = id()
+    const channels = new Map([
+      [channelId, { state: 'resolved', roomId: '!chanroom:matrix.example.org' }],
+    ])
+    expect(resolveAttachmentScope('!chanroom:matrix.example.org', channels)).toEqual({
+      channelId,
+    })
+    expect(resolveAttachmentScope('!dmroom123:matrix.example.org', channels)).toEqual({
+      roomId: '!dmroom123:matrix.example.org',
+    })
+    const v12Room = '!' + 'A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8S9t0U1_'
+    expect(resolveAttachmentScope(v12Room, channels)).toEqual({
+      roomId: v12Room,
+    })
+    expect(resolveAttachmentScope(channelId.toUpperCase())).toEqual({
+      channelId,
+    })
+    expect(resolveAttachmentScope('!synthetic-local')).toEqual({})
   })
 })

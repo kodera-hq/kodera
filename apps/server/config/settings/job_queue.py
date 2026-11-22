@@ -31,7 +31,11 @@ from apps.outbox.mail.seal import key_from_environment
 from apps.outbox.mail.transport import transport_from_environment
 from apps.outbox.realm.keycloak import origins_from_environment as realm_origins_from_environment
 from config.environment import auth_trust, billing_enabled, intake_admitted, legal_text_origin
-from config.workspace_features import media_gateway_socket, notification_settings
+from config.workspace_features import (
+    media_gateway_socket,
+    media_room_verifier_url,
+    notification_settings,
+)
 from core.sealing import key_from_environment as sealing_key_from_environment
 
 from .persistence import *
@@ -108,6 +112,7 @@ KODERA_UNPAID_LAPSE_ENABLED = os.environ.get("KODERA_UNPAID_LAPSE_ENABLED") == "
 # Whether Core bills: KODERA_BILLING_ENABLED (docs/specs/QUICK_WORKSPACE.md §2).
 KODERA_BILLING_ENABLED = billing_enabled(os.environ)
 KODERA_MEDIA_GATEWAY_SOCKET = media_gateway_socket(os.environ)
+KODERA_MEDIA_ROOM_VERIFIER_URL = media_room_verifier_url(os.environ)
 (KODERA_NOTIFICATION_SEAL_KEY, KODERA_PUSH_VAPID_PUBLIC_KEY) = notification_settings(os.environ)
 (
     KODERA_COLLAB_TICKET_KEY,

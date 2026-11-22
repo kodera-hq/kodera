@@ -28,7 +28,7 @@ from functools import partial
 from uuid import UUID
 
 from django.conf import settings
-from django.db import connection, transaction
+from django.db import connection, models, transaction
 from django.utils import timezone
 
 from apps.billing.switch import require_billing
@@ -98,8 +98,86 @@ def _in_flight(invoice: Invoice) -> bool:
     ).exists()
 
 
+def net_settled_invoice_minor(invoice: Invoice) -> int:
+    """Net settled minor units covering `invoice` from allocated payments minus applied refunds.
+
+    Falls back to `invoice.amount_paid_minor` only when no `Payment` row exists on `invoice`
+    (synthetic ledger fixtures); when `Payment` rows exist, bounds coverage by net allocated
+    succeeded payments minus cumulative applied `payment.reversed` provider events.
+    """
+    payments = list(
+        Payment.objects.filter(invoice=invoice).only(
+            "id",
+            "provider",
+            "provider_ref",
+            "state",
+            "allocated",
+            "amount_minor",
+        )
+    )
+    ledger_paid = max(int(invoice.amount_paid_minor), 0)
+    if not payments:
+        return ledger_paid
+    allocated = [p for p in payments if p.state == "succeeded" and p.allocated]
+    if not allocated:
+        return 0
+    refs_by_provider: dict[str, list[str]] = {}
+    for p in allocated:
+        refs_by_provider.setdefault(p.provider, []).append(p.provider_ref)
+    refunded_by_key: dict[tuple[str, str], int] = {}
+    for prov, refs in refs_by_provider.items():
+        rows = (
+            ProviderEvent.objects.filter(
+                provider=prov,
+                payment_ref__in=refs,
+                kind="payment.reversed",
+                outcome="applied",
+            )
+            .values("payment_ref")
+            .annotate(max_refunded=models.Max("amount_minor"))
+        )
+        for row in rows:
+            raw_max = row["max_refunded"]
+            refunded_by_key[(prov, str(row["payment_ref"]))] = (
+                int(raw_max) if isinstance(raw_max, int) else 0
+            )
+    net_allocated = 0
+    for p in allocated:
+        refunded = min(p.amount_minor, refunded_by_key.get((p.provider, p.provider_ref), 0))
+        net_allocated += max(p.amount_minor - refunded, 0)
+    return min(ledger_paid, net_allocated)
+
+
+def effective_owed_minor(invoice: Invoice) -> int:
+    """Net unpaid minor balance owed on `invoice` after accounting for partial and full refunds."""
+    return max(int(invoice.total_incl_vat_minor) - net_settled_invoice_minor(invoice), 0)
+
+
+def invoice_has_refund_or_reversal(invoice: Invoice) -> bool:
+    """True when `invoice` has a reversed payment or an applied refund provider event."""
+    payments = list(
+        Payment.objects.filter(invoice=invoice).values_list("provider", "provider_ref", "state")
+    )
+    if not payments:
+        return False
+    if any(state == "reversed" for _, _, state in payments):
+        return True
+    refs_by_provider: dict[str, list[str]] = {}
+    for prov, ref, _ in payments:
+        refs_by_provider.setdefault(prov, []).append(ref)
+    for prov, refs in refs_by_provider.items():
+        if ProviderEvent.objects.filter(
+            provider=prov,
+            payment_ref__in=refs,
+            kind="payment.reversed",
+            outcome="applied",
+        ).exists():
+            return True
+    return False
+
+
 def _owed(invoice: Invoice) -> int:
-    return max(invoice.total_incl_vat_minor - invoice.amount_paid_minor, 0)
+    return effective_owed_minor(invoice)
 
 
 @dataclass(frozen=True, slots=True)
@@ -639,8 +717,8 @@ def _reversed(invoice: Invoice, payment: Payment, metadata: dict[str, object]) -
 def subscription_has_blocking_unpaid_invoice(
     subscription: Subscription, *, settled_invoice: Invoice
 ) -> bool:
-    """True when a newer unpaid invoice or any other overdue invoice blocks reactivating
-    `subscription` upon settling `settled_invoice` (out-of-order / stale settlement guard)."""
+    """True when a newer unpaid invoice, any other overdue invoice, or any refund-underpaid
+    invoice blocks reactivating `subscription` upon settling `settled_invoice`."""
     from django.db.models import Q
 
     other_unpaid = Invoice.objects.filter(subscription=subscription).exclude(id=settled_invoice.id)
@@ -655,7 +733,14 @@ def subscription_has_blocking_unpaid_invoice(
         .exists()
     ):
         return True
-    return other_unpaid.filter(state="issued", due_at__lte=timezone.now()).exists()
+    if other_unpaid.filter(state="issued", due_at__lte=timezone.now()).exists():
+        return True
+    for candidate in other_unpaid.filter(state__in=("issued", "paid")):
+        if effective_owed_minor(candidate) > 0 and (
+            candidate.state == "paid" or invoice_has_refund_or_reversal(candidate)
+        ):
+            return True
+    return False
 
 
 def _move_subscription(invoice: Invoice, requested: str) -> None:

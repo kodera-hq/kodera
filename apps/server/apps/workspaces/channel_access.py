@@ -16,6 +16,7 @@ next channel membership set, which the tenant agent posts in the channel once (A
 The channel set's input, built from this access, is `channel_sets.channel_set_input` (§13).
 """
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
@@ -29,6 +30,7 @@ from services.identity.access_tokens import VerifiedAccessToken
 from services.workspace_policy.projection import evaluate
 
 from .administration import (
+    ADMINISTERING_ROLES,
     Fields,
     StructureInvalidError,
     Write,
@@ -43,22 +45,41 @@ from .administration import (
     unchanged,
 )
 from .models import (
+    POLICY_CAPABILITIES,
     Category,
     Channel,
     ChannelNotice,
     ResourcePolicy,
     ResourcePolicyRule,
     Workspace,
+    WorkspaceChannelRoleOverride,
+    WorkspaceMemberRole,
+    WorkspaceModerator,
 )
 from .structure import WorkspaceNotFoundError, WorkspaceUnavailableError
 
 VIEW = "channel.view"
+MODERATION_CAPABILITIES = frozenset({"message.delete_any", "file.delete_any", "media.moderate"})
+BASELINE_MEMBER_CAPABILITIES = frozenset(POLICY_CAPABILITIES) - MODERATION_CAPABILITIES
 # §6: what each flag denies to `org_member` and `org_billing`.
 READ_ONLY = ("file.upload", "message.edit_own", "message.post", "message.reply")
 LISTEN_ONLY = ("media.share", "media.speak", "media.video")
 # The capability sets the two flags add or remove, whole, when a flag changes; every other stored
 # deny, and a partial set, is kept as it is.
 FLAGS = (("read_only", frozenset(READ_ONLY)), ("listen_only", frozenset(LISTEN_ONLY)))
+
+
+def expand_override_capabilities(capabilities: Iterable[str]) -> list[str]:
+    """Expand shorthand channel override capabilities (`message.post`, `media.speak`) into the full
+    effective capability sets they lift or deny so delegated permission ceilings cannot be bypassed."""
+    expanded = set(capabilities)
+    if "message.post" in expanded:
+        expanded.update(READ_ONLY)
+    if "media.speak" in expanded:
+        expanded.update(LISTEN_ONLY)
+    return sorted(expanded)
+
+
 FIELDS = ("mode", "visibility", "allow_members", "deny_members", "read_only", "listen_only")
 INHERIT = Channel.PolicyMode.INHERIT
 EXPLICIT = Channel.PolicyMode.EXPLICIT
@@ -76,6 +97,9 @@ class Access:
     allow_members: tuple[UUID, ...]
     deny_members: tuple[UUID, ...]
     denied: frozenset[str]
+    channel_overrides: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...] = ()
+    override_member_roles: tuple[tuple[UUID, tuple[str, ...]], ...] = ()
+    overrides_loaded: bool = False
 
     @property
     def read_only(self) -> bool:
@@ -141,6 +165,26 @@ def resolve(channel_id: UUID, *, inherit: bool = False) -> Access:
             denied.add(capability)
         else:
             raise WorkspaceUnavailableError()
+    channel_overrides = tuple(
+        (str(role_id), tuple(allow_caps), tuple(deny_caps))
+        for role_id, allow_caps, deny_caps in WorkspaceChannelRoleOverride.objects.filter(
+            channel_id=channel.id
+        )
+        .order_by("role_id")
+        .values_list("role_id", "allow", "deny")
+    )
+    override_member_roles: tuple[tuple[UUID, tuple[str, ...]], ...] = ()
+    if channel_overrides:
+        override_role_ids = [UUID(role_id_str) for role_id_str, _, _ in channel_overrides]
+        by_member: dict[UUID, set[str]] = {}
+        for membership_id, role_id in WorkspaceMemberRole.objects.filter(
+            workspace_id=channel.workspace_id, role_id__in=override_role_ids
+        ).values_list("membership_id", "role_id"):
+            by_member.setdefault(membership_id, set()).add(str(role_id))
+        override_member_roles = tuple(
+            (m_id, tuple(sorted(r_ids)))
+            for m_id, r_ids in sorted(by_member.items(), key=lambda item: str(item[0]))
+        )
     return Access(
         channel_id=channel.id,
         kind=channel.kind,
@@ -152,6 +196,9 @@ def resolve(channel_id: UUID, *, inherit: bool = False) -> Access:
         allow_members=_members(allow),
         deny_members=_members(deny),
         denied=frozenset(denied),
+        channel_overrides=channel_overrides,
+        override_member_roles=override_member_roles,
+        overrides_loaded=True,
     )
 
 
@@ -213,6 +260,27 @@ def resolve_all(workspace_id: UUID) -> dict[UUID, tuple[Access, str, str]]:
         ).values_list("id", "revision", "visibility")
     }
     rules = _rules(set(policies))
+    channel_ids = [pk for pk, *_ in channels]
+    overrides_by_channel: dict[UUID, list[tuple[str, tuple[str, ...], tuple[str, ...]]]] = {}
+    referenced_role_ids: set[UUID] = set()
+    if channel_ids:
+        for ch_id, role_id, allow_caps, deny_caps in (
+            WorkspaceChannelRoleOverride.objects.filter(
+                workspace_id=workspace_id, channel_id__in=channel_ids
+            )
+            .order_by("channel_id", "role_id")
+            .values_list("channel_id", "role_id", "allow", "deny")
+        ):
+            overrides_by_channel.setdefault(ch_id, []).append(
+                (str(role_id), tuple(allow_caps), tuple(deny_caps))
+            )
+            referenced_role_ids.add(role_id)
+    roles_by_member: dict[UUID, set[str]] = {}
+    if referenced_role_ids:
+        for membership_id, role_id in WorkspaceMemberRole.objects.filter(
+            workspace_id=workspace_id, role_id__in=referenced_role_ids
+        ).values_list("membership_id", "role_id"):
+            roles_by_member.setdefault(membership_id, set()).add(str(role_id))
     found = {}
     for pk, kind, lifecycle, mode, _, _, name, topic in channels:
         policy_id = chosen[pk]
@@ -220,6 +288,15 @@ def resolve_all(workspace_id: UUID) -> dict[UUID, tuple[Access, str, str]]:
             raise WorkspaceUnavailableError()
         revision, visibility = policies[policy_id]
         rule = rules[policy_id]
+        ch_overrides = tuple(overrides_by_channel.get(pk, ()))
+        ch_member_roles: tuple[tuple[UUID, tuple[str, ...]], ...] = ()
+        if ch_overrides:
+            ch_role_set = {role_id_str for role_id_str, _, _ in ch_overrides}
+            ch_member_roles = tuple(
+                (m_id, tuple(sorted(r_ids & ch_role_set)))
+                for m_id, r_ids in sorted(roles_by_member.items(), key=lambda item: str(item[0]))
+                if r_ids & ch_role_set
+            )
         access = Access(
             channel_id=pk,
             kind=kind,
@@ -231,9 +308,79 @@ def resolve_all(workspace_id: UUID) -> dict[UUID, tuple[Access, str, str]]:
             allow_members=_members(rule.allow),
             deny_members=_members(rule.deny),
             denied=frozenset(rule.denied),
+            channel_overrides=ch_overrides,
+            override_member_roles=ch_member_roles,
+            overrides_loaded=True,
         )
         found[pk] = (access, name, topic)
     return found
+
+
+def _channel_role_context(
+    *,
+    channel_id: UUID,
+    membership_id: UUID,
+    member_role_ids: tuple[str, ...] | None = None,
+    member_role_permissions: frozenset[str] | None = None,
+    channel_overrides: list[tuple[str, tuple[str, ...], tuple[str, ...]]] | None = None,
+) -> tuple[list[str], frozenset[str], list[str], list[str], set[str], set[str]]:
+    if member_role_ids is None or member_role_permissions is None:
+        role_ids_found: list[str] = []
+        perms_found: set[str] = set()
+        for role_id, permissions in (
+            WorkspaceMemberRole.objects.filter(membership_id=membership_id)
+            .order_by("role_id")
+            .values_list("role_id", "role__permissions")
+        ):
+            role_ids_found.append(str(role_id))
+            perms_found.update(p for p in permissions if p in POLICY_CAPABILITIES)
+        role_ids = sorted(set(role_ids_found))
+        role_perms = frozenset(perms_found)
+    else:
+        role_ids = list(member_role_ids)
+        role_perms = member_role_permissions
+
+    if channel_overrides is None:
+        raw_overrides = [
+            (str(role_id), tuple(allow), tuple(deny))
+            for role_id, allow, deny in WorkspaceChannelRoleOverride.objects.filter(
+                channel_id=channel_id
+            )
+            .order_by("role_id")
+            .values_list("role_id", "allow", "deny")
+        ]
+    else:
+        raw_overrides = channel_overrides
+
+    role_set = set(role_ids)
+    allow_roles: list[str] = []
+    deny_roles: list[str] = []
+    override_allow: set[str] = set()
+    override_deny: set[str] = set()
+    for role_id_str, allow, deny in raw_overrides:
+        if VIEW in allow:
+            allow_roles.append(role_id_str)
+        if VIEW in deny:
+            deny_roles.append(role_id_str)
+        if role_id_str in role_set:
+            override_allow.update(p for p in allow if p in POLICY_CAPABILITIES)
+            override_deny.update(p for p in deny if p in POLICY_CAPABILITIES)
+            if "message.post" in allow:
+                override_allow.update(READ_ONLY)
+            if "message.post" in deny:
+                override_deny.update(READ_ONLY)
+            if "media.speak" in allow:
+                override_allow.update(LISTEN_ONLY)
+            if "media.speak" in deny:
+                override_deny.update(LISTEN_ONLY)
+    return (
+        role_ids,
+        role_perms,
+        sorted(set(allow_roles)),
+        sorted(set(deny_roles)),
+        override_allow,
+        override_deny,
+    )
 
 
 def may_view(
@@ -242,12 +389,32 @@ def may_view(
     organisation_id: UUID,
     membership_id: UUID,
     authority_revision: int,
+    member_role_ids: tuple[str, ...] | None = None,
+    channel_overrides: list[tuple[str, tuple[str, ...], tuple[str, ...]]] | None = None,
 ) -> bool:
-    """`channel.view` for one current active membership on the access alone, by the projection
-    kernel over Core's own current revisions, as `getWorkspace` evaluates it (AUTHZ.md §6 rule 8).
-    The lifecycle is not part of the question: an archived channel, an audio room included, keeps
-    the viewers its access gives it, so a self-grant on it is a self-grant and its room is not
-    emptied (ESPACE_STRUCTURE.md §§2.1, 9)."""
+    """`channel.view` for one current active membership on the access and its role overrides, by
+    the projection kernel over Core's own current revisions, as `getWorkspace` evaluates it
+    (AUTHZ.md §6 rule 8). The lifecycle is not part of the question: an archived channel, an audio
+    room included, keeps the viewers its access gives it, so a self-grant on it is a self-grant and
+    its room is not emptied (ESPACE_STRUCTURE.md §§2.1, 9)."""
+    resolved_overrides = (
+        list(access.channel_overrides)
+        if channel_overrides is None and access.overrides_loaded
+        else channel_overrides
+    )
+    resolved_role_ids = (
+        dict(access.override_member_roles).get(membership_id, ())
+        if member_role_ids is None and channel_overrides is None and access.overrides_loaded
+        else member_role_ids
+    )
+    role_ids, _, allow_roles, deny_roles, override_allow, override_deny = _channel_role_context(
+        channel_id=access.channel_id,
+        membership_id=membership_id,
+        member_role_ids=resolved_role_ids,
+        member_role_permissions=frozenset(),
+        channel_overrides=resolved_overrides,
+    )
+    effective_denied = (set(access.denied) - override_allow) | override_deny
     decision = evaluate(
         {
             "actor_org": str(organisation_id),
@@ -262,17 +429,79 @@ def may_view(
             "projected_policy_revision": access.revision,
             "projection_state": "ready",
             "eligible": [VIEW],
-            "denied": sorted(access.denied),
+            "denied": sorted(effective_denied),
             "action": VIEW,
             "kind": access.kind,
             # A plain string: the kernel admits only exact `str` values.
             "lifecycle": "active",
             "visibility": access.visibility,
-            "role_ids": [],
+            "role_ids": role_ids,
             "allow_members": [str(member) for member in access.allow_members],
-            "allow_roles": [],
+            "allow_roles": allow_roles,
             "deny_members": [str(member) for member in access.deny_members],
-            "deny_roles": [],
+            "deny_roles": deny_roles,
+            "dm_members": [],
+        }
+    )
+    return decision["allowed"]
+
+
+def may_perform(
+    access: Access,
+    *,
+    action: str,
+    organisation_id: UUID,
+    membership_id: UUID,
+    member_org_role: str,
+    authority_revision: int,
+    is_moderator: bool | None = None,
+    ignore_lifecycle: bool = False,
+    member_role_ids: tuple[str, ...] | None = None,
+    member_role_permissions: frozenset[str] | None = None,
+    channel_overrides: list[tuple[str, tuple[str, ...], tuple[str, ...]]] | None = None,
+) -> bool:
+    """Evaluate any channel capability `action` over `access`, role grants, and role overrides."""
+    role_ids, role_perms, allow_roles, deny_roles, override_allow, override_deny = (
+        _channel_role_context(
+            channel_id=access.channel_id,
+            membership_id=membership_id,
+            member_role_ids=member_role_ids,
+            member_role_permissions=member_role_permissions,
+            channel_overrides=channel_overrides,
+        )
+    )
+    if is_moderator is None:
+        is_moderator = WorkspaceModerator.objects.filter(membership_id=membership_id).exists()
+    is_admin = member_org_role in ADMINISTERING_ROLES
+    eligible = set(BASELINE_MEMBER_CAPABILITIES) | set(role_perms) | override_allow
+    if is_admin or is_moderator:
+        eligible |= MODERATION_CAPABILITIES
+    base_denied = {VIEW} & set(access.denied) if is_admin else set(access.denied)
+    effective_denied = (base_denied - override_allow) | override_deny
+    decision = evaluate(
+        {
+            "actor_org": str(organisation_id),
+            "resource_org": str(organisation_id),
+            "member_id": str(membership_id),
+            "active_member": True,
+            "resolved": True,
+            "is_dm": False,
+            "authority_revision": authority_revision,
+            "projected_authority_revision": authority_revision,
+            "policy_revision": access.revision,
+            "projected_policy_revision": access.revision,
+            "projection_state": "ready",
+            "eligible": sorted(eligible),
+            "denied": sorted(effective_denied),
+            "action": action,
+            "kind": access.kind,
+            "lifecycle": "active" if ignore_lifecycle else access.lifecycle,
+            "visibility": access.visibility,
+            "role_ids": role_ids,
+            "allow_members": [str(member) for member in access.allow_members],
+            "allow_roles": allow_roles,
+            "deny_members": [str(member) for member in access.deny_members],
+            "deny_roles": deny_roles,
             "dm_members": [],
         }
     )

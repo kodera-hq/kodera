@@ -55,6 +55,8 @@ export interface UploadInput {
   organisationId: string
   file: Blob
   checked: Extract<Preflight, { ok: true }>
+  channelId?: string
+  roomId?: string
   signal?: AbortSignal
   /** Must remain authorized for the target room at every upload boundary. */
   mayUpload?: () => boolean
@@ -66,6 +68,8 @@ export async function uploadAttachment({
   organisationId,
   file,
   checked,
+  channelId,
+  roomId,
   signal,
   put = putToStorage,
   mayUpload,
@@ -75,6 +79,13 @@ export async function uploadAttachment({
   const sha256 = await sha256Hex(file)
   signal?.throwIfAborted()
   if (mayUpload?.() === false) throw new UploadRefused('ticket')
+  const requestBody: components['schemas']['AttachmentUploadRequest'] = {
+    filename: checked.filename,
+    contentType: checked.contentType,
+    sizeBytes: checked.sizeBytes,
+    sha256,
+    ...(channelId !== undefined ? { channelId } : roomId !== undefined ? { roomId } : {}),
+  }
   const ticket = checkTicket(
     await mutate(
       { method: 'post', path: '/organisations/{organisation_id}/workspace/attachments/uploads' },
@@ -85,12 +96,7 @@ export async function uploadAttachment({
         },
         ...(signal === undefined ? {} : { signal }),
         ...(mayUpload === undefined ? {} : { dispatchGuard: mayUpload }),
-        body: {
-          filename: checked.filename,
-          contentType: checked.contentType,
-          sizeBytes: checked.sizeBytes,
-          sha256,
-        },
+        body: requestBody,
       }
     )
   )

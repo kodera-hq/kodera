@@ -1688,9 +1688,21 @@ const CANONICAL_MIGRATE_COMMAND_SCRIPT: &str = concat!(
     "fi",
 );
 
+const CANONICAL_WEB_ENTRYPOINT_SCRIPT: &str = concat!(
+    "if [ -n \"${KODERA_ATTACHMENT_BASE:-}\" ]; then ",
+    "set -- \"$@\" --attachment-base \"$KODERA_ATTACHMENT_BASE\"; ",
+    "fi; ",
+    "exec node /app/static.mjs --root /srv/console --host 0.0.0.0 \"$@\"",
+);
+
 fn matches_canonical_synapse_entrypoint_script(raw_script: &str) -> bool {
     let normalized = raw_script.replace("\r\n", "\n");
     normalized.trim_end_matches('\n') == CANONICAL_SYNAPSE_ENTRYPOINT_SCRIPT
+}
+
+fn matches_canonical_web_entrypoint_script(raw_script: &str) -> bool {
+    let normalized = raw_script.replace("\r\n", "\n").replace("$$", "$");
+    normalized.trim_end_matches('\n') == CANONICAL_WEB_ENTRYPOINT_SCRIPT
 }
 
 fn matches_canonical_migrate_command_script(raw_script: &str) -> bool {
@@ -1708,22 +1720,37 @@ fn validate_resolved_service_entrypoint(
     if val.is_null() {
         return Ok(());
     }
-    if service_name != "synapse" {
-        return Err(CommunityDeployError::ComposeConfigInvalid);
-    }
     let Some(items) = val.as_array() else {
         return Err(CommunityDeployError::ComposeConfigInvalid);
     };
-    if items.len() != 3
-        || items[0].as_str() != Some("/bin/sh")
-        || items[1].as_str() != Some("-c")
-        || items[2]
-            .as_str()
-            .is_none_or(|script| !matches_canonical_synapse_entrypoint_script(script))
-    {
-        return Err(CommunityDeployError::ComposeConfigInvalid);
+    match service_name {
+        "synapse" => {
+            if items.len() != 3
+                || items[0].as_str() != Some("/bin/sh")
+                || items[1].as_str() != Some("-c")
+                || items[2]
+                    .as_str()
+                    .is_none_or(|script| !matches_canonical_synapse_entrypoint_script(script))
+            {
+                return Err(CommunityDeployError::ComposeConfigInvalid);
+            }
+            Ok(())
+        }
+        "web" => {
+            if items.len() != 4
+                || items[0].as_str() != Some("/bin/sh")
+                || items[1].as_str() != Some("-ec")
+                || items[2]
+                    .as_str()
+                    .is_none_or(|script| !matches_canonical_web_entrypoint_script(script))
+                || items[3].as_str() != Some("sh")
+            {
+                return Err(CommunityDeployError::ComposeConfigInvalid);
+            }
+            Ok(())
+        }
+        _ => Err(CommunityDeployError::ComposeConfigInvalid),
     }
-    Ok(())
 }
 
 fn is_admitted_service_user(service_name: &str, user_val: &str) -> bool {
@@ -1799,6 +1826,7 @@ const SERVER_ADMITTED_ENV_KEYS: &[&str] = &[
     "KODERA_OUTBOX_SEAL_KEY",
     "KODERA_PROXIMITY_BROKER_SOCKET",
     "KODERA_STAFF_ISSUER",
+    "KODERA_TRUSTED_EDGE_ADDRESSES",
 ];
 
 const SYNAPSE_ADMITTED_ENV_KEYS: &[&str] = &[
@@ -1840,6 +1868,8 @@ const TENANT_AGENT_ADMITTED_ENV_KEYS: &[&str] = &[
     "LIVEKIT_API_SECRET",
     "LIVEKIT_URL",
 ];
+
+const WEB_ADMITTED_ENV_KEYS: &[&str] = &["KODERA_ATTACHMENT_BASE"];
 
 const YJS_COLLAB_ADMITTED_ENV_KEYS: &[&str] = &[
     "DATABASE_URL",
@@ -1891,6 +1921,7 @@ const _: () = {
     assert!(slice_is_strictly_sorted_ascii(
         TENANT_AGENT_ADMITTED_ENV_KEYS
     ));
+    assert!(slice_is_strictly_sorted_ascii(WEB_ADMITTED_ENV_KEYS));
     assert!(slice_is_strictly_sorted_ascii(YJS_COLLAB_ADMITTED_ENV_KEYS));
 };
 
@@ -1908,6 +1939,7 @@ pub fn admitted_service_environment_keys(service_name: &str) -> &'static [&'stat
         "synapse" => SYNAPSE_ADMITTED_ENV_KEYS,
         "synapse-db" => SYNAPSE_DB_ADMITTED_ENV_KEYS,
         "tenant-agent" => TENANT_AGENT_ADMITTED_ENV_KEYS,
+        "web" => WEB_ADMITTED_ENV_KEYS,
         "yjs-collab" => YJS_COLLAB_ADMITTED_ENV_KEYS,
         _ => &[],
     }
@@ -1926,8 +1958,46 @@ fn is_admitted_service_env_var(service_name: &str, key: &str, val_opt: Option<&s
             matches!(service_name, "migrate" | "server") && val_opt == Some("false")
         }
         "KODERA_EDITION" => service_name == "server" && val_opt == Some("community"),
+        "KODERA_ATTACHMENT_BASE" => {
+            service_name == "web"
+                && match val_opt {
+                    None | Some("" | "${KODERA_ATTACHMENT_BASE:-}") => true,
+                    Some(v) => is_valid_https_attachment_base(v),
+                }
+        }
         _ => val_opt.is_none_or(|v| !v.contains('\0')),
     }
+}
+
+fn is_valid_https_attachment_base(raw: &str) -> bool {
+    if !raw.starts_with("https://")
+        || !raw.ends_with('/')
+        || raw.chars().any(|c| {
+            c.is_control()
+                || c.is_whitespace()
+                || matches!(c, '%' | '?' | '#' | '\\' | ';' | '\'' | '"' | '*')
+        })
+    {
+        return false;
+    }
+    let Some(authority_end) = raw["https://".len()..]
+        .find('/')
+        .map(|idx| idx + "https://".len())
+    else {
+        return false;
+    };
+    let origin = &raw[..authority_end];
+    let full_path = &raw[authority_end..];
+    if validate_oidc_provider_origin(origin).is_err() || origin.contains('@') {
+        return false;
+    }
+    full_path.len() >= 3
+        && full_path.starts_with('/')
+        && full_path.ends_with('/')
+        && !full_path.contains("//")
+        && !full_path[1..full_path.len() - 1]
+            .split('/')
+            .any(|seg| seg.is_empty() || matches!(seg, "." | ".."))
 }
 
 fn validate_resolved_service_environment(
@@ -2790,12 +2860,23 @@ fn finalize_yaml_argv_block(state: &mut YamlArgvBlockState) -> Result<(), Commun
             return Err(CommunityDeployError::ComposeConfigInvalid);
         }
         if state.is_entrypoint {
-            if state.service_name != "synapse"
-                || complete_items.len() != 3
-                || complete_items[0] != "/bin/sh"
-                || complete_items[1] != "-c"
-                || !matches_canonical_synapse_entrypoint_script(&complete_items[2])
-            {
+            let entrypoint_ok = match state.service_name.as_str() {
+                "synapse" => {
+                    complete_items.len() == 3
+                        && complete_items[0] == "/bin/sh"
+                        && complete_items[1] == "-c"
+                        && matches_canonical_synapse_entrypoint_script(&complete_items[2])
+                }
+                "web" => {
+                    complete_items.len() == 4
+                        && complete_items[0] == "/bin/sh"
+                        && complete_items[1] == "-ec"
+                        && matches_canonical_web_entrypoint_script(&complete_items[2])
+                        && complete_items[3] == "sh"
+                }
+                _ => false,
+            };
+            if !entrypoint_ok {
                 return Err(CommunityDeployError::ComposeConfigInvalid);
             }
         } else {
@@ -3057,12 +3138,18 @@ fn validate_compose_file_policy(compose_path: &Path) -> Result<(), CommunityDepl
                             current_service_has_image_or_build = true;
                         }
                         "entrypoint" => {
-                            if current_service.as_deref() != Some("synapse") || !rest.is_empty() {
+                            let Some(svc_name) = current_service
+                                .as_deref()
+                                .filter(|s| matches!(*s, "synapse" | "web"))
+                            else {
+                                return Err(CommunityDeployError::ComposeConfigInvalid);
+                            };
+                            if !rest.is_empty() {
                                 return Err(CommunityDeployError::ComposeConfigInvalid);
                             }
                             argv_state = YamlArgvBlockState {
                                 active: true,
-                                service_name: "synapse".to_owned(),
+                                service_name: svc_name.to_owned(),
                                 is_entrypoint: true,
                                 ..YamlArgvBlockState::default()
                             };
@@ -6296,13 +6383,16 @@ mod tests {
             "proximity-broker",
             "proximity-socket-init",
             "valkey",
-            "web",
         ] {
             assert!(
                 admitted_service_environment_keys(zero_env_svc).is_empty(),
                 "service {zero_env_svc} has no canonical environment block and must admit zero keys"
             );
         }
+        assert_eq!(
+            admitted_service_environment_keys("web"),
+            ["KODERA_ATTACHMENT_BASE"]
+        );
 
         // 2. World-writable temp roots, macOS `/private/*` & `/var/folders`, UNC roots, and credential segments are sensitive.
         for sensitive in [
@@ -6446,6 +6536,12 @@ mod tests {
             "services:\n  synapse:\n    image: matrixdotorg/synapse:v1.165.0@sha256:673b4223c81a7634fd07d832b939a58f97081cfdaae7cdd2d1664cdcf7611b62\n    environment:\n      PYTHONWARNINGS: \"ignore::antigravity.Example\"\n      BROWSER: '/bin/sh -c \"printf R5_ENV_BYPASS >&2\" %s'\n",
             "services:\n  valkey:\n    image: valkey/valkey:8.1-alpine@sha256:1b426a5a4d7d4fcad15e9d40f0bd8bc2e5c1f09061f5cc8b2a5f6653d5bd5949\n    environment:\n      POSTGRES_USER: kodera\n",
             "services:\n  server:\n    image: ghcr.io/kodera/server:0.1.0@sha256:f1b43b8d9a5b7a5e8f17c91e6b3f0f8f0f9d4a6e3e9f6d7c8b9a0f1e2d3c4b5a\n    environment:\n      KODERA_BILLING_ENABLED: \"true\"\n",
+            "services:\n  web:\n    image: ghcr.io/kodera/web:0.1.0@sha256:f1b43b8d9a5b7a5e8f17c91e6b3f0f8f0f9d4a6e3e9f6d7c8b9a0f1e2d3c4b5a\n    environment:\n      NODE_OPTIONS: \"--require /tmp/evil.js\"\n",
+            "services:\n  web:\n    image: ghcr.io/kodera/web:0.1.0@sha256:f1b43b8d9a5b7a5e8f17c91e6b3f0f8f0f9d4a6e3e9f6d7c8b9a0f1e2d3c4b5a\n    environment:\n      KODERA_ATTACHMENT_BASE: \"http://insecure.example.org/bucket/\"\n",
+            "services:\n  web:\n    image: ghcr.io/kodera/web:0.1.0@sha256:f1b43b8d9a5b7a5e8f17c91e6b3f0f8f0f9d4a6e3e9f6d7c8b9a0f1e2d3c4b5a\n    environment:\n      KODERA_ATTACHMENT_BASE: \"https://media.example.org//\"\n",
+            "services:\n  web:\n    image: ghcr.io/kodera/web:0.1.0@sha256:f1b43b8d9a5b7a5e8f17c91e6b3f0f8f0f9d4a6e3e9f6d7c8b9a0f1e2d3c4b5a\n    environment:\n      KODERA_ATTACHMENT_BASE: \"https://media.example.org/bucket//\"\n",
+            "services:\n  web:\n    image: ghcr.io/kodera/web:0.1.0@sha256:f1b43b8d9a5b7a5e8f17c91e6b3f0f8f0f9d4a6e3e9f6d7c8b9a0f1e2d3c4b5a\n    environment:\n      KODERA_ATTACHMENT_BASE: \"https://media.example.org/%2e/\"\n",
+            "services:\n  web:\n    image: ghcr.io/kodera/web:0.1.0@sha256:f1b43b8d9a5b7a5e8f17c91e6b3f0f8f0f9d4a6e3e9f6d7c8b9a0f1e2d3c4b5a\n    entrypoint:\n      - \"/bin/sh\"\n      - \"-ec\"\n      - \"id; exec node /app/static.mjs\"\n      - \"sh\"\n",
             // Publishing Postgres 5432, SSH 22, or mixed single-port range `3478-7882:7881/tcp` on host.
             "services:\n  db:\n    image: postgres:17.12-alpine@sha256:a77aa70e641402a21411b92b721c58d10f23b50ae5fdd2333efd22d166e1e5f7\n    ports:\n      - \"5432:5432\"\n",
             "services:\n  caddy:\n    image: caddy:2.11.9-alpine@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0\n    ports:\n      - \"22:80\"\n",
@@ -6527,6 +6623,12 @@ mod tests {
             bad_synapse_pythonwarnings_browser_json.as_str(),
             r#"{"services":{"valkey":{"image":"valkey/valkey:8.1-alpine@sha256:1b426a5a4d7d4fcad15e9d40f0bd8bc2e5c1f09061f5cc8b2a5f6653d5bd5949","environment":{"POSTGRES_USER":"kodera"}}}}"#,
             r#"{"services":{"server":{"image":"ghcr.io/kodera/server:0.1.0@sha256:f1b43b8d9a5b7a5e8f17c91e6b3f0f8f0f9d4a6e3e9f6d7c8b9a0f1e2d3c4b5a","environment":{"KODERA_BILLING_ENABLED":"true"}}}}"#,
+            r#"{"services":{"web":{"image":"ghcr.io/kodera/web:0.1.0@sha256:f1b43b8d9a5b7a5e8f17c91e6b3f0f8f0f9d4a6e3e9f6d7c8b9a0f1e2d3c4b5a","environment":{"NODE_OPTIONS":"--require /tmp/evil.js"}}}}"#,
+            r#"{"services":{"web":{"image":"ghcr.io/kodera/web:0.1.0@sha256:f1b43b8d9a5b7a5e8f17c91e6b3f0f8f0f9d4a6e3e9f6d7c8b9a0f1e2d3c4b5a","environment":{"KODERA_ATTACHMENT_BASE":"https://media.example.org/no-trailing-slash"}}}}"#,
+            r#"{"services":{"web":{"image":"ghcr.io/kodera/web:0.1.0@sha256:f1b43b8d9a5b7a5e8f17c91e6b3f0f8f0f9d4a6e3e9f6d7c8b9a0f1e2d3c4b5a","environment":{"KODERA_ATTACHMENT_BASE":"https://media.example.org//"}}}}"#,
+            r#"{"services":{"web":{"image":"ghcr.io/kodera/web:0.1.0@sha256:f1b43b8d9a5b7a5e8f17c91e6b3f0f8f0f9d4a6e3e9f6d7c8b9a0f1e2d3c4b5a","environment":{"KODERA_ATTACHMENT_BASE":"https://media.example.org/bucket//"}}}}"#,
+            r#"{"services":{"web":{"image":"ghcr.io/kodera/web:0.1.0@sha256:f1b43b8d9a5b7a5e8f17c91e6b3f0f8f0f9d4a6e3e9f6d7c8b9a0f1e2d3c4b5a","environment":{"KODERA_ATTACHMENT_BASE":"https://media.example.org/%2e%2e/"}}}}"#,
+            r#"{"services":{"web":{"image":"ghcr.io/kodera/web:0.1.0@sha256:f1b43b8d9a5b7a5e8f17c91e6b3f0f8f0f9d4a6e3e9f6d7c8b9a0f1e2d3c4b5a","entrypoint":["/bin/sh","-ec","id","sh"]}}}"#,
             // Publishing `5432` on `db`, `22` on `caddy`, `"3478-7882"` TCP range on `livekit`, or `"8080-8090"` range on loopback `caddy`.
             r#"{"services":{"db":{"image":"postgres:17.12-alpine@sha256:a77aa70e641402a21411b92b721c58d10f23b50ae5fdd2333efd22d166e1e5f7","ports":[{"target":5432,"published":"5432","protocol":"tcp"}]}}}"#,
             r#"{"services":{"caddy":{"image":"caddy:2.11.9-alpine@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0","ports":[{"target":80,"published":"22","protocol":"tcp"}]}}}"#,

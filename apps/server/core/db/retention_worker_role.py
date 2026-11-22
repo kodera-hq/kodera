@@ -6,6 +6,7 @@ ROLE = re.compile(r"[a-z_][a-z0-9_]{0,62}\Z")
 FUNCTIONS = (
     "privacy_purge_core(uuid)",
     "privacy_purge_account_core(uuid)",
+    "privacy_confirm_account_attachments_erased(uuid,text)",
     "privacy_record_account_absence(uuid,uuid,timestamptz,text,text,text,text,timestamptz)",
     "privacy_complete_account_erasure(uuid)",
     "privacy_record_absence(uuid,text,timestamptz,text,text,timestamptz)",
@@ -14,7 +15,7 @@ FUNCTIONS = (
 )
 ADMISSION_FUNCTIONS = (
     "privacy_begin_erasure(uuid,uuid,text,text,timestamptz,uuid)",
-    "privacy_begin_account_erasure(uuid,uuid,text,text,timestamptz,uuid)",
+    "privacy_admit_account_erasure(uuid,uuid,text,text,timestamptz,uuid)",
     "privacy_account_protocol_recorded(uuid)",
     "billing_close_contract(uuid,timestamptz,text,text,uuid)",
     "billing_qualify_legacy_accounting(text,uuid,timestamptz,text)",
@@ -54,6 +55,7 @@ def grant_statements(role: str, *, include_extensions: bool = False) -> list[str
                 "orgs_erasurereceipt",
                 "orgs_accounterasure",
                 "orgs_accounterasurereceipt",
+                "orgs_accountattachmenterasure",
             ]
         ),
     ]
@@ -70,5 +72,6 @@ def admission_grant_statements(role: str, *, include_extensions: bool = False) -
             f'GRANT SELECT ON TABLE "{table}" TO "{role}"'
             for table in ["billing_fiscalperiod", "orgs_privacyerasure", "orgs_accounterasure"]
         ),
+        f'REVOKE ALL ON FUNCTION privacy_begin_account_erasure(uuid,uuid,text,text,timestamptz,uuid) FROM "{role}"',
         *(f'GRANT EXECUTE ON FUNCTION {signature} TO "{role}"' for signature in functions),
     ]

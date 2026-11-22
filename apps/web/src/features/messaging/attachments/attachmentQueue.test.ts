@@ -119,4 +119,16 @@ describe('attachment upload room authorization', () => {
     expect(upload).not.toHaveBeenCalled()
     expect(queue.files('room')[0]?.status).toBe('failed')
   })
+
+  it('refuses unscoped rooms when using the live upload transport', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch')
+    try {
+      const queue = new AttachmentQueue('org')
+      await queue.add('unscoped-local-room', [png()])
+      expect(queue.files('unscoped-local-room')[0]?.status).toBe('failed')
+      expect(fetchSpy).not.toHaveBeenCalled()
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
 })

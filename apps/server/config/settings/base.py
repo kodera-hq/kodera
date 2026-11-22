@@ -86,9 +86,12 @@ KODERA_DEFAULT_COMMUNITY_OWNER_USER_ID = os.environ.get(
 # Zero-trust /staff/v1/* C1 plane and mobile Universal/App Links (/.well-known/*); fail-closed (503) when unset.
 KODERA_STAFF_OIDC_ISSUER: str | None = None
 KODERA_STAFF_OIDC_JWKS_URL: str | None = None
+KODERA_STAFF_ADMIN_HOSTS: tuple[str, ...] = ()
 KODERA_STAFF_OPS_HOSTS: tuple[str, ...] = ()
 KODERA_STAFF_ADMIN_ORIGINS: str | None = None
 KODERA_IOS_APP_IDS: tuple[str, ...] = ()
 KODERA_ANDROID_ASSETLINKS_SHA256: tuple[str, ...] = ()
 # Optional explicit sign-in link URL on an allowed Console origin for Passport magic-link mails.
 KODERA_PASSPORT_MAGIC_LINK: str | None = None
+# Optional internal room-access endpoint verifying Matrix DM room membership for attachments.
+KODERA_MEDIA_ROOM_VERIFIER_URL: str | None = None

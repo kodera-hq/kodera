@@ -57,7 +57,14 @@ from typing import Any
 
 from . import federation
 from .engines import EngineError, LiveKit, LiveKitUnavailableError
-from .synapse import OCCUPANCY, POLICY, Synapse, SynapseUnavailableError, livekit_room
+from .synapse import (
+    CONFIDENTIAL_ALGORITHMS,
+    OCCUPANCY,
+    POLICY,
+    Synapse,
+    SynapseUnavailableError,
+    livekit_room,
+)
 
 log = logging.getLogger("tenant_agent.channels")
 CHANNEL_KIND = "engine_set_channel_members"
@@ -113,6 +120,16 @@ def _subjects(value: Any) -> bool:
     )
 
 
+def _confidential_algorithm(value: Any) -> str | None:
+    if value is None or value is False:
+        return None
+    if value is True:
+        return "io.kodera.mls.v1"
+    if isinstance(value, str) and value in CONFIDENTIAL_ALGORITHMS:
+        return value
+    raise ValueError("invalid confidential designation")
+
+
 def parse(payload: dict[str, Any]) -> ChannelSet | None:
     """The set, or None when it breaks the contract: then nothing is touched."""
     revision, channels = payload.get("revision"), payload.get("channels")
@@ -141,6 +158,13 @@ def parse(payload: dict[str, Any]) -> ChannelSet | None:
             isinstance(channel.get(k), bool) for k in ("archived", "read_only", "listen_only")
         ):
             return None
+        if "confidential" in channel:
+            try:
+                confidential_algo = _confidential_algorithm(channel.get("confidential"))
+            except ValueError:
+                return None
+            if confidential_algo is not None and channel.get("kind") != "text":
+                return None
         if not all(_subjects(channel.get(k)) for k in ("members", "denied", "exempt")):
             return None
         audience = channel.get("audience")
@@ -277,6 +301,8 @@ class _Wanted:
     public: bool = False
     federation_servers: tuple[str, ...] = ()
     federation_blocked: bool = False
+    banned: frozenset[str] = frozenset()
+    confidential: str | None = None
 
     @property
     def closing(self) -> tuple[tuple[str, dict[str, Any]], ...]:
@@ -490,18 +516,20 @@ class Channels:
         users = frozenset(
             u for s in room_members(channel, all_members) if (u := synapse.user_id(s)) is not None
         )
+        banned_users: frozenset[str] = frozenset()
         if moderation is not None:
-            banned_users = {
+            banned_users = frozenset(
                 u
                 for subject in moderation.banned_subjects
                 if (u := synapse.user_id(subject)) is not None
-            }
+            )
             users = users - banned_users
         exempt = sorted(u for s in channel["exempt"] if (u := synapse.user_id(s)) in users)
+        confidential = _confidential_algorithm(channel.get("confidential"))
         requested = self._partner_channels.get(channel["channel_id"], ())
-        partners = requested if federation.eligible(channel) else ()
+        partners = requested if (federation.eligible(channel) and confidential is None) else ()
         blocked = bool(requested and not partners)
-        public = native_public(channel, synapse) and not requested
+        public = native_public(channel, synapse) and not requested and confidential is None
         governance = policy(channel, exempt, users)
         governance.update(
             local_only=not bool(partners),
@@ -509,6 +537,8 @@ class Channels:
             allow_federated_invites=bool(partners),
             federation_servers=list(partners),
         )
+        if partners:
+            governance["local_members"] = sorted(users)
         if moderation is not None and moderation.moderation_present:
             governance["banned"] = sorted(
                 u
@@ -533,8 +563,9 @@ class Channels:
             (JOIN_RULES, {"join_rule": "public" if public else "invite"}),
             ("m.room.server_acl", federation.acl(synapse.server_name, partners)),
         )
-        digest = hashlib.sha256(json.dumps(state, sort_keys=True).encode()).hexdigest()
-        return _Wanted(users, state, digest, public, partners, blocked)
+        digest_input = state if confidential is None else (state, confidential)
+        digest = hashlib.sha256(json.dumps(digest_input, sort_keys=True).encode()).hexdigest()
+        return _Wanted(users, state, digest, public, partners, blocked, banned_users, confidential)
 
     # -- phase 1: take access away -----------------------------------------------------------
 
@@ -617,7 +648,11 @@ class Channels:
         """Native public calls follow current room membership, including a newly joined user."""
         if channel["archived"]:
             return frozenset()
-        return frozenset(present) if wanted.public and present is not None else wanted.users
+        return (
+            frozenset(present - wanted.banned)
+            if wanted.public and present is not None
+            else wanted.users
+        )
 
     def _removed(self, wanted: _Wanted, present: set[str], keep: set[str]) -> list[str]:
         if not wanted.public:
@@ -639,6 +674,7 @@ class Channels:
             user
             for user in present - keep
             if user in revoked
+            or user in wanted.banned
             or user in self._barred
             or user.partition(":")[2] != self._synapse.server_name
         )
@@ -714,6 +750,7 @@ class Channels:
                     ],
                     wanted.state[1][1],
                     federation_servers=wanted.federation_servers,
+                    confidential=wanted.confidential,
                 )
             else:
                 if not wanted.federation_servers:
@@ -723,7 +760,9 @@ class Channels:
                         raise EngineError(
                             "partner opt-in requires an unrestricted non-read-only active text channel"
                         )
-                    synapse.require_federation_mode(room_id, wanted.federation_servers)
+                    synapse.require_federation_mode(
+                        room_id, wanted.federation_servers, confidential=wanted.confidential
+                    )
                 except EngineError:
                     if not wanted.federation_servers:
                         for user in self._removed(wanted, self._present(room_id), keep):
@@ -775,7 +814,8 @@ class Channels:
         posted = self._state.posted_notices()
         for notice in channel["notices"]:
             if notice["notice_id"] not in posted:
-                synapse.notice(room_id, notice["notice_id"], notice["body"])
+                if wanted.confidential is None:
+                    synapse.notice(room_id, notice["notice_id"], notice["body"])
                 self._state.record_notice(notice["notice_id"])
                 result.notices_posted += 1
         return room_id

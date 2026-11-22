@@ -406,3 +406,144 @@ def test_adapter_level_internal_error_is_logged_without_text(caplog):
     assert_headers(response, 500, quota=False)
     assert "request_id=c-safe-request-501 exception=KeyError" in caplog.text
     assert "private-sentinel" not in caplog.text
+
+
+def _effective_community_server_env(topology: str, values: dict[str, str]) -> dict[str, str]:
+    import re
+    import runpy
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parents[3]
+    gate = runpy.run_path(str(repo_root / "scripts/ci/check-community-deploy.py"))
+    compose_text = (repo_root / "deploy/community/docker-compose.yml").read_text(encoding="utf-8")
+    services = gate["parse_compose_services"](compose_text)
+    env_raw = dict(services["server"].environment)
+    if topology == "split":
+        split_text = (repo_root / "deploy/community/docker-compose.split.yml").read_text(
+            encoding="utf-8"
+        )
+        split_services = gate["parse_compose_services"](split_text)
+        env_raw.update(split_services["server"].environment)
+
+    var_re = re.compile(r"\$\{([A-Z][A-Z0-9_]*)(?::-([^}]*)|:\?([^}]*))?\}")
+
+    def expand(expr: str) -> str:
+        def repl(match: re.Match[str]) -> str:
+            name, default, required = match.group(1), match.group(2), match.group(3)
+            val = values.get(name, "")
+            if val:
+                return val
+            if required is not None:
+                raise AssertionError(f"missing required Compose variable {name}")
+            return default or ""
+
+        prev = None
+        current = expr
+        while current != prev:
+            prev = current
+            current = var_re.sub(repl, current)
+        return current
+
+    return {
+        k: expand(v)
+        for k, v in env_raw.items()
+        if k in {"KODERA_CONSOLE_ORIGINS", "KODERA_TRUSTED_EDGE_ADDRESSES"}
+    }
+
+
+@pytest.mark.parametrize(
+    "topology,fetch_site",
+    [("single", "same-origin"), ("split", "same-site")],
+)
+def test_community_compose_single_and_split_console_origins_admit_web_and_refuse_foreign(
+    settings, ready, topology, fetch_site
+):
+    resolved = _effective_community_server_env(
+        topology, {"KODERA_DOMAIN": "community.example.org", "KODERA_MATRIX_DOMAIN": "example.org"}
+    )
+    assert resolved["KODERA_CONSOLE_ORIGINS"] == "https://community.example.org"
+    settings.KODERA_CONSOLE_ORIGINS = resolved["KODERA_CONSOLE_ORIGINS"]
+
+    body = json.dumps({"slug": ready.organisation.slug}).encode()
+    ok = post(body, HTTP_ORIGIN="https://community.example.org", HTTP_SEC_FETCH_SITE=fetch_site)
+    assert_headers(ok, 200)
+    assert ok.json()["issuer"] == ready.organisation.issuer
+
+    refused = post(body, HTTP_ORIGIN=ATTACKER, HTTP_SEC_FETCH_SITE="cross-site")
+    assert_headers(refused, 403, quota=False)
+
+
+@pytest.mark.parametrize("topology", ["single", "split"])
+def test_community_compose_trusted_edge_isolates_client_buckets_and_ignores_untrusted_spoofing(
+    settings, ready, topology
+):
+    from config.environment import trusted_edge
+
+    resolved = _effective_community_server_env(
+        topology, {"KODERA_DOMAIN": "community.example.org", "KODERA_MATRIX_DOMAIN": "example.org"}
+    )
+    assert resolved["KODERA_TRUSTED_EDGE_ADDRESSES"] == "172.30.240.2/32"
+    settings.KODERA_TRUSTED_EDGE = trusted_edge(resolved)
+    settings.KODERA_CONSOLE_ORIGINS = resolved["KODERA_CONSOLE_ORIGINS"]
+
+    body = json.dumps({"slug": ready.organisation.slug}).encode()
+    for _ in range(30):
+        resp_a = post(
+            body,
+            REMOTE_ADDR="172.30.240.2",
+            HTTP_X_FORWARDED_FOR="198.51.100.10",
+            HTTP_ORIGIN="https://community.example.org",
+            HTTP_SEC_FETCH_SITE="same-origin",
+        )
+        assert_headers(resp_a, 200)
+
+    # Client A is now rate-limited at 429, while distinct Client B behind Caddy still reaches lookup.
+    throttled_a = post(
+        body,
+        REMOTE_ADDR="172.30.240.2",
+        HTTP_X_FORWARDED_FOR="198.51.100.10",
+        HTTP_ORIGIN="https://community.example.org",
+        HTTP_SEC_FETCH_SITE="same-origin",
+    )
+    assert_headers(throttled_a, 429)
+    assert throttled_a.json()["scope"] == "ip"
+
+    admitted_b = post(
+        body,
+        REMOTE_ADDR="172.30.240.2",
+        HTTP_X_FORWARDED_FOR="198.51.100.20",
+        HTTP_ORIGIN="https://community.example.org",
+        HTTP_SEC_FETCH_SITE="same-origin",
+    )
+    assert_headers(admitted_b, 200)
+    assert admitted_b.json()["issuer"] == ready.organisation.issuer
+
+    # A sibling container or untrusted direct peer (172.18.0.9) cannot forge X-Forwarded-For to
+    # burn Client B's bucket or choose arbitrary buckets.
+    for i in range(30):
+        direct = post(
+            body,
+            REMOTE_ADDR="172.18.0.9",
+            HTTP_X_FORWARDED_FOR=f"203.0.113.{i + 1}",
+            HTTP_ORIGIN="https://community.example.org",
+            HTTP_SEC_FETCH_SITE="same-origin",
+        )
+        assert_headers(direct, 200)
+    throttled_direct = post(
+        body,
+        REMOTE_ADDR="172.18.0.9",
+        HTTP_X_FORWARDED_FOR="198.51.100.20",
+        HTTP_ORIGIN="https://community.example.org",
+        HTTP_SEC_FETCH_SITE="same-origin",
+    )
+    assert_headers(throttled_direct, 429)
+
+    # Client B behind trusted Caddy is completely unaffected by the untrusted peer's forged header.
+    still_ok_b = post(
+        body,
+        REMOTE_ADDR="172.30.240.2",
+        HTTP_X_FORWARDED_FOR="198.51.100.20",
+        HTTP_ORIGIN="https://community.example.org",
+        HTTP_SEC_FETCH_SITE="same-origin",
+    )
+    assert_headers(still_ok_b, 200)

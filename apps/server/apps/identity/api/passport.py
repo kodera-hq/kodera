@@ -89,8 +89,10 @@ SAFE_CODES: dict[str, str] = {
     "invalid-organisation-id": "invalid-organisation-id",
 }
 SAFE_RATE_SCOPES: dict[str, str] = {
-    "ip": "Rate limit exceeded (ip).",
-    "email": "Rate limit exceeded (email).",
+    "ip": "Rate limit exceeded.",
+    "email": "Rate limit exceeded.",
+    "passport": "Rate limit exceeded.",
+    "global": "Rate limit exceeded.",
 }
 SAFE_MALFORMED_RESPONSES: dict[str, tuple[int, str, str]] = {
     "payload-too-large": (413, "payload-too-large", f"Body exceeds {MAX_BODY_BYTES} bytes."),

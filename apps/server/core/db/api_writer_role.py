@@ -439,9 +439,10 @@ UPDATE_COLUMNS = (
     ("workspaces_workspaceabusereport", "resolution"),
     ("workspaces_workspaceabusereport", "resolved_by_id"),
     ("workspaces_workspaceabusereport", "updated_at"),
-    # Attachment completion, inbox read marks, and device subscription rotation/revocation;
+    # Attachment completion/cancellation, inbox read marks, and device subscription rotation/revocation;
     # checksums, sizes, MIME types, recipients, resource_ids and push outbox leases stay immutable.
     ("media_attachment", "completed_at"),
+    ("media_attachment", "cancelled_at"),
     ("media_attachment", "updated_at"),
     ("notifications_notification", "read_at"),
     ("notifications_notification", "updated_at"),
@@ -647,6 +648,7 @@ DELETE = (
     "workspaces_workspacerole",
     "workspaces_workspacememberrole",
     "workspaces_workspacechannelroleoverride",
+    "workspaces_workspacemoderator",
     "docs_collectionrow",
     "identity_discoveryquotaevent",
     "identity_passportmagiclinktoken",
@@ -662,6 +664,7 @@ DELETE = (
     "ee_scim_group",
     "ee_scim_group_member",
     "ee_scim_session",
+    "media_attachment",
 )
 EXECUTE_FUNCTIONS = (
     "workspace_iam_permissions(jsonb)",

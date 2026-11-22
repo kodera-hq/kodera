@@ -4,9 +4,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
+from django.db import connection
 from django.db.models import QuerySet
 
-from apps.identity.selectors import person_identities
+from apps.identity.selectors import lock_user_fence, person_identities
 
 from .models import Membership, Organisation
 
@@ -175,9 +176,36 @@ class MembershipContact:
     organisation_name: str
 
 
+def organisation_exists(*, organisation_id: UUID) -> bool:
+    return Organisation.objects.filter(id=organisation_id).exists()
+
+
+def membership_user_id(*, membership_id: UUID) -> UUID:
+    """Resolve a membership's immutable person id without acquiring a row lock."""
+    user_id = Membership.objects.values_list("user_id", flat=True).get(id=membership_id)
+    return user_id if isinstance(user_id, UUID) else UUID(str(user_id))
+
+
+def lock_erasure_cutoff_fences(*, organisation_id: UUID, user_id: UUID | None = None) -> None:
+    """Acquire shared org/account erasure cutoff advisory fences before any actor or domain row locks."""
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT pg_advisory_xact_lock_shared(hashtextextended('privacy_erasure_cutoff:' || %s, 0))",
+            [str(organisation_id)],
+        )
+        if user_id is not None:
+            cursor.execute(
+                "SELECT pg_advisory_xact_lock_shared(hashtextextended('privacy_account_cutoff:' || %s, 0))",
+                [str(user_id)],
+            )
+
+
 def lock_organisation(*, organisation_id: UUID) -> bool:
-    """Hold the organisation fence until the caller's outer transaction ends."""
-    return Organisation.objects.select_for_update().filter(id=organisation_id).first() is not None
+    """Hold a non-key organisation fence until the caller's outer transaction ends."""
+    return (
+        Organisation.objects.select_for_update(no_key=True).filter(id=organisation_id).first()
+        is not None
+    )
 
 
 def lock_organisation_fence(*, organisation_id: UUID) -> None:
@@ -185,10 +213,37 @@ def lock_organisation_fence(*, organisation_id: UUID) -> None:
     Organisation.objects.select_for_update(no_key=True).filter(id=organisation_id).first()
 
 
+def lock_membership_fence(*, membership_id: UUID) -> UUID:
+    """Hold a shared membership fence before identity, user, organisation, and workspace locks."""
+    user_id = lock_membership_fence_if_present(membership_id=membership_id)
+    if user_id is None:
+        raise Membership.DoesNotExist("Membership matching query does not exist.")
+    return user_id
+
+
+def lock_membership_fence_if_present(*, membership_id: UUID) -> UUID | None:
+    """Hold a shared membership fence if the row still exists."""
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT user_id FROM orgs_membership WHERE id = %s FOR SHARE",
+            [membership_id],
+        )
+        row = cursor.fetchone()
+    if row is None:
+        return None
+    return row[0] if isinstance(row[0], UUID) else UUID(str(row[0]))
+
+
 def lock_membership_user(*, membership_id: UUID) -> UUID:
-    """Lock the membership and its joined user, retaining the original lock set."""
-    row = Membership.objects.select_for_update().select_related("user").get(id=membership_id)
-    return row.user_id
+    """Hold shared fences on the membership and its joined user in canonical m -> u order."""
+    user_id = lock_membership_fence(membership_id=membership_id)
+    lock_user_fence(user_id=user_id)
+    return user_id
+
+
+def lock_membership_only(*, membership_id: UUID) -> UUID | None:
+    """Hold a shared membership fence if the row still exists."""
+    return lock_membership_fence_if_present(membership_id=membership_id)
 
 
 def active_organisation(*, organisation_id: UUID) -> bool:

@@ -12,6 +12,8 @@ from urllib.parse import urljoin
 
 from .outbound import BlockedTargetError, FetchError, remaining, request, target
 
+_DEFAULT_OUTBOUND_REQUEST = request
+
 MAX_BODY = 256 * 1024
 MAX_SECONDS = 3
 MAX_REDIRECTS = 3
@@ -79,7 +81,7 @@ class Metadata(HTMLParser):
             self.titles.append(data)
 
 
-def unfurl(url: str) -> dict[str, str]:
+def unfurl(url: str, *, scope_key: str | None = None) -> dict[str, str]:
     deadline = time.monotonic() + MAX_SECONDS
     original = target(url)
     current = original
@@ -91,11 +93,20 @@ def unfurl(url: str) -> dict[str, str]:
         seen.add(current.url)
         connection = response = None
         try:
-            connection, response = request(
-                current,
-                deadline=deadline,
-                headers={"Accept": "text/html", "User-Agent": "kodera-unfurl/1"},
-            )
+            if request is _DEFAULT_OUTBOUND_REQUEST:
+                connection, response = request(
+                    current,
+                    deadline=deadline,
+                    headers={"Accept": "text/html", "User-Agent": "kodera-unfurl/1"},
+                    pool="unfurl",
+                    scope_key=scope_key,
+                )
+            else:
+                connection, response = request(
+                    current,
+                    deadline=deadline,
+                    headers={"Accept": "text/html", "User-Agent": "kodera-unfurl/1"},
+                )
             if response.status in REDIRECTS:
                 locations = response.headers.get_all("Location", [])
                 if hop == MAX_REDIRECTS or len(locations) != 1:

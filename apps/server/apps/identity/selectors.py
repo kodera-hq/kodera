@@ -82,6 +82,25 @@ def current_identity(
     return PersonSnapshot(user.id, user.email, user.display_name), _snapshot(identity)
 
 
+def current_identity_by_id(*, identity_id: UUID) -> tuple[PersonSnapshot, IdentitySnapshot] | None:
+    identity = (
+        Identity.objects.select_related("user")
+        .filter(
+            id=identity_id,
+            organisation__isnull=False,
+            enabled=True,
+            deleted_at__isnull=True,
+            user__enabled=True,
+            user__deleted_at__isnull=True,
+        )
+        .first()
+    )
+    if identity is None:
+        return None
+    user = identity.user
+    return PersonSnapshot(user.id, user.email, user.display_name), _snapshot(identity)
+
+
 def person_identities(*, user_id: UUID) -> tuple[IdentitySnapshot, ...]:
     return tuple(
         _snapshot(identity)
@@ -279,15 +298,50 @@ def delivery_identity_exists(*, user_id: UUID, organisation_id: UUID) -> bool:
     ).exists()
 
 
+def lock_user(*, user_id: UUID) -> bool:
+    """Hold a shared person fence if the row still exists."""
+    return lock_user_fence_if_present(user_id=user_id)
+
+
+def lock_user_fence_if_present(*, user_id: UUID) -> bool:
+    """Hold a shared person fence after membership/identity and before organisation/workspace."""
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT id FROM identity_user WHERE id = %s FOR SHARE",
+            [user_id],
+        )
+        return cursor.fetchone() is not None
+
+
+def lock_user_fence(*, user_id: UUID) -> None:
+    """Hold a shared person fence after membership/identity and before organisation/workspace."""
+    if not lock_user_fence_if_present(user_id=user_id):
+        raise User.DoesNotExist("User matching query does not exist.")
+
+
 def lock_delivery_identity(*, identity_id: UUID) -> None:
-    """Hold the named identity lock in the caller's transaction."""
-    Identity.objects.select_for_update().get(id=identity_id)
+    """Hold a shared identity fence in the caller's transaction."""
+    if not lock_delivery_identity_if_present(identity_id=identity_id):
+        raise Identity.DoesNotExist("Identity matching query does not exist.")
+
+
+def lock_delivery_identity_if_present(*, identity_id: UUID) -> bool:
+    """Hold a shared identity fence if the row still exists."""
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT id FROM identity_identity WHERE id = %s FOR SHARE",
+            [identity_id],
+        )
+        return cursor.fetchone() is not None
 
 
 def lock_delivery_identities(*, user_id: UUID, organisation_id: UUID) -> None:
-    """Evaluate all current rows before returning; no lazy query escapes the lock port."""
-    list(
-        Identity.objects.select_for_update().filter(
-            user_id=user_id, organisation_id=organisation_id
+    """Hold shared fences on all current identities in deterministic primary-key order."""
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT id FROM identity_identity"
+            " WHERE user_id = %s AND organisation_id = %s"
+            " ORDER BY id FOR SHARE",
+            [user_id, organisation_id],
         )
-    )
+        cursor.fetchall()

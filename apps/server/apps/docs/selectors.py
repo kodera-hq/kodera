@@ -1,5 +1,6 @@
 """Materialized document and collection values for other applications' policies."""
 
+from collections.abc import Sequence
 from datetime import datetime
 from uuid import UUID
 
@@ -23,6 +24,27 @@ def document_is_visible(
             [document_id, organisation_id, membership_id, identity_id, issuer, subject],
         )
         return cursor.fetchone()[0] in {"viewer", "editor"}
+
+
+def visible_document_ids(
+    *,
+    document_ids: Sequence[UUID],
+    organisation_id: UUID,
+    membership_id: UUID,
+    identity_id: UUID,
+    issuer: str,
+    subject: str,
+) -> set[UUID]:
+    """Batch document visibility check in a single set-based SQL query."""
+    if not document_ids:
+        return set()
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT u.doc_id FROM unnest(%s::uuid[]) AS u(doc_id) "
+            "WHERE docs_document_role(u.doc_id,%s,%s,%s,%s,%s) IN ('viewer','editor')",
+            [list(document_ids), organisation_id, membership_id, identity_id, issuer, subject],
+        )
+        return {UUID(str(row[0])) for row in cursor.fetchall()}
 
 
 def digest_document_candidates(

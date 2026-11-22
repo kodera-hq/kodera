@@ -10,9 +10,12 @@ from django.core.exceptions import RequestDataTooBig
 from django.http import HttpRequest, HttpResponse
 
 from apps.workspaces import moderation as service
+from apps.workspaces.channel_sets import ChannelSetError
 from apps.workspaces.moderation_wire import link_wire, page, report_wire, tag
+from apps.workspaces.quota_http import respond_once
+from apps.workspaces.structure import WorkspaceUnavailableError
 from core.api import lanes
-from core.api.idempotency import StoredResponse, respond_once
+from core.api.idempotency import StoredResponse
 from core.api.scopes import Operation, declares
 from services.identity.access_tokens import TokenVerificationError
 from services.identity.trusted_issuers import verify_configured_token
@@ -163,6 +166,10 @@ def _serve(request: HttpRequest, handlers: dict[str, Any]) -> HttpResponse:
         response = _problem(400, request_id)
     except service.RefusalError as error:
         response = _problem(error.status, request_id, error.kind, error.current_etag)
+    except (WorkspaceUnavailableError, ChannelSetError):
+        response = responses.problem(
+            "service-unavailable", request_id, retry_after_s=responses.RETRY_AFTER_S
+        )
     return responses.finish(response, request_id)
 
 
@@ -204,6 +211,22 @@ def moderation(request: HttpRequest, organisation_id: UUID) -> HttpResponse:
             "AUTHORIZE": lambda verified: _authorize(verified, organisation_id, moderator=True),
         },
     )
+
+
+@declares(Operation("DELETE", "revokeWorkspaceModerator", "workspace_moderation:act"))
+def moderator_detail(
+    request: HttpRequest, organisation_id: UUID, membership_id: UUID
+) -> HttpResponse:
+    def delete(verified: Any, request_id: str) -> HttpResponse:
+        service.revoke_moderator(
+            verified=verified,
+            organisation_id=organisation_id,
+            target_id=membership_id,
+            request_id=request_id,
+        )
+        return HttpResponse(status=204)
+
+    return _serve(request, {"DELETE": delete})
 
 
 @declares(

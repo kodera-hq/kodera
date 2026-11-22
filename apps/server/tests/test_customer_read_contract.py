@@ -1058,7 +1058,8 @@ N4_PATH = "/organisations/{organisation_id}/bootstrap"
 # Rebound at 0.48.0: keycloakTenant securityScheme host aligned with auth.kodera.io; assurance guards unchanged.
 # Rebound at 0.49.0: listMemberships optional q filter; assurance guards unchanged.
 # Rebound at 0.50.0: granular workspace roles, overrides, profile, bans, and audit logs; assurance guards unchanged.
-N4_VERSION = "0.50.0"
+# Rebound at 0.51.0: attachment channel/room scope, upload cancellation, moderator revocation, and confidential channel creation; assurance guards unchanged.
+N4_VERSION = "0.51.0"
 # Rebound at 0.19.0 (2026-10-21, on top of 0.18.1): the notice-contacts delta and the Plan example's EU hosting.
 # Rebound at 0.22.0: the ten structure operations, their schemas and Problem.reason's first value;
 # then room_state on WorkspaceChannel, the starter's lounge (template version 2) and AppCode messaging;
@@ -1110,7 +1111,8 @@ N4_VERSION = "0.50.0"
 # Rebound at 0.48.0: keycloakTenant securityScheme host aligned with auth.kodera.io; no N4 bytes changed.
 # Rebound at 0.49.0: listMemberships optional q filter; no N4 bytes changed.
 # Rebound at 0.50.0: granular workspace roles, overrides, profile, bans, and audit logs; no N4 bytes changed.
-N4_OLD_CONTRACT = "f9972ff24912e99447f15e4ddac96409d28f8c40f54365bdf6d85eb6afcbbdc5"
+# Rebound at 0.51.0: attachment channel/room scope, upload cancellation, moderator revocation, and confidential channel creation; no N4 bytes changed.
+N4_OLD_CONTRACT = "5381a0fe08320b23debee83605c8bb353f950308b19ec9ec790bfdd479fc61e9"
 # Rebound at 0.20.0 (2026-10-22): CONVENTIONS.md §6 gains the order-in-progress and invoice-issued rows and a changelog line.
 # Rebound at 0.24.0 (2026-10-22): CONVENTIONS.md §6's invoice-issued row narrowed, and a changelog line.
 # Rebound at 0.28.0: CONVENTIONS.md §6 gains the identity-unknown row and a changelog line.

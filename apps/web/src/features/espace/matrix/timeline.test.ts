@@ -104,6 +104,25 @@ describe('the timeline Espace draws', () => {
     ])
   })
 
+  it('drops free-text, bidi, control-character and multi-grapheme m.reaction abuse keys', () => {
+    const view = timelineView(
+      [
+        message('$1', 'bonjour', BOB),
+        reaction('$r1', '$1', '❤️', ME),
+        reaction('$r2', '$1', '🏳️‍🌈', BOB),
+        reaction('$r3', '$1', 'free-text abuse while muted', BOB),
+        reaction('$r4', '$1', '👍 abuse', BOB),
+        reaction('$r5', '$1', '👍\u202Eevil', BOB),
+        reaction('$r6', '$1', '👍👍', BOB),
+      ],
+      ME
+    )
+    expect(view[0]!.reactions).toEqual([
+      { key: '❤️', count: 1, mine: true },
+      { key: '🏳️‍🌈', count: 1, mine: false },
+    ])
+  })
+
   it('keeps a reply’s target, and leaves thread replies to their thread', () => {
     const view = timelineView(
       [

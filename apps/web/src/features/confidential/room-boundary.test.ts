@@ -82,4 +82,28 @@ describe('the immutable confidential room boundary', () => {
     expect(permitsPlaintext('ordinary')).toBe(true)
     expect(permitsPlaintext('community')).toBe(true)
   })
+
+  it('keeps pre-designated confidential rooms and malformed trustedCreator or public flags quarantined', () => {
+    const tracker = new RoomBoundaryTracker()
+    tracker.markProtected('pre-designated')
+    expect(tracker.observe('pre-designated', undefined, undefined, agent)).toBe('invalid')
+    expect(tracker.observe('pre-designated', create({}), undefined, agent)).toBe('invalid')
+    expect(
+      tracker.observe(
+        'empty-agent',
+        create({ [CONFIDENTIAL_MARKER]: algorithms[0] }, ''),
+        create({ algorithm: algorithms[0] }, ''),
+        ''
+      )
+    ).toBe('invalid')
+    expect(
+      tracker.observe(
+        'public-confidential',
+        create({ [CONFIDENTIAL_MARKER]: algorithms[0] }),
+        create({ algorithm: algorithms[0] }),
+        agent,
+        true
+      )
+    ).toBe('invalid')
+  })
 })

@@ -160,3 +160,99 @@ def test_failed_presence_capacity_does_not_consume_token_counter(
         checkin(broker, pending, principal="bob")
     broker.checkout(principal_key="alice", workspace_id=WORKSPACE, now_unix_secs=NOW)
     checkin(broker, pending, principal="bob")
+
+
+def test_per_principal_scope_and_replay_limits_and_workspace_isolation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """BUG-0029: Per-principal and per-workspace quotas prevent cross-user and cross-tenant starvation."""
+    broker = ProximityBroker()
+    other_workspace = UUID("01950000-0000-7000-8000-0000000000c9")
+
+    # 1. Single principal cannot hold active check-ins in more than MAX_ACTIVE_SCOPES_PER_PRINCIPAL (3) scopes
+    for idx in range(services.MAX_ACTIVE_SCOPES_PER_PRINCIPAL):
+        scope = f"scope-{idx}"
+        wire = broker.mint_client_token(
+            workspace_id=WORKSPACE,
+            event_scope=scope,
+            device_seed=bytes([idx + 1]) * 32,
+            counter=0,
+            now_unix_secs=NOW,
+        )
+        broker.checkin(
+            principal_key="alice",
+            workspace_id=WORKSPACE,
+            event_scope=scope,
+            beacon_token_hex=wire,
+            now_unix_secs=NOW,
+        )
+    excess_scope_wire = broker.mint_client_token(
+        workspace_id=WORKSPACE,
+        event_scope="scope-excess",
+        device_seed=bytes([99]) * 32,
+        counter=0,
+        now_unix_secs=NOW,
+    )
+    with pytest.raises(ProximityRefusalError, match="principal_scope_limit_reached") as scope_err:
+        broker.checkin(
+            principal_key="alice",
+            workspace_id=WORKSPACE,
+            event_scope="scope-excess",
+            beacon_token_hex=excess_scope_wire,
+            now_unix_secs=NOW,
+        )
+    assert scope_err.value.status == 409
+    # Another principal in the same workspace still succeeds!
+    bob_wire = broker.mint_client_token(
+        workspace_id=WORKSPACE,
+        event_scope="scope-excess",
+        device_seed=bytes([100]) * 32,
+        counter=0,
+        now_unix_secs=NOW,
+    )
+    broker.checkin(
+        principal_key="bob",
+        workspace_id=WORKSPACE,
+        event_scope="scope-excess",
+        beacon_token_hex=bob_wire,
+        now_unix_secs=NOW,
+    )
+
+    # 2. Single principal cannot allocate unbounded _replay_bindings pseudonyms in one epoch
+    broker.clear()
+    for idx in range(services.MAX_REPLAY_BINDINGS_PER_PRINCIPAL):
+        checkin(broker, token(broker, 0, seed=idx + 1), principal="alice")
+    with pytest.raises(
+        ProximityRefusalError, match="principal_replay_capacity_reached"
+    ) as replay_err:
+        checkin(
+            broker,
+            token(broker, 0, seed=services.MAX_REPLAY_BINDINGS_PER_PRINCIPAL + 1),
+            principal="alice",
+        )
+    assert replay_err.value.status == 409
+
+    # 3. Filling one workspace's quota never starves another workspace_id
+    broker.clear()
+    monkeypatch.setattr(services, "MAX_ACTIVE_CHECKINS_PER_WORKSPACE", 2)
+    checkin(broker, token(broker, 0, seed=11), principal="u1")
+    checkin(broker, token(broker, 0, seed=12), principal="u2")
+    with pytest.raises(ProximityRefusalError, match="workspace_capacity_reached") as ws_err:
+        checkin(broker, token(broker, 0, seed=13), principal="u3")
+    assert ws_err.value.status == 503
+
+    other_wire = broker.mint_client_token(
+        workspace_id=other_workspace,
+        event_scope="default",
+        device_seed=bytes([55]) * 32,
+        counter=0,
+        now_unix_secs=NOW,
+    )
+    res = broker.checkin(
+        principal_key="tenant2-user",
+        workspace_id=other_workspace,
+        event_scope="default",
+        beacon_token_hex=other_wire,
+        now_unix_secs=NOW,
+    )
+    assert res["workspace_id"] == str(other_workspace)

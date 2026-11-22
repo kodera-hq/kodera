@@ -39,6 +39,7 @@ RUNS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("send_invitations", ("--once",)),
     ("send_support_tickets", ("--once",)),
     ("run_deliveries", ("--once", "--budget-s", str(DELIVERY_BUDGET_S))),
+    ("purge_idempotency", ("--once",)),
 )
 MIN_INTERVAL_S = 10
 MAX_INTERVAL_S = 3600

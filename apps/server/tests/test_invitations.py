@@ -1100,3 +1100,83 @@ def test_a_removed_row_is_never_revived_through_an_invitation(w):
     assert membership.state == "removed"
     operations = model("outbox", "OutboxRealmAccess").objects.order_by("delivery_id")
     assert [item.operation for item in operations] == ["access_off"]
+
+
+def test_in_tx_authority_reverification_replay_guard_and_identity_unknown_parity(w, monkeypatch):
+    """BUG-0024 regression:
+    1. Unknown customer tokens receive `403 identity-unknown` on `DELETE /invitations/{id}` and
+       `POST /invitations/{id}/actions/resend` regardless of whether `invitation_id` exists.
+    2. Demotion, suspension, or workspace restriction between `authorise()` and `_lock_invitations()`
+       / `_held()` aborts `invite`, `resend`, and `revoke` with `403 forbidden`.
+    3. Replaying a prior `Idempotency-Key` after demotion/suspension returns `403 forbidden`."""
+    from apps.orgs import invitations as inv_service
+    from apps.workspaces.models import Workspace, WorkspaceMemberRestriction
+
+    # 1. Pre-lookup identity-unknown parity (existing vs non-existent invitation UUID)
+    invite(w, w.owner, [row("probe@example.test")])
+    existing = invitations(email="probe@example.test").get()
+    unknown_who = SimpleNamespace(
+        credential=token(w.signer, w.alpha.issuer, subject="unknown-customer-sub")
+    )
+    for target_id in (existing.id, uuid4()):
+        problem(revoke(w, unknown_who, target_id), 403, "identity-unknown")
+        problem(resend(w, unknown_who, target_id), 403, "identity-unknown")
+
+    # 2. Replay guard after demotion / suspension / workspace ban
+    replay_key = "invitation-demoted-replay-0001"
+    first = invite(w, w.admin, [row("before-demote@example.test")], key=replay_key)
+    assert first.status_code == 201
+
+    raw_update(w.admin.member, role="org_member")
+    problem(
+        invite(w, w.admin, [row("before-demote@example.test")], key=replay_key),
+        403,
+        "forbidden",
+    )
+
+    raw_update(w.admin.member, role="org_admin", state="suspended")
+    problem(
+        invite(w, w.admin, [row("before-demote@example.test")], key=replay_key),
+        403,
+        "forbidden",
+    )
+    raw_update(w.admin.member, state="active")
+
+    # Workspace ban blocks invite/resend/revoke with 403
+    ws = Workspace.objects.create(organisation=w.alpha)
+    restriction = WorkspaceMemberRestriction.objects.create(
+        workspace=ws,
+        membership=w.admin.member,
+        banned=True,
+    )
+    problem(invite(w, w.admin, [row("banned-try@example.test")]), 403, "forbidden")
+    raw_update(existing, last_sent_at=existing.last_sent_at - timedelta(minutes=2))
+    problem(resend(w, w.admin, existing.id), 403, "forbidden")
+    problem(revoke(w, w.admin, existing.id), 403, "forbidden")
+    restriction.delete()
+
+    # 3. Race window between `authorise()` and `_lock_invitations()` / `_held()` -> 403 forbidden
+    orig_lock = inv_service._lock_invitations
+
+    def _demote_during_lock(org_id):
+        orig_lock(org_id)
+        raw_update(w.admin.member, role="org_member")
+
+    monkeypatch.setattr(inv_service, "_lock_invitations", _demote_during_lock)
+    problem(invite(w, w.admin, [row("race-invite@example.test")]), 403, "forbidden")
+    assert not invitations(email="race-invite@example.test").exists()
+    monkeypatch.setattr(inv_service, "_lock_invitations", orig_lock)
+    raw_update(w.admin.member, role="org_admin")
+
+    orig_held = inv_service._held
+
+    def _suspend_during_held(inv_id, org_id):
+        held_inv = orig_held(inv_id, org_id)
+        raw_update(w.admin.member, state="suspended")
+        return held_inv
+
+    monkeypatch.setattr(inv_service, "_held", _suspend_during_held)
+    problem(resend(w, w.admin, existing.id), 403, "forbidden")
+    raw_update(w.admin.member, state="active")
+    problem(revoke(w, w.admin, existing.id), 403, "forbidden")
+    assert invitations(id=existing.id).get().state == "pending"

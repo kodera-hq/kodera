@@ -30,6 +30,28 @@ import {
   useDraft,
 } from './shared'
 
+const READ_ONLY_BUNDLE: readonly WorkspaceCapability[] = [
+  'file.upload',
+  'message.edit_own',
+  'message.post',
+  'message.reply',
+]
+const LISTEN_ONLY_BUNDLE: readonly WorkspaceCapability[] = [
+  'media.share',
+  'media.speak',
+  'media.video',
+]
+
+export function mayOverride(authority: RoleAuthority, capability: WorkspaceCapability): boolean {
+  if (capability === 'message.post') {
+    return READ_ONLY_BUNDLE.every((item) => mayGrant(authority, item))
+  }
+  if (capability === 'media.speak') {
+    return LISTEN_ONLY_BUNDLE.every((item) => mayGrant(authority, item))
+  }
+  return mayGrant(authority, capability)
+}
+
 const STATES: readonly OverrideState[] = ['allow', 'inherit', 'deny']
 const GLYPH: Record<OverrideState, string> = { allow: '✓', inherit: '/', deny: '✕' }
 const TONE: Record<OverrideState, string> = {
@@ -124,10 +146,25 @@ export function ChannelOverridesPanel({
     text: '',
     tone: 'neutral',
   })
+  const selectedChannel = useMemo(
+    () => channels.find((item) => item.id === channel),
+    [channels, channel]
+  )
   const selectedRole = useMemo(
     () => roles.data?.roles.find((item) => item.id === role),
     [roles.data, role]
   )
+  const applicableGroups = useMemo(() => {
+    const kind = selectedChannel?.kind ?? 'text'
+    const enforced: ReadonlySet<WorkspaceCapability> =
+      kind === 'audio'
+        ? new Set<WorkspaceCapability>(['channel.view', 'media.connect', 'media.speak'])
+        : new Set<WorkspaceCapability>(['channel.view', 'message.post'])
+    return CAPABILITY_GROUPS.flatMap((group) => {
+      const items = group.items.filter((item) => enforced.has(item))
+      return items.length > 0 ? [{ key: group.key, items }] : []
+    })
+  }, [selectedChannel?.kind])
 
   if (roles.isError)
     return isIamUnsupported(roles.error) ? (
@@ -159,7 +196,7 @@ export function ChannelOverridesPanel({
   const rowsBlocked = (draft ?? []).some((row) => {
     const rowRole = roleById.get(row.role_id)
     if (rowRole === undefined || !mayManage(authority, rowRole)) return true
-    return [...row.allow, ...row.deny].some((capability) => !mayGrant(authority, capability))
+    return [...row.allow, ...row.deny].some((capability) => !mayOverride(authority, capability))
   })
 
   function save() {
@@ -170,6 +207,7 @@ export function ChannelOverridesPanel({
       .then(
         (saved) => {
           client.setQueryData(iamKeys.overrides(organisationId, channel), saved)
+          void client.invalidateQueries({ queryKey: ['workspace', organisationId] })
           setNotice({ text: copy.saved, tone: 'neutral' })
         },
         (error: unknown) => setNotice({ text: problemText(error, copy), tone: 'bad' })
@@ -216,7 +254,7 @@ export function ChannelOverridesPanel({
         )
       ) : (
         <div className="flex flex-col gap-4">
-          {CAPABILITY_GROUPS.map((group) => (
+          {applicableGroups.map((group) => (
             <fieldset key={group.key} className="flex flex-col gap-1">
               <legend className="mb-1 text-xs font-semibold text-c-ink-3">
                 {copy.capabilityGroup[group.key]}
@@ -230,7 +268,9 @@ export function ChannelOverridesPanel({
                   <TriState
                     label={copy.capability[capability]}
                     value={overrideState(draft, role, capability)}
-                    disabled={!editable || busy || rowsBlocked || !mayGrant(authority, capability)}
+                    disabled={
+                      !editable || busy || rowsBlocked || !mayOverride(authority, capability)
+                    }
                     onChange={(state) => setDraft(withOverride(draft, role, capability, state))}
                   />
                 </div>

@@ -1,3 +1,7 @@
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -6,6 +10,7 @@ import {
   createExtensionTestHarness,
 } from '@kodera/extension-sdk';
 import {
+  createDurableReplayStore,
   createOpenprojectWebhookHandler,
   extensionManifest,
   handleWorkCommand,
@@ -53,6 +58,7 @@ test('OpenProject HAL+JSON work_package:created and work_package:updated normali
     secret: TEST_SECRET,
     defaultChannelId: 'chan_roadmap',
     client: mockClient,
+    allowEphemeralReplayStore: true,
   });
 
   const createdPayload = {
@@ -138,6 +144,7 @@ test('Jira issue and sprint fixtures normalize into identical sovereign card con
     secret: TEST_SECRET,
     defaultChannelId: 'chan_sprint',
     client: mockClient,
+    allowEphemeralReplayStore: true,
   });
 
   // 1. Jira issue created + updated
@@ -238,4 +245,238 @@ test('Jira issue and sprint fixtures normalize into identical sovereign card con
     },
   });
   assert.equal(cmdRes.response.result.itemKey, 'OP-1042');
+});
+
+test('openproject BUG-0064 enforces durable replay retention across +301s, >24h & restarts plus signed timestamp freshness', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'kodera-op-replay-'));
+  const storePath = join(dir, 'replay.json');
+  const baseNow = 1_765_100_000;
+  const posted = [];
+  const client = {
+    async postChannelMessage(msg) {
+      posted.push(msg);
+      return { id: `msg_${posted.length}` };
+    },
+    async postThreadReply(msg) {
+      posted.push(msg);
+      return { id: `rep_${posted.length}` };
+    },
+  };
+  try {
+    let handler = createOpenprojectWebhookHandler({
+      secret: TEST_SECRET,
+      client,
+      replayStore: createDurableReplayStore(storePath),
+    });
+
+    const rawBody = JSON.stringify({
+      action: 'work_package:created',
+      work_package: {
+        id: 2048,
+        subject: 'Replay guard check',
+        htmlUrl: 'https://openproject.example.org/work_packages/2048',
+      },
+    });
+    const sig = signWorkWebhookPayload(TEST_SECRET, rawBody);
+
+    await handler({
+      rawBody,
+      headers: { 'x-openproject-signature': sig, 'x-openproject-delivery': 'op_init' },
+      nowUnixSeconds: baseNow,
+    });
+    assert.equal(posted.length, 1);
+
+    for (const delta of [10, 301, 90_000]) {
+      await assert.rejects(
+        () =>
+          handler({
+            rawBody,
+            headers: {
+              'x-openproject-signature': sig,
+              'x-openproject-delivery': `op_replay_${delta}`,
+            },
+            nowUnixSeconds: baseNow + delta,
+          }),
+        (err) => err instanceof WebhookVerificationError && err.code === 'REPLAY_DETECTED'
+      );
+    }
+
+    // Restart handler against durable store with mutated unsigned delivery ID
+    handler = createOpenprojectWebhookHandler({
+      secret: TEST_SECRET,
+      client,
+      replayStore: createDurableReplayStore(storePath),
+    });
+    await assert.rejects(
+      () =>
+        handler({
+          rawBody,
+          headers: {
+            'x-openproject-signature': sig,
+            'x-openproject-delivery': 'op_after_restart',
+          },
+          nowUnixSeconds: baseNow + 100_000,
+        }),
+      (err) => err instanceof WebhookVerificationError && err.code === 'REPLAY_DETECTED'
+    );
+    assert.equal(posted.length, 1);
+
+    // Controlled timestamp + stable eventId envelope accepts fresh and rejects stale
+    const freshBody = JSON.stringify({
+      action: 'work_package:created',
+      work_package: {
+        id: 2049,
+        subject: 'Timestamped work item',
+        htmlUrl: 'https://openproject.example.org/work_packages/2049',
+      },
+    });
+    const tsNow = baseNow + 100_010;
+    const tsSig = signWorkWebhookPayload(TEST_SECRET, freshBody, {
+      timestamp: tsNow,
+      eventId: 'evt_op_2049',
+    });
+    await handler({
+      rawBody: freshBody,
+      headers: { 'x-openproject-signature': tsSig },
+      nowUnixSeconds: tsNow + 5,
+    });
+    assert.equal(posted.length, 2);
+
+    const staleSig = signWorkWebhookPayload(TEST_SECRET, freshBody, {
+      timestamp: tsNow - 600,
+      eventId: 'evt_op_2049_stale',
+    });
+    await assert.rejects(
+      () =>
+        handler({
+          rawBody: freshBody,
+          headers: { 'x-openproject-signature': staleSig },
+          nowUnixSeconds: tsNow,
+        }),
+      (err) => err instanceof WebhookVerificationError && err.code === 'TIMESTAMP_OUT_OF_RANGE'
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('openproject BUG-0064 requires durable backing independently of NODE_ENV and blocks cross-process replays at +90000s', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'kodera-op-mw-'));
+  const prevReplayDir = process.env.KODERA_WEBHOOK_REPLAY_DIR;
+  try {
+    delete process.env.KODERA_WEBHOOK_REPLAY_DIR;
+
+    assert.equal(createDurableReplayStore(undefined, { allowEphemeral: true }).durable, false);
+    assert.throws(
+      () => createDurableReplayStore(),
+      (err) => err instanceof WebhookVerificationError && err.code === 'REPLAY_STORE_NOT_DURABLE'
+    );
+    const prevNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      assert.throws(
+        () => createOpenprojectWebhookHandler({ secret: TEST_SECRET }),
+        (err) => err instanceof WebhookVerificationError && err.code === 'REPLAY_STORE_NOT_DURABLE'
+      );
+    } finally {
+      if (prevNodeEnv === undefined) {
+        delete process.env.NODE_ENV;
+      } else {
+        process.env.NODE_ENV = prevNodeEnv;
+      }
+    }
+
+    const storeA = createDurableReplayStore(join(dir, 'shared'));
+    const storeB = createDurableReplayStore(join(dir, 'shared'));
+    assert.equal(storeA.durable, true);
+    assert.equal(storeA.claim('sig:writer-a', { recordedAt: 100, expiresAt: null }, 100), true);
+    assert.equal(storeB.claim('sig:writer-b', { recordedAt: 101, expiresAt: null }, 101), true);
+    const storeRestarted = createDurableReplayStore(join(dir, 'shared'));
+    assert.equal(storeRestarted.has('sig:writer-a'), true);
+    assert.equal(storeRestarted.has('sig:writer-b'), true);
+
+    const rawBody = JSON.stringify({
+      action: 'work_package:created',
+      work_package: {
+        id: 3099,
+        subject: 'Recreate test',
+        htmlUrl: 'https://openproject.example.org/work_packages/3099',
+      },
+    });
+    const sig = signWorkWebhookPayload(TEST_SECRET, rawBody);
+    const baseNow = 1_760_100_000;
+
+    const hMissingDurable = createOpenprojectWebhookHandler({
+      secret: TEST_SECRET,
+      defaultChannelId: 'chan_op_missing_durable',
+    });
+    await assert.rejects(
+      () =>
+        hMissingDurable({
+          rawBody,
+          headers: { 'x-openproject-signature': sig, 'x-openproject-delivery': 'op_missing_1' },
+          nowUnixSeconds: baseNow,
+        }),
+      (err) => err instanceof WebhookVerificationError && err.code === 'REPLAY_STORE_NOT_DURABLE'
+    );
+
+    const sharedEnvDir = join(dir, 'env-replay');
+    const indexUrl = new URL('../index.mjs', import.meta.url).href;
+    const workerScript = `
+      import { createOpenprojectWebhookHandler } from ${JSON.stringify(indexUrl)};
+      const handler = createOpenprojectWebhookHandler({
+        secret: process.env.TEST_WH_SECRET,
+        defaultChannelId: 'chan_op_recreate',
+      });
+      try {
+        await handler({
+          rawBody: process.env.TEST_BODY,
+          headers: {
+            'x-openproject-signature': process.env.TEST_SIG,
+            'x-openproject-delivery': process.env.TEST_DELIVERY,
+          },
+          nowUnixSeconds: Number(process.env.TEST_NOW),
+        });
+        process.stdout.write('ACCEPTED');
+      } catch (err) {
+        process.stdout.write(String(err.code || err.message));
+      }
+    `;
+    const firstOut = execFileSync(process.execPath, ['--input-type=module', '-e', workerScript], {
+      env: {
+        ...process.env,
+        NODE_ENV: 'development',
+        KODERA_WEBHOOK_REPLAY_DIR: sharedEnvDir,
+        TEST_WH_SECRET: TEST_SECRET,
+        TEST_BODY: rawBody,
+        TEST_SIG: sig,
+        TEST_DELIVERY: 'op_proc_1',
+        TEST_NOW: String(baseNow),
+      },
+      encoding: 'utf8',
+    });
+    assert.equal(firstOut, 'ACCEPTED');
+
+    const secondOut = execFileSync(process.execPath, ['--input-type=module', '-e', workerScript], {
+      env: {
+        ...process.env,
+        NODE_ENV: 'development',
+        KODERA_WEBHOOK_REPLAY_DIR: sharedEnvDir,
+        TEST_WH_SECRET: TEST_SECRET,
+        TEST_BODY: rawBody,
+        TEST_SIG: sig,
+        TEST_DELIVERY: 'op_proc_2',
+        TEST_NOW: String(baseNow + 90_000),
+      },
+      encoding: 'utf8',
+    });
+    assert.equal(secondOut, 'REPLAY_DETECTED');
+  } finally {
+    if (prevReplayDir === undefined) {
+      delete process.env.KODERA_WEBHOOK_REPLAY_DIR;
+    } else {
+      process.env.KODERA_WEBHOOK_REPLAY_DIR = prevReplayDir;
+    }
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

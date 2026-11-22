@@ -50,6 +50,17 @@ def document_role_permitted(
         return cursor.fetchone()[0] in {"editor", "viewer"}
 
 
+def collection_disclosure_context(*, identifier: UUID) -> tuple[UUID, UUID, UUID] | None:
+    row = (
+        Collection.objects.filter(id=identifier, deleted_at__isnull=True)
+        .values("workspace__organisation_id", "workspace_id", "creator__user_id")
+        .first()
+    )
+    if row is None:
+        return None
+    return row["workspace__organisation_id"], row["workspace_id"], row["creator__user_id"]
+
+
 def collection_export_permitted(
     *, identifier: UUID, scope: str, user_id: str, workspace_ids: tuple[UUID, ...]
 ) -> bool:
@@ -127,11 +138,14 @@ def collection_export_parts(
     user_id: str,
     workspace_ids: tuple[UUID, ...],
     permitted: Callable[[UUID], bool],
+    collection_permitted: Callable[[UUID], bool] | None = None,
 ) -> Iterator[ExportPart]:
     rows = Collection.objects.filter(workspace_id__in=workspace_ids, deleted_at__isnull=True)
     if scope == "account":
         rows = rows.filter(creator__user_id=user_id)
     for row in rows.order_by("id").iterator():
+        if collection_permitted is not None and not collection_permitted(row.id):
+            continue
         yield ExportPart(
             "collection",
             row.id,

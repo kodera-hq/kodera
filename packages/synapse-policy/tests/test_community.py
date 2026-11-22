@@ -11,6 +11,7 @@ ROOM = "!community:example.test"
 
 def governed(*, read_only=False, audience="all", members=None, exempt=None, sender=AGENT):
     return {
+        ("m.room.create", ""): SimpleNamespace(sender=AGENT),
         ("io.kodera.room.policy", ""): SimpleNamespace(sender=sender, content={
             "version": 1, "kind": "text", "read_only": read_only, "audience": audience,
             "members": members or [], "exempt": exempt or [], "allow_member_invites": True,
@@ -161,8 +162,21 @@ def test_workspace_mute_uses_server_time_even_for_exempt_member():
     state = governed(exempt=[ALICE])
     content = state[("io.kodera.room.policy", "")].content
     content['muted_until'] = {ALICE: (datetime.now(UTC) + timedelta(minutes=5)).isoformat()}
-    assert both_callbacks(state, event('m.room.message', ALICE, state=False)) == (False, FORBIDDEN)
+    for kind, is_state in (
+        ('m.room.message', False),
+        ('m.reaction', False),
+        ('io.kodera.custom', False),
+        ('m.room.topic', True),
+    ):
+        assert both_callbacks(state, event(kind, ALICE, state=is_state)) == (False, FORBIDDEN)
+    configured = KoderaPolicy({'agent_user_id': AGENT}, FakeApi({ROOM: state}))
+    assert run(configured.user_may_invite(ALICE, CAROL, ROOM)) == FORBIDDEN
+    leaving = event('m.room.member', ALICE, membership='leave')
+    leaving.state_key = ALICE
+    assert both_callbacks(state, leaving) == (True, ALLOWED)
     content['muted_until'][ALICE] = (datetime.now(UTC) - timedelta(seconds=1)).isoformat()
     assert both_callbacks(state, event('m.room.message', ALICE, state=False)) == (True, ALLOWED)
+    assert both_callbacks(state, event('m.reaction', ALICE, state=False)) == (True, ALLOWED)
+    assert run(configured.user_may_invite(ALICE, CAROL, ROOM)) == ALLOWED
     content['muted_until'][ALICE] = 'invalid'
     assert both_callbacks(state, event('m.room.message', ALICE, state=False)) == (False, FORBIDDEN)

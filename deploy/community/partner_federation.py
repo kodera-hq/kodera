@@ -13,7 +13,10 @@ HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parents[1] / "apps/server"))
 from tenant_agent.federation import parse, servers
 
-MATRIX = "@matrix path /_matrix/client/* /_matrix/media/* /_synapse/client/*"
+MATRIX = (
+    "@matrix path /_matrix/client/* /_matrix/media/v3/upload /_matrix/media/v3/upload/*"
+    " /_matrix/media/v1/create /_matrix/media/v3/config /_synapse/client/*"
+)
 PARTNER_MATRIX = MATRIX + " /_matrix/federation/* /_matrix/key/*"
 
 

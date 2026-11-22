@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import http.client
 import json
+import re
 import time
 import urllib.error
 import urllib.parse
@@ -13,6 +14,11 @@ import urllib.request
 from typing import Any
 
 import jwt
+
+from .rooms import POLICY
+
+_LOCALPART = re.compile(r"[a-z0-9._=\-/+]{1,255}")
+_ROOM_ID = re.compile(r"!([!-9;-~]{1,128}:[A-Za-z0-9.:-]{1,253}|[A-Za-z0-9_-]{43})")
 
 
 class UpstreamError(Exception):
@@ -120,6 +126,83 @@ class Matrix:
         _, answer = self._call("GET", f"/_matrix/client/v3/rooms/{_q(room_id)}/joined_members")
         return set(answer.get("joined", {}))
 
+    def dm_member_joined(self, room_id: str, subject: str, agent_user: str) -> bool:
+        """Authoritative check that `subject` is a joined member of direct-message `room_id`
+        and that `room_id` is not an agent-governed workspace channel room."""
+        if (
+            not isinstance(room_id, str)
+            or len(room_id) > 255
+            or _ROOM_ID.fullmatch(room_id) is None
+            or not isinstance(subject, str)
+            or not isinstance(agent_user, str)
+            or not agent_user.startswith("@")
+            or ":" not in agent_user
+        ):
+            return False
+        localpart = subject.lower()
+        server_name = agent_user.partition(":")[2]
+        if _LOCALPART.fullmatch(localpart) is None or not server_name:
+            return False
+        caller_mxid = f"@{localpart}:{server_name}"
+
+        mod_status, mod_answer = self._call(
+            "GET",
+            f"/_synapse/client/kodera/v1/dm_member?room_id={_q(room_id)}&user_id={_q(caller_mxid)}",
+            ok=(200, 403, 404),
+        )
+        if (
+            mod_status == 200
+            and isinstance(mod_answer, dict)
+            and isinstance(mod_answer.get("joined"), bool)
+        ):
+            return mod_answer["joined"]
+        if mod_status != 404:
+            raise UpstreamError("Synapse refused DM room membership inspection")
+
+        status, answer = self._call(
+            "GET",
+            f"/_synapse/admin/v1/rooms/{_q(room_id)}/state",
+            ok=(200, 403, 404),
+        )
+        if status == 404:
+            return False
+        if status == 200 and isinstance(answer, dict) and isinstance(answer.get("state"), list):
+            events = answer["state"]
+            for event in events:
+                if (
+                    isinstance(event, dict)
+                    and event.get("type") == POLICY
+                    and event.get("state_key", "") == ""
+                    and event.get("sender") == agent_user
+                ):
+                    return False
+            return any(
+                isinstance(event, dict)
+                and event.get("type") == "m.room.member"
+                and event.get("state_key") == caller_mxid
+                and isinstance(event.get("content"), dict)
+                and event["content"].get("membership") == "join"
+                for event in events
+            )
+
+        policy_event = self.state_event(room_id, POLICY)
+        if isinstance(policy_event, dict) and policy_event.get("sender") == agent_user:
+            return False
+        cs_status, joined_ans = self._call(
+            "GET",
+            f"/_matrix/client/v3/rooms/{_q(room_id)}/joined_members",
+            ok=(200, 403, 404),
+        )
+        if cs_status == 404:
+            return False
+        if (
+            cs_status == 200
+            and isinstance(joined_ans, dict)
+            and isinstance(joined_ans.get("joined"), dict)
+        ):
+            return caller_mxid in joined_ans["joined"]
+        raise UpstreamError("Synapse refused DM room membership inspection")
+
     def put_state(self, room_id: str, event_type: str, content: dict[str, Any]) -> None:
         self._call(
             "PUT", f"/_matrix/client/v3/rooms/{_q(room_id)}/state/{_q(event_type)}/", content
@@ -142,7 +225,6 @@ class Matrix:
         if self._since:
             query["since"] = self._since
         _, answer = self._call("GET", "/_matrix/client/v3/sync?" + urllib.parse.urlencode(query))
-        self._since = answer.get("next_batch", self._since)
         joined = []
         for room_id, invite in answer.get("rooms", {}).get("invite", {}).items():
             events = (invite or {}).get("invite_state", {}).get("events", [])
@@ -159,6 +241,7 @@ class Matrix:
                 joined.append(room_id)
             elif senders:
                 self._call("POST", f"/_matrix/client/v3/rooms/{_q(room_id)}/leave", {})
+        self._since = answer.get("next_batch", self._since)
         return joined
 
 

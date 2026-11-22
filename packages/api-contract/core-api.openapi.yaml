@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Kodera Core API
-  version: 0.50.0
+  version: 0.51.0
   summary: Control plane of kodera.io, consumed by kodera-web and by staff operators.
   description: |
     The Core API is the only backend of `kodera-web` (console ADR-0003) and the system of
@@ -6349,6 +6349,47 @@ paths:
       - owner
       - admin
       - moderator
+  /organisations/{organisation_id}/workspace/moderators/{membership_id}:
+    delete:
+      operationId: revokeWorkspaceModerator
+      summary: Revoke workspace moderator
+      description: 'Organisation is derived from the verified issuer; current active membership and resource
+        visibility are checked on every request. Responses are Cache-Control: no-store. All mutations are
+        audited. Only owners and admins may revoke a workspace moderator grant; only owners may revoke an
+        admin.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_moderation:act
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - $ref: '#/components/parameters/MembershipId'
+      responses:
+        '204':
+          description: Successful operation.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+      x-kodera-workspace-roles:
+      - owner
+      - admin
   /organisations/{organisation_id}/workspace/reports:
     post:
       operationId: createAbuseReport
@@ -6970,6 +7011,45 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Attachment'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    delete:
+      operationId: cancelAttachmentUpload
+      summary: Cancel pending attachment upload
+      description: 'Organisation is derived from the verified issuer; current active membership and resource
+        visibility are checked on every request. Responses are Cache-Control: no-store. All mutations are
+        audited. Cancels an incomplete upload session initiated by the caller and releases its reserved
+        storage quota.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_attachment:delete
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - $ref: '#/components/parameters/AttachmentId'
+      responses:
+        '204':
+          description: Successful operation.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
         '400':
           $ref: '#/components/responses/MalformedRequest'
         '401':
@@ -12336,6 +12416,16 @@ components:
         sha256:
           type: string
           pattern: ^[a-f0-9]{64}$
+        channelId:
+          type: string
+          format: uuid
+          description: Optional workspace channel this attachment is bound to; mutually exclusive with roomId.
+        roomId:
+          type: string
+          minLength: 4
+          maxLength: 255
+          pattern: ^!([!-9;-~]{1,128}:[A-Za-z0-9.:-]{1,253}|[A-Za-z0-9_-]{43})$
+          description: Optional private direct-message Matrix room identifier; mutually exclusive with channelId.
       description: SHA-256 is the lowercase hex digest. The upload signature binds checksum, content type
         and size to an organisation-scoped random object key. HTML and SVG are refused.
     AttachmentUploadTicket:
@@ -14585,6 +14675,10 @@ components:
         name: { type: string, minLength: 1, maxLength: 100 }
         topic: { type: string, maxLength: 1024, default: '' }
         position: { type: integer, minimum: 0 }
+        confidential:
+          type: boolean
+          default: false
+          description: 'Text channels only: designates an immutable end-to-end encrypted confidential channel at creation.'
 
     ChannelPatchRequest:
       type: object

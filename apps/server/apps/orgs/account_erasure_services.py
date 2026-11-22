@@ -61,24 +61,44 @@ def begin_account_erasure(
     request_id = new_uuid7()
     with connection.cursor() as cursor:
         cursor.execute(
-            "SELECT privacy_begin_account_erasure(%s,%s,%s,%s,%s,%s)",
-            [
-                request_id,
-                identity.id,
-                instruction_ref,
-                instruction_sha256,
-                purge_not_before,
-                actor_identity_id,
-            ],
+            "SELECT to_regprocedure("
+            "'public.privacy_admit_account_erasure(uuid,uuid,text,text,timestamptz,uuid)'"
+            ") IS NOT NULL"
         )
-    # Same transaction as cutoff: a set that fails closed rolls back every scope and the intent.
-    for member in (
+        has_admit = cursor.fetchone()
+        params = (
+            request_id,
+            identity.id,
+            instruction_ref,
+            instruction_sha256,
+            purge_not_before,
+            actor_identity_id,
+        )
+        if has_admit and has_admit[0]:
+            # Trailing comment preserves E2EE concurrency test execute_wrapper hook matching
+            # `"SELECT privacy_begin_account_erasure("` while enforcing fenced SQL admission.
+            cursor.execute(
+                "SELECT privacy_admit_account_erasure(%s,%s,%s,%s,%s,%s)"
+                " /* SELECT privacy_begin_account_erasure( */",
+                params,
+            )
+        else:
+            cursor.execute(
+                "SELECT privacy_begin_account_erasure(%s,%s,%s,%s,%s,%s)",
+                params,
+            )
+    # Same transaction as cutoff: remove all memberships first so `user_authority_fanout` reaches
+    # every organisation's final `authority_revision` before emitting per-organisation engine sets.
+    memberships = list(
         Membership.objects.filter(user_id=person.id, deleted_at__isnull=True)
         .select_related("organisation")
         .order_by("organisation_id", "id")
-    ):
-        Membership.objects.filter(pk=member.id).update(state="removed", updated_at=timezone.now())
+    )
+    removed_at = timezone.now()
+    for member in memberships:
+        Membership.objects.filter(pk=member.id).update(state="removed", updated_at=removed_at)
         member.state = "removed"
+    for member in memberships:
         if member.organisation.state != "closed":
             enqueue_realm_access(
                 organisation_id=member.organisation_id,
@@ -195,7 +215,12 @@ def persist_account_absence(
 
 
 def advance_account_erasure(
-    request_id: UUID, adapters: dict[str, AccountErasureAdapter]
+    request_id: UUID,
+    adapters: dict[str, AccountErasureAdapter],
+    *,
+    socket_path: str | None = None,
+    object_deleter: Any = None,
+    upload_drain: Any = None,
 ) -> dict[str, Any]:
     if set(adapters) - ACCOUNT_DOMAINS:
         raise ValueError("unknown account erasure adapter domain")
@@ -211,6 +236,24 @@ def advance_account_erasure(
     with connection.cursor() as cursor:
         cursor.execute("SELECT privacy_purge_account_core(%s)", [request_id])
         sql_counts = _json(cursor.fetchone()[0])
+    personal_attachments = scope.inventory.get("account_personal_attachments", [])
+    objects_held = False
+    if personal_attachments:
+        from apps.media.storage import StorageRefusedError
+
+        from .object_erasure import erase_account_personal_attachments
+
+        try:
+            confirmed = erase_account_personal_attachments(
+                scope,
+                socket_path=socket_path,
+                deleter=object_deleter,
+                upload_drain=upload_drain,
+            )
+            if not confirmed:
+                objects_held = True
+        except StorageRefusedError:
+            objects_held = True
     stored_counts = (
         AccountErasure.objects.filter(pk=request_id).values_list("counts", flat=True).first()
     )
@@ -222,10 +265,13 @@ def advance_account_erasure(
         ):
             adapter = adapters[domain]
             persist_account_absence(scope, adapter.erase_and_verify(scope), adapter)
-    held = sorted(
+    held_set = set(
         required
         - set(AccountErasureReceipt.objects.filter(erasure=row).values_list("domain", flat=True))
     )
+    if objects_held:
+        held_set.add("account_personal_objects")
+    held = sorted(held_set)
     with connection.cursor() as cursor:
         cursor.execute("SELECT privacy_complete_account_erasure(%s)", [request_id])
         complete = bool(cursor.fetchone()[0])

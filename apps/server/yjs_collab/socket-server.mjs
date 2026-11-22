@@ -6,6 +6,7 @@ import { createTransformServer } from './transform-http.mjs'
 import { verify, bind, TicketRefused } from './tickets.mjs'
 import { frame, snapshotFrame, storedVectorFrame, storedDiff, updateFrame, ViewerWrite } from './protocol.mjs'
 import { Refused } from './engine.mjs'
+import { LockBusy } from './store.mjs'
 import { receive, awarenessFrame } from './presence.mjs'
 const MAX_BUFFER = 2 * 1024 * 1024 + 32
 
@@ -14,8 +15,9 @@ export function createCollabServer({key, store, origins, pollMilliseconds = 1000
   const wss = new WebSocketServer({noServer: true, maxPayload: MAX_BUFFER, perMessageDeflate: false})
   const rooms = new Map(), connections = new Set()
   let unauthenticated = 0, pendingBytes = 0, polling = false
-  function close(socket, code = 4403) {
-    if (socket.readyState === WebSocket.OPEN) socket.close(code, code === 4401 ? 'ticket refused' : code === 1013 ? 'retry later' : 'operation refused')
+  function close(socket, code = 4403, reason) {
+    const label = reason ?? (code === 4401 ? 'ticket refused' : code === 1013 ? 'retry later' : 'operation refused')
+    if (socket.readyState === WebSocket.OPEN) socket.close(code, label)
     if (!socket.forcedClose) {
       socket.forcedClose = setTimeout(() => socket.terminate(), 1000)
       socket.forcedClose.unref()
@@ -27,13 +29,17 @@ export function createCollabServer({key, store, origins, pollMilliseconds = 1000
     socket.send(bytes, {binary: true}, error => { if (error) close(socket, 1013) })
   }
   function failure(socket, error) {
-    close(socket, error instanceof TicketRefused ? error.code : error instanceof Refused ? 1008 : 1013)
+    if (error instanceof TicketRefused) close(socket, error.code)
+    else if (error instanceof Refused) close(socket, 1008)
+    else if (error instanceof LockBusy) close(socket, 1013, 'lock-busy')
+    else close(socket, 1013)
   }
   function roomFor(document) {
     let room = rooms.get(document)
     if (room) return room
     if (rooms.size >= 32) throw new Error('room capacity reached')
     const doc = new Y.Doc(), awareness = new Awareness(doc)
+    awareness._checkInterval?.unref?.()
     awareness.setLocalState(null)
     room = {doc, awareness, connections: new Set(), owners: new Map(), refreshing: false}
     rooms.set(document, room)
@@ -55,7 +61,9 @@ export function createCollabServer({key, store, origins, pollMilliseconds = 1000
       await store.deliver(socket.claims, ({state, revision}) => {
         send(socket, updateFrame(state));socket.revision = revision
       }, socket.revision)
-    } catch (error) { failure(socket, error) }
+    } catch (error) {
+      failure(socket, error)
+    }
   }
   async function refreshRoom(document) {
     const room = rooms.get(document)
@@ -153,7 +161,7 @@ export function createCollabServer({key, store, origins, pollMilliseconds = 1000
       if (!room) return
       room.connections.delete(socket)
       if (socket.presenceId !== null) { room.owners.delete(socket.presenceId);removeAwarenessStates(room.awareness, [socket.presenceId], socket) }
-      if (!room.connections.size) { rooms.delete(socket.claims.document);room.doc.destroy() }
+      if (!room.connections.size) { rooms.delete(socket.claims.document);room.awareness.destroy();room.doc.destroy() }
     })
   })
   const poll = setInterval(() => {
@@ -168,6 +176,8 @@ export function createCollabServer({key, store, origins, pollMilliseconds = 1000
     async shutdown() {
       clearInterval(poll)
       for (const socket of connections) socket.terminate()
+      for (const room of rooms.values()) { room.awareness?.destroy?.();room.doc.destroy() }
+      rooms.clear()
       await new Promise(resolve => wss.close(resolve))
       server.closeAllConnections()
       await new Promise(resolve => server.close(resolve))

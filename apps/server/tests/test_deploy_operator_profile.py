@@ -31,8 +31,11 @@ APPS = [
     "apps.media",
     "apps.notifications",
     "apps.e2ee",
+    "core.idempotency",
 ]
 COMMANDS = [
+    "purge_idempotency",
+    "purge_expired_uploads",
     "erase_core_workspace",
     "manage_statutory_retention",
     "dispatch_push",
@@ -177,12 +180,12 @@ loader = MigrationLoader(None)
 loader.graph.validate_consistency()
 print(json.dumps({'apps': settings.INSTALLED_APPS,
                   'migration_apps': sorted({app for app, name in loader.graph.leaf_nodes()}),
-                  'commands': sorted(n for n, app in commands.items() if app.startswith('apps.'))}))
+                  'commands': sorted(n for n, app in commands.items() if app.startswith(('apps.', 'core.')))}))
 """
     )
     assert result == {
         "apps": APPS,
-        "migration_apps": sorted(p[5:] for p in APPS),
+        "migration_apps": sorted(p.rsplit(".", 1)[-1] for p in APPS),
         "commands": sorted(COMMANDS),
     }
 

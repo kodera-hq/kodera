@@ -269,3 +269,122 @@ def test_gateway_distinguishes_object_mismatch_from_unavailable_or_invalid_reply
     with pytest.raises(StorageRefusedError) as failure:
         Gateway(str(tmp_path / "signer.sock")).call("verify", obj())
     assert isinstance(failure.value, ObjectMismatchError) is mismatch
+
+
+def test_worker_delete_executes_signed_delete_then_verifies_head_404(
+    tmp_path, socket_directory, monkeypatch
+):
+    """BUG-0021 & BUG-0025: delete_object performs signed DELETE followed by signed HEAD == 404."""
+    import threading
+
+    from apps.media import storage_gateway
+
+    upload = obj()
+    directory = tmp_path / "mounted"
+    directory.mkdir()
+    (directory / str(upload.organisation_id)).write_text(
+        json.dumps(
+            {
+                "endpoint": "https://storage.example.org",
+                "bucket": "example-bucket",
+                "region": "fr-par",
+                "accessKey": secrets.token_hex(12),
+                "secretKey": secrets.token_urlsafe(32),
+            }
+        )
+    )
+    methods_seen: list[str] = []
+    head_status = [404]
+
+    def fake_request(destination, **kwargs):
+        methods_seen.append(kwargs["method"])
+        status = 204 if kwargs["method"] == "DELETE" else head_status[0]
+        return SimpleNamespace(close=lambda: None), SimpleNamespace(
+            status=status, close=lambda: None
+        )
+
+    monkeypatch.setattr(storage_worker.outbound, "request", fake_request)
+    socket_path = socket_directory / "delete.sock"
+    server = storage_worker.bind(socket_path, storage_worker.DirectorySource(directory))
+    thread = threading.Thread(target=lambda: server.serve_forever(poll_interval=0.01), daemon=True)
+    thread.start()
+    try:
+        assert storage_gateway.delete_object(upload.key, socket_path=str(socket_path)) == {
+            "deleted": True
+        }
+        assert methods_seen == ["DELETE", "HEAD"]
+
+        # Fail closed when post-DELETE HEAD still sees 200 OK instead of 404!
+        methods_seen.clear()
+        head_status[0] = 200
+        with pytest.raises(StorageRefusedError):
+            storage_gateway.delete_object(upload, socket_path=str(socket_path))
+        assert methods_seen == ["DELETE", "HEAD"]
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+def test_sixteen_concurrent_worker_rpcs_succeed_while_one_s3_head_blocks_3s(
+    tmp_path, socket_directory, monkeypatch
+):
+    """BUG-0022: Bounded concurrent _UnixServer serves 16 RPCs while 1 verify HEAD blocks 3s."""
+    import threading
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+
+    upload = obj()
+    directory = tmp_path / "mounted"
+    directory.mkdir()
+    (directory / str(upload.organisation_id)).write_text(
+        json.dumps(
+            {
+                "endpoint": "https://storage.example.org",
+                "bucket": "example-bucket",
+                "region": "fr-par",
+                "accessKey": secrets.token_hex(12),
+                "secretKey": secrets.token_urlsafe(32),
+            }
+        )
+    )
+    head_entered = threading.Event()
+
+    def slow_verify(destination, **kwargs):
+        head_entered.set()
+        time.sleep(3.0)
+        pairs = [
+            ("content-length", str(upload.size_bytes)),
+            ("content-type", upload.content_type),
+            ("x-amz-checksum-sha256", upload.checksum),
+        ]
+        return SimpleNamespace(close=lambda: None), SimpleNamespace(
+            status=200,
+            getheaders=lambda: pairs,
+            getheader=lambda k: None,
+            close=lambda: None,
+        )
+
+    monkeypatch.setattr(storage_worker.outbound, "request", slow_verify)
+    socket_path = socket_directory / "concurrent.sock"
+    server = storage_worker.bind(socket_path, storage_worker.DirectorySource(directory))
+    thread = threading.Thread(target=lambda: server.serve_forever(poll_interval=0.01), daemon=True)
+    thread.start()
+    try:
+        gw = Gateway(str(socket_path))
+        with ThreadPoolExecutor(max_workers=17) as pool:
+            slow_fut = pool.submit(gw.call, "verify", upload)
+            assert head_entered.wait(timeout=2.0)
+            t0 = time.monotonic()
+            fast_futs = [pool.submit(gw.call, "upload", upload) for _ in range(16)]
+            fast_results = [f.result(timeout=2.0) for f in fast_futs]
+            elapsed_fast = time.monotonic() - t0
+            assert len(fast_results) == 16
+            assert elapsed_fast < 2.0, (
+                f"16 concurrent presigns blocked on slow HEAD ({elapsed_fast:.2f}s)"
+            )
+            assert slow_fut.result(timeout=5.0) == {"verified": True}
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)

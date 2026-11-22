@@ -342,8 +342,9 @@ def test_protected_target_refusal_detects_its_source_mutation(world, monkeypatch
 def test_scoped_invite_grants_only_its_restricted_channel_and_moderator_role(world):
     from apps.workspaces.models import Channel, ResourcePolicy, ResourcePolicyRule
 
-    org, workspace, _, tokens = world
+    org, workspace, members, tokens = world
     policy = ResourcePolicy.objects.create(workspace=workspace, visibility="restricted")
+    ResourcePolicyRule.objects.create(policy=policy, kind="allow_member", membership=members[0])
     channel = Channel.objects.create(
         workspace=workspace,
         name="Private example",

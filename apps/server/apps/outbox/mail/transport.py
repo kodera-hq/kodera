@@ -15,6 +15,7 @@ import ipaddress
 import re
 import smtplib
 import ssl
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from email.headerregistry import Address
@@ -254,25 +255,41 @@ def _close(client: smtplib.SMTP | None) -> None:
         pass
 
 
+def _apply_deadline(client: smtplib.SMTP, deadline: float) -> None:
+    left = deadline - time.monotonic()
+    if left <= 0:
+        raise TimeoutError("SMTP conversation deadline exceeded")
+    sock = getattr(client, "sock", None)
+    if sock is not None and hasattr(sock, "settimeout"):
+        sock.settimeout(left)
+
+
 def send(transport: MailTransport, *, recipient: str, message: bytes) -> SendResult:
     """One SMTP conversation delivering `message` to `recipient`. It never raises: whatever goes
     wrong is a transport failure before MAIL, temporary before the content, ambiguous after."""
+    deadline = time.monotonic() + TIMEOUT_S
     client: smtplib.SMTP | None = None
     try:
         # Transport phase: until MAIL is sent, a failure is the transport's (§7.3). The client is
         # built with the host so that STARTTLS verifies the certificate against that name. The
         # EHLO name is the sending domain: no lookup of this host's own name.
         try:
+            connect_budget = deadline - time.monotonic()
+            if connect_budget <= 0:
+                raise TimeoutError("SMTP connect deadline exceeded")
             client = smtplib.SMTP(
                 transport.host,
                 transport.port,
                 local_hostname=transport.sender_domain,
-                timeout=TIMEOUT_S,
+                timeout=connect_budget,
             )
             client.set_debuglevel(SMTP_DEBUGLEVEL)
+            _apply_deadline(client, deadline)
             client.ehlo()
+            _apply_deadline(client, deadline)
             negotiate_tls(client, transport)
             if transport.username is not None and transport.password is not None:
+                _apply_deadline(client, deadline)
                 client.login(transport.username, transport.password)
         except smtplib.SMTPResponseException as error:
             return _transport_failure(error, error.smtp_code)
@@ -281,12 +298,15 @@ def send(transport: MailTransport, *, recipient: str, message: bytes) -> SendRes
 
         # Envelope phase: nothing of the message has left; a lost connection is temporary.
         try:
+            _apply_deadline(client, deadline)
             code, _ = client.mail(transport.sender_address)
             if code != 250:
                 return _refused(code)
+            _apply_deadline(client, deadline)
             code, _ = client.rcpt(recipient)
             if code not in (250, 251):
                 return _refused(code)
+            _apply_deadline(client, deadline)
             code, _ = client.docmd("DATA")
             if code != 354:
                 return _refused(code)
@@ -300,7 +320,9 @@ def send(transport: MailTransport, *, recipient: str, message: bytes) -> SendRes
         # Content phase: the message is leaving. Only a deciding reply decides; anything else,
         # an exception included, leaves the outcome unknown.
         try:
+            _apply_deadline(client, deadline)
             client.send(dot_stuffed(message))
+            _apply_deadline(client, deadline)
             code, reply = client.getreply()
         except Exception as error:  # noqa: BLE001 - the server may hold the message
             return SendResult(

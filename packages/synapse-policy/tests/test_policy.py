@@ -38,8 +38,12 @@ class FakeApi:
             return self.users.get(user_id)
         return SimpleNamespace(is_deactivated=False, is_guest=False, approved=True, locked=False, suspended=False)
 
-    async def get_room_state(self, room_id):
-        return self.rooms.get(room_id, {})
+    async def get_room_state(self, room_id, event_filter=None):
+        room_state = self.rooms.get(room_id, {})
+        if event_filter is None:
+            return room_state
+        wanted = set(event_filter)
+        return {key: value for key, value in room_state.items() if key in wanted}
 
 
 def run(coro):
@@ -139,12 +143,12 @@ def test_only_room_access_and_the_agent_write_occupancy():
     assert run(policy().check_event_for_spam(kodera_state("io.kodera.room.occupancy", ROOM_ACCESS, occupancy))) == FORBIDDEN
 
 
-def test_version_is_0_1_6():
-    assert __version__ == "0.1.6"
+def test_version_is_0_1_7():
+    assert __version__ == "0.1.7"
     pyproject = pathlib.Path(__file__).resolve().parent.parent / "pyproject.toml"
     if pyproject.exists():
         meta = tomllib.loads(pyproject.read_text(encoding="utf-8"))
-        assert meta["project"]["version"] == "0.1.6"
+        assert meta["project"]["version"] == "0.1.7"
 
 
 @pytest.mark.parametrize(
@@ -209,11 +213,34 @@ def test_member_creates_a_direct_message():
         dm_request(preset="public_chat"),
         dm_request(initial_state=[{"type": "m.room.history_visibility", "content": {"history_visibility": "shared"}}]),
         dm_request(power_level_content_override={"invite": 0}),
+        dm_request(additional_creators=[BOB]),
         dm_request(creation_content={"type": "m.space"}),
+        dm_request(creation_content={"additional_creators": [BOB]}),
+        dm_request(creation_content={"predecessor": {"room_id": "!old:example.org", "event_id": "$1"}}),
+        dm_request(creation_content={"m.room.Predecessor": {"room_id": "!old:example.org"}}),
     ],
 )
 def test_member_cannot_create_anything_but_a_direct_message(request_body):
     assert run(policy().user_may_create_room(ALICE, request_body)) == FORBIDDEN
+
+
+@pytest.mark.parametrize(
+    "creation_content",
+    [
+        {"additional_creators": [BOB]},
+        {"predecessor": {"room_id": "!old:example.org", "event_id": "$1"}},
+        {"m.room.Predecessor": {"room_id": "!old:example.org"}},
+        {"io.kodera.room.initial_partner_servers": ["dinum.gouv.fr"]},
+    ],
+)
+def test_member_dm_creation_hook_refuses_additional_creators_and_predecessor(creation_content):
+    from synapse.module_api.errors import SynapseError
+
+    configured = policy()
+    requester = SimpleNamespace(user=SimpleNamespace(to_string=lambda: ALICE))
+    with pytest.raises(SynapseError) as refusal:
+        run(configured.on_create_room(requester, dm_request(creation_content=creation_content), False))
+    assert (refusal.value.code, refusal.value.errcode) == (403, FORBIDDEN)
 
 
 def test_member_invites_once_into_their_new_direct_message():
@@ -423,7 +450,7 @@ def test_nobody_creates_an_encrypted_room(creator):
 @pytest.mark.parametrize("sender", [ALICE, AGENT])
 def test_no_event_turns_on_encryption(sender):
     # The path Synapse's server admins take too: initial state, forced encryption, upgrades.
-    assert run(policy().check_event_allowed(event("m.room.encryption", sender), {})) == (False, None)
+    assert run(policy().check_event_allowed(event("m.room.encryption", sender), state_of(AGENT, []))) == (False, None)
 
 
 MEGOLM_CIPHERTEXT = {
@@ -458,18 +485,22 @@ CIPHERTEXT_CASES = pytest.mark.parametrize(
 def test_no_event_carries_ciphertext(encrypted):
     # A client can post ciphertext in a room where encryption is off, with keys sent by to-device
     # message; refusing m.room.encryption alone would let it through.
-    assert run(policy().check_event_allowed(encrypted, {})) == (False, None)
+    assert run(policy().check_event_allowed(encrypted, state_of(AGENT, []))) == (False, None)
 
 
 @CIPHERTEXT_CASES
 def test_no_federated_event_carries_ciphertext(encrypted):
     # Synapse checks events from other servers with check_event_for_spam, not check_event_allowed.
-    assert run(policy().check_event_for_spam(encrypted)) == FORBIDDEN
+    ordinary_rooms = {"!channel": state_of(AGENT, []), "!dm": state_of(ALICE, [BOB])}
+    assert run(policy(ordinary_rooms).check_event_for_spam(encrypted)) == FORBIDDEN
 
 
 @pytest.mark.parametrize("kind", ["m.room.message", "m.room.join_rules", "m.room.member"])
 def test_rules_allow_every_other_event(kind):
-    assert run(policy().check_event_allowed(event(kind, AGENT), {})) == (True, None)
+    candidate = event(kind, AGENT)
+    if kind == "m.room.member":
+        candidate.state_key = ALICE
+    assert run(policy().check_event_allowed(candidate, state_of(AGENT, []))) == (True, None)
 
 
 def test_agent_creates_a_room_with_other_initial_state():
@@ -565,3 +596,142 @@ def test_dm_creation_and_invites_require_active_registered_local_accounts(blocke
     configured = KoderaPolicy({"agent_user_id": AGENT}, FakeApi({"!dm": state}, users=users))
     assert run(configured.user_may_create_room(ALICE, dm_request())) == FORBIDDEN
     assert run(configured.user_may_invite(ALICE, BOB, "!dm")) == FORBIDDEN
+
+
+@pytest.mark.parametrize("blocked", [ALICE, BOB])
+@pytest.mark.parametrize(
+    "status",
+    [
+        None,
+        {"is_deactivated": True},
+        {"is_guest": True},
+        {"approved": False},
+        {"locked": True},
+        {"suspended": True},
+    ],
+)
+def test_channel_member_invites_require_active_registered_local_accounts(blocked, status):
+    users = {
+        user: SimpleNamespace(
+            is_deactivated=False, is_guest=False, approved=True, locked=False, suspended=False
+        )
+        for user in (ALICE, BOB)
+    }
+    if status is None:
+        del users[blocked]
+    else:
+        for key, value in status.items():
+            setattr(users[blocked], key, value)
+    rooms = {
+        "!ch": channel_with_policy(
+            {"version": 1, "kind": "text", "allow_member_invites": True},
+            {AGENT: "join", ALICE: "join"},
+        )
+    }
+    configured = KoderaPolicy({"agent_user_id": AGENT}, FakeApi(rooms, users=users))
+    assert run(configured.user_may_invite(ALICE, BOB, "!ch")) == FORBIDDEN
+
+
+def test_channel_member_invites_refuse_archived_banned_and_muted_participants():
+    base = {
+        "version": 1,
+        "kind": "text",
+        "read_only": False,
+        "audience": "all",
+        "members": [],
+        "exempt": [],
+        "allow_member_invites": True,
+    }
+    for extra in (
+        {"archived": True},
+        {"banned": [ALICE]},
+        {"banned": [BOB]},
+        {"muted_until": {ALICE: "9999-01-01T00:00:00Z"}},
+    ):
+        rooms = {"!ch": channel_with_policy({**base, **extra}, {AGENT: "join", ALICE: "join"})}
+        assert run(policy(rooms).user_may_invite(ALICE, BOB, "!ch")) == FORBIDDEN
+
+
+def test_dm_member_joined_restricts_inspection_to_service_accounts_and_rejects_channels():
+    from synapse.module_api.errors import SynapseError
+
+    dm_id = f"!dm1:{SERVER}"
+    v12_dm_id = "!" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8S9t0U1_"
+    chan_id = f"!chan1:{SERVER}"
+    legacy_chan_id = f"!chan2:{SERVER}"
+    rooms = {
+        dm_id: {
+            ("m.room.create", ""): SimpleNamespace(sender=ALICE),
+            ("m.room.member", ALICE): SimpleNamespace(sender=ALICE, content={"membership": "join"}),
+            ("m.room.member", BOB): SimpleNamespace(sender=ALICE, content={"membership": "invite"}),
+        },
+        v12_dm_id: {
+            ("m.room.create", ""): SimpleNamespace(sender=ALICE),
+            ("m.room.member", ALICE): SimpleNamespace(sender=ALICE, content={"membership": "join"}),
+        },
+        f"!missingcreator:{SERVER}": {
+            ("m.room.create", ""): SimpleNamespace(sender=None),
+            ("m.room.member", ALICE): SimpleNamespace(sender=ALICE, content={"membership": "join"}),
+        },
+        chan_id: {
+            ("m.room.create", ""): SimpleNamespace(sender=AGENT),
+            ("io.kodera.room.policy", ""): SimpleNamespace(
+                sender=AGENT, content={"version": 1, "kind": "text"}
+            ),
+            ("m.room.member", ALICE): SimpleNamespace(sender=AGENT, content={"membership": "join"}),
+        },
+        legacy_chan_id: {
+            ("m.room.create", ""): SimpleNamespace(sender=ALICE),
+            ("io.kodera.room.policy", ""): SimpleNamespace(
+                sender=AGENT, content={"version": 1, "kind": "text"}
+            ),
+            ("m.room.member", ALICE): SimpleNamespace(sender=ALICE, content={"membership": "join"}),
+        },
+    }
+    users = {
+        ALICE: SimpleNamespace(
+            is_deactivated=False, is_guest=False, approved=True, locked=False, suspended=False
+        ),
+        BOB: SimpleNamespace(
+            is_deactivated=False, is_guest=False, approved=True, locked=False, suspended=False
+        ),
+        CAROL: SimpleNamespace(
+            is_deactivated=True, is_guest=False, approved=True, locked=False, suspended=False
+        ),
+    }
+    rooms[dm_id][("m.room.member", CAROL)] = SimpleNamespace(
+        sender=CAROL, content={"membership": "join"}
+    )
+    configured = KoderaPolicy(
+        {"agent_user_id": AGENT, "room_access_user_id": ROOM_ACCESS},
+        FakeApi(rooms, users=users),
+    )
+
+    for svc in (ROOM_ACCESS, AGENT):
+        assert run(configured.dm_member_joined(svc, dm_id, ALICE)) is True
+        assert run(configured.dm_member_joined(svc, v12_dm_id, ALICE)) is True
+        assert run(configured.dm_member_joined(svc, v12_dm_id, BOB)) is False
+        assert run(configured.dm_member_joined(svc, f"!missingcreator:{SERVER}", ALICE)) is False
+        assert run(configured.dm_member_joined(svc, "!synthetic-local", ALICE)) is False
+        assert run(configured.dm_member_joined(svc, "!\x7f:acme-sa.kodera.io", ALICE)) is False
+        assert run(configured.dm_member_joined(svc, "!room:bad/domain", ALICE)) is False
+        assert run(configured.dm_member_joined(svc, dm_id, BOB)) is False
+        assert run(configured.dm_member_joined(svc, dm_id, CAROL)) is False
+        assert run(configured.dm_member_joined(svc, f"!missing:{SERVER}", ALICE)) is False
+        assert run(configured.dm_member_joined(svc, chan_id, ALICE)) is False
+        assert run(configured.dm_member_joined(svc, legacy_chan_id, ALICE)) is False
+        assert run(configured.dm_member_joined(svc, dm_id, OUTSIDER)) is False
+        assert run(configured.dm_member_joined(svc, dm_id, AGENT)) is False
+        assert run(configured.dm_member_joined(svc, "not-a-room", ALICE)) is False
+
+    for unauthorized in (ALICE, BOB, OUTSIDER, None):
+        with pytest.raises(SynapseError) as refused:
+            run(configured.dm_member_joined(unauthorized, dm_id, ALICE))
+        assert refused.value.code == 403
+
+    without_ra = KoderaPolicy({"agent_user_id": AGENT}, FakeApi(rooms, users=users))
+    with pytest.raises(SynapseError):
+        run(without_ra.dm_member_joined(None, dm_id, ALICE))
+    with pytest.raises(SynapseError):
+        run(without_ra.dm_member_joined(ROOM_ACCESS, dm_id, ALICE))
+    assert run(without_ra.dm_member_joined(AGENT, dm_id, ALICE)) is True

@@ -322,6 +322,7 @@ def test_room_creation_uses_real_http_proof_and_keeps_one_room_on_replay(relay, 
         position=1,
         lifecycle="active",
         room_state="ready",
+        is_confidential=True,
     )
     document = {
         "deviceId": str(relay[5][0]),
@@ -347,6 +348,27 @@ def test_room_creation_uses_real_http_proof_and_keeps_one_room_on_replay(relay, 
             index=2,
         )
         assert denied.status_code == 404
+        ordinary = Channel.objects.create(
+            workspace=relay[1],
+            kind="text",
+            name="Ordinary plaintext channel",
+            position=2,
+            lifecycle="active",
+            room_state="ready",
+            is_confidential=False,
+        )
+        refused_ordinary = post(
+            relay,
+            http,
+            "create-room",
+            "rooms",
+            {
+                "deviceId": str(relay[5][0]),
+                "channelId": str(ordinary.id),
+                "algorithm": "io.kodera.mls.v1",
+            },
+        )
+        assert refused_ordinary.status_code == 409
 
 
 def test_http_package_claim_commit_retirement_and_rekey_under_real_writer_role(relay, http, writer):
@@ -599,3 +621,89 @@ def test_same_person_identity_from_another_lane_cannot_bind_an_own_tenant_device
         transaction.atomic(),
     ):
         candidate.save(force_insert=True)
+
+
+def test_pre_existing_relay_room_on_ordinary_channel_is_refused_across_send_commit_read_claim_and_replay(
+    relay, http, monkeypatch
+):
+    from apps.e2ee.models import Participant, Room
+
+    owner, peer = str(relay[5][0]), str(relay[5][2])
+    ordinary = Channel.objects.create(
+        workspace=relay[1],
+        kind="text",
+        name="Pre-upgrade ordinary channel",
+        position=10,
+        lifecycle="active",
+        room_state="ready",
+        is_confidential=False,
+    )
+    legacy_room = Room.objects.create(
+        organisation=relay[0], channel=ordinary, algorithm="io.kodera.mls.v1"
+    )
+    Participant.objects.create(
+        organisation=relay[0], room=legacy_room, device_id=relay[5][0], joined_epoch=0
+    )
+    published = post(
+        relay,
+        http,
+        "publish-key-package",
+        "key-packages",
+        {"deviceId": peer, "keyPackage": b64(os.urandom(64))},
+        index=2,
+    )
+    assert published.status_code == 201, published.content
+
+    replay_key = str(uuid4())
+    send_body = {"deviceId": owner, "epoch": 0, "ciphertext": b64(os.urandom(32))}
+    client, tokens = http
+
+    def post_legacy(operation, suffix, body, *, key=None):
+        signed = relay[7](0, operation, body, legacy_room.id)
+        return client.post(
+            path(relay, f"rooms/{legacy_room.id}/{suffix}"),
+            data=json.dumps(signed),
+            content_type="application/json",
+            HTTP_AUTHORIZATION="Bearer " + tokens[0],
+            HTTP_IDEMPOTENCY_KEY=key or str(uuid4()),
+        )
+
+    real_check = services.is_designated_confidential_channel
+    monkeypatch.setattr(services, "is_designated_confidential_channel", lambda **_: True)
+    seeded = post_legacy("send-application", "envelopes", send_body, key=replay_key)
+    assert seeded.status_code == 201, seeded.content
+    monkeypatch.setattr(services, "is_designated_confidential_channel", real_check)
+
+    replayed = post_legacy("send-application", "envelopes", send_body, key=replay_key)
+    assert replayed.status_code == 409
+    assert "Idempotency-Replayed" not in replayed
+
+    fresh_send = post_legacy("send-application", "envelopes", send_body)
+    assert fresh_send.status_code == 409
+
+    claimed = post_legacy(
+        "claim-key-package",
+        "key-packages/claims",
+        {"deviceId": owner, "targetDeviceId": peer, "epoch": 0},
+    )
+    assert claimed.status_code == 409
+
+    committed = post_legacy(
+        "commit-epoch",
+        "commits",
+        {"deviceId": owner, "epoch": 0, "deviceIds": [owner], "ciphertext": b64(os.urandom(32))},
+    )
+    assert committed.status_code == 409
+
+    listed = client.get(
+        path(relay, f"rooms/{legacy_room.id}/envelopes?deviceId={owner}"),
+        HTTP_AUTHORIZATION="Bearer " + tokens[0],
+    )
+    assert listed.status_code == 409
+
+    retired = post_legacy(
+        "retire-room-device",
+        "participants/retire",
+        {"deviceId": owner, "targetDeviceId": owner, "epoch": 0},
+    )
+    assert retired.status_code == 200, retired.content

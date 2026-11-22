@@ -20,8 +20,9 @@ def main() -> int:
         print(f"room_access: {exc}", file=sys.stderr)
         return 2
     livekit = LiveKit(config.livekit_url, config.livekit_key, config.livekit_secret)
+    matrix = Matrix(config.synapse_url, config.matrix_token)
     service = Service(
-        Matrix(config.synapse_url, config.matrix_token),
+        matrix,
         livekit,
         config.livekit_ws_url,
         config.agent_user,
@@ -35,7 +36,14 @@ def main() -> int:
             config.allowed_origins,
             limiter=GrantLimiter(config.grants_per_minute),
         ),
-        make_webhook_server(config.webhook_bind, config.webhook_port, livekit, service.on_webhook),
+        make_webhook_server(
+            config.webhook_bind,
+            config.webhook_port,
+            livekit,
+            service.on_webhook,
+            matrix=matrix,
+            agent_user=config.agent_user,
+        ),
     ):
         threading.Thread(target=server.serve_forever, daemon=True).start()
     while True:
