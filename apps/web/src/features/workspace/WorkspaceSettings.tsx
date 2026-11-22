@@ -452,7 +452,7 @@ function Appearance({
         role="group"
         aria-label={copy.appearance}
       >
-        {/* Every theme the console has, « Automatique » and the two frosted-glass ones included.
+        {/* Every selectable theme the console offers (`system`, `light`, `dark`, `black`).
             The chosen one is said by its edge and by `aria-pressed`, not by a glyph inside its
             name. */}
         {THEME_PREFERENCES.map((mode) => (

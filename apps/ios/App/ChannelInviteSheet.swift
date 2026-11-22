@@ -3,7 +3,7 @@ import UIKit
 import KoderaClient
 import KoderaDomain
 
-/// Universal Matrix invitation sheet consuming `KoderaTokens` (`ciel` / `cielNuit`).
+/// Universal Matrix invitation sheet consuming `KoderaTokens` (`dark` / `light`).
 /// Copies canonical `matrix.to`, `matrix:` URI, and `#alias:domain` targets to the clipboard
 /// without opening external web pages, and validates `@user:domain` MXIDs locally.
 @MainActor

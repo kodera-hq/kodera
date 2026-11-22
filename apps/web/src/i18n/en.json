@@ -1202,7 +1202,7 @@
   "console.shell.appearance.hint-ciel-nuit": "the night sky, low light",
   "console.shell.appearance.hint-dark": "low light, end of the day",
   "console.shell.appearance.hint-light": "office, daylight",
-  "console.shell.appearance.hint-system": "the light sky or true black, following your device’s setting",
+  "console.shell.appearance.hint-system": "the light or dark theme, following your device’s setting",
   "console.shell.appearance.label-black": "Black",
   "console.shell.appearance.label-ciel": "Sky",
   "console.shell.appearance.label-ciel-nuit": "Sky night",

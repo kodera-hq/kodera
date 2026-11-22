@@ -799,8 +799,8 @@ test('appearance/page: passes axe in every theme', async ({ page }) => {
     ['light', 'light', 'Clair'],
     ['dark', 'dark', 'Sombre'],
     ['black', 'dark', 'Noir'],
-    ['ciel', 'light', 'Clair'],
-    ['ciel-nuit', 'dark', 'Sombre'],
+    ['ciel', 'light', 'Automatique'],
+    ['ciel-nuit', 'dark', 'Automatique'],
   ] as const) {
     await page.evaluate(({ key, value }) => window.localStorage.setItem(key, value), {
       key: KEY,

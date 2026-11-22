@@ -177,6 +177,7 @@
     color-scheme: light;
   }
 
+  :root:where(:not([data-theme='light'], [data-theme='ciel'])),
   [data-theme='dark'],
   [data-theme='black'],
   [data-theme='ciel-nuit'] {
@@ -385,6 +386,7 @@
      the edge, and no screen nests one around an inverse card.
      `tests/e2e/10-appearance.spec.ts` measures it in a browser. Every dark theme is named here,
      as in the `color-scheme` rule above: a theme added to one list belongs in both. */
+  :root:where(:not([data-theme='light'], [data-theme='ciel'])) .inverse-edge,
   [data-theme='dark'] .inverse-edge,
   [data-theme='black'] .inverse-edge,
   [data-theme='ciel-nuit'] .inverse-edge {
@@ -395,6 +397,7 @@
      nothing on a dark page and its edge already shapes it. Raised grounds are for overlays. Only
      the shadow layer is zeroed: Tailwind 4 draws rings in `box-shadow` too, so `box-shadow: none`
      would also erase a ring on a card. */
+  :root:where(:not([data-theme='light'], [data-theme='ciel'])) .card-flat-dark,
   [data-theme='dark'] .card-flat-dark,
   [data-theme='black'] .card-flat-dark,
   [data-theme='ciel-nuit'] .card-flat-dark {

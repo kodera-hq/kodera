@@ -1,13 +1,11 @@
 import { LanguageSwitch } from './LanguageSwitch'
 // `/{org}/appearance` — « Apparence » (docs/specs/10-appearance.md), the start
-// of the delivered design's Réglages › Vous › Apparence pane: one line saying
-// how a choice applies, then one preview card per theme. « Automatique » comes
-// first and is the default — an owner-approved deviation from the mock (plan
-// D4, 2026-09-24) — and follows the device inside the Ciel family (owner
-// decision B2): Ciel on a light device, Ciel nuit on a dark one. The two Ciel
-// cards follow, then the mock's three Givre cards (Clair, Sombre, Noir), each
-// still one click away. The pane's density and text-size rows are not
-// drawn: the console has neither setting.
+// of Réglages › Vous › Apparence: one line saying how a choice applies, then one
+// preview card per selectable theme. « Automatique » comes first and is the
+// default, following the device between Light Givre (`light`) and Dark Precision
+// (`dark`, defaultTheme), followed by Clair, Sombre and Noir. Legacy stored
+// `ciel` / `ciel-nuit` values remain truthful until the member chooses an active
+// card, which migrates storage cleanly in one click.
 //
 // This page only stores a choice and announces it (`src/theme/theme.ts`);
 // `public/theme.js` applies it to the whole page, before the first paint on the
@@ -22,11 +20,12 @@ import { applyCustomTokensToDocument } from './themeOverrides'
 import {
   THEME_PREFERENCES,
   THEME_STORAGE_KEY,
+  isSelectableThemePreference,
   isThemePreferenceKept,
   readThemePreference,
   saveThemePreference,
 } from '../../theme/theme'
-import type { AppliedTheme, ThemePreference } from '../../theme/theme'
+import type { AppliedTheme, StoredThemePreference } from '../../theme/theme'
 import { PAGE_TITLE } from '../../ui/pageTitle'
 import { THEME_COPY, THEME_PREVIEW } from '../../theme/themeChoices'
 
@@ -78,7 +77,7 @@ export function AppearanceScreen() {
   // The choice in effect, not only the stored one: after a refused write the
   // page keeps the refused choice until the next load, and so does a page
   // opened again in the meantime, warning included.
-  const [preference, setPreference] = useState<ThemePreference>(readThemePreference)
+  const [preference, setPreference] = useState<StoredThemePreference>(readThemePreference)
   const [notKept, setNotKept] = useState(() => !isThemePreferenceKept())
 
   // Another tab's choice reaches this one through `storage`, as it reaches
@@ -118,7 +117,7 @@ export function AppearanceScreen() {
           {t('console.shell.appearance.hint-choice')}
         </p>
         <RadioGroupPrimitive.Root
-          value={preference}
+          value={isSelectableThemePreference(preference) ? preference : ''}
           onValueChange={choose}
           aria-label={t('console.shell.appearance.label-theme')}
           aria-describedby={hintId}

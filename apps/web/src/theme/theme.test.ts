@@ -3,10 +3,12 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { defaultTheme, themeIds, themes } from '@kodera/design-tokens/themes'
 import {
-  LEGACY_THEME_ALIASES,
+  LEGACY_THEME_IDS,
   THEME_CHANGE_EVENT,
   THEME_PREFERENCES,
   THEME_STORAGE_KEY,
+  appliedTheme,
+  isSelectableThemePreference,
   isThemePreferenceKept,
   readThemePreference,
   saveThemePreference,
@@ -54,7 +56,7 @@ describe('public/theme.js', () => {
     expect(dark.scheme).toBe('dark')
   })
 
-  it('offers the active Givre themes in primary pickers while covering legacy Ciel aliases', () => {
+  it('offers the active Givre themes in primary pickers while covering legacy Ciel IDs', () => {
     expect([...THEME_PREFERENCES].filter((preference) => preference !== 'system')).toEqual([
       'light',
       'dark',
@@ -63,7 +65,7 @@ describe('public/theme.js', () => {
     expect(
       [
         ...THEME_PREFERENCES.filter((preference) => preference !== 'system'),
-        ...Object.keys(LEGACY_THEME_ALIASES),
+        ...LEGACY_THEME_IDS,
       ].sort()
     ).toEqual([...themeIds].sort())
   })
@@ -275,6 +277,18 @@ describe('theme preference', () => {
     expect(readThemePreference()).toBe('system')
     localStorage.setItem(THEME_STORAGE_KEY, 'sepia')
     expect(readThemePreference()).toBe('system')
+  })
+
+  it('reports legacy stored ciel and ciel-nuit truthfully so studio seeding and 1-click migration stay accurate', () => {
+    localStorage.setItem(THEME_STORAGE_KEY, 'ciel')
+    expect(readThemePreference()).toBe('ciel')
+    expect(appliedTheme(readThemePreference())).toBe('ciel')
+    expect(isSelectableThemePreference(readThemePreference())).toBe(false)
+
+    localStorage.setItem(THEME_STORAGE_KEY, 'ciel-nuit')
+    expect(readThemePreference()).toBe('ciel-nuit')
+    expect(appliedTheme(readThemePreference())).toBe('ciel-nuit')
+    expect(isSelectableThemePreference(readThemePreference())).toBe(false)
   })
 
   it('stores the choice and announces it with the value', () => {

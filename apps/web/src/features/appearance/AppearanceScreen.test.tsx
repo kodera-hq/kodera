@@ -62,6 +62,31 @@ describe('AppearanceScreen', () => {
     )
   })
 
+  it('leaves primary cards unchecked for legacy stored Ciel values and migrates in one click', async () => {
+    const user = userEvent.setup()
+    for (const [legacy, targetLabel, targetId] of [
+      ['ciel', 'Clair', 'light'],
+      ['ciel-nuit', 'Sombre', 'dark'],
+    ] as const) {
+      localStorage.setItem(THEME_STORAGE_KEY, legacy)
+      const announced = vi.fn()
+      window.addEventListener(THEME_CHANGE_EVENT, announced)
+      const { unmount } = render(<AppearanceScreen />)
+      for (const radio of cards()) {
+        expect(radio).toHaveAttribute('aria-checked', 'false')
+      }
+      await user.click(screen.getByRole('radio', { name: targetLabel }))
+      window.removeEventListener(THEME_CHANGE_EVENT, announced)
+      expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe(targetId)
+      expect(announced.mock.calls[0]?.[0]).toMatchObject({ detail: targetId })
+      expect(screen.getByRole('radio', { name: targetLabel })).toHaveAttribute(
+        'aria-checked',
+        'true'
+      )
+      unmount()
+    }
+  })
+
   it('stores and announces a choice at once, and edges the chosen card', async () => {
     const user = userEvent.setup()
     const announced = vi.fn()

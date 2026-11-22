@@ -96,8 +96,8 @@ fun KoderaTheme(
 }
 
 /**
- * Cobalt × Kodera — verre `ciel` translucent glass card consuming generated `KoderaTokens` panel
- * material, hairline border, and frost legibility in both light (`ciel`) and dark (`ciel-nuit`) modes.
+ * Cobalt × Kodera translucent glass card consuming generated `KoderaTokens` panel material,
+ * hairline border, and legibility in both `light` (Light Givre) and `dark` (Dark Precision) modes.
  */
 @Composable
 internal fun CielGlassCard(

@@ -244,7 +244,7 @@ test('community sidebar, both menus, appearance and product dialogs are usable',
     await menu(page, 'Paramètres personnels…', true)
     const personal = page.getByRole('dialog', { name: 'Paramètres personnels', exact: true })
     await personal.getByRole('tab', { name: 'Apparence & thèmes', exact: true }).click()
-    for (const cardLabel of ['Automatique', 'Ciel', 'Ciel nuit', 'Clair', 'Sombre', 'Noir']) {
+    for (const cardLabel of ['Automatique', 'Clair', 'Sombre', 'Noir']) {
       await expect(personal.getByRole('button', { name: cardLabel, exact: true })).toBeVisible()
     }
     await personal.getByRole('button', { name, exact: true }).click()
