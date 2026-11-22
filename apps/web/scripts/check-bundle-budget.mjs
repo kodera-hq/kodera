@@ -24,22 +24,14 @@
 // the build measures today plus a little room, so growth is noticed when it happens; lower them
 // when the build shrinks. A budget above its ceiling stops the script before it measures anything.
 //
-// Status of the entry ceiling: NOT MET. The entry measures about 225 kB (production profile)
-// against 180 kB, down from 907 kB before the route tree was split. What is left is almost all
-// libraries the sign-in screen itself runs — react-dom, the router, i18next, zod, react-hook-form
-// and the query client are about 164 kB of it between them — so the remainder is not a matter of
-// splitting. The rule stays at the ceiling: by default this script fails on it. CI runs it with
-// `--report-only entry-size` (.github/workflows/ci-web.yml), which measures and prints the rule
-// and does not fail the run on it, and with nothing else relaxed. Remove that flag the day the
-// entry fits; do not move the number.
+// Status of the entry ceiling: MET across `production`, `production-telemetry` and `staging`.
+// Each profile carries its own `entryGzip` budget (`ENTRY_BUDGETS`, today's measurement plus a few
+// kilobytes of room, well below the 180 kB ceiling), and CI runs this script with no `--report-only`
+// hold (.github/workflows/ci-web.yml).
 //
-// The regression limit is a different thing, and exists only because of that status. It is not a
-// target and says nothing is met: it is the entry's measured size per profile plus about 3 kB, it
-// always fails the run, and it cannot be reported only. All it does is stop the entry getting
-// worse while the 180 kB target is out of reach. Every run prints both lines, the target as NOT
-// MET and the limit, so neither can be read as the other. Lower the limit when the entry shrinks;
-// delete it, with the `--report-only` flag, when the entry meets the target. A limit at or below
-// the target stops the script: by then it is the target that must be enforced.
+// `measure()` retains optional `entryRegressionGzip` support for the emergency case where a build
+// temporarily exceeds the ceiling and must be capped above `CEILINGS.entryGzip`; at or below the
+// ceiling, `entryGzip` itself is enforced and any `entryRegressionGzip` is refused.
 //
 // Sizes are gzip level 9 of each emitted file, in bytes; 1 kB is 1000 bytes, as Vite reports it.
 //
@@ -47,11 +39,10 @@
 //   node scripts/check-bundle-budget.mjs [--profile production|production-telemetry|staging] [--json <file>]
 //     [--report-only <rule>]   rule: entry-size, chunk-size, entry-vendors, entry-catalogues or
 //     chunk-cycles.
-//     A reported-only rule is measured and printed as NOT MET, and does not fail the run. It
-//     exists for a ceiling the build does not meet yet; see the status note above.
-//     `entry-regression` is refused here: it is what holds the line while `entry-size` is held.
+//     A reported-only rule is measured and printed as NOT MET, and does not fail the run.
+//     `entry-regression` is refused here: it exists only to hold the line if `entry-size` is held.
 //   node scripts/check-bundle-budget.mjs --mutation <name>
-//     For the self-test only (`scripts/check-bundle-budget.selftest.sh`): builds with one fault
+//     For the self-test only (`scripts/check-bundle-budget.selftest.mjs`): builds with one fault
 //     injected into the module graph, in memory, so the check can be shown to fail. Nothing in the
 //     working tree is touched. Names: `vendor-matrix`, `vendor-livekit`, `vendor-oidc`,
 //     `inflate-entry`, `inflate-entry-slightly`, `inflate-chunk`, `whole-catalogue`,
@@ -70,36 +61,36 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
 /** The product's limits. Never raised: a build that cannot meet one is reported, not accommodated. */
 export const CEILINGS = Object.freeze({ entryGzip: 180_000, chunkGzip: 350_000 })
-/**
- * What is enforced: today's measurement plus a little room, never above a ceiling.
- *
- * - `entryGzip`: the ceiling itself; the entry is above it (see the status note at the top).
- * - `chunkGzip`: the largest deferred chunk is `matrix-js-sdk` in its own file, at about 148 kB.
- */
-export const BUDGETS = Object.freeze({ entryGzip: 180_000, chunkGzip: 160_000 })
 
 /**
- * The entry's regression limit, per build profile: NOT the target (that is `CEILINGS.entryGzip`,
- * which the entry does not meet), only the size the entry may not grow past meanwhile.
+ * Enforced entry JavaScript budgets per build profile: today's measurement plus ~4.5 kB of room,
+ * each well below `CEILINGS.entryGzip` (180 000 bytes).
  *
- * - `production`: measured 207 225 bytes.
- * - `production-telemetry`: measured 207 613 bytes.
- * - `staging`: measured 208 948 bytes (the first-owner journey is built in).
- *
- * About 3 kB of room each. These only ever go down.
+ * - `production`: measured ~153.5 kB gzip.
+ * - `production-telemetry`: measured ~153.8 kB gzip.
+ * - `staging`: measured ~155.2 kB gzip (the first-owner journey is built in).
  */
-export const ENTRY_REGRESSION_LIMITS = Object.freeze({
-  production: 210_500,
-  'production-telemetry': 211_000,
-  staging: 212_500,
+export const ENTRY_BUDGETS = Object.freeze({
+  production: 158_000,
+  'production-telemetry': 158_500,
+  staging: 160_000,
 })
+
+/**
+ * What is enforced by default (`production` profile): today's measurement plus a little room,
+ * never above a ceiling.
+ *
+ * - `entryGzip`: `ENTRY_BUDGETS.production`.
+ * - `chunkGzip`: the largest deferred chunk is `CollaborativeBlockEditor` at ~151.5 kB.
+ */
+export const BUDGETS = Object.freeze({ entryGzip: ENTRY_BUDGETS.production, chunkGzip: 160_000 })
 
 /** The budgets a profile is measured against. */
 export function budgetsFor(profile) {
-  if (!Object.hasOwn(ENTRY_REGRESSION_LIMITS, profile)) {
+  if (!Object.hasOwn(ENTRY_BUDGETS, profile)) {
     throw new BudgetError(`unknown profile "${profile}"`)
   }
-  return { ...BUDGETS, entryRegressionGzip: ENTRY_REGRESSION_LIMITS[profile] }
+  return { ...BUDGETS, entryGzip: ENTRY_BUDGETS[profile] }
 }
 
 /** The rules, by the name `--report-only` takes. A violation starts with its rule's code. */
@@ -405,9 +396,7 @@ function profileEnvironment(profile) {
     VITE_ENABLE_MSW: '0',
     VITE_FIRST_OWNER_JOURNEY: profile === 'staging' ? '1' : '0',
     VITE_POSTHOG_KEY:
-      profile === 'production-telemetry'
-        ? 'phc_9Xk4vR7mQ2pL8nW5jT3yH6fB1cZ0dG4sA8uE2wP9qM7'
-        : '',
+      profile === 'production-telemetry' ? 'phc_9Xk4vR7mQ2pL8nW5jT3yH6fB1cZ0dG4sA8uE2wP9qM7' : '',
     VITE_POSTHOG_HOST: 'https://eu.i.posthog.com',
     VITE_CORE_API_URL: 'http://localhost:8000/api/v1',
     VITE_KEYCLOAK_URL: 'http://localhost:8080',
@@ -418,11 +407,7 @@ function profileEnvironment(profile) {
 
 /** Builds into `outDir` and describes what was emitted, sizes read back from the files on disk. */
 export async function describeBuild({ outDir, profile = 'production', mutation }) {
-  if (
-    profile !== 'production' &&
-    profile !== 'production-telemetry' &&
-    profile !== 'staging'
-  ) {
+  if (profile !== 'production' && profile !== 'production-telemetry' && profile !== 'staging') {
     throw new BudgetError(`unknown profile "${profile}"`)
   }
   const captured = []

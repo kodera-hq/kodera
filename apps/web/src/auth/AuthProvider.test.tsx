@@ -3,7 +3,13 @@ import { act, render, renderHook, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import type { AuthAdapter, AuthSessionSnapshot, AuthUser } from '@/auth/AuthAdapter'
-import { AuthProvider, useAuth, useAuthLifetime } from '@/auth/AuthProvider'
+import {
+  AuthProvider,
+  PUSH_MODULE_LOAD_TIMEOUT_MS,
+  useAuth,
+  useAuthLifetime,
+} from '@/auth/AuthProvider'
+import { PUSH_DEVICE_KEY } from '@/features/notifications/pushState'
 import * as matrixAuth from '@/auth/matrix'
 import { coreApi } from '@/api/client'
 import { authAdapter as defaultAuthAdapter } from './oidc'
@@ -284,10 +290,7 @@ describe('AuthProvider / useAuth', () => {
       },
       onMatrixClear
     )
-    localStorage.setItem(
-      'kodera.web.espace.device:https://matrix.acme-sa.kodera.io',
-      'KODERADEV'
-    )
+    localStorage.setItem('kodera.web.espace.device:https://matrix.acme-sa.kodera.io', 'KODERADEV')
     sessionStorage.setItem('kodera.web.auth.returnTo', '/acme-sa/workspace')
 
     const signOutSpy = vi
@@ -647,5 +650,84 @@ it('draft_observer_failure_does_not_skip_signout_steps', async () => {
       revoke.mockRestore()
       matrixAuth.clearMatrixSession()
     }
+  }
+})
+
+it('completes credential revocation, Matrix sign-out, and local storage wipe when the lazy push module load stalls', async () => {
+  vi.useFakeTimers()
+  const adapter = fakeAdapter({ realm: 'acme-sa' }, 'stalled-push-token')
+  const onSessionEnded = vi.fn()
+  const lateDisablePush = vi.fn(async () => true)
+  let resolvePushLoad: ((mod: { disablePush: typeof lateDisablePush }) => void) | undefined
+  const stalledLoadPush = vi.fn(
+    () =>
+      new Promise<{ disablePush: typeof lateDisablePush }>((resolve) => {
+        resolvePushLoad = resolve
+      })
+  )
+  matrixAuth.registerMatrixSession({
+    baseUrl: 'https://matrix.acme-sa.kodera.io',
+    userId: '@person-a:acme-sa.kodera.io',
+    deviceId: 'KODERADEV',
+    accessToken: 'syt_stalled_token',
+    refreshToken: 'syr_stalled_refresh',
+    refresh: vi.fn(),
+  })
+  const revoke = vi.spyOn(matrixAuth, 'signOutOfMatrix').mockResolvedValue(undefined)
+  localStorage.setItem(PUSH_DEVICE_KEY, '11111111-2222-4333-8444-555555555555')
+  sessionStorage.setItem('kodera.web.auth.returnTo', '/acme-sa/home')
+
+  const { result, unmount } = renderHook(() => ({ auth: useAuth(), lifetime: useAuthLifetime() }), {
+    wrapper: ({ children }) => (
+      <AuthProvider
+        adapter={adapter}
+        loadPushModule={stalledLoadPush}
+        onSessionEnded={onSessionEnded}
+      >
+        {children}
+      </AuthProvider>
+    ),
+  })
+  const initialStamp = result.current.lifetime.getRetirementStamp()
+  try {
+    let settled = false
+    const signOutPromise = result.current.auth.signOut().then(() => {
+      settled = true
+    })
+
+    // Synchronous retirement happens immediately before awaiting the push chunk.
+    expect(result.current.lifetime.getRetirementStamp()).not.toBe(initialStamp)
+    expect(stalledLoadPush).toHaveBeenCalledTimes(1)
+    expect(settled).toBe(false)
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(PUSH_MODULE_LOAD_TIMEOUT_MS - 1)
+    })
+    expect(settled).toBe(false)
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1)
+      await signOutPromise
+    })
+
+    expect(settled).toBe(true)
+    expect(adapter.signOut).toHaveBeenCalledTimes(1)
+    expect(adapter.getAccessToken()).toBeUndefined()
+    expect(onSessionEnded).toHaveBeenCalledTimes(1)
+    expect(revoke).toHaveBeenCalledWith('https://matrix.acme-sa.kodera.io', 'syt_stalled_token')
+    expect(localStorage.getItem(PUSH_DEVICE_KEY)).toBeNull()
+    expect(sessionStorage.getItem('kodera.web.auth.returnTo')).toBeNull()
+
+    // Even if the stalled chunk eventually arrives later, it never runs teardown after timeout.
+    resolvePushLoad?.({ disablePush: lateDisablePush })
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(lateDisablePush).not.toHaveBeenCalled()
+  } finally {
+    unmount()
+    revoke.mockRestore()
+    matrixAuth.clearMatrixSession()
+    vi.useRealTimers()
   }
 })

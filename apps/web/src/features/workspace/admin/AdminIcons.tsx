@@ -57,11 +57,6 @@ export const PersonIcon = () => (
     <path d="M3 13c.8-2.3 2.7-3.5 5-3.5s4.2 1.2 5 3.5" />
   </Glyph>
 )
-export const MoreIcon = () => (
-  <Glyph>
-    <path d="M3.5 8h.01M8 8h.01M12.5 8h.01" strokeWidth="2.4" />
-  </Glyph>
-)
 export const UnbanIcon = () => (
   <Glyph>
     <circle cx="8" cy="8" r="5" />

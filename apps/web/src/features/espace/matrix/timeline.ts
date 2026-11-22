@@ -151,7 +151,7 @@ function decodeEntities(text: string): string {
  * The user pills of a message's HTML (`<a href="https://matrix.to/#/@id">Name</a>`), read with a
  * pattern and never parsed as HTML: only the id and the words go on, as text.
  */
-export function mentionPillsOf(content: Record<string, unknown>): MentionPill[] {
+function mentionPillsOf(content: Record<string, unknown>): MentionPill[] {
   if (content.format !== 'org.matrix.custom.html') return []
   const html = content.formatted_body
   if (typeof html !== 'string' || html.length > 65_536) return []

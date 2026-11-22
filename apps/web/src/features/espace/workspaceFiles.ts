@@ -42,7 +42,7 @@ export interface WorkspaceFileEntry {
 }
 
 /** Which chip a Core attachment falls under, by the type the contract accepts. */
-export function fileKindOf(contentType: AttachmentType): WorkspaceFileKind {
+function fileKindOf(contentType: AttachmentType): WorkspaceFileKind {
   if (contentType.startsWith('image/')) return 'image'
   if (contentType === 'application/pdf' || contentType === 'text/plain') return 'document'
   return 'other'

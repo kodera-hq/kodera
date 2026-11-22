@@ -1,4 +1,3 @@
-import '../../validation-policy'
 import { z } from '@/validation-policy'
 
 export const documentCommentSchema = z.object({

@@ -9,7 +9,7 @@ import { useTranslation } from 'react-i18next'
 import { useAuth } from '../auth/AuthProvider'
 import { isProtectedCallbackError, readPendingRealm } from '../auth/oidc'
 import { consumeReturnTo, hasReturnTo, rememberReturnTo } from '../auth/return-to'
-import { Button } from '../ui/Button/Button'
+import { TextButton as Button } from '../ui/Button/TextButton'
 import { onCommunityHost } from './communityHost'
 import { rootRoute } from './root-route'
 

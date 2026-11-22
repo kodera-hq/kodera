@@ -5,16 +5,13 @@
 // Every case is a real build. The control is the tree as it is; each mutation is the same build
 // with one fault injected into the module graph in memory (`--mutation`, nothing in the working
 // tree is touched): a workspace-only vendor imported by the application entry, an entry or a
-// deferred chunk made heavier than its ceiling, a message catalogue the entry must not carry, two
+// deferred chunk made heavier than its budget, a message catalogue the entry must not carry, two
 // chunks made to import each other.
 // A case asserts the LINE THE GATE PRINTS. The exit code alone would be satisfied by a gate that
 // refuses everything, so the control must pass, and must print none of the refusals.
 //
-// The entry ceiling is not met yet, and CI runs the gate with `--report-only entry-size` (see the
-// status note in the gate). The cases here run the same way, so that what they prove is what CI
-// enforces, except the ones that are about the entry-size rule itself. What stops the entry
-// growing meanwhile is its regression limit, which is always enforced: the cases on it prove that
-// holding the target does not hold the limit, and that the limit cannot be held at all.
+// CI runs the gate with no `--report-only` flags (.github/workflows/ci-web.yml), enforcing every
+// rule including `entry-size`. The cases here run the same way.
 //
 // The case count at the bottom is counted, not written down: a case that stops running stops
 // being reported.
@@ -26,8 +23,9 @@ import { fileURLToPath } from 'node:url'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const GATE = join(HERE, 'check-bundle-budget.mjs')
-const AS_IN_CI = ['--report-only', 'entry-size']
+const AS_IN_CI = []
 const REFUSALS = [
+  'ENTRY_OVER_BUDGET',
   'FORBIDDEN_ENTRY_VENDOR',
   'CHUNK_OVER_BUDGET',
   'ENTRY_CATALOGUE',
@@ -66,17 +64,21 @@ function expectRefusal(title, args, needle) {
   for (const refusal of REFUSALS) {
     assert.ok(!output.includes(refusal), `control: the gate printed ${refusal}\n${output}`)
   }
+  assert.ok(!output.includes('NOT MET'), `control: printed NOT MET\n${output}`)
   assert.match(output, /entry JavaScript: \d+\.\d+ kB gzip in \d+ file\(s\)/, output)
-  // Both lines, every run: the target, which is not met, and the limit, which is not the target.
-  assert.match(output, /target 180\.00 kB \(ceiling 180\.00 kB\): NOT MET, over by /, output)
-  assert.match(output, /regression limit \d+\.\d+ kB \(not the target\): held, /, output)
-  assert.ok(
-    output.includes('NOT MET (reported only, does not fail this run): ENTRY_OVER_BUDGET'),
-    `control: the unmet target was not reported as NOT MET\n${output}`
+  assert.match(
+    output,
+    /target \d+\.\d+ kB \(ceiling 180\.00 kB\): met, \d+\.\d+ kB to spare/,
+    output
   )
-  assert.ok(!output.includes('OK — entry and deferred chunks are within budget'), output)
+  assert.ok(
+    output.includes(
+      'check-bundle-budget: OK — entry and deferred chunks are within budget, no forbidden vendor or catalogue in the entry, no chunk cycle'
+    ),
+    output
+  )
   assert.match(output, /deferred chunks: \d+;/, output)
-  console.log('ok - control: the tree as it is passes the enforced rules')
+  console.log('ok - control: the tree as it is passes every rule')
 }
 
 // Each workspace-only vendor, imported by the application entry, is refused by name.
@@ -92,7 +94,7 @@ for (const [mutation, vendor] of [
   )
 }
 
-// A deferred chunk over its ceiling is refused, and named.
+// A deferred chunk over its budget is refused, and named.
 expectRefusal(
   'a deferred chunk over its budget is refused',
   [...AS_IN_CI, '--mutation', 'inflate-chunk'],
@@ -118,37 +120,38 @@ expectRefusal(
   'CHUNK_CYCLE: these chunks import each other: assets/cycle-0'
 )
 
-// The entry-size rule is live at its ceiling: without `--report-only`, an entry made far heavier
-// than the ceiling fails the run on that rule, whatever the tree measures today.
+// Both a large inflation past the 180 kB ceiling and a ~12 kB regression past `BUDGETS.entryGzip`
+// fail the gate as CI runs it.
 expectRefusal(
-  'an entry over its budget is refused when the rule is enforced',
-  ['--mutation', 'inflate-entry'],
+  'an entry over its ceiling is refused',
+  [...AS_IN_CI, '--mutation', 'inflate-entry'],
+  'ENTRY_OVER_BUDGET: the entry JavaScript is '
+)
+expectRefusal(
+  'an entry growing past its tight budget is refused',
+  [...AS_IN_CI, '--mutation', 'inflate-entry-slightly'],
   'ENTRY_OVER_BUDGET: the entry JavaScript is '
 )
 
-// The regression limit holds while the target is held: an entry a few kilobytes heavier — nowhere
-// near the mutation above — fails the run as CI runs it, by the limit's own name, with the target
-// still reported beside it as NOT MET.
+// `--report-only` still reports a held violation as NOT MET without claiming full budget compliance.
 {
   cases++
-  const { status, output } = run([...AS_IN_CI, '--mutation', 'inflate-entry-slightly'])
-  assert.equal(status, 1, `regression: a heavier entry passed while the target is held\n${output}`)
-  assert.ok(
-    output.includes('check-bundle-budget: ENTRY_REGRESSION: the entry JavaScript is '),
-    `regression: the failure did not name the limit\n${output}`
-  )
-  assert.match(output, /regression limit \d+\.\d+ kB \(not the target\): EXCEEDED by /, output)
+  const { status, output } = run([
+    '--report-only',
+    'entry-size',
+    '--mutation',
+    'inflate-entry-slightly',
+  ])
+  assert.equal(status, 0, `report-only: failed when entry-size was held\n${output}`)
   assert.ok(
     output.includes('NOT MET (reported only, does not fail this run): ENTRY_OVER_BUDGET'),
-    `regression: the target was no longer reported as NOT MET\n${output}`
+    `report-only: the held rule was not reported as NOT MET\n${output}`
   )
-  assert.ok(output.includes('check-bundle-budget: FAILED — 1 violation(s)'), output)
-  console.log(
-    'ok - an entry past its regression limit is refused while the target is only reported'
-  )
+  assert.ok(!output.includes('OK — entry and deferred chunks are within budget'), output)
+  console.log('ok - a reported-only rule is printed as NOT MET without claiming full compliance')
 }
 
-// The limit cannot be made report-only: the request is refused before any build.
+// The regression limit cannot be made report-only: the request is refused before any build.
 {
   cases++
   const { status, output } = run(['--report-only', 'entry-regression'])

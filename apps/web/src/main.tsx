@@ -16,7 +16,6 @@
 // fuller version of this reasoning, and `src/config.ts` for why this file
 // reads `import.meta.env` directly instead of going through it here).
 
-import './validation-policy'
 import { RouterProvider } from '@tanstack/react-router'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'

@@ -7,9 +7,7 @@
 import { createRoute, redirect } from '@tanstack/react-router'
 import { authAdapter } from '../auth/oidc'
 import { onCommunityHost } from './communityHost'
-import { loadCurrentUser } from './currentUser'
 import { demoLandingFor, isDemoActive } from './interactiveDemo'
-import { landingIn } from './organisationLanding'
 import { SessionLoading } from './SessionLoading'
 import { rootRoute } from './root-route'
 
@@ -26,6 +24,10 @@ export const indexRoute = createRoute({
       if (onCommunityHost()) throw redirect({ to: '/login', search: { org: 'community' } })
       throw redirect({ to: '/login' })
     }
+    const [{ loadCurrentUser }, { landingIn }] = await Promise.all([
+      import('./currentUser'),
+      import('./organisationLanding'),
+    ])
     const { me, generation, credentialGeneration } = await loadCurrentUser()
     const current = authAdapter.getSnapshot()
     if (

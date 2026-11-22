@@ -25,10 +25,3 @@ export function trackOrganisationSwitched(membershipCount: number): void {
 export function trackSessionExpiryDialogShown(outcome: SessionExpiryOutcome): void {
   track('session_expiry_dialog_shown', { outcome })
 }
-
-/** §11 names this event; no screen raises it yet. It is declared here so the
- * first one to grow a help affordance calls the shell's own function rather
- * than inventing a second spelling of the same event. */
-export function trackHelpOpened(area: string, screen: string): void {
-  track('help_opened', { area, screen })
-}
