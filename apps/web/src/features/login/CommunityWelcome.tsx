@@ -30,7 +30,7 @@ export function CommunityWelcome() {
     }
   }
   return (
-    <main className="flex min-h-screen items-center justify-center bg-c-surface p-6 narrow:p-4">
+    <main className="flex min-h-screen items-center justify-center bg-c-page p-6 narrow:p-4">
       <Card className="w-full max-w-shell-document-min-width">
         <CardBody className="flex flex-col gap-6 p-6">
           <KoderaMark className="h-10 w-10 text-c-ink" />

@@ -1,7 +1,7 @@
 import { expect, test, type Page } from '@playwright/test'
 import AxeBuilder from '@axe-core/playwright'
 
-test.use({ permissions: ['clipboard-read', 'clipboard-write'] })
+test.use({ permissions: ['clipboard-read', 'clipboard-write'], reducedMotion: 'reduce' })
 
 interface SessionGateStatus {
   ownsFetch: boolean
@@ -256,7 +256,7 @@ test('community sidebar, both menus, appearance and product dialogs are usable',
       animations: 'disabled',
     })
     const accessibility = await new AxeBuilder({ page })
-      .withTags(['wcag2a', 'wcag2aa', 'wcag21aa'])
+      .withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa'])
       .analyze()
     expect(accessibility.violations, `Workspace accessibility in ${theme}`).toEqual([])
   }

@@ -1,5 +1,5 @@
-:host { position: fixed; right: var(--space-4); bottom: var(--space-4); z-index: 2147483647; font-family: var(--font-family-sans); }
-button { display: inline-flex; align-items: center; gap: var(--space-2); padding: var(--space-3) var(--space-4); border: 0; border-radius: var(--radius-full); background: var(--semantic-action-primary); color: var(--semantic-action-onPrimary); font-family: var(--font-family-sans); font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); cursor: pointer; }
-button:hover { background: var(--semantic-action-primaryHover); }
-button:focus-visible { outline: var(--space-control-selection-ring-width) solid var(--semantic-action-primary); outline-offset: var(--space-1); }
+:host { color-scheme: dark; position: fixed; right: var(--space-4); bottom: var(--space-4); z-index: 2147483647; font-family: var(--font-family-sans); }
+button { display: inline-flex; align-items: center; gap: var(--space-2); padding: var(--space-3) var(--space-4); border-width: thin; border-style: solid; border-color: var(--color-theme-dark-border); border-radius: var(--radius-full); background: var(--color-theme-dark-action); color: var(--semantic-action-onPrimary); font-family: var(--font-family-sans); font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); cursor: pointer; }
+button:hover { background: var(--color-theme-dark-action-hover); }
+button:focus-visible { outline: var(--space-control-selection-ring-width) solid var(--color-theme-dark-accent-ink); outline-offset: var(--space-1); }
 button:disabled { cursor: wait; }

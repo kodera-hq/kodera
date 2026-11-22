@@ -105,6 +105,14 @@ test('actual update response literal declares unsupported with the complete expe
 
 test('fallback stylesheet is exact generated token output and rejects literal or missing-token styles', () => {
   checkBootstrapCss();
+  const bootstrapCss = readFileSync(new URL('../src-tauri/assets/bootstrap.css', import.meta.url), 'utf8');
+  const updaterCss = readFileSync(new URL('../src-tauri/assets/updater.css', import.meta.url), 'utf8');
+  assert.match(bootstrapCss, /color-scheme:\s*dark;/);
+  assert.doesNotMatch(bootstrapCss, /color-scheme:\s*light;/);
+  assert.match(bootstrapCss, /--color-theme-dark-page:\s*#08090A;/i);
+  assert.match(bootstrapCss, /--color-theme-dark-surface:\s*#141516;/i);
+  assert.match(updaterCss, /color-scheme:\s*dark;/);
+  assert.match(updaterCss, /--color-theme-dark-action:\s*#4361EE;/i);
   for (const css of ['body {color:#fff}', 'body {color:#ffffff}', 'body {padding:12px}', 'body {font-family:Arial}', 'body {font:Arial}', 'body {color:red}', 'body {background:hsl(0 0% 0%)}', 'body {color:var(--missing-token)}']) {
     assert.throws(() => generateBootstrapCss(css));
   }

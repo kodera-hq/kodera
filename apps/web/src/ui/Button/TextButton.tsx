@@ -33,12 +33,9 @@ const VARIANT: Record<ButtonVariant, string> = {
   primary: 'bg-c-action text-c-on-inverse hover:bg-c-action-hover',
   secondary: 'border border-c-border-input bg-c-surface text-c-ink hover:bg-c-muted',
   tertiary: LINK_TEXT.standalone,
-  // COMPONENTS.md gives this border as a raw light-red value rather than a
-  // token name, and the tokens package publishes no step for it. So the border
-  // is the danger fill at the opacity that lands on the same colour over white
-  // — a token with a modifier, never a value typed in here. Replace it with the
-  // real token the moment the tokens repository publishes one.
-  destructive: 'border border-red-500/40 bg-c-surface text-c-bad-ink hover:bg-c-bad-soft',
+  // Destructive outline clears 3:1 UI component boundary contrast across all
+  // five themes via the themed `c-bad` role.
+  destructive: 'border border-c-bad bg-c-surface text-c-bad-ink hover:bg-c-bad-soft',
 }
 
 /**

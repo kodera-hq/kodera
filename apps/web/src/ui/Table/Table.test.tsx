@@ -171,4 +171,26 @@ describe('Table', () => {
     // adds a `wide` step and this component consumes it.
     expect(trackingClassesOf(header)).toEqual([])
   })
+
+  it('tints danger rows with themed bg-c-bad-soft and preserves readable body contrast in every theme', () => {
+    render(
+      <Table caption="Incidents">
+        <TableBody>
+          <TableRow tone="danger">
+            <TableCell>Ligne en échec</TableCell>
+          </TableRow>
+        </TableBody>
+      </Table>
+    )
+
+    const cell = screen.getByRole('cell', { name: 'Ligne en échec' })
+    const row = cell.closest('tr')!
+    expect(row).toHaveClass('border-l-2', 'border-l-c-bad', 'bg-c-bad-soft')
+    for (const theme of THEMES) {
+      expect(
+        contrastRatio(roleHex('text-c-ink', theme), roleHex('bg-c-bad-soft', theme)),
+        theme
+      ).toBeGreaterThanOrEqual(4.5)
+    }
+  })
 })

@@ -38,8 +38,11 @@ for (const width of [1440, 390]) {
       exact: true,
     })
     expect(
-      (await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze())
-        .violations
+      (
+        await new AxeBuilder({ page })
+          .withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa'])
+          .analyze()
+      ).violations
     ).toEqual([])
     await notificationPanel
       .getByRole('button', { name: en ? 'Close' : 'Fermer', exact: true })
@@ -246,8 +249,11 @@ for (const width of [1440, 390]) {
       ).not.toHaveAttribute('aria-current', 'page')
     }
     expect(
-      (await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze())
-        .violations
+      (
+        await new AxeBuilder({ page })
+          .withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa'])
+          .analyze()
+      ).violations
     ).toEqual([])
     // Choosing a channel returns the canvas from Files back to the conversation
     await navigation()
@@ -281,22 +287,31 @@ for (const width of [1440, 390]) {
     })
     await camera.click()
     expect(
-      (await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze())
-        .violations
+      (
+        await new AxeBuilder({ page })
+          .withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa'])
+          .analyze()
+      ).violations
     ).toEqual([])
     await navigation()
     await notifications.click()
     expect(
-      (await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze())
-        .violations
+      (
+        await new AxeBuilder({ page })
+          .withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa'])
+          .analyze()
+      ).violations
     ).toEqual([])
     await notificationPanel.getByRole('button', { name: /#announcements/ }).click()
     await navigation()
     await page.getByRole('button', { name: en ? 'Files' : 'Fichiers', exact: true }).click()
     await expect(files).toBeVisible()
     expect(
-      (await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze())
-        .violations
+      (
+        await new AxeBuilder({ page })
+          .withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa'])
+          .analyze()
+      ).violations
     ).toEqual([])
     await files
       .getByRole('button', { name: new RegExp(en ? '^Review notes' : '^Notes de revue') })
@@ -320,8 +335,11 @@ for (const width of [1440, 390]) {
       document.documentElement.dataset.theme = 'black'
     })
     expect(
-      (await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze())
-        .violations
+      (
+        await new AxeBuilder({ page })
+          .withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa'])
+          .analyze()
+      ).violations
     ).toEqual([])
   })
 }

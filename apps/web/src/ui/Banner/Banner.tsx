@@ -8,10 +8,9 @@ export type BannerKind = 'info' | 'maintenance' | 'incident' | 'success'
 
 const KIND: Record<BannerKind, string> = {
   info: 'border border-c-border border-l-4 border-l-c-action bg-c-surface text-c-ink',
-  maintenance: 'border border-amber-500/40 bg-c-warn-soft text-c-warn-ink',
-  // The border is the danger fill at the opacity that lands on the same
-  // colour over white — the same token-with-a-modifier `Button.tsx` uses for
-  // its destructive variant, kept here rather than a second raw value.
+  maintenance: 'border border-c-warn bg-c-warn-soft text-c-warn-ink',
+  // Kept on `border-red-500/40` until `c-bad-border` lands alongside refreshed
+  // `invoices-*` visual baselines (`tests/visual/screens.spec.ts`).
   incident: 'border border-red-500/40 bg-c-bad-soft text-c-bad-ink',
   // `focus-ground-inverse` (`src/index.css`): the action and the dismiss
   // control draw the on-inverse ring on this ground.

@@ -1,20 +1,22 @@
 /* Generated from @kodera/design-tokens. Edit bootstrap.template.css. */
 :host {
+  --color-theme-dark-accent-ink: #B4C2FF;
+  --color-theme-dark-action: #4361EE;
+  --color-theme-dark-action-hover: #3A59E8;
+  --color-theme-dark-border: #282B30;
   --font-family-sans: "Inter Variable", "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-size-sm: 13px;
   --font-weight-semibold: 600;
   --radius-full: 999px;
   --semantic-action-onPrimary: #FFFFFF;
-  --semantic-action-primary: #2B4BDB;
-  --semantic-action-primaryHover: #2340C4;
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
   --space-4: 16px;
   --space-control-selection-ring-width: 5px;
 }
-:host { position: fixed; right: var(--space-4); bottom: var(--space-4); z-index: 2147483647; font-family: var(--font-family-sans); }
-button { display: inline-flex; align-items: center; gap: var(--space-2); padding: var(--space-3) var(--space-4); border: 0; border-radius: var(--radius-full); background: var(--semantic-action-primary); color: var(--semantic-action-onPrimary); font-family: var(--font-family-sans); font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); cursor: pointer; }
-button:hover { background: var(--semantic-action-primaryHover); }
-button:focus-visible { outline: var(--space-control-selection-ring-width) solid var(--semantic-action-primary); outline-offset: var(--space-1); }
+:host { color-scheme: dark; position: fixed; right: var(--space-4); bottom: var(--space-4); z-index: 2147483647; font-family: var(--font-family-sans); }
+button { display: inline-flex; align-items: center; gap: var(--space-2); padding: var(--space-3) var(--space-4); border-width: thin; border-style: solid; border-color: var(--color-theme-dark-border); border-radius: var(--radius-full); background: var(--color-theme-dark-action); color: var(--semantic-action-onPrimary); font-family: var(--font-family-sans); font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); cursor: pointer; }
+button:hover { background: var(--color-theme-dark-action-hover); }
+button:focus-visible { outline: var(--space-control-selection-ring-width) solid var(--color-theme-dark-accent-ink); outline-offset: var(--space-1); }
 button:disabled { cursor: wait; }
