@@ -282,7 +282,7 @@ def digest_member(*, membership_id: UUID) -> MembershipContact | None:
             organisation__state="active",
             organisation__deleted_at__isnull=True,
         )
-        .select_related("user")
+        .select_related("user", "organisation")
         .first()
     )
     if row is None:

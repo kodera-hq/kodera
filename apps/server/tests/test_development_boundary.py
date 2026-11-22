@@ -128,6 +128,7 @@ def assert_image_boundary(ignore):
         "!core/api/edition.py",
         "!core/api/ee_billing.py",
         "!core/api/errors.py",
+        "!core/api/pagination.py",
         "!core/db/__init__.py",
         "!core/db/ids.py",
         "!core/db/models.py",

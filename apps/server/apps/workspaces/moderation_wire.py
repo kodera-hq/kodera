@@ -10,6 +10,7 @@ from django.core import signing
 from django.db import transaction
 from django.db.models import QuerySet
 
+from core.api.pagination import clamp_page_rows
 from core.db.models import StoredModel
 from services.identity.access_tokens import VerifiedAccessToken
 
@@ -163,12 +164,21 @@ def _select[Row: StoredModel](
             raise RefusalError(400) from None
         rows = rows.filter(id__lt=anchor)
     selected = list(rows.order_by("-id")[: limit + 1])
-    more = len(selected) > limit
-    selected = selected[:limit]
+    if encode_batch is not None:
+        window = selected[:limit]
+        rendered = encode_batch(window)
+        pairs = list(zip(window, rendered, strict=True))
+        emitted_pairs, data, clamped_more = clamp_page_rows(
+            pairs, limit=limit, render=lambda pair: pair[1]
+        )
+        emitted_rows = [pair[0] for pair in emitted_pairs]
+        more = clamped_more or len(selected) > len(emitted_rows)
+    else:
+        emitted_rows, data, more = clamp_page_rows(selected, limit=limit, render=encode)
     return {
-        "data": encode_batch(selected)
-        if encode_batch is not None
-        else [encode(row) for row in selected],
+        "data": data,
         "has_more": more,
-        "next_cursor": signing.dumps(str(selected[-1].id), salt=salt) if more else None,
+        "next_cursor": signing.dumps(str(emitted_rows[-1].id), salt=salt)
+        if more and emitted_rows
+        else None,
     }

@@ -11,15 +11,19 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from django.db.models import Exists, F, OuterRef, Prefetch, Q, QuerySet
+from django.db.models import Exists, F, OuterRef, Prefetch, Q, QuerySet, Subquery
 from django.utils import timezone
 
+from core.api.pagination import clamp_page_rows
+
 from . import representations as shape
+from .artifacts import artifact_metadata_queryset
 from .models import (
     CapacityTier,
     CreditNote,
     CreditNoteLine,
     Invoice,
+    InvoiceLine,
     Order,
     Pack,
     PaymentLink,
@@ -41,14 +45,16 @@ def _page(
     position: Any,
     render: Any,
 ) -> JSON:
-    more = len(rows) > query.limit
-    rows = rows[: query.limit]
+    emitted_rows, data, more = clamp_page_rows(rows, limit=query.limit, render=render)
     cursor = None
-    if more:
+    if more and emitted_rows:
         cursor = encode_cursor(
-            operation=operation, scope=scope, filters=query.filters, after=position(rows[-1])
+            operation=operation,
+            scope=scope,
+            filters=query.filters,
+            after=position(emitted_rows[-1]),
         )
-    return {"data": [render(row) for row in rows], "next_cursor": cursor, "has_more": more}
+    return {"data": data, "next_cursor": cursor, "has_more": more}
 
 
 def _uuid(value: str) -> UUID:
@@ -118,34 +124,43 @@ def list_plans(query: ListQuery) -> JSON:
     # The public catalogue shows published plans only: a draft or retired one is staff's.
     rows = Plan.objects.filter(state="published") if state == "published" else Plan.objects.none()
     page = _by_id(rows, query)
-    packs: dict[UUID, list[str]] = {
-        row.id: _codes(_offered_prices().filter(plan=row).values_list("pack__code", flat=True))
-        for row in page
-    }
+    shown = page[: query.limit]
+    packs_by_plan: dict[UUID, set[str]] = {row.id: set() for row in shown}
+    if packs_by_plan:
+        for plan_id, pack_code in (
+            _offered_prices()
+            .filter(plan_id__in=list(packs_by_plan))
+            .values_list("plan_id", "pack__code")
+        ):
+            packs_by_plan[plan_id].add(pack_code)
     return _page(
         page,
         query=query,
         operation="listPlans",
         scope="",
         position=lambda row: (str(row.id),),
-        render=lambda row: shape.plan(row, packs[row.id]),
+        render=lambda row: shape.plan(row, _codes(packs_by_plan[row.id])),
     )
 
 
 def list_packs(query: ListQuery) -> JSON:
     page = _by_id(Pack.objects.all(), query)
+    shown = page[: query.limit]
+    tiers_by_pack: dict[UUID, set[str]] = {row.id: set() for row in shown}
+    if tiers_by_pack:
+        for pack_id, tier_code in (
+            _offered_prices()
+            .filter(pack_id__in=list(tiers_by_pack))
+            .values_list("pack_id", "capacity_tier__code")
+        ):
+            tiers_by_pack[pack_id].add(tier_code)
     return _page(
         page,
         query=query,
         operation="listPacks",
         scope="",
         position=lambda row: (str(row.id),),
-        render=lambda row: shape.pack(
-            row,
-            _codes(
-                _offered_prices().filter(pack=row).values_list("capacity_tier__code", flat=True)
-            ),
-        ),
+        render=lambda row: shape.pack(row, _codes(tiers_by_pack[row.id])),
     )
 
 
@@ -188,19 +203,27 @@ def list_prices(query: ListQuery) -> JSON:
 # --- an organisation's rows -------------------------------------------------------------------
 
 
-def _order(row: Order) -> JSON:
-    subscription = Subscription.objects.filter(order=row).values_list("id", flat=True).first()
-    invoice = (
-        Invoice.objects.filter(order=row)
-        .order_by("created_at", "id")
-        .values_list("id", flat=True)
-        .first()
+def _orders(organisation_id: UUID) -> QuerySet[Order]:
+    return Order.objects.filter(organisation_id=organisation_id).annotate(
+        _subscription_id=Subquery(
+            Subscription.objects.filter(order_id=OuterRef("pk")).values("id")[:1]
+        ),
+        _invoice_id=Subquery(
+            Invoice.objects.filter(order_id=OuterRef("pk"))
+            .order_by("created_at", "id")
+            .values("id")[:1]
+        ),
     )
+
+
+def _order(row: Order) -> JSON:
+    subscription: object = getattr(row, "_subscription_id", None)
+    invoice: object = getattr(row, "_invoice_id", None)
     return shape.order(row, subscription_id=subscription, invoice_id=invoice)
 
 
 def list_orders(*, organisation_id: UUID, query: ListQuery) -> JSON:
-    rows = Order.objects.filter(organisation_id=organisation_id)
+    rows = _orders(organisation_id)
     return _page(
         _newest_first(rows, query, "created_at"),
         query=query,
@@ -212,7 +235,7 @@ def list_orders(*, organisation_id: UUID, query: ListQuery) -> JSON:
 
 
 def get_order(*, organisation_id: UUID, order_id: UUID) -> JSON | None:
-    row = Order.objects.filter(organisation_id=organisation_id, id=order_id).first()
+    row = _orders(organisation_id).filter(id=order_id).first()
     return None if row is None else _order(row)
 
 
@@ -240,7 +263,11 @@ def _issued(organisation_id: UUID) -> QuerySet[Invoice]:
     return (
         Invoice.objects.filter(organisation_id=organisation_id)
         .exclude(state="draft")
-        .prefetch_related("credit_notes")
+        .prefetch_related(
+            "credit_notes",
+            Prefetch("lines", queryset=InvoiceLine.objects.order_by("position")),
+            Prefetch("billingartifact", queryset=artifact_metadata_queryset()),
+        )
     )
 
 
@@ -263,12 +290,19 @@ def get_invoice(*, organisation_id: UUID, invoice_id: UUID) -> JSON | None:
     return None if row is None else shape.invoice(row)
 
 
-def list_credit_notes(*, organisation_id: UUID, query: ListQuery) -> JSON:
-    rows = (
+def _credit_notes(organisation_id: UUID) -> QuerySet[CreditNote]:
+    return (
         CreditNote.objects.filter(organisation_id=organisation_id)
         .select_related("invoice")
-        .prefetch_related(Prefetch("lines", queryset=CreditNoteLine.objects.order_by("position")))
+        .prefetch_related(
+            Prefetch("lines", queryset=CreditNoteLine.objects.order_by("position")),
+            Prefetch("billingartifact", queryset=artifact_metadata_queryset()),
+        )
     )
+
+
+def list_credit_notes(*, organisation_id: UUID, query: ListQuery) -> JSON:
+    rows = _credit_notes(organisation_id)
     return _page(
         _newest_first(rows, query, "issued_at"),
         query=query,
@@ -280,11 +314,7 @@ def list_credit_notes(*, organisation_id: UUID, query: ListQuery) -> JSON:
 
 
 def get_credit_note(*, organisation_id: UUID, credit_note_id: UUID) -> JSON | None:
-    row = (
-        CreditNote.objects.filter(organisation_id=organisation_id, id=credit_note_id)
-        .select_related("invoice")
-        .first()
-    )
+    row = _credit_notes(organisation_id).filter(id=credit_note_id).first()
     return None if row is None else shape.credit_note(row)
 
 

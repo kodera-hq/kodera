@@ -32,6 +32,7 @@ from apps.workspaces.selectors import (
     is_designated_confidential_channel,
     restricted_workspace_membership_ids,
 )
+from core.api.pagination import MAX_PAGE_UTF8_BYTES, utf8_json_size
 from services.identity.access_tokens import VerifiedAccessToken
 
 from .models import Device, Envelope, KeyPackage, Participant, Room
@@ -46,7 +47,7 @@ MAX_FENCED_ACCOUNTS = 2 * MAX_PARTICIPANTS + 3
 MAX_ENVELOPES = 4096
 # One bounded full-roster rotation remains possible when application capacity is exhausted.
 MAX_RECOVERY_ENVELOPES = MAX_ENVELOPES + MAX_PARTICIPANTS + 1
-MAX_PAGE_BYTES = 512 * 1024
+MAX_PAGE_BYTES = MAX_PAGE_UTF8_BYTES
 ADMINS = frozenset({"org_owner", "org_admin"})
 REQUEST_FIELDS = {
     "register-device": ({"signingKey", "signature"}, set()),
@@ -849,34 +850,23 @@ def read_envelopes(
         )
         .order_by("sequence")[:101]
     )
+    devices = [
+        {
+            "deviceId": str(identifier),
+            "signingKey": base64.b64encode(bytes(value.signing_key)).decode(),
+        }
+        for identifier, value in sorted(active.items())
+    ]
+    envelope_budget = max(1, MAX_PAGE_BYTES - utf8_json_size(devices))
     rows: list[Envelope] = []
+    envelopes: list[dict[str, Any]] = []
     total = 0
     more = False
     # Django's concrete QuerySet.iterator returns its _iterator generator; the
     # stubs expose only Iterator, omitting the close used for early page limits.
     with closing(cast(Generator[Envelope, None, None], pending.iterator(chunk_size=1))) as iterator:
         for row in iterator:
-            if len(rows) >= 100 or total + len(row.ciphertext) > MAX_PAGE_BYTES:
-                more = True
-                break
-            rows.append(row)
-            total += len(row.ciphertext)
-    return {
-        "roomId": str(room.id),
-        "algorithm": room.algorithm,
-        "epoch": room.epoch,
-        "rekeyRequired": room.rekey_required,
-        "hasMore": more,
-        "nextAfter": rows[-1].sequence if rows else after,
-        "devices": [
-            {
-                "deviceId": str(identifier),
-                "signingKey": base64.b64encode(bytes(value.signing_key)).decode(),
-            }
-            for identifier, value in sorted(active.items())
-        ],
-        "envelopes": [
-            {
+            item = {
                 "id": str(row.id),
                 "kind": row.kind,
                 "epoch": row.epoch,
@@ -884,6 +874,20 @@ def read_envelopes(
                 "senderDeviceId": str(row.sender_id),
                 "ciphertext": base64.b64encode(bytes(row.ciphertext)).decode(),
             }
-            for row in rows
-        ],
+            item_bytes = utf8_json_size(item) + (2 if envelopes else 0)
+            if len(rows) >= 100 or (rows and total + item_bytes > envelope_budget):
+                more = True
+                break
+            rows.append(row)
+            envelopes.append(item)
+            total += item_bytes
+    return {
+        "roomId": str(room.id),
+        "algorithm": room.algorithm,
+        "epoch": room.epoch,
+        "rekeyRequired": room.rekey_required,
+        "hasMore": more,
+        "nextAfter": rows[-1].sequence if rows else after,
+        "devices": devices,
+        "envelopes": envelopes,
     }
