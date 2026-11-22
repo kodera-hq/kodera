@@ -45,6 +45,11 @@ def api_login():
         yield role, password
     finally:
         with connection.cursor() as cursor:
+            cursor.execute(
+                sql.SQL("GRANT TEMP ON DATABASE {} TO PUBLIC").format(
+                    sql.Identifier(connection.settings_dict["NAME"])
+                )
+            )
             cursor.execute(sql.SQL("DROP OWNED BY {}").format(sql.Identifier(role)))
             cursor.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(role)))
 

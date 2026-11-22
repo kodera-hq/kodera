@@ -868,3 +868,10 @@ def quota_replay_policy():
     from apps.workspaces.services import quota_replay_policy as workspace_policy
 
     return workspace_policy()
+
+
+def has_in_flight_attachment_uploads(*, attachment_ids: list[UUID], cutoff: datetime) -> bool:
+    """Whether any listed attachment still has an upload window open after `cutoff`."""
+    if not attachment_ids:
+        return False
+    return Attachment.objects.filter(id__in=attachment_ids, upload_expires_at__gt=cutoff).exists()

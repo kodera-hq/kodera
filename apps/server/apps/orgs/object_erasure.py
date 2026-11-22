@@ -20,7 +20,7 @@ from django.conf import settings
 from django.db import connection, transaction
 
 from apps.media import storage_gateway
-from apps.media.models import Attachment
+from apps.media.services import has_in_flight_attachment_uploads
 from apps.media.storage import StorageRefusedError
 from config.upload_limits import UPLOAD_STREAM_DRAIN_SECONDS
 
@@ -40,10 +40,10 @@ def has_in_flight_uploads(object_keys: tuple[str, ...]) -> bool:
     The qualified provider/ingress inspector remains mandatory as well.
     """
     ids = [UUID(key.rsplit("/", 1)[-1]) for key in object_keys]
-    return Attachment.objects.filter(
-        id__in=ids,
-        upload_expires_at__gt=database_now() - timedelta(seconds=UPLOAD_STREAM_DRAIN_SECONDS),
-    ).exists()
+    return has_in_flight_attachment_uploads(
+        attachment_ids=ids,
+        cutoff=database_now() - timedelta(seconds=UPLOAD_STREAM_DRAIN_SECONDS),
+    )
 
 
 class ObjectReplicaAbsenceVerifier(Protocol):

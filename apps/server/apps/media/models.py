@@ -10,9 +10,9 @@ ROOM_ID_REGEX = r"^!([!-9;-~]{1,128}:[A-Za-z0-9.:-]{1,253}|[A-Za-z0-9_-]{43})$"
 class PreviewAdmission(models.Model):
     """Short-lived hashed principal budgets and origin timeout records, shared across workers."""
 
-    key = models.CharField(max_length=80, primary_key=True)
+    key = models.TextField(primary_key=True)
     expires_at = models.DateTimeField(db_index=True)
-    hits = models.PositiveSmallIntegerField(default=0)
+    hits = models.PositiveIntegerField(default=0)
 
     def __str__(self) -> str:
         return self.key

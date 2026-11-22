@@ -11,9 +11,9 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name="PreviewAdmission",
             fields=[
-                ("key", models.CharField(max_length=80, primary_key=True, serialize=False)),
+                ("key", models.TextField(primary_key=True, serialize=False)),
                 ("expires_at", models.DateTimeField(db_index=True)),
-                ("hits", models.PositiveSmallIntegerField(default=0)),
+                ("hits", models.PositiveIntegerField(default=0)),
             ],
         ),
         migrations.RunSQL(
