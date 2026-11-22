@@ -763,6 +763,9 @@ def test_actual_pinned_gunicorn_accepts_source_and_disables_forwarder_headers(mo
     for key, value in source.items():
         if key in actual.settings:
             actual.set(key, value)
+    assert actual.workers == 2
+    assert actual.threads == 4
+    assert actual.worker_class_str == "gthread"
     assert actual.forwarder_headers == []
     assert actual.forwarded_allow_ips == []
     assert actual.secure_scheme_headers == {}
@@ -783,6 +786,9 @@ def test_nonempty_forwarder_mutation_refuses_actual_effective_trust(monkeypatch,
         for key, value in runpy.run_path(str(path)).items():
             if key in actual.settings:
                 actual.set(key, value)
+        assert actual.workers == 2
+        assert actual.threads == 4
+        assert actual.worker_class_str == "gthread"
         assert actual.forwarder_headers == [], "empty forwarder header trust required"
 
     path = ROOT / "config/gunicorn.py"

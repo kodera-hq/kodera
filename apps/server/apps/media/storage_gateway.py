@@ -64,11 +64,21 @@ class Gateway:
             raise StorageRefusedError()
         self.path = socket_path
 
-    def call(self, operation: str, obj: ObjectDescriptor | ObjectKey | str) -> dict[str, Any]:
-        if operation != "delete" and not isinstance(obj, ObjectDescriptor):
-            raise StorageRefusedError()
+    def call(
+        self, operation: str, obj: ObjectDescriptor | ObjectKey | str | dict[str, Any]
+    ) -> dict[str, Any]:
+        if operation == "attachment_prefix":
+            if not isinstance(obj, dict):
+                raise StorageRefusedError()
+            object_message = obj
+        else:
+            if isinstance(obj, dict) or (
+                operation != "delete" and not isinstance(obj, ObjectDescriptor)
+            ):
+                raise StorageRefusedError()
+            object_message = message(obj)
         raw = json.dumps(
-            {"operation": operation, "object": message(obj)}, separators=(",", ":")
+            {"operation": operation, "object": object_message}, separators=(",", ":")
         ).encode()
         if len(raw) > MAX_RPC_BYTES:
             raise StorageRefusedError()
@@ -90,7 +100,36 @@ class Gateway:
                 raise ObjectMismatchError()
             if response.status != 200:
                 raise StorageRefusedError()
-            if operation == "verify":
+            if operation == "attachment_prefix":
+                if object_message["key"] is not None:
+                    if result != {"deleted": True}:
+                        raise StorageRefusedError()
+                elif (
+                    not isinstance(result, dict)
+                    or set(result) != {"keys", "continuation"}
+                    or not isinstance(result["keys"], list)
+                    or len(result["keys"]) > 10
+                    or any(
+                        not isinstance(key, str)
+                        or not key.startswith(
+                            f"organisations/{object_message['organisationId']}/attachments/"
+                        )
+                        or len(key.encode("utf-8")) > 1024
+                        or any(part in {".", ".."} for part in key.split("/"))
+                        for key in result["keys"]
+                    )
+                    or (
+                        result["continuation"] is not None
+                        and (
+                            not isinstance(result["continuation"], str)
+                            or not result["continuation"]
+                            or len(result["continuation"]) > 4096
+                            or not result["continuation"].isascii()
+                        )
+                    )
+                ):
+                    raise StorageRefusedError()
+            elif operation == "verify":
                 if (
                     not isinstance(result, dict)
                     or set(result) != {"verified"}
@@ -193,3 +232,25 @@ def delete_object(
 
         resolved_socket = getattr(settings, "KODERA_MEDIA_GATEWAY_SOCKET", None)
     return Gateway(resolved_socket).delete_object(target_obj)
+
+
+def attachment_prefix(
+    organisation_id: UUID,
+    *,
+    continuation: str | None = None,
+    key: str | None = None,
+    socket_path: str | None = None,
+) -> dict[str, Any]:
+    """List one S3 page or delete a prefix-scoped key through the private worker."""
+    if socket_path is None:
+        from django.conf import settings
+
+        socket_path = getattr(settings, "KODERA_MEDIA_GATEWAY_SOCKET", None)
+    return Gateway(socket_path).call(
+        "attachment_prefix",
+        {
+            "organisationId": str(organisation_id),
+            "continuation": continuation,
+            "key": key,
+        },
+    )

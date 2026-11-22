@@ -13,7 +13,8 @@ from test_intake_writer_role import INSUFFICIENT_PRIVILEGE, acting_as, refused
 from test_workspace_writer_role import _role
 from workspace_safety.test_moderation import world as world
 
-from apps.media import outbound, services as media_service
+from apps.media import outbound, preview_guard, services as media_service
+from apps.media.models import PreviewAdmission
 from apps.notifications import push, services as notification_service
 from apps.workspaces import moderation
 
@@ -187,7 +188,7 @@ def test_writer_runs_media_and_notifications_and_refuses_immutable_mutations(
     from services.identity.access_tokens import VerifiedAccessToken
 
     Attachment.objects.filter(pk=cancelled_id).update(
-        upload_expires_at=timezone.now() - timedelta(seconds=5)
+        upload_expires_at=media_service._upload_purge_before() - timedelta(seconds=5)
     )
     with acting_as(writer):
         assert media_service.reap_expired_uploads(limit=10) == 1
@@ -241,3 +242,15 @@ def test_writer_runs_media_and_notifications_and_refuses_immutable_mutations(
     with acting_as(writer):
         assert refused("DELETE FROM media_attachment WHERE completed_at IS NOT NULL") == "23514"
     assert Attachment.objects.filter(pk=attachment_id).exists()
+
+
+def test_writer_can_insert_select_update_and_delete_preview_admission(world, writer):
+    key = "principal:" + uuid4().hex
+    with acting_as(writer):
+        assert preview_guard.charge(key)
+        assert preview_guard.charge(key)  # ON CONFLICT requires UPDATE and SELECT.
+        assert PreviewAdmission.objects.get(pk=key).hits == 2
+        preview_guard.remember_timeout(key, 10)
+        assert preview_guard.timed_out(key)
+        PreviewAdmission.objects.filter(pk=key).delete()
+        assert not preview_guard.timed_out(key)

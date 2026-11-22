@@ -143,12 +143,12 @@ def test_only_room_access_and_the_agent_write_occupancy():
     assert run(policy().check_event_for_spam(kodera_state("io.kodera.room.occupancy", ROOM_ACCESS, occupancy))) == FORBIDDEN
 
 
-def test_version_is_0_1_7():
-    assert __version__ == "0.1.7"
+def test_version_is_0_1_8():
+    assert __version__ == "0.1.8"
     pyproject = pathlib.Path(__file__).resolve().parent.parent / "pyproject.toml"
     if pyproject.exists():
         meta = tomllib.loads(pyproject.read_text(encoding="utf-8"))
-        assert meta["project"]["version"] == "0.1.7"
+        assert meta["project"]["version"] == "0.1.8"
 
 
 @pytest.mark.parametrize(

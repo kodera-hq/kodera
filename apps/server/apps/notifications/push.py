@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import ipaddress
 import re
 import time
 from dataclasses import dataclass
@@ -14,7 +15,7 @@ import jwt
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
-from apps.media import outbound
+from apps.media import outbound, preview_guard
 
 _DEFAULT_OUTBOUND_ADDRESSES = outbound.addresses
 _DEFAULT_OUTBOUND_REQUEST = outbound.request
@@ -57,11 +58,24 @@ def subscription(endpoint: str, p256dh: str, auth: str, *, resolve: bool = True)
     point(p256dh)
     decode(auth, size=16)
     if resolve:
+        with outbound.request_lane():
+            _resolve(destination)
+    return destination.url
+
+
+def _resolve(destination: outbound.Target) -> None:
+    # Literal addresses need no DNS and must fail SSRF validation before opening a DB lease.
+    try:
+        ipaddress.ip_address(destination.host)
+    except ValueError:
+        pass
+    else:
+        outbound.public_address(destination.host)
+    with preview_guard.cluster_lane(preview_guard.PUSH_LOCK):
         if outbound.addresses is _DEFAULT_OUTBOUND_ADDRESSES:
             outbound.addresses(destination, time.monotonic() + 3, pool="push")
         else:
             outbound.addresses(destination, time.monotonic() + 3)
-    return destination.url
 
 
 def public_key(private_key: ec.EllipticCurvePrivateKey) -> str:

@@ -254,7 +254,7 @@ continue to reject open-by-default profiles.
 
 ## Images and limits
 
-- Synapse installs `kodera-synapse-policy` 0.1.6 from the local read-only package mount on every start, with `--no-index --no-deps --no-build-isolation`. No package download occurs. Keep the repository's `packages/synapse-policy` directory beside this deployment tree.
+- Synapse installs `kodera-synapse-policy` 0.1.8 from the local read-only package mount on every start, with `--no-index --no-deps --no-build-isolation`. No package download occurs. Keep the repository's `packages/synapse-policy` directory beside this deployment tree.
 - Fresh and existing Synapse configurations enable `kodera_synapse_policy.KoderaPolicy`. The tenant agent is `@kodera-agent:<domain>` and the occupancy writer is `@kodera-rooms:<domain>`; provision `ROOM_ACCESS_MATRIX_TOKEN` for that room-access account. The generated configuration preserves other operator modules and replaces the policy entry idempotently.
 - Every pulled image is pinned by tag and digest (`name:tag@sha256:…`), matching the versions the CI runs where the CI runs them (Postgres 17.12, Synapse v1.165.0, LiveKit v1.13.11). The `server`, `migrate`, `room-access` and `web` images are built from this repository.
 - Every service sets `mem_limit`.
@@ -507,6 +507,61 @@ the two-account negative checks after reconciliation before reopening traffic.
 ## Media attachment signing worker
 
 Status: Implemented; provider credentials remain operator-provisioned
+
+Django ingress applies `request_body { max_size 1MiB }` to API and association handles.
+Caddy streams those bodies without body-placeholder reads or reverse-proxy request buffers.
+Gunicorn uses two `gthread` workers with four threads and at most 32 connections each.
+Before Django runs, each worker admits at most two concurrent body readers, buffers at most
+1 MiB, and enforces a 10-second absolute read deadline (including trickling bodies). Saturated
+readers receive `503` with `Retry-After: 1`; timeouts receive `408`, and oversized bodies `413`.
+Refusals close the upstream connection without waiting for the remaining body. Successful reads
+release their slot before Django runs, with the body in memory. This reserves two request threads
+per worker for bodyless health and authenticated reads during slow-body pressure (four concurrent
+slow-body streams — two per worker — still saturate body-carrying API writes with `503` while reads
+stay up); it does not reserve capacity against expensive views or slow request headers. Add an edge
+per-IP connection limit appropriate to shared NAT users, plus a global connection limit, before
+exposing Community publicly. Caddy's bundled build does not provide a per-IP connection limiter;
+use a qualified front proxy or firewall. Follow-up: [kodera#254](https://github.com/kodera-hq/kodera/issues/254).
+Global Caddy timeouts are `read_header 10s`,
+`read_body 300s`, and `idle 120s`: the body deadline bounds trickle connections while allowing
+25 MiB Matrix uploads on 1 Mbit/s links. Matrix retains its upstream media size limits.
+Run `python3 scripts/ci/smoke-community-ingress.py` against the cached pinned Caddy image;
+`--static` checks configuration without Docker, `--gunicorn` exercises real slow-body admission
+without Docker, and `--fast` skips the long Matrix case. Use the locked server Python environment.
+The smoke uses real Gunicorn with a synthetic downstream view; the focused server concurrency
+acceptance additionally exercises authenticated workspace, upload-ticket, subscription and preview
+routes against PostgreSQL with synthetic external transports. Hosted CI runs the fast pinned-image
+smoke. Gunicorn's `timeout = 30` monitors worker liveness in gthread mode, not individual requests:
+PostgreSQL statements retain a 2-second timeout, and outbound operations have their own deadlines.
+There is no universal 30-second request kill in this configuration.
+
+URL previews and push DNS resolution each use a distinct non-blocking PostgreSQL advisory lease
+across API processes. Lease connections must reach PostgreSQL directly, without a transaction-mode
+pooler such as PgBouncer: session advisory locks cannot safely traverse transaction pooling.
+Deployments using transaction pooling must set `KODERA_DATABASE_TRANSACTION_POOLER=1`; this
+selects transaction-scoped leases on the disposable connection and rolls back before returning it,
+so no session lock survives in a recycled server connection.
+Application-side pooling is disabled on the disposable lease connection; a failed lease refuses
+network work. Non-PostgreSQL tests retain process-local admission only. A principal has a
+fixed-window budget of ten previews per minute (including cache hits), and a timed-out normalized
+origin is refused for ten seconds across workers. These cluster-wide lanes are sized for Community;
+hosted multi-tenant deployments need fairness between organisations. Neither guard needs Redis.
+
+Uncompleted attachment tickets release quota at `upload_expires_at + 300 seconds` even without a
+reaper. Completed attachments always count. The canonical `UPLOAD_STREAM_DRAIN_SECONDS = 300`
+matches migration 0016's SQL; settings other than 300 are refused. S3-compatible providers do not
+cap PUT stream duration. A PUT started before expiry can therefore land after the quota fence and
+row cleanup. Organisation erasure also paginates `organisations/{org}/attachments/`, deletes orphaned
+keys, and verifies a fresh prefix listing is empty. The worker credential must allow bucket listing
+restricted with `s3:ListBucket` to `organisations/<org>/attachments/`; a refused listing keeps
+erasure held. Listing uses ten keys per page and refuses more than 100,001 pagination iterations.
+The prefix sweep runs only for whole-organisation erasure: its authoritative scope binds the
+organisation's erasure journal, and upload tickets are refused once erasure begins. Account
+erasure deletes its inventoried personal attachment keys individually, without a prefix sweep.
+A periodic rowless-object sweep remains tracked in
+[kodera#253](https://github.com/kodera-hq/kodera/issues/253). Erasure still requires authoritative inspection
+that pre-expiry streams have drained; a prefix sweep cannot certify the absence of a future PUT.
+Cancelled and expired tickets retain their key until the reaper confirms physical absence.
 
 The API delegates attachment signing to `media-storage-worker` through
 `/run/kodera-media/media.sock`, selected by `KODERA_MEDIA_GATEWAY_SOCKET`. It receives

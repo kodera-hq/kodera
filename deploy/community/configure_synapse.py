@@ -240,8 +240,8 @@ def configure(document, environment=None):
 if __name__ == "__main__":
     import yaml
 
-    if version("kodera-synapse-policy") != "0.1.7":
-        raise RuntimeError("Community requires room-policy version 0.1.7")
+    if version("kodera-synapse-policy") != "0.1.8":
+        raise RuntimeError("Community requires room-policy version 0.1.8")
     if not os.environ.get("PGPASSWORD") or os.environ["PGPASSWORD"].startswith("CHANGE_ME_"):
         raise RuntimeError("Synapse requires the PostgreSQL credential of its own database")
     config = Path(sys.argv[1])

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Load complete 500-channel workspaces with maximum-length UTF-8 topics within a bounded 4 MiB response.
+
 - Align the community blueprint with server provisioning, including general discussion, member arrivals and the private repository activity room.
 
 - Declare the three approved associated domains and bind the app entitlement file to the public signing team. Refuse domain, capability, entitlement-path and team drift in resource checks. Signed-device Universal Links and inbound link handling remain unqualified; no push entitlement or background mode is added.

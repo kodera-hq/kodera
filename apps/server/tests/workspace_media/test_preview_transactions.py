@@ -146,3 +146,37 @@ def test_http_prepares_outside_replay_and_replays_without_fetch_or_audit(world, 
     headers.pop("HTTP_IDEMPOTENCY_KEY")
     missing = client.post(path, data=data, content_type="application/json", **headers)
     assert missing.status_code == 400 and len(fetch) == 1
+
+
+def test_cached_preview_survives_another_url_timeout_but_still_charges(world, fetch, monkeypatch):
+    from apps.media import preview_guard
+
+    org, _, _, tokens = world
+    common = {"verified": tokens[3], "organisation_id": org.id, "url": "https://example.test/"}
+    cached = services.prepare_preview(**common)
+    monkeypatch.setattr(preview_guard, "timed_out", lambda key: True)
+    assert services.prepare_preview(**common) == cached
+    monkeypatch.setattr(preview_guard, "charge", lambda key: False)
+    with pytest.raises(RefusalError) as failure:
+        services.prepare_preview(**common)
+    assert failure.value.status == 429
+
+
+@pytest.mark.parametrize("status", [429, 503])
+@override_settings(ROOT_URLCONF="apps.media.api.urls")
+def test_preview_transient_refusal_has_retry_after(world, http, monkeypatch, status):
+    def refused(**kwargs):
+        raise RefusalError(status)
+
+    monkeypatch.setattr(services, "prepare_preview", refused)
+    org, _, _, _ = world
+    client, credentials = http
+    response = client.post(
+        f"/api/v1/organisations/{org.id}/workspace/unfurl",
+        data=json.dumps({"url": "https://example.test/"}),
+        content_type="application/json",
+        HTTP_AUTHORIZATION="Bearer " + credentials[3],
+        HTTP_IDEMPOTENCY_KEY=str(uuid4()),
+    )
+    assert response.status_code == status
+    assert response["Retry-After"] == "1"

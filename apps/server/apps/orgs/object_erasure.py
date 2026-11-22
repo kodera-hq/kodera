@@ -20,7 +20,9 @@ from django.conf import settings
 from django.db import connection, transaction
 
 from apps.media import storage_gateway
+from apps.media.models import Attachment
 from apps.media.storage import StorageRefusedError
+from config.upload_limits import UPLOAD_STREAM_DRAIN_SECONDS
 
 from .account_erasure_services import AccountErasureScope
 from .erasure_services import AbsenceProof, ErasureScope, database_now
@@ -29,6 +31,19 @@ from .privacy_models import AccountErasure, PrivacyErasure
 
 class ObjectUploadWindowOpenError(Exception):
     """Raised when a presigned PUT window or in-flight upload stream has not yet drained."""
+
+
+def has_in_flight_uploads(object_keys: tuple[str, ...]) -> bool:
+    """A ticket remains potentially in flight until 300s after its presigned PUT expiry.
+
+    This is a conservative database fence, not proof that the provider's streams drained.
+    The qualified provider/ingress inspector remains mandatory as well.
+    """
+    ids = [UUID(key.rsplit("/", 1)[-1]) for key in object_keys]
+    return Attachment.objects.filter(
+        id__in=ids,
+        upload_expires_at__gt=database_now() - timedelta(seconds=UPLOAD_STREAM_DRAIN_SECONDS),
+    ).exists()
 
 
 class ObjectReplicaAbsenceVerifier(Protocol):
@@ -79,7 +94,9 @@ class BoundedStreamUploadDrainVerifier:
         if max_upload_expiry.tzinfo is None:
             raise ValueError("max_upload_expiry must be timezone-aware")
         now = database_now()
-        if now < max_upload_expiry or now < max_upload_expiry + self.max_stream_duration:
+        if now < max_upload_expiry + max(
+            self.max_stream_duration, timedelta(seconds=UPLOAD_STREAM_DRAIN_SECONDS)
+        ):
             raise ObjectUploadWindowOpenError(
                 "presigned upload or bounded stream drain window still open"
             )
@@ -141,6 +158,36 @@ def invoke_gateway_delete(
     return result
 
 
+MAX_PREFIX_PAGES = 100_001
+
+
+def sweep_attachment_prefix(organisation_id: UUID, *, socket_path: str | None = None) -> None:
+    """Delete rowless objects too, then require a fresh empty prefix listing.
+
+    Each private RPC reads one bounded S3 page. A failed/partial sweep never yields an
+    absence proof; retrying is idempotent. Upload-drain checks still fence late PUTs.
+    """
+    continuation = None
+    seen_tokens: set[str] = set()
+    for _ in range(MAX_PREFIX_PAGES):
+        page = storage_gateway.attachment_prefix(
+            organisation_id, continuation=continuation, socket_path=socket_path
+        )
+        for key in page["keys"]:
+            storage_gateway.attachment_prefix(organisation_id, key=key, socket_path=socket_path)
+        continuation = page["continuation"]
+        if continuation is None:
+            break
+        if continuation in seen_tokens:
+            raise StorageRefusedError()
+        seen_tokens.add(continuation)
+    else:
+        raise StorageRefusedError()
+    page = storage_gateway.attachment_prefix(organisation_id, socket_path=socket_path)
+    if page["keys"] or page["continuation"] is not None:
+        raise StorageRefusedError()
+
+
 def _parse_upload_expiry(value: object) -> datetime | None:
     if value is None:
         return None
@@ -160,7 +207,9 @@ def _check_upload_drain(
 ) -> str | None:
     if max_upload_expiry is None:
         return None
-    if database_now() < max_upload_expiry:
+    if database_now() < max_upload_expiry + timedelta(
+        seconds=UPLOAD_STREAM_DRAIN_SECONDS
+    ) or has_in_flight_uploads(object_keys):
         raise ObjectUploadWindowOpenError("presigned upload window still open")
     if upload_drain is None:
         raise ObjectUploadWindowOpenError(
@@ -183,7 +232,7 @@ class ObjectWorkspaceErasureAdapter:
     replicas: ObjectReplicaAbsenceVerifier | None = None
     upload_drain: ObjectUploadDrainVerifier | None = None
     domain: str = "objects"
-    revision: str = "storage-gateway-erasure-v1"
+    revision: str = "storage-gateway-erasure-v2"
 
     def _authoritative(
         self, scope: ErasureScope
@@ -241,6 +290,7 @@ class ObjectWorkspaceErasureAdapter:
                 raise ValueError("object replica absence evidence invalid")
         payload: dict[str, Any] = {
             "absent_object_keys": list(object_keys),
+            "empty_attachment_prefix": f"organisations/{scope.organisation_id}/attachments/",
             "adapter_revision": self.revision,
             "cutoff_at": scope.cutoff_at.isoformat(),
             "domain": self.domain,
@@ -261,6 +311,7 @@ class ObjectWorkspaceErasureAdapter:
         pre_drain = _check_upload_drain(self.upload_drain, scope, object_keys, max_upload_expiry)
         for key in object_keys:
             invoke_gateway_delete(key, socket_path=self.socket_path, deleter=self.deleter)
+        sweep_attachment_prefix(scope.organisation_id, socket_path=self.socket_path)
         post_drain = _check_upload_drain(self.upload_drain, scope, object_keys, max_upload_expiry)
         if pre_drain != post_drain:
             raise ValueError("object upload drain evidence changed across deletion")
@@ -301,6 +352,7 @@ class ObjectWorkspaceErasureAdapter:
             )
             for key in object_keys:
                 invoke_gateway_delete(key, socket_path=self.socket_path, deleter=self.deleter)
+            sweep_attachment_prefix(scope.organisation_id, socket_path=self.socket_path)
             post_drain = _check_upload_drain(
                 self.upload_drain, scope, object_keys, max_upload_expiry
             )

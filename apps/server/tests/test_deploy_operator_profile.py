@@ -517,3 +517,49 @@ def test_without_the_cutover_the_tenant_agent_commands_refuse_before_reading_any
     assert "cutover is not declared final" in result.stderr
     assert "profile acceptance attempted database or network contact" not in result.stderr
     assert not token_file.exists()
+
+
+@pytest.mark.parametrize("seed", ["", "synthetic-audit-seed-" + "0123456789abcdef" * 3])
+def test_operator_and_http_profiles_derive_the_same_erasure_key(seed):
+    program = """
+from core.db.ee_erasure import derive_server_ee_audit_erasure_key_hex
+print(json.dumps(derive_server_ee_audit_erasure_key_hex()))
+"""
+    keys = []
+    for profile in (
+        PROFILE,
+        "config.settings.deploy",
+        "config.settings.customer_http",
+        "config.settings.e2e_operator",
+        "config.settings.job_queue",
+    ):
+        keys.append(
+            loaded(
+                program,
+                {
+                    "DJANGO_SETTINGS_MODULE": profile,
+                    "KODERA_EE_AUDIT_SIGNING_SEED": seed,
+                    "DJANGO_ALLOWED_HOSTS": "localhost",
+                    "DATABASE_URL": "postgresql://synthetic:synthetic-pass@localhost/kodera_server",
+                },
+            )
+        )
+    assert len(set(keys)) == 1
+    assert len(keys[0]) == 64
+
+
+def test_operator_refuses_malformed_audit_seed_without_echo():
+    result = probe(
+        "print('started')", {"KODERA_EE_AUDIT_SIGNING_SEED": "synthetic-private-sentinel"}
+    )
+    assert result.returncode != 0
+    assert "started" not in result.stdout
+    assert "synthetic-private-sentinel" not in result.stderr
+
+
+@pytest.mark.parametrize("seconds", ["1", "299", "301", "86400", "invalid"])
+def test_upload_drain_setting_cannot_drift_from_quota_sql(seconds):
+    result = probe("print('started')", {"KODERA_MEDIA_MAX_UPLOAD_STREAM_S": seconds})
+    assert result.returncode != 0
+    assert "started" not in result.stdout
+    assert "media upload drain window must be 300 seconds" in result.stderr

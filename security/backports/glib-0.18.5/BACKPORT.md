@@ -12,7 +12,7 @@ Only `src/variant_iter.rs` changes within the upstream files: the exact two-line
 
 Root Cargo.toml explicitly excludes this package from workspace membership and overrides only crates.io `glib` to this path. Cargo.lock retains version `0.18.5` and the same dependency list, removing only its registry source/checksum because the selected package is now local. No package resolution, fake version bump or broader dependency update was performed.
 
-GTK 0.18 requires GLib 0.18. Adding GLib 0.20 directly would leave the vulnerable transitive crate present. This reviewed same-version source has a distinct integrated source-manifest hash; it is not the original registry archive under a new label. Version-only scanners can still flag [GHSA-wrw7-89jp-8q8g](https://github.com/advisories/GHSA-wrw7-89jp-8q8g), which lists versions below 0.20 as affected. No advisory ignore, alert dismissal, unreachable claim or zero-advisory assertion is added.
+GTK 0.18 requires GLib 0.18. Adding GLib 0.20 directly would leave the vulnerable transitive crate present. This reviewed same-version source has a distinct integrated source-manifest hash; it is not the original registry archive under a new label. Version-only scanners can still flag [GHSA-wrw7-89jp-8q8g](https://github.com/advisories/GHSA-wrw7-89jp-8q8g), which lists versions below 0.20 as affected. The Cargo advisory gate queries this baseline and binds only RUSTSEC-2024-0429 and its GHSA-wrw7-89jp-8q8g alias to this verified correction in security/cargo-advisory-allowlist.json. Every other advisory remains blocking.
 
 ## Source verification
 

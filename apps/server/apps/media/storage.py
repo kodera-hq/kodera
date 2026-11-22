@@ -165,23 +165,6 @@ def presign(
         raise StorageRefusedError()
     if not isinstance(descriptor, ObjectDescriptor | ObjectKey):
         raise StorageRefusedError()
-    if (
-        not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", credential.access_key)
-        or not credential.secret_key
-        or len(credential.secret_key) > 4096
-        or (
-            credential.session_token is not None
-            and (
-                not credential.session_token
-                or len(credential.session_token) > 8192
-                or any(ord(c) <= 32 or ord(c) > 126 for c in credential.session_token)
-            )
-        )
-    ):
-        raise StorageRefusedError()
-    stamp = now.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
-    date = stamp[:8]
-    scope = f"{date}/{location.region}/s3/aws4_request"
     host = urlsplit(location.endpoint).netloc
     headers = {"host": host}
     if method == "PUT":
@@ -197,16 +180,7 @@ def presign(
         )
     if method == "HEAD" and isinstance(descriptor, ObjectDescriptor):
         headers["x-amz-checksum-mode"] = "ENABLED"
-    signed_headers = ";".join(sorted(headers))
-    parameters = {
-        "X-Amz-Algorithm": "AWS4-HMAC-SHA256",
-        "X-Amz-Credential": credential.access_key + "/" + scope,
-        "X-Amz-Date": stamp,
-        "X-Amz-Expires": str(EXPIRY_SECONDS),
-        "X-Amz-SignedHeaders": signed_headers,
-    }
-    if credential.session_token:
-        parameters["X-Amz-Security-Token"] = credential.session_token
+    parameters: dict[str, str] = {}
     if method == "GET":
         if not isinstance(descriptor, ObjectDescriptor):
             raise StorageRefusedError()
@@ -217,8 +191,96 @@ def presign(
                 "response-cache-control": "private, no-store",
             }
         )
-    canonical_query = urlencode(sorted(parameters.items()), quote_via=quote, safe="-_.~")
     path = "/" + quote(location.bucket + "/" + descriptor.key, safe="/-_.~")
+    return _presign_request(location, credential, method, now, path, headers, parameters)
+
+
+def presign_prefix_request(
+    location: S3Location,
+    credential: S3Credential,
+    organisation_id: UUID,
+    *,
+    now: datetime,
+    continuation: str | None = None,
+    key: str | None = None,
+) -> tuple[str, dict[str, str]]:
+    """Worker-only list/delete signing, restricted to one organisation's attachment prefix."""
+    prefix = f"organisations/{organisation_id}/attachments/"
+    headers = {"host": urlsplit(location.endpoint).netloc}
+    if key is not None:
+        if (
+            not key.startswith(prefix)
+            or len(key.encode("utf-8")) > 1024
+            or any(part in {".", ".."} for part in key.split("/"))
+        ):
+            raise StorageRefusedError()
+        return _presign_request(
+            location,
+            credential,
+            "DELETE",
+            now,
+            "/" + quote(location.bucket + "/" + key, safe="/-_.~"),
+            headers,
+            {},
+        )
+    # Ten ordinary 1 KiB keys plus the continuation token fit the 16 KiB RPC envelope.
+    # The RPC encoder independently refuses oversized JSON (including escaped keys).
+    parameters = {"list-type": "2", "prefix": prefix, "max-keys": "10"}
+    if continuation is not None:
+        if not continuation or len(continuation) > 4096 or not continuation.isascii():
+            raise StorageRefusedError()
+        parameters["continuation-token"] = continuation
+    return _presign_request(
+        location,
+        credential,
+        "GET",
+        now,
+        "/" + quote(location.bucket, safe="-_.~"),
+        headers,
+        parameters,
+    )
+
+
+def _presign_request(
+    location: S3Location,
+    credential: S3Credential,
+    method: str,
+    now: datetime,
+    path: str,
+    headers: dict[str, str],
+    parameters: dict[str, str],
+) -> tuple[str, dict[str, str]]:
+    if (
+        not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", credential.access_key)
+        or not credential.secret_key
+        or len(credential.secret_key) > 4096
+        or (
+            credential.session_token is not None
+            and (
+                not credential.session_token
+                or len(credential.session_token) > 8192
+                or any(ord(c) <= 32 or ord(c) > 126 for c in credential.session_token)
+            )
+        )
+    ):
+        raise StorageRefusedError()
+    if now.tzinfo is None:
+        raise StorageRefusedError()
+    stamp = now.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
+    date = stamp[:8]
+    scope = f"{date}/{location.region}/s3/aws4_request"
+    signed_headers = ";".join(sorted(headers))
+    parameters = {
+        **parameters,
+        "X-Amz-Algorithm": "AWS4-HMAC-SHA256",
+        "X-Amz-Credential": credential.access_key + "/" + scope,
+        "X-Amz-Date": stamp,
+        "X-Amz-Expires": str(EXPIRY_SECONDS),
+        "X-Amz-SignedHeaders": signed_headers,
+    }
+    if credential.session_token:
+        parameters["X-Amz-Security-Token"] = credential.session_token
+    canonical_query = urlencode(sorted(parameters.items()), quote_via=quote, safe="-_.~")
     canonical_headers = "".join(f"{name}:{headers[name]}\n" for name in sorted(headers))
     canonical = "\n".join(
         (method, path, canonical_query, canonical_headers, signed_headers, "UNSIGNED-PAYLOAD")

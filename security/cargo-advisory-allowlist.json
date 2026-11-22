@@ -14,6 +14,20 @@
       "version": "2.0.1",
       "informational": "unmaintained",
       "reason": "Compile-time host proc-macro transitive dependency pulled in by Tauri v2 macros; ships zero code in runtime desktop, mobile, or browser binaries and carries no known vulnerability. Remove this entry when upstream Tauri macros migrate off proc-macro-error2."
+    },
+    {
+      "advisory": "RUSTSEC-2024-0429",
+      "package": "glib",
+      "version": "0.18.5",
+      "informational": "unsound",
+      "reason": "The exact upstream mutable out-pointer correction is backported in security/backports/glib-0.18.5. Its verify.py gate validates the source patch and baseline identity; this exception binds only the corrected iterator advisory, not the crate."
+    },
+    {
+      "advisory": "GHSA-wrw7-89jp-8q8g",
+      "package": "glib",
+      "version": "0.18.5",
+      "informational": null,
+      "reason": "The exact upstream mutable out-pointer correction is backported in security/backports/glib-0.18.5. Its verify.py gate validates the source patch and baseline identity; this exception binds only the corrected iterator advisory, not the crate."
     }
   ]
 }

@@ -181,8 +181,6 @@ def serve(
             )
             if 200 <= response.status_code <= 299 and post_commit_authorize is not None:
                 post_commit_authorize(verified)
-            if response.status_code == 503:
-                response["Retry-After"] = "1"
         else:
             response = execute()
     except TokenVerificationError:
@@ -191,4 +189,6 @@ def serve(
         response = problem(RefusalError(400), request_id)
     except RefusalError as failure:
         response = problem(failure, request_id)
+    if response.status_code in {429, 503}:
+        response["Retry-After"] = "1"
     return responses.finish(response, request_id)

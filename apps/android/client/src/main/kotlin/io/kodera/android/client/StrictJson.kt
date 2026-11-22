@@ -28,8 +28,8 @@ internal fun String.scalarCount(): Int = codePointCount(0, length)
 
 /** Bounded token parsing; numbers retain their lexical type and every decoded object key is unique. */
 internal object StrictJson {
-    fun parse(data: ByteArray): JsonValue {
-        if (data.size > 65536) refused()
+    fun parse(data: ByteArray, byteLimit: Int = 65536): JsonValue {
+        if (data.size > byteLimit) refused()
         try {
             val decoder = Charsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT).onUnmappableCharacter(CodingErrorAction.REPORT)
             val text = decoder.decode(ByteBuffer.wrap(data)).toString()

@@ -12,6 +12,7 @@ from django.core.exceptions import ObjectDoesNotExist
 from django.db import IntegrityError, connection, transaction
 from django.utils import timezone
 
+from apps.media import outbound
 from apps.media.context import RefusalError as RefusalError, audit, caller, read_caller
 from apps.orgs.actor_selectors import TenantCaller
 from apps.orgs.selectors import lock_erasure_cutoff_fences
@@ -61,18 +62,41 @@ def public_key() -> str:
     return value
 
 
-@transaction.atomic
 def put_subscription(
     *, verified: VerifiedAccessToken, device_id: UUID, body: dict[str, Any], request_id: str
 ) -> None:
-    initial = read_caller(verified)
+    with transaction.atomic():
+        initial = read_caller(verified)
     public_key()
     key = seal_key()
     try:
         endpoint = push.subscription(body["endpoint"], body["p256dh"], body["auth"])
+    except outbound.FetchError as failure:
+        raise RefusalError(503, "service-unavailable", failure.reason) from None
     except ValueError:
         raise RefusalError(422) from None
     material = {"endpoint": endpoint, "p256dh": body["p256dh"], "auth": body["auth"]}
+    _store_subscription(
+        verified=verified,
+        device_id=device_id,
+        material=material,
+        key=key,
+        organisation_id=initial.organisation_id,
+        request_id=request_id,
+    )
+
+
+@transaction.atomic
+def _store_subscription(
+    *,
+    verified: VerifiedAccessToken,
+    device_id: UUID,
+    material: dict[str, str],
+    key: bytes,
+    organisation_id: UUID,
+    request_id: str,
+) -> None:
+    initial = read_caller(verified, organisation_id)
     # Hold shared erasure advisories and membership fence in canonical advisories -> m -> w order.
     member = for_workspace(
         organisation_id=initial.organisation_id, membership_id=initial.membership_id, lock=False
@@ -117,7 +141,7 @@ def put_subscription(
             device_id=device_id,
         )
     row.version, row.revoked_at = uuid4(), None
-    row.endpoint_digest = hashlib.sha256(endpoint.encode()).hexdigest()
+    row.endpoint_digest = hashlib.sha256(material["endpoint"].encode()).hexdigest()
     row.sealed_subscription = sealing.seal(
         key, associated(row), json.dumps(material, separators=(",", ":")).encode()
     )

@@ -9,6 +9,7 @@
 !config/deploy_environment.py
 !config/settings/__init__.py
 !config/settings/base.py
+!config/upload_limits.py
 !config/settings/deploy_worker.py
 !core/__init__.py
 !core/db/__init__.py

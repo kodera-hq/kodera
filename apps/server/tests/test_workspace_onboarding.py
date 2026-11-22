@@ -1282,3 +1282,45 @@ def test_without_a_committed_order_a_cancelled_one_does_not_count(w):
     assert read(w, w.owner).json()["can_initialise"] is False
     response = initialise(w, w.owner)
     assert response.status_code == 409 and response.json()["allowed_states"] == ["ordered"]
+
+
+@pytest.mark.parametrize("topic", ["\u2028" * 1024, "😀" * 1024, ('😀\u2028"\\' * 256)])
+def test_maximum_channel_workspace_response_fits_mobile_transport_limit(w, topic):
+    """Use the real Core read and serializer, with 500 fully populated categories/channels."""
+    from rest_framework.renderers import JSONRenderer
+
+    from apps.engine_intents.channel_sets import MAX_CHANNELS
+    from apps.workspaces.models import Category, Channel, ResourcePolicy, Workspace
+
+    assert JSONRenderer.ensure_ascii is False
+    assert len(topic) == 1024
+    workspace = Workspace.objects.create(organisation=w.alpha)
+    policy = ResourcePolicy.objects.create(workspace=workspace, visibility="organisation")
+    workspace.default_policy = policy
+    workspace.save(update_fields=["default_policy"])
+    name = "😀" * 100
+    categories = [Category(workspace=workspace, name=name, position=i) for i in range(MAX_CHANNELS)]
+    Category.objects.bulk_create(categories)
+    Channel.objects.bulk_create(
+        [
+            Channel(
+                workspace=workspace,
+                category=category,
+                kind="text",
+                name=name,
+                topic=topic,
+                position=0,
+                lifecycle="active",
+                room_state="ready",
+            )
+            for category in categories
+        ]
+    )
+    response = read(w, w.owner)
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload["categories"]) == MAX_CHANNELS == 500
+    assert sum(len(item["channels"]) for item in payload["categories"]) == 500
+    assert payload["categories"][0]["channels"][0]["topic"] == topic
+    assert len(response.content) <= 4 * 1024 * 1024
+    assert len(JSONRenderer().render(payload)) <= 4 * 1024 * 1024

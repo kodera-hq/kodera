@@ -204,7 +204,7 @@ private final class W04Scenario: @unchecked Sendable {
     let stepSize: Int
     let tailSize: Int
     let declaredLength: String?
-    init(prefixSizes: [Int] = [65_537], stepSize: Int = 0, tailSize: Int = 1, declaredLength: String? = nil) {
+    init(prefixSizes: [Int] = [coreResponseByteLimit + 1], stepSize: Int = 0, tailSize: Int = 1, declaredLength: String? = nil) {
         self.prefixSizes = prefixSizes; self.stepSize = stepSize; self.tailSize = tailSize; self.declaredLength = declaredLength
     }
     let trace = W04Trace()
@@ -362,7 +362,7 @@ extension CoreRequesterTests {
             XCTAssertEqual(Set(events.map(\.attempt)).count, 1)
             XCTAssertEqual(events.filter { $0.phase == .terminal }.count, 1)
             XCTAssertEqual(scenario.invalidCount, 0)
-            if peak > StrictJSON.byteLimit && !legacy.isEmpty {
+            if peak > coreResponseByteLimit && !legacy.isEmpty {
                 XCTAssertEqual(legacy.map(\.retained), [65_538])
                 XCTAssertEqual(scenario.offeredCount, 65_538)
                 let trace = scenario.trace.events
@@ -374,7 +374,7 @@ extension CoreRequesterTests {
             let requests = await tokens.requested, refreshes = await tokens.forcedRefreshes, ends = await tokens.localEnds
             XCTAssertEqual(requests, 1); XCTAssertEqual(refreshes, 0); XCTAssertEqual(ends, 0)
             print("W04 finiteBody peak=\(peak) offered=\(scenario.offeredCount) legacy=\(!legacy.isEmpty) terminals=\(events.filter { $0.phase == .terminal }.count) sessionDrained=\(recorder.drained.finished)")
-            XCTAssertLessThanOrEqual(peak, StrictJSON.byteLimit, "BodyAccumulatedPastExistingLimit")
+            XCTAssertLessThanOrEqual(peak, coreResponseByteLimit, "BodyAccumulatedPastExistingLimit")
             XCTAssertEqual(box.value, .tooLarge)
         } catch {
             try await finish()
@@ -394,7 +394,7 @@ extension CoreRequesterTests {
         XCTAssertFalse(measurements.isEmpty, "MissingActualBodyMeasurement")
         let peak = try XCTUnwrap(measurements.map(\.retained).max())
         print("W04 resource peak=\(peak) measurements=\(measurements.count)")
-        XCTAssertLessThanOrEqual(peak, StrictJSON.byteLimit, "BodyAccumulatedPastExistingLimit")
+        XCTAssertLessThanOrEqual(peak, coreResponseByteLimit, "BodyAccumulatedPastExistingLimit")
     }
 
     private func w04Scenario(_ scenario: W04Scenario,
@@ -443,26 +443,26 @@ extension CoreRequesterTests {
     }
 
     func testOverflowStopsBeforeHeldTailAndEOF() async throws {
-        let scenario = W04Scenario(prefixSizes: [65_536], stepSize: 1, tailSize: 17)
+        let scenario = W04Scenario(prefixSizes: [coreResponseByteLimit], stepSize: 1, tailSize: 17)
         try await w04Scenario(scenario) { recorder, load, task, box, complete in
             try await w04Wait(recorder.acknowledgement(.headerAccepted))
             load.prefix.release()
-            try await w04Wait(recorder.acknowledgement(.retained, retained: 65_536))
+            try await w04Wait(recorder.acknowledgement(.retained, retained: coreResponseByteLimit))
             load.step.release()
-            try await w04Wait(recorder.acknowledgement(.overflow, retained: 65_536))
+            try await w04Wait(recorder.acknowledgement(.overflow, retained: coreResponseByteLimit))
             try await w04Complete(complete, task, recorder)
             try await w04Wait(load.stopped)
             XCTAssertEqual(box.value, .tooLarge)
             let overflow = try XCTUnwrap(recorder.events.first { $0.phase == .overflow })
             XCTAssertEqual(overflow.incoming, 1)
-            XCTAssertEqual(scenario.offeredCount, 65_537)
+            XCTAssertEqual(scenario.offeredCount, coreResponseByteLimit + 1)
             XCTAssertFalse(scenario.trace.events.contains("fixture.eofSubmitted"))
             try w04AssertBound(recorder)
         }
     }
 
     func testDeclaredOversizeStopsBeforeBodyAdmission() async throws {
-        let scenario = W04Scenario(declaredLength: "65537")
+        let scenario = W04Scenario(declaredLength: String(coreResponseByteLimit + 1))
         try await w04Scenario(scenario) { recorder, load, task, box, complete in
             try await w04Wait(recorder.acknowledgement(.headerRejected, retained: 0))
             try await w04Complete(complete, task, recorder)
@@ -475,7 +475,7 @@ extension CoreRequesterTests {
     }
 
     func testExactlyBoundedBodyAndSmallBodyCompleteAfterEOF() async throws {
-        for sizes in [[4], [65_536], [16_384, 16_384, 16_384, 16_384], [3, 65_530, 3]] {
+        for sizes in [[4], [coreResponseByteLimit], [16_384, 16_384, 16_384, 16_384], [3, coreResponseByteLimit - 6, 3]] {
             let count = sizes.reduce(0, +)
             let scenario = W04Scenario(prefixSizes: sizes, tailSize: 0)
             try await w04Scenario(scenario) { recorder, load, task, box, complete in
@@ -493,7 +493,7 @@ extension CoreRequesterTests {
     }
 
     func testOneOverBoundCannotBeRetainedEvenAtEOF() async throws {
-        let scenario = W04Scenario(prefixSizes: [65_537], tailSize: 0)
+        let scenario = W04Scenario(prefixSizes: [coreResponseByteLimit + 1], tailSize: 0)
         try await w04Scenario(scenario) { recorder, load, task, box, complete in
             load.prefix.release()
             try await w04Wait(load.prefixSent)
@@ -524,13 +524,13 @@ extension CoreRequesterTests {
     }
 
     func testSelectedOverflowIsNotReplacedByLateCancellation() async throws {
-        let scenario = W04Scenario(prefixSizes: [65_536], stepSize: 1, tailSize: 17)
+        let scenario = W04Scenario(prefixSizes: [coreResponseByteLimit], stepSize: 1, tailSize: 17)
         try await w04Scenario(scenario) { recorder, load, task, box, complete in
             try await w04Wait(recorder.acknowledgement(.headerAccepted))
             load.prefix.release()
-            try await w04Wait(recorder.acknowledgement(.retained, retained: 65_536))
+            try await w04Wait(recorder.acknowledgement(.retained, retained: coreResponseByteLimit))
             load.step.release()
-            try await w04Wait(recorder.acknowledgement(.overflow, retained: 65_536))
+            try await w04Wait(recorder.acknowledgement(.overflow, retained: coreResponseByteLimit))
             task.cancel()
             try await w04Complete(complete, task, recorder)
             try await w04Wait(load.stopped)
@@ -757,11 +757,11 @@ final class CoreRequesterTests: XCTestCase {
 
     func testAnOversizedBodyIsNotHandedOn() async throws {
         URLProtocolFixture.install(.body(status: 200, headers: Self.headers,
-                                         chunks: [Data(repeating: 32, count: StrictJSON.byteLimit + 1)]))
+                                         chunks: [Data(repeating: 32, count: coreResponseByteLimit + 1)]))
         let reply = try await requester(FakeTokens()).get(path: Self.path)
         XCTAssertEqual(reply, .tooLarge)
 
-        let limit = Data(repeating: 32, count: StrictJSON.byteLimit)
+        let limit = Data(repeating: 32, count: coreResponseByteLimit)
         URLProtocolFixture.install(.body(status: 200, headers: Self.headers, chunks: [limit]))
         let atLimit = try await requester(FakeTokens()).get(path: Self.path)
         XCTAssertEqual(atLimit, .answered(status: 200, body: limit), "a body of exactly the limit is handed on")

@@ -14,6 +14,14 @@ SOURCE = ROOT / "src" / "kodera_synapse_policy" / "__init__.py"
 
 # (description, original text, mutated text, test that must fail)
 MUTANTS = [
+    ("active service occupancy refused", '                self._room_access is not None\n                and event.sender == self._room_access', '                False\n                and event.sender == self._room_access', "test_active_audio_occupancy_is_scoped_to_room_access"),
+    ("active occupancy audio scope removed", '                and content.get("kind") == "audio"\n            )\n        if content["audience"]', '            )\n        if content["audience"]', "test_active_audio_occupancy_is_scoped_to_room_access"),
+    ("active occupancy state key widened", '                and getattr(event, "state_key", None) == ""\n                and content.get("kind") == "audio"', '                and content.get("kind") == "audio"', "test_active_audio_occupancy_is_scoped_to_room_access"),
+
+    ("service invite audio scope removed", '                and content.get("kind") == "audio"\n                and content.get("archived", False) is False', '                and content.get("archived", False) is False', "test_agent_room_access_invite_requires_current_trusted_audio_policy"),
+
+    ("listed room-access join callback refused", 'and not (user == self._room_access and content.get("kind") == "audio") and user not in content["members"]', 'and user not in content["members"]', "test_room_access_joins_a_listed_audio_room"),
+    ("listed room-access membership refused", 'if target not in content["members"] and not (target == self._room_access and membership == "join" and content.get("kind") == "audio"):', 'if target not in content["members"]:', "test_room_access_joins_a_listed_audio_room"),
     ("DM account eligibility ignored at creation", '        if not await self._active_dm_users(user_id, *room_config["invite"]):\n            return Codes.FORBIDDEN\n', "", "test_dm_creation_and_invites_require_active_registered_local_accounts"),
     ("DM account eligibility ignored at invitation", 'or not await self._active_dm_users(inviter, invitee)', "", "test_dm_creation_and_invites_require_active_registered_local_accounts"),
     ("group DMs refused", "len(invite) <= MAX_DM_INVITEES", "len(invite) <= 1", "test_member_creates_bounded_private_group_direct_messages"),
@@ -63,11 +71,11 @@ MUTANTS = [
     ("federated channel invites refused when allowed", "if federated_invites:\n                return NOT_SPAM", "if False:\n                return NOT_SPAM", "test_joined_member_invites_federated_user_when_federated_invites_allowed"),
     ("federated channel invites open without federated policy", 'if not self._api.is_mine(invitee) and not self._partner_federation_allowed(state, invitee):', "if False:", "test_agent_cannot_invite_remote_users_into_internal_rooms"),
     ("announcement posting open", 'if content["read_only"] and (', 'if False and (', "test_announcement_member_cannot_post_or_edit_even_with_permissive_levels"),
-    ("private membership open", 'if target not in content["members"]:', 'if False:', "test_private_room_refuses_unlisted_membership_even_with_invitation"),
+    ("private membership open", 'if target not in content["members"] and not (target == self._room_access and membership == "join" and content.get("kind") == "audio"):', 'if False:', "test_private_room_refuses_unlisted_membership_even_with_invitation"),
     ("private invites open", 'if policy_content.get("audience") == "listed" and (', 'if False and (', "test_private_room_cannot_be_opened_through_member_invite_policy"),
     ("untrusted policy author accepted", 'if getattr(policy_event, "sender", None) != self._agent:', 'if False:', "test_untrusted_governance_author_fails_closed"),
     ("malformed governance open", 'if not self._governance_valid(policy_event):\n            return False', 'if not self._governance_valid(policy_event):\n            return True', "test_malformed_governance_fails_closed"),
-    ("private join callback open", 'if content["audience"] == "listed" and user not in content["members"]:', 'if False:', "test_private_room_cannot_be_opened_through_member_invite_policy"),
+    ("private join callback open", 'if content["audience"] == "listed" and not (user == self._room_access and content.get("kind") == "audio") and user not in content["members"]:', 'if False:', "test_private_room_cannot_be_opened_through_member_invite_policy"),
     ("frozen policy ignored", 'return isinstance(content, Mapping) and any(', 'return isinstance(content, dict) and any(', "test_frozen_synapse_event_content_enforces_governance"),
     ('agent remote invitation bypass', 'if inviter == self._agent and self._api.is_mine(invitee):', 'if inviter == self._agent:', 'test_agent_cannot_invite_remote_users_into_internal_rooms'),
     ('agent governance bypass before federation boundary', '        if not self._federation_boundary_allows(event, state):\n            return False', '        if event.sender != self._agent and not self._federation_boundary_allows(event, state):\n            return False', 'test_agent_event_bypass_never_admits_remote_membership_to_internal_room'),
@@ -100,9 +108,11 @@ MUTANTS = [
 ]
 
 
-HELPER_MUTANTS = [('public homeserver validation omitted', 'return isinstance(value, str) and len(value) <= 253 and PUBLIC_SERVER.fullmatch(value) is not None and not value.endswith(PRIVATE_SUFFIXES)', 'return True', 'test_public_server_allowlist_configuration_refusals_name_boundary'), ('global allowlist bound removed', 'len(value) > MAX_SERVERS', 'len(value) > 100', 'test_public_server_allowlist_configuration_refusals_name_boundary'), ('global allowlist duplicates accepted', 'or len(set(value)) != len(value)', '', 'test_public_server_allowlist_configuration_refusals_name_boundary'), ('immutable federation disabled ignored', 'and content.get("m.federate") is True', '', 'test_partner_author_creation_acl_and_global_boundaries_are_independent'), ('frozen ACL not recognized', 'isinstance(content, Mapping) and set(content) == set(expected)', 'isinstance(content, dict) and set(content) == set(expected)', 'test_frozen_partner_state_preserves_bounded_federation')]
+HELPER_MUTANTS = [
+('public homeserver validation omitted', 'return isinstance(value, str) and len(value) <= 253 and PUBLIC_SERVER.fullmatch(value) is not None and not value.endswith(PRIVATE_SUFFIXES)', 'return True', 'test_public_server_allowlist_configuration_refusals_name_boundary'), ('global allowlist bound removed', 'len(value) > MAX_SERVERS', 'len(value) > 100', 'test_public_server_allowlist_configuration_refusals_name_boundary'), ('global allowlist duplicates accepted', 'or len(set(value)) != len(value)', '', 'test_public_server_allowlist_configuration_refusals_name_boundary'), ('immutable federation disabled ignored', 'and content.get("m.federate") is True', '', 'test_partner_author_creation_acl_and_global_boundaries_are_independent'), ('frozen ACL not recognized', 'isinstance(content, Mapping) and set(content) == set(expected)', 'isinstance(content, dict) and set(content) == set(expected)', 'test_frozen_partner_state_preserves_bounded_federation')]
 
 CONFIDENTIAL_MUTANTS = [
+
     ("missing or malformed m.room.create admitted", '    if not isinstance(creator, str) or ":" not in creator or not creator.startswith("@") or not isinstance(creation, Mapping):\n        return False', '    if False:\n        return False', "test_missing_or_malformed_room_create_state_fails_closed"),
     ("ordinary encryption state admitted", 'return event.type not in {"m.room.encryption", "m.room.encrypted"}', 'return event.type != "m.room.encrypted"', "test_no_event_turns_on_encryption"),
     ("ordinary ciphertext admitted", 'return event.type not in {"m.room.encryption", "m.room.encrypted"}', 'return event.type != "m.room.encryption"', "test_no_event_carries_ciphertext"),

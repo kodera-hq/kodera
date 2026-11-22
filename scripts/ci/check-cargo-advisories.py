@@ -73,7 +73,7 @@ def _http_json_curl(url: str, payload: dict[str, object] | None = None) -> dict[
     return parsed
 
 
-def _load_workspace_and_patches(root: Path) -> tuple[set[str], set[str]]:
+def _load_workspace_and_patches(root: Path) -> tuple[set[str], dict[str, str]]:
     manifest_path = root / "Cargo.toml"
     try:
         manifest = tomllib.loads(manifest_path.read_text(encoding="utf-8"))
@@ -103,7 +103,7 @@ def _load_workspace_and_patches(root: Path) -> tuple[set[str], set[str]]:
             raise CargoAdvisoryRefusal(f"workspace member {rel}/Cargo.toml lacks package.name")
         workspace_names.add(pkg_name)
 
-    patch_names: set[str] = set()
+    patch_names: dict[str, str] = {}
     patches = (manifest.get("patch") or {}).get("crates-io") or {}
     if not isinstance(patches, dict):
         raise CargoAdvisoryRefusal("Cargo.toml [patch.crates-io] must be a table")
@@ -122,7 +122,13 @@ def _load_workspace_and_patches(root: Path) -> tuple[set[str], set[str]]:
             raise CargoAdvisoryRefusal(
                 f"Cargo.toml [patch.crates-io].{crate_name} missing {patch_rel}/Cargo.toml"
             )
-        patch_names.add(crate_name)
+        try:
+            package = tomllib.loads(patch_toml_path.read_text(encoding="utf-8"))["package"]
+            if package["name"] != crate_name or not isinstance(package["version"], str):
+                raise ValueError("backport identity mismatch")
+            patch_names[crate_name] = package["version"]
+        except (OSError, tomllib.TOMLDecodeError, KeyError, TypeError, ValueError) as exc:
+            raise CargoAdvisoryRefusal(f"backport {crate_name} baseline identity is invalid") from exc
 
     return workspace_names, patch_names
 
@@ -153,7 +159,10 @@ def _load_locked_crates(root: Path) -> list[tuple[str, str]]:
             if name in workspace_names:
                 continue
             if name in patch_names:
+                if version != patch_names[name]:
+                    raise CargoAdvisoryRefusal(f"backport {name} version differs from Cargo.lock")
                 seen_patches.add(name)
+                registry_crates.append((name, version))
                 continue
             raise CargoAdvisoryRefusal(
                 f"Cargo.lock carries unreviewed local/path crate `{name}@{version}` outside workspace and [patch.crates-io]"
@@ -164,7 +173,7 @@ def _load_locked_crates(root: Path) -> list[tuple[str, str]]:
             )
         registry_crates.append((name, version))
 
-    missing_patches = sorted(patch_names - seen_patches)
+    missing_patches = sorted(patch_names.keys() - seen_patches)
     if missing_patches:
         raise CargoAdvisoryRefusal(
             f"[patch.crates-io] declares backports unused by Cargo.lock: {', '.join(missing_patches)}"
@@ -253,6 +262,7 @@ def audit_cargo_lock(
 ) -> tuple[int, list[str]]:
     crates = _load_locked_crates(root)
     allowed = _load_allowlist(root)
+    _, patch_names = _load_workspace_and_patches(root)
 
     findings: list[dict[str, object]] = []
     vuln_cache: dict[str, dict[str, object]] = {}
@@ -303,7 +313,7 @@ def audit_cargo_lock(
         ver = str(finding["version"])
         info = finding["informational"]
         excuse = allowed.get((adv, pkg))
-        if excuse is None:
+        if excuse is None or (excuse["informational"] in (None, "unsound") and pkg not in patch_names):
             kind = f"informational:{info}" if info else "security vulnerability"
             problems.append(
                 f"{adv} on {pkg}@{ver} ({kind}) is not bound in {ALLOWLIST_REL}"
@@ -371,22 +381,28 @@ def _write_synthetic_fixture(
 
 def selftest() -> int:
     def mock_clean(url: str, payload: dict[str, object] | None) -> dict[str, object]:
-        assert url == OSV_BATCH_URL and payload is not None
+        if url != OSV_BATCH_URL or payload is None:
+            raise CargoAdvisoryRefusal("selftest unexpected batch request")
         queries = payload["queries"]
-        assert isinstance(queries, list)
+        if not isinstance(queries, list):
+            raise CargoAdvisoryRefusal("selftest malformed queries")
         return {"results": [{} for _ in queries]}
 
     def mock_vuln(url: str, payload: dict[str, object] | None) -> dict[str, object]:
         if url == OSV_BATCH_URL:
-            assert payload is not None
+            if payload is None:
+                raise CargoAdvisoryRefusal("selftest missing query payload")
             queries = payload["queries"]
-            assert isinstance(queries, list)
+            if not isinstance(queries, list):
+                raise CargoAdvisoryRefusal("selftest malformed queries")
             out = []
             for q in queries:
-                assert isinstance(q, dict)
+                if not isinstance(q, dict):
+                    raise CargoAdvisoryRefusal("selftest malformed query")
                 pkg = q["package"]
-                assert isinstance(pkg, dict)
-                if pkg["name"] == "vuln-crate":
+                if not isinstance(pkg, dict):
+                    raise CargoAdvisoryRefusal("selftest malformed package")
+                if pkg["name"] == "patched":
                     out.append({"vulns": [{"id": "RUSTSEC-2099-0001"}]})
                 else:
                     out.append({})
@@ -394,10 +410,10 @@ def selftest() -> int:
         if url == f"{OSV_VULN_URL_PREFIX}RUSTSEC-2099-0001":
             return {
                 "id": "RUSTSEC-2099-0001",
-                "summary": "Memory corruption in vuln-crate",
+                "summary": "Memory corruption in patched",
                 "affected": [
                     {
-                        "package": {"name": "vuln-crate", "ecosystem": "crates.io"},
+                        "package": {"name": "patched", "ecosystem": "crates.io"},
                         "database_specific": {"informational": None},
                     }
                 ],
@@ -409,7 +425,7 @@ def selftest() -> int:
         d = Path(tmp)
         _write_synthetic_fixture(d)
         count, probs = audit_cargo_lock(d, fetch_json=mock_clean)
-        if count != 2 or probs:
+        if count != 3 or probs:
             print(f"[FAIL] selftest clean case failed: count={count} probs={probs}", file=sys.stderr)
             return 1
 
@@ -418,15 +434,15 @@ def selftest() -> int:
         d = Path(tmp)
         _write_synthetic_fixture(d)
         _, probs = audit_cargo_lock(d, fetch_json=mock_vuln)
-        if not any("RUSTSEC-2099-0001 on vuln-crate@0.4.0 (security vulnerability)" in p for p in probs):
+        if not any("RUSTSEC-2099-0001 on patched@0.1.0 (security vulnerability)" in p for p in probs):
             print(f"[FAIL] selftest planted vulnerability did not fail: {probs}", file=sys.stderr)
             return 1
 
     # 3. Bound allowlist entry passes, while version drift fails closed.
     bound_entry = {
         "advisory": "RUSTSEC-2099-0001",
-        "package": "vuln-crate",
-        "version": "0.4.0",
+        "package": "patched",
+        "version": "0.1.0",
         "informational": None,
         "reason": "Synthetic test fixture exception.",
     }
@@ -442,7 +458,7 @@ def selftest() -> int:
         d = Path(tmp)
         _write_synthetic_fixture(d, allowlist_entries=[{**bound_entry, "version": "0.3.9"}])
         _, probs = audit_cargo_lock(d, fetch_json=mock_vuln)
-        if not any("binds version '0.3.9', Cargo.lock pins '0.4.0'" in p for p in probs):
+        if not any("binds version '0.3.9', Cargo.lock pins '0.1.0'" in p for p in probs):
             print(f"[FAIL] selftest version drift did not fail: {probs}", file=sys.stderr)
             return 1
 
@@ -451,7 +467,7 @@ def selftest() -> int:
         d = Path(tmp)
         _write_synthetic_fixture(d, allowlist_entries=[bound_entry])
         _, probs = audit_cargo_lock(d, fetch_json=mock_clean)
-        if not any("stale entry (RUSTSEC-2099-0001, vuln-crate)" in p for p in probs):
+        if not any("stale entry (RUSTSEC-2099-0001, patched)" in p for p in probs):
             print(f"[FAIL] selftest stale entry did not fail: {probs}", file=sys.stderr)
             return 1
 
@@ -479,14 +495,81 @@ def selftest() -> int:
         try:
             audit_cargo_lock(d, fetch_json=lambda _u, _p: {"results": [{}]})
         except CargoAdvisoryRefusal as exc:
-            if "returned 1 results for 2 queried crates" not in str(exc):
+            if "returned 1 results for 3 queried crates" not in str(exc):
                 print(f"[FAIL] selftest truncated OSV batch wrong error: {exc}", file=sys.stderr)
                 return 1
         else:
             print("[FAIL] selftest truncated OSV batch did not refuse", file=sys.stderr)
             return 1
 
-    print("OK: check-cargo-advisories selftest passed (6 cases).")
+    # Registry vulnerabilities remain audited alongside patched baseline cases.
+    def registry_vuln(url, payload):
+        if url == OSV_BATCH_URL:
+            return {"results": [
+                {"vulns": [{"id": "REGISTRY-0001"}]}
+                if q["package"]["name"] == "vuln-crate" else {}
+                for q in payload["queries"]
+            ]}
+        return {"affected": [{"package": {"name": "vuln-crate"}}]}
+
+    with tempfile.TemporaryDirectory() as tmp:
+        d = Path(tmp)
+        _write_synthetic_fixture(d)
+        _, probs = audit_cargo_lock(d, fetch_json=registry_vuln)
+        if not any("REGISTRY-0001 on vuln-crate@0.4.0" in p for p in probs):
+            print(f"[FAIL] selftest registry vulnerability not refused: {probs}", file=sys.stderr)
+            return 1
+
+    # Every patched baseline is queried; its bound fix cannot hide a new advisory.
+    def patched_vulns(url, payload):
+        if url == OSV_BATCH_URL:
+            queries = payload["queries"]
+            if not any(q["package"]["name"] == "patched" and q["version"] == "0.1.0" for q in queries):
+                raise CargoAdvisoryRefusal("selftest did not query patched baseline")
+            return {"results": [
+                {"vulns": [{"id": "FIXED-0001"}, {"id": "NEW-0002"}]}
+                if q["package"]["name"] == "patched" else {} for q in queries
+            ]}
+        return {"affected": [{"package": {"name": "patched"}}]}
+
+    with tempfile.TemporaryDirectory() as tmp:
+        d = Path(tmp)
+        _write_synthetic_fixture(d, allowlist_entries=[{
+            "advisory": "FIXED-0001", "package": "patched", "version": "0.1.0",
+            "informational": None, "reason": "Verified synthetic backport of this fix only.",
+        }])
+        _, probs = audit_cargo_lock(d, fetch_json=patched_vulns)
+        if len(probs) != 1 or "NEW-0002 on patched@0.1.0" not in probs[0]:
+            print(f"[FAIL] selftest unrelated patched advisory not refused: {probs}", file=sys.stderr)
+            return 1
+        # Removing the patch must revoke the backport exception immediately.
+        cargo = d / "Cargo.toml"
+        original = cargo.read_text()
+        cargo.write_text(original.split("[patch.crates-io]")[0])
+        lock = d / "Cargo.lock"
+        original_lock = lock.read_text()
+        lock.write_text(original_lock.replace(
+            'name = "patched"\nversion = "0.1.0"\n',
+            'name = "patched"\nversion = "0.1.0"\n'
+            'source = "registry+https://github.com/rust-lang/crates.io-index"\n',
+        ))
+        _, probs = audit_cargo_lock(d, fetch_json=patched_vulns)
+        if not any("FIXED-0001 on patched@0.1.0" in problem for problem in probs):
+            print(f"[FAIL] selftest removed patch retained exception: {probs}", file=sys.stderr)
+            return 1
+        cargo.write_text(original)
+        lock.write_text(original_lock)
+        manifest = d / "security/backports/patched-0.1.0/Cargo.toml"
+        manifest.write_text(manifest.read_text().replace('version = "0.1.0"', 'version = "0.2.0"'))
+        try:
+            _load_locked_crates(d)
+        except CargoAdvisoryRefusal:
+            pass
+        else:
+            print("[FAIL] selftest backport version drift accepted", file=sys.stderr)
+            return 1
+
+    print("OK: check-cargo-advisories selftest passed (10 cases).")
     return 0
 
 

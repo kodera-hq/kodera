@@ -1466,6 +1466,7 @@ SYNAPSE_STRIP_EXPOSED_SERVER = (
     'header_down Access-Control-Expose-Headers "(?i)(?:,\\s*server(\\s*,|$)|^\\s*server\\s*,\\s*|^\\s*server\\s*$)" "$1"'
 )
 SINGLE_PROXY_OPTIONS: dict[tuple[str, str], tuple[str, ...]] = {
+    (REVIEWED_CADDY_SITE, "server:8000"): (),
     (REVIEWED_CADDY_SITE, "synapse:8008"): (
         SPLIT_SYNAPSE_CORS,
         SYNAPSE_STRIP_SERVER,
@@ -1473,6 +1474,7 @@ SINGLE_PROXY_OPTIONS: dict[tuple[str, str], tuple[str, ...]] = {
     ),
 }
 SPLIT_PROXY_OPTIONS: dict[tuple[str, str], tuple[str, ...]] = {
+    (SPLIT_API_SITE, "server:8000"): (),
     (SPLIT_MATRIX_SITE, "synapse:8008"): (
         SPLIT_SYNAPSE_CORS,
         SYNAPSE_STRIP_SERVER,
@@ -1552,11 +1554,18 @@ def _check_caddy(
 
     for line in root.lines:
         errors.append(f"{label} has an unreviewed directive outside every block: '{_directive(line)}'")
+    if sum(block.header == "" for block in root.blocks) != 1:
+        errors.append(f"{label} must set reviewed request timeouts in global options")
     sites: list[CaddyBlock] = []
     for position, block in enumerate(root.blocks):
         if block.header == "":
-            if position != 0 or block.blocks or tuple(block.lines) != REVIEWED_CADDY_GLOBAL_OPTIONS:
-                errors.append(f"{label} global options differ from the reviewed ones (the ACME contact only)")
+            if (position != 0 or tuple(block.lines) != REVIEWED_CADDY_GLOBAL_OPTIONS
+                or len(block.blocks) != 1 or block.blocks[0].header != "servers"
+                or block.blocks[0].lines or len(block.blocks[0].blocks) != 1
+                or block.blocks[0].blocks[0].header != "timeouts"
+                or block.blocks[0].blocks[0].blocks
+                or block.blocks[0].blocks[0].lines != ["read_header 10s", "read_body 300s", "idle 120s"]):
+                errors.append(f"{label} global options differ from the reviewed ACME contact and request timeouts")
         elif block.header.startswith("("):
             name = block.header[1:-1] if block.header.endswith(")") else block.header
             if block.blocks or sorted(block.lines) != sorted(REVIEWED_CADDY_SNIPPETS.get(name, ("",))):
@@ -1630,6 +1639,10 @@ def _check_caddy(
                 elif line not in ("respond 404", *REVIEWED_CADDY_REWRITES):
                     errors.append(f"{label} has an unreviewed directive in a handle: '{_directive(line)}'")
             for child in block.blocks:
+                if child.header == "request_body":
+                    if child.blocks or child.lines != ["max_size 1MiB"]:
+                        errors.append(f"{label} must set the reviewed API body limit: max_size 1MiB")
+                    continue
                 words = child.header.split()
                 if words[:1] != ["reverse_proxy"] or len(words) != 2 or child.blocks:
                     errors.append(f"{label} has an unreviewed block in a handle: '{_directive(child.header)}'")
@@ -1651,6 +1664,12 @@ def _check_caddy(
                     if option not in directives:
                         errors.append(f"{label} must set the reviewed reverse_proxy option for '{words[1]}': '{option}'")
                 upstreams.append((words[1], directives))
+            body_limits = [child for child in block.blocks if child.header == "request_body"]
+            if any(upstream == "server:8000" for upstream, _ in upstreams):
+                if len(body_limits) != 1 or body_limits[0].lines != ["max_size 1MiB"] or body_limits[0].blocks:
+                    errors.append(f"{label} must set the reviewed API body limit: max_size 1MiB")
+            elif body_limits:
+                errors.append(f"{label} must scope max_size 1MiB to Django handles only")
             for rewrite, only_for in REVIEWED_CADDY_REWRITES.items():
                 if rewrite in block.lines and [upstream for upstream, _ in upstreams] != [only_for]:
                     errors.append(f"{label} rewrites a path in a handle that is not the reviewed one ('{rewrite}' is for {only_for} only)")
@@ -1724,7 +1743,7 @@ def check_synapse_policy_source(source: str) -> list[str]:
         'MODULE = "kodera_synapse_policy.KoderaPolicy"',
         '"room_access_user_id": f"@kodera-rooms:{server}"',
         '"agent_user_id": f"@kodera-agent:{server}"',
-        'version("kodera-synapse-policy") != "0.1.7"',
+        'version("kodera-synapse-policy") != "0.1.8"',
         'yaml.safe_dump(configure(document, os.environ)',
         '"pkce_method": "always"',
         '"allow_existing_users": False',
@@ -2607,6 +2626,14 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
         return 1
 
     mutations: list[tuple[str, MutationFn, str]] = [
+        ("global timeouts removed", lambda c, e, cf: (c, e, cf[cf.index("\n# Caddy"):]), "must set reviewed request timeouts"),
+        ("idle timeout removed", lambda c, e, cf: (c, e, cf.replace("idle 120s", "")), "global options differ"),
+        ("slow header timeout removed", lambda c, e, cf: (c, e, cf.replace("read_header 10s", "")), "global options differ"),
+        ("API body limit removed", lambda c, e, cf: (c, e, cf.replace("\t\trequest_body {\n\t\t\tmax_size 1MiB\n\t\t}\n", "", 1)), "max_size 1MiB"),
+        ("API body limit widened", lambda c, e, cf: (c, e, cf.replace("max_size 1MiB", "max_size 2MiB", 1)), "max_size 1MiB"),
+        ("Matrix body timeout shortened", lambda c, e, cf: (c, e, cf.replace("read_body 300s", "read_body 10s")), "global options differ"),
+        ("API body placeholder added", lambda c, e, cf: (c, e, cf.replace("handle @api {", "handle @api {\n\t\t@invalid_api_body not vars_regexp {http.request.body} (?s).*", 1)), "unreviewed directive in a handle"),
+        ("API request buffering added", lambda c, e, cf: (c, e, cf.replace("reverse_proxy server:8000 {", "reverse_proxy server:8000 {\n\t\t\trequest_buffers 1MiB", 1)), "unreviewed reverse_proxy option"),
         (
             "Caddy waits for the web client the split topology does not start",
             lambda c, e, cf: (c.replace("    depends_on:\n      server:\n        condition: service_healthy\n      room-access:",
@@ -2943,7 +2970,7 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
                    "Caddyfile has an unreviewed directive in a handle: 'rewrite'"),
         caddy_case("the reviewed rewrite moved to the API", "\thandle @api {\n", "\thandle @api {\n\t\trewrite * /token\n",
                    "Caddyfile rewrites a path in a handle that is not the reviewed one"),
-        caddy_case("a prefix-stripping handle", "\thandle @api {\n" + api_proxy + "\t}\n", "\thandle_path /internal/* {\n" + api_proxy + "\t}\n",
+        caddy_case("a prefix-stripping handle", "\thandle @api {\n\n\t\trequest_body {\n\t\t\tmax_size 1MiB\n\t\t}\n" + api_proxy + "\t}\n", "\thandle_path /internal/* {\n" + api_proxy + "\t}\n",
                    "Caddyfile has an unreviewed block in a site block: 'handle_path'"),
         caddy_case("an upstream option that was not reviewed", api_proxy,
                    api_proxy.replace("import client_address", "import client_address\n\t\t\theader_up Host internal.example.org"),
@@ -2966,7 +2993,7 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
         caddy_case("Synapse CORS exposed Server stripping is dropped from Caddyfile", f"\t\t\t{SYNAPSE_STRIP_EXPOSED_SERVER}\n", "",
                    f"Caddyfile must set the reviewed reverse_proxy option for 'synapse:8008': '{SYNAPSE_STRIP_EXPOSED_SERVER}'"),
         caddy_case("Caddy's admin API is opened", "\temail {$KODERA_ACME_EMAIL}\n", "\temail {$KODERA_ACME_EMAIL}\n\tadmin 0.0.0.0:2019\n",
-                   "Caddyfile global options differ from the reviewed ones"),
+                   "Caddyfile global options differ from the reviewed ACME contact and request timeouts"),
         caddy_case("a directive outside every block", site_open, "debug\n\n" + site_open,
                    "Caddyfile has an unreviewed directive outside every block: 'debug'"),
         caddy_case("an unreviewed directive in the site block", "\tencode zstd gzip\n", "\tencode zstd gzip\n\tfile_server browse\n",
@@ -3231,6 +3258,8 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
                     "\t# Exact mobile association routes only; /.well-known/matrix/* stays on web:8080.\n"
                     "\t@mobile_association path /.well-known/apple-app-site-association /.well-known/assetlinks.json\n"
                     "\thandle @mobile_association {\n"
+                    "\n"
+                    "\t\trequest_body {\n\t\t\tmax_size 1MiB\n\t\t}\n"
                     "\t\treverse_proxy server:8000 {\n"
                     "\t\t\timport client_address\n"
                     "\t\t}\n"
@@ -3730,6 +3759,14 @@ def _last(old: str, new: str) -> Callable[[str], str]:
 
 # (label, file mutated: "override" or "caddy", mutation, expected refusal)
 SPLIT_MUTATIONS: tuple[SplitMutation, ...] = (
+    ("global timeouts removed", "caddy", lambda cf: cf[cf.index("\n# Split topology"):], "must set reviewed request timeouts"),
+    ("idle timeout removed", "caddy", _first("idle 120s", ""), "global options differ"),
+    ("slow header timeout removed", "caddy", _first("read_header 10s", ""), "global options differ"),
+    ("API body limit removed", "caddy", _first("\t\trequest_body {\n\t\t\tmax_size 1MiB\n\t\t}\n", ""), "max_size 1MiB"),
+    ("API body limit widened", "caddy", _first("max_size 1MiB", "max_size 2MiB"), "max_size 1MiB"),
+    ("Matrix body timeout shortened", "caddy", _first("read_body 300s", "read_body 10s"), "global options differ"),
+    ("API body placeholder added", "caddy", _first("handle @api {", "handle @api {\n\t\t@invalid_api_body not vars_regexp {http.request.body} (?s).*"), "unreviewed directive in a handle"),
+    ("API request buffering added", "caddy", _first("reverse_proxy server:8000 {", "reverse_proxy server:8000 {\n\t\t\trequest_buffers 1MiB"), "unreviewed reverse_proxy option"),
     ("the API origin routes the agent API", "caddy", _first("@api path /api/* /health/*", "@api path /api/* /health/* /agent/*"),
      "Caddyfile.split must not expose the agent API to the internet (got '/agent/*')"),
     ("the API origin exposes the staff plane", "caddy", _first("@api path /api/* /health/*", "@api path /api/* /health/* /staff/*"),
@@ -4511,7 +4548,7 @@ def main() -> int:
             print("[FAIL] " + error, file=sys.stderr)
         return 1
     if args.selftest:
-        for guard in ('kodera_synapse_policy.KoderaPolicy', 'room_access_user_id', '0.1.7'):
+        for guard in ('kodera_synapse_policy.KoderaPolicy', 'room_access_user_id', '0.1.8'):
             if not check_synapse_policy_source(policy_source.replace(guard, "removed")):
                 print("[FAIL] Synapse policy source mutation escaped", file=sys.stderr)
                 return 1

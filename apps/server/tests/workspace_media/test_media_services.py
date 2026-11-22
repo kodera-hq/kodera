@@ -173,8 +173,6 @@ def test_database_refuses_an_attachment_uploader_from_another_organisation(world
 
 
 def test_pending_upload_caps_cancel_reaper_and_expired_quota_release(world, gateway, settings):
-    from django.db import connection
-
     from apps.workspaces.models import WorkspaceQuota
     from apps.workspaces.quotas import violation
 
@@ -256,7 +254,7 @@ def test_pending_upload_caps_cancel_reaper_and_expired_quota_release(world, gate
     # Once the presigned PUT capability expires, the reaper executes signed S3 DELETE + HEAD 404
     # (cleaning up any delayed PUT) and removes the tombstone row, freeing the member's slot.
     Attachment.objects.filter(pk=second["attachmentId"]).update(
-        upload_expires_at=timezone.now() - timedelta(seconds=5)
+        upload_expires_at=service._upload_purge_before() - timedelta(seconds=5)
     )
     delete_calls_before_reap = sum(1 for op, _ in gateway.calls if op == "delete")
     assert service.reap_expired_uploads(limit=10) == 1
@@ -283,7 +281,7 @@ def test_pending_upload_caps_cancel_reaper_and_expired_quota_release(world, gate
     )
 
     Attachment.objects.filter(pk=third["attachmentId"]).update(
-        upload_expires_at=timezone.now() - timedelta(seconds=5)
+        upload_expires_at=service._upload_purge_before() - timedelta(seconds=5)
     )
     gateway.reject = True
     assert service.reap_expired_uploads(limit=10) == 0
@@ -292,28 +290,6 @@ def test_pending_upload_caps_cancel_reaper_and_expired_quota_release(world, gate
     assert service.reap_expired_uploads(limit=10) == 1
     assert not Attachment.objects.filter(pk=third["attachmentId"]).exists()
     assert Attachment.objects.filter(pk=first["attachmentId"]).exists()
-
-    with connection.cursor() as cursor:
-        cursor.execute(
-            """
-            CREATE OR REPLACE FUNCTION workspace_quota_usage(p_workspace uuid) RETURNS jsonb
-            LANGUAGE sql VOLATILE SET search_path=pg_catalog,public AS $$
-            SELECT jsonb_build_object(
-             'seats', (SELECT count(*) FROM public.orgs_membership m WHERE m.organisation_id=w.organisation_id
-                       AND m.state='active' AND m.accepted_at IS NOT NULL AND m.deleted_at IS NULL)
-                      +(SELECT count(*) FROM public.orgs_invitation i WHERE i.organisation_id=w.organisation_id
-                        AND i.state='pending' AND i.expires_at>statement_timestamp()
-                        AND NOT EXISTS(SELECT 1 FROM public.orgs_membership m JOIN public.identity_user u ON u.id=m.user_id
-                                       WHERE m.organisation_id=i.organisation_id AND m.state='active'
-                                       AND m.deleted_at IS NULL AND m.accepted_at IS NOT NULL AND lower(u.email)=i.email)),
-             'mediaBytes', (SELECT coalesce(sum(a.size_bytes),0) FROM public.media_attachment a
-                            WHERE a.organisation_id=w.organisation_id
-                              AND (a.completed_at IS NOT NULL OR a.upload_expires_at > statement_timestamp())),
-             'pages', (SELECT count(*) FROM public.docs_document d WHERE d.workspace_id=w.id AND d.deleted_at IS NULL))
-            FROM public.workspaces_workspace w WHERE w.id=p_workspace;
-            $$;
-            """
-        )
 
     limit_bytes = 26_214_400
     WorkspaceQuota.objects.update_or_create(
@@ -349,8 +325,9 @@ def test_pending_upload_caps_cancel_reaper_and_expired_quota_release(world, gate
     assert quota_detail is not None and quota_detail["status"] == 413
 
     Attachment.objects.filter(pk=big_ticket["attachmentId"]).update(
-        upload_expires_at=timezone.now() - timedelta(seconds=1)
+        upload_expires_at=service._upload_purge_before() - timedelta(seconds=1)
     )
+    assert service.reap_expired_uploads() == 1
     recovered = service.create_upload(
         verified=tokens[3],
         organisation_id=org.id,
@@ -474,3 +451,123 @@ def test_storage_gateway_rpc_runs_outside_workspace_row_lock(world, gateway):
         completed = future.result(5)
     assert in_tx == [False]
     assert completed["id"] == ticket["attachmentId"]
+
+
+@pytest.mark.parametrize("cancel_first", [False, True])
+def test_upload_tombstone_retains_late_put_and_quota_until_stream_drains(
+    world, gateway, settings, monkeypatch, cancel_first
+):
+    from django.db import connection
+
+    org, workspace, _, tokens = world
+    ticket = upload(world, gateway)
+    row = Attachment.objects.get(pk=ticket["attachmentId"])
+    settings.KODERA_MEDIA_MAX_UPLOAD_STREAM_S = 300
+    expiry = timezone.now() - timedelta(seconds=1)
+    Attachment.objects.filter(pk=row.id).update(upload_expires_at=expiry)
+    clock = [expiry + timedelta(seconds=1)]
+    monkeypatch.setattr(service.timezone, "now", lambda: clock[0])
+    # A DELETE may precede a late pre-expiry PUT. The row remains its durable cleanup index.
+    present = [False]
+    gateway.hooks["delete"] = lambda obj: present.__setitem__(0, False)
+    if cancel_first:
+        service.cancel_upload(
+            verified=tokens[3],
+            organisation_id=org.id,
+            attachment_id=row.id,
+            request_id=str(uuid4()),
+        )
+    present[0] = True
+    deletes = sum(op == "delete" for op, _ in gateway.calls)
+    assert service.reap_expired_uploads() == 0
+    assert Attachment.objects.filter(pk=row.id).exists()
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT workspace_quota_usage(%s)->>'mediaBytes'", [workspace.id])
+        assert int(cursor.fetchone()[0]) == row.size_bytes
+    clock[0] = expiry + timedelta(seconds=300)
+    assert service.reap_expired_uploads() == 1
+    assert sum(op == "delete" for op, _ in gateway.calls) == deletes + 1
+    assert present[0] is False
+    assert not Attachment.objects.filter(pk=row.id).exists()
+
+
+@pytest.mark.django_db(transaction=True)
+def test_upload_quota_migration_reverses_and_reapplies():
+    from django.db import connection
+    from django.db.migrations.executor import MigrationExecutor
+
+    def definition():
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT pg_get_functiondef('workspace_quota_usage(uuid)'::regprocedure)")
+            return cursor.fetchone()[0]
+
+    assert "make_interval(secs => 300)" in definition()
+    executor = MigrationExecutor(connection)
+    leaves = executor.loader.graph.leaf_nodes()
+    try:
+        executor.migrate([("workspaces", "0015_confidential_channel_designation")])
+        assert "a.upload_expires_at" in definition()
+        assert "make_interval(secs => 300)" not in definition()
+    finally:
+        MigrationExecutor(connection).migrate(leaves)
+    assert "make_interval(secs => 300)" in definition()
+
+
+def test_cancel_crossing_stream_deadline_requires_another_cleanup_pass(
+    world, gateway, settings, monkeypatch
+):
+    org, _, _, tokens = world
+    ticket = upload(world, gateway)
+    settings.KODERA_MEDIA_MAX_UPLOAD_STREAM_S = 300
+    expiry = timezone.now() - timedelta(seconds=301)
+    Attachment.objects.filter(pk=ticket["attachmentId"]).update(upload_expires_at=expiry)
+    clock = [expiry + timedelta(seconds=299)]
+    monkeypatch.setattr(service.timezone, "now", lambda: clock[0])
+
+    def late_put_during_delete(obj):
+        clock[0] = expiry + timedelta(seconds=300)
+
+    gateway.hooks["delete"] = late_put_during_delete
+    service.cancel_upload(
+        verified=tokens[3],
+        organisation_id=org.id,
+        attachment_id=ticket["attachmentId"],
+        request_id=str(uuid4()),
+    )
+    assert Attachment.objects.filter(pk=ticket["attachmentId"]).exists()
+    assert service.reap_expired_uploads() == 1
+    assert sum(op == "delete" for op, _ in gateway.calls) == 2
+
+
+@pytest.mark.parametrize(
+    "age,completed,counted",
+    [(301, False, False), (299, False, True), (-60, False, True), (301, True, True)],
+)
+def test_quota_releases_abandoned_tickets_without_a_reaper(world, gateway, age, completed, counted):
+    from django.db import connection
+
+    _, workspace, _, _ = world
+    ticket = upload(world, gateway)
+    row = Attachment.objects.get(pk=ticket["attachmentId"])
+    now = timezone.now()
+    Attachment.objects.filter(pk=row.id).update(
+        upload_expires_at=now - timedelta(seconds=age),
+        completed_at=now if completed else None,
+    )
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT workspace_quota_usage(%s)->>'mediaBytes'", [workspace.id])
+        assert int(cursor.fetchone()[0]) == (row.size_bytes if counted else 0)
+    assert Attachment.objects.filter(pk=row.id).exists()
+
+
+@pytest.mark.parametrize("age,expected", [(301, False), (299, True), (-60, True)])
+def test_erasure_treats_post_expiry_tickets_as_in_flight(world, gateway, age, expected):
+    from apps.orgs.object_erasure import has_in_flight_uploads
+
+    ticket = upload(world, gateway)
+    row = Attachment.objects.get(pk=ticket["attachmentId"])
+    Attachment.objects.filter(pk=row.id).update(
+        upload_expires_at=timezone.now() - timedelta(seconds=age)
+    )
+    key = f"organisations/{row.organisation_id}/attachments/{row.id}"
+    assert has_in_flight_uploads((key,)) is expected

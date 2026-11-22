@@ -224,6 +224,24 @@ check("explicit private member can join", call("POST", f"/rooms/{private_id}/joi
 check("private member cannot invite unlisted user", call("POST", f"/rooms/{private_id}/invite", bob, {"user_id": CAROL})[0], 403)
 check("unlisted member cannot read private state", call("GET", f"/rooms/{private_id}/state", alice)[0], 403)
 
+# The service joins listed audio and publishes occupancy at power 10, below state_default 50.
+for read_only in (False, True):
+    audio_power = {**CHANNEL_POWER, "state_default": 50,
+                   "users": {"@kodera-rooms:it.local": 10},
+                   "events": {**CHANNEL_POWER["events"], "io.kodera.room.occupancy": 10}}
+    status, audio = call("POST", "/createRoom", agent, {
+        "preset": "private_chat", "room_version": "12", "name": "listed-audio", "power_level_content_override": audio_power,
+    })
+    check("agent creates listed audio room", status, 200)
+    audio_id = audio.get("room_id", "!missing")
+    audio_policy = {"version": 1, "kind": "audio", "read_only": read_only,
+                    "audience": "listed", "members": [BOB], "local_members": [BOB], "exempt": []}
+    check("agent publishes listed audio policy", call("PUT", f"/rooms/{audio_id}/state/io.kodera.room.policy/", agent, audio_policy)[0], 200)
+    check("agent invites room-access to listed audio", call("POST", f"/rooms/{audio_id}/invite", agent, {"user_id": "@kodera-rooms:it.local"})[0], 200)
+    check("room-access joins listed audio", call("POST", f"/rooms/{audio_id}/join", room_access)[0], 200)
+    check("room-access writes listed/read-only audio occupancy", call("PUT", f"/rooms/{audio_id}/state/io.kodera.room.occupancy/", room_access, {"version": 1, "participants": [], "at_ms": 1})[0], 200)
+    check("room-access cannot post in listed audio", call("PUT", f"/rooms/{audio_id}/send/m.room.message/refused", room_access, {"msgtype": "m.text", "body": "refuse"})[0], 403)
+
 # Non-admin room-access inspects private DM membership through the module endpoint, while
 # Synapse admin and room-member client APIs stay closed to it and members cannot query the endpoint.
 q_dm = urllib.parse.quote(dm_id, safe="")

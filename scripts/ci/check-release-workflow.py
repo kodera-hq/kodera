@@ -117,17 +117,8 @@ def check_workflow_text(text: str, root: Path = ROOT) -> list[str]:
     if "'v[0-9]+.[0-9]+.[0-9]*'" not in text and '"v[0-9]+.[0-9]+.[0-9]*"' not in text:
         errors.append("workflow must trigger on semantic version tags 'v[0-9]+.[0-9]+.[0-9]*'")
 
-    if not re.search(
-        r"(?m)^  workflow_dispatch:\n"
-        r"    inputs:\n"
-        r"      publish_release:\n"
-        r"(?:        [^\n]+\n){0,5}"
-        r"        default:\s*false\n"
-        r"(?:        [^\n]+\n){0,3}"
-        r"        type:\s*boolean\s*$",
-        text,
-    ):
-        errors.append("workflow_dispatch must define boolean input 'publish_release' with default: false")
+    if not re.search(r"(?m)^  workflow_dispatch:\s*$", text) or "publish_release" in text:
+        errors.append("workflow_dispatch must have no obsolete publication input")
 
     if not re.search(r"(?m)^permissions:\n  contents: read\s*$", text):
         errors.append("top-level permissions must be exactly 'contents: read'")
@@ -168,7 +159,7 @@ def check_workflow_text(text: str, root: Path = ROOT) -> list[str]:
     errors.extend(check_no_expression_in_run_blocks(text))
 
     jobs = split_jobs(text)
-    expected_jobs = {"desktop-release", "android-release", "ios-verify", "publish-release"}
+    expected_jobs = {"desktop-release", "android-release", "android-production-sign", "ios-verify", "publish-release"}
     if set(jobs) != expected_jobs:
         errors.append(f"workflow jobs {sorted(jobs)} must match {sorted(expected_jobs)}")
         return errors
@@ -319,14 +310,38 @@ def check_workflow_text(text: str, root: Path = ROOT) -> list[str]:
         errors.append(
             "android-release must protect keystore material with umask 077, chmod 600, and EXIT cleanup trap"
         )
-    if (
-        'if [ "$REF_TYPE" = "tag" ] || [ "$PUBLISH_RELEASE" = "true" ]' not in android_block
-        or "ANDROID_SIGNING_KEYSTORE_B64: ${{ secrets.ANDROID_SIGNING_KEYSTORE_B64 }}"
-        not in android_block
-    ):
-        errors.append(
-            "android-release must bind ANDROID_SIGNING_KEYSTORE_B64 and fail closed on release tags or publish_release when missing"
-        )
+    production = jobs["android-production-sign"]
+    if "    permissions:\n      contents: read\n      actions: read\n" not in production:
+        errors.append("production signing must use only read access to content and environment protection")
+    protection_probe = 'gh api "repos/$GITHUB_REPOSITORY/environments/release"'
+    reviewer_check = "any(.type == \"required_reviewers\" and (.reviewers | length > 0))"
+    if (protection_probe not in production or reviewer_check not in production
+        or "| grep -qx true" not in production
+        or production.find(protection_probe) > production.find("secrets.ANDROID_SIGNING_KEYSTORE_B64")):
+        errors.append("production signing must verify required reviewers before receiving signing secrets")
+    tag_gate = "    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')"
+    if tag_gate not in production or "    environment: release\n" not in production:
+        errors.append("production signing requires a push v-tag and the protected release environment")
+    if "    needs: android-release\n" not in production or "name: android-unsigned-candidate" not in production:
+        errors.append("production signing must consume the verified unsigned candidate")
+    digest_output = "package_sha256: ${{ steps.candidate-digest.outputs.sha256 }}"
+    digest_binding = "EXPECTED_PACKAGE_SHA256: ${{ needs.android-release.outputs.package_sha256 }}"
+    digest_check = 'printf \'%s  %s\\n\' "$EXPECTED_PACKAGE_SHA256" candidate/first/package.zip | sha256sum -c -'
+    if (digest_output not in android_block or "id: candidate-digest" not in android_block
+        or "sha256sum candidate/first/package.zip" not in android_block
+        or digest_binding not in production or digest_check not in production
+        or production.find(digest_check) > production.find("secrets.ANDROID_SIGNING_KEYSTORE_B64")):
+        errors.append("production signing must verify the candidate SHA-256 job output before signing")
+    for job, block in jobs.items():
+        if job != "android-production-sign" and re.search(r"secrets\.ANDROID_SIGNING_", block):
+            errors.append("production signing secrets must appear only in android-production-sign")
+    for secret in ("KEYSTORE_B64", "KEY_ALIAS", "STORE_PASSWORD"):
+        if f"secrets.ANDROID_SIGNING_{secret}" not in production:
+            errors.append("production signing must bind all release secrets")
+    if "keytool -genkeypair" not in android_block or "secrets." in android_block:
+        errors.append("android-release must use only an ephemeral signing key")
+    if '${ANDROID_SIGNING_KEYSTORE_B64:?release keystore required}' not in production:
+        errors.append("production signing must fail closed without a release keystore")
     if "name: release-android-sbom" not in android_block or "path: candidate/sbom.cdx.json" not in android_block:
         errors.append("android-release must upload candidate/sbom.cdx.json as release-android-sbom")
     if not (root / "scripts" / "ci" / "package-android-release.py").is_file():
@@ -344,8 +359,15 @@ def check_workflow_text(text: str, root: Path = ROOT) -> list[str]:
         errors.append("ios-verify must run unsigned build verification (CODE_SIGNING_ALLOWED=NO)")
 
     publish_block = jobs["publish-release"]
-    if "needs: [desktop-release, android-release, ios-verify]" not in publish_block:
-        errors.append("publish-release must depend on [desktop-release, android-release, ios-verify]")
+    for step in re.split(r"(?m)^      - ", publish_block):
+        if "actions/download-artifact@" in step and not re.search(r"(?m)^          name: \S", step):
+            errors.append("publish-release artifact downloads require an exact name")
+    android_download = "name: release-android\n          path: release-staging/android"
+    if (android_download not in publish_block or "pattern:" in publish_block
+        or "merge-multiple:" in publish_block or "name: release-android-preview" in publish_block):
+        errors.append("publish-release must download production Android by exact name release-android")
+    if "needs: [desktop-release, android-release, android-production-sign, ios-verify]" not in publish_block:
+        errors.append("publish-release must depend on [desktop-release, android-release, android-production-sign, ios-verify]")
     if not re.search(r"(?m)^    permissions:\n      contents: write\s*$", publish_block):
         errors.append("publish-release must scope job permissions to exactly 'contents: write'")
     if text.count("contents: write") != 1:
@@ -378,10 +400,6 @@ def check_workflow_text(text: str, root: Path = ROOT) -> list[str]:
         errors.append(
             "publish-release must compute 'sha256sum *' and verify 'sha256sum -c SHA256SUMS.txt'"
         )
-    if "if: startsWith(github.ref, 'refs/tags/v') || inputs.publish_release == true" not in publish_block:
-        errors.append(
-            "GitHub Release publication step must be gated by \"startsWith(github.ref, 'refs/tags/v') || inputs.publish_release == true\""
-        )
     if (
         "GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}" not in publish_block
         or 'gh release view "$TAG"' not in publish_block
@@ -403,6 +421,33 @@ def run_selftest(baseline: str) -> int:
         return 1
 
     mutations: list[tuple[str, Callable[[str], str], str]] = [
+        (
+            "unnamed release download",
+            lambda s: s.replace("name: release-desktop-linux", "# omitted desktop artifact name"),
+            "publish-release artifact downloads require an exact name",
+        ),
+        (
+            "wildcard release download",
+            lambda s: s.replace("name: release-android\n          path: release-staging/android",
+                                "pattern: release-*\n          merge-multiple: true\n          path: release-staging/android"),
+            "publish-release must download production Android by exact name release-android",
+        ),
+        (
+            "preview release download",
+            lambda s: s.replace("name: release-android\n          path: release-staging/android",
+                                "name: release-android-preview\n          path: release-staging/android"),
+            "publish-release must download production Android by exact name release-android",
+        ),
+        (
+            "candidate digest check removed",
+            lambda s: s.replace("candidate/first/package.zip | sha256sum -c -", "candidate/first/package.zip | cat", 1),
+            "production signing must verify the candidate SHA-256 job output before signing",
+        ),
+        (
+            "candidate digest output removed",
+            lambda s: s.replace("package_sha256: ${{ steps.candidate-digest.outputs.sha256 }}", "package_sha256: unused"),
+            "production signing must verify the candidate SHA-256 job output before signing",
+        ),
         (
             "unexpected fixed action SHA",
             lambda s: s.replace(
@@ -428,9 +473,9 @@ def run_selftest(baseline: str) -> int:
             "workflow must trigger on semantic version tags",
         ),
         (
-            "publish_release default true",
-            lambda s: s.replace("default: false", "default: true", 1),
-            "workflow_dispatch must define boolean input 'publish_release' with default: false",
+            "obsolete manual publication input",
+            lambda s: s.replace("  workflow_dispatch:\n", "  workflow_dispatch:\n    inputs:\n      publish_release: {}\n", 1),
+            "workflow_dispatch must have no obsolete publication input",
         ),
         (
             "root contents write permission",
@@ -440,8 +485,8 @@ def run_selftest(baseline: str) -> int:
         (
             "write scope leaked onto build job",
             lambda s: s.replace(
-                "  android-release:\n    name: Android Release APK",
-                "  android-release:\n    permissions:\n      contents: write\n    name: Android Release APK",
+                "    name: Android Release APK",
+                "    permissions:\n      contents: write\n    name: Android Release APK",
                 1,
             ),
             "job 'android-release' must inherit read-only root permissions",
@@ -540,13 +585,29 @@ def run_selftest(baseline: str) -> int:
             "android-release must verify signed APK signatures via 'apksigner verify'",
         ),
         (
-            "removed Android signing secret fail-closed tag guard",
-            lambda s: s.replace(
-                'if [ "$REF_TYPE" = "tag" ] || [ "$PUBLISH_RELEASE" = "true" ]',
-                'if [ "never" = "true" ]',
-                1,
-            ),
-            "android-release must bind ANDROID_SIGNING_KEYSTORE_B64 and fail closed",
+            "environment protection probe removed",
+            lambda s: s.replace('gh api "repos/$GITHUB_REPOSITORY/environments/release"', 'echo unprotected', 1),
+            "must verify required reviewers before receiving signing secrets",
+        ),
+        (
+            "production signing runs on branches",
+            lambda s: s.replace("    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')", "    if: always()", 1),
+            "production signing requires a push v-tag",
+        ),
+        (
+            "production environment removed",
+            lambda s: s.replace("    environment: release\n", "", 1),
+            "protected release environment",
+        ),
+        (
+            "preview receives production key",
+            lambda s: s.replace("  android-release:\n", "  android-release:\n    env:\n      KEY: ${{ secrets.ANDROID_SIGNING_KEYSTORE_B64 }}\n", 1),
+            "production signing secrets must appear only",
+        ),
+        (
+            "missing production key falls back",
+            lambda s: s.replace('${ANDROID_SIGNING_KEYSTORE_B64:?release keystore required}', '${ANDROID_SIGNING_KEYSTORE_B64:-}', 1),
+            "production signing must fail closed",
         ),
         (
             "removed keystore EXIT cleanup trap",
@@ -593,11 +654,11 @@ def run_selftest(baseline: str) -> int:
         (
             "publish-release bypasses ios-verify dependency",
             lambda s: s.replace(
-                "needs: [desktop-release, android-release, ios-verify]",
+                "needs: [desktop-release, android-release, android-production-sign, ios-verify]",
                 "needs: [desktop-release, android-release]",
                 1,
             ),
-            "publish-release must depend on [desktop-release, android-release, ios-verify]",
+            "publish-release must depend on [desktop-release, android-release, android-production-sign, ios-verify]",
         ),
         (
             "missing SHA256SUMS generation",
@@ -608,15 +669,6 @@ def run_selftest(baseline: str) -> int:
             "missing sbom-cyclonedx.json",
             lambda s: s.replace("sbom-cyclonedx.json", "inventory.txt"),
             "publish-release must stage or generate 'sbom-cyclonedx.json'",
-        ),
-        (
-            "unguarded gh release publication",
-            lambda s: s.replace(
-                "        if: startsWith(github.ref, 'refs/tags/v') || inputs.publish_release == true\n",
-                "",
-                1,
-            ),
-            "GitHub Release publication step must be gated",
         ),
     ]
 

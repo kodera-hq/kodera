@@ -180,3 +180,90 @@ def test_workspace_mute_uses_server_time_even_for_exempt_member():
     assert run(configured.user_may_invite(ALICE, CAROL, ROOM)) == ALLOWED
     content['muted_until'][ALICE] = 'invalid'
     assert both_callbacks(state, event('m.room.message', ALICE, state=False)) == (False, FORBIDDEN)
+
+
+def test_room_access_joins_a_listed_audio_room():
+    room_access = "@rooms:" + AGENT.split(":", 1)[1]
+    state = governed(audience="listed", members=[BOB])
+    state[("io.kodera.room.policy", "")].content.update(kind="audio", local_members=[BOB])
+    configured = KoderaPolicy(
+        {"agent_user_id": AGENT, "room_access_user_id": room_access}, FakeApi({ROOM: state})
+    )
+    assert run(configured.user_may_invite(AGENT, room_access, ROOM)) == ALLOWED
+    assert run(configured.user_may_invite(BOB, room_access, ROOM)) == FORBIDDEN
+    for invited in (False, True):
+        assert run(configured.user_may_join_room(room_access, ROOM, invited)) == ALLOWED
+        assert run(configured.user_may_join_room(CAROL, ROOM, invited)) == FORBIDDEN
+    for membership in ("join", "invite", "knock"):
+        member = event("m.room.member", room_access, membership=membership)
+        member.state_key = room_access
+        member.room_id = ROOM
+        allowed, _ = run(configured.check_event_allowed(member, state))
+        assert allowed is (membership == "join")
+    message = event("m.room.message", room_access, state=False)
+    message.room_id = ROOM
+    assert run(configured.check_event_allowed(message, state))[0] is False
+    assert run(configured.check_event_for_spam(message)) == FORBIDDEN
+
+
+def test_room_access_cannot_use_audio_join_exemption_in_text_room():
+    room_access = "@rooms:" + AGENT.split(":", 1)[1]
+    state = governed(audience="listed", members=[BOB])
+    state[("io.kodera.room.policy", "")].content.update(kind="text", local_members=[BOB])
+    configured = KoderaPolicy(
+        {"agent_user_id": AGENT, "room_access_user_id": room_access}, FakeApi({ROOM: state})
+    )
+    assert run(configured.user_may_invite(AGENT, room_access, ROOM)) == FORBIDDEN
+    assert run(configured.user_may_join_room(room_access, ROOM, True)) == FORBIDDEN
+    member = event("m.room.member", room_access, membership="join")
+    member.state_key = room_access
+    member.room_id = ROOM
+    assert run(configured.check_event_allowed(member, state))[0] is False
+
+
+def test_agent_room_access_invite_requires_current_trusted_audio_policy():
+    room_access = "@rooms:" + AGENT.split(":", 1)[1]
+    for change in ("missing", "untrusted", "archived", "banned", "text"):
+        state = governed(audience="listed", members=[BOB])
+        policy = state[("io.kodera.room.policy", "")]
+        policy.content.update(kind="audio", local_members=[BOB])
+        if change == "missing":
+            state.clear()
+        elif change == "untrusted":
+            policy.sender = CAROL
+        elif change == "archived":
+            policy.content["archived"] = True
+        elif change == "banned":
+            policy.content["banned"] = [room_access]
+        else:
+            policy.content["kind"] = "text"
+        configured = KoderaPolicy(
+            {"agent_user_id": AGENT, "room_access_user_id": room_access}, FakeApi({ROOM: state})
+        )
+        assert run(configured.user_may_invite(AGENT, room_access, ROOM)) == FORBIDDEN
+
+
+@pytest.mark.parametrize("audience,read_only", [("listed", False), ("all", True), ("listed", True)])
+@pytest.mark.parametrize("kind", ["audio", "text"])
+def test_active_audio_occupancy_is_scoped_to_room_access(audience, read_only, kind):
+    from kodera_synapse_policy import OCCUPANCY
+
+    room_access = "@rooms:" + AGENT.split(":", 1)[1]
+    state = governed(audience=audience, read_only=read_only, members=[BOB])
+    state[("io.kodera.room.policy", "")].content.update(kind=kind, local_members=[BOB])
+    state[("m.room.power_levels", "")].content["users"][room_access] = 10
+    configured = KoderaPolicy(
+        {"agent_user_id": AGENT, "room_access_user_id": room_access}, FakeApi({ROOM: state})
+    )
+    for sender, event_type, state_key, is_state in (
+        (room_access, OCCUPANCY, "", True), (BOB, OCCUPANCY, "", True),
+        (room_access, OCCUPANCY, "other", True),
+        (room_access, OCCUPANCY, "", False),
+        (room_access, "m.room.message", "", False),
+    ):
+        message = event(event_type, sender, state=is_state)
+        message.state_key = state_key
+        message.room_id = ROOM
+        allowed = kind == "audio" and sender == room_access and event_type == OCCUPANCY and state_key == "" and is_state
+        assert run(configured.check_event_allowed(message, state))[0] is allowed
+        assert run(configured.check_event_for_spam(message)) == (ALLOWED if allowed else FORBIDDEN)

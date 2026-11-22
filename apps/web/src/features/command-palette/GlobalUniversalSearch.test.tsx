@@ -123,6 +123,11 @@ it('indexes synced workspace files and opens the Files view from the palette', a
         simulation={false}
         snapshot={snapshot}
       />
+      <UniversalSearch
+        entries={[{ id: 'sidebar', label: 'Sidebar channel', kind: 'text' }]}
+        onChoose={() => null}
+        shortcut={false}
+      />
     </PaletteProvider>
   )
   await user.keyboard('{Control>}k{/Control}')
