@@ -208,7 +208,7 @@ export default {
         "control-selection-ring-width": "5px",
       },
       fontFamily: {
-        sans: ["Plus Jakarta Sans", "system-ui", "-apple-system", "Segoe UI", "sans-serif"],
+        sans: ["Inter Variable", "Inter", "system-ui", "-apple-system", "Segoe UI", "sans-serif"],
         mono: ["IBM Plex Mono", "ui-monospace", "SF Mono", "Menlo", "monospace"],
         display: ["Inter Variable", "Inter", "system-ui", "-apple-system", "Segoe UI", "sans-serif"],
       },

@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { defaultTheme, themeIds, themes } from '@kodera/design-tokens/themes'
 import {
+  LEGACY_THEME_ALIASES,
   THEME_CHANGE_EVENT,
   THEME_PREFERENCES,
   THEME_STORAGE_KEY,
@@ -38,34 +39,40 @@ function boot({ stored, dark }: { stored: string | null; dark: boolean }) {
 }
 
 describe('public/theme.js', () => {
-  it('follows the device — Ciel or true black — until a theme is chosen, and follows its changes', () => {
+  it('follows the device — Light Givre or Dark Precision — until a theme is chosen, and follows its changes', () => {
     const page = boot({ stored: null, dark: true })
-    expect(page.theme()).toBe('black')
+    expect(page.theme()).toBe('dark')
     page.setDevice(false)
-    expect(page.theme()).toBe('ciel')
+    expect(page.theme()).toBe('light')
   })
 
-  it('follows the device with the tokens package default, and with true black when it is dark', () => {
-    // A default moved in the tokens package and not here would ship the old family by default.
-    expect(boot({ stored: null, dark: false }).theme()).toBe(defaultTheme)
-    // Owner directive: the default dark is the neutral carbon black, not the default family's
-    // blue night twin — which stays offered as its own choice.
-    const black = themes.find((theme) => theme.id === 'black')!
-    expect(black.scheme).toBe('dark')
-    expect(boot({ stored: null, dark: true }).theme()).toBe('black')
-    expect(THEME_PREFERENCES).toContain('ciel-nuit')
+  it('follows a dark device with the tokens package default (dark), and a light device with light', () => {
+    expect(defaultTheme).toBe('dark')
+    expect(boot({ stored: null, dark: true }).theme()).toBe(defaultTheme)
+    expect(boot({ stored: null, dark: false }).theme()).toBe('light')
+    const dark = themes.find((theme) => theme.id === 'dark')!
+    expect(dark.scheme).toBe('dark')
   })
 
-  it('offers every theme the tokens package ships', () => {
-    expect([...THEME_PREFERENCES].filter((preference) => preference !== 'system').sort()).toEqual(
-      [...themeIds].sort()
-    )
+  it('offers the active Givre themes in primary pickers while covering legacy Ciel aliases', () => {
+    expect([...THEME_PREFERENCES].filter((preference) => preference !== 'system')).toEqual([
+      'light',
+      'dark',
+      'black',
+    ])
+    expect(
+      [
+        ...THEME_PREFERENCES.filter((preference) => preference !== 'system'),
+        ...Object.keys(LEGACY_THEME_ALIASES),
+      ].sort()
+    ).toEqual([...themeIds].sort())
   })
 
-  it('applies a stored theme over the device', () => {
+  it('applies a stored theme over the device, including backward-compatible Ciel values', () => {
     expect(boot({ stored: 'black', dark: false }).theme()).toBe('black')
     expect(boot({ stored: 'light', dark: true }).theme()).toBe('light')
-    expect(boot({ stored: 'system', dark: true }).theme()).toBe('black')
+    expect(boot({ stored: 'dark', dark: false }).theme()).toBe('dark')
+    expect(boot({ stored: 'system', dark: true }).theme()).toBe('dark')
     expect(boot({ stored: 'ciel', dark: true }).theme()).toBe('ciel')
     expect(boot({ stored: 'ciel-nuit', dark: false }).theme()).toBe('ciel-nuit')
   })
@@ -73,7 +80,7 @@ describe('public/theme.js', () => {
   it('applies every theme the page offers, so a theme added to one list alone fails here', () => {
     for (const preference of THEME_PREFERENCES.filter((candidate) => candidate !== 'system')) {
       // Against the opposite device, so following the device cannot pass for applying it.
-      const dark = preference === 'light' || preference === 'ciel'
+      const dark = preference === 'light'
       expect(boot({ stored: preference, dark }).theme(), preference).toBe(preference)
     }
   })
@@ -96,7 +103,7 @@ describe('public/theme.js', () => {
     }
   })
 
-  it('reads Automatique as Ciel light when the device cannot be asked, and still takes a choice', () => {
+  it('reads Automatique as Dark Precision when the device cannot be asked, and still takes a choice', () => {
     const events = new EventTarget()
     const root = { dataset: {} as Record<string, string> }
     const fakeWindow = {
@@ -105,18 +112,18 @@ describe('public/theme.js', () => {
       addEventListener: events.addEventListener.bind(events),
     }
     new Function('window', BOOT)(fakeWindow)
-    expect(root.dataset.theme).toBe('ciel')
-    // Its listeners were registered: the page can still change the theme without a reload.
-    events.dispatchEvent(new CustomEvent(THEME_CHANGE_EVENT, { detail: 'dark' }))
     expect(root.dataset.theme).toBe('dark')
+    // Its listeners were registered: the page can still change the theme without a reload.
+    events.dispatchEvent(new CustomEvent(THEME_CHANGE_EVENT, { detail: 'light' }))
+    expect(root.dataset.theme).toBe('light')
   })
 
   it('treats a value it does not know as Automatique', () => {
     for (const stored of ['sepia', '', 'DARK', '"dark"']) {
       const page = boot({ stored, dark: true })
-      expect(page.theme(), stored).toBe('black')
+      expect(page.theme(), stored).toBe('dark')
       page.setDevice(false)
-      expect(page.theme(), stored).toBe('ciel')
+      expect(page.theme(), stored).toBe('light')
     }
   })
 
@@ -125,7 +132,7 @@ describe('public/theme.js', () => {
     page.setDevice(true)
     expect(page.theme()).toBe('light')
     page.events.dispatchEvent(new CustomEvent(THEME_CHANGE_EVENT, { detail: 'system' }))
-    expect(page.theme()).toBe('black')
+    expect(page.theme()).toBe('dark')
   })
 
   it('syncs the color-scheme meta before any stylesheet, so a dark theme never paints a light canvas', () => {
@@ -196,7 +203,7 @@ describe('public/theme.js', () => {
       addEventListener: () => {},
     }
     new Function('window', BOOT)(fakeWindow)
-    expect(root.dataset.theme).toBe('black')
+    expect(root.dataset.theme).toBe('dark')
   })
 })
 

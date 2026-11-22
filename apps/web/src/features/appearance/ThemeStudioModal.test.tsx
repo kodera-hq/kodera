@@ -67,20 +67,20 @@ it('reports storage failure instead of claiming that a theme was saved', async (
   write.mockRestore()
 })
 
-it('offers Ciel first and keeps every Givre theme one click away', async () => {
+it('offers the three active Givre themes one click away', async () => {
   const onSelectCoreTheme = vi.fn()
   render(
-    <ThemeStudioModal {...props} currentThemeMode="ciel" onSelectCoreTheme={onSelectCoreTheme} />
+    <ThemeStudioModal {...props} currentThemeMode="light" onSelectCoreTheme={onSelectCoreTheme} />
   )
-  const official = ['ciel', 'ciel-nuit', 'light', 'dark', 'black'].map((theme) =>
+  const official = ['light', 'dark', 'black'].map((theme) =>
     screen.getByTestId(`theme-studio-base-${theme}`)
   )
   expect(official[0]).toHaveAttribute('aria-pressed', 'true')
-  for (const [index, theme] of (['ciel-nuit', 'light', 'dark', 'black'] as const).entries()) {
+  for (const [index, theme] of (['dark', 'black'] as const).entries()) {
     await userEvent.click(official[index + 1]!)
     expect(onSelectCoreTheme).toHaveBeenLastCalledWith(theme)
   }
-  expect(onSelectCoreTheme).toHaveBeenCalledTimes(4)
+  expect(onSelectCoreTheme).toHaveBeenCalledTimes(2)
 })
 
 it('records a Ciel theme in a share code by its mode, which the v1 code knows', () => {
@@ -92,7 +92,7 @@ it('records a Ciel theme in a share code by its mode, which the v1 code knows', 
   expect(payload.baseMode).toBe('dark')
 })
 
-it('seeds official Cobalt tokens for ciel-nuit and dark instead of green Forest, and syncs native color swatches (issue 221)', () => {
+it('seeds official Cobalt and Dark Precision tokens for ciel-nuit and dark instead of green Forest, and syncs native color swatches (issue 221)', () => {
   const { unmount } = render(<ThemeStudioModal {...props} currentThemeMode="ciel-nuit" />)
   const actionInput = screen.getByTestId('theme-token---c-action') as HTMLInputElement
   // Official Cobalt action rgb(67, 97, 238), never Forest green rgb(28, 112, 66)
@@ -105,6 +105,6 @@ it('seeds official Cobalt tokens for ciel-nuit and dark instead of green Forest,
     'rgb(67, 97, 238)'
   )
   expect((screen.getByTestId('theme-token---c-page') as HTMLInputElement).value).toBe(
-    'rgb(11, 14, 20)'
+    'rgb(8, 9, 10)'
   )
 })

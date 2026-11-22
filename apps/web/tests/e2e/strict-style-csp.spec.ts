@@ -150,8 +150,8 @@ test('strict style CSP: Radix primitives, the audio dock and Theme Studio raise 
   await settings.getByRole('button', { name: 'Ouvrir Theme Studio', exact: true }).click()
   await page.getByTestId('theme-studio-base-light').click()
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
-  await page.getByTestId('theme-studio-base-ciel').click()
-  await expect(page.locator('html')).toHaveAttribute('data-theme', 'ciel')
+  await page.getByTestId('theme-studio-base-dark').click()
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
   expect(await violations(page), 'theme studio').toEqual([])
   await page.getByTestId('theme-studio-close-btn').click()
 

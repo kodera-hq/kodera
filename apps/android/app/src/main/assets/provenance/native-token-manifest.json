@@ -2,7 +2,7 @@
   "format": "kodera-native-tokens/1",
   "source": {
     "path": "tokens.json",
-    "sha256": "cdf9e7a299fb260a9aacd87c39cac82a7cec644e01a3a50757a92d5174ddee5a"
+    "sha256": "a295a7bea9919b0bb2d41e3221f4073792c0f5d447eacaa283e26dac3177a1fb"
   },
   "themes": [
     {
@@ -19,7 +19,7 @@
       "family": "givre",
       "mode": "dark",
       "scheme": "dark",
-      "default": false
+      "default": true
     },
     {
       "id": "black",
@@ -35,7 +35,7 @@
       "family": "ciel",
       "mode": "light",
       "scheme": "light",
-      "default": true
+      "default": false
     },
     {
       "id": "ciel-nuit",
@@ -1313,9 +1313,9 @@
       "api": "KoderaTokens.dark.page",
       "type": "color",
       "value": {
-        "r": 11,
-        "g": 14,
-        "b": 20,
+        "r": 8,
+        "g": 9,
+        "b": 10,
         "a": 1
       },
       "colorSpace": "sRGB"
@@ -1329,9 +1329,9 @@
       "api": "KoderaTokens.dark.surface",
       "type": "color",
       "value": {
-        "r": 19,
-        "g": 24,
-        "b": 35,
+        "r": 20,
+        "g": 21,
+        "b": 22,
         "a": 1
       },
       "colorSpace": "sRGB"
@@ -1345,9 +1345,9 @@
       "api": "KoderaTokens.dark.sunken",
       "type": "color",
       "value": {
-        "r": 14,
-        "g": 18,
-        "b": 25,
+        "r": 15,
+        "g": 16,
+        "b": 17,
         "a": 1
       },
       "colorSpace": "sRGB"
@@ -1361,9 +1361,9 @@
       "api": "KoderaTokens.dark.muted",
       "type": "color",
       "value": {
-        "r": 29,
-        "g": 36,
-        "b": 51,
+        "r": 30,
+        "g": 32,
+        "b": 35,
         "a": 1
       },
       "colorSpace": "sRGB"
@@ -1377,9 +1377,9 @@
       "api": "KoderaTokens.dark.muted2",
       "type": "color",
       "value": {
-        "r": 38,
-        "g": 46,
-        "b": 62,
+        "r": 39,
+        "g": 42,
+        "b": 46,
         "a": 1
       },
       "colorSpace": "sRGB"
@@ -1393,9 +1393,9 @@
       "api": "KoderaTokens.dark.hairline",
       "type": "color",
       "value": {
-        "r": 22,
-        "g": 27,
-        "b": 37,
+        "r": 27,
+        "g": 29,
+        "b": 32,
         "a": 1
       },
       "colorSpace": "sRGB"
@@ -1409,9 +1409,9 @@
       "api": "KoderaTokens.dark.border",
       "type": "color",
       "value": {
-        "r": 38,
-        "g": 46,
-        "b": 60,
+        "r": 40,
+        "g": 43,
+        "b": 48,
         "a": 1
       },
       "colorSpace": "sRGB"
@@ -1425,9 +1425,9 @@
       "api": "KoderaTokens.dark.borderSoft",
       "type": "color",
       "value": {
-        "r": 29,
-        "g": 36,
-        "b": 48,
+        "r": 31,
+        "g": 33,
+        "b": 36,
         "a": 1
       },
       "colorSpace": "sRGB"
@@ -1441,9 +1441,9 @@
       "api": "KoderaTokens.dark.borderStrong",
       "type": "color",
       "value": {
-        "r": 52,
-        "g": 64,
-        "b": 86,
+        "r": 58,
+        "g": 62,
+        "b": 69,
         "a": 1
       },
       "colorSpace": "sRGB"
@@ -1457,9 +1457,9 @@
       "api": "KoderaTokens.dark.inverse",
       "type": "color",
       "value": {
-        "r": 7,
-        "g": 9,
-        "b": 13,
+        "r": 5,
+        "g": 6,
+        "b": 7,
         "a": 1
       },
       "colorSpace": "sRGB"
@@ -1474,8 +1474,8 @@
       "type": "color",
       "value": {
         "r": 22,
-        "g": 27,
-        "b": 38,
+        "g": 24,
+        "b": 27,
         "a": 1
       },
       "colorSpace": "sRGB"
@@ -1489,9 +1489,9 @@
       "api": "KoderaTokens.dark.railLine",
       "type": "color",
       "value": {
-        "r": 42,
-        "g": 50,
-        "b": 66,
+        "r": 38,
+        "g": 41,
+        "b": 46,
         "a": 1
       },
       "colorSpace": "sRGB"
@@ -1505,9 +1505,9 @@
       "api": "KoderaTokens.dark.ink",
       "type": "color",
       "value": {
-        "r": 237,
-        "g": 241,
-        "b": 247,
+        "r": 247,
+        "g": 248,
+        "b": 248,
         "a": 1
       },
       "colorSpace": "sRGB"
@@ -1521,9 +1521,9 @@
       "api": "KoderaTokens.dark.ink2",
       "type": "color",
       "value": {
-        "r": 184,
-        "g": 194,
-        "b": 209,
+        "r": 201,
+        "g": 205,
+        "b": 211,
         "a": 1
       },
       "colorSpace": "sRGB"
@@ -1537,9 +1537,9 @@
       "api": "KoderaTokens.dark.ink3",
       "type": "color",
       "value": {
-        "r": 151,
+        "r": 158,
         "g": 163,
-        "b": 181,
+        "b": 172,
         "a": 1
       },
       "colorSpace": "sRGB"
@@ -1553,9 +1553,9 @@
       "api": "KoderaTokens.dark.ink4",
       "type": "color",
       "value": {
-        "r": 125,
-        "g": 138,
-        "b": 157,
+        "r": 138,
+        "g": 143,
+        "b": 152,
         "a": 1
       },
       "colorSpace": "sRGB"
@@ -1569,9 +1569,9 @@
       "api": "KoderaTokens.dark.onInverse",
       "type": "color",
       "value": {
-        "r": 243,
-        "g": 247,
-        "b": 251,
+        "r": 247,
+        "g": 248,
+        "b": 248,
         "a": 1
       },
       "colorSpace": "sRGB"
@@ -1585,9 +1585,9 @@
       "api": "KoderaTokens.dark.onInverseDim",
       "type": "color",
       "value": {
-        "r": 161,
-        "g": 173,
-        "b": 190,
+        "r": 165,
+        "g": 170,
+        "b": 179,
         "a": 1
       },
       "colorSpace": "sRGB"
@@ -1633,9 +1633,9 @@
       "api": "KoderaTokens.dark.accentSoft",
       "type": "color",
       "value": {
-        "r": 26,
-        "g": 35,
-        "b": 80,
+        "r": 24,
+        "g": 32,
+        "b": 66,
         "a": 1
       },
       "colorSpace": "sRGB"
@@ -1649,8 +1649,8 @@
       "api": "KoderaTokens.dark.accentInk",
       "type": "color",
       "value": {
-        "r": 174,
-        "g": 190,
+        "r": 180,
+        "g": 194,
         "b": 255,
         "a": 1
       },
@@ -2081,9 +2081,9 @@
       "api": "KoderaTokens.dark.elevated",
       "type": "color",
       "value": {
-        "r": 27,
-        "g": 33,
-        "b": 48,
+        "r": 25,
+        "g": 26,
+        "b": 28,
         "a": 1
       },
       "colorSpace": "sRGB"
@@ -2113,9 +2113,9 @@
       "api": "KoderaTokens.dark.borderInput",
       "type": "color",
       "value": {
-        "r": 110,
-        "g": 125,
-        "b": 148,
+        "r": 117,
+        "g": 122,
+        "b": 130,
         "a": 1
       },
       "colorSpace": "sRGB"
@@ -2129,9 +2129,9 @@
       "api": "KoderaTokens.dark.placeholder",
       "type": "color",
       "value": {
-        "r": 143,
-        "g": 155,
-        "b": 174,
+        "r": 146,
+        "g": 151,
+        "b": 160,
         "a": 1
       },
       "colorSpace": "sRGB"
@@ -2145,9 +2145,9 @@
       "api": "KoderaTokens.dark.disabled",
       "type": "color",
       "value": {
-        "r": 38,
-        "g": 46,
-        "b": 62,
+        "r": 39,
+        "g": 42,
+        "b": 46,
         "a": 1
       },
       "colorSpace": "sRGB"
@@ -2161,9 +2161,9 @@
       "api": "KoderaTokens.dark.onDisabled",
       "type": "color",
       "value": {
-        "r": 151,
+        "r": 158,
         "g": 163,
-        "b": 181,
+        "b": 172,
         "a": 1
       },
       "colorSpace": "sRGB"
@@ -6783,8 +6783,9 @@
       "api": "KoderaTokens.FontFamily.sans",
       "type": "fontFamily",
       "value": {
-        "primary": "Plus Jakarta Sans",
+        "primary": "Inter Variable",
         "fallbacks": [
+          "Inter",
           "system-ui",
           "-apple-system",
           "Segoe UI",
@@ -6997,24 +6998,24 @@
       "type": "material",
       "value": {
         "tint": {
-          "r": 19,
-          "g": 24,
-          "b": 35,
+          "r": 20,
+          "g": 21,
+          "b": 22,
           "a": 1
         },
         "alpha": 1,
         "blur": 0,
         "saturation": 1,
         "border": {
-          "r": 38,
-          "g": 46,
-          "b": 60,
+          "r": 40,
+          "g": 43,
+          "b": 48,
           "a": 1
         },
         "fallback": {
-          "r": 19,
-          "g": 24,
-          "b": 35,
+          "r": 20,
+          "g": 21,
+          "b": 22,
           "a": 1
         }
       },
@@ -7037,24 +7038,24 @@
       "type": "material",
       "value": {
         "tint": {
-          "r": 19,
-          "g": 24,
-          "b": 35,
+          "r": 20,
+          "g": 21,
+          "b": 22,
           "a": 1
         },
         "alpha": 1,
         "blur": 0,
         "saturation": 1,
         "border": {
-          "r": 38,
-          "g": 46,
-          "b": 60,
+          "r": 40,
+          "g": 43,
+          "b": 48,
           "a": 1
         },
         "fallback": {
-          "r": 19,
-          "g": 24,
-          "b": 35,
+          "r": 20,
+          "g": 21,
+          "b": 22,
           "a": 1
         }
       },
@@ -7077,24 +7078,24 @@
       "type": "material",
       "value": {
         "tint": {
-          "r": 27,
-          "g": 33,
-          "b": 48,
+          "r": 25,
+          "g": 26,
+          "b": 28,
           "a": 1
         },
         "alpha": 1,
         "blur": 0,
         "saturation": 1,
         "border": {
-          "r": 38,
-          "g": 46,
-          "b": 60,
+          "r": 40,
+          "g": 43,
+          "b": 48,
           "a": 1
         },
         "fallback": {
-          "r": 27,
-          "g": 33,
-          "b": 48,
+          "r": 25,
+          "g": 26,
+          "b": 28,
           "a": 1
         }
       },
@@ -7117,24 +7118,24 @@
       "type": "material",
       "value": {
         "tint": {
-          "r": 27,
-          "g": 33,
-          "b": 48,
+          "r": 25,
+          "g": 26,
+          "b": 28,
           "a": 1
         },
         "alpha": 1,
         "blur": 0,
         "saturation": 1,
         "border": {
-          "r": 38,
-          "g": 46,
-          "b": 60,
+          "r": 40,
+          "g": 43,
+          "b": 48,
           "a": 1
         },
         "fallback": {
-          "r": 27,
-          "g": 33,
-          "b": 48,
+          "r": 25,
+          "g": 26,
+          "b": 28,
           "a": 1
         }
       },

@@ -55,10 +55,10 @@
 	</array>
 	<key>UIAppFonts</key>
 	<array>
-		<string>Fonts/PlusJakartaSans-Regular.ttf</string>
-		<string>Fonts/PlusJakartaSans-Medium.ttf</string>
-		<string>Fonts/PlusJakartaSans-SemiBold.ttf</string>
-		<string>Fonts/PlusJakartaSans-Bold.ttf</string>
+		<string>Fonts/Inter-Regular.ttf</string>
+		<string>Fonts/Inter-Medium.ttf</string>
+		<string>Fonts/Inter-SemiBold.ttf</string>
+		<string>Fonts/Inter-Bold.ttf</string>
 		<string>Fonts/IBMPlexMono-Regular.ttf</string>
 	</array>
 	<key>UIApplicationSceneManifest</key>

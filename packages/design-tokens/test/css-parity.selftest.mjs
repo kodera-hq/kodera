@@ -87,10 +87,10 @@ test('every theme declares both rings, an opaque core inside a translucent halo'
       '--focus-ring-on-inverse-color: #FFFFFF;',
     ],
     '[data-theme="dark"]': [
-      '--focus-ring: 0 0 0 2px #AEBEFF, 0 0 0 5px rgba(174, 190, 255, 0.35);',
-      '--focus-ring-color: #AEBEFF;',
-      '--focus-ring-on-inverse: 0 0 0 2px #F3F7FB, 0 0 0 5px rgba(243, 247, 251, 0.35);',
-      '--focus-ring-on-inverse-color: #F3F7FB;',
+      '--focus-ring: 0 0 0 2px #B4C2FF, 0 0 0 5px rgba(180, 194, 255, 0.35);',
+      '--focus-ring-color: #B4C2FF;',
+      '--focus-ring-on-inverse: 0 0 0 2px #F7F8F8, 0 0 0 5px rgba(247, 248, 248, 0.35);',
+      '--focus-ring-on-inverse-color: #F7F8F8;',
     ],
     '[data-theme="black"]': [
       '--focus-ring: 0 0 0 2px #AEBEFF, 0 0 0 5px rgba(174, 190, 255, 0.35);',
@@ -132,7 +132,7 @@ test('the generic font keywords are not quoted into family names', () => {
   // `'sans-serif'` would be a font NAMED sans-serif; the fallback stops working
   // and nothing reports it.
   assert.doesNotMatch(css, /'sans-serif'|'monospace'|'system-ui'|'ui-monospace'/);
-  assert.match(css, /--font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;/);
+  assert.match(css, /--font-sans: 'Inter Variable', Inter, system-ui, -apple-system, 'Segoe UI', sans-serif;/);
 });
 
 test('a spot check of values still matches the design drop', () => {

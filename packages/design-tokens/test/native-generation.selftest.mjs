@@ -96,7 +96,7 @@ test('native dimensions, weights and family fallbacks have explicit mapping', as
   }
   assert.equal(m.entries.find(e => e.path === 'font.weight.semibold').value, 600);
   assert.deepEqual(m.entries.find(e => e.path === 'font.family.sans').value, {
-    primary: 'Plus Jakarta Sans', fallbacks: ['system-ui', '-apple-system', 'Segoe UI', 'sans-serif'],
+    primary: 'Inter Variable', fallbacks: ['Inter', 'system-ui', '-apple-system', 'Segoe UI', 'sans-serif'],
   });
   assert.match(outputs[names[0]], /import SwiftUI/);
   assert.match(outputs[names[0]], /public struct Palette: Sendable/);

@@ -37,7 +37,7 @@ struct VoiceCallDockCard: View {
     @StateObject private var callKitCoordinator = CallKitPushCoordinator()
 
     private var palette: KoderaTokens.Palette {
-        KoderaTokens.cielPalette(for: colorScheme)
+        KoderaTokens.activePalette(for: colorScheme)
     }
     // Hide old metadata synchronously, before onChange clears the previous scope's reducer.
     private var preview: Bool {

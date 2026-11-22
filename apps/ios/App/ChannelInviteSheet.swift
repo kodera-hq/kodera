@@ -17,7 +17,7 @@ struct ChannelInviteSheet: View {
     @State private var recipientInput = ""
 
     private var palette: KoderaTokens.Palette {
-        KoderaTokens.cielPalette(for: colorScheme)
+        KoderaTokens.activePalette(for: colorScheme)
     }
 
     var body: some View {

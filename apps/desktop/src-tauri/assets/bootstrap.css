@@ -1,7 +1,7 @@
 /* Generated from @kodera/design-tokens. Edit bootstrap.template.css. */
 :root {
   --font-family-mono: "IBM Plex Mono", ui-monospace, "SF Mono", "Menlo", monospace;
-  --font-family-sans: "Plus Jakarta Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-family-sans: "Inter Variable", "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-lineHeight-body: 1.55;
   --font-lineHeight-snug: 1.25;
   --font-size-2xl: 24px;

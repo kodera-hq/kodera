@@ -213,7 +213,7 @@ expect_refusal "a font file that is not bound" 1 "res/font differs from android-
 
 fresh; edit_json $M/assets/provenance/android-font-bindings.json 'd["fonts"][1]["weight"] = 501'
 expect_refusal "a binding to another face" 1 \
-  "font plus_jakarta_sans_medium.ttf is bound to a different face than its source"
+  "font inter_medium.ttf is bound to a different face than its source"
 
 fresh; edit_json $M/assets/provenance/android-font-bindings.json \
   'import os; b = d["fonts"].pop(); os.remove(os.path.join(os.path.dirname(path), "../../res/font", b["resourceFile"]))'
@@ -229,14 +229,14 @@ expect_refusal "a licence notice that drifted" 1 \
   "font licence OFL-ibm-plex-mono.txt differs from its source hash"
 
 # Both guards speak: one notice short, and the listed one is gone.
-fresh; rm -- "$work/$M/assets/licenses/OFL-plus-jakarta-sans.txt"
+fresh; rm -- "$work/$M/assets/licenses/OFL-inter.txt"
 expect_refusal "a missing licence notice" 2 \
   "expected 2 OFL font licence notices in assets/licenses, found 1"
 
 # Two notices are still present, so only the listed-notice guard can see it.
-fresh; mv -- "$work/$M/assets/licenses/OFL-plus-jakarta-sans.txt" "$work/$M/assets/licenses/OFL-renamed.txt"
+fresh; mv -- "$work/$M/assets/licenses/OFL-inter.txt" "$work/$M/assets/licenses/OFL-renamed.txt"
 expect_refusal "a listed licence notice replaced by another file" 1 \
-  "font licence OFL-plus-jakarta-sans.txt listed in font-assets-source.json is missing"
+  "font licence OFL-inter.txt listed in font-assets-source.json is missing"
 
 # ── AndroidManifest.xml ────────────────────────────────────────────────────
 fresh; replace $M/AndroidManifest.xml 'android:allowBackup="false"' 'android:allowBackup="true"'

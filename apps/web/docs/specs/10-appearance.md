@@ -14,7 +14,7 @@ organisation's setting. Most never open this page, because the console already f
 light or dark setting of their device. The one who does has a reason: the device is dark and they
 want the console light, or they want the black theme on a phone.
 
-**Alone test: pass.** The page is one choice between six cards, each drawn in the theme it names,
+**Alone test: pass.** The page is one choice between four cards, each drawn in the theme it names,
 and the choice applies at once, so the person sees the result before leaving the page. Nothing
 needs saving and nothing can be lost.
 
@@ -60,15 +60,15 @@ itself is not the organisation's.
 
 The delivered design's Réglages › Vous › Apparence pane, its theme cards only.
 
-- **Six cards, one choice**, in this order: « Automatique » (the default), « Ciel », « Ciel nuit »,
-  « Clair », « Sombre », « Noir ». « Automatique » follows the device: « Ciel » on a light device
-  and « Noir » (`noir`, rendered as `data-theme="black"`) on a dark one. « Ciel nuit » and the Givre
-  themes stay one click away. The mock draws the last three; « Automatique », which follows the device, is an owner-approved deviation from
-  the mock (plan D4), and the two Ciel cards follow the same decision.
+- **Four cards, one choice**, in this order: « Automatique » (the default), « Clair », « Sombre »
+  (*Dark Precision*, `defaultTheme = "dark"`), « Noir ». « Automatique » follows the device:
+  « Clair » (`light`) on a light device and « Sombre » (`dark`, rendered as `data-theme="dark"`) on
+  a dark one. Legacy `ciel` and `ciel-nuit` values remain accepted as backward-compatible token and
+  storage aliases so previously stored preferences never break.
 - **A card:** a 56 px preview, the theme's name (13 px, 600) and the mock's hint (`text-xs`, the
   type scale's smallest step). The preview draws the theme's own page strip, surface and primary
   action colour, scoped with `data-theme` on the preview, so it cannot drift from the theme it
-  names; « Automatique »'s preview is half « Ciel », half « Noir ».
+  names; « Automatique »'s preview is half « Clair », half « Sombre ».
 - **The chosen card** has a 2 px `c-accent-ink` edge and a `c-accent-ink` name; the others a 1 px
   `c-border` edge. The mock draws the chosen edge in `c-action`; `c-accent-ink` follows the
   owner-approved chosen-edge ruling of the plan cards , taken when `action` was
@@ -87,9 +87,9 @@ dot and a label rather than a card.
 
 | State | `appearance` |
 |---|---|
-| Default | The six cards; the stored choice checked, or « Automatique » when none is stored or the stored value is not a theme. |
+| Default | The four cards; the stored choice checked, or « Automatique » when none is stored or the stored value is not a theme (legacy `ciel` / `ciel-nuit` resolve to « Clair » / « Sombre »). |
 | Loading | Not reachable: the page reads nothing from the network, only this browser's storage. |
-| Empty | Not reachable: there are always five themes and « Automatique ». |
+| Empty | Not reachable: there are always three selectable Givre themes and « Automatique ». |
 | Error | The browser refuses to store the choice (private mode, a policy, a full storage): the choice still applies to this page until the next load, and an `InlineAlert` (`warning`) under the cards says it will not be kept, then how to keep it. Opened again before that load, the page shows the same choice checked and the same warning: it shows the choice the page wears, never an older stored one. |
 | Success | The page changes theme at once and the chosen card is checked; no `Toast`, the page itself is the confirmation. |
 | Partial failure | The error row above is the one partial case: applied, not kept. |
@@ -123,9 +123,9 @@ to this page only; to keep it, allow the site to store data in the browser's set
   `public/theme.js` as a classic script and awaits its successful load/application before
   importing the real main module and calling `boot`. It sets `data-theme` on `html` from the
   stored choice or the device's `prefers-color-scheme`, and follows the device's changes while
-  « Automatique » is chosen: « Ciel » on a light device, « Noir » (`black`) on a dark one. The
-  browser's own parts (scrollbars, native controls) follow with `color-scheme: dark` in dark,
-  black and « Ciel nuit ». Before any stylesheet loads, the same script sets the
+  « Automatique » is chosen: « Clair » (`light`) on a light device, « Sombre » (`dark`, *Dark
+  Precision*) on a dark one. The browser's own parts (scrollbars, native controls) follow with
+  `color-scheme: dark` in dark, black and « Ciel nuit ». Before any stylesheet loads, the same script sets the
   `<meta name="color-scheme">` content to `dark` or `light` for the resolved theme, so the
   browser canvas of a dark theme on a light device (a return through `/auth/callback`) is never
   painted white first; it is a meta attribute, never an inline style.

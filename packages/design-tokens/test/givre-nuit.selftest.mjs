@@ -228,7 +228,7 @@ test('the radius ladder rises and holds the decided steps', () => checkRadius(tr
 test('every clause fails on its own mutation', () => {
   assert.throws(
     () => checkNoGradient(mutate((t) => (t.color['theme-dark']['page-grad'].$value[1].color = '#161D25'))),
-    /dark\.page-grad: stop 1 is #161D25, not the flat page #0B0E14 \(no gradient, D-UI3\)/,
+    /dark\.page-grad: stop 1 is #161D25, not the flat page #08090A \(no gradient, D-UI3\)/,
   );
   assert.throws(
     () => checkNoGradient(mutate((t) => (t.color['theme-light']['page-grad'].$value[2].color = '#5B33C9'))),
@@ -268,7 +268,7 @@ test('every clause fails on its own mutation', () => {
   // A Givre role that reaches the sky through an alias paints it in Givre.
   assert.throws(
     () => checkNoGradient(withSky((t) => (t.semantic.theme.dark['page-grad'].$value = '{color.theme-ciel.page-grad}'))),
-    /dark\.page-grad: stop 0 is #D7E8FA, not the flat page #0B0E14 \(no gradient, D-UI3\)/,
+    /dark\.page-grad: stop 0 is #D7E8FA, not the flat page #08090A \(no gradient, D-UI3\)/,
   );
   // A second Givre gradient role, aliased to the sky: caught by the tree walk, which reads every role.
   assert.throws(
@@ -300,11 +300,11 @@ test('every clause fails on its own mutation', () => {
     /dist: tokens\.css --theme-dark-sky is a linear-gradient with 2 distinct colours/,
   );
   assert.throws(
-    () => checkDarkSteps(mutate((t) => (t.color['theme-dark'].surface.$value = '#0D1017'))),
+    () => checkDarkSteps(mutate((t) => (t.color['theme-dark'].surface.$value = '#0D0E0F'))),
     /dark: sunken must be darker than surface, or the surfaces stop separating/,
   );
   assert.throws(
-    () => checkDarkSteps(mutate((t) => (t.color['theme-dark'].elevated.$value = '#121722'))),
+    () => checkDarkSteps(mutate((t) => (t.color['theme-dark'].elevated.$value = '#121314'))),
     /dark: surface must be darker than elevated/,
   );
   assert.throws(

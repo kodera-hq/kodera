@@ -1,5 +1,5 @@
 // The console's fonts are self-hosted (`src/index.css`) and NAMED by the tokens
-// preset: `font-sans` asks for "Plus Jakarta Sans", `font-mono` for "IBM Plex
+// preset: `font-sans` asks for "Inter Variable", `font-mono` for "IBM Plex
 // Mono". Neither side can see the other. A face bundled under any other family
 // name is matched by nothing, and the browser draws the next family in the
 // stack — system-ui — with no error and no warning. A missing weight fails the
@@ -80,9 +80,7 @@ async function facesNotBundled(page: Page): Promise<{ scanned: number; missing: 
   })
 }
 
-test('fonts/home: draws the greeting heading in the bundled Plus Jakarta Sans', async ({
-  page,
-}) => {
+test('fonts/home: draws the greeting heading in the bundled Inter Variable', async ({ page }) => {
   await useScenario(page, ['shell.single-organisation', 'home.default'])
   await signInToOrg(page, ORG)
 
@@ -90,16 +88,14 @@ test('fonts/home: draws the greeting heading in the bundled Plus Jakarta Sans', 
   await expect(heading).toBeVisible()
   await page.evaluate(() => document.fonts.ready)
 
-  expect(await page.evaluate(() => document.fonts.check('600 16px "Plus Jakarta Sans"'))).toBe(true)
+  expect(await page.evaluate(() => document.fonts.check('600 16px "Inter Variable"'))).toBe(true)
   // `check()` is not the proof. Per the CSS Font Loading spec it answers true
   // when NO face carries the family name at all, and on the build before this
   // test it did, while the heading was drawn from a fallback. The proof is the
-  // face the glyphs came from: `familyName` is the font file's own name ("Plus
-  // Jakarta Sans SemiBold" for the 600 file), and `isCustomFont` separates the
-  // bundled face from a copy installed on the machine running the test, which
-  // reports the same name and hid the defect on a machine that had one.
+  // face the glyphs came from: `familyName` is the font file's own SFNT name
+  // ("Inter" or "Inter Variable"), and `isCustomFont` separates the bundled face from a system copy.
   expect(await renderedFonts(page, heading)).toEqual([
-    { familyName: expect.stringMatching(/^Plus Jakarta Sans\b/), isCustomFont: true },
+    { familyName: expect.stringMatching(/^Inter\b/), isCustomFont: true },
   ])
 })
 

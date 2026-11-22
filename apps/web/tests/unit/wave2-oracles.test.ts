@@ -1247,7 +1247,7 @@ describe('R6 browser helpers and WCAG guard mutations', () => {
   const scan = {
     scanned: 21,
     missing: [],
-    sans: 'Plus Jakarta Sans',
+    sans: 'Inter Variable',
     mono: 'IBM Plex Mono',
     negativeFacePresent: false,
   }
@@ -1282,24 +1282,22 @@ describe('R6 browser helpers and WCAG guard mutations', () => {
   })
   it('requires one custom rendered face; catches a single-glyph fallback and synthetic weights', () => {
     assertFontScan(scan)
-    assertRenderedFont(
-      [{ familyName: 'Plus Jakarta Sans SemiBold', isCustomFont: true }],
-      'Plus Jakarta Sans'
-    )
+    assertRenderedFont([{ familyName: 'Inter', isCustomFont: true }], 'Inter')
+    assertRenderedFont([{ familyName: 'Inter Variable', isCustomFont: true }], 'Inter')
     for (const fonts of [
       [],
       [{ familyName: 'Other', isCustomFont: true }],
-      [{ familyName: 'Plus Jakarta Sans', isCustomFont: false }],
+      [{ familyName: 'Inter', isCustomFont: false }],
       [
-        { familyName: 'Plus Jakarta Sans', isCustomFont: true },
+        { familyName: 'Inter', isCustomFont: true },
         { familyName: 'Fallback', isCustomFont: false },
       ],
     ])
-      expect(() => assertRenderedFont(fonts, 'Plus Jakarta Sans')).toThrow('R6_FONT_FAMILY_RENAMED')
+      expect(() => assertRenderedFont(fonts, 'Inter')).toThrow('R6_FONT_FAMILY_RENAMED')
     for (const mutation of [
       { scanned: 0 },
       { negativeFacePresent: true },
-      { missing: ['Plus Jakarta Sans 600 normal'] },
+      { missing: ['Inter Variable 600 normal'] },
       { missing: ['IBM Plex Mono 600 normal'] },
       { sans: 'Fallback' },
       { mono: 'Fallback' },
@@ -2140,7 +2138,7 @@ describe('concurrent transport and font regressions', () => {
     const original = Object.getOwnPropertyDescriptor(document, 'fonts')
     const faces = [
       ...['normal', '500', '600', 'bold', '800'].map((weight) => ({
-        family: 'Plus Jakarta Sans',
+        family: 'Inter Variable',
         weight,
         style: 'normal',
         status: 'loaded',
@@ -2158,7 +2156,7 @@ describe('concurrent transport and font regressions', () => {
     })
     vi.stubGlobal('getComputedStyle', (_element: Element, pseudo?: string) => ({
       content: pseudo ? 'none' : '',
-      fontFamily: 'Plus Jakarta Sans',
+      fontFamily: 'Inter Variable',
       fontWeight: 'normal',
       fontStyle: 'normal',
       getPropertyValue: () => 'IBM Plex Mono',
@@ -2172,11 +2170,11 @@ describe('concurrent transport and font regressions', () => {
     try {
       assertFontScan(scanFontsInDocument('landing'))
       faces[0]!.weight = 'invalid'
-      expect(scanFontsInDocument('landing').missing).toContain('Plus Jakarta Sans 400 normal')
+      expect(scanFontsInDocument('landing').missing).toContain('Inter Variable 400 normal')
       expect(() => assertFontScan(scanFontsInDocument('landing'))).toThrow('R6_FONT_ASSET_MISSING')
       faces[0]!.weight = 'normal'
       faces[3]!.weight = 'invalid'
-      expect(scanFontsInDocument('landing').missing).toContain('Plus Jakarta Sans 700 normal')
+      expect(scanFontsInDocument('landing').missing).toContain('Inter Variable 700 normal')
       faces[3]!.weight = '700 800'
       assertFontScan(scanFontsInDocument('landing'))
     } finally {

@@ -2,9 +2,9 @@
 // runs before the first paint and follows the device while the choice is
 // "system" — so this module only stores a choice and announces it.
 
-export type ThemePreference = 'system' | 'ciel' | 'ciel-nuit' | 'light' | 'dark' | 'black'
-/** A theme a page can wear: every choice but « Automatique », which resolves to one of these. */
-export type AppliedTheme = Exclude<ThemePreference, 'system'>
+export type ThemePreference = 'system' | 'light' | 'dark' | 'black'
+/** A theme a page can wear, including backward-compatible stored Ciel tokens. */
+export type AppliedTheme = 'light' | 'dark' | 'black' | 'ciel' | 'ciel-nuit'
 /** The light/dark/black axis a theme sits on, which a shareable theme code records (`themeCodec.ts`). */
 export type ThemeMode = 'light' | 'dark' | 'black'
 
@@ -13,30 +13,28 @@ export const THEME_STORAGE_KEY = 'console:theme'
 export const THEME_CHANGE_EVENT = 'console:theme'
 
 /**
- * Every choice, the default first: « Automatique » follows the device — Ciel when it is light, the
- * neutral true-black theme when it is dark — then Ciel's two themes, then the three Givre themes,
- * each one click away.
+ * Primary user choices: « Automatique » follows the device (Light Givre when light, Dark Precision
+ * when dark), followed by Clair (`light`), Sombre (`dark`, defaultTheme) and Noir (`black`).
+ * Legacy `ciel` and `ciel-nuit` values remain supported as backward-compatible token/API aliases.
  */
-export const THEME_PREFERENCES: readonly ThemePreference[] = [
-  'system',
-  'ciel',
-  'ciel-nuit',
-  'light',
-  'dark',
-  'black',
-]
+export const THEME_PREFERENCES: readonly ThemePreference[] = ['system', 'light', 'dark', 'black']
 
-const APPLIED: readonly AppliedTheme[] = ['ciel', 'ciel-nuit', 'light', 'dark', 'black']
+export const LEGACY_THEME_ALIASES: Readonly<Record<'ciel' | 'ciel-nuit', ThemePreference>> = {
+  ciel: 'light',
+  'ciel-nuit': 'dark',
+}
+
+const APPLIED: readonly AppliedTheme[] = ['light', 'dark', 'black', 'ciel', 'ciel-nuit']
 
 /**
  * The theme on the page now: the choice itself, or the theme `public/theme.js` resolved
- * « Automatique » to — Ciel light when it cannot tell.
+ * « Automatique » to — Dark Precision (`dark`) when it cannot tell.
  */
 export function appliedTheme(preference: ThemePreference): AppliedTheme {
   if (preference !== 'system') return preference
   const applied =
     typeof document === 'undefined' ? undefined : document.documentElement.dataset.theme
-  return APPLIED.find((theme) => theme === applied) ?? 'ciel'
+  return APPLIED.find((theme) => theme === applied) ?? 'dark'
 }
 
 /** The mode a theme renders in: Ciel and Ciel Nuit are the light and dark sides of their family. */
@@ -67,6 +65,7 @@ export function readThemePreference(): ThemePreference {
   if (unsaved !== null) return unsaved
   try {
     const stored = window.localStorage.getItem(THEME_STORAGE_KEY)
+    if (stored === 'ciel' || stored === 'ciel-nuit') return LEGACY_THEME_ALIASES[stored]
     return THEME_PREFERENCES.find((preference) => preference === stored) ?? 'system'
   } catch {
     return 'system'

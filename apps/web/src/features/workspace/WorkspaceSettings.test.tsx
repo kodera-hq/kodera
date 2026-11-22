@@ -160,14 +160,14 @@ it('keeps appearance and audio available to a member', async () => {
   const user = userEvent.setup()
   render(<WorkspaceSettings {...props} />)
   await user.click(screen.getByRole('tab', { name: 'Apparence & thèmes' }))
-  // Every theme the console has, named as the appearance screen names them.
-  for (const theme of ['Automatique', 'Ciel', 'Ciel nuit', 'Clair', 'Sombre', 'Noir']) {
+  // Every selectable theme the console offers, named as the appearance screen names them.
+  for (const theme of ['Automatique', 'Clair', 'Sombre', 'Noir']) {
     expect(screen.getByRole('button', { name: theme })).toBeVisible()
   }
   await user.click(screen.getByRole('button', { name: 'Noir' }))
   expect(localStorage.getItem('console:theme')).toBe('black')
-  await user.click(screen.getByRole('button', { name: 'Ciel nuit' }))
-  expect(localStorage.getItem('console:theme')).toBe('ciel-nuit')
+  await user.click(screen.getByRole('button', { name: 'Sombre' }))
+  expect(localStorage.getItem('console:theme')).toBe('dark')
   await user.click(screen.getByRole('button', { name: 'Ouvrir Theme Studio' }))
   expect(screen.getAllByRole('dialog', { hidden: true })).toHaveLength(2)
   await user.keyboard('{Escape}')

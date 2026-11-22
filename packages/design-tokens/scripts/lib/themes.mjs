@@ -46,9 +46,9 @@ const SCHEME_OF = { light: 'light', dark: 'dark', black: 'dark' };
 export const THEME_REGISTRY = Object.freeze(
   [
     { id: 'light', family: 'givre', mode: 'light' },
-    { id: 'dark', family: 'givre', mode: 'dark' },
+    { id: 'dark', family: 'givre', mode: 'dark', default: true },
     { id: 'black', family: 'givre', mode: 'black' },
-    { id: 'ciel', family: 'ciel', mode: 'light', default: true },
+    { id: 'ciel', family: 'ciel', mode: 'light' },
     { id: 'ciel-nuit', family: 'ciel', mode: 'dark' },
   ].map((theme) => Object.freeze({ default: false, ...theme, scheme: SCHEME_OF[theme.mode] })),
 );

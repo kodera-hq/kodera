@@ -19,8 +19,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Dp
 import io.kodera.tokens.KoderaTokens
 
-internal val LocalKoderaPalette = staticCompositionLocalOf { KoderaTokens.ciel }
-internal val LocalKoderaMaterials = staticCompositionLocalOf { KoderaTokens.MaterialSet.ciel }
+internal val LocalKoderaPalette = staticCompositionLocalOf { KoderaTokens.dark }
+internal val LocalKoderaMaterials = staticCompositionLocalOf { KoderaTokens.MaterialSet.dark }
+
+internal fun resolveActiveTheme(darkTheme: Boolean): KoderaTokens.Theme =
+    if (darkTheme) KoderaTokens.Theme.Dark else KoderaTokens.Theme.Light
 
 internal fun resolveCielTheme(darkTheme: Boolean): KoderaTokens.Theme =
     if (darkTheme) KoderaTokens.Theme.CielNuit else KoderaTokens.Theme.Ciel
@@ -31,7 +34,7 @@ fun KoderaTheme(
     themeOverride: KoderaTokens.Theme? = null,
     content: @Composable () -> Unit,
 ) {
-    val activeTheme = themeOverride ?: resolveCielTheme(darkTheme)
+    val activeTheme = themeOverride ?: resolveActiveTheme(darkTheme)
     val palette = activeTheme.palette
     val materials = activeTheme.materials
     val base = if (activeTheme.isDark) darkColorScheme() else lightColorScheme()

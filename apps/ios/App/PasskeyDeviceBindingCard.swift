@@ -12,7 +12,7 @@ struct PasskeyDeviceBindingCard: View {
     @Environment(\.colorScheme) private var colorScheme
 
     private var palette: KoderaTokens.Palette {
-        KoderaTokens.cielPalette(for: colorScheme)
+        KoderaTokens.activePalette(for: colorScheme)
     }
 
     var body: some View {

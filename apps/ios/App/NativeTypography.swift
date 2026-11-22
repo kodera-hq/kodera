@@ -29,6 +29,14 @@ enum NativeTypography {
 }
 
 extension KoderaTokens {
+    static func activePalette(for colorScheme: ColorScheme) -> Palette {
+        colorScheme == .dark ? dark : light
+    }
+
+    static func activeTheme(for colorScheme: ColorScheme) -> Theme {
+        colorScheme == .dark ? .dark : .light
+    }
+
     static func cielPalette(for colorScheme: ColorScheme) -> Palette {
         colorScheme == .dark ? cielNuit : ciel
     }
