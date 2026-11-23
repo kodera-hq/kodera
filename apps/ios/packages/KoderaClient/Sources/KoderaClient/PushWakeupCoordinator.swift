@@ -81,6 +81,7 @@ public actor PushWakeupCoordinator {
             throw .invalidInput
         }
         let bodyObject: [String: String] = [
+            "platform": "ios",
             "endpoint": endpoint,
             "p256dh": p256dh,
             "auth": auth,
@@ -88,6 +89,7 @@ public actor PushWakeupCoordinator {
         guard let body = try? JSONSerialization.data(withJSONObject: bodyObject, options: [.sortedKeys]) else {
             throw .invalidInput
         }
+        // Always PUT so a remembered registration from an older client gains platform parity.
         let path = Self.deviceWakeupPath(deviceId: deviceId)
         let reply = await requester.put(path: path, jsonBody: body)
         switch reply {

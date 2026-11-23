@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next'
-import { useId, useMemo, useState } from 'react'
+import { lazy, Suspense, useId, useMemo, useState } from 'react'
 import { Button } from '@/ui/Button/Button'
 import { Card, CardBody } from '@/ui/Card/Card'
 import { StatusPill } from '@/ui/StatusPill/StatusPill'
@@ -7,6 +7,9 @@ import { BrandIcon } from '@/ui/icons/BrandIcon'
 import { EXTENSION_BRANDS } from './extensionBrand'
 import { ModuleGlyph } from '@/ui/icons/ModuleGlyph'
 import { WebhookSignatureTester } from './WebhookSignatureTester'
+import { workspaceMigratorCopy } from './workspaceMigratorMessages'
+import type { WorkspaceMigratorTransport } from './workspaceMigrator'
+import type { MigratorChannelOption } from './WorkspaceMigratorPanel'
 import {
   EXTENSION_CATEGORY_FILTERS,
   EXTENSION_SCHEMA_VERSION,
@@ -18,12 +21,20 @@ import {
   validateExtensionWebhookUrl,
 } from './catalog'
 
+const LazyWorkspaceMigratorPanel = lazy(async () => {
+  const mod = await import('./WorkspaceMigratorPanel')
+  return { default: mod.WorkspaceMigratorPanel }
+})
+
 export interface ExtensionsCatalogPanelProps {
-  readonly channels?: readonly { id: string; label: string }[] | undefined
+  readonly organisationId?: string | undefined
+  readonly channels?: readonly MigratorChannelOption[] | undefined
   readonly extensions?: readonly OfficialExtensionDescriptor[] | undefined
   readonly defaultSelectedId?: OfficialExtensionId | undefined
   readonly defaultCategory?: ExtensionCategoryFilter | undefined
   readonly defaultWebhookUrl?: string | undefined
+  readonly defaultMigratorOpen?: boolean | undefined
+  readonly migratorTransport?: WorkspaceMigratorTransport | undefined
   readonly onSelectExtension?: ((extension: OfficialExtensionDescriptor) => void) | undefined
   readonly onWebhookValidated?:
     ((extensionId: OfficialExtensionId, normalizedUrl: string) => void) | undefined
@@ -101,6 +112,7 @@ const PANEL_COPY = {
 } as const
 
 export function ExtensionsCatalogPanel({
+  organisationId,
   channels = [],
   extensions = OFFICIAL_EXTENSIONS_CATALOG,
   // No connector is chosen on arrival. A card drawn as chosen that nobody chose reads as a stray
@@ -108,17 +120,21 @@ export function ExtensionsCatalogPanel({
   defaultSelectedId,
   defaultCategory = 'all',
   defaultWebhookUrl = '',
+  defaultMigratorOpen = false,
+  migratorTransport,
   onSelectExtension,
   onWebhookValidated,
 }: ExtensionsCatalogPanelProps) {
   const { t, i18n } = useTranslation()
   const isEn = Boolean(i18n.resolvedLanguage?.startsWith('en'))
   const copy = isEn ? PANEL_COPY.en : PANEL_COPY.fr
+  const migratorCopy = workspaceMigratorCopy(i18n.resolvedLanguage)
   const headingId = useId()
   const webhookInputId = useId()
   const searchInputId = useId()
   const channelInputId = useId()
   const [channelId, setChannelId] = useState('')
+  const [migratorOpen, setMigratorOpen] = useState<boolean>(defaultMigratorOpen)
 
   const [selectedCategory, setSelectedCategory] = useState<ExtensionCategoryFilter>(defaultCategory)
   const [selectedId, setSelectedId] = useState<OfficialExtensionId | null>(
@@ -463,6 +479,34 @@ export function ExtensionsCatalogPanel({
               </details>
             </div>
           )}
+
+          <div className="flex flex-col gap-3 border-t border-c-border-soft pt-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <Button
+                size="sm"
+                variant="secondary"
+                aria-expanded={migratorOpen}
+                data-testid="toggle-workspace-migrator"
+                onClick={() => setMigratorOpen((prev) => !prev)}
+              >
+                {migratorOpen ? migratorCopy.toggleClose : migratorCopy.toggleOpen}
+              </Button>
+              <StatusPill state="info">{migratorCopy.toggleBadge}</StatusPill>
+            </div>
+            {migratorOpen ? (
+              <Suspense
+                fallback={
+                  <p className="text-xs text-c-ink-3">{migratorCopy.loadingPanel}</p>
+                }
+              >
+                <LazyWorkspaceMigratorPanel
+                  organisationId={organisationId}
+                  channels={channels}
+                  transport={migratorTransport}
+                />
+              </Suspense>
+            ) : null}
+          </div>
         </CardBody>
       </Card>
     </section>

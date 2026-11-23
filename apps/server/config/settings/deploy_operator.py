@@ -21,7 +21,11 @@ from config.environment import (
     billing_enabled,
     ee_audit_signing_seed,
     intake_admitted,
+    matrix_replay_transport_factory,
     staff_issuer,
+    synapse_admin_token,
+    synapse_server_name,
+    synapse_url,
     tenant_app_urls,
 )
 from core.sealing import key_from_environment as contact_key_from_environment
@@ -114,3 +118,10 @@ KODERA_DEFAULT_COMMUNITY_ISSUER = os.environ.get("KODERA_DEFAULT_COMMUNITY_ISSUE
 KODERA_DEFAULT_COMMUNITY_OWNER_USER_ID = os.environ.get(
     "KODERA_DEFAULT_COMMUNITY_OWNER_USER_ID", ""
 )
+
+# Optional Matrix worker settings for dispatch_extension_coexistence, which this profile runs;
+# unset, the command refuses to run rather than silently draining nothing.
+KODERA_SYNAPSE_URL = synapse_url(os.environ)
+KODERA_SYNAPSE_ADMIN_TOKEN = synapse_admin_token(os.environ)
+KODERA_SYNAPSE_SERVER_NAME = synapse_server_name(os.environ)
+KODERA_MATRIX_REPLAY_TRANSPORT_FACTORY = matrix_replay_transport_factory(os.environ)

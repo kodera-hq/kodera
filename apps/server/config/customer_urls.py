@@ -38,7 +38,7 @@ from apps.orgs.api.memberships import membership_directory
 from apps.orgs.api.notice_contacts import notice_contacts
 from apps.orgs.api.owner_claims import consume_owner_claim
 from apps.support.api.community import community_support_tickets
-from apps.support.api.views import support_tickets
+from apps.support.api.views import bug_reports, support_tickets
 from apps.workspaces.api import administration as structure, quotas
 from apps.workspaces.api.instant_claim import instant_claim
 from apps.workspaces.api.views import initialise, workspace
@@ -59,7 +59,9 @@ urlpatterns = [
     path("", include("apps.proximity.api.urls")),
     # Every confidential operation independently refuses while its feature gate is disabled.
     path("", include("apps.e2ee.api.urls")),
+    path("", include("apps.ai_gateway.api.urls")),
     path("", include("apps.docs.api.urls")),
+    path("", include("apps.extensions.api.urls")),
     path("api/v1/me", me),
     path("api/v1/me/privacy/exports", privacy.account_exports),
     path("api/v1/me/privacy/exports/<uuid:request_id>", privacy.account_export),
@@ -109,8 +111,12 @@ urlpatterns = [
         membership,
     ),
     path("api/v1/owner-claims/actions/consume", consume_owner_claim),
-    # Support tickets (docs/specs/SUPPORT_TICKETS.md): createSupportTicket only.
+    # Support tickets (docs/specs/SUPPORT_TICKETS.md) and zero-PII bug reports.
     path("api/v1/support/tickets", support_tickets),
+    path(
+        "api/v1/organisations/<uuid:organisation_id>/support/bug-reports",
+        bug_reports,
+    ),
     path("api/v1/community/support/tickets", community_support_tickets),
     # Invitations (docs/specs/INVITATIONS.md).
     path(

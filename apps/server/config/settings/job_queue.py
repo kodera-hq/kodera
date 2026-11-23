@@ -36,6 +36,10 @@ from config.environment import (
     ee_audit_signing_seed,
     intake_admitted,
     legal_text_origin,
+    matrix_replay_transport_factory,
+    synapse_admin_token,
+    synapse_server_name,
+    synapse_url,
 )
 from config.workspace_features import (
     media_gateway_socket,
@@ -127,3 +131,10 @@ KODERA_MEDIA_ROOM_VERIFIER_URL = media_room_verifier_url(os.environ)
 ) = collaboration_settings(os.environ)
 
 KODERA_EE_AUDIT_SIGNING_SEED = ee_audit_signing_seed(os.environ)
+
+# Optional Matrix worker settings for dispatch_extension_coexistence, which runs on this operator
+# profile; unset, the command refuses to run rather than silently draining nothing.
+KODERA_SYNAPSE_URL = synapse_url(os.environ)
+KODERA_SYNAPSE_ADMIN_TOKEN = synapse_admin_token(os.environ)
+KODERA_SYNAPSE_SERVER_NAME = synapse_server_name(os.environ)
+KODERA_MATRIX_REPLAY_TRANSPORT_FACTORY = matrix_replay_transport_factory(os.environ)

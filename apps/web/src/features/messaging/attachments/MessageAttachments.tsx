@@ -10,7 +10,8 @@ import { loadImagePreview } from './imagePreview'
 import { useTranslation } from 'react-i18next'
 import { coreApi } from '../../../api/client'
 import { useMessagingOrganisation } from '../organisationContext'
-import type { AttachmentRef } from './attachmentRefs'
+import { isVoiceNoteType, type AttachmentRef } from './attachmentRefs'
+import { VoiceNotePlayer } from './VoiceNotePlayer'
 
 const CHIP =
   'flex min-h-10 max-w-full items-center gap-2 rounded-md border border-c-border bg-c-sunken px-3 py-2 text-left text-sm text-c-ink hover:bg-c-muted focus-visible:ring focus-visible:outline-hidden disabled:cursor-not-allowed disabled:text-c-on-disabled'
@@ -103,36 +104,43 @@ export function MessageAttachments({ refs }: { refs: readonly AttachmentRef[] })
       if (live.current) setProblem(true)
     }
   }
+  const voiceNotes = refs.filter((ref) => isVoiceNoteType(ref.contentType))
+  const fileRefs = refs.filter((ref) => !isVoiceNoteType(ref.contentType))
   return (
     <div className="mt-2 flex flex-col gap-2">
-      <ul
-        aria-label={t('console.workspace.attachments.label-list')}
-        className="flex flex-wrap gap-2"
-      >
-        {refs.map((ref) => (
-          <li key={ref.id} className="max-w-full">
-            <button
-              type="button"
-              className={CHIP}
-              disabled={organisationId === null || pending === organisationId}
-              onClick={() => void open(ref)}
-              aria-label={
-                ref.contentType.startsWith('image/')
-                  ? `${copy.preview}: ${cleanText(ref.filename, 120)}`
-                  : t('console.workspace.attachments.action-open', {
-                      name: cleanText(ref.filename, 120),
-                    })
-              }
-            >
-              <span aria-hidden="true">📎</span>
-              <span className="min-w-0 truncate">{cleanText(ref.filename, 120)}</span>
-              <span className="shrink-0 text-xs text-c-ink-3">
-                {formatBytes(ref.sizeBytes, i18n.resolvedLanguage)}
-              </span>
-            </button>
-          </li>
-        ))}
-      </ul>
+      {voiceNotes.map((ref) => (
+        <VoiceNotePlayer key={ref.id} attachment={ref} organisationId={organisationId} />
+      ))}
+      {fileRefs.length > 0 ? (
+        <ul
+          aria-label={t('console.workspace.attachments.label-list')}
+          className="flex flex-wrap gap-2"
+        >
+          {fileRefs.map((ref) => (
+            <li key={ref.id} className="max-w-full">
+              <button
+                type="button"
+                className={CHIP}
+                disabled={organisationId === null || pending === organisationId}
+                onClick={() => void open(ref)}
+                aria-label={
+                  ref.contentType.startsWith('image/')
+                    ? `${copy.preview}: ${cleanText(ref.filename, 120)}`
+                    : t('console.workspace.attachments.action-open', {
+                        name: cleanText(ref.filename, 120),
+                      })
+                }
+              >
+                <span aria-hidden="true">📎</span>
+                <span className="min-w-0 truncate">{cleanText(ref.filename, 120)}</span>
+                <span className="shrink-0 text-xs text-c-ink-3">
+                  {formatBytes(ref.sizeBytes, i18n.resolvedLanguage)}
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
       <Dialog
         open={preview !== null && preview.organisationId === organisationId}
         onOpenChange={(open) => {

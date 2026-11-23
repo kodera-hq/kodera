@@ -10,9 +10,27 @@ import type { CopyStatus } from '../../ui/CopyableField/CopyableField'
 import { InlineAlert } from '../../ui/InlineAlert/InlineAlert'
 import { LinkButton } from '../../ui/LinkButton/LinkButton'
 import { canViewInvoices } from '../invoices/permissions'
+import { BugReportDialog } from './BugReportDialog'
+import { bugReportCopy } from './bugReportMessages'
+import type { BugComponent } from './bugReportScrubber'
 import { CommunitySupport } from './CommunitySupport'
 import { helpTopic } from './helpTopic'
 import type { HelpSearch } from './helpTopic'
+
+function deriveDiagnosticDefaults(search: HelpSearch): {
+  component: BugComponent
+  errorCode: string
+} {
+  const component: BugComponent =
+    search.invoiceNumber !== undefined || search.topic !== undefined ? 'billing' : 'workspace'
+  if (search.reason === 'step-failed') return { component, errorCode: 'JOB_STEP_FAILED' }
+  if (search.reason === 'stale') return { component, errorCode: 'AGENT_HEARTBEAT_STALE' }
+  if (search.reason === 'incident') return { component, errorCode: 'SERVICE_INCIDENT' }
+  if (search.state !== undefined) {
+    return { component, errorCode: `STATE_${search.state.toUpperCase()}` }
+  }
+  return { component, errorCode: 'UI_REPORTED_ISSUE' }
+}
 
 export interface HelpScreenProps {
   search: HelpSearch
@@ -36,10 +54,12 @@ function useCopyAddress() {
 }
 
 export function HelpScreen({ search }: HelpScreenProps) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const { membership, me } = orgRoute.useLoaderData()
-  const { name: organisation, slug } = membership.organisation
+  const { id: organisationId, name: organisation, slug } = membership.organisation
   const topic = helpTopic(search, t)
+  const diagnostic = deriveDiagnosticDefaults(search)
+  const bugCopy = bugReportCopy(i18n.resolvedLanguage)
   const copyAddress = useCopyAddress()
 
   // What the page asks for, and the pre-written e-mail's lines, follow the
@@ -169,6 +189,15 @@ export function HelpScreen({ search }: HelpScreenProps) {
                 </p>
               </div>
             ) : null}
+            <div className="flex flex-col gap-1 pt-2">
+              <BugReportDialog
+                organisationId={organisationId}
+                organisationSlug={slug}
+                defaultComponent={diagnostic.component}
+                defaultErrorCode={diagnostic.errorCode}
+              />
+              <p className="text-xs text-c-ink-3">{bugCopy.hintTrigger}</p>
+            </div>
           </section>
         </Card>
       </div>

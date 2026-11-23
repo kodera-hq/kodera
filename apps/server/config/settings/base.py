@@ -98,6 +98,20 @@ KODERA_PASSPORT_MAGIC_LINK: str | None = None
 KODERA_MEDIA_ROOM_VERIFIER_URL: str | None = None
 KODERA_PUBLIC_API_ORIGIN: str | None = None
 KODERA_SAML_SP_BASE_URL: str | None = None
+KODERA_AI_GATEWAY_ENABLED = False
+KODERA_AI_SEAL_KEY: bytes | None = None
+KODERA_AI_MISTRAL_API_KEY: str | None = None
+KODERA_AI_ACTOR_SUBJECTS: tuple[str, ...] = ()
+KODERA_AI_CLIENT_IDS: tuple[str, ...] = ()
+# Optional Matrix worker settings for dispatch_extension_coexistence (queued Matrix history
+# imports and inbound coexistence deliveries). Each profile that runs the worker reads them from
+# its environment through config.environment's validators; unset, the command refuses to run
+# rather than silently draining nothing. KODERA_MATRIX_REPLAY_TRANSPORT_FACTORY holds a dotted
+# Python path, resolved by the command; the command also accepts a callable assigned directly.
+KODERA_SYNAPSE_URL: str | None = None
+KODERA_SYNAPSE_ADMIN_TOKEN: str | None = None
+KODERA_SYNAPSE_SERVER_NAME: str = ""
+KODERA_MATRIX_REPLAY_TRANSPORT_FACTORY: str | None = None
 
 from core.db.ee_erasure import install_ee_erasure_key_sync as _install_ee_erasure_key_sync  # noqa: E402
 

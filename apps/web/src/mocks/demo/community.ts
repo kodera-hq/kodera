@@ -115,6 +115,7 @@ export function communityWorkspace(): components['schemas']['Workspace'] {
         kind: definition.voice ? 'audio' : 'text',
         topic: `${copy[category.audience]} · ${copy[definition.description]}`,
         template_key: null,
+        is_confidential: false,
         room_state: 'ready',
       })),
     })),

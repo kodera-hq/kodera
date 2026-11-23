@@ -41,6 +41,7 @@ export interface DrawerProps {
   open?: boolean
   defaultOpen?: boolean
   onOpenChange?: (open: boolean) => void
+  onEscapeKeyDown?: (event: KeyboardEvent) => void
   trigger?: ReactNode
   title: string
   description?: string
@@ -73,6 +74,7 @@ export const Drawer = forwardRef<HTMLDivElement, DrawerProps>(function Drawer(
     open,
     defaultOpen,
     onOpenChange,
+    onEscapeKeyDown,
     trigger,
     title,
     description,
@@ -109,6 +111,7 @@ export const Drawer = forwardRef<HTMLDivElement, DrawerProps>(function Drawer(
             side === 'right' ? SIZE[size] : 'safe-area-bottom'
           )}
           onCloseAutoFocus={closeAutoFocusHandler(returnFocusTo)}
+          {...(onEscapeKeyDown === undefined ? {} : { onEscapeKeyDown })}
         >
           <div className="flex items-start justify-between gap-4">
             <RadixDialog.Title className="text-lg font-semibold text-c-ink">

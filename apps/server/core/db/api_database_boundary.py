@@ -93,7 +93,11 @@ def assert_writer_grants(cursor: Any, role: str) -> None:
                 and table not in policy.SELECT
                 and (table, column) not in policy.SELECT_COLUMNS
             )
-            or (inserts and table not in policy.INSERT)
+            or (
+                inserts
+                and table not in policy.INSERT
+                and (table, column) not in policy.INSERT_COLUMNS
+            )
             or (updates and (table, column) not in policy.UPDATE_COLUMNS)
         ):
             raise DatabaseError(REFUSAL)

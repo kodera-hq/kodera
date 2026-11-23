@@ -62,7 +62,11 @@ def public_key(request: HttpRequest) -> HttpResponse:
 )
 def subscription(request: HttpRequest, device_id: UUID) -> HttpResponse:
     def put(verified: VerifiedAccessToken, request_id: str) -> HttpResponse:
-        data = http.body(request, {"endpoint", "p256dh", "auth"}, {"endpoint", "p256dh", "auth"})
+        data = http.body(
+            request,
+            {"endpoint", "p256dh", "auth", "platform"},
+            {"endpoint", "p256dh", "auth"},
+        )
         service.put_subscription(
             verified=verified, device_id=device_id, body=data, request_id=request_id
         )
@@ -70,6 +74,25 @@ def subscription(request: HttpRequest, device_id: UUID) -> HttpResponse:
 
     def delete(verified: VerifiedAccessToken, request_id: str) -> HttpResponse:
         service.delete_subscription(verified=verified, device_id=device_id, request_id=request_id)
+        return HttpResponse(status=204)
+
+    return http.serve(request, {"PUT": put, "DELETE": delete})
+
+
+@declares(
+    Operation("PUT", "putNotificationPresence", "presence_lease:update"),
+    Operation("DELETE", "deleteNotificationPresence", "presence_lease:delete"),
+)
+def presence(request: HttpRequest, device_id: UUID) -> HttpResponse:
+    def put(verified: VerifiedAccessToken, request_id: str) -> HttpResponse:
+        data = http.body(request, {"platform", "ttlSeconds"}, {"platform"})
+        lease = service.put_presence(
+            verified=verified, device_id=device_id, body=data, request_id=request_id
+        )
+        return http.json_response(lease)
+
+    def delete(verified: VerifiedAccessToken, request_id: str) -> HttpResponse:
+        service.delete_presence(verified=verified, device_id=device_id, request_id=request_id)
         return HttpResponse(status=204)
 
     return http.serve(request, {"PUT": put, "DELETE": delete})

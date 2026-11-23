@@ -330,6 +330,35 @@ def test_read_only_lets_the_exempt_post_and_listen_only_names_who_may_publish(tm
     assert audio[("m.room.power_levels", "")]["users"][ROOMS] == 10
 
 
+def test_audio_channel_reuses_single_room_with_distinct_chat_exempt_and_voice_may_publish(tmp_path):
+    handlers, homeserver, _, _ = build(tmp_path)
+    outcome = handlers.handle(
+        CHANNEL_KIND,
+        channel_set(
+            1,
+            channel(
+                AUDIO,
+                kind="audio",
+                members=[ALICE, BOB],
+                read_only=True,
+                listen_only=True,
+                exempt=[ALICE],
+                speak_exempt=[BOB],
+            ),
+        ),
+    )
+    assert outcome.status == "succeeded"
+    assert len(homeserver.rooms) == 1
+    audio = homeserver.room_of(AUDIO)["state"]
+    assert audio[(POLICY, "")]["read_only"] is True
+    assert audio[(POLICY, "")]["exempt"] == [mx(ALICE)]
+    assert audio[(POLICY, "")]["listen_only"] is True
+    assert audio[(POLICY, "")]["may_publish"] == [mx(BOB)]
+    levels = audio[("m.room.power_levels", "")]
+    assert levels["events_default"] == 20
+    assert levels["users"] == {mx(ALICE): 20, ROOMS: 10}
+
+
 def test_a_member_without_an_account_is_joined_on_the_first_application(tmp_path):
     """The account is made before the member's first sign-in, bound to their realm subject as it
     is (not the lowercased localpart), so that sign-in lands on it rather than on a second one."""

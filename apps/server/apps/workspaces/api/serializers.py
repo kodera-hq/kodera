@@ -22,6 +22,7 @@ def _channel(channel: ChannelView) -> dict[str, Any]:
         "topic": channel.topic,
         "lifecycle": channel.lifecycle,
         "room_state": channel.room_state,
+        "is_confidential": channel.is_confidential,
     }
 
 

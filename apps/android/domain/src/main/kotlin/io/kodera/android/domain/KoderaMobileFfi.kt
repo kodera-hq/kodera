@@ -487,9 +487,14 @@ enum class AttachmentMimeType(val wireValue: String) {
     PNG("image/png"),
     WEBP("image/webp"),
     GIF("image/gif"),
+    OGG_AUDIO("audio/ogg"),
+    WEBM_AUDIO("audio/webm"),
+    MP4_AUDIO("audio/mp4"),
     PDF("application/pdf"),
     PLAIN_TEXT("text/plain"),
     OCTET_STREAM("application/octet-stream");
+
+    val isAudio: Boolean get() = this in setOf(OGG_AUDIO, WEBM_AUDIO, MP4_AUDIO)
 
     companion object {
         fun fromWire(raw: String): AttachmentMimeType? =
@@ -886,6 +891,14 @@ class KoderaMobileFfiBridge(
                     ),
                 )
                 throw KoderaMobileFfiFailure(KoderaMobileFfiError.FEATURE_DISABLED)
+            }
+
+            "attachment_mime_validate" -> {
+                ensureAllowedKeys(obj, setOf("op", "content_type"))
+                val mime = (obj["content_type"] as? MiniJsonVal.Str)?.value
+                    ?: throw KoderaMobileFfiFailure(KoderaMobileFfiError.INVALID_INPUT)
+                val valid = AttachmentMimeType.fromWire(mime) != null
+                KoderaFfiPacket("""{"ok":true,"valid":$valid}""".toByteArray(Charsets.UTF_8), status = 0)
             }
 
             "reaction_validate" -> {

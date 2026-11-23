@@ -32,6 +32,10 @@ import {
   WAVE4_BILLING_PRIVACY_DEMO_ROUTES,
   wave4BillingPrivacyDemoHandlers,
 } from '../demo/wave4BillingPrivacy'
+import {
+  WORKSPACE_MIGRATOR_DEMO_ROUTES,
+  workspaceMigratorDemoHandlers,
+} from '../demo/workspaceMigrator'
 // The walkable demo (docs/dev/DEMO.md): one scenario overlay that answers
 // EVERY route the built areas call, from the one seed in `src/mocks/demo/seed.ts`.
 //
@@ -111,6 +115,8 @@ const now = (): Date => new Date()
  * added to a screen without a seeded answer is a failing test rather than a
  * stray ACME row mid-demo. */
 export const DEMO_ROUTES: readonly string[] = [
+  'PUT /notifications/presence/:device_id',
+  'DELETE /notifications/presence/:device_id',
   'POST /workspaces/instant-claim',
   'POST /auth/discover',
   'GET /auth/passport/workspaces',
@@ -162,6 +168,7 @@ export const DEMO_ROUTES: readonly string[] = [
   'POST /organisations/:organisation_id/orders',
   'POST /organisations/:organisation_id/dpa',
   'POST /organisations/:organisation_id/tenants',
+  'POST /organisations/:organisation_id/support/bug-reports',
   'POST /support/tickets',
   'POST /community/support/tickets',
   'POST /invitations/:invitation_id/actions/resend',
@@ -173,6 +180,7 @@ export const DEMO_ROUTES: readonly string[] = [
   ...GOVERNANCE_DEMO_ROUTES,
   ...WORKSPACE_DOCS_DEMO_ROUTES,
   ...WAVE4_BILLING_PRIVACY_DEMO_ROUTES,
+  ...WORKSPACE_MIGRATOR_DEMO_ROUTES,
 ]
 
 /** The invoice whose id the console asked for, or the current month's — the
@@ -249,6 +257,23 @@ function demoPassportDirectory(
 const demoPassportSessionToken = (): string => `kp1.${'a'.repeat(32)}.demo`
 
 export const handlers: HttpHandler[] = [
+  http.put(`${BASE}/notifications/presence/:device_id`, async ({ params, request }) => {
+    const body = (await request.json()) as { platform: 'web' | 'desktop'; ttlSeconds?: number }
+    const ttlSeconds = body.ttlSeconds ?? 60
+    return HttpResponse.json(
+      {
+        deviceId: String(params.device_id),
+        platform: body.platform ?? 'web',
+        ttlSeconds,
+        expiresAt: new Date(Date.now() + ttlSeconds * 1000).toISOString(),
+      } satisfies components['schemas']['NotificationPresenceLease'],
+      { headers: headers() }
+    )
+  }),
+  http.delete(
+    `${BASE}/notifications/presence/:device_id`,
+    () => new HttpResponse(null, { status: 204, headers: headers() })
+  ),
   // A demo never allocates a Cloud tenant or fabricates a signed invitation.
   http.post(`${BASE}/workspaces/instant-claim`, () =>
     HttpResponse.json({ code: 'local-preview-only' }, { status: 503, headers: headers() })
@@ -805,6 +830,18 @@ export const handlers: HttpHandler[] = [
     `${BASE}/organisations/:organisation_id/enrolment-tokens/:enrolment_token_id`,
     () => new HttpResponse(null, { status: 204, headers: headers() })
   ),
+  http.post(`${BASE}/organisations/:organisation_id/support/bug-reports`, () =>
+    HttpResponse.json(
+      {
+        id: crypto.randomUUID(),
+        status: 'queued',
+        dedup_fingerprint: '0'.repeat(64),
+        occurrences: 1,
+        created_at: now().toISOString(),
+      } satisfies components['schemas']['BugReportReceipt'],
+      { status: 201, headers: { ...headers(), 'Idempotency-Replayed': 'false' } }
+    )
+  ),
   // The workspace (11-workspace.md): the starter template, which names no company, already
   // created for the demo's organisation; creating it again changes nothing, as the API answers.
   http.get(`${BASE}/organisations/:organisation_id/workspace`, ({ params }) =>
@@ -847,4 +884,5 @@ export const handlers: HttpHandler[] = [
   ...governanceDemoHandlers(BASE, headers),
   ...workspaceDocumentsDemoHandlers(BASE, headers),
   ...wave4BillingPrivacyDemoHandlers(BASE, headers),
+  ...workspaceMigratorDemoHandlers(BASE, headers),
 ]

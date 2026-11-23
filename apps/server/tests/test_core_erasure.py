@@ -12,7 +12,7 @@ from workspace_safety.test_moderation import world as world
 from apps.docs.models import Collection, CollectionRow, Document, DocumentSnapshot, DocumentUpdate
 from apps.identity.models import Identity, StaffRole, User
 from apps.media.models import Attachment
-from apps.notifications.models import Notification, PushOutbox, PushSubscription
+from apps.notifications.models import Notification, PresenceLease, PushOutbox, PushSubscription
 from apps.orgs.erasure_services import (
     AbsenceProof,
     ErasureScope,
@@ -23,6 +23,7 @@ from apps.orgs.erasure_services import (
     purge_core,
 )
 from apps.orgs.privacy_models import ErasureReceipt, PrivacyErasure
+from apps.workspaces.models import Channel, MemberAiConsent, ResourcePolicy, WorkspaceAiPolicy
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -93,6 +94,46 @@ def seed(world):
     Notification.objects.create(
         organisation=org, membership=members[0], kind="document", resource_id=doc.id
     )
+    PresenceLease.objects.create(
+        organisation=org,
+        membership=members[0],
+        device_id=uuid4(),
+        platform="desktop",
+        expires_at=timezone.now() + timedelta(seconds=60),
+    )
+    WorkspaceAiPolicy.objects.create(
+        organisation=org,
+        workspace=workspace,
+        enabled=True,
+        provider="byom",
+        provider_region="eu",
+        eu_sovereign_only=True,
+        model="mistral-small-latest",
+        sealed_byom_config=b"synthetic-sealed-byom",
+    )
+    MemberAiConsent.objects.create(
+        organisation=org,
+        workspace=workspace,
+        membership=members[0],
+        identity=principal,
+        enabled=True,
+        consented_at=timezone.now(),
+    )
+    ai_channel_policy = ResourcePolicy.objects.create(
+        workspace=workspace, visibility="organisation"
+    )
+    Channel.objects.create(
+        workspace=workspace,
+        kind="text",
+        name="Synthetic AI Channel",
+        position=99,
+        lifecycle="active",
+        room_state="ready",
+        policy_mode="explicit",
+        explicit_policy=ai_channel_policy,
+        is_confidential=False,
+        ai_enabled=True,
+    )
     return doc, attachment, principal
 
 
@@ -119,8 +160,12 @@ def test_real_core_payloads_are_deleted_while_missing_remote_adapters_hold_compl
         PushSubscription,
         PushOutbox,
         Notification,
+        PresenceLease,
+        WorkspaceAiPolicy,
+        MemberAiConsent,
     ]:
         assert not model.objects.exists(), model.__name__
+    assert not Channel.objects.filter(workspace=workspace, ai_enabled=True).exists()
     principal.refresh_from_db()
     assert not principal.enabled and principal.email == f"erased:{principal.id}"
     assert (
@@ -142,6 +187,8 @@ def test_cutoff_refuses_new_payload_and_reactivation_and_recovery_clock_is_enfor
         lambda: Document.objects.create(
             workspace=workspace, creator=members[0], title="After cutoff"
         ),
+        lambda: WorkspaceAiPolicy.objects.filter(workspace=workspace).update(enabled=False),
+        lambda: MemberAiConsent.objects.filter(membership=members[0]).update(enabled=False),
     ]:
         with pytest.raises(IntegrityError, match="durable erasure cutoff"), transaction.atomic():
             mutation()

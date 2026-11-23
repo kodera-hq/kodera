@@ -34,6 +34,221 @@ class MatrixRoomAndWakeupTests {
     private val txn2 = "01935651-787b-7102-8304-05060708090b"
     private val roomId = "!roomAlpha:atelier.matrix.kodera.io"
 
+    @Test
+    fun transportBootstrapUsesInjectedWorkspaceAndPreservesConfidentiality() {
+        CoreRequester("https://core.test", LoopbackPolicy.REFUSE, FakeTokens()).use { requester ->
+            for (confidentiality in listOf(false, true, null)) {
+                val channel = WorkspaceChannel(
+                    channelId, io.kodera.android.domain.ChannelKind.TEXT, "general", null, "",
+                    WorkspaceChannelLifecycle.ACTIVE, io.kodera.android.domain.ChannelRoomState.READY,
+                    confidentiality,
+                )
+                val snapshot = WorkspaceSnapshot(
+                    orgId, WorkspaceState.INITIALISED, WorkspaceSetup(WorkspaceSetupState.READY, null),
+                    false, "00000000-0000-4000-8000-000000000020", emptyList(), listOf(channel),
+                )
+                val requests = mutableListOf<String>()
+                val stub = MatrixHttpStub { request ->
+                    val path = java.net.URI(request.url).path
+                    requests += path
+                    when {
+                        path == "/.well-known/matrix/client" -> MatrixHttpReply(404)
+                        path.startsWith("/_matrix/client/v3/directory/room/") ->
+                            MatrixHttpReply(200, """{"room_id":"$roomId"}""".toByteArray())
+                        path.endsWith("/join") -> MatrixHttpReply(200, """{"room_id":"$roomId"}""".toByteArray())
+                        path == "/_matrix/client/v3/sync" -> MatrixHttpReply(200,
+                            """{"next_batch":"s1","rooms":{"join":{"$roomId":{"state":{"events":[]},"timeline":{"events":[]}}}}}""".toByteArray())
+                        else -> error("Unexpected Matrix request: $path")
+                    }
+                }
+                MatrixRoomClient(requester, LoopbackPolicy.REFUSE, httpStub = stub).use { client ->
+                    MatrixChannelConversationTransport(
+                        ownUserId = "@member:atelier.matrix.kodera.io", roomClient = client,
+                        organisationSlug = "atelier", matrixDomain = "matrix.kodera.io",
+                        matrixServerName = "atelier.matrix.kodera.io", matrixAccessToken = "token",
+                        fetchWorkspace = { requestedOrg ->
+                            assertEquals(orgId, requestedOrg)
+                            WorkspaceOutcome.Loaded(snapshot)
+                        },
+                    ).use { transport ->
+                        val boot = transport.bootstrapRoom(orgId, channelId)
+                        assertEquals(roomId, boot.roomId)
+                        assertEquals(confidentiality == false, roomId in boot.initialBatch.plaintextAllowedRooms)
+                        assertEquals(4, requests.size)
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    fun injectedWorkspaceAuthorityFailuresStopBootstrapBeforeHTTP() {
+        val archived = WorkspaceChannel(
+            channelId, io.kodera.android.domain.ChannelKind.TEXT, "general", null, "",
+            WorkspaceChannelLifecycle.ARCHIVED, io.kodera.android.domain.ChannelRoomState.READY, false,
+        )
+        val snapshot = WorkspaceSnapshot(
+            orgId, WorkspaceState.INITIALISED, WorkspaceSetup(WorkspaceSetupState.READY, null),
+            false, "00000000-0000-4000-8000-000000000020", emptyList(), listOf(archived),
+        )
+        val cases = listOf(
+            WorkspaceOutcome.SignedOut to MatrixClientError.SIGNED_OUT,
+            WorkspaceOutcome.Unavailable(WorkspaceFailure.Forbidden) to MatrixClientError.FORBIDDEN,
+            WorkspaceOutcome.Unavailable(WorkspaceFailure.NotFound) to MatrixClientError.NOT_FOUND,
+            WorkspaceOutcome.Unavailable(WorkspaceFailure.ServiceUnavailable) to MatrixClientError.SERVICE_UNAVAILABLE,
+            WorkspaceOutcome.Unavailable(WorkspaceFailure.IdentityUnavailable) to MatrixClientError.IDENTITY_UNAVAILABLE,
+            WorkspaceOutcome.Unavailable(WorkspaceFailure.ProtocolViolation) to MatrixClientError.PROTOCOL_VIOLATION,
+            WorkspaceOutcome.Loaded(snapshot) to MatrixClientError.FORBIDDEN,
+        )
+        CoreRequester("https://core.test", LoopbackPolicy.REFUSE, FakeTokens()).use { requester ->
+            MatrixRoomClient(requester, LoopbackPolicy.REFUSE,
+                httpStub = MatrixHttpStub { error("Authority failure must stop before HTTP") },
+            ).use { client ->
+                for ((outcome, expected) in cases) {
+                    MatrixChannelConversationTransport(
+                        ownUserId = "@member:atelier.matrix.kodera.io", roomClient = client,
+                        organisationSlug = "atelier", matrixDomain = "matrix.kodera.io",
+                        matrixServerName = "atelier.matrix.kodera.io", matrixAccessToken = "token",
+                        fetchWorkspace = { outcome },
+                    ).let { transport ->
+                        val failure = assertThrows(MatrixClientException::class.java) {
+                            transport.bootstrapRoom(orgId, channelId)
+                        }
+                        assertEquals(expected, failure.reason)
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    fun plaintextMutationsRefuseUnknownConfidentialAndEncryptedRoomsWithoutHTTP() {
+        val origin = "https://atelier.matrix.kodera.io"
+        val tokens = FakeTokens()
+        CoreRequester("https://core.test", LoopbackPolicy.REFUSE, tokens).use { requester ->
+            for (boundary in listOf("unknown", "unknown-core", "missing-state", "malformed-state", "confidential", "m.room.encryption", "io.kodera.room.security", "io.kodera.room.confidential")) {
+                val requests = CopyOnWriteArrayList<Request>()
+                val state = if (boundary in listOf("confidential", "unknown-core", "missing-state")) "[]" else if (boundary == "malformed-state") "[{}]" else """[{"type":"$boundary","state_key":"","content":{"algorithm":"m.megolm.v1.aes-sha2"}}]"""
+                val stateField = if (boundary == "missing-state") "" else """"state":{"events":$state},"""
+                val interceptor = Interceptor { chain ->
+                    val req = chain.request()
+                    requests += req
+                    Response.Builder().request(req).protocol(Protocol.HTTP_1_1).code(200).message("OK")
+                        .body("""{"next_batch":"s1","rooms":{"join":{"$roomId":{${stateField}"timeline":{"events":[]}}}}}""".toResponseBody("application/json".toMediaType())).build()
+                }
+                MatrixRoomClient(requester, LoopbackPolicy.REFUSE, interceptor).use { client ->
+                    if (boundary != "unknown") {
+                        client.bindChannelSecurity(orgId, channelId, origin, roomId, if (boundary == "unknown-core") null else boundary == "confidential")
+                        assertTrue(client.sync(origin, "token", roomId = roomId).plaintextAllowedRooms.isEmpty())
+                    }
+                    requests.clear()
+                    val payload = AttachmentUploadPayload("secret.ogg", AttachmentMimeType.OGG_AUDIO, byteArrayOf(1))
+                    for (operation in listOf<() -> Unit>(
+                        { client.sendTextMessage(origin, "token", roomId, txn1, "secret") },
+                        { client.editMessage(origin, "token", roomId, txn1, "\$event", "secret") },
+                        { client.sendReaction(origin, "token", roomId, txn1, "\$event", "👍") },
+                        { client.uploadChannelAttachment(orgId, channelId, payload) },
+                    )) {
+                        val failure = assertThrows(MatrixClientException::class.java) { operation() }
+                        assertEquals(MatrixClientError.PLAINTEXT_FORBIDDEN, failure.reason)
+                        assertTrue(requests.isEmpty())
+                        assertEquals(0, tokens.requested.get())
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    fun malformedIncrementalStateRevokesPlaintextWithoutSendHTTP() {
+        val origin = "https://atelier.matrix.kodera.io"
+        for (malformed in listOf("""{"events":null}""", "123", "\"bad\"", "null", """{"events":{}}""")) {
+            var state = """{"events":[]}"""
+            val requests = CopyOnWriteArrayList<Request>()
+            val interceptor = Interceptor { chain ->
+                val req = chain.request()
+                requests += req
+                Response.Builder().request(req).protocol(Protocol.HTTP_1_1).code(200).message("OK")
+                    .body("""{"next_batch":"s1","rooms":{"join":{"$roomId":{"state":$state,"timeline":{"events":[]}}}}}""".toResponseBody("application/json".toMediaType())).build()
+            }
+            CoreRequester("https://core.test", LoopbackPolicy.REFUSE, FakeTokens()).use { requester ->
+                MatrixRoomClient(requester, LoopbackPolicy.REFUSE, interceptor).use { client ->
+                    client.bindChannelSecurity(orgId, channelId, origin, roomId, false)
+                    val initial = client.sync(origin, "token", roomId = roomId)
+                    assertEquals(setOf(roomId), initial.plaintextAllowedRooms)
+                    state = "{}"
+                    val empty = client.sync(origin, "token", roomId = roomId, since = initial.nextBatch)
+                    assertEquals(setOf(roomId), empty.plaintextAllowedRooms)
+                    state = malformed
+                    assertEquals(MatrixClientError.PROTOCOL_VIOLATION, assertThrows(MatrixClientException::class.java) {
+                        client.sync(origin, "token", roomId = roomId, since = empty.nextBatch)
+                    }.reason)
+                    requests.clear()
+                    assertEquals(MatrixClientError.PLAINTEXT_FORBIDDEN, assertThrows(MatrixClientException::class.java) {
+                        client.sendTextMessage(origin, "token", roomId, txn1, "secret")
+                    }.reason)
+                    assertTrue(requests.isEmpty())
+                }
+            }
+        }
+    }
+
+    @Test
+    fun joinAndScopedSyncHaveBoundedResponsesAndTypedAdmissionFailure() {
+        val origin = "https://atelier.matrix.kodera.io"
+        var code = 200
+        var body = """{"room_id":"$roomId"}"""
+        val requests = CopyOnWriteArrayList<Request>()
+        val interceptor = Interceptor { chain ->
+            val req = chain.request()
+            requests += req
+            Response.Builder().request(req).protocol(Protocol.HTTP_1_1).code(code).message("OK")
+            .body(body.toResponseBody("application/json".toMediaType())).build()
+        }
+        val tokens = FakeTokens()
+        CoreRequester("https://core.test", LoopbackPolicy.REFUSE, tokens).use { requester ->
+            MatrixRoomClient(requester, LoopbackPolicy.REFUSE, interceptor).use { client ->
+                repeat(2) { client.joinRoom(origin, "token", roomId) }
+                assertEquals("POST", requests.last().method)
+                assertTrue(requests.last().url.encodedPath.endsWith("/%21roomAlpha%3Aatelier.matrix.kodera.io/join"))
+                code = 403
+                assertEquals(MatrixClientError.FORBIDDEN, assertThrows(MatrixClientException::class.java) { client.joinRoom(origin, "token", roomId) }.reason)
+                code = 200
+                body = """{"next_batch":"s1","padding":"${"x".repeat(70_000)}","rooms":{"join":{"$roomId":{"state":{"events":[]},"timeline":{"events":[]}}}}}"""
+                client.bindChannelSecurity(orgId, channelId, origin, roomId, false)
+                assertEquals(setOf(roomId), client.sync(origin, "token", roomId = roomId).plaintextAllowedRooms)
+                val filter = StrictJson.parse(requests.last().url.queryParameter("filter")!!.toByteArray(), 4096).objectValue()
+                val room = (filter["room"] as JsonValue.ObjectValue).fields
+                assertEquals(listOf(JsonValue.StringValue(roomId)), (room["rooms"] as JsonValue.ArrayValue).values)
+                client.updateChannelSecurity(orgId, channelId, true)
+                requests.clear()
+                assertEquals(MatrixClientError.PLAINTEXT_FORBIDDEN, assertThrows(MatrixClientException::class.java) { client.sendTextMessage(origin, "token", roomId, txn1, "secret") }.reason)
+                assertTrue(requests.isEmpty())
+
+                body = " ".repeat(262_145)
+                assertEquals(MatrixClientError.PROTOCOL_VIOLATION, assertThrows(MatrixClientException::class.java) { client.sync(origin, "token", roomId = roomId) }.reason)
+            }
+        }
+    }
+
+
+    @Test
+    fun coreRoomClassificationMustBeExplicitAndConsistent() {
+        val channel = """{"id":"$channelId","kind":"text","name":"general","template_key":null,"topic":"","lifecycle":"active","room_state":"ready"%s}"""
+        for ((field, expected) in listOf(
+            ",\"isConfidential\":false" to false,
+            ",\"isConfidential\":true" to true,
+            "" to null,
+        )) {
+            val payload = """{"organisation_id":"$orgId","state":"initialised","setup":{"state":"ready","reason":null},"can_initialise":false,"id":"00000000-0000-4000-8000-000000000020","categories":[],"uncategorised_channels":[${channel.format(field)}]}"""
+            assertEquals(expected, CoreWorkspaceClient.decode(payload.toByteArray(), orgId).uncategorisedChannels.single().isConfidential)
+            if (expected == false) {
+                val inconsistent = payload.replace("\"isConfidential\":false", "\"isConfidential\":false,\"confidential\":true")
+                assertThrows(DiscoveryDecodingException::class.java) { CoreWorkspaceClient.decode(inconsistent.toByteArray(), orgId) }
+            }
+        }
+    }
+
     private class SoftwareSessionKeys(initial: ByteArray) : SessionKeys {
         private var key: SecretKey? = SecretKeySpec(initial, "AES")
         override fun existing(): SecretKey? = key
@@ -295,6 +510,7 @@ class MatrixRoomAndWakeupTests {
                           "rooms": {
                             "join": {
                               "$roomId": {
+                                "state": {"events": []},
                                 "timeline": {
                                   "events": [
                                     {
@@ -411,7 +627,8 @@ class MatrixRoomAndWakeupTests {
                     )
                     assertEquals(roomId, resolved.rawValue)
 
-                    val syncBatch = matrixClient.sync(fallbackOrigin, "mtx_tok_01", "s72_00")
+                    matrixClient.bindChannelSecurity(orgId, channelId, fallbackOrigin, roomId, false)
+                    val syncBatch = matrixClient.sync(fallbackOrigin, "mtx_tok_01", roomId = roomId)
                     assertEquals("s72_99", syncBatch.nextBatch)
                     assertEquals(1, syncBatch.roomEvents[roomId]?.size)
 
@@ -438,7 +655,7 @@ class MatrixRoomAndWakeupTests {
                     assertEquals("\$sentWithAttachment", sentId)
                 }
 
-                // 4. PushWakeupCoordinator: register strictly {"endpoint","p256dh","auth"} (Core 422 parity), reject cleartext, catch-up, revoke on signOut.
+                // 4. PushWakeupCoordinator: register with an explicit Android platform, reject cleartext, catch-up, revoke on signOut.
                 val wakeupCoordinator = PushWakeupCoordinator(requester)
                 wakeupCoordinator.registerDeviceWakeup(
                     deviceId = deviceId,
@@ -447,8 +664,13 @@ class MatrixRoomAndWakeupTests {
                     auth = "B".repeat(22),
                 )
                 val putPushObj = StrictJson.parse(wire.requests.last().body).objectValue()
-                assertEquals(setOf("endpoint", "p256dh", "auth"), putPushObj.keys)
+                assertEquals(setOf("endpoint", "p256dh", "auth", "platform"), putPushObj.keys)
                 assertFalse(putPushObj.containsKey("surface"))
+                assertEquals("android", (putPushObj["platform"] as JsonValue.StringValue).value)
+                val registrationsBefore = wire.requests.size
+                wakeupCoordinator.registerDeviceWakeup(deviceId, "https://push.kodera.io/device-01", "A".repeat(87), "B".repeat(22))
+                assertEquals(registrationsBefore + 1, wire.requests.size)
+
 
                 val beforeRejectCount = wire.requests.size
                 val leaky = """{"wakeup_id":"01935800-0000-7000-8000-000000000301","organisation_id":"$orgId","body":"secret"}"""
@@ -689,6 +911,7 @@ class MatrixRoomAndWakeupTests {
                 }
                 path.startsWith("/_matrix/client/v3/directory/room/") -> 200 to
                     """{"room_id":"!roomAlpha:atelier.kodera.io"}"""
+                path.endsWith("/join") -> 200 to """{"room_id":"!roomAlpha:atelier.kodera.io"}"""
                 path == "/_matrix/client/v3/sync" -> 200 to """
                     {
                       "next_batch": "s_next_2",
@@ -726,7 +949,7 @@ class MatrixRoomAndWakeupTests {
                 .build()
         }
 
-        WireFixture(reply = { WireReply(status = 200, body = "{}".toByteArray()) }).use { wire ->
+        WireFixture(reply = { WireReply(status = 200, body = """{"organisation_id":"00000000-0000-4000-8000-000000000001","state":"initialised","setup":{"state":"ready","reason":null},"can_initialise":false,"id":"00000000-0000-4000-8000-000000000020","categories":[],"uncategorised_channels":[{"id":"00000000-0000-4000-8000-000000000010","kind":"text","name":"general","template_key":null,"topic":"","lifecycle":"active","room_state":"ready","isConfidential":false}]}""".toByteArray()) }).use { wire ->
             CoreRequester("https://core.test", FakeTokens(), wire.route(), Fixtures.COLD_START_MILLIS).use { requester ->
                 assertEquals("kodera.io", MatrixRoomClient.deriveMatrixDomain("https://api.kodera.io", LoopbackPolicy.REFUSE))
                 MatrixRoomClient(requester, LoopbackPolicy.REFUSE, interceptor, fence = fence).use { client ->
@@ -793,7 +1016,7 @@ class MatrixRoomAndWakeupTests {
                     val hitsBeforeFence = matrixHits.size
                     fence.invalidate()
                     val fencedErr = assertThrows(MatrixClientException::class.java) {
-                        client.sync("https://atelier.kodera.io", "mtx_live_2")
+                        client.sync("https://atelier.kodera.io", "mtx_live_2", roomId = roomId)
                     }
                     assertEquals(MatrixClientError.SIGNED_OUT, fencedErr.reason)
                     assertEquals(hitsBeforeFence, matrixHits.size)

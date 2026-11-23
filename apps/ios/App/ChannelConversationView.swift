@@ -10,6 +10,7 @@ struct ChannelConversationScope: Equatable, Hashable, Identifiable, Sendable {
     let channelName: String
     let channelTopic: String
     let kind: WorkspaceChannelKind
+    let isConfidential: Bool?
     let roomState: WorkspaceChannelRoomState
 
     var id: String { "\(organisationId):\(channelId)" }
@@ -26,6 +27,7 @@ struct ChannelConversationScope: Equatable, Hashable, Identifiable, Sendable {
         self.channelTopic = channel.topic
         self.kind = channel.kind
         self.roomState = channel.roomState
+        self.isConfidential = channel.isConfidential
     }
 }
 
@@ -45,12 +47,16 @@ final class ChannelConversationModel: ObservableObject {
     private let transport: (any ChannelConversationTransport)?
     private var reducer: MatrixTimelineReducer
     private var roomId: String?
+    private var requiresFullSync = false
     private var sinceToken: String?
     private var failedOutbounds: [String: FailedOutbound] = [:]
     private var localReactionCounter: Int = 0
     private var syncLoopTask: Task<Void, Never>?
     private var actionTasks: [UUID: Task<Void, Never>] = [:]
 
+    @Published private(set) var isConfidential: Bool?
+    @Published private(set) var isForeground = true
+    @Published private(set) var plaintextAllowed = false
     @Published private(set) var messages: [MatrixTimelineMessage] = []
     @Published var composerText: String = ""
     @Published var activeReplyTarget: MatrixTimelineMessage?
@@ -63,11 +69,14 @@ final class ChannelConversationModel: ObservableObject {
         scope: ChannelConversationScope,
         transport: (any ChannelConversationTransport)? = nil,
         ownUserId: String = "@me:kodera.local",
-        fence: SessionFence = SessionFence()
+        fence: SessionFence = SessionFence(),
+        initialForeground: Bool = true
     ) {
         self.scope = scope
+        self.isConfidential = scope.isConfidential
         self.transport = transport
         self.fence = fence
+        self.isForeground = initialForeground
         let effectiveUser = transport?.ownUserId ?? ownUserId
         self.reducer = MatrixTimelineReducer(ownUserId: effectiveUser)
     }
@@ -82,6 +91,7 @@ final class ChannelConversationModel: ObservableObject {
 
     var canSend: Bool {
         !fence.isInvalidated
+            && isForeground && (transport == nil || plaintextAllowed) && isConfidential == false
             && (!composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !stagedAttachments.isEmpty)
     }
 
@@ -96,9 +106,31 @@ final class ChannelConversationModel: ObservableObject {
         actionTasks[id] = task
     }
 
+    func updateChannelSecurity(isConfidential: Bool?) {
+        guard self.isConfidential != isConfidential else { return }
+        self.isConfidential = isConfidential
+        plaintextAllowed = false
+        syncStateKey = "conversation.status_secure_transport_required"
+        launchFencedTask { [weak self] in
+            guard let self else { return }
+            await self.transport?.updateChannelSecurity(organisationId: self.scope.organisationId, channelId: self.scope.channelId, isConfidential: isConfidential)
+        }
+    }
+
+    func setForeground(_ active: Bool) {
+        guard isForeground != active else { return }
+        isForeground = active
+        if active { startSyncLoop() } else { stopSyncLoop() }
+    }
+
+    func startSyncLoop() {
+        guard isForeground, syncLoopTask == nil, !fence.isInvalidated else { return }
+        syncLoopTask = Task { [weak self] in await self?.runSyncLoop() }
+    }
+
     func runSyncLoop(pollIntervalNanoseconds: UInt64 = 4_000_000_000) async {
-        guard !fence.isInvalidated else { return }
-        await bootstrap()
+        guard !fence.isInvalidated, isForeground else { return }
+        if roomId == nil { await bootstrap() } else { await refreshSync() }
         guard transport != nil else { return }
         while !Task.isCancelled && !fence.isInvalidated {
             try? await Task.sleep(nanoseconds: pollIntervalNanoseconds)
@@ -113,7 +145,7 @@ final class ChannelConversationModel: ObservableObject {
     }
 
     func bootstrap() async {
-        guard !fence.isInvalidated else { return }
+        guard !fence.isInvalidated, isForeground else { return }
         guard let transport else {
             syncStateKey = "conversation.status_offline"
             return
@@ -131,6 +163,7 @@ final class ChannelConversationModel: ObservableObject {
                 reducer = MatrixTimelineReducer(ownUserId: transport.ownUserId)
             }
             roomId = bootstrapped.roomId
+            plaintextAllowed = isConfidential == false && bootstrapped.initialBatch.plaintextAllowedRooms.contains(bootstrapped.roomId)
             sinceToken = bootstrapped.initialBatch.nextBatch
             if let delta = bootstrapped.initialBatch.roomDeltas[bootstrapped.roomId] {
                 reducer.applySyncDelta(delta)
@@ -139,7 +172,7 @@ final class ChannelConversationModel: ObservableObject {
                 reducer.applyEvents(roomEvents)
                 messages = reducer.messages
             }
-            syncStateKey = "conversation.status_live"
+            syncStateKey = plaintextAllowed ? "conversation.status_live" : "conversation.status_secure_transport_required"
         } catch {
             guard !fence.isInvalidated else { return }
             syncStateKey = "conversation.status_offline"
@@ -147,7 +180,7 @@ final class ChannelConversationModel: ObservableObject {
     }
 
     func refreshSync() async {
-        guard !fence.isInvalidated else { return }
+        guard !fence.isInvalidated, isForeground else { return }
         guard let transport else {
             syncStateKey = "conversation.status_offline"
             return
@@ -159,8 +192,10 @@ final class ChannelConversationModel: ObservableObject {
         isSyncing = true
         defer { isSyncing = false }
         do {
-            let batch = try await transport.syncRoom(roomId: currentRoomId, since: sinceToken)
+            let batch = try await transport.syncRoom(roomId: currentRoomId, since: requiresFullSync ? nil : sinceToken)
             guard !fence.isInvalidated, !Task.isCancelled else { return }
+            plaintextAllowed = isConfidential == false && batch.plaintextAllowedRooms.contains(currentRoomId)
+            requiresFullSync = false
             sinceToken = batch.nextBatch
             if let delta = batch.roomDeltas[currentRoomId] {
                 var backfilled: [MatrixRawTimelineEvent] = []
@@ -177,9 +212,11 @@ final class ChannelConversationModel: ObservableObject {
                     messages = reducer.messages
                 }
             }
-            syncStateKey = "conversation.status_live"
+            syncStateKey = plaintextAllowed ? "conversation.status_live" : "conversation.status_secure_transport_required"
         } catch {
             guard !fence.isInvalidated else { return }
+            plaintextAllowed = false
+            requiresFullSync = true
             syncStateKey = "conversation.status_offline"
         }
     }
@@ -194,6 +231,7 @@ final class ChannelConversationModel: ObservableObject {
     }
 
     func stageAttachment(_ payload: AttachmentUploadPayload) {
+        guard isConfidential == false, transport == nil || plaintextAllowed else { return }
         guard stagedAttachments.count < AttachmentMetadataRef.maxRefsPerMessage else { return }
         stagedAttachments.append(payload)
     }
@@ -246,6 +284,7 @@ final class ChannelConversationModel: ObservableObject {
     }
 
     func retryFailedMessage(transactionId: String) async {
+        guard isForeground, isConfidential == false, transport == nil || plaintextAllowed else { return }
         guard let failed = failedOutbounds[transactionId] else { return }
         reducer.markOptimisticRetrying(transactionId: transactionId)
         messages = reducer.messages
@@ -259,7 +298,7 @@ final class ChannelConversationModel: ObservableObject {
     }
 
     func toggleReaction(on message: MatrixTimelineMessage, emojiKey: String) async {
-        guard !fence.isInvalidated,
+        guard isConfidential == false, transport == nil || plaintextAllowed, !fence.isInvalidated,
               Self.canReact(to: message),
               let liveTargetEventId = message.eventId,
               ReactionKeyValidator.isValid(emojiKey) else {
@@ -386,7 +425,7 @@ final class ChannelConversationModel: ObservableObject {
         stagedPayloads: [AttachmentUploadPayload],
         uploadedRefs: [AttachmentMetadataRef]
     ) async {
-        guard !fence.isInvalidated else { return }
+        guard isConfidential == false, transport == nil || plaintextAllowed, !fence.isInvalidated else { return }
         guard let transport, let currentRoomId = roomId else {
             failedOutbounds[transactionId] = FailedOutbound(
                 body: body,
@@ -427,7 +466,7 @@ final class ChannelConversationModel: ObservableObject {
             failedOutbounds.removeValue(forKey: transactionId)
             reducer.acknowledgeOptimisticSend(transactionId: transactionId, eventId: eventId)
             messages = reducer.messages
-            syncStateKey = "conversation.status_live"
+            syncStateKey = plaintextAllowed ? "conversation.status_live" : "conversation.status_secure_transport_required"
         } catch {
             guard !fence.isInvalidated else { return }
             failedOutbounds[transactionId] = FailedOutbound(
@@ -469,9 +508,7 @@ struct ChannelConversationView: View {
         .foregroundStyle(palette.ink)
         .background(palette.page.ignoresSafeArea())
         .tint(palette.action)
-        .task(id: model.scope.id) {
-            await model.runSyncLoop()
-        }
+        .onAppear { model.startSyncLoop() }
         .onDisappear {
             model.stopSyncLoop()
         }
@@ -507,7 +544,7 @@ struct ChannelConversationView: View {
                             .lineLimit(1)
                             .accessibilityAddTraits(.isHeader)
                     }
-                    Text(LocalizedStringKey(model.syncStateKey))
+                    Text(LocalizedStringKey(model.isConfidential == false ? model.syncStateKey : "conversation.status_secure_transport_required"))
                         .font(NativeTypography.caption)
                         .foregroundStyle(palette.ink3)
                 }
@@ -810,7 +847,7 @@ private struct ConversationMessageRow: View {
                 if !message.attachments.isEmpty {
                     VStack(alignment: .leading, spacing: KoderaTokens.Space.s1) {
                         ForEach(message.attachments, id: \.id) { ref in
-                            Text(verbatim: "📎 \(ref.filename)")
+                            Text(verbatim: "\(ref.contentType.isAudio ? "🎤" : "📎") \(ref.filename)")
                                 .font(NativeTypography.monoCaption)
                                 .foregroundStyle(palette.accentInk)
                                 .padding(.horizontal, KoderaTokens.Space.s3)

@@ -24,6 +24,199 @@ final class MatrixRoomAndWakeupTests: XCTestCase {
         )
     }
 
+    func testTransportBootstrapUsesInjectedWorkspaceAndPreservesConfidentiality() async throws {
+        for confidentiality in [false, true, nil] as [Bool?] {
+            let snapshot = WorkspaceSnapshot(
+                organisationId: Self.orgId, state: .initialised,
+                setup: WorkspaceSetup(state: .ready, reason: nil), canInitialise: false,
+                id: "00000000-0000-4000-8000-000000000020", categories: [],
+                uncategorisedChannels: [WorkspaceChannel(
+                    id: Self.channelId, kind: .text, name: "general", templateKey: nil,
+                    topic: "", lifecycle: .active, roomState: .ready, isConfidential: confidentiality
+                )]
+            )
+            let client = MatrixRoomClient(coreRequester: try makeRequester(), loopback: .refuse, protocolClass: URLProtocolFixture.self)
+            let transport = MatrixChannelConversationTransport(
+                ownUserId: "@member:atelier.matrix.kodera.io", roomClient: client,
+                organisationSlug: "atelier", matrixDomain: "matrix.kodera.io",
+                matrixServerName: "atelier.matrix.kodera.io", matrixAccessToken: "token",
+                fetchWorkspace: { organisationId in
+                    XCTAssertEqual(organisationId, snapshot.organisationId)
+                    return .loaded(snapshot)
+                }
+            )
+            URLProtocolFixture.install(sequence: [
+                .body(status: 404, headers: Self.jsonHeaders, chunks: [Data("{}".utf8)]),
+                .body(status: 200, headers: Self.jsonHeaders, chunks: [Data("{\"room_id\":\"\(Self.roomId)\"}".utf8)]),
+                .body(status: 200, headers: Self.jsonHeaders, chunks: [Data("{\"room_id\":\"\(Self.roomId)\"}".utf8)]),
+                .body(status: 200, headers: Self.jsonHeaders, chunks: [Data("{\"next_batch\":\"s1\",\"rooms\":{\"join\":{\"\(Self.roomId)\":{\"state\":{\"events\":[]},\"timeline\":{\"events\":[]}}}}}".utf8)])
+            ])
+            let boot = try await transport.bootstrapRoom(organisationId: Self.orgId, channelId: Self.channelId)
+            XCTAssertEqual(boot.roomId, Self.roomId)
+            XCTAssertEqual(boot.initialBatch.plaintextAllowedRooms.contains(Self.roomId), confidentiality == false)
+            XCTAssertEqual(URLProtocolFixture.requests.count, 4)
+            XCTAssertFalse(URLProtocolFixture.requests.contains { $0.url?.host == "core.test" })
+        }
+    }
+
+    func testInjectedWorkspaceAuthorityFailuresStopBootstrapBeforeHTTP() async throws {
+        let archived = WorkspaceChannel(
+            id: Self.channelId, kind: .text, name: "general", templateKey: nil,
+            topic: "", lifecycle: .archived, roomState: .ready, isConfidential: false
+        )
+        let snapshot = WorkspaceSnapshot(
+            organisationId: Self.orgId, state: .initialised,
+            setup: WorkspaceSetup(state: .ready, reason: nil), canInitialise: false,
+            id: "00000000-0000-4000-8000-000000000020", categories: [], uncategorisedChannels: [archived]
+        )
+        let cases: [(WorkspaceOutcome, MatrixClientFailure)] = [
+            (.signedOut, .signedOut), (.signedOutNotWiped, .signedOutNotWiped),
+            (.unavailable(.forbidden), .forbidden), (.unavailable(.notFound), .notFound),
+            (.unavailable(.serviceUnavailable), .serviceUnavailable),
+            (.unavailable(.identityUnavailable), .identityUnavailable),
+            (.unavailable(.protocolViolation), .protocolViolation),
+            (.unavailable(.transport(.offline)), .transport(.offline)),
+            (.loaded(snapshot), .forbidden)
+        ]
+        for (outcome, expected) in cases {
+            let client = MatrixRoomClient(coreRequester: try makeRequester(), loopback: .refuse, protocolClass: URLProtocolFixture.self)
+            let transport = MatrixChannelConversationTransport(
+                ownUserId: "@member:atelier.matrix.kodera.io", roomClient: client,
+                organisationSlug: "atelier", matrixDomain: "matrix.kodera.io",
+                matrixServerName: "atelier.matrix.kodera.io", matrixAccessToken: "token",
+                fetchWorkspace: { _ in outcome }
+            )
+            URLProtocolFixture.install(.body(status: 200, headers: Self.jsonHeaders, chunks: [Data("{}".utf8)]))
+            do {
+                _ = try await transport.bootstrapRoom(organisationId: Self.orgId, channelId: Self.channelId)
+                XCTFail("Expected injected authority refusal")
+            } catch { XCTAssertEqual(error, expected) }
+            XCTAssertTrue(URLProtocolFixture.requests.isEmpty)
+        }
+    }
+
+    func testPlaintextMutationsEmitNoHTTPForUnknownConfidentialAndEncryptedRooms() async throws {
+        let origin = "https://atelier.matrix.kodera.io"
+        for boundary in ["unknown", "unknown-core", "missing-state", "malformed-state", "confidential", "m.room.encryption", "io.kodera.room.security", "io.kodera.room.confidential"] {
+            let client = MatrixRoomClient(coreRequester: try makeRequester(), loopback: .refuse, protocolClass: URLProtocolFixture.self)
+            if boundary != "unknown" {
+                await client.bindChannelSecurity(organisationId: Self.orgId, channelId: Self.channelId, origin: origin, roomId: Self.roomId, isConfidential: boundary == "unknown-core" ? nil : boundary == "confidential")
+                let stateEvents: [[String: Any]] = ["confidential", "unknown-core", "missing-state"].contains(boundary) ? [] : [["type": boundary, "state_key": "", "content": ["algorithm": "m.megolm.v1.aes-sha2"]]]
+                var room: [String: Any] = ["timeline": ["events": []]]
+                if boundary != "missing-state" { room["state"] = ["events": boundary == "malformed-state" ? [[:]] : stateEvents] }
+                let payload: [String: Any] = ["next_batch": "s1", "rooms": ["join": [Self.roomId: room]]]
+                URLProtocolFixture.install(.body(status: 200, headers: Self.jsonHeaders, chunks: [try JSONSerialization.data(withJSONObject: payload)]))
+                let batch = try await client.sync(homeserverOrigin: origin, matrixAccessToken: "token", roomId: Self.roomId)
+                XCTAssertTrue(batch.plaintextAllowedRooms.isEmpty)
+            }
+            for operation in 0..<4 {
+                URLProtocolFixture.install(.body(status: 200, headers: Self.jsonHeaders, chunks: [Data("{}".utf8)]))
+                do {
+                    switch operation {
+                    case 0: _ = try await client.sendTextMessage(homeserverOrigin: origin, matrixAccessToken: "token", roomId: Self.roomId, transactionId: Self.txn1, body: "secret")
+                    case 1: _ = try await client.editMessage(homeserverOrigin: origin, matrixAccessToken: "token", roomId: Self.roomId, transactionId: Self.txn1, targetEventId: "$event", newBody: "secret")
+                    case 2: _ = try await client.sendReaction(homeserverOrigin: origin, matrixAccessToken: "token", roomId: Self.roomId, transactionId: Self.txn1, targetEventId: "$event", emojiKey: "👍")
+                    default: _ = try await client.uploadChannelAttachment(organisationId: Self.orgId, channelId: Self.channelId, payload: AttachmentUploadPayload(filename: "secret.txt", contentType: .plainText, data: Data([1])))
+                    }
+                    XCTFail("Expected plaintext refusal for \(boundary)")
+                } catch { XCTAssertEqual(error as? MatrixClientFailure, .plaintextForbidden) }
+                XCTAssertTrue(URLProtocolFixture.requests.isEmpty, "No HTTP for \(boundary) operation \(operation)")
+            }
+        }
+    }
+
+    func testMalformedIncrementalStateRevokesPlaintextWithoutSendHTTP() async throws {
+        let origin = "https://atelier.matrix.kodera.io"
+        for malformed: Any in [["events": NSNull()], 123, "bad", NSNull(), ["events": [:]]] {
+            let client = MatrixRoomClient(coreRequester: try makeRequester(), loopback: .refuse, protocolClass: URLProtocolFixture.self)
+            await client.bindChannelSecurity(organisationId: Self.orgId, channelId: Self.channelId, origin: origin, roomId: Self.roomId, isConfidential: false)
+            func installState(_ state: Any) throws {
+                let payload: [String: Any] = ["next_batch": "s1", "rooms": ["join": [Self.roomId: ["state": state, "timeline": ["events": []]]]]]
+                URLProtocolFixture.install(.body(status: 200, headers: Self.jsonHeaders, chunks: [try JSONSerialization.data(withJSONObject: payload)]))
+            }
+            try installState(["events": []])
+            let initial = try await client.sync(homeserverOrigin: origin, matrixAccessToken: "token", roomId: Self.roomId)
+            XCTAssertTrue(initial.plaintextAllowedRooms.contains(Self.roomId))
+            // Matrix permits an empty state object on incremental sync.
+            try installState([String: Any]())
+            let empty = try await client.sync(homeserverOrigin: origin, matrixAccessToken: "token", roomId: Self.roomId, since: initial.nextBatch)
+            XCTAssertTrue(empty.plaintextAllowedRooms.contains(Self.roomId))
+            try installState(malformed)
+            do {
+                _ = try await client.sync(homeserverOrigin: origin, matrixAccessToken: "token", roomId: Self.roomId, since: empty.nextBatch)
+                XCTFail("Malformed incremental state must fail closed")
+            } catch { XCTAssertEqual(error, .protocolViolation) }
+            URLProtocolFixture.install(.body(status: 200, headers: Self.jsonHeaders, chunks: [Data("{}".utf8)]))
+            do {
+                _ = try await client.sendTextMessage(homeserverOrigin: origin, matrixAccessToken: "token", roomId: Self.roomId, transactionId: Self.txn1, body: "secret")
+                XCTFail("Malformed state must revoke plaintext authority")
+            } catch { XCTAssertEqual(error, .plaintextForbidden) }
+            XCTAssertTrue(URLProtocolFixture.requests.isEmpty)
+        }
+    }
+
+    func testJoinIsIdempotentEncodedAndAdmissionFailureIsTyped() async throws {
+        let client = MatrixRoomClient(coreRequester: try makeRequester(), loopback: .refuse, protocolClass: URLProtocolFixture.self)
+        for _ in 0..<2 {
+            URLProtocolFixture.install(.body(status: 200, headers: Self.jsonHeaders, chunks: [Data("{\"room_id\":\"\(Self.roomId)\"}".utf8)]))
+            try await client.joinRoom(homeserverOrigin: "https://atelier.matrix.kodera.io", matrixAccessToken: "token", roomId: Self.roomId)
+            XCTAssertEqual(URLProtocolFixture.requests.first?.httpMethod, "POST")
+            XCTAssertTrue(URLProtocolFixture.requests.first?.url?.absoluteString.contains("%21roomAlpha%3Aatelier.matrix.kodera.io/join") == true)
+        }
+        URLProtocolFixture.install(.body(status: 403, headers: Self.jsonHeaders, chunks: [Data("{}".utf8)]))
+        do {
+            try await client.joinRoom(homeserverOrigin: "https://atelier.matrix.kodera.io", matrixAccessToken: "token", roomId: Self.roomId)
+            XCTFail("Expected admission refusal")
+        } catch { XCTAssertEqual(error, .forbidden) }
+    }
+
+    func testScopedSyncAdmitsLargeRoomAndRejectsResponseAboveCeiling() async throws {
+        let origin = "https://atelier.matrix.kodera.io"
+        let client = MatrixRoomClient(coreRequester: try makeRequester(), loopback: .refuse, protocolClass: URLProtocolFixture.self)
+        await client.bindChannelSecurity(organisationId: Self.orgId, channelId: Self.channelId, origin: origin, roomId: Self.roomId, isConfidential: false)
+        let payload: [String: Any] = ["next_batch": "s1", "padding": String(repeating: "x", count: 70_000), "rooms": ["join": [Self.roomId: ["state": ["events": []], "timeline": ["events": []]]]]]
+        URLProtocolFixture.install(.body(status: 200, headers: Self.jsonHeaders, chunks: [try JSONSerialization.data(withJSONObject: payload)]))
+        let batch = try await client.sync(homeserverOrigin: origin, matrixAccessToken: "token", roomId: Self.roomId)
+        XCTAssertTrue(batch.plaintextAllowedRooms.contains(Self.roomId))
+        let url = try XCTUnwrap(URLProtocolFixture.requests.first?.url)
+        let filterText = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "filter" })?.value)
+        let filter = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(filterText.utf8)) as? [String: Any])
+        let room = try XCTUnwrap(filter["room"] as? [String: Any])
+        XCTAssertEqual(room["rooms"] as? [String], [Self.roomId])
+        XCTAssertEqual((room["timeline"] as? [String: Int])?["limit"], 25)
+        await client.updateChannelSecurity(organisationId: Self.orgId, channelId: Self.channelId, isConfidential: true)
+        URLProtocolFixture.install(.body(status: 200, headers: Self.jsonHeaders, chunks: [Data("{}".utf8)]))
+        do {
+            _ = try await client.sendTextMessage(homeserverOrigin: origin, matrixAccessToken: "token", roomId: Self.roomId, transactionId: Self.txn1, body: "secret")
+            XCTFail("Core confidentiality must revoke plaintext authority")
+        } catch { XCTAssertEqual(error, .plaintextForbidden) }
+        XCTAssertTrue(URLProtocolFixture.requests.isEmpty)
+
+        URLProtocolFixture.install(.body(status: 200, headers: Self.jsonHeaders, chunks: [Data(repeating: 32, count: 262_145)]))
+        do {
+            _ = try await client.sync(homeserverOrigin: origin, matrixAccessToken: "token", roomId: Self.roomId)
+            XCTFail("Expected response ceiling")
+        } catch { XCTAssertEqual(error, .protocolViolation) }
+    }
+
+    func testCoreRoomClassificationMustBeExplicitAndConsistent() throws {
+        let fixture = #"{"state":"initialised","setup":{"state":"ready","reason":null},"can_initialise":false,"id":"00000000-0000-4000-8000-000000000020","categories":[],"uncategorised_channels":[{"id":"00000000-0000-4000-8000-000000000010","kind":"text","name":"general","template_key":null,"topic":"","lifecycle":"active","room_state":"ready","isConfidential":false}],"organisation_id":"00000000-0000-4000-8000-000000000001"}"#
+        let base = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(fixture.utf8)) as? [String: Any])
+        for value: Bool? in [false, true, nil] {
+            var root = base
+            var channels = try XCTUnwrap(root["uncategorised_channels"] as? [[String: Any]])
+            channels[0]["isConfidential"] = value
+            root["uncategorised_channels"] = channels
+            let snapshot = try CoreWorkspaceClient.decode(JSONSerialization.data(withJSONObject: root), organisationId: Self.orgId)
+            XCTAssertEqual(snapshot.uncategorisedChannels.first?.isConfidential, value)
+        }
+        var root = base
+        var channels = try XCTUnwrap(root["uncategorised_channels"] as? [[String: Any]])
+        channels[0]["confidential"] = true
+        root["uncategorised_channels"] = channels
+        XCTAssertThrowsError(try CoreWorkspaceClient.decode(JSONSerialization.data(withJSONObject: root), organisationId: Self.orgId))
+    }
+
     func testCoreRequesterAdmitsValidatedPaginationQueryPutAndDeleteAndRefusesInjection() async throws {
         let pageBody = Data(#"{"data":[],"has_more":false,"next_cursor":null}"#.utf8)
         URLProtocolFixture.install(.body(status: 200, headers: Self.jsonHeaders, chunks: [pageBody]))
@@ -265,13 +458,14 @@ final class MatrixRoomAndWakeupTests: XCTestCase {
             "https://atelier.matrix.kodera.io/_matrix/client/v3/directory/room/%23kodera-ch-\(Self.channelId)%3Aatelier.matrix.kodera.io"
         )
 
-        // 4. Bounded /sync with lazy_load_members & limit 25.
+        // 4. Room-scoped /sync with security state and limit 25.
         let syncPayload = Data(#"""
         {
           "next_batch": "s72_99",
           "rooms": {
             "join": {
               "!roomAlpha:atelier.matrix.kodera.io": {
+                "state": {"events": []},
                 "timeline": {
                   "events": [
                     {
@@ -289,15 +483,17 @@ final class MatrixRoomAndWakeupTests: XCTestCase {
         }
         """#.utf8)
         URLProtocolFixture.install(.body(status: 200, headers: Self.jsonHeaders, chunks: [syncPayload]))
+        await client.bindChannelSecurity(organisationId: Self.orgId, channelId: Self.channelId, origin: fallback, roomId: Self.roomId, isConfidential: false)
         let syncBatch = try await client.sync(
             homeserverOrigin: fallback,
             matrixAccessToken: "mtx_tok_01",
-            since: "s72_00"
+            roomId: Self.roomId,
+            since: nil
         )
         XCTAssertEqual(syncBatch.nextBatch, "s72_99")
         XCTAssertEqual(syncBatch.roomEvents[Self.roomId]?.count, 1)
         let syncURL = try XCTUnwrap(URLProtocolFixture.requests.first?.url?.absoluteString)
-        XCTAssertTrue(syncURL.contains("lazy_load_members"))
+        XCTAssertTrue(syncURL.contains("rooms"))
         XCTAssertTrue(syncURL.contains("25"))
 
         // 5. 3-step Core scoped attachment upload + Matrix message send with io.kodera.attachments.
@@ -370,7 +566,7 @@ final class MatrixRoomAndWakeupTests: XCTestCase {
         let p256dh = String(repeating: "A", count: 87)
         let auth = String(repeating: "B", count: 22)
 
-        // 1. Register wakeup endpoint sending strictly {"endpoint", "p256dh", "auth"} (Core 422 parity).
+        // 1. Register wakeup endpoint sending with an explicit iOS platform.
         URLProtocolFixture.install(.body(status: 204, headers: Self.jsonHeaders, chunks: []))
         try await coordinator.registerDeviceWakeup(
             deviceId: Self.deviceId,
@@ -384,8 +580,15 @@ final class MatrixRoomAndWakeupTests: XCTestCase {
         let registerBody = try XCTUnwrap(
             JSONSerialization.jsonObject(with: try URLProtocolFixture.bodyData(registerReq)) as? [String: String]
         )
-        XCTAssertEqual(Set(registerBody.keys), ["endpoint", "p256dh", "auth"])
+        XCTAssertEqual(Set(registerBody.keys), ["endpoint", "p256dh", "auth", "platform"])
         XCTAssertNil(registerBody["surface"])
+        XCTAssertEqual(registerBody["platform"], "ios")
+        URLProtocolFixture.install(.body(status: 204, headers: Self.jsonHeaders, chunks: []))
+        try await coordinator.registerDeviceWakeup(deviceId: Self.deviceId, endpoint: "https://push.kodera.io/device-01", p256dh: p256dh, auth: auth)
+        XCTAssertEqual(URLProtocolFixture.requests.count, 1)
+        let repeated = try XCTUnwrap(URLProtocolFixture.requests.first)
+        let repeatedBody = try XCTUnwrap(JSONSerialization.jsonObject(with: URLProtocolFixture.bodyData(repeated)) as? [String: String])
+        XCTAssertEqual(repeatedBody["platform"], "ios")
 
         // 2. Cleartext leak (top-level or nested inside transport) is rejected before any network call.
         URLProtocolFixture.install(.body(status: 200, headers: Self.jsonHeaders, chunks: [Data("{}".utf8)]))
@@ -720,13 +923,15 @@ final class MatrixRoomAndWakeupTests: XCTestCase {
         }
         """#.utf8)
         URLProtocolFixture.install(sequence: [
+            .body(status: 200, headers: Self.jsonHeaders, chunks: [Data(#"{"state":"initialised","setup":{"state":"ready","reason":null},"can_initialise":false,"id":"00000000-0000-4000-8000-000000000020","categories":[],"uncategorised_channels":[{"id":"00000000-0000-4000-8000-000000000010","kind":"text","name":"general","template_key":null,"topic":"","lifecycle":"active","room_state":"ready","isConfidential":false}],"organisation_id":"00000000-0000-4000-8000-000000000001"}"#.utf8)]),
             .body(status: 404, headers: Self.jsonHeaders, chunks: [Data("{}".utf8)]),
             .body(status: 200, headers: Self.jsonHeaders, chunks: [loginJSON]),
+            .body(status: 200, headers: Self.jsonHeaders, chunks: [dirJSON]),
             .body(status: 200, headers: Self.jsonHeaders, chunks: [dirJSON]),
             .body(status: 200, headers: Self.jsonHeaders, chunks: [syncLimitedJSON]),
         ])
         let boot = try await transport.bootstrapRoom(organisationId: Self.orgId, channelId: Self.channelId)
-        let loginRequest = try XCTUnwrap(URLProtocolFixture.requests.dropFirst().first)
+        let loginRequest = try XCTUnwrap(URLProtocolFixture.requests.dropFirst(2).first)
         let sentLoginBody = String(decoding: try URLProtocolFixture.bodyData(loginRequest), as: UTF8.self)
         XCTAssertTrue(sentLoginBody.contains("\"type\":\"m.login.token\""))
         XCTAssertTrue(sentLoginBody.contains("\"token\":\"sso_tok_valid_01\""))
@@ -758,7 +963,7 @@ final class MatrixRoomAndWakeupTests: XCTestCase {
         URLProtocolFixture.install(.body(status: 200, headers: Self.jsonHeaders, chunks: [Data("{}".utf8)]))
         fence.invalidate()
         do {
-            _ = try await client.sync(homeserverOrigin: "https://atelier.kodera.io", matrixAccessToken: "mtx_live_2")
+            _ = try await client.sync(homeserverOrigin: "https://atelier.kodera.io", matrixAccessToken: "mtx_live_2", roomId: Self.roomId)
             XCTFail("Expected fence refusal")
         } catch {
             XCTAssertEqual(error, .signedOut)

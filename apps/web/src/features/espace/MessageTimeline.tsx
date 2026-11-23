@@ -24,6 +24,8 @@ import { calendarDay, formatDayDivider, previousCalendarDay } from '../../i18n/f
 import { Button } from '../../ui/Button/Button'
 import { TimelineDivider } from '../../ui/TimelineDivider/TimelineDivider'
 import type { ChannelDoc } from '../docs/ChannelDocsEditor'
+import { PollCard } from '../polls/PollCard'
+import { pollStore } from '../polls/pollStore'
 import type { MemberProfile } from '../profile/UserProfilePopover'
 import {
   mergeTimelineInserts,
@@ -202,6 +204,7 @@ function MessageTimelineView({
   const demoCopy = demoMessages[locale]
   // The snapshot is the token for the store's getters: each one below is read again with it.
   useSyncExternalStore(store.subscribe, store.getSnapshot)
+  useSyncExternalStore(pollStore.subscribe, pollStore.getVersion)
   const timeline = roomId !== null ? store.getTimeline(roomId) : NO_MESSAGES
   const history = roomId !== null ? store.getHistory?.(roomId) : undefined
   const unnamed = t('console.workspace.members.unnamed')
@@ -235,12 +238,55 @@ function MessageTimelineView({
     },
     [store, roomId]
   )
+  const isUserModerator = useCallback(
+    (userId: string): boolean => {
+      if (roomId === null) return false
+      const profileRole = store.getProfileRole?.(roomId, userId)
+      if (profileRole === 'admin' || profileRole === 'maintainer') {
+        return true
+      }
+      if (store.getMemberRole?.(roomId, userId) === 'admin') return true
+      return userId === viewerId && canPin
+    },
+    [roomId, store, viewerId, canPin]
+  )
+  const roomPolls = pollStore.derivePolls(roomId, timeline, unnamed, {
+    sink: store,
+    isModerator: isUserModerator,
+  })
+  const pollInserts: readonly TimelineInsert[] = roomPolls.map((poll) => {
+    const canClosePoll = poll.createdBy === viewerId || isUserModerator(viewerId)
+    return {
+      key: `poll:${poll.id}`,
+      ts: poll.createdAt,
+      node: (
+        <PollCard
+          poll={poll}
+          currentUserId={viewerId}
+          canClose={canClosePoll}
+          locale={locale}
+          onVote={(_pollId, optionId) => {
+            pollStore.vote(poll, optionId, viewerId, store)
+          }}
+          onClosePoll={() => {
+            pollStore.close(poll, store, canClosePoll)
+          }}
+        />
+      ),
+    }
+  })
+  const combinedInserts = pollInserts.length === 0 ? inserts : [...inserts, ...pollInserts]
+  const messageOnlyTimeline = timeline.some((item) => item.poll !== undefined)
+    ? timeline.filter((item) => item.poll === undefined)
+    : timeline
   const shown =
-    timeline.length === 0
+    messageOnlyTimeline.length === 0
       ? []
-      : timelineRows(timeline, { dayOf: dayOfMessage, unreadFrom, me: viewerId })
+      : timelineRows(messageOnlyTimeline, { dayOf: dayOfMessage, unreadFrom, me: viewerId })
   const rows: readonly LogRow[] =
-    shown.length === 0 && inserts.length === 0 ? [] : mergeTimelineInserts(shown, inserts)
+    shown.length === 0 && combinedInserts.length === 0
+      ? []
+      : mergeTimelineInserts(shown, combinedInserts)
   const keys = rows.map((row) => row.key)
   const estimate = (index: number) => estimateOf(rows[index])
   const { window, listRef, beforeRef, afterRef, layout } = useTimelineVirtualizer({

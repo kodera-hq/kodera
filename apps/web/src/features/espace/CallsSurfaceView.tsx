@@ -9,7 +9,6 @@ import { useTranslation } from 'react-i18next'
 import { ConnectionQualityBars } from '../../ui/AudioDock/AudioDock'
 import { Avatar } from '../../ui/Avatar/Avatar'
 import { Button } from '../../ui/Button/Button'
-import { cssProperty, initialCssProperty } from '../../ui/cssom'
 import { EmptyState } from '../../ui/EmptyState/EmptyState'
 import { EspaceGlyph } from '../../ui/icons/EspaceGlyph'
 import { StudioGlyph } from '../../ui/icons/StudioGlyph'
@@ -21,6 +20,7 @@ import {
   type WorkspaceChannel,
 } from '../workspace/workspace'
 import { readDeviceChoice, saveDeviceChoice, playTestTone } from './audio/devices'
+import { KoderaVoiceVisualizer } from './audio/KoderaVoiceVisualizer'
 import { webAudioMeter, type MicMeter } from './audio/meter'
 import { AudioSettings, type AudioSettingsCall } from './AudioSettings'
 import {
@@ -87,11 +87,8 @@ export function CallsSurfaceView({
   }, [deviceSettings])
 
   const dummyPanelMeterRef = useRef<HTMLSpanElement | null>(null)
-  const prejoinMeterFillRef = useRef<HTMLSpanElement | null>(null)
-  const initialMeterRef = useMemo(
-    () => initialCssProperty<HTMLSpanElement>('transform', 'scaleX(0)', prejoinMeterFillRef),
-    []
-  )
+  const prejoinLevelRef = useRef(0)
+  const [activeMicTrack, setActiveMicTrack] = useState<MediaStreamTrack | null>(null)
 
   const [testingMic, setTestingMic] = useState(false)
   const [micPending, setMicPending] = useState(false)
@@ -120,12 +117,13 @@ export function CallsSurfaceView({
   const stopMicTest = () => {
     micRequestIdRef.current += 1
     micPendingRef.current = false
+    prejoinLevelRef.current = 0
     runMicCleanup()
     if (mountedRef.current) {
+      setActiveMicTrack(null)
       setMicPending(false)
       setTestingMic(false)
     }
-    cssProperty('transform', 'scaleX(0)')(prejoinMeterFillRef.current)
   }
 
   useEffect(() => {
@@ -192,12 +190,13 @@ export function CallsSurfaceView({
       const tick = () => {
         if (!active) return
         const level = meter ? Math.min(1, Math.max(0, meter.level(track))) : 0
-        cssProperty('transform', `scaleX(${level.toFixed(3)})`)(prejoinMeterFillRef.current)
+        prejoinLevelRef.current = level
         frame = requestAnimationFrame(tick)
       }
       frame = requestAnimationFrame(tick)
       micCleanupRef.current = () => {
         active = false
+        prejoinLevelRef.current = 0
         cancelAnimationFrame(frame)
         try {
           meter?.close()
@@ -207,6 +206,7 @@ export function CallsSurfaceView({
         stopStreamTracks(stream)
       }
       micPendingRef.current = false
+      setActiveMicTrack(track)
       setMicPending(false)
       setTestingMic(true)
     } catch {
@@ -421,13 +421,19 @@ export function CallsSurfaceView({
               )}
             </Button>
           </div>
-          <span
+          <div
             aria-hidden="true"
             data-testid="calls-prejoin-mic-meter"
-            className="block h-2 w-full overflow-hidden rounded-full bg-c-muted"
+            className="block w-full overflow-hidden rounded-full bg-c-muted"
           >
-            <span ref={initialMeterRef} className="block h-full w-full origin-left bg-c-ok" />
-          </span>
+            <KoderaVoiceVisualizer
+              track={activeMicTrack}
+              levelSampler={() => prejoinLevelRef.current}
+              muted={!testingMic}
+              connected={testingMic}
+              surface="light"
+            />
+          </div>
           {micError ? (
             <p role="alert" className="text-xs text-c-bad-ink">
               {t('console.workspace.calls.problem-mic-test')}

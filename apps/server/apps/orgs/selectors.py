@@ -355,3 +355,49 @@ def organisation_slug_or_none(*, organisation_id: UUID) -> str | None:
         .values_list("slug", flat=True)
         .first()
     )
+
+
+def attachment_sweep_organisation_ids(
+    *,
+    after_org: UUID | None = None,
+    include_after_org: bool = False,
+    limit: int = 50,
+) -> tuple[UUID, ...]:
+    """Return undeleted customer organisation IDs ordered by UUID for bounded S3 orphan sweeps."""
+    qs = Organisation.objects.filter(deleted_at__isnull=True).exclude(realm="kodera-staff")
+    if after_org is not None:
+        qs = qs.filter(id__gte=after_org) if include_after_org else qs.filter(id__gt=after_org)
+    return tuple(qs.order_by("id").values_list("id", flat=True)[:limit])
+
+
+def previous_sweep_organisation_id(*, before_org: UUID) -> UUID | None:
+    """Return the immediate predecessor undeleted customer organisation ID before `before_org`."""
+    return (
+        Organisation.objects.filter(deleted_at__isnull=True, id__lt=before_org)
+        .exclude(realm="kodera-staff")
+        .order_by("-id")
+        .values_list("id", flat=True)
+        .first()
+    )
+
+
+def active_membership_ids_by_user(*, organisation_id: UUID) -> dict[UUID, UUID]:
+    """Accepted active memberships of enabled people for read-only import matching."""
+    return dict(
+        _organisation_memberships(organisation_id=organisation_id)
+        .filter(user__enabled=True, user__deleted_at__isnull=True)
+        .values_list("user_id", "id")
+    )
+
+
+def current_admin_role(*, membership_id: UUID, organisation_id: UUID) -> str | None:
+    return (
+        _organisation_memberships(organisation_id=organisation_id)
+        .filter(id=membership_id, role__in=("org_owner", "org_admin"))
+        .values_list("role", flat=True)
+        .first()
+    )
+
+
+def organisation_authority_revision(*, organisation_id: UUID) -> int:
+    return Organisation.objects.values_list("authority_revision", flat=True).get(id=organisation_id)

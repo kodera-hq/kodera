@@ -149,6 +149,14 @@ export interface AudioDockMediaToggle {
   onToggle: () => void
 }
 
+/** In-call companion chat toggle and live unread indicator (`ADR-0018`). */
+export interface AudioDockCompanionChat {
+  readonly open: boolean
+  readonly unread: number
+  readonly label: string
+  readonly onToggle: () => void
+}
+
 export interface AudioDockProps {
   /** The region's accessible name, e.g. « Appel en cours ». */
   participants?: readonly {
@@ -211,6 +219,10 @@ export interface AudioDockProps {
   layout?: AudioDockLayout
   /** The microphone meter's fill: its transform is the caller's to set (see above). */
   meterRef?: Ref<HTMLSpanElement>
+  /** Signature Cobalt voice visualizer slot (replaces legacy linear meter when provided). */
+  visualizer?: ReactNode
+  /** Compact procedural soundboard trigger/popover in `studio` layout. */
+  soundboard?: ReactNode
   /**
    * The call's audio settings: a control the caller draws (a popover's trigger), set in the
    * dock's top row beside the call's name, before `onOpenCall`'s button.
@@ -221,6 +233,10 @@ export interface AudioDockProps {
    * of the preview camera or the « not available » one.
    */
   media?: { camera: AudioDockMediaToggle; screen?: AudioDockMediaToggle }
+  /** Optional 1:1 audio-channel companion chat drawer/split-pane toggle. */
+  companionChat?: AudioDockCompanionChat
+  /** Ref to the companion chat toggle button so focus returns to it after closing. */
+  companionChatButtonRef?: Ref<HTMLButtonElement>
 }
 
 // Filled only when connected; a hollow ring while the call is not yet, or no
@@ -285,16 +301,7 @@ interface ControlProps {
   onClick: () => void
 }
 
-function Control({
-  layout,
-  label,
-  glyph,
-  tone,
-  pressed,
-  busy,
-  buttonRef,
-  onClick,
-}: ControlProps) {
+function Control({ layout, label, glyph, tone, pressed, busy, buttonRef, onClick }: ControlProps) {
   return (
     <Tooltip content={label} names>
       <button
@@ -335,6 +342,8 @@ export function AudioDock({
   labels,
   layout = 'sidebar',
   meterRef,
+  visualizer,
+  soundboard,
   settings,
   participants,
   participantsLabel,
@@ -342,6 +351,8 @@ export function AudioDock({
   localParticipantId,
   previewCamera = false,
   media,
+  companionChat,
+  companionChatButtonRef,
 }: AudioDockProps) {
   const [cameraActive, setCameraActive] = useState(false)
   // Starts empty, then the caller scales it; never a `style` attribute (src/ui/cssom.ts).
@@ -408,7 +419,14 @@ export function AudioDock({
             ) : (
               <p className="truncate text-xs leading-snug font-semibold">{room}</p>
             )}
-            {meterRef === undefined ? null : (
+            {visualizer !== undefined ? (
+              <span aria-hidden="true" data-mic-meter="" className="mt-1 block w-full">
+                {meterRef === undefined ? null : (
+                  <span ref={meterFillRef} className="sr-only origin-left" />
+                )}
+                {visualizer}
+              </span>
+            ) : meterRef === undefined ? null : (
               <span
                 aria-hidden="true"
                 data-mic-meter=""
@@ -416,7 +434,7 @@ export function AudioDock({
               >
                 <span
                   ref={meterFillRef}
-                  className="block h-full w-full origin-left bg-c-ok-on-dark"
+                  className="block h-full w-full origin-left bg-c-action"
                 />
               </span>
             )}
@@ -448,7 +466,14 @@ export function AudioDock({
               >
                 {statusLabel}
               </p>
-              {meterRef === undefined ? null : (
+              {visualizer !== undefined ? (
+                <span aria-hidden="true" data-mic-meter="" className="mt-1 block w-full">
+                  {meterRef === undefined ? null : (
+                    <span ref={meterFillRef} className="sr-only origin-left" />
+                  )}
+                  {visualizer}
+                </span>
+              ) : meterRef === undefined ? null : (
                 <span
                   aria-hidden="true"
                   data-mic-meter=""
@@ -458,7 +483,7 @@ export function AudioDock({
                       track's rounded clip keeps its ends round. */}
                   <span
                     ref={meterFillRef}
-                    className="block h-full w-full origin-left bg-c-ok-on-dark"
+                    className="block h-full w-full origin-left bg-c-action"
                   />
                 </span>
               )}
@@ -556,7 +581,9 @@ export function AudioDock({
                     name={person.name}
                     identity={person.id}
                     size="lg"
-                    {...(person.onAvatarError === undefined ? {} : { onError: person.onAvatarError })}
+                    {...(person.onAvatarError === undefined
+                      ? {}
+                      : { onError: person.onAvatarError })}
                     {...(person.avatarSrc === undefined ? {} : { src: person.avatarSrc })}
                   />
                 )}
@@ -584,7 +611,13 @@ export function AudioDock({
           </ul>
         </div>
       ) : null}
-      <div className={CONTROLS[layout]}>
+      <div
+        className={
+          layout === 'sidebar' && companionChat !== undefined && hasLabel(companionChat.label)
+            ? 'grid grid-cols-4 gap-1'
+            : CONTROLS[layout]
+        }
+      >
         {media !== undefined ? (
           <>
             {isCompact && media.screen?.on === true ? (
@@ -667,6 +700,35 @@ export function AudioDock({
           pressed={deafened}
           onClick={onToggleDeafen}
         />
+        {layout === 'studio' && soundboard !== undefined ? soundboard : null}
+        {companionChat !== undefined && hasLabel(companionChat.label) ? (
+          <Tooltip content={companionChat.label} names>
+            <button
+              ref={companionChatButtonRef}
+              type="button"
+              aria-label={companionChat.label}
+              aria-expanded={companionChat.open}
+              onClick={companionChat.onToggle}
+              className={cx(
+                'relative motion-reduce:transition-none',
+                CONTROL_BASE,
+                CONTROL_SHAPE[layout],
+                companionChat.open ? TONE.pressed : TONE.idle
+              )}
+            >
+              <StudioGlyph name="message" />
+              {!companionChat.open && companionChat.unread > 0 ? (
+                <span
+                  aria-hidden="true"
+                  data-testid="companion-chat-unread"
+                  className="pointer-events-none absolute -top-1 -right-1 min-w-5 rounded-full bg-c-action px-1 text-center text-xs font-bold text-c-on-inverse tabular-nums"
+                >
+                  {companionChat.unread > 99 ? '99+' : companionChat.unread}
+                </span>
+              ) : null}
+            </button>
+          </Tooltip>
+        ) : null}
         {(isCompact || layout === 'banner') && onDetach !== undefined && hasLabel(labels.detach) ? (
           <Control
             layout={layout}

@@ -293,6 +293,93 @@ def _prefix_request(location, credential, organisation_id, *, continuation=None,
         conn.close()
 
 
+def _parse_s3_last_modified(raw_value: str | None) -> str:
+    if not raw_value or not isinstance(raw_value, str) or len(raw_value) > 64:
+        raise StorageRefusedError()
+    try:
+        parsed = datetime.fromisoformat(raw_value)
+    except ValueError:
+        raise StorageRefusedError() from None
+    if parsed.tzinfo is None:
+        raise StorageRefusedError()
+    return parsed.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _prefix_objects_request(
+    location: S3Location,
+    credential: S3Credential,
+    organisation_id: UUID,
+    *,
+    continuation: str | None = None,
+) -> tuple[list[dict[str, str]], str | None]:
+    if continuation is not None and (
+        not isinstance(continuation, str)
+        or not continuation
+        or len(continuation) > 4096
+        or not continuation.isascii()
+    ):
+        raise StorageRefusedError()
+    url, headers = presign_prefix_request(
+        location,
+        credential,
+        organisation_id,
+        now=datetime.now(UTC),
+        continuation=continuation,
+        key=None,
+    )
+    conn, response = outbound.request(
+        outbound.target(url, https_only=True),
+        method="GET",
+        headers=headers,
+        deadline=time.monotonic() + 10,
+        pool="storage",
+    )
+    try:
+        raw = response.read(256 * 1024 + 1)
+        if response.status != 200 or len(raw) > 256 * 1024 or b"<!" in raw:
+            raise StorageRefusedError()
+        try:
+            text = raw.decode("utf-8")
+            if "<!" in text:
+                raise StorageRefusedError()
+            document = ElementTree.fromstring(text)  # noqa: S314 - bounded UTF-8 with all DTD/entity declarations refused
+        except (UnicodeError, ElementTree.ParseError):
+            raise StorageRefusedError() from None
+        ns = "{http://s3.amazonaws.com/doc/2006-03-01/}"
+        if document.tag != ns + "ListBucketResult":
+            raise StorageRefusedError()
+        prefix = f"organisations/{organisation_id}/attachments/"
+        if document.findtext(ns + "Prefix") != prefix:
+            raise StorageRefusedError()
+        items = document.findall(ns + "Contents")
+        if len(items) > 10:
+            raise StorageRefusedError()
+        objects: list[dict[str, str]] = []
+        for item in items:
+            key = item.findtext(ns + "Key")
+            if (
+                not key
+                or not key.startswith(prefix)
+                or len(key.encode("utf-8")) > 1024
+                or any(part in {".", ".."} for part in key.split("/"))
+            ):
+                raise StorageRefusedError()
+            last_modified = _parse_s3_last_modified(item.findtext(ns + "LastModified"))
+            objects.append({"key": key, "last_modified": last_modified})
+        truncated = document.findtext(ns + "IsTruncated")
+        if truncated not in {"true", "false"}:
+            raise StorageRefusedError()
+        token = document.findtext(ns + "NextContinuationToken") if truncated == "true" else None
+        if truncated == "true" and (
+            not token or token == continuation or len(token) > 4096 or not token.isascii()
+        ):
+            raise StorageRefusedError()
+        return objects, token
+    finally:
+        response.close()
+        conn.close()
+
+
 def _room_member_target(data: Any) -> tuple[UUID, str, str]:
     if (
         not isinstance(data, dict)
@@ -325,8 +412,27 @@ class StorageWorker:
             "delete",
             "room_member",
             "attachment_prefix",
+            "attachment_prefix_objects",
         }:
             raise StorageRefusedError()
+        if operation == "attachment_prefix_objects":
+            data = message["object"]
+            if (
+                not isinstance(data, dict)
+                or set(data) != {"organisationId", "continuation"}
+                or not isinstance(data["organisationId"], str)
+                or (data["continuation"] is not None and not isinstance(data["continuation"], str))
+            ):
+                raise StorageRefusedError()
+            try:
+                org_id = UUID(data["organisationId"])
+            except ValueError:
+                raise StorageRefusedError() from None
+            with self.source.load(org_id) as (location, credential):
+                objects, token = _prefix_objects_request(
+                    location, credential, org_id, continuation=data["continuation"]
+                )
+            return {"objects": objects, "continuation": token}
         if operation == "attachment_prefix":
             data = message["object"]
             if (

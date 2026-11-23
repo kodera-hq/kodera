@@ -20,9 +20,11 @@ from django.db import connection, transaction
 from django.utils import timezone
 
 from apps.orgs.actor_selectors import TenantCaller
-from apps.workspaces.channel_access import may_view, resolve
+from apps.orgs.claim_readiness import database_now
+from apps.orgs.selectors import attachment_sweep_organisation_ids, previous_sweep_organisation_id
+from apps.workspaces.channel_access import may_perform, resolve
 from apps.workspaces.selectors import (
-    active_text_channel_id,
+    active_channel_id,
     undeleted_channel_id,
     workspace_id_for,
 )
@@ -34,8 +36,14 @@ from services.identity.access_tokens import VerifiedAccessToken
 from . import outbound, preview_guard, unfurl
 from .context import RefusalError as RefusalError, audit, caller, read_caller
 from .models import ROOM_ID_REGEX, Attachment
-from .storage import ObjectDescriptor, ObjectMismatchError, StorageRefusedError
-from .storage_gateway import Gateway
+from .storage import (
+    EXPIRY_SECONDS,
+    ObjectDescriptor,
+    ObjectMismatchError,
+    StorageRefusedError,
+    parse_object_key,
+)
+from .storage_gateway import Gateway, attachment_prefix_objects, delete_object
 from .storage_protocol import unique_object
 
 _DEFAULT_UNFURL = unfurl.unfurl
@@ -220,20 +228,20 @@ _DEFAULT_GATEWAY = _gateway
 
 def _verify_channel_upload_authority(principal: TenantCaller, channel_id: UUID) -> None:
     ws_id = workspace_id_for(organisation_id=principal.organisation_id)
-    if ws_id is None or active_text_channel_id(workspace_id=ws_id, channel_id=channel_id) is None:
+    if ws_id is None or active_channel_id(workspace_id=ws_id, channel_id=channel_id) is None:
         raise RefusalError(403)
     try:
         access = resolve(channel_id)
     except (ObjectDoesNotExist, WorkspaceUnavailableError):
         raise RefusalError(403) from None
-    if not may_view(
+    if not may_perform(
         access,
+        action="file.upload",
         organisation_id=principal.organisation_id,
         membership_id=principal.membership_id,
+        member_org_role=principal.role,
         authority_revision=principal.authority_revision,
     ):
-        raise RefusalError(403)
-    if "file.upload" in access.denied and principal.role not in {"org_owner", "org_admin"}:
         raise RefusalError(403)
 
 
@@ -250,14 +258,14 @@ def _verify_db_read_authority(principal: TenantCaller, row: Attachment) -> None:
             access = resolve(row.channel_id)
         except (ObjectDoesNotExist, WorkspaceUnavailableError):
             raise RefusalError(403) from None
-        if not may_view(
+        if not may_perform(
             access,
+            action="file.read",
             organisation_id=principal.organisation_id,
             membership_id=principal.membership_id,
+            member_org_role=principal.role,
             authority_revision=principal.authority_revision,
         ):
-            raise RefusalError(403)
-        if "file.read" in access.denied and principal.role not in {"org_owner", "org_admin"}:
             raise RefusalError(403)
         return
 
@@ -875,3 +883,250 @@ def has_in_flight_attachment_uploads(*, attachment_ids: list[UUID], cutoff: date
     if not attachment_ids:
         return False
     return Attachment.objects.filter(id__in=attachment_ids, upload_expires_at__gt=cutoff).exists()
+
+
+def _orphan_sweep_cutoff() -> datetime:
+    if settings.KODERA_MEDIA_MAX_UPLOAD_STREAM_S != UPLOAD_STREAM_DRAIN_SECONDS:
+        raise RuntimeError("media upload drain window must be 300 seconds")
+    return database_now() - timedelta(seconds=EXPIRY_SECONDS + UPLOAD_STREAM_DRAIN_SECONDS)
+
+
+def sweep_orphan_attachments(
+    *,
+    max_orgs: int = 50,
+    max_pages: int = 100,
+    max_deletes: int = 100,
+    after_org: UUID | str | None = None,
+    continuation: str | None = None,
+    socket_path: str | None = None,
+) -> dict[str, Any]:
+    """Bounded, resumable S3 sweep deleting only rowless objects older than the 600s drain fence."""
+    for label, bound in (
+        ("max_orgs", max_orgs),
+        ("max_pages", max_pages),
+        ("max_deletes", max_deletes),
+    ):
+        if type(bound) is not int or not 1 <= bound <= 1000:
+            raise ValueError(f"orphan attachment sweep {label} must be between 1 and 1000")
+
+    resolved_after_org: UUID | None = None
+    if after_org is not None:
+        if isinstance(after_org, UUID):
+            resolved_after_org = after_org
+        elif isinstance(after_org, str) and after_org:
+            try:
+                resolved_after_org = UUID(after_org)
+            except ValueError:
+                raise ValueError("after_org must be a valid UUID") from None
+        else:
+            raise ValueError("after_org must be a valid UUID")
+
+    if continuation is not None:
+        if (
+            not isinstance(continuation, str)
+            or not continuation
+            or len(continuation) > 4096
+            or not continuation.isascii()
+        ):
+            raise ValueError("continuation must be a non-empty ASCII token up to 4096 bytes")
+        if resolved_after_org is None:
+            raise ValueError("continuation requires after_org")
+
+    cutoff = _orphan_sweep_cutoff()
+    resuming_current_org = continuation is not None
+    fetched_orgs = attachment_sweep_organisation_ids(
+        after_org=resolved_after_org,
+        include_after_org=resuming_current_org,
+        limit=max_orgs + 1,
+    )
+    has_extra_orgs = len(fetched_orgs) > max_orgs
+    org_ids = fetched_orgs[:max_orgs]
+
+    orgs_scanned = 0
+    pages_scanned = 0
+    objects_inspected = 0
+    deleted = 0
+    skipped_recent = 0
+    skipped_tracked = 0
+    last_completed_org: UUID | None = (
+        previous_sweep_organisation_id(before_org=resolved_after_org)
+        if resuming_current_org and resolved_after_org is not None
+        else resolved_after_org
+    )
+
+    for index, org_id in enumerate(org_ids):
+        if pages_scanned >= max_pages or deleted >= max_deletes:
+            return {
+                "organisationsScanned": orgs_scanned,
+                "pagesScanned": pages_scanned,
+                "objectsInspected": objects_inspected,
+                "deleted": deleted,
+                "skippedRecent": skipped_recent,
+                "skippedTracked": skipped_tracked,
+                "hasMore": True,
+                "nextAfterOrg": str(last_completed_org) if last_completed_org is not None else None,
+                "nextContinuation": None,
+            }
+
+        orgs_scanned += 1
+        page_token: str | None = (
+            continuation
+            if resuming_current_org
+            and resolved_after_org is not None
+            and org_id == resolved_after_org
+            else None
+        )
+
+        while True:
+            page = attachment_prefix_objects(
+                org_id,
+                continuation=page_token,
+                socket_path=socket_path,
+            )
+            pages_scanned += 1
+            raw_objects: list[dict[str, str]] = page["objects"]
+            next_token: str | None = page["continuation"]
+
+            for item_idx, entry in enumerate(raw_objects):
+                objects_inspected += 1
+                parsed = parse_object_key(entry["key"])
+                if parsed.organisation_id != org_id:
+                    raise StorageRefusedError()
+
+                last_modified = datetime.fromisoformat(entry["last_modified"])
+                if last_modified.tzinfo is None:
+                    raise StorageRefusedError()
+                if last_modified > cutoff:
+                    skipped_recent += 1
+                    continue
+
+                if Attachment.objects.filter(id=parsed.attachment_id).exists():
+                    skipped_tracked += 1
+                    continue
+
+                delete_object(parsed, socket_path=socket_path)
+                deleted += 1
+
+                if deleted >= max_deletes:
+                    remaining_on_page = item_idx + 1 < len(raw_objects)
+                    if remaining_on_page:
+                        if page_token is not None:
+                            return {
+                                "organisationsScanned": orgs_scanned,
+                                "pagesScanned": pages_scanned,
+                                "objectsInspected": objects_inspected,
+                                "deleted": deleted,
+                                "skippedRecent": skipped_recent,
+                                "skippedTracked": skipped_tracked,
+                                "hasMore": True,
+                                "nextAfterOrg": str(org_id),
+                                "nextContinuation": page_token,
+                            }
+                        return {
+                            "organisationsScanned": orgs_scanned,
+                            "pagesScanned": pages_scanned,
+                            "objectsInspected": objects_inspected,
+                            "deleted": deleted,
+                            "skippedRecent": skipped_recent,
+                            "skippedTracked": skipped_tracked,
+                            "hasMore": True,
+                            "nextAfterOrg": (
+                                str(last_completed_org) if last_completed_org is not None else None
+                            ),
+                            "nextContinuation": None,
+                        }
+                    if next_token is not None:
+                        return {
+                            "organisationsScanned": orgs_scanned,
+                            "pagesScanned": pages_scanned,
+                            "objectsInspected": objects_inspected,
+                            "deleted": deleted,
+                            "skippedRecent": skipped_recent,
+                            "skippedTracked": skipped_tracked,
+                            "hasMore": True,
+                            "nextAfterOrg": str(org_id),
+                            "nextContinuation": next_token,
+                        }
+                    last_completed_org = org_id
+                    more_orgs = (index + 1 < len(org_ids)) or has_extra_orgs
+                    return {
+                        "organisationsScanned": orgs_scanned,
+                        "pagesScanned": pages_scanned,
+                        "objectsInspected": objects_inspected,
+                        "deleted": deleted,
+                        "skippedRecent": skipped_recent,
+                        "skippedTracked": skipped_tracked,
+                        "hasMore": more_orgs,
+                        "nextAfterOrg": str(org_id) if more_orgs else None,
+                        "nextContinuation": None,
+                    }
+
+            if next_token is None:
+                last_completed_org = org_id
+                break
+
+            page_token = next_token
+            if pages_scanned >= max_pages:
+                return {
+                    "organisationsScanned": orgs_scanned,
+                    "pagesScanned": pages_scanned,
+                    "objectsInspected": objects_inspected,
+                    "deleted": deleted,
+                    "skippedRecent": skipped_recent,
+                    "skippedTracked": skipped_tracked,
+                    "hasMore": True,
+                    "nextAfterOrg": str(org_id),
+                    "nextContinuation": page_token,
+                }
+
+    return {
+        "organisationsScanned": orgs_scanned,
+        "pagesScanned": pages_scanned,
+        "objectsInspected": objects_inspected,
+        "deleted": deleted,
+        "skippedRecent": skipped_recent,
+        "skippedTracked": skipped_tracked,
+        "hasMore": has_extra_orgs,
+        "nextAfterOrg": (
+            str(last_completed_org) if has_extra_orgs and last_completed_org is not None else None
+        ),
+        "nextContinuation": None,
+    }
+
+
+@dataclass(frozen=True)
+class CompletedAttachmentSnapshot:
+    id: UUID
+    organisation_id: UUID
+    uploader_id: UUID
+    channel_id: UUID | None
+    room_id: str | None
+    filename: str
+    content_type: str
+    size_bytes: int
+    sha256: str
+
+
+def get_completed_attachment(
+    *, attachment_id: UUID, organisation_id: UUID
+) -> CompletedAttachmentSnapshot | None:
+    """Return a completed, non-cancelled attachment snapshot for `organisation_id`."""
+    row = Attachment.objects.filter(
+        id=attachment_id,
+        organisation_id=organisation_id,
+        completed_at__isnull=False,
+        cancelled_at__isnull=True,
+    ).first()
+    if row is None:
+        return None
+    return CompletedAttachmentSnapshot(
+        id=row.id,
+        organisation_id=row.organisation_id,
+        uploader_id=row.uploader_id,
+        channel_id=row.channel_id,
+        room_id=row.room_id,
+        filename=row.filename,
+        content_type=row.content_type,
+        size_bytes=row.size_bytes,
+        sha256=row.sha256,
+    )

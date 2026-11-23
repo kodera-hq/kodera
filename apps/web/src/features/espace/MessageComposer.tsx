@@ -16,9 +16,13 @@ import { TOUCH_TARGET, TOUCH_TARGET_HEIGHT } from '../../ui/touchTarget'
 import { permitsPlaintext } from '../confidential/room-boundary'
 import { AttachmentQueue, type QueuedFile } from '../messaging/attachments/attachmentQueue'
 import { resolveAttachmentScope } from '../messaging/attachments/attachmentRefs'
+import { VoiceNoteRecorder } from '../messaging/attachments/VoiceNoteRecorder'
 import { transformOutsideCode } from '../messaging/formatting'
 import { useMessagingOrganisation } from '../messaging/organisationContext'
 import { RichComposerInput } from '../messaging/RichComposerInput'
+import { pollMessages } from '../polls/pollMessages'
+import { parsePollCommand, pollFallbackBody, type PollWirePayload } from '../polls/pollState'
+import { pollStore } from '../polls/pollStore'
 import { useDraftSlice, type DraftChannel } from './draftChannel'
 import { replaceShortcodes } from './emoji'
 import { EmojiPalette } from './EmojiPalette'
@@ -283,7 +287,11 @@ function MessageComposerView({
   insertRef,
 }: MessageComposerProps) {
   const { t, i18n } = useTranslation()
-  const demoCopy = demoMessages[i18n.resolvedLanguage === 'en' ? 'en' : 'fr']
+  const locale = i18n.resolvedLanguage === 'en' ? 'en' : 'fr'
+  const demoCopy = demoMessages[locale]
+  const [pollError, setPollError] = useState<string | null>(null)
+  const roomBoundary = store.getRoomBoundary?.(roomId)
+  const plaintextPermitted = roomBoundary === undefined || permitsPlaintext(roomBoundary)
   const composerBox = useRef<HTMLDivElement>(null)
   const text = useDraftSlice(draft, textOf)
   const replyTo = useDraftSlice(draft, replyOf)
@@ -344,6 +352,58 @@ function MessageComposerView({
     }
     if (filesReady === null) return
     if (trimmed === '' && filesReady.length === 0) return
+    if (
+      filesReady.length === 0 &&
+      (typed === '/poll' || typed.startsWith('/poll ') || typed.startsWith('/poll\n'))
+    ) {
+      if (!plaintextPermitted) {
+        const forbiddenMsg = pollMessages[locale].errConfidentialForbidden
+        setPollError(forbiddenMsg)
+        onAnnounce(forbiddenMsg)
+        return
+      }
+      const parsed = parsePollCommand(typed, locale)
+      if (!parsed.ok) {
+        setPollError(parsed.error)
+        onAnnounce(parsed.error)
+        return
+      }
+      setPollError(null)
+      store.setTyping?.(roomId, false)
+      const payload: PollWirePayload = {
+        question: parsed.question,
+        options: parsed.options,
+        allowMultiple: parsed.allowMultiple,
+        anonymous: false,
+      }
+      const authorName =
+        store.getOwnProfile?.()?.displayName ??
+        members.find((m) => m.userId === viewerId)?.label ??
+        viewerId
+      draft.command(
+        () => {
+          const optimistic = pollStore.recordLocalPoll({
+            roomId,
+            payload,
+            createdBy: viewerId,
+            createdByName: authorName,
+            requireClientPollId: true,
+          })
+          const wirePayload: PollWirePayload = { ...payload, clientPollId: optimistic.id }
+          Promise.resolve(store.send(roomId, pollFallbackBody(payload), { poll: wirePayload })).catch(
+            () => {
+              pollStore.removeLocalPoll(roomId, optimistic.id)
+              const sendErr = pollMessages[locale].errSendFailed
+              setPollError(sendErr)
+              onAnnounce(sendErr)
+            }
+          )
+        },
+        { replyTo: null, text: '' }
+      )
+      return
+    }
+    setPollError(null)
     store.setTyping?.(roomId, false)
     const options: SendOptions = mentioning(typed, members)
     if (filesReady.length > 0) {
@@ -394,6 +454,15 @@ function MessageComposerView({
               {t('console.workspace.composer.reply-cancel')}
             </Button>
           </div>
+        ) : null}
+        {pollError !== null ? (
+          <p
+            role="alert"
+            data-testid="composer-poll-error"
+            className="rounded-md bg-c-sunken px-3 py-2 text-xs text-c-bad-ink"
+          >
+            {pollError}
+          </p>
         ) : null}
         {editingEventId !== null ? (
           <div className="flex items-center justify-between gap-2 rounded-md bg-c-sunken px-3 py-2 text-xs text-c-ink-2">
@@ -454,6 +523,16 @@ function MessageComposerView({
             mentionRef={mentionRef}
             insertRef={insertRef}
             onKeyDown={keyDown}
+            leadingTools={
+              editingEventId === null && uploads !== null && composerText.trim() === '' ? (
+                <VoiceNoteRecorder
+                  roomId={roomId}
+                  uploads={uploads}
+                  plaintextPermitted={plaintextPermitted}
+                  disabled={navigationUnsettled}
+                />
+              ) : null
+            }
             trailing={
               <>
                 {/* p02's `.icon-btn`, drawn as the thread panel's close button is. */}

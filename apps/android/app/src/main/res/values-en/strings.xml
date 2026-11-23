@@ -368,4 +368,5 @@
     <string name="conversation_delivery_sending">Sending…</string>
     <string name="conversation_delivery_failed">Delivery failed</string>
     <string name="conversation_sync_refresh">Refresh</string>
+    <string name="conversation_status_secure_transport_required">Sending is disabled until a public room is verified. Confidential and encrypted rooms require secure messaging support.</string>
 </resources>

@@ -840,7 +840,8 @@ export const EXAMPLES = {
               "template_key": "welcome",
               "topic": "",
               "lifecycle": "active",
-              "room_state": "ready"
+              "room_state": "ready",
+              "is_confidential": false
             },
             {
               "id": "0192f3a4-5b6c-7d8e-9f01-23456789abd1",
@@ -849,7 +850,8 @@ export const EXAMPLES = {
               "template_key": "general",
               "topic": "",
               "lifecycle": "active",
-              "room_state": "ready"
+              "room_state": "ready",
+              "is_confidential": false
             }
           ]
         },
@@ -865,7 +867,8 @@ export const EXAMPLES = {
               "template_key": "lounge",
               "topic": "",
               "lifecycle": "active",
-              "room_state": "pending"
+              "room_state": "pending",
+              "is_confidential": false
             }
           ]
         }
@@ -3225,6 +3228,25 @@ export const EXAMPLES = {
     idempotent: true,
     requiresIfMatch: false,
   },
+  "createBugReport": {
+    operationId: "createBugReport",
+    method: "post",
+    path: "/organisations/{organisation_id}/support/bug-reports",
+    status: 201,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "id": "01900000-0000-7000-8000-000000000099",
+      "status": "queued",
+      "dedup_fingerprint": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+      "occurrences": 1,
+      "created_at": "2026-11-23T00:00:00Z"
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
   "listSupportTickets": {
     operationId: "listSupportTickets",
     method: "get",
@@ -5331,6 +5353,37 @@ export const EXAMPLES = {
     idempotent: false,
     requiresIfMatch: false,
   },
+  "putNotificationPresence": {
+    operationId: "putNotificationPresence",
+    method: "put",
+    path: "/notifications/presence/{device_id}",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "deviceId": "0195c000-0000-7000-8000-000000000001",
+      "platform": "desktop",
+      "expiresAt": "2026-11-23T00:01:00Z",
+      "ttlSeconds": 60
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "deleteNotificationPresence": {
+    operationId: "deleteNotificationPresence",
+    method: "delete",
+    path: "/notifications/presence/{device_id}",
+    status: 204,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: null,
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
   "putPushSubscription": {
     operationId: "putPushSubscription",
     method: "put",
@@ -6420,6 +6473,273 @@ export const EXAMPLES = {
     },
     isList: false,
     idempotent: true,
+    requiresIfMatch: false,
+  },
+  "getWorkspaceAiPolicy": {
+    operationId: "getWorkspaceAiPolicy",
+    method: "get",
+    path: "/organisations/{organisation_id}/workspace/ai/policy",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "gatewayEnabled": false,
+      "enabled": false,
+      "provider": "mistral",
+      "providerRegion": "eu",
+      "euSovereignOnly": true,
+      "selfHostedEndpoint": "",
+      "model": "mistral-small-latest",
+      "hasByomConfig": false,
+      "monthlyBudgetMicros": 50000000,
+      "monthlySpentMicros": 0,
+      "memberConsent": {
+        "enabled": false,
+        "consentedAt": null,
+        "revokedAt": null
+      }
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "putWorkspaceAiPolicy": {
+    operationId: "putWorkspaceAiPolicy",
+    method: "put",
+    path: "/organisations/{organisation_id}/workspace/ai/policy",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "gatewayEnabled": false,
+      "enabled": false,
+      "provider": "mistral",
+      "providerRegion": "eu",
+      "euSovereignOnly": true,
+      "selfHostedEndpoint": "",
+      "model": "mistral-small-latest",
+      "hasByomConfig": false,
+      "monthlyBudgetMicros": 50000000,
+      "monthlySpentMicros": 0,
+      "memberConsent": {
+        "enabled": false,
+        "consentedAt": null,
+        "revokedAt": null
+      }
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "putChannelAiPolicy": {
+    operationId: "putChannelAiPolicy",
+    method: "put",
+    path: "/organisations/{organisation_id}/workspace/channels/{channel_id}/ai",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "channelId": "00000000-0000-7000-8000-000000000001",
+      "aiEnabled": false
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "putMemberAiConsent": {
+    operationId: "putMemberAiConsent",
+    method: "put",
+    path: "/organisations/{organisation_id}/workspace/ai/consent",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "enabled": false,
+      "consentedAt": null,
+      "revokedAt": null
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "transcribeVoiceNote": {
+    operationId: "transcribeVoiceNote",
+    method: "post",
+    path: "/organisations/{organisation_id}/workspace/attachments/{attachment_id}/actions/transcribe",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "attachmentId": "00000000-0000-7000-8000-000000000001",
+      "channelId": "00000000-0000-7000-8000-000000000002",
+      "text": "Bonjour tout le monde",
+      "language": "fr",
+      "provider": "mistral",
+      "model": "voxtral-mini-latest"
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "previewWorkspaceImport": {
+    operationId: "previewWorkspaceImport",
+    method: "post",
+    path: "/organisations/{organisation_id}/workspace/imports/preview",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "source": "slack",
+      "archive_sha256": "000000000000000000000000000000000000000000000000000000000000a1b2",
+      "dry_run": true,
+      "counts": {
+        "channels_total": 2,
+        "channels_existing": 1,
+        "channels_to_create": 1,
+        "messages_total": 14,
+        "thread_replies_total": 3,
+        "docs_pages_total": 2,
+        "collections_total": 0,
+        "collection_rows_total": 0,
+        "members_matched": 2,
+        "members_unmatched": 1,
+        "already_imported_reused": 0,
+        "omitted_assets": 0
+      },
+      "member_mappings": [
+        {
+          "external_id": "U01ALICE",
+          "display_name": "Alice Martin",
+          "matched_membership_id": "01950000-0000-7000-8000-0000000000b1",
+          "local_role_preserved": true
+        }
+      ],
+      "warnings": []
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "executeWorkspaceImport": {
+    operationId: "executeWorkspaceImport",
+    method: "post",
+    path: "/organisations/{organisation_id}/workspace/imports/execute",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "batch_id": "01950000-0000-7000-8000-0000000000b2",
+      "source": "slack",
+      "state": "complete",
+      "imported": 2,
+      "reused": 0,
+      "remaining": 0,
+      "omitted_assets": 0,
+      "replayed_messages": 14,
+      "reused_messages": 0,
+      "warnings": []
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "listCoexistenceBridges": {
+    operationId: "listCoexistenceBridges",
+    method: "get",
+    path: "/organisations/{organisation_id}/workspace/coexistence/bridges",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "bridges": [
+        {
+          "id": "01950000-0000-7000-8000-0000000000c1",
+          "workspaceId": "01950000-0000-7000-8000-0000000000c2",
+          "channelId": "01950000-0000-7000-8000-0000000000c3",
+          "creatorMembershipId": "01950000-0000-7000-8000-0000000000c4",
+          "source": "slack",
+          "externalWorkspaceId": "T01EXTERNAL",
+          "externalChannelId": "C01GENERAL",
+          "outboundEndpoint": "https://hooks.example.com/services/bridge",
+          "active": true,
+          "revokedAt": null,
+          "createdAt": "2026-11-23T00:00:00Z",
+          "updatedAt": "2026-11-23T00:00:00Z"
+        }
+      ]
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "createCoexistenceBridge": {
+    operationId: "createCoexistenceBridge",
+    method: "post",
+    path: "/organisations/{organisation_id}/workspace/coexistence/bridges",
+    status: 201,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "id": "01950000-0000-7000-8000-0000000000c1",
+      "workspaceId": "01950000-0000-7000-8000-0000000000c2",
+      "channelId": "01950000-0000-7000-8000-0000000000c3",
+      "creatorMembershipId": "01950000-0000-7000-8000-0000000000c4",
+      "source": "slack",
+      "externalWorkspaceId": "T01EXTERNAL",
+      "externalChannelId": "C01GENERAL",
+      "outboundEndpoint": "https://hooks.example.com/services/bridge",
+      "active": true,
+      "revokedAt": null,
+      "createdAt": "2026-11-23T00:00:00Z",
+      "updatedAt": "2026-11-23T00:00:00Z"
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "revokeCoexistenceBridge": {
+    operationId: "revokeCoexistenceBridge",
+    method: "delete",
+    path: "/organisations/{organisation_id}/workspace/coexistence/bridges/{bridge_id}",
+    status: 204,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: null,
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "receiveCoexistenceEvent": {
+    operationId: "receiveCoexistenceEvent",
+    method: "post",
+    path: "/coexistence/bridges/{bridge_id}/events",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "accepted": true,
+      "queued": true,
+      "status": "queued",
+      "bridgeId": "01950000-0000-7000-8000-0000000000c1",
+      "channelId": "01950000-0000-7000-8000-0000000000c3",
+      "externalEventId": "Ev01EXTERNAL",
+      "matrixEventId": null,
+      "matrixTxnId": "kodera-coex-00000000000000000000000000000001",
+      "validatedAttachmentMimes": []
+    },
+    isList: false,
+    idempotent: false,
     requiresIfMatch: false,
   },
 } satisfies Record<string, OperationExample>

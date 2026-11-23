@@ -235,7 +235,8 @@ def channel_set_input(workspace_id: UUID) -> tuple[list[str], list[dict[str, Any
         read_only = access.read_only
         listen_only = access.listen_only
         exempt_members: set[UUID] = set()
-        if access.kind == Channel.Kind.TEXT and revision is not None:
+        speak_exempt_members: set[UUID] = set()
+        if revision is not None:
             has_post_override = any(
                 bool((set(allow) | set(deny)) & set(READ_ONLY)) for _, allow, deny in c_overrides
             )
@@ -263,34 +264,35 @@ def channel_set_input(workspace_id: UUID) -> tuple[list[str], list[dict[str, Any
                 if read_only or posters != admitted:
                     read_only = True
                     exempt_members = posters
-        elif access.kind == Channel.Kind.AUDIO and revision is not None:
-            has_speak_override = any(
-                bool((set(allow) | set(deny)) & set(LISTEN_ONLY)) for _, allow, deny in c_overrides
-            )
-            if listen_only or has_speak_override:
-                speakers = {
-                    m
-                    for m in admitted
-                    if all(
-                        may_perform(
-                            access,
-                            action=cap,
-                            organisation_id=organisation_id,
-                            membership_id=m,
-                            member_org_role=members[m][1],
-                            authority_revision=revision,
-                            is_moderator=m in moderators,
-                            ignore_lifecycle=True,
-                            member_role_ids=role_ids_by_member.get(m, ()),
-                            member_role_permissions=perms_by_member.get(m, frozenset()),
-                            channel_overrides=c_overrides,
+            if access.kind == Channel.Kind.AUDIO:
+                has_speak_override = any(
+                    bool((set(allow) | set(deny)) & set(LISTEN_ONLY))
+                    for _, allow, deny in c_overrides
+                )
+                if listen_only or has_speak_override:
+                    speakers = {
+                        m
+                        for m in admitted
+                        if all(
+                            may_perform(
+                                access,
+                                action=cap,
+                                organisation_id=organisation_id,
+                                membership_id=m,
+                                member_org_role=members[m][1],
+                                authority_revision=revision,
+                                is_moderator=m in moderators,
+                                ignore_lifecycle=True,
+                                member_role_ids=role_ids_by_member.get(m, ()),
+                                member_role_permissions=perms_by_member.get(m, frozenset()),
+                                channel_overrides=c_overrides,
+                            )
+                            for cap in LISTEN_ONLY
                         )
-                        for cap in LISTEN_ONLY
-                    )
-                }
-                if listen_only or speakers != admitted:
-                    listen_only = True
-                    exempt_members = speakers
+                    }
+                    if listen_only or speakers != admitted:
+                        listen_only = True
+                        speak_exempt_members = speakers
 
         effective_etag = (
             tag(
@@ -326,9 +328,11 @@ def channel_set_input(workspace_id: UUID) -> tuple[list[str], list[dict[str, Any
             "denied": sorted(set(of(set(members) - admitted)) & everyone) if everyone_sees else [],
             "read_only": read_only,
             "listen_only": listen_only,
-            "exempt": of(exempt_members) if (read_only or listen_only) else [],
+            "exempt": of(exempt_members) if read_only else [],
             "notices": notices,
         }
+        if access.kind == Channel.Kind.AUDIO and listen_only:
+            entry["speak_exempt"] = of(speak_exempt_members)
         if channel_id in confidential_ids:
             entry["confidential"] = "io.kodera.mls.v1"
         channels.append(entry)

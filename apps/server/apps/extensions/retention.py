@@ -13,6 +13,8 @@ from django.db import connection, transaction
 from django.db.models import Q
 
 from .models import (
+    CoexistenceBridge,
+    CoexistenceReplayGuard,
     Delivery,
     DeliveryAttempt,
     DigestConsent,
@@ -62,6 +64,18 @@ def purge_due(*, limit: int = 100, organisation_id: UUID | None = None) -> int:
             ]
         )
         count += 1
+    remaining = limit - count
+    if remaining > 0:
+        replay_rows = (
+            CoexistenceReplayGuard.objects.select_for_update(skip_locked=True)
+            .filter(expires_at__lte=now)
+            .order_by("expires_at", "id")
+        )
+        if organisation_id is not None:
+            replay_rows = replay_rows.filter(bridge__workspace__organisation_id=organisation_id)
+        for replay_row in replay_rows[:remaining]:
+            replay_row.delete()
+            count += 1
     return count
 
 
@@ -70,24 +84,42 @@ def local_payloads_absent(*, organisation_id: UUID) -> bool:
         not Delivery.objects.filter(installation__workspace__organisation_id=organisation_id)
         .filter(Q(purged_at__isnull=True) | ~Q(event=b""))
         .exists()
+        and not CoexistenceBridge.objects.filter(workspace__organisation_id=organisation_id)
+        .exclude(sealed_signing_secret=b"")
+        .exists()
+        and not CoexistenceReplayGuard.objects.filter(
+            bridge__workspace__organisation_id=organisation_id,
+            sanitized_payload__isnull=False,
+        ).exists()
+        and not ImportedObject.objects.filter(
+            workspace__organisation_id=organisation_id,
+            replay_payload__isnull=False,
+        ).exists()
     )
 
 
 def receiver_inventory(*, organisation_id: UUID) -> tuple[str, ...]:
     import hashlib
 
-    return tuple(
+    install_urns = [
         f"urn:kodera:extension-installation:{row.id}:endpoint-sha256:{hashlib.sha256(row.endpoint.encode()).hexdigest()}"
-        for row in Installation.objects.filter(workspace__organisation_id=organisation_id).order_by(
-            "id"
-        )
-    )
+        for row in Installation.objects.filter(workspace__organisation_id=organisation_id)
+    ]
+    bridge_urns = [
+        f"urn:kodera:coexistence-bridge:{row.id}:endpoint-sha256:{hashlib.sha256(row.outbound_endpoint.encode()).hexdigest()}"
+        for row in CoexistenceBridge.objects.filter(workspace__organisation_id=organisation_id)
+    ]
+    return tuple(sorted(install_urns + bridge_urns))
 
 
 def metadata_absent(*, organisation_id: UUID) -> bool:
     return not any(
         (
             Installation.objects.filter(workspace__organisation_id=organisation_id).exists(),
+            CoexistenceBridge.objects.filter(workspace__organisation_id=organisation_id).exists(),
+            CoexistenceReplayGuard.objects.filter(
+                bridge__workspace__organisation_id=organisation_id
+            ).exists(),
             ImportBatch.objects.filter(workspace__organisation_id=organisation_id).exists(),
             ImportedObject.objects.filter(workspace__organisation_id=organisation_id).exists(),
             DigestConsent.objects.filter(membership__organisation_id=organisation_id).exists(),

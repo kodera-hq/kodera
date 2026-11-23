@@ -26,6 +26,7 @@ function workspace(name = 'support') {
         template_key: 'support',
         topic: '',
         lifecycle: 'active',
+        is_confidential: false,
         room_state: 'ready',
       },
     ],

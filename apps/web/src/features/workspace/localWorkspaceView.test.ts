@@ -49,6 +49,7 @@ it('restores every created channel beyond 256 without discarding unrelated notes
     topic: '',
     template_key: null,
     lifecycle: 'active',
+    is_confidential: false,
     room_state: 'ready',
   }))
   const saved = {

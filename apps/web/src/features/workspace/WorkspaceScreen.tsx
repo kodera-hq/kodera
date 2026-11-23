@@ -20,7 +20,6 @@ import {
 import type { WorkspaceCategory, WorkspaceChannel } from './workspace'
 import { appliedTheme, themeMode } from '../../theme/theme'
 import { useThemePreference } from '../../theme/useThemePreference'
-import { ExtensionsCatalogPanel } from '../extensions/ExtensionsCatalogPanel'
 import { Dialog } from '../../ui/Dialog/Dialog'
 import type { DocsWorkspaceView } from '../docs/DocsWorkspacePanel'
 import { useQueryClient } from '@tanstack/react-query'
@@ -301,6 +300,11 @@ function ReadyWorkspace({
 }
 
 const LazyWorkspaceCollaborativeDocs = lazy(() => import('../docs/WorkspaceCollaborativeDocs'))
+const LazyExtensionsCatalogPanel = lazy(() =>
+  import('../extensions/ExtensionsCatalogPanel').then((module) => ({
+    default: module.ExtensionsCatalogPanel,
+  }))
+)
 
 const demoWorkspaceViews = new WeakMap<
   EspaceStoreLike,
@@ -745,6 +749,7 @@ function LiveWorkspace({
               access: options.access,
               template_key: null,
               lifecycle: 'active',
+              is_confidential: false,
               room_state: 'ready',
             }
             store?.addChannel?.(created)
@@ -991,7 +996,12 @@ export function WorkspaceScreen() {
           size="lg"
         >
           <div className="max-h-[calc(100vh*2/3)] overflow-y-auto">
-            <ExtensionsCatalogPanel defaultSelectedId="io.kodera.ext.frameio-review-bridge" />
+            <Suspense fallback={<Skeleton shape="block" />}>
+              <LazyExtensionsCatalogPanel
+                defaultSelectedId="io.kodera.ext.frameio-review-bridge"
+                organisationId={organisationId}
+              />
+            </Suspense>
           </div>
         </Dialog>
         <Dialog

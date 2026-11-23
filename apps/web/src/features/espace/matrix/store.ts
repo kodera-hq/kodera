@@ -12,6 +12,13 @@ import {
   type AttachmentRef,
 } from '../../messaging/attachments/attachmentRefs'
 import {
+  POLL_END_EVENT,
+  POLL_FIELD,
+  POLL_RESPONSE_EVENT,
+  type PollWirePayload,
+} from '../../polls/pollState'
+import { pollStore } from '../../polls/pollStore'
+import {
   ClientEvent,
   createClient,
   EventStatus,
@@ -150,6 +157,8 @@ export interface SendOptions {
   clientTxnId?: string | undefined
   /** Optional workspace channel ID for fail-closed archive enforcement across restarts. */
   channelId?: string | undefined
+  /** Structured channel or live-call poll (`io.kodera.poll`). */
+  poll?: PollWirePayload
 }
 
 /** What an edit names, read from its new text as `SendOptions` reads a message's. */
@@ -1236,6 +1245,7 @@ export class EspaceStore {
     this.#outboxRetryTargetAt = Number.POSITIVE_INFINITY
     this.#joinRateLimitedUntil = 0
     this.#avatars.close()
+    pollStore.clearAll()
     this.#status = status
     this.#snapshot = { ...this.#snapshot, status }
     this.#emit()
@@ -2640,6 +2650,7 @@ export class EspaceStore {
       body: effectiveBody,
       ...(html === null ? {} : { format: HTML_FORMAT, formatted_body: html }),
       ...(attachments.length === 0 ? {} : { [ATTACHMENTS_FIELD]: attachments }),
+      ...(options.poll === undefined ? {} : { [POLL_FIELD]: options.poll }),
       ...(mentions === undefined ? {} : { 'm.mentions': mentions }),
       ...(relatesTo === undefined ? {} : { 'm.relates_to': relatesTo }),
     }
@@ -3141,6 +3152,18 @@ export class EspaceStore {
     } finally {
       this.#replayingOutbox = false
     }
+  }
+
+  async sendEvent(
+    roomId: string,
+    eventType: string,
+    content: Record<string, unknown>
+  ): Promise<void> {
+    if (eventType !== POLL_RESPONSE_EVENT && eventType !== POLL_END_EVENT) {
+      throw new Error('Unsupported custom room event type.')
+    }
+    this.#requireUnmutedPlaintextRoom(roomId)
+    await this.#client.sendEvent(roomId, eventType as never, content as never)
   }
 
   /**

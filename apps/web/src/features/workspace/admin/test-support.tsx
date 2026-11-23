@@ -55,6 +55,7 @@ export const WORKSPACE = {
             template_key: null,
             topic: '',
             lifecycle: 'active',
+            is_confidential: false,
             room_state: 'ready',
           },
           {
@@ -64,6 +65,7 @@ export const WORKSPACE = {
             template_key: null,
             topic: '',
             lifecycle: 'active',
+            is_confidential: false,
             room_state: 'ready',
           },
           {
@@ -73,6 +75,7 @@ export const WORKSPACE = {
             template_key: null,
             topic: '',
             lifecycle: 'active',
+            is_confidential: false,
             room_state: 'ready',
           },
         ],

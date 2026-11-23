@@ -88,6 +88,10 @@ WORKSPACE = "apps.workspaces.api.views"
 STRUCTURE = "apps.workspaces.api.administration"
 BILLING = "apps.billing.api.views"
 LEGAL = "apps.legal.api.views"
+EXTENSIONS = "apps.extensions.api.views"
+EXTENSIONS_HTTP = "apps.extensions.api.http"
+AI_GATEWAY = "apps.ai_gateway.api.views"
+AI_GATEWAY_HTTP = "apps.ai_gateway.api.http"
 STRUCTURE_SERVICES = (
     STRUCTURE + ".authorise",
     STRUCTURE + ".read_administration",
@@ -406,6 +410,14 @@ CASES = (
         ("apps.support.tickets.authorise",),
     ),
     Case(
+        "createBugReport",
+        "apps.support.api.views.bug_reports",
+        "post",
+        ORG,
+        "apps.support.bug_reports.BugReportCallerUnknownError",
+        ("apps.support.bug_reports.authorise",),
+    ),
+    Case(
         "requestAccountExport",
         "apps.orgs.api.privacy.account_exports",
         "post",
@@ -494,6 +506,45 @@ CASES = (
         "apps.orgs.privacy_selectors.PrivacyHttpError",
         ("apps.orgs.api.privacy.admit_privacy_request",),
         error_args=("identity-unknown",),
+    ),
+    # The extension routes: owner/admin admission resolves the principal before any handler runs.
+    *(
+        Case(
+            operation,
+            EXTENSIONS + "." + view,
+            method,
+            kwargs,
+            "apps.extensions.wire.ExtensionIdentityUnknownError",
+            (EXTENSIONS_HTTP + "._admit_owner_or_admin",),
+            verifier=EXTENSIONS_HTTP,
+        )
+        for operation, view, method, kwargs in (
+            ("previewWorkspaceImport", "import_preview", "post", ORG),
+            ("executeWorkspaceImport", "import_execute", "post", ORG),
+            ("listCoexistenceBridges", "coexistence_bridges", "get", ORG),
+            ("createCoexistenceBridge", "coexistence_bridges", "post", ORG),
+            ("revokeCoexistenceBridge", "coexistence_bridge", "delete", {**ORG, "bridge_id": ROW}),
+        )
+    ),
+    # The workspace AI routes: `authorize` resolves the caller before any handler or prepare runs.
+    *(
+        Case(
+            operation,
+            AI_GATEWAY + "." + view,
+            method,
+            kwargs,
+            "apps.ai_gateway.adapters.AiGatewayRefusalError",
+            (AI_GATEWAY_HTTP + ".authorize",),
+            error_args=(403, None, "identity-unknown"),
+            verifier=AI_GATEWAY_HTTP,
+        )
+        for operation, view, method, kwargs in (
+            ("getWorkspaceAiPolicy", "policy", "get", ORG),
+            ("putWorkspaceAiPolicy", "policy", "put", ORG),
+            ("putChannelAiPolicy", "channel_policy", "put", {**ORG, "channel_id": ROW}),
+            ("putMemberAiConsent", "consent", "put", ORG),
+            ("transcribeVoiceNote", "transcribe", "post", {**ORG, "attachment_id": ROW}),
+        )
     ),
 )
 
@@ -598,13 +649,24 @@ def identity_unknown_refusals(case: Case, response: HttpResponse) -> list[str]:
     return found
 
 
+def _declared_operations(patterns: Any) -> set[str]:
+    """Every contract operation a routed view declares, descending into include() resolvers."""
+    from django.urls.resolvers import URLResolver
+
+    declared: set[str] = set()
+    for pattern in patterns:
+        if isinstance(pattern, URLResolver):
+            declared |= _declared_operations(pattern.url_patterns)
+        else:
+            for operation in getattr(pattern.callback, "declared_operations", ()):
+                declared.add(operation.operation_id)
+    return declared
+
+
 def test_every_customer_operation_that_resolves_a_principal_is_listed():
     from django.urls import get_resolver
 
-    declared = set()
-    for pattern in get_resolver("config.customer_urls").url_patterns:
-        for operation in getattr(pattern.callback, "declared_operations", ()):
-            declared.add(operation.operation_id)
+    declared = _declared_operations(get_resolver("config.customer_urls").url_patterns)
     anonymous_or_other_lane = {
         "discoverRealm",
         "requestPassportMagicLink",
@@ -624,6 +686,97 @@ def test_every_customer_operation_that_resolves_a_principal_is_listed():
         # answers identity-unknown (docs/specs/INVITATIONS.md §3).
         "acceptInvitation",
         "previewInvitation",
+        # Signed provider webhook: it authenticates the bridge HMAC, not a customer OIDC
+        # principal, so it never answers identity-unknown.
+        "receiveCoexistenceEvent",
+        # Everything else routed through include(): the staff lane under staff/v1/ and the
+        # workspace-safety, docs, media, notifications, proximity and e2ee urlconfs, which this
+        # suite does not drive — their own acceptance suites answer for them.
+        "bootstrapProximity",
+        "cancelAttachmentUpload",
+        "checkInProximity",
+        "checkOutProximity",
+        "claimConfidentialKeyPackage",
+        "commitConfidentialEpoch",
+        "completeAttachmentUpload",
+        "completeStaffSar",
+        "createAbuseReport",
+        "createAttachmentUpload",
+        "createConfidentialRoom",
+        "createDocumentCollabSession",
+        "createStaffFeedbackGithubDraft",
+        "createStaffSar",
+        "createWorkspaceCollection",
+        "createWorkspaceDocument",
+        "createWorkspaceInviteLink",
+        "createWorkspaceRole",
+        "deleteNotificationPresence",
+        "deletePushSubscription",
+        "deleteWorkspaceCollection",
+        "deleteWorkspaceCollectionRow",
+        "deleteWorkspaceDocument",
+        "deleteWorkspaceRole",
+        "getAttachment",
+        "getNearbyProximity",
+        "getPushPublicKey",
+        "getStaffEngineering",
+        "getStaffFeedback",
+        "getStaffFinops",
+        "getStaffOrganisations",
+        "getStaffOverview",
+        "getStaffPipeline",
+        "getStaffSecurity",
+        "getStaffSre",
+        "getWorkspaceChannelOverrides",
+        "getWorkspaceCollection",
+        "getWorkspaceCollectionRow",
+        "getWorkspaceDocument",
+        "getWorkspaceProfile",
+        "grantStaffRole",
+        "listAbuseReports",
+        "listConfidentialEnvelopes",
+        "listDocumentBacklinks",
+        "listNotifications",
+        "listWorkspaceAuditLogs",
+        "listWorkspaceBans",
+        "listWorkspaceCollections",
+        "listWorkspaceDocuments",
+        "listWorkspaceInviteLinks",
+        "listWorkspaceRoles",
+        "markNotificationsRead",
+        "moderateWorkspaceMember",
+        "openStaffWaitlistCohort",
+        "previewWorkspaceInvite",
+        "publishConfidentialKeyPackage",
+        "putNotificationPresence",
+        "putPushSubscription",
+        "putWorkspaceCollectionRow",
+        "queryWorkspaceCollection",
+        "reconcileStaffDelivery",
+        "reconcileStaffJob",
+        "recordStaffFinopsSnapshot",
+        "redeemWorkspaceInvite",
+        "registerConfidentialDevice",
+        "registerStaffIssuerSnapshot",
+        "resolveAbuseReport",
+        "resolveProximityTokens",
+        "retireConfidentialParticipant",
+        "revokeConfidentialDevice",
+        "revokeStaffRole",
+        "revokeWorkspaceInviteLink",
+        "revokeWorkspaceModerator",
+        "searchWorkspace",
+        "sendConfidentialEnvelope",
+        "setWorkspaceChannelOverrides",
+        "setWorkspaceMemberRoles",
+        "triageStaffFeedback",
+        "unfurlUrl",
+        "updateWorkspaceCollection",
+        "updateWorkspaceDocument",
+        "updateWorkspaceProfile",
+        "updateWorkspaceRole",
+        "upsertStaffDeal",
+        "verifyStaffAuditChain",
     }
     listed = {case.operation for case in CASES}
     assert declared - anonymous_or_other_lane == listed, (

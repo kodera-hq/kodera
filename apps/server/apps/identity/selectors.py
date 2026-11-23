@@ -345,3 +345,31 @@ def lock_delivery_identities(*, user_id: UUID, organisation_id: UUID) -> None:
             [user_id, organisation_id],
         )
         cursor.fetchall()
+
+
+def first_organisation_identity_id(*, organisation_id: UUID, user_id: UUID) -> UUID | None:
+    """First undeleted identity, including disabled rows, for the delivery lock order."""
+    return (
+        Identity.objects.filter(
+            organisation_id=organisation_id, user_id=user_id, deleted_at__isnull=True
+        )
+        .order_by("id")
+        .values_list("id", flat=True)
+        .first()
+    )
+
+
+def enabled_user(*, user_id: UUID) -> bool:
+    return User.objects.filter(id=user_id, enabled=True, deleted_at__isnull=True).exists()
+
+
+def enabled_email_user_ids(*, organisation_id: UUID, email: str) -> set[UUID]:
+    """All enabled identity owners matching an exported email; ambiguity stays explicit."""
+    return set(
+        Identity.objects.filter(
+            organisation_id=organisation_id,
+            enabled=True,
+            deleted_at__isnull=True,
+            email__iexact=email,
+        ).values_list("user_id", flat=True)
+    )

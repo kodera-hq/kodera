@@ -408,7 +408,9 @@ def test_adapter_level_internal_error_is_logged_without_text(caplog):
     assert "private-sentinel" not in caplog.text
 
 
-def _effective_community_server_env(topology: str, values: dict[str, str]) -> dict[str, str]:
+def _effective_community_server_env(
+    topology: str, values: dict[str, str], *, service: str = "server"
+) -> dict[str, str]:
     import re
     import runpy
     from pathlib import Path
@@ -417,13 +419,14 @@ def _effective_community_server_env(topology: str, values: dict[str, str]) -> di
     gate = runpy.run_path(str(repo_root / "scripts/ci/check-community-deploy.py"))
     compose_text = (repo_root / "deploy/community/docker-compose.yml").read_text(encoding="utf-8")
     services = gate["parse_compose_services"](compose_text)
-    env_raw = dict(services["server"].environment)
+    env_raw = dict(services[service].environment)
     if topology == "split":
         split_text = (repo_root / "deploy/community/docker-compose.split.yml").read_text(
             encoding="utf-8"
         )
         split_services = gate["parse_compose_services"](split_text)
-        env_raw.update(split_services["server"].environment)
+        if service in split_services:
+            env_raw.update(split_services[service].environment)
 
     var_re = re.compile(r"\$\{([A-Z][A-Z0-9_]*)(?::-([^}]*)|:\?([^}]*))?\}")
 
@@ -479,10 +482,17 @@ def test_community_compose_trusted_edge_isolates_client_buckets_and_ignores_untr
 ):
     from config.environment import trusted_edge
 
+    admission_resolved = _effective_community_server_env(
+        topology,
+        {"KODERA_DOMAIN": "community.example.org", "KODERA_MATRIX_DOMAIN": "example.org"},
+        service="api-admission",
+    )
+    assert admission_resolved["KODERA_TRUSTED_EDGE_ADDRESSES"] == "172.30.240.2/32"
+
     resolved = _effective_community_server_env(
         topology, {"KODERA_DOMAIN": "community.example.org", "KODERA_MATRIX_DOMAIN": "example.org"}
     )
-    assert resolved["KODERA_TRUSTED_EDGE_ADDRESSES"] == "172.30.240.2/32"
+    assert resolved["KODERA_TRUSTED_EDGE_ADDRESSES"] == "172.30.240.4/32"
     settings.KODERA_TRUSTED_EDGE = trusted_edge(resolved)
     settings.KODERA_CONSOLE_ORIGINS = resolved["KODERA_CONSOLE_ORIGINS"]
 
@@ -490,17 +500,17 @@ def test_community_compose_trusted_edge_isolates_client_buckets_and_ignores_untr
     for _ in range(30):
         resp_a = post(
             body,
-            REMOTE_ADDR="172.30.240.2",
+            REMOTE_ADDR="172.30.240.4",
             HTTP_X_FORWARDED_FOR="198.51.100.10",
             HTTP_ORIGIN="https://community.example.org",
             HTTP_SEC_FETCH_SITE="same-origin",
         )
         assert_headers(resp_a, 200)
 
-    # Client A is now rate-limited at 429, while distinct Client B behind Caddy still reaches lookup.
+    # Client A is now rate-limited at 429, while distinct Client B behind Caddy + api-admission still reaches lookup.
     throttled_a = post(
         body,
-        REMOTE_ADDR="172.30.240.2",
+        REMOTE_ADDR="172.30.240.4",
         HTTP_X_FORWARDED_FOR="198.51.100.10",
         HTTP_ORIGIN="https://community.example.org",
         HTTP_SEC_FETCH_SITE="same-origin",
@@ -510,7 +520,7 @@ def test_community_compose_trusted_edge_isolates_client_buckets_and_ignores_untr
 
     admitted_b = post(
         body,
-        REMOTE_ADDR="172.30.240.2",
+        REMOTE_ADDR="172.30.240.4",
         HTTP_X_FORWARDED_FOR="198.51.100.20",
         HTTP_ORIGIN="https://community.example.org",
         HTTP_SEC_FETCH_SITE="same-origin",
@@ -538,10 +548,10 @@ def test_community_compose_trusted_edge_isolates_client_buckets_and_ignores_untr
     )
     assert_headers(throttled_direct, 429)
 
-    # Client B behind trusted Caddy is completely unaffected by the untrusted peer's forged header.
+    # Client B behind trusted Caddy + api-admission is completely unaffected by forged headers.
     still_ok_b = post(
         body,
-        REMOTE_ADDR="172.30.240.2",
+        REMOTE_ADDR="172.30.240.4",
         HTTP_X_FORWARDED_FOR="198.51.100.20",
         HTTP_ORIGIN="https://community.example.org",
         HTTP_SEC_FETCH_SITE="same-origin",

@@ -137,7 +137,10 @@ const TEMPLATES = [
   'audiovisual-production',
   'tech-studio',
   'b2b-advisory',
+  'association-coop',
+  'open-source-community',
   'public-sector',
+  'blank',
   'proximity',
   'crisis-cell',
 ]

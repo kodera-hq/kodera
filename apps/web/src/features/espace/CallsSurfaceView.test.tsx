@@ -30,6 +30,7 @@ const WORKSPACE: Workspace = {
       template_key: null,
       topic: '',
       lifecycle: 'active',
+      is_confidential: false,
       room_state: 'ready',
     },
   ],

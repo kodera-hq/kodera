@@ -2,10 +2,11 @@
 
 use super::compose_env::{is_admitted_service_user, validate_resolved_service_environment};
 use super::compose_service_policy::{
-    is_admitted_named_volume_source, is_admitted_service_image, validate_compose_volume_entry,
-    validate_resolved_bind_source, validate_resolved_service_build,
+    ensure_api_admission_hardening, is_admitted_named_volume_source, is_admitted_service_image,
+    validate_compose_volume_entry, validate_resolved_bind_source, validate_resolved_service_build,
     validate_resolved_service_command, validate_resolved_service_entrypoint,
-    validate_resolved_service_ports, verify_kodera_source_root,
+    validate_resolved_service_ports, verify_kodera_source_root, API_ADMISSION_ONLY_NETWORK,
+    API_ADMISSION_SERVICE_NAME,
 };
 use super::compose_yaml::{is_admitted_cap_add_token, is_admitted_cap_drop_token};
 use super::input_and_stack::is_sensitive_stack_root;
@@ -88,6 +89,12 @@ pub fn validate_resolved_compose_config_json_with_source(
         if !has_build && !has_image {
             return Err(CommunityDeployError::ComposeConfigInvalid);
         }
+        let is_api_admission = svc_name.as_str() == API_ADMISSION_SERVICE_NAME;
+        let mut api_read_only_true = false;
+        let mut api_cap_drop_all = false;
+        let mut api_security_opt_no_new_privileges = false;
+        let mut api_networks: Vec<String> = Vec::new();
+        let mut api_volumes_nonempty = false;
         for (directive, val) in svc_obj {
             if ADMITTED_COMPOSE_SERVICE_DIRECTIVES
                 .binary_search(&directive.as_str())
@@ -163,6 +170,9 @@ pub fn validate_resolved_compose_config_json_with_source(
                             return Err(CommunityDeployError::ComposeConfigInvalid);
                         }
                     }
+                    if is_api_admission && !caps.is_empty() {
+                        api_cap_drop_all = true;
+                    }
                 }
                 "security_opt" => {
                     let Some(opts) = val.as_array() else {
@@ -173,11 +183,53 @@ pub fn validate_resolved_compose_config_json_with_source(
                             return Err(CommunityDeployError::ComposeConfigInvalid);
                         }
                     }
+                    if is_api_admission && !opts.is_empty() {
+                        api_security_opt_no_new_privileges = true;
+                    }
+                }
+                "read_only" => {
+                    if is_api_admission {
+                        if val != &serde_json::Value::Bool(true) {
+                            return Err(CommunityDeployError::ComposeConfigInvalid);
+                        }
+                        api_read_only_true = true;
+                    }
+                }
+                "networks" => {
+                    if is_api_admission {
+                        let Some(nets) = val.as_object() else {
+                            return Err(CommunityDeployError::ComposeConfigInvalid);
+                        };
+                        for (net_name, net_cfg) in nets {
+                            if net_name != API_ADMISSION_ONLY_NETWORK {
+                                return Err(CommunityDeployError::ComposeConfigInvalid);
+                            }
+                            if !net_cfg.is_null() {
+                                let Some(net_obj) = net_cfg.as_object() else {
+                                    return Err(CommunityDeployError::ComposeConfigInvalid);
+                                };
+                                for net_key in net_obj.keys() {
+                                    if net_key != "ipv4_address" {
+                                        return Err(CommunityDeployError::ComposeConfigInvalid);
+                                    }
+                                }
+                                if let Some(ip_val) = net_obj.get("ipv4_address") {
+                                    if ip_val.as_str().is_none_or(str::is_empty) {
+                                        return Err(CommunityDeployError::ComposeConfigInvalid);
+                                    }
+                                }
+                            }
+                            api_networks.push(net_name.clone());
+                        }
+                    }
                 }
                 "volumes" => {
                     let Some(vols) = val.as_array() else {
                         return Err(CommunityDeployError::ComposeConfigInvalid);
                     };
+                    if is_api_admission && !vols.is_empty() {
+                        api_volumes_nonempty = true;
+                    }
                     for entry in vols {
                         if let Some(short_spec) = entry.as_str() {
                             if short_spec.contains("${") {
@@ -271,6 +323,15 @@ pub fn validate_resolved_compose_config_json_with_source(
                 }
                 _ => {}
             }
+        }
+        if is_api_admission {
+            ensure_api_admission_hardening(
+                api_read_only_true,
+                api_cap_drop_all,
+                api_security_opt_no_new_privileges,
+                &api_networks,
+                api_volumes_nonempty,
+            )?;
         }
     }
 

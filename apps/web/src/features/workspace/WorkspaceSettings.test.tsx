@@ -4,6 +4,8 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, expect, it, vi } from 'vitest'
 import type * as IamApiModule from './iamApi'
 import type * as MembersApiModule from './admin/membersApi'
+import type * as ExtensionsCatalogModule from '../extensions/ExtensionsCatalogPanel'
+import type { ExtensionsCatalogPanelProps } from '../extensions/ExtensionsCatalogPanel'
 import type { ReactElement, ReactNode } from 'react'
 import '../../i18n'
 import WorkspaceSettings from './WorkspaceSettings'
@@ -82,9 +84,21 @@ vi.mock('./admin/membersApi', async (actual) => ({
   }),
 }))
 vi.mock('./HostingOfferPanel', () => ({ HostingOfferPanel: () => <div>Hosting</div> }))
-vi.mock('../extensions/ExtensionsCatalogPanel', () => ({
-  ExtensionsCatalogPanel: () => <div>Extensions</div>,
-}))
+const extensionsSpy = vi.hoisted(() => ({ useRealPanel: false }))
+vi.mock('../extensions/ExtensionsCatalogPanel', async (actual) => {
+  const mod = await actual<typeof ExtensionsCatalogModule>()
+  return {
+    ...mod,
+    ExtensionsCatalogPanel: (panelProps: ExtensionsCatalogPanelProps) =>
+      extensionsSpy.useRealPanel ? (
+        <mod.ExtensionsCatalogPanel {...panelProps} />
+      ) : (
+        <div data-testid="extensions-mock" data-org-id={panelProps.organisationId ?? ''}>
+          Extensions
+        </div>
+      ),
+  }
+})
 function render(ui: ReactElement) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return rtlRender(<QueryClientProvider client={client}>{ui}</QueryClientProvider>)
@@ -384,4 +398,27 @@ it('switches the open settings dialog between French and English', async () => {
   await user.click(screen.getByRole('button', { name: 'Français' }))
   expect(screen.getByRole('group', { name: 'Langue' })).toBeVisible()
   expect(screen.getByRole('button', { name: 'Français' })).toHaveAttribute('aria-pressed', 'true')
+})
+
+it('wires organisationId into ExtensionsCatalogPanel so WorkspaceMigratorPanel controls are enabled', async () => {
+  const user = userEvent.setup()
+  extensionsSpy.useRealPanel = true
+  const ownerProps = { ...props, role: 'org_owner' as const }
+  try {
+    render(<WorkspaceSettings {...ownerProps} />)
+    await user.click(screen.getByRole('button', { name: 'Administration de l’espace' }))
+    await user.click(screen.getByRole('tab', { name: /Extensions/i }))
+
+    const toggle = await screen.findByRole('button', {
+      name: /Migrateur & coexistence/i,
+    })
+    await user.click(toggle)
+
+    const panel = await screen.findByTestId('workspace-migrator-panel')
+    expect(within(panel).queryByTestId('migrator-no-org-hint')).toBeNull()
+    expect(within(panel).getByRole('button', { name: /Simuler à blanc/i })).toBeEnabled()
+    expect(within(panel).getByRole('button', { name: /Exécuter un lot borné/i })).toBeEnabled()
+  } finally {
+    extensionsSpy.useRealPanel = false
+  }
 })

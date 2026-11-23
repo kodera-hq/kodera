@@ -117,6 +117,7 @@ it('adds a channel without losing conversations and immediately accepts messages
     template_key: null,
     topic: '',
     lifecycle: 'active',
+    is_confidential: false,
     room_state: 'ready',
   })
   const resolution = store.getSnapshot().channels.get('new-room')!

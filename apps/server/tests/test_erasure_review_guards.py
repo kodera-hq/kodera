@@ -13,7 +13,9 @@ from test_core_erasure import begin, seed
 from workspace_safety.test_moderation import world as make_world, world as world
 
 from apps.billing.models import FiscalPeriod
-from apps.notifications.models import Notification, PushSubscription
+from apps.identity.models import Identity
+from apps.notifications.models import Notification, PresenceLease, PushSubscription
+from apps.workspaces.models import MemberAiConsent, WorkspaceAiPolicy
 from core.db.ids import new_uuid7
 from core.db.retention_worker_role import admission_grant_statements, grant_statements
 
@@ -96,7 +98,9 @@ def test_restricted_admission_temp_relations_cannot_hide_overlap_or_invent_timez
 
 
 @pytest.mark.parametrize("cutoff", ["workspace", "account"])
-@pytest.mark.parametrize("resource", ["attachment", "subscription", "notification"])
+@pytest.mark.parametrize(
+    "resource", ["attachment", "subscription", "notification", "presence_lease"]
+)
 def test_old_cutoff_payload_cannot_move_to_valid_live_other_scope(world, cutoff, resource):
     _, attachment, _ = seed(world)
     other, _, other_members, _ = make_world.__wrapped__()
@@ -116,6 +120,10 @@ def test_old_cutoff_payload_cannot_move_to_valid_live_other_scope(world, cutoff,
         ),
         "notification": (
             Notification.objects.get(membership=world[2][0]),
+            {"organisation_id": other.id, "membership_id": other_members[0].id},
+        ),
+        "presence_lease": (
+            PresenceLease.objects.get(membership=world[2][0]),
             {"organisation_id": other.id, "membership_id": other_members[0].id},
         ),
     }
@@ -173,3 +181,33 @@ def restricted_login(purpose):
         with connection.cursor() as cursor:
             cursor.execute(sql.SQL("DROP OWNED BY {}").format(sql.Identifier(name)))
             cursor.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(name)))
+
+
+def test_ai_policy_and_consent_binding_immutable_across_cutoff_scopes(world):
+    seed(world)
+    other_org, other_ws, other_members, _ = make_world.__wrapped__()
+    other_identity = Identity.objects.get(organisation=other_org, user=other_members[0].user)
+    begin(world[0])
+
+    policy = WorkspaceAiPolicy.objects.get(organisation=world[0])
+    consent = MemberAiConsent.objects.get(membership=world[2][0])
+
+    for row, changes in (
+        (policy, {"organisation_id": other_org.id, "workspace_id": other_ws.id}),
+        (
+            consent,
+            {
+                "organisation_id": other_org.id,
+                "workspace_id": other_ws.id,
+                "membership_id": other_members[0].id,
+                "identity_id": other_identity.id,
+            },
+        ),
+    ):
+        with (
+            pytest.raises(IntegrityError, match="resource authority binding immutable"),
+            transaction.atomic(),
+        ):
+            row.__class__.objects.filter(pk=row.pk).update(**changes)
+        row.refresh_from_db()
+        assert row.organisation_id == world[0].id

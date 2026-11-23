@@ -25,6 +25,7 @@ public struct WorkspaceChannel: Equatable, Sendable {
     public let templateKey: String?
     public let topic: String
     public let lifecycle: WorkspaceChannelLifecycle
+    public let isConfidential: Bool?
     public let roomState: WorkspaceChannelRoomState
 
     public init(
@@ -34,7 +35,8 @@ public struct WorkspaceChannel: Equatable, Sendable {
         templateKey: String?,
         topic: String,
         lifecycle: WorkspaceChannelLifecycle,
-        roomState: WorkspaceChannelRoomState
+        roomState: WorkspaceChannelRoomState,
+        isConfidential: Bool? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -43,6 +45,7 @@ public struct WorkspaceChannel: Equatable, Sendable {
         self.topic = topic
         self.lifecycle = lifecycle
         self.roomState = roomState
+        self.isConfidential = isConfidential
     }
 }
 
@@ -163,7 +166,15 @@ public actor CoreWorkspaceClient {
     }
 
     private static func channel(_ value: StrictJSONValue) throws -> WorkspaceChannel {
-        let fields = try object(value, fields: ["id", "kind", "name", "template_key", "topic", "lifecycle", "room_state"])
+        guard let raw = value.object else { throw WorkspaceFailure.protocolViolation }
+        let securityKeys: Set<String> = ["isConfidential", "is_confidential", "confidential"]
+        let fields = try object(value, fields: Set(["id", "kind", "name", "template_key", "topic", "lifecycle", "room_state"]).union(Set(raw.keys).intersection(securityKeys)))
+        var confidential: Bool?
+        for key in securityKeys where fields[key] != nil {
+            guard case let .boolean(flag) = fields[key] else { throw WorkspaceFailure.protocolViolation }
+            if let confidential, confidential != flag { throw WorkspaceFailure.protocolViolation }
+            confidential = flag
+        }
         guard let kind = WorkspaceChannelKind(rawValue: try text(fields["kind"])),
               let lifecycle = WorkspaceChannelLifecycle(rawValue: try text(fields["lifecycle"])),
               let roomState = WorkspaceChannelRoomState(rawValue: try text(fields["room_state"])) else {
@@ -172,7 +183,7 @@ public actor CoreWorkspaceClient {
         let topic = try text(fields["topic"])
         guard topic.unicodeScalars.count <= 1024 else { throw WorkspaceFailure.protocolViolation }
         return try WorkspaceChannel(id: uuid(fields["id"]), kind: kind, name: name(fields["name"]),
-            templateKey: templateKey(fields["template_key"]), topic: topic, lifecycle: lifecycle, roomState: roomState)
+            templateKey: templateKey(fields["template_key"]), topic: topic, lifecycle: lifecycle, roomState: roomState, isConfidential: confidential)
     }
 
     private static func object(_ value: StrictJSONValue?, fields: Set<String>) throws -> [String: StrictJSONValue] {

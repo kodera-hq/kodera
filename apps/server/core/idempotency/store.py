@@ -35,6 +35,10 @@ DIGEST_HEX = re.compile(r"[0-9a-f]{64}\Z")
 
 PIN_ISOLATION = "SET TRANSACTION ISOLATION LEVEL READ COMMITTED"
 _TRY_LOCK = "SELECT pg_try_advisory_xact_lock(%s)"
+# Session-level advisory locks survive the short committed transactions around them, so a route
+# can claim a scope's execution ownership before running any external effect and release it after.
+_TRY_SESSION_LOCK = "SELECT pg_try_advisory_lock(%s)"
+_RELEASE_SESSION_LOCK = "SELECT pg_advisory_unlock(%s)"
 
 
 @dataclass(frozen=True)
@@ -216,6 +220,27 @@ def require_own_transaction() -> None:
 def try_lock(scope: Scope) -> bool:
     with connection.cursor() as cursor:
         cursor.execute(_TRY_LOCK, [lock_key(scope)])
+        row = cursor.fetchone()
+    return bool(row[0])
+
+
+def claim_execution(scope: Scope) -> bool:
+    """Atomically claim the scope's execution ownership on the current session, or report that
+    another in-flight request already holds it. The claim is a session-level advisory lock on
+    the same key as the transaction lock below, so it is re-entrant for this session inside
+    `run_once` and is dropped automatically if the session ends; the caller releases it
+    explicitly with `release_execution` once the scope's answer is durable or the attempt is
+    abandoned, which is what fences a concurrent duplicate key before any external effect."""
+    with connection.cursor() as cursor:
+        cursor.execute(_TRY_SESSION_LOCK, [lock_key(scope)])
+        row = cursor.fetchone()
+    return bool(row[0])
+
+
+def release_execution(scope: Scope) -> bool:
+    """Release a claim taken by `claim_execution` on the current session."""
+    with connection.cursor() as cursor:
+        cursor.execute(_RELEASE_SESSION_LOCK, [lock_key(scope)])
         row = cursor.fetchone()
     return bool(row[0])
 

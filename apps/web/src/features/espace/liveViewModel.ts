@@ -122,6 +122,11 @@ export interface EspaceStoreLike {
   /** Opens, or starts, the direct conversation with these people; resolves to its room id. */
   openDirect?: (userIds: readonly string[]) => Promise<string>
   send: (roomId: string, body: string, options?: SendOptions) => Promise<void>
+  sendEvent?: (
+    roomId: string,
+    eventType: string,
+    content: Record<string, unknown>
+  ) => Promise<void>
   edit: (roomId: string, eventId: string, body: string, options?: EditOptions) => Promise<void>
   remove: (roomId: string, eventId: string) => Promise<void>
   toggleReaction: (roomId: string, eventId: string, key: string) => Promise<void>
@@ -199,6 +204,8 @@ export interface AudioCallLike {
   startAudio: () => Promise<void>
   /** The member's own microphone level, 0 to 1, read on every frame (`CallController.micLevel`). */
   micLevel?: () => number
+  /** Live local microphone track for real-time audio visualization without track cloning. */
+  localMicTrack?: () => MediaStreamTrack | null
   /** The microphone and output chosen, and choosing them (`CallController`); the panel needs all. */
   getDeviceChoice?: AudioSettingsCall['getDeviceChoice']
   chooseInput?: AudioSettingsCall['chooseInput']

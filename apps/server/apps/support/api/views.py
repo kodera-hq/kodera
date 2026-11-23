@@ -8,12 +8,13 @@ the pointers, escaped (RFC 6901), to the members it named: never the values of t
 
 import json
 import logging
+from uuid import UUID
 
 from django.conf import settings
 from django.core.exceptions import RequestDataTooBig
 from django.http import HttpRequest, HttpResponse
 
-from apps.support import tickets as service
+from apps.support import bug_reports as bug_service, tickets as service
 from core.api import lanes, problems
 from core.api.idempotency import StoredResponse, respond_once
 from core.api.scopes import declares
@@ -21,7 +22,7 @@ from core.db.ids import new_uuid7
 from services.identity.access_tokens import TokenVerificationError, VerifiedAccessToken
 from services.identity.trusted_issuers import verify_configured_token
 
-from .permissions import CREATE_SUPPORT_TICKET
+from .permissions import CREATE_BUG_REPORT, CREATE_SUPPORT_TICKET
 
 LOG = logging.getLogger(__name__)
 PROBLEM_BASE = "https://kodera.io/problems/"
@@ -34,7 +35,10 @@ PROBLEMS = {
     "malformed-request": (400, "Malformed request"),
     "unauthenticated": (401, "Authentication required"),
     "forbidden": (403, "Access refused"),
+    "not-found": (404, "Not found"),
     "method-not-allowed": (405, "Method not allowed"),
+    "payload-too-large": (413, "Payload too large"),
+    "validation-error": (422, "Validation error"),
     "rate-limited": (429, "Too many requests"),
     "internal-error": (500, "Internal error"),
     "service-unavailable": (503, "Support is not available"),
@@ -172,6 +176,114 @@ def support_tickets(request: HttpRequest) -> HttpResponse:
         response["Retry-After"] = str(limited.retry_after_s)
     except Exception as failure:
         # SQL diagnostics, the request's text and addresses never enter the body or the log.
+        LOG.error("%s failed: %s request_id=%s", operation, type(failure).__name__, request_id)
+        response = _problem("internal-error", request_id)
+    return _finish(response, request_id)
+
+
+def _bug_malformed(request_id: str, refused: bug_service.BugReportMalformedError) -> HttpResponse:
+    if not refused.errors:
+        return _problem("malformed-request", request_id)
+    errors = [{"pointer": pointer, "code": code} for pointer, code in refused.errors]
+    return _problem("malformed-request", request_id, errors=errors)
+
+
+def _bug_validation(request_id: str, refused: bug_service.BugReportValidationError) -> HttpResponse:
+    errors = [{"pointer": pointer, "code": code} for pointer, code in refused.errors]
+    return _problem("validation-error", request_id, errors=errors)
+
+
+def _bug_denied(refused: bug_service.BugReportForbiddenError, request_id: str) -> HttpResponse:
+    try:
+        bug_service.record_tenant_denial(refused=refused, request_id=request_id)
+    except Exception as unrecorded:
+        LOG.error(
+            "bug report denial not recorded: %s request_id=%s",
+            type(unrecorded).__name__,
+            request_id,
+        )
+        return _problem("internal-error", request_id)
+    return _problem("forbidden", request_id)
+
+
+def _bug_body(request: HttpRequest) -> bytes:
+    try:
+        return request.body
+    except RequestDataTooBig:
+        raise bug_service.BugReportPayloadTooLargeError() from None
+
+
+@declares(CREATE_BUG_REPORT)
+def bug_reports(request: HttpRequest, organisation_id: UUID) -> HttpResponse:
+    request_id = _request_id(request)
+    operation = CREATE_BUG_REPORT.operation_id
+    try:
+        if request.method != "POST":
+            response = _problem("method-not-allowed", request_id)
+            response["Allow"] = "POST"
+            return _finish(response, request_id)
+        verified, lane = _verified(request)
+        if lane == "staff":
+            bug_service.record_staff_denial(
+                verified=verified, organisation_id=organisation_id, request_id=request_id
+            )
+            return _finish(_problem("forbidden", request_id), request_id)
+        caller = bug_service.authorise(verified=verified, organisation_id=organisation_id)
+        bug_request = bug_service.parse_bug_report_request(
+            _bug_body(request),
+            request.content_type or "",
+            organisation_slug_value=caller.organisation_slug,
+            tenant_slug_value=caller.tenant_slug,
+        )
+
+        def handler() -> StoredResponse:
+            result = bug_service.open_bug_report(
+                verified=verified,
+                organisation_id=organisation_id,
+                request=bug_request,
+            )
+            return StoredResponse(
+                status=201,
+                body=json.dumps(bug_service.representation(result)).encode(),
+                content_type="application/json",
+            )
+
+        response = respond_once(
+            request,
+            issuer=verified.issuer,
+            subject=verified.subject,
+            request_id=request_id,
+            handler=handler,
+        )
+    except TokenVerificationError:
+        response = _problem("unauthenticated", request_id)
+    except bug_service.BugReportCallerUnknownError:
+        response = problems.identity_unknown(request_id, operation)
+    except bug_service.BugReportNotFoundError:
+        response = _problem("not-found", request_id)
+    except bug_service.BugReportForbiddenError as refused:
+        response = _bug_denied(refused, request_id)
+    except bug_service.BugReportPayloadTooLargeError:
+        response = _problem(
+            "payload-too-large",
+            request_id,
+            detail="Bug report request exceeds 384 KiB.",
+        )
+    except bug_service.BugReportMalformedError as refused:
+        response = _bug_malformed(request_id, refused)
+    except bug_service.BugReportValidationError as refused:
+        response = _bug_validation(request_id, refused)
+    except bug_service.BugReportRateLimitedError as limited:
+        response = _problem("rate-limited", request_id)
+        response["Retry-After"] = str(limited.retry_after_s)
+    except bug_service.BugReportUnavailableError as unavailable:
+        response = _problem(
+            "service-unavailable",
+            request_id,
+            retry_after_s=unavailable.retry_after_s,
+        )
+        response["Retry-After"] = str(unavailable.retry_after_s)
+    except Exception as failure:
         LOG.error("%s failed: %s request_id=%s", operation, type(failure).__name__, request_id)
         response = _problem("internal-error", request_id)
     return _finish(response, request_id)

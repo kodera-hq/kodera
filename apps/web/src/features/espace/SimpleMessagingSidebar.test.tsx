@@ -53,6 +53,7 @@ const WORKSPACE: Workspace = {
           template_key: 'general',
           topic: 'Discussions équipe',
           lifecycle: 'active',
+          is_confidential: false,
           room_state: 'ready',
         },
         {
@@ -62,6 +63,7 @@ const WORKSPACE: Workspace = {
           template_key: null,
           topic: 'Production',
           lifecycle: 'active',
+          is_confidential: false,
           room_state: 'ready',
         },
         {
@@ -71,6 +73,7 @@ const WORKSPACE: Workspace = {
           template_key: null,
           topic: '',
           lifecycle: 'active',
+          is_confidential: false,
           room_state: 'ready',
         },
         {
@@ -80,6 +83,7 @@ const WORKSPACE: Workspace = {
           template_key: null,
           topic: '',
           lifecycle: 'active',
+          is_confidential: false,
           room_state: 'ready',
         },
         {
@@ -89,6 +93,7 @@ const WORKSPACE: Workspace = {
           template_key: null,
           topic: '',
           lifecycle: 'active',
+          is_confidential: false,
           room_state: 'ready',
         },
         {
@@ -98,6 +103,7 @@ const WORKSPACE: Workspace = {
           template_key: null,
           topic: '',
           lifecycle: 'active',
+          is_confidential: false,
           room_state: 'ready',
         },
       ],

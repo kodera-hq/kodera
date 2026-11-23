@@ -82,6 +82,11 @@
       "path": "/organisations/{organisation_id}/workspace/attachments/uploads"
     },
     {
+      "operation_id": "createBugReport",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/support/bug-reports"
+    },
+    {
       "operation_id": "createCategory",
       "method": "POST",
       "path": "/organisations/{organisation_id}/workspace/categories"
@@ -90,6 +95,11 @@
       "operation_id": "createChannel",
       "method": "POST",
       "path": "/organisations/{organisation_id}/workspace/channels"
+    },
+    {
+      "operation_id": "createCoexistenceBridge",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/workspace/coexistence/bridges"
     },
     {
       "operation_id": "createCommunitySupportTicket",
@@ -152,6 +162,11 @@
       "path": "/organisations/{organisation_id}/workspace/categories/{category_id}"
     },
     {
+      "operation_id": "deleteNotificationPresence",
+      "method": "DELETE",
+      "path": "/notifications/presence/{device_id}"
+    },
+    {
       "operation_id": "deletePushSubscription",
       "method": "DELETE",
       "path": "/push/subscriptions/{device_id}"
@@ -180,6 +195,11 @@
       "operation_id": "discoverRealm",
       "method": "POST",
       "path": "/auth/discover"
+    },
+    {
+      "operation_id": "executeWorkspaceImport",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/workspace/imports/execute"
     },
     {
       "operation_id": "generateDpa",
@@ -332,6 +352,11 @@
       "path": "/organisations/{organisation_id}/workspace/administration"
     },
     {
+      "operation_id": "getWorkspaceAiPolicy",
+      "method": "GET",
+      "path": "/organisations/{organisation_id}/workspace/ai/policy"
+    },
+    {
       "operation_id": "getWorkspaceChannelOverrides",
       "method": "GET",
       "path": "/organisations/{organisation_id}/workspace/channels/{channel_id}/overrides"
@@ -405,6 +430,11 @@
       "operation_id": "listCapacityTiers",
       "method": "GET",
       "path": "/catalog/capacity-tiers"
+    },
+    {
+      "operation_id": "listCoexistenceBridges",
+      "method": "GET",
+      "path": "/organisations/{organisation_id}/workspace/coexistence/bridges"
     },
     {
       "operation_id": "listConfidentialEnvelopes",
@@ -552,6 +582,11 @@
       "path": "/invitations/preview"
     },
     {
+      "operation_id": "previewWorkspaceImport",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/workspace/imports/preview"
+    },
+    {
       "operation_id": "previewWorkspaceInvite",
       "method": "POST",
       "path": "/workspace-invites/preview"
@@ -562,9 +597,29 @@
       "path": "/organisations/{organisation_id}/confidential/key-packages"
     },
     {
+      "operation_id": "putChannelAiPolicy",
+      "method": "PUT",
+      "path": "/organisations/{organisation_id}/workspace/channels/{channel_id}/ai"
+    },
+    {
+      "operation_id": "putMemberAiConsent",
+      "method": "PUT",
+      "path": "/organisations/{organisation_id}/workspace/ai/consent"
+    },
+    {
+      "operation_id": "putNotificationPresence",
+      "method": "PUT",
+      "path": "/notifications/presence/{device_id}"
+    },
+    {
       "operation_id": "putPushSubscription",
       "method": "PUT",
       "path": "/push/subscriptions/{device_id}"
+    },
+    {
+      "operation_id": "putWorkspaceAiPolicy",
+      "method": "PUT",
+      "path": "/organisations/{organisation_id}/workspace/ai/policy"
     },
     {
       "operation_id": "putWorkspaceCollectionRow",
@@ -575,6 +630,11 @@
       "operation_id": "queryWorkspaceCollection",
       "method": "POST",
       "path": "/organisations/{organisation_id}/workspace/collections/{collection_id}/query"
+    },
+    {
+      "operation_id": "receiveCoexistenceEvent",
+      "method": "POST",
+      "path": "/coexistence/bridges/{bridge_id}/events"
     },
     {
       "operation_id": "receiveStripeWebhook",
@@ -642,6 +702,11 @@
       "path": "/organisations/{organisation_id}/confidential/rooms/{room_id}/participants/retire"
     },
     {
+      "operation_id": "revokeCoexistenceBridge",
+      "method": "DELETE",
+      "path": "/organisations/{organisation_id}/workspace/coexistence/bridges/{bridge_id}"
+    },
+    {
       "operation_id": "revokeConfidentialDevice",
       "method": "POST",
       "path": "/organisations/{organisation_id}/confidential/devices/revoke"
@@ -685,6 +750,11 @@
       "operation_id": "switchPassportWorkspace",
       "method": "POST",
       "path": "/auth/passport/switch-workspace"
+    },
+    {
+      "operation_id": "transcribeVoiceNote",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/workspace/attachments/{attachment_id}/actions/transcribe"
     },
     {
       "operation_id": "unarchiveChannel",

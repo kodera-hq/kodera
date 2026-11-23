@@ -43,6 +43,7 @@ const GENERAL_CHANNEL: WorkspaceChannel = {
   template_key: 'general',
   topic: 'Discussions générales et pads Docs',
   lifecycle: 'active',
+  is_confidential: false,
   room_state: 'ready',
 }
 
@@ -53,6 +54,7 @@ const PROXIMITY_CHANNEL: WorkspaceChannel = {
   template_key: null,
   topic: 'Présence de proximité, pointage volontaire',
   lifecycle: 'active',
+  is_confidential: false,
   room_state: 'ready',
 }
 

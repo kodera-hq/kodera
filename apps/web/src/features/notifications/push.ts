@@ -115,7 +115,7 @@ export async function enablePush(copy: { title: string; body: string }): Promise
   }
   const { response } = await coreApi().PUT('/push/subscriptions/{device_id}', {
     params: { path: { device_id: deviceId() } },
-    body: keys,
+    body: { ...keys, platform: 'web' },
   })
   if (!response.ok) {
     await subscription.unsubscribe()

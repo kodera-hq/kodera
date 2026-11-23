@@ -4,6 +4,7 @@ import KoderaDomain
 
 public enum MatrixClientFailure: Error, Equatable, Sendable {
     case invalidInput
+    case plaintextForbidden
     case protocolViolation
     case unauthorized
     case forbidden
@@ -197,6 +198,7 @@ public struct PersistedMatrixSession: Equatable, Sendable {
 
 public struct MatrixSyncBatch: Equatable, Sendable {
     public let nextBatch: String
+    public var plaintextAllowedRooms: Set<String> = []
     public let roomEvents: [String: [MatrixRawTimelineEvent]]
     public let roomDeltas: [String: MatrixRoomSyncDelta]
 
@@ -235,6 +237,7 @@ public struct AttachmentUploadPayload: Equatable, Sendable {
 /// High-level conversation transport consumed by `ChannelConversationView` without exposing raw URLs in `App/`.
 public protocol ChannelConversationTransport: Sendable {
     var ownUserId: String { get }
+    func updateChannelSecurity(organisationId: String, channelId: String, isConfidential: Bool?) async
     func bootstrapRoom(organisationId: String, channelId: String) async throws(MatrixClientFailure) -> (roomId: String, initialBatch: MatrixSyncBatch)
     func syncRoom(roomId: String, since: String?) async throws(MatrixClientFailure) -> MatrixSyncBatch
     func sendMessage(
@@ -274,6 +277,8 @@ public protocol ChannelConversationTransport: Sendable {
 }
 
 public extension ChannelConversationTransport {
+    func updateChannelSecurity(organisationId: String, channelId: String, isConfidential: Bool?) async {}
+
     func backfillRoomMessages(
         roomId: String,
         fromToken: String,
@@ -284,10 +289,87 @@ public extension ChannelConversationTransport {
 }
 
 /// Matrix Client-Server v3 room transport + Core-scoped 3-step attachment uploader.
-/// Enforces origin validation, zero redirects, ephemeral credential-free sessions, and <= 65,536-byte JSON bounds.
+/// Enforces origin validation, zero redirects, ephemeral credential-free sessions, and bounded JSON responses.
 public actor MatrixRoomClient {
     public static let syncTimelineLimit = 25
-    public static let boundedSyncFilterJSON = #"{"room":{"state":{"lazy_load_members":true},"timeline":{"limit":25}}}"#
+    public static let syncResponseByteLimit = 262_144
+
+    public static func boundedSyncFilterJSON(roomId: String) -> String {
+        let filter: [String: Any] = ["room": [
+            "rooms": [roomId],
+            "state": ["types": ["m.room.encryption", "io.kodera.room.security", "io.kodera.room.confidential"], "limit": 16],
+            "timeline": ["limit": syncTimelineLimit], "ephemeral": ["types": []], "account_data": ["types": []],
+        ], "presence": ["types": []], "account_data": ["types": []]]
+        return String(decoding: try! JSONSerialization.data(withJSONObject: filter, options: [.sortedKeys]), as: UTF8.self)
+    }
+
+    private struct RoomSecurity {
+        var corePublic: Bool
+        var matrixKnown = false
+        var blocked = false
+    }
+    private var security: [String: RoomSecurity] = [:]
+    private var channelRooms: [String: String] = [:]
+
+    private func securityKey(_ origin: String, _ roomId: String) -> String { origin + "/" + roomId }
+
+    func bindChannelSecurity(organisationId: String, channelId: String, origin: String, roomId: String, isConfidential: Bool?) {
+        let key = securityKey(origin, roomId)
+        let previous = security[key]
+        security[key] = RoomSecurity(corePublic: isConfidential == false, blocked: previous?.blocked == true || isConfidential == true)
+        channelRooms[organisationId + ":" + channelId] = key
+    }
+
+    func updateChannelSecurity(organisationId: String, channelId: String, isConfidential: Bool?) {
+        guard let key = channelRooms[organisationId + ":" + channelId] else { return }
+        security[key]?.corePublic = isConfidential == false
+        if isConfidential == true { security[key]?.blocked = true }
+    }
+
+    public func requirePlaintextAllowed(origin: String, roomId: String) throws(MatrixClientFailure) {
+        try fence.checkActive()
+        guard let state = security[securityKey(origin, roomId)], state.corePublic, state.matrixKnown, !state.blocked else {
+            throw .plaintextForbidden
+        }
+    }
+
+    private func requireUploadAllowed(organisationId: String, channelId: String) throws(MatrixClientFailure) {
+        try fence.checkActive()
+        guard let key = channelRooms[organisationId + ":" + channelId], let state = security[key],
+              state.corePublic, state.matrixKnown, !state.blocked else { throw .plaintextForbidden }
+    }
+
+    func channelConfidentiality(organisationId: String, channelId: String) async throws(MatrixClientFailure) -> Bool? {
+        try Self.channelConfidentiality(await CoreWorkspaceClient(requester: coreRequester).fetch(organisationId: organisationId), channelId: channelId)
+    }
+
+    nonisolated static func channelConfidentiality(_ outcome: WorkspaceOutcome, channelId: String) throws(MatrixClientFailure) -> Bool? {
+        switch outcome {
+        case let .loaded(snapshot):
+            let channels = snapshot.uncategorisedChannels + snapshot.categories.flatMap(\.channels)
+            guard let channel = channels.first(where: { $0.id == channelId && $0.lifecycle == .active }) else { throw .forbidden }
+            return channel.isConfidential
+        case .signedOut: throw .signedOut
+        case .signedOutNotWiped: throw .signedOutNotWiped
+        case let .unavailable(failure):
+            switch failure {
+            case .forbidden: throw .forbidden
+            case .notFound: throw .notFound
+            case .protocolViolation: throw .protocolViolation
+            case .serviceUnavailable: throw .serviceUnavailable
+            case .identityUnavailable: throw .identityUnavailable
+            case let .transport(reason): throw .transport(reason)
+            }
+        }
+    }
+
+    public func joinRoom(homeserverOrigin: String, matrixAccessToken: String, roomId: String) async throws(MatrixClientFailure) {
+        try validateHomeserverOriginAndToken(homeserverOrigin: homeserverOrigin, matrixAccessToken: matrixAccessToken)
+        guard (try? MatrixRoomId(roomId)) != nil,
+              let url = URL(string: "\(homeserverOrigin)/_matrix/client/v3/rooms/\(Self.percentEncodePathSegment(roomId))/join") else { throw .invalidInput }
+        let root = try await matrixJSONRequest(url: url, method: "POST", matrixAccessToken: matrixAccessToken, jsonBody: Data("{}".utf8))
+        guard root["room_id"]?.string == roomId else { throw .protocolViolation }
+    }
 
     private static let forbiddenPresignedHeaders: Set<String> = [
         "authorization", "cookie", "set-cookie", "host", "origin", "referer",
@@ -431,10 +513,11 @@ public actor MatrixRoomClient {
         return roomId
     }
 
-    /// Runs a bounded Matrix `/sync` (`lazy_load_members: true`, `timeline.limit: 25`, `<= 65,536` bytes).
+    /// Runs a bounded Matrix `/sync` (`timeline.limit: 25`, security state limit 16, `<= 262,144` bytes).
     public func sync(
         homeserverOrigin: String,
         matrixAccessToken: String,
+        roomId: String,
         since: String? = nil
     ) async throws(MatrixClientFailure) -> MatrixSyncBatch {
         try validateHomeserverOriginAndToken(homeserverOrigin: homeserverOrigin, matrixAccessToken: matrixAccessToken)
@@ -443,7 +526,13 @@ public actor MatrixRoomClient {
                 throw .invalidInput
             }
         }
-        let encodedFilter = Self.percentEncodeQueryComponent(Self.boundedSyncFilterJSON)
+        guard (try? MatrixRoomId(roomId)) != nil else { throw .invalidInput }
+        var completed = false
+        defer {
+            if !completed { security[securityKey(homeserverOrigin, roomId)]?.matrixKnown = false }
+        }
+        if since == nil { security[securityKey(homeserverOrigin, roomId)]?.matrixKnown = false }
+        let encodedFilter = Self.percentEncodeQueryComponent(Self.boundedSyncFilterJSON(roomId: roomId))
         var query = "filter=\(encodedFilter)&timeout=0"
         if let since {
             query += "&since=\(Self.percentEncodeQueryComponent(since))"
@@ -455,17 +544,67 @@ public actor MatrixRoomClient {
             url: url,
             method: "GET",
             matrixAccessToken: matrixAccessToken,
-            jsonBody: nil
+            jsonBody: nil,
+            responseByteLimit: Self.syncResponseByteLimit
         )
         guard let nextBatch = root["next_batch"]?.string, !nextBatch.isEmpty else {
             throw .protocolViolation
         }
         var roomDeltas: [String: MatrixRoomSyncDelta] = [:]
+        if let rawRooms = root["rooms"] {
+            guard let roomsObject = rawRooms.object else { throw .protocolViolation }
+            if let rawLeave = roomsObject["leave"] {
+                guard let leaveObject = rawLeave.object else { throw .protocolViolation }
+                if leaveObject[roomId] != nil {
+                    security[securityKey(homeserverOrigin, roomId)]?.matrixKnown = false
+                }
+            }
+            if let rawJoin = roomsObject["join"], rawJoin.object == nil {
+                throw .protocolViolation
+            }
+        }
         if let joinedRooms = root["rooms"]?.object?["join"]?.object {
             for (roomKey, roomVal) in joinedRooms {
-                guard (try? MatrixRoomId(roomKey)) != nil else { continue }
-                let timelineObj = roomVal.object?["timeline"]?.object
+                guard roomKey == roomId, let roomObject = roomVal.object else { throw .protocolViolation }
+                if root["rooms"]?.object?["leave"]?.object?[roomId] != nil {
+                    throw .protocolViolation
+                }
+                if let rawTimeline = roomObject["timeline"] {
+                    guard let tlObject = rawTimeline.object,
+                          tlObject["events"] == nil || tlObject["events"]?.array != nil else {
+                        throw .protocolViolation
+                    }
+                }
+                let timelineObj = roomObject["timeline"]?.object
                 let rawEvents = timelineObj?["events"]?.array ?? []
+                if let rawState = roomObject["state"] {
+                    guard let stateObject = rawState.object,
+                          stateObject["events"] == nil || stateObject["events"]?.array != nil else {
+                        let key = securityKey(homeserverOrigin, roomId)
+                        var state = security[key] ?? RoomSecurity(corePublic: false)
+                        state.matrixKnown = false
+                        state.blocked = true
+                        security[key] = state
+                        throw .protocolViolation
+                    }
+                }
+                let stateEvents = roomObject["state"]?.object?["events"]?.array
+                guard rawEvents.count <= Self.syncTimelineLimit, (stateEvents?.count ?? 0) < 16 else { throw .protocolViolation }
+                let key = securityKey(homeserverOrigin, roomId)
+                var state = security[key] ?? RoomSecurity(corePublic: false)
+                if since == nil { state.matrixKnown = stateEvents != nil }
+                // Only security event types are requested; malformed or unclassified entries also block plaintext.
+                if stateEvents?.isEmpty == false { state.blocked = true }
+                for event in (stateEvents ?? []) + rawEvents {
+                    guard let eventObj = event.object else { throw .protocolViolation }
+                    if let rawType = eventObj["type"], rawType.string == nil { throw .protocolViolation }
+                    let type = eventObj["type"]?.string
+                    if ["m.room.encryption", "io.kodera.room.security", "io.kodera.room.confidential"].contains(type) {
+                        // These boundaries require encrypted transport; unknown classifications also fail closed.
+                        state.blocked = true
+                    }
+                }
+                security[key] = state
                 let limited: Bool
                 if let limVal = timelineObj?["limited"], case let .boolean(b) = limVal {
                     limited = b
@@ -480,7 +619,10 @@ public actor MatrixRoomClient {
                 )
             }
         }
-        return MatrixSyncBatch(nextBatch: nextBatch, roomDeltas: roomDeltas)
+        var batch = MatrixSyncBatch(nextBatch: nextBatch, roomDeltas: roomDeltas)
+        if (try? requirePlaintextAllowed(origin: homeserverOrigin, roomId: roomId)) != nil { batch.plaintextAllowedRooms.insert(roomId) }
+        completed = true
+        return batch
     }
 
     /// Backfills timeline messages prior to `fromToken` (`dir=b`) when an incremental `/sync` reports `limited: true`.
@@ -919,6 +1061,7 @@ public actor MatrixRoomClient {
         targetEventId: String,
         reason: String? = nil
     ) async throws(MatrixClientFailure) -> String {
+        try requirePlaintextAllowed(origin: homeserverOrigin, roomId: roomId)
         try validateHomeserverOriginAndToken(homeserverOrigin: homeserverOrigin, matrixAccessToken: matrixAccessToken)
         guard (try? MatrixRoomId(roomId)) != nil,
               (try? UuidV7Identifier(parsing: transactionId)) != nil,
@@ -992,6 +1135,7 @@ public actor MatrixRoomClient {
         channelId: String,
         payload: AttachmentUploadPayload
     ) async throws(MatrixClientFailure) -> AttachmentMetadataRef {
+        try requireUploadAllowed(organisationId: organisationId, channelId: channelId)
         guard TrustPolicy.canonicalNonNilUUID(organisationId),
               TrustPolicy.canonicalNonNilUUID(channelId) else {
             throw .invalidInput
@@ -1022,6 +1166,7 @@ public actor MatrixRoomClient {
         let ticket = try Self.decodeUploadTicket(ticketBody, loopback: loopback)
 
         try fence.checkActive()
+        try requireUploadAllowed(organisationId: organisationId, channelId: channelId)
         let putResponse = await MatrixHTTPTransport(
             protocolClass: protocolClass,
             timeout: timeout,
@@ -1049,6 +1194,7 @@ public actor MatrixRoomClient {
             }
         }
 
+        try requireUploadAllowed(organisationId: organisationId, channelId: channelId)
         let completeReply = await coreRequester.post(
             path: "/api/v1/organisations/\(organisationId)/workspace/attachments/\(ticket.attachmentId)/complete",
             jsonBody: Data("{}".utf8),
@@ -1073,6 +1219,7 @@ public actor MatrixRoomClient {
         transactionId: String,
         payloadObject: [String: Any]
     ) async throws(MatrixClientFailure) -> String {
+        try requirePlaintextAllowed(origin: homeserverOrigin, roomId: roomId)
         guard let body = try? JSONSerialization.data(withJSONObject: payloadObject),
               body.count <= StrictJSON.byteLimit else {
             throw .payloadTooLarge
@@ -1100,9 +1247,10 @@ public actor MatrixRoomClient {
         url: URL,
         method: String,
         matrixAccessToken: String,
-        jsonBody: Data?
+        jsonBody: Data?,
+        responseByteLimit: Int = StrictJSON.byteLimit
     ) async throws(MatrixClientFailure) -> [String: StrictJSONValue] {
-        try await performJSONRequest(url: url, method: method, bearerToken: matrixAccessToken, jsonBody: jsonBody)
+        try await performJSONRequest(url: url, method: method, bearerToken: matrixAccessToken, jsonBody: jsonBody, responseByteLimit: responseByteLimit)
     }
 
     private func matrixUnauthenticatedJSONRequest(
@@ -1117,7 +1265,8 @@ public actor MatrixRoomClient {
         url: URL,
         method: String,
         bearerToken: String?,
-        jsonBody: Data?
+        jsonBody: Data?,
+        responseByteLimit: Int = StrictJSON.byteLimit
     ) async throws(MatrixClientFailure) -> [String: StrictJSONValue] {
         try fence.checkActive()
         var headers = [
@@ -1130,7 +1279,7 @@ public actor MatrixRoomClient {
         let result = await MatrixHTTPTransport(
             protocolClass: protocolClass,
             timeout: timeout,
-            maxResponseBytes: StrictJSON.byteLimit,
+            maxResponseBytes: responseByteLimit,
             fence: fence
         ).perform(
             url: url,
@@ -1148,7 +1297,7 @@ public actor MatrixRoomClient {
         case let .response(status, body):
             switch status {
             case 200:
-                guard let parsed = try? StrictJSON.parse(body, byteLimit: StrictJSON.byteLimit),
+                guard let parsed = try? StrictJSON.parse(body, byteLimit: responseByteLimit),
                       let object = parsed.object else {
                     throw .protocolViolation
                 }
@@ -1461,6 +1610,7 @@ public actor MatrixChannelConversationTransport: ChannelConversationTransport {
 
     private let userIdBox: UserIdBox
     public nonisolated var ownUserId: String { userIdBox.value }
+    private let fetchWorkspace: (@Sendable (String) async -> WorkspaceOutcome)?
     private let roomClient: MatrixRoomClient
     private let organisationSlug: String
     private let matrixDomain: String
@@ -1475,10 +1625,12 @@ public actor MatrixChannelConversationTransport: ChannelConversationTransport {
         organisationSlug: String,
         matrixDomain: String,
         matrixServerName: String,
-        matrixAccessToken: String
+        matrixAccessToken: String,
+        fetchWorkspace: (@Sendable (String) async -> WorkspaceOutcome)? = nil
     ) {
         self.userIdBox = UserIdBox(ownUserId)
         self.roomClient = roomClient
+        self.fetchWorkspace = fetchWorkspace
         self.organisationSlug = organisationSlug
         self.matrixDomain = matrixDomain
         self.matrixServerName = matrixServerName
@@ -1496,12 +1648,14 @@ public actor MatrixChannelConversationTransport: ChannelConversationTransport {
         ssoAuthorizer: @escaping MatrixSsoAuthorizer,
         loadVault: @escaping @Sendable (String, String) -> Data?,
         saveVault: @escaping @Sendable (String, String, Data) throws(MatrixClientFailure) -> Bool,
-        onSessionEstablished: (@Sendable (PersistedMatrixSession) -> Void)? = nil
+        onSessionEstablished: (@Sendable (PersistedMatrixSession) -> Void)? = nil,
+        fetchWorkspace: (@Sendable (String) async -> WorkspaceOutcome)? = nil
     ) {
         let serverName = "\(organisationSlug.lowercased()).\(matrixDomain.lowercased())"
         let initialUser = "@\(initialExpectedSubject ?? "member"):\(serverName)"
         self.userIdBox = UserIdBox(initialUser)
         self.roomClient = roomClient
+        self.fetchWorkspace = fetchWorkspace
         self.organisationSlug = organisationSlug.lowercased()
         self.matrixDomain = matrixDomain.lowercased()
         self.matrixServerName = serverName
@@ -1662,11 +1816,21 @@ public actor MatrixChannelConversationTransport: ChannelConversationTransport {
         }
     }
 
+    public func updateChannelSecurity(organisationId: String, channelId: String, isConfidential: Bool?) async {
+        await roomClient.updateChannelSecurity(organisationId: organisationId, channelId: channelId, isConfidential: isConfidential)
+    }
+
     public func bootstrapRoom(
         organisationId: String,
         channelId: String
     ) async throws(MatrixClientFailure) -> (roomId: String, initialBatch: MatrixSyncBatch) {
         guard TrustPolicy.canonicalNonNilUUID(organisationId) else { throw .invalidInput }
+        let confidential: Bool?
+        if let fetchWorkspace {
+            confidential = try MatrixRoomClient.channelConfidentiality(await fetchWorkspace(organisationId), channelId: channelId)
+        } else {
+            confidential = try await roomClient.channelConfidentiality(organisationId: organisationId, channelId: channelId)
+        }
         return try await withAuthenticatedRetry { origin, token in
             let roomId = try await roomClient.resolveChannelRoomId(
                 homeserverOrigin: origin,
@@ -1674,9 +1838,12 @@ public actor MatrixChannelConversationTransport: ChannelConversationTransport {
                 channelId: channelId,
                 serverName: matrixServerName
             )
+            await roomClient.bindChannelSecurity(organisationId: organisationId, channelId: channelId, origin: origin, roomId: roomId.rawValue, isConfidential: confidential)
+            try await roomClient.joinRoom(homeserverOrigin: origin, matrixAccessToken: token, roomId: roomId.rawValue)
             let batch = try await roomClient.sync(
                 homeserverOrigin: origin,
                 matrixAccessToken: token,
+                roomId: roomId.rawValue,
                 since: nil
             )
             return (roomId.rawValue, batch)
@@ -1688,6 +1855,7 @@ public actor MatrixChannelConversationTransport: ChannelConversationTransport {
             try await roomClient.sync(
                 homeserverOrigin: origin,
                 matrixAccessToken: token,
+                roomId: roomId,
                 since: since
             )
         }
@@ -1716,7 +1884,9 @@ public actor MatrixChannelConversationTransport: ChannelConversationTransport {
         replyToEventId: String?,
         attachments: [AttachmentMetadataRef]
     ) async throws(MatrixClientFailure) -> String {
-        try await withAuthenticatedRetry { origin, token in
+        guard let origin = cachedHomeserverOrigin else { throw .plaintextForbidden }
+        try await roomClient.requirePlaintextAllowed(origin: origin, roomId: roomId)
+        return try await withAuthenticatedRetry { origin, token in
             try await roomClient.sendTextMessage(
                 homeserverOrigin: origin,
                 matrixAccessToken: token,
@@ -1735,7 +1905,9 @@ public actor MatrixChannelConversationTransport: ChannelConversationTransport {
         targetEventId: String,
         newBody: String
     ) async throws(MatrixClientFailure) -> String {
-        try await withAuthenticatedRetry { origin, token in
+        guard let origin = cachedHomeserverOrigin else { throw .plaintextForbidden }
+        try await roomClient.requirePlaintextAllowed(origin: origin, roomId: roomId)
+        return try await withAuthenticatedRetry { origin, token in
             try await roomClient.editMessage(
                 homeserverOrigin: origin,
                 matrixAccessToken: token,
@@ -1752,7 +1924,9 @@ public actor MatrixChannelConversationTransport: ChannelConversationTransport {
         transactionId: String,
         targetEventId: String
     ) async throws(MatrixClientFailure) -> String {
-        try await withAuthenticatedRetry { origin, token in
+        guard let origin = cachedHomeserverOrigin else { throw .plaintextForbidden }
+        try await roomClient.requirePlaintextAllowed(origin: origin, roomId: roomId)
+        return try await withAuthenticatedRetry { origin, token in
             try await roomClient.redactEvent(
                 homeserverOrigin: origin,
                 matrixAccessToken: token,
@@ -1769,7 +1943,9 @@ public actor MatrixChannelConversationTransport: ChannelConversationTransport {
         targetEventId: String,
         emojiKey: String
     ) async throws(MatrixClientFailure) -> String {
-        try await withAuthenticatedRetry { origin, token in
+        guard let origin = cachedHomeserverOrigin else { throw .plaintextForbidden }
+        try await roomClient.requirePlaintextAllowed(origin: origin, roomId: roomId)
+        return try await withAuthenticatedRetry { origin, token in
             try await roomClient.sendReaction(
                 homeserverOrigin: origin,
                 matrixAccessToken: token,

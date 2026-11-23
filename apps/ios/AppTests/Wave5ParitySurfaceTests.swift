@@ -11,6 +11,58 @@ import KoderaDomain
 final class Wave5ParitySurfaceTests: XCTestCase {
     private let orgId = "11111111-1111-4111-8111-111111111111"
 
+    func testConversationBackgroundPreservesDraftStagingAndFailedRetryUntilExplicitClosure() async throws {
+        let channel = WorkspaceChannel(id: "22222222-2222-4222-8222-222222222222", kind: .text, name: "general", templateKey: nil, topic: "", lifecycle: .active, roomState: .ready, isConfidential: false)
+        let scope = try XCTUnwrap(ChannelConversationScope(organisationId: orgId, channel: channel))
+        var authority = OrganisationChannelsLoader.State()
+        XCTAssertFalse(AppSessionModel.conversationAuthorityLost(scope: scope, state: authority))
+        authority.workspace = .loading
+        XCTAssertFalse(AppSessionModel.conversationAuthorityLost(scope: scope, state: authority))
+        authority.workspace = .unavailable(.serviceUnavailable)
+        XCTAssertFalse(AppSessionModel.conversationAuthorityLost(scope: scope, state: authority))
+        authority.workspace = .unavailable(.notFound)
+        XCTAssertTrue(AppSessionModel.conversationAuthorityLost(scope: scope, state: authority))
+        authority.workspace = .unavailable(.forbidden)
+        XCTAssertTrue(AppSessionModel.conversationAuthorityLost(scope: scope, state: authority))
+        let transport = MockConversationTransport()
+        let model = ChannelConversationModel(scope: scope, transport: transport)
+        await model.bootstrap()
+        await transport.setShouldFailNextSend(true)
+        model.stageAttachment(try AttachmentUploadPayload(filename: "retry.ogg", contentType: .oggAudio, data: Data([1, 2])))
+        model.composerText = "Retry with attachment"
+        await model.sendComposerMessage()
+        let failed = try XCTUnwrap(model.messages.last)
+        XCTAssertEqual(failed.deliveryStatus, .failed)
+        model.composerText = "Unsent draft"
+        model.stageAttachment(try AttachmentUploadPayload(filename: "draft.webm", contentType: .webmAudio, data: Data([3, 4])))
+        model.setForeground(false)
+        XCTAssertEqual(model.composerText, "Unsent draft")
+        XCTAssertEqual(model.stagedAttachments.map(\.filename), ["draft.webm"])
+        XCTAssertFalse(model.fence.isInvalidated)
+        XCTAssertFalse(model.canSend)
+        model.setForeground(true)
+        model.stopSyncLoop()
+        XCTAssertEqual(model.composerText, "Unsent draft")
+        XCTAssertEqual(model.stagedAttachments.count, 1)
+        await transport.setShouldFailNextSend(false)
+        await model.retryFailedMessage(transactionId: try XCTUnwrap(failed.transactionId))
+        XCTAssertEqual(model.messages.last?.deliveryStatus, .sent)
+        XCTAssertEqual(model.messages.last?.attachments.first?.contentType, .oggAudio)
+        model.clear()
+        XCTAssertTrue(model.fence.isInvalidated)
+        XCTAssertEqual(model.composerText, "")
+        XCTAssertTrue(model.stagedAttachments.isEmpty)
+    }
+
+    func testConfidentialAndUnknownConversationMetadataDisableComposer() throws {
+        for confidential: Bool? in [true, nil] {
+            let channel = WorkspaceChannel(id: "22222222-2222-4222-8222-222222222222", kind: .text, name: "private", templateKey: nil, topic: "", lifecycle: .active, roomState: .ready, isConfidential: confidential)
+            let model = ChannelConversationModel(scope: try XCTUnwrap(ChannelConversationScope(organisationId: orgId, channel: channel)))
+            model.composerText = "Secret"
+            XCTAssertFalse(model.canSend)
+        }
+    }
+
     func testCielThemeAndPaletteMappingResolvesLightAndDarkTokens() {
         XCTAssertEqual(KoderaTokens.Theme.defaultTheme, .dark)
         XCTAssertEqual(KoderaTokens.activeTheme(for: .light), .light)
@@ -188,7 +240,8 @@ final class Wave5ParitySurfaceTests: XCTestCase {
             templateKey: "general",
             topic: "Discussions d'équipe",
             lifecycle: .active,
-            roomState: .ready
+            roomState: .ready,
+            isConfidential: false
         )
         let activeAudio = WorkspaceChannel(
             id: audioChannelId,
@@ -197,7 +250,8 @@ final class Wave5ParitySurfaceTests: XCTestCase {
             templateKey: nil,
             topic: "Salon vocal",
             lifecycle: .active,
-            roomState: .ready
+            roomState: .ready,
+            isConfidential: false
         )
         let archivedText = WorkspaceChannel(
             id: archivedChannelId,
@@ -206,7 +260,8 @@ final class Wave5ParitySurfaceTests: XCTestCase {
             templateKey: nil,
             topic: "",
             lifecycle: .archived,
-            roomState: .ready
+            roomState: .ready,
+            isConfidential: false
         )
 
         let textScope = try XCTUnwrap(ChannelConversationScope(organisationId: orgId, channel: activeText))
@@ -267,7 +322,8 @@ final class Wave5ParitySurfaceTests: XCTestCase {
             templateKey: "general",
             topic: "",
             lifecycle: .active,
-            roomState: .ready
+            roomState: .ready,
+            isConfidential: false
         )
         let scope = try XCTUnwrap(ChannelConversationScope(organisationId: orgId, channel: channel))
 
@@ -320,7 +376,8 @@ final class Wave5ParitySurfaceTests: XCTestCase {
             templateKey: "general",
             topic: "",
             lifecycle: .active,
-            roomState: .ready
+            roomState: .ready,
+            isConfidential: false
         )
         let scope = try XCTUnwrap(ChannelConversationScope(organisationId: orgId, channel: channel))
         let transport = MockConversationTransport()
@@ -403,12 +460,26 @@ final class Wave5ParitySurfaceTests: XCTestCase {
         R2CoreProtocol.install(scenario)
         defer { R2CoreProtocol.install(nil) }
 
+        let channelsLoader = OrganisationChannelsLoader()
+        let injectedWorkspace = WorkspaceSnapshot(
+            organisationId: orgId, state: .initialised,
+            setup: WorkspaceSetup(state: .ready, reason: nil), canInitialise: false,
+            id: "99999999-9999-4999-8999-999999999999",
+            categories: [WorkspaceCategory(
+                id: "88888888-8888-4888-8888-888888888888", name: "General", templateKey: nil,
+                channels: [WorkspaceChannel(
+                    id: "22222222-2222-4222-8222-222222222222", kind: .text, name: "general",
+                    templateKey: "general", topic: "General", lifecycle: .active,
+                    roomState: .ready, isConfidential: false
+                )]
+            )], uncategorisedChannels: []
+        )
         let model = AppSessionModel(
             configuration: appConfig,
             service: signInService,
             store: oidcStore,
             defaults: defaults,
-            channels: OrganisationChannelsLoader(),
+            channels: channelsLoader,
             requesterFactory: { origin, policy, tokens in
                 try CoreRequester(
                     coreApiOrigin: origin,
@@ -427,7 +498,8 @@ final class Wave5ParitySurfaceTests: XCTestCase {
                     )
                 }
             },
-            matrixProtocolClass: R2CoreProtocol.self
+            matrixProtocolClass: R2CoreProtocol.self,
+            fetchWorkspace: { _ in .loaded(injectedWorkspace) }
         )
 
         model.setForeground(true)
@@ -457,6 +529,7 @@ final class Wave5ParitySurfaceTests: XCTestCase {
         let mismatchedConv = try XCTUnwrap(model.activeConversation)
         await mismatchedConv.bootstrap()
         XCTAssertEqual(mismatchedConv.syncStateKey, "conversation.status_offline")
+        XCTAssertEqual(scenario.workspaceFetchCount, 0)
         XCTAssertEqual(scenario.matrixLogoutTokens, ["Bearer aaa_bad"])
         model.closeChannel()
 
@@ -467,13 +540,37 @@ final class Wave5ParitySurfaceTests: XCTestCase {
         XCTAssertTrue(activeConv.hasLiveTransport)
         await activeConv.bootstrap()
         XCTAssertEqual(activeConv.syncStateKey, "conversation.status_live")
+        XCTAssertEqual(scenario.workspaceFetchCount, 0)
         XCTAssertEqual(scenario.lastMatrixLoginType, "m.login.token")
 
-        // Navigate Back from channel BEFORE signing out (`closeChannel -> signOut`).
-        model.closeChannel()
+        activeConv.stopSyncLoop()
+        activeConv.composerText = "Failed retry payload"
+        await activeConv.sendComposerMessage()
+        let failedTransaction = try XCTUnwrap(activeConv.messages.last?.transactionId)
+        XCTAssertEqual(activeConv.messages.last?.deliveryStatus, .failed)
+        activeConv.composerText = "Draft preserved during retry"
+        activeConv.stageAttachment(try AttachmentUploadPayload(filename: "draft.ogg", contentType: .oggAudio, data: Data([1])))
+        var authority = OrganisationChannelsLoader.State()
+        authority.member = model.member
+        for workspace in [OrganisationChannelsLoader.Workspace.loading, .unavailable(.serviceUnavailable), .unavailable(.identityUnavailable), .unavailable(.transport(.offline))] {
+            authority.workspace = workspace
+            channelsLoader.onChange(authority)
+            XCTAssertTrue(model.activeConversation === activeConv)
+            XCTAssertEqual(activeConv.composerText, "Draft preserved during retry")
+            XCTAssertEqual(activeConv.stagedAttachments.count, 1)
+            XCTAssertFalse(activeConv.fence.isInvalidated)
+        }
+        authority.workspace = .unavailable(.notFound)
+        channelsLoader.onChange(authority)
         XCTAssertNil(model.activeConversation)
+        XCTAssertEqual(activeConv.composerText, "")
+        XCTAssertTrue(activeConv.stagedAttachments.isEmpty)
+        XCTAssertTrue(activeConv.messages.isEmpty)
+        XCTAssertTrue(activeConv.fence.isInvalidated)
+        await activeConv.retryFailedMessage(transactionId: failedTransaction)
+        XCTAssertTrue(activeConv.messages.isEmpty)
 
-        // Register payload-free push wakeup and verify strict 3-key JSON body (no `surface`).
+        // Register payload-free push wakeup and verify strict 4-key JSON body (`platform: "ios"`, no `surface`).
         let pushDeviceId = "01935800-0000-7000-8000-000000000777"
         try await model.registerPushWakeup(
             deviceId: pushDeviceId,
@@ -481,7 +578,7 @@ final class Wave5ParitySurfaceTests: XCTestCase {
             p256dh: "B" + String(repeating: "A", count: 86),
             auth: String(repeating: "A", count: 22)
         )
-        XCTAssertEqual(scenario.lastPutBodyKeys, ["auth", "endpoint", "p256dh"])
+        XCTAssertEqual(scenario.lastPutBodyKeys, ["auth", "endpoint", "p256dh", "platform"])
 
         // Inject vault wipe fault and sign out -> must revoke push, call `/_matrix/client/v3/logout` despite `closeChannel()`,
         // AND propagate `session.not_wiped`.
@@ -587,11 +684,15 @@ private final class R2CoreProtocolScenario: @unchecked Sendable {
     private var _lastMatrixLoginType: String?
     private var _matrixLogoutTokens: [String] = []
     private var _mismatchNextLogin = false
+    private var _workspaceFetchCount = 0
 
     init(organisationId: String, expectedOidcSubject: String) {
         self.organisationId = organisationId
         self.expectedOidcSubject = expectedOidcSubject
     }
+
+    var workspaceFetchCount: Int { lock.withLock { _workspaceFetchCount } }
+    func recordWorkspaceFetch() { lock.withLock { _workspaceFetchCount += 1 } }
 
     var lastPutBodyKeys: [String] { lock.withLock { _lastPutBodyKeys } }
     var deletedPushPaths: [String] { lock.withLock { _deletedPushPaths } }
@@ -672,6 +773,7 @@ private final class R2CoreProtocol: URLProtocol, @unchecked Sendable {
             """
             responseBody = Data(payload.utf8)
         } else if method == "GET" && path == "/api/v1/organisations/\(scenario.organisationId)/workspace" {
+            scenario.recordWorkspaceFetch()
             status = 200
             let payload = """
             {
@@ -693,7 +795,8 @@ private final class R2CoreProtocol: URLProtocol, @unchecked Sendable {
                       "template_key": "general",
                       "topic": "Discussions",
                       "lifecycle": "active",
-                      "room_state": "ready"
+                      "room_state": "ready",
+                      "is_confidential": false
                     }
                   ]
                 }
@@ -733,9 +836,12 @@ private final class R2CoreProtocol: URLProtocol, @unchecked Sendable {
         } else if method == "GET" && path.hasPrefix("/_matrix/client/v3/directory/room/") {
             status = 200
             responseBody = Data(#"{"room_id":"!general:atelier.kodera.test"}"#.utf8)
+        } else if method == "POST" && path.hasPrefix("/_matrix/client/v3/rooms/") && path.hasSuffix("/join") {
+            status = 200
+            responseBody = Data(#"{"room_id":"!general:atelier.kodera.test"}"#.utf8)
         } else if method == "GET" && path == "/_matrix/client/v3/sync" {
             status = 200
-            responseBody = Data(#"{"next_batch":"s_live_1","rooms":{"join":{}}}"#.utf8)
+            responseBody = Data(#"{"next_batch":"s_live_1","rooms":{"join":{"!general:atelier.kodera.test":{"state":{"events":[]},"timeline":{"events":[]}}}}}"#.utf8)
         } else if method == "POST" && path == "/_matrix/client/v3/logout" {
             scenario.recordMatrixLogout(authHeader: request.value(forHTTPHeaderField: "Authorization"))
             status = 200
@@ -799,6 +905,7 @@ private actor MockConversationTransport: ChannelConversationTransport {
                 roomId: MatrixRoomSyncDelta(events: postGap, limited: true, prevBatch: prevBatch)
             ]
         )
+        pendingLimitedBatch?.plaintextAllowedRooms = [roomId]
         pendingBackfill = backfilled
     }
 
@@ -807,7 +914,7 @@ private actor MockConversationTransport: ChannelConversationTransport {
         channelId: String
     ) async throws(MatrixClientFailure) -> (roomId: String, initialBatch: MatrixSyncBatch) {
         let roomId = "!general:atelier.matrix.kodera.io"
-        let batch = MatrixSyncBatch(
+        var batch = MatrixSyncBatch(
             nextBatch: "s1",
             roomEvents: [
                 roomId: [
@@ -822,6 +929,7 @@ private actor MockConversationTransport: ChannelConversationTransport {
                 ]
             ]
         )
+        batch.plaintextAllowedRooms = [roomId]
         return (roomId, batch)
     }
 
@@ -830,7 +938,9 @@ private actor MockConversationTransport: ChannelConversationTransport {
             pendingLimitedBatch = nil
             return batch
         }
-        return MatrixSyncBatch(nextBatch: "s2", roomEvents: [:])
+        var batch = MatrixSyncBatch(nextBatch: "s2", roomEvents: [:])
+        batch.plaintextAllowedRooms = [roomId]
+        return batch
     }
 
     func backfillRoomMessages(

@@ -1,11 +1,28 @@
 """Scoped workspace values and caller-owned transaction fences."""
 
+import json
 from collections.abc import Iterable
+from dataclasses import dataclass
 from uuid import UUID
 
+from django.db import connection
 from django.db.models import Q
 
-from .models import Channel, Workspace, WorkspaceMemberRestriction
+from .models import Channel, Workspace, WorkspaceMemberRestriction, WorkspaceQuota
+
+
+def active_channel_id(*, workspace_id: UUID, channel_id: UUID) -> UUID | None:
+    """An active text or audio channel in the exact workspace, without exporting its model."""
+    return (
+        Channel.objects.filter(
+            id=channel_id,
+            workspace_id=workspace_id,
+            kind__in=("text", "audio"),
+            lifecycle="active",
+        )
+        .values_list("id", flat=True)
+        .first()
+    )
 
 
 def active_text_channel_id(*, workspace_id: UUID, channel_id: UUID) -> UUID | None:
@@ -17,6 +34,13 @@ def active_text_channel_id(*, workspace_id: UUID, channel_id: UUID) -> UUID | No
         .values_list("id", flat=True)
         .first()
     )
+
+
+def is_confidential_channel(*, channel_id: UUID, organisation_id: UUID) -> bool:
+    """Read the confidential designation within the exact organisation."""
+    return Channel.objects.filter(
+        id=channel_id, workspace__organisation_id=organisation_id, is_confidential=True
+    ).exists()
 
 
 def is_confidential_text_channel(*, workspace_id: UUID, channel_id: UUID) -> bool:
@@ -159,3 +183,62 @@ def is_workspace_membership_restricted(*, membership_id: UUID) -> bool:
         .filter(Q(banned=True) | Q(kicked=True))
         .exists()
     )
+
+
+@dataclass(frozen=True, slots=True)
+class ChannelSnapshot:
+    id: UUID
+    name: str
+    kind: str
+    lifecycle: str
+    room_state: str
+    is_confidential: bool
+
+
+def _channel_snapshot(channel: Channel) -> ChannelSnapshot:
+    return ChannelSnapshot(
+        channel.id,
+        channel.name,
+        channel.kind,
+        channel.lifecycle,
+        channel.room_state,
+        channel.is_confidential,
+    )
+
+
+def channel_snapshot(
+    *, workspace_id: UUID, channel_id: UUID, for_update: bool = False
+) -> ChannelSnapshot | None:
+    """Read the exact channel, retaining a caller-owned row lock when requested."""
+    rows = Channel.objects.filter(id=channel_id, workspace_id=workspace_id)
+    if for_update:
+        rows = rows.select_for_update()
+    row = rows.first()
+    return None if row is None else _channel_snapshot(row)
+
+
+def importable_channel_snapshots(*, workspace_id: UUID) -> tuple[ChannelSnapshot, ...]:
+    return tuple(
+        _channel_snapshot(row)
+        for row in Channel.objects.filter(workspace_id=workspace_id, kind="text").exclude(
+            lifecycle__in=("deletion_pending", "deleted")
+        )
+    )
+
+
+def workspace_page_limit(*, workspace_id: UUID) -> int | None:
+    return (
+        WorkspaceQuota.objects.filter(workspace_id=workspace_id)
+        .values_list("pages", flat=True)
+        .first()
+    )
+
+
+def workspace_pages_used(*, workspace_id: UUID) -> int:
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT workspace_quota_usage(%s)", [workspace_id])
+        raw_usage = cursor.fetchone()[0]
+    usage = json.loads(raw_usage) if isinstance(raw_usage, str) else raw_usage
+    if isinstance(usage, dict) and type(usage.get("pages")) is int:
+        return int(usage["pages"])
+    return 0

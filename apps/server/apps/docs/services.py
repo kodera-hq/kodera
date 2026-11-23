@@ -3,6 +3,7 @@
 import hashlib
 import json
 import unicodedata
+from collections.abc import Callable
 from datetime import timedelta
 from typing import Any
 from uuid import UUID
@@ -627,3 +628,188 @@ def quota_replay_policy():
     from apps.workspaces.services import quota_replay_policy as workspace_policy
 
     return workspace_policy()
+
+
+def reconcile_template_collection(
+    *,
+    workspace_id: UUID,
+    organisation_id: UUID,
+    creator_membership_id: UUID,
+    actor_identity_id: UUID,
+    title_text: str,
+    properties: list[dict[str, Any]],
+    views: list[dict[str, Any]],
+    existing_id: UUID | None = None,
+    request_id: str = "",
+    authorise_write: Callable[[], None] | None = None,
+) -> tuple[UUID, bool]:
+    """Idempotently ensure a template starter Collection exists in `workspace_id`."""
+    from . import collection_schema
+    from .models import Collection
+
+    normalized_title = title(title_text)
+    collection_schema.views(properties, views)
+    with transaction.atomic():
+        if authorise_write is not None:
+            authorise_write()
+        if lock_workspace(organisation_id) is None:
+            raise RefusalError(404)
+        row = None
+        if existing_id is not None:
+            row = Collection.objects.filter(
+                pk=existing_id, workspace_id=workspace_id, deleted_at__isnull=True
+            ).first()
+        if row is None:
+            row = (
+                Collection.objects.filter(
+                    workspace_id=workspace_id,
+                    deleted_at__isnull=True,
+                    title=normalized_title,
+                )
+                .order_by("id")
+                .first()
+            )
+        if row is not None:
+            return row.id, False
+        row = Collection.objects.create(
+            workspace_id=workspace_id,
+            creator_id=creator_membership_id,
+            title=normalized_title,
+            properties=properties,
+            views=views,
+        )
+        record_workspace_resource_event(
+            action="workspace.collection.created",
+            organisation_id=organisation_id,
+            target_id=row.id,
+            actor_id=actor_identity_id,
+            request_id=request_id,
+        )
+        return row.id, True
+
+
+def reconcile_template_document(
+    *,
+    workspace_id: UUID,
+    organisation_id: UUID,
+    creator_membership_id: UUID,
+    actor_identity_id: UUID,
+    title_text: str,
+    markdown_text: str,
+    channel_id: UUID | None = None,
+    collection_id: UUID | None = None,
+    collection_values: dict[str, Any] | None = None,
+    existing_id: UUID | None = None,
+    request_id: str = "",
+    authorise_write: Callable[[], None] | None = None,
+) -> tuple[UUID, bool]:
+    """Idempotently ensure a template starter Document, Snapshot, and optional CollectionRow exist."""
+    from . import collection_schema
+    from .models import Collection, CollectionRow
+
+    normalized_title = title(title_text)
+    target_key = titles.key(normalized_title)
+    existing_doc: Document | None = None
+    if existing_id is not None:
+        existing_doc = Document.objects.filter(
+            pk=existing_id, workspace_id=workspace_id, deleted_at__isnull=True
+        ).first()
+    if existing_doc is None:
+        existing_doc = (
+            Document.objects.filter(
+                workspace_id=workspace_id, title_key=target_key, deleted_at__isnull=True
+            )
+            .order_by("id")
+            .first()
+        )
+    has_valid_snapshot = (
+        existing_doc is not None
+        and DocumentSnapshot.objects.filter(document=existing_doc)
+        .exclude(state=b"")
+        .exclude(state=b"\x00\x00")
+        .exists()
+    )
+
+    transformed: engine.State | None = None
+    if not has_valid_snapshot:
+        if authorise_write is not None:
+            with transaction.atomic():
+                authorise_write()
+        transformed = engine.transform(markdown=markdown_text)
+        if not transformed.snapshot or transformed.snapshot == b"\x00\x00":
+            raise RefusalError(503, "service-unavailable")
+
+    with transaction.atomic():
+        if authorise_write is not None:
+            authorise_write()
+        if lock_workspace(organisation_id) is None:
+            raise RefusalError(404)
+        row = None
+        if existing_id is not None:
+            row = Document.objects.filter(
+                pk=existing_id, workspace_id=workspace_id, deleted_at__isnull=True
+            ).first()
+        if row is None:
+            row = (
+                Document.objects.filter(
+                    workspace_id=workspace_id, title_key=target_key, deleted_at__isnull=True
+                )
+                .order_by("id")
+                .first()
+            )
+        created = False
+        if row is None:
+            if transformed is None:
+                raise RefusalError(503, "service-unavailable")
+            row = Document(
+                workspace_id=workspace_id,
+                creator_id=creator_membership_id,
+                channel_id=channel_id,
+                title=normalized_title,
+                markdown=transformed.markdown,
+                visibility="workspace",
+            )
+            row.save(force_insert=True)
+            DocumentSnapshot.objects.create(
+                document=row, sequence=0, head_sequence=0, state=transformed.snapshot
+            )
+            links(row, transformed.links)
+            resolve_incoming(row)
+            record_workspace_resource_event(
+                action="workspace.document.created",
+                organisation_id=organisation_id,
+                target_id=row.id,
+                actor_id=actor_identity_id,
+                request_id=request_id,
+            )
+            created = True
+        else:
+            existing_snap = DocumentSnapshot.objects.filter(document=row).first()
+            if existing_snap is None:
+                if transformed is None:
+                    raise RefusalError(503, "service-unavailable")
+                DocumentSnapshot.objects.create(
+                    document=row, sequence=0, head_sequence=0, state=transformed.snapshot
+                )
+            elif bytes(existing_snap.state) in (b"", b"\x00\x00"):
+                if transformed is None:
+                    raise RefusalError(503, "service-unavailable")
+                existing_snap.state = transformed.snapshot
+                existing_snap.save(update_fields=["state", "updated_at"])
+
+        if collection_id is not None:
+            collection = Collection.objects.filter(
+                pk=collection_id, workspace_id=workspace_id, deleted_at__isnull=True
+            ).first()
+            if collection is not None:
+                supplied_values = dict(collection_values or {})
+                collection_schema.values(collection.properties, supplied_values)
+                _, created_row = CollectionRow.objects.get_or_create(
+                    collection=collection,
+                    document=row,
+                    defaults={"values": supplied_values},
+                )
+                if created_row:
+                    collection.revision += 1
+                    collection.save(update_fields=["revision", "updated_at"])
+        return row.id, created

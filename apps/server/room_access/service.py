@@ -59,6 +59,36 @@ def _source(track: dict[str, Any]) -> Any:
     return track.get("source")
 
 
+CONFIDENTIAL = "io.kodera.room.confidential"
+ENCRYPTION = "m.room.encryption"
+CREATE = "m.room.create"
+AI_LOCALPART_PREFIXES = (
+    "_kodera_ai",
+    "kodera_ai",
+    "kodera-ai",
+    "ai-",
+    "ai_",
+    "bot-",
+    "bot_",
+    "agent-",
+    "agent_",
+    "_agent_",
+    "livekit-agent",
+)
+AI_LOCALPART_SUFFIXES = ("-bot", "_bot", "-agent", "_agent")
+
+
+def _is_ai_user(user_id: str, ai_users: frozenset[str], *, agent_user: str = "") -> bool:
+    normalized = user_id.strip().lower()
+    if not normalized or (agent_user and normalized == agent_user.strip().lower()):
+        return False
+    configured = {entry.strip().lower() for entry in ai_users if entry.strip()}
+    if normalized in configured:
+        return True
+    local = normalized.partition(":")[0].lstrip("@")
+    return local.startswith(AI_LOCALPART_PREFIXES) or local.endswith(AI_LOCALPART_SUFFIXES)
+
+
 def _active_audio_policy(policy: dict[str, Any] | None) -> TypeGuard[dict[str, Any]]:
     """A missing, retired or malformed policy cannot admit or retain a media participant."""
     return (
@@ -67,10 +97,28 @@ def _active_audio_policy(policy: dict[str, Any] | None) -> TypeGuard[dict[str, A
         and policy["version"] == 1
         and policy.get("kind") == "audio"
         and policy.get("archived") is False
+        and policy.get(CONFIDENTIAL) in (None, False)
+        and policy.get("confidential") in (None, False)
+        and type(policy.get("ai_enabled", False)) is bool
         and type(policy.get("listen_only")) is bool
         and isinstance(policy.get("may_publish"), list)
         and all(isinstance(user, str) for user in policy["may_publish"])
     )
+
+
+def _room_is_confidential_or_encrypted(
+    matrix: Matrix, room_id: str, policy: dict[str, Any] | None
+) -> bool:
+    if isinstance(policy, dict) and (
+        bool(policy.get(CONFIDENTIAL)) or bool(policy.get("confidential"))
+    ):
+        return True
+    if matrix.state(room_id, ENCRYPTION) is not None:
+        return True
+    if matrix.state(room_id, CONFIDENTIAL) is not None:
+        return True
+    created = matrix.state(room_id, CREATE)
+    return isinstance(created, dict) and bool(created.get(CONFIDENTIAL))
 
 
 def _audience_allows(policy: dict[str, Any], user: str, agent: str) -> bool:
@@ -129,6 +177,7 @@ class Service:
     ws_url: str
     agent: str  # the tenant agent's Matrix account: the only sender of a policy that counts
     token_ttl_s: int = 600
+    ai_users: frozenset[str] = frozenset()
     stats: Stats = field(default_factory=Stats)
     _rooms: dict[str, str] = field(default_factory=dict)  # LiveKit room → Matrix room
     _published: dict[str, Any] = field(default_factory=dict)  # LiveKit room → occupancy written
@@ -167,10 +216,13 @@ class Service:
         user_id, device_id = caller
         if admit is not None:
             admit(user_id)
+        if _is_ai_user(user_id, self.ai_users, agent_user=self.agent):
+            raise RefusedError(403)
         policy = self._policy(room_id)
         # One answer for "no such room", "not an audio room", "archived" and "not a member".
         if (
             not _active_audio_policy(policy)
+            or _room_is_confidential_or_encrypted(self.matrix, room_id, policy)
             or not _audience_allows(policy, user_id, self.agent)
             or self.matrix.membership(room_id, user_id) != "join"
         ):
@@ -207,7 +259,13 @@ class Service:
         with lock:
             participants = self.livekit.participants(name)
             policy = self._policy(room_id) or {}
-            active_audio = _active_audio_policy(policy)
+            confidential = (
+                _room_is_confidential_or_encrypted(self.matrix, room_id, policy)
+                if participants
+                else False
+            )
+            active_audio = _active_audio_policy(policy) and not confidential
+            ai_allowed = active_audio and (policy.get("ai_enabled") is True)
             # Invalidated policy is enough to remove everyone, even if membership is unreadable.
             joined = self.matrix.joined_members(room_id) if participants and active_audio else set()
             may_publish = set(policy["may_publish"]) if active_audio else set()
@@ -218,6 +276,7 @@ class Service:
                 user = user_of(who)
                 if (
                     not active_audio
+                    or (_is_ai_user(user, self.ai_users, agent_user=self.agent) and not ai_allowed)
                     or user not in joined
                     or not _audience_allows(policy, user, self.agent)
                 ):

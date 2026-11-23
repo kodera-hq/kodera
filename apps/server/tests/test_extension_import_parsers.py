@@ -181,3 +181,66 @@ def test_forged_metadata_unbounded_zip_codecs_refuse_before_any_member_opens(
     monkeypatch.setattr(zipfile.ZipFile, "open", opened)
     with pytest.raises(ExtensionRefusedError, match="archive_compression"):
         parse("notion", bytes(raw))
+
+
+def many_user_slack_archive():
+    return archive(
+        {
+            "channels.json": json.dumps([{"id": "C1", "name": "general"}]),
+            "users.json": json.dumps(
+                [{"id": f"U{i:05d}", "name": f"member-{i:05d}"} for i in range(10_000)]
+            ),
+            "general/2026-11-01.json": json.dumps(
+                [{"ts": "1794560000.000001", "user": "U09999", "text": "Last user attribution"}]
+            ),
+        }
+    )
+
+
+def test_large_slack_member_report_is_bounded_without_truncating_attribution():
+    from pathlib import Path
+    from uuid import UUID
+
+    import jsonschema_rs
+    import yaml
+
+    from apps.extensions.imports import MAX_RESPONSE_MEMBER_MAPPINGS, response_member_mappings
+    from apps.extensions.member_matching import match_external_users
+    from core.idempotency.store import StoredResponse
+
+    raw = many_user_slack_archive()
+    assert len(raw) < 128 * 1024
+    parsed = parse("slack", raw)
+    assert len(parsed.external_users) == 10_000
+    # No emails: matching performs no DB access, so this regression stays non-socket.
+    matched = match_external_users(
+        organisation_id=UUID(int=1), external_users=parsed.external_users
+    )
+    warnings = []
+    report = {"member_mappings": response_member_mappings(matched, warnings), "warnings": warnings}
+    assert len(report["member_mappings"]) == MAX_RESPONSE_MEMBER_MAPPINGS
+    encoded = json.dumps(report).encode()
+    assert len(encoded) < 128 * 1024
+    assert StoredResponse(status=200, body=encoded, content_type="application/json").body == encoded
+    contract = yaml.safe_load(
+        (
+            Path(__file__).resolve().parents[3] / "packages/api-contract/core-api.openapi.yaml"
+        ).read_text()
+    )
+    report_properties = contract["components"]["schemas"]["WorkspaceImportDryRunReport"][
+        "properties"
+    ]
+    jsonschema_rs.validate(
+        {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {key: report_properties[key] for key in report},
+            "components": contract["components"],
+        },
+        report,
+    )
+    assert warnings == ["unsupported_assets_omitted"]
+    assert matched.by_external_id["U09999"].display_name == "member-09999"
+    assert len(matched.mappings) == matched.unmatched_count == 10_000
+    assert report["member_mappings"][0]["external_id"] == "U00000"
+    assert report["member_mappings"][-1]["external_id"] == "U00249"

@@ -16,6 +16,7 @@ import {
 import { uploadAttachment, type Attachment, type UploadInput } from './uploadAttachment'
 import {
   resolveAttachmentScope,
+  type AttachmentMetadata,
   type AttachmentRef,
   type AttachmentUploadScope,
 } from './attachmentRefs'
@@ -39,7 +40,7 @@ export class AttachmentQueue {
   readonly #scopeOf: (room: string) => AttachmentUploadScope
   #rooms = new Map<string, readonly QueuedFile[]>()
   #aborts = new Map<string, AbortController>()
-  #sources = new Map<string, { room: string; file: File }>()
+  #sources = new Map<string, { room: string; file: File; metadata?: AttachmentMetadata }>()
   #listeners = new Set<() => void>()
   #serial = 0
   #generation = 0
@@ -72,7 +73,11 @@ export class AttachmentQueue {
     return files.flatMap((file) => (file.status === 'ready' ? [file.ref] : []))
   }
 
-  async add(room: string, incoming: readonly File[]): Promise<void> {
+  async add(
+    room: string,
+    incoming: readonly File[],
+    metadata?: AttachmentMetadata
+  ): Promise<void> {
     if (!this.#mayUpload(room)) return
     const generation = this.#generation
     await Promise.all(
@@ -84,7 +89,7 @@ export class AttachmentQueue {
           return
         }
         this.#put(room, { ...base, status: 'uploading' })
-        await this.#send(room, key, file, base, generation)
+        await this.#send(room, key, file, base, generation, metadata)
       })
     )
   }
@@ -98,7 +103,7 @@ export class AttachmentQueue {
     const base = { key, filename: existing.filename, sizeBytes: existing.sizeBytes }
     this.#sources.delete(key)
     this.#replace(room, key, { ...base, status: 'uploading' })
-    await this.#send(room, key, source.file, base, generation)
+    await this.#send(room, key, source.file, base, generation, source.metadata)
   }
 
   remove(room: string, key: string): void {
@@ -132,11 +137,16 @@ export class AttachmentQueue {
     key: string,
     file: File,
     base: { key: string; filename: string; sizeBytes: number },
-    generation: number
+    generation: number,
+    metadata?: AttachmentMetadata
   ): Promise<void> {
     const rememberFailure = (named = base) => {
       if (generation === this.#generation && this.files(room).some((entry) => entry.key === key)) {
-        this.#sources.set(key, { room, file })
+        this.#sources.set(key, {
+          room,
+          file,
+          ...(metadata === undefined ? {} : { metadata }),
+        })
       }
       this.#replace(room, key, { ...named, status: 'failed' })
     }
@@ -182,6 +192,16 @@ export class AttachmentQueue {
         signal: abort.signal,
         mayUpload: () => generation === this.#generation && this.#mayUpload(room),
       })
+      const validWaveform =
+        metadata?.waveform !== undefined &&
+        metadata.waveform.length >= 1 &&
+        metadata.waveform.length <= 64
+          ? metadata.waveform.map((v) => Math.max(0, Math.min(100, Math.round(v))))
+          : undefined
+      const validDuration =
+        metadata?.durationMs !== undefined && metadata.durationMs >= 1
+          ? Math.min(3_600_000, Math.round(metadata.durationMs))
+          : undefined
       this.#replace(room, key, {
         ...named,
         status: 'ready',
@@ -190,6 +210,8 @@ export class AttachmentQueue {
           filename: checked.filename,
           contentType: checked.contentType,
           sizeBytes: checked.sizeBytes,
+          ...(validDuration === undefined ? {} : { durationMs: validDuration }),
+          ...(validWaveform === undefined ? {} : { waveform: validWaveform }),
         },
       })
     } catch {

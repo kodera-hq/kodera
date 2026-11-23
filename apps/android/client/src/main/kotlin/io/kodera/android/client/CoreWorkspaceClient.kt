@@ -15,7 +15,7 @@ data class WorkspaceSetup(val state: WorkspaceSetupState, val reason: WorkspaceS
 /** Server-filtered metadata only. A ready room does not establish current Matrix access. */
 data class WorkspaceChannel(val id: String, val kind: ChannelKind, val name: String,
     val templateKey: String?, val topic: String, val lifecycle: WorkspaceChannelLifecycle,
-    val roomState: ChannelRoomState)
+    val roomState: ChannelRoomState, val isConfidential: Boolean? = null)
 
 data class WorkspaceCategory(val id: String, val name: String, val templateKey: String?,
     val channels: List<WorkspaceChannel>)
@@ -134,7 +134,13 @@ class CoreWorkspaceClient(private val requester: CoreRequester) {
 
         private fun channel(value: JsonValue): WorkspaceChannel {
             val objectValue = value.objectValue()
-            fields(objectValue, "id", "kind", "name", "template_key", "topic", "lifecycle", "room_state")
+            val securityKeys = setOf("isConfidential", "is_confidential", "confidential")
+            fields(objectValue.filterKeys { it !in securityKeys }, "id", "kind", "name", "template_key", "topic", "lifecycle", "room_state")
+            val flags = securityKeys.filter { it in objectValue }.map {
+                (objectValue[it] as? JsonValue.BooleanValue)?.value ?: refused()
+            }
+            if (flags.distinct().size > 1) refused()
+            val confidential = flags.firstOrNull()
             val kind = when (objectValue.getValue("kind").stringValue()) {
                 "text" -> ChannelKind.TEXT
                 "audio" -> ChannelKind.AUDIO
@@ -154,7 +160,7 @@ class CoreWorkspaceClient(private val requester: CoreRequester) {
             val topic = objectValue.getValue("topic").stringValue()
             if (topic.scalarCount() > 1024) refused()
             return WorkspaceChannel(uuid(objectValue.getValue("id")), kind, name(objectValue.getValue("name")),
-                templateKey(objectValue.getValue("template_key")), topic, lifecycle, roomState)
+                templateKey(objectValue.getValue("template_key")), topic, lifecycle, roomState, confidential)
         }
 
         private fun fields(value: Map<String, JsonValue>, vararg names: String) {

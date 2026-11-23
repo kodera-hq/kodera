@@ -1,0 +1,230 @@
+import type {
+  ArchiveValidationErrorCode,
+  BridgeFormErrorCode,
+  WorkspaceImportWarningCode,
+} from './workspaceMigrator'
+
+const MESSAGES = {
+  fr: {
+    toggleOpen: 'Migrateur & coexistence',
+    toggleClose: 'Masquer le migrateur',
+    toggleBadge: 'Slack · Discord · Notion',
+    loadingPanel: 'Chargement du migrateur…',
+    heading: 'Migration d’espace (simulation sans écriture) & pont de coexistence',
+    subtitle:
+      'Prévisualisez une archive Slack, Discord ou Notion sans aucune mutation base/Matrix, rejouez l’historique de façon idempotente et reliez un salon non confidentiel pendant la transition.',
+    noOrgHint:
+      'Ouvrez ce panneau depuis un espace d’organisation actif (propriétaire ou administrateur) pour exécuter la simulation ou créer un pont.',
+    tabImport: 'Simulation & import d’archive',
+    tabCoexistence: 'Pont de coexistence en direct',
+    sourceLabel: 'Source d’export',
+    sources: {
+      slack: 'Archive Slack (.zip)',
+      discord: 'Export Discord (.zip ou .json)',
+      notion: 'Espace Notion (.zip)',
+    },
+    archiveModeLabel: 'Mode de chargement de l’archive',
+    modeInline: 'Aperçu rapide (< 512 Kio)',
+    modeAttachment: 'Pièce jointe téléversée (jusqu’à 20 Mio)',
+    archiveFileLabel: 'Fichier d’archive (.zip ou .json Discord < 512 Kio)',
+    attachmentIdLabel: 'Identifiant de pièce jointe téléversée (UUID)',
+    attachmentIdPlaceholder: '01950000-0000-7000-8000-000000000001',
+    targetChannelMapLabel: 'Salon cible optionnel pour le rejeu Matrix (non confidentiel)',
+    externalChannelNameLabel: 'Nom du salon externe (ex. general)',
+    chooseTargetChannel: 'Aucun rejeu de salon ciblé',
+    confidentialSuffix: '(confidentiel — refusé)',
+    previewButton: 'Simuler à blanc',
+    executeButton: 'Exécuter un lot borné',
+    securityNotice:
+      'Invariant de sécurité : les rôles externes (is_owner, is_admin, bitmask Discord) n’accordent jamais de privilège local ni ne créent de compte.',
+    dryRunTitle: 'Rapport de simulation sans mutation',
+    executionTitle: 'Rapport d’exécution idempotente',
+    shaLabel: 'Empreinte SHA-256 :',
+    metrics: {
+      channelsTotal: 'Salons analysés',
+      channelsToCreate: 'Salons nouveaux',
+      messagesTotal: 'Messages',
+      threadRepliesTotal: 'Réponses en fil',
+      docsPagesTotal: 'Pages Docs',
+      collectionsTotal: 'Bases / collections',
+      membersMatched: 'Membres vérifiés',
+      membersUnmatched: 'Auteurs inertes',
+      omittedAssets: 'Médias omis',
+      reusedObjects: 'Déjà importés',
+      importedBatch: 'Objets importés',
+      replayedMessages: 'Messages Matrix rejoués',
+      remainingBatch: 'Restants dans l’archive',
+    },
+    warningsHeading: 'Avertissements de pré-validation',
+    warnings: {
+      external_admin_privilege_ignored:
+        'Privilèges administrateur externes ignorés : aucun rôle propriétaire, admin ou modérateur n’est accordé.',
+      confidential_target_channel_skipped:
+        'Salon cible confidentiel détecté : le rejeu d’historique vers un salon chiffré de bout en bout est refusé.',
+      unsupported_assets_omitted:
+        'Certaines pièces jointes non prises en charge ont été omises en toute sécurité.',
+      quota_headroom_exceeded:
+        'Capacité de quota dépassée : augmentez la marge de documents ou collections avant l’import complet.',
+    } satisfies Record<WorkspaceImportWarningCode, string>,
+    memberMappingsHeading: 'Correspondance des membres par courriel vérifié',
+    memberMatched: 'Membre actif associé • rôle local préservé',
+    memberUnmatched: 'Aucun compte créé • attribué en texte inerte',
+    coexistenceHeading: 'Nouveau pont de coexistence borné',
+    coexistenceSubtitle:
+      'Signature HMAC-SHA256 en temps constant (fenêtre 300 s), garde anti-boucle d’écho et refus strict des salons confidentiels.',
+    bridgeSourceLabel: 'Plateforme distante',
+    bridgeChannelLabel: 'Salon Kodera associé (texte non confidentiel)',
+    chooseBridgeChannel: 'Sélectionner un salon non confidentiel',
+    externalWorkspaceLabel: 'Identifiant d’espace externe (équipe Slack / guilde Discord)',
+    externalChannelLabel: 'Identifiant du salon externe',
+    outboundUrlLabel: 'URL HTTPS du webhook sortant (protection anti-SSRF)',
+    signingSecretLabel: 'Secret de signature partagé (scellé côté serveur, 16+ caractères)',
+    generateSecretButton: 'Générer un secret',
+    createBridgeButton: 'Activer le pont',
+    refreshBridgesButton: 'Actualiser les ponts',
+    activeBridgesHeading: 'Ponts configurés sur cet espace',
+    noBridges: 'Aucun pont de coexistence configuré pour cet espace.',
+    bridgeActiveBadge: 'Actif',
+    bridgeRevokedBadge: 'Révoqué',
+    revokeBridgeButton: 'Révoquer',
+    guardHmacBadge: 'HMAC 300 s',
+    guardLoopBadge: 'Anti-écho actif',
+    guardPlainBadge: 'Salon non confidentiel',
+    archiveErrors: {
+      ARCHIVE_EMPTY: 'Sélectionnez une archive non vide.',
+      ARCHIVE_NOT_ZIP: 'Le fichier sélectionné doit être une archive ZIP valide (ou JSON UTF-8 pour Discord).',
+      ARCHIVE_INLINE_TOO_LARGE:
+        'Cette archive dépasse 512 Kio : téléversez-la d’abord comme pièce jointe d’espace puis renseignez son UUID.',
+      ARCHIVE_TOO_LARGE: 'L’archive dépasse la limite maximale de 20 Mio.',
+    } satisfies Record<ArchiveValidationErrorCode, string>,
+    bridgeErrors: {
+      CHANNEL_REQUIRED: 'Choisissez un salon Kodera de destination.',
+      CHANNEL_CONFIDENTIAL_FORBIDDEN:
+        'Les salons confidentiels chiffrés ne peuvent jamais être reliés à un pont externe.',
+      EXTERNAL_IDS_INVALID:
+        'Renseignez des identifiants d’espace et de salon externes valides (lettres, chiffres, tirets, points).',
+      SECRET_TOO_SHORT: 'Le secret de signature doit comporter au moins 16 caractères.',
+      INVALID_URL: 'Saisissez une adresse HTTPS complète et valide.',
+      SSRF_INSECURE_PROTOCOL: 'Seules les adresses HTTPS sont autorisées.',
+      SSRF_EMBEDDED_CREDENTIALS: 'Retirez les identifiants intégrés dans l’URL.',
+      SSRF_FORBIDDEN_HOST: 'Utilisez un nom d’hôte public.',
+      SSRF_FORBIDDEN_IP: 'Les adresses IP privées ou réservées sont refusées.',
+    } satisfies Record<BridgeFormErrorCode, string>,
+    requestFailed:
+      'L’opération a été refusée par l’API Core. Vérifiez vos droits propriétaire/admin et la validité de l’archive.',
+    attachmentRequired: 'Renseignez un UUID de pièce jointe valide.',
+  },
+  en: {
+    toggleOpen: 'Migrator & coexistence',
+    toggleClose: 'Hide migrator',
+    toggleBadge: 'Slack · Discord · Notion',
+    loadingPanel: 'Loading workspace migrator…',
+    heading: 'Workspace migrator (zero-mutation dry-run) & coexistence bridge',
+    subtitle:
+      'Simulate a Slack, Discord, or Notion archive with zero database or Matrix writes, replay room and thread history idempotently, and bridge non-confidential channels during transition.',
+    noOrgHint:
+      'Open this panel inside an active organisation workspace (owner or admin) to run dry-run simulations or manage coexistence bridges.',
+    tabImport: 'Archive dry-run & replay',
+    tabCoexistence: 'Live coexistence bridge',
+    sourceLabel: 'Export source',
+    sources: {
+      slack: 'Slack archive (.zip)',
+      discord: 'Discord export (.zip or .json)',
+      notion: 'Notion workspace (.zip)',
+    },
+    archiveModeLabel: 'Archive input mode',
+    modeInline: 'Quick inline preview (< 512 KiB)',
+    modeAttachment: 'Uploaded workspace attachment (up to 20 MiB)',
+    archiveFileLabel: 'Archive file (.zip or Discord .json < 512 KiB)',
+    attachmentIdLabel: 'Uploaded attachment identifier (UUID)',
+    attachmentIdPlaceholder: '01950000-0000-7000-8000-000000000001',
+    targetChannelMapLabel: 'Optional target channel for Matrix replay (non-confidential)',
+    externalChannelNameLabel: 'External channel name (e.g. general)',
+    chooseTargetChannel: 'No mapped channel replay',
+    confidentialSuffix: '(confidential — refused)',
+    previewButton: 'Simulate dry-run',
+    executeButton: 'Execute bounded step',
+    securityNotice:
+      'Security invariant: external flags (is_owner, is_admin, Discord bitmasks) never grant local privileges or create user accounts.',
+    dryRunTitle: 'Zero-mutation dry-run simulation report',
+    executionTitle: 'Idempotent import step report',
+    shaLabel: 'Archive SHA-256:',
+    metrics: {
+      channelsTotal: 'Channels scanned',
+      channelsToCreate: 'Channels to create',
+      messagesTotal: 'Messages',
+      threadRepliesTotal: 'Thread replies',
+      docsPagesTotal: 'Docs pages',
+      collectionsTotal: 'Collections',
+      membersMatched: 'Matched members',
+      membersUnmatched: 'Inert authors',
+      omittedAssets: 'Omitted assets',
+      reusedObjects: 'Already imported',
+      importedBatch: 'Imported items',
+      replayedMessages: 'Replayed Matrix messages',
+      remainingBatch: 'Remaining in archive',
+    },
+    warningsHeading: 'Pre-flight warnings',
+    warnings: {
+      external_admin_privilege_ignored:
+        'External administrator flags ignored: no local owner, admin, or moderator role will be granted.',
+      confidential_target_channel_skipped:
+        'Confidential target channel detected: history replay into an end-to-end encrypted channel is refused.',
+      unsupported_assets_omitted:
+        'Unsupported archive assets were safely omitted from this import.',
+      quota_headroom_exceeded:
+        'Workspace quota headroom exceeded: raise document or collection capacity before executing full import.',
+    } satisfies Record<WorkspaceImportWarningCode, string>,
+    memberMappingsHeading: 'Verified-email member mappings',
+    memberMatched: 'Active member matched • local role preserved',
+    memberUnmatched: 'No account created • inert author attribution',
+    coexistenceHeading: 'Create bounded coexistence bridge',
+    coexistenceSubtitle:
+      'Constant-time HMAC-SHA256 verification (300 s window), anti-echo loop guard, and strict refusal on confidential channels.',
+    bridgeSourceLabel: 'Remote platform',
+    bridgeChannelLabel: 'Paired Kodera channel (non-confidential text)',
+    chooseBridgeChannel: 'Choose a non-confidential channel',
+    externalWorkspaceLabel: 'External workspace ID (Slack team / Discord guild)',
+    externalChannelLabel: 'External channel ID',
+    outboundUrlLabel: 'Outbound HTTPS webhook URL (anti-SSRF guarded)',
+    signingSecretLabel: 'Shared signing secret (sealed server-side, 16+ chars)',
+    generateSecretButton: 'Generate secret',
+    createBridgeButton: 'Enable bridge',
+    refreshBridgesButton: 'Refresh bridges',
+    activeBridgesHeading: 'Configured workspace bridges',
+    noBridges: 'No coexistence bridges configured for this workspace.',
+    bridgeActiveBadge: 'Active',
+    bridgeRevokedBadge: 'Revoked',
+    revokeBridgeButton: 'Revoke',
+    guardHmacBadge: '300 s HMAC',
+    guardLoopBadge: 'Anti-echo guard',
+    guardPlainBadge: 'Non-confidential lock',
+    archiveErrors: {
+      ARCHIVE_EMPTY: 'Choose a non-empty export file.',
+      ARCHIVE_NOT_ZIP: 'The selected file must carry a valid ZIP header (or UTF-8 JSON for Discord).',
+      ARCHIVE_INLINE_TOO_LARGE:
+        'This archive is 512 KiB or larger: upload it as a workspace attachment first and supply its UUID.',
+      ARCHIVE_TOO_LARGE: 'Archive exceeds the 20 MiB maximum limit.',
+    } satisfies Record<ArchiveValidationErrorCode, string>,
+    bridgeErrors: {
+      CHANNEL_REQUIRED: 'Select a destination Kodera channel.',
+      CHANNEL_CONFIDENTIAL_FORBIDDEN:
+        'Confidential end-to-end encrypted channels can never be bound to an external bridge.',
+      EXTERNAL_IDS_INVALID:
+        'Enter valid external workspace and channel identifiers (letters, digits, hyphens, dots).',
+      SECRET_TOO_SHORT: 'Signing secret must be at least 16 characters.',
+      INVALID_URL: 'Enter a complete, valid HTTPS URL.',
+      SSRF_INSECURE_PROTOCOL: 'Only HTTPS endpoints are permitted.',
+      SSRF_EMBEDDED_CREDENTIALS: 'Remove embedded credentials from the URL.',
+      SSRF_FORBIDDEN_HOST: 'Use a public hostname.',
+      SSRF_FORBIDDEN_IP: 'Private and reserved IP addresses are refused.',
+    } satisfies Record<BridgeFormErrorCode, string>,
+    requestFailed:
+      'The Core API refused the operation. Verify owner/admin authority and archive integrity.',
+    attachmentRequired: 'Enter a valid uploaded attachment UUID.',
+  },
+} as const
+
+export function workspaceMigratorCopy(language: string | undefined) {
+  return language?.startsWith('en') ? MESSAGES.en : MESSAGES.fr
+}

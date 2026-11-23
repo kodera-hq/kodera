@@ -24,6 +24,7 @@ const channel = z.object({
   template_key: templateKey,
   topic: z.string(),
   lifecycle: z.enum(['active', 'archived']),
+  is_confidential: z.boolean(),
   room_state: z.enum(['pending', 'ready', 'failed']),
 })
 const workspaceSchema = z.object({

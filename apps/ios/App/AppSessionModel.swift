@@ -31,6 +31,7 @@ final class AppSessionModel: ObservableObject {
     private let store: any TokenStore
     private let defaults: UserDefaults
     typealias RequesterFactory = @MainActor (String, LoopbackPolicy, any SignInService) throws -> CoreRequester
+    private let fetchWorkspace: (@Sendable (String) async -> WorkspaceOutcome)?
     private let requesterFactory: RequesterFactory
     let proximityRadioSession = VoluntaryProximityRadioSession(
         gattDriver: CoreBluetoothGattRadioDriver(), bonjourDriver: NetworkBonjourProximityDriver()
@@ -110,13 +111,15 @@ final class AppSessionModel: ObservableObject {
          ),
          conversationTransportFactory: ConversationTransportFactory? = nil,
          matrixSsoAuthorizerFactory: (@MainActor (SessionFence) -> MatrixSsoAuthorizer)? = nil,
-         matrixProtocolClass: URLProtocol.Type? = nil) {
+         matrixProtocolClass: URLProtocol.Type? = nil,
+         fetchWorkspace: (@Sendable (String) async -> WorkspaceOutcome)? = nil) {
         self.configuration = configuration
         self.service = service
         self.store = store
         self.defaults = defaults
         self.channels = channels
         self.requesterFactory = requesterFactory
+        self.fetchWorkspace = fetchWorkspace
         self.sessionVault = sessionVault
         self.conversationTransportFactory = conversationTransportFactory
         self.matrixSsoAuthorizerFactory = matrixSsoAuthorizerFactory
@@ -144,12 +147,14 @@ final class AppSessionModel: ObservableObject {
                     self.activeVaultOrganisationId = snapshot.organisationId
                 }
             }
-            if let self, let openScope = self.activeConversation?.scope {
-                guard case .loaded = state.member,
-                      case let .loaded(snapshot) = state.workspace,
-                      snapshot.organisationId == openScope.organisationId else {
+            if let self, let conversation = self.activeConversation {
+                if Self.conversationAuthorityLost(scope: conversation.scope, state: state) {
                     self.closeChannel()
-                    return
+                } else if case let .loaded(snapshot) = state.workspace {
+                    let channels = snapshot.uncategorisedChannels + snapshot.categories.flatMap(\.channels)
+                    if let channel = channels.first(where: { $0.id == conversation.scope.channelId }) {
+                        conversation.updateChannelSecurity(isConfidential: channel.isConfidential)
+                    }
                 }
             }
             if let self, let scope = self.proximityScope {
@@ -328,6 +333,7 @@ final class AppSessionModel: ObservableObject {
     func retryChannels() { channels.retry() }
     func setForeground(_ active: Bool) {
         isForegroundActive = active
+        activeConversation?.setForeground(active)
         proximityRadioSession.handleSceneForegroundChange(isActive: active)
         if !active { resetProximity() }
         channels.setForeground(active)
@@ -496,8 +502,20 @@ final class AppSessionModel: ObservableObject {
         activeConversation = ChannelConversationModel(
             scope: scope,
             transport: transport,
-            fence: conversationFence
+            fence: conversationFence,
+            initialForeground: isForegroundActive
         )
+    }
+
+    static func conversationAuthorityLost(scope: ChannelConversationScope, state: OrganisationChannelsLoader.State) -> Bool {
+        if state.member == .unavailable(.noOrganisationYet) { return true }
+        if case let .loaded(snapshot) = state.workspace {
+            let channels = snapshot.uncategorisedChannels + snapshot.categories.flatMap(\.channels)
+            return snapshot.organisationId != scope.organisationId ||
+                !channels.contains(where: { $0.id == scope.channelId && $0.lifecycle == .active })
+        }
+        // Reloading and transient failures preserve drafts; confirmed access loss clears them.
+        return state.workspace == .unavailable(.forbidden) || state.workspace == .unavailable(.notFound) || state.workspace == .targetUnavailable
     }
 
     func closeChannel() {
@@ -614,7 +632,8 @@ final class AppSessionModel: ObservableObject {
                     guard let self, !fence.isInvalidated else { return }
                     self.activeMatrixSession = established
                 }
-            }
+            },
+            fetchWorkspace: fetchWorkspace ?? { await clients.workspace.fetch(organisationId: $0) }
         )
         activeMatrixTransport = transport
         return transport
@@ -626,7 +645,7 @@ final class AppSessionModel: ObservableObject {
         if let clients {
             channels.enter(realm: session.realm, requester: clients.requester,
                 fetchMember: { await clients.me.fetch() },
-                fetchWorkspace: { await clients.workspace.fetch(organisationId: $0) })
+                fetchWorkspace: fetchWorkspace ?? { await clients.workspace.fetch(organisationId: $0) })
         } else {
             channels.enter(realm: session.realm, requester: nil)
         }

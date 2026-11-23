@@ -3226,6 +3226,7 @@ def migration_create_model_names(
             "django.db.models.BinaryField",
             "django.db.models.BooleanField",
             "django.db.models.CASCADE",
+            "django.db.models.CharField",
             "django.db.models.CheckConstraint",
             "django.db.models.DateTimeField",
             "django.db.models.Deferrable.DEFERRED",
@@ -6626,19 +6627,19 @@ def reachable_openapi_schema_records(
         }
         if pattern in catchalls:
             return True
-        if re.fullmatch(r"\^\(\?!\.\*\[(?:\\.|[^\]])+\]\)\.(?:\+|\*)\$", pattern):
+        if re.fullmatch(r"\^\(\?!\.\*\[(?:\\.|[^\\\]])+\]\)\.(?:\+|\*)\$", pattern):
             return True
         try:
             re.compile(pattern)
         except re.error as error:
             raise ValueError(f"invalid OpenAPI property-name regex: {pattern}") from error
         character_class_pattern = re.fullmatch(
-            r"\^?(?:\[(?:\\.|[^\]])+\](?:\+|\*|\?|\{\d+(?:,\d*)?\})?)+\$?",
+            r"\^?(?:\[(?:\\.|[^\\\]])+\](?:\+|\*|\?|\{\d+(?:,\d*)?\})?)+\$?",
             pattern,
         )
         if character_class_pattern is None:
             return False
-        character_classes = re.findall(r"\[((?:\\.|[^\]])+)\]", pattern)
+        character_classes = re.findall(r"\[((?:\\.|[^\\\]])+)\]", pattern)
         if not character_classes or len(character_classes) > 2:
             return False
 

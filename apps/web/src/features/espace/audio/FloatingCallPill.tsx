@@ -20,6 +20,7 @@ import {
 } from 'react'
 import {
   ConnectionQualityBars,
+  type AudioDockCompanionChat,
   type AudioDockMediaToggle,
   type AudioDockStatus,
   type SignalQuality,
@@ -27,6 +28,8 @@ import {
 import { cssProperty, initialCssProperty } from '../../../ui/cssom'
 import { cx } from '../../../ui/cx'
 import { EspaceGlyph, type EspaceGlyphName } from '../../../ui/icons/EspaceGlyph'
+import { StudioGlyph } from '../../../ui/icons/StudioGlyph'
+import { hasLabel } from '../../../ui/stateLabel'
 import { TOUCH_TARGET } from '../../../ui/touchTarget'
 import { Tooltip } from '../../../ui/Tooltip/Tooltip'
 
@@ -427,7 +430,12 @@ export interface FloatingCallPillProps {
   muted: boolean
   deafened: boolean
   media?: { camera: AudioDockMediaToggle; screen?: AudioDockMediaToggle }
+  companionChat?: AudioDockCompanionChat
+  companionChatButtonRef?: Ref<HTMLButtonElement>
   meterRef?: Ref<HTMLSpanElement>
+  visualizer?: ReactNode
+  activePollCount?: number
+  activePollLabel?: string
   videoPreview?: ReactNode
   redockButtonRef?: Ref<HTMLButtonElement>
   /** Renders only the inner pill bar when `false` inside a persistent outer `<CallDockRegion>`. */
@@ -457,7 +465,12 @@ export function FloatingCallPill({
   muted,
   deafened,
   media,
+  companionChat,
+  companionChatButtonRef,
   meterRef,
+  visualizer,
+  activePollCount = 0,
+  activePollLabel,
   videoPreview,
   redockButtonRef,
   asSection = true,
@@ -495,6 +508,17 @@ export function FloatingCallPill({
                 {statusLabel}
               </p>
               <ConnectionQualityBars quality={quality} status={status} label={qualityLabel} />
+              {activePollCount > 0 ? (
+                <span
+                  data-testid="floating-pill-poll-badge"
+                  {...(activePollLabel !== undefined && hasLabel(activePollLabel)
+                    ? { role: 'status', 'aria-label': activePollLabel }
+                    : {})}
+                  className="inline-flex shrink-0 items-center rounded-full bg-c-action px-2 text-xs font-bold text-c-on-inverse tabular-nums"
+                >
+                  {activePollCount}
+                </span>
+              ) : null}
             </div>
             {category === undefined ? null : <span className="sr-only">{category}</span>}
             <Tooltip content={labels.openCall} names>
@@ -507,7 +531,14 @@ export function FloatingCallPill({
                 {room}
               </button>
             </Tooltip>
-            {meterRef === undefined ? null : (
+            {visualizer !== undefined ? (
+              <span aria-hidden="true" data-mic-meter="" className="mt-1 block w-full">
+                {meterRef === undefined ? null : (
+                  <span ref={meterFillRef} className="sr-only origin-left" />
+                )}
+                {visualizer}
+              </span>
+            ) : meterRef === undefined ? null : (
               <span
                 aria-hidden="true"
                 data-mic-meter=""
@@ -515,7 +546,7 @@ export function FloatingCallPill({
               >
                 <span
                   ref={meterFillRef}
-                  className="block h-full w-full origin-left bg-c-ok-on-dark"
+                  className="block h-full w-full origin-left bg-c-action"
                 />
               </span>
             )}
@@ -555,6 +586,33 @@ export function FloatingCallPill({
             pressed={deafened}
             onClick={onToggleDeafen}
           />
+          {companionChat !== undefined && hasLabel(companionChat.label) ? (
+            <Tooltip content={companionChat.label} names>
+              <button
+                ref={companionChatButtonRef}
+                type="button"
+                aria-label={companionChat.label}
+                aria-expanded={companionChat.open}
+                onClick={companionChat.onToggle}
+                className={cx(
+                  'focus-offset relative flex h-[28px] min-h-[28px] w-[28px] min-w-[28px] shrink-0 items-center justify-center rounded-md border-2 border-transparent transition-colors duration-fast focus-visible:ring focus-visible:ring-offset-2 focus-visible:outline-hidden motion-reduce:transition-none',
+                  TOUCH_TARGET,
+                  companionChat.open ? TONE.pressed : TONE.idle
+                )}
+              >
+                <StudioGlyph name="message" />
+                {!companionChat.open && companionChat.unread > 0 ? (
+                  <span
+                    aria-hidden="true"
+                    data-testid="companion-chat-unread"
+                    className="pointer-events-none absolute -top-1 -right-1 min-w-5 rounded-full bg-c-action px-1 text-center text-xs font-bold text-c-on-inverse tabular-nums"
+                  >
+                    {companionChat.unread > 99 ? '99+' : companionChat.unread}
+                  </span>
+                ) : null}
+              </button>
+            </Tooltip>
+          ) : null}
           <PillIconButton
             label={labels.redock}
             glyph="redock"

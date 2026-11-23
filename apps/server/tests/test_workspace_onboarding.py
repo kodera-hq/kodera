@@ -387,6 +387,7 @@ def expected_view(w, *, can_initialise=False):
             "topic": "",
             "lifecycle": "active",
             "room_state": "pending",
+            "is_confidential": False,
         }
 
     return {
@@ -1034,6 +1035,40 @@ def test_ws15_the_etag_is_the_callers_view(w):
     assert "hello" not in revoked.content.decode()
     for response in (first, unchanged, renamed, revoked):
         assert "revision" not in response.content.decode(), "WS-15: an answer carries a revision"
+
+
+@pytest.mark.parametrize("categorised", [False, True])
+def test_workspace_projects_stored_confidentiality_and_canonical_etag(w, categorised):
+    initialise(w, w.owner)
+    data = starter(w)
+    category = model("workspaces", "Category").objects.filter(workspace=data.workspace).first()
+    confidential = model("workspaces", "Channel").objects.create(
+        workspace=data.workspace,
+        category=category if categorised else None,
+        name="Confidential",
+        kind="text",
+        lifecycle="active",
+        position=9,
+        is_confidential=True,
+    )
+    response = read(w, w.owner)
+    assert response.status_code == 200
+    body = response.json()
+    channels = body["uncategorised_channels"] + [
+        channel for group in body["categories"] for channel in group["channels"]
+    ]
+    assert (
+        next(channel for channel in channels if channel["id"] == str(confidential.id))[
+            "is_confidential"
+        ]
+        is True
+    )
+    assert all(
+        channel["is_confidential"] is False
+        for channel in channels
+        if channel["id"] != str(confidential.id)
+    )
+    assert response.headers["ETag"] == '"' + hashlib.sha256(response.content).hexdigest() + '"'
 
 
 def test_ws15_a_revoked_caller_never_gets_304(w):

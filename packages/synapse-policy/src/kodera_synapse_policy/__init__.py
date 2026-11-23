@@ -69,12 +69,36 @@ OCCUPANCY = "io.kodera.room.occupancy"
 # client can post ``m.room.encrypted`` in a room where encryption is off, with the keys shared by
 # to-device message, so refusing the state event alone would not keep a room in the clear.
 ENCRYPTION = frozenset({"m.room.encryption", "m.room.encrypted"})
+AI_LOCALPART_PREFIXES = (
+    "@kodera-ai",
+    "@kodera_ai",
+    "@_kodera_ai",
+    "@ai-",
+    "@ai_",
+    "@bot-",
+    "@bot_",
+    "@agent-",
+    "@agent_",
+    "@_agent_",
+    "@livekit-agent",
+)
+AI_LOCALPART_SUFFIXES = ("-bot", "_bot", "-agent", "_agent")
 
 
 class KoderaPolicy:
     def __init__(self, config: dict[str, Any], api: ModuleApi) -> None:
         self._agent = config["agent_user_id"]
         self._room_access = config.get("room_access_user_id")
+        self._trusted_services = frozenset(
+            entry.strip().lower()
+            for entry in (self._agent, self._room_access)
+            if isinstance(entry, str) and entry.strip()
+        )
+        self._ai_users = frozenset(
+            entry.strip().lower()
+            for entry in config.get("ai_user_ids", ())
+            if isinstance(entry, str) and entry.strip()
+        )
         self._api = api
         self._server = self._agent.partition(":")[2]
         self._federation_servers = frozenset(config.get("federation_domain_allowlist", ()))
@@ -107,10 +131,31 @@ class KoderaPolicy:
             not isinstance(room_access, str) or not room_access.startswith("@") or ":" not in room_access
         ):
             raise ConfigError("room_access_user_id must be a full Matrix user ID, such as @rooms:example.org")
+        ai_users = config.get("ai_user_ids", [])
+        reserved_ids = {
+            entry.strip().lower()
+            for entry in (agent, room_access)
+            if isinstance(entry, str) and entry.strip()
+        }
+        if (
+            not isinstance(ai_users, list)
+            or len(ai_users) > 32
+            or not all(isinstance(entry, str) and _is_valid_user_id(entry.strip()) for entry in ai_users)
+            or len({entry.strip().lower() for entry in ai_users}) != len(ai_users)
+            or any(entry.strip().lower() in reserved_ids for entry in ai_users)
+        ):
+            raise ConfigError("ai_user_ids must list at most 32 distinct valid Matrix user IDs")
+        normalized_ai_users = [entry.strip().lower() for entry in ai_users]
         servers = server_list(config.get("federation_domain_allowlist", []), empty=True)
         if servers is None or agent.partition(":")[2] in (servers or ()):
             raise ConfigError("federation_domain_allowlist must list at most 32 distinct public homeserver names without ports or wildcards")
-        parsed = {"agent_user_id": agent, "room_access_user_id": room_access, "federation_domain_allowlist": list(servers)}
+        parsed: dict[str, Any] = {
+            "agent_user_id": agent,
+            "room_access_user_id": room_access,
+            "federation_domain_allowlist": list(servers),
+        }
+        if "ai_user_ids" in config:
+            parsed["ai_user_ids"] = normalized_ai_users
         if "federation_mode" in config:
             mode = config["federation_mode"]
             if mode not in ("closed", "partner", "open") or (mode in ("closed", "open") and servers):
@@ -158,11 +203,49 @@ class KoderaPolicy:
             return Codes.FORBIDDEN
         return NOT_SPAM
 
+    def _is_ai_user(self, user_id: Any) -> bool:
+        if not isinstance(user_id, str):
+            return False
+        normalized = user_id.strip().lower()
+        if normalized in self._trusted_services:
+            return False
+        local = normalized.partition(":")[0]
+        return (
+            normalized in self._ai_users
+            or local.startswith(AI_LOCALPART_PREFIXES)
+            or local.endswith(AI_LOCALPART_SUFFIXES)
+        )
+
+    def _ai_room_allowed(self, state: Any) -> bool:
+        create = state.get(("m.room.create", "")) if isinstance(state, Mapping) else None
+        creation = getattr(create, "content", {}) if create is not None else None
+        if (
+            getattr(create, "sender", None) != self._agent
+            or not isinstance(creation, Mapping)
+            or CONFIDENTIAL in creation
+            or ("m.room.encryption", "") in state
+            or (CONFIDENTIAL, "") in state
+        ):
+            return False
+        policy_event = state.get(("io.kodera.room.policy", ""))
+        policy_content = getattr(policy_event, "content", None)
+        if (
+            getattr(policy_event, "sender", None) != self._agent
+            or not isinstance(policy_content, Mapping)
+            or policy_content.get("archived", False) is not False
+            or policy_content.get(CONFIDENTIAL) not in (None, False)
+            or policy_content.get("ai_enabled") is not True
+        ):
+            return False
+        return not _has_governance(policy_content) or self._governance_valid(policy_event)
+
     def _is_direct_message(self, creator: str, config: dict[str, Any]) -> bool:
         invite = config.get("invite")
         if config.get("is_direct") is not True or not isinstance(invite, list) or not 1 <= len(invite) <= MAX_DM_INVITEES:
             return False
         if creator == self._room_access or not _is_valid_user_id(creator) or not self._api.is_mine(creator):
+            return False
+        if self._is_ai_user(creator) or any(self._is_ai_user(invitee) for invitee in invite):
             return False
         if not all(
             _is_valid_user_id(invitee) and invitee != creator and self._api.is_mine(invitee)
@@ -264,6 +347,12 @@ class KoderaPolicy:
             return Codes.FORBIDDEN
         if not _is_valid_user_id(invitee):
             return Codes.FORBIDDEN
+        if self._is_ai_user(inviter):
+            return Codes.FORBIDDEN
+        if self._is_ai_user(invitee):
+            ai_state = await self._api.get_room_state(room_id)
+            if not self._ai_room_allowed(ai_state):
+                return Codes.FORBIDDEN
         if inviter == self._agent and self._api.is_mine(invitee):
             return NOT_SPAM
         state = await self._api.get_room_state(room_id)
@@ -342,6 +431,8 @@ class KoderaPolicy:
         creator = getattr(create, "sender", None)
         if not state or not isinstance(creator, str) or not self._api.is_mine(creator):
             return Codes.FORBIDDEN
+        if self._is_ai_user(user) and not self._ai_room_allowed(state):
+            return Codes.FORBIDDEN
         policy_event = state.get(("io.kodera.room.policy", ""))
         content = getattr(policy_event, "content", None)
         if not self._api.is_mine(user) and not self._partner_federation_allowed(state, user):
@@ -393,6 +484,8 @@ class KoderaPolicy:
             or not self._api.is_mine(subject_user_id)
             or subject_user_id in {self._agent, self._room_access}
         ):
+            return False
+        if self._is_ai_user(subject_user_id):
             return False
         state = await self._api.get_room_state(
             room_id,
@@ -461,6 +554,8 @@ class KoderaPolicy:
         if type(content.get("archived", False)) is not bool:
             return False
         if type(content.get("local_only", False)) is not bool:
+            return False
+        if type(content.get("ai_enabled", False)) is not bool:
             return False
         for key in ("members", "exempt"):
             values = content.get(key)
@@ -572,6 +667,21 @@ class KoderaPolicy:
     def _governance_allows(self, event: Any, state: Any) -> bool:
         if not self._federation_boundary_allows(event, state):
             return False
+        if self._is_ai_user(event.sender):
+            own_ai_leave = (
+                event.type == "m.room.member"
+                and getattr(event, "state_key", None) == event.sender
+                and event.content.get("membership") == "leave"
+            )
+            if not own_ai_leave and not self._ai_room_allowed(state):
+                return False
+        if (
+            event.type == "m.room.member"
+            and event.content.get("membership") in {"join", "invite", "knock"}
+            and self._is_ai_user(getattr(event, "state_key", None))
+            and not self._ai_room_allowed(state)
+        ):
+            return False
         if event.sender == self._agent:
             return True
         policy_event = state.get(("io.kodera.room.policy", ""))
@@ -627,6 +737,8 @@ class KoderaPolicy:
                 and content.get("kind") == "audio"
             )
         if content["audience"] == "listed" and event.sender not in content["members"]:
+            return False
+        if self._room_access is not None and event.sender == self._room_access:
             return False
         if (
             "local_members" in content

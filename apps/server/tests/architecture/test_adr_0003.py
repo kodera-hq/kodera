@@ -268,6 +268,12 @@ ALLOWED_SECRETS = {
     "KODERA_NOTIFICATION_SEAL_KEY": (
         "an application secret: the key device push subscriptions are sealed with"
     ),
+    "KODERA_AI_SEAL_KEY": (
+        "an application secret: the HKDF master key workspace BYOM AI configs are sealed with"
+    ),
+    "KODERA_AI_MISTRAL_API_KEY": (
+        "an application secret: the optional EU-sovereign Mistral API key when managed AI is on"
+    ),
     "KODERA_PUSH_VAPID_PUBLIC_KEY": (
         "public information: the uncompressed P-256 VAPID discovery point, validated by "
         "apps/notifications/push.py"
@@ -280,6 +286,10 @@ ALLOWED_SECRETS = {
         "apps/billing/configuration.py refuses any other key"
     ),
     "KODERA_STRIPE_WEBHOOK_SECRET": "the billing provider's webhook signing secret",
+    "KODERA_SYNAPSE_ADMIN_TOKEN": (
+        "an application secret: the internal Matrix homeserver admin access token the "
+        "coexistence replay worker sends queued imports and inbound coexistence events with"
+    ),
 }
 # Inside a setting's value: a key or field shaped like a credential, and the one §2 admits there.
 ALLOWED_NESTED = {"DATABASES['default']['PASSWORD']": "the API's own database, §2's first row"}

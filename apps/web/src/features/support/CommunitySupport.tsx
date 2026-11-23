@@ -7,6 +7,7 @@ import { useAuthLifetime } from '../../auth/AuthProvider'
 import { Button } from '../../ui/Button/Button'
 import { Card } from '../../ui/Card/Card'
 import { InlineAlert } from '../../ui/InlineAlert/InlineAlert'
+import { BugReportDialog } from './BugReportDialog'
 import { communitySupportHref, createCommunitySupportTicket } from './communitySupportClient'
 import { communitySupportCopy } from './communitySupportMessages'
 
@@ -78,14 +79,21 @@ export function CommunitySupport({ organisationId }: { organisationId: string | 
           <p className="text-sm text-c-ink-2">{copy.unavailable}</p>
         ) : (
           <>
-            <Button
-              variant="secondary"
-              className="self-start"
-              disabled={joining}
-              onClick={() => void join()}
-            >
-              {copy.join}
-            </Button>
+            <div className="flex flex-wrap items-center gap-3">
+              <Button
+                variant="secondary"
+                className="self-start"
+                disabled={joining}
+                onClick={() => void join()}
+              >
+                {copy.join}
+              </Button>
+              <BugReportDialog
+                organisationId={organisationId}
+                organisationSlug="community"
+                lifetime={lifetime}
+              />
+            </div>
             <form
               className="flex flex-col gap-3"
               onSubmit={(event) => {

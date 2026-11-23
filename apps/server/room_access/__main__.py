@@ -27,6 +27,7 @@ def main() -> int:
         config.livekit_ws_url,
         config.agent_user,
         config.token_ttl_s,
+        ai_users=config.ai_users,
     )
     for server in (
         make_token_server(

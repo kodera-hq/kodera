@@ -12,6 +12,7 @@ reaching an agent.
 """
 
 import re
+from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
@@ -30,7 +31,7 @@ _SUBJECT = re.compile(r"[\x21-\x7e]{1,255}")
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 # The workspace's reasons name the change, such as `channel.access_changed` (§13.2).
 _REASON = re.compile(r"[a-z][a-z0-9_.]{0,63}")
-_OPTIONAL_FIELDS = {"confidential"}
+_OPTIONAL_FIELDS = {"confidential", "speak_exempt"}
 _CONFIDENTIAL_ALGORITHMS = frozenset({"io.kodera.mls.v1", "m.megolm.v1.aes-sha2"})
 _FIELDS = {
     "channel_id",
@@ -114,14 +115,20 @@ def normalise(
         if not isinstance(etag, str) or not 1 <= len(etag) <= 200:
             raise ChannelSetError("access_etag is 1-200 characters")
         read_only, listen_only = _bool(entry, "read_only"), _bool(entry, "listen_only")
-        if (read_only and kind != "text") or (listen_only and kind != "audio"):
-            raise ChannelSetError("read_only is for text channels, listen_only for audio rooms")
+        if listen_only and kind != "audio":
+            raise ChannelSetError("listen_only is for audio rooms")
         audience = entry["audience"]
         if audience not in ("all", "listed"):
             raise ChannelSetError("audience is all or listed")
         members = _subjects(entry["members"], "members")
         denied = _subjects(entry["denied"], "denied")
         exempt = _subjects(entry["exempt"], "exempt")
+        has_speak_exempt = "speak_exempt" in entry
+        speak_exempt: list[str] = []
+        if has_speak_exempt:
+            if kind != "audio":
+                raise ChannelSetError("speak_exempt is for audio rooms")
+            speak_exempt = _subjects(entry["speak_exempt"], "speak_exempt")
         if (audience == "all" and members) or (audience == "listed" and denied):
             raise ChannelSetError("audience all lists denied subjects, listed lists members")
         if not set(members) <= set(everyone) or not set(denied) <= set(everyone):
@@ -129,7 +136,9 @@ def normalise(
         effective = set(everyone) - set(denied) if audience == "all" else set(members)
         if not set(exempt) <= effective:
             raise ChannelSetError("an exempt subject is a member")
-        members_total += len(members) + len(denied) + len(exempt)
+        if has_speak_exempt and not set(speak_exempt) <= effective:
+            raise ChannelSetError("a speak_exempt subject is a member")
+        members_total += len(members) + len(denied) + len(exempt) + len(speak_exempt)
         notices = entry["notices"]
         if not isinstance(notices, list) or len(notices) > MAX_NOTICES:
             raise ChannelSetError(f"a channel carries at most {MAX_NOTICES} notices")
@@ -162,6 +171,8 @@ def normalise(
                 {"notice_id": str(n["notice_id"]).lower(), "body": n["body"]} for n in notices
             ],
         }
+        if has_speak_exempt:
+            normalised_entry["speak_exempt"] = speak_exempt
         if confidential_algo is not None:
             normalised_entry["confidential"] = confidential_algo
         out.append(normalised_entry)
@@ -275,3 +286,66 @@ def results(
         for n in c["notices"]
     ]
     return ready, sorted(failed & {c["channel_id"] for c in channel_set.channels}), posted
+
+
+@dataclass(frozen=True, slots=True)
+class ChannelSetSnapshot:
+    id: UUID
+    revision: int
+    all_members: list[str]
+    channels: list[dict[str, Any]]
+    moderation: dict[str, Any]
+    reason: str
+
+    def to_agent_payload(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "revision": self.revision,
+            "all_members": list(self.all_members),
+            "channels": list(self.channels),
+        }
+        if self.moderation:
+            payload["moderation"] = dict(self.moderation)
+        return payload
+
+
+def to_snapshot(channel_set: EngineChannelSet) -> ChannelSetSnapshot:
+    return ChannelSetSnapshot(
+        id=channel_set.id,
+        revision=channel_set.revision,
+        all_members=list(channel_set.all_members),
+        channels=list(channel_set.channels),
+        moderation=dict(channel_set.moderation or {}),
+        reason=channel_set.reason,
+    )
+
+
+def read_channel_set_snapshot(
+    *, organisation_id: UUID, channel_set_id: UUID | None = None
+) -> ChannelSetSnapshot | None:
+    qs = EngineChannelSet.objects.filter(organisation_id=organisation_id)
+    row = (
+        qs.filter(id=channel_set_id).first()
+        if channel_set_id is not None
+        else qs.order_by("-revision").first()
+    )
+    return None if row is None else to_snapshot(row)
+
+
+def snapshot_results(
+    snapshot: ChannelSetSnapshot, *, succeeded: bool, failed_ids: list[str] | None
+) -> tuple[dict[str, str], list[str], list[str]]:
+    if succeeded:
+        failed: set[str] = set()
+    elif failed_ids is None:
+        failed = {c["channel_id"] for c in snapshot.channels}
+    else:
+        failed = set(failed_ids)
+    ready = {
+        c["channel_id"]: c["access_etag"]
+        for c in snapshot.channels
+        if c["channel_id"] not in failed
+    }
+    posted = [
+        n["notice_id"] for c in snapshot.channels if c["channel_id"] in ready for n in c["notices"]
+    ]
+    return ready, sorted(failed & {c["channel_id"] for c in snapshot.channels}), posted

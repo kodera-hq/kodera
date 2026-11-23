@@ -41,6 +41,7 @@ MISSING = "idempotency-key-missing"
 MALFORMED = "malformed-request"
 REUSE = "idempotency-key-reuse"
 IN_FLIGHT = "idempotency-key-in-flight"
+RETRY_AFTER_S = store.RETRY_AFTER_S
 _PROBLEMS = {
     MISSING: (400, "Idempotency-Key header missing"),
     MALFORMED: (400, "Malformed request"),
@@ -80,6 +81,25 @@ def holds_answer(request: HttpRequest, *, issuer: str, subject: str, key: str) -
         return False
     found = store.lookup(scope)
     return found is not None and not getattr(found, "expired", False)
+
+
+def claim_execution(scope: Scope) -> bool:
+    """Claim durable per-(scope, key) execution ownership before any external effect runs, or
+    report that a concurrent request with the same key is currently in flight. The claim is a
+    session-level advisory lock, so it survives the short transactions around the preparing
+    step; release it with `release_execution` once the answer is durable or the attempt is
+    abandoned (a prepare that raised before provider work completed)."""
+    return store.claim_execution(scope)
+
+
+def release_execution(scope: Scope) -> bool:
+    """Release an execution claim taken by `claim_execution` on the current session."""
+    return store.release_execution(scope)
+
+
+def in_flight_problem(request_id: str) -> StoredResponse:
+    """The 409 conflict problem for a key whose execution another request currently owns."""
+    return problem(IN_FLIGHT, request_id, retry_after_s=RETRY_AFTER_S)
 
 
 def problem(kind: str, request_id: str, **extension: object) -> StoredResponse:

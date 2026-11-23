@@ -13,6 +13,7 @@ const channel = z.object({
   template_key: z.string().nullable(),
   lifecycle: z.enum(['active', 'archived']),
   room_state: z.enum(['pending', 'ready', 'failed']),
+  is_confidential: z.boolean(),
 })
 const savedView = z.object({
   channels: z.record(z.string(), z.array(channel)),

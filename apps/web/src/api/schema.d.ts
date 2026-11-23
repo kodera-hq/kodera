@@ -809,8 +809,8 @@ export interface paths {
          *     `inherit` detaches it, and the detached policy is kept, never deleted. `422` refuses
          *     `inherit` with any member differing from the resolved policy, `organisation` visibility
          *     with a non-empty `allow_members`, a membership that is not a current membership of the
-         *     organisation, one member both allowed and denied, `read_only` on an audio room and
-         *     `listen_only` on a text channel.
+         *     organisation, one member both allowed and denied, and `listen_only` on a text channel
+         *     (`read_only` applies to both text channels and audio companion chat).
          *
          *     Audited as `workspace.channel_access_changed`, with the membership ids added to and
          *     removed from each list, the flags and the new tag. An owner or admin who grants
@@ -1964,6 +1964,42 @@ export interface paths {
          *     appears in the response. No GitHub issue is published by this operation.
          */
         post: operations["createCommunitySupportTicket"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/support/bug-reports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Submit a zero-PII in-app diagnostic bug report
+         * @description Accepts a closed allowlist of technical diagnostic metadata from an authenticated
+         *     current member of `organisation_id`. Persists zero foreign keys to User, Identity,
+         *     Membership, Organisation, or Tenant, and zero email addresses, IP addresses, or slugs.
+         *
+         *     `consent` must be `true` whenever `note` or `screenshot` is supplied; supplying either
+         *     while `consent` is `false` is refused with `422 validation-error`. `note`, when given,
+         *     is refused (`422`) if it contains credentials, tokens, PEM headers, invitation/claim/magic
+         *     paths, or URLs, and any residual emails, UUIDs, IP addresses, Matrix IDs, phone numbers,
+         *     or organisation/tenant slugs are scrubbed before storage. `screenshot`, when given, must
+         *     be blurred (`blurred: true`), at most 256 KiB decoded, match `image/png` or `image/webp`
+         *     magic bytes, and carry zero `tEXt`/`iTXt`/`zTXt`/`eXIf`/`tIME` or `EXIF`/`XMP` metadata
+         *     chunks (`422` otherwise).
+         *
+         *     Enforces three keyed-HMAC rolling one-hour rate buckets (`5/h` per member, `20/h` per
+         *     organisation, `200/h` global -> `429` with `Retry-After`), coalesces duplicate reports
+         *     within 24 hours (`status: deduplicated`), and caps undispatched queue depth at 500
+         *     (`503` with `Retry-After: 60`).
+         */
+        post: operations["createBugReport"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3452,6 +3488,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/notifications/presence/{device_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Renew foreground notification presence lease
+         * @description Organisation is derived from the verified issuer; current active membership is checked on every request. Foreground web and desktop clients renew a bounded server-enforced lease (<= 90 seconds) so mobile push wakeups are suppressed while the member is active on desktop or web without hiding inbox entries.
+         */
+        put: operations["putNotificationPresence"];
+        post?: never;
+        /**
+         * Delete foreground notification presence lease
+         * @description Immediately clears this device's foreground presence lease so mobile push wakeups resume without waiting for TTL expiry.
+         */
+        delete: operations["deleteNotificationPresence"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/push/subscriptions/{device_id}": {
         parameters: {
             query?: never;
@@ -4275,6 +4335,194 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/organisations/{organisation_id}/workspace/ai/policy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read workspace AI policy and caller consent
+         * @description Every request checks current active membership in this organisation. Responses are Cache-Control: no-store. Returns the default-off 3-tier AI policy state without disclosing any BYOM secret material.
+         */
+        get: operations["getWorkspaceAiPolicy"];
+        /**
+         * Update workspace AI policy
+         * @description Owner/admin only. Enforces eu_sovereign_only refusal on non-EU provider configurations, SSRF protection on self-hosted endpoints, and HKDF-sealed BYOM secret persistence.
+         */
+        put: operations["putWorkspaceAiPolicy"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/channels/{channel_id}/ai": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Update channel AI policy
+         * @description Owner/admin only. Confidential and E2EE rooms fail closed with 403 and can never enable AI features.
+         */
+        put: operations["putChannelAiPolicy"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/ai/consent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Update caller member AI consent
+         * @description Records or revokes the authenticated member's explicit opt-in consent for workspace AI features.
+         */
+        put: operations["putMemberAiConsent"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/attachments/{attachment_id}/actions/transcribe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Transcribe a completed channel voice-note attachment
+         * @description Evaluates all three OFF-by-default AI consent tiers (org -> channel -> member) and refuses confidential, E2EE, and DM/unclassified rooms with 403.
+         */
+        post: operations["transcribeVoiceNote"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/imports/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Simulate a workspace archive import with zero database or Matrix mutations
+         * @description Runs a read-only dry-run simulation of a Slack, Discord, or Notion export archive for an active owner or admin. Never persists import batches, documents, collections, audit rows, or Matrix events, and never grants local privileges from external administrator flags.
+         */
+        post: operations["previewWorkspaceImport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/imports/execute": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Execute a bounded idempotent workspace archive import step
+         * @description Imports up to 25 archive items per bounded step for an active owner or admin, replaying mapped non-confidential channels idempotently with deterministic Matrix transaction identifiers while preserving existing local member roles.
+         */
+        post: operations["executeWorkspaceImport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/coexistence/bridges": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List workspace coexistence bridges
+         * @description Returns bounded live coexistence bridges configured for the organisation workspace without exposing signing secret material.
+         */
+        get: operations["listCoexistenceBridges"];
+        put?: never;
+        /**
+         * Create a bounded live coexistence bridge on a non-confidential text channel
+         * @description Creates a sealed Slack or Discord coexistence bridge pairing one active non-confidential text channel with one external workspace/channel pair and a validated HTTPS outbound endpoint.
+         */
+        post: operations["createCoexistenceBridge"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/coexistence/bridges/{bridge_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Revoke a workspace coexistence bridge
+         * @description Permanently revokes a coexistence bridge and zeroes its sealed signing secret.
+         */
+        delete: operations["revokeCoexistenceBridge"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/coexistence/bridges/{bridge_id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Receive a signed external coexistence event for anti-echo Matrix delivery
+         * @description Public inbound endpoint exempt from OIDC bearer tokens and verified in constant time via HMAC-SHA256 within a 300-second replay window before JSON parsing. Enforces anti-echo loop guards, delivery-time owner/admin authority, and non-confidential target channel state.
+         */
+        post: operations["receiveCoexistenceEvent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -4774,7 +5022,7 @@ export interface components {
         AttachmentUploadRequest: {
             filename: string;
             /** @enum {string} */
-            contentType: "image/jpeg" | "image/png" | "image/webp" | "image/gif" | "application/pdf" | "text/plain" | "application/octet-stream";
+            contentType: "image/jpeg" | "image/png" | "image/webp" | "image/gif" | "audio/ogg" | "audio/webm" | "audio/mp4" | "application/pdf" | "text/plain" | "application/octet-stream";
             sizeBytes: number;
             sha256: string;
             /**
@@ -4933,6 +5181,40 @@ export interface components {
             endpoint: string;
             p256dh: string;
             auth: string;
+            /**
+             * @default web
+             * @enum {string}
+             */
+            platform: "web" | "desktop" | "ios" | "android";
+        };
+        /**
+         * NotificationPresenceRequest
+         * @description Ephemeral foreground presence lease renewal for an active web or desktop session, bounded to at most 90 seconds.
+         */
+        NotificationPresenceRequest: {
+            /** @enum {string} */
+            platform: "web" | "desktop";
+            /** @default 60 */
+            ttlSeconds: number;
+        };
+        /**
+         * NotificationPresenceLease
+         * @description Active foreground presence lease bound to the caller's membership and device.
+         * @example {
+         *       "deviceId": "0195c000-0000-7000-8000-000000000001",
+         *       "platform": "desktop",
+         *       "expiresAt": "2026-11-23T00:01:00Z",
+         *       "ttlSeconds": 60
+         *     }
+         */
+        NotificationPresenceLease: {
+            /** Format: uuid */
+            deviceId: string;
+            /** @enum {string} */
+            platform: "web" | "desktop";
+            /** Format: date-time */
+            expiresAt: string;
+            ttlSeconds: number;
         };
         /**
          * WorkspaceDocumentRequest
@@ -5043,6 +5325,29 @@ export interface components {
             soundPackId?: "cristal-48k" | "studio-mat" | "silence" | "givre" | "atelier" | "souffle" | "cosmos" | "luciole" | "silencieux";
             /** @description Duplicates are collapsed preserving order; omitted uses template defaults. */
             enabledConnectors?: ("frameio-review-bridge" | "github-webhook" | "linear-sync" | "sentry-alerts" | "qonto-treasury-alerts" | "stripe-revenue-events" | "calcom-booking-sync" | "nextcloud-drive-notifier")[];
+            /** @description Optional client-supplied durable operation key for resumable WorkspaceTemplate v2 execution. Re-invoking with the same key resumes incomplete steps idempotently without duplicating categories, channels, Matrix rooms, collections or starter documents. */
+            operationKey?: string;
+            customization?: components["schemas"]["WorkspaceTemplateCustomization"];
+        };
+        /**
+         * WorkspaceTemplateCustomization
+         * @description Optional WorkspaceTemplate v2 customization toggles and channel overrides applied deterministically when building or resuming a workspace template plan. Omitted members keep the template's defaults; at least one text channel must remain enabled.
+         */
+        WorkspaceTemplateCustomization: {
+            /** @default true */
+            includeAudioChannels: boolean;
+            /** @default true */
+            includeCollections: boolean;
+            /** @default true */
+            includeStarterDocs: boolean;
+            excludedChannelKeys?: string[];
+            additionalChannels?: {
+                categoryKey: string;
+                name: string;
+                /** @enum {string} */
+                kind: "text" | "audio";
+                topic?: string;
+            }[];
         };
         /**
          * @example {
@@ -5093,10 +5398,14 @@ export interface components {
          *     took before 0.42.0 and it is permanent: Core accepts it for as long as this contract
          *     exists, resolves it to the same template as `proximity`, and never answers it differently.
          *     A new client sends `proximity`; a value stored as `crisis-cell` is read as `proximity`.
+         *
+         *     WorkspaceTemplate v2 (`0.52.0`) covers the six customizable onboarding personas
+         *     (`tech-studio`, `b2b-advisory`, `association-coop`, `open-source-community`,
+         *     `public-sector`, `blank`) alongside `audiovisual-production` and `proximity`.
          * @example proximity
          * @enum {string}
          */
-        WorkspaceTemplateId: "audiovisual-production" | "tech-studio" | "b2b-advisory" | "public-sector" | "proximity" | "crisis-cell";
+        WorkspaceTemplateId: "audiovisual-production" | "tech-studio" | "b2b-advisory" | "association-coop" | "open-source-community" | "public-sector" | "blank" | "proximity" | "crisis-cell";
         /**
          * ThemeId
          * @description The unified theme vocabulary, the same identifier on every client and in Core: `light`,
@@ -6236,7 +6545,8 @@ export interface components {
          *               "template_key": "welcome",
          *               "topic": "",
          *               "lifecycle": "active",
-         *               "room_state": "ready"
+         *               "room_state": "ready",
+         *               "is_confidential": false
          *             },
          *             {
          *               "id": "0192f3a4-5b6c-7d8e-9f01-23456789abd1",
@@ -6245,7 +6555,8 @@ export interface components {
          *               "template_key": "general",
          *               "topic": "",
          *               "lifecycle": "active",
-         *               "room_state": "ready"
+         *               "room_state": "ready",
+         *               "is_confidential": false
          *             }
          *           ]
          *         },
@@ -6261,7 +6572,8 @@ export interface components {
          *               "template_key": "lounge",
          *               "topic": "",
          *               "lifecycle": "active",
-         *               "room_state": "pending"
+         *               "room_state": "pending",
+         *               "is_confidential": false
          *             }
          *           ]
          *         }
@@ -6385,6 +6697,8 @@ export interface components {
              * @enum {string}
              */
             lifecycle: "active" | "archived";
+            /** @description Authoritative stored confidentiality designation. Plaintext clients require false. */
+            is_confidential: boolean;
             /**
              * @description Whether the channel's Matrix room exists yet. A channel is `active` as soon as Core
              *     commits it; until a tenant agent acknowledges its room, the console shows it as not yet
@@ -6555,9 +6869,10 @@ export interface components {
          * ChannelAccess
          * @description Who may view a channel and what they may do there, as one document
          *     (`docs/specs/ESPACE_STRUCTURE.md` §6). `read_only` denies posting, replying, editing and
-         *     uploading in a text channel, and `listen_only` speaking, video and sharing in an audio
-         *     room, to `org_member` and `org_billing`; owners and admins are exempt. Reactions, deleting
-         *     one's own earlier messages and reading stay allowed.
+         *     uploading in a text channel or in an audio channel's 1:1 Matrix companion chat, and
+         *     `listen_only` denies speaking, video and sharing in an audio room, to `org_member` and
+         *     `org_billing`; owners and admins are exempt. Reactions, deleting one's own earlier messages
+         *     and reading stay allowed.
          * @example {
          *       "channel_id": "0192f3a4-5b6c-7d8e-9f01-23456789abd0",
          *       "mode": "explicit",
@@ -6583,7 +6898,7 @@ export interface components {
             allow_members: string[];
             /** @description Membership ids that may never view it; a deny wins over everything. */
             deny_members: string[];
-            /** @description Text channels only. */
+            /** @description Text channels and audio companion chat. */
             read_only: boolean;
             /** @description Audio rooms only. */
             listen_only: boolean;
@@ -8901,6 +9216,60 @@ export interface components {
             queue: "security-incident" | "infra-sre" | "identity-access" | "billing-ops" | "product-engineering" | "compliance-dpo";
             /** @constant */
             confirmation: "ticket-created";
+        };
+        /**
+         * @example {
+         *       "contentType": "image/png",
+         *       "blurred": true,
+         *       "dataBase64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg=="
+         *     }
+         */
+        BugReportScreenshotInput: {
+            /** @enum {string} */
+            contentType: "image/png" | "image/webp";
+            /** @constant */
+            blurred: true;
+            dataBase64: string;
+        };
+        /**
+         * @example {
+         *       "build_id": "web-0.52.0",
+         *       "component": "calls",
+         *       "error_code": "LIVEKIT_ICE_TIMEOUT",
+         *       "device_class": "web-desktop",
+         *       "consent": false
+         *     }
+         */
+        BugReportCreateRequest: {
+            build_id: string;
+            /** @enum {string} */
+            component: "workspace" | "messaging" | "calls" | "docs" | "files" | "auth" | "billing" | "settings" | "confidential" | "desktop" | "mobile" | "other";
+            error_code: string;
+            /** @enum {string} */
+            device_class: "web-desktop" | "web-mobile" | "desktop-macos" | "desktop-linux" | "desktop-windows" | "ios" | "android";
+            /** @description Must be `true` whenever `note` or `screenshot` is provided; `422` otherwise. */
+            consent: boolean;
+            note?: string;
+            screenshot?: components["schemas"]["BugReportScreenshotInput"];
+        };
+        /**
+         * @example {
+         *       "id": "01900000-0000-7000-8000-000000000099",
+         *       "status": "queued",
+         *       "dedup_fingerprint": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+         *       "occurrences": 1,
+         *       "created_at": "2026-11-23T00:00:00Z"
+         *     }
+         */
+        BugReportReceipt: {
+            /** Format: uuid */
+            id: string;
+            /** @enum {string} */
+            status: "queued" | "deduplicated";
+            dedup_fingerprint: string;
+            occurrences: number;
+            /** Format: date-time */
+            created_at: string;
         };
         /**
          * SupportTicket
@@ -12303,6 +12672,358 @@ export interface components {
             devices: components["schemas"]["ConfidentialDevice"][];
             envelopes: components["schemas"]["ConfidentialEnvelope"][];
         };
+        /** @enum {string} */
+        WorkspaceImportSource: "slack" | "discord" | "notion";
+        WorkspaceImportPreviewRequest: {
+            source: components["schemas"]["WorkspaceImportSource"];
+            /** @description Inline base64-encoded ZIP archive strictly smaller than 512 KiB; mutually exclusive with attachmentId. */
+            inlineArchiveBase64?: string;
+            /**
+             * Format: uuid
+             * @description Uploaded workspace attachment identifier for archives up to 20 MiB; mutually exclusive with inlineArchiveBase64.
+             */
+            attachmentId?: string;
+            channelMap?: {
+                [key: string]: string;
+            };
+        };
+        WorkspaceImportExecuteRequest: {
+            source: components["schemas"]["WorkspaceImportSource"];
+            inlineArchiveBase64?: string;
+            /** Format: uuid */
+            attachmentId?: string;
+            /** @default false */
+            dryRun: boolean;
+            /** @default 25 */
+            limit: number;
+            channelMap?: {
+                [key: string]: string;
+            };
+        };
+        WorkspaceImportDryRunCounts: {
+            channels_total: number;
+            channels_existing: number;
+            channels_to_create: number;
+            messages_total: number;
+            thread_replies_total: number;
+            docs_pages_total: number;
+            collections_total: number;
+            collection_rows_total: number;
+            members_matched: number;
+            members_unmatched: number;
+            already_imported_reused: number;
+            omitted_assets: number;
+        };
+        WorkspaceImportMemberMapping: {
+            external_id: string;
+            display_name: string;
+            /** Format: uuid */
+            matched_membership_id: string | null;
+            /** @constant */
+            local_role_preserved: true;
+        };
+        /** @enum {string} */
+        WorkspaceImportWarningCode: "external_admin_privilege_ignored" | "confidential_target_channel_skipped" | "unsupported_assets_omitted" | "quota_headroom_exceeded";
+        /**
+         * @example {
+         *       "source": "slack",
+         *       "archive_sha256": "000000000000000000000000000000000000000000000000000000000000a1b2",
+         *       "dry_run": true,
+         *       "counts": {
+         *         "channels_total": 2,
+         *         "channels_existing": 1,
+         *         "channels_to_create": 1,
+         *         "messages_total": 14,
+         *         "thread_replies_total": 3,
+         *         "docs_pages_total": 2,
+         *         "collections_total": 0,
+         *         "collection_rows_total": 0,
+         *         "members_matched": 2,
+         *         "members_unmatched": 1,
+         *         "already_imported_reused": 0,
+         *         "omitted_assets": 0
+         *       },
+         *       "member_mappings": [
+         *         {
+         *           "external_id": "U01ALICE",
+         *           "display_name": "Alice Martin",
+         *           "matched_membership_id": "01950000-0000-7000-8000-0000000000b1",
+         *           "local_role_preserved": true
+         *         }
+         *       ],
+         *       "warnings": []
+         *     }
+         */
+        WorkspaceImportDryRunReport: {
+            source: components["schemas"]["WorkspaceImportSource"];
+            archive_sha256: string;
+            dry_run: boolean;
+            counts: components["schemas"]["WorkspaceImportDryRunCounts"];
+            member_mappings: components["schemas"]["WorkspaceImportMemberMapping"][];
+            warnings: components["schemas"]["WorkspaceImportWarningCode"][];
+        };
+        /**
+         * @example {
+         *       "batch_id": "01950000-0000-7000-8000-0000000000b2",
+         *       "source": "slack",
+         *       "state": "complete",
+         *       "imported": 2,
+         *       "reused": 0,
+         *       "remaining": 0,
+         *       "omitted_assets": 0,
+         *       "replayed_messages": 14,
+         *       "reused_messages": 0,
+         *       "warnings": []
+         *     }
+         */
+        WorkspaceImportResponse: {
+            /** Format: uuid */
+            batch_id?: string;
+            source: components["schemas"]["WorkspaceImportSource"];
+            /** @enum {string} */
+            state?: "pending" | "partial" | "complete";
+            dry_run?: boolean;
+            archive_sha256?: string;
+            imported?: number;
+            reused?: number;
+            remaining?: number;
+            omitted_assets?: number;
+            complete?: boolean;
+            queued_messages?: number;
+            replayed_messages?: number;
+            reused_messages?: number;
+            counts?: components["schemas"]["WorkspaceImportDryRunCounts"];
+            member_mappings?: components["schemas"]["WorkspaceImportMemberMapping"][];
+            warnings?: components["schemas"]["WorkspaceImportWarningCode"][];
+        } & {
+            [key: string]: unknown;
+        };
+        /** @enum {string} */
+        CoexistenceBridgeSource: "slack" | "discord";
+        /**
+         * @example {
+         *       "id": "01950000-0000-7000-8000-0000000000c1",
+         *       "workspaceId": "01950000-0000-7000-8000-0000000000c2",
+         *       "channelId": "01950000-0000-7000-8000-0000000000c3",
+         *       "creatorMembershipId": "01950000-0000-7000-8000-0000000000c4",
+         *       "source": "slack",
+         *       "externalWorkspaceId": "T01EXTERNAL",
+         *       "externalChannelId": "C01GENERAL",
+         *       "outboundEndpoint": "https://hooks.example.com/services/bridge",
+         *       "active": true,
+         *       "revokedAt": null,
+         *       "createdAt": "2026-11-23T00:00:00Z",
+         *       "updatedAt": "2026-11-23T00:00:00Z"
+         *     }
+         */
+        CoexistenceBridge: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            workspaceId: string;
+            /** Format: uuid */
+            channelId: string;
+            /** Format: uuid */
+            creatorMembershipId: string;
+            source: components["schemas"]["CoexistenceBridgeSource"];
+            externalWorkspaceId: string;
+            externalChannelId: string;
+            /** Format: uri */
+            outboundEndpoint: string;
+            active: boolean;
+            /** Format: date-time */
+            revokedAt: string | null;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        /**
+         * @example {
+         *       "bridges": [
+         *         {
+         *           "id": "01950000-0000-7000-8000-0000000000c1",
+         *           "workspaceId": "01950000-0000-7000-8000-0000000000c2",
+         *           "channelId": "01950000-0000-7000-8000-0000000000c3",
+         *           "creatorMembershipId": "01950000-0000-7000-8000-0000000000c4",
+         *           "source": "slack",
+         *           "externalWorkspaceId": "T01EXTERNAL",
+         *           "externalChannelId": "C01GENERAL",
+         *           "outboundEndpoint": "https://hooks.example.com/services/bridge",
+         *           "active": true,
+         *           "revokedAt": null,
+         *           "createdAt": "2026-11-23T00:00:00Z",
+         *           "updatedAt": "2026-11-23T00:00:00Z"
+         *         }
+         *       ]
+         *     }
+         */
+        CoexistenceBridgeListResponse: {
+            bridges: components["schemas"]["CoexistenceBridge"][];
+        };
+        CoexistenceBridgeCreateRequest: {
+            /** Format: uuid */
+            channelId: string;
+            source: components["schemas"]["CoexistenceBridgeSource"];
+            externalWorkspaceId: string;
+            externalChannelId: string;
+            /** Format: uri */
+            outboundEndpoint: string;
+            signingSecret: string;
+        };
+        /** @description Signed Slack Events API or Discord coexistence event payload verified via HMAC before parsing. */
+        CoexistenceInboundEvent: {
+            [key: string]: unknown;
+        };
+        /**
+         * @example {
+         *       "accepted": true,
+         *       "queued": true,
+         *       "status": "queued",
+         *       "bridgeId": "01950000-0000-7000-8000-0000000000c1",
+         *       "channelId": "01950000-0000-7000-8000-0000000000c3",
+         *       "externalEventId": "Ev01EXTERNAL",
+         *       "matrixEventId": null,
+         *       "matrixTxnId": "kodera-coex-00000000000000000000000000000001",
+         *       "validatedAttachmentMimes": []
+         *     }
+         */
+        CoexistenceEventReceipt: {
+            accepted: boolean;
+            queued?: boolean;
+            /** @enum {string} */
+            status: "queued" | "delivered" | "duplicate" | "ignored_echo" | "ignored_event";
+            /** Format: uuid */
+            bridgeId?: string;
+            /** Format: uuid */
+            channelId?: string;
+            externalEventId?: string;
+            reason?: string;
+            matrixEventId?: string | null;
+            matrixTxnId?: string;
+            validatedAttachmentMimes?: string[];
+        };
+        /**
+         * MemberAiConsent
+         * @example {
+         *       "enabled": false,
+         *       "consentedAt": null,
+         *       "revokedAt": null
+         *     }
+         */
+        MemberAiConsent: {
+            enabled: boolean;
+            /** Format: date-time */
+            consentedAt: string | null;
+            /** Format: date-time */
+            revokedAt: string | null;
+        };
+        /** MemberAiConsentRequest */
+        MemberAiConsentRequest: {
+            enabled: boolean;
+        };
+        /** WorkspaceByomConfigInput */
+        WorkspaceByomConfigInput: {
+            /** Format: uri */
+            endpoint: string;
+            model: string;
+            apiKey: string;
+            /** @enum {string} */
+            region?: "eu" | "non_eu";
+        };
+        /**
+         * WorkspaceAiPolicy
+         * @example {
+         *       "gatewayEnabled": false,
+         *       "enabled": false,
+         *       "provider": "mistral",
+         *       "providerRegion": "eu",
+         *       "euSovereignOnly": true,
+         *       "selfHostedEndpoint": "",
+         *       "model": "mistral-small-latest",
+         *       "hasByomConfig": false,
+         *       "monthlyBudgetMicros": 50000000,
+         *       "monthlySpentMicros": 0,
+         *       "memberConsent": {
+         *         "enabled": false,
+         *         "consentedAt": null,
+         *         "revokedAt": null
+         *       }
+         *     }
+         */
+        WorkspaceAiPolicy: {
+            gatewayEnabled: boolean;
+            enabled: boolean;
+            /** @enum {string} */
+            provider: "mistral" | "self_hosted" | "byom";
+            /** @enum {string} */
+            providerRegion: "eu" | "non_eu";
+            euSovereignOnly: boolean;
+            selfHostedEndpoint: string;
+            model: string;
+            hasByomConfig: boolean;
+            monthlyBudgetMicros: number;
+            monthlySpentMicros: number;
+            memberConsent: components["schemas"]["MemberAiConsent"];
+        };
+        /** WorkspaceAiPolicyRequest */
+        WorkspaceAiPolicyRequest: {
+            enabled?: boolean;
+            /** @enum {string} */
+            provider?: "mistral" | "self_hosted" | "byom";
+            /** @enum {string} */
+            providerRegion?: "eu" | "non_eu";
+            euSovereignOnly?: boolean;
+            selfHostedEndpoint?: string;
+            model?: string;
+            monthlyBudgetMicros?: number;
+            byomConfig?: components["schemas"]["WorkspaceByomConfigInput"] | null;
+            clearByomConfig?: boolean;
+        };
+        /**
+         * ChannelAiPolicy
+         * @example {
+         *       "channelId": "00000000-0000-7000-8000-000000000001",
+         *       "aiEnabled": false
+         *     }
+         */
+        ChannelAiPolicy: {
+            /** Format: uuid */
+            channelId: string;
+            aiEnabled: boolean;
+        };
+        /** ChannelAiPolicyRequest */
+        ChannelAiPolicyRequest: {
+            aiEnabled: boolean;
+        };
+        /** VoiceNoteTranscriptionRequest */
+        VoiceNoteTranscriptionRequest: {
+            /** Format: uuid */
+            channelId?: string;
+            roomId?: string;
+            language?: string;
+        };
+        /**
+         * VoiceNoteTranscription
+         * @example {
+         *       "attachmentId": "00000000-0000-7000-8000-000000000001",
+         *       "channelId": "00000000-0000-7000-8000-000000000002",
+         *       "text": "Bonjour tout le monde",
+         *       "language": "fr",
+         *       "provider": "mistral",
+         *       "model": "voxtral-mini-latest"
+         *     }
+         */
+        VoiceNoteTranscription: {
+            /** Format: uuid */
+            attachmentId: string;
+            /** Format: uuid */
+            channelId: string;
+            text: string;
+            language: string | null;
+            provider: string;
+            model: string;
+        };
     };
     responses: {
         /** @description The request body or its parameters are malformed. */
@@ -12541,6 +13262,7 @@ export interface components {
         AttachmentId: string;
         DocumentId: string;
         DeviceId: string;
+        BridgeId: string;
         /** @description Required compatibility header only for discoverRealm. Validate then discard. Every request is a fresh charged current lookup, including identical, different-body and concurrent reuse. This operation is explicitly exempt from generic 24-hour response replay, fingerprint, key-reuse and in-flight rules. No key or response is stored; no Idempotency-Replayed header or idempotency 409 is emitted. Other POST operations retain the generic IdempotencyKey parameter and rules. */
         DiscoveryCompatibilityKey: string;
         /**
@@ -16792,6 +17514,89 @@ export interface operations {
             500: components["responses"]["InternalError"];
         };
     };
+    createBugReport: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BugReportCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Zero-PII bug report queued or coalesced into an existing 24h fingerprint. */
+            201: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BugReportReceipt"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+            /** @description Undispatched bug-report triage queue is full; nothing was stored. */
+            503: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    /** @example 60 */
+                    "Retry-After": number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     listSupportTickets: {
         parameters: {
             query?: {
@@ -20101,6 +20906,67 @@ export interface operations {
             429: components["responses"]["RateLimited"];
         };
     };
+    putNotificationPresence: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                device_id: components["parameters"]["DeviceId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NotificationPresenceRequest"];
+            };
+        };
+        responses: {
+            /** @description Active foreground presence lease recorded. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationPresenceLease"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    deleteNotificationPresence: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                device_id: components["parameters"]["DeviceId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful operation. */
+            204: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
     putPushSubscription: {
         parameters: {
             query?: never;
@@ -23160,6 +24026,488 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+        };
+    };
+    getWorkspaceAiPolicy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current workspace AI policy and caller consent state. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceAiPolicy"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["WorkspaceBusy"];
+        };
+    };
+    putWorkspaceAiPolicy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceAiPolicyRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated workspace AI policy. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceAiPolicy"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["WorkspaceBusy"];
+        };
+    };
+    putChannelAiPolicy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                /** @description Identifier of the non-confidential workspace channel. */
+                channel_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChannelAiPolicyRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated channel AI policy. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChannelAiPolicy"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["WorkspaceBusy"];
+        };
+    };
+    putMemberAiConsent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MemberAiConsentRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated caller AI consent state. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemberAiConsent"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["WorkspaceBusy"];
+        };
+    };
+    transcribeVoiceNote: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                /** @description Completed voice-note attachment identifier. */
+                attachment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["VoiceNoteTranscriptionRequest"];
+            };
+        };
+        responses: {
+            /** @description Transcribed voice-note text. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VoiceNoteTranscription"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["WorkspaceBusy"];
+        };
+    };
+    previewWorkspaceImport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceImportPreviewRequest"];
+            };
+        };
+        responses: {
+            /** @description Zero-mutation dry-run simulation report. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceImportDryRunReport"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["UpstreamUnavailable"];
+        };
+    };
+    executeWorkspaceImport: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceImportExecuteRequest"];
+            };
+        };
+        responses: {
+            /** @description Bounded import execution or dry-run report. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceImportResponse"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["UpstreamUnavailable"];
+        };
+    };
+    listCoexistenceBridges: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Coexistence bridges for the workspace. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CoexistenceBridgeListResponse"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    createCoexistenceBridge: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CoexistenceBridgeCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Coexistence bridge created. */
+            201: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CoexistenceBridge"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    revokeCoexistenceBridge: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                bridge_id: components["parameters"]["BridgeId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Coexistence bridge revoked. */
+            204: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    receiveCoexistenceEvent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                bridge_id: components["parameters"]["BridgeId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CoexistenceInboundEvent"];
+            };
+        };
+        responses: {
+            /** @description Signed coexistence event verified and delivered to Matrix. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CoexistenceEventReceipt"];
+                };
+            };
+            /** @description Signed coexistence event verified and durably queued for Matrix worker delivery. */
+            202: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CoexistenceEventReceipt"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            422: components["responses"]["ValidationError"];
+            502: components["responses"]["UpstreamUnavailable"];
+            503: components["responses"]["UpstreamUnavailable"];
         };
     };
 }

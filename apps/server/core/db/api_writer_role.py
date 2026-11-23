@@ -30,6 +30,9 @@ SELECT = (
     "workspaces_workspacerole",
     "workspaces_workspacememberrole",
     "workspaces_workspacechannelroleoverride",
+    "workspaces_workspacetemplateapplication",
+    "workspaces_workspaceaipolicy",
+    "workspaces_memberaiconsent",
     # Confidential transport stores public device keys and opaque ciphertext only.
     "e2ee_device",
     "e2ee_room",
@@ -71,12 +74,19 @@ SELECT = (
     "notifications_notification",
     "notifications_pushsubscription",
     "notifications_pushoutbox",
+    "notifications_presencelease",
     # Native workspace documents, per-document grants, wikilinks, compacted snapshots and updates.
     "docs_document",
     "docs_documentgrant",
     "docs_documentlink",
     "docs_documentsnapshot",
     "docs_documentupdate",
+    # Workspace import dry-run/replay batches and bounded coexistence bridges.
+    "extensions_workspacecutoff",
+    "extensions_importbatch",
+    "extensions_importedobject",
+    "extensions_coexistencebridge",
+    "extensions_coexistencereplayguard",
     "identity_user",
     "identity_identity",
     "identity_staffrole",
@@ -129,6 +139,8 @@ SELECT = (
     # caller's and the organisation's recent tickets, which the creation limits count.
     "tenancy_tenant",
     "support_supportticket",
+    "support_bugreport",
+    "support_bugreportrateevent",
     # Public billing catalogue reads (/api/v1/catalog/*) and createTenant (QUICK_WORKSPACE.md §4)
     # read published plans, packs, capacity tiers and offered prices: catalogue rows, no personal data.
     "billing_plan",
@@ -165,6 +177,9 @@ INSERT = (
     "workspaces_workspacerole",
     "workspaces_workspacememberrole",
     "workspaces_workspacechannelroleoverride",
+    "workspaces_workspacetemplateapplication",
+    "workspaces_workspaceaipolicy",
+    "workspaces_memberaiconsent",
     "e2ee_device",
     "e2ee_room",
     "e2ee_participant",
@@ -197,11 +212,17 @@ INSERT = (
     "notifications_notification",
     "notifications_pushsubscription",
     "notifications_pushoutbox",
+    "notifications_presencelease",
     # Native workspace documents, wikilinks, snapshots and journal updates (grants stay excluded).
     "docs_document",
     "docs_documentlink",
     "docs_documentsnapshot",
     "docs_documentupdate",
+    # Workspace import batches/objects and bounded coexistence bridges/replay guards.
+    "extensions_importbatch",
+    "extensions_importedobject",
+    "extensions_coexistencebridge",
+    "extensions_coexistencereplayguard",
     "orgs_organisation",
     "orgs_slugreservation",
     "orgs_organisationintake",
@@ -245,7 +266,9 @@ INSERT = (
     "orgs_membership",
     # A support ticket (SUPPORT_TICKETS.md): the row only. Its mail mark is the operator's to set,
     # so no column of it is granted for UPDATE; its audit row and stored answer are granted above.
+    # `support_bugreport` is omitted from table-wide INSERT and governed strictly by INSERT_COLUMNS.
     "support_supportticket",
+    "support_bugreportrateevent",
     # createTenant (QUICK_WORKSPACE.md §4): the tenant, its DPA and the acceptance of the CGV and
     # the DPA for it. Its `tenant.ordered` and `dpa.accepted` rows are audit rows, granted above.
     "tenancy_tenant",
@@ -338,6 +361,28 @@ UPDATE_COLUMNS = (
     ("workspaces_workspacechannelroleoverride", "allow"),
     ("workspaces_workspacechannelroleoverride", "deny"),
     ("workspaces_workspacechannelroleoverride", "updated_at"),
+    ("workspaces_workspacetemplateapplication", "state"),
+    ("workspaces_workspacetemplateapplication", "completed_steps"),
+    ("workspaces_workspacetemplateapplication", "artefacts"),
+    ("workspaces_workspacetemplateapplication", "last_error"),
+    ("workspaces_workspacetemplateapplication", "completed_at"),
+    ("workspaces_workspacetemplateapplication", "updated_at"),
+    ("workspaces_workspaceaipolicy", "enabled"),
+    ("workspaces_workspaceaipolicy", "provider"),
+    ("workspaces_workspaceaipolicy", "provider_region"),
+    ("workspaces_workspaceaipolicy", "eu_sovereign_only"),
+    ("workspaces_workspaceaipolicy", "self_hosted_endpoint"),
+    ("workspaces_workspaceaipolicy", "model"),
+    ("workspaces_workspaceaipolicy", "sealed_byom_config"),
+    ("workspaces_workspaceaipolicy", "monthly_budget_micros"),
+    ("workspaces_workspaceaipolicy", "monthly_spent_micros"),
+    ("workspaces_workspaceaipolicy", "budget_period"),
+    ("workspaces_workspaceaipolicy", "updated_at"),
+    ("workspaces_memberaiconsent", "enabled"),
+    ("workspaces_memberaiconsent", "consented_at"),
+    ("workspaces_memberaiconsent", "revoked_at"),
+    ("workspaces_memberaiconsent", "updated_at"),
+    ("workspaces_channel", "ai_enabled"),
     ("workspaces_workspace", "description"),
     ("workspaces_workspace", "banner_preset"),
     ("workspaces_workspace", "icon_mxc"),
@@ -450,11 +495,15 @@ UPDATE_COLUMNS = (
     ("media_attachment", "updated_at"),
     ("notifications_notification", "read_at"),
     ("notifications_notification", "updated_at"),
+    ("notifications_pushsubscription", "platform"),
     ("notifications_pushsubscription", "version"),
     ("notifications_pushsubscription", "endpoint_digest"),
     ("notifications_pushsubscription", "sealed_subscription"),
     ("notifications_pushsubscription", "revoked_at"),
     ("notifications_pushsubscription", "updated_at"),
+    ("notifications_presencelease", "platform"),
+    ("notifications_presencelease", "expires_at"),
+    ("notifications_presencelease", "updated_at"),
     # Native workspace document tree/content mutations, soft-delete, snapshot compaction and links;
     # ownership, visibility, creator, channel binding and journal rows stay immutable.
     ("docs_document", "parent_id"),
@@ -471,6 +520,23 @@ UPDATE_COLUMNS = (
     ("docs_documentsnapshot", "updated_at"),
     ("docs_documentlink", "target_id"),
     ("docs_documentlink", "updated_at"),
+    # Workspace import batch completion, `SELECT ... FOR UPDATE` on immutable imported objects,
+    # coexistence bridge revocation + secret zeroization, and retryable coexistence queue leases.
+    ("extensions_importbatch", "report"),
+    ("extensions_importbatch", "state"),
+    ("extensions_importbatch", "updated_at"),
+    ("extensions_importedobject", "id"),
+    ("extensions_coexistencebridge", "revoked_at"),
+    ("extensions_coexistencebridge", "sealed_signing_secret"),
+    ("extensions_coexistencebridge", "updated_at"),
+    ("extensions_coexistencereplayguard", "state"),
+    ("extensions_coexistencereplayguard", "lease_id"),
+    ("extensions_coexistencereplayguard", "lease_expires_at"),
+    ("extensions_coexistencereplayguard", "attempts"),
+    ("extensions_coexistencereplayguard", "matrix_txn_id"),
+    ("extensions_coexistencereplayguard", "matrix_event_id"),
+    ("extensions_coexistencereplayguard", "sanitized_payload"),
+    ("extensions_coexistencereplayguard", "updated_at"),
     ("identity_discoveryquotagate", "singleton"),
     ("identity_identity", "id"),
     ("identity_staffrole", "created_at"),
@@ -529,6 +595,11 @@ UPDATE_COLUMNS = (
     ("orgs_invitation", "revoked_at"),
     ("orgs_invitation", "updated_at"),
     ("orgs_membership", "accepted_at"),
+    # Zero-PII bug report deduplication coalesces only `occurrences` and `updated_at`; worker
+    # dispatch fields (`dispatched_at`, `github_issue_number`, `dispatch_attempts`,
+    # `last_dispatch_error`) and `support_bugreportcircuitstate` remain operator-only.
+    ("support_bugreport", "occurrences"),
+    ("support_bugreport", "updated_at"),
     # createTenant supersedes an older unaccepted DPA, and accepts the one it records (legal
     # services prepare_dpa and record_agreements); the update also covers their
     # `SELECT ... FOR UPDATE` of the DPA rows.
@@ -670,6 +741,8 @@ DELETE = (
     "ee_scim_session",
     "media_attachment",
     "media_previewadmission",
+    "notifications_presencelease",
+    "support_bugreportrateevent",
 )
 EXECUTE_FUNCTIONS = (
     "workspace_iam_permissions(jsonb)",
@@ -708,18 +781,62 @@ SELECT_COLUMNS = (
     ),
 )
 
+# SQL column-level INSERT restriction: `support_bugreport` grants `kodera_api` INSERT strictly on
+# collector-owned diagnostic columns; worker-owned claim and GitHub dispatch columns (`claimed_at`,
+# `claim_token`, `dispatched_at`, `github_issue_number`, `dispatch_attempts`, `last_dispatch_error`)
+# populate from SQL DEFAULTs and cannot be forged by the HTTP API role.
+INSERT_COLUMNS = (
+    *(
+        ("support_bugreport", column)
+        for column in (
+            "id",
+            "created_at",
+            "updated_at",
+            "build_id",
+            "component",
+            "error_code",
+            "device_class",
+            "consent",
+            "sanitized_note",
+            "screenshot_content_type",
+            "screenshot_bytes",
+            "screenshot_sha256",
+            "dedup_fingerprint",
+            "occurrences",
+        )
+    ),
+)
+
+
+def revoke_broad_insert_statements(role: str) -> list[str]:
+    """Revoke table-wide INSERT on column-scoped INSERT_COLUMNS tables before applying column grants."""
+    if ROLE.fullmatch(role) is None:
+        raise ValueError("a role name is a lower-case identifier")
+    column_insert_tables = sorted({table for table, _ in INSERT_COLUMNS})
+    return [f'REVOKE INSERT ON TABLE "{table}" FROM "{role}"' for table in column_insert_tables]
+
 
 def grant_statements(role: str) -> list[str]:
     """The GRANT statements for `role`, a lower-case PostgreSQL identifier."""
     if ROLE.fullmatch(role) is None:
         raise ValueError("a role name is a lower-case identifier")
+    column_insert_tables = {table for table, _ in INSERT_COLUMNS}
     statements = [f'GRANT USAGE ON SCHEMA public TO "{role}"']
     statements += [f'GRANT SELECT ON TABLE "{table}" TO "{role}"' for table in SELECT]
     statements += [
         f'GRANT SELECT ("{column}") ON TABLE "{table}" TO "{role}"'
         for table, column in SELECT_COLUMNS
     ]
-    statements += [f'GRANT INSERT ON TABLE "{table}" TO "{role}"' for table in INSERT]
+    statements += revoke_broad_insert_statements(role)
+    statements += [
+        f'GRANT INSERT ON TABLE "{table}" TO "{role}"'
+        for table in INSERT
+        if table not in column_insert_tables
+    ]
+    statements += [
+        f'GRANT INSERT ("{column}") ON TABLE "{table}" TO "{role}"'
+        for table, column in INSERT_COLUMNS
+    ]
     statements += [
         f'GRANT UPDATE ("{column}") ON TABLE "{table}" TO "{role}"'
         for table, column in UPDATE_COLUMNS

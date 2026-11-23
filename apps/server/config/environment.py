@@ -93,6 +93,8 @@ ADMITTED_SECRET_NAMES = frozenset(
         "DJANGO_SECRET_KEY",  # the application signing key
         "KODERA_COLLAB_TICKET_KEY",  # collaboration ticket and transform HMAC key
         "KODERA_NOTIFICATION_SEAL_KEY",  # sealed per-device application data
+        "KODERA_AI_SEAL_KEY",  # optional HKDF master key sealing BYOM AI configs
+        "KODERA_AI_MISTRAL_API_KEY",  # optional EU-sovereign Mistral API key
         "KODERA_PUSH_VAPID_PUBLIC_KEY",  # public P-256 discovery point
         "KODERA_CONTACT_SEAL_KEY",  # application secrets
         "KODERA_OUTBOX_SEAL_KEY",
@@ -103,6 +105,7 @@ ADMITTED_SECRET_NAMES = frozenset(
         "KODERA_STRIPE_SECRET_KEY",  # a restricted key, apps/billing/configuration.py
         "KODERA_STRIPE_WEBHOOK_SECRET",
         "KODERA_MAIL_SMTP_PASSWORD",  # transactional mail, the operator's sender
+        "KODERA_SYNAPSE_ADMIN_TOKEN",  # optional Matrix worker homeserver admin access token
         "KODERA_REALM_WORKER_SECRET_DIR",  # a path to per-realm secrets, never a secret
         "GPG_KEY",  # python image: the fingerprint of CPython's release signing key
     }
@@ -314,6 +317,153 @@ def ee_audit_signing_seed(environment: Mapping[str, str]) -> bytes | None:
             "characters with sufficient entropy, or unset"
         )
     return raw.encode("ascii")
+
+
+def ai_mistral_api_key(environment: Mapping[str, str]) -> str | None:
+    """Optional EU-sovereign Mistral API key for managed AI requests, from
+    KODERA_AI_MISTRAL_API_KEY.
+
+    Unset or empty returns `None`. When set, must be 1 to 512 printable non-whitespace ASCII
+    characters and never a PEM private key, Stripe full secret key or Scaleway access key."""
+    raw = environment.get("KODERA_AI_MISTRAL_API_KEY", "")
+    if raw == "":
+        return None
+    upper = raw.upper()
+    if (
+        not 1 <= len(raw) <= 512
+        or any(not (0x21 <= ord(ch) <= 0x7E) for ch in raw)
+        or "PRIVATE" in upper
+        or raw.startswith(("sk_live_", "sk_test_"))
+        or re.search(r"\bSCW[A-Z0-9]{17}\b", raw) is not None
+    ):
+        raise ImproperlyConfigured(
+            "KODERA_AI_MISTRAL_API_KEY must be 1 to 512 printable non-whitespace ASCII "
+            "characters, or unset"
+        )
+    return raw
+
+
+def _normalized_comma_tokens(environment: Mapping[str, str], name: str) -> tuple[str, ...]:
+    raw = environment.get(name, "")
+    if not raw:
+        return ()
+    items = [entry.strip().lower() for entry in raw.split(",") if entry.strip()]
+    if any(
+        len(entry) > 255 or any(ord(ch) <= 32 or ord(ch) == 127 for ch in entry) for entry in items
+    ):
+        raise ImproperlyConfigured(f"{name} entries must be 1 to 255 printable ASCII characters")
+    return tuple(dict.fromkeys(items))
+
+
+def ai_actor_subjects(environment: Mapping[str, str]) -> tuple[str, ...]:
+    """Lowercase-normalized OIDC subject identifiers treated as AI/service actors."""
+    return _normalized_comma_tokens(environment, "KODERA_AI_ACTOR_SUBJECTS")
+
+
+def ai_client_ids(environment: Mapping[str, str]) -> tuple[str, ...]:
+    """Lowercase-normalized OAuth client (`azp`) identifiers treated as AI/service actors."""
+    return _normalized_comma_tokens(environment, "KODERA_AI_CLIENT_IDS")
+
+
+def synapse_url(environment: Mapping[str, str]) -> str | None:
+    """The internal Matrix homeserver's base URL for the coexistence replay worker, from
+    KODERA_SYNAPSE_URL.
+
+    Unset or empty returns `None`. When set, must be one `http` or `https` URL of a host with an
+    optional port and nothing else: no userinfo, path, query or fragment. Anything else stops the
+    process without reflecting the value."""
+    value = environment.get("KODERA_SYNAPSE_URL", "").strip()
+    if not value:
+        return None
+    refused = ImproperlyConfigured(
+        "KODERA_SYNAPSE_URL must be http(s)://<host>[:port], with no path, query, fragment or user"
+    )
+    if len(value) > 2048 or any(ord(ch) <= 32 or ord(ch) == 127 for ch in value):
+        raise refused
+    try:
+        parsed = urlsplit(value)
+        port = parsed.port
+    except ValueError:
+        raise refused from None
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in ("", "/")
+        or parsed.query
+        or parsed.fragment
+        or (port is not None and not 1 <= port <= 65535)
+        or "\\" in parsed.netloc
+    ):
+        raise refused
+    return value
+
+
+def synapse_admin_token(environment: Mapping[str, str]) -> str | None:
+    """Optional Matrix homeserver admin access token for the coexistence replay worker, from
+    KODERA_SYNAPSE_ADMIN_TOKEN.
+
+    Unset or empty returns `None`. When set, must be 1 to 512 printable non-whitespace ASCII
+    characters and never a PEM private key, Stripe full secret key or Scaleway access key."""
+    raw = environment.get("KODERA_SYNAPSE_ADMIN_TOKEN", "")
+    if raw == "":
+        return None
+    upper = raw.upper()
+    if (
+        not 1 <= len(raw) <= 512
+        or any(not (0x21 <= ord(ch) <= 0x7E) for ch in raw)
+        or "PRIVATE" in upper
+        or raw.startswith(("sk_live_", "sk_test_"))
+        or re.search(r"\bSCW[A-Z0-9]{17}\b", raw) is not None
+    ):
+        raise ImproperlyConfigured(
+            "KODERA_SYNAPSE_ADMIN_TOKEN must be 1 to 512 printable non-whitespace ASCII "
+            "characters, or unset"
+        )
+    return raw
+
+
+MATRIX_SERVER_NAME = re.compile(
+    r"(?=.{1,255}\Z)[a-z0-9](?:[a-z0-9.-]{0,253}[a-z0-9])?(?::[1-9][0-9]{0,4})?\Z"
+)
+
+
+def synapse_server_name(environment: Mapping[str, str]) -> str:
+    """The Matrix homeserver's `server_name`, from KODERA_SYNAPSE_SERVER_NAME.
+
+    Unset or empty returns `""`: the worker then sends with the token's own server name. When set,
+    must be a lowercase host name or address with an optional port; anything else stops the
+    process without reflecting the value."""
+    value = environment.get("KODERA_SYNAPSE_SERVER_NAME", "").strip().lower()
+    if not value:
+        return ""
+    if MATRIX_SERVER_NAME.fullmatch(value) is None:
+        raise ImproperlyConfigured(
+            "KODERA_SYNAPSE_SERVER_NAME must be a lowercase host name or address with an "
+            "optional port"
+        )
+    return value
+
+
+DOTTED_PYTHON_PATH = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+\Z")
+
+
+def matrix_replay_transport_factory(environment: Mapping[str, str]) -> str | None:
+    """Optional dotted Python path of the callable the coexistence worker builds its Matrix replay
+    transport with, from KODERA_MATRIX_REPLAY_TRANSPORT_FACTORY.
+
+    Unset or empty returns `None`: the worker builds the default homeserver transport from
+    KODERA_SYNAPSE_URL and KODERA_SYNAPSE_ADMIN_TOKEN. When set, must be one dotted path
+    (`package.module.attribute`); anything else stops the process."""
+    value = environment.get("KODERA_MATRIX_REPLAY_TRANSPORT_FACTORY", "").strip()
+    if not value:
+        return None
+    if len(value) > 255 or DOTTED_PYTHON_PATH.fullmatch(value) is None:
+        raise ImproperlyConfigured(
+            "KODERA_MATRIX_REPLAY_TRANSPORT_FACTORY must be one dotted Python path, or unset"
+        )
+    return value
 
 
 STAFF_REALM_SUFFIX = "/realms/kodera-staff"

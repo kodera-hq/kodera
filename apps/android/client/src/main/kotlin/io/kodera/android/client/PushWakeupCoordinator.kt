@@ -72,11 +72,13 @@ class PushWakeupCoordinator(private val requester: CoreRequester) {
             throw PushWakeupException(PushWakeupError.INVALID_INPUT)
         }
         val bodyBytes = JsonObject().apply {
+            addProperty("platform", "android")
             addProperty("endpoint", endpoint)
             addProperty("p256dh", p256dh)
             addProperty("auth", auth)
         }.toString().toByteArray(Charsets.UTF_8)
 
+        // Always PUT so a remembered legacy registration gains platform parity.
         val reply = requester.put(
             path = deviceWakeupPath(deviceId),
             jsonBody = bodyBytes,

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Resolve conversation security through the session workspace loader.
+
+- Reject malformed incremental room state before plaintext sends.
+- Block plaintext messages, edits, reactions and uploads until Core and Matrix room security are verified; show a bilingual secure-messaging notice.
+- Join rooms before initial sync and limit sync to one room with a bounded 256 KiB response.
+- Admit Ogg, WebM and MP4 voice-note attachments and register the explicit mobile push platform.
+
 - Add `KoderaMobileFfiBridge`, `UuidV7Identifier`, `Kdv1SessionVaultCodec` (`RustSessionVault` persisted under `filesDir/session/rust-vault.bin` with Android Keystore AES-256-GCM bound to `(organisation_id, device_id)` AAD and verified byte-for-byte against `packages/kodera-rs/vectors/mobile-ffi-v1.txt`), `MatrixRoomClient`, `MatrixTimelineReducer`, `PushWakeupCoordinator`, and interactive `ChannelConversationScreen` (`LazyColumn` for active text and audio companion channels with multiline composer, `OpenDocument` attachments, haptic swipe-to-reply, single-grapheme emoji reactions, and native `ACTION_SEND` chooser via `StartActivityForResult`).
 
 - Sync generated `@kodera/design-tokens` `0.8.0` bindings (`Dark` *Dark Precision* default theme and `Light` *Light Givre*), unify bundled sans font resources and `OFL-inter.txt` on `Inter`, and retire `Plus Jakarta Sans`.

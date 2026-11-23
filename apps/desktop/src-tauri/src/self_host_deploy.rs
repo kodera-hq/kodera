@@ -65,6 +65,7 @@ const MAX_COMPOSE_FILE_BYTES: u64 = 262_144;
 
 const ADMITTED_COMMUNITY_COMPOSE_SERVICES: &[&str] = &[
     "agent-state-init",
+    "api-admission",
     "caddy",
     "db",
     "keycloak",

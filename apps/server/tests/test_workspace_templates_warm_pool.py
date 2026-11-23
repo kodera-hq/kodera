@@ -13,9 +13,11 @@ from types import SimpleNamespace
 
 import pytest
 
+from apps.docs import collection_schema
 from apps.workspaces import templates
 from apps.workspaces.models import TEMPLATE_KEY, Channel
 from apps.workspaces.templates import (
+    PERSONA_TEMPLATE_IDS,
     TEMPLATES,
     UnknownWorkspaceTemplateError,
     list_templates,
@@ -57,11 +59,30 @@ def test_catalogue_exposes_all_five_official_templates() -> None:
         "audiovisual-production",
         "tech-studio",
         "b2b-advisory",
+        "association-coop",
+        "open-source-community",
         "public-sector",
+        "blank",
         "proximity",
     }
     assert set(TEMPLATES.keys()) == expected_ids
     assert [tpl.id for tpl in list_templates()] == list(TEMPLATES.keys())
+    assert PERSONA_TEMPLATE_IDS == (
+        "tech-studio",
+        "b2b-advisory",
+        "association-coop",
+        "open-source-community",
+        "public-sector",
+        "blank",
+    )
+    assert [TEMPLATES[pid].persona for pid in PERSONA_TEMPLATE_IDS] == [
+        "startup-product",
+        "agency-clients",
+        "association-coop",
+        "open-source-community",
+        "public-sector",
+        "blank",
+    ]
 
 
 def test_audiovisual_production_template_matches_production_company_blueprint() -> None:
@@ -114,6 +135,26 @@ def test_every_template_satisfies_database_template_key_and_channel_constraints(
             assert 0 <= len(ch.topic) <= 1024
         for connector in tpl.default_connectors:
             assert connector in OFFICIAL_CONNECTOR_IDS
+        col_by_key = {col.key: col for col in tpl.collections}
+        assert len(col_by_key) == len(tpl.collections)
+        for col in tpl.collections:
+            assert pattern.fullmatch(col.db_template_key), (tpl.id, col.db_template_key)
+            collection_schema.views([dict(p) for p in col.properties], [dict(v) for v in col.views])
+        ch_keys = {ch.template_key for ch in tpl.channels}
+        seen_doc_keys: set[str] = set()
+        for doc in tpl.documents:
+            assert pattern.fullmatch(doc.db_template_key), (tpl.id, doc.db_template_key)
+            assert doc.db_template_key not in seen_doc_keys
+            seen_doc_keys.add(doc.db_template_key)
+            assert 1 <= len(doc.title.strip()) <= 200
+            if doc.channel_key is not None:
+                assert doc.channel_key in ch_keys, (tpl.id, doc.channel_key)
+            if doc.collection_key is not None:
+                assert doc.collection_key in col_by_key, (tpl.id, doc.collection_key)
+                collection_schema.values(
+                    [dict(p) for p in col_by_key[doc.collection_key].properties],
+                    dict(doc.collection_values),
+                )
 
 
 def test_resolve_template_refuses_unknown_identifier() -> None:
@@ -284,9 +325,109 @@ def test_instant_claim_uses_the_existing_tenant_slug_bound():
     assert _errors({**VALID_CLAIM_PAYLOAD, "slug": "a" * 33}) == [("/slug", "invalid")]
 
 
-@pytest.mark.parametrize("field", ["themeId", "soundPackId", "enabledConnectors"])
+@pytest.mark.parametrize(
+    "field",
+    ["themeId", "soundPackId", "enabledConnectors", "operationKey", "customization"],
+)
 def test_explicit_null_optional_fields_match_the_nonnullable_contract(field):
     assert _errors({**VALID_CLAIM_PAYLOAD, field: None}) == [("/" + field, "invalid")]
+
+
+def test_v2_customization_and_operation_key_preserve_legacy_compat_and_validate_channels() -> None:
+    legacy = _parse(VALID_CLAIM_PAYLOAD)
+    legacy_plan = build_instant_claim_plan(legacy)
+    assert "customization" not in legacy_plan
+    assert "operation_key" not in legacy_plan
+    assert "template_version" not in legacy_plan
+
+    # `operationKey` alone never mutates the warm-pool structural allocation plan, so a client
+    # supplying `operationKey` still matches a pre-warmed pool allocation.
+    with_op_key_only = _parse({**VALID_CLAIM_PAYLOAD, "operationKey": "claim-lumiere:01"})
+    assert build_instant_claim_plan(with_op_key_only) == legacy_plan
+
+    customized_req = _parse(
+        {
+            "organizationName": "Coopérative Solaire",
+            "slug": "cooperative-solaire",
+            "hostingMode": "cloud",
+            "templateId": "association-coop",
+            "operationKey": "claim-asso-solaire:v2",
+            "customization": {
+                "includeAudioChannels": False,
+                "includeCollections": True,
+                "includeStarterDocs": True,
+                "excludedChannelKeys": ["entraide-projets"],
+                "additionalChannels": [
+                    {
+                        "categoryKey": "projets",
+                        "name": "Chantiers Énergie",
+                        "kind": "text",
+                        "topic": "Suivi des installations photovoltaïques",
+                    }
+                ],
+            },
+        }
+    )
+    assert customized_req.operation_key == "claim-asso-solaire:v2"
+    plan = build_instant_claim_plan(customized_req)
+    assert plan["template_version"] == 2
+    assert "operation_key" not in plan
+    assert [ch["name"] for ch in plan["channels"]] == [
+        "accueil",
+        "gouvernance",
+        "Chantiers Énergie",
+    ]
+    assert [ch["db_template_key"] for ch in plan["channels"]] == [
+        "accueil",
+        "gouvernance",
+        "chantiers_energie",
+    ]
+    assert all(ch["kind"] == "text" for ch in plan["channels"])
+    assert [c["key"] for c in plan["collections"]] == ["decisions-collectives"]
+    assert [d["key"] for d in plan["documents"]] == ["governance-charter"]
+
+    # Refuses whitespace/symbol-only additional channel names, excluding every text channel, or
+    # adding audio while includeAudioChannels is false.
+    for bad_name in ("   ", "!!!", "Bad\nName"):
+        assert _errors(
+            {
+                "organizationName": "Vierge",
+                "slug": "espace-vierge-test",
+                "hostingMode": "cloud",
+                "templateId": "blank",
+                "customization": {
+                    "additionalChannels": [
+                        {"categoryKey": "general", "name": bad_name, "kind": "text"}
+                    ]
+                },
+            }
+        ) == [("/customization", "invalid")]
+    assert _errors(
+        {
+            "organizationName": "Vierge",
+            "slug": "espace-vierge-test",
+            "hostingMode": "cloud",
+            "templateId": "blank",
+            "customization": {"excludedChannelKeys": ["general"]},
+        }
+    ) == [("/customization", "invalid")]
+    assert _errors(
+        {
+            "organizationName": "Vierge",
+            "slug": "espace-vierge-test",
+            "hostingMode": "cloud",
+            "templateId": "blank",
+            "customization": {
+                "includeAudioChannels": False,
+                "additionalChannels": [
+                    {"categoryKey": "general", "name": "vocal", "kind": "audio"}
+                ],
+            },
+        }
+    ) == [("/customization", "invalid")]
+    assert _errors({**VALID_CLAIM_PAYLOAD, "operationKey": "bad key with spaces"}) == [
+        ("/operationKey", "invalid")
+    ]
 
 
 # --- contract 0.42.0: proximity, its alias, and the theme vocabulary ----------------------------
@@ -569,3 +710,68 @@ def test_the_server_vocabularies_are_the_contracts():
     accepted = schemas["InstantClaimTenantRequest"]["properties"]["themeId"]["enum"]
     assert accepted == [*templates.THEME_IDS, *templates.THEME_ALIASES]
     assert schemas["WorkspaceTemplateId"]["enum"] == [*TEMPLATES, *templates.TEMPLATE_ALIASES]
+
+
+def test_additional_channel_name_character_set_parity_between_openapi_and_warm_pool() -> None:
+    import jsonschema_rs
+    import yaml
+
+    from apps.workspaces.warm_pool import (
+        ADDITIONAL_CHANNEL_NAME_RE,
+        _is_printable_single_line,
+        slugify_channel_key,
+    )
+
+    schemas = yaml.safe_load((ROOT / "contracts/core-api.openapi.yaml").read_text())["components"][
+        "schemas"
+    ]
+    name_schema = schemas["WorkspaceTemplateCustomization"]["properties"]["additionalChannels"][
+        "items"
+    ]["properties"]["name"]
+    assert name_schema["pattern"] == ADDITIONAL_CHANNEL_NAME_RE.pattern
+    validator = jsonschema_rs.validator_for(name_schema)
+
+    rejected = ["ø", "Ａ", "ＡBC", "Team\u00adChat", "   ", "---", "Team\nChat", ""]
+    for bad_name in rejected:
+        assert validator.is_valid(bad_name) is False, bad_name
+        assert _errors(
+            {
+                **VALID_CLAIM_PAYLOAD,
+                "customization": {
+                    "additionalChannels": [
+                        {"categoryKey": "production", "name": bad_name, "kind": "text"}
+                    ]
+                },
+            }
+        ) == [("/customization", "invalid")]
+
+    accepted = [("Équipe Produit 1", "equipe-produit-1"), ("Team Chat", "team-chat")]
+    for good_name, expected_key in accepted:
+        assert validator.is_valid(good_name) is True, good_name
+        parsed = _parse(
+            {
+                **VALID_CLAIM_PAYLOAD,
+                "customization": {
+                    "additionalChannels": [
+                        {"categoryKey": "production", "name": good_name, "kind": "text"}
+                    ]
+                },
+            }
+        )
+        assert parsed.customization is not None
+        assert parsed.customization.additional_channels[0].name == good_name
+        assert slugify_channel_key(good_name) == expected_key
+
+    # Full BMP codepoint sweep: zero mismatch between OpenAPI schema and warm_pool.py.
+    for cp in range(0x10000):
+        if 0xD800 <= cp <= 0xDFFF:
+            continue
+        ch = chr(cp)
+        for probe in (ch, f"A{ch}"):
+            schema_ok = validator.is_valid(probe)
+            parser_ok = (
+                ADDITIONAL_CHANNEL_NAME_RE.fullmatch(probe) is not None
+                and _is_printable_single_line(probe)
+                and bool(slugify_channel_key(probe))
+            )
+            assert schema_ok == parser_ok, (hex(cp), repr(probe), schema_ok, parser_ok)

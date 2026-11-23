@@ -16,6 +16,7 @@ import {
   type EspaceStoreLike,
 } from './liveViewModel'
 import { createEspaceStore } from './matrix/store'
+import { useForegroundPresence } from './useForegroundPresence'
 import { useMicActivity } from './useMicActivity'
 import { useStoreSlice } from './useStoreSlice'
 import { useTabTitle } from './useTabTitle'
@@ -130,6 +131,7 @@ export function useEspaceRuntime({
     [workspace]
   )
   const organisationId = workspace.organisation_id
+  useForegroundPresence(organisationId, membershipActive, authLifetime)
 
   const ownedSlot = useMemo<OwnedStoreSlot | null>(() => {
     if (injectedStore !== undefined) return null

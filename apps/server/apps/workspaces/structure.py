@@ -64,6 +64,7 @@ class ChannelView:
     topic: str
     lifecycle: str
     room_state: str
+    is_confidential: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,6 +172,7 @@ def _visible_structure(
             "policy_mode",
             "explicit_policy_id",
             "room_state",
+            "is_confidential",
         )
     )
     category_defaults = {row[0]: row[3] for row in categories}
@@ -220,7 +222,19 @@ def _visible_structure(
         )
 
     visible: dict[UUID | None, list[ChannelView]] = {}
-    for pk, category_id, kind, name, key, topic, lifecycle, mode, explicit, room in channels:
+    for (
+        pk,
+        category_id,
+        kind,
+        name,
+        key,
+        topic,
+        lifecycle,
+        mode,
+        explicit,
+        room,
+        confidential,
+    ) in channels:
         if category_id is not None and category_id not in category_defaults:
             raise WorkspaceUnavailableError()
         if mode == Channel.PolicyMode.EXPLICIT:
@@ -232,7 +246,7 @@ def _visible_structure(
             raise WorkspaceUnavailableError()
         if may_view(resolved, kind, lifecycle, overrides_by_channel.get(pk)):
             visible.setdefault(category_id, []).append(
-                ChannelView(pk, kind, name, key, topic, lifecycle, room)
+                ChannelView(pk, kind, name, key, topic, lifecycle, room, confidential)
             )
 
     shown = []

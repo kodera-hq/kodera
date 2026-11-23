@@ -33,10 +33,21 @@ describe('AudioDock', () => {
     expect(meter).toHaveAttribute('aria-hidden', 'true')
     // The caller's element: its width is set frame by frame, starting empty.
     expect(meterRef.current).toBe(meter.firstElementChild)
-    expect(meterRef.current).toHaveClass('origin-left', 'bg-c-ok-on-dark')
+    expect(meterRef.current).toHaveClass('origin-left', 'bg-c-action')
     // Empty until the caller draws it.
     expect(meterRef.current!.style.transform).toBe('scaleX(0)')
     expect(meter).toHaveClass('bg-c-inverse-2')
+  })
+
+  it('renders custom visualizer and studio soundboard slots when supplied', () => {
+    setup({
+      layout: 'studio',
+      visualizer: <canvas data-testid="custom-voice-visualizer" />,
+      soundboard: <button type="button" aria-label="Palette sonore" />,
+    })
+    const region = screen.getByRole('region', { name: 'Appel en cours' })
+    expect(within(region).getByTestId('custom-voice-visualizer')).toBeInTheDocument()
+    expect(within(region).getByRole('button', { name: 'Palette sonore' })).toBeInTheDocument()
   })
 
   it("sets the caller's settings control in the top row, before the open-call button", () => {
@@ -362,5 +373,70 @@ describe('AudioDock camera and screen', () => {
       'false'
     )
     expect(screen.queryByRole('button', { name: /écran/u })).toBeNull()
+  })
+})
+
+describe('AudioDock companionChat control', () => {
+  it('exposes aria-expanded, caps unread badge at 99+, hides badge when open, and keeps Quitter as the only red control', async () => {
+    const user = userEvent.setup()
+    const onToggle = vi.fn()
+    const { rerender } = render(
+      <AudioDock
+        label="Appel en cours"
+        room="Point quotidien"
+        status="connected"
+        statusLabel="Connecté"
+        muted={false}
+        deafened={false}
+        onToggleMute={vi.fn()}
+        onToggleDeafen={vi.fn()}
+        onLeave={vi.fn()}
+        companionChat={{
+          open: false,
+          unread: 125,
+          label: 'Discussion de l’appel (99+)',
+          onToggle,
+        }}
+        labels={{ mute: 'Micro', deafen: 'Son', leave: 'Quitter' }}
+      />
+    )
+
+    const chatBtn = screen.getByRole('button', { name: 'Discussion de l’appel (99+)' })
+    expect(chatBtn).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.getByTestId('companion-chat-unread')).toHaveTextContent('99+')
+
+    // Quitter stays the dock's only bg-c-bad red control
+    const region = screen.getByRole('region', { name: 'Appel en cours' })
+    const red = [region, ...region.querySelectorAll('*')].filter((el) =>
+      [...el.classList].some((name) => /(^|:)bg-c-bad/.test(name))
+    )
+    expect(red).toEqual([screen.getByRole('button', { name: 'Quitter' })])
+
+    await user.click(chatBtn)
+    expect(onToggle).toHaveBeenCalledTimes(1)
+
+    rerender(
+      <AudioDock
+        label="Appel en cours"
+        room="Point quotidien"
+        status="connected"
+        statusLabel="Connecté"
+        muted={false}
+        deafened={false}
+        onToggleMute={vi.fn()}
+        onToggleDeafen={vi.fn()}
+        onLeave={vi.fn()}
+        companionChat={{
+          open: true,
+          unread: 0,
+          label: 'Discussion de l’appel',
+          onToggle,
+        }}
+        labels={{ mute: 'Micro', deafen: 'Son', leave: 'Quitter' }}
+      />
+    )
+    const expandedBtn = screen.getByRole('button', { name: 'Discussion de l’appel' })
+    expect(expandedBtn).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.queryByTestId('companion-chat-unread')).toBeNull()
   })
 })

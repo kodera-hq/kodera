@@ -368,4 +368,5 @@
     <string name="conversation_delivery_sending">Envoi…</string>
     <string name="conversation_delivery_failed">Échec de l’envoi</string>
     <string name="conversation_sync_refresh">Actualiser</string>
+    <string name="conversation_status_secure_transport_required">L’envoi est désactivé tant qu’un salon public n’est pas vérifié. Les salons confidentiels et chiffrés nécessitent la messagerie sécurisée.</string>
 </resources>

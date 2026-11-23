@@ -4,7 +4,7 @@
 
 ## Two separate API boundaries
 
-Core API 0.51.0 is the customer-console contract. Agent API 0.7.0 is the tenant-agent contract; its authentication and operations are a separate boundary. Both use OpenAPI 3.1.
+Core API 0.55.0 is the customer-console contract. Agent API 0.8.0 is the tenant-agent contract; its authentication and operations are a separate boundary. Both use OpenAPI 3.1.
 
 The console uses its authenticated Core transport. It does not call identity providers, infrastructure providers or tenant control endpoints directly.
 

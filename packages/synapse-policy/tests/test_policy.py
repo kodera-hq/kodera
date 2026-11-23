@@ -735,3 +735,96 @@ def test_dm_member_joined_restricts_inspection_to_service_accounts_and_rejects_c
     with pytest.raises(SynapseError):
         run(without_ra.dm_member_joined(ROOM_ACCESS, dm_id, ALICE))
     assert run(without_ra.dm_member_joined(AGENT, dm_id, ALICE)) is True
+
+
+def test_audio_companion_chat_follows_read_only_exempt_and_archive():
+    audio_room = f"!audio-companion:{SERVER}"
+
+    def audio_state(*, read_only=False, listen_only=False, exempt=None, may_publish=None, archived=False):
+        return {
+            ("m.room.create", ""): SimpleNamespace(sender=AGENT, content={"m.federate": False}),
+            ("io.kodera.room.policy", ""): SimpleNamespace(
+                sender=AGENT,
+                content={
+                    "version": 1,
+                    "kind": "audio",
+                    "read_only": read_only,
+                    "audience": "all",
+                    "members": [],
+                    "exempt": exempt or [],
+                    "listen_only": listen_only,
+                    "may_publish": may_publish or [],
+                    "archived": archived,
+                },
+            ),
+            ("m.room.power_levels", ""): SimpleNamespace(
+                content={"users_default": 0, "state_default": 100, "users": {BOB: 50, ROOM_ACCESS: 10}}
+            ),
+            ("m.room.member", ALICE): SimpleNamespace(content={"membership": "join"}),
+            ("m.room.member", BOB): SimpleNamespace(content={"membership": "join"}),
+            ("m.room.member", CAROL): SimpleNamespace(content={"membership": "join"}),
+            ("m.room.member", ROOM_ACCESS): SimpleNamespace(content={"membership": "join"}),
+        }
+
+    def verdicts(state, incoming):
+        incoming.room_id = audio_room
+        configured = KoderaPolicy(
+            {"agent_user_id": AGENT, "room_access_user_id": ROOM_ACCESS},
+            FakeApi({audio_room: state}),
+        )
+        return (
+            run(configured.check_event_allowed(incoming, state))[0],
+            run(configured.check_event_for_spam(incoming)),
+        )
+
+    # 1. Active audio room with read_only=False allows companion m.room.message even when listen_only=True.
+    for listen_only in (False, True):
+        open_chat = audio_state(read_only=False, listen_only=listen_only, may_publish=[])
+        assert verdicts(open_chat, event("m.room.message", ALICE, state=False, body="hello")) == (
+            True,
+            ALLOWED,
+        )
+        assert verdicts(open_chat, event("m.reaction", ALICE, state=False)) == (True, ALLOWED)
+        # Service account room_access never posts companion messages even in an open all-audience audio room.
+        assert verdicts(
+            open_chat, event("m.room.message", ROOM_ACCESS, state=False, body="spoof")
+        ) == (False, FORBIDDEN)
+
+    # 2. Active audio room with read_only=True enforces chat `exempt` (may_publish never grants chat posting).
+    restricted_chat = audio_state(
+        read_only=True,
+        listen_only=True,
+        exempt=[CAROL],
+        may_publish=[ALICE],
+    )
+    assert verdicts(restricted_chat, event("m.room.message", ALICE, state=False, body="blocked")) == (
+        False,
+        FORBIDDEN,
+    )
+    assert verdicts(restricted_chat, event("m.sticker", ALICE, state=False)) == (False, FORBIDDEN)
+    assert verdicts(restricted_chat, event("m.reaction", ALICE, state=False)) == (True, ALLOWED)
+    for writer in (CAROL, BOB, AGENT):
+        assert verdicts(
+            restricted_chat, event("m.room.message", writer, state=False, body="allowed")
+        ) == (True, ALLOWED)
+
+    # 3. Archived audio room refuses companion messages and reactions from members, exempt included.
+    archived_chat = audio_state(
+        read_only=False,
+        listen_only=False,
+        exempt=[CAROL],
+        may_publish=[ALICE],
+        archived=True,
+    )
+    for sender in (ALICE, BOB, CAROL, ROOM_ACCESS):
+        assert verdicts(archived_chat, event("m.room.message", sender, state=False, body="closed")) == (
+            False,
+            FORBIDDEN,
+        )
+        assert verdicts(archived_chat, event("m.reaction", sender, state=False)) == (
+            False,
+            FORBIDDEN,
+        )
+    assert verdicts(
+        archived_chat, event("io.kodera.room.occupancy", ROOM_ACCESS, state=True, participants=[])
+    ) == (True, ALLOWED)
