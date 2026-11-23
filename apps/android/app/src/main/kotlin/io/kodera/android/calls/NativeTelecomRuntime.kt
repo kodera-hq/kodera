@@ -36,12 +36,15 @@ import io.kodera.android.client.NativeCallPresenter
 import io.kodera.android.domain.NativeRingPhase
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 
 /** Install only for a provisioned authenticated call session; never from untrusted intent extras. */
 class NativeTelecomRuntime(private val context: Context, val coordinator: NativeCallCoordinator) : NativeCallPresenter {
     private val main = Handler(Looper.getMainLooper())
     private val worker = Executors.newSingleThreadExecutor()
+    // Authority checks must not queue behind a blocked media connect or audio handoff.
+    private val timeline = Executors.newSingleThreadScheduledExecutor()
     private val telecom = context.getSystemService(TelecomManager::class.java)
     private val audio = context.getSystemService(AudioManager::class.java)
     private val notifications = context.getSystemService(NotificationManager::class.java)
@@ -73,13 +76,14 @@ class NativeTelecomRuntime(private val context: Context, val coordinator: Native
             telecom.registerPhoneAccount(PhoneAccount.builder(account, context.getString(R.string.brand_name)).setCapabilities(PhoneAccount.CAPABILITY_SELF_MANAGED).build())
             notifications.createNotificationChannel(NotificationChannel(CHANNEL, context.getString(R.string.native_call_channel), NotificationManager.IMPORTANCE_HIGH))
             coordinator.bind(this); connectivity.registerDefaultNetworkCallback(network); main.post(expiry)
+            timeline.scheduleWithFixedDelay({ coordinator.pollCompanionTimeline() }, 0, 1, TimeUnit.SECONDS)
         } catch (failure: Exception) { stop(); throw failure }
     }
     fun stop() {
         if (!current.compareAndSet(this, null)) return
         coordinator.revoke(); main.removeCallbacks(expiry)
         runCatching { connectivity.unregisterNetworkCallback(network) }; audioFocus.release()
-        telecom.unregisterPhoneAccount(account); worker.shutdownNow()
+        telecom.unregisterPhoneAccount(account); worker.shutdownNow(); timeline.shutdownNow()
     }
     /** Entry point for a provisioned messaging provider's high-priority data callback. No notification payload is accepted. */
     fun onFcmCallWake(data: Map<String, String>, highPriority: Boolean, hasNotification: Boolean = false) {

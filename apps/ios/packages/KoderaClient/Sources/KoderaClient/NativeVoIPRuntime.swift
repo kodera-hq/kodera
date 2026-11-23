@@ -51,7 +51,11 @@ public final class NativeVoIPRuntime: NSObject, @preconcurrency PKPushRegistryDe
         let registry = PKPushRegistry(queue: .main)
         registry.delegate = self; registry.desiredPushTypes = [.voIP]; self.registry = registry
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.coordinator.tick() }
+            Task { @MainActor in
+                guard let self else { return }
+                self.coordinator.tick()
+                await self.coordinator.pollCompanionTimeline()
+            }
         }
         monitor.pathUpdateHandler = { [weak self] _ in
             Task { @MainActor in await self?.coordinator.networkPathChanged() }

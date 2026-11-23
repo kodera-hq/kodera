@@ -24,8 +24,52 @@ private const val ORG = "11111111-1111-4111-8111-111111111111"
 private const val CHANNEL = "22222222-2222-4222-8222-222222222222"
 private const val CALL = "33333333-3333-4333-8333-333333333333"
 private const val ROOM = "!audio:example.org"
+private const val OTHER_CHANNEL = "44444444-4444-4444-8444-444444444444"
+private const val OTHER_ROOM = "!other:example.org"
 
 class NativeCallConversationTests {
+    @Test fun callRoomIsPolledWhileAnotherChannelInTheSameOrganisationIsSelected() {
+        for (connected in listOf(false, true)) {
+            for (boundary in listOf("answer", "leave", "confidential", "notFound", "forbidden")) {
+                val transport = ConversationCallTransport(); val media = ConversationCallMedia()
+                val coordinator = NativeCallCoordinator(ORG, "local", NativeCallResolver {
+                    AuthenticatedNativeCall(it, ROOM, "Member")
+                }, media, transport, { 100 })
+                val selected = ChannelConversationController(scope().copy(channelId = OTHER_CHANNEL), transport,
+                    onAuthenticatedSync = { roomId, batch -> coordinator.consumeAuthenticatedSync(batch, roomId) },
+                )
+                selected.bootstrap()
+                coordinator.receive(NativeCallWake(CALL, ORG, CHANNEL, 1, NativeRingPhase.RINGING, 130))
+                if (connected) { coordinator.answer(CALL); coordinator.audioSession(true) }
+                transport.batch = MatrixSyncBatch("call-next", emptyMap(), plaintextAllowedRooms = setOf(ROOM))
+                coordinator.pollCompanionTimeline()
+                assertNotNull(coordinator.currentCall())
+                transport.batch = when (boundary) {
+                    "answer" -> MatrixSyncBatch("answer", mapOf(ROOM to listOf(MatrixRawTimelineEvent(
+                        type = "m.call.answer", eventId = "\$answer", sender = transport.ownUserId,
+                        originServerTs = 100, callId = CALL, callPartyId = "other",
+                    ))), plaintextAllowedRooms = setOf(ROOM))
+                    "leave" -> MatrixSyncBatch("left", emptyMap(), authorityLostRooms = setOf(ROOM))
+                    "confidential" -> MatrixSyncBatch("blocked", emptyMap())
+                    else -> transport.batch
+                }
+                if (boundary == "notFound" || boundary == "forbidden") {
+                    transport.failure = if (boundary == "notFound") MatrixClientError.NOT_FOUND else MatrixClientError.FORBIDDEN
+                }
+                selected.refreshSync()
+                assertNotNull("The selected room cannot observe the call room boundary", coordinator.currentCall())
+                coordinator.pollCompanionTimeline()
+                assertNull(boundary, coordinator.currentCall()); assertFalse(media.microphoneEnabled)
+                assertEquals(boundary, 1, media.disconnects)
+                assertEquals(if (boundary == "answer") NativeRingPhase.ANSWERED_ELSEWHERE else null, coordinator.phase(CALL))
+                assertEquals(listOf(ROOM to "s", OTHER_ROOM to "other", ROOM to "call-next"), transport.syncRequests)
+                coordinator.pollCompanionTimeline()
+                assertEquals(3, transport.syncRequests.size)
+                selected.clear()
+            }
+        }
+    }
+
     @Test fun liveConversationRevokesRingingAndConnectedCallsAtAuthorityAndSecurityBoundaries() {
         for (connected in listOf(false, true)) {
             for (boundary in listOf("answer", "leave", "plaintext", "notFound", "forbidden", "backfill", "confidential", "unknown")) {
@@ -110,11 +154,16 @@ private class ConversationCallTransport : ChannelConversationTransport {
     }
     var failure: MatrixClientError? = null
     var batch = MatrixSyncBatch("s", emptyMap(), plaintextAllowedRooms = setOf(ROOM))
+    val syncRequests = mutableListOf<Pair<String, String?>>()
     override fun bootstrapRoom(organisationId: String, channelId: String): BootstrappedMatrixRoom {
+        if (channelId == OTHER_CHANNEL) return BootstrappedMatrixRoom(OTHER_ROOM,
+            MatrixSyncBatch("other", emptyMap(), plaintextAllowedRooms = setOf(OTHER_ROOM)))
         failure?.let { throw MatrixClientException(it) }
         return BootstrappedMatrixRoom(ROOM, batch)
     }
     override fun syncRoom(roomId: String, since: String?): MatrixSyncBatch {
+        syncRequests += roomId to since
+        if (roomId == OTHER_ROOM) return MatrixSyncBatch("other", emptyMap(), plaintextAllowedRooms = setOf(OTHER_ROOM))
         failure?.let { throw MatrixClientException(it) }
         return batch
     }

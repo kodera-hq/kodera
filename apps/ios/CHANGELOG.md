@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Monitor the native call's own room for answers and authority changes while another channel is selected.
+
 - Revoke native call media from live conversation authority and security changes, and discard late cancellation wakes after revocation.
 
 - End native calls when room authority is lost, fence retired media and audio ownership, and preserve active calls when duplicate wakes are refused.

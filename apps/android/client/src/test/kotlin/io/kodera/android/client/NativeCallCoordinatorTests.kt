@@ -27,8 +27,12 @@ private class ChatFixture : ChannelConversationTransport {
     var events = emptyList<MatrixRawTimelineEvent>()
     var lostRooms = emptySet<String>()
     var syncFailure: MatrixClientError? = null
+    var beforeSync: (() -> Unit)? = null
+    val syncRequests = java.util.concurrent.CopyOnWriteArrayList<String?>()
     override fun bootstrapRoom(organisationId: String, channelId: String) = BootstrappedMatrixRoom("!room:example.org", MatrixSyncBatch("one", emptyMap(), plaintextAllowedRooms = setOf("!room:example.org")))
     override fun syncRoom(roomId: String, since: String?): MatrixSyncBatch {
+        syncRequests += since
+        beforeSync?.invoke()
         syncFailure?.let { throw MatrixClientException(it) }
         return MatrixSyncBatch("two", mapOf(roomId to events), plaintextAllowedRooms = setOf(roomId), authorityLostRooms = lostRooms)
     }
@@ -48,6 +52,28 @@ private class PresenterFixture : NativeCallPresenter {
 }
 class NativeCallCoordinatorTests {
     private fun resolver() = NativeCallResolver { AuthenticatedNativeCall(it, "!room:example.org", "Member") }
+    @Test fun companionPollCoalescesAndLateFailureCannotRetireTheNextCall() {
+        val entered = CountDownLatch(1); val release = CountDownLatch(1)
+        val media = MediaFixture(); val chat = ChatFixture()
+        val coordinator = NativeCallCoordinator(ORG, "local", resolver(), media, chat, { 100 })
+        coordinator.receive(wake())
+        chat.beforeSync = { entered.countDown(); check(release.await(5, TimeUnit.SECONDS)) }
+        val polling = Thread { coordinator.pollCompanionTimeline() }
+        polling.start()
+        val nextId = "55555555-5555-4555-8555-555555555555"
+        try {
+            assertTrue(entered.await(5, TimeUnit.SECONDS))
+            coordinator.pollCompanionTimeline(); assertEquals(listOf("one"), chat.syncRequests)
+            coordinator.end(CALL); coordinator.receive(wake().copy(callId = nextId))
+            chat.syncFailure = MatrixClientError.FORBIDDEN
+        } finally { release.countDown(); polling.join(5000) }
+        assertFalse(polling.isAlive); assertEquals(nextId, coordinator.currentCall()?.wake?.callId)
+        assertEquals(1, media.disconnects.get())
+        chat.beforeSync = null; chat.syncFailure = null
+        coordinator.pollCompanionTimeline()
+        assertEquals(listOf("one", "one"), chat.syncRequests)
+        coordinator.end(nextId)
+    }
     @Test fun cancellationDuringLookupFencesLateMetadataAndMedia() {
         val entered = CountDownLatch(1); val release = CountDownLatch(1); val failure = AtomicReference<Throwable?>()
         val media = MediaFixture(); val presenter = PresenterFixture()

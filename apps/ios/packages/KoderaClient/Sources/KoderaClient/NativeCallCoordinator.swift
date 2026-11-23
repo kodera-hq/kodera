@@ -55,6 +55,8 @@ public final class NativeCallCoordinator {
     private var audioActive = false
     private var muted = false
     private var stopped = false
+    private var companionSince: String?
+    private var companionPollOwner: UInt64?
 
     public init(organisationId: String, localPartyId: String, resolver: any NativeCallResolving, media: any LiveKitWebRTCSession,
                 conversation: any ChannelConversationTransport, now: @escaping @Sendable () -> UInt64 = { UInt64(max(0, Date().timeIntervalSince1970)) }) throws {
@@ -84,7 +86,8 @@ public final class NativeCallCoordinator {
             guard owns(owner, wake.callId) else { return }
             guard room.roomId == resolved.roomId else { throw KoderaMobileFfiError.organisationMismatch }
             try wake.validate(now: now())
-            call = resolved; consumeAuthenticatedSync(room.initialBatch, roomId: room.roomId)
+            call = resolved; companionSince = room.initialBatch.nextBatch
+            consumeAuthenticatedSync(room.initialBatch, roomId: room.roomId)
             guard owns(owner, wake.callId) else { return }
             presenter?.metadata(resolved)
             if answerRequested { try await connect(owner: owner, call: resolved) }
@@ -163,6 +166,19 @@ public final class NativeCallCoordinator {
             return batch
         } catch { if owns(owner, call.wake.callId) { finish(.revoked) }; throw error }
     }
+    /// Runtime timer entry point. Always monitors the call's room, independently of the selected UI.
+    public func pollCompanionTimeline() async {
+        guard let call, companionPollOwner == nil else { return }
+        let owner = generation
+        companionPollOwner = owner
+        defer { if companionPollOwner == owner { companionPollOwner = nil } }
+        do {
+            let batch = try await syncCompanionTimeline(since: companionSince)
+            if owns(owner, call.wake.callId) { companionSince = batch.nextBatch }
+        } catch {
+            // syncCompanionTimeline retires only the owner that issued the request.
+        }
+    }
     public func consumeAuthenticatedSync(_ batch: MatrixSyncBatch, roomId: String? = nil) {
         guard let id = activeId, let currentRoomId = call?.roomId ?? roomId else { return }
         if batch.authorityLostRooms.contains(currentRoomId) ||
@@ -206,6 +222,7 @@ public final class NativeCallCoordinator {
         let answer = pendingAnswer; pendingAnswer = nil
         answer?.resume(throwing: KoderaMobileFfiError.authenticationFailed)
         let id = activeId; activeId = nil; call = nil; answerRequested = false; muted = false; audioActive = false
+        companionSince = nil; companionPollOwner = nil
         media.disconnect()
         if reason == .revoked { stopped = true; ring.revoke() }
         if let id {

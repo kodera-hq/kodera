@@ -52,6 +52,8 @@ class NativeCallCoordinator(
     private var audioActive = false
     private var muted = false
     private var stopped = false
+    private var companionSince: String? = null
+    private var companionPollOwner: Long? = null
     private var presenter: NativeCallPresenter? = null
     fun bind(presenter: NativeCallPresenter) = synchronized(lock) { this.presenter = presenter }
     fun phase(callId: String): NativeRingPhase? = synchronized(lock) { ring.records[callId]?.phase }
@@ -77,7 +79,8 @@ class NativeCallCoordinator(
             synchronized(lock) {
                 if (!owns(owner, wake.callId)) return
                 check(room.roomId == resolved.roomId); wake.validate(now())
-                call = resolved; consumeAuthenticatedSync(room.initialBatch, room.roomId)
+                call = resolved; companionSince = room.initialBatch.nextBatch
+                consumeAuthenticatedSync(room.initialBatch, room.roomId)
                 if (!owns(owner, wake.callId)) return
                 presenter?.ringing(resolved)
             }
@@ -150,14 +153,36 @@ class NativeCallCoordinator(
     }
     fun syncCompanionTimeline(since: String?): MatrixSyncBatch {
         val context = synchronized(lock) { generation to (call ?: error("call unavailable")) }
+        return syncCompanionTimeline(context.first, context.second, since)
+    }
+    private fun syncCompanionTimeline(owner: Long, current: AuthenticatedNativeCall, since: String?): MatrixSyncBatch {
         try {
-            val batch = conversation.syncRoom(context.second.roomId, since)
+            val batch = conversation.syncRoom(current.roomId, since)
             synchronized(lock) {
-                check(owns(context.first, context.second.wake.callId)); consumeAuthenticatedSync(batch, context.second.roomId)
+                check(owns(owner, current.wake.callId)); consumeAuthenticatedSync(batch, current.roomId)
             }
             return batch
         } catch (failure: Exception) {
-            synchronized(lock) { if (owns(context.first, context.second.wake.callId)) finish(NativeRingPhase.REVOKED) }; throw failure
+            synchronized(lock) { if (owns(owner, current.wake.callId)) finish(NativeRingPhase.REVOKED) }; throw failure
+        }
+    }
+    /** Runtime timer entry point. The call's room is monitored independently of the selected UI. */
+    fun pollCompanionTimeline() {
+        val context = synchronized(lock) {
+            val current = call ?: return
+            if (companionPollOwner != null) return
+            companionPollOwner = generation
+            Triple(generation, current, companionSince)
+        }
+        try {
+            val batch = syncCompanionTimeline(context.first, context.second, context.third)
+            synchronized(lock) {
+                if (owns(context.first, context.second.wake.callId)) companionSince = batch.nextBatch
+            }
+        } catch (_: Exception) {
+            // syncCompanionTimeline retires only the owner that issued the request.
+        } finally {
+            synchronized(lock) { if (companionPollOwner == context.first) companionPollOwner = null }
         }
     }
     fun consumeAuthenticatedSync(batch: MatrixSyncBatch, roomId: String? = null) = synchronized(lock) {
@@ -196,6 +221,7 @@ class NativeCallCoordinator(
     private fun owns(owner: Long, id: String) = synchronized(lock) { !stopped && generation == owner && activeId == id }
     private fun finish(reason: NativeRingPhase) {
         generation += 1; val id = activeId; activeId = null; call = null; answerRequested = false; muted = false; audioActive = false
+        companionSince = null; companionPollOwner = null
         media.disconnect()
         if (reason == NativeRingPhase.REVOKED) { stopped = true; ring.revoke() }
         if (id != null) {

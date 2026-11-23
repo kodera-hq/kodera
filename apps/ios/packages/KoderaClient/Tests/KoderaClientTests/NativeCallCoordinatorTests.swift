@@ -6,6 +6,8 @@ import KoderaDomain
 private let callOrg = "22222222-2222-4222-8222-222222222222"
 private let callId = "11111111-1111-4111-8111-111111111111"
 private let callChannel = "33333333-3333-4333-8333-333333333333"
+private let selectedChannel = "44444444-4444-4444-8444-444444444444"
+private let selectedRoom = "!selected:example.org"
 private func callWake(_ state: NativeRingPhase = .ringing, epoch: UInt64 = 1) throws -> NativeCallWake {
     try NativeCallWake(callId: callId, organisationId: callOrg, channelId: callChannel, epoch: epoch, state: state, expiresAt: 130)
 }
@@ -54,12 +56,13 @@ private actor HeldCallResolver: NativeCallResolving {
 }
 @MainActor private final class CallMediaFixture: LiveKitWebRTCSession {
     var connections = 0; var disconnects = 0; var microphoneValues: [Bool] = []; var networks = 0
+    var microphoneEnabled = false
     var connectGate: CallMediaGate?; var microphoneGate: CallMediaGate?
     func connect(_ call: AuthenticatedNativeCall) async throws { connections += 1; try await connectGate?.wait() }
-    func microphone(enabled: Bool) async throws { microphoneValues.append(enabled); try await microphoneGate?.wait() }
+    func microphone(enabled: Bool) async throws { microphoneEnabled = enabled; microphoneValues.append(enabled); try await microphoneGate?.wait() }
     func audioSession(active: Bool) {}
     func networkPathChanged() async throws { networks += 1 }
-    func disconnect() { disconnects += 1 }
+    func disconnect() { disconnects += 1; microphoneEnabled = false }
 }
 @MainActor private final class CallPresenterFixture: NativeCallPresenting {
     var reasons: [NativeRingPhase] = []; var metadataCount = 0
@@ -74,19 +77,49 @@ private actor CallChatFixture: ChannelConversationTransport {
     private var refuse = false
     private var lostRooms: Set<String> = []
     private var syncFailure: MatrixClientFailure?
+    private var plaintextBlocked = false
+    private var syncRequests: [String] = []
+    private var holdSync = false
+    private var syncGate: CheckedContinuation<Void, Never>?
+    private var syncWaiters: [CheckedContinuation<Void, Never>] = []
+    func requests() -> [String] { syncRequests }
+    func blockPlaintext() { plaintextBlocked = true }
+    func holdNextSync() { holdSync = true }
+    func waitUntilSyncEntered() async {
+        if syncGate != nil { return }
+        await withCheckedContinuation { syncWaiters.append($0) }
+    }
+    func releaseSync() { syncGate?.resume(); syncGate = nil }
     func loseAuthority(_ rooms: Set<String>) { lostRooms = rooms }
     func failSync(_ failure: MatrixClientFailure) { syncFailure = failure }
     func deny() { refuse = true }
     func setEvents(_ value: [MatrixRawTimelineEvent]) { events = value }
     func bootstrapRoom(organisationId: String, channelId: String) async throws(MatrixClientFailure) -> (roomId: String, initialBatch: MatrixSyncBatch) {
+        if channelId == selectedChannel {
+            var batch = MatrixSyncBatch(nextBatch: "selected", roomEvents: [:])
+            batch.plaintextAllowedRooms = [selectedRoom]
+            return (selectedRoom, batch)
+        }
         var batch = MatrixSyncBatch(nextBatch: "one", roomEvents: [:])
         batch.plaintextAllowedRooms = ["!room:example.org"]
         return ("!room:example.org", batch)
     }
     func syncRoom(roomId: String, since: String?) async throws(MatrixClientFailure) -> MatrixSyncBatch {
+        syncRequests.append("\(roomId)|\(since ?? "nil")")
+        if roomId == selectedRoom {
+            var batch = MatrixSyncBatch(nextBatch: "selected", roomEvents: [:])
+            batch.plaintextAllowedRooms = [selectedRoom]; return batch
+        }
+        if holdSync {
+            holdSync = false
+            await withCheckedContinuation { continuation in
+                syncGate = continuation
+                syncWaiters.forEach { $0.resume() }; syncWaiters.removeAll()
+            }
+        }
         if let syncFailure { throw syncFailure }
         var batch = MatrixSyncBatch(nextBatch: "two", roomEvents: [roomId: events])
-        batch.authorityLostRooms = lostRooms; batch.plaintextAllowedRooms = [roomId]; return batch
+        batch.authorityLostRooms = lostRooms; batch.plaintextAllowedRooms = plaintextBlocked ? [] : [roomId]; return batch
     }
     func sendMessage(roomId: String, transactionId: String, body: String, replyToEventId: String?, attachments: [AttachmentMetadataRef]) async throws(MatrixClientFailure) -> String {
         if refuse { throw .notFound }; return "$sent"
@@ -103,6 +136,61 @@ private actor CallChatFixture: ChannelConversationTransport {
 }
 
 @MainActor final class NativeCallCoordinatorTests: XCTestCase {
+    func testCallRoomIsPolledWhileAnotherChannelInTheSameOrganisationIsSelected() async throws {
+        for connected in [false, true] {
+            for boundary in ["answer", "leave", "confidential", "notFound", "forbidden"] {
+                let media = CallMediaFixture(); let chat = CallChatFixture(); let presenter = CallPresenterFixture()
+                let coordinator = try NativeCallCoordinator(organisationId: callOrg, localPartyId: "local",
+                    resolver: ImmediateCallResolver(), media: media, conversation: chat, now: { 100 })
+                coordinator.bind(presenter)
+                let selected = try await chat.bootstrapRoom(organisationId: callOrg, channelId: selectedChannel)
+                coordinator.consumeAuthenticatedSync(selected.initialBatch, roomId: selected.roomId)
+                try await coordinator.receive(callWake())
+                if connected { try await coordinator.answer(callId: callId); await coordinator.audioSession(active: true) }
+                await coordinator.pollCompanionTimeline()
+                XCTAssertNotNil(coordinator.call)
+                switch boundary {
+                case "answer":
+                    await chat.setEvents([MatrixRawTimelineEvent(type: "m.call.answer", eventId: "$answer",
+                        sender: chat.ownUserId, originServerTs: 100, callId: callId, callPartyId: "other")])
+                case "leave": await chat.loseAuthority(["!room:example.org"])
+                case "confidential": await chat.blockPlaintext()
+                case "notFound": await chat.failSync(.notFound)
+                default: await chat.failSync(.forbidden)
+                }
+                let selectedBatch = try await chat.syncRoom(roomId: selected.roomId, since: selected.initialBatch.nextBatch)
+                coordinator.consumeAuthenticatedSync(selectedBatch, roomId: selected.roomId)
+                XCTAssertNotNil(coordinator.call, "The selected room cannot observe the call room boundary")
+                await coordinator.pollCompanionTimeline()
+                XCTAssertNil(coordinator.call, boundary); XCTAssertEqual(media.disconnects, 1, boundary)
+                XCTAssertFalse(media.microphoneEnabled)
+                XCTAssertEqual(presenter.reasons, [boundary == "answer" ? .answeredElsewhere : .revoked])
+                await coordinator.pollCompanionTimeline()
+                let requests = await chat.requests()
+                XCTAssertEqual(requests, ["!room:example.org|one", "\(selectedRoom)|selected", "!room:example.org|two"])
+            }
+        }
+    }
+
+    func testCompanionPollCoalescesAndLateFailureCannotRetireTheNextCall() async throws {
+        let media = CallMediaFixture(); let chat = CallChatFixture()
+        let coordinator = try NativeCallCoordinator(organisationId: callOrg, localPartyId: "local",
+            resolver: ImmediateCallResolver(), media: media, conversation: chat, now: { 100 })
+        try await coordinator.receive(callWake()); await chat.holdNextSync()
+        let polling = Task { await coordinator.pollCompanionTimeline() }
+        await chat.waitUntilSyncEntered()
+        await coordinator.pollCompanionTimeline()
+        let entered = await chat.requests(); XCTAssertEqual(entered.count, 1)
+        coordinator.end(callId: callId)
+        let nextId = "55555555-5555-4555-8555-555555555555"
+        try await coordinator.receive(NativeCallWake(callId: nextId, organisationId: callOrg,
+            channelId: callChannel, epoch: 1, state: .ringing, expiresAt: 130))
+        await chat.failSync(.forbidden); await chat.releaseSync(); await polling.value
+        XCTAssertEqual(coordinator.call?.wake.callId, nextId)
+        XCTAssertEqual(media.disconnects, 1)
+        coordinator.end(callId: nextId)
+    }
+
     func testCancelDuringResolutionFencesLateMetadataAndMedia() async throws {
         let resolver = HeldCallResolver(); let media = CallMediaFixture(); let presenter = CallPresenterFixture()
         let coordinator = try NativeCallCoordinator(organisationId: callOrg, localPartyId: "local", resolver: resolver, media: media, conversation: CallChatFixture(), now: { 100 })
