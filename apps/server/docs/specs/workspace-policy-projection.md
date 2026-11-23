@@ -61,11 +61,20 @@ eligibility or with connect explicitly denied; it still requires view, its own
 capability, current resource access and all other gates. This pure decision does
 not itself establish an actual media connection or revoke a provider session.
 
-Only audio channels accept media actions. Text/DM accepts message/file actions
-and history. View applies to either kind. Archived text permits only view,
-history, search and file read; archived audio refuses every kernel action,
-including occupancy/view. Structural administration has a separate authority
-path and does not grant content or occupancy.
+Only `audio` channels accept media actions. Both `text` (including DMs) and
+`audio` channels accept message/file actions and history: per ADR-0018, each
+`Channel.Kind.AUDIO` reuses its existing `1:1` Matrix room for companion text
+chat (`message.post`, `message.reply`, `file.upload`, history, reactions and
+search) governed by channel policy (`read_only` for companion text posting,
+`listen_only` for voice/media publishing, and `archived`), without creating a
+second Matrix room, while confidential/E2EE (`is_confidential`) and federation
+remain strictly `text`-only. Ad-hoc Meet calls without a workspace `Channel`
+remain ephemeral LiveKit sessions without persistent Matrix room history and
+are outside this workspace channel kernel. `channel.view` applies to either
+kind. Archived `text` permits only view, history, search and file read;
+archived `audio` refuses every kernel action, including companion chat
+operations and occupancy/view. Structural administration has a separate
+authority path and does not grant content or occupancy.
 
 ## Evaluation order and reasons
 

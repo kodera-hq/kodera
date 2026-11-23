@@ -632,11 +632,12 @@ def test_bug_0050_granular_iam_role_overrides_enforced_end_to_end(world):
     assert m3_ident.subject not in by_channel[str(secret_text.id)]["exempt"]
 
     assert by_channel[str(audio_chan.id)]["listen_only"] is True
-    assert m3_ident.subject not in by_channel[str(audio_chan.id)]["exempt"]
+    assert by_channel[str(audio_chan.id)]["exempt"] == []
+    assert m3_ident.subject not in by_channel[str(audio_chan.id)]["speak_exempt"]
     m0_ident = Identity.objects.get(user=members[0].user, organisation=org)
     m1_ident = Identity.objects.get(user=members[1].user, organisation=org)
-    assert m0_ident.subject in by_channel[str(audio_chan.id)]["exempt"]
-    assert m1_ident.subject in by_channel[str(audio_chan.id)]["exempt"]
+    assert m0_ident.subject in by_channel[str(audio_chan.id)]["speak_exempt"]
+    assert m1_ident.subject in by_channel[str(audio_chan.id)]["speak_exempt"]
 
 
 def test_bug_0050_unsupported_channel_overrides_refused_and_stored_media_caps_folded(world):
@@ -707,7 +708,8 @@ def test_bug_0050_unsupported_channel_overrides_refused_and_stored_media_caps_fo
         "media.video",
         "media.share",
         "media.moderate",
-        "message.post",
+        "message.reply",
+        "file.upload",
     ):
         with pytest.raises(moderation.RefusalError) as audio_err:
             governance.overrides(
@@ -745,7 +747,7 @@ def test_bug_0050_unsupported_channel_overrides_refused_and_stored_media_caps_fo
         _, raw_channels = channel_sets.channel_set_input(workspace.id)
     emitted = {entry["channel_id"]: entry for entry in raw_channels}
     assert emitted[str(audio_chan.id)]["listen_only"] is True
-    assert m3_ident.subject not in emitted[str(audio_chan.id)]["exempt"]
+    assert m3_ident.subject not in emitted[str(audio_chan.id)]["speak_exempt"]
     assert emitted[str(text_chan.id)]["read_only"] is True
     assert m3_ident.subject not in emitted[str(text_chan.id)]["exempt"]
 
@@ -1406,11 +1408,11 @@ def test_r5_allow_overrides_exempt_roles_on_read_only_and_listen_only_channels(w
         _, baseline_channels = channel_sets.channel_set_input(workspace.id)
     by_cid = {entry["channel_id"]: entry for entry in baseline_channels}
     assert m3_ident.subject not in by_cid[str(ro_text.id)]["exempt"]
-    assert m3_ident.subject not in by_cid[str(lo_audio.id)]["exempt"]
+    assert m3_ident.subject not in by_cid[str(lo_audio.id)]["speak_exempt"]
 
     # 2. Grant `allow: ["message.post"]` on `ro_text` and `allow: ["media.speak"]` on `lo_audio`:
     #    `members[3]` is now exempted across ALL 4 READ_ONLY and ALL 3 LISTEN_ONLY capabilities,
-    #    present in `exempt` on both channels, and `'editor'` in `docs_document_role`!
+    #    present in `exempt` / `speak_exempt` on the respective channels, and `'editor'` in `docs_document_role`!
     governance.overrides(
         **owner_args,
         channel_id=ro_text.id,
@@ -1458,7 +1460,8 @@ def test_r5_allow_overrides_exempt_roles_on_read_only_and_listen_only_channels(w
     assert emitted_by_cid[str(ro_text.id)]["read_only"] is True
     assert m3_ident.subject in emitted_by_cid[str(ro_text.id)]["exempt"]
     assert emitted_by_cid[str(lo_audio.id)]["listen_only"] is True
-    assert m3_ident.subject in emitted_by_cid[str(lo_audio.id)]["exempt"]
+    assert emitted_by_cid[str(lo_audio.id)]["exempt"] == []
+    assert m3_ident.subject in emitted_by_cid[str(lo_audio.id)]["speak_exempt"]
 
     # 3. Assign second role `muted_role` with `deny: ["message.post"]` / `deny: ["media.speak"]`:
     #    `deny` strictly beats `allow` across all companion capabilities and SQL `docs_document_role`.
@@ -1519,7 +1522,7 @@ def test_r5_allow_overrides_exempt_roles_on_read_only_and_listen_only_channels(w
     assert latest_set is not None
     emitted_by_cid = {entry["channel_id"]: entry for entry in latest_set.channels}
     assert m3_ident.subject not in emitted_by_cid[str(ro_text.id)]["exempt"]
-    assert m3_ident.subject not in emitted_by_cid[str(lo_audio.id)]["exempt"]
+    assert m3_ident.subject not in emitted_by_cid[str(lo_audio.id)]["speak_exempt"]
 
 
 def test_r5_iam_channel_set_failure_aborts_write_and_returns_503(

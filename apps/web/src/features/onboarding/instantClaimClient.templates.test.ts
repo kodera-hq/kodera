@@ -99,11 +99,25 @@ describe('the proximity template and its alias', () => {
 
   it('refuses an identifier that names no template before anything is sent', async () => {
     const post = vi.fn().mockResolvedValue(assigned)
-    for (const templateId of ['crisis', 'urgence', 'open-source-community', 'PROXIMITY'])
+    for (const templateId of ['crisis', 'urgence', 'PROXIMITY'])
       await expect(
         instantClaimWorkspace({ ...base, templateId: templateId as TemplateId }, { post })
       ).rejects.toMatchObject({ kind: 'refused' })
     expect(post).not.toHaveBeenCalled()
+  })
+
+  it('accepts all six WorkspaceTemplate v2 customizable personas in cloud claims', async () => {
+    const personas: readonly TemplateId[] = [
+      'tech-studio',
+      'b2b-advisory',
+      'association-coop',
+      'open-source-community',
+      'public-sector',
+      'blank',
+    ]
+    for (const persona of personas) {
+      expect(await sentFor(persona)).toEqual({ sent: persona, kept: persona })
+    }
   })
 
   it('names the proximity template to the self-host tooling by the alias its table holds', () => {

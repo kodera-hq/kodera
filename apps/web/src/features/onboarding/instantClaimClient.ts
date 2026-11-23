@@ -8,10 +8,8 @@ type ClaimRequest = components['schemas']['InstantClaimTenantRequest']
 
 /** An official workspace template, as the contract names it (`proximity`, and its alias). */
 export type WorkspaceTemplateId = components['schemas']['WorkspaceTemplateId']
-/** A template only the local preview offers: Core's contract does not take it. */
-type LocalTemplateId = 'open-source-community'
-/** Any template identifier this client may read: official, local, or the deprecated alias. */
-export type TemplateId = WorkspaceTemplateId | LocalTemplateId
+/** Any template identifier this client may read: official or the deprecated alias. */
+export type TemplateId = WorkspaceTemplateId
 
 /**
  * `crisis-cell` is the identifier the proximity template took before contract 0.42.0. It is a
@@ -48,9 +46,7 @@ export const TEMPLATE_CHANNELS: Record<TemplateId, readonly string[]> = {
   ],
   'tech-studio': ['general', 'architecture', 'incident-prod'],
   'b2b-advisory': ['general', 'client-projects', 'deliverables'],
-  'public-sector': ['general', 'compliance', 'on-call'],
-  proximity: PROXIMITY_CHANNELS,
-  'crisis-cell': PROXIMITY_CHANNELS,
+  'association-coop': ['accueil', 'gouvernance', 'entraide-projets', 'foyer', 'assemblee'],
   'open-source-community': [
     'general',
     'announcements',
@@ -58,6 +54,10 @@ export const TEMPLATE_CHANNELS: Record<TemplateId, readonly string[]> = {
     'support',
     'community-lounge',
   ],
+  'public-sector': ['general', 'compliance', 'on-call'],
+  blank: ['general'],
+  proximity: PROXIMITY_CHANNELS,
+  'crisis-cell': PROXIMITY_CHANNELS,
 }
 
 /**
@@ -104,7 +104,10 @@ const CLOUD_TEMPLATES: Record<WorkspaceTemplateId, true> = {
   'audiovisual-production': true,
   'tech-studio': true,
   'b2b-advisory': true,
+  'association-coop': true,
+  'open-source-community': true,
   'public-sector': true,
+  blank: true,
   proximity: true,
   'crisis-cell': true,
 }

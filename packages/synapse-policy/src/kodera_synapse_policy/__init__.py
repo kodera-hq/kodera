@@ -628,6 +628,8 @@ class KoderaPolicy:
             )
         if content["audience"] == "listed" and event.sender not in content["members"]:
             return False
+        if self._room_access is not None and event.sender == self._room_access:
+            return False
         if (
             "local_members" in content
             and self._api.is_mine(event.sender)

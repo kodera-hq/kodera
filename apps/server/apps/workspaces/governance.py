@@ -32,7 +32,7 @@ _UNSET = object()
 
 ENFORCED_CHANNEL_OVERRIDE_CAPABILITIES: dict[str, frozenset[str]] = {
     Channel.Kind.TEXT: frozenset({"channel.view", "message.post"}),
-    Channel.Kind.AUDIO: frozenset({"channel.view", "media.connect", "media.speak"}),
+    Channel.Kind.AUDIO: frozenset({"channel.view", "message.post", "media.connect", "media.speak"}),
 }
 
 PROFILE_TEXT = {"description", "banner_preset", "icon_mxc"}

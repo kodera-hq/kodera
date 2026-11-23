@@ -14,12 +14,13 @@ from apps.workspaces.instant_claim import (
     PoolUnavailableError,
     authorise_instant_claim,
     claim_allocation,
+    prepare_template_claim,
     reauthorise_instant_claim,
 )
 from apps.workspaces.quota_http import respond_once
 from apps.workspaces.warm_pool import InstantClaimInputError, parse_instant_claim_request
 from core.api import lanes, problems
-from core.api.idempotency import StoredResponse
+from core.api.idempotency import KEY_HEADER, StoredResponse, holds_answer, is_malformed, is_missing
 from core.api.scopes import Operation, declares
 from services.identity.access_tokens import TokenVerificationError
 from services.identity.trusted_issuers import verify_configured_token
@@ -58,6 +59,25 @@ def instant_claim(request: HttpRequest) -> HttpResponse:
         if lane != "customer":
             raise ClaimForbiddenError()
         organisation_id = authorise_instant_claim(verified)
+        idem_key = request.headers.get(KEY_HEADER, "")
+        if (
+            not is_missing(idem_key)
+            and not is_malformed(idem_key)
+            and not holds_answer(
+                request, issuer=verified.issuer, subject=verified.subject, key=idem_key
+            )
+        ):
+            try:
+                candidate = parse_instant_claim_request(request.body, request.content_type or "")
+            except InstantClaimInputError:
+                candidate = None
+            if candidate is not None and candidate.operation_key is not None:
+                prepare_template_claim(
+                    candidate,
+                    organisation_id,
+                    verified=verified,
+                    request_id=request_id,
+                )
 
         def authority(_event):
             reauthorise_instant_claim(verified, organisation_id)

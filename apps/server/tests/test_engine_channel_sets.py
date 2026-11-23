@@ -74,7 +74,8 @@ def test_a_channel_set_is_only_recorded_inside_its_change_transaction(org):
         {"name": " "},
         {"name": "n" * 101},
         {"topic": "t" * 1025},
-        {"read_only": True, "kind": "audio"},
+        {"speak_exempt": ["sub-a"], "kind": "text"},
+        {"kind": "audio", "speak_exempt": ["sub-z"]},
         {"listen_only": True, "kind": "text"},
         {"members": ["has a space"]},
         {"members": ["sub-a", "sub-a"]},
@@ -149,6 +150,22 @@ def test_pull_delivers_both_kinds_and_honours_the_kinds_filter(org):
     assert only_channels.poll_after_s == 3
     both = services.pull(agent, kinds=None, limit=5).commands
     assert [c["kind"] for c in both] == ["engine_set_member_subjects"]
+
+
+def test_audio_channel_carries_separate_chat_exempt_and_voice_speak_exempt(org):
+    entry = channel(
+        kind="audio",
+        read_only=True,
+        listen_only=True,
+        exempt=["sub-b", "sub-a"],
+        speak_exempt=["sub-a"],
+    )
+    channel_set = emit_channels(org, [entry])
+    [stored] = channel_set.channels
+    assert stored["read_only"] is True
+    assert stored["listen_only"] is True
+    assert stored["exempt"] == ["sub-a", "sub-b"]
+    assert stored["speak_exempt"] == ["sub-a"]
 
 
 def test_a_success_marks_every_channel_ready_and_its_notices_posted(org, reported):

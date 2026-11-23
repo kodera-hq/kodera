@@ -560,3 +560,65 @@ class WorkspaceChannelRoleOverride(StoredModel):
                 fields=["channel", "role"], name="workspace_channel_role_unique"
             )
         ]
+
+
+TEMPLATE_APP_ERROR_CODES = (
+    "",
+    "structure_failed",
+    "matrix_projection_failed",
+    "collections_failed",
+    "starter_docs_failed",
+    "collab_engine_unavailable",
+    "internal_step_failed",
+)
+
+
+class WorkspaceTemplateApplication(StoredModel):
+    """Durable operation-key ledger for resumable, idempotent WorkspaceTemplate v2 execution."""
+
+    class State(models.TextChoices):
+        IN_PROGRESS = "in_progress", "In progress"
+        FAILED = "failed", "Failed"
+        COMPLETED = "completed", "Completed"
+
+    workspace = models.ForeignKey(Workspace, on_delete=models.RESTRICT, db_constraint=False)
+    operation_key = models.TextField()
+    template_id = models.TextField()
+    template_version = models.IntegerField(default=2)
+    spec_fingerprint = models.TextField()
+    state = models.TextField(choices=State.choices, default=State.IN_PROGRESS)
+    completed_steps = models.JSONField(default=list)
+    artefacts = models.JSONField(default=dict)
+    last_error = models.TextField(default="", blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["workspace"], name="workspace_template_app_ws_idx"),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["workspace", "operation_key"],
+                name="workspace_template_app_op_key_unique",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(operation_key__regex=r"^[A-Za-z0-9._:-]{1,128}$"),
+                name="workspace_template_app_op_key_valid",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(spec_fingerprint__regex=r"^[a-f0-9]{64}$"),
+                name="workspace_template_app_fingerprint_valid",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(state__in=["in_progress", "failed", "completed"]),
+                name="workspace_template_app_state_valid",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(template_version__gte=1),
+                name="workspace_template_app_version_valid",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(last_error__in=list(TEMPLATE_APP_ERROR_CODES)),
+                name="workspace_template_app_error_code_valid",
+            ),
+        ]

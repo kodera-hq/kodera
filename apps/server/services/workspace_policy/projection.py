@@ -184,9 +184,7 @@ def evaluate(value: object) -> Decision:
         required.add("media.connect")
     if not required.issubset(snapshot["eligible"]) or required.intersection(snapshot["denied"]):
         return _decision("forbidden")
-    if (action in _MEDIA_ACTIONS and snapshot["kind"] != "audio") or (
-        action in _TEXT_ACTIONS and snapshot["kind"] != "text"
-    ):
+    if action in _MEDIA_ACTIONS and snapshot["kind"] != "audio":
         return _decision("forbidden")
     if snapshot["lifecycle"] not in {"active", "archived"}:
         return _decision("unavailable")

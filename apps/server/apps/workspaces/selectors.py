@@ -8,6 +8,20 @@ from django.db.models import Q
 from .models import Channel, Workspace, WorkspaceMemberRestriction
 
 
+def active_channel_id(*, workspace_id: UUID, channel_id: UUID) -> UUID | None:
+    """An active text or audio channel in the exact workspace, without exporting its model."""
+    return (
+        Channel.objects.filter(
+            id=channel_id,
+            workspace_id=workspace_id,
+            kind__in=("text", "audio"),
+            lifecycle="active",
+        )
+        .values_list("id", flat=True)
+        .first()
+    )
+
+
 def active_text_channel_id(*, workspace_id: UUID, channel_id: UUID) -> UUID | None:
     """An active text channel in the exact workspace, without exporting its model."""
     return (

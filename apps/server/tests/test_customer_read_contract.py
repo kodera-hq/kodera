@@ -1059,7 +1059,8 @@ N4_PATH = "/organisations/{organisation_id}/bootstrap"
 # Rebound at 0.49.0: listMemberships optional q filter; assurance guards unchanged.
 # Rebound at 0.50.0: granular workspace roles, overrides, profile, bans, and audit logs; assurance guards unchanged.
 # Rebound at 0.51.0: attachment channel/room scope, upload cancellation, moderator revocation, and confidential channel creation; assurance guards unchanged.
-N4_VERSION = "0.51.0"
+# Rebound at 0.52.0: audio companion chat read_only access and WorkspaceTemplate v2 personas/customization; assurance guards unchanged.
+N4_VERSION = "0.52.0"
 # Rebound at 0.19.0 (2026-10-21, on top of 0.18.1): the notice-contacts delta and the Plan example's EU hosting.
 # Rebound at 0.22.0: the ten structure operations, their schemas and Problem.reason's first value;
 # then room_state on WorkspaceChannel, the starter's lounge (template version 2) and AppCode messaging;
@@ -1112,7 +1113,8 @@ N4_VERSION = "0.51.0"
 # Rebound at 0.49.0: listMemberships optional q filter; no N4 bytes changed.
 # Rebound at 0.50.0: granular workspace roles, overrides, profile, bans, and audit logs; no N4 bytes changed.
 # Rebound at 0.51.0: attachment channel/room scope, upload cancellation, moderator revocation, and confidential channel creation; no N4 bytes changed.
-N4_OLD_CONTRACT = "5381a0fe08320b23debee83605c8bb353f950308b19ec9ec790bfdd479fc61e9"
+# Rebound at 0.52.0: audio companion chat read_only access and WorkspaceTemplate v2 personas/customization; no N4 bytes changed.
+N4_OLD_CONTRACT = "4fea8c788b46c6db5a1dafccd6bf1cf08968b72b0489487d44c83df5458493a2"
 # Rebound at 0.20.0 (2026-10-22): CONVENTIONS.md §6 gains the order-in-progress and invoice-issued rows and a changelog line.
 # Rebound at 0.24.0 (2026-10-22): CONVENTIONS.md §6's invoice-issued row narrowed, and a changelog line.
 # Rebound at 0.28.0: CONVENTIONS.md §6 gains the identity-unknown row and a changelog line.

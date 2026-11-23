@@ -167,6 +167,11 @@ def parse(payload: dict[str, Any]) -> ChannelSet | None:
                 return None
         if not all(_subjects(channel.get(k)) for k in ("members", "denied", "exempt")):
             return None
+        has_speak_exempt = "speak_exempt" in channel
+        if has_speak_exempt and (
+            channel.get("kind") != "audio" or not _subjects(channel.get("speak_exempt"))
+        ):
+            return None
         audience = channel.get("audience")
         if audience not in ("all", "listed"):
             return None
@@ -176,7 +181,10 @@ def parse(payload: dict[str, Any]) -> ChannelSet | None:
             return None
         if not set(channel["members"]) | set(channel["denied"]) <= all_members:
             return None
-        if not set(channel["exempt"]) <= set(room_members(channel, all_members)):
+        admitted_subjects = set(room_members(channel, all_members))
+        if not set(channel["exempt"]) <= admitted_subjects:
+            return None
+        if has_speak_exempt and not set(channel["speak_exempt"]) <= admitted_subjects:
             return None
         notices = channel.get("notices")
         if not isinstance(notices, list) or not all(
@@ -188,7 +196,12 @@ def parse(payload: dict[str, Any]) -> ChannelSet | None:
             for n in notices
         ):
             return None
-        members += len(channel["members"]) + len(channel["denied"]) + len(channel["exempt"])
+        members += (
+            len(channel["members"])
+            + len(channel["denied"])
+            + len(channel["exempt"])
+            + (len(channel["speak_exempt"]) if has_speak_exempt else 0)
+        )
     if members > MAX_MEMBERS:
         return None
     banned, muted = payload.get("banned_subjects", []), payload.get("muted_subjects", [])
@@ -235,7 +248,7 @@ def power_levels(channel: dict[str, Any], synapse: Synapse, exempt: list[str]) -
     Rooms are created at room version 12, where the creator (the agent) holds unlimited power and
     must not be listed in `users`: Synapse refuses a power-levels event that names it."""
     users: dict[str, int] = {}
-    closed = channel["archived"] or (channel["kind"] == "text" and channel["read_only"])
+    closed = channel["archived"] or channel["read_only"]
     if closed and not channel["archived"]:
         users.update({user: POST_LEVEL for user in exempt})
     if channel["kind"] == "audio" and synapse.room_access_user:
@@ -261,7 +274,13 @@ def power_levels(channel: dict[str, Any], synapse: Synapse, exempt: list[str]) -
     }
 
 
-def policy(channel: dict[str, Any], exempt: list[str], members: frozenset[str]) -> dict[str, Any]:
+def policy(
+    channel: dict[str, Any],
+    exempt: list[str],
+    members: frozenset[str],
+    speak_exempt: list[str] | None = None,
+) -> dict[str, Any]:
+    publishers = exempt if speak_exempt is None else speak_exempt
     return {
         "version": 1,
         "kind": channel["kind"],
@@ -270,7 +289,7 @@ def policy(channel: dict[str, Any], exempt: list[str], members: frozenset[str]) 
         "members": sorted(members) if channel["audience"] == "listed" else [],
         "exempt": sorted(exempt),
         "listen_only": channel["listen_only"],
-        "may_publish": sorted(exempt) if channel["listen_only"] else [],
+        "may_publish": sorted(publishers) if channel["listen_only"] else [],
         "archived": channel["archived"],
     }
 
@@ -525,12 +544,20 @@ class Channels:
             )
             users = users - banned_users
         exempt = sorted(u for s in channel["exempt"] if (u := synapse.user_id(s)) in users)
+        raw_speak_exempt = (
+            channel["speak_exempt"]
+            if "speak_exempt" in channel
+            else (
+                channel["exempt"] if channel["kind"] == "audio" and not channel["read_only"] else []
+            )
+        )
+        speak_exempt = sorted(u for s in raw_speak_exempt if (u := synapse.user_id(s)) in users)
         confidential = _confidential_algorithm(channel.get("confidential"))
         requested = self._partner_channels.get(channel["channel_id"], ())
         partners = requested if (federation.eligible(channel) and confidential is None) else ()
         blocked = bool(requested and not partners)
         public = native_public(channel, synapse) and not requested and confidential is None
-        governance = policy(channel, exempt, users)
+        governance = policy(channel, exempt, users, speak_exempt=speak_exempt)
         governance.update(
             local_only=not bool(partners),
             allow_member_invites=bool(partners),

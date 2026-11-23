@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Kodera Agent API
-  version: 0.7.0
+  version: 0.8.0
   summary: The contract every tenant VM implements, spoken by the agent and served by kodera-server.
   description: |
     Contract 2 of the architecture strategy (Appendix A). The agent runs on every tenant VM and is
@@ -840,7 +840,7 @@ components:
         channels:
           type: array
           maxItems: 500
-          description: '`engine_set_channel_members`: every channel of the organisation''s workspace that is not deleted. `all_members` plus every channel''s `members`, `denied` and `exempt` number at most 10 000.'
+          description: '`engine_set_channel_members`: every channel of the organisation''s workspace that is not deleted. `all_members` plus every channel''s `members`, `denied`, `exempt` and `speak_exempt` number at most 10 000.'
           items: { $ref: '#/components/schemas/ChannelMembership' }
       examples:
         - { to_version: '1.5', safety_snapshot: true }
@@ -874,7 +874,7 @@ components:
           type: string
           maxLength: 200
           description: The channel's access ETag this entry describes. A `succeeded` result means the room is at it.
-        archived: { type: boolean, description: 'An archived text channel is read-only to everyone; an archived audio room admits no one to its call.' }
+        archived: { type: boolean, description: 'An archived channel is read-only to everyone in Matrix; an archived audio room also admits no one to its call.' }
         audience:
           type: string
           enum: [all, listed]
@@ -885,11 +885,14 @@ components:
         denied:
           $ref: '#/components/schemas/MemberSubjects'
           description: With `audience` `all`, the members of the organisation the room excludes, among `all_members`.
-        read_only: { type: boolean, description: 'Text channels only: members outside `exempt` may react but not post.' }
-        listen_only: { type: boolean, description: 'Audio rooms only: members outside `exempt` may listen but not publish. Enforced by the room-access service from `io.kodera.room.policy`.' }
+        read_only: { type: boolean, description: 'Text channels and audio companion chat: members outside `exempt` may react but not post.' }
+        listen_only: { type: boolean, description: 'Audio rooms only: members outside `speak_exempt` (or `exempt` on older producers when `speak_exempt` is omitted and `read_only` is false) may listen but not publish. Enforced by the room-access service from `io.kodera.room.policy`.' }
         exempt:
           $ref: '#/components/schemas/MemberSubjects'
-          description: The room's members exempt from `read_only` or `listen_only`, owners and admins (`ESPACE_STRUCTURE.md` §6).
+          description: The room's members exempt from `read_only` companion or text chat restrictions (`ESPACE_STRUCTURE.md` §6).
+        speak_exempt:
+          $ref: '#/components/schemas/MemberSubjects'
+          description: 'Audio rooms only: when present on a `listen_only` audio channel, the room''s members exempt from voice publishing restrictions (`io.kodera.room.policy.may_publish`), decoupled from companion chat `exempt`.'
         notices:
           type: array
           maxItems: 20

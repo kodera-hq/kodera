@@ -770,13 +770,11 @@ def test_es05_a_category_holding_an_archived_channel_is_not_empty(e):
         "removed_member",
         "foreign_member",
         "allowed_and_denied",
-        "read_only_audio",
         "listen_only_text",
     ],
 )
 def test_es06_each_invalid_access_is_422(e, case):
     text = create_channel(e, None)
-    audio = create_channel(e, None, "salon", kind="audio")
     removed = e.member.member
     if case == "removed_member":
         removed = model("orgs", "Membership").objects.get(pk=e.billing.member.pk)
@@ -798,7 +796,6 @@ def test_es06_each_invalid_access_is_422(e, case):
                 deny_members=[membership(e.member)],
             ),
         ),
-        "read_only_audio": (audio, document(read_only=True)),
         "listen_only_text": (text, document(listen_only=True)),
     }
     channel, body = bodies[case]
@@ -838,6 +835,9 @@ def test_es06_the_flags_store_deny_capability_rules_and_read_back(e):
         )
         assert stored == capabilities, f"ES-06: {channel['kind']} flag rules are {stored}"
     assert access_of(e, text["id"])[0]["read_only"] is True
+    assert access_of(e, audio["id"])[0]["listen_only"] is True
+    assert set_access(e, audio["id"], read_only=True, listen_only=True).status_code == 200
+    assert access_of(e, audio["id"])[0]["read_only"] is True
     assert access_of(e, audio["id"])[0]["listen_only"] is True
 
 

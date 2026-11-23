@@ -105,6 +105,7 @@ MUTANTS = [
     ('DM membership inspection open to non-service callers', 'if requester_user_id is None or requester_user_id not in authorized:', 'if False:', 'test_dm_member_joined_restricts_inspection_to_service_accounts_and_rejects_channels'),
     ('DM membership inspection admits governed channels', 'if policy_entry is not None and getattr(policy_entry, "sender", None) == self._agent:', 'if False:', 'test_dm_member_joined_restricts_inspection_to_service_accounts_and_rejects_channels'),
     ('DM membership inspection ignores join state', '_membership_of(state.get(("m.room.member", subject_user_id))) == "join"', 'True', 'test_dm_member_joined_restricts_inspection_to_service_accounts_and_rejects_channels'),
+    ('room-access timeline post open in all-audience audio room', '        if self._room_access is not None and event.sender == self._room_access:\n            return False', '        if False:\n            return False', 'test_audio_companion_chat_follows_read_only_exempt_and_archive'),
 ]
 
 

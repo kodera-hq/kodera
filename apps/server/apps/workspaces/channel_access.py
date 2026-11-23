@@ -690,8 +690,6 @@ def _validate(document: _Document, current: Access, inherited: Access, organisat
     """§6's `422`s. A membership already on a list may stay there: only an added one must be a
     current membership, so a suspended member stays denied."""
     errors: list[tuple[str, str]] = []
-    if document.read_only and current.kind != Channel.Kind.TEXT:
-        errors.append(("/read_only", "not_applicable"))
     if document.listen_only and current.kind != Channel.Kind.AUDIO:
         errors.append(("/listen_only", "not_applicable"))
     if document.visibility == ResourcePolicy.Visibility.ORGANISATION and document.allow_members:

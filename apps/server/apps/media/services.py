@@ -20,9 +20,9 @@ from django.db import connection, transaction
 from django.utils import timezone
 
 from apps.orgs.actor_selectors import TenantCaller
-from apps.workspaces.channel_access import may_view, resolve
+from apps.workspaces.channel_access import may_perform, resolve
 from apps.workspaces.selectors import (
-    active_text_channel_id,
+    active_channel_id,
     undeleted_channel_id,
     workspace_id_for,
 )
@@ -220,20 +220,20 @@ _DEFAULT_GATEWAY = _gateway
 
 def _verify_channel_upload_authority(principal: TenantCaller, channel_id: UUID) -> None:
     ws_id = workspace_id_for(organisation_id=principal.organisation_id)
-    if ws_id is None or active_text_channel_id(workspace_id=ws_id, channel_id=channel_id) is None:
+    if ws_id is None or active_channel_id(workspace_id=ws_id, channel_id=channel_id) is None:
         raise RefusalError(403)
     try:
         access = resolve(channel_id)
     except (ObjectDoesNotExist, WorkspaceUnavailableError):
         raise RefusalError(403) from None
-    if not may_view(
+    if not may_perform(
         access,
+        action="file.upload",
         organisation_id=principal.organisation_id,
         membership_id=principal.membership_id,
+        member_org_role=principal.role,
         authority_revision=principal.authority_revision,
     ):
-        raise RefusalError(403)
-    if "file.upload" in access.denied and principal.role not in {"org_owner", "org_admin"}:
         raise RefusalError(403)
 
 
@@ -250,14 +250,14 @@ def _verify_db_read_authority(principal: TenantCaller, row: Attachment) -> None:
             access = resolve(row.channel_id)
         except (ObjectDoesNotExist, WorkspaceUnavailableError):
             raise RefusalError(403) from None
-        if not may_view(
+        if not may_perform(
             access,
+            action="file.read",
             organisation_id=principal.organisation_id,
             membership_id=principal.membership_id,
+            member_org_role=principal.role,
             authority_revision=principal.authority_revision,
         ):
-            raise RefusalError(403)
-        if "file.read" in access.denied and principal.role not in {"org_owner", "org_admin"}:
             raise RefusalError(403)
         return
 

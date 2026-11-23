@@ -240,7 +240,7 @@ class WorkspacePolicyProjectionTests(unittest.TestCase):
                     snapshot(action=action, lifecycle="archived"),
                     "allow" if action in read_actions else "archived",
                 )
-        for action in ("channel.view", *MEDIA_ACTIONS):
+        for action in ALL_ACTIONS:
             with self.subTest(audio_action=action):
                 self.assert_decision(
                     snapshot(action=action, kind="audio", lifecycle="archived"), "archived"
@@ -250,10 +250,38 @@ class WorkspacePolicyProjectionTests(unittest.TestCase):
         for action in MEDIA_ACTIONS:
             self.assert_decision(snapshot(action=action), "forbidden")
         for action in TEXT_ACTIONS:
-            if action != "channel.view":
-                self.assert_decision(snapshot(action=action, kind="audio"), "forbidden")
+            with self.subTest(audio_companion_action=action):
+                self.assert_decision(snapshot(action=action, kind="audio"), "allow")
         for lifecycle in ("provisioning", "deletion_pending", "deleted"):
             self.assert_decision(snapshot(lifecycle=lifecycle), "unavailable")
+            self.assert_decision(snapshot(kind="audio", lifecycle=lifecycle), "unavailable")
+
+    def test_audio_companion_chat_separates_read_only_and_listen_only_denies(self) -> None:
+        read_only_denied = ["file.upload", "message.edit_own", "message.post", "message.reply"]
+        listen_only_denied = ["media.share", "media.speak", "media.video"]
+        for action in read_only_denied:
+            self.assert_decision(
+                snapshot(action=action, kind="audio", denied=read_only_denied), "forbidden"
+            )
+            self.assert_decision(
+                snapshot(action=action, kind="audio", denied=listen_only_denied), "allow"
+            )
+        for action in listen_only_denied:
+            self.assert_decision(
+                snapshot(action=action, kind="audio", denied=listen_only_denied), "forbidden"
+            )
+            self.assert_decision(
+                snapshot(action=action, kind="audio", denied=read_only_denied), "allow"
+            )
+        for action in ("message.react", "file.read", "channel.history"):
+            self.assert_decision(
+                snapshot(
+                    action=action,
+                    kind="audio",
+                    denied=[*read_only_denied, *listen_only_denied],
+                ),
+                "allow",
+            )
 
     def test_malformed_input_has_no_permissive_defaults(self) -> None:
         for value in (None, True, 1, "snapshot", [], (), object()):

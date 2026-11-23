@@ -542,3 +542,157 @@ def test_media_0003_attachment_scope_binding_reverses_and_reapplies_cleanly(djan
         executor = MigrationExecutor(target)
         executor.migrate([("media", "0003_attachment_scope_binding")])
         assert schema_objects(target) == forward_schema
+
+
+def test_audio_companion_channel_upload_enforces_read_only_overrides_and_archive(world, gateway):
+    import hashlib
+
+    from apps.workspaces import governance, iam
+    from apps.workspaces.channel_access import LISTEN_ONLY, READ_ONLY
+    from apps.workspaces.models import Channel, ResourcePolicy, ResourcePolicyRule
+
+    org, workspace, members, tokens = world
+    default_pol = ResourcePolicy.objects.create(workspace=workspace, visibility="organisation")
+    workspace.default_policy = default_pol
+    workspace.save(update_fields=["default_policy", "updated_at"])
+
+    audio_policy = ResourcePolicy.objects.create(workspace=workspace, visibility="organisation")
+    for cap in LISTEN_ONLY:
+        ResourcePolicyRule.objects.create(
+            policy=audio_policy, kind="deny_capability", capability=cap
+        )
+    audio_chan = Channel.objects.create(
+        workspace=workspace,
+        name="Stage Lounge",
+        kind="audio",
+        lifecycle="active",
+        position=5,
+        policy_mode="explicit",
+        explicit_policy=audio_policy,
+    )
+    payload = {
+        "channelId": str(audio_chan.id),
+        "filename": "notes.pdf",
+        "contentType": "application/pdf",
+        "sizeBytes": 128,
+        "sha256": hashlib.sha256(b"audio-companion").hexdigest(),
+    }
+
+    # 1. Active audio channel with listen_only=True and read_only=False admits member file.upload!
+    ticket = services.create_upload(
+        verified=tokens[3], organisation_id=org.id, body=payload, request_id=str(uuid4())
+    )
+    completed = services.complete_upload(
+        verified=tokens[3],
+        organisation_id=org.id,
+        attachment_id=ticket["attachmentId"],
+        request_id=str(uuid4()),
+    )
+    assert completed["filename"] == "notes.pdf"
+
+    # 2. Turning read_only=True on the audio channel denies org_member uploads, admits org_owner,
+    #    and admits org_member once granted `allow: ["message.post"]` role override!
+    for cap in READ_ONLY:
+        ResourcePolicyRule.objects.create(
+            policy=audio_policy, kind="deny_capability", capability=cap
+        )
+    with pytest.raises(RefusalError) as ro_denied:
+        services.create_upload(
+            verified=tokens[3], organisation_id=org.id, body=payload, request_id=str(uuid4())
+        )
+    assert ro_denied.value.status == 403
+
+    owner_ticket = services.create_upload(
+        verified=tokens[0], organisation_id=org.id, body=payload, request_id=str(uuid4())
+    )
+    assert owner_ticket["attachmentId"]
+
+    poster_role = iam.create_role(
+        verified=tokens[0],
+        organisation_id=org.id,
+        data={
+            "name": "CompanionPoster",
+            "slug": "companion-poster",
+            "position": 10,
+            "permissions": [],
+        },
+        request_id=str(uuid4()),
+    )
+    iam.assign_roles(
+        verified=tokens[0],
+        organisation_id=org.id,
+        membership_id=members[3].id,
+        role_ids=[poster_role["id"]],
+        request_id=str(uuid4()),
+    )
+    governance.overrides(
+        verified=tokens[0],
+        organisation_id=org.id,
+        channel_id=audio_chan.id,
+        data=[{"role_id": poster_role["id"], "allow": ["message.post"], "deny": []}],
+        request_id=str(uuid4()),
+    )
+    overridden_ticket = services.create_upload(
+        verified=tokens[3], organisation_id=org.id, body=payload, request_id=str(uuid4())
+    )
+    assert overridden_ticket["attachmentId"]
+
+    # 3. Active audio attachment is readable while active, whereas archiving the audio channel
+    #    denies BOTH upload AND read (`file.read` via `may_perform`) to everyone — while an
+    #    archived text channel preserves attachment read access!
+    from uuid import UUID
+
+    text_chan = Channel.objects.create(
+        workspace=workspace,
+        kind="text",
+        name="notes-archive",
+        position=51,
+        policy_mode="inherit",
+        lifecycle="active",
+        room_state="ready",
+    )
+    text_payload = {
+        **payload,
+        "channelId": str(text_chan.id),
+        "sha256": hashlib.sha256(b"text-archive").hexdigest(),
+    }
+    text_ticket = services.create_upload(
+        verified=tokens[3], organisation_id=org.id, body=text_payload, request_id=str(uuid4())
+    )
+    services.complete_upload(
+        verified=tokens[3],
+        organisation_id=org.id,
+        attachment_id=text_ticket["attachmentId"],
+        request_id=str(uuid4()),
+    )
+
+    # Active audio attachment is readable before archiving.
+    active_read = services.get_attachment(
+        verified=tokens[3],
+        organisation_id=org.id,
+        attachment_id=UUID(ticket["attachmentId"]),
+    )
+    assert active_read["id"] == ticket["attachmentId"]
+
+    Channel.objects.filter(pk__in=[audio_chan.id, text_chan.id]).update(lifecycle="archived")
+    for caller_tok in (tokens[0], tokens[3]):
+        with pytest.raises(RefusalError) as archived_denied:
+            services.create_upload(
+                verified=caller_tok, organisation_id=org.id, body=payload, request_id=str(uuid4())
+            )
+        assert archived_denied.value.status == 403
+        with pytest.raises(RefusalError) as archived_read_denied:
+            services.get_attachment(
+                verified=caller_tok,
+                organisation_id=org.id,
+                attachment_id=UUID(ticket["attachmentId"]),
+            )
+        assert archived_read_denied.value.status == 403
+
+    # Archived text channel attachment remains readable.
+    archived_text_read = services.get_attachment(
+        verified=tokens[3],
+        organisation_id=org.id,
+        attachment_id=UUID(text_ticket["attachmentId"]),
+    )
+    assert archived_text_read["id"] == text_ticket["attachmentId"]

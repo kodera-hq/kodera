@@ -809,8 +809,8 @@ export interface paths {
          *     `inherit` detaches it, and the detached policy is kept, never deleted. `422` refuses
          *     `inherit` with any member differing from the resolved policy, `organisation` visibility
          *     with a non-empty `allow_members`, a membership that is not a current membership of the
-         *     organisation, one member both allowed and denied, `read_only` on an audio room and
-         *     `listen_only` on a text channel.
+         *     organisation, one member both allowed and denied, and `listen_only` on a text channel
+         *     (`read_only` applies to both text channels and audio companion chat).
          *
          *     Audited as `workspace.channel_access_changed`, with the membership ids added to and
          *     removed from each list, the flags and the new tag. An owner or admin who grants
@@ -5043,6 +5043,29 @@ export interface components {
             soundPackId?: "cristal-48k" | "studio-mat" | "silence" | "givre" | "atelier" | "souffle" | "cosmos" | "luciole" | "silencieux";
             /** @description Duplicates are collapsed preserving order; omitted uses template defaults. */
             enabledConnectors?: ("frameio-review-bridge" | "github-webhook" | "linear-sync" | "sentry-alerts" | "qonto-treasury-alerts" | "stripe-revenue-events" | "calcom-booking-sync" | "nextcloud-drive-notifier")[];
+            /** @description Optional client-supplied durable operation key for resumable WorkspaceTemplate v2 execution. Re-invoking with the same key resumes incomplete steps idempotently without duplicating categories, channels, Matrix rooms, collections or starter documents. */
+            operationKey?: string;
+            customization?: components["schemas"]["WorkspaceTemplateCustomization"];
+        };
+        /**
+         * WorkspaceTemplateCustomization
+         * @description Optional WorkspaceTemplate v2 customization toggles and channel overrides applied deterministically when building or resuming a workspace template plan. Omitted members keep the template's defaults; at least one text channel must remain enabled.
+         */
+        WorkspaceTemplateCustomization: {
+            /** @default true */
+            includeAudioChannels: boolean;
+            /** @default true */
+            includeCollections: boolean;
+            /** @default true */
+            includeStarterDocs: boolean;
+            excludedChannelKeys?: string[];
+            additionalChannels?: {
+                categoryKey: string;
+                name: string;
+                /** @enum {string} */
+                kind: "text" | "audio";
+                topic?: string;
+            }[];
         };
         /**
          * @example {
@@ -5093,10 +5116,14 @@ export interface components {
          *     took before 0.42.0 and it is permanent: Core accepts it for as long as this contract
          *     exists, resolves it to the same template as `proximity`, and never answers it differently.
          *     A new client sends `proximity`; a value stored as `crisis-cell` is read as `proximity`.
+         *
+         *     WorkspaceTemplate v2 (`0.52.0`) covers the six customizable onboarding personas
+         *     (`tech-studio`, `b2b-advisory`, `association-coop`, `open-source-community`,
+         *     `public-sector`, `blank`) alongside `audiovisual-production` and `proximity`.
          * @example proximity
          * @enum {string}
          */
-        WorkspaceTemplateId: "audiovisual-production" | "tech-studio" | "b2b-advisory" | "public-sector" | "proximity" | "crisis-cell";
+        WorkspaceTemplateId: "audiovisual-production" | "tech-studio" | "b2b-advisory" | "association-coop" | "open-source-community" | "public-sector" | "blank" | "proximity" | "crisis-cell";
         /**
          * ThemeId
          * @description The unified theme vocabulary, the same identifier on every client and in Core: `light`,
@@ -6555,9 +6582,10 @@ export interface components {
          * ChannelAccess
          * @description Who may view a channel and what they may do there, as one document
          *     (`docs/specs/ESPACE_STRUCTURE.md` §6). `read_only` denies posting, replying, editing and
-         *     uploading in a text channel, and `listen_only` speaking, video and sharing in an audio
-         *     room, to `org_member` and `org_billing`; owners and admins are exempt. Reactions, deleting
-         *     one's own earlier messages and reading stay allowed.
+         *     uploading in a text channel or in an audio channel's 1:1 Matrix companion chat, and
+         *     `listen_only` denies speaking, video and sharing in an audio room, to `org_member` and
+         *     `org_billing`; owners and admins are exempt. Reactions, deleting one's own earlier messages
+         *     and reading stay allowed.
          * @example {
          *       "channel_id": "0192f3a4-5b6c-7d8e-9f01-23456789abd0",
          *       "mode": "explicit",
@@ -6583,7 +6611,7 @@ export interface components {
             allow_members: string[];
             /** @description Membership ids that may never view it; a deny wins over everything. */
             deny_members: string[];
-            /** @description Text channels only. */
+            /** @description Text channels and audio companion chat. */
             read_only: boolean;
             /** @description Audio rooms only. */
             listen_only: boolean;

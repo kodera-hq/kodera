@@ -970,6 +970,7 @@ def without_template_key(objects):
 # Every test restores the current leaf, including the later warm-pool allocation table.
 LEAF = "0010_moderation_scope_guards"
 WARM_POOL_TABLE = "workspaces_warmpoolallocation"
+TEMPLATE_APP_TABLE = "workspaces_workspacetemplateapplication"
 NOTICE_TABLE = "workspaces_channelnotice"
 ESPACE_OBJECTS = {
     ("column", "workspaces_channel", "room_state"),
@@ -1001,7 +1002,15 @@ def without_warm_pool(objects):
     )
     assert ("relation", WARM_POOL_TABLE, WARM_POOL_TABLE) in objects
     assert ("constraint", WARM_POOL_TABLE, "warm_pool_offer_valid") in objects
-    return {key: value for key, value in objects.items() if key[1] != WARM_POOL_TABLE}
+    template_app_shared = {
+        ("trigger", "orgs_privacyerasure", "aa_04_workspace_template_app_erasure"),
+        ("function", "workspace_template_app_erasure_hook", ""),
+    }
+    return {
+        key: value
+        for key, value in objects.items()
+        if key[1] not in {WARM_POOL_TABLE, TEMPLATE_APP_TABLE} and key not in template_app_shared
+    }
 
 
 def without_espace_structure(objects):
@@ -1143,5 +1152,5 @@ def test_frozen_final_kernel_source_is_reused_without_a_second_evaluator(world):
     from services.workspace_policy import projection
 
     assert hashlib.sha256(Path(projection.__file__).read_bytes()).hexdigest() == (
-        "47b7d8aede9cd1275df10f8ce5fa9534b45374d94ebf967d5fc5188b025d7e47"
+        "cc995ddaf8394701ed4eb3ec82300c573efcbe1aa43783141d4c78beba551eee"
     )
