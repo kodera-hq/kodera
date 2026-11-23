@@ -107,3 +107,10 @@ export const espaceDevHomeserver = (): string | undefined =>
  */
 export const espaceDevServerName = (): string | undefined =>
   import.meta.env.DEV ? read(import.meta.env.VITE_ESPACE_DEV_SERVER_NAME) : undefined
+
+/**
+ * Optional public release identifier stamped into outgoing zero-PII diagnostic bug reports.
+ * Read via static dot property access so Vite folds the literal at build time without emitting
+ * the `import.meta.env` dictionary into the production bundle (`scripts/check-production-bundle.sh`).
+ */
+export const buildId = (): string | undefined => read(import.meta.env.VITE_BUILD_ID)

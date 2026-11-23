@@ -197,8 +197,10 @@ export function isValidErrorCode(value: string, context?: ScrubberContext): bool
   )
 }
 
+import { buildId } from '../../config'
+
 export function detectBuildId(envBuildId?: string): string {
-  const candidate = (envBuildId ?? import.meta.env['VITE_BUILD_ID'] ?? '').trim()
+  const candidate = (envBuildId ?? buildId() ?? '').trim()
   if (candidate && isValidBuildId(candidate)) return candidate
   return 'web-0.1.1'
 }
