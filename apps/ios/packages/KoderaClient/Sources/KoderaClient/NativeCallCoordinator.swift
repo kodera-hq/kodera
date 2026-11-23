@@ -184,7 +184,8 @@ public final class NativeCallCoordinator {
                 companionSince = batch.roomDeltas[call.roomId]?.limited == true ? nil : batch.nextBatch
             }
         } catch {
-            // Authority failures retire the request's owner; transient failures retry the same cursor next poll.
+            // Failed sync clears Matrix room knowledge; recover it with a full sync for this owner.
+            if self.owns(owner, call.wake.callId) { self.companionSince = nil }
         }
     }
     public func consumeAuthenticatedSync(_ batch: MatrixSyncBatch, roomId: String? = nil) {

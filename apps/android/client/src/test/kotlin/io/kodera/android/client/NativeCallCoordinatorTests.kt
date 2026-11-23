@@ -1,6 +1,7 @@
 package io.kodera.android.client
 
 import io.kodera.android.domain.*
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.junit.Assert.*
 import org.junit.Test
 import java.util.concurrent.CountDownLatch
@@ -59,7 +60,66 @@ private class PresenterFixture : NativeCallPresenter {
 }
 class NativeCallCoordinatorTests {
     private fun resolver() = NativeCallResolver { AuthenticatedNativeCall(it, "!room:example.org", "Member") }
-    @Test fun companionPollRetriesTransientFailuresWithoutRetiringCallOrAdvancingCursor() {
+    @Test fun realMatrixClientRecoversCompanionPollAfter503WithoutFalseAuthorityLoss() {
+        for (connected in listOf(false, true)) {
+            CoreRequester("https://core.test", LoopbackPolicy.REFUSE, FakeTokens()).use { requester ->
+                val snapshot = WorkspaceSnapshot(ORG, WorkspaceState.INITIALISED,
+                    WorkspaceSetup(WorkspaceSetupState.READY, null), false,
+                    "00000000-0000-4000-8000-000000000020", emptyList(), listOf(
+                        WorkspaceChannel(CHANNEL, ChannelKind.AUDIO, "call", null, "",
+                            WorkspaceChannelLifecycle.ACTIVE, ChannelRoomState.READY, false)))
+                val cursors = mutableListOf<String?>()
+                fun sync(cursor: String, events: String = "[]") = MatrixHttpReply(200,
+                    """{"next_batch":"$cursor","rooms":{"join":{"!room:example.org":{"state":{"events":[]},"timeline":{"events":$events}}}}}""".toByteArray())
+                val stub = MatrixHttpStub { request ->
+                    val url = request.url.toHttpUrl()
+                    when {
+                        url.encodedPath == "/.well-known/matrix/client" -> MatrixHttpReply(404)
+                        url.encodedPath.startsWith("/_matrix/client/v3/directory/room/") || url.encodedPath.endsWith("/join") ->
+                            MatrixHttpReply(200, """{"room_id":"!room:example.org"}""".toByteArray())
+                        url.encodedPath == "/_matrix/client/v3/sync" -> {
+                            cursors += url.queryParameter("since")
+                            when (cursors.size) {
+                                1 -> sync("one")
+                                2 -> MatrixHttpReply(503)
+                                3 -> sync("recovered")
+                                4 -> sync("answered", """[{"type":"m.call.answer","event_id":"${'$'}answer","sender":"@member:example.org","origin_server_ts":100,"content":{"call_id":"$CALL","party_id":"other"}}]""")
+                                else -> error("Unexpected extra sync")
+                            }
+                        }
+                        else -> error("Unexpected Matrix request: ${url.encodedPath}")
+                    }
+                }
+                MatrixRoomClient(requester, LoopbackPolicy.REFUSE, httpStub = stub).use { client ->
+                    MatrixChannelConversationTransport(ownUserId = "@member:example.org", roomClient = client,
+                        organisationSlug = "atelier", matrixDomain = "matrix.kodera.io",
+                        matrixServerName = "atelier.matrix.kodera.io", matrixAccessToken = "token",
+                        fetchWorkspace = { WorkspaceOutcome.Loaded(snapshot) }).use { transport ->
+                        val media = MediaFixture(); val presenter = PresenterFixture()
+                        val coordinator = NativeCallCoordinator(ORG, "local", resolver(), media, transport, { 100 })
+                        coordinator.bind(presenter); coordinator.receive(wake())
+                        if (connected) { coordinator.answer(CALL); coordinator.audioSession(true) }
+                        val owner = coordinator.ownership(CALL)
+                        assertEquals(CALL, coordinator.currentCall()?.wake?.callId)
+                        coordinator.pollCompanionTimeline() // 503 clears the real client's matrixKnown.
+                        assertEquals(CALL, coordinator.currentCall()?.wake?.callId); assertEquals(0, media.disconnects.get())
+                        assertEquals(connected, media.microphone); assertTrue(presenter.reasons.isEmpty())
+                        coordinator.pollCompanionTimeline() // Full 200 sync must restore matrixKnown.
+                        assertEquals(CALL, coordinator.currentCall()?.wake?.callId); assertEquals(owner, coordinator.ownership(CALL))
+                        assertEquals(if (connected) NativeRingPhase.CONNECTED else NativeRingPhase.RINGING, coordinator.phase(CALL))
+                        assertEquals(0, media.disconnects.get()); assertEquals(connected, media.microphone)
+                        assertTrue(presenter.reasons.isEmpty())
+                        coordinator.pollCompanionTimeline()
+                        assertEquals(listOf(null, "one", null, "recovered"), cursors)
+                        assertNull(coordinator.currentCall()); assertEquals(1, media.disconnects.get()); assertFalse(media.microphone)
+                        assertEquals(listOf(NativeRingPhase.ANSWERED_ELSEWHERE), presenter.reasons)
+                    }
+                }
+            }
+        }
+    }
+
+    @Test fun companionPollResetsCursorAfterTransientFailuresWithoutRetiringCall() {
         for (connected in listOf(false, true)) {
             for (failure in listOf(MatrixClientError.SERVICE_UNAVAILABLE, MatrixClientError.TRANSPORT, MatrixClientError.RATE_LIMITED)) {
                 val media = MediaFixture(); val chat = ChatFixture(); val presenter = PresenterFixture()
@@ -75,7 +135,7 @@ class NativeCallCoordinatorTests {
                 chat.syncFailure = null; coordinator.pollCompanionTimeline()
                 chat.events = listOf(MatrixRawTimelineEvent("m.call.answer", "\$answer", chat.ownUserId, 100, callId = CALL, callPartyId = "other"))
                 coordinator.pollCompanionTimeline()
-                assertEquals(listOf("one", "one", "one", "two"), chat.syncRequests)
+                assertEquals(listOf("one", null, null, "two"), chat.syncRequests)
                 assertNull(coordinator.currentCall()); assertEquals(1, media.disconnects.get())
                 assertEquals(listOf(NativeRingPhase.ANSWERED_ELSEWHERE), presenter.reasons)
             }

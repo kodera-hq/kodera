@@ -187,7 +187,10 @@ class NativeCallCoordinator(
                 }
             }
         } catch (_: Exception) {
-            // Authority failures retire the request's owner; transient failures retry the same cursor next poll.
+            // Failed sync clears Matrix room knowledge; recover it with a full sync for this owner.
+            synchronized(lock) {
+                if (owns(context.first, context.second.wake.callId)) companionSince = null
+            }
         } finally {
             synchronized(lock) { if (companionPollOwner == context.first) companionPollOwner = null }
         }

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Restore Matrix room security knowledge with a full sync after a temporary native call polling failure.
+
 - Preserve native calls across temporary Matrix sync failures, recover limited timelines, and end expired rings before replacement.
 
 - Monitor the native call's own room for answers and authority changes while another channel is selected.

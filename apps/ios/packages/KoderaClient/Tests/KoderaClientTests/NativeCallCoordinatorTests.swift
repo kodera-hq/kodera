@@ -150,7 +150,61 @@ private actor CallChatFixture: ChannelConversationTransport {
 }
 
 @MainActor final class NativeCallCoordinatorTests: XCTestCase {
-    func testCompanionPollRetriesTransientFailuresWithoutRetiringCallOrAdvancingCursor() async throws {
+    func testRealMatrixClientRecoversCompanionPollAfter503WithoutFalseAuthorityLoss() async throws {
+        for connected in [false, true] {
+            let requester = try CoreRequester(coreApiOrigin: "https://core.test", loopback: .refuse,
+                tokens: FakeTokens(), protocolClass: URLProtocolFixture.self, timeout: 2)
+            let client = MatrixRoomClient(coreRequester: requester, loopback: .refuse, protocolClass: URLProtocolFixture.self)
+            let snapshot = WorkspaceSnapshot(organisationId: callOrg, state: .initialised,
+                setup: WorkspaceSetup(state: .ready, reason: nil), canInitialise: false,
+                id: "00000000-0000-4000-8000-000000000020", categories: [],
+                uncategorisedChannels: [WorkspaceChannel(id: callChannel, kind: .audio, name: "call",
+                    templateKey: nil, topic: "", lifecycle: .active, roomState: .ready, isConfidential: false)])
+            let transport = MatrixChannelConversationTransport(ownUserId: "@member:example.org", roomClient: client,
+                organisationSlug: "atelier", matrixDomain: "matrix.kodera.io",
+                matrixServerName: "atelier.matrix.kodera.io", matrixAccessToken: "token",
+                fetchWorkspace: { _ in .loaded(snapshot) })
+            let headers = ["Content-Type": "application/json"]
+            func reply(_ status: Int, _ json: String) -> URLProtocolFixture.Response {
+                .body(status: status, headers: headers, chunks: [Data(json.utf8)])
+            }
+            func sync(_ cursor: String, events: String = "[]") -> URLProtocolFixture.Response {
+                reply(200, """
+                {"next_batch":"\(cursor)","rooms":{"join":{"!room:example.org":{"state":{"events":[]},"timeline":{"events":\(events)}}}}}
+                """)
+            }
+            URLProtocolFixture.install(sequence: [reply(404, "{}"),
+                reply(200, "{\"room_id\":\"!room:example.org\"}"), reply(200, "{\"room_id\":\"!room:example.org\"}"),
+                sync("one"), reply(503, "{}"), sync("recovered"), sync("answered", events: """
+                [{"type":"m.call.answer","event_id":"$answer","sender":"@member:example.org","origin_server_ts":100,
+                  "content":{"call_id":"\(callId)","party_id":"other"}}]
+                """)])
+            let media = CallMediaFixture(); let presenter = CallPresenterFixture()
+            let coordinator = try NativeCallCoordinator(organisationId: callOrg, localPartyId: "local",
+                resolver: ImmediateCallResolver(), media: media, conversation: transport, now: { 100 })
+            coordinator.bind(presenter); try await coordinator.receive(callWake())
+            if connected { try await coordinator.answer(callId: callId); await coordinator.audioSession(active: true) }
+            XCTAssertEqual(coordinator.call?.wake.callId, callId)
+            await coordinator.pollCompanionTimeline() // 503 clears the real client's matrixKnown.
+            XCTAssertEqual(coordinator.call?.wake.callId, callId); XCTAssertEqual(media.disconnects, 0)
+            XCTAssertEqual(media.microphoneEnabled, connected); XCTAssertTrue(presenter.reasons.isEmpty)
+            await coordinator.pollCompanionTimeline() // Full 200 sync must restore matrixKnown.
+            XCTAssertEqual(coordinator.call?.wake.callId, callId)
+            XCTAssertEqual(coordinator.ring.records[callId]?.phase, connected ? .connected : .ringing)
+            XCTAssertEqual(media.disconnects, 0); XCTAssertEqual(media.microphoneEnabled, connected)
+            XCTAssertTrue(presenter.reasons.isEmpty)
+            await coordinator.pollCompanionTimeline()
+            let requests = URLProtocolFixture.requests.filter { $0.url?.path == "/_matrix/client/v3/sync" }
+            let cursors = requests.map { request in
+                URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "since" }?.value
+            }
+            XCTAssertEqual(cursors, [nil, "one", nil, "recovered"])
+            XCTAssertNil(coordinator.call); XCTAssertEqual(media.disconnects, 1)
+            XCTAssertFalse(media.microphoneEnabled); XCTAssertEqual(presenter.reasons, [.answeredElsewhere])
+        }
+    }
+
+    func testCompanionPollResetsCursorAfterTransientFailuresWithoutRetiringCall() async throws {
         for connected in [false, true] {
             for failure in [MatrixClientFailure.serviceUnavailable, .transport(.offline), .transport(.timeout), .rateLimited] {
                 let media = CallMediaFixture(); let chat = CallChatFixture(); let presenter = CallPresenterFixture()
@@ -169,7 +223,7 @@ private actor CallChatFixture: ChannelConversationTransport {
                     sender: chat.ownUserId, originServerTs: 100, callId: callId, callPartyId: "other")])
                 await coordinator.pollCompanionTimeline()
                 let requests = await chat.requests()
-                XCTAssertEqual(requests, ["!room:example.org|one", "!room:example.org|one", "!room:example.org|one", "!room:example.org|two"])
+                XCTAssertEqual(requests, ["!room:example.org|one", "!room:example.org|nil", "!room:example.org|nil", "!room:example.org|two"])
                 XCTAssertNil(coordinator.call); XCTAssertEqual(media.disconnects, 1)
                 XCTAssertEqual(presenter.reasons, [.answeredElsewhere])
             }
