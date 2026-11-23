@@ -60,14 +60,31 @@ public final class AppAuthBackend: AuthorizationBackend {
         try Self.checkTokens(accessToken: tokens.accessToken, idToken: tokens.idToken)
         let state = OIDAuthState(authorizationResponse: response, tokenResponse: tokens)
         guard state.isAuthorized else { throw .refused }
-        return StoredGrant(issuer: issuer.issuer, archive: try Self.archive(state))
+        let subject = Self.extractJwtSubject(tokens.idToken)
+        return StoredGrant(issuer: issuer.issuer, archive: try Self.archive(state), subject: subject)
     }
 
     public func freshAccessToken(grant: StoredGrant, forceRefresh: Bool) async throws(BackendFailure) -> FreshToken {
         let state = try Self.unarchive(grant.archive)
         if forceRefresh { state.setNeedsTokenRefresh() }
         let token = try await Self.performWithFreshTokens(state)
-        return FreshToken(accessToken: token, grant: StoredGrant(issuer: grant.issuer, archive: try Self.archive(state)))
+        let subject = Self.extractJwtSubject(state.lastTokenResponse?.idToken ?? state.lastAuthorizationResponse.idToken)
+            ?? grant.subject
+        return FreshToken(
+            accessToken: token,
+            grant: StoredGrant(issuer: grant.issuer, archive: try Self.archive(state), subject: subject)
+        )
+    }
+
+    nonisolated public func authenticatedSubject(for grant: StoredGrant) -> String? {
+        if let explicit = grant.subject, !explicit.isEmpty {
+            return explicit
+        }
+        guard let state = try? Self.unarchive(grant.archive) else {
+            return nil
+        }
+        let idToken = state.lastTokenResponse?.idToken ?? state.lastAuthorizationResponse.idToken
+        return Self.extractJwtSubject(idToken)
     }
 
     public func revoke(grant: StoredGrant, issuer: AdmittedIssuer, configuration: SignInConfiguration) async {
@@ -231,5 +248,27 @@ public final class AppAuthBackend: AuthorizationBackend {
             throw .protocolViolation
         }
         return state
+    }
+
+    nonisolated static func extractJwtSubject(_ idToken: String?) -> String? {
+        guard let idToken, !idToken.isEmpty else { return nil }
+        let segments = idToken.split(separator: ".", omittingEmptySubsequences: false)
+        guard segments.count == 3 else { return nil }
+        var base64 = segments[1]
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        let remainder = base64.count % 4
+        if remainder != 0 {
+            base64 += String(repeating: "=", count: 4 - remainder)
+        }
+        guard let payloadData = Data(base64Encoded: base64),
+              payloadData.count <= 16_384,
+              let json = (try? JSONSerialization.jsonObject(with: payloadData)) as? [String: Any],
+              let sub = json["sub"] as? String,
+              (1...255).contains(sub.utf8.count),
+              sub.utf8.allSatisfy({ $0 >= 0x21 && $0 <= 0x7E }) else {
+            return nil
+        }
+        return sub
     }
 }

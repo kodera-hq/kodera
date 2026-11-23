@@ -87,6 +87,11 @@ public actor KoderaSignInService: SignInService {
         sessionEndedListeners.append(listener)
     }
 
+    public func authenticatedSubject() -> String? {
+        guard let grant else { return nil }
+        return backend.authenticatedSubject(for: grant)
+    }
+
     public func signIn(issuer: String) async throws(SignInFailure) -> Session {
         let admitted = try configuration.admit(issuer)
         guard !signingIn else { throw .inProgress }

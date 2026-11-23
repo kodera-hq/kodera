@@ -3,6 +3,10 @@ package io.kodera.android.auth
 import android.content.Intent
 import io.kodera.android.client.BackendException
 import io.kodera.android.client.BackendFailure
+import io.kodera.android.client.MatrixClientError
+import io.kodera.android.client.MatrixClientException
+import io.kodera.android.client.MatrixSsoRedirectRequest
+import io.kodera.android.client.MatrixSsoTokenGrant
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
@@ -14,6 +18,10 @@ internal interface BrowserAuthorization {
     fun onAuthorizationResult(data: Intent?): Boolean
     /** Cancels the sign-in in flight, at whatever step it is. False when there is none. */
     fun cancelAuthorization(): Boolean
+    /** Launches the Synapse OIDC SSO browser flow and returns the single-use `loginToken` grant. */
+    fun authorizeMatrixSso(request: MatrixSsoRedirectRequest): MatrixSsoTokenGrant {
+        throw MatrixClientException(MatrixClientError.IDENTITY_UNAVAILABLE)
+    }
 }
 
 /**

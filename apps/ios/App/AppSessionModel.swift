@@ -42,8 +42,24 @@ final class AppSessionModel: ObservableObject {
     private var proximityScope: (organisation: String, workspace: String)?
     private var isForegroundActive = false
     /// Completion includes the coordinator reducer and synchronous App effects; actions remain Void.
+    private static let vaultDeviceIdDefaultsKey = "io.kodera.app.session.vault_device_id"
+    private static let pushDeviceIdDefaultsKey = "io.kodera.app.session.push_device_id"
+    private static let vaultUnwipedDefaultsKey = "io.kodera.app.session.vault_unwiped"
+
     private(set) var signInTask: Task<Void, Never>?
     private(set) var signOutTask: Task<Void, Never>?
+    @Published private(set) var activeConversation: ChannelConversationModel?
+    typealias ConversationTransportFactory = @MainActor (ChannelConversationScope, CoreRequester?) -> (any ChannelConversationTransport)?
+    private let conversationTransportFactory: ConversationTransportFactory?
+    private let matrixSsoAuthorizerFactory: (@MainActor (SessionFence) -> MatrixSsoAuthorizer)?
+    private let matrixProtocolClass: URLProtocol.Type?
+    private let sessionVault: KeychainSessionVault
+    private var vaultUnwiped = false
+    private var activeSessionFence = SessionFence()
+    private var activeVaultOrganisationId: String?
+    private var registeredPushDeviceId: String?
+    private var activeMatrixTransport: MatrixChannelConversationTransport?
+    private var activeMatrixSession: PersistedMatrixSession?
     /// The signed-in session's Core clients: one `CoreRequester`, bound to the configured Core origin and
     /// shared by every Core client of that session. Nil when signed out or when Core is not configured.
     private var core: CoreClients? {
@@ -52,7 +68,9 @@ final class AppSessionModel: ObservableObject {
         didSet {
             if let left = oldValue?.requester, left !== core?.requester {
                 left.invalidate()
+                rotateSessionFence()
                 resetProximity()
+                closeChannel()
             }
         }
     }
@@ -62,6 +80,7 @@ final class AppSessionModel: ObservableObject {
         let requester: CoreRequester
         let me: CoreMeClient
         let workspace: CoreWorkspaceClient
+        let pushWakeup: PushWakeupCoordinator
     }
 
     convenience init(configuration: AppConfiguration) {
@@ -73,28 +92,66 @@ final class AppSessionModel: ObservableObject {
         } else {
             service = nil
         }
+        let ssoBackend = MatrixSsoAuthorizerBackend(presenter: { Self.presentingViewController() })
         self.init(configuration: configuration, service: service, store: store, defaults: .standard,
                   channels: OrganisationChannelsLoader(), requesterFactory: { origin, policy, service in
             try CoreRequester(coreApiOrigin: origin, loopback: policy, tokens: service)
-        })
+        }, sessionVault: KeychainSessionVault(),
+                  matrixSsoAuthorizerFactory: { fence in ssoBackend.makeAuthorizer(fence: fence) })
     }
 
     /// Internal composition boundary: production and hosted tests share every state/effect mapping.
     init(configuration: AppConfiguration, service: (any SignInService)?, store: any TokenStore,
          defaults: UserDefaults, channels: OrganisationChannelsLoader,
-         requesterFactory: @escaping RequesterFactory) {
+         requesterFactory: @escaping RequesterFactory,
+         sessionVault: KeychainSessionVault = KeychainSessionVault(
+             keyStore: InMemoryTokenStore(),
+             sealedStore: InMemoryTokenStore()
+         ),
+         conversationTransportFactory: ConversationTransportFactory? = nil,
+         matrixSsoAuthorizerFactory: (@MainActor (SessionFence) -> MatrixSsoAuthorizer)? = nil,
+         matrixProtocolClass: URLProtocol.Type? = nil) {
         self.configuration = configuration
         self.service = service
         self.store = store
         self.defaults = defaults
         self.channels = channels
         self.requesterFactory = requesterFactory
+        self.sessionVault = sessionVault
+        self.conversationTransportFactory = conversationTransportFactory
+        self.matrixSsoAuthorizerFactory = matrixSsoAuthorizerFactory
+        self.matrixProtocolClass = matrixProtocolClass
+        self.vaultUnwiped = defaults.bool(forKey: Self.vaultUnwipedDefaultsKey)
         proximityRadioSession.onAuthenticatedRebootstrapRequired = { [weak self] deadline in
             self?.prepareProximity(renewUntil: deadline)
         }
         channels.onChange = { [weak self] state in
             self?.member = state.member
             self?.workspace = state.workspace
+            if let self, case let .loaded(snapshot) = state.workspace {
+                if let previousOrg = self.activeVaultOrganisationId, previousOrg != snapshot.organisationId {
+                    let retiringFence = self.rotateSessionFence()
+                    self.closeChannel()
+                    self.activeMatrixSession = nil
+                    self.activeVaultOrganisationId = snapshot.organisationId
+                    if !self.wipeSessionVaultAndDeviceIds(invalidating: retiringFence) {
+                        self.channels.closeReads()
+                        self.core = nil
+                        self.phase = .signedOut
+                        return
+                    }
+                } else {
+                    self.activeVaultOrganisationId = snapshot.organisationId
+                }
+            }
+            if let self, let openScope = self.activeConversation?.scope {
+                guard case .loaded = state.member,
+                      case let .loaded(snapshot) = state.workspace,
+                      snapshot.organisationId == openScope.organisationId else {
+                    self.closeChannel()
+                    return
+                }
+            }
             if let self, let scope = self.proximityScope {
                 guard case .loaded = state.member, case let .loaded(snapshot) = state.workspace,
                       snapshot.organisationId == scope.organisation, snapshot.id == scope.workspace else {
@@ -108,11 +165,25 @@ final class AppSessionModel: ObservableObject {
             // Exhaustive synchronous mapping: ownership and monotonicity were decided by the coordinator.
             switch effect {
             case let .ended(explicit):
-                phase = .signedOut
-                noticeKey = explicit ? nil : "session.ended"
-            case .requireWipe: sessionNotWiped()
+                let retiringFence = self.rotateSessionFence()
+                self.activeVaultOrganisationId = nil
+                self.activeMatrixSession = nil
+                self.closeChannel()
+                let wiped = self.wipeSessionVaultAndDeviceIds(invalidating: retiringFence)
+                self.phase = .signedOut
+                self.noticeKey = wiped ? (explicit ? nil : "session.ended") : "session.not_wiped"
+            case .requireWipe:
+                let retiringFence = self.rotateSessionFence()
+                self.activeVaultOrganisationId = nil
+                self.activeMatrixSession = nil
+                self.closeChannel()
+                _ = self.wipeSessionVaultAndDeviceIds(invalidating: retiringFence)
+                self.sessionNotWiped()
             case .clearNotice: noticeKey = nil
-            case .authenticationStopped: phase = .signedOut
+            case .authenticationStopped:
+                _ = self.rotateSessionFence()
+                self.closeChannel()
+                self.phase = .signedOut
             }
         }
     }
@@ -129,6 +200,7 @@ final class AppSessionModel: ObservableObject {
         guard phase == .restoring else { return }
         guard let service else { phase = .signedOut; return }
         guard let context = channels.beginAuthentication() else { return }
+        let isNewInstall = !defaults.bool(forKey: FirstLaunch.markerKey)
         do throws(TokenStoreFailure) {
             try FirstLaunch.wipeIfNewInstall(store: store, defaults: defaults)
         } catch {
@@ -137,6 +209,34 @@ final class AppSessionModel: ObservableObject {
                 noticeKey = "signin.storage"
             }
             return
+        }
+        if vaultUnwiped || defaults.bool(forKey: Self.vaultUnwipedDefaultsKey) {
+            defaults.removeObject(forKey: Self.vaultDeviceIdDefaultsKey)
+            defaults.removeObject(forKey: Self.pushDeviceIdDefaultsKey)
+            do {
+                try sessionVault.wipe()
+                vaultUnwiped = false
+                defaults.removeObject(forKey: Self.vaultUnwipedDefaultsKey)
+            } catch {
+                vaultUnwiped = true
+                defaults.set(true, forKey: Self.vaultUnwipedDefaultsKey)
+                FirstLaunch.requireWipe(defaults: defaults)
+                channels.completeAuthentication(context, failed: true, notWiped: true) {}
+                return
+            }
+        } else if isNewInstall {
+            defaults.removeObject(forKey: Self.vaultDeviceIdDefaultsKey)
+            defaults.removeObject(forKey: Self.pushDeviceIdDefaultsKey)
+            do {
+                try sessionVault.wipe()
+            } catch {
+                FirstLaunch.requireWipe(defaults: defaults)
+                channels.completeAuthentication(context, failed: true) {
+                    phase = .signedOut
+                    noticeKey = "signin.storage"
+                }
+                return
+            }
         }
         let result: Result<Session?, SessionNotWiped>
         do throws(SessionNotWiped) { result = .success(try await service.resume()) }
@@ -154,6 +254,29 @@ final class AppSessionModel: ObservableObject {
 
     func signIn(issuer: String) {
         guard let service, phase == .signedOut, let context = channels.beginAuthentication() else { return }
+        let hasUnwipedVault = vaultUnwiped || defaults.bool(forKey: Self.vaultUnwipedDefaultsKey)
+        let hasTerminalNotWiped = channels.terminalStrength == .signedOutNotWiped || noticeKey == "session.not_wiped"
+        if hasUnwipedVault || hasTerminalNotWiped {
+            do {
+                try sessionVault.wipe()
+                vaultUnwiped = false
+                defaults.removeObject(forKey: Self.vaultUnwipedDefaultsKey)
+            } catch {
+                vaultUnwiped = true
+                defaults.set(true, forKey: Self.vaultUnwipedDefaultsKey)
+                channels.completeAuthentication(context, failed: true, notWiped: true) {}
+                return
+            }
+            if hasTerminalNotWiped {
+                do {
+                    try store.wipe()
+                    defaults.set(true, forKey: FirstLaunch.markerKey)
+                } catch {
+                    channels.completeAuthentication(context, failed: true, notWiped: true) {}
+                    return
+                }
+            }
+        }
         phase = .signingIn
         signInTask = Task {
             let result: Result<Session, SignInFailure>
@@ -268,15 +391,233 @@ final class AppSessionModel: ObservableObject {
     }
 
     func signOut() {
-        guard let context = channels.beginSignOut(), let service else { return }
-        let coordinator = channels
-        signOutTask = Task {
-            let notWiped: Bool
-            do throws(SessionNotWiped) { try await service.signOut(); notWiped = false }
-            catch { notWiped = true }
-            // Forward even after phase/core changed: only the coordinator reduces this captured owner receipt.
-            coordinator.completeSignOut(context, notWiped: notWiped)
+        guard !channels.isAuthenticating, case .signedIn = phase, let service else { return }
+        let pushDeviceId = registeredPushDeviceId ?? defaults.string(forKey: Self.pushDeviceIdDefaultsKey)
+        let matrixTransport = activeMatrixTransport
+        var matrixSessionToLogout = activeMatrixSession
+        if matrixSessionToLogout == nil,
+           let orgId = activeVaultOrganisationId ?? channels.loadedOrganisation?.id,
+           let vaultDeviceId = defaults.string(forKey: Self.vaultDeviceIdDefaultsKey),
+           let rawVault = try? sessionVault.open(organisationId: orgId, deviceId: vaultDeviceId),
+           let decoded = try? PersistedMatrixSession.decodeVaultData(rawVault) {
+            matrixSessionToLogout = decoded
         }
+        activeMatrixTransport = nil
+        activeMatrixSession = nil
+        activeVaultOrganisationId = nil
+        let retiringFence = rotateSessionFence()
+        closeChannel()
+        let vaultWiped = wipeSessionVaultAndDeviceIds(invalidating: retiringFence)
+        guard let context = channels.beginSignOut() else { return }
+        let coordinator = channels
+        let coreOrigin = configuration.coreApiOrigin
+        let makeRequester = requesterFactory
+        let protocolClass = matrixProtocolClass
+        signOutTask = Task {
+            if let pushDeviceId,
+               let coreOrigin,
+               let revokeRequester = try? makeRequester(coreOrigin, AppConfiguration.loopback, service) {
+                try? await PushWakeupCoordinator(requester: revokeRequester).revokeOnSignOut(deviceId: pushDeviceId)
+                revokeRequester.invalidate()
+            }
+            if let matrixTransport {
+                await matrixTransport.logoutIfAuthenticated()
+            } else if let session = matrixSessionToLogout {
+                await MatrixRoomClient.logoutStandalone(
+                    homeserverOrigin: session.homeserverOrigin,
+                    matrixAccessToken: session.accessToken,
+                    loopback: AppConfiguration.loopback,
+                    protocolClass: protocolClass
+                )
+            }
+            let serviceNotWiped: Bool
+            do throws(SessionNotWiped) { try await service.signOut(); serviceNotWiped = false }
+            catch { serviceNotWiped = true }
+            // Forward even after phase/core changed: only the coordinator reduces this captured owner receipt.
+            coordinator.completeSignOut(context, notWiped: serviceNotWiped || !vaultWiped)
+        }
+    }
+
+    func registerPushWakeup(
+        deviceId: String,
+        endpoint: String,
+        p256dh: String,
+        auth: String
+    ) async throws(PushWakeupFailure) {
+        guard case .signedIn = phase, let clients = core else {
+            throw .signedOut
+        }
+        try await clients.pushWakeup.registerDeviceWakeup(
+            deviceId: deviceId,
+            endpoint: endpoint,
+            p256dh: p256dh,
+            auth: auth
+        )
+        registeredPushDeviceId = deviceId
+        defaults.set(deviceId, forKey: Self.pushDeviceIdDefaultsKey)
+    }
+
+    func handleIncomingPushWakeup(rawPayload: Data) async throws(PushWakeupFailure) -> InboxNotificationPage {
+        guard case .signedIn = phase, let clients = core else {
+            throw .signedOut
+        }
+        let expectedOrg = channels.loadedOrganisation?.id ?? activeVaultOrganisationId
+        let conversation = activeConversation
+        return try await clients.pushWakeup.handleIncomingWakeup(
+            rawPayload: rawPayload,
+            expectedOrganisationId: expectedOrg
+        ) { @Sendable in
+            if let conversation {
+                await conversation.refreshSync()
+            }
+        }
+    }
+
+    func openChannel(_ channel: WorkspaceChannel, organisationId: String) {
+        guard case .signedIn = phase,
+              case .loaded = member,
+              case let .loaded(snapshot) = workspace,
+              snapshot.organisationId == organisationId,
+              let scope = ChannelConversationScope(organisationId: organisationId, channel: channel) else {
+            return
+        }
+        activeConversation?.clear()
+        let conversationFence = SessionFence()
+        let parentFenceToken = activeSessionFence.registerCancellation {
+            conversationFence.invalidate()
+        }
+        _ = parentFenceToken
+        let transport: (any ChannelConversationTransport)?
+        if let customFactory = conversationTransportFactory {
+            transport = customFactory(scope, core?.requester)
+        } else {
+            transport = makeProductionConversationTransport(scope: scope, fence: conversationFence)
+        }
+        activeConversation = ChannelConversationModel(
+            scope: scope,
+            transport: transport,
+            fence: conversationFence
+        )
+    }
+
+    func closeChannel() {
+        activeConversation?.clear()
+        activeConversation = nil
+        activeMatrixTransport = nil
+    }
+
+    @discardableResult
+    private func rotateSessionFence() -> SessionFence {
+        let retiring = activeSessionFence
+        activeSessionFence = SessionFence()
+        retiring.invalidate()
+        return retiring
+    }
+
+    @discardableResult
+    private func wipeSessionVaultAndDeviceIds(invalidating retiringFence: SessionFence? = nil) -> Bool {
+        defaults.removeObject(forKey: Self.vaultDeviceIdDefaultsKey)
+        defaults.removeObject(forKey: Self.pushDeviceIdDefaultsKey)
+        registeredPushDeviceId = nil
+        do {
+            try sessionVault.retireAndWipe {
+                retiringFence?.invalidate()
+            }
+            vaultUnwiped = false
+            defaults.removeObject(forKey: Self.vaultUnwipedDefaultsKey)
+            return true
+        } catch {
+            vaultUnwiped = true
+            defaults.set(true, forKey: Self.vaultUnwipedDefaultsKey)
+            sessionNotWiped()
+            return false
+        }
+    }
+
+    private func loadOrMintVaultDeviceId() -> String? {
+        if let existing = defaults.string(forKey: Self.vaultDeviceIdDefaultsKey),
+           Kdv1SessionVaultCodec.isValidVaultDeviceId(existing) {
+            return existing
+        }
+        guard let minted = (try? UuidV7Identifier.mint())?.description else {
+            return nil
+        }
+        defaults.set(minted, forKey: Self.vaultDeviceIdDefaultsKey)
+        return minted
+    }
+
+    private func makeProductionConversationTransport(
+        scope: ChannelConversationScope,
+        fence: SessionFence
+    ) -> (any ChannelConversationTransport)? {
+        guard let clients = core,
+              let service,
+              let coreOrigin = configuration.coreApiOrigin,
+              let org = channels.loadedOrganisation,
+              org.id == scope.organisationId,
+              let matrixDomain = MatrixRoomClient.deriveMatrixDomain(
+                  fromCoreApiOrigin: coreOrigin,
+                  loopback: AppConfiguration.loopback
+              ),
+              let vaultDeviceId = loadOrMintVaultDeviceId() else {
+            return nil
+        }
+        let vault = sessionVault
+        let ssoAuthorizer: MatrixSsoAuthorizer
+        if let authorizerFactory = matrixSsoAuthorizerFactory {
+            ssoAuthorizer = authorizerFactory(fence)
+        } else {
+            ssoAuthorizer = { _ throws(MatrixClientFailure) -> MatrixSsoTokenGrant in
+                throw .identityUnavailable
+            }
+        }
+        let roomClient = MatrixRoomClient(
+            coreRequester: clients.requester,
+            loopback: AppConfiguration.loopback,
+            fence: fence,
+            protocolClass: matrixProtocolClass
+        )
+        let transport = MatrixChannelConversationTransport(
+            roomClient: roomClient,
+            organisationId: scope.organisationId,
+            organisationSlug: org.slug,
+            matrixDomain: matrixDomain,
+            vaultDeviceId: vaultDeviceId,
+            expectedSubjectProvider: { () async throws(MatrixClientFailure) -> String in
+                try fence.checkActive()
+                guard let sub = await service.authenticatedSubject(),
+                      !sub.isEmpty else {
+                    throw MatrixClientFailure.forbidden
+                }
+                try fence.checkActive()
+                return sub
+            },
+            ssoAuthorizer: ssoAuthorizer,
+            loadVault: { orgId, devId in
+                guard !fence.isInvalidated else { return nil }
+                return try? vault.open(organisationId: orgId, deviceId: devId)
+            },
+            saveVault: { (orgId: String, devId: String, plaintext: Data) throws(MatrixClientFailure) -> Bool in
+                do {
+                    return try vault.sealIfActive(
+                        organisationId: orgId,
+                        deviceId: devId,
+                        plaintext: plaintext,
+                        isActive: { !fence.isInvalidated }
+                    ) != nil
+                } catch {
+                    throw MatrixClientFailure.protocolViolation
+                }
+            },
+            onSessionEstablished: { [weak self] established in
+                Task { @MainActor in
+                    guard let self, !fence.isInvalidated else { return }
+                    self.activeMatrixSession = established
+                }
+            }
+        )
+        activeMatrixTransport = transport
+        return transport
     }
 
     private func enter(_ session: Session) {
@@ -298,7 +639,8 @@ final class AppSessionModel: ObservableObject {
         guard let service, let origin = configuration.coreApiOrigin,
               let requester = try? requesterFactory(origin, AppConfiguration.loopback, service) else { return nil }
         return CoreClients(session: session, requester: requester, me: CoreMeClient(requester: requester),
-                           workspace: CoreWorkspaceClient(requester: requester))
+                           workspace: CoreWorkspaceClient(requester: requester),
+                           pushWakeup: PushWakeupCoordinator(requester: requester))
     }
 
     /// The front-most view controller of the active window, for the browser sheet.

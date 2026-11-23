@@ -81,6 +81,8 @@ public protocol SignInService: AccessTokenProvider {
     /// Throws when the refusal's wipe could not delete the stored copy.
     func resume() async throws(SessionNotWiped) -> Session?
     func freshAccessToken() async throws(AccessTokenFailure) -> String
+    /// Returns the authenticated OIDC `sub` identity claim for the active session, if available.
+    func authenticatedSubject() async -> String?
     /// `listener` is told once for each session the service ends, with which session and why, and never for
     /// a call that ended nothing. It must not block. The paths it covers, and the wipes it does not report,
     /// are listed on `KoderaSignInService.addSessionEndedListener(_:)`.
@@ -120,5 +122,9 @@ public struct SessionEnded: Equatable, Sendable {
 extension SignInService {
     public func freshAccessToken() async throws(AccessTokenFailure) -> String {
         try await accessToken(forceRefresh: false).value
+    }
+
+    public func authenticatedSubject() async -> String? {
+        nil
     }
 }

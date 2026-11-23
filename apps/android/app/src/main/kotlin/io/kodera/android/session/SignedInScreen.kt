@@ -1,5 +1,6 @@
 package io.kodera.android.session
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -83,7 +84,17 @@ fun SignedInScreen(
     inviteCoordinator: ChannelInviteCoordinator? = null,
     passkeyCoordinator: PasskeySessionCoordinator? = null,
     onCopyInviteText: ((String) -> Unit)? = null,
+    activeConversation: ChannelConversationController? = null,
+    onOpenChannel: ((WorkspaceChannel, String) -> Unit)? = null,
+    onCloseChannel: (() -> Unit)? = null,
 ) {
+    if (activeConversation != null && onCloseChannel != null) {
+        ChannelConversationScreen(
+            controller = activeConversation,
+            onBack = onCloseChannel,
+        )
+        return
+    }
     val palette = LocalKoderaPalette.current
     val loadedOrganisationId = (workspace as? WorkspaceViewState.Loaded)?.snapshot?.organisationId
     Surface(modifier = Modifier.fillMaxSize(), color = palette.page, contentColor = palette.ink) {
@@ -134,6 +145,7 @@ fun SignedInScreen(
                         onRetry = onWorkspaceRetry,
                         inviteCoordinator = inviteCoordinator,
                         onCopyInviteText = onCopyInviteText,
+                        onOpenChannel = onOpenChannel,
                     )
                     CommunityWorkspaceCard(
                         organisationId = loadedOrganisationId,
@@ -256,6 +268,7 @@ private fun WorkspaceSection(
     onRetry: () -> Unit,
     inviteCoordinator: ChannelInviteCoordinator? = null,
     onCopyInviteText: ((String) -> Unit)? = null,
+    onOpenChannel: ((WorkspaceChannel, String) -> Unit)? = null,
 ) {
     val palette = LocalKoderaPalette.current
     val loadedOrganisationId = (state as? WorkspaceViewState.Loaded)?.snapshot?.organisationId
@@ -278,7 +291,7 @@ private fun WorkspaceSection(
         ) {
             Text(stringResource(R.string.workspace_title), style = NativeTypography.heading,
                 modifier = Modifier.semantics { heading() })
-            Text(stringResource(R.string.workspace_readonly_hint), style = NativeTypography.caption, color = palette.ink2)
+            Text(stringResource(R.string.workspace_open_channel_hint), style = NativeTypography.caption, color = palette.ink2)
             val status = when (state) {
                 WorkspaceViewState.Hidden -> null
                 WorkspaceViewState.Loading -> R.string.workspace_loading
@@ -362,6 +375,7 @@ private fun WorkspaceSection(
                                 channel = channel,
                                 organisationId = snapshot.organisationId,
                                 canInvite = inviteCoordinator != null && !isPrivateInternal,
+                                onOpenChannel = onOpenChannel,
                                 onOpenInvite = { scope ->
                                     workspaceSheetContext = inviteCoordinator?.let {
                                         try { it.openSheet(scope) } catch (_: ChannelInviteFailure) { null }
@@ -380,6 +394,7 @@ private fun WorkspaceSection(
                                 channel = channel,
                                 organisationId = snapshot.organisationId,
                                 canInvite = inviteCoordinator != null && !isPrivateInternal,
+                                onOpenChannel = onOpenChannel,
                                 onOpenInvite = { scope ->
                                     workspaceSheetContext = inviteCoordinator?.let {
                                         try { it.openSheet(scope) } catch (_: ChannelInviteFailure) { null }
@@ -417,11 +432,13 @@ private fun ChannelMetadata(
     channel: WorkspaceChannel,
     organisationId: String,
     canInvite: Boolean = false,
+    onOpenChannel: ((WorkspaceChannel, String) -> Unit)? = null,
     onOpenInvite: ((ChannelInviteScope) -> Unit)? = null,
 ) {
     val palette = LocalKoderaPalette.current
+    val isActive = channel.lifecycle == WorkspaceChannelLifecycle.ACTIVE
     val inviteScope = remember(organisationId, channel.id, channel.name, canInvite, channel.lifecycle) {
-        if (canInvite && channel.lifecycle == WorkspaceChannelLifecycle.ACTIVE) {
+        if (canInvite && isActive) {
             CommunityCategoryPresentation.makeInviteScope(
                 organisationId = organisationId,
                 channelId = channel.id,
@@ -441,10 +458,32 @@ private fun ChannelMetadata(
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             Column(
-                modifier = Modifier.weight(1f).semantics(mergeDescendants = true) {},
+                modifier = Modifier
+                    .weight(1f)
+                    .heightIn(min = KoderaTokens.Space.s12)
+                    .let { base ->
+                        if (isActive && onOpenChannel != null) {
+                            base.clickable { onOpenChannel(channel, organisationId) }
+                        } else {
+                            base
+                        }
+                    }
+                    .semantics(mergeDescendants = true) {},
                 verticalArrangement = Arrangement.spacedBy(KoderaTokens.Space.s1),
             ) {
-                Text(channel.name, style = NativeTypography.body)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(KoderaTokens.Space.s2),
+                ) {
+                    Text(channel.name, style = if (isActive) NativeTypography.emphasis else NativeTypography.body)
+                    if (isActive && onOpenChannel != null) {
+                        Text(
+                            text = stringResource(R.string.workspace_open_channel_action),
+                            style = NativeTypography.caption,
+                            color = palette.accentInk,
+                        )
+                    }
+                }
                 Text(stringResource(when (channel.kind) {
                     ChannelKind.TEXT -> R.string.workspace_channel_text
                     ChannelKind.AUDIO -> R.string.workspace_channel_audio

@@ -11,11 +11,19 @@ import io.kodera.android.client.BackendException
 import io.kodera.android.client.BackendFailure
 import io.kodera.android.client.DiscoveredEndpoints
 import io.kodera.android.client.FreshToken
+import io.kodera.android.client.MatrixClientError
+import io.kodera.android.client.MatrixClientException
+import io.kodera.android.client.MatrixRoomClient
+import io.kodera.android.client.MatrixSsoRedirectRequest
+import io.kodera.android.client.MatrixSsoTokenGrant
 import io.kodera.android.client.Revocation
 import io.kodera.android.client.SignInConfiguration
 import io.kodera.android.client.StoredGrant
 import io.kodera.android.domain.AdmittedIssuer
+import io.kodera.android.domain.DomainFailure
+import io.kodera.android.domain.IssuerAdmission
 import io.kodera.android.domain.LoopbackPolicy
+import io.kodera.android.domain.TrustPolicy
 import net.openid.appauth.AppAuthConfiguration
 import net.openid.appauth.AuthState
 import net.openid.appauth.AuthorizationException
@@ -23,6 +31,8 @@ import net.openid.appauth.AuthorizationRequest
 import net.openid.appauth.AuthorizationResponse
 import net.openid.appauth.AuthorizationService
 import net.openid.appauth.AuthorizationServiceConfiguration
+import net.openid.appauth.EndSessionRequest
+import net.openid.appauth.EndSessionResponse
 import net.openid.appauth.ResponseTypeValues
 import net.openid.appauth.browser.AnyBrowserMatcher
 import net.openid.appauth.browser.BrowserMatcher
@@ -57,7 +67,9 @@ internal fun appAuthConfiguration(loopback: LoopbackPolicy, connections: Connect
 
 /** Whether [intent] carries an AppAuth answer (a response or an error), as a completion intent does. */
 internal fun carriesAuthorizationResult(intent: Intent?): Boolean = intent != null &&
-    (intent.hasExtra(AuthorizationResponse.EXTRA_RESPONSE) || intent.hasExtra(AuthorizationException.EXTRA_EXCEPTION))
+    (intent.hasExtra(AuthorizationResponse.EXTRA_RESPONSE) ||
+        intent.hasExtra(EndSessionResponse.EXTRA_RESPONSE) ||
+        intent.hasExtra(AuthorizationException.EXTRA_EXCEPTION))
 
 /**
  * AppAuth behind [AuthorizationBackend]: discovery from the admitted issuer, authorization code with
@@ -157,7 +169,8 @@ internal class AppAuthBackend(context: Context, private val loopback: LoopbackPo
         AppAuthChecks.checkTokenResponse(state.isAuthorized, state.accessToken, state.idToken)
         // Cancelled while the code was being exchanged: the member asked to stop, so nothing is kept.
         browser.ensureLive(claim)
-        return StoredGrant(issuer.issuer, state.jsonSerializeString())
+        val subject = extractJwtSubject(state.idToken)
+        return StoredGrant(issuer.issuer, state.jsonSerializeString(), subject)
     }
 
     override fun freshAccessToken(grant: StoredGrant, forceRefresh: Boolean): FreshToken {
@@ -170,9 +183,90 @@ internal class AppAuthBackend(context: Context, private val loopback: LoopbackPo
             state.performActionWithFreshTokens(authorizationService()) { accessToken, _, problem -> call.answer(accessToken to problem) }
         }
         if (error != null) throw failure(AppAuthErrors.refreshOutcome(state.isAuthorized, error.error))
-        val fresh = FreshToken(token ?: throw failure(BackendFailure.REFUSED), StoredGrant(grant.issuer, state.jsonSerializeString()))
+        val subject = extractJwtSubject(state.idToken) ?: grant.subject
+        val fresh = FreshToken(
+            token ?: throw failure(BackendFailure.REFUSED),
+            StoredGrant(grant.issuer, state.jsonSerializeString(), subject),
+        )
         rotations.clear(grant.state)
         return fresh
+    }
+
+    override fun authenticatedSubject(grant: StoredGrant): String? {
+        if (!grant.subject.isNullOrEmpty()) return grant.subject
+        val latest = rotations.peek(grant.state) ?: grant.state
+        val state = deserialize(latest) ?: return null
+        return extractJwtSubject(state.idToken)
+    }
+
+    override fun authorizeMatrixSso(request: MatrixSsoRedirectRequest): MatrixSsoTokenGrant {
+        try {
+            IssuerAdmission.validateOrigin(request.homeserverOrigin, loopback)
+        } catch (_: DomainFailure) {
+            throw MatrixClientException(MatrixClientError.INVALID_INPUT)
+        }
+        if (!request.callbackUri.startsWith(SignInConfiguration.REDIRECT_URI) ||
+            !request.ssoRedirectUrl.startsWith("${request.homeserverOrigin}/_matrix/client/v3/login/sso/redirect?")
+        ) {
+            throw MatrixClientException(MatrixClientError.INVALID_INPUT)
+        }
+        val claim = browser.claim() ?: throw MatrixClientException(MatrixClientError.IDENTITY_UNAVAILABLE)
+        return try {
+            val endpointUri = Uri.parse("${request.homeserverOrigin}/_matrix/client/v3/login/sso/redirect")
+            val serviceConfig = AuthorizationServiceConfiguration(endpointUri, endpointUri, null, endpointUri)
+            val ssoRequest = EndSessionRequest.Builder(serviceConfig)
+                .setState(request.state)
+                .setAdditionalParameters(mapOf("redirectUrl" to request.callbackUri))
+                .build()
+            browser.presenting(claim)
+            browser.ensureLive(claim)
+            val presented = onMain<Boolean> { call ->
+                val target = synchronized(lock) { presenter }
+                call.answer(
+                    try {
+                        target?.present(authorizationService().getEndSessionRequestIntent(ssoRequest)) == true
+                    } catch (_: ActivityNotFoundException) {
+                        false
+                    }
+                )
+            }
+            if (!presented) throw MatrixClientException(MatrixClientError.IDENTITY_UNAVAILABLE)
+            val data = browser.await(claim)
+            val rawCallbackUri = data.data?.toString()
+            // Immediately strip any single-use loginToken from the Activity result Intent.
+            data.setData(null)
+            data.removeExtra(EndSessionResponse.EXTRA_RESPONSE)
+
+            val authErr = AuthorizationException.fromIntent(data)
+            if (authErr != null) {
+                val mapped = when (classify(authErr)) {
+                    BackendFailure.CANCELLED -> MatrixClientError.SIGNED_OUT
+                    BackendFailure.UNAVAILABLE -> MatrixClientError.IDENTITY_UNAVAILABLE
+                    BackendFailure.REFUSED -> MatrixClientError.FORBIDDEN
+                    BackendFailure.PROTOCOL_VIOLATION -> MatrixClientError.PROTOCOL_VIOLATION
+                }
+                throw MatrixClientException(mapped)
+            }
+            if (rawCallbackUri == null) {
+                throw MatrixClientException(MatrixClientError.PROTOCOL_VIOLATION)
+            }
+            browser.ensureLive(claim)
+            val grant = MatrixRoomClient.consumeSsoCallbackUri(rawCallbackUri, request.state)
+            data.setData(Uri.parse(grant.redactedCallbackUri))
+            grant
+        } catch (err: MatrixClientException) {
+            throw err
+        } catch (backendErr: BackendException) {
+            val mapped = when (backendErr.failure) {
+                BackendFailure.CANCELLED -> MatrixClientError.SIGNED_OUT
+                BackendFailure.UNAVAILABLE -> MatrixClientError.IDENTITY_UNAVAILABLE
+                BackendFailure.REFUSED -> MatrixClientError.FORBIDDEN
+                BackendFailure.PROTOCOL_VIOLATION -> MatrixClientError.PROTOCOL_VIOLATION
+            }
+            throw MatrixClientException(mapped)
+        } finally {
+            browser.release(claim)
+        }
     }
 
     override fun revoke(grant: StoredGrant, issuer: AdmittedIssuer, configuration: SignInConfiguration) {
@@ -255,19 +349,22 @@ internal class AppAuthBackend(context: Context, private val loopback: LoopbackPo
         }
     }
 
-    private companion object {
+    internal companion object {
         /**
          * Each AppAuth step is one HTTP exchange, bounded by the connection's 15 s connect and 15 s
          * read timeouts; the rest is headroom for a busy main thread. A late refresh answer is kept:
          * see [onMain].
          */
-        const val CALL_SECONDS = 45L
-        const val REVOCATION_ENDPOINT = "revocation_endpoint"
+        private const val CALL_SECONDS = 45L
+        private const val REVOCATION_ENDPOINT = "revocation_endpoint"
 
-        fun failure(kind: BackendFailure) = BackendException(kind)
+        private fun failure(kind: BackendFailure) = BackendException(kind)
 
-        fun classify(error: AuthorizationException?): BackendFailure =
+        private fun classify(error: AuthorizationException?): BackendFailure =
             if (error == null) BackendFailure.PROTOCOL_VIOLATION else AppAuthErrors.classify(error.type, error.code)
+
+        internal fun extractJwtSubject(idToken: String?): String? =
+            MatrixRoomClient.extractOidcJwtSubject(idToken)
     }
 }
 

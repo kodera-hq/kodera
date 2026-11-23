@@ -33,8 +33,8 @@ Kodera is a public open-core monorepo: nothing listed here is held back from the
 
 ## Track 3 — Native Clients (`Status: Foundations implemented; native transports and distribution in progress`)
 
-- [x] Companion client foundations in `apps/ios` (SwiftUI) and `apps/android` (Jetpack Compose) with `ciel` design parity, Matrix room/invitation models, CallKit / `ConnectionService` call seams, payload-free push integration and universal WebAuthn passkeys (no in-app purchase and no pricing screen)
-- [ ] Live native Matrix messaging/invitation transport, real audio/video/call adapters and compiled mobile Rust client bindings
+- [x] Companion client foundations in `apps/ios` (SwiftUI) and `apps/android` (Jetpack Compose) with *Dark Precision* / *Light Givre* design parity, native Matrix room messaging (`m.login.token` SSO, bounded `/sync`, replies, edits, redactions, single-grapheme reactions, Core-scoped attachments), golden-vector-verified `PacketDispatcher` and `KDV1` session vault parity across `kodera-rs`, Swift (`CryptoKit`) and Kotlin (`javax.crypto`) (`vectors/mobile-ffi-v1.txt`), CallKit / `ConnectionService` call seams, payload-free push wakeup integration and universal WebAuthn passkeys (no in-app purchase and no pricing screen)
+- [ ] Remote Matrix room-invitation delivery, real audio/video/call media adapters and linked native Rust client binaries (unmangled C-ABI exports remain gated while `#![forbid(unsafe_code)]` is in force)
 - [ ] End-to-end native push delivery and device/provider qualification
 - [x] Reproducible native candidate verification and reviewed SPDX SBOM provenance gates across desktop and mobile targets
 - [x] Web Push notifications that wake the web client without carrying message text

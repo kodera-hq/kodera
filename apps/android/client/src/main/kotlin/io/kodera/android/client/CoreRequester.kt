@@ -3,6 +3,7 @@ package io.kodera.android.client
 import io.kodera.android.domain.DomainFailure
 import io.kodera.android.domain.IssuerAdmission
 import io.kodera.android.domain.LoopbackPolicy
+import io.kodera.android.domain.TrustPolicy
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -136,21 +137,54 @@ class CoreRequester private constructor(coreApiOrigin: String, loopback: Loopbac
      * failure.
      */
     internal fun <T> get(path: String, read: (Response) -> T): CoreReply<T> {
-        return send(path, null, read)
+        return get(path, emptyList(), read)
+    }
+
+    internal fun <T> get(path: String, query: List<Pair<String, String>>, read: (Response) -> T): CoreReply<T> {
+        return send("GET", path, query, null, null, read)
     }
 
     /** Bounded JSON POST through the same accepted-owner and response policy as GET. */
     internal fun <T> post(path: String, jsonBody: ByteArray, read: (Response) -> T): CoreReply<T> {
-        if (jsonBody.size > REQUEST_BODY_LIMIT) return CoreReply.Unsendable
-        return send(path, jsonBody.copyOf(), read)
+        return post(path, jsonBody, null, read)
     }
 
-    private fun <T> send(path: String, jsonBody: ByteArray?, read: (Response) -> T): CoreReply<T> {
+    internal fun <T> post(
+        path: String,
+        jsonBody: ByteArray,
+        idempotencyKey: String?,
+        read: (Response) -> T,
+    ): CoreReply<T> {
+        if (jsonBody.size > REQUEST_BODY_LIMIT) return CoreReply.Unsendable
+        return send("POST", path, emptyList(), jsonBody.copyOf(), idempotencyKey, read)
+    }
+
+    /** Bounded JSON PUT through the same accepted-owner and response policy as GET. */
+    internal fun <T> put(path: String, jsonBody: ByteArray, read: (Response) -> T): CoreReply<T> {
+        if (jsonBody.size > REQUEST_BODY_LIMIT) return CoreReply.Unsendable
+        return send("PUT", path, emptyList(), jsonBody.copyOf(), null, read)
+    }
+
+    /** Authorised DELETE on the Core origin without request body. */
+    internal fun <T> delete(path: String, read: (Response) -> T): CoreReply<T> {
+        return send("DELETE", path, emptyList(), null, null, read)
+    }
+
+    private fun <T> send(
+        method: String,
+        path: String,
+        query: List<Pair<String, String>>,
+        jsonBody: ByteArray?,
+        idempotencyKey: String?,
+        read: (Response) -> T,
+    ): CoreReply<T> {
         if (!staysOnOrigin(path)) return CoreReply.PathRefused
+        val encodedQuery = encodeAdmittedQuery(query) ?: return CoreReply.PathRefused
+        if (idempotencyKey != null && !TrustPolicy.canonicalNonNilUUID(idempotencyKey)) return CoreReply.PathRefused
         if (closed) return CoreReply.Transport(TransportFailure.OTHER)
-        val url = origin + path
+        val url = origin + path + encodedQuery
         val first = try { accessToken(false) } catch (error: AccessTokenException) { return reply(error) }
-        when (val result = attempt(url, first, jsonBody, read)) {
+        when (val result = attempt(url, method, first, jsonBody, idempotencyKey, read)) {
             is Attempt.Done -> return result.reply
             Attempt.Unauthorized -> Unit
         }
@@ -158,7 +192,7 @@ class CoreRequester private constructor(coreApiOrigin: String, loopback: Loopbac
         // nothing more.
         if (closed) return CoreReply.Transport(TransportFailure.OTHER)
         val second = try { accessToken(true) } catch (error: AccessTokenException) { return reply(error) }
-        return when (val result = attempt(url, second, jsonBody, read)) {
+        return when (val result = attempt(url, method, second, jsonBody, idempotencyKey, read)) {
             is Attempt.Done -> result.reply
             Attempt.Unauthorized -> endSession(second)
         }
@@ -198,12 +232,28 @@ class CoreRequester private constructor(coreApiOrigin: String, loopback: Loopbac
         data object Unauthorized : Attempt<Nothing>
     }
 
-    private fun <T> attempt(url: String, token: AccessToken, jsonBody: ByteArray?, read: (Response) -> T): Attempt<T> {
+    private fun <T> attempt(
+        url: String,
+        method: String,
+        token: AccessToken,
+        jsonBody: ByteArray?,
+        idempotencyKey: String?,
+        read: (Response) -> T,
+    ): Attempt<T> {
         // Checked before each send: the requester may have been closed while the token was fetched.
         if (closed) return Attempt.Done(CoreReply.Transport(TransportFailure.OTHER))
         val request = try {
             Request.Builder().url(url).apply {
-                if (jsonBody == null) get() else post(jsonBody.toRequestBody("application/json".toMediaType()))
+                when (method) {
+                    "GET" -> get()
+                    "DELETE" -> delete()
+                    "POST" -> post((jsonBody ?: ByteArray(0)).toRequestBody("application/json".toMediaType()))
+                    "PUT" -> put((jsonBody ?: ByteArray(0)).toRequestBody("application/json".toMediaType()))
+                    else -> throw IllegalArgumentException("Unsupported method")
+                }
+                if (idempotencyKey != null) {
+                    header("Idempotency-Key", idempotencyKey)
+                }
             }.header("Authorization", "Bearer ${token.value}")
                 .header("Accept", "application/json, application/problem+json")
                 .header("Accept-Encoding", "identity").header("Cache-Control", "no-store").build()
@@ -256,6 +306,37 @@ class CoreRequester private constructor(coreApiOrigin: String, loopback: Loopbac
 
         private fun isUnreserved(c: Char): Boolean =
             c in 'a'..'z' || c in 'A'..'Z' || c in '0'..'9' || c == '-' || c == '.' || c == '_' || c == '~'
+
+        fun encodeAdmittedQuery(query: List<Pair<String, String>>): String? {
+            if (query.isEmpty()) return ""
+            val seen = HashSet<String>()
+            val parts = ArrayList<String>(query.size)
+            for ((name, value) in query) {
+                if (!seen.add(name)) return null
+                when (name) {
+                    "cursor" -> {
+                        if (value.isEmpty() || value.length > 512) return null
+                        val encoded = StringBuilder(value.length + 8)
+                        for (c in value) {
+                            when {
+                                isUnreserved(c) -> encoded.append(c)
+                                c == ':' -> encoded.append("%3A")
+                                else -> return null
+                            }
+                        }
+                        parts.add("cursor=$encoded")
+                    }
+                    "limit" -> {
+                        if (value.isEmpty() || value[0] == '0' || !value.all { it in '0'..'9' }) return null
+                        val parsed = value.toIntOrNull() ?: return null
+                        if (parsed !in 1..200) return null
+                        parts.add("limit=$value")
+                    }
+                    else -> return null
+                }
+            }
+            return "?" + parts.joinToString("&")
+        }
 
         /** The whole body, or null past [BODY_LIMIT]. */
         fun bounded(input: InputStream): ByteArray? = input.use {

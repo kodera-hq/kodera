@@ -31,6 +31,16 @@ class SessionStorageTests {
         val file = SessionStorage.sessionFile(filesDir)
         assertEquals(filesDir.canonicalFile, file.parentFile.parentFile.canonicalFile)
         assertEquals("core-session.bin", file.name)
+
+        val rustVault = SessionStorage.rustVaultFile(filesDir)
+        assertEquals(file.parentFile.canonicalFile, rustVault.parentFile.canonicalFile)
+        assertEquals("rust-vault.bin", rustVault.name)
+
+        val sessionDir = SessionStorage.sessionDirectory(filesDir)
+        assertEquals(checkNotNull(file.parentFile).canonicalFile, sessionDir.canonicalFile)
+        assertEquals(sessionDir.canonicalFile, checkNotNull(SessionStorage.vaultDeviceIdFile(sessionDir).parentFile).canonicalFile)
+        assertEquals(sessionDir.canonicalFile, checkNotNull(SessionStorage.pushDeviceIdFile(sessionDir).parentFile).canonicalFile)
+        assertEquals(sessionDir.canonicalFile, checkNotNull(SessionStorage.unwipedMarkerFile(sessionDir).parentFile).canonicalFile)
     }
 
     @Test fun testTheBackupAndTransferRulesExcludeTheSessionDirectory() {

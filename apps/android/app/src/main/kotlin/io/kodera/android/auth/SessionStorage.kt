@@ -4,6 +4,7 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import io.kodera.android.client.EncryptedFileTokenStore
+import io.kodera.android.client.RustSessionVault
 import io.kodera.android.client.SessionKeys
 import io.kodera.android.client.TokenStore
 import java.io.File
@@ -19,12 +20,35 @@ internal object SessionStorage {
      */
     const val SESSION_DIRECTORY = "session"
     private const val SESSION_FILE = "core-session.bin"
+    const val RUST_VAULT_FILE = "rust-vault.bin"
+    const val VAULT_DEVICE_ID_FILE = "vault-device-id.txt"
+    const val PUSH_DEVICE_ID_FILE = "push-device-id.txt"
+    const val VAULT_UNWIPED_MARKER_FILE = "vault-unwiped.flag"
     private const val KEY_ALIAS = "io.kodera.app.session"
+    private const val RUST_VAULT_KEY_ALIAS = "io.kodera.app.rust_vault"
+
+    /** Directory under [filesDir] excluded from cloud backup and device-to-device transfer. */
+    fun sessionDirectory(filesDir: File): File = File(filesDir, SESSION_DIRECTORY)
 
     /** The sealed session file under [filesDir]. */
-    fun sessionFile(filesDir: File): File = File(File(filesDir, SESSION_DIRECTORY), SESSION_FILE)
+    fun sessionFile(filesDir: File): File = File(sessionDirectory(filesDir), SESSION_FILE)
+
+    /** The KDV1 AES-256-GCM session vault file under [filesDir], excluded from cloud backup and transfer. */
+    fun rustVaultFile(filesDir: File): File = File(sessionDirectory(filesDir), RUST_VAULT_FILE)
+
+    /** Device identifier bound as AAD to the active session's KDV1 vault. */
+    fun vaultDeviceIdFile(sessionDir: File): File = File(sessionDir, VAULT_DEVICE_ID_FILE)
+
+    /** Registered payload-free push wakeup device identifier for explicit revocation on sign-out. */
+    fun pushDeviceIdFile(sessionDir: File): File = File(sessionDir, PUSH_DEVICE_ID_FILE)
+
+    /** Persistent refusal marker written if session vault destruction fails; blocks session restore until wiped. */
+    fun unwipedMarkerFile(sessionDir: File): File = File(sessionDir, VAULT_UNWIPED_MARKER_FILE)
 
     fun store(context: Context): TokenStore = EncryptedFileTokenStore(sessionFile(context.filesDir), KeystoreSessionKeys(KEY_ALIAS))
+
+    fun rustVault(context: Context): RustSessionVault =
+        RustSessionVault(rustVaultFile(context.filesDir), KeystoreSessionKeys(RUST_VAULT_KEY_ALIAS))
 }
 
 /**

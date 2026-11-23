@@ -256,6 +256,14 @@ class KoderaSignInService private constructor(
         owns(owner) && token.session == owner.generation
     }
 
+    internal fun authenticatedSubjectFor(owner: AcceptedOwner): String? {
+        val current = synchronized(lock) {
+            if (!owns(owner)) return null
+            checkNotNull(grant)
+        }
+        return backend.authenticatedSubject(current)
+    }
+
     internal fun signOutFor(owner: AcceptedOwner) {
         val target = synchronized(lock) {
             if (!owns(owner)) return
