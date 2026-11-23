@@ -99,7 +99,7 @@ SCOPE_WORDS = frozenset({"own", "all", "self", "by reference"})
 # column on purpose. Their authorisation is the closed list in that paragraph
 # (anonymous), the override below (invited) or the closed operation list below
 # (bootstrap), not a cell.
-NO_COLUMN = frozenset({"anonymous", "invited", "bootstrap"})
+NO_COLUMN = frozenset({"anonymous", "invited", "bootstrap", "single_channel_guest"})
 
 # AUTHZ.md §4: the `bootstrap` principal reaches exactly these operations. The
 # sentence is checked so that this list cannot outlive the rule that states it;
@@ -152,6 +152,7 @@ NOT_ON_CORE = frozenset({"agent"})
 # granting both invitation operations the four organisation roles.
 INVITATION_ROLES_SENTENCE = "Both operations also name the four organisation roles, deliberately"
 OVERRIDES: dict[str, tuple[frozenset[str], tuple[str, ...]]] = {
+    "getSingleGuestChannel": (frozenset({"single_channel_guest"}), ("`single_channel_guest` reaches only `getSingleGuestChannel` in Core",)),
     "acceptInvitation": (
         frozenset({"invited", "org_owner", "org_admin", "org_billing", "org_member"}),
         (INVITATION_ROLES_SENTENCE,),
@@ -358,6 +359,9 @@ def check(matrix: Matrix, contract: Path) -> list[str]:
                 )
             continue
 
+        if "single_channel_guest" in declared:
+            failures.append(f"{oid} ({route}): single_channel_guest has no ordinary Core grant")
+            continue
         if "invited" in declared:
             failures.append(
                 f"{oid} ({route}): names `invited`, which {where} §4 grants to acceptInvitation and previewInvitation only"

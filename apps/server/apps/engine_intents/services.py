@@ -563,7 +563,7 @@ def revoke_credential(*, credential_id: UUID) -> None:
         ).update(state="superseded", finished_at=now)
 
 
-def authenticate(token: str) -> EngineAgentCredential | None:
+def authenticate(token: str, *, touch: bool = True) -> EngineAgentCredential | None:
     match = _TOKEN.fullmatch(token) if isinstance(token, str) else None
     if match is None:
         return None
@@ -572,7 +572,8 @@ def authenticate(token: str) -> EngineAgentCredential | None:
     expected = credential.secret_hash if credential else _digest("")
     if not hmac.compare_digest(expected, _digest(match.group(2))) or credential is None:
         return None
-    EngineAgentCredential.objects.filter(id=credential.id).update(last_seen_at=timezone.now())
+    if touch:
+        EngineAgentCredential.objects.filter(id=credential.id).update(last_seen_at=timezone.now())
     return credential
 
 
@@ -956,3 +957,20 @@ def anomalies(*, within: timedelta = REFRESH_AFTER) -> list[Anomaly]:
                 Anomaly(head.organisation_id, head.revision, f"{size} of {MAX_SUBJECTS} subjects")
             )
     return found
+
+
+def channel_authority(
+    *, token: str, room_id: str, user_id: str, action: str
+) -> dict[str, Any] | None:
+    """Credential-bound live admission; no positive answer is cached by consumers."""
+    from apps.workspaces.bridges import matrix_authority
+
+    credential = authenticate(token, touch=False)
+    if credential is None:
+        return None
+    return matrix_authority(
+        organisation_id=credential.organisation_id,
+        room_id=room_id,
+        user_id=user_id,
+        action=action,
+    )

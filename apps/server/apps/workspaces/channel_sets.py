@@ -48,6 +48,7 @@ from .models import (
     Channel,
     ChannelNotice,
     ResourcePolicy,
+    SingleChannelGuestGrant,
     Workspace,
     WorkspaceChannelRoleOverride,
     WorkspaceMemberRole,
@@ -190,6 +191,20 @@ def channel_set_input(workspace_id: UUID) -> tuple[list[str], list[dict[str, Any
         .exclude(lifecycle=DELETED)
         .values_list("id", flat=True)
     )
+    guest_grants: dict[UUID, list[dict[str, str]]] = {}
+    for grant in SingleChannelGuestGrant.objects.filter(
+        single_channel__workspace_id=workspace_id,
+        revoked_at__isnull=True,
+        expires_at__gt=timezone.now(),
+        guest_identity__enabled=True,
+        guest_identity__deleted_at__isnull=True,
+        guest_identity__user__enabled=True,
+        guest_identity__user__deleted_at__isnull=True,
+    ).order_by("matrix_user_id"):
+        guest_grants.setdefault(grant.single_channel_id, []).append(
+            {"user_id": grant.matrix_user_id, "room_id": grant.matrix_room_id}
+        )
+
     for channel_id, (access, name, topic) in sorted(
         resolve_all(workspace_id).items(), key=lambda item: str(item[0])
     ):
@@ -333,6 +348,9 @@ def channel_set_input(workspace_id: UUID) -> tuple[list[str], list[dict[str, Any
         }
         if access.kind == Channel.Kind.AUDIO and listen_only:
             entry["speak_exempt"] = of(speak_exempt_members)
+        grants = guest_grants.get(channel_id, [])
+        if grants:
+            entry["guest_grants"] = grants
         if channel_id in confidential_ids:
             entry["confidential"] = "io.kodera.mls.v1"
         channels.append(entry)

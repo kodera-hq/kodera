@@ -132,7 +132,7 @@ Read as: what each role may do to each resource. `own` means "rows belonging to 
 | `PresenceLease` | update, delete self | update, delete self | update, delete self | update, delete self | — | — | — | — |
 | `ConfidentialDevice` | create, act self | create, act self | create, act self | create, act self | — | — | — | — |
 | `ConfidentialKeyPackage` | create, act own | create, act own | create own | create own | — | — | — | — |
-| `ConfidentialRoom` | create, act own | create, act own | act own | act own | — | — | — | — |
+| `ConfidentialRoom` | create, read, act own | create, read, act own | read, act own | read, act own | — | — | — | — |
 | `ConfidentialEnvelope` | create, read own | create, read own | create, read own | create, read own | — | — | — | — |
 | `WorkspaceImport` | create, read, act own | create, read, act own | — | — | — | — | — | — |
 | `CoexistenceBridge` | full own | full own | — | — | — | — | — | — |
@@ -384,3 +384,35 @@ hold, and cannot change their own assignments or administrator memberships. Chan
 are administrative role metadata. Profile updates and ban-list searches require owner/admin;
 audit-table reads additionally admit assigned `view_audit_log` holders. Invite pause prevents
 workspace link creation, preview and redemption. Existing moderation `unban` lifts a listed ban.
+
+
+## Partner and guest channel authority
+
+Status: Implemented (operator configuration required)
+
+`single_channel_guest` reaches only `getSingleGuestChannel` in Core. It is a separate
+identity-bound grant, never an organisation membership role or directory/search grant.
+The guest middleware denies other Core operations, including after expiry or revocation.
+The grant pins one channel and Matrix room with an expiry of at most thirty days.
+
+Only the current owner/admin of an agreement side can read governance or propose/edit
+agreements. The proposing side approves the initial revision; only the partner side
+can activate it. Either side can immediately suspend or revoke. Suspension blocks
+new events and calls; revocation is terminal. Existing media sessions are evicted by
+room-access reconciliation and durable eviction markers record the cutoff. Matrix
+history already replicated to the partner homeserver cannot be remotely erased.
+
+The credential-bound Agent operation `getChannelAuthority` resolves live channel
+authority without a positive cache. Synapse's join, invite, create and event hooks
+and room-access token admission/reconciliation enforce its answer. The Matrix edge
+request-scope subrequest is mandatory for guest directory/alias isolation; see
+[the deployment contract](../../../../docs/specs/H2_3_BRIDGES_GUESTS_MLS.md). An unconfigured
+legacy homeserver must not enable guest grants or agreement-governed rooms.
+
+`discoverConfidentialRoom` checks active participating device and channel authority,
+and returns current server-accepted MLS epoch evidence plus public verification
+bundles. `publishDeviceVerificationBundle` requires a current registered device proof,
+a consecutive publication revision and master/self-signing signatures bound to the
+organisation, membership and device. This publishes key possession evidence; human
+identity verification remains a client action. No server operation receives MLS
+group secrets or private signing/backup keys.

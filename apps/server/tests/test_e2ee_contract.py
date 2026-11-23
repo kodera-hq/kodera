@@ -2,11 +2,15 @@
 
 import base64
 from copy import deepcopy
+from functools import partial
 from pathlib import Path
 
 import jsonschema_rs
 import pytest
 import yaml
+
+_load_yaml = partial(yaml.load, Loader=getattr(yaml, "CSafeLoader", yaml.SafeLoader))
+
 
 ROOT = Path(__file__).resolve().parents[3]
 CONTRACT = ROOT / "packages/api-contract/core-api.openapi.yaml"
@@ -38,11 +42,11 @@ IDENTIFIER = "01950000-0000-7000-8000-0000000000a1"
 
 
 def document():
-    return yaml.safe_load(CONTRACT.read_text())
+    return _load_yaml(CONTRACT.read_text())
 
 
 def guard(value):
-    assert value["info"]["version"] == "0.55.0"
+    assert value["info"]["version"] == "0.56.0"
     for (path, method), (name, scope) in OPERATIONS.items():
         operation = value["paths"][path][method]
         assert operation["operationId"] == name and operation["x-kodera-scope"] == scope
@@ -111,7 +115,10 @@ def test_canonical_operations_are_closed_and_every_mirror_matches():
     for target in ("apps/server/contracts", "apps/web/contracts"):
         assert (ROOT / target / CONTRACT.name).read_bytes() == CONTRACT.read_bytes()
     assert not any(
-        isinstance(token, yaml.tokens.AliasToken) for token in yaml.scan(CONTRACT.read_text())
+        isinstance(token, yaml.tokens.AliasToken)
+        for token in yaml.scan(
+            CONTRACT.read_text(), Loader=getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+        )
     )
 
 

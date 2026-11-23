@@ -12,7 +12,8 @@ from apps.billing.api.membership_count import membership_count
 from apps.billing.api.slug_availability import slug_availability
 from apps.billing.api.vat_status import billing_vat
 from apps.billing.api.webhooks import stripe_webhook
-from apps.engine_intents.api.views import ack, commands, result
+from apps.confidential.api import views as confidential
+from apps.engine_intents.api.views import ack, channel_authority, commands, result
 from apps.identity.api.discovery import discovery
 from apps.identity.api.passport import (
     passport_magic_link_request,
@@ -39,7 +40,7 @@ from apps.orgs.api.notice_contacts import notice_contacts
 from apps.orgs.api.owner_claims import consume_owner_claim
 from apps.support.api.community import community_support_tickets
 from apps.support.api.views import bug_reports, support_tickets
-from apps.workspaces.api import administration as structure, quotas
+from apps.workspaces.api import administration as structure, bridges, quotas
 from apps.workspaces.api.instant_claim import instant_claim
 from apps.workspaces.api.views import initialise, workspace
 from core.well_known import apple_app_site_association, assetlinks
@@ -47,6 +48,33 @@ from core.well_known import apple_app_site_association, assetlinks
 from .urls import urlpatterns as diagnostics
 
 urlpatterns = [
+    path(
+        "api/v1/organisations/<uuid:organisation_id>/confidential/rooms/<uuid:room_id>/discovery",
+        confidential.discovery,
+    ),
+    path(
+        "api/v1/organisations/<uuid:organisation_id>/confidential/verification-bundles",
+        confidential.bundles,
+    ),
+    path("agent/v1/channel-authority", channel_authority),
+    path(
+        "api/v1/organisations/<uuid:organisation_id>/workspace/channel-governance", bridges.overview
+    ),
+    path(
+        "api/v1/organisations/<uuid:organisation_id>/workspace/partner-agreements", bridges.propose
+    ),
+    path(
+        "api/v1/organisations/<uuid:organisation_id>/workspace/partner-agreements/<uuid:agreement_id>/actions/transition",
+        bridges.transition,
+    ),
+    path("api/v1/organisations/<uuid:organisation_id>/workspace/guest-grants", bridges.guests),
+    path(
+        "api/v1/organisations/<uuid:organisation_id>/workspace/guest-grants/<uuid:grant_id>/actions/revoke",
+        bridges.revoke,
+    ),
+    path(
+        "api/v1/organisations/<uuid:organisation_id>/workspace/guest-channel", bridges.guest_channel
+    ),
     *diagnostics,
     path(".well-known/apple-app-site-association", apple_app_site_association),
     path(".well-known/assetlinks.json", assetlinks),

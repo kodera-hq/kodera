@@ -68,3 +68,18 @@ python -m room_access
 - that this service and the agent name LiveKit rooms alike.
 
 E9 measures the p95 latencies again on the lab VM.
+
+## Partner agreements and single-channel guests
+
+Status: Implemented (operator configuration required)
+
+Set `ROOM_ACCESS_CORE_AUTHORITY_ORIGIN` to the exact HTTPS Core origin and
+`ROOM_ACCESS_CORE_AUTHORITY_TOKEN` to this organisation's existing agent credential.
+Configure both together. Tokens go only to that origin, without redirects or proxies.
+Every token request and participant reconciliation reads live Core authority; errors
+fail closed. Guest calls require an explicit `allowCalls` grant for the exact audio
+channel and room, plus current Matrix membership. Unilateral partner suspension or
+revocation refuses new tokens immediately; existing sessions are removed by the
+reconciliation loop (normally every two seconds, plus upstream latency). Core records
+session eviction markers at revocation. These markers are evidence of the cutoff,
+not acknowledgements that a media session has already disconnected.

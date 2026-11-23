@@ -4523,10 +4523,435 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/organisations/{organisation_id}/workspace/channel-governance": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * getChannelGovernance
+         * @description Read partner agreements and guest grants; owner/admin only.
+         */
+        get: operations["getChannelGovernance"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/partner-agreements": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * proposePartnerChannelAgreement
+         * @description Propose a bilateral agreement for two explicit channels. Matrix history already replicated to the partner homeserver cannot be remotely erased. The history disclosure must be accepted. Activation requires the partner administrator. HTTPS live authority and the Matrix edge request-scope gate must be configured before use.
+         */
+        post: operations["proposePartnerChannelAgreement"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/partner-agreements/{agreement_id}/actions/transition": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * transitionPartnerChannelAgreement
+         * @description Revision-fenced bilateral activation or unilateral immediate suspension/revocation. Revocation is terminal; a suspended agreement requires a fresh proposal revision and bilateral approval. Durable eviction markers record invalidated sessions; room-access reconciliation removes existing calls. Prior replicated Matrix history cannot be remotely erased.
+         */
+        post: operations["transitionPartnerChannelAgreement"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/guest-grants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * grantSingleChannelGuest
+         * @description Grant one channel to an enabled identity with no ordinary membership. Expiry is at most thirty days. The grant does not create membership or grant directory, alias, search, DM, invite or unrelated document access. Call access is explicit and requires an audio channel. Configure the Matrix edge request-scope gate before enabling guests.
+         */
+        post: operations["grantSingleChannelGuest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/guest-grants/{grant_id}/actions/revoke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * revokeSingleChannelGuest
+         * @description Immediately revoke a guest grant and record an active-session eviction marker.
+         */
+        post: operations["revokeSingleChannelGuest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/guest-channel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * getSingleGuestChannel
+         * @description Read only the single channel of the current unexpired, non-revoked guest grant. No ordinary organisation membership or directory admission is granted.
+         */
+        get: operations["getSingleGuestChannel"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/confidential/rooms/{room_id}/discovery": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * discoverConfidentialRoom
+         * @description Discover the current server-accepted monotonic MLS epoch and public device verification bundles. Requires current registered device participation, channel visibility and enabled relay. Stale or revoked devices cannot discover room state. Acceptance attests ordering of signed opaque commits; the server has no group secret and cannot independently validate the MLS transcript.
+         */
+        get: operations["discoverConfidentialRoom"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/confidential/verification-bundles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * publishDeviceVerificationBundle
+         * @description Publish a revisioned public cross-signing and device-verification bundle. Requires current registered-device proof using signing operation publish-verification-bundle with null room coordinate and the existing confidential relay statement format. The master signs the self-signing statement and the self-signing key signs the device-verification statement: compact sorted JSON containing purpose, organisationId, membershipId, deviceId, revision, masterKey, selfSigningKey and signingKey. This proves key possession, not out-of-band human identity verification. Private keys, archives and MLS group secrets are refused.
+         */
+        post: operations["publishDeviceVerificationBundle"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * @example {
+         *       "partnerOrganisationId": "01950000-0000-7000-8000-0000000000a2",
+         *       "channelId": "01950000-0000-7000-8000-0000000000a1",
+         *       "partnerChannelId": "01950000-0000-7000-8000-0000000000a2",
+         *       "localHomeserver": "local.example.org",
+         *       "partnerHomeserver": "peer.example.org",
+         *       "matrixRoomId": "!shared:local.example.org",
+         *       "historyDisclosureAccepted": true
+         *     }
+         */
+        PartnerChannelProposal: {
+            /** Format: uuid */
+            partnerOrganisationId: string;
+            /** Format: uuid */
+            channelId: string;
+            /** Format: uuid */
+            partnerChannelId: string;
+            localHomeserver: string;
+            partnerHomeserver: string;
+            matrixRoomId: string;
+            /** @constant */
+            historyDisclosureAccepted: true;
+        };
+        /**
+         * @example {
+         *       "id": "01950000-0000-7000-8000-0000000000a1",
+         *       "organisationId": "01950000-0000-7000-8000-0000000000a1",
+         *       "partnerOrganisationId": "01950000-0000-7000-8000-0000000000a2",
+         *       "channelId": "01950000-0000-7000-8000-0000000000a1",
+         *       "partnerChannelId": "01950000-0000-7000-8000-0000000000a2",
+         *       "localHomeserver": "local.example.org",
+         *       "partnerHomeserver": "peer.example.org",
+         *       "matrixRoomId": "!shared:local.example.org",
+         *       "federationMode": "partner",
+         *       "state": "proposed",
+         *       "revision": 1,
+         *       "replicatedHistoryErasable": false,
+         *       "historyNotice": "Matrix history already replicated to the partner homeserver cannot be remotely erased."
+         *     }
+         */
+        PartnerChannelAgreement: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            organisationId: string;
+            /** Format: uuid */
+            partnerOrganisationId: string;
+            /** Format: uuid */
+            channelId: string;
+            /** Format: uuid */
+            partnerChannelId: string;
+            localHomeserver: string;
+            partnerHomeserver: string;
+            matrixRoomId: string;
+            /** @constant */
+            federationMode: "partner";
+            /** @enum {string} */
+            state: "proposed" | "active" | "suspended" | "revoked";
+            revision: number;
+            /** @constant */
+            replicatedHistoryErasable: false;
+            historyNotice: string;
+        };
+        /**
+         * @example {
+         *       "revision": 1,
+         *       "action": "activate"
+         *     }
+         */
+        PartnerChannelTransition: {
+            revision: number;
+            /** @enum {string} */
+            action: "activate" | "suspend" | "revoke" | "repropose";
+        };
+        /**
+         * @example {
+         *       "guestIdentityId": "01950000-0000-7000-8000-0000000000a2",
+         *       "channelId": "01950000-0000-7000-8000-0000000000a1",
+         *       "matrixUserId": "@guest:peer.example.org",
+         *       "matrixRoomId": "!guest:local.example.org",
+         *       "expiresAt": "2026-12-01T12:00:00Z",
+         *       "allowCalls": false
+         *     }
+         */
+        SingleChannelGuestRequest: {
+            /** Format: uuid */
+            guestIdentityId: string;
+            /** Format: uuid */
+            channelId: string;
+            matrixUserId: string;
+            matrixRoomId: string;
+            /** Format: date-time */
+            expiresAt: string;
+            allowCalls?: boolean;
+        };
+        /**
+         * @example {
+         *       "id": "01950000-0000-7000-8000-0000000000a1",
+         *       "guestIdentityId": "01950000-0000-7000-8000-0000000000a2",
+         *       "channelId": "01950000-0000-7000-8000-0000000000a1",
+         *       "matrixUserId": "@guest:peer.example.org",
+         *       "matrixRoomId": "!guest:local.example.org",
+         *       "role": "single_channel_guest",
+         *       "expiresAt": "2026-12-01T12:00:00Z",
+         *       "allowCalls": false,
+         *       "revokedAt": null
+         *     }
+         */
+        SingleChannelGuestGrant: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            guestIdentityId: string;
+            /** Format: uuid */
+            channelId: string;
+            matrixUserId: string;
+            matrixRoomId: string;
+            /** Format: date-time */
+            expiresAt: string;
+            allowCalls: boolean;
+            /** @constant */
+            role: "single_channel_guest";
+            /** Format: date-time */
+            revokedAt: string | null;
+        };
+        /** @example {} */
+        EmptyGovernanceAction: Record<string, never>;
+        /**
+         * @example {
+         *       "enforcementReady": false,
+         *       "agreements": [],
+         *       "guests": []
+         *     }
+         */
+        ChannelGovernance: {
+            enforcementReady: boolean;
+            agreements: components["schemas"]["PartnerChannelAgreement"][];
+            guests: components["schemas"]["SingleChannelGuestGrant"][];
+        };
+        /**
+         * @example {
+         *       "channelId": "01950000-0000-7000-8000-0000000000a1",
+         *       "name": "Partner channel",
+         *       "kind": "text",
+         *       "matrixRoomId": "!guest:local.example.org",
+         *       "allowCalls": false,
+         *       "expiresAt": "2026-12-01T12:00:00Z",
+         *       "role": "single_channel_guest"
+         *     }
+         */
+        SingleGuestChannel: {
+            /** Format: uuid */
+            channelId: string;
+            name: string;
+            /** @enum {string} */
+            kind: "text" | "audio";
+            matrixRoomId: string;
+            allowCalls: boolean;
+            /** Format: date-time */
+            expiresAt: string;
+            /** @constant */
+            role: "single_channel_guest";
+        };
+        /**
+         * @example {
+         *       "deviceId": "01950000-0000-7000-8000-0000000000a1",
+         *       "revision": 1,
+         *       "masterKey": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+         *       "selfSigningKey": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+         *       "crossSigningSignature": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+         *       "deviceSignature": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+         *       "signature": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+         *     }
+         */
+        DeviceVerificationPublication: {
+            /** Format: uuid */
+            deviceId: string;
+            revision: number;
+            /** Format: byte */
+            masterKey: string;
+            /** Format: byte */
+            selfSigningKey: string;
+            /** Format: byte */
+            crossSigningSignature: string;
+            /** Format: byte */
+            deviceSignature: string;
+            /** Format: byte */
+            signature: string;
+        };
+        /**
+         * @example {
+         *       "deviceId": "01950000-0000-7000-8000-0000000000a1",
+         *       "revision": 1
+         *     }
+         */
+        PublishedDeviceVerification: {
+            /** Format: uuid */
+            deviceId: string;
+            revision: number;
+        };
+        /**
+         * @example {
+         *       "deviceId": "01950000-0000-7000-8000-0000000000a1",
+         *       "revision": 1,
+         *       "masterKey": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+         *       "selfSigningKey": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+         *       "crossSigningSignature": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+         *       "deviceSignature": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+         *       "signature": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+         *       "signingKey": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+         *       "membershipId": "01950000-0000-7000-8000-0000000000a1"
+         *     }
+         */
+        DeviceVerificationBundle: {
+            /** Format: uuid */
+            deviceId: string;
+            revision: number;
+            /** Format: byte */
+            masterKey: string;
+            /** Format: byte */
+            selfSigningKey: string;
+            /** Format: byte */
+            crossSigningSignature: string;
+            /** Format: byte */
+            deviceSignature: string;
+            /** Format: byte */
+            signature: string;
+            /** Format: byte */
+            signingKey: string;
+            /** Format: uuid */
+            membershipId: string;
+        };
+        /**
+         * @example {
+         *       "roomId": "01950000-0000-7000-8000-0000000000a1",
+         *       "channelId": "01950000-0000-7000-8000-0000000000a1",
+         *       "epoch": 0,
+         *       "algorithm": "io.kodera.mls.v1",
+         *       "rekeyRequired": false,
+         *       "deviceIds": [
+         *         "01950000-0000-7000-8000-0000000000a1"
+         *       ],
+         *       "commitSequence": 0,
+         *       "commitDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+         *       "acceptedAt": "2026-11-23T12:00:00Z",
+         *       "verificationBundles": []
+         *     }
+         */
+        ConfidentialRoomDiscovery: {
+            /** Format: uuid */
+            roomId: string;
+            /** Format: uuid */
+            channelId: string;
+            epoch: number;
+            /** @constant */
+            algorithm: "io.kodera.mls.v1";
+            rekeyRequired: boolean;
+            deviceIds: string[];
+            commitSequence: number;
+            commitDigest: string;
+            /** Format: date-time */
+            acceptedAt: string;
+            verificationBundles: components["schemas"]["DeviceVerificationBundle"][];
+        };
         /**
          * WorkspaceRole
          * @example {
@@ -24508,6 +24933,710 @@ export interface operations {
             422: components["responses"]["ValidationError"];
             502: components["responses"]["UpstreamUnavailable"];
             503: components["responses"]["UpstreamUnavailable"];
+        };
+    };
+    getChannelGovernance: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current authority checked; accepted response. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChannelGovernance"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description Authentication, authority, validation, conflict, capacity or temporary contention refusal. */
+            405: {
+                headers: {
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            /** @description Authentication, authority, validation, conflict, capacity or temporary contention refusal. */
+            503: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    proposePartnerChannelAgreement: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PartnerChannelProposal"];
+            };
+        };
+        responses: {
+            /** @description Current authority checked; accepted response. */
+            201: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PartnerChannelAgreement"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description Authentication, authority, validation, conflict, capacity or temporary contention refusal. */
+            405: {
+                headers: {
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            /** @description Authentication, authority, validation, conflict, capacity or temporary contention refusal. */
+            503: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    transitionPartnerChannelAgreement: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                agreement_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PartnerChannelTransition"];
+            };
+        };
+        responses: {
+            /** @description Current authority checked; accepted response. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PartnerChannelAgreement"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description Authentication, authority, validation, conflict, capacity or temporary contention refusal. */
+            405: {
+                headers: {
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            /** @description Authentication, authority, validation, conflict, capacity or temporary contention refusal. */
+            503: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    grantSingleChannelGuest: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SingleChannelGuestRequest"];
+            };
+        };
+        responses: {
+            /** @description Current authority checked; accepted response. */
+            201: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SingleChannelGuestGrant"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description Authentication, authority, validation, conflict, capacity or temporary contention refusal. */
+            405: {
+                headers: {
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            /** @description Authentication, authority, validation, conflict, capacity or temporary contention refusal. */
+            503: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    revokeSingleChannelGuest: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                grant_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmptyGovernanceAction"];
+            };
+        };
+        responses: {
+            /** @description Current authority checked; accepted response. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SingleChannelGuestGrant"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description Authentication, authority, validation, conflict, capacity or temporary contention refusal. */
+            405: {
+                headers: {
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            /** @description Authentication, authority, validation, conflict, capacity or temporary contention refusal. */
+            503: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    getSingleGuestChannel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current authority checked; accepted response. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SingleGuestChannel"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description Authentication, authority, validation, conflict, capacity or temporary contention refusal. */
+            405: {
+                headers: {
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            /** @description Authentication, authority, validation, conflict, capacity or temporary contention refusal. */
+            503: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    discoverConfidentialRoom: {
+        parameters: {
+            query: {
+                deviceId: string;
+            };
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                room_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current authority checked; accepted response. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfidentialRoomDiscovery"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description Authentication, authority, validation, conflict, capacity or temporary contention refusal. */
+            405: {
+                headers: {
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            /** @description Authentication, authority, validation, conflict, capacity or temporary contention refusal. */
+            503: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    publishDeviceVerificationBundle: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeviceVerificationPublication"];
+            };
+        };
+        responses: {
+            /** @description Current authority checked; accepted response. */
+            201: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublishedDeviceVerification"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description Authentication, authority, validation, conflict, capacity or temporary contention refusal. */
+            405: {
+                headers: {
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            /** @description Authentication, authority, validation, conflict, capacity or temporary contention refusal. */
+            503: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
 }

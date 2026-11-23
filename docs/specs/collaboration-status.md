@@ -16,7 +16,7 @@ The hosted Community tenant is live: active tenant promotion, release evidence a
 
 ## Wave 10 client capabilities
 
-Status: In progress; client primitives implemented, server discovery and publication deferred.
+Status: In progress; client primitives and operator-gated server discovery/publication implemented.
 
 Merged work in #169, #177, #180, #182 and #183 implements refusal of plaintext fallback and
 room quarantine, worker-isolated attachment encryption, confidential Pages updates/snapshots,
@@ -24,9 +24,14 @@ LiveKit media transforms, local worker SAS device comparison, and user-held `KVK
 local key archives. These are cryptographic capabilities, not a claim that ordinary rooms,
 uploads, documents or calls are encrypted end to end in production. Standard channels and
 ordinary Yjs documents remain server-readable. The existing ordinary collaboration relay does
-not admit confidential `KDE1` envelopes. Server-side confidential room/session discovery,
-trusted epoch provisioning, cross-signing publication and server backup publication remain
-deferred; native group/key integration and interoperable browser/codec qualification remain open.
+not admit confidential `KDE1` envelopes. The operator-gated server directory now publishes
+current participating-device room discovery, consecutive accepted MLS epoch evidence and
+proof-bound public cross-signing/device-verification bundles (`apps/server/apps/confidential`).
+Key-package claims reject stale epochs. Server backup publication, native group/key integration
+and interoperable browser/codec qualification remain open. The
+[partner/guest channel slice](H2_3_BRIDGES_GUESTS_MLS.md) adds revisioned bilateral
+agreements, single-channel guest grants and live Matrix/media revocation checks; its required
+edge request-scope gate and default-off operator activation are explicit deployment boundaries.
 
 ## Acceptance evidence
 
@@ -34,4 +39,4 @@ The executable acceptance lives beside the implementation: Synapse policy tests 
 
 ## Remaining scope
 
-Status: Client transport/group integration, physical radio qualification, remaining operator activation and universal encryption roadmap. Live native Matrix messaging, real native media adapters, compiled mobile Rust client bindings, native push runtime acceptance, durable browser/native group integration, server confidential room/session discovery, trusted epoch provisioning, cross-signing/backup publication, interoperable LiveKit media qualification, persistent desktop OS keychain wiring, background iOS PushKit provisioning, two-device physical `mDNS + QUIC` / `BLE GATT` radio qualification, OS-notarised desktop installers, App Store / Google Play publication, backup/restore rehearsal, live payment activation and managed-fleet provisioning remain open; universal zero-knowledge end-to-end encryption by default across all rooms, documents, attachments and calls is planned in Track 7 of [`ROADMAP.md`](../../ROADMAP.md). The repository issues and GitHub Project remain the authoritative backlog.
+Status: Client transport/group integration, physical radio qualification, remaining operator activation and universal encryption roadmap. Live native Matrix messaging, real native media adapters, compiled mobile Rust client bindings, native push runtime acceptance, durable browser/native group integration, operator activation of server discovery/epoch and cross-signing publication, server backup publication, interoperable LiveKit media qualification, persistent desktop OS keychain wiring, background iOS PushKit provisioning, two-device physical `mDNS + QUIC` / `BLE GATT` radio qualification, OS-notarised desktop installers, App Store / Google Play publication, backup/restore rehearsal, live payment activation and managed-fleet provisioning remain open; universal zero-knowledge end-to-end encryption by default across all rooms, documents, attachments and calls is planned in Track 7 of [`ROADMAP.md`](../../ROADMAP.md). The repository issues and GitHub Project remain the authoritative backlog.

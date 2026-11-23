@@ -99,6 +99,71 @@ STRUCTURE_SERVICES = (
 )
 
 CASES = (
+    *(
+        Case(
+            operation,
+            "apps.workspaces.api.bridges." + view,
+            method,
+            kwargs,
+            "apps.workspaces.moderation.RefusalError",
+            at,
+            error_args=(403, "identity-unknown"),
+        )
+        for operation, view, method, kwargs, at in (
+            ("getChannelGovernance", "overview", "get", ORG, ("apps.workspaces.bridges.overview",)),
+            (
+                "proposePartnerChannelAgreement",
+                "propose",
+                "post",
+                ORG,
+                ("apps.workspaces.api.bridges.authorise_workspace",),
+            ),
+            (
+                "transitionPartnerChannelAgreement",
+                "transition",
+                "post",
+                {**ORG, "agreement_id": ROW},
+                ("apps.workspaces.api.bridges.authorise_workspace",),
+            ),
+            (
+                "grantSingleChannelGuest",
+                "guests",
+                "post",
+                ORG,
+                ("apps.workspaces.api.bridges.authorise_workspace",),
+            ),
+            (
+                "revokeSingleChannelGuest",
+                "revoke",
+                "post",
+                {**ORG, "grant_id": ROW},
+                ("apps.workspaces.api.bridges.authorise_workspace",),
+            ),
+            (
+                "getSingleGuestChannel",
+                "guest_channel",
+                "get",
+                ORG,
+                ("apps.workspaces.bridges.guest_channel",),
+            ),
+        )
+    ),
+    *(
+        Case(
+            operation,
+            "apps.confidential.api.views." + view,
+            method,
+            kwargs,
+            "apps.confidential.services.RefusalError",
+            ("apps.confidential.services.admit_directory",),
+            error_args=(403, "identity-unknown"),
+            also={"apps.confidential.services.enabled": lambda: None},
+        )
+        for operation, view, method, kwargs in (
+            ("discoverConfidentialRoom", "discovery", "get", {**ORG, "room_id": ROW}),
+            ("publishDeviceVerificationBundle", "bundles", "post", ORG),
+        )
+    ),
     Case(
         "getWorkspaceQuotaUsage",
         "apps.workspaces.api.quotas.usage",
@@ -680,6 +745,7 @@ def test_every_customer_operation_that_resolves_a_principal_is_listed():
         "getLegalDocumentText",
         "createOrganisation",  # the staff intake: a customer token is 403 forbidden there
         "getCommands",
+        "getChannelAuthority",
         "ackCommand",
         "reportCommandResult",
         # The `invited` principal: acceptance creates the identity, so neither it nor its preview

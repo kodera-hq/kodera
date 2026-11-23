@@ -187,3 +187,36 @@ An agent-authored governed policy may include `local_only: true` for public comm
 channels. Both the native join callback and membership event rules refuse remote users,
 even if invited. A non-boolean flag fails closed. This complements Matrix's native join
 rule; it does not publish rooms, relax private listed membership or announcement posting.
+
+## Live partner and guest channel authority
+
+Status: Implemented (operator configuration required)
+
+Configure `core_authority_origin` with the exact HTTPS Core origin and
+`core_authority_token` with an existing credential for this organisation's agent.
+Both are required together. The credential stays in runtime configuration. Joins,
+invites, room creation and local/federated event admission consult Core live, without
+positive caching. Authority outages deny access. The immutable room federation ACL,
+Matrix native authorization, bans and channel governance still apply. A suspended
+agreement stops new activity from both sides. Previously replicated Matrix history
+cannot be remotely erased.
+
+Guests also require the **edge request-scope gate**: event hooks cannot filter HTTP
+directory reads. Configure every client-server API location on the public edge to
+perform an internal authorization subrequest to
+`/_synapse/client/kodera/v1/request_scope`, forwarding the original bearer token and
+setting `X-Original-URI` and `X-Original-Method` from the edge's own request variables.
+Strip client-supplied versions of those headers. Do not expose this internal location
+as an alternative client API; deny direct access to Synapse's unfiltered client port.
+Apply the gate to every supported client API version, including aliases and legacy
+prefixes. Guests receive only the exact v3 room reads/writes in `guest_request`; user
+search, public rooms, aliases, room creation, invitations and arbitrary state edits
+are refused. `/sync` is refused for guests because it could reveal prior membership
+in another room; guest clients use explicit single-room reads. Normal members retain
+the existing client API surface.
+
+Before enabling `KODERA_CHANNEL_GOVERNANCE_ENABLED=true` on Core, qualify the edge,
+both homeservers' hooks, organisation-bound credentials and room-access live checks
+using a direct Matrix client. The default-off Core gate prevents issuance on an
+unconfigured deployment; setting it is an operator attestation, not an automatic
+network probe. Neither tests nor configuration examples claim deployed qualification.

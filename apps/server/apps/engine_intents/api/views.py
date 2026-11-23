@@ -22,7 +22,7 @@ from apps.engine_intents.services import (
     pull,
     report,
 )
-from core.api.scopes import declares
+from core.api.scopes import Operation, declares
 from core.db.ids import new_uuid7
 
 from .permissions import ACK_COMMAND, GET_COMMANDS, REPORT_COMMAND_RESULT
@@ -171,3 +171,28 @@ def result(request: HttpRequest, command_id: UUID) -> HttpResponse:
     return _json(
         200, {"command_id": str(command_id), "recorded": recorded, "status": status}, request_id
     )
+
+
+@declares(Operation("GET", "getChannelAuthority", "agent"))
+def channel_authority(request: HttpRequest) -> HttpResponse:
+    """Internal agent authority endpoint; the credential fixes the organisation."""
+    from ..services import channel_authority as decide
+
+    request_id = _request_id(request)
+    if request.method != "GET":
+        return _problem(405, request_id, allow="GET")
+    fields = {"room_id", "user_id", "action"}
+    if set(request.GET) != fields or any(
+        len(request.GET.getlist(key)) != 1 or len(request.GET[key]) > 512 for key in fields
+    ):
+        return _problem(400, request_id)
+    header = request.headers.get("Authorization", "")
+    result = decide(
+        token=header[7:] if header.startswith("Bearer ") else "",
+        **{key: request.GET[key] for key in fields},
+    )
+    if result is None:
+        return _problem(401, request_id)
+    response = _json(200, result, request_id)
+    response["Cache-Control"] = "no-store"
+    return response

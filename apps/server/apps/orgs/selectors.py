@@ -401,3 +401,18 @@ def current_admin_role(*, membership_id: UUID, organisation_id: UUID) -> str | N
 
 def organisation_authority_revision(*, organisation_id: UUID) -> int:
     return Organisation.objects.values_list("authority_revision", flat=True).get(id=organisation_id)
+
+
+def person_has_membership(*, user_id: UUID) -> bool:
+    """Guest admission cannot also carry ordinary workspace membership."""
+    return Membership.objects.filter(user_id=user_id).exclude(state="removed").exists()
+
+
+def has_privacy_cutoff(*, organisation_id: UUID, user_id: UUID | None = None) -> bool:
+    """Current durable cutoff existence, including the interval before physical erasure."""
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT EXISTS(SELECT 1 FROM orgs_privacyerasure WHERE organisation_reference=%s) OR EXISTS(SELECT 1 FROM orgs_accounterasure WHERE user_reference=%s)",
+            [organisation_id, user_id],
+        )
+        return bool(cursor.fetchone()[0])

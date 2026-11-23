@@ -1,12 +1,16 @@
 """Canonical proximity operations, strict lease shape and refusal controls."""
 
 from copy import deepcopy
+from functools import partial
 from pathlib import Path
 from typing import Any
 
 import jsonschema_rs
 import pytest
 import yaml
+
+_load_yaml = partial(yaml.load, Loader=getattr(yaml, "CSafeLoader", yaml.SafeLoader))
+
 
 ROOT = Path(__file__).resolve().parents[3]
 CONTRACT = ROOT / "packages/api-contract/core-api.openapi.yaml"
@@ -20,7 +24,7 @@ NAMES = {
 
 
 def assert_contract(document: dict[str, Any]) -> None:
-    assert document["info"]["version"] == "0.55.0"
+    assert document["info"]["version"] == "0.56.0"
     for name, (method, operation, schema) in NAMES.items():
         op = document["paths"][f"/proximity/{name}"][method]
         assert op["operationId"] == operation
@@ -60,8 +64,11 @@ def assert_contract(document: dict[str, Any]) -> None:
 
 def test_canonical_paths_and_each_response_example_validate() -> None:
     text = CONTRACT.read_text()
-    assert not any(isinstance(token, yaml.tokens.AliasToken) for token in yaml.scan(text))
-    document = yaml.safe_load(text)
+    assert not any(
+        isinstance(token, yaml.tokens.AliasToken)
+        for token in yaml.scan(text, Loader=getattr(yaml, "CSafeLoader", yaml.SafeLoader))
+    )
+    document = _load_yaml(text)
     assert_contract(document)
     for _, _, name in NAMES.values():
         validator = jsonschema_rs.validator_for(
@@ -88,7 +95,7 @@ def test_canonical_paths_and_each_response_example_validate() -> None:
     ],
 )
 def test_each_proximity_contract_guard_refuses_its_mutation(mutation: str) -> None:
-    document = deepcopy(yaml.safe_load(CONTRACT.read_text()))
+    document = deepcopy(_load_yaml(CONTRACT.read_text()))
     op = document["paths"]["/proximity/bootstrap"]["post"]
     lease = document["components"]["schemas"]["ProximityEpochLease"]
     if mutation == "staff":

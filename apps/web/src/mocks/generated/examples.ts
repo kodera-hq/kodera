@@ -6742,6 +6742,186 @@ export const EXAMPLES = {
     idempotent: false,
     requiresIfMatch: false,
   },
+  "getChannelGovernance": {
+    operationId: "getChannelGovernance",
+    method: "get",
+    path: "/organisations/{organisation_id}/workspace/channel-governance",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "enforcementReady": false,
+      "agreements": [],
+      "guests": []
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "proposePartnerChannelAgreement": {
+    operationId: "proposePartnerChannelAgreement",
+    method: "post",
+    path: "/organisations/{organisation_id}/workspace/partner-agreements",
+    status: 201,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "id": "01950000-0000-7000-8000-0000000000a1",
+      "organisationId": "01950000-0000-7000-8000-0000000000a1",
+      "partnerOrganisationId": "01950000-0000-7000-8000-0000000000a2",
+      "channelId": "01950000-0000-7000-8000-0000000000a1",
+      "partnerChannelId": "01950000-0000-7000-8000-0000000000a2",
+      "localHomeserver": "local.example.org",
+      "partnerHomeserver": "peer.example.org",
+      "matrixRoomId": "!shared:local.example.org",
+      "federationMode": "partner",
+      "state": "proposed",
+      "revision": 1,
+      "replicatedHistoryErasable": false,
+      "historyNotice": "Matrix history already replicated to the partner homeserver cannot be remotely erased."
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "transitionPartnerChannelAgreement": {
+    operationId: "transitionPartnerChannelAgreement",
+    method: "post",
+    path: "/organisations/{organisation_id}/workspace/partner-agreements/{agreement_id}/actions/transition",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "id": "01950000-0000-7000-8000-0000000000a1",
+      "organisationId": "01950000-0000-7000-8000-0000000000a1",
+      "partnerOrganisationId": "01950000-0000-7000-8000-0000000000a2",
+      "channelId": "01950000-0000-7000-8000-0000000000a1",
+      "partnerChannelId": "01950000-0000-7000-8000-0000000000a2",
+      "localHomeserver": "local.example.org",
+      "partnerHomeserver": "peer.example.org",
+      "matrixRoomId": "!shared:local.example.org",
+      "federationMode": "partner",
+      "state": "proposed",
+      "revision": 1,
+      "replicatedHistoryErasable": false,
+      "historyNotice": "Matrix history already replicated to the partner homeserver cannot be remotely erased."
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "grantSingleChannelGuest": {
+    operationId: "grantSingleChannelGuest",
+    method: "post",
+    path: "/organisations/{organisation_id}/workspace/guest-grants",
+    status: 201,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "id": "01950000-0000-7000-8000-0000000000a1",
+      "guestIdentityId": "01950000-0000-7000-8000-0000000000a2",
+      "channelId": "01950000-0000-7000-8000-0000000000a1",
+      "matrixUserId": "@guest:peer.example.org",
+      "matrixRoomId": "!guest:local.example.org",
+      "role": "single_channel_guest",
+      "expiresAt": "2026-12-01T12:00:00Z",
+      "allowCalls": false,
+      "revokedAt": null
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "revokeSingleChannelGuest": {
+    operationId: "revokeSingleChannelGuest",
+    method: "post",
+    path: "/organisations/{organisation_id}/workspace/guest-grants/{grant_id}/actions/revoke",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "id": "01950000-0000-7000-8000-0000000000a1",
+      "guestIdentityId": "01950000-0000-7000-8000-0000000000a2",
+      "channelId": "01950000-0000-7000-8000-0000000000a1",
+      "matrixUserId": "@guest:peer.example.org",
+      "matrixRoomId": "!guest:local.example.org",
+      "role": "single_channel_guest",
+      "expiresAt": "2026-12-01T12:00:00Z",
+      "allowCalls": false,
+      "revokedAt": null
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "getSingleGuestChannel": {
+    operationId: "getSingleGuestChannel",
+    method: "get",
+    path: "/organisations/{organisation_id}/workspace/guest-channel",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "channelId": "01950000-0000-7000-8000-0000000000a1",
+      "name": "Partner channel",
+      "kind": "text",
+      "matrixRoomId": "!guest:local.example.org",
+      "allowCalls": false,
+      "expiresAt": "2026-12-01T12:00:00Z",
+      "role": "single_channel_guest"
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "discoverConfidentialRoom": {
+    operationId: "discoverConfidentialRoom",
+    method: "get",
+    path: "/organisations/{organisation_id}/confidential/rooms/{room_id}/discovery",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "roomId": "01950000-0000-7000-8000-0000000000a1",
+      "channelId": "01950000-0000-7000-8000-0000000000a1",
+      "epoch": 0,
+      "algorithm": "io.kodera.mls.v1",
+      "rekeyRequired": false,
+      "deviceIds": [
+        "01950000-0000-7000-8000-0000000000a1"
+      ],
+      "commitSequence": 0,
+      "commitDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "acceptedAt": "2026-11-23T12:00:00Z",
+      "verificationBundles": []
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "publishDeviceVerificationBundle": {
+    operationId: "publishDeviceVerificationBundle",
+    method: "post",
+    path: "/organisations/{organisation_id}/confidential/verification-bundles",
+    status: 201,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "deviceId": "01950000-0000-7000-8000-0000000000a1",
+      "revision": 1
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
 } satisfies Record<string, OperationExample>
 
 export type OperationId = keyof typeof EXAMPLES

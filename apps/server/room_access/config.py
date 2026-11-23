@@ -87,6 +87,8 @@ class Config:
     # One identity's token requests per rolling minute (room_access/server.py GrantLimiter).
     grants_per_minute: int = 30
     ai_users: frozenset[str] = frozenset()
+    core_authority_origin: str = ""
+    core_authority_token: str = ""
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> "Config":
@@ -96,7 +98,17 @@ class Config:
                 raise ConfigError(f"{name} is required")
             return value
 
+        origin, token = (
+            env.get("ROOM_ACCESS_CORE_AUTHORITY_ORIGIN", ""),
+            env.get("ROOM_ACCESS_CORE_AUTHORITY_TOKEN", ""),
+        )
+        if (origin or token) and (
+            _HTTPS_ORIGIN.fullmatch(origin) is None or not token or any(c.isspace() for c in token)
+        ):
+            raise ConfigError("Core authority requires an HTTPS origin and a nonempty credential")
         return cls(
+            core_authority_origin=origin,
+            core_authority_token=token,
             synapse_url=need("ROOM_ACCESS_SYNAPSE_URL").rstrip("/"),
             matrix_token=need("ROOM_ACCESS_MATRIX_TOKEN"),
             livekit_url=need("LIVEKIT_URL").rstrip("/"),

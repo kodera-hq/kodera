@@ -723,3 +723,105 @@ class MemberAiConsent(StoredModel):
                 name="member_ai_consent_timestamp_required",
             ),
         ]
+
+
+class PartnerChannelAgreement(StoredModel):
+    """Bilateral authority for an exact room and one channel in each organisation."""
+
+    organisation = models.ForeignKey(
+        "orgs.Organisation", on_delete=models.RESTRICT, related_name="+"
+    )
+    partner_organisation = models.ForeignKey(
+        "orgs.Organisation", on_delete=models.RESTRICT, related_name="+"
+    )
+    channel = models.OneToOneField(Channel, on_delete=models.RESTRICT, related_name="+")
+    partner_channel = models.OneToOneField(Channel, on_delete=models.RESTRICT, related_name="+")
+    matrix_room_id = models.TextField(unique=True)
+    local_homeserver = models.TextField()
+    partner_homeserver = models.TextField()
+    federation_mode = models.TextField(default="partner")
+    state = models.TextField(default="proposed")
+    revision = models.BigIntegerField(default=1)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=~models.Q(organisation=models.F("partner_organisation")),
+                name="partner_distinct_orgs",
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(channel=models.F("partner_channel")),
+                name="partner_distinct_channels",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(federation_mode="partner"), name="partner_federation_mode"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(state__in=["proposed", "active", "suspended", "revoked"]),
+                name="partner_state_valid",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(revision__gte=1), name="partner_revision_positive"
+            ),
+        ]
+
+
+class PartnerChannelAgreementRevision(StoredModel):
+    agreement = models.ForeignKey(PartnerChannelAgreement, on_delete=models.RESTRICT)
+    revision = models.BigIntegerField()
+    state = models.TextField()
+    acting_organisation_id = models.UUIDField()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["agreement", "revision"], name="partner_revision_unique"
+            ),
+        ]
+
+
+class SingleChannelGuestGrant(StoredModel):
+    """A guest never becomes an organisation member by accepting this grant."""
+
+    organisation = models.ForeignKey("orgs.Organisation", on_delete=models.RESTRICT)
+    guest_identity = models.OneToOneField("identity.Identity", on_delete=models.RESTRICT)
+    single_channel = models.ForeignKey(Channel, on_delete=models.RESTRICT)
+    matrix_user_id = models.TextField(unique=True)
+    matrix_room_id = models.TextField()
+    role = models.TextField(default="single_channel_guest")
+    allow_calls = models.BooleanField(default=False)
+    expires_at = models.DateTimeField()
+    revoked_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(role="single_channel_guest"), name="guest_role_fixed"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(expires_at__gt=models.F("created_at")),
+                name="guest_expiry_future",
+            ),
+        ]
+
+
+class SessionEviction(StoredModel):
+    """Durable revocation evidence; media sessions are removed by reconciliation."""
+
+    organisation = models.ForeignKey("orgs.Organisation", on_delete=models.RESTRICT)
+    channel = models.ForeignKey(Channel, on_delete=models.RESTRICT)
+    agreement = models.ForeignKey(PartnerChannelAgreement, on_delete=models.RESTRICT, null=True)
+    guest_grant = models.ForeignKey(SingleChannelGuestGrant, on_delete=models.RESTRICT, null=True)
+    revision = models.BigIntegerField()
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(agreement__isnull=False, guest_grant__isnull=True)
+                | models.Q(agreement__isnull=True, guest_grant__isnull=False),
+                name="session_eviction_exact_source",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(revision__gte=1), name="session_eviction_revision"
+            ),
+        ]

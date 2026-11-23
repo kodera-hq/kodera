@@ -373,3 +373,8 @@ def enabled_email_user_ids(*, organisation_id: UUID, email: str) -> set[UUID]:
             email__iexact=email,
         ).values_list("user_id", flat=True)
     )
+
+
+def lock_guest_identity(*, identity_id: UUID) -> None:
+    """Serialize guest grant creation without exporting a stored model."""
+    Identity.objects.select_for_update().get(id=identity_id)

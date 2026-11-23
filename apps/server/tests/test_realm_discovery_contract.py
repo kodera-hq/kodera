@@ -7,12 +7,16 @@ import copy
 import hashlib
 import json
 import re
+from functools import partial
 from pathlib import Path
 from urllib.parse import urlsplit
 from uuid import UUID
 
 import pytest
 import yaml
+
+_load_yaml = partial(yaml.load, Loader=getattr(yaml, "CSafeLoader", yaml.SafeLoader))
+
 
 ROOT = Path(__file__).resolve().parents[1]
 DISCOVERY_SCHEMAS = (
@@ -92,7 +96,7 @@ DISCOVERY_SCHEMAS = (
 # Rebound at 0.53.0: push subscription platform, bounded foreground presence leases, and zero-PII createBugReport; discovery unchanged.
 # Rebound at 0.54.0: workspace import dry-run/execution, live coexistence bridges, three-tier AI policy/consent, and voice-note transcription; discovery unchanged.
 # Rebound at 0.55.0: authoritative workspace channel confidentiality; discovery unchanged.
-UNCHANGED_SHA = "e74eec1656f4c181c09d72375840a9f025329f0b8aef22e2166d8f5b66b1290b"
+UNCHANGED_SHA = "72d841fcf64553ff3ae7c0c8ecab20cb6cceb46e4348ca0be0b227d0972bc99a"
 # Approved schema/key semantics; prose is removed before hashing.
 # Rebound at 0.26.0: discoverRealm declares 403 forbidden, a browser request refused from its
 # headers before any quota charge; the rest of the discovery wire is unchanged.
@@ -217,7 +221,7 @@ def assert_local_refs(value, document):
 
 @pytest.fixture(scope="module")
 def contract():
-    return yaml.safe_load((ROOT / "contracts/core-api.openapi.yaml").read_text())
+    return _load_yaml((ROOT / "contracts/core-api.openapi.yaml").read_text())
 
 
 def test_actual_contract(contract):
