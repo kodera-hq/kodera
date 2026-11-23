@@ -134,3 +134,6 @@ if _pooler not in {"0", "1"}:
     raise ValueError("KODERA_DATABASE_TRANSACTION_POOLER must be 0 or 1")
 KODERA_DATABASE_TRANSACTION_POOLER = _pooler == "1"
 del _pooler
+
+# Bounded base64 raster workspace logos; each JSON endpoint retains its own smaller limit.
+DATA_UPLOAD_MAX_MEMORY_SIZE = 2830000

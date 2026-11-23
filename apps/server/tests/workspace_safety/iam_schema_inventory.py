@@ -53,7 +53,30 @@ SHARED = frozenset(
 )
 
 
+UX_OBJECTS = frozenset(
+    {
+        *(
+            ("column", "workspaces_workspace", name)
+            for name in (
+                "display_name",
+                "logo_url",
+                "default_ui_mode",
+                "default_channel_id",
+                "allow_member_channel_creation",
+                "allow_member_invites",
+                "allow_link_previews",
+            )
+        ),
+        ("function", "workspace_ux_guard", ""),
+        ("trigger", "workspaces_workspace", "workspace_ux_guard"),
+    }
+)
+
+
 def without_iam(objects):
+    if ("column", "workspaces_workspace", "display_name") in objects:
+        assert UX_OBJECTS <= objects.keys(), "workspace identity and UX inventory is incomplete"
+        objects = {key: value for key, value in objects.items() if key not in UX_OBJECTS}
     # Historical lifecycle targets intentionally predate IAM. A partial current schema fails.
     present = any(key[1] in TABLES or key in SHARED for key in objects)
     if not present:

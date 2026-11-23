@@ -16,7 +16,7 @@ The hosted Community tenant is live: active tenant promotion, release evidence a
 
 ## Wave 10 client capabilities
 
-Status: In progress; client primitives and operator-gated server discovery/publication implemented.
+Status: In progress; OpenAPI 0.57.0, client primitives and operator-gated server discovery/publication implemented.
 
 Merged work in #169, #177, #180, #182 and #183 implements refusal of plaintext fallback and
 room quarantine, worker-isolated attachment encryption, confidential Pages updates/snapshots,
@@ -32,6 +32,22 @@ and interoperable browser/codec qualification remain open. The
 [partner/guest channel slice](H2_3_BRIDGES_GUESTS_MLS.md) adds revisioned bilateral
 agreements, single-channel guest grants and live Matrix/media revocation checks; its required
 edge request-scope gate and default-off operator activation are explicit deployment boundaries.
+
+## Founder messaging and workspace administration
+
+Status: Implemented in H2.6; deployment acceptance remains operator-owned.
+
+The [H2.6 specification](H2_6_MESSAGES_WORKSPACE_ADMIN.md) covers compact Pro/Messages icon
+navigation, a full-page conversation master/detail layout with mobile back navigation, bubble
+messages, deterministic arrivals precedence and administrator-managed workspace identity and
+preferences. The bounded logo and optional preferences use the existing tenant-scoped profile
+with conditional writes. Repeated S6 media socket initialization preserves the live listener;
+the worker owns stale-socket recovery under its exclusive lock.
+
+H1.4b's separate native VoIP lane adds PushKit/CallKit, Android ConnectionService and shared
+`kodera-rs` ring deduplication. Integration of that lane into this stack is Planned; the
+current tree contains the earlier native call coordinators. Device/provider qualification and
+signed distribution remain separate acceptance gates.
 
 ## Acceptance evidence
 

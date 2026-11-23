@@ -37,7 +37,7 @@ const messages = {
     noDirect: 'No direct conversations are available in this workspace.',
     messages: 'Messages',
     collections: 'Collections',
-    switchToSimple: 'Switch to Simple Messaging',
+    switchToSimple: 'Switch to Messages mode',
     switchToPro: 'Switch to Pro Workspace',
   },
   fr: {
@@ -79,7 +79,7 @@ const messages = {
     noDirect: 'Aucune conversation directe n’est disponible dans cet espace.',
     messages: 'Messages',
     collections: 'Collections',
-    switchToSimple: 'Basculer vers Messagerie Simple',
+    switchToSimple: 'Basculer vers le mode Messages',
     switchToPro: 'Basculer vers Espace Pro',
   },
 } as const

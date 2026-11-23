@@ -26,7 +26,7 @@ CHECK = runpy.run_path(str(ROOT / "scripts/ci/check-community-deploy.py"))
 
 
 class MediaWorkerStartupTests(unittest.TestCase):
-    def test_initializer_recovers_stale_socket_and_preserves_credentials(self):
+    def test_initializer_preserves_socket_and_credentials_until_worker_recovers(self):
         # Keep Unix paths short on hosts with a 104-byte sockaddr_un limit.
         with tempfile.TemporaryDirectory(dir="/tmp", prefix="media-") as temporary:
             root = Path(temporary)
@@ -58,7 +58,7 @@ class MediaWorkerStartupTests(unittest.TestCase):
                 self.assertEqual(chown.call_args_list[1].args, (str(secrets), 10001, 10001))
             self.assertEqual(stat.S_IMODE(runtime.stat().st_mode), 0o700)
             self.assertEqual(stat.S_IMODE(secrets.stat().st_mode), 0o700)
-            self.assertFalse(path.exists())
+            self.assertTrue(path.is_socket())
             self.assertEqual(credential.read_text(), "synthetic credential marker")
             worker = bind(path, DirectorySource(secrets))
             worker.server_close()
@@ -85,6 +85,15 @@ class MediaWorkerStartupTests(unittest.TestCase):
                 lock_file = Path(str(path) + ".lock")
                 self.assertTrue(lock_file.is_file())
                 self.assertEqual(stat.S_IMODE(lock_file.stat().st_mode), 0o600)
+                exec(CHECK["MEDIA_HEALTH_CODE"].replace(CHECK["MEDIA_SOCKET"], str(path)), {})
+
+                # Reapply initialization while the worker listens: its inode and health survive.
+                inode = path.stat().st_ino
+                code = CHECK["MEDIA_INIT_CODE"].replace("/run/kodera-media-secrets", str(secrets)).replace("/run/kodera-media", str(root))
+                with patch("os.chown"):
+                    exec(code, {})
+                    exec(code, {})
+                self.assertEqual(path.stat().st_ino, inode)
                 exec(CHECK["MEDIA_HEALTH_CODE"].replace(CHECK["MEDIA_SOCKET"], str(path)), {})
 
                 # A second concurrent worker must be refused while the first holds media.sock.lock.

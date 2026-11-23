@@ -103,6 +103,13 @@ class Workspace(StoredModel):
     organisation = models.ForeignKey(
         "orgs.Organisation", on_delete=models.RESTRICT, db_constraint=False
     )
+    display_name = models.TextField(default="", blank=True)
+    logo_url = models.TextField(default="", blank=True)
+    default_ui_mode = models.TextField(default="pro")
+    default_channel_id = models.UUIDField(null=True, blank=True)
+    allow_member_channel_creation = models.BooleanField(default=False)
+    allow_member_invites = models.BooleanField(default=True)
+    allow_link_previews = models.BooleanField(default=True)
     description = models.TextField(default="", blank=True)
     banner_preset = models.TextField(default="", blank=True)
     icon_mxc = models.TextField(default="", blank=True)

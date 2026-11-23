@@ -392,28 +392,28 @@ describe('SimpleMessagingSidebar & Workspace UI Mode', () => {
     // Default mode is Pro: Simple sidebar is absent, toggle shows Pro pressed.
     expect(screen.queryByTestId('simple-messaging-sidebar')).toBeNull()
     const toggle = screen.getByTestId('workspace-ui-mode-toggle')
-    expect(within(toggle).getByRole('button', { name: 'Pro' })).toHaveAttribute(
+    expect(within(toggle).getByRole('button', { name: 'Mode Espace Pro' })).toHaveAttribute(
       'aria-pressed',
       'true'
     )
-    expect(within(toggle).getByRole('button', { name: 'Simple' })).toHaveAttribute(
+    expect(within(toggle).getByRole('button', { name: 'Mode Messages' })).toHaveAttribute(
       'aria-pressed',
       'false'
     )
 
-    // 1-click switch to Messagerie Simple: switches canvas cleanly to chat without dropping call.
-    await user.click(within(toggle).getByRole('button', { name: 'Simple' }))
+    // 1-click switch to mode Messages: switches canvas cleanly to chat without dropping call.
+    await user.click(within(toggle).getByRole('button', { name: 'Mode Messages' }))
     expect(onChangeCanvasMode).toHaveBeenCalledWith('chat')
     expect(leave).not.toHaveBeenCalled()
 
     const simpleNav = await screen.findByTestId('simple-messaging-sidebar')
-    expect(within(simpleNav).getByRole('button', { name: 'Simple' })).toHaveAttribute(
+    expect(within(simpleNav).getByRole('button', { name: 'Mode Messages' })).toHaveAttribute(
       'aria-pressed',
       'true'
     )
 
-    // Dormant empty non-favorite channel is omitted; pinned, DM, mention, voice-occupied, and unread appear in deterministic order!
-    expect(within(simpleNav).queryByText('archives-silencieuses')).toBeNull()
+    // Active channels remain discoverable; pinned, DM, mention, voice-occupied, and unread appear in deterministic order!
+    expect(within(simpleNav).getByText('archives-silencieuses')).toBeVisible()
     expect(within(simpleNav).getByText('Invitations en attente (1)')).toBeInTheDocument()
 
     const rows = within(simpleNav).getAllByTestId(/^simple-feed-row-/)
@@ -423,6 +423,7 @@ describe('SimpleMessagingSidebar & Workspace UI Mode', () => {
       `simple-feed-row-channel:${VAULT}`,
       `simple-feed-row-direct:${DM_ROOM}`,
       `simple-feed-row-channel:${GENERAL}`,
+      `simple-feed-row-channel:${DORMANT}`,
       `simple-feed-row-channel:${STANDUP}`,
     ])
 
@@ -439,7 +440,7 @@ describe('SimpleMessagingSidebar & Workspace UI Mode', () => {
 
   it('triggers 1-tap call from a conversation row without switching the active text channel', async () => {
     const user = userEvent.setup()
-    setUiMode('simple')
+    setUiMode('messages')
     const store = createFixtureStore()
     const { call, join } = createFakeCall()
 
@@ -501,7 +502,7 @@ describe('SimpleMessagingSidebar & Workspace UI Mode', () => {
     // Switch to Simple mode via Command Palette quick action!
     await user.keyboard('{Control>}k{/Control}')
     const paletteInput = await screen.findByRole('combobox')
-    await user.type(paletteInput, 'Messagerie Simple')
+    await user.type(paletteInput, 'mode Messages')
     await user.keyboard('{Enter}')
 
     const simpleNav = await screen.findByTestId('simple-messaging-sidebar')
@@ -555,9 +556,9 @@ describe('SimpleMessagingSidebar & Workspace UI Mode', () => {
     )
 
     // Activate Simple mode button -> focus lands on the newly mounted Simple button in SimpleMessagingSidebar!
-    await user.click(screen.getByTestId('workspace-ui-mode-simple'))
+    await user.click(screen.getByTestId('workspace-ui-mode-messages'))
     const simpleNav = await screen.findByTestId('simple-messaging-sidebar')
-    expect(within(simpleNav).getByTestId('workspace-ui-mode-simple')).toHaveFocus()
+    expect(within(simpleNav).getByTestId('workspace-ui-mode-messages')).toHaveFocus()
 
     // Open ChannelContextMenu on #opérations row in SimpleMessagingSidebar and close with Escape -> focus returns to the row's primary button!
     const opsRow = within(simpleNav).getByTestId(`simple-feed-row-channel:${OPS}`)
@@ -578,7 +579,7 @@ describe('SimpleMessagingSidebar & Workspace UI Mode', () => {
 
   it('fails closed when getRoomBoundary is absent and clears pendingMessageJump when navigation is blocked or superseded', async () => {
     const user = userEvent.setup()
-    setUiMode('simple')
+    setUiMode('messages')
     const baseStore = createFixtureStore()
     // Boundary-less store adapter: excerpts and omnibox message hits must fail closed!
     const { getRoomBoundary: _omittedBoundary, ...boundarylessStore } = baseStore

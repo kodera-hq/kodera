@@ -163,6 +163,13 @@ describe('workspace profile', () => {
   it('reads with its tag and saves under If-Match', async () => {
     let ifMatch: string | null = null
     const profile = {
+      display_name: '',
+      logo_url: '',
+      default_ui_mode: 'pro',
+      default_channel_id: null,
+      allow_member_channel_creation: false,
+      allow_member_invites: true,
+      allow_link_previews: true,
       description: 'Product',
       banner_preset: 'cobalt',
       icon_mxc: '',

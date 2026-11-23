@@ -24,6 +24,20 @@ final class CoreWorkspaceClientTests: XCTestCase {
        "topic":"","lifecycle":"active","room_state":"failed"}]}
     """
 
+    func testArrivalsPrecedesCategoriesAndAcceptsProfileAdditions() throws {
+        let data = try changed { root in
+            root["default_ui_mode"] = "messages"
+            channel(&root) { $0["name"] = "#arrivées" }
+        }
+        let result = try decode(data)
+        XCTAssertEqual(result.uncategorisedChannels.first?.id, Self.channel)
+        XCTAssertFalse(result.categories.flatMap(\.channels).contains { $0.id == Self.channel })
+        for name in ["arrivals", "arrivees", "#arrivées", "#ARRIVALS"] {
+            XCTAssertTrue(isArrivalsChannelName(name))
+        }
+        XCTAssertFalse(isArrivalsChannelName("general"))
+    }
+
     private func tree() throws -> Object {
         try XCTUnwrap(JSONSerialization.jsonObject(with: Data(Self.raw.utf8)) as? Object)
     }

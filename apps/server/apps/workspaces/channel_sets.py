@@ -43,6 +43,7 @@ from .channel_access import (
     resolve,
     resolve_all,
 )
+from .channel_order import is_arrivals
 from .models import (
     POLICY_CAPABILITIES,
     Channel,
@@ -185,6 +186,9 @@ def channel_set_input(workspace_id: UUID) -> tuple[list[str], list[dict[str, Any
             channel_overrides=channel_overrides,
         )
 
+    member_invites = Workspace.objects.values_list("allow_member_invites", flat=True).get(
+        id=workspace_id
+    )
     channels = []
     confidential_ids = set(
         Channel.objects.filter(workspace_id=workspace_id, is_confidential=True)
@@ -206,7 +210,8 @@ def channel_set_input(workspace_id: UUID) -> tuple[list[str], list[dict[str, Any
         )
 
     for channel_id, (access, name, topic) in sorted(
-        resolve_all(workspace_id).items(), key=lambda item: str(item[0])
+        resolve_all(workspace_id).items(),
+        key=lambda item: (not is_arrivals(item[1][1]), str(item[0])),
     ):
         c_overrides = overrides_by_channel.get(channel_id, [])
         viewers = viewers_of(access, c_overrides)
@@ -345,6 +350,7 @@ def channel_set_input(workspace_id: UUID) -> tuple[list[str], list[dict[str, Any
             "listen_only": listen_only,
             "exempt": of(exempt_members) if read_only else [],
             "notices": notices,
+            "allow_member_invites": member_invites,
         }
         if access.kind == Channel.Kind.AUDIO and listen_only:
             entry["speak_exempt"] = of(speak_exempt_members)

@@ -177,7 +177,7 @@ export function EspaceChannelHeader({
                     mxc={activeDirect?.avatarMxc}
                     name={activeChannelName}
                     identity={activeDirect?.userIds[0] ?? directRoomId}
-                    size="xs"
+                    size={simpleMode ? 'lg' : 'xs'}
                   />
                 </span>
                 <span aria-hidden="true" className="font-medium text-c-ink-3">
@@ -189,7 +189,14 @@ export function EspaceChannelHeader({
                 <AntennaIcon />
               </span>
             ) : (
-              <span aria-hidden="true" className="font-mono font-medium text-c-ink-3">
+              <span
+                aria-hidden="true"
+                className={
+                  simpleMode
+                    ? 'flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-c-muted font-mono text-c-ink-2'
+                    : 'font-mono font-medium text-c-ink-3'
+                }
+              >
                 #
               </span>
             )}
@@ -265,9 +272,7 @@ export function EspaceChannelHeader({
           {searchPermitted ? (
             <MessageSearch store={activeStore} roomId={activeRoomId} onShow={onShowMessage} />
           ) : null}
-          {simpleMode ? null : (
-            <PinnedMessages store={activeStore} roomId={activeRoomId} onShow={onShowMessage} />
-          )}
+          {<PinnedMessages store={activeStore} roomId={activeRoomId} onShow={onShowMessage} />}
         </>
       )}
       {activeRoomId === null || focusedDocs ? null : (

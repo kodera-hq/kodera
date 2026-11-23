@@ -16,7 +16,7 @@ const sections = [
 
 async function openSettings(page: Page) {
   await page.goto('/community/workspace')
-  await expect(page.getByRole('heading', { name: 'announcements', exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'arrivals', exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Réglages', exact: true }).click()
   return page.getByRole('dialog', { name: 'Paramètres personnels', exact: true })
 }
@@ -58,7 +58,7 @@ test('settings exposes every personal section to members while keeping administr
   await page.keyboard.press('Escape')
   await expect(settings).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Réglages', exact: true })).toBeFocused()
-  await expect(page.getByRole('heading', { name: 'announcements', exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'arrivals', exact: true })).toBeVisible()
 })
 
 test('appearance themes remain accessible and nested studio closes before settings', async ({

@@ -129,7 +129,10 @@ it.each(['fr', 'en'] as const)(
     expect(demoLandingFor('vercelli')).toBeUndefined()
     const community = createDemoWorkspaceStore('community', communityWorkspace())!
     const vercelli = createDemoWorkspaceStore('vercelli', readyWorkspace())!
-    expect(community.getSnapshot().rooms.map((room) => room.name)).toEqual(COMMUNITY_CHANNEL_NAMES)
+    expect(community.getSnapshot().rooms.map((room) => room.name)).toEqual([
+      'arrivals',
+      ...COMMUNITY_CHANNEL_NAMES.filter((name) => name !== 'arrivals'),
+    ])
     expect(Object.keys(workspaceDemoMessages[language].community).sort()).toEqual(
       community
         .getSnapshot()
@@ -154,7 +157,7 @@ it.each(['fr', 'en'] as const)(
       expect(community.getTimeline(room.roomId)[0]?.body).toMatch(
         ['announcements', 'support'].includes(room.name) ? /simul/i : /Bienvenue|Welcome/
       )
-      expect(community.getTimeline(room.roomId)).toHaveLength(room.name === 'announcements' ? 3 : 2)
+      expect(community.getTimeline(room.roomId)).toHaveLength(room.name === 'arrivals' ? 3 : 2)
       if (room.name === 'partner-onboarding' || room.name === 'partner-feedback') {
         expect(community.getTimeline(room.roomId)[1]?.body).toMatch(
           /Element.*Matrix|Matrix.*Element/

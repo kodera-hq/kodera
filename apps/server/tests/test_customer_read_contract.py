@@ -1066,7 +1066,8 @@ N4_PATH = "/organisations/{organisation_id}/bootstrap"
 # Rebound at 0.52.0: audio companion chat read_only access and WorkspaceTemplate v2 personas/customization; assurance guards unchanged.
 # Rebound at 0.53.0: push subscription platform, bounded foreground presence leases, and zero-PII createBugReport; assurance guards unchanged.
 # Rebound at 0.55.0: authoritative workspace channel confidentiality; N4 assurance guards unchanged.
-N4_VERSION = "0.56.0"
+# Rebound at 0.57.0: optional workspace identity and preferences; protected bootstrap and discovery semantics unchanged.
+N4_VERSION = "0.57.0"
 # Rebound at 0.19.0 (2026-10-21, on top of 0.18.1): the notice-contacts delta and the Plan example's EU hosting.
 # Rebound at 0.22.0: the ten structure operations, their schemas and Problem.reason's first value;
 # then room_state on WorkspaceChannel, the starter's lounge (template version 2) and AppCode messaging;
@@ -1122,7 +1123,8 @@ N4_VERSION = "0.56.0"
 # Rebound at 0.52.0: audio companion chat read_only access and WorkspaceTemplate v2 personas/customization; no N4 bytes changed.
 # Rebound at 0.53.0: push subscription platform, bounded foreground presence leases, and zero-PII createBugReport; no N4 bytes changed.
 # Rebound at 0.55.0: authoritative workspace channel confidentiality; N4 assurance guards unchanged.
-N4_OLD_CONTRACT = "3d6adba576d4e0e7219ea4bfcd983b3d71afb51666b2fe6dda6625f639639a0f"
+# Rebound at 0.57.0: optional workspace identity and preferences; protected bootstrap and discovery semantics unchanged.
+N4_OLD_CONTRACT = "5cc4d329e04523026c9ca697797203418ba3ae8d0106db95951d24b7fa2973bd"
 # Rebound at 0.20.0 (2026-10-22): CONVENTIONS.md §6 gains the order-in-progress and invoice-issued rows and a changelog line.
 # Rebound at 0.24.0 (2026-10-22): CONVENTIONS.md §6's invoice-issued row narrowed, and a changelog line.
 # Rebound at 0.28.0: CONVENTIONS.md §6 gains the identity-unknown row and a changelog line.

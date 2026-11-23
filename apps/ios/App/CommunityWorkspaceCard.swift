@@ -126,7 +126,7 @@ struct CommunityWorkspaceCard: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             VStack(alignment: .leading, spacing: KoderaTokens.Space.s2) {
-                ForEach(category.channels) { channel in
+                ForEach(category.channels.sorted { isArrivalsChannelName($0.name) && !isArrivalsChannelName($1.name) }) { channel in
                     channelRow(channel)
                 }
             }

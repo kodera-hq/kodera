@@ -690,6 +690,8 @@ export interface paths {
          *     §5). `kind` never changes afterwards. A `category_id` of another workspace is `422`. A
          *     workspace holds at most 500 channels that are not deleted, archived ones included: the
          *     501st is `409 conflict` with `reason: channel_limit`, refused before anything is written.
+         *     Members may create uncategorised, non-confidential channels only when the workspace
+         *     enables allow_member_channel_creation. Other structure writes remain administrator-only.
          *     Audited as `workspace.channel_created`, with no name or topic.
          */
         post: operations["createChannel"];
@@ -5162,6 +5164,20 @@ export interface components {
          *     }
          */
         WorkspaceProfile: {
+            /** @description Trimmed workspace display name; empty on existing workspaces until customized. */
+            display_name?: string;
+            /** @description Validated PNG, JPEG or WebP base64 data URL, at most 2 MiB decoded; empty clears the logo. External URLs are refused. */
+            logo_url?: string;
+            /** @enum {string} */
+            default_ui_mode?: "pro" | "messages";
+            /**
+             * Format: uuid
+             * @description Active text channel in this workspace; null uses arrivals when visible.
+             */
+            default_channel_id?: string | null;
+            allow_member_channel_creation?: boolean;
+            allow_member_invites?: boolean;
+            allow_link_previews?: boolean;
             description: string;
             banner_preset: string;
             icon_mxc: string;
@@ -5181,6 +5197,20 @@ export interface components {
         };
         /** WorkspaceProfilePatch */
         WorkspaceProfilePatch: {
+            /** @description Trimmed workspace display name; empty on existing workspaces until customized. */
+            display_name?: string;
+            /** @description Validated PNG, JPEG or WebP base64 data URL, at most 2 MiB decoded; empty clears the logo. External URLs are refused. */
+            logo_url?: string;
+            /** @enum {string} */
+            default_ui_mode?: "pro" | "messages";
+            /**
+             * Format: uuid
+             * @description Active text channel in this workspace; null uses arrivals when visible.
+             */
+            default_channel_id?: string | null;
+            allow_member_channel_creation?: boolean;
+            allow_member_invites?: boolean;
+            allow_link_previews?: boolean;
             description?: string;
             banner_preset?: string;
             icon_mxc?: string;
@@ -7019,6 +7049,22 @@ export interface components {
          *     }
          */
         Workspace: {
+            /** Format: uuid */
+            arrivals_channel_id?: string | null;
+            /** @description Trimmed workspace display name; empty on existing workspaces until customized. */
+            display_name?: string;
+            /** @description Validated PNG, JPEG or WebP base64 data URL, at most 2 MiB decoded; empty clears the logo. External URLs are refused. */
+            logo_url?: string;
+            /** @enum {string} */
+            default_ui_mode?: "pro" | "messages";
+            /**
+             * Format: uuid
+             * @description Active text channel in this workspace; null uses arrivals when visible.
+             */
+            default_channel_id?: string | null;
+            allow_member_channel_creation?: boolean;
+            allow_member_invites?: boolean;
+            allow_link_previews?: boolean;
             /** Format: uuid */
             organisation_id: string;
             state: components["schemas"]["WorkspaceState"];

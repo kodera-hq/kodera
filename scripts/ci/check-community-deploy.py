@@ -318,8 +318,8 @@ REVIEWED_MEDIA_MOUNTS = frozenset({
     ("media-storage-worker", MEDIA_SECRETS_MOUNT + ":ro"),
 })
 MEDIA_INIT_CODE = (
-    "import os; from pathlib import Path; Path('/run/kodera-media/media.sock').unlink(missing_ok=True); "
-    "[(os.chmod(p, 0o700), os.chown(p, 10001, 10001)) for p in ('/run/kodera-media', '/run/kodera-media-secrets')]"
+    "import os; from pathlib import Path; "
+    "[(Path(p).mkdir(parents=True, exist_ok=True), os.chmod(p, 0o700), os.chown(p, 10001, 10001)) for p in ('/run/kodera-media', '/run/kodera-media-secrets')]"
 )
 MEDIA_WORKER_COMMAND = ["python", "-m", "apps.media.storage_worker", "--socket", MEDIA_SOCKET,
                         "--secret-directory", "/run/kodera-media-secrets"]
@@ -564,7 +564,7 @@ def media_runtime_errors(services: dict[str, ServiceSpec]) -> list[str]:
     if service_scalar(initializer, "cap_add") != '["CHOWN", "FOWNER", "DAC_OVERRIDE"]':
         errors.append("media initializer must retain only ownership and private-directory cleanup capabilities")
     if not command_matches(initializer, ["python", "-c", MEDIA_INIT_CODE]):
-        errors.append("media initializer must remove the stale socket and establish mode 0700 and owner 10001 on both directories")
+        errors.append("media initializer must preserve the live socket and establish mode 0700 and owner 10001 on both directories")
     if not command_matches(worker, MEDIA_WORKER_COMMAND):
         errors.append("media worker must run the reviewed signing command")
     if worker.depends_on_conditions != {"media-socket-init": "service_completed_successfully"}:
@@ -743,10 +743,10 @@ def run_media_console_selftest(compose: str, env: str, caddy: str, split: str) -
                "media components must share the same socket and secrets source with worker secrets read-only")
     mutate("worker writable secrets", "media-storage-worker", MEDIA_SECRETS_MOUNT + ":ro", MEDIA_SECRETS_MOUNT,
            "media components must share the same socket and secrets source with worker secrets read-only")
-    for old, new in ((".unlink(missing_ok=True)", ".exists()"), ("0o700", "0o777"), ("10001, 10001", "0, 0"),
+    for old, new in ((".mkdir(parents=True, exist_ok=True)", ".exists()"), ("0o700", "0o777"), ("10001, 10001", "0, 0"),
                      ("'/run/kodera-media-secrets')", "'/run/other-secrets')")):
         mutate("initializer cleanup/ownership changed: " + old, "media-socket-init", old, new,
-               "media initializer must remove the stale socket and establish mode 0700 and owner 10001 on both directories")
+               "media initializer must preserve the live socket and establish mode 0700 and owner 10001 on both directories")
     mutate("initializer excess capabilities", "media-socket-init", '["CHOWN", "FOWNER", "DAC_OVERRIDE"]', '["ALL"]',
            "media initializer must retain only ownership and private-directory cleanup capabilities")
     mutate("worker command changed", "media-storage-worker", "apps.media.storage_worker", "other.worker",

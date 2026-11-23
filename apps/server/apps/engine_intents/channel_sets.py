@@ -31,7 +31,7 @@ _SUBJECT = re.compile(r"[\x21-\x7e]{1,255}")
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 # The workspace's reasons name the change, such as `channel.access_changed` (§13.2).
 _REASON = re.compile(r"[a-z][a-z0-9_.]{0,63}")
-_OPTIONAL_FIELDS = {"confidential", "speak_exempt", "guest_grants"}
+_OPTIONAL_FIELDS = {"confidential", "speak_exempt", "guest_grants", "allow_member_invites"}
 _CONFIDENTIAL_ALGORITHMS = frozenset({"io.kodera.mls.v1", "m.megolm.v1.aes-sha2"})
 _FIELDS = {
     "channel_id",
@@ -171,6 +171,8 @@ def normalise(
                 {"notice_id": str(n["notice_id"]).lower(), "body": n["body"]} for n in notices
             ],
         }
+        if "allow_member_invites" in entry:
+            normalised_entry["allow_member_invites"] = _bool(entry, "allow_member_invites")
         if "guest_grants" in entry:
             grants = entry["guest_grants"]
             if (

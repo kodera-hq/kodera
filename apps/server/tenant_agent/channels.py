@@ -158,6 +158,8 @@ def parse(payload: dict[str, Any]) -> ChannelSet | None:
             isinstance(channel.get(k), bool) for k in ("archived", "read_only", "listen_only")
         ):
             return None
+        if "allow_member_invites" in channel and type(channel["allow_member_invites"]) is not bool:
+            return None
         if "confidential" in channel:
             try:
                 confidential_algo = _confidential_algorithm(channel.get("confidential"))
@@ -582,10 +584,15 @@ class Channels:
         partners = requested if (federation.eligible(channel) and confidential is None) else ()
         blocked = bool(requested and not partners)
         public = native_public(channel, synapse) and not requested and confidential is None
+        member_invites = (
+            channel.get("allow_member_invites", bool(partners))
+            and confidential is None
+            and not channel["archived"]
+        )
         governance = policy(channel, exempt, users, speak_exempt=speak_exempt)
         governance.update(
             local_only=not bool(partners),
-            allow_member_invites=bool(partners),
+            allow_member_invites=bool(partners) or member_invites,
             allow_federated_invites=bool(partners),
             federation_servers=list(partners),
         )
@@ -605,7 +612,8 @@ class Channels:
         if public:
             governance["local_only"] = True
         levels = power_levels(channel, synapse, exempt)
-        if partners:
+        # Keep the bounded partner policy shape while the power level fences new invitations.
+        if member_invites:
             levels["invite"] = 0
         state = (
             (POLICY, governance),

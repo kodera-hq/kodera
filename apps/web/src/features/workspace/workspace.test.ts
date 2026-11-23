@@ -342,3 +342,31 @@ describe('welcomeChannel', () => {
     expect(welcomeChannel(workspace)).toBeUndefined()
   })
 })
+
+describe('arrivals display precedence', () => {
+  it.each(['arrivals', '#arrivals', 'arrivees', '#arrivées', ' ARRIVÉES '])(
+    'lifts %s ahead of every category and favorite position',
+    (name) => {
+      const source = readyWorkspace()
+      source.categories[0]!.channels.push(channel({ id: 'arrival', name, template_key: null }))
+      const read = requireWorkspace(source)
+      expect(read.uncategorised_channels[0]?.id).toBe('arrival')
+      expect(channelsInOrder(read)[0]?.id).toBe('arrival')
+      expect(currentChannel(read, undefined)?.id).toBe('arrival')
+      expect(source.uncategorised_channels.some((entry) => entry.id === 'arrival')).toBe(false)
+    }
+  )
+
+  it('preserves a renamed system arrivals channel and honors an explicit landing channel', () => {
+    const source = readyWorkspace()
+    source.categories[0]!.channels.push(
+      channel({ id: 'arrival', name: 'Welcome desk', template_key: null })
+    )
+    source.arrivals_channel_id = 'arrival'
+    source.default_channel_id = 'arrival'
+    const read = requireWorkspace(source)
+    expect(read.uncategorised_channels[0]?.id).toBe('arrival')
+    expect(channelsInOrder(read)[0]?.id).toBe('arrival')
+    expect(currentChannel(read, undefined)?.id).toBe('arrival')
+  })
+})

@@ -10,7 +10,7 @@ Kodera is a public open-core monorepo: nothing listed here is held back from the
 
 - [x] Unified `@kodera/*` monorepo (`apps/`, `packages/`, `extensions/`, `deploy/community/`, `ee/`)
 - [x] `@kodera/design-tokens` ("Cobalt × Kodera — givre") with automated contrast & grammar CI gates
-- [x] `kodera-server` OpenAPI 3.1 contract-first control plane (`0.54.0`), ADR-0003 secret isolation & `room_access` sidecar
+- [x] `kodera-server` OpenAPI 3.1 contract-first control plane (`0.57.0`), ADR-0003 secret isolation & `room_access` sidecar
 - [x] Matrix-backed channels and LiveKit audio rooms in the web client, governed by `kodera-synapse-policy`
 - [x] `kodera-rs` zero-unsafe Rust core (`UuidV7`, `Ed25519` traits, OpenMLS/Megolm primitives, durable device/session state, universal ES256 passkey binding, `#proximity` frame v1/v2 codecs)
 - [x] `@kodera/extension-sdk` HMAC-signed webhooks and 23 reference implementations (the `/hello` starter plus 22 domain connectors) with a generated catalogue
@@ -31,6 +31,8 @@ Kodera is a public open-core monorepo: nothing listed here is held back from the
 - [x] `Kodera Passport`: signed PKCE cross-workspace magic-link sign-in, multi-organisation workspace switcher and account-erasure integration alongside per-realm OIDC + WebAuthn passkeys
 - [x] Default-off sovereign `ai_gateway` (`KODERA_AI_GATEWAY_ENABLED=false`) with three-tier opt-in (`org -> channel -> member`), EU-sovereign `MistralAdapter` / SSRF-guarded self-hosted / HKDF-SHA256 AEAD-sealed `ByomAdapter`, and triple-layer `403` confidential/E2EE/unclassified refusal across control plane, `room_access` and `kodera-synapse-policy` (`H2.4a`)
 - [x] Signature audio & call experience (`H2.4b`): zero-allocation `KoderaVoiceVisualizer` (`AudioWorklet` + `AnalyserNode` fallback), async voice notes (`audio/ogg`, `audio/webm`, `audio/mp4`) with confidential-room capture guardrails and opt-in `ai_gateway` transcription, localized `/poll` timeline & live-call `PollCard` overlay, and `AudioDock` procedural soundboard
+- [x] H2.6 Messages and workspace administration (#275): discreet Pro/Messages icon switcher, full-page master/detail messaging with mobile back navigation, arrivals precedence across web/server/native, and workspace logo, display name, landing channel, default mode and member preferences ([specification](./docs/specs/H2_6_MESSAGES_WORKSPACE_ADMIN.md))
+- [x] S6 media socket initialization preserves a live signing worker during tenant-agent reapply
 - [x] Hosted Community tenant promotion, identity-provider cutover to `auth.kodera.io` and release evidence
 - [ ] Backup/restore rehearsal and subsequent exact-release deployment acceptance
 
@@ -38,6 +40,7 @@ Kodera is a public open-core monorepo: nothing listed here is held back from the
 
 - [x] Companion client foundations in `apps/ios` (SwiftUI) and `apps/android` (Jetpack Compose) with *Dark Precision* / *Light Givre* design parity, native Matrix room messaging (`m.login.token` SSO, bounded `/sync`, replies, edits, redactions, single-grapheme reactions, Core-scoped attachments), golden-vector-verified `PacketDispatcher` and `KDV1` session vault parity across `kodera-rs`, Swift (`CryptoKit`) and Kotlin (`javax.crypto`) (`vectors/mobile-ffi-v1.txt`), CallKit / `ConnectionService` call seams, payload-free push wakeup integration and universal WebAuthn passkeys (no in-app purchase and no pricing screen)
 - [ ] Remote Matrix room-invitation delivery, real audio/video/call media adapters and linked native Rust client binaries (unmangled C-ABI exports remain gated while `#![forbid(unsafe_code)]` is in force)
+- [ ] H1.4b integration of the separate native VoIP lane: PushKit/CallKit, Android ConnectionService and `kodera-rs` ring deduplication; this stack currently contains the earlier coordinator seams
 - [ ] End-to-end native push delivery and device/provider qualification
 - [x] Reproducible native candidate verification and reviewed SPDX SBOM provenance gates across desktop and mobile targets
 - [x] Web Push notifications that wake the web client without carrying message text
@@ -48,10 +51,12 @@ Kodera is a public open-core monorepo: nothing listed here is held back from the
 ## Track 4 — Confidential Rooms & Federation (`Status: Transport & device primitives shipped; group coordinators in progress`)
 
 - [x] Cryptographic primitives, device lifecycle, durable session state, modern `openmls_*` crypto-provider generation, `wasm32` browser device-proof bindings and LiveKit media-frame encryption seams in `packages/kodera-rs` (scoped OpenMLS RFC 9420 and Vodozemac Megolm), paired with atomic browser IndexedDB confidential vault storage (`apps/web/src/features/confidential/`), and default-off `/api/v1/organisations/{organisation_id}/confidential/*` opaque envelope and HPKE KeyPackage relay (`0.51.0`)
+- [x] H2.3 revisioned bilateral `PartnerChannelAgreement` bridges and isolated `single_channel_guest` grants with live Matrix/media revocation checks and a required edge scope gate
 - [x] Opt-in open Matrix federation (`KODERA_FEDERATION_MODE=open`, closed by default on `deploy/community`) alongside explicit partner-room federation governance in `packages/synapse-policy` (`0.1.6`)
 - [x] Refusal of plaintext fallback and room-store quarantine for unavailable confidential or unclassified sessions (#180)
 - [x] Worker-isolated attachment/Pages/LiveKit media cryptographic capabilities (#169, #177, #182), local SAS device comparison and `KVKB1` encrypted local key archives (#183)
-- [ ] Server-side confidential room/session discovery and trusted epoch provisioning; server cross-signing and backup publication
+- [x] H2.3 operator-gated Wave 10 server confidential room/session discovery, consecutive MLS epoch provisioning and proof-bound cross-signing publication
+- [ ] Server backup publication and client group integration
 - [ ] Durable browser/native group integration, native key management and interoperable LiveKit media qualification
 
 ## Track 5 — `#proximity` (`Status: Broker & foreground radio layers shipped; physical two-device qualification open`)
@@ -73,8 +78,10 @@ The generic invoice ledger and the payment engine already in `apps/server` stay 
 - [ ] Universal client-side end-to-end encryption (MLS / Megolm) across **all** channels, direct messages and threads by default, retiring clear-text homeserver room storage so the operator holds zero readable message content
 - [x] Worker-isolated client AEAD capabilities for confidential Yjs document updates/snapshots and attachments; protected sessions refuse plaintext fallback
 - [x] Worker-isolated LiveKit media transforms, SAS device comparison and user-held encrypted `KVKB1` local key archives
-- [ ] Server confidential room/session discovery, encrypted collaboration relay admission and trusted epoch provisioning
-- [ ] Server cross-signing/backup publication and key management/rotation across browser and native clients
+- [x] H2.3 operator-gated server confidential room/session discovery and trusted epoch provisioning
+- [ ] Encrypted collaboration relay admission
+- [x] Operator-gated proof-bound server cross-signing publication
+- [ ] Server backup publication and key management/rotation across browser and native clients
 - [ ] Mandatory `kodera-rs` cryptographic store binding across `apps/ios` and `apps/android`, and end-to-end media encryption (`SFrame` / MLS epoch keys) on all LiveKit voice, video and screen-sharing sessions
 - [ ] Metadata minimisation and client-local encrypted full-text search so search indexes never exist in plaintext on the server
 
@@ -86,4 +93,4 @@ The [collaboration status](./docs/specs/collaboration-status.md) records the Wav
 - **Wave 5 (`Foundations implemented; mobile transports and distribution open`):** `kodera-rs` OpenMLS/Megolm/Passkey/proximity codecs, reproducible native SBOM gates, Tauri v2 desktop shell/bridge and iOS/Android companion implementations.
 - **Wave 6 & 7 (`Implemented`):** extension runtime v2, 23 reference implementations, `Slack`/`Discord`/`Notion` importers, bounded partner-room and opt-in open federation controls, developer docs + `llms.txt`, and multi-surface security hardening.
 - **Wave 8 & 9 (`Implemented in tree; hosted Community promoted; signing & group-integration gates open`):** `deploy/community` fresh-volume cold-start footprint gate, Zero-Trust `/staff/v1/*` surface and `.well-known` discovery, Desktop self-host stack deployment, `Kodera Passport` cross-workspace magic-link PKCE sign-in, Enterprise `ee/` (`SAML 2.0`, `SCIM 2.0`, `Ed25519` audit exports, `ee/billing/`), `kodera-rs` `wasm32` browser device-proof bindings, modern `openmls_*` crypto-provider generation, default-off `0.47.0` confidential envelope relay, atomic browser confidential local-state vault, RAM-only `#proximity` check-in broker + 15-minute HKDF epoch leases + foreground native BLE/mDNS layers, and multi-OS release workflow; durable group integration, physical two-device radio qualification, backup rehearsal and signing gates remain open.
-- **Wave 10 (`In progress`):** refusal of plaintext fallback and room quarantine, worker-isolated attachment/Pages/LiveKit media cryptographic capabilities, worker SAS device comparison and `KVKB1` encrypted local key archives are implemented. Server confidential room/session discovery, trusted epoch provisioning, cross-signing/backup publication, native integration and browser/codec qualification remain open. Universal encryption by default is still Planned.
+- **Wave 10 (`In progress`):** refusal of plaintext fallback and room quarantine, worker-isolated attachment/Pages/LiveKit media cryptographic capabilities, worker SAS device comparison and `KVKB1` encrypted local key archives are implemented. H2.3 implements operator-gated server confidential room/session discovery, trusted consecutive epoch provisioning and proof-bound cross-signing publication. Server backup publication, native integration and browser/codec qualification remain open. Universal encryption by default is still Planned.

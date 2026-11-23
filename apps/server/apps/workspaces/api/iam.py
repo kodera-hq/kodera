@@ -132,7 +132,7 @@ def profile(request: HttpRequest, organisation_id: UUID) -> HttpResponse:
         body, etag = governance.profile_with_etag(
             verified=verified,
             organisation_id=organisation_id,
-            data=_body(request, governance.PROFILE_FIELDS, set()),
+            data=_body(request, governance.PROFILE_FIELDS, set(), limit=2830000),
             if_match=request.headers.get("If-Match", ""),
             request_id=request_id,
         )

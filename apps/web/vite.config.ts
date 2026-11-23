@@ -323,9 +323,14 @@ function deferredVendorGroups() {
 // Only the lazy workspace MessageComposer uses these rich-translation renderers.
 // The root react-i18next barrel re-exports them, but must not pin them to app.
 // Normal bundling still makes any genuinely eager import part of the measured entry.
-const LAZY_TRANSLATION_RENDERERS = /\/node_modules\/(?:react-i18next\/dist\/es\/Trans(?:WithoutContext)?\.js|html-parse-stringify\/dist\/esm\/html-parse-stringify\.js)$/
+const LAZY_TRANSLATION_RENDERERS =
+  /\/node_modules\/(?:react-i18next\/dist\/es\/Trans(?:WithoutContext)?\.js|html-parse-stringify\/dist\/esm\/html-parse-stringify\.js)$/
 
-function applicationClosure(): { plugin: Plugin; has: (id: string) => boolean } {
+function applicationClosure(
+  seed = MAIN_MODULE_ID,
+  pluginName = 'kodera-application-closure',
+  additionalSeeds: readonly string[] = []
+): { plugin: Plugin; has: (id: string) => boolean } {
   const closure = new Set<string>()
   return {
     has: (id) => {
@@ -333,13 +338,15 @@ function applicationClosure(): { plugin: Plugin; has: (id: string) => boolean } 
       return closure.has(normalized) && !LAZY_TRANSLATION_RENDERERS.test(normalized)
     },
     plugin: {
-      name: 'kodera-application-closure',
+      name: pluginName,
       apply: 'build',
       buildEnd() {
         closure.clear()
+        const roots = [seed, ...additionalSeeds]
+        for (const root of roots) if (root !== MAIN_MODULE_ID) closure.add(root)
         const lookupInfo = (normId: string) =>
           this.getModuleInfo(normId) ?? this.getModuleInfo(normId.replaceAll('/', '\\'))
-        const queue = [...(lookupInfo(MAIN_MODULE_ID)?.importedIds ?? [])]
+        const queue = roots.flatMap((root) => lookupInfo(root)?.importedIds ?? [])
         for (let rawId = queue.pop(); rawId !== undefined; rawId = queue.pop()) {
           if (rawId.startsWith('\0')) continue
           const id = normalizeViteModuleId(rawId)
@@ -353,6 +360,11 @@ function applicationClosure(): { plugin: Plugin; has: (id: string) => boolean } 
 }
 
 const application = applicationClosure()
+const notifications = applicationClosure(
+  MAIN_MODULE_ID.replace('/main.tsx', '/features/notifications/NotificationCenter.tsx'),
+  'kodera-notification-closure',
+  [MAIN_MODULE_ID.replace('/main.tsx', '/features/espace/WorkspaceUiModeToggle.tsx')]
+)
 
 const CATALOGUE = /[\\/]src[\\/]i18n[\\/]catalogues[\\/](fr|en)[\\/]([a-z]+)\.json$/
 
@@ -400,6 +412,13 @@ export default defineConfig({
               includeDependenciesRecursively: false,
             },
             { name: catalogueBundle, priority: 20, includeDependenciesRecursively: false },
+            // Keep notification UI and its static dependencies together across lazy panels.
+            {
+              name: 'notifications',
+              test: notifications.has,
+              priority: 15,
+              includeDependenciesRecursively: false,
+            },
             // What the lazy routes have in common and the application does not import: the
             // organisation layout every area hangs below, and the pieces three areas or more
             // use — a table, a select, a status pill. Filed strictly by which routes reach it,
@@ -438,6 +457,7 @@ export default defineConfig({
     mockServiceWorkerPlugin(),
     entryBootstrapPlugin(),
     application.plugin,
+    notifications.plugin,
   ],
   resolve: {
     // Mirrors `paths` in tsconfig.json. The two have to agree: TypeScript

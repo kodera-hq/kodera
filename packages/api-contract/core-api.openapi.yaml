@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Kodera Core API
-  version: 0.56.0
+  version: 0.57.0
   summary: Control plane of kodera.io, consumed by kodera-web and by staff operators.
   description: |
     The Core API is the only backend of `kodera-web` (console ADR-0003) and the system of
@@ -1941,11 +1941,13 @@ paths:
         §5). `kind` never changes afterwards. A `category_id` of another workspace is `422`. A
         workspace holds at most 500 channels that are not deleted, archived ones included: the
         501st is `409 conflict` with `reason: channel_limit`, refused before anything is written.
+        Members may create uncategorised, non-confidential channels only when the workspace
+        enables allow_member_channel_creation. Other structure writes remain administrator-only.
         Audited as `workspace.channel_created`, with no name or topic.
       tags: [Workspace]
       x-kodera-scope: 'workspace:create'
       x-kodera-authz:
-        roles: [org_owner, org_admin]
+        roles: [org_owner, org_admin, org_member]
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -13696,6 +13698,27 @@ components:
       - security_alerts_channel_id
       - invites_paused
       properties:
+        display_name:
+          type: string
+          maxLength: 80
+          description: Trimmed workspace display name; empty on existing workspaces until customized.
+        logo_url:
+          type: string
+          maxLength: 2796236
+          description: Validated PNG, JPEG or WebP base64 data URL, at most 2 MiB decoded; empty clears the logo. External URLs are refused.
+        default_ui_mode:
+          type: string
+          enum: [pro, messages]
+        default_channel_id:
+          type: [string, 'null']
+          format: uuid
+          description: Active text channel in this workspace; null uses arrivals when visible.
+        allow_member_channel_creation:
+          type: boolean
+        allow_member_invites:
+          type: boolean
+        allow_link_previews:
+          type: boolean
         description:
           type: string
           maxLength: 500
@@ -13764,6 +13787,28 @@ components:
       additionalProperties: false
       required: []
       properties:
+        display_name:
+          type: string
+          minLength: 2
+          maxLength: 80
+          description: Trimmed workspace display name; empty on existing workspaces until customized.
+        logo_url:
+          type: string
+          maxLength: 2796236
+          description: Validated PNG, JPEG or WebP base64 data URL, at most 2 MiB decoded; empty clears the logo. External URLs are refused.
+        default_ui_mode:
+          type: string
+          enum: [pro, messages]
+        default_channel_id:
+          type: [string, 'null']
+          format: uuid
+          description: Active text channel in this workspace; null uses arrivals when visible.
+        allow_member_channel_creation:
+          type: boolean
+        allow_member_invites:
+          type: boolean
+        allow_link_previews:
+          type: boolean
         description:
           type: string
           maxLength: 500
@@ -16231,6 +16276,30 @@ components:
       additionalProperties: false
       required: [organisation_id, state, setup, can_initialise, id, categories, uncategorised_channels]
       properties:
+        arrivals_channel_id:
+          type: [string, 'null']
+          format: uuid
+        display_name:
+          type: string
+          maxLength: 80
+          description: Trimmed workspace display name; empty on existing workspaces until customized.
+        logo_url:
+          type: string
+          maxLength: 2796236
+          description: Validated PNG, JPEG or WebP base64 data URL, at most 2 MiB decoded; empty clears the logo. External URLs are refused.
+        default_ui_mode:
+          type: string
+          enum: [pro, messages]
+        default_channel_id:
+          type: [string, 'null']
+          format: uuid
+          description: Active text channel in this workspace; null uses arrivals when visible.
+        allow_member_channel_creation:
+          type: boolean
+        allow_member_invites:
+          type: boolean
+        allow_link_previews:
+          type: boolean
         organisation_id: { type: string, format: uuid }
         state: { $ref: '#/components/schemas/WorkspaceState' }
         setup: { $ref: '#/components/schemas/WorkspaceSetup' }

@@ -153,7 +153,7 @@ services:
     cap_drop: ["ALL"]
     cap_add: ["CHOWN", "FOWNER", "DAC_OVERRIDE"]
     security_opt: ["no-new-privileges:true"]
-    command: ["python", "-c", "import os; from pathlib import Path; Path('/run/kodera-media/media.sock').unlink(missing_ok=True); [(os.chmod(p, 0o700), os.chown(p, 10001, 10001)) for p in ('/run/kodera-media', '/run/kodera-media-secrets')]"]
+    command: ["python", "-c", "import os; from pathlib import Path; [(Path(p).mkdir(parents=True, exist_ok=True), os.chmod(p, 0o700), os.chown(p, 10001, 10001)) for p in ('/run/kodera-media', '/run/kodera-media-secrets')]"]
     restart: "no"
     volumes:
       - media_socket:/run/kodera-media

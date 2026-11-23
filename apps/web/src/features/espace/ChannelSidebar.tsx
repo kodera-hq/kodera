@@ -1,3 +1,4 @@
+import { arrivalsFirst } from '../workspace/workspace'
 // The workspace's navigation column: the organisation, the universal search, the studio's
 // sections, then every category with its text channels and its audio rooms. Memoised, and it
 // reads the store itself: unread marks, mentions and who is in a room draw it again; a keystroke
@@ -25,7 +26,7 @@ import { categoryLabel, channelLabel } from '../workspace/workspace'
 import type { Workspace, WorkspaceCategory, WorkspaceChannel } from '../workspace/workspace'
 import { AntennaIcon } from './AntennaIcon'
 import { ChannelContextMenu as ChannelMenu, type ChannelMenuTarget } from './ChannelContextMenu'
-import { WorkspaceUiModeToggle } from './SimpleMessagingSidebar'
+import { WorkspaceUiModeToggle } from './WorkspaceUiModeToggle'
 import type { WorkspaceUiMode } from './uiModePreference'
 import type { CallSnapshot } from './audio/call'
 import {
@@ -280,7 +281,7 @@ export interface ChannelSidebarProps {
 function ChannelSidebarView({
   store,
   call,
-  workspace,
+  workspace: incomingWorkspace,
   org,
   organisationName,
   narrow,
@@ -338,6 +339,7 @@ function ChannelSidebarView({
     }
     onSelectDirect?.(roomId)
   }
+  const workspace = arrivalsFirst(incomingWorkspace)
   const { t, i18n } = useTranslation()
   const [menuTarget, setMenuTarget] = useState<ChannelMenuTarget | null>(null)
   const ownsMenu =
@@ -511,7 +513,11 @@ function ChannelSidebarView({
           <div className="flex items-center gap-1">
             {narrow ? null : (
               <div className="min-w-0 flex-1">
-                <OrganisationHeader name={organisationName} slug={org} />
+                <OrganisationHeader
+                  name={workspace.display_name || organisationName}
+                  slug={org}
+                  logoUrl={workspace.logo_url}
+                />
               </div>
             )}
             {simulation ? null : (
@@ -545,10 +551,11 @@ function ChannelSidebarView({
                   {
                     id: 'ui-mode',
                     label:
-                      (uiMode ?? 'pro') === 'simple'
+                      (uiMode ?? 'pro') === 'messages'
                         ? paletteCopy(i18n.resolvedLanguage).switchToPro
                         : paletteCopy(i18n.resolvedLanguage).switchToSimple,
-                    open: () => onChangeUiMode((uiMode ?? 'pro') === 'simple' ? 'pro' : 'simple'),
+                    open: () =>
+                      onChangeUiMode((uiMode ?? 'pro') === 'messages' ? 'pro' : 'messages'),
                   },
                 ]
               : []),

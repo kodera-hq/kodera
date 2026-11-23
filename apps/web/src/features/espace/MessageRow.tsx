@@ -172,6 +172,7 @@ function MessageRowView({
   const hasMenuItems = allowReact || !inThread || isOwn
   return (
     <TimelineMessage
+      own={isOwn}
       document={
         document && onOpenDocument
           ? {

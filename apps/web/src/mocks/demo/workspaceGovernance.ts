@@ -28,6 +28,13 @@ export const GOVERNANCE_DEMO_ROUTES: readonly string[] = [
 ]
 
 const BLANK_PROFILE = {
+  display_name: '',
+  logo_url: '',
+  default_ui_mode: 'pro',
+  default_channel_id: null,
+  allow_member_channel_creation: false,
+  allow_member_invites: true,
+  allow_link_previews: true,
   description: '',
   banner_preset: '',
   icon_mxc: '',

@@ -17,6 +17,7 @@ from services.identity.access_tokens import VerifiedAccessToken
 
 from .iam import authorize, check_manage, emit_iam_channel_set, mutation_context, resolve_roles
 from .iam_validation import validate_permissions
+from .logo import validate_logo
 from .models import (
     Channel,
     ChannelNotice,
@@ -37,12 +38,24 @@ ENFORCED_CHANNEL_OVERRIDE_CAPABILITIES: dict[str, frozenset[str]] = {
 
 PROFILE_TEXT = {"description", "banner_preset", "icon_mxc"}
 PROFILE_CHANNELS = {
+    "default_channel_id",
     "arrivals_channel_id",
     "rules_channel_id",
     "moderator_updates_channel_id",
     "security_alerts_channel_id",
 }
-PROFILE_FIELDS = PROFILE_TEXT | PROFILE_CHANNELS | {"traits", "invites_paused"}
+PROFILE_BOOLEANS = {
+    "invites_paused",
+    "allow_member_channel_creation",
+    "allow_member_invites",
+    "allow_link_previews",
+}
+PROFILE_FIELDS = (
+    PROFILE_TEXT
+    | PROFILE_CHANNELS
+    | PROFILE_BOOLEANS
+    | {"traits", "display_name", "logo_url", "default_ui_mode"}
+)
 
 
 def profile_wire(workspace: Workspace) -> dict[str, Any]:
@@ -86,7 +99,23 @@ def profile_with_etag(
         if not data or data.keys() - PROFILE_FIELDS:
             raise RefusalError(422)
         for field, value in data.items():
-            if field in PROFILE_TEXT:
+            if field == "display_name":
+                if (
+                    not isinstance(value, str)
+                    or not _storable_text(value)
+                    or not 2 <= len(value.strip()) <= 80
+                ):
+                    raise RefusalError(422)
+                value = value.strip()
+            elif field == "logo_url":
+                try:
+                    value = validate_logo(value)
+                except ValueError:
+                    raise RefusalError(422) from None
+            elif field == "default_ui_mode":
+                if not isinstance(value, str) or value not in {"pro", "messages"}:
+                    raise RefusalError(422)
+            elif field in PROFILE_TEXT:
                 if not isinstance(value, str) or not _storable_text(value):
                     raise RefusalError(422)
                 if field == "description" and len(value) > 500:
@@ -121,7 +150,7 @@ def profile_with_etag(
                         lifecycle__in=["active", "provisioning"],
                     ).exists():
                         raise RefusalError(404)
-            elif field == "invites_paused":
+            elif field in PROFILE_BOOLEANS:
                 if type(value) is not bool:
                     raise RefusalError(422)
             elif field == "traits":
@@ -134,6 +163,8 @@ def profile_with_etag(
                     _text(badge["label"], 50)
             setattr(workspace, field, value)
         workspace.save(update_fields=[*data, "updated_at"])
+        if "allow_member_invites" in data:
+            emit_iam_channel_set(workspace, "workspace.profile.invites_updated")
         _audit(workspace, caller.identity_id, "workspace.profile.updated", workspace.id, request_id)
     return profile_wire(workspace), profile_etag(workspace)
 

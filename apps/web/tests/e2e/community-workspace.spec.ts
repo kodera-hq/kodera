@@ -215,7 +215,7 @@ async function login(page: Page) {
   await page.goto('/login?demo=1&org=community')
   await page.getByRole('button', { name: 'Continuer', exact: true }).click()
   await page.waitForURL(/\/community\/workspace$/)
-  await expect(page.getByRole('heading', { name: 'announcements', exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'arrivals', exact: true })).toBeVisible()
   await expect(page.getByText('community.kodera.io', { exact: true }).first()).toBeVisible()
 }
 async function menu(page: Page, action: string, rail = false) {
@@ -395,7 +395,7 @@ test('console pages remain community-scoped and return to Messages', async ({ pa
       /Groupe Vercelli|Inès Kaci|138 membres|groupe-vercelli\.fr/
     )
     await page.getByRole('link', { name: 'Messages', exact: true }).click()
-    await expect(page.getByRole('heading', { name: 'announcements', exact: true })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'arrivals', exact: true })).toBeVisible()
   }
 })
 
@@ -464,11 +464,11 @@ test('a healthy session stays unobstructed after one minute and keyboard focus',
     await page.keyboard.press('Escape')
     await expect(page.getByRole('menu')).toHaveCount(0)
     await page.setViewportSize({ width: 390, height: 844 })
-    await expect(page.getByRole('heading', { name: 'announcements', exact: true })).toBeInViewport()
+    await expect(page.getByRole('heading', { name: 'arrivals', exact: true })).toBeInViewport()
     await expect
       .poll(
         async () =>
-          (await page.getByRole('heading', { name: 'announcements', exact: true }).boundingBox())
+          (await page.getByRole('heading', { name: 'arrivals', exact: true }).boundingBox())
             ?.width ?? 0
       )
       .toBeGreaterThan(150)

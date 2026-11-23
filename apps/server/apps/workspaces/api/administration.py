@@ -245,10 +245,11 @@ def _once(
     *,
     takes_body: bool,
     creating: bool = False,
+    channel_creation: bool = False,
 ) -> HttpResponse:
     """A `POST`: authorised first, then run once per key by the replay store. The step takes the
     workspace in a savepoint, so a refusal stores its `4xx` and nothing else."""
-    authorise(verified=verified, organisation_id=organisation_id)
+    authorise(verified=verified, organisation_id=organisation_id, channel_creation=channel_creation)
 
     def step() -> StoredResponse:
         try:
@@ -265,6 +266,7 @@ def _once(
                     organisation_id=organisation_id,
                     request_id=request_id,
                     creating=creating,
+                    channel_creation=channel_creation,
                 )
                 status, rendered, etag = act(write, body)
         except WorkspaceNotFoundError:
@@ -373,7 +375,14 @@ def channels(request: HttpRequest, organisation_id: UUID) -> HttpResponse:
             "POST": (
                 CREATE_SCOPE,
                 lambda r, v, i: _once(
-                    r, v, i, organisation_id, act, takes_body=True, creating=True
+                    r,
+                    v,
+                    i,
+                    organisation_id,
+                    act,
+                    takes_body=True,
+                    creating=True,
+                    channel_creation=True,
                 ),
             )
         },

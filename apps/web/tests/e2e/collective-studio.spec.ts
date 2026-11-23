@@ -13,7 +13,7 @@ for (const width of [1440, 390]) {
     await page.goto('/login?demo=1&org=community')
     if (en) await page.getByRole('button', { name: 'EN', exact: true }).click()
     await page.getByRole('button', { name: en ? 'Continue' : 'Continuer', exact: true }).click()
-    await expect(page.getByRole('heading', { name: 'announcements', exact: true })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'arrivals', exact: true })).toBeVisible()
     const navigation = async () => {
       if (width === 390)
         await page.getByRole('button', { name: en ? 'Channels' : 'Salons', exact: true }).click()
@@ -319,7 +319,7 @@ for (const width of [1440, 390]) {
     await dock.getByRole('button', { name: en ? 'Leave' : 'Quitter', exact: true }).click()
     await expect(dock).toHaveCount(0)
     await page.reload()
-    await expect(page.getByRole('heading', { name: 'announcements', exact: true })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'arrivals', exact: true })).toBeVisible()
     await navigation()
     await page.getByRole('button', { name: en ? 'Files' : 'Fichiers', exact: true }).click()
     await expect(files).toBeVisible()

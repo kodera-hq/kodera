@@ -257,6 +257,12 @@ struct SignedInView: View {
                     if snapshot.categories.allSatisfy({ $0.channels.isEmpty }) && snapshot.uncategorisedChannels.isEmpty {
                         Text("workspace.empty")
                     }
+                    if !snapshot.uncategorisedChannels.isEmpty {
+                        Text("workspace.uncategorised").font(NativeTypography.emphasis).accessibilityAddTraits(.isHeader)
+                        ForEach(snapshot.uncategorisedChannels, id: \.id) { channel in
+                            channelMetadata(channel, organisationId: snapshot.organisationId)
+                        }
+                    }
                     ForEach(snapshot.categories, id: \.id) { category in
                         let matchedBlueprint = CommunityWorkspaceBlueprint.matchCategory(
                             id: category.id,
@@ -281,12 +287,6 @@ struct SignedInView: View {
                                 .foregroundStyle(palette.ink3)
                         }
                         ForEach(category.channels, id: \.id) { channel in
-                            channelMetadata(channel, organisationId: snapshot.organisationId)
-                        }
-                    }
-                    if !snapshot.uncategorisedChannels.isEmpty {
-                        Text("workspace.uncategorised").font(NativeTypography.emphasis).accessibilityAddTraits(.isHeader)
-                        ForEach(snapshot.uncategorisedChannels, id: \.id) { channel in
                             channelMetadata(channel, organisationId: snapshot.organisationId)
                         }
                     }

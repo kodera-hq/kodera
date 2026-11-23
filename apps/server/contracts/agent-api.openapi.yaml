@@ -950,6 +950,9 @@ components:
         exempt:
           $ref: '#/components/schemas/MemberSubjects'
           description: The room's members exempt from `read_only` companion or text chat restrictions (`ESPACE_STRUCTURE.md` §6).
+        allow_member_invites:
+          type: boolean
+          description: Workspace policy for joined members inviting permitted local users. Omission preserves earlier behavior; confidential rooms always refuse. Federated invitations additionally require the existing partner-room policy.
         speak_exempt:
           $ref: '#/components/schemas/MemberSubjects'
           description: 'Audio rooms only: when present on a `listen_only` audio channel, the room''s members exempt from voice publishing restrictions (`io.kodera.room.policy.may_publish`), decoupled from companion chat `exempt`.'

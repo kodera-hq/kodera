@@ -14,7 +14,7 @@ test('Files and Integrations stay in the canvas while global shortcuts own one a
   await expect(
     page.getByRole('textbox', { name: 'Rechercher un fichier', exact: true })
   ).toBeVisible()
-  await expect(page.getByRole('heading', { name: 'announcements', exact: true })).toBeHidden()
+  await expect(page.getByRole('heading', { name: 'arrivals', exact: true })).toBeHidden()
   await expect(
     page.getByRole('group', { name: 'Filtrer par type' }).getByRole('button')
   ).toHaveCount(4)
