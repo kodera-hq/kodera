@@ -20,7 +20,11 @@ import { setTokenProvider } from '../api/client'
 import type { AuthAdapter, AuthCallbackResult, AuthSessionSnapshot, AuthUser } from './AuthAdapter'
 import * as matrixAuth from './matrix'
 import { authAdapter as defaultAdapter } from './oidc'
-import { clearLocalSessionStorage } from './localSession'
+import {
+  clearLocalSessionStorage,
+  purgeDocsCollabDatabases,
+  purgeEspaceVaultDatabases,
+} from './localSession'
 import {
   hasStoredPushDeviceKey,
   pushSupported,
@@ -77,14 +81,14 @@ export interface AuthProviderProps {
   onCredentialChanged?: () => void
 }
 
-export interface AuthLifetime {
-  getSnapshot(): AuthSessionSnapshot
-  hasUsableCredential(): boolean
-  getRetirementStamp(): object
-  subscribe(listener: () => void): () => void
-}
+import {
+  AuthLifetimeContext,
+  useAuthLifetime,
+  useOptionalAuthLifetime,
+  type AuthLifetime,
+} from './authLifetimeContext'
 
-const AuthLifetimeContext = createContext<AuthLifetime | null>(null)
+export type { AuthLifetime }
 
 function createAuthLifetime(
   adapter: AuthAdapter,
@@ -154,13 +158,16 @@ function createAuthLifetime(
   const update = () => {
     const next = adapter.getSnapshot()
     const nextUsable = Boolean(adapter.getAccessToken())
+    const hadAuthenticatedUser = previous.user !== undefined
     const identityChanged =
       previous.user?.realm !== next.user?.realm ||
       previous.user?.identity?.issuer !== next.user?.identity?.issuer ||
       previous.user?.identity?.subject !== next.user?.identity?.subject
+    const principalSwitched = hadAuthenticatedUser && identityChanged
     const sessionEnded =
       next.generation !== previous.generation ||
-      (next.status === 'unauthenticated' && previous.status !== 'unauthenticated')
+      (next.status === 'unauthenticated' && previous.status !== 'unauthenticated') ||
+      principalSwitched
     const credentialChanged = next.credentialGeneration !== previous.credentialGeneration
     const changed =
       previous !== next ||
@@ -171,6 +178,14 @@ function createAuthLifetime(
       usable !== nextUsable
     if (!changed) return
     if (sessionEnded || identityChanged || (usable && !nextUsable)) stamp = {}
+    if (
+      principalSwitched ||
+      (hadAuthenticatedUser && sessionEnded) ||
+      (previous.status !== 'unauthenticated' && next.status === 'unauthenticated')
+    ) {
+      contain(() => purgeEspaceVaultDatabases())
+      contain(() => purgeDocsCollabDatabases(true))
+    }
     previous = next
     usable = nextUsable
     revision += 1
@@ -348,9 +363,4 @@ export function useAuth(): AuthContextValue {
   return value
 }
 
-/** The stable lifetime of this provider's actual captured adapter. */
-export function useAuthLifetime(): AuthLifetime {
-  const value = useContext(AuthLifetimeContext)
-  if (value === null) throw new Error('useAuthLifetime must be used within an AuthProvider')
-  return value
-}
+export { useAuthLifetime, useOptionalAuthLifetime }

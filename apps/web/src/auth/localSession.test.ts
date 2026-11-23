@@ -9,6 +9,7 @@ import {
   DOCS_COLLAB_DATABASE_PREFIX,
   DOCS_COLLAB_REGISTRY_KEY,
   ESPACE_TIMELINE_DATABASE,
+  ESPACE_VAULT_DATABASE,
   PUSH_COPY_CACHE,
   registerLocalSessionCleanup,
 } from './localSession'
@@ -30,8 +31,34 @@ describe('the local sign-out', () => {
     const deleteDatabase = vi.fn()
     vi.stubGlobal('indexedDB', { deleteDatabase })
     clearLocalSessionStorage()
+    expect(deleteDatabase).toHaveBeenCalledWith(ESPACE_VAULT_DATABASE)
     expect(deleteDatabase).toHaveBeenCalledWith(ESPACE_TIMELINE_DATABASE)
     expect(deleteDatabase).toHaveBeenCalledWith(DOCS_COLLAB_DATABASE)
+  })
+
+  it('logout-purge: cryptographically revokes open EspaceVault CryptoKeys and deletes kodera.espace-vault.v1 + kodera-espace-timelines', async () => {
+    const { openEspaceVault } = await import('../features/espace/matrix/encryptedCache')
+    const { createTestVaultIndexedDb } = await import('../features/espace/matrix/testVaultIdb')
+    const idb = createTestVaultIndexedDb()
+    vi.stubGlobal('indexedDB', idb)
+    const vault = await openEspaceVault(
+      {
+        ownerId: '@alice:matrix.acme.kodera.test',
+        organisationId: 'org-1',
+        membershipId: 'mem-1',
+        deviceId: 'DEV1',
+      },
+      { idb, delayMs: 0 }
+    )
+    await vault.putDraft('!room:matrix.acme.kodera.test', 'ordinary', 'secret-draft', '')
+    clearLocalSessionStorage()
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(idb.deletedDatabases).toContain(ESPACE_VAULT_DATABASE)
+    expect(idb.deletedDatabases).toContain(ESPACE_TIMELINE_DATABASE)
+    expect(idb.hasDatabase(ESPACE_VAULT_DATABASE)).toBe(false)
+    await expect(vault.readDraft('!room:matrix.acme.kodera.test')).rejects.toMatchObject({
+      code: 'closed',
+    })
   })
 
   it('wipes all registered collaborative document Yjs IndexedDB databases and invokes teardown hooks', () => {

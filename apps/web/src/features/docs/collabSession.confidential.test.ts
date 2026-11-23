@@ -81,11 +81,41 @@ const settle = async () => {
 }
 
 describe('confidential collaboration transport', () => {
-  it('never opens plaintext IndexedDB or permits REST Markdown seeding', () => {
+  it('never opens plaintext IndexedDB and actively deletes kodera-docs-yjs:* DBs when confidential.required is true or roomBoundary is non-ordinary', async () => {
     const open = vi.fn()
-    vi.stubGlobal('indexedDB', { open })
+    const deleteDatabase = vi.fn()
+    const databases = vi.fn(async () => [
+      { name: 'kodera-docs-yjs:workspace-a:page-a' },
+      { name: 'kodera-docs-yjs:workspace-a:legacy-page' },
+      { name: 'kodera-docs-yjs:other-workspace:keep' },
+    ])
+    vi.stubGlobal('indexedDB', { open, deleteDatabase, databases })
     create(fakeCipher())
+    await settle()
     expect(open).not.toHaveBeenCalled()
+    expect(deleteDatabase).toHaveBeenCalledWith('kodera-docs-yjs:workspace-a:page-a')
+    expect(deleteDatabase).toHaveBeenCalledWith('kodera-docs-yjs:workspace-a:legacy-page')
+    expect(deleteDatabase).not.toHaveBeenCalledWith('kodera-docs-yjs:other-workspace:keep')
+
+    for (const boundary of ['unknown', 'invalid', 'confidential-unavailable'] as const) {
+      open.mockClear()
+      deleteDatabase.mockClear()
+      const ydoc = new Y.Doc()
+      const s = new CollabSessionController({
+        ydoc,
+        scopeKey: 'workspace-b',
+        documentId: 'page-b',
+        user: { id: 'member-a', name: 'Member A' },
+        roomBoundary: boundary,
+        enableOfflineBuffer: true,
+        fetchSession: vi.fn(),
+      })
+      sessions.push(s)
+      expect(open).not.toHaveBeenCalled()
+      expect(deleteDatabase).toHaveBeenCalledWith('kodera-docs-yjs:workspace-b:page-b')
+      expect(s.getSnapshot().status).toBe('forbidden')
+    }
+
     for (const remote of [true, false])
       for (const status of ['local', 'synced', 'offline-buffered'] as const)
         expect(
@@ -189,6 +219,57 @@ describe('confidential collaboration transport', () => {
     await settle()
     expect(session.getSnapshot().status).toBe('forbidden')
     expect(session.ydoc.getText('body').toString()).toBe('')
+  })
+
+  it('setRoomBoundary handles cold-start unknown -> ordinary upgrade and enforces sticky purge on ordinary -> confidential transition', async () => {
+    const deleteDatabase = vi.fn()
+    const databases = vi.fn(async () => [{ name: 'kodera-docs-yjs:workspace-live:doc-live' }])
+    vi.stubGlobal('indexedDB', { deleteDatabase, databases })
+
+    // 1. Cold-start `'unknown'` blocks plaintext Yjs socket/persistence until `/sync` confirms `'ordinary'`.
+    const socket = new Socket()
+    const fetchSession = vi.fn(async () => ({
+      wsUrl: 'wss://relay.invalid/live',
+      token: 'ticket-live',
+      expiresAt: '',
+      role: 'editor' as const,
+    }))
+    const controller = new CollabSessionController({
+      ydoc: new Y.Doc(),
+      scopeKey: 'workspace-live',
+      documentId: 'doc-live',
+      user: { id: 'member-a', name: 'Member A' },
+      roomBoundary: 'unknown',
+      enableOfflineBuffer: true,
+      fetchSession,
+      webSocketFactory: () => socket,
+    })
+    sessions.push(controller)
+
+    expect(controller.getSnapshot().status).toBe('forbidden')
+    await controller.connect()
+    expect(fetchSession).not.toHaveBeenCalled()
+
+    // 2. `/sync` resolves room as `'ordinary'` -> plaintext session unlocks and connects cleanly.
+    controller.setRoomBoundary('ordinary')
+    expect(controller.getSnapshot().status).toBe('connecting')
+    await controller.connect()
+    expect(fetchSession).toHaveBeenCalledTimes(1)
+    socket.open()
+    expect(socket.readyState).toBe(1)
+
+    // 3. Room transitions to `'confidential-unavailable'` -> closes socket, purges `kodera-docs-yjs:*`, and stays sticky `'forbidden'` even if a stale `'ordinary'` update arrives!
+    deleteDatabase.mockClear()
+    controller.setRoomBoundary('confidential-unavailable')
+    await settle()
+    expect(controller.getSnapshot().status).toBe('forbidden')
+    expect(socket.readyState).toBe(3)
+    expect(deleteDatabase).toHaveBeenCalledWith('kodera-docs-yjs:workspace-live:doc-live')
+
+    controller.setRoomBoundary('ordinary')
+    expect(controller.getSnapshot().status).toBe('forbidden')
+    await controller.connect()
+    expect(fetchSession).toHaveBeenCalledTimes(1)
   })
 })
 

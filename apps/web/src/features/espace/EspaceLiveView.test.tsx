@@ -2294,8 +2294,8 @@ describe('actual-store message subscriptions without a parent render', () => {
       expectSameSummaries(summaries, store.getSnapshot())
 
       await act(async () => {
-        await fixture.finishSend(403, { errcode: 'M_FORBIDDEN', error: 'Controlled send failure' })
-        expect(await sending).toMatchObject({ errcode: 'M_FORBIDDEN' })
+        await fixture.finishSend(413, { errcode: 'M_TOO_LARGE', error: 'Controlled send failure' })
+        expect(await sending).toMatchObject({ errcode: 'M_TOO_LARGE' })
       })
       expect(screen.getByText('Échec de l’envoi')).toBeInTheDocument()
       expect(store.getTimeline(SNAPSHOT_ROOM).at(-1)?.key).toBe(pending.key)
@@ -2622,11 +2622,11 @@ describe('literal bilingual live-store acceptance', () => {
           copy.placeholder
         )
         await act(async () => {
-          await fixture.finishSend(403, {
-            errcode: 'M_FORBIDDEN',
+          await fixture.finishSend(413, {
+            errcode: 'M_TOO_LARGE',
             error: 'Controlled send failure',
           })
-          expect(await sending).toMatchObject({ errcode: 'M_FORBIDDEN' })
+          expect(await sending).toMatchObject({ errcode: 'M_TOO_LARGE' })
         })
         expect(screen.getByText(copy.failed)).toBeInTheDocument()
         await userEvent.setup().click(screen.getByRole('button', { name: copy.retry }))
@@ -3020,7 +3020,7 @@ describe('literal bilingual live-store acceptance', () => {
         sending = store
           .send(SNAPSHOT_ROOM, 'Failed unchanged {body}')
           .catch((error: unknown) => error)
-        await fixture.finishSend(403, { errcode: 'M_FORBIDDEN', error: 'Controlled send failure' })
+        await fixture.finishSend(413, { errcode: 'M_TOO_LARGE', error: 'Controlled send failure' })
         await sending
       })
       const failed = store.getTimeline(SNAPSHOT_ROOM).at(-1)!

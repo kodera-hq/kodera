@@ -1,4 +1,4 @@
-import { permitsPlaintext } from '../confidential/room-boundary'
+import { permitsPlaintext, type RoomBoundary } from '../confidential/room-boundary'
 import {
   createContext,
   useContext,
@@ -10,6 +10,10 @@ import {
 import { isDemoActive } from '../../app/interactiveDemo'
 import { useAuthLifetime, type AuthLifetime } from '../../auth/AuthProvider'
 import {
+  registerEspaceVaultCleanup,
+  registerLocalSessionCleanup,
+} from '../../auth/localSession'
+import {
   getMatrixRegistrationStamp,
   getMatrixSession,
   subscribeMatrixSession,
@@ -18,6 +22,18 @@ import {
 import { espaceSessionFor } from '../workspace/OpenEspace'
 import type { Workspace } from '../workspace/workspace'
 import type { EspaceStoreLike } from './EspaceLiveView'
+import {
+  buildVaultAad,
+  isVerifiedPlaintextBoundary,
+  MAX_DRAFT_CHARS,
+  MAX_DRAFT_ROOMS,
+  openEspaceVault,
+  principalOwnerKey,
+  vaultSupported,
+  type EspaceVault,
+  type EspaceVaultPrincipal,
+  type VerifiedPlaintextBoundary,
+} from './matrix/encryptedCache'
 
 export interface RoomTarget {
   roomId: string
@@ -43,6 +59,8 @@ export const EMPTY_DRAFT: ChannelDraft = Object.freeze({
 interface Authority {
   org: string
   organisationId: string
+  ownerId?: string | undefined
+  membershipId?: string | undefined
   meGeneration: number
   meCredentialGeneration: number
 }
@@ -58,8 +76,106 @@ interface Owner {
   deviceId: string
   org: string
   organisationId: string
+  principal: EspaceVaultPrincipal
+  ownerKey: string
   /** The tenant's slug: its homeserver's server name, which the session belongs to. */
   serverSlug: string
+}
+
+const LEGACY_DRAFT_PREFIX = 'kodera:drafts:'
+const SESSION_ENCRYPTED_DRAFT_PREFIX = 'kodera.web.encrypted-drafts.v1:'
+
+interface SessionDraftKeyRecord {
+  readonly incarnation: string
+  readonly keyPromise: Promise<CryptoKey>
+  active: boolean
+}
+
+interface EncryptedSessionDraftEntry {
+  readonly incarnation: string
+  readonly verifiedBoundary: VerifiedPlaintextBoundary
+  readonly iv: string
+  readonly ciphertext: string
+}
+
+const sessionDraftKeys = new Map<string, SessionDraftKeyRecord>()
+
+function toBase64(bytes: Uint8Array): string {
+  let binary = ''
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]!)
+  }
+  return btoa(binary)
+}
+
+function fromBase64(encoded: string): Uint8Array<ArrayBuffer> {
+  const binary = atob(encoded)
+  const out = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) {
+    out[i] = binary.charCodeAt(i)
+  }
+  return out
+}
+
+function purgePlaintextDraftStorage(): void {
+  for (const kind of ['sessionStorage', 'localStorage'] as const) {
+    try {
+      const storage = globalThis[kind]
+      if (!storage) continue
+      for (const key of Object.keys(storage)) {
+        if (key.startsWith(LEGACY_DRAFT_PREFIX)) {
+          storage.removeItem(key)
+        }
+      }
+    } catch {
+      // Ignore restricted storage environments.
+    }
+  }
+}
+
+function clearAllSessionDraftKeys(): void {
+  for (const record of sessionDraftKeys.values()) {
+    record.active = false
+  }
+  sessionDraftKeys.clear()
+  purgePlaintextDraftStorage()
+  try {
+    const storage = globalThis.sessionStorage
+    if (!storage) return
+    for (const key of Object.keys(storage)) {
+      if (key.startsWith(SESSION_ENCRYPTED_DRAFT_PREFIX)) {
+        storage.removeItem(key)
+      }
+    }
+  } catch {
+    // Ignore restricted sessionStorage environments.
+  }
+}
+
+registerEspaceVaultCleanup(clearAllSessionDraftKeys)
+registerLocalSessionCleanup(clearAllSessionDraftKeys)
+
+function getOrCreateSessionDraftKey(ownerKey: string): SessionDraftKeyRecord {
+  const existing = sessionDraftKeys.get(ownerKey)
+  if (existing !== undefined && existing.active) return existing
+  const record: SessionDraftKeyRecord = {
+    incarnation: crypto.randomUUID(),
+    keyPromise: crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, [
+      'encrypt',
+      'decrypt',
+    ]),
+    active: true,
+  }
+  sessionDraftKeys.set(ownerKey, record)
+  return record
+}
+
+function revokeSessionDraftKey(ownerKey: string): void {
+  const record = sessionDraftKeys.get(ownerKey)
+  if (record !== undefined) {
+    record.active = false
+    sessionDraftKeys.delete(ownerKey)
+  }
 }
 interface ViewRecord {
   store: EspaceStoreLike | null
@@ -87,6 +203,7 @@ export class DraftMemory {
     { timer: ReturnType<typeof setTimeout>; write: () => void }
   >()
   private storageKey: string | null = null
+  private vaultPromise: Promise<EspaceVault | null> | null = null
   private views = new Set<ViewRecord>()
   private attached = false
   private revision = 0
@@ -96,9 +213,11 @@ export class DraftMemory {
   constructor(
     private readonly lifetime: AuthLifetime,
     initial: Authority,
-    private readonly tenantSlugFor: (organisationId: string) => string | undefined
+    private readonly tenantSlugFor: (organisationId: string) => string | undefined,
+    private readonly idb: IDBFactory | undefined = globalThis.indexedDB
   ) {
     this.authority = initial
+    purgePlaintextDraftStorage()
   }
   /**
    * The organisation's tenant slug, read when asked: the session is its homeserver's, which may be
@@ -128,6 +247,20 @@ export class DraftMemory {
       }
     }
   }
+  private ensureVault(owner: Owner): Promise<EspaceVault | null> {
+    if (!vaultSupported(this.idb)) return Promise.resolve(null)
+    this.vaultPromise ??= openEspaceVault(owner.principal, { idb: this.idb })
+      .then((vault) => {
+        if (this.owner !== owner || this.terminal(owner)) {
+          void vault.close()
+          return null
+        }
+        return vault
+      })
+      .catch(() => null)
+    return this.vaultPromise
+  }
+
   private persist(roomId: string, store: EspaceStoreLike) {
     const key = this.storageKey
     if (key === null) return
@@ -137,32 +270,144 @@ export class DraftMemory {
     const write = () => {
       this.pendingWrites.delete(roomId)
       if (owner === null || owner !== this.owner || this.terminal(owner) || !this.accepted()) return
-      try {
-        const raw: unknown = JSON.parse(sessionStorage.getItem(key) ?? '{}')
-        const saved: Record<string, unknown> =
-          raw && typeof raw === 'object' && !Array.isArray(raw) ? { ...raw } : {}
-        const boundary = store.getRoomBoundary?.(roomId)
-        const draft = this.drafts.get(roomId)
-        if (
-          boundary !== undefined &&
-          permitsPlaintext(boundary) &&
-          draft &&
-          (draft.text || draft.threadText)
-        ) {
-          saved[roomId] = {
-            text: draft.text.slice(0, 65536),
-            threadText: draft.threadText.slice(0, 65536),
-          }
-        } else delete saved[roomId]
-        const bounded = Object.fromEntries(Object.entries(saved).slice(-64))
-        if (Object.keys(bounded).length) sessionStorage.setItem(key, JSON.stringify(bounded))
-        else sessionStorage.removeItem(key)
-      } catch {
-        /* Storage restrictions never interrupt composing. */
+      purgePlaintextDraftStorage()
+      const boundary = store.getRoomBoundary?.(roomId)
+      if (boundary === 'unknown') {
+        return
       }
+      const draft = this.drafts.get(roomId)
+      if (
+        !isVerifiedPlaintextBoundary(boundary) ||
+        !draft ||
+        (!draft.text && !draft.threadText)
+      ) {
+        this.deleteEncryptedRoom(key, owner, roomId)
+        return
+      }
+      const text = draft.text.slice(0, MAX_DRAFT_CHARS)
+      const threadText = draft.threadText.slice(0, MAX_DRAFT_CHARS)
+      void this.writeEncryptedRoom(key, owner, roomId, text, threadText, store)
     }
     this.pendingWrites.set(roomId, { timer: setTimeout(write, 300), write })
   }
+
+  private async writeEncryptedRoom(
+    storageKey: string,
+    owner: Owner,
+    roomId: string,
+    text: string,
+    threadText: string,
+    store: EspaceStoreLike
+  ): Promise<void> {
+    try {
+      if (vaultSupported(this.idb)) {
+        const vault = await this.ensureVault(owner)
+        if (
+          vault === null ||
+          owner !== this.owner ||
+          this.terminal(owner) ||
+          !this.accepted()
+        ) {
+          return
+        }
+        const currentBoundary = store.getRoomBoundary?.(roomId)
+        if (!isVerifiedPlaintextBoundary(currentBoundary)) {
+          await vault.deleteDraft(roomId).catch(() => undefined)
+          return
+        }
+        await vault.putDraft(roomId, currentBoundary, text, threadText)
+        return
+      }
+
+      const keyRecord = getOrCreateSessionDraftKey(owner.ownerKey)
+      const cryptoKey = await keyRecord.keyPromise
+      if (
+        !keyRecord.active ||
+        owner !== this.owner ||
+        this.terminal(owner) ||
+        !this.accepted()
+      ) {
+        return
+      }
+      const currentBoundary = store.getRoomBoundary?.(roomId)
+      if (!isVerifiedPlaintextBoundary(currentBoundary)) {
+        this.deleteSessionEncryptedRoom(storageKey, roomId)
+        return
+      }
+      const plaintext = new TextEncoder().encode(JSON.stringify({ v: 1, text, threadText }))
+      try {
+        const iv = crypto.getRandomValues(new Uint8Array(12))
+        const ciphertext = await crypto.subtle.encrypt(
+          {
+            name: 'AES-GCM',
+            iv,
+            additionalData: buildVaultAad(
+              owner.principal,
+              keyRecord.incarnation,
+              'draft',
+              roomId,
+              currentBoundary
+            ),
+          },
+          cryptoKey,
+          plaintext
+        )
+        if (
+          !keyRecord.active ||
+          owner !== this.owner ||
+          this.terminal(owner) ||
+          !this.accepted() ||
+          !isVerifiedPlaintextBoundary(store.getRoomBoundary?.(roomId))
+        ) {
+          return
+        }
+        const raw: unknown = JSON.parse(sessionStorage.getItem(storageKey) ?? '{}')
+        const saved: Record<string, unknown> =
+          raw && typeof raw === 'object' && !Array.isArray(raw) ? { ...raw } : {}
+        saved[roomId] = {
+          incarnation: keyRecord.incarnation,
+          verifiedBoundary: currentBoundary,
+          iv: toBase64(iv),
+          ciphertext: toBase64(new Uint8Array(ciphertext)),
+        } satisfies EncryptedSessionDraftEntry
+        const bounded = Object.fromEntries(Object.entries(saved).slice(-MAX_DRAFT_ROOMS))
+        if (Object.keys(bounded).length) {
+          sessionStorage.setItem(storageKey, JSON.stringify(bounded))
+        } else {
+          sessionStorage.removeItem(storageKey)
+        }
+      } finally {
+        plaintext.fill(0)
+      }
+    } catch {
+      /* Storage or WebCrypto restrictions never interrupt composing. */
+    }
+  }
+
+  private deleteSessionEncryptedRoom(storageKey: string, roomId: string): void {
+    try {
+      const saved: unknown = JSON.parse(sessionStorage.getItem(storageKey) ?? '{}')
+      if (saved && typeof saved === 'object' && !Array.isArray(saved)) {
+        const remaining = { ...saved } as Record<string, unknown>
+        delete remaining[roomId]
+        if (Object.keys(remaining).length) {
+          sessionStorage.setItem(storageKey, JSON.stringify(remaining))
+        } else {
+          sessionStorage.removeItem(storageKey)
+        }
+      }
+    } catch {
+      /* Ignore malformed or unavailable storage. */
+    }
+  }
+
+  private deleteEncryptedRoom(storageKey: string, owner: Owner | null, roomId: string): void {
+    this.deleteSessionEncryptedRoom(storageKey, roomId)
+    if (owner !== null && vaultSupported(this.idb)) {
+      void this.ensureVault(owner).then((vault) => vault?.deleteDraft(roomId).catch(() => undefined))
+    }
+  }
+
   private flush(roomId: string) {
     const pending = this.pendingWrites.get(roomId)
     if (pending) {
@@ -170,59 +415,164 @@ export class DraftMemory {
       pending.write()
     }
   }
+
   private discardStoredRoom(roomId: string) {
     const timer = this.pendingWrites.get(roomId)
     if (timer) clearTimeout(timer.timer)
     this.pendingWrites.delete(roomId)
-    if (this.storageKey === null) return
-    try {
-      const saved: unknown = JSON.parse(sessionStorage.getItem(this.storageKey) ?? '{}')
-      if (saved && typeof saved === 'object' && !Array.isArray(saved)) {
-        const remaining = { ...saved } as Record<string, unknown>
-        delete remaining[roomId]
-        if (Object.keys(remaining).length)
-          sessionStorage.setItem(this.storageKey, JSON.stringify(remaining))
-        else sessionStorage.removeItem(this.storageKey)
-      }
-    } catch {
-      /* Ignore malformed or unavailable storage. */
+    purgePlaintextDraftStorage()
+    if (this.storageKey !== null) {
+      this.deleteEncryptedRoom(this.storageKey, this.owner, roomId)
     }
   }
+
   private restore(roomId: string, store: EspaceStoreLike) {
-    if (this.storageKey === null) return
+    purgePlaintextDraftStorage()
+    const storageKey = this.storageKey
+    const owner = this.owner
+    if (storageKey === null || owner === null) return
     const boundary = store.getRoomBoundary?.(roomId)
+    if (boundary === 'unknown') {
+      // Cold-start before `/sync` classifies the room: hold hydration in suspense without
+      // deleting the persisted encrypted draft until `/sync` resolves the boundary.
+      this.drafts.delete(roomId)
+      return
+    }
     if (boundary === undefined || !permitsPlaintext(boundary)) {
       this.discardStoredRoom(roomId)
       if (boundary !== undefined) this.drafts.delete(roomId)
       return
     }
     if (this.drafts.has(roomId)) return
+    void this.restoreEncryptedRoom(storageKey, owner, roomId, store)
+  }
+
+  private async restoreEncryptedRoom(
+    storageKey: string,
+    owner: Owner,
+    roomId: string,
+    store: EspaceStoreLike
+  ): Promise<void> {
     try {
-      const saved: unknown = JSON.parse(sessionStorage.getItem(this.storageKey) ?? '{}')
-      const entry: unknown =
-        saved && typeof saved === 'object' ? (saved as Record<string, unknown>)[roomId] : undefined
-      if (!entry || typeof entry !== 'object') return
-      const draft = entry as Record<string, unknown>
+      let restored: { text: string; threadText: string } | null = null
+      if (vaultSupported(this.idb)) {
+        const vault = await this.ensureVault(owner)
+        if (vault === null || owner !== this.owner || this.terminal(owner)) return
+        const payload = await vault.readDraft(roomId)
+        if (payload !== null) {
+          restored = { text: payload.text, threadText: payload.threadText }
+        }
+      } else {
+        const keyRecord = sessionDraftKeys.get(owner.ownerKey)
+        if (keyRecord === undefined || !keyRecord.active) return
+        const raw: unknown = JSON.parse(sessionStorage.getItem(storageKey) ?? '{}')
+        const entry =
+          raw && typeof raw === 'object' && !Array.isArray(raw)
+            ? ((raw as Record<string, unknown>)[roomId] as Partial<EncryptedSessionDraftEntry> | undefined)
+            : undefined
+        const entryBoundary = entry?.verifiedBoundary as RoomBoundary | undefined
+        if (
+          !entry ||
+          entry.incarnation !== keyRecord.incarnation ||
+          !isVerifiedPlaintextBoundary(entryBoundary) ||
+          typeof entry.iv !== 'string' ||
+          typeof entry.ciphertext !== 'string'
+        ) {
+          return
+        }
+        const iv = fromBase64(entry.iv)
+        const ciphertext = fromBase64(entry.ciphertext)
+        if (iv.byteLength !== 12 || ciphertext.byteLength < 18) return
+        const cryptoKey = await keyRecord.keyPromise
+        if (!keyRecord.active || owner !== this.owner || this.terminal(owner)) return
+        let plaintext: Uint8Array<ArrayBuffer> | undefined
+        try {
+          const decrypted = await crypto.subtle.decrypt(
+            {
+              name: 'AES-GCM',
+              iv,
+              additionalData: buildVaultAad(
+                owner.principal,
+                keyRecord.incarnation,
+                'draft',
+                roomId,
+                entryBoundary
+              ),
+            },
+            cryptoKey,
+            ciphertext
+          )
+          plaintext = new Uint8Array(decrypted)
+          const parsed = JSON.parse(
+            new TextDecoder('utf-8', { fatal: true }).decode(plaintext)
+          ) as Record<string, unknown>
+          if (
+            parsed.v === 1 &&
+            typeof parsed.text === 'string' &&
+            typeof parsed.threadText === 'string' &&
+            parsed.text.length <= MAX_DRAFT_CHARS &&
+            parsed.threadText.length <= MAX_DRAFT_CHARS
+          ) {
+            restored = { text: parsed.text, threadText: parsed.threadText }
+          }
+        } finally {
+          plaintext?.fill(0)
+        }
+      }
+
       if (
-        typeof draft.text === 'string' &&
-        typeof draft.threadText === 'string' &&
-        draft.text.length <= 65536 &&
-        draft.threadText.length <= 65536
-      )
-        this.drafts.set(roomId, { ...EMPTY_DRAFT, text: draft.text, threadText: draft.threadText })
+        restored === null ||
+        owner !== this.owner ||
+        this.terminal(owner) ||
+        !this.accepted()
+      ) {
+        return
+      }
+      const liveBoundary = store.getRoomBoundary?.(roomId)
+      if (liveBoundary === 'unknown') {
+        return
+      }
+      if (liveBoundary === undefined || !permitsPlaintext(liveBoundary)) {
+        this.discardStoredRoom(roomId)
+        if (liveBoundary !== undefined && this.drafts.delete(roomId)) this.publish()
+        return
+      }
+      if (!this.drafts.has(roomId)) {
+        this.drafts.set(roomId, {
+          ...EMPTY_DRAFT,
+          text: restored.text,
+          threadText: restored.threadText,
+        })
+        this.publish()
+      }
     } catch {
-      /* Ignore malformed or unavailable storage. */
+      /* Ignore corrupt, revoked, or unavailable encrypted draft entries. */
     }
   }
+
   private retire(clearStorage = true) {
     for (const pending of this.pendingWrites.values()) clearTimeout(pending.timer)
     this.pendingWrites.clear()
-    if (clearStorage && this.storageKey !== null) {
-      try {
-        sessionStorage.removeItem(this.storageKey)
-      } catch {
-        /* Storage may be blocked. */
+    purgePlaintextDraftStorage()
+    const retiringOwner = this.owner
+    const closingVault = this.vaultPromise
+    this.vaultPromise = null
+    if (clearStorage) {
+      if (retiringOwner !== null) {
+        revokeSessionDraftKey(retiringOwner.ownerKey)
       }
+      if (this.storageKey !== null) {
+        try {
+          sessionStorage.removeItem(this.storageKey)
+        } catch {
+          /* Storage may be blocked. */
+        }
+      }
+      if (closingVault !== null) {
+        void closingVault.then((vault) => vault?.wipe().catch(() => undefined))
+      }
+    } else if (closingVault !== null) {
+      void closingVault.then((vault) => vault?.close().catch(() => undefined))
     }
     this.storageKey = null
     this.viewEpoch += 1
@@ -382,6 +732,12 @@ export class DraftMemory {
     ) {
       const live = this.lifetime.getSnapshot()
       const identity = live.user!.identity!
+      const principal: EspaceVaultPrincipal = {
+        ownerId: this.authority.ownerId ?? identity.subject,
+        organisationId: this.authority.organisationId,
+        membershipId: this.authority.membershipId ?? `${session.userId}@${session.baseUrl}`,
+        deviceId: session.deviceId,
+      }
       this.owner = {
         generation: live.generation,
         issuer: identity.issuer,
@@ -394,11 +750,13 @@ export class DraftMemory {
         deviceId: session.deviceId,
         org: this.authority.org,
         organisationId: this.authority.organisationId,
+        principal,
+        ownerKey: principalOwnerKey(principal),
         serverSlug,
       }
     }
     if (this.owner !== null) {
-      this.storageKey = `kodera:drafts:${encodeURIComponent(this.owner.organisationId)}:${encodeURIComponent(this.owner.org)}:${encodeURIComponent(this.owner.issuer)}:${encodeURIComponent(this.owner.userId)}:${encodeURIComponent(this.owner.baseUrl)}`
+      this.storageKey = `${SESSION_ENCRYPTED_DRAFT_PREFIX}${encodeURIComponent(this.owner.organisationId)}:${encodeURIComponent(this.owner.org)}:${encodeURIComponent(this.owner.issuer)}:${encodeURIComponent(this.owner.userId)}:${encodeURIComponent(this.owner.baseUrl)}`
       this.restore(roomId, store)
     }
     // A committed replacement store or room supersedes all detached handlers.
@@ -417,9 +775,17 @@ export class DraftMemory {
     this.views.add(view)
     view.unsubscribe = store.subscribe(() => {
       const boundary = store.getRoomBoundary?.(roomId)
+      if (boundary === 'unknown') {
+        if (this.drafts.delete(roomId)) this.publish()
+        return
+      }
       if (boundary !== undefined && !permitsPlaintext(boundary)) {
         this.discardStoredRoom(roomId)
         if (this.drafts.delete(roomId)) this.publish()
+        return
+      }
+      if (boundary !== undefined && permitsPlaintext(boundary) && !this.drafts.has(roomId)) {
+        this.restore(roomId, store)
       }
     })
     const current = () => {
@@ -502,6 +868,8 @@ export function EspaceDraftProvider({
   children,
   org,
   organisationId,
+  ownerId,
+  membershipId,
   meGeneration,
   meCredentialGeneration,
   tenantSlugFor,
@@ -512,8 +880,15 @@ export function EspaceDraftProvider({
 }) {
   const lifetime = useAuthLifetime()
   const authority = useMemo(
-    () => ({ org, organisationId, meGeneration, meCredentialGeneration }),
-    [org, organisationId, meGeneration, meCredentialGeneration]
+    () => ({
+      org,
+      organisationId,
+      ownerId,
+      membershipId,
+      meGeneration,
+      meCredentialGeneration,
+    }),
+    [org, organisationId, ownerId, membershipId, meGeneration, meCredentialGeneration]
   )
   // Fixed for the provider's life: the application has one query cache.
   const [memory] = useState(() => new DraftMemory(lifetime, authority, tenantSlugFor))

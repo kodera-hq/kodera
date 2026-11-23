@@ -73,6 +73,7 @@ import { InlineAlert } from '../../ui/InlineAlert/InlineAlert'
 import { Skeleton } from '../../ui/Skeleton/Skeleton'
 import { DocsWorkspacePanel } from '../docs/DocsWorkspacePanel'
 import { EspaceLiveView } from '../espace/EspaceLiveView'
+import { permitsPlaintext, type RoomBoundary } from '../confidential/room-boundary'
 import { ChannelSidebar } from './ChannelSidebar'
 import {
   espaceOffered,
@@ -320,6 +321,9 @@ interface LiveWorkspaceProps {
   /** The name the console's own account carries; the live view names the member with it when
    * neither this browser nor the homeserver holds one. */
   accountName?: string | undefined
+  ownerId?: string | undefined
+  membershipId?: string | undefined
+  membershipActive?: boolean | undefined
 }
 
 /**
@@ -338,6 +342,9 @@ function LiveWorkspace({
   actions,
   serverSlug,
   accountName,
+  ownerId,
+  membershipId,
+  membershipActive,
 }: LiveWorkspaceProps) {
   const { t, i18n } = useTranslation()
   const communityCopy = developerDocsCopy(i18n.resolvedLanguage)
@@ -437,12 +444,53 @@ function LiveWorkspace({
     ],
     [workspacePages, docsWorkspace.docs]
   )
+  const [liveChannelBoundary, setLiveChannelBoundary] = useState<{
+    readonly channelId: string | undefined
+    readonly roomBoundary: RoomBoundary | undefined
+    readonly isConfidential: boolean
+  }>({ channelId: undefined, roomBoundary: undefined, isConfidential: false })
+  const handleActiveChannelBoundaryChange = useCallback(
+    (next: {
+      readonly channelId: string | undefined
+      readonly roomBoundary: RoomBoundary | undefined
+      readonly isConfidential: boolean
+    }) => {
+      setLiveChannelBoundary((prev) =>
+        prev.channelId === next.channelId &&
+        prev.roomBoundary === next.roomBoundary &&
+        prev.isConfidential === next.isConfidential
+          ? prev
+          : next
+      )
+    },
+    []
+  )
   const channel = channelId
     ? liveWorkspace.categories
         .flatMap((category) => category.channels)
         .concat(liveWorkspace.uncategorised_channels)
         .find((entry) => entry.id === channelId)
     : currentChannel(liveWorkspace, channelId)
+  const channelConfFlags = channel as
+    | (WorkspaceChannel & {
+        readonly isConfidential?: boolean | undefined
+        readonly is_confidential?: boolean | undefined
+      })
+    | undefined
+  const matchedLiveBoundary =
+    liveChannelBoundary.channelId === channel?.id ? liveChannelBoundary : undefined
+  const effectiveDocsIsConfidential =
+    channelConfFlags?.isConfidential === true ||
+    channelConfFlags?.is_confidential === true ||
+    matchedLiveBoundary?.isConfidential === true ||
+    matchedLiveBoundary?.roomBoundary === 'confidential-unavailable' ||
+    matchedLiveBoundary?.roomBoundary === 'invalid'
+  const effectiveDocsBoundary: RoomBoundary | undefined = effectiveDocsIsConfidential
+    ? matchedLiveBoundary?.roomBoundary !== undefined &&
+      !permitsPlaintext(matchedLiveBoundary.roomBoundary)
+      ? matchedLiveBoundary.roomBoundary
+      : 'confidential-unavailable'
+    : matchedLiveBoundary?.roomBoundary
   const selectedChannelId = channel?.id
   const selectedChannelKind = channel?.kind
   useEffect(() => {
@@ -486,6 +534,9 @@ function LiveWorkspace({
         {...(session ? { session } : {})}
         {...(store ? { store } : {})}
         {...(accountName === undefined ? {} : { accountName })}
+        {...(ownerId === undefined ? {} : { ownerId })}
+        {...(membershipId === undefined ? {} : { membershipId })}
+        {...(membershipActive === undefined ? {} : { membershipActive })}
         focusedDocs={canvas === 'docs' && (docsView === 'developer' || docsView === 'pages')}
         documents={[
           ...docsWorkspace.docs,
@@ -549,6 +600,7 @@ function LiveWorkspace({
         onChangeCanvasMode={setCanvas}
         organisationActionSlot={actions}
         {...(store?.addChannel ? { onCreateInCategory: setCreateCategory } : {})}
+        onActiveChannelBoundaryChange={handleActiveChannelBoundaryChange}
         docsCanvasSlot={
           channel ? (
             <DocsWorkspacePanel
@@ -570,6 +622,12 @@ function LiveWorkspace({
                           onLocalDocumentsChange: setWorkspacePages,
                         }
                       : { organisationId })}
+                    {...(effectiveDocsBoundary === undefined
+                      ? {}
+                      : { roomBoundary: effectiveDocsBoundary })}
+                    {...(effectiveDocsIsConfidential
+                      ? { confidential: { required: true, epoch: 0, cipher: null } }
+                      : {})}
                     currentUser={{
                       id: userId || 'member',
                       name: currentUserName,
@@ -585,6 +643,10 @@ function LiveWorkspace({
                   <ChannelDocsEditor
                     channelId={channel.id}
                     channelName={channel.name}
+                    {...(effectiveDocsBoundary === undefined
+                      ? {}
+                      : { roomBoundary: effectiveDocsBoundary })}
+                    isConfidential={effectiveDocsIsConfidential}
                     workspace={docsWorkspace}
                     onWorkspaceChange={setDocsWorkspace}
                     onNavigateDocument={(targetDoc) => {
@@ -889,6 +951,9 @@ export function WorkspaceScreen() {
               serverSlug={live.serverSlug}
               actions={actions}
               accountName={accountName}
+              ownerId={me.id}
+              membershipId={membership.membership_id}
+              membershipActive={membership.state === 'active'}
             />
           ) : (
             <ReadyWorkspace

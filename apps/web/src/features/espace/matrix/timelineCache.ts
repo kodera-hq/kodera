@@ -373,6 +373,16 @@ export function indexedDbBackend(factory: IDBFactory = indexedDB): CacheBackend 
   }
 }
 
+export function deleteLegacyTimelineDatabase(factory: IDBFactory | undefined = globalThis.indexedDB): void {
+  try {
+    if (factory !== undefined && typeof factory.deleteDatabase === 'function') {
+      factory.deleteDatabase(CACHE_DATABASE)
+    }
+  } catch {
+    // Ignore restricted IndexedDB environments.
+  }
+}
+
 let browserBackend: CacheBackend | null = null
 
 function browserCache(): CacheBackend | null {
@@ -381,12 +391,18 @@ function browserCache(): CacheBackend | null {
   return browserBackend
 }
 
-// From the moment Espace's code is loaded, a Matrix session that ends wipes the cache, whether
-// or not a store is open.
+// From the moment Espace's code is loaded, a Matrix session that ends deletes the legacy cache,
+// without ever opening or creating it when unused.
 if (typeof indexedDB !== 'undefined') {
   subscribeMatrixSession(() => {
-    const backend = browserCache()
-    if (backend !== null && getMatrixSession() === undefined) void wipeTimelineCaches(backend)
+    if (getMatrixSession() !== undefined) return
+    if (browserBackend !== null) {
+      void wipeTimelineCaches(browserBackend).finally(() => {
+        void browserBackend?.destroy().catch(() => undefined)
+      })
+    } else {
+      deleteLegacyTimelineDatabase()
+    }
   })
 }
 

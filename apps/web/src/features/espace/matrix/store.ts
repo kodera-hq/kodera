@@ -19,6 +19,7 @@ import {
   HistoryVisibility,
   HttpApiEvent,
   MatrixError,
+  MatrixScheduler,
   MemoryStore,
   Method,
   MsgType,
@@ -62,7 +63,22 @@ import {
   type Occupancy,
   type TimelineEvent,
 } from './timeline'
-import { openTimelineCache, type TimelineCache } from './timelineCache'
+import {
+  deleteLegacyPlaintextTimelineDb,
+  EspaceVaultError,
+  isVerifiedPlaintextBoundary,
+  MAX_OUTBOX_BODY_BYTES,
+  MAX_OUTBOX_ITEMS,
+  openEspaceVault,
+  resolveSessionVaultPrincipal,
+  vaultSupported,
+  wipeEspaceVault,
+  type CachedRoomSummary,
+  type EspaceVault,
+  type EspaceVaultPrincipal,
+  type VerifiedPlaintextBoundary,
+} from './encryptedCache'
+import { deleteLegacyTimelineDatabase, type TimelineCache } from './timelineCache'
 import { AvatarCache, isMxcUrl } from './avatarCache'
 import { HTML_FORMAT, markdownToHtml, type MentionTarget } from '../../messaging/markdownHtml'
 import { passportOf, PASSPORT_KEY, type Passport } from '../../profile/passport'
@@ -130,6 +146,10 @@ export interface SendOptions {
   threadRootId?: string
   /** Files already stored by Core, named by id (docs/specs/messaging-media-and-notifications.md). */
   attachments?: AttachmentRef[]
+  /** Optional deterministic client transaction ID for idempotent offline outbox replay. */
+  clientTxnId?: string | undefined
+  /** Optional workspace channel ID for fail-closed archive enforcement across restarts. */
+  channelId?: string | undefined
 }
 
 /** What an edit names, read from its new text as `SendOptions` reads a message's. */
@@ -191,6 +211,8 @@ export interface ArrivalView extends MemberView {
   waved?: boolean
 }
 
+const NO_ARRIVALS: readonly ArrivalView[] = []
+
 export interface InviteView {
   roomId: string
   name: string
@@ -232,6 +254,47 @@ export interface EspaceSession {
    * other rejection (the network) leaves the session to retry.
    */
   refresh?: (refreshToken: string) => Promise<{ accessToken: string; refreshToken?: string }>
+  ownerId?: string | undefined
+  organisationId?: string | undefined
+  membershipId?: string | undefined
+}
+
+export type OutboxRefusalReason =
+  | 'membership-revoked'
+  | 'channel-archived'
+  | 'policy-readonly'
+  | 'boundary-or-epoch-changed'
+  | 'send-failed'
+
+export interface OutboxStatusEntry {
+  readonly clientTxnId: string
+  readonly roomId: string
+  readonly state: 'queued' | 'replaying' | 'refused' | 'quarantined'
+  readonly reason?: OutboxRefusalReason | undefined
+  readonly queuedAt: number
+}
+
+export interface WorkspaceRuntimeContext {
+  readonly activeChannelId?: string | undefined
+  readonly activeRoomId?: string | undefined
+  readonly workspaceChannelIds?: ReadonlySet<string> | undefined
+  readonly confidentialChannelIds?: ReadonlySet<string> | undefined
+  readonly archivedChannelIds?: ReadonlySet<string> | undefined
+  readonly membershipActive?: boolean | undefined
+}
+
+interface InternalOutboxEntry {
+  readonly clientTxnId: string
+  readonly roomId: string
+  readonly channelId?: string | undefined
+  readonly verifiedBoundary: VerifiedPlaintextBoundary
+  readonly expectedEpoch: 0
+  readonly queuedAt: number
+  readonly body: string
+  readonly content: Record<string, unknown>
+  state: 'queued' | 'replaying'
+  queuedSyncEpoch: number
+  notBefore?: number | undefined
 }
 
 const POLICY = 'io.kodera.room.policy'
@@ -462,7 +525,32 @@ export class EspaceStore {
   readonly #timelines = new Map<string, readonly MessageView[]>()
   /** What this device kept of each room, shown until the room's first sync replaces it. */
   readonly #cached = new Map<string, readonly MessageView[]>()
+  readonly #cachedBoundaries = new Map<string, VerifiedPlaintextBoundary>()
+  #hydratedSidebarRooms: readonly RoomSummary[] = []
   readonly #cache: TimelineCache | undefined
+  #vault: EspaceVault | undefined
+  #vaultOpening: Promise<EspaceVault | undefined> | null = null
+  readonly #vaultDisabled: boolean
+  readonly #vaultIdb: IDBFactory | undefined
+  readonly #principal: EspaceVaultPrincipal | null
+  readonly #quarantined = new Set<string>()
+  readonly #confidentialRooms = new Set<string>()
+  readonly #forbiddenRooms = new Set<string>()
+  #workspaceChannelIds: ReadonlySet<string>
+  #confidentialChannelIds: ReadonlySet<string>
+  #archivedChannelIds: ReadonlySet<string>
+  #membershipActive: boolean
+  #activeChannelId: string | undefined
+  #activeRoomId: string | undefined
+  readonly #authLifetime: EspaceStoreOptions['authLifetime']
+  readonly #authStamp: object | undefined
+  #liveSyncEpoch = 0
+  #hydrationDone: Promise<void> = Promise.resolve()
+  #replayingOutbox = false
+  #outboxRetryTimer: ReturnType<typeof setTimeout> | null = null
+  #outboxRetryTargetAt = Number.POSITIVE_INFINITY
+  readonly #outbox = new Map<string, InternalOutboxEntry>()
+  readonly #outboxOutcomes = new Map<string, OutboxStatusEntry>()
   readonly #threads = new Map<string, Map<string, readonly MessageView[]>>()
   /** Each joined room's pinned events: the same array until the room's pins change. */
   readonly #pins = new Map<string, readonly string[]>()
@@ -567,9 +655,25 @@ export class EspaceStore {
     base: typeof fetch = globalThis.fetch.bind(globalThis),
     options: EspaceStoreOptions = {}
   ) {
-    // No cache given: this browser's, where it has IndexedDB. `null`: none.
-    this.#cache =
-      options.cache === undefined ? openTimelineCache(session.userId) : (options.cache ?? undefined)
+    this.#cache = options.cache ?? undefined
+    this.#vault = options.vault ?? undefined
+    this.#vaultDisabled =
+      options.vault === null ||
+      (options.vault === undefined &&
+        options.vaultIdb === undefined &&
+        options.cache !== undefined)
+    this.#vaultIdb = options.vaultIdb ?? globalThis.indexedDB
+    this.#principal = resolveSessionVaultPrincipal(session, options.principal)
+    this.#workspaceChannelIds = options.workspaceChannelIds ?? new Set()
+    this.#confidentialChannelIds = options.confidentialChannelIds ?? new Set()
+    this.#archivedChannelIds = options.archivedChannelIds ?? new Set()
+    this.#membershipActive = options.membershipActive ?? true
+    this.#activeChannelId = options.activeChannelId
+    this.#activeRoomId = options.activeRoomId
+    this.#authLifetime = options.authLifetime
+    this.#authStamp = options.authLifetime?.getRetirementStamp()
+    deleteLegacyTimelineDatabase(this.#vaultIdb)
+    deleteLegacyPlaintextTimelineDb(this.#vaultIdb)
     this.#accessToken = session.accessToken
     this.#refreshToken = session.refreshToken
     this.#refresh = session.refresh
@@ -611,13 +715,28 @@ export class EspaceStore {
             timeline[2]!.startsWith('state/') ||
             (timeline[2] === 'typing' && !isOwnTypingStop)
           if (isContentWrite) {
-            this.#requireUnmutedPlaintextRoom(roomId)
+            const isMessageSend =
+              timeline[2] === 'send' &&
+              /^\/_matrix\/client\/(?:v3|r0|unstable)\/rooms\/[^/]+\/send\/m\.room\.message(?:\/|$)/.test(
+                url.pathname
+              )
+            this.#requireUnmutedPlaintextRoom(roomId, {
+              requireMessageSendPermission: isMessageSend,
+            })
           } else {
             this.#requirePlaintextRoom(roomId)
           }
         }
       }
-      return base(input, init)
+      const isSync = /^\/_matrix\/client\/(?:v3|r0|unstable)\/sync(?:\/|$)/.test(url.pathname)
+      const dispatched = base(input, init)
+      if (!isSync) return dispatched
+      return dispatched.then((response) => {
+        if (response.status === 403 && !this.#stopped) {
+          this.stop('signed-out')
+        }
+        return response
+      })
     }
     this.#fetch =
       this.#refresh === undefined || this.#refreshToken === undefined
@@ -633,6 +752,9 @@ export class EspaceStore {
       accessToken: this.#accessToken,
       // In memory: the SDK's default store writes to localStorage.
       store: new MemoryStore(),
+      // Disable ALL automatic MatrixScheduler retries (including 429): every retry must go through
+      // `#replayOutbox()` after fresh `/sync` (`PREPARED` / `SYNCING`) + 3-gate revalidation.
+      scheduler: new MatrixScheduler(() => -1),
       // The SDK is never handed the refresh token (see refresh.ts).
       fetchFn: this.#fetch,
     })
@@ -741,9 +863,21 @@ export class EspaceStore {
     })
     on(ClientEvent.Sync, (state: SyncState) => {
       this.#status = this.#statusOf(state)
-      // The first full sync: every room is new.
+      // Advance outbox replay epoch ONLY after a real `/sync` response has been processed
+      // (`Prepared` / `Syncing`). `Catchup` fires *before* the recovery `/sync` HTTP response!
+      if (state === SyncState.Prepared || state === SyncState.Syncing) {
+        this.#liveSyncEpoch += 1
+        this.#hydratedSidebarRooms = []
+      }
+      // The first full sync: every room is new, and any cached room no longer joined is evicted.
       if (state === SyncState.Prepared) {
         for (const room of this.#client.getRooms()) this.#dirty.add(room.roomId)
+        for (const cachedRoomId of [...this.#cached.keys(), ...this.#cachedBoundaries.keys()]) {
+          this.#dirty.add(cachedRoomId)
+        }
+        for (const entry of this.#outbox.values()) {
+          this.#dirty.add(entry.roomId)
+        }
       }
       this.#schedule()
     })
@@ -760,6 +894,7 @@ export class EspaceStore {
       const membership = room.getMyMembership()
       const stored = this.#client.getRoom(room.roomId) !== null
       if (membership === 'join') {
+        this.#forbiddenRooms.delete(room.roomId)
         this.#joinSettled.add(room.roomId)
         this.#clearJoinTimer(room.roomId)
         if (stored) {
@@ -781,6 +916,7 @@ export class EspaceStore {
         this.#awaitingJoinSync.delete(room.roomId)
         this.#clearJoinTimer(room.roomId)
         this.#setJoinState(room.roomId, 'refused')
+        this.#purgeRoomOnLeaveOrBan(room.roomId)
       } else if (membership === 'leave' && !this.#inFlightJoins.has(room.roomId)) {
         this.#awaitingJoinSync.delete(room.roomId)
         this.#clearJoinTimer(room.roomId)
@@ -788,6 +924,7 @@ export class EspaceStore {
           this.#joins.delete(room.roomId)
           this.#joinsChanged = true
         }
+        this.#purgeRoomOnLeaveOrBan(room.roomId)
       }
       touch(room)
     })
@@ -797,6 +934,8 @@ export class EspaceStore {
     on(HttpApiEvent.SessionLoggedOut, () => this.stop('signed-out'))
     // What the device kept is shown while the first sync is on its way; it does not hold it up.
     void this.#cache?.loadAll().then((rooms) => this.#hydrate(rooms))
+    this.#hydrationDone = this.#hydrateVault()
+    void this.#hydrationDone
     await this.#client.startClient({
       initialSyncLimit: 50,
       lazyLoadMembers: true,
@@ -806,6 +945,192 @@ export class EspaceStore {
     // Stopped while starting (React mounts, unmounts and remounts an effect): only now has the
     // client a sync to stop.
     if (this.#stopped) this.#halt()
+  }
+
+  #ensureVault(): Promise<EspaceVault | undefined> {
+    if (this.#stopped) return Promise.resolve(undefined)
+    if (this.#vault !== undefined) return Promise.resolve(this.#vault)
+    if (this.#vaultDisabled || this.#principal === null || !vaultSupported(this.#vaultIdb)) {
+      return Promise.resolve(undefined)
+    }
+    this.#vaultOpening ??= openEspaceVault(this.#principal, { idb: this.#vaultIdb })
+      .then((vault) => {
+        if (this.#stopped) {
+          void vault.close()
+          return undefined
+        }
+        this.#vault = vault
+        return vault
+      })
+      .catch(() => undefined)
+    return this.#vaultOpening
+  }
+
+  async #hydrateVault(): Promise<void> {
+    const vault = await this.#ensureVault()
+    if (vault === undefined || this.#stopped) return
+    try {
+      const cold = await vault.coldStartRead(this.#activeChannelId, this.#activeRoomId)
+      if (this.#stopped) return
+      let changed = false
+      for (const qRoomId of cold.quarantined) {
+        this.#quarantined.add(qRoomId)
+        this.#boundaries.markProtected(qRoomId)
+        if (this.#cached.delete(qRoomId) || this.#cachedBoundaries.delete(qRoomId)) {
+          changed = true
+        }
+      }
+      if (cold.sidebar !== null && this.#liveSyncEpoch === 0) {
+        const nextChannels = new Map(this.#snapshot.channels)
+        let channelsUpdated = false
+        for (const [channelId, roomId] of cold.sidebar.channels) {
+          if (
+            this.#confidentialChannelIds.has(channelId) ||
+            this.#quarantined.has(roomId) ||
+            this.#isRoomMarkedConfidential(roomId)
+          ) {
+            this.#quarantined.add(roomId)
+            this.#boundaries.markProtected(roomId)
+            continue
+          }
+          if (!nextChannels.has(channelId)) {
+            nextChannels.set(channelId, { state: 'resolved', roomId })
+            channelsUpdated = true
+          }
+        }
+        const hydratedRooms: RoomSummary[] = cold.sidebar.rooms
+          .filter(
+            (r) => !this.#quarantined.has(r.roomId) && !this.#isRoomMarkedConfidential(r.roomId)
+          )
+          .map((r) => ({
+            roomId: r.roomId,
+            name: r.name,
+            alias: r.alias,
+            confidentiality: r.verifiedBoundary,
+            kind: r.kind,
+            unread: r.unread,
+            mentions: r.mentions,
+            occupancy: null,
+            ...(r.joined === undefined ? {} : { joined: r.joined }),
+          }))
+        for (const r of cold.sidebar.rooms) {
+          if (!this.#quarantined.has(r.roomId) && !this.#isRoomMarkedConfidential(r.roomId)) {
+            this.#cachedBoundaries.set(r.roomId, r.verifiedBoundary)
+          }
+        }
+        if (this.#snapshot.rooms.length === 0 && hydratedRooms.length > 0) {
+          this.#hydratedSidebarRooms = hydratedRooms
+          this.#snapshot = {
+            ...this.#snapshot,
+            rooms: hydratedRooms,
+            ...(channelsUpdated ? { channels: nextChannels } : {}),
+          }
+          changed = true
+        } else if (channelsUpdated) {
+          this.#snapshot = { ...this.#snapshot, channels: nextChannels }
+          changed = true
+        }
+      }
+      if (
+        cold.activeRoom !== null &&
+        !this.#timelines.has(cold.activeRoom.roomId) &&
+        !this.#quarantined.has(cold.activeRoom.roomId) &&
+        !this.#isRoomMarkedConfidential(cold.activeRoom.roomId)
+      ) {
+        const liveBoundary = this.getRoomBoundary(cold.activeRoom.roomId)
+        if (liveBoundary === 'unknown' || permitsPlaintext(liveBoundary)) {
+          this.#cachedBoundaries.set(cold.activeRoom.roomId, cold.activeRoom.verifiedBoundary)
+          this.#cached.set(cold.activeRoom.roomId, cold.activeRoom.messages)
+          if (
+            this.#liveSyncEpoch === 0 &&
+            cold.activeRoom.summary !== undefined &&
+            !this.#snapshot.rooms.some((r) => r.roomId === cold.activeRoom!.roomId)
+          ) {
+            const s = cold.activeRoom.summary
+            const summaryView: RoomSummary = {
+              roomId: s.roomId,
+              name: s.name,
+              alias: s.alias,
+              confidentiality: s.verifiedBoundary,
+              kind: s.kind,
+              unread: s.unread,
+              mentions: s.mentions,
+              occupancy: null,
+              ...(s.joined === undefined ? {} : { joined: s.joined }),
+            }
+            const nextRooms = [...this.#snapshot.rooms, summaryView].sort((a, b) =>
+              a.name.localeCompare(b.name)
+            )
+            this.#hydratedSidebarRooms = nextRooms
+            this.#snapshot = { ...this.#snapshot, rooms: nextRooms }
+          }
+          changed = true
+        }
+      }
+      const now = Date.now()
+      let earliestHydratedWaitMs: number | null = null
+      for (const item of cold.outbox) {
+        if (this.#outbox.has(item.clientTxnId)) continue
+        if (this.#quarantined.has(item.roomId) || this.#isRoomMarkedConfidential(item.roomId)) {
+          this.#recordOutboxOutcome(
+            item.clientTxnId,
+            item.roomId,
+            'quarantined',
+            'boundary-or-epoch-changed',
+            item.queuedAt
+          )
+          void vault.deleteOutbox(item.clientTxnId)
+          changed = true
+          continue
+        }
+        this.#outbox.set(item.clientTxnId, {
+          ...item,
+          state: 'queued',
+          queuedSyncEpoch: 0,
+        })
+        if (item.notBefore !== undefined && item.notBefore > now) {
+          const waitMs = item.notBefore - now
+          earliestHydratedWaitMs =
+            earliestHydratedWaitMs === null ? waitMs : Math.min(earliestHydratedWaitMs, waitMs)
+        }
+        this.#dirty.add(item.roomId)
+        changed = true
+      }
+      if (earliestHydratedWaitMs !== null) {
+        this.#armOutboxRetryTimer(earliestHydratedWaitMs)
+      }
+      if (changed) {
+        this.#snapshot = { ...this.#snapshot }
+        this.#emit()
+      }
+      if (this.#liveSyncEpoch > 0 && this.#status === 'live' && this.#outbox.size > 0) {
+        this.#schedule()
+      }
+      const remaining = await vault.readRemainingRooms(cold.activeRoom?.roomId)
+      if (this.#stopped) return
+      let remainingChanged = false
+      for (const [roomId, payload] of remaining) {
+        if (
+          this.#timelines.has(roomId) ||
+          this.#quarantined.has(roomId) ||
+          this.#isRoomMarkedConfidential(roomId)
+        ) {
+          continue
+        }
+        const liveBoundary = this.getRoomBoundary(roomId)
+        if (liveBoundary === 'unknown' || permitsPlaintext(liveBoundary)) {
+          this.#cachedBoundaries.set(roomId, payload.verifiedBoundary)
+          this.#cached.set(roomId, payload.messages)
+          remainingChanged = true
+        }
+      }
+      if (remainingChanged) {
+        this.#snapshot = { ...this.#snapshot }
+        this.#emit()
+      }
+    } catch {
+      // Corrupt or unavailable vault fails closed without blocking live sync.
+    }
   }
 
   #hydrate(rooms: ReadonlyMap<string, readonly MessageView[]>): void {
@@ -854,7 +1179,17 @@ export class EspaceStore {
 
   stop(status: SyncStatus = 'stopped'): void {
     if (this.#stopped) {
-      if (status === 'signed-out') this.#typingCleanup.clear()
+      if (status === 'signed-out') {
+        this.#typingCleanup.clear()
+        this.#cached.clear()
+        this.#cachedBoundaries.clear()
+        this.#hydratedSidebarRooms = []
+        this.#outbox.clear()
+        void this.#cache?.wipe()
+        if (this.#vault !== undefined) void this.#vault.wipe()
+        else if (!this.#vaultDisabled) void wipeEspaceVault(this.#vaultIdb)
+        clearMatrixSession()
+      }
       return
     }
     // The view going, another organisation or a new session: the others stop seeing the member
@@ -875,10 +1210,16 @@ export class EspaceStore {
     else this.#starting.catch(() => this.#halt())
     if (status === 'signed-out') {
       this.#cached.clear()
+      this.#cachedBoundaries.clear()
+      this.#hydratedSidebarRooms = []
+      this.#outbox.clear()
       void this.#cache?.wipe()
+      if (this.#vault !== undefined) void this.#vault.wipe()
+      else if (!this.#vaultDisabled) void wipeEspaceVault(this.#vaultIdb)
       clearMatrixSession()
     } else {
       void this.#cache?.close()
+      void this.#vault?.close()
     }
     for (const timer of this.#askAgain.values()) clearTimeout(timer)
     this.#askAgain.clear()
@@ -888,6 +1229,11 @@ export class EspaceStore {
       clearTimeout(this.#joinCooldownTimer)
       this.#joinCooldownTimer = null
     }
+    if (this.#outboxRetryTimer !== null) {
+      clearTimeout(this.#outboxRetryTimer)
+      this.#outboxRetryTimer = null
+    }
+    this.#outboxRetryTargetAt = Number.POSITIVE_INFINITY
     this.#joinRateLimitedUntil = 0
     this.#avatars.close()
     this.#status = status
@@ -904,15 +1250,86 @@ export class EspaceStore {
 
   getUserId = (): string => this.#me
 
+  /** Body-free, non-leaking offline outbox status for queued, replaying, refused, or quarantined items. */
+  getOutboxStatus = (roomId?: string): readonly OutboxStatusEntry[] => {
+    const entries: OutboxStatusEntry[] = []
+    for (const item of this.#outbox.values()) {
+      if (roomId !== undefined && item.roomId !== roomId) continue
+      entries.push({
+        clientTxnId: item.clientTxnId,
+        roomId: item.roomId,
+        state: item.state,
+        queuedAt: item.queuedAt,
+      })
+    }
+    for (const outcome of this.#outboxOutcomes.values()) {
+      if (roomId !== undefined && outcome.roomId !== roomId) continue
+      if (this.#outbox.has(outcome.clientTxnId)) continue
+      entries.push(outcome)
+    }
+    entries.sort((a, b) => a.queuedAt - b.queuedAt || a.clientTxnId.localeCompare(b.clientTxnId))
+    return entries
+  }
+
+  /** Updates workspace-level channel confidentiality, archive status, and membership liveness. */
+  setWorkspaceContext = (context: WorkspaceRuntimeContext): void => {
+    let shouldSchedule = false
+    if (context.activeChannelId !== undefined) this.#activeChannelId = context.activeChannelId
+    if (context.activeRoomId !== undefined) this.#activeRoomId = context.activeRoomId
+    if (context.workspaceChannelIds !== undefined) {
+      this.#workspaceChannelIds = context.workspaceChannelIds
+      shouldSchedule = true
+    }
+    if (context.confidentialChannelIds !== undefined) {
+      this.#confidentialChannelIds = context.confidentialChannelIds
+      for (const chId of this.#confidentialChannelIds) {
+        const resolved = this.#snapshot.channels.get(chId)
+        if (resolved?.state === 'resolved') {
+          this.markConfidentialRoom(resolved.roomId)
+        }
+      }
+    }
+    if (context.archivedChannelIds !== undefined) {
+      this.#archivedChannelIds = context.archivedChannelIds
+      shouldSchedule = true
+    }
+    if (context.membershipActive !== undefined) {
+      this.#membershipActive = context.membershipActive
+      if (!this.#membershipActive && this.#outbox.size > 0) {
+        this.#refuseAllOutbox('membership-revoked')
+        shouldSchedule = true
+      }
+    }
+    if (shouldSchedule && this.#outbox.size > 0) {
+      this.#schedule()
+    }
+  }
+
   /** One room's messages, oldest first; the same array until one of them changes. */
-  getTimeline = (roomId: string): readonly MessageView[] =>
-    permitsPlaintext(this.getRoomBoundary(roomId))
-      ? (this.#timelines.get(roomId) ?? this.#cached.get(roomId) ?? NONE)
-      : NONE
+  getTimeline = (roomId: string): readonly MessageView[] => {
+    if (
+      this.#forbiddenRooms.has(roomId) ||
+      this.#quarantined.has(roomId) ||
+      this.#isRoomMarkedConfidential(roomId)
+    ) {
+      return NONE
+    }
+    const boundary = this.getRoomBoundary(roomId)
+    if (permitsPlaintext(boundary)) {
+      return this.#timelines.get(roomId) ?? this.#cached.get(roomId) ?? NONE
+    }
+    if (boundary === 'unknown') {
+      const attested = this.#cachedBoundaries.get(roomId)
+      if (attested === 'ordinary' || attested === 'community') {
+        return this.#cached.get(roomId) ?? NONE
+      }
+    }
+    return NONE
+  }
 
   /** How far back one room's timeline reaches; it changes with the snapshot, as messages do. */
   getHistory = (roomId: string): History =>
-    permitsPlaintext(this.getRoomBoundary(roomId))
+    !this.#forbiddenRooms.has(roomId) && permitsPlaintext(this.getRoomBoundary(roomId))
       ? (this.#histories.get(roomId) ?? 'more')
       : 'start'
 
@@ -923,7 +1340,9 @@ export class EspaceStore {
    * for a room never read, or not known.
    */
   getReadMarker = (roomId: string): string | null => {
-    if (!permitsPlaintext(this.getRoomBoundary(roomId))) return null
+    if (this.#forbiddenRooms.has(roomId) || !permitsPlaintext(this.getRoomBoundary(roomId))) {
+      return null
+    }
     const marker = this.#client
       .getRoom(roomId)
       ?.getAccountData('m.fully_read')
@@ -939,7 +1358,9 @@ export class EspaceStore {
    * follows it.
    */
   firstShownAfter = (roomId: string, eventId: string): string | null => {
-    if (!permitsPlaintext(this.getRoomBoundary(roomId))) return null
+    if (this.#forbiddenRooms.has(roomId) || !permitsPlaintext(this.getRoomBoundary(roomId))) {
+      return null
+    }
     const events = this.#client.getRoom(roomId)?.getLiveTimeline().getEvents() ?? []
     const at = events.findIndex((event) => event.getId() === eventId)
     if (at === -1) return null
@@ -957,6 +1378,7 @@ export class EspaceStore {
    * greets each with a card (`ArrivalCard`). The same array for the same snapshot.
    */
   getArrivals = (roomId: string): readonly ArrivalView[] => {
+    if (this.#forbiddenRooms.has(roomId)) return NO_ARRIVALS
     const cached = this.#arrivals.get(roomId)
     if (cached?.snapshot === this.#snapshot) return cached.list
     const room = this.#client.getRoom(roomId)
@@ -1014,7 +1436,9 @@ export class EspaceStore {
 
   /** One thread's replies, oldest first; the same array until one of them changes. */
   getThread = (roomId: string, rootEventId: string): readonly MessageView[] => {
-    if (!permitsPlaintext(this.getRoomBoundary(roomId))) return NONE
+    if (this.#forbiddenRooms.has(roomId) || !permitsPlaintext(this.getRoomBoundary(roomId))) {
+      return NONE
+    }
     const byRoom = this.#threads.get(roomId)
     const cached = byRoom?.get(rootEventId)
     if (cached !== undefined) return cached
@@ -1035,9 +1459,10 @@ export class EspaceStore {
     switch (state) {
       case SyncState.Prepared:
       case SyncState.Syncing:
-      case SyncState.Catchup:
         return 'live'
-      // The SDK keeps retrying from an error: the screen says it is reconnecting.
+      // `Catchup` fires *before* the recovery `/sync` HTTP response arrives; stay `'reconnecting'`
+      // until `Syncing` / `Prepared` confirms fresh server state.
+      case SyncState.Catchup:
       case SyncState.Reconnecting:
       case SyncState.Error:
         return 'reconnecting'
@@ -1065,7 +1490,15 @@ export class EspaceStore {
     let messageDataChanged = false
     for (const roomId of this.#dirty) {
       const room = this.#client.getRoom(roomId)
-      if (room === null || room.getMyMembership() !== 'join') {
+      if (room === null || room.getMyMembership() !== 'join' || this.#forbiddenRooms.has(roomId)) {
+        if (
+          !this.#forbiddenRooms.has(roomId) &&
+          this.#liveSyncEpoch === 0 &&
+          (this.#cached.has(roomId) || this.#outbox.size > 0)
+        ) {
+          // Before initial `/sync` lands, preserve attested cold-start cache and queued outbox.
+          continue
+        }
         // Nothing of the room's typing reaches a member out of it: back in, no one is typing
         // until its next `m.typing` says who is. (A room still being set up was never joined.)
         if (this.#timelines.has(roomId)) this.#typingIds.set(roomId, [])
@@ -1078,7 +1511,14 @@ export class EspaceStore {
         this.#timelines.delete(roomId)
         // Out of the room: what this device kept of it goes too.
         if (this.#cached.delete(roomId)) messageDataChanged = true
+        this.#cachedBoundaries.delete(roomId)
         this.#cache?.forget(roomId)
+        if (this.#refuseOutboxForRoom(roomId, 'refused', 'membership-revoked', true)) {
+          messageDataChanged = true
+        }
+        void this.#hydrationDone
+          .then(() => this.#ensureVault())
+          .then((vault) => vault?.forgetRoom(roomId))
         this.#threads.delete(roomId)
         this.#pins.delete(roomId)
         this.#eventsByRoom.delete(roomId)
@@ -1088,11 +1528,25 @@ export class EspaceStore {
         continue
       }
       messageDataChanged = true
-      const plaintext = permitsPlaintext(this.getRoomBoundary(roomId))
-      if (!plaintext) {
+      const boundary = this.getRoomBoundary(roomId)
+      const isConfidential = this.#isRoomMarkedConfidential(roomId)
+      if (isConfidential || !isVerifiedPlaintextBoundary(boundary)) {
         this.#timelines.delete(roomId)
         this.#cached.delete(roomId)
+        this.#cachedBoundaries.delete(roomId)
         this.#cache?.forget(roomId)
+        if (isConfidential || boundary === 'confidential-unavailable' || boundary === 'invalid') {
+          this.#quarantined.add(roomId)
+          this.#boundaries.markProtected(roomId)
+          this.#refuseOutboxForRoom(roomId, 'quarantined', 'boundary-or-epoch-changed', true)
+          void this.#hydrationDone
+            .then(() => this.#ensureVault())
+            .then((vault) => vault?.quarantineRoom(roomId))
+        } else {
+          void this.#hydrationDone
+            .then(() => this.#ensureVault())
+            .then((vault) => vault?.forgetRoom(roomId))
+        }
         this.#threads.delete(roomId)
         this.#pins.delete(roomId)
         this.#eventsByRoom.delete(roomId)
@@ -1108,7 +1562,9 @@ export class EspaceStore {
       const timeline = reuse(this.#timelines.get(roomId), next, (m) => m.key)
       this.#timelines.set(roomId, timeline)
       this.#cached.delete(roomId)
+      this.#cachedBoundaries.set(roomId, boundary)
       this.#cache?.save(roomId, timeline)
+      this.#scheduleRoomVaultSave(room, boundary, timeline)
       const pins = pinnedOf(room.currentState.getStateEvents(PINNED_EVENTS, '')?.getContent())
       const knownPins = this.#pins.get(roomId)
       this.#pins.set(roomId, knownPins !== undefined && sameIds(knownPins, pins) ? knownPins : pins)
@@ -1129,10 +1585,20 @@ export class EspaceStore {
     // Summaries are cheap; unread counts arrive with every sync, so all are recomputed and the
     // unchanged ones reused.
     const joinedSummaries = all
-      .filter((room) => room.getMyMembership() === 'join')
+      .filter((room) => room.getMyMembership() === 'join' && !this.#forbiddenRooms.has(room.roomId))
       .map((room) => this.#summary(room))
       .sort((a, b) => a.name.localeCompare(b.name))
-    const rooms = reuse(this.#snapshot.rooms, joinedSummaries, (r) => r.roomId)
+    const rooms =
+      this.#liveSyncEpoch === 0 &&
+      joinedSummaries.length === 0 &&
+      this.#hydratedSidebarRooms.length > 0
+        ? this.#hydratedSidebarRooms.filter(
+            (r) =>
+              !this.#forbiddenRooms.has(r.roomId) &&
+              !this.#quarantined.has(r.roomId) &&
+              !this.#isRoomMarkedConfidential(r.roomId)
+          )
+        : reuse(this.#snapshot.rooms, joinedSummaries, (r) => r.roomId)
     const invites = reuse(
       this.#snapshot.invites,
       all
@@ -1173,6 +1639,10 @@ export class EspaceStore {
       this.#ensureMentionRules()
       this.#syncWantedJoins(rooms)
       this.#recheck(rooms, invites)
+      if (this.#liveSyncEpoch > 0) {
+        this.#scheduleSidebarVaultSave(rooms)
+        void this.#replayOutbox()
+      }
     }
     const typingChanged = this.#typingChanged
     this.#typingChanged = false
@@ -1333,6 +1803,7 @@ export class EspaceStore {
 
   /** The panel's joined human roster includes the viewer; mention suggestions do not. */
   getRoster = (roomId: string): readonly MemberView[] => {
+    if (this.#forbiddenRooms.has(roomId)) return NO_MEMBERS
     const room = this.#client.getRoom(roomId)
     if (room === null || room.getMyMembership() !== 'join') return NO_MEMBERS
     const next = room
@@ -1351,12 +1822,15 @@ export class EspaceStore {
 
   /** The room's pinned events, oldest pin first; the same array until they change. */
   getPinned = (roomId: string): readonly string[] =>
-    permitsPlaintext(this.getRoomBoundary(roomId)) ? (this.#pins.get(roomId) ?? NO_PINS) : NO_PINS
+    !this.#forbiddenRooms.has(roomId) && permitsPlaintext(this.getRoomBoundary(roomId))
+      ? (this.#pins.get(roomId) ?? NO_PINS)
+      : NO_PINS
 
   /** Whether the room's power levels let the member change its pins. */
   canPin = (roomId: string): boolean => {
     const room = this.#client.getRoom(roomId)
     if (
+      this.#forbiddenRooms.has(roomId) ||
       !this.#isPlaintextRoomAllowed(roomId) ||
       room === null ||
       room.getMyMembership() !== 'join' ||
@@ -1368,10 +1842,17 @@ export class EspaceStore {
 
   /** Marks a room as confidential out-of-band so plaintext is permanently refused. */
   markConfidentialRoom = (roomId: string): void => {
+    this.#confidentialRooms.add(roomId)
+    this.#quarantined.add(roomId)
     this.#boundaries.markProtected(roomId)
     this.#timelines.delete(roomId)
     this.#cached.delete(roomId)
+    this.#cachedBoundaries.delete(roomId)
     this.#cache?.forget(roomId)
+    this.#refuseOutboxForRoom(roomId, 'quarantined', 'boundary-or-epoch-changed', true)
+    void this.#hydrationDone
+      .then(() => this.#ensureVault())
+      .then((vault) => vault?.quarantineRoom(roomId))
     this.#threads.delete(roomId)
     this.#pins.delete(roomId)
     this.#eventsByRoom.delete(roomId)
@@ -1381,6 +1862,198 @@ export class EspaceStore {
       this.#dirty.add(roomId)
       this.#schedule()
     }
+  }
+
+  #isRoomMarkedConfidential(roomId: string): boolean {
+    if (this.#confidentialRooms.has(roomId)) return true
+    for (const [chId, resolved] of this.#snapshot.channels) {
+      if (resolved.state === 'resolved' && resolved.roomId === roomId) {
+        if (this.#confidentialChannelIds.has(chId)) return true
+      }
+    }
+    return false
+  }
+
+  #channelIdForRoom(roomId: string): string | undefined {
+    for (const [chId, resolved] of this.#snapshot.channels) {
+      if (resolved.state === 'resolved' && resolved.roomId === roomId) {
+        return chId
+      }
+    }
+    if (this.#activeRoomId === roomId && this.#activeChannelId !== undefined) {
+      return this.#activeChannelId
+    }
+    return undefined
+  }
+
+  #isDirectRoom(roomId: string): boolean {
+    const map = directMap(this.#client.getAccountData(EventType.Direct)?.getContent())
+    return directRooms(map).has(roomId)
+  }
+
+  #isChannelArchivedForRoom(roomId: string, explicitChannelId?: string | undefined): boolean {
+    if (explicitChannelId !== undefined && this.#archivedChannelIds.has(explicitChannelId)) {
+      return true
+    }
+    for (const [chId, resolved] of this.#snapshot.channels) {
+      if (resolved.state === 'resolved' && resolved.roomId === roomId) {
+        if (this.#archivedChannelIds.has(chId)) return true
+      }
+    }
+    return false
+  }
+
+  #isChannelArchiveUnresolvedForOutbox(entry: InternalOutboxEntry): boolean {
+    if (entry.channelId !== undefined) return false
+    if (this.#channelIdForRoom(entry.roomId) !== undefined) return false
+    if (this.#isDirectRoom(entry.roomId)) return false
+    const hasWorkspaceChannels =
+      this.#workspaceChannelIds.size > 0 ||
+      this.#archivedChannelIds.size > 0 ||
+      this.#watched.size > 0
+    if (!hasWorkspaceChannels) return false
+
+    const toVerify = new Set<string>([
+      ...this.#archivedChannelIds,
+      ...this.#workspaceChannelIds,
+      ...this.#watched,
+    ])
+    let anyUnsettled = false
+    for (const chId of toVerify) {
+      const current = this.#snapshot.channels.get(chId)
+      if (current?.state === 'resolved') continue
+      anyUnsettled = true
+      if (isChannelId(chId)) {
+        void this.#lookUp(chId)
+      }
+    }
+    if (anyUnsettled) return true
+    return this.#workspaceChannelIds.size > 0
+  }
+
+  #purgeVaultRoomAndRotateKey(roomId: string): void {
+    this.#cached.delete(roomId)
+    this.#cachedBoundaries.delete(roomId)
+    this.#cache?.forget(roomId)
+    void this.#hydrationDone
+      .then(() => this.#ensureVault())
+      .then((vault) => vault?.forgetRoom(roomId))
+  }
+
+  #scrubForbiddenRoom(roomId: string): void {
+    this.#forbiddenRooms.add(roomId)
+    const room = this.#client.getRoom(roomId)
+    if (room !== null) {
+      for (const ev of [...this.#pendingRoomEvents(room)]) {
+        try {
+          this.#client.cancelPendingEvent(ev)
+        } catch {
+          // Ignore already settled event.
+        }
+      }
+    }
+    if (this.#timelines.has(roomId) || this.#typingIds.has(roomId)) {
+      this.#typingIds.set(roomId, [])
+    }
+    this.#typing.delete(roomId)
+    this.#timelines.delete(roomId)
+    this.#threads.delete(roomId)
+    this.#pins.delete(roomId)
+    this.#arrivals.delete(roomId)
+    this.#eventsByRoom.delete(roomId)
+    this.#paging.delete(roomId)
+    this.#histories.delete(roomId)
+    this.#members.delete(roomId)
+    this.#rosters.delete(roomId)
+    this.#hydratedSidebarRooms = this.#hydratedSidebarRooms.filter((r) => r.roomId !== roomId)
+    this.#refuseOutboxForRoom(roomId, 'refused', 'membership-revoked', true)
+    this.#purgeVaultRoomAndRotateKey(roomId)
+  }
+
+  #purgeRoomOnLeaveOrBan(roomId: string): void {
+    if (this.#timelines.has(roomId) || this.#typingIds.has(roomId)) {
+      this.#typingIds.set(roomId, [])
+    }
+    this.#typing.delete(roomId)
+    this.#timelines.delete(roomId)
+    this.#threads.delete(roomId)
+    this.#pins.delete(roomId)
+    this.#eventsByRoom.delete(roomId)
+    this.#paging.delete(roomId)
+    this.#histories.delete(roomId)
+    this.#refuseOutboxForRoom(roomId, 'refused', 'membership-revoked', true)
+    this.#purgeVaultRoomAndRotateKey(roomId)
+  }
+
+  #scheduleRoomVaultSave(
+    room: Room,
+    boundary: VerifiedPlaintextBoundary,
+    timeline: readonly MessageView[]
+  ): void {
+    if (
+      this.#stopped ||
+      this.#vaultDisabled ||
+      this.#quarantined.has(room.roomId) ||
+      this.#isRoomMarkedConfidential(room.roomId)
+    ) {
+      return
+    }
+    const summaryData = this.#summary(room)
+    const cachedSummary: CachedRoomSummary = {
+      roomId: summaryData.roomId,
+      name: summaryData.name,
+      alias: summaryData.alias,
+      verifiedBoundary: boundary,
+      kind: summaryData.kind,
+      unread: summaryData.unread,
+      mentions: summaryData.mentions,
+      ...(summaryData.joined === undefined ? {} : { joined: summaryData.joined }),
+    }
+    const channelIds: string[] = []
+    for (const [chId, resolved] of this.#snapshot.channels) {
+      if (resolved.state === 'resolved' && resolved.roomId === room.roomId) {
+        channelIds.push(chId)
+      }
+    }
+    void this.#ensureVault().then((vault) => {
+      if (!vault || this.#stopped || this.#quarantined.has(room.roomId)) return
+      vault.scheduleRoomSave(room.roomId, boundary, timeline, cachedSummary, channelIds)
+    })
+  }
+
+  #scheduleSidebarVaultSave(rooms: readonly RoomSummary[]): void {
+    if (this.#stopped || this.#vaultDisabled) return
+    const cachedSummaries: CachedRoomSummary[] = []
+    for (const r of rooms) {
+      if (this.#quarantined.has(r.roomId) || this.#isRoomMarkedConfidential(r.roomId)) continue
+      const boundary = r.confidentiality ?? this.getRoomBoundary(r.roomId)
+      if (!isVerifiedPlaintextBoundary(boundary)) continue
+      cachedSummaries.push({
+        roomId: r.roomId,
+        name: r.name,
+        alias: r.alias,
+        verifiedBoundary: boundary,
+        kind: r.kind,
+        unread: r.unread,
+        mentions: r.mentions,
+        ...(r.joined === undefined ? {} : { joined: r.joined }),
+      })
+    }
+    const validRoomIds = new Set(cachedSummaries.map((s) => s.roomId))
+    const channelPairs: [string, string][] = []
+    for (const [chId, resolved] of this.#snapshot.channels) {
+      if (
+        resolved.state === 'resolved' &&
+        !this.#confidentialChannelIds.has(chId) &&
+        validRoomIds.has(resolved.roomId)
+      ) {
+        channelPairs.push([chId, resolved.roomId])
+      }
+    }
+    void this.#ensureVault().then((vault) => {
+      if (!vault || this.#stopped) return
+      vault.scheduleSidebarSave(cachedSummaries, channelPairs)
+    })
   }
 
   #pendingRoomEvents(
@@ -1426,6 +2099,14 @@ export class EspaceStore {
     const policyEvent = room.currentState.getStateEvents(POLICY as never, '')
     if (policyEvent?.getSender() !== `@kodera-agent:${server}`) return false
     const content = policyEvent.getContent() as Record<string, unknown> | undefined
+    if (
+      content?.read_only === true ||
+      content?.readOnly === true ||
+      content?.posting === 'readonly' ||
+      content?.posting === 'none'
+    ) {
+      return true
+    }
     const muted = content?.muted_until
     if (muted === null || typeof muted !== 'object' || Array.isArray(muted)) return false
     if (!Object.hasOwn(muted, this.#me)) return false
@@ -1435,19 +2116,76 @@ export class EspaceStore {
     return Number.isNaN(parsed) || parsed > Date.now()
   }
 
+  #roomEpoch(room: NonNullable<ReturnType<MatrixClient['getRoom']>>): number {
+    for (const type of [
+      'io.kodera.room.confidential',
+      'io.kodera.room.epoch',
+      POLICY,
+      'm.room.create',
+    ]) {
+      const ev = room.currentState.getStateEvents(type as never, '')
+      const content = ev?.getContent() as Record<string, unknown> | undefined
+      if (content && Object.hasOwn(content, 'epoch') && content.epoch !== undefined) {
+        return typeof content.epoch === 'number' && Number.isSafeInteger(content.epoch)
+          ? content.epoch
+          : -1
+      }
+    }
+    return 0
+  }
+
   #isPlaintextRoomAllowed(roomId: string): boolean {
-    return !this.#stopped && permitsPlaintext(this.getRoomBoundary(roomId))
+    return (
+      !this.#stopped &&
+      !this.#quarantined.has(roomId) &&
+      !this.#isRoomMarkedConfidential(roomId) &&
+      permitsPlaintext(this.getRoomBoundary(roomId))
+    )
   }
 
   #requirePlaintextRoom(roomId: string): void {
     if (!this.#isPlaintextRoomAllowed(roomId)) throw new ConfidentialRoomUnavailable()
   }
 
-  #requireUnmutedPlaintextRoom(roomId: string): void {
+  #requireUnmutedPlaintextRoom(
+    roomId: string,
+    options?: { readonly requireMessageSendPermission?: boolean | undefined }
+  ): void {
     this.#requirePlaintextRoom(roomId)
+    if (this.#forbiddenRooms.has(roomId)) {
+      throw new Error('Room membership is no longer active. No content was sent.')
+    }
+    if (
+      this.#authLifetime != null &&
+      (!this.#authLifetime.hasUsableCredential() ||
+        this.#authLifetime.getRetirementStamp() !== this.#authStamp)
+    ) {
+      throw new Error('Session credential is no longer active. No content was sent.')
+    }
+    if (!this.#membershipActive) {
+      throw new Error('Workspace membership is inactive. No content was sent.')
+    }
+    if (this.#isChannelArchivedForRoom(roomId)) {
+      throw new Error('This channel is archived. No content was sent.')
+    }
     const room = this.#client.getRoom(roomId)
-    if (room !== null && this.#isMutedInRoom(room)) {
-      throw new Error('The member is muted in this room. No content was sent.')
+    if (room !== null) {
+      if (room.getMyMembership() !== 'join') {
+        throw new Error('Room membership is no longer active. No content was sent.')
+      }
+      if (this.#roomEpoch(room) !== 0) {
+        throw new ConfidentialRoomUnavailable()
+      }
+      if (this.#isMutedInRoom(room)) {
+        throw new Error('The member is muted in this room. No content was sent.')
+      }
+      if (
+        options?.requireMessageSendPermission === true &&
+        !isV12RoomCreator(room, this.#me) &&
+        !room.currentState.maySendEvent(EventType.RoomMessage, this.#me)
+      ) {
+        throw new Error('The member cannot send messages in this room. No content was sent.')
+      }
     }
   }
 
@@ -1455,19 +2193,25 @@ export class EspaceStore {
   canSendMessage = (roomId: string): boolean => {
     const room = this.#client.getRoom(roomId)
     if (
+      this.#forbiddenRooms.has(roomId) ||
       !this.#isPlaintextRoomAllowed(roomId) ||
+      this.#isChannelArchivedForRoom(roomId) ||
       room === null ||
       room.getMyMembership() !== 'join' ||
       this.#isMutedInRoom(room)
     )
       return false
-    return room.currentState.maySendEvent(EventType.RoomMessage, this.#me)
+    return (
+      isV12RoomCreator(room, this.#me) ||
+      room.currentState.maySendEvent(EventType.RoomMessage, this.#me)
+    )
   }
 
   /** Whether the room's power levels let the member react to messages (`m.reaction`). */
   canReact = (roomId: string): boolean => {
     const room = this.#client.getRoom(roomId)
     if (
+      this.#forbiddenRooms.has(roomId) ||
       !this.#isPlaintextRoomAllowed(roomId) ||
       room === null ||
       room.getMyMembership() !== 'join' ||
@@ -1518,6 +2262,7 @@ export class EspaceStore {
    * members the sync brought.
    */
   getMembers = (roomId: string): readonly MemberView[] => {
+    if (this.#forbiddenRooms.has(roomId)) return NO_MEMBERS
     const room = this.#client.getRoom(roomId)
     if (room === null || room.getMyMembership() !== 'join') return NO_MEMBERS
     const next = this.#joinedOthers(room)
@@ -1534,6 +2279,7 @@ export class EspaceStore {
    * has not loaded yet is named by id, as their messages would be.
    */
   getTyping = (roomId: string): readonly MemberView[] => {
+    if (this.#forbiddenRooms.has(roomId)) return NO_MEMBERS
     const room = this.#client.getRoom(roomId)
     if (room === null || room.getMyMembership() !== 'join') return NO_MEMBERS
     const ids =
@@ -1613,19 +2359,36 @@ export class EspaceStore {
 
   /** The live timeline then this device's unsent events, as Matrix events plus what this device knows. */
   #events(room: Room): TimelineEvent[] {
-    return [...room.getLiveTimeline().getEvents(), ...room.getPendingEvents()].map((event) => {
+    const liveEvents = room.getLiveTimeline().getEvents()
+    const liveTxnIds = new Set<string>()
+    for (const event of liveEvents) {
+      const txn = event.getTxnId() ?? (event.getUnsigned().transaction_id as string | undefined)
+      if (txn !== undefined) liveTxnIds.add(txn)
+    }
+    for (const txn of liveTxnIds) {
+      if (this.#outbox.delete(txn)) {
+        this.#outboxOutcomes.delete(txn)
+        void this.#vault?.deleteOutbox(txn)
+      }
+    }
+    const seenKeys = new Set<string>()
+    const mapped = [...liveEvents, ...room.getPendingEvents()].map((event) => {
       const id = event.getId() ?? ''
       const content = event.getOriginalContent() as Record<string, unknown>
       const relation = relationOf(content)
       if (relation !== null && !event.isRedacted()) this.#relations.set(id, relation)
       const remembered = event.isRedacted() ? this.#relations.get(id) : undefined
-      const local =
-        event.status === EventStatus.NOT_SENT
+      const txn = event.getTxnId() ?? (event.getUnsigned().transaction_id as string | undefined)
+      const isQueuedOutbox = txn !== undefined && this.#outbox.has(txn)
+      const local = isQueuedOutbox
+        ? ('pending' as const)
+        : event.status === EventStatus.NOT_SENT
           ? ('failed' as const)
           : event.status !== null
             ? ('pending' as const)
             : undefined
-      const txn = event.getTxnId() ?? (event.getUnsigned().transaction_id as string | undefined)
+      if (txn !== undefined) seenKeys.add(txn)
+      if (id !== '') seenKeys.add(id)
       const senderName = displayName(room, event.getSender() ?? '')
       const senderAvatar = avatarOf(room, event.getSender() ?? '')
       return {
@@ -1643,6 +2406,24 @@ export class EspaceStore {
         ...(senderAvatar === undefined ? {} : { sender_avatar: senderAvatar }),
       }
     })
+    for (const item of this.#outbox.values()) {
+      if (item.roomId !== room.roomId || seenKeys.has(item.clientTxnId)) continue
+      const senderName = displayName(room, this.#me)
+      const senderAvatar = avatarOf(room, this.#me)
+      mapped.push({
+        event_id: `~${room.roomId}:${item.clientTxnId}`,
+        type: EventType.RoomMessage,
+        sender: this.#me,
+        origin_server_ts: item.queuedAt,
+        content: item.content,
+        unsigned: {},
+        key: item.clientTxnId,
+        local: 'pending',
+        ...(senderName === undefined ? {} : { sender_name: senderName }),
+        ...(senderAvatar === undefined ? {} : { sender_avatar: senderAvatar }),
+      })
+    }
+    return mapped
   }
 
   #emit(): void {
@@ -1758,10 +2539,19 @@ export class EspaceStore {
     })
     if (!resolved) this.#later(channelId, wait)
     const current = this.#snapshot.channels.get(channelId)
+    if (room.state === 'resolved' && this.#confidentialChannelIds.has(channelId)) {
+      this.markConfidentialRoom(room.roomId)
+    }
     if (current !== undefined && same(current, room)) return
     const channels = new Map(this.#snapshot.channels)
     channels.set(channelId, room)
     this.#snapshot = { ...this.#snapshot, channels }
+    if (resolved && this.#liveSyncEpoch > 0 && this.#status === 'live') {
+      this.#scheduleSidebarVaultSave(this.#snapshot.rooms)
+      if (this.#outbox.size > 0) {
+        void this.#replayOutbox()
+      }
+    }
     this.#emit()
   }
 
@@ -1801,6 +2591,21 @@ export class EspaceStore {
 
   async send(roomId: string, body: string, options: SendOptions = {}): Promise<void> {
     this.#requireUnmutedPlaintextRoom(roomId)
+    if (this.#isChannelArchivedForRoom(roomId)) {
+      throw new Error('This channel is archived. No content was sent.')
+    }
+    const syncedRoom = this.#client.getRoom(roomId)
+    if (
+      syncedRoom !== null &&
+      !isV12RoomCreator(syncedRoom, this.#me) &&
+      !syncedRoom.currentState.maySendEvent(EventType.RoomMessage, this.#me)
+    ) {
+      throw new Error('The member cannot send messages in this room. No content was sent.')
+    }
+    const boundary = this.getRoomBoundary(roomId)
+    if (!isVerifiedPlaintextBoundary(boundary)) {
+      throw new ConfidentialRoomUnavailable()
+    }
     const relatesTo =
       options.threadRootId !== undefined
         ? {
@@ -1815,6 +2620,11 @@ export class EspaceStore {
             }
           : undefined
     const attachments = options.attachments ?? []
+    const effectiveBody =
+      body === '' && attachments.length > 0 ? attachmentsFallback(attachments) : body
+    if (new TextEncoder().encode(effectiveBody).byteLength > MAX_OUTBOX_BODY_BYTES) {
+      throw new Error('Message exceeds maximum offline outbox size. No content was sent.')
+    }
     // The Markdown the member typed, as HTML other Matrix clients draw; `body` stays the text.
     const html = body === '' ? null : markdownToHtml(body, options.mentionTargets ?? [])
     const mentions =
@@ -1824,15 +2634,513 @@ export class EspaceStore {
             user_ids: options.mentions ?? [],
             ...(options.mentionsRoom === true ? { room: true } : {}),
           }
-    await this.#client.sendMessage(roomId, {
+    const content: Record<string, unknown> = {
       msgtype: MsgType.Text,
       // Other clients show the files' names when the message has no text of its own.
-      body: body === '' && attachments.length > 0 ? attachmentsFallback(attachments) : body,
+      body: effectiveBody,
       ...(html === null ? {} : { format: HTML_FORMAT, formatted_body: html }),
       ...(attachments.length === 0 ? {} : { [ATTACHMENTS_FIELD]: attachments }),
       ...(mentions === undefined ? {} : { 'm.mentions': mentions }),
       ...(relatesTo === undefined ? {} : { 'm.relates_to': relatesTo }),
-    } as never)
+    }
+    const clientTxnId =
+      typeof options.clientTxnId === 'string' &&
+      options.clientTxnId.trim().length > 0 &&
+      options.clientTxnId.trim().length <= 128
+        ? options.clientTxnId.trim()
+        : this.#client.makeTxnId()
+
+    const resolvedChannelId =
+      typeof options.channelId === 'string' &&
+      options.channelId.trim().length > 0 &&
+      options.channelId.trim().length <= 128
+        ? options.channelId.trim()
+        : this.#channelIdForRoom(roomId)
+    if (this.#isChannelArchivedForRoom(roomId, resolvedChannelId)) {
+      throw new Error('This channel is archived. No content was sent.')
+    }
+
+    const isOfflineNow =
+      this.#status === 'reconnecting' ||
+      (typeof navigator !== 'undefined' && navigator.onLine === false)
+
+    const vault = await this.#ensureVault()
+    // Re-verify room protection and membership/policy after awaiting vault open.
+    this.#requireUnmutedPlaintextRoom(roomId, { requireMessageSendPermission: true })
+    if (this.#isChannelArchivedForRoom(roomId, resolvedChannelId)) {
+      throw new Error('This channel is archived. No content was sent.')
+    }
+    const recheckedBoundary = this.getRoomBoundary(roomId)
+    if (!isVerifiedPlaintextBoundary(recheckedBoundary)) {
+      throw new ConfidentialRoomUnavailable()
+    }
+
+    if (isOfflineNow) {
+      if (!this.#outbox.has(clientTxnId) && this.#outbox.size >= MAX_OUTBOX_ITEMS) {
+        throw new Error('Offline outbox capacity reached. No content was sent.')
+      }
+      const queuedAt = Date.now()
+      if (vault !== undefined) {
+        try {
+          await vault.putOutbox({
+            clientTxnId,
+            roomId,
+            ...(resolvedChannelId === undefined ? {} : { channelId: resolvedChannelId }),
+            verifiedBoundary: recheckedBoundary,
+            queuedAt,
+            body: effectiveBody,
+            content,
+          })
+        } catch (error) {
+          if (error instanceof EspaceVaultError && error.code === 'capacity') {
+            throw new Error('Offline outbox capacity reached. No content was sent.', {
+              cause: error,
+            })
+          }
+          if (error instanceof EspaceVaultError && error.code === 'quarantined') {
+            throw new ConfidentialRoomUnavailable()
+          }
+          throw error
+        }
+      }
+      this.#outboxOutcomes.delete(clientTxnId)
+      this.#outbox.set(clientTxnId, {
+        clientTxnId,
+        roomId,
+        ...(resolvedChannelId === undefined ? {} : { channelId: resolvedChannelId }),
+        verifiedBoundary: recheckedBoundary,
+        expectedEpoch: 0,
+        queuedAt,
+        body: effectiveBody,
+        content,
+        state: 'queued',
+        queuedSyncEpoch: this.#liveSyncEpoch,
+      })
+      this.#dirty.add(roomId)
+      this.#schedule()
+      return
+    }
+
+    let persistedToVault = false
+    const queuedAt = Date.now()
+    if (vault !== undefined && (this.#outbox.has(clientTxnId) || this.#outbox.size < MAX_OUTBOX_ITEMS)) {
+      try {
+        await vault.putOutbox({
+          clientTxnId,
+          roomId,
+          ...(resolvedChannelId === undefined ? {} : { channelId: resolvedChannelId }),
+          verifiedBoundary: recheckedBoundary,
+          queuedAt,
+          body: effectiveBody,
+          content,
+        })
+        persistedToVault = true
+      } catch (error) {
+        if (error instanceof EspaceVaultError && error.code === 'quarantined') {
+          throw new ConfidentialRoomUnavailable()
+        }
+      }
+    }
+
+    try {
+      await this.#client.sendMessage(roomId, content as never, clientTxnId)
+      this.#outbox.delete(clientTxnId)
+      this.#outboxOutcomes.delete(clientTxnId)
+      if (persistedToVault && vault !== undefined) {
+        void vault.deleteOutbox(clientTxnId)
+      }
+    } catch (error: unknown) {
+      const isUnauthorizedSession =
+        error instanceof MatrixError &&
+        (error.errcode === 'M_UNKNOWN_TOKEN' || error.httpStatus === 401)
+      if (isUnauthorizedSession) {
+        this.stop('signed-out')
+        throw error
+      }
+      if (error instanceof ConfidentialRoomUnavailable) {
+        this.markConfidentialRoom(roomId)
+        throw error
+      }
+      const isForbidden =
+        error instanceof MatrixError &&
+        (error.httpStatus === 403 || error.errcode === 'M_FORBIDDEN')
+      if (isForbidden) {
+        this.#outbox.delete(clientTxnId)
+        this.#recordOutboxOutcome(clientTxnId, roomId, 'refused', 'membership-revoked', queuedAt)
+        this.#scrubForbiddenRoom(roomId)
+        this.#dirty.add(roomId)
+        this.#snapshot = { ...this.#snapshot }
+        this.#schedule()
+        throw error
+      }
+      const permanentRefusal =
+        error instanceof MatrixError &&
+        typeof error.httpStatus === 'number' &&
+        error.httpStatus >= 400 &&
+        error.httpStatus < 500 &&
+        !error.isRateLimitError()
+      if (permanentRefusal) {
+        this.#outbox.delete(clientTxnId)
+        if (persistedToVault && vault !== undefined) {
+          void vault.deleteOutbox(clientTxnId)
+        }
+        throw error
+      }
+      // Transient network / offline failure or 429 rate-limit: keep encrypted in outbox for
+      // server-revalidated replay ONLY after Retry-After (if 429) AND the next `/sync` completes.
+      const retryDelayMs =
+        error instanceof MatrixError && error.isRateLimitError() ? rateLimitWaitMs(error, 1) : 0
+      const notBefore = retryDelayMs > 0 ? Date.now() + retryDelayMs : undefined
+      const canQueueOutbox =
+        persistedToVault ||
+        (vault === undefined &&
+          (this.#outbox.has(clientTxnId) || this.#outbox.size < MAX_OUTBOX_ITEMS))
+      if (canQueueOutbox) {
+        this.#outboxOutcomes.delete(clientTxnId)
+        this.#outbox.set(clientTxnId, {
+          clientTxnId,
+          roomId,
+          ...(resolvedChannelId === undefined ? {} : { channelId: resolvedChannelId }),
+          verifiedBoundary: recheckedBoundary,
+          expectedEpoch: 0,
+          queuedAt,
+          body: effectiveBody,
+          content,
+          state: 'queued',
+          queuedSyncEpoch: this.#liveSyncEpoch,
+          ...(notBefore === undefined ? {} : { notBefore }),
+        })
+        if (notBefore !== undefined) {
+          if (vault !== undefined) {
+            void vault
+              .putOutbox({
+                clientTxnId,
+                roomId,
+                ...(resolvedChannelId === undefined ? {} : { channelId: resolvedChannelId }),
+                verifiedBoundary: recheckedBoundary,
+                queuedAt,
+                notBefore,
+                body: effectiveBody,
+                content,
+              })
+              .catch(() => undefined)
+          }
+          this.#armOutboxRetryTimer(retryDelayMs)
+        }
+        this.#dirty.add(roomId)
+        this.#schedule()
+      }
+      throw error
+    }
+  }
+
+  #armOutboxRetryTimer(delayMs: number): void {
+    if (this.#stopped) return
+    const clampedMs = Math.max(10, delayMs)
+    const targetAt = Date.now() + clampedMs
+    if (this.#outboxRetryTimer !== null && this.#outboxRetryTargetAt <= targetAt) {
+      return
+    }
+    if (this.#outboxRetryTimer !== null) clearTimeout(this.#outboxRetryTimer)
+    this.#outboxRetryTargetAt = targetAt
+    this.#outboxRetryTimer = setTimeout(() => {
+      this.#outboxRetryTimer = null
+      this.#outboxRetryTargetAt = Number.POSITIVE_INFINITY
+      if (!this.#stopped && this.#status === 'live' && this.#outbox.size > 0) {
+        this.#schedule()
+      }
+    }, clampedMs)
+  }
+
+  #recordOutboxOutcome(
+    clientTxnId: string,
+    roomId: string,
+    state: 'refused' | 'quarantined',
+    reason: OutboxRefusalReason,
+    queuedAt: number
+  ): void {
+    this.#outboxOutcomes.set(clientTxnId, {
+      clientTxnId,
+      roomId,
+      state,
+      reason,
+      queuedAt,
+    })
+  }
+
+  #cancelSdkPendingByTxnId(roomId: string, clientTxnId: string): void {
+    const room = this.#client.getRoom(roomId)
+    if (room === null) return
+    const match = this.#pendingRoomEvents(room).find(
+      (candidate) => (candidate.getTxnId() ?? candidate.getId()) === clientTxnId
+    )
+    if (match !== undefined) {
+      try {
+        this.#client.cancelPendingEvent(match)
+      } catch {
+        // Already removed from pending list.
+      }
+    }
+  }
+
+  #refuseOutboxForRoom(
+    roomId: string,
+    state: 'refused' | 'quarantined',
+    reason: OutboxRefusalReason,
+    skipVaultDelete = false
+  ): boolean {
+    let changed = false
+    for (const [txnId, entry] of this.#outbox) {
+      if (entry.roomId !== roomId) continue
+      this.#outbox.delete(txnId)
+      this.#cancelSdkPendingByTxnId(roomId, txnId)
+      this.#recordOutboxOutcome(txnId, roomId, state, reason, entry.queuedAt)
+      if (!skipVaultDelete) {
+        void this.#vault?.deleteOutbox(txnId)
+      }
+      changed = true
+    }
+    return changed
+  }
+
+  #refuseAllOutbox(reason: OutboxRefusalReason): void {
+    const affectedRooms = new Set<string>()
+    for (const [txnId, entry] of this.#outbox) {
+      this.#outbox.delete(txnId)
+      this.#cancelSdkPendingByTxnId(entry.roomId, txnId)
+      this.#recordOutboxOutcome(txnId, entry.roomId, 'refused', reason, entry.queuedAt)
+      affectedRooms.add(entry.roomId)
+      this.#dirty.add(entry.roomId)
+    }
+    for (const roomId of affectedRooms) {
+      void this.#hydrationDone
+        .then(() => this.#ensureVault())
+        .then((vault) => vault?.forgetRoom(roomId))
+    }
+  }
+
+  #revalidateOutboxEntry(
+    entry: InternalOutboxEntry
+  ):
+    | { readonly ok: true }
+    | { readonly ok: false; readonly hold: true }
+    | {
+        readonly ok: false
+        readonly hold?: false
+        readonly state: 'refused' | 'quarantined'
+        readonly reason: OutboxRefusalReason
+      } {
+    // 1. Principal & Membership check
+    if (
+      this.#authLifetime != null &&
+      (!this.#authLifetime.hasUsableCredential() ||
+        this.#authLifetime.getRetirementStamp() !== this.#authStamp)
+    ) {
+      return { ok: false, state: 'refused', reason: 'membership-revoked' }
+    }
+    if (!this.#membershipActive) {
+      return { ok: false, state: 'refused', reason: 'membership-revoked' }
+    }
+    if (this.#isChannelArchivedForRoom(entry.roomId, entry.channelId)) {
+      return { ok: false, state: 'refused', reason: 'channel-archived' }
+    }
+    const room = this.#client.getRoom(entry.roomId)
+    if (room === null || room.getMyMembership() !== 'join') {
+      return { ok: false, state: 'refused', reason: 'membership-revoked' }
+    }
+    if (this.#isChannelArchiveUnresolvedForOutbox(entry)) {
+      return { ok: false, hold: true }
+    }
+
+    // 2. Boundary & Epoch (`0`) check (checked before policy so confidential rooms quarantine first)
+    const boundary = this.getRoomBoundary(entry.roomId)
+    const createContent = room.currentState.getStateEvents('m.room.create', '')?.getContent() as
+      | Record<string, unknown>
+      | undefined
+    const hasEncryptionState =
+      room.currentState.getStateEvents('m.room.encryption', '') != null ||
+      room.currentState.getStateEvents('io.kodera.room.confidential' as never, '') != null ||
+      (createContent != null && Object.hasOwn(createContent, 'io.kodera.room.confidential'))
+    const hasEncryptedEvents = [
+      ...room.getLiveTimeline().getEvents(),
+      ...this.#pendingRoomEvents(room),
+    ].some((ev) => ev.getType() === 'm.room.encrypted')
+    const roomEpoch = this.#roomEpoch(room)
+
+    if (
+      this.#quarantined.has(entry.roomId) ||
+      this.#isRoomMarkedConfidential(entry.roomId) ||
+      !isVerifiedPlaintextBoundary(boundary) ||
+      hasEncryptionState ||
+      hasEncryptedEvents ||
+      roomEpoch !== 0 ||
+      entry.expectedEpoch !== 0
+    ) {
+      return { ok: false, state: 'quarantined', reason: 'boundary-or-epoch-changed' }
+    }
+
+    // 3. Live Room Policy (`io.kodera.room.policy`) & Power Levels check
+    if (
+      this.#isMutedInRoom(room) ||
+      (!isV12RoomCreator(room, this.#me) &&
+        !room.currentState.maySendEvent(EventType.RoomMessage, this.#me))
+    ) {
+      return { ok: false, state: 'refused', reason: 'policy-readonly' }
+    }
+
+    return { ok: true }
+  }
+
+  async #replayOutbox(): Promise<void> {
+    if (
+      this.#replayingOutbox ||
+      this.#stopped ||
+      this.#status !== 'live' ||
+      this.#liveSyncEpoch === 0 ||
+      this.#outbox.size === 0
+    ) {
+      return
+    }
+    this.#replayingOutbox = true
+    try {
+      const now = Date.now()
+      let earliestPendingWaitMs: number | null = null
+      const candidates: InternalOutboxEntry[] = []
+      for (const item of this.#outbox.values()) {
+        if (item.state !== 'queued' || this.#liveSyncEpoch <= item.queuedSyncEpoch) continue
+        if (item.notBefore !== undefined && item.notBefore > now) {
+          const remaining = item.notBefore - now
+          earliestPendingWaitMs =
+            earliestPendingWaitMs === null ? remaining : Math.min(earliestPendingWaitMs, remaining)
+          continue
+        }
+        candidates.push(item)
+      }
+      if (earliestPendingWaitMs !== null) {
+        this.#armOutboxRetryTimer(earliestPendingWaitMs)
+      }
+      candidates.sort((a, b) => a.queuedAt - b.queuedAt || a.clientTxnId.localeCompare(b.clientTxnId))
+
+      for (const item of candidates) {
+        if (this.#stopped || this.#status !== 'live') break
+        if (!this.#outbox.has(item.clientTxnId)) continue
+
+        const verdict = this.#revalidateOutboxEntry(item)
+        if (!verdict.ok) {
+          if (verdict.hold) {
+            continue
+          }
+          this.#outbox.delete(item.clientTxnId)
+          this.#cancelSdkPendingByTxnId(item.roomId, item.clientTxnId)
+          this.#recordOutboxOutcome(
+            item.clientTxnId,
+            item.roomId,
+            verdict.state,
+            verdict.reason,
+            item.queuedAt
+          )
+          if (verdict.state === 'quarantined') {
+            this.markConfidentialRoom(item.roomId)
+          } else if (verdict.reason === 'membership-revoked') {
+            this.#purgeRoomOnLeaveOrBan(item.roomId)
+          } else {
+            void this.#vault?.deleteOutbox(item.clientTxnId)
+          }
+          this.#dirty.add(item.roomId)
+          this.#snapshot = { ...this.#snapshot }
+          this.#schedule()
+          continue
+        }
+
+        item.state = 'replaying'
+        this.#cancelSdkPendingByTxnId(item.roomId, item.clientTxnId)
+        try {
+          await this.#client.sendMessage(item.roomId, item.content as never, item.clientTxnId)
+          this.#outbox.delete(item.clientTxnId)
+          this.#outboxOutcomes.delete(item.clientTxnId)
+          void this.#vault?.deleteOutbox(item.clientTxnId)
+          this.#dirty.add(item.roomId)
+          this.#schedule()
+        } catch (error: unknown) {
+          if (this.#stopped) break
+          if (
+            error instanceof MatrixError &&
+            (error.errcode === 'M_UNKNOWN_TOKEN' || error.httpStatus === 401)
+          ) {
+            this.stop('signed-out')
+            break
+          }
+          const forbidden =
+            error instanceof ConfidentialRoomUnavailable ||
+            (error instanceof MatrixError &&
+              (error.httpStatus === 403 || error.errcode === 'M_FORBIDDEN'))
+          const permanentClientError =
+            error instanceof MatrixError &&
+            typeof error.httpStatus === 'number' &&
+            error.httpStatus >= 400 &&
+            error.httpStatus < 500 &&
+            !error.isRateLimitError()
+
+          if (forbidden || permanentClientError) {
+            this.#outbox.delete(item.clientTxnId)
+            this.#cancelSdkPendingByTxnId(item.roomId, item.clientTxnId)
+            const state = error instanceof ConfidentialRoomUnavailable ? 'quarantined' : 'refused'
+            const reason: OutboxRefusalReason =
+              error instanceof ConfidentialRoomUnavailable
+                ? 'boundary-or-epoch-changed'
+                : forbidden
+                  ? 'membership-revoked'
+                  : 'send-failed'
+            this.#recordOutboxOutcome(
+              item.clientTxnId,
+              item.roomId,
+              state,
+              reason,
+              item.queuedAt
+            )
+            if (error instanceof ConfidentialRoomUnavailable) {
+              this.markConfidentialRoom(item.roomId)
+            } else if (forbidden) {
+              this.#scrubForbiddenRoom(item.roomId)
+            } else {
+              void this.#vault?.deleteOutbox(item.clientTxnId)
+            }
+            this.#dirty.add(item.roomId)
+            this.#snapshot = { ...this.#snapshot }
+            this.#schedule()
+          } else {
+            const retryDelayMs =
+              error instanceof MatrixError && error.isRateLimitError()
+                ? rateLimitWaitMs(error, 1)
+                : 0
+            item.state = 'queued'
+            item.queuedSyncEpoch = this.#liveSyncEpoch
+            if (retryDelayMs > 0) {
+              const nextNotBefore = Date.now() + retryDelayMs
+              item.notBefore = nextNotBefore
+              void this.#vault
+                ?.putOutbox({
+                  clientTxnId: item.clientTxnId,
+                  roomId: item.roomId,
+                  ...(item.channelId === undefined ? {} : { channelId: item.channelId }),
+                  verifiedBoundary: item.verifiedBoundary,
+                  queuedAt: item.queuedAt,
+                  notBefore: nextNotBefore,
+                  body: item.body,
+                  content: item.content,
+                })
+                .catch(() => undefined)
+              this.#armOutboxRetryTimer(retryDelayMs)
+            } else {
+              delete item.notBefore
+            }
+            break
+          }
+        }
+      }
+    } finally {
+      this.#replayingOutbox = false
+    }
   }
 
   /**
@@ -2684,16 +3992,34 @@ export class EspaceStore {
     if (unsent !== null) await this.#client.resendEvent(unsent.event, unsent.room)
   }
 
-  /** Drops a failed message, by its row key. */
+  /** Drops a failed or queued message, by its row key. */
   cancel(roomId: string, key: string): void {
+    const removedOutbox = this.#outbox.delete(key)
+    this.#outboxOutcomes.delete(key)
+    if (removedOutbox) {
+      void this.#vault?.deleteOutbox(key)
+      this.#dirty.add(roomId)
+      this.#schedule()
+    }
     const unsent = this.#unsent(roomId, key)
     if (unsent !== null) this.#client.cancelPendingEvent(unsent.event)
   }
 }
 
-export interface EspaceStoreOptions {
-  /** Where the rooms' last messages are kept; `null` keeps none. Defaults to this browser's. */
+export interface EspaceStoreOptions extends WorkspaceRuntimeContext {
+  /** Legacy unattested cache seam for unit tests; `null` keeps nothing. */
   cache?: TimelineCache | null
+  /** Encrypted cold-start & offline outbox vault (`kodera.espace-vault.v1`). */
+  vault?: EspaceVault | null | undefined
+  vaultIdb?: IDBFactory | undefined
+  principal?: Partial<EspaceVaultPrincipal> | undefined
+  authLifetime?:
+    | {
+        hasUsableCredential(): boolean
+        getRetirementStamp(): object
+      }
+    | null
+    | undefined
 }
 
 export function createEspaceStore(

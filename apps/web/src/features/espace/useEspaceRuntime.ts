@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useSyncExternalStore } from 'react'
+import { useOptionalAuthLifetime } from '../../auth/authLifetimeContext'
 import type { MatrixSession } from '../../auth/matrix'
+import type { ConfidentialChannelFlags } from '../command-palette/omniboxIndex'
 import { getWorkspaceSettingsEpoch } from '../workspace/settingsRuntime'
-import type { Workspace } from '../workspace/workspace'
+import { currentChannel, everyChannel, type Workspace } from '../workspace/workspace'
 import type { AudioSettingsCall } from './AudioSettings'
 import { createCallController, type CallSnapshot } from './audio/call'
 import { serverNameOf } from './homeserver'
@@ -80,6 +82,35 @@ export interface UseEspaceRuntimeOptions {
   injectedCall: AudioCallLike | undefined
   session: MatrixSession | undefined
   workspace: Workspace
+  channelId?: string | undefined
+  ownerId?: string | undefined
+  membershipId?: string | undefined
+  membershipActive?: boolean | undefined
+}
+
+function collectChannelFlags(workspace: Workspace): {
+  readonly workspaceChannelIds: ReadonlySet<string>
+  readonly confidentialChannelIds: ReadonlySet<string>
+  readonly archivedChannelIds: ReadonlySet<string>
+} {
+  const all = new Set<string>()
+  const confidential = new Set<string>()
+  const archived = new Set<string>()
+  for (const ch of everyChannel(workspace)) {
+    all.add(ch.id)
+    const flags = ch as typeof ch & ConfidentialChannelFlags
+    if (flags.isConfidential === true || flags.is_confidential === true) {
+      confidential.add(ch.id)
+    }
+    if (ch.lifecycle === 'archived') {
+      archived.add(ch.id)
+    }
+  }
+  return {
+    workspaceChannelIds: all,
+    confidentialChannelIds: confidential,
+    archivedChannelIds: archived,
+  }
 }
 
 export function useEspaceRuntime({
@@ -87,21 +118,56 @@ export function useEspaceRuntime({
   injectedCall,
   session,
   workspace,
+  channelId,
+  ownerId,
+  membershipId,
+  membershipActive,
 }: UseEspaceRuntimeOptions) {
+  const authLifetime = useOptionalAuthLifetime()
+  const activeChannelId = channelId ?? currentChannel(workspace, channelId)?.id
+  const { workspaceChannelIds, confidentialChannelIds, archivedChannelIds } = useMemo(
+    () => collectChannelFlags(workspace),
+    [workspace]
+  )
+  const organisationId = workspace.organisation_id
+
   const ownedSlot = useMemo<OwnedStoreSlot | null>(() => {
     if (injectedStore !== undefined) return null
     if (session === undefined) return null
     return new OwnedStoreSlot(() =>
-      createEspaceStore({
-        baseUrl: session.baseUrl,
-        userId: session.userId,
-        deviceId: session.deviceId,
-        accessToken: session.accessToken,
-        refreshToken: session.refreshToken,
-        refresh: session.refresh,
-      })
+      createEspaceStore(
+        {
+          baseUrl: session.baseUrl,
+          userId: session.userId,
+          deviceId: session.deviceId,
+          accessToken: session.accessToken,
+          refreshToken: session.refreshToken,
+          refresh: session.refresh,
+          ...(ownerId === undefined ? {} : { ownerId }),
+          organisationId,
+          ...(membershipId === undefined ? {} : { membershipId }),
+        },
+        undefined,
+        {
+          principal: {
+            ...(ownerId === undefined ? {} : { ownerId }),
+            organisationId,
+            ...(membershipId === undefined ? {} : { membershipId }),
+            deviceId: session.deviceId,
+          },
+          activeChannelId,
+          workspaceChannelIds,
+          confidentialChannelIds,
+          archivedChannelIds,
+          membershipActive,
+          authLifetime,
+        }
+      )
     )
-  }, [injectedStore, session])
+    // `activeChannelId`, `workspaceChannelIds`, `confidentialChannelIds`, `archivedChannelIds`, and `membershipActive`
+    // update live via `setWorkspaceContext` below without tearing down the Matrix sync client.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [injectedStore, session, ownerId, organisationId, membershipId, authLifetime])
   const ownedStore = useSyncExternalStore(
     ownedSlot?.subscribe ?? subscribeToNoSlot,
     ownedSlot?.getSnapshot ?? noSlotStore
@@ -121,6 +187,22 @@ export function useEspaceRuntime({
     throw new Error('EspaceLiveView requires either a store or a MatrixSession')
   }
   const activeStore: EspaceStoreLike = resolvedStore
+  useEffect(() => {
+    activeStore.setWorkspaceContext?.({
+      activeChannelId,
+      workspaceChannelIds,
+      confidentialChannelIds,
+      archivedChannelIds,
+      membershipActive,
+    })
+  }, [
+    activeStore,
+    activeChannelId,
+    workspaceChannelIds,
+    confidentialChannelIds,
+    archivedChannelIds,
+    membershipActive,
+  ])
   const settingsEpoch = useMemo(() => {
     void activeStore
     return getWorkspaceSettingsEpoch()
