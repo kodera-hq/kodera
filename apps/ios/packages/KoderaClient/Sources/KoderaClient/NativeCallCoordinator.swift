@@ -71,6 +71,8 @@ public final class NativeCallCoordinator {
     public func receive(_ wake: NativeCallWake) async throws {
         guard !stopped else { throw KoderaMobileFfiError.authenticationFailed }
         try ring.observe(wake, now: now())
+        // observe can expire (or evict) the previous ring while admitting this wake.
+        if let id = activeId, ring.records[id] == nil || ring.records[id]?.phase == .expired { finish(.expired) }
         if wake.state != .ringing {
             if activeId == wake.callId { finish(wake.state) }
             return
@@ -101,11 +103,11 @@ public final class NativeCallCoordinator {
         answerRequested = true
         let owner = generation
         try await withCheckedThrowingContinuation { continuation in
-            pendingAnswer = continuation
-            if let call {
+            self.pendingAnswer = continuation
+            if let call = self.call {
                 Task { @MainActor in
-                    do { try await connect(owner: owner, call: call) }
-                    catch { if owns(owner, callId) { finish(.revoked) } }
+                    do { try await self.connect(owner: owner, call: call) }
+                    catch { if self.owns(owner, callId) { self.finish(.revoked) } }
                 }
             }
         }
@@ -164,7 +166,10 @@ public final class NativeCallCoordinator {
             guard owns(owner, call.wake.callId) else { throw KoderaMobileFfiError.authenticationFailed }
             consumeAuthenticatedSync(batch, roomId: call.roomId)
             return batch
-        } catch { if owns(owner, call.wake.callId) { finish(.revoked) }; throw error }
+        } catch {
+            if owns(owner, call.wake.callId), let failure = error as? MatrixClientFailure { consumeTransportFailure(failure) }
+            throw error
+        }
     }
     /// Runtime timer entry point. Always monitors the call's room, independently of the selected UI.
     public func pollCompanionTimeline() async {
@@ -174,9 +179,12 @@ public final class NativeCallCoordinator {
         defer { if companionPollOwner == owner { companionPollOwner = nil } }
         do {
             let batch = try await syncCompanionTimeline(since: companionSince)
-            if owns(owner, call.wake.callId) { companionSince = batch.nextBatch }
+            if owns(owner, call.wake.callId) {
+                // Re-read the room without an incremental cursor after an omitted timeline segment.
+                companionSince = batch.roomDeltas[call.roomId]?.limited == true ? nil : batch.nextBatch
+            }
         } catch {
-            // syncCompanionTimeline retires only the owner that issued the request.
+            // Authority failures retire the request's owner; transient failures retry the same cursor next poll.
         }
     }
     public func consumeAuthenticatedSync(_ batch: MatrixSyncBatch, roomId: String? = nil) {

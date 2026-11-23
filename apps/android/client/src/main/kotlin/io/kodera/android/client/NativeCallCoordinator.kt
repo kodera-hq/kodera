@@ -65,6 +65,8 @@ class NativeCallCoordinator(
             if (stopped) return
             // Admission errors describe an untrusted wake, never loss of the active call's authority.
             try { ring.observe(wake, now()) } catch (_: KoderaMobileFfiFailure) { return }
+            // observe can expire (or evict) the previous ring while admitting this wake.
+            activeId?.let { if (ring.records[it] == null || ring.records[it]?.phase == NativeRingPhase.EXPIRED) finish(NativeRingPhase.EXPIRED) }
             if (wake.state != NativeRingPhase.RINGING) {
                 if (activeId == wake.callId) finish(wake.state)
                 return
@@ -163,7 +165,9 @@ class NativeCallCoordinator(
             }
             return batch
         } catch (failure: Exception) {
-            synchronized(lock) { if (owns(owner, current.wake.callId)) finish(NativeRingPhase.REVOKED) }; throw failure
+            synchronized(lock) {
+                if (owns(owner, current.wake.callId) && failure is MatrixClientException) consumeTransportFailure(failure)
+            }; throw failure
         }
     }
     /** Runtime timer entry point. The call's room is monitored independently of the selected UI. */
@@ -177,10 +181,13 @@ class NativeCallCoordinator(
         try {
             val batch = syncCompanionTimeline(context.first, context.second, context.third)
             synchronized(lock) {
-                if (owns(context.first, context.second.wake.callId)) companionSince = batch.nextBatch
+                if (owns(context.first, context.second.wake.callId)) {
+                    // Re-read the room without an incremental cursor after an omitted timeline segment.
+                    companionSince = if (batch.roomDeltas[context.second.roomId]?.limited == true) null else batch.nextBatch
+                }
             }
         } catch (_: Exception) {
-            // syncCompanionTimeline retires only the owner that issued the request.
+            // Authority failures retire the request's owner; transient failures retry the same cursor next poll.
         } finally {
             synchronized(lock) { if (companionPollOwner == context.first) companionPollOwner = null }
         }

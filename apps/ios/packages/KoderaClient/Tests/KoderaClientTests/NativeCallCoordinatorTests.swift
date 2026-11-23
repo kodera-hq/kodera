@@ -66,10 +66,17 @@ private actor HeldCallResolver: NativeCallResolving {
 }
 @MainActor private final class CallPresenterFixture: NativeCallPresenting {
     var reasons: [NativeRingPhase] = []; var metadataCount = 0
+    var lifecycle: [String] = []
     var onEnded: (() -> Void)?
-    func metadata(_ call: AuthenticatedNativeCall) { metadataCount += 1 }
+    func metadata(_ call: AuthenticatedNativeCall) { metadataCount += 1; lifecycle.append("ring:\(call.wake.callId)") }
     func connected(callId: String) {}
-    func ended(callId: String, reason: NativeRingPhase) { reasons.append(reason); onEnded?() }
+    func ended(callId: String, reason: NativeRingPhase) { reasons.append(reason); lifecycle.append("end:\(callId):\(reason.rawValue)"); onEnded?() }
+}
+private final class CallClockFixture: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: UInt64 = 100
+    func read() -> UInt64 { lock.lock(); defer { self.lock.unlock() }; return value }
+    func set(_ value: UInt64) { lock.lock(); defer { self.lock.unlock() }; self.value = value }
 }
 private actor CallChatFixture: ChannelConversationTransport {
     nonisolated let ownUserId = "@member:example.org"
@@ -77,6 +84,8 @@ private actor CallChatFixture: ChannelConversationTransport {
     private var refuse = false
     private var lostRooms: Set<String> = []
     private var syncFailure: MatrixClientFailure?
+    private var limitedRooms: Set<String> = []
+    private var recoveryBatch: MatrixSyncBatch?
     private var plaintextBlocked = false
     private var syncRequests: [String] = []
     private var holdSync = false
@@ -91,7 +100,9 @@ private actor CallChatFixture: ChannelConversationTransport {
     }
     func releaseSync() { syncGate?.resume(); syncGate = nil }
     func loseAuthority(_ rooms: Set<String>) { lostRooms = rooms }
-    func failSync(_ failure: MatrixClientFailure) { syncFailure = failure }
+    func failSync(_ failure: MatrixClientFailure?) { syncFailure = failure }
+    func limitTimeline(_ rooms: Set<String>) { limitedRooms = rooms }
+    func recoverWith(_ batch: MatrixSyncBatch) { recoveryBatch = batch }
     func deny() { refuse = true }
     func setEvents(_ value: [MatrixRawTimelineEvent]) { events = value }
     func bootstrapRoom(organisationId: String, channelId: String) async throws(MatrixClientFailure) -> (roomId: String, initialBatch: MatrixSyncBatch) {
@@ -118,7 +129,10 @@ private actor CallChatFixture: ChannelConversationTransport {
             }
         }
         if let syncFailure { throw syncFailure }
-        var batch = MatrixSyncBatch(nextBatch: "two", roomEvents: [roomId: events])
+        if since == nil, let recoveryBatch { return recoveryBatch }
+        var deltas = Dictionary(uniqueKeysWithValues: limitedRooms.map { ($0, MatrixRoomSyncDelta(events: [], limited: true)) })
+        deltas[roomId] = MatrixRoomSyncDelta(events: events, limited: limitedRooms.contains(roomId))
+        var batch = MatrixSyncBatch(nextBatch: "two", roomDeltas: deltas)
         batch.authorityLostRooms = lostRooms; batch.plaintextAllowedRooms = plaintextBlocked ? [] : [roomId]; return batch
     }
     func sendMessage(roomId: String, transactionId: String, body: String, replyToEventId: String?, attachments: [AttachmentMetadataRef]) async throws(MatrixClientFailure) -> String {
@@ -136,6 +150,106 @@ private actor CallChatFixture: ChannelConversationTransport {
 }
 
 @MainActor final class NativeCallCoordinatorTests: XCTestCase {
+    func testCompanionPollRetriesTransientFailuresWithoutRetiringCallOrAdvancingCursor() async throws {
+        for connected in [false, true] {
+            for failure in [MatrixClientFailure.serviceUnavailable, .transport(.offline), .transport(.timeout), .rateLimited] {
+                let media = CallMediaFixture(); let chat = CallChatFixture(); let presenter = CallPresenterFixture()
+                let coordinator = try NativeCallCoordinator(organisationId: callOrg, localPartyId: "local",
+                    resolver: ImmediateCallResolver(), media: media, conversation: chat, now: { 100 })
+                coordinator.bind(presenter); try await coordinator.receive(callWake())
+                if connected { try await coordinator.answer(callId: callId); await coordinator.audioSession(active: true) }
+                await chat.failSync(failure)
+                await coordinator.pollCompanionTimeline(); await coordinator.pollCompanionTimeline()
+                XCTAssertEqual(coordinator.call?.wake.callId, callId)
+                XCTAssertEqual(coordinator.ring.records[callId]?.phase, connected ? .connected : .ringing)
+                XCTAssertEqual(media.disconnects, 0); XCTAssertEqual(media.microphoneEnabled, connected)
+                XCTAssertTrue(presenter.reasons.isEmpty)
+                await chat.failSync(nil); await coordinator.pollCompanionTimeline()
+                await chat.setEvents([MatrixRawTimelineEvent(type: "m.call.answer", eventId: "$answer",
+                    sender: chat.ownUserId, originServerTs: 100, callId: callId, callPartyId: "other")])
+                await coordinator.pollCompanionTimeline()
+                let requests = await chat.requests()
+                XCTAssertEqual(requests, ["!room:example.org|one", "!room:example.org|one", "!room:example.org|one", "!room:example.org|two"])
+                XCTAssertNil(coordinator.call); XCTAssertEqual(media.disconnects, 1)
+                XCTAssertEqual(presenter.reasons, [.answeredElsewhere])
+            }
+        }
+    }
+
+    func testCompanionPollAuthorityFailuresImmediatelyRetireRingingAndConnectedCalls() async throws {
+        for connected in [false, true] {
+            for failure in [MatrixClientFailure.unauthorized, .forbidden, .notFound, .plaintextForbidden,
+                            .protocolViolation, .signedOut, .signedOutNotWiped, .identityUnavailable] {
+                let media = CallMediaFixture(); let chat = CallChatFixture(); let presenter = CallPresenterFixture()
+                let coordinator = try NativeCallCoordinator(organisationId: callOrg, localPartyId: "local",
+                    resolver: ImmediateCallResolver(), media: media, conversation: chat, now: { 100 })
+                coordinator.bind(presenter); try await coordinator.receive(callWake())
+                if connected { try await coordinator.answer(callId: callId); await coordinator.audioSession(active: true) }
+                await chat.failSync(failure); await coordinator.pollCompanionTimeline(); await coordinator.pollCompanionTimeline()
+                XCTAssertNil(coordinator.call); XCTAssertTrue(coordinator.ring.records.isEmpty)
+                XCTAssertEqual(media.disconnects, 1); XCTAssertFalse(media.microphoneEnabled)
+                XCTAssertEqual(presenter.reasons, [.revoked])
+                let requests = await chat.requests(); XCTAssertEqual(requests, ["!room:example.org|one"])
+            }
+        }
+    }
+
+    func testLimitedCallTimelineResetsCursorAndRecoversOmittedAnswerOrAuthority() async throws {
+        for recovery in ["answer", "authority", "continue"] {
+            let media = CallMediaFixture(); let chat = CallChatFixture(); let presenter = CallPresenterFixture()
+            let coordinator = try NativeCallCoordinator(organisationId: callOrg, localPartyId: "local",
+                resolver: ImmediateCallResolver(), media: media, conversation: chat, now: { 100 })
+            coordinator.bind(presenter); try await coordinator.receive(callWake()); try await coordinator.answer(callId: callId)
+            await chat.limitTimeline([selectedRoom]); await coordinator.pollCompanionTimeline()
+            await chat.limitTimeline(["!room:example.org"]); await coordinator.pollCompanionTimeline()
+            XCTAssertNotNil(coordinator.call); XCTAssertEqual(media.disconnects, 0)
+            // Recovery can also fail transiently; the reset cursor must survive that failure.
+            await chat.failSync(.serviceUnavailable); await coordinator.pollCompanionTimeline(); await chat.failSync(nil)
+            let events = recovery == "answer" ? [MatrixRawTimelineEvent(type: "m.call.answer", eventId: "$omitted",
+                sender: chat.ownUserId, originServerTs: 100, callId: callId, callPartyId: "other")] : []
+            var recovered = MatrixSyncBatch(nextBatch: "recovered", roomEvents: ["!room:example.org": events])
+            recovered.plaintextAllowedRooms = ["!room:example.org"]
+            if recovery == "authority" { recovered.authorityLostRooms = ["!room:example.org"] }
+            await chat.recoverWith(recovered); await coordinator.pollCompanionTimeline()
+            let requests = await chat.requests()
+            XCTAssertEqual(requests, ["!room:example.org|one", "!room:example.org|two", "!room:example.org|nil", "!room:example.org|nil"])
+            if recovery == "continue" {
+                XCTAssertNotNil(coordinator.call); XCTAssertTrue(presenter.reasons.isEmpty)
+                await chat.limitTimeline([]); await coordinator.pollCompanionTimeline()
+                let resumed = await chat.requests(); XCTAssertEqual(resumed.last, "!room:example.org|recovered")
+                coordinator.end(callId: callId)
+            } else {
+                XCTAssertNil(coordinator.call); XCTAssertEqual(media.disconnects, 1)
+                XCTAssertEqual(presenter.reasons, [recovery == "answer" ? .answeredElsewhere : .revoked])
+            }
+        }
+    }
+
+    func testReplacingExpiredRingEndsPreviousCallBeforePresentingNextCall() async throws {
+        for timestamp: UInt64 in [130, 160] {
+            let clock = CallClockFixture(); let media = CallMediaFixture(); let presenter = CallPresenterFixture()
+            let coordinator = try NativeCallCoordinator(organisationId: callOrg, localPartyId: "local",
+                resolver: ImmediateCallResolver(), media: media, conversation: CallChatFixture(), now: { clock.read() })
+            coordinator.bind(presenter); try await coordinator.receive(callWake())
+            let nextId = "55555555-5555-4555-8555-555555555555"
+            presenter.onEnded = {
+                XCTAssertNil(coordinator.call)
+                XCTAssertEqual(presenter.metadataCount, 1)
+            }
+            clock.set(timestamp)
+            try await coordinator.receive(NativeCallWake(callId: nextId, organisationId: callOrg,
+                channelId: callChannel, epoch: 1, state: .ringing, expiresAt: timestamp + 30))
+            presenter.onEnded = nil
+            XCTAssertEqual(presenter.lifecycle, ["ring:\(callId)", "end:\(callId):expired", "ring:\(nextId)"])
+            XCTAssertEqual(media.disconnects, 1); XCTAssertEqual(coordinator.call?.wake.callId, nextId)
+            coordinator.end(callId: callId); coordinator.tick()
+            XCTAssertEqual(presenter.reasons, [.expired]); XCTAssertEqual(coordinator.ring.records[nextId]?.phase, .ringing)
+            try await coordinator.answer(callId: nextId)
+            XCTAssertEqual(coordinator.ring.records[nextId]?.phase, .connected)
+            coordinator.end(callId: nextId); XCTAssertEqual(presenter.reasons, [.expired, .ended])
+        }
+    }
+
     func testCallRoomIsPolledWhileAnotherChannelInTheSameOrganisationIsSelected() async throws {
         for connected in [false, true] {
             for boundary in ["answer", "leave", "confidential", "notFound", "forbidden"] {

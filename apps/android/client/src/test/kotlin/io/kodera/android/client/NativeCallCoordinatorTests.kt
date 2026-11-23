@@ -27,6 +27,8 @@ private class ChatFixture : ChannelConversationTransport {
     var events = emptyList<MatrixRawTimelineEvent>()
     var lostRooms = emptySet<String>()
     var syncFailure: MatrixClientError? = null
+    var limitedRooms = emptySet<String>()
+    var recoveryBatch: MatrixSyncBatch? = null
     var beforeSync: (() -> Unit)? = null
     val syncRequests = java.util.concurrent.CopyOnWriteArrayList<String?>()
     override fun bootstrapRoom(organisationId: String, channelId: String) = BootstrappedMatrixRoom("!room:example.org", MatrixSyncBatch("one", emptyMap(), plaintextAllowedRooms = setOf("!room:example.org")))
@@ -34,7 +36,10 @@ private class ChatFixture : ChannelConversationTransport {
         syncRequests += since
         beforeSync?.invoke()
         syncFailure?.let { throw MatrixClientException(it) }
-        return MatrixSyncBatch("two", mapOf(roomId to events), plaintextAllowedRooms = setOf(roomId), authorityLostRooms = lostRooms)
+        if (since == null) recoveryBatch?.let { return it }
+        val deltas = limitedRooms.associateWith { MatrixRoomSyncDelta(emptyList(), limited = true) }.toMutableMap()
+        deltas[roomId] = MatrixRoomSyncDelta(events, limited = roomId in limitedRooms)
+        return MatrixSyncBatch.fromDeltas("two", deltas).copy(plaintextAllowedRooms = setOf(roomId), authorityLostRooms = lostRooms)
     }
     override fun sendMessage(roomId: String, transactionId: String, body: String, replyToEventId: String?, attachments: List<AttachmentMetadataRef>): String {
         check(!refuse); return "\$sent"
@@ -46,12 +51,100 @@ private class ChatFixture : ChannelConversationTransport {
 }
 private class PresenterFixture : NativeCallPresenter {
     val reasons = mutableListOf<NativeRingPhase>(); var metadata = 0
-    override fun ringing(call: AuthenticatedNativeCall) { metadata++ }
+    val lifecycle = mutableListOf<String>()
+    var onEnded: (() -> Unit)? = null
+    override fun ringing(call: AuthenticatedNativeCall) { metadata++; lifecycle += "ring:${call.wake.callId}" }
     override fun connected(callId: String) {}
-    override fun ended(callId: String, reason: NativeRingPhase) { reasons += reason }
+    override fun ended(callId: String, reason: NativeRingPhase) { reasons += reason; lifecycle += "end:$callId:$reason"; onEnded?.invoke() }
 }
 class NativeCallCoordinatorTests {
     private fun resolver() = NativeCallResolver { AuthenticatedNativeCall(it, "!room:example.org", "Member") }
+    @Test fun companionPollRetriesTransientFailuresWithoutRetiringCallOrAdvancingCursor() {
+        for (connected in listOf(false, true)) {
+            for (failure in listOf(MatrixClientError.SERVICE_UNAVAILABLE, MatrixClientError.TRANSPORT, MatrixClientError.RATE_LIMITED)) {
+                val media = MediaFixture(); val chat = ChatFixture(); val presenter = PresenterFixture()
+                val coordinator = NativeCallCoordinator(ORG, "local", resolver(), media, chat, { 100 })
+                coordinator.bind(presenter); coordinator.receive(wake())
+                if (connected) { coordinator.answer(CALL); coordinator.audioSession(true) }
+                val owner = coordinator.ownership(CALL)
+                chat.syncFailure = failure
+                coordinator.pollCompanionTimeline(); coordinator.pollCompanionTimeline()
+                assertEquals(CALL, coordinator.currentCall()?.wake?.callId); assertEquals(owner, coordinator.ownership(CALL))
+                assertEquals(if (connected) NativeRingPhase.CONNECTED else NativeRingPhase.RINGING, coordinator.phase(CALL))
+                assertEquals(0, media.disconnects.get()); assertEquals(connected, media.microphone); assertTrue(presenter.reasons.isEmpty())
+                chat.syncFailure = null; coordinator.pollCompanionTimeline()
+                chat.events = listOf(MatrixRawTimelineEvent("m.call.answer", "\$answer", chat.ownUserId, 100, callId = CALL, callPartyId = "other"))
+                coordinator.pollCompanionTimeline()
+                assertEquals(listOf("one", "one", "one", "two"), chat.syncRequests)
+                assertNull(coordinator.currentCall()); assertEquals(1, media.disconnects.get())
+                assertEquals(listOf(NativeRingPhase.ANSWERED_ELSEWHERE), presenter.reasons)
+            }
+        }
+    }
+    @Test fun companionPollAuthorityFailuresImmediatelyRetireRingingAndConnectedCalls() {
+        for (connected in listOf(false, true)) {
+            for (failure in listOf(MatrixClientError.UNAUTHORIZED, MatrixClientError.FORBIDDEN, MatrixClientError.NOT_FOUND,
+                MatrixClientError.PLAINTEXT_FORBIDDEN, MatrixClientError.PROTOCOL_VIOLATION, MatrixClientError.SIGNED_OUT, MatrixClientError.IDENTITY_UNAVAILABLE)) {
+                val media = MediaFixture(); val chat = ChatFixture(); val presenter = PresenterFixture()
+                val coordinator = NativeCallCoordinator(ORG, "local", resolver(), media, chat, { 100 })
+                coordinator.bind(presenter); coordinator.receive(wake())
+                if (connected) { coordinator.answer(CALL); coordinator.audioSession(true) }
+                chat.syncFailure = failure; coordinator.pollCompanionTimeline(); coordinator.pollCompanionTimeline()
+                assertNull(coordinator.currentCall()); assertNull(coordinator.phase(CALL))
+                assertEquals(1, media.disconnects.get()); assertFalse(media.microphone)
+                assertEquals(listOf(NativeRingPhase.REVOKED), presenter.reasons); assertEquals(listOf("one"), chat.syncRequests)
+            }
+        }
+    }
+    @Test fun limitedCallTimelineResetsCursorAndRecoversOmittedAnswerOrAuthority() {
+        for (recovery in listOf("answer", "authority", "continue")) {
+            val media = MediaFixture(); val chat = ChatFixture(); val presenter = PresenterFixture()
+            val coordinator = NativeCallCoordinator(ORG, "local", resolver(), media, chat, { 100 })
+            coordinator.bind(presenter); coordinator.receive(wake()); coordinator.answer(CALL)
+            chat.limitedRooms = setOf("!other:example.org"); coordinator.pollCompanionTimeline()
+            chat.limitedRooms = setOf("!room:example.org"); coordinator.pollCompanionTimeline()
+            assertNotNull(coordinator.currentCall()); assertEquals(0, media.disconnects.get())
+            // Recovery can also fail transiently; the reset cursor must survive that failure.
+            chat.syncFailure = MatrixClientError.SERVICE_UNAVAILABLE; coordinator.pollCompanionTimeline(); chat.syncFailure = null
+            val events = if (recovery == "answer") listOf(MatrixRawTimelineEvent("m.call.answer", "\$omitted", chat.ownUserId, 100,
+                callId = CALL, callPartyId = "other")) else emptyList()
+            chat.recoveryBatch = MatrixSyncBatch("recovered", mapOf("!room:example.org" to events),
+                plaintextAllowedRooms = setOf("!room:example.org"),
+                authorityLostRooms = if (recovery == "authority") setOf("!room:example.org") else emptySet())
+            coordinator.pollCompanionTimeline()
+            assertEquals(listOf("one", "two", null, null), chat.syncRequests)
+            if (recovery == "continue") {
+                assertNotNull(coordinator.currentCall()); assertTrue(presenter.reasons.isEmpty())
+                chat.limitedRooms = emptySet(); coordinator.pollCompanionTimeline(); assertEquals("recovered", chat.syncRequests.last())
+                coordinator.end(CALL)
+            } else {
+                assertNull(coordinator.currentCall()); assertEquals(1, media.disconnects.get())
+                assertEquals(listOf(if (recovery == "answer") NativeRingPhase.ANSWERED_ELSEWHERE else NativeRingPhase.REVOKED), presenter.reasons)
+            }
+        }
+    }
+    @Test fun replacingExpiredRingEndsPreviousCallBeforePresentingNextCall() {
+        for (timestamp in listOf(130L, 160L)) {
+            var time = 100L
+            val media = MediaFixture(); val presenter = PresenterFixture()
+            val coordinator = NativeCallCoordinator(ORG, "local", resolver(), media, ChatFixture(), { time })
+            coordinator.bind(presenter); coordinator.receive(wake())
+            val oldOwner = coordinator.ownership(CALL)!!
+            val nextId = "55555555-5555-4555-8555-555555555555"
+            presenter.onEnded = {
+                assertNull(coordinator.currentCall()); assertNull(coordinator.ownership(CALL)); assertNull(coordinator.ownership(nextId))
+                assertEquals(1, presenter.metadata)
+            }
+            time = timestamp; coordinator.receive(wake().copy(callId = nextId, expiresAt = timestamp + 30))
+            presenter.onEnded = null
+            assertEquals(listOf("ring:$CALL", "end:$CALL:EXPIRED", "ring:$nextId"), presenter.lifecycle)
+            assertEquals(1, media.disconnects.get()); assertEquals(nextId, coordinator.currentCall()?.wake?.callId)
+            coordinator.end(CALL); coordinator.answer(CALL, expectedOwner = oldOwner, activateAudio = true); coordinator.tick()
+            assertEquals(listOf(NativeRingPhase.EXPIRED), presenter.reasons); assertEquals(NativeRingPhase.RINGING, coordinator.phase(nextId))
+            assertFalse(media.microphone); coordinator.answer(nextId); assertEquals(NativeRingPhase.CONNECTED, coordinator.phase(nextId))
+            coordinator.end(nextId); assertEquals(listOf(NativeRingPhase.EXPIRED, NativeRingPhase.ENDED), presenter.reasons)
+        }
+    }
     @Test fun companionPollCoalescesAndLateFailureCannotRetireTheNextCall() {
         val entered = CountDownLatch(1); val release = CountDownLatch(1)
         val media = MediaFixture(); val chat = ChatFixture()

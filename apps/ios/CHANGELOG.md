@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Preserve native calls across temporary Matrix sync failures, recover limited timelines, and end expired rings before replacement.
+
 - Monitor the native call's own room for answers and authority changes while another channel is selected.
 
 - Revoke native call media from live conversation authority and security changes, and discard late cancellation wakes after revocation.
