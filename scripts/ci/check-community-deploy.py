@@ -2772,8 +2772,10 @@ def quotes_host(message: str, host: str) -> bool:
 def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
     baseline_errors = check_community_deploy(compose_text, env_text, caddyfile_text)
     if baseline_errors:
-        for err in baseline_errors:
-            print(f"[FAIL] baseline community deploy invalid: {err}", file=sys.stderr)
+        print(
+            f"[FAIL] baseline community deploy invalid ({len(baseline_errors)} error(s))",
+            file=sys.stderr,
+        )
         return 1
 
     mutations: list[tuple[str, MutationFn, str]] = [
