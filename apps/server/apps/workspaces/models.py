@@ -7,6 +7,8 @@ from django.db.models.lookups import GreaterThan
 
 from core.db.models import StoredModel
 
+models.BinaryField.register_lookup(Length)
+
 # Storage vocabulary frozen with the single final evaluator; no role grants.
 POLICY_CAPABILITIES = (
     "channel.history",
@@ -216,6 +218,7 @@ class Channel(StoredModel):
     # result changes nothing.
     room_state_revision = models.BigIntegerField(default=0)
     is_confidential = models.BooleanField(default=False)
+    ai_enabled = models.BooleanField(default=False)
 
     class Meta:
         constraints = [
@@ -266,6 +269,10 @@ class Channel(StoredModel):
             models.CheckConstraint(
                 name="channel_confidential_text_only",
                 condition=models.Q(is_confidential=False) | models.Q(kind="text"),
+            ),
+            models.CheckConstraint(
+                name="channel_confidential_no_ai",
+                condition=models.Q(is_confidential=False) | models.Q(ai_enabled=False),
             ),
             *template_key_constraints("channel"),
         ]
@@ -620,5 +627,99 @@ class WorkspaceTemplateApplication(StoredModel):
             models.CheckConstraint(
                 condition=models.Q(last_error__in=list(TEMPLATE_APP_ERROR_CODES)),
                 name="workspace_template_app_error_code_valid",
+            ),
+        ]
+
+
+AI_PROVIDERS = ("mistral", "self_hosted", "byom")
+AI_PROVIDER_REGIONS = ("eu", "non_eu")
+DEFAULT_MONTHLY_AI_BUDGET_MICROS = 50_000_000
+
+
+class WorkspaceAiPolicy(StoredModel):
+    """Org/workspace-tier AI policy: strictly OFF by default and EU-sovereign by default."""
+
+    organisation = models.ForeignKey(
+        "orgs.Organisation", on_delete=models.RESTRICT, db_constraint=False
+    )
+    workspace = models.OneToOneField(Workspace, on_delete=models.RESTRICT, db_constraint=False)
+    enabled = models.BooleanField(default=False)
+    provider = models.TextField(default="mistral")
+    provider_region = models.TextField(default="eu")
+    eu_sovereign_only = models.BooleanField(default=True)
+    self_hosted_endpoint = models.TextField(default="", blank=True)
+    model = models.TextField(default="mistral-small-latest")
+    sealed_byom_config = models.BinaryField(default=b"")
+    monthly_budget_micros = models.BigIntegerField(default=DEFAULT_MONTHLY_AI_BUDGET_MICROS)
+    monthly_spent_micros = models.BigIntegerField(default=0)
+    budget_period = models.TextField(default="", blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["organisation"], name="workspace_ai_policy_org_unique"),
+            models.CheckConstraint(
+                condition=models.Q(provider__in=list(AI_PROVIDERS)),
+                name="workspace_ai_policy_provider_valid",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(provider_region__in=list(AI_PROVIDER_REGIONS)),
+                name="workspace_ai_policy_region_valid",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(self_hosted_endpoint__length__lte=2048),
+                name="workspace_ai_policy_endpoint_bound",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(model__length__range=(1, 128)),
+                name="workspace_ai_policy_model_bound",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(sealed_byom_config__length__lte=16384),
+                name="workspace_ai_policy_sealed_bound",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(monthly_budget_micros__gte=0),
+                name="workspace_ai_policy_budget_nonneg",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(monthly_spent_micros__gte=0),
+                name="workspace_ai_policy_spent_nonneg",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(budget_period__length__lte=7),
+                name="workspace_ai_policy_period_bound",
+            ),
+        ]
+
+
+class MemberAiConsent(StoredModel):
+    """Member-tier explicit AI consent: strictly OFF by default until the member opts in."""
+
+    organisation = models.ForeignKey(
+        "orgs.Organisation", on_delete=models.RESTRICT, db_constraint=False
+    )
+    workspace = models.ForeignKey(Workspace, on_delete=models.RESTRICT, db_constraint=False)
+    membership = models.ForeignKey(
+        "orgs.Membership", on_delete=models.RESTRICT, db_constraint=False
+    )
+    identity = models.ForeignKey(
+        "identity.Identity", on_delete=models.RESTRICT, db_constraint=False
+    )
+    enabled = models.BooleanField(default=False)
+    consented_at = models.DateTimeField(null=True, blank=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["membership"], name="member_ai_consent_member_idx"),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["workspace", "membership"],
+                name="member_ai_consent_unique",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(enabled=False) | models.Q(consented_at__isnull=False),
+                name="member_ai_consent_timestamp_required",
             ),
         ]

@@ -10801,6 +10801,242 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+  /organisations/{organisation_id}/workspace/ai/policy:
+    get:
+      operationId: getWorkspaceAiPolicy
+      summary: Read workspace AI policy and caller consent
+      description: 'Every request checks current active membership in this organisation. Responses are Cache-Control: no-store. Returns the default-off 3-tier AI policy state without disclosing any BYOM secret material.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_ai:read
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      responses:
+        '200':
+          description: Current workspace AI policy and caller consent state.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceAiPolicy'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/WorkspaceBusy'
+    put:
+      operationId: putWorkspaceAiPolicy
+      summary: Update workspace AI policy
+      description: 'Owner/admin only. Enforces eu_sovereign_only refusal on non-EU provider configurations, SSRF protection on self-hosted endpoints, and HKDF-sealed BYOM secret persistence.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_ai:update
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      responses:
+        '200':
+          description: Updated workspace AI policy.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceAiPolicy'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/WorkspaceBusy'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkspaceAiPolicyRequest'
+  /organisations/{organisation_id}/workspace/channels/{channel_id}/ai:
+    put:
+      operationId: putChannelAiPolicy
+      summary: Update channel AI policy
+      description: 'Owner/admin only. Confidential and E2EE rooms fail closed with 403 and can never enable AI features.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_ai:update
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - name: channel_id
+        in: path
+        required: true
+        description: Identifier of the non-confidential workspace channel.
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Updated channel AI policy.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChannelAiPolicy'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/WorkspaceBusy'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChannelAiPolicyRequest'
+  /organisations/{organisation_id}/workspace/ai/consent:
+    put:
+      operationId: putMemberAiConsent
+      summary: Update caller member AI consent
+      description: 'Records or revokes the authenticated member''s explicit opt-in consent for workspace AI features.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_ai:update
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      responses:
+        '200':
+          description: Updated caller AI consent state.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MemberAiConsent'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/WorkspaceBusy'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MemberAiConsentRequest'
+  /organisations/{organisation_id}/workspace/attachments/{attachment_id}/actions/transcribe:
+    post:
+      operationId: transcribeVoiceNote
+      summary: Transcribe a completed channel voice-note attachment
+      description: 'Evaluates all three OFF-by-default AI consent tiers (org -> channel -> member) and refuses confidential, E2EE, and DM/unclassified rooms with 403.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_ai:act
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - name: attachment_id
+        in: path
+        required: true
+        description: Completed voice-note attachment identifier.
+        schema:
+          type: string
+          format: uuid
+      - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Transcribed voice-note text.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoiceNoteTranscription'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/WorkspaceBusy'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VoiceNoteTranscriptionRequest'
 
   /organisations/{organisation_id}/workspace/imports/preview:
     post:
@@ -12839,6 +13075,9 @@ components:
           - image/png
           - image/webp
           - image/gif
+          - audio/ogg
+          - audio/webm
+          - audio/mp4
           - application/pdf
           - text/plain
           - application/octet-stream
@@ -22083,3 +22322,243 @@ components:
         matrixEventId: null
         matrixTxnId: kodera-coex-00000000000000000000000000000001
         validatedAttachmentMimes: []
+    MemberAiConsent:
+      type: object
+      title: MemberAiConsent
+      additionalProperties: false
+      required:
+      - enabled
+      - consentedAt
+      - revokedAt
+      properties:
+        enabled:
+          type: boolean
+        consentedAt:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        revokedAt:
+          type:
+          - string
+          - 'null'
+          format: date-time
+      examples:
+      - enabled: false
+        consentedAt: null
+        revokedAt: null
+    MemberAiConsentRequest:
+      type: object
+      title: MemberAiConsentRequest
+      additionalProperties: false
+      required:
+      - enabled
+      properties:
+        enabled:
+          type: boolean
+    WorkspaceByomConfigInput:
+      type: object
+      title: WorkspaceByomConfigInput
+      additionalProperties: false
+      required:
+      - endpoint
+      - model
+      - apiKey
+      properties:
+        endpoint:
+          type: string
+          format: uri
+          maxLength: 2048
+        model:
+          type: string
+          minLength: 1
+          maxLength: 128
+        apiKey:
+          type: string
+          minLength: 1
+          maxLength: 512
+        region:
+          type: string
+          enum:
+          - eu
+          - non_eu
+    WorkspaceAiPolicy:
+      type: object
+      title: WorkspaceAiPolicy
+      additionalProperties: false
+      required:
+      - gatewayEnabled
+      - enabled
+      - provider
+      - providerRegion
+      - euSovereignOnly
+      - selfHostedEndpoint
+      - model
+      - hasByomConfig
+      - monthlyBudgetMicros
+      - monthlySpentMicros
+      - memberConsent
+      properties:
+        gatewayEnabled:
+          type: boolean
+        enabled:
+          type: boolean
+        provider:
+          type: string
+          enum:
+          - mistral
+          - self_hosted
+          - byom
+        providerRegion:
+          type: string
+          enum:
+          - eu
+          - non_eu
+        euSovereignOnly:
+          type: boolean
+        selfHostedEndpoint:
+          type: string
+          maxLength: 2048
+        model:
+          type: string
+          minLength: 1
+          maxLength: 128
+        hasByomConfig:
+          type: boolean
+        monthlyBudgetMicros:
+          type: integer
+          minimum: 0
+          maximum: 1000000000000
+        monthlySpentMicros:
+          type: integer
+          minimum: 0
+        memberConsent:
+          $ref: '#/components/schemas/MemberAiConsent'
+      examples:
+      - gatewayEnabled: false
+        enabled: false
+        provider: mistral
+        providerRegion: eu
+        euSovereignOnly: true
+        selfHostedEndpoint: ''
+        model: mistral-small-latest
+        hasByomConfig: false
+        monthlyBudgetMicros: 50000000
+        monthlySpentMicros: 0
+        memberConsent:
+          enabled: false
+          consentedAt: null
+          revokedAt: null
+    WorkspaceAiPolicyRequest:
+      type: object
+      title: WorkspaceAiPolicyRequest
+      additionalProperties: false
+      properties:
+        enabled:
+          type: boolean
+        provider:
+          type: string
+          enum:
+          - mistral
+          - self_hosted
+          - byom
+        providerRegion:
+          type: string
+          enum:
+          - eu
+          - non_eu
+        euSovereignOnly:
+          type: boolean
+        selfHostedEndpoint:
+          type: string
+          maxLength: 2048
+        model:
+          type: string
+          minLength: 1
+          maxLength: 128
+        monthlyBudgetMicros:
+          type: integer
+          minimum: 0
+          maximum: 1000000000000
+        byomConfig:
+          oneOf:
+          - $ref: '#/components/schemas/WorkspaceByomConfigInput'
+          - type: 'null'
+        clearByomConfig:
+          type: boolean
+    ChannelAiPolicy:
+      type: object
+      title: ChannelAiPolicy
+      additionalProperties: false
+      required:
+      - channelId
+      - aiEnabled
+      properties:
+        channelId:
+          type: string
+          format: uuid
+        aiEnabled:
+          type: boolean
+      examples:
+      - channelId: 00000000-0000-7000-8000-000000000001
+        aiEnabled: false
+    ChannelAiPolicyRequest:
+      type: object
+      title: ChannelAiPolicyRequest
+      additionalProperties: false
+      required:
+      - aiEnabled
+      properties:
+        aiEnabled:
+          type: boolean
+    VoiceNoteTranscriptionRequest:
+      type: object
+      title: VoiceNoteTranscriptionRequest
+      additionalProperties: false
+      properties:
+        channelId:
+          type: string
+          format: uuid
+        roomId:
+          type: string
+          minLength: 4
+          maxLength: 255
+        language:
+          type: string
+          minLength: 2
+          maxLength: 16
+    VoiceNoteTranscription:
+      type: object
+      title: VoiceNoteTranscription
+      additionalProperties: false
+      required:
+      - attachmentId
+      - channelId
+      - text
+      - language
+      - provider
+      - model
+      properties:
+        attachmentId:
+          type: string
+          format: uuid
+        channelId:
+          type: string
+          format: uuid
+        text:
+          type: string
+        language:
+          type:
+          - string
+          - 'null'
+        provider:
+          type: string
+        model:
+          type: string
+      examples:
+      - attachmentId: 00000000-0000-7000-8000-000000000001
+        channelId: 00000000-0000-7000-8000-000000000002
+        text: Bonjour tout le monde
+        language: fr
+        provider: mistral
+        model: voxtral-mini-latest

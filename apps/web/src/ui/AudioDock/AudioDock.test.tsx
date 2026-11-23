@@ -33,10 +33,21 @@ describe('AudioDock', () => {
     expect(meter).toHaveAttribute('aria-hidden', 'true')
     // The caller's element: its width is set frame by frame, starting empty.
     expect(meterRef.current).toBe(meter.firstElementChild)
-    expect(meterRef.current).toHaveClass('origin-left', 'bg-c-ok-on-dark')
+    expect(meterRef.current).toHaveClass('origin-left', 'bg-c-action')
     // Empty until the caller draws it.
     expect(meterRef.current!.style.transform).toBe('scaleX(0)')
     expect(meter).toHaveClass('bg-c-inverse-2')
+  })
+
+  it('renders custom visualizer and studio soundboard slots when supplied', () => {
+    setup({
+      layout: 'studio',
+      visualizer: <canvas data-testid="custom-voice-visualizer" />,
+      soundboard: <button type="button" aria-label="Palette sonore" />,
+    })
+    const region = screen.getByRole('region', { name: 'Appel en cours' })
+    expect(within(region).getByTestId('custom-voice-visualizer')).toBeInTheDocument()
+    expect(within(region).getByRole('button', { name: 'Palette sonore' })).toBeInTheDocument()
   })
 
   it("sets the caller's settings control in the top row, before the open-call button", () => {

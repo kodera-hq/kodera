@@ -576,6 +576,20 @@ export class CallController {
     return session.meter.level(track.mediaStreamTrack)
   }
 
+  localMicTrack = (): MediaStreamTrack | null => {
+    const session = this.#session
+    if (session === null || session.closed || this.#muteRequested) return null
+    if (this.#snapshot.status !== 'connected') return null
+    let track
+    try {
+      track = session.room.localParticipant.getTrackPublication(Track.Source.Microphone)?.track
+    } catch {
+      return null
+    }
+    if (track === undefined || track.isMuted || ended(track)) return null
+    return track.mediaStreamTrack ?? null
+  }
+
   /**
    * Joins an audio room, leaving the one the member is in first. Call it from the click itself:
    * it unlocks audio playback while the browser still counts the gesture.

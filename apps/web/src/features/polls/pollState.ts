@@ -1,3 +1,17 @@
+import { pollMessages, type PollLocale } from './pollMessages'
+
+export const POLL_FIELD = 'io.kodera.poll'
+export const POLL_RESPONSE_EVENT = 'io.kodera.poll.response'
+export const POLL_END_EVENT = 'io.kodera.poll.end'
+export const MAX_POLL_OPTIONS = 10
+
+export interface PollWirePayload {
+  readonly question: string
+  readonly options: readonly string[]
+  readonly allowMultiple: boolean
+  readonly anonymous: boolean
+}
+
 export interface PollOption {
   readonly id: string
   readonly label: string
@@ -108,12 +122,50 @@ function tokenizePollArguments(rawArgs: string): {
   return { segments, flags, unclosedQuote: false }
 }
 
-export function parsePollCommand(input: string): ParsePollCommandResult {
+function tryParseMultilinePoll(afterCommand: string): ParsePollCommandResult | null {
+  if (!afterCommand.includes('\n')) return null
+  const lines = afterCommand
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+  if (lines.length < 3) return null
+  const firstLine = lines[0] ?? ''
+  const flags: string[] = []
+  const questionWords: string[] = []
+  for (const part of firstLine.split(/\s+/u)) {
+    if (part.startsWith('--')) flags.push(part.toLowerCase())
+    else questionWords.push(part)
+  }
+  const question = questionWords.join(' ').trim()
+  const options: string[] = []
+  for (const line of lines.slice(1)) {
+    if (line.startsWith('--')) {
+      flags.push(line.toLowerCase())
+      continue
+    }
+    const cleaned = line.replace(/^[-*•]\s*/u, '').trim()
+    if (cleaned.length > 0) options.push(cleaned)
+  }
+  if (question.length === 0 || options.length < 2) return null
+  return {
+    ok: true,
+    question,
+    options: options.slice(0, MAX_POLL_OPTIONS),
+    allowMultiple: flags.includes('--multiple') || flags.includes('--multi'),
+    anonymous: flags.includes('--anonymous') || flags.includes('--anon'),
+  }
+}
+
+export function parsePollCommand(
+  input: string,
+  locale: PollLocale = 'fr'
+): ParsePollCommandResult {
+  const copy = pollMessages[locale]
   const trimmed = input.trim()
-  if (!trimmed.startsWith('/poll')) {
+  if (!trimmed.startsWith('/poll') || (trimmed.length > 5 && !/\s/u.test(trimmed[5]!))) {
     return {
       ok: false,
-      error: 'La commande doit commencer par /poll.',
+      error: copy.errNotPoll,
     }
   }
 
@@ -121,15 +173,18 @@ export function parsePollCommand(input: string): ParsePollCommandResult {
   if (afterCommand.length === 0) {
     return {
       ok: false,
-      error: 'Usage : /poll "Question ?" "Option A" "Option B" [--multiple] [--anonymous]',
+      error: copy.errUsage,
     }
   }
+
+  const multiline = tryParseMultilinePoll(afterCommand)
+  if (multiline !== null) return multiline
 
   const { segments, flags, unclosedQuote } = tokenizePollArguments(afterCommand)
   if (unclosedQuote) {
     return {
       ok: false,
-      error: 'Guillemet non refermé dans la commande /poll.',
+      error: copy.errUnclosedQuote,
     }
   }
 
@@ -139,7 +194,7 @@ export function parsePollCommand(input: string): ParsePollCommandResult {
   if (segments.length < 3) {
     return {
       ok: false,
-      error: 'Un sondage requiert une question et au moins 2 options.',
+      error: copy.errMinOptions,
     }
   }
 
@@ -152,17 +207,48 @@ export function parsePollCommand(input: string): ParsePollCommandResult {
   if (question.length === 0 || options.length < 2) {
     return {
       ok: false,
-      error: 'Un sondage requiert une question valide et au moins 2 options non vides.',
+      error: copy.errEmptyQuestionOrOptions,
     }
   }
 
   return {
     ok: true,
     question,
-    options: options.slice(0, 10),
+    options: options.slice(0, MAX_POLL_OPTIONS),
     allowMultiple,
     anonymous,
   }
+}
+
+/** Validates an untrusted `io.kodera.poll` payload on a Matrix `m.room.message` event. */
+export function pollPayloadOf(content: unknown): PollWirePayload | undefined {
+  if (content === null || typeof content !== 'object') return undefined
+  const raw = (content as Record<string, unknown>)[POLL_FIELD]
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  const obj = raw as Record<string, unknown>
+  const question = typeof obj.question === 'string' ? obj.question.trim() : ''
+  if (question.length === 0 || question.length > 500 || !Array.isArray(obj.options)) {
+    return undefined
+  }
+  const options = obj.options
+    .filter((item): item is string => typeof item === 'string')
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0 && item.length <= 200)
+    .slice(0, MAX_POLL_OPTIONS)
+  if (options.length < 2) return undefined
+  return {
+    question,
+    options,
+    allowMultiple: obj.allowMultiple === true,
+    anonymous: obj.anonymous === true,
+  }
+}
+
+export function pollFallbackBody(payload: PollWirePayload): string {
+  return [
+    `📊 ${payload.question}`,
+    ...payload.options.map((opt, idx) => `${idx + 1}. ${opt}`),
+  ].join('\n')
 }
 
 export interface CreateChannelPollParams {
@@ -292,20 +378,22 @@ export function computePollSummary(poll: ChannelPoll): PollComputedSummary {
   }
 }
 
-export function formatPollMarkdownForDocs(poll: ChannelPoll): string {
+export function formatPollMarkdownForDocs(
+  poll: ChannelPoll,
+  locale: PollLocale = 'fr'
+): string {
+  const copy = pollMessages[locale]
   const summary = computePollSummary(poll)
-  const statusLabel = poll.closed ? 'Clôturé' : 'En cours'
-  const modeLabel = poll.allowMultiple ? 'Choix multiple' : 'Choix unique'
-  const anonymityLabel = poll.anonymous ? 'Vote anonyme' : 'Vote nominatif'
+  const statusLabel = poll.closed ? copy.mdStatusClosed : copy.mdStatusOpen
+  const modeLabel = poll.allowMultiple ? copy.modeMultiple : copy.modeSingle
+  const anonymityLabel = poll.anonymous ? copy.anonymousBadge : copy.mdNamedVote
 
   const lines: string[] = [
-    `### Sondage Kodera : ${poll.question}`,
-    `- **Statut** : ${statusLabel} (${modeLabel} · ${anonymityLabel})`,
-    `- **Participation** : ${summary.totalVotes} vote(s) (${summary.totalParticipants} participant(s))`,
+    copy.mdHeading(poll.question),
+    copy.mdStatusLine(statusLabel, modeLabel, anonymityLabel),
+    copy.mdParticipation(summary.totalVotes, summary.totalParticipants),
     '',
-    ...summary.options.map(
-      (opt) => `- **${opt.label}** : ${opt.count} vote(s) (${opt.percentage} %)`
-    ),
+    ...summary.options.map((opt) => copy.mdOptionLine(opt.label, opt.count, opt.percentage)),
   ]
 
   return lines.join('\n')

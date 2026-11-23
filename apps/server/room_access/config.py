@@ -54,11 +54,16 @@ def _webhook_bind(value: str) -> str:
     return value
 
 
-def _matrix_user(value: str) -> str:
+def _matrix_user(value: str, name: str = "ROOM_ACCESS_AGENT_USER") -> str:
     local, _, server = value.partition(":")
     if not local.startswith("@") or len(local) < 2 or not server or any(c.isspace() for c in value):
-        raise ConfigError("ROOM_ACCESS_AGENT_USER must be a full Matrix user ID, @name:server")
+        raise ConfigError(f"{name} must be a full Matrix user ID, @name:server")
     return value
+
+
+def _ai_users(value: str) -> frozenset[str]:
+    entries = [entry.strip() for entry in value.split(",") if entry.strip()]
+    return frozenset(_matrix_user(entry, "ROOM_ACCESS_AI_USERS").lower() for entry in entries)
 
 
 @dataclass(frozen=True)
@@ -81,6 +86,7 @@ class Config:
     token_ttl_s: int = 600
     # One identity's token requests per rolling minute (room_access/server.py GrantLimiter).
     grants_per_minute: int = 30
+    ai_users: frozenset[str] = frozenset()
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> "Config":
@@ -106,4 +112,5 @@ class Config:
             reconcile_s=float(env.get("ROOM_ACCESS_RECONCILE_S", "2")),
             token_ttl_s=int(env.get("ROOM_ACCESS_TOKEN_TTL_S", "600")),
             grants_per_minute=_grants_per_minute(env.get("ROOM_ACCESS_GRANTS_PER_MINUTE", "30")),
+            ai_users=_ai_users(env.get("ROOM_ACCESS_AI_USERS", "")),
         )

@@ -268,6 +268,12 @@ ALLOWED_SECRETS = {
     "KODERA_NOTIFICATION_SEAL_KEY": (
         "an application secret: the key device push subscriptions are sealed with"
     ),
+    "KODERA_AI_SEAL_KEY": (
+        "an application secret: the HKDF master key workspace BYOM AI configs are sealed with"
+    ),
+    "KODERA_AI_MISTRAL_API_KEY": (
+        "an application secret: the optional EU-sovereign Mistral API key when managed AI is on"
+    ),
     "KODERA_PUSH_VAPID_PUBLIC_KEY": (
         "public information: the uncompressed P-256 VAPID discovery point, validated by "
         "apps/notifications/push.py"

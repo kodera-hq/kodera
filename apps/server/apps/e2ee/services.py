@@ -12,6 +12,7 @@ from uuid import UUID
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+from django.conf import settings
 from django.db import OperationalError, connection, transaction
 from django.db.models import Q
 from django.utils import timezone
@@ -33,9 +34,97 @@ from apps.workspaces.selectors import (
     restricted_workspace_membership_ids,
 )
 from core.api.pagination import MAX_PAGE_UTF8_BYTES, utf8_json_size
-from services.identity.access_tokens import VerifiedAccessToken
+from services.identity.access_tokens import PROFILE, VerifiedAccessToken
 
 from .models import Device, Envelope, KeyPackage, Participant, Room
+
+NON_HUMAN_SUBJECT_PREFIXES = (
+    "kodera-ai",
+    "kodera_ai",
+    "_kodera_ai",
+    "@kodera-ai",
+    "@kodera_ai",
+    "@_kodera_ai",
+    "service-account-",
+    "ai-",
+    "ai_",
+    "bot-",
+    "bot_",
+    "agent-",
+    "agent_",
+    "_agent_",
+    "livekit-agent",
+)
+NON_HUMAN_SUBJECT_SUFFIXES = ("-bot", "_bot", "-agent", "_agent")
+NON_HUMAN_SUBJECT_NAMES = frozenset({"kodera-agent", "room-access", "kodera-ai", "kodera_ai"})
+NON_HUMAN_AZP_PREFIXES = (
+    "kodera-ai",
+    "kodera_ai",
+    "ai-",
+    "ai_",
+    "bot-",
+    "bot_",
+    "service-",
+    "agent-",
+    "agent_",
+)
+NON_HUMAN_EMAIL_PREFIXES = (
+    "kodera-ai@",
+    "kodera_ai@",
+    "bot-",
+    "bot_",
+    "ai-",
+    "ai_",
+    "service-account-",
+)
+
+
+def is_ai_or_service_actor(verified: VerifiedAccessToken) -> bool:
+    """Detect bot, service-account, or AI worker tokens so they never cross E2EE boundaries."""
+    if verified.profile != PROFILE:
+        return True
+    subject = verified.subject.strip().lower()
+    localpart = subject.partition(":")[0]
+    bare_local = localpart.lstrip("@")
+    if (
+        not subject
+        or subject in NON_HUMAN_SUBJECT_NAMES
+        or localpart in NON_HUMAN_SUBJECT_NAMES
+        or bare_local in NON_HUMAN_SUBJECT_NAMES
+        or subject.startswith(NON_HUMAN_SUBJECT_PREFIXES)
+        or localpart.startswith(NON_HUMAN_SUBJECT_PREFIXES)
+        or bare_local.startswith(NON_HUMAN_SUBJECT_PREFIXES)
+        or bare_local.endswith(NON_HUMAN_SUBJECT_SUFFIXES)
+    ):
+        return True
+    configured_subjects = {
+        str(entry).strip().lower()
+        for entry in getattr(settings, "KODERA_AI_ACTOR_SUBJECTS", ())
+        if str(entry).strip()
+    }
+    if subject in configured_subjects:
+        return True
+    azp = (verified.authorized_party or "").strip().lower()
+    if azp and (azp.startswith(NON_HUMAN_AZP_PREFIXES) or azp.endswith(NON_HUMAN_SUBJECT_SUFFIXES)):
+        return True
+    email = (verified.email or "").strip().lower()
+    if email and email.startswith(NON_HUMAN_EMAIL_PREFIXES):
+        return True
+    configured_clients = {
+        str(entry).strip().lower()
+        for entry in getattr(settings, "KODERA_AI_CLIENT_IDS", ())
+        if str(entry).strip()
+    }
+    return bool(azp and azp in configured_clients)
+
+
+def has_confidential_room(*, channel_id: UUID, organisation_id: UUID | None = None) -> bool:
+    """Whether an E2EE confidential room row is bound to `channel_id`."""
+    queryset = Room.objects.filter(channel_id=channel_id)
+    if organisation_id is not None:
+        queryset = queryset.filter(organisation_id=organisation_id)
+    return queryset.exists()
+
 
 # The wire uses JSON integers shared with browser clients; never admit a value
 # that loses precision in their number representation.
@@ -155,9 +244,15 @@ def _context(
         cursor.execute("SHOW transaction_isolation")
         if cursor.fetchone()[0] != "read committed":
             raise RefusalError(503, "service-unavailable")
+    if is_ai_or_service_actor(verified):
+        raise RefusalError(403, "forbidden")
     identity = current_identity(issuer=verified.issuer, subject=verified.subject)
     if identity is None:
         raise RefusalError(403, "identity-unknown")
+    if identity[0].email.strip().lower().startswith(NON_HUMAN_EMAIL_PREFIXES) or identity[
+        1
+    ].email.strip().lower().startswith(NON_HUMAN_EMAIL_PREFIXES):
+        raise RefusalError(403, "forbidden")
     identifiers = set()
     for field in ("deviceId", "targetDeviceId"):
         if body is not None and field in body:

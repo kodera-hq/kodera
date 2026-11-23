@@ -1,0 +1,44 @@
+// Localized copy for async voice-note recording, playback, and opt-in AI transcription.
+
+export const voiceNoteMessages = {
+  fr: {
+    recordStart: 'Enregistrer une note vocale',
+    recordStop: 'Terminer la note vocale',
+    recordCancel: 'Annuler la note vocale',
+    recordConfidentialDisabled: 'Notes vocales désactivées dans un salon confidentiel',
+    recordError: 'Impossible d’enregistrer la note vocale.',
+    play: 'Lire la note vocale',
+    pause: 'Mettre la note vocale en pause',
+    speedLabel: (rate: number) => `Vitesse de lecture ${rate}×`,
+    loading: 'Chargement…',
+    transcribe: 'Transcrire',
+    transcribing: 'Transcription…',
+    transcriptHeading: 'Transcription',
+    transcriptHide: 'Replier',
+    transcriptShow: 'Afficher la transcription',
+    transcribeForbidden:
+      'Transcription refusée : politique IA désactivée (organisation, salon ou consentement membre) ou salon confidentiel.',
+    transcribeError: 'Impossible de transcrire cette note vocale.',
+    audioError: 'Impossible de lire cette note vocale.',
+  },
+  en: {
+    recordStart: 'Record voice note',
+    recordStop: 'Finish voice note',
+    recordCancel: 'Cancel voice note',
+    recordConfidentialDisabled: 'Voice notes are disabled in confidential rooms',
+    recordError: 'Unable to record voice note.',
+    play: 'Play voice note',
+    pause: 'Pause voice note',
+    speedLabel: (rate: number) => `Playback speed ${rate}×`,
+    loading: 'Loading…',
+    transcribe: 'Transcribe',
+    transcribing: 'Transcribing…',
+    transcriptHeading: 'Transcript',
+    transcriptHide: 'Collapse',
+    transcriptShow: 'Show transcript',
+    transcribeForbidden:
+      'Transcription refused: AI policy is off (organisation, channel, or member consent) or room is confidential.',
+    transcribeError: 'Unable to transcribe this voice note.',
+    audioError: 'Unable to play this voice note.',
+  },
+} as const

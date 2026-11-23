@@ -219,6 +219,10 @@ export interface AudioDockProps {
   layout?: AudioDockLayout
   /** The microphone meter's fill: its transform is the caller's to set (see above). */
   meterRef?: Ref<HTMLSpanElement>
+  /** Signature Cobalt voice visualizer slot (replaces legacy linear meter when provided). */
+  visualizer?: ReactNode
+  /** Compact procedural soundboard trigger/popover in `studio` layout. */
+  soundboard?: ReactNode
   /**
    * The call's audio settings: a control the caller draws (a popover's trigger), set in the
    * dock's top row beside the call's name, before `onOpenCall`'s button.
@@ -338,6 +342,8 @@ export function AudioDock({
   labels,
   layout = 'sidebar',
   meterRef,
+  visualizer,
+  soundboard,
   settings,
   participants,
   participantsLabel,
@@ -413,7 +419,14 @@ export function AudioDock({
             ) : (
               <p className="truncate text-xs leading-snug font-semibold">{room}</p>
             )}
-            {meterRef === undefined ? null : (
+            {visualizer !== undefined ? (
+              <span aria-hidden="true" data-mic-meter="" className="mt-1 block w-full">
+                {meterRef === undefined ? null : (
+                  <span ref={meterFillRef} className="sr-only origin-left" />
+                )}
+                {visualizer}
+              </span>
+            ) : meterRef === undefined ? null : (
               <span
                 aria-hidden="true"
                 data-mic-meter=""
@@ -421,7 +434,7 @@ export function AudioDock({
               >
                 <span
                   ref={meterFillRef}
-                  className="block h-full w-full origin-left bg-c-ok-on-dark"
+                  className="block h-full w-full origin-left bg-c-action"
                 />
               </span>
             )}
@@ -453,7 +466,14 @@ export function AudioDock({
               >
                 {statusLabel}
               </p>
-              {meterRef === undefined ? null : (
+              {visualizer !== undefined ? (
+                <span aria-hidden="true" data-mic-meter="" className="mt-1 block w-full">
+                  {meterRef === undefined ? null : (
+                    <span ref={meterFillRef} className="sr-only origin-left" />
+                  )}
+                  {visualizer}
+                </span>
+              ) : meterRef === undefined ? null : (
                 <span
                   aria-hidden="true"
                   data-mic-meter=""
@@ -463,7 +483,7 @@ export function AudioDock({
                       track's rounded clip keeps its ends round. */}
                   <span
                     ref={meterFillRef}
-                    className="block h-full w-full origin-left bg-c-ok-on-dark"
+                    className="block h-full w-full origin-left bg-c-action"
                   />
                 </span>
               )}
@@ -680,6 +700,7 @@ export function AudioDock({
           pressed={deafened}
           onClick={onToggleDeafen}
         />
+        {layout === 'studio' && soundboard !== undefined ? soundboard : null}
         {companionChat !== undefined && hasLabel(companionChat.label) ? (
           <Tooltip content={companionChat.label} names>
             <button

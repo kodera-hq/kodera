@@ -10,6 +10,13 @@ import {
   attachmentsFallback,
   type AttachmentRef,
 } from '../../messaging/attachments/attachmentRefs'
+import {
+  POLL_END_EVENT,
+  POLL_RESPONSE_EVENT,
+  MAX_POLL_OPTIONS,
+  pollPayloadOf,
+  type PollWirePayload,
+} from '../../polls/pollState'
 import { isMatrixUserId } from '../roomInvitations'
 
 /** A Matrix event as the client-server API delivers it, the part Espace reads. */
@@ -60,6 +67,12 @@ export interface MessageView {
   attachment?: { name: string }
   /** Files stored by Core that the message carries, checked (`attachmentRefs.ts`). */
   attachments?: AttachmentRef[]
+  /** Structured channel or live-call poll (`io.kodera.poll`). */
+  poll?: PollWirePayload
+  /** Synced Matrix `io.kodera.poll.response` selections keyed by voter MXID. */
+  pollResponses?: Readonly<Record<string, readonly number[]>>
+  /** Synced Matrix `io.kodera.poll.end` senders referencing this poll. */
+  pollEndedBy?: readonly string[]
   ts: number
   /** Replaced by a later edit from its own sender. */
   edited: boolean
@@ -188,10 +201,45 @@ function collectRelations(events: readonly TimelineEvent[]) {
   const senders = new Map(events.map((event) => [event.event_id, event.sender]))
   const edits = new Map<string, Edit>()
   const reactions = new Map<string, Map<string, Set<string>>>()
+  const pollResponses = new Map<string, Map<string, readonly number[]>>()
+  const pollEnds = new Map<string, Set<string>>()
 
   for (const event of events) {
+    if (isRedacted(event)) continue
     const rel = relation(event)
-    if (rel === null || isRedacted(event) || typeof rel.event_id !== 'string') continue
+    if (event.type === POLL_RESPONSE_EVENT) {
+      const targetId =
+        typeof rel?.event_id === 'string'
+          ? rel.event_id
+          : typeof event.content.pollId === 'string'
+            ? event.content.pollId
+            : null
+      const rawIndexes = event.content.optionIndexes
+      if (targetId !== null && Array.isArray(rawIndexes)) {
+        const cleaned = rawIndexes
+          .filter((idx): idx is number => typeof idx === 'number' && Number.isInteger(idx) && idx >= 0 && idx < MAX_POLL_OPTIONS)
+          .slice(0, MAX_POLL_OPTIONS)
+        const byVoter = pollResponses.get(targetId) ?? new Map<string, readonly number[]>()
+        byVoter.set(event.sender, cleaned)
+        pollResponses.set(targetId, byVoter)
+      }
+      continue
+    }
+    if (event.type === POLL_END_EVENT) {
+      const targetId =
+        typeof rel?.event_id === 'string'
+          ? rel.event_id
+          : typeof event.content.pollId === 'string'
+            ? event.content.pollId
+            : null
+      if (targetId !== null) {
+        const who = pollEnds.get(targetId) ?? new Set<string>()
+        who.add(event.sender)
+        pollEnds.set(targetId, who)
+      }
+      continue
+    }
+    if (rel === null || typeof rel.event_id !== 'string') continue
     if (event.type === 'm.room.message' && rel.rel_type === 'm.replace') {
       if (senders.get(rel.event_id) !== event.sender) continue
       const content = contentOf(event.content['m.new_content'])
@@ -214,7 +262,7 @@ function collectRelations(events: readonly TimelineEvent[]) {
     }
   }
 
-  return { edits, reactions }
+  return { edits, reactions, pollResponses, pollEnds }
 }
 
 /** The text and files a message shows: the files' fallback line is not shown as text twice. */
@@ -262,7 +310,9 @@ function toMessageView(
   event: TimelineEvent,
   me: string,
   edits: ReadonlyMap<string, Edit>,
-  reactions: ReadonlyMap<string, Map<string, Set<string>>>
+  reactions: ReadonlyMap<string, Map<string, Set<string>>>,
+  pollResponses?: ReadonlyMap<string, Map<string, readonly number[]>>,
+  pollEnds?: ReadonlyMap<string, Set<string>>
 ): MessageView {
   const rel = relation(event)
   const redacted = isRedacted(event)
@@ -274,12 +324,22 @@ function toMessageView(
     inReply !== null && typeof inReply === 'object'
       ? (inReply as { event_id?: unknown }).event_id
       : undefined
+  const poll = !redacted ? pollPayloadOf(event.content) : undefined
+  const pollResponseMap = poll !== undefined ? pollResponses?.get(event.event_id) : undefined
+  const pollEndSet = poll !== undefined ? pollEnds?.get(event.event_id) : undefined
   return {
     key: event.key ?? event.event_id,
     eventId: event.event_id,
     sender: event.sender,
     ...(event.sender_name === undefined ? {} : { senderName: event.sender_name }),
     ...messageText(event, redacted, edit?.body),
+    ...(poll === undefined ? {} : { poll }),
+    ...(pollResponseMap === undefined || pollResponseMap.size === 0
+      ? {}
+      : { pollResponses: Object.fromEntries(pollResponseMap) }),
+    ...(pollEndSet === undefined || pollEndSet.size === 0
+      ? {}
+      : { pollEndedBy: [...pollEndSet] }),
     ...(!redacted &&
     ['m.file', 'm.image', 'm.audio', 'm.video'].includes(String(event.content.msgtype))
       ? { attachment: { name: text(event.content) ?? '' } }
@@ -313,14 +373,14 @@ function toMessageView(
  * @param me the signed-in member's Matrix user id
  */
 export function timelineView(events: readonly TimelineEvent[], me: string): MessageView[] {
-  const { edits, reactions } = collectRelations(events)
+  const { edits, reactions, pollResponses, pollEnds } = collectRelations(events)
   const messages: MessageView[] = []
   for (const event of events) {
     if (event.type !== 'm.room.message') continue
     const rel = relation(event)
     // An edit is folded into its message; a thread reply belongs to its thread's panel.
     if (rel?.rel_type === 'm.replace' || rel?.rel_type === 'm.thread') continue
-    messages.push(toMessageView(event, me, edits, reactions))
+    messages.push(toMessageView(event, me, edits, reactions, pollResponses, pollEnds))
   }
   return messages
 }
@@ -337,13 +397,13 @@ export function threadView(
   rootEventId: string,
   me: string
 ): MessageView[] {
-  const { edits, reactions } = collectRelations(events)
+  const { edits, reactions, pollResponses, pollEnds } = collectRelations(events)
   const replies: MessageView[] = []
   for (const event of events) {
     if (event.type !== 'm.room.message') continue
     const rel = relation(event)
     if (rel?.rel_type !== 'm.thread' || rel.event_id !== rootEventId) continue
-    replies.push(toMessageView(event, me, edits, reactions))
+    replies.push(toMessageView(event, me, edits, reactions, pollResponses, pollEnds))
   }
   return replies
 }
@@ -363,7 +423,7 @@ export function roomViews(
   events: readonly TimelineEvent[],
   me: string
 ): { timeline: MessageView[]; threads: Map<string, MessageView[]> } {
-  const { edits, reactions } = collectRelations(events)
+  const { edits, reactions, pollResponses, pollEnds } = collectRelations(events)
   const timeline: MessageView[] = []
   const threads = new Map<string, MessageView[]>()
   for (const event of events) {
@@ -374,10 +434,10 @@ export function roomViews(
       if (typeof rel.event_id !== 'string') continue
       let replies = threads.get(rel.event_id)
       if (replies === undefined) threads.set(rel.event_id, (replies = []))
-      replies.push(toMessageView(event, me, edits, reactions))
+      replies.push(toMessageView(event, me, edits, reactions, pollResponses, pollEnds))
       continue
     }
-    timeline.push(toMessageView(event, me, edits, reactions))
+    timeline.push(toMessageView(event, me, edits, reactions, pollResponses, pollEnds))
   }
   return { timeline, threads }
 }

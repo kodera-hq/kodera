@@ -593,14 +593,14 @@ class _DeadlineReader(io.RawIOBase):
     def readinto(self, buffer: Any) -> int:
         owner = self.transport
         owner.sock.settimeout(remaining(owner.deadline))
-        size = min(len(buffer), MAX_WIRE - owner.received + 1)
+        size = min(len(buffer), owner.max_wire - owner.received + 1)
         if size <= 0:
             raise FetchError("too-large")
         count = self.file.readinto(memoryview(buffer)[:size])
         if count is None:
             raise FetchError("timeout")
         owner.received += count
-        if owner.received > MAX_WIRE:
+        if owner.received > owner.max_wire:
             raise FetchError("too-large")
         return count
 
@@ -610,8 +610,9 @@ class _DeadlineReader(io.RawIOBase):
 
 
 class _Transport:
-    def __init__(self, sock: Any, deadline: float) -> None:
+    def __init__(self, sock: Any, deadline: float, max_wire: int = MAX_WIRE) -> None:
         self.sock, self.deadline, self.received = sock, deadline, 0
+        self.max_wire = max_wire
         self.transmitted = False
 
     def sendall(self, data: bytes) -> None:
@@ -630,12 +631,18 @@ class _Transport:
 
 class PinnedConnection(http.client.HTTPConnection):
     def __init__(
-        self, destination: Target, resolved: list[tuple[Any, ...]], deadline: float
+        self,
+        destination: Target,
+        resolved: list[tuple[Any, ...]],
+        deadline: float,
+        *,
+        max_wire: int = MAX_WIRE,
     ) -> None:
         super().__init__(
             destination.host, destination.port, timeout=remaining(deadline, pre_send=True)
         )
         self.destination, self.resolved, self.deadline = destination, resolved, deadline
+        self.max_wire = max_wire
         self._transport: _Transport | None = None
 
     @property
@@ -657,7 +664,7 @@ class PinnedConnection(http.client.HTTPConnection):
                     raw.settimeout(remaining(self.deadline, pre_send=True))
                     raw = context.wrap_socket(raw, server_hostname=self.destination.host)
                 remaining(self.deadline, pre_send=True)
-                self._transport = _Transport(raw, self.deadline)
+                self._transport = _Transport(raw, self.deadline, max_wire=self.max_wire)
                 self.sock = self._transport  # Documented HTTP socket adapter.
                 return
             except TimeoutError:
@@ -680,6 +687,7 @@ def request(
     pool: str = "default",
     scope_key: str | None = None,
     nameservers: Sequence[tuple[str, int]] | None = None,
+    max_wire: int = MAX_WIRE,
 ) -> tuple[PinnedConnection, http.client.HTTPResponse]:
     resolved = addresses(
         destination,
@@ -688,7 +696,7 @@ def request(
         scope_key=scope_key,
         nameservers=nameservers,
     )
-    connection = PinnedConnection(destination, resolved, deadline)
+    connection = PinnedConnection(destination, resolved, deadline, max_wire=max_wire)
     try:
         connection.request(
             method,

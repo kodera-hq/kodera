@@ -98,6 +98,11 @@ KODERA_PASSPORT_MAGIC_LINK: str | None = None
 KODERA_MEDIA_ROOM_VERIFIER_URL: str | None = None
 KODERA_PUBLIC_API_ORIGIN: str | None = None
 KODERA_SAML_SP_BASE_URL: str | None = None
+KODERA_AI_GATEWAY_ENABLED = False
+KODERA_AI_SEAL_KEY: bytes | None = None
+KODERA_AI_MISTRAL_API_KEY: str | None = None
+KODERA_AI_ACTOR_SUBJECTS: tuple[str, ...] = ()
+KODERA_AI_CLIENT_IDS: tuple[str, ...] = ()
 
 from core.db.ee_erasure import install_ee_erasure_key_sync as _install_ee_erasure_key_sync  # noqa: E402
 

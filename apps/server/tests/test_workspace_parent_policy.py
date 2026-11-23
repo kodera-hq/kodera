@@ -971,6 +971,8 @@ def without_template_key(objects):
 LEAF = "0010_moderation_scope_guards"
 WARM_POOL_TABLE = "workspaces_warmpoolallocation"
 TEMPLATE_APP_TABLE = "workspaces_workspacetemplateapplication"
+AI_POLICY_TABLE = "workspaces_workspaceaipolicy"
+AI_CONSENT_TABLE = "workspaces_memberaiconsent"
 NOTICE_TABLE = "workspaces_channelnotice"
 ESPACE_OBJECTS = {
     ("column", "workspaces_channel", "room_state"),
@@ -1005,11 +1007,20 @@ def without_warm_pool(objects):
     template_app_shared = {
         ("trigger", "orgs_privacyerasure", "aa_04_workspace_template_app_erasure"),
         ("function", "workspace_template_app_erasure_hook", ""),
+        ("column", "workspaces_channel", "ai_enabled"),
+        ("constraint", "workspaces_channel", "channel_confidential_no_ai"),
+        ("trigger", "orgs_privacyerasure", "aa_05_workspace_ai_erasure"),
+        ("trigger", "orgs_accounterasure", "aa_05_account_ai_erasure"),
+        ("function", "workspace_ai_scope_guard", ""),
+        ("function", "workspace_ai_account_cutoff_guard", ""),
+        ("function", "workspace_ai_erasure_hook", ""),
+        ("function", "account_ai_consent_erasure_hook", ""),
     }
     return {
         key: value
         for key, value in objects.items()
-        if key[1] not in {WARM_POOL_TABLE, TEMPLATE_APP_TABLE} and key not in template_app_shared
+        if key[1] not in {WARM_POOL_TABLE, TEMPLATE_APP_TABLE, AI_POLICY_TABLE, AI_CONSENT_TABLE}
+        and key not in template_app_shared
     }
 
 

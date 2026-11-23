@@ -6,6 +6,11 @@ from urllib.parse import urlsplit
 
 from django.core.exceptions import ImproperlyConfigured
 
+from config.environment import (
+    ai_actor_subjects as ai_actor_subjects,
+    ai_client_ids as ai_client_ids,
+    ai_mistral_api_key as ai_mistral_api_key,
+)
 from core.sealing import key_from_environment
 
 
@@ -14,6 +19,17 @@ def confidential_relay_enabled(environment: Mapping[str, str]) -> bool:
     if value not in {"true", "false"}:
         raise ImproperlyConfigured("KODERA_E2EE_RELAY_ENABLED must be true or false")
     return value == "true"
+
+
+def ai_gateway_enabled(environment: Mapping[str, str]) -> bool:
+    value = environment.get("KODERA_AI_GATEWAY_ENABLED", "false")
+    if value not in {"true", "false"}:
+        raise ImproperlyConfigured("KODERA_AI_GATEWAY_ENABLED must be true or false")
+    return value == "true"
+
+
+def ai_seal_key(environment: Mapping[str, str]) -> bytes | None:
+    return key_from_environment(environment, "KODERA_AI_SEAL_KEY")
 
 
 def media_gateway_socket(environment: Mapping[str, str]) -> str | None:

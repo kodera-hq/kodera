@@ -21,6 +21,9 @@ ALLOWED_TYPES = frozenset(
         "application/pdf",
         "text/plain",
         "application/octet-stream",
+        "audio/ogg",
+        "audio/webm",
+        "audio/mp4",
     }
 )
 MAX_BYTES = 25 * 1024 * 1024

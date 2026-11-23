@@ -136,6 +136,7 @@ Read as: what each role may do to each resource. `own` means "rows belonging to 
 | `ConfidentialEnvelope` | create, read own | create, read own | create, read own | create, read own | — | — | — | — |
 | `WorkspaceImport` | create, read, act own | create, read, act own | — | — | — | — | — | — |
 | `CoexistenceBridge` | full own | full own | — | — | — | — | — | — |
+| `WorkspaceAi` | read, update, act own | read, update, act own | read, update, act own | read, update, act own | — | — | — | — |
 
 ### Confidential relay
 

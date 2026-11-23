@@ -4335,6 +4335,90 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/organisations/{organisation_id}/workspace/ai/policy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read workspace AI policy and caller consent
+         * @description Every request checks current active membership in this organisation. Responses are Cache-Control: no-store. Returns the default-off 3-tier AI policy state without disclosing any BYOM secret material.
+         */
+        get: operations["getWorkspaceAiPolicy"];
+        /**
+         * Update workspace AI policy
+         * @description Owner/admin only. Enforces eu_sovereign_only refusal on non-EU provider configurations, SSRF protection on self-hosted endpoints, and HKDF-sealed BYOM secret persistence.
+         */
+        put: operations["putWorkspaceAiPolicy"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/channels/{channel_id}/ai": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Update channel AI policy
+         * @description Owner/admin only. Confidential and E2EE rooms fail closed with 403 and can never enable AI features.
+         */
+        put: operations["putChannelAiPolicy"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/ai/consent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Update caller member AI consent
+         * @description Records or revokes the authenticated member's explicit opt-in consent for workspace AI features.
+         */
+        put: operations["putMemberAiConsent"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/attachments/{attachment_id}/actions/transcribe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Transcribe a completed channel voice-note attachment
+         * @description Evaluates all three OFF-by-default AI consent tiers (org -> channel -> member) and refuses confidential, E2EE, and DM/unclassified rooms with 403.
+         */
+        post: operations["transcribeVoiceNote"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/organisations/{organisation_id}/workspace/imports/preview": {
         parameters: {
             query?: never;
@@ -4938,7 +5022,7 @@ export interface components {
         AttachmentUploadRequest: {
             filename: string;
             /** @enum {string} */
-            contentType: "image/jpeg" | "image/png" | "image/webp" | "image/gif" | "application/pdf" | "text/plain" | "application/octet-stream";
+            contentType: "image/jpeg" | "image/png" | "image/webp" | "image/gif" | "audio/ogg" | "audio/webm" | "audio/mp4" | "application/pdf" | "text/plain" | "application/octet-stream";
             sizeBytes: number;
             sha256: string;
             /**
@@ -12813,6 +12897,127 @@ export interface components {
             matrixEventId?: string | null;
             matrixTxnId?: string;
             validatedAttachmentMimes?: string[];
+        };
+        /**
+         * MemberAiConsent
+         * @example {
+         *       "enabled": false,
+         *       "consentedAt": null,
+         *       "revokedAt": null
+         *     }
+         */
+        MemberAiConsent: {
+            enabled: boolean;
+            /** Format: date-time */
+            consentedAt: string | null;
+            /** Format: date-time */
+            revokedAt: string | null;
+        };
+        /** MemberAiConsentRequest */
+        MemberAiConsentRequest: {
+            enabled: boolean;
+        };
+        /** WorkspaceByomConfigInput */
+        WorkspaceByomConfigInput: {
+            /** Format: uri */
+            endpoint: string;
+            model: string;
+            apiKey: string;
+            /** @enum {string} */
+            region?: "eu" | "non_eu";
+        };
+        /**
+         * WorkspaceAiPolicy
+         * @example {
+         *       "gatewayEnabled": false,
+         *       "enabled": false,
+         *       "provider": "mistral",
+         *       "providerRegion": "eu",
+         *       "euSovereignOnly": true,
+         *       "selfHostedEndpoint": "",
+         *       "model": "mistral-small-latest",
+         *       "hasByomConfig": false,
+         *       "monthlyBudgetMicros": 50000000,
+         *       "monthlySpentMicros": 0,
+         *       "memberConsent": {
+         *         "enabled": false,
+         *         "consentedAt": null,
+         *         "revokedAt": null
+         *       }
+         *     }
+         */
+        WorkspaceAiPolicy: {
+            gatewayEnabled: boolean;
+            enabled: boolean;
+            /** @enum {string} */
+            provider: "mistral" | "self_hosted" | "byom";
+            /** @enum {string} */
+            providerRegion: "eu" | "non_eu";
+            euSovereignOnly: boolean;
+            selfHostedEndpoint: string;
+            model: string;
+            hasByomConfig: boolean;
+            monthlyBudgetMicros: number;
+            monthlySpentMicros: number;
+            memberConsent: components["schemas"]["MemberAiConsent"];
+        };
+        /** WorkspaceAiPolicyRequest */
+        WorkspaceAiPolicyRequest: {
+            enabled?: boolean;
+            /** @enum {string} */
+            provider?: "mistral" | "self_hosted" | "byom";
+            /** @enum {string} */
+            providerRegion?: "eu" | "non_eu";
+            euSovereignOnly?: boolean;
+            selfHostedEndpoint?: string;
+            model?: string;
+            monthlyBudgetMicros?: number;
+            byomConfig?: components["schemas"]["WorkspaceByomConfigInput"] | null;
+            clearByomConfig?: boolean;
+        };
+        /**
+         * ChannelAiPolicy
+         * @example {
+         *       "channelId": "00000000-0000-7000-8000-000000000001",
+         *       "aiEnabled": false
+         *     }
+         */
+        ChannelAiPolicy: {
+            /** Format: uuid */
+            channelId: string;
+            aiEnabled: boolean;
+        };
+        /** ChannelAiPolicyRequest */
+        ChannelAiPolicyRequest: {
+            aiEnabled: boolean;
+        };
+        /** VoiceNoteTranscriptionRequest */
+        VoiceNoteTranscriptionRequest: {
+            /** Format: uuid */
+            channelId?: string;
+            roomId?: string;
+            language?: string;
+        };
+        /**
+         * VoiceNoteTranscription
+         * @example {
+         *       "attachmentId": "00000000-0000-7000-8000-000000000001",
+         *       "channelId": "00000000-0000-7000-8000-000000000002",
+         *       "text": "Bonjour tout le monde",
+         *       "language": "fr",
+         *       "provider": "mistral",
+         *       "model": "voxtral-mini-latest"
+         *     }
+         */
+        VoiceNoteTranscription: {
+            /** Format: uuid */
+            attachmentId: string;
+            /** Format: uuid */
+            channelId: string;
+            text: string;
+            language: string | null;
+            provider: string;
+            model: string;
         };
     };
     responses: {
@@ -23816,6 +24021,211 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+        };
+    };
+    getWorkspaceAiPolicy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current workspace AI policy and caller consent state. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceAiPolicy"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["WorkspaceBusy"];
+        };
+    };
+    putWorkspaceAiPolicy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceAiPolicyRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated workspace AI policy. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceAiPolicy"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["WorkspaceBusy"];
+        };
+    };
+    putChannelAiPolicy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                /** @description Identifier of the non-confidential workspace channel. */
+                channel_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChannelAiPolicyRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated channel AI policy. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChannelAiPolicy"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["WorkspaceBusy"];
+        };
+    };
+    putMemberAiConsent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MemberAiConsentRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated caller AI consent state. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemberAiConsent"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["WorkspaceBusy"];
+        };
+    };
+    transcribeVoiceNote: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                /** @description Completed voice-note attachment identifier. */
+                attachment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["VoiceNoteTranscriptionRequest"];
+            };
+        };
+        responses: {
+            /** @description Transcribed voice-note text. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VoiceNoteTranscription"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["WorkspaceBusy"];
         };
     };
     previewWorkspaceImport: {

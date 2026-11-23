@@ -433,6 +433,9 @@ export interface FloatingCallPillProps {
   companionChat?: AudioDockCompanionChat
   companionChatButtonRef?: Ref<HTMLButtonElement>
   meterRef?: Ref<HTMLSpanElement>
+  visualizer?: ReactNode
+  activePollCount?: number
+  activePollLabel?: string
   videoPreview?: ReactNode
   redockButtonRef?: Ref<HTMLButtonElement>
   /** Renders only the inner pill bar when `false` inside a persistent outer `<CallDockRegion>`. */
@@ -465,6 +468,9 @@ export function FloatingCallPill({
   companionChat,
   companionChatButtonRef,
   meterRef,
+  visualizer,
+  activePollCount = 0,
+  activePollLabel,
   videoPreview,
   redockButtonRef,
   asSection = true,
@@ -502,6 +508,17 @@ export function FloatingCallPill({
                 {statusLabel}
               </p>
               <ConnectionQualityBars quality={quality} status={status} label={qualityLabel} />
+              {activePollCount > 0 ? (
+                <span
+                  data-testid="floating-pill-poll-badge"
+                  {...(activePollLabel !== undefined && hasLabel(activePollLabel)
+                    ? { role: 'status', 'aria-label': activePollLabel }
+                    : {})}
+                  className="inline-flex shrink-0 items-center rounded-full bg-c-action px-2 text-xs font-bold text-c-on-inverse tabular-nums"
+                >
+                  {activePollCount}
+                </span>
+              ) : null}
             </div>
             {category === undefined ? null : <span className="sr-only">{category}</span>}
             <Tooltip content={labels.openCall} names>
@@ -514,7 +531,14 @@ export function FloatingCallPill({
                 {room}
               </button>
             </Tooltip>
-            {meterRef === undefined ? null : (
+            {visualizer !== undefined ? (
+              <span aria-hidden="true" data-mic-meter="" className="mt-1 block w-full">
+                {meterRef === undefined ? null : (
+                  <span ref={meterFillRef} className="sr-only origin-left" />
+                )}
+                {visualizer}
+              </span>
+            ) : meterRef === undefined ? null : (
               <span
                 aria-hidden="true"
                 data-mic-meter=""
@@ -522,7 +546,7 @@ export function FloatingCallPill({
               >
                 <span
                   ref={meterFillRef}
-                  className="block h-full w-full origin-left bg-c-ok-on-dark"
+                  className="block h-full w-full origin-left bg-c-action"
                 />
               </span>
             )}

@@ -1092,3 +1092,41 @@ def sweep_orphan_attachments(
         ),
         "nextContinuation": None,
     }
+
+
+@dataclass(frozen=True)
+class CompletedAttachmentSnapshot:
+    id: UUID
+    organisation_id: UUID
+    uploader_id: UUID
+    channel_id: UUID | None
+    room_id: str | None
+    filename: str
+    content_type: str
+    size_bytes: int
+    sha256: str
+
+
+def get_completed_attachment(
+    *, attachment_id: UUID, organisation_id: UUID
+) -> CompletedAttachmentSnapshot | None:
+    """Return a completed, non-cancelled attachment snapshot for `organisation_id`."""
+    row = Attachment.objects.filter(
+        id=attachment_id,
+        organisation_id=organisation_id,
+        completed_at__isnull=False,
+        cancelled_at__isnull=True,
+    ).first()
+    if row is None:
+        return None
+    return CompletedAttachmentSnapshot(
+        id=row.id,
+        organisation_id=row.organisation_id,
+        uploader_id=row.uploader_id,
+        channel_id=row.channel_id,
+        room_id=row.room_id,
+        filename=row.filename,
+        content_type=row.content_type,
+        size_bytes=row.size_bytes,
+        sha256=row.sha256,
+    )

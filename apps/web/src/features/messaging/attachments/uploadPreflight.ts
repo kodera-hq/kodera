@@ -19,6 +19,9 @@ export const ATTACHMENT_TYPES = [
   'image/png',
   'image/webp',
   'image/gif',
+  'audio/ogg',
+  'audio/webm',
+  'audio/mp4',
   'application/pdf',
   'text/plain',
   'application/octet-stream',
@@ -102,6 +105,9 @@ function contractTypeOf(reported: string, name: string): AttachmentType {
   if ((ATTACHMENT_TYPES as readonly string[]).includes(type)) return type as AttachmentType
   const ext = extensionOf(name)
   if (ext === 'txt' || ext === 'md' || ext === 'csv') return 'text/plain'
+  if (ext === 'ogg' || ext === 'opus') return 'audio/ogg'
+  if (ext === 'webm') return 'audio/webm'
+  if (ext === 'm4a' || ext === 'mp4') return 'audio/mp4'
   return 'application/octet-stream'
 }
 
@@ -111,6 +117,9 @@ const SIGNATURES: Partial<Record<AttachmentType, (bytes: Uint8Array) => boolean>
   'image/jpeg': (b) => b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff,
   'image/gif': (b) => ascii(b, 0, 6) === 'GIF87a' || ascii(b, 0, 6) === 'GIF89a',
   'image/webp': (b) => ascii(b, 0, 4) === 'RIFF' && ascii(b, 8, 12) === 'WEBP',
+  'audio/ogg': (b) => ascii(b, 0, 4) === 'OggS',
+  'audio/webm': (b) => b[0] === 0x1a && b[1] === 0x45 && b[2] === 0xdf && b[3] === 0xa3,
+  'audio/mp4': (b) => b.length >= 8 && ascii(b, 4, 8) === 'ftyp',
   'application/pdf': (b) => ascii(b, 0, 5) === '%PDF-',
 }
 

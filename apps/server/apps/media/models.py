@@ -53,6 +53,9 @@ class Attachment(StoredModel):
                         "application/pdf",
                         "text/plain",
                         "application/octet-stream",
+                        "audio/ogg",
+                        "audio/webm",
+                        "audio/mp4",
                     ]
                 ),
                 name="media_attachment_mime_valid",

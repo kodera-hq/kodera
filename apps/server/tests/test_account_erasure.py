@@ -17,6 +17,7 @@ from apps.orgs.account_erasure_services import begin_account_erasure, purge_acco
 from apps.orgs.erasure_services import database_now
 from apps.orgs.models import Membership
 from apps.orgs.privacy_models import AccountErasure
+from apps.workspaces.models import MemberAiConsent, WorkspaceAiPolicy
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -50,8 +51,17 @@ def test_last_owner_requires_transfer_without_disabling_or_erasing_any_scope(wor
 
 def test_account_intent_emits_real_erasure_sets_and_purges_only_personal_contacts_and_push(world):
     transfer(world)
-    org, _, members, _ = world
+    org, workspace, members, _ = world
     document, attachment, principal = seed(world)
+    peer_identity = Identity.objects.get(organisation=org, user=members[1].user)
+    MemberAiConsent.objects.create(
+        organisation=org,
+        workspace=workspace,
+        membership=members[1],
+        identity=peer_identity,
+        enabled=True,
+        consented_at=database_now(),
+    )
     original_subject = principal.subject
     other_email = members[1].user.email
     row = admit(world)
@@ -78,6 +88,9 @@ def test_account_intent_emits_real_erasure_sets_and_purges_only_personal_contact
     assert not Notification.objects.filter(membership=members[0]).exists()
     assert not PresenceLease.objects.filter(membership=members[0]).exists()
     assert result["counts"]["presence_leases"] == 1
+    assert not MemberAiConsent.objects.filter(membership=members[0]).exists()
+    assert MemberAiConsent.objects.filter(membership=members[1]).exists()
+    assert WorkspaceAiPolicy.objects.filter(organisation=org).exists()
     # No individual account intent owns shared documents, Yjs history or uploaded workspace content.
     assert Document.objects.filter(pk=document.id, markdown="Synthetic private body").exists()
     assert DocumentSnapshot.objects.filter(document=document).exists()
@@ -139,6 +152,7 @@ def test_account_cutoff_blocks_restore_and_new_push_and_enforces_explicit_nonsta
         lambda: User.objects.filter(pk=row.user_reference).update(enabled=True),
         lambda: Identity.objects.filter(pk=principal.id).update(enabled=True),
         lambda: Membership.objects.filter(pk=world[2][0].id).update(state="active"),
+        lambda: MemberAiConsent.objects.filter(membership=world[2][0]).update(enabled=False),
     ]:
         with pytest.raises(IntegrityError, match="durable account cutoff"), transaction.atomic():
             mutate()

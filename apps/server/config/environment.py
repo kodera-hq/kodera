@@ -93,6 +93,8 @@ ADMITTED_SECRET_NAMES = frozenset(
         "DJANGO_SECRET_KEY",  # the application signing key
         "KODERA_COLLAB_TICKET_KEY",  # collaboration ticket and transform HMAC key
         "KODERA_NOTIFICATION_SEAL_KEY",  # sealed per-device application data
+        "KODERA_AI_SEAL_KEY",  # optional HKDF master key sealing BYOM AI configs
+        "KODERA_AI_MISTRAL_API_KEY",  # optional EU-sovereign Mistral API key
         "KODERA_PUSH_VAPID_PUBLIC_KEY",  # public P-256 discovery point
         "KODERA_CONTACT_SEAL_KEY",  # application secrets
         "KODERA_OUTBOX_SEAL_KEY",
@@ -314,6 +316,52 @@ def ee_audit_signing_seed(environment: Mapping[str, str]) -> bytes | None:
             "characters with sufficient entropy, or unset"
         )
     return raw.encode("ascii")
+
+
+def ai_mistral_api_key(environment: Mapping[str, str]) -> str | None:
+    """Optional EU-sovereign Mistral API key for managed AI requests, from
+    KODERA_AI_MISTRAL_API_KEY.
+
+    Unset or empty returns `None`. When set, must be 1 to 512 printable non-whitespace ASCII
+    characters and never a PEM private key, Stripe full secret key or Scaleway access key."""
+    raw = environment.get("KODERA_AI_MISTRAL_API_KEY", "")
+    if raw == "":
+        return None
+    upper = raw.upper()
+    if (
+        not 1 <= len(raw) <= 512
+        or any(not (0x21 <= ord(ch) <= 0x7E) for ch in raw)
+        or "PRIVATE" in upper
+        or raw.startswith(("sk_live_", "sk_test_"))
+        or re.search(r"\bSCW[A-Z0-9]{17}\b", raw) is not None
+    ):
+        raise ImproperlyConfigured(
+            "KODERA_AI_MISTRAL_API_KEY must be 1 to 512 printable non-whitespace ASCII "
+            "characters, or unset"
+        )
+    return raw
+
+
+def _normalized_comma_tokens(environment: Mapping[str, str], name: str) -> tuple[str, ...]:
+    raw = environment.get(name, "")
+    if not raw:
+        return ()
+    items = [entry.strip().lower() for entry in raw.split(",") if entry.strip()]
+    if any(
+        len(entry) > 255 or any(ord(ch) <= 32 or ord(ch) == 127 for ch in entry) for entry in items
+    ):
+        raise ImproperlyConfigured(f"{name} entries must be 1 to 255 printable ASCII characters")
+    return tuple(dict.fromkeys(items))
+
+
+def ai_actor_subjects(environment: Mapping[str, str]) -> tuple[str, ...]:
+    """Lowercase-normalized OIDC subject identifiers treated as AI/service actors."""
+    return _normalized_comma_tokens(environment, "KODERA_AI_ACTOR_SUBJECTS")
+
+
+def ai_client_ids(environment: Mapping[str, str]) -> tuple[str, ...]:
+    """Lowercase-normalized OAuth client (`azp`) identifiers treated as AI/service actors."""
+    return _normalized_comma_tokens(environment, "KODERA_AI_CLIENT_IDS")
 
 
 STAFF_REALM_SUFFIX = "/realms/kodera-staff"

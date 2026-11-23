@@ -24,8 +24,11 @@ const CHANNEL: CallChannel = {
   categoryName: 'Équipe',
 }
 
+import { pollStore } from '../polls/pollStore'
+
 beforeAll(async () => {
   await i18n.changeLanguage('fr')
+  await import('./CallCompanionChatDrawer')
 })
 
 const CONNECTED_CALL: CallSnapshot = {
@@ -666,5 +669,63 @@ describe('VoiceCallDock in-call companion chat integration', () => {
     // Lifting quarantine still keeps the pre-quarantine handle retired
     controller.sync(activeScope)
     expect(fresh.command(quarantineEffect)).toBe(false)
+  })
+
+  it('mounts collapsible active-poll overlay banner on stage and active-poll badge on FloatingCallPill', async () => {
+    const user = userEvent.setup()
+    pollStore.clearAll()
+    const { call } = createCall()
+    const { store } = createLiveStore()
+
+    act(() => {
+      pollStore.recordLocalPoll({
+        roomId: ROOM,
+        payload: {
+          question: 'Créneau rétro ?',
+          options: ['Jeudi 15h', 'Vendredi 10h'],
+          allowMultiple: false,
+          anonymous: false,
+        },
+        createdBy: ME,
+        createdByName: 'ZôÖma',
+      })
+    })
+
+    const { rerender } = render(
+      <VoiceCallDock
+        call={call}
+        channel={CHANNEL}
+        store={store}
+        viewerId={ME}
+        deviceSettings={null}
+        meterRef={{ current: null }}
+        panelMeterRef={{ current: null }}
+        placement="stage"
+      />
+    )
+
+    const banner = screen.getByTestId('call-active-poll-banner')
+    expect(within(banner).getByText('Créneau rétro ?')).toBeInTheDocument()
+
+    const toggle = screen.getByTestId('call-poll-banner-toggle')
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    await user.click(toggle)
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(within(banner).getByText('Jeudi 15h')).toBeInTheDocument()
+
+    rerender(
+      <VoiceCallDock
+        call={call}
+        channel={CHANNEL}
+        store={store}
+        viewerId={ME}
+        deviceSettings={null}
+        meterRef={{ current: null }}
+        panelMeterRef={{ current: null }}
+        placement="floating"
+      />
+    )
+    expect(screen.getByTestId('floating-pill-poll-badge')).toHaveTextContent('1')
+    pollStore.clearAll()
   })
 })

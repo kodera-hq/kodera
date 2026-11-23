@@ -6472,6 +6472,117 @@ export const EXAMPLES = {
     idempotent: true,
     requiresIfMatch: false,
   },
+  "getWorkspaceAiPolicy": {
+    operationId: "getWorkspaceAiPolicy",
+    method: "get",
+    path: "/organisations/{organisation_id}/workspace/ai/policy",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "gatewayEnabled": false,
+      "enabled": false,
+      "provider": "mistral",
+      "providerRegion": "eu",
+      "euSovereignOnly": true,
+      "selfHostedEndpoint": "",
+      "model": "mistral-small-latest",
+      "hasByomConfig": false,
+      "monthlyBudgetMicros": 50000000,
+      "monthlySpentMicros": 0,
+      "memberConsent": {
+        "enabled": false,
+        "consentedAt": null,
+        "revokedAt": null
+      }
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "putWorkspaceAiPolicy": {
+    operationId: "putWorkspaceAiPolicy",
+    method: "put",
+    path: "/organisations/{organisation_id}/workspace/ai/policy",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "gatewayEnabled": false,
+      "enabled": false,
+      "provider": "mistral",
+      "providerRegion": "eu",
+      "euSovereignOnly": true,
+      "selfHostedEndpoint": "",
+      "model": "mistral-small-latest",
+      "hasByomConfig": false,
+      "monthlyBudgetMicros": 50000000,
+      "monthlySpentMicros": 0,
+      "memberConsent": {
+        "enabled": false,
+        "consentedAt": null,
+        "revokedAt": null
+      }
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "putChannelAiPolicy": {
+    operationId: "putChannelAiPolicy",
+    method: "put",
+    path: "/organisations/{organisation_id}/workspace/channels/{channel_id}/ai",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "channelId": "00000000-0000-7000-8000-000000000001",
+      "aiEnabled": false
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "putMemberAiConsent": {
+    operationId: "putMemberAiConsent",
+    method: "put",
+    path: "/organisations/{organisation_id}/workspace/ai/consent",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "enabled": false,
+      "consentedAt": null,
+      "revokedAt": null
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "transcribeVoiceNote": {
+    operationId: "transcribeVoiceNote",
+    method: "post",
+    path: "/organisations/{organisation_id}/workspace/attachments/{attachment_id}/actions/transcribe",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "attachmentId": "00000000-0000-7000-8000-000000000001",
+      "channelId": "00000000-0000-7000-8000-000000000002",
+      "text": "Bonjour tout le monde",
+      "language": "fr",
+      "provider": "mistral",
+      "model": "voxtral-mini-latest"
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
   "previewWorkspaceImport": {
     operationId: "previewWorkspaceImport",
     method: "post",

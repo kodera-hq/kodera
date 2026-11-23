@@ -217,6 +217,7 @@ def test_registered_schema_matches_migrations(schema):
             "0015_confidential_channel_designation",
             "0016_upload_tombstone_quota",
             "0017_workspacetemplateapplication",
+            "0018_ai_policy_and_consent",
         }
 
 

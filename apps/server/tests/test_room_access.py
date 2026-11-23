@@ -1114,3 +1114,114 @@ def test_internal_room_member_endpoint_enforces_private_peer_webhook_bind_and_ra
     finally:
         srv.shutdown()
         srv.server_close()
+
+
+def test_ai_users_and_confidential_or_encrypted_rooms_are_refused_and_evicted(world):
+    from room_access.config import Config
+    from room_access.rooms import identity
+    from room_access.service import CONFIDENTIAL, CREATE, ENCRYPTION
+
+    matrix, livekit, _ = world
+    ai_explicit = "@Custom-Scribe:acme.kodera.io"
+    ai_prefix = "@Kodera-AI-Transcribe:acme.kodera.io"
+    ai_suffix = "@Summary_Agent:acme.kodera.io"
+    TOKENS["tok-ai-explicit"] = (ai_explicit, "AI1")
+    TOKENS["tok-ai-prefix"] = (ai_prefix, "AI2")
+    TOKENS["tok-ai-suffix"] = (ai_suffix, "AI3")
+    try:
+        matrix.rooms[AUDIO]["joined"].update({ai_explicit, ai_prefix, ai_suffix})
+        svc = Service(
+            matrix,
+            livekit,
+            "wss://media.acme.kodera.io",
+            AGENT,
+            token_ttl_s=600,
+            ai_users=frozenset({ai_explicit.lower()}),
+        )
+
+        # Config parses optional comma-separated ROOM_ACCESS_AI_USERS case-insensitively.
+        cfg = Config.from_env(
+            {
+                "ROOM_ACCESS_SYNAPSE_URL": "http://synapse:8008",
+                "ROOM_ACCESS_MATRIX_TOKEN": "room-access-token",
+                "ROOM_ACCESS_AGENT_USER": AGENT,
+                "LIVEKIT_URL": "http://livekit:7880",
+                "LIVEKIT_WS_URL": "wss://media.acme.kodera.io",
+                "LIVEKIT_API_KEY": KEY,
+                "LIVEKIT_API_SECRET": SECRET,
+                "ROOM_ACCESS_ALLOWED_ORIGINS": CONSOLE,
+                "ROOM_ACCESS_AI_USERS": f" {ai_explicit} , {ai_prefix} ",
+            }
+        )
+        assert cfg.ai_users == frozenset({ai_explicit.lower(), ai_prefix.lower()})
+
+        # Even if room has ai_enabled=True, grant() NEVER mints a LiveKit token to AI actors.
+        matrix.policy(AUDIO, ai_enabled=True)
+        for tok in ("tok-ai-explicit", "tok-ai-prefix", "tok-ai-suffix"):
+            with pytest.raises(RefusedError) as refused:
+                svc.grant(tok, AUDIO)
+            assert refused.value.status == 403
+
+        # Confidential / E2EE markers on a room refuse grant() with 403 even for human members.
+        for marker_room, state_events in (
+            (
+                "!conf-policy:acme.kodera.io",
+                {
+                    POLICY: {
+                        "version": 1,
+                        "kind": "audio",
+                        "listen_only": False,
+                        "may_publish": [],
+                        "archived": False,
+                        CONFIDENTIAL: True,
+                    }
+                },
+            ),
+            (
+                "!conf-enc:acme.kodera.io",
+                {
+                    POLICY: {
+                        "version": 1,
+                        "kind": "audio",
+                        "listen_only": False,
+                        "may_publish": [],
+                        "archived": False,
+                    },
+                    ENCRYPTION: {"algorithm": "m.megolm.v1.aes-sha2"},
+                },
+            ),
+            (
+                "!conf-create:acme.kodera.io",
+                {
+                    POLICY: {
+                        "version": 1,
+                        "kind": "audio",
+                        "listen_only": False,
+                        "may_publish": [],
+                        "archived": False,
+                    },
+                    CREATE: {CONFIDENTIAL: True},
+                },
+            ),
+        ):
+            matrix.rooms[marker_room] = {"state": state_events, "joined": {ALICE, ROOM_ACCESS}}
+            with pytest.raises(RefusedError) as refused:
+                svc.grant("tok-alice", marker_room)
+            assert refused.value.status == 403
+
+        # refresh() retains AI participant ONLY when non-confidential audio policy has ai_enabled=True,
+        # and immediately evicts via livekit.remove when ai_enabled=False or room turns confidential.
+        lk_name = livekit_room(AUDIO)
+        livekit.join(AUDIO, identity(ALICE, "DEV1"))
+        livekit.join(AUDIO, identity(ai_prefix, "AI2"))
+        svc.refresh(lk_name, AUDIO)
+        assert identity(ai_prefix, "AI2") not in livekit.removed
+
+        matrix.policy(AUDIO, ai_enabled=False)
+        svc.refresh(lk_name, AUDIO)
+        assert identity(ai_prefix, "AI2") in livekit.removed
+        assert identity(ALICE, "DEV1") not in livekit.removed
+    finally:
+        TOKENS.pop("tok-ai-explicit", None)
+        TOKENS.pop("tok-ai-prefix", None)
+        TOKENS.pop("tok-ai-suffix", None)

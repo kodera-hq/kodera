@@ -13,6 +13,7 @@ import {
   lazy,
   memo,
   Suspense,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -45,13 +46,18 @@ import { Skeleton } from '../../ui/Skeleton/Skeleton'
 import { TOUCH_TARGET } from '../../ui/touchTarget'
 import { permitsPlaintext } from '../confidential/room-boundary'
 import { useMessagingOrganisation } from '../messaging/organisationContext'
+import { PollCard } from '../polls/PollCard'
+import { pollMessages } from '../polls/pollMessages'
+import { pollStore } from '../polls/pollStore'
 import { profileMessages } from '../profile/profileMessages'
 import { usePassportServices } from '../profile/passportContext'
+import { SoundboardPopover } from '../sounds/SoundboardPopover'
 import { studioMessages } from '../workspace/studioMessages'
 import type { Workspace } from '../workspace/workspace'
 import type { CallProblem, CallQuality, VideoProblem } from './audio/call'
 import { callPreferences } from './audio/callPreferences'
 import { CallDockRegion, FloatingCallPill } from './audio/FloatingCallPill'
+import { KoderaVoiceVisualizer } from './audio/KoderaVoiceVisualizer'
 import { bindPushToTalk } from './audio/pushToTalk'
 import { Rejoiner, REJOIN_ATTEMPTS, type RejoinSnapshot } from './audio/rejoin'
 import type { StagePresentation } from './video/VideoStage'
@@ -716,6 +722,41 @@ function VoiceCallDockView({
         : countTimelineMessagesAfter(companionWatermark.lastSeenEventKey)
 
   const companionCopy = COMPANION_COPY[locale]
+  const pollCopy = pollMessages[locale]
+  const pollVersion = useSyncExternalStore(pollStore.subscribe, pollStore.getVersion)
+  const [pollOverlayExpanded, setPollOverlayExpanded] = useState(false)
+  const isCallModerator = useCallback(
+    (userId: string): boolean => {
+      if (currentCallRoomId === null) return false
+      const profileRole = store.getProfileRole?.(currentCallRoomId, userId)
+      if (profileRole === 'admin' || profileRole === 'maintainer') {
+        return true
+      }
+      if (store.getMemberRole?.(currentCallRoomId, userId) === 'admin') return true
+      return userId === viewerId && store.canPin?.(currentCallRoomId) === true
+    },
+    [currentCallRoomId, store, viewerId]
+  )
+  const activeCallPolls = useMemo(() => {
+    void pollVersion
+    if (currentCallRoomId === null || companionProtectionUnavailable) return []
+    return pollStore
+      .derivePolls(currentCallRoomId, companionTimeline, viewerId, {
+        sink: store,
+        isModerator: isCallModerator,
+      })
+      .filter((item) => !item.closed)
+  }, [
+    currentCallRoomId,
+    companionProtectionUnavailable,
+    companionTimeline,
+    viewerId,
+    pollVersion,
+    store,
+    isCallModerator,
+  ])
+  const latestActivePoll =
+    activeCallPolls.length > 0 ? activeCallPolls[activeCallPolls.length - 1] : undefined
   const companionBadgeText =
     effectiveCompanionUnread > 99 ? '99+' : String(effectiveCompanionUnread)
   const companionButtonLabel =
@@ -1029,6 +1070,50 @@ function VoiceCallDockView({
                 />
               </Suspense>
             ) : null}
+            {placement === 'stage' && latestActivePoll !== undefined ? (
+              <div
+                data-testid="call-active-poll-banner"
+                className="mx-3 mt-2 flex flex-col gap-2 rounded-lg border border-c-on-inverse-dim bg-c-inverse-2 p-2 text-c-on-inverse"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2 px-1">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="inline-flex shrink-0 items-center rounded-full bg-c-action px-2 py-1 font-mono text-xs font-semibold text-c-on-inverse">
+                      {pollCopy.callOverlayBadge(activeCallPolls.length)}
+                    </span>
+                    <span className="truncate text-sm font-semibold text-c-on-inverse">
+                      {latestActivePoll.question}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    data-testid="call-poll-banner-toggle"
+                    aria-expanded={pollOverlayExpanded}
+                    onClick={() => setPollOverlayExpanded((prev) => !prev)}
+                    className="focus-offset rounded-md bg-c-inverse px-2 py-1 text-xs font-semibold text-c-on-inverse hover:underline focus-visible:ring focus-visible:ring-offset-2 focus-visible:outline-hidden"
+                  >
+                    {pollOverlayExpanded ? pollCopy.callOverlayHide : pollCopy.callOverlayShow}
+                  </button>
+                </div>
+                {pollOverlayExpanded ? (
+                  <PollCard
+                    poll={latestActivePoll}
+                    currentUserId={viewerId}
+                    canClose={latestActivePoll.createdBy === viewerId || isCallModerator(viewerId)}
+                    locale={locale}
+                    onVote={(_pollId, optionId) => {
+                      pollStore.vote(latestActivePoll, optionId, viewerId, store)
+                    }}
+                    onClosePoll={() => {
+                      pollStore.close(
+                        latestActivePoll,
+                        store,
+                        latestActivePoll.createdBy === viewerId || isCallModerator(viewerId)
+                      )
+                    }}
+                  />
+                ) : null}
+              </div>
+            ) : null}
             {isFloating ? (
               <FloatingCallPill
                 asSection={false}
@@ -1048,8 +1133,30 @@ function VoiceCallDockView({
                 deafened={callSnapshot.deafened}
                 companionChat={companionChat}
                 companionChatButtonRef={chatButtonRef}
+                activePollCount={activeCallPolls.length}
+                {...(latestActivePoll === undefined
+                  ? {}
+                  : { activePollLabel: pollCopy.pillBadgeLabel(latestActivePoll.question) })}
                 {...(media === undefined ? {} : { media })}
-                {...(call.micLevel === undefined ? {} : { meterRef })}
+                {...(call.micLevel === undefined && call.localMicTrack === undefined
+                  ? {}
+                  : {
+                      ...(call.micLevel === undefined ? {} : { meterRef }),
+                      visualizer: (
+                        <KoderaVoiceVisualizer
+                          trackSource={call.localMicTrack}
+                          levelSampler={call.micLevel}
+                          muted={
+                            callSnapshot.muted ||
+                            callSnapshot.deafened ||
+                            callSnapshot.listenOnly
+                          }
+                          connected={callSnapshot.status === 'connected'}
+                          surface="inverse"
+                          compact
+                        />
+                      ),
+                    })}
                 onToggleMute={() => void call.setMuted(!callSnapshot.muted)}
                 onToggleDeafen={() => void call.setDeafened(!callSnapshot.deafened)}
                 onOpenCall={handleOpenStage}
@@ -1118,7 +1225,36 @@ function VoiceCallDockView({
                 }
                 muted={callSnapshot.muted}
                 deafened={callSnapshot.deafened}
-                {...(call.micLevel === undefined ? {} : { meterRef })}
+                {...(call.micLevel === undefined && call.localMicTrack === undefined
+                  ? {}
+                  : {
+                      ...(call.micLevel === undefined ? {} : { meterRef }),
+                      visualizer: (
+                        <KoderaVoiceVisualizer
+                          trackSource={call.localMicTrack}
+                          levelSampler={call.micLevel}
+                          muted={
+                            callSnapshot.muted ||
+                            callSnapshot.deafened ||
+                            callSnapshot.listenOnly
+                          }
+                          connected={callSnapshot.status === 'connected'}
+                          surface="inverse"
+                          compact={dockLayout === 'compact'}
+                        />
+                      ),
+                    })}
+                {...(dockLayout === 'studio'
+                  ? {
+                      soundboard: (
+                        <SoundboardPopover
+                          roomId={callSnapshot.roomId}
+                          listenOnly={callSnapshot.listenOnly}
+                          deafened={callSnapshot.deafened}
+                        />
+                      ),
+                    }
+                  : {})}
                 {...(deviceSettings === null || dockLayout === 'compact'
                   ? {}
                   : {

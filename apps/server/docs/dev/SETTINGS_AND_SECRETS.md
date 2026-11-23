@@ -36,6 +36,7 @@ Each environment module imports `base` and overrides; none of them declares a se
 | a billing-provider restricted key limited to Checkout Sessions (create and expire), and the webhook signing secret. No refund, payout, transfer or full secret key; the key's scope is set and checked when it is issued | No money movement from the API |
 | The audit pepper, the Enterprise audit-export signing seed (`KODERA_EE_AUDIT_SIGNING_SEED`), and the application signing key | Application secrets, not infrastructure |
 | Outbox message seal key (`KODERA_OUTBOX_SEAL_KEY`) for sealing transactional mail recipients and one-time link secrets | Application secret; unsealed only by the mail sender |
+| Optional AI BYOM seal key (`KODERA_AI_SEAL_KEY`) for HKDF-sealing per-workspace AI provider configurations, and optional EU-sovereign Mistral API key (`KODERA_AI_MISTRAL_API_KEY`) when managed AI is enabled | Application secrets; unset when AI gateway or BYOM is unused |
 | The Key Manager key **identifier** | An identifier, not a key |
 
 ## 3. What the API process must never hold

@@ -352,6 +352,11 @@
       "path": "/organisations/{organisation_id}/workspace/administration"
     },
     {
+      "operation_id": "getWorkspaceAiPolicy",
+      "method": "GET",
+      "path": "/organisations/{organisation_id}/workspace/ai/policy"
+    },
+    {
       "operation_id": "getWorkspaceChannelOverrides",
       "method": "GET",
       "path": "/organisations/{organisation_id}/workspace/channels/{channel_id}/overrides"
@@ -592,6 +597,16 @@
       "path": "/organisations/{organisation_id}/confidential/key-packages"
     },
     {
+      "operation_id": "putChannelAiPolicy",
+      "method": "PUT",
+      "path": "/organisations/{organisation_id}/workspace/channels/{channel_id}/ai"
+    },
+    {
+      "operation_id": "putMemberAiConsent",
+      "method": "PUT",
+      "path": "/organisations/{organisation_id}/workspace/ai/consent"
+    },
+    {
       "operation_id": "putNotificationPresence",
       "method": "PUT",
       "path": "/notifications/presence/{device_id}"
@@ -600,6 +615,11 @@
       "operation_id": "putPushSubscription",
       "method": "PUT",
       "path": "/push/subscriptions/{device_id}"
+    },
+    {
+      "operation_id": "putWorkspaceAiPolicy",
+      "method": "PUT",
+      "path": "/organisations/{organisation_id}/workspace/ai/policy"
     },
     {
       "operation_id": "putWorkspaceCollectionRow",
@@ -730,6 +750,11 @@
       "operation_id": "switchPassportWorkspace",
       "method": "POST",
       "path": "/auth/passport/switch-workspace"
+    },
+    {
+      "operation_id": "transcribeVoiceNote",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/workspace/attachments/{attachment_id}/actions/transcribe"
     },
     {
       "operation_id": "unarchiveChannel",

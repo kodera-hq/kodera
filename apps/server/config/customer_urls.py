@@ -59,6 +59,7 @@ urlpatterns = [
     path("", include("apps.proximity.api.urls")),
     # Every confidential operation independently refuses while its feature gate is disabled.
     path("", include("apps.e2ee.api.urls")),
+    path("", include("apps.ai_gateway.api.urls")),
     path("", include("apps.docs.api.urls")),
     path("", include("apps.extensions.api.urls")),
     path("api/v1/me", me),

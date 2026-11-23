@@ -4,7 +4,7 @@ from types import MappingProxyType, SimpleNamespace
 
 import pytest
 from kodera_synapse_policy.confidential import CONFIDENTIAL
-from synapse.module_api.errors import SynapseError
+from synapse.module_api.errors import ConfigError, SynapseError
 from test_community import governed
 from test_policy import (
     AGENT,
@@ -205,3 +205,145 @@ def test_frozen_confidential_state_has_the_same_refusal_boundary():
         False,
         FORBIDDEN,
     )
+
+
+def test_ai_user_ids_configuration_validates_distinct_matrix_identifiers():
+    default_cfg = KoderaPolicy.parse_config({"agent_user_id": AGENT})
+    assert default_cfg.get("ai_user_ids", []) == []
+    configured = KoderaPolicy.parse_config(
+        {"agent_user_id": AGENT, "ai_user_ids": [" @Custom-Scribe:acme-sa.kodera.io "]}
+    )
+    assert configured["ai_user_ids"] == ["@custom-scribe:acme-sa.kodera.io"]
+    for invalid in (
+        ("@custom-scribe:acme-sa.kodera.io",),
+        ["bad-id"],
+        [AGENT],
+        [AGENT.upper()],
+        ["@dup:acme-sa.kodera.io", "@DUP:acme-sa.kodera.io"],
+        [f"@bot-{idx}:acme-sa.kodera.io" for idx in range(33)],
+    ):
+        with pytest.raises(ConfigError, match="ai_user_ids"):
+            KoderaPolicy.parse_config({"agent_user_id": AGENT, "ai_user_ids": invalid})
+
+
+def test_ai_actors_are_refused_in_confidential_dm_and_ai_disabled_rooms():
+    configured_ai = "@Custom-Scribe:acme-sa.kodera.io"
+    prefixed_ai = "@Kodera-AI-Transcriber:acme-sa.kodera.io"
+    suffixed_ai = "@Summary_Bot:acme-sa.kodera.io"
+    dm_room = "!dm:acme-sa.kodera.io"
+    disabled_room = "!disabled:acme-sa.kodera.io"
+    enabled_room = "!enabled:acme-sa.kodera.io"
+    conf_ai_room = "!conf-ai:acme-sa.kodera.io"
+    bad_flag_room = "!bad-flag:acme-sa.kodera.io"
+
+    dm_state = {
+        ("m.room.create", ""): SimpleNamespace(sender=ALICE, content={"m.federate": False}),
+        ("m.room.member", ALICE): SimpleNamespace(sender=ALICE, content={"membership": "join"}),
+        ("m.room.member", configured_ai): SimpleNamespace(
+            sender=configured_ai, content={"membership": "join"}
+        ),
+        ("m.room.member", prefixed_ai): SimpleNamespace(
+            sender=prefixed_ai, content={"membership": "join"}
+        ),
+        ("m.room.member", suffixed_ai): SimpleNamespace(
+            sender=suffixed_ai, content={"membership": "join"}
+        ),
+    }
+    disabled_state = governed()
+    enabled_state = governed()
+    enabled_state[("io.kodera.room.policy", "")].content["ai_enabled"] = True
+    enabled_state[("m.room.member", configured_ai)] = SimpleNamespace(content={"membership": "join"})
+    enabled_state[("m.room.member", prefixed_ai)] = SimpleNamespace(content={"membership": "join"})
+    enabled_state[("m.room.member", suffixed_ai)] = SimpleNamespace(content={"membership": "join"})
+    conf_ai_state = confidential()
+    conf_ai_state[("io.kodera.room.policy", "")].content["ai_enabled"] = True
+    bad_flag_state = governed()
+    bad_flag_state[("io.kodera.room.policy", "")].content["ai_enabled"] = "yes"
+
+    api = FakeApi(
+        {
+            dm_room: dm_state,
+            disabled_room: disabled_state,
+            enabled_room: enabled_state,
+            conf_ai_room: conf_ai_state,
+            bad_flag_room: bad_flag_state,
+        }
+    )
+    policy = KoderaPolicy(
+        KoderaPolicy.parse_config({"agent_user_id": AGENT, "ai_user_ids": [configured_ai]}),
+        api,
+    )
+
+    # Non-boolean ai_enabled fails governance validation even for human members.
+    bad_msg = event("m.room.message", ALICE, state=False, body="hello")
+    bad_msg.room_id = bad_flag_room
+    assert run(policy.check_event_allowed(bad_msg, bad_flag_state))[0] is False
+
+    for ai_user in (configured_ai, prefixed_ai, suffixed_ai):
+        # DM creation with AI creator or invitee is forbidden.
+        dm_req = {
+            "is_direct": True,
+            "invite": [ALICE],
+            "preset": "private_chat",
+            "visibility": "private",
+        }
+        assert run(policy.user_may_create_room(ai_user, dm_req)) == FORBIDDEN
+        assert (
+            run(
+                policy.user_may_create_room(
+                    ALICE,
+                    {
+                        "is_direct": True,
+                        "invite": [ai_user],
+                        "preset": "private_chat",
+                        "visibility": "private",
+                    },
+                )
+            )
+            == FORBIDDEN
+        )
+
+        # dm_member_joined never admits an AI subject.
+        assert run(policy.dm_member_joined(AGENT, dm_room, ai_user)) is False
+
+        # AI actor never invites anyone.
+        assert run(policy.user_may_invite(ai_user, ALICE, enabled_room)) == FORBIDDEN
+
+        # Even AGENT cannot invite AI into confidential, DM/unclassified, or ai_enabled=False rooms.
+        for forbidden_room in (dm_room, disabled_room, conf_ai_room, bad_flag_room):
+            assert run(policy.user_may_invite(AGENT, ai_user, forbidden_room)) == FORBIDDEN
+            assert run(policy.user_may_join_room(ai_user, forbidden_room, True)) == FORBIDDEN
+
+        # AGENT may invite AI and AI may join only when room is non-confidential with ai_enabled=True.
+        assert run(policy.user_may_invite(AGENT, ai_user, enabled_room)) == ALLOWED
+        assert run(policy.user_may_join_room(ai_user, enabled_room, True)) == ALLOWED
+
+        # Timeline events and membership target events are refused everywhere except enabled_room (and own leave).
+        for room_id, state in (
+            (dm_room, dm_state),
+            (disabled_room, disabled_state),
+            (conf_ai_room, conf_ai_state),
+        ):
+            msg = event("m.room.message", ai_user, state=False, body="summary")
+            msg.room_id = room_id
+            assert run(policy.check_event_allowed(msg, state))[0] is False
+            assert run(policy.check_event_for_spam(msg)) == FORBIDDEN
+
+            agent_invite = event("m.room.member", AGENT, membership="invite")
+            agent_invite.state_key = ai_user
+            agent_invite.room_id = room_id
+            assert run(policy.check_event_allowed(agent_invite, state))[0] is False
+
+        own_leave = event("m.room.member", ai_user, membership="leave")
+        own_leave.state_key = ai_user
+        own_leave.room_id = disabled_room
+        assert run(policy.check_event_allowed(own_leave, disabled_state))[0] is True
+
+        ok_msg = event("m.room.message", ai_user, state=False, body="summary")
+        ok_msg.room_id = enabled_room
+        assert run(policy.check_event_allowed(ok_msg, enabled_state))[0] is True
+        assert run(policy.check_event_for_spam(ok_msg)) == ALLOWED
+        ok_invite = event("m.room.member", AGENT, membership="invite")
+        ok_invite.state_key = ai_user
+        ok_invite.room_id = enabled_room
+        assert run(policy.check_event_allowed(ok_invite, enabled_state))[0] is True

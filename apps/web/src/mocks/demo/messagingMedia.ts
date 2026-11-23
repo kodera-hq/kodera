@@ -5,12 +5,20 @@
 // refusal, never a fiction.
 
 import { http, HttpResponse, type HttpHandler } from 'msw/http'
+import type { components } from '@/api/schema'
 import { problem } from '../problem'
+
+type WorkspaceAiPolicy = components['schemas']['WorkspaceAiPolicy']
 
 export const MESSAGING_DEMO_ROUTES: readonly string[] = [
   'POST /organisations/:organisation_id/workspace/attachments/uploads',
   'POST /organisations/:organisation_id/workspace/attachments/:attachment_id/complete',
   'GET /organisations/:organisation_id/workspace/attachments/:attachment_id',
+  'POST /organisations/:organisation_id/workspace/attachments/:attachment_id/actions/transcribe',
+  'GET /organisations/:organisation_id/workspace/ai/policy',
+  'PUT /organisations/:organisation_id/workspace/ai/policy',
+  'PUT /organisations/:organisation_id/workspace/channels/:channel_id/ai',
+  'PUT /organisations/:organisation_id/workspace/ai/consent',
   'POST /organisations/:organisation_id/workspace/unfurl',
   'GET /notifications',
   'POST /notifications/read',
@@ -35,6 +43,23 @@ export function messagingDemoHandlers(
   const refused = () => problem('https://kodera.io/problems/forbidden')
   const missing = () => problem('https://kodera.io/problems/not-found')
   const done = () => new HttpResponse(null, { status: 204, headers: headers() })
+  const defaultAiPolicy = (): WorkspaceAiPolicy => ({
+    gatewayEnabled: false,
+    enabled: false,
+    provider: 'mistral',
+    providerRegion: 'eu',
+    euSovereignOnly: true,
+    selfHostedEndpoint: '',
+    model: 'mistral-small-latest',
+    hasByomConfig: false,
+    monthlyBudgetMicros: 50_000_000,
+    monthlySpentMicros: 0,
+    memberConsent: {
+      enabled: false,
+      consentedAt: null,
+      revokedAt: null,
+    },
+  })
   return [
     http.post(`${base}/organisations/:organisation_id/workspace/attachments/uploads`, refused),
     http.post(
@@ -45,6 +70,16 @@ export function messagingDemoHandlers(
       `${base}/organisations/:organisation_id/workspace/attachments/:attachment_id`,
       missing
     ),
+    http.post(
+      `${base}/organisations/:organisation_id/workspace/attachments/:attachment_id/actions/transcribe`,
+      refused
+    ),
+    http.get(`${base}/organisations/:organisation_id/workspace/ai/policy`, () =>
+      HttpResponse.json(defaultAiPolicy(), { headers: headers() })
+    ),
+    http.put(`${base}/organisations/:organisation_id/workspace/ai/policy`, refused),
+    http.put(`${base}/organisations/:organisation_id/workspace/channels/:channel_id/ai`, refused),
+    http.put(`${base}/organisations/:organisation_id/workspace/ai/consent`, refused),
     http.post(`${base}/organisations/:organisation_id/workspace/unfurl`, missing),
     http.get(`${base}/notifications`, empty),
     http.post(`${base}/notifications/read`, done),

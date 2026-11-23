@@ -278,6 +278,7 @@ export function RichComposerInput({
   onInvite,
   onKeyDown,
   uploads,
+  leadingTools,
   trailing,
   ...props
 }: MentionInputProps & {
@@ -286,6 +287,8 @@ export function RichComposerInput({
   onInvite?: (() => void) | undefined
   /** A live workspace's uploads: dropped, pasted and chosen files are sent, not only shown. */
   uploads?: AttachmentQueue | null
+  /** Optional capture tools alongside attach/command on the left of the bottom bar. */
+  leadingTools?: ReactNode
   /** The caller's own icons at the end of the bottom bar: mention, emoji, send. */
   trailing?: ReactNode
 }) {
@@ -579,6 +582,7 @@ export function RichComposerInput({
           disabled={props.readOnly}
           onClick={startCommand}
         />
+        {leadingTools}
         {trailing === undefined ? null : (
           <div className="ml-auto flex items-center gap-1">{trailing}</div>
         )}

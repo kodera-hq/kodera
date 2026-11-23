@@ -106,6 +106,20 @@ MUTANTS = [
     ('DM membership inspection admits governed channels', 'if policy_entry is not None and getattr(policy_entry, "sender", None) == self._agent:', 'if False:', 'test_dm_member_joined_restricts_inspection_to_service_accounts_and_rejects_channels'),
     ('DM membership inspection ignores join state', '_membership_of(state.get(("m.room.member", subject_user_id))) == "join"', 'True', 'test_dm_member_joined_restricts_inspection_to_service_accounts_and_rejects_channels'),
     ('room-access timeline post open in all-audience audio room', '        if self._room_access is not None and event.sender == self._room_access:\n            return False', '        if False:\n            return False', 'test_audio_companion_chat_follows_read_only_exempt_and_archive'),
+    ('ai_user_ids configuration unchecked', 'not isinstance(ai_users, list)', 'False and not isinstance(ai_users, list)', 'test_ai_user_ids_configuration_validates_distinct_matrix_identifiers'),
+    ('AI localpart prefix ignored', 'or local.startswith(AI_LOCALPART_PREFIXES)', '', 'test_ai_actors_are_refused_in_confidential_dm_and_ai_disabled_rooms'),
+    ('AI localpart suffix ignored', 'or local.endswith(AI_LOCALPART_SUFFIXES)', '', 'test_ai_actors_are_refused_in_confidential_dm_and_ai_disabled_rooms'),
+    ('AI configured user_ids ignored', 'normalized in self._ai_users\n            or ', '', 'test_ai_actors_are_refused_in_confidential_dm_and_ai_disabled_rooms'),
+    ('AI invite into forbidden room open', '        if self._is_ai_user(invitee):\n            ai_state = await self._api.get_room_state(room_id)\n            if not self._ai_room_allowed(ai_state):\n                return Codes.FORBIDDEN\n', '', 'test_ai_actors_are_refused_in_confidential_dm_and_ai_disabled_rooms'),
+    ('AI inviter open', '        if self._is_ai_user(inviter):\n            return Codes.FORBIDDEN\n', '', 'test_ai_actors_are_refused_in_confidential_dm_and_ai_disabled_rooms'),
+    ('AI join room callback open', '        if self._is_ai_user(user) and not self._ai_room_allowed(state):\n            return Codes.FORBIDDEN\n', '', 'test_ai_actors_are_refused_in_confidential_dm_and_ai_disabled_rooms'),
+    ('AI dm_member_joined open', '        if self._is_ai_user(subject_user_id):\n            return False\n', '', 'test_ai_actors_are_refused_in_confidential_dm_and_ai_disabled_rooms'),
+    ('AI DM creation open', '        if self._is_ai_user(creator) or any(self._is_ai_user(invitee) for invitee in invite):\n            return False\n', '', 'test_ai_actors_are_refused_in_confidential_dm_and_ai_disabled_rooms'),
+    ('AI sender event allowed without ai_enabled', '            if not own_ai_leave and not self._ai_room_allowed(state):\n                return False', '            if False:\n                return False', 'test_ai_actors_are_refused_in_confidential_dm_and_ai_disabled_rooms'),
+    ('AI member target event allowed without ai_enabled', '            and self._is_ai_user(getattr(event, "state_key", None))\n            and not self._ai_room_allowed(state)', '            and False', 'test_ai_actors_are_refused_in_confidential_dm_and_ai_disabled_rooms'),
+    ('AI room check ignores confidential marker', '            or CONFIDENTIAL in creation\n            or ("m.room.encryption", "") in state\n            or (CONFIDENTIAL, "") in state', '', 'test_ai_actors_are_refused_in_confidential_dm_and_ai_disabled_rooms'),
+    ('AI room check ignores explicit ai_enabled true', '            or policy_content.get("ai_enabled") is not True', '', 'test_ai_actors_are_refused_in_confidential_dm_and_ai_disabled_rooms'),
+    ('malformed ai_enabled flag open', '        if type(content.get("ai_enabled", False)) is not bool:\n            return False\n', '', 'test_ai_actors_are_refused_in_confidential_dm_and_ai_disabled_rooms'),
 ]
 
 

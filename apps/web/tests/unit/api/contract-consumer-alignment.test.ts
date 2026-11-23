@@ -27,11 +27,11 @@ const contactType = 'https://kodera.io/problems/owner-claim-contact-unverified'
 const serviceType = 'https://kodera.io/problems/service-unavailable'
 const expectedLock = {
   repository: 'kodera-hq/kodera',
-  ref: 'blob:98d457cb8e95d461c0d4e61da4bc9f5d483edf06',
-  blob: '98d457cb8e95d461c0d4e61da4bc9f5d483edf06',
+  ref: 'blob:9802622e33546e208d813097c3ebe16e5347c748',
+  blob: '9802622e33546e208d813097c3ebe16e5347c748',
   path: 'packages/api-contract/core-api.openapi.yaml',
   version: '0.54.0',
-  sha256: '6e45b28d12f96000cad31474ef2b12f6ff99fd6bc64b3713ffc7f6cc523c516a',
+  sha256: '9d8f30828cfaa21b0b1a4d8b7696ac2d64076f01c55e5f7f21b26338aaa43e89',
 }
 const blobOidPattern = /^[0-9a-f]{40}(?![\s\S])/
 const maxPinnedBlobBytes = 4 * 1024 * 1024
@@ -343,20 +343,20 @@ describe('the immutable contract consumer', () => {
 
   it('retains every operation, collection, schema, problem and protected mock byte', () => {
     const ops = operations(spec)
-    expect(ops).toHaveLength(207)
-    expect(new Set(ops.map((op) => op.operationId)).size).toBe(207)
+    expect(ops).toHaveLength(212)
+    expect(new Set(ops.map((op) => op.operationId)).size).toBe(212)
     expect(ops.filter((op) => op.isList)).toHaveLength(35)
-    expect(Object.keys(spec.components.schemas)).toHaveLength(321)
+    expect(Object.keys(spec.components.schemas)).toHaveLength(330)
     expect(problems(spec)).toHaveLength(44)
     expect(PROBLEM_TYPES).toHaveLength(44)
     const hashes = {
       'src/mocks/generated/problems.ts':
         '82377473578e293b1f7fcea3a987e250f4f58ef0a0e9d89bb959052a6266cc88',
       'src/mocks/generated/examples.ts':
-        '444ef624bc99542a89ad98905ccec198cef81fcb409172df117e634289a31752',
+        '178f64cbb79389ae8141c8d258d2b2e0c19366e55d6187427e4996b914ad6f8c',
       'src/mocks/generated/handlers.ts':
-        'd4c8ed8972c93d31e348b984ccd357c1ca63284fadee6f707af8087455032165',
-      'src/api/schema.d.ts': '99f1dc14f34768fb24518defb5abafaf708e450dec04df1ed3714e7eeb2c4399',
+        '624a24434b1953718fbe0bf8a7a0ec7fe49dd10fd631ae4de4c8365ff3501ae2',
+      'src/api/schema.d.ts': '5e7207be31e3c3be4739b2c43e68e3b394ce54ef776abb6be216feaf1da79a66',
     }
     for (const [path, expected] of Object.entries(hashes)) {
       expect(sha(readFileSync(join(root, path)))).toBe(expected)

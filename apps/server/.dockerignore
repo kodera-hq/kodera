@@ -404,3 +404,16 @@ config/settings/deploy_worker.py
 !apps/e2ee/api/responses.py
 !apps/e2ee/api/urls.py
 !apps/e2ee/api/views.py
+
+# Default-disabled 3-tier AI gateway and consent persistence; no migrations or operator writers.
+!apps/workspaces/ai_policy.py
+!apps/ai_gateway/__init__.py
+!apps/ai_gateway/adapters.py
+!apps/ai_gateway/sealing.py
+!apps/ai_gateway/services.py
+!apps/ai_gateway/api/__init__.py
+!apps/ai_gateway/api/http.py
+!apps/ai_gateway/api/permissions.py
+!apps/ai_gateway/api/responses.py
+!apps/ai_gateway/api/urls.py
+!apps/ai_gateway/api/views.py
