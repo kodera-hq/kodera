@@ -1615,8 +1615,8 @@ describe('message cache invalidation with stable summaries', () => {
       )
       const pending = store.getTimeline(SNAPSHOT_ROOM).at(-1)!
       const beforeFailure = store.getSnapshot()
-      await fixture.finishSend(403, { errcode: 'M_FORBIDDEN', error: 'Controlled send failure' })
-      expect(await sending).toMatchObject({ errcode: 'M_FORBIDDEN' })
+      await fixture.finishSend(413, { errcode: 'M_TOO_LARGE', error: 'Controlled send failure' })
+      expect(await sending).toMatchObject({ errcode: 'M_TOO_LARGE' })
       await vi.waitFor(() =>
         expect(store.getTimeline(SNAPSHOT_ROOM).at(-1)?.delivery).toBe('failed')
       )
@@ -1662,7 +1662,7 @@ describe('message cache invalidation with stable summaries', () => {
 
       fixture.holdNextSend()
       sending = store.send(SNAPSHOT_ROOM, 'Cancel this exact echo').catch((error: unknown) => error)
-      await fixture.finishSend(403, { errcode: 'M_FORBIDDEN', error: 'Controlled cancellation' })
+      await fixture.finishSend(413, { errcode: 'M_TOO_LARGE', error: 'Controlled cancellation' })
       await sending
       await vi.waitFor(() =>
         expect(store.getTimeline(SNAPSHOT_ROOM).at(-1)?.delivery).toBe('failed')
@@ -2920,7 +2920,7 @@ describe('confidential room plaintext quarantine', () => {
         expect(fixture.store.getTimeline(SNAPSHOT_ROOM).at(-1)?.delivery).toBe('pending')
       )
       const pending = fixture.store.getTimeline(SNAPSHOT_ROOM).at(-1)!
-      await fixture.finishSend(403, { errcode: 'M_FORBIDDEN', error: 'Controlled send failure' })
+      await fixture.finishSend(413, { errcode: 'M_TOO_LARGE', error: 'Controlled send failure' })
       await firstSend
       await vi.waitFor(() =>
         expect(fixture.store.getTimeline(SNAPSHOT_ROOM).at(-1)?.delivery).toBe('failed')

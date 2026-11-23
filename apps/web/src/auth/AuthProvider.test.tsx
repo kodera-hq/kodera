@@ -731,3 +731,117 @@ it('completes credential revocation, Matrix sign-out, and local storage wipe whe
     vi.useRealTimers()
   }
 })
+
+it('account-switch-purge and logout-purge: wipes kodera.espace-vault.v1, kodera-espace-timelines, and kodera-docs-yjs:* when principal switches or signs out', async () => {
+  const { openEspaceVault } = await import('@/features/espace/matrix/encryptedCache')
+  const { createTestVaultIndexedDb } = await import('@/features/espace/matrix/testVaultIdb')
+  const {
+    DOCS_COLLAB_REGISTRY_KEY,
+    ESPACE_TIMELINE_DATABASE,
+    ESPACE_VAULT_DATABASE,
+    registerDocsCollabCleanup,
+  } = await import('@/auth/localSession')
+
+  const idb = createTestVaultIndexedDb()
+  vi.stubGlobal('indexedDB', idb)
+
+  const openSeedDb = (name: string) =>
+    new Promise<void>((resolve) => {
+      const req = idb.open(name, 1)
+      req.onsuccess = () => {
+        req.result.close()
+        resolve()
+      }
+    })
+
+  const actual = controlledDraftAdapter()
+  const vaultA = await openEspaceVault(
+    {
+      ownerId: '@person-a:acme-sa.kodera.io',
+      organisationId: 'acme-sa',
+      membershipId: 'mem-a',
+      deviceId: 'DEV_A',
+    },
+    { idb, delayMs: 0 }
+  )
+  await vaultA.putDraft('!room-a:acme-sa.kodera.io', 'ordinary', 'person-a-draft', '')
+  await openSeedDb('kodera-docs-yjs:acme-sa:doc-person-a')
+  localStorage.setItem(
+    DOCS_COLLAB_REGISTRY_KEY,
+    JSON.stringify(['kodera-docs-yjs:acme-sa:doc-person-a'])
+  )
+  const docsCleanupA = vi.fn()
+  const unregisterDocsA = registerDocsCollabCleanup(docsCleanupA)
+  idb.deletedDatabases.length = 0
+
+  const { result, unmount } = renderHook(() => ({ auth: useAuth() }), {
+    wrapper: ({ children }) => <AuthProvider adapter={actual.adapter}>{children}</AuthProvider>,
+  })
+
+  try {
+    // 1. Account / principal switch (`person-a` -> `person-b`) immediately purges Espace vault + Yjs docs DBs!
+    act(() => {
+      actual.publish(
+        {
+          status: 'ready',
+          user: {
+            realm: 'acme-sa',
+            identity: { issuer: 'https://issuer.test', subject: 'person-b' },
+          },
+          generation: 1,
+          credentialGeneration: 2,
+        },
+        'person-b-token'
+      )
+    })
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    expect(docsCleanupA).toHaveBeenCalledTimes(1)
+    expect(localStorage.getItem(DOCS_COLLAB_REGISTRY_KEY)).toBeNull()
+    expect(idb.deletedDatabases).toContain(ESPACE_VAULT_DATABASE)
+    expect(idb.deletedDatabases).toContain(ESPACE_TIMELINE_DATABASE)
+    expect(idb.deletedDatabases).toContain('kodera-docs-yjs:acme-sa:doc-person-a')
+    expect(idb.hasDatabase(ESPACE_VAULT_DATABASE)).toBe(false)
+    expect(idb.hasDatabase('kodera-docs-yjs:acme-sa:doc-person-a')).toBe(false)
+    await expect(vaultA.readDraft('!room-a:acme-sa.kodera.io')).rejects.toMatchObject({
+      code: 'closed',
+    })
+    unregisterDocsA()
+
+    // 2. Person B opens a fresh vault + Yjs doc, then explicit `signOut()` wipes both again!
+    const vaultB = await openEspaceVault(
+      {
+        ownerId: '@person-b:acme-sa.kodera.io',
+        organisationId: 'acme-sa',
+        membershipId: 'mem-b',
+        deviceId: 'DEV_B',
+      },
+      { idb, delayMs: 0 }
+    )
+    await vaultB.putDraft('!room-b:acme-sa.kodera.io', 'ordinary', 'person-b-draft', '')
+    await openSeedDb('kodera-docs-yjs:acme-sa:doc-person-b')
+    const docsCleanupB = vi.fn()
+    const unregisterDocsB = registerDocsCollabCleanup(docsCleanupB)
+    idb.deletedDatabases.length = 0
+
+    await act(async () => {
+      await result.current.auth.signOut()
+    })
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    expect(docsCleanupB).toHaveBeenCalled()
+    expect(idb.deletedDatabases).toContain(ESPACE_VAULT_DATABASE)
+    expect(idb.deletedDatabases).toContain(ESPACE_TIMELINE_DATABASE)
+    expect(idb.deletedDatabases).toContain('kodera-docs-yjs:acme-sa:doc-person-b')
+    expect(idb.hasDatabase(ESPACE_VAULT_DATABASE)).toBe(false)
+    expect(idb.hasDatabase('kodera-docs-yjs:acme-sa:doc-person-b')).toBe(false)
+    await expect(vaultB.readDraft('!room-b:acme-sa.kodera.io')).rejects.toMatchObject({
+      code: 'closed',
+    })
+    unregisterDocsB()
+  } finally {
+    unregisterDocsA()
+    unmount()
+    vi.unstubAllGlobals()
+  }
+})

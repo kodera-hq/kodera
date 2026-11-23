@@ -250,7 +250,7 @@ function ToastProviderWithCopy({ children }: { children: ReactNode }) {
 }
 
 function OrgLayout() {
-  const { membership, meGeneration, meCredentialGeneration } = orgRoute.useLoaderData()
+  const { me, membership, meGeneration, meCredentialGeneration } = orgRoute.useLoaderData()
   const client = useQueryClient()
   const tenantSlugFor = useCallback(
     (organisationId: string) => cachedTenantSlug(client, organisationId),
@@ -262,6 +262,8 @@ function OrgLayout() {
         tenantSlugFor={tenantSlugFor}
         org={membership.organisation.slug}
         organisationId={membership.organisation.id}
+        ownerId={me.id}
+        membershipId={membership.membership_id}
         meGeneration={meGeneration}
         meCredentialGeneration={meCredentialGeneration}
       >

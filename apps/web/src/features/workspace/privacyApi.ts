@@ -6,7 +6,9 @@
 import { coreApi } from '../../api/client'
 import { mutate } from '../../api/mutations'
 import type { components } from '../../api/schema'
+import { purgeDocsCollabDatabases, purgeEspaceVaultDatabases } from '../../auth/localSession'
 import { isSafePresignedDownloadUrl } from '../billing/checkoutUrl'
+import { wipeEspaceVault } from '../espace/matrix/encryptedCache'
 
 export type PrivacyWorkspaceExport = components['schemas']['PrivacyWorkspaceExport']
 export type PrivacyWorkspaceDeletion = components['schemas']['PrivacyWorkspaceDeletion']
@@ -187,6 +189,9 @@ export async function requestWorkspaceDeletion(
     }
   )
   validateLifecycleCommon(data, 'workspace', 'deletion', DELETION_STATUSES)
+  await wipeEspaceVault().catch(() => undefined)
+  purgeEspaceVaultDatabases()
+  purgeDocsCollabDatabases(true)
   return data
 }
 
@@ -220,6 +225,9 @@ export async function requestAccountDeletion(
     }
   )
   validateLifecycleCommon(data, 'account', 'deletion', DELETION_STATUSES)
+  await wipeEspaceVault().catch(() => undefined)
+  purgeEspaceVaultDatabases()
+  purgeDocsCollabDatabases(true)
   return data
 }
 

@@ -21,6 +21,7 @@ import { CollaborativeBlockEditor } from './CollaborativeBlockEditor'
 import { CollaboratorPresence } from './CollaboratorPresence'
 import { getCollectionCopy } from './collectionMessages'
 import type { CollectionAssigneeMember } from './collectionSchema'
+import { permitsPlaintext, type RoomBoundary } from '../confidential/room-boundary'
 import {
   CollabSessionController,
   collabSessionOwnsBody,
@@ -110,6 +111,7 @@ export interface WorkspaceCollaborativeDocsProps {
   readonly onLocalDocumentsChange?: ((docs: readonly WorkspacePageRecord[]) => void) | undefined
   readonly workspaceFiles?: readonly WorkspaceDriveFileItem[] | undefined
   readonly confidential?: ConfidentialCollabPolicy | undefined
+  readonly roomBoundary?: RoomBoundary | undefined
   readonly webSocketFactory?: ((url: string) => WebSocketLike) | undefined
 }
 
@@ -305,6 +307,7 @@ export function WorkspaceCollaborativeDocs({
   workspaceFiles = [],
   webSocketFactory,
   confidential,
+  roomBoundary,
 }: WorkspaceCollaborativeDocsProps) {
   const { t, i18n } = useTranslation()
   const collectionCopy = getCollectionCopy(i18n.resolvedLanguage)
@@ -362,16 +365,21 @@ export function WorkspaceCollaborativeDocs({
   const docsRef = useRef<readonly WorkspacePageRecord[]>(docs)
   const onDocumentsLoadedRef = useRef(onDocumentsLoaded)
   const protectionRef = useRef(confidential)
+  const roomBoundaryRef = useRef(roomBoundary)
 
   useLayoutEffect(() => {
     protectionRef.current = confidential
+    roomBoundaryRef.current = roomBoundary
     const scheduled = saveTimersRef.current
-    if (confidential?.required && scheduled.size > 0) {
+    const blockedPlaintext =
+      Boolean(confidential?.required) ||
+      (roomBoundary !== undefined && !permitsPlaintext(roomBoundary))
+    if (blockedPlaintext && scheduled.size > 0) {
       for (const save of scheduled.values()) clearTimeout(save.timer)
       scheduled.clear()
       if (inFlightSavesRef.current.size === 0) setIsSavingRemote(false)
     }
-  }, [confidential])
+  }, [confidential, roomBoundary])
 
   useLayoutEffect(() => {
     docsRef.current = docs
@@ -532,9 +540,11 @@ export function WorkspaceCollaborativeDocs({
   useEffect(() => {
     if (!activeDocId || !activeDocRole) return
     const scopeKey = organisationId ?? 'local-workspace'
+    const initialBoundary = roomBoundaryRef.current
     const ctrl = new CollabSessionController({
       scopeKey,
       ...(confidential ? { confidential } : {}),
+      ...(initialBoundary !== undefined ? { roomBoundary: initialBoundary } : {}),
       documentId: activeDocId,
       initialRole: activeDocRole,
       user: {
@@ -549,7 +559,11 @@ export function WorkspaceCollaborativeDocs({
       ...(webSocketFactory ? { webSocketFactory } : {}),
     })
     controllerBridge.attach(ctrl)
-    if (isRemoteMode && organisationId) {
+    if (
+      isRemoteMode &&
+      organisationId &&
+      (Boolean(confidential) || initialBoundary === undefined || permitsPlaintext(initialBoundary))
+    ) {
       void ctrl.connect()
     }
     return () => {
@@ -568,6 +582,27 @@ export function WorkspaceCollaborativeDocs({
     webSocketFactory,
   ])
 
+  const { controller: sessionController, session: collabSnapshot } = useSyncExternalStore(
+    controllerBridge.subscribe,
+    controllerBridge.getSnapshot
+  )
+
+  useLayoutEffect(() => {
+    if (!sessionController) return
+    const wasForbidden = sessionController.getSnapshot().status === 'forbidden'
+    sessionController.setRoomBoundary(roomBoundary)
+    if (
+      wasForbidden &&
+      isRemoteMode &&
+      organisationId &&
+      !confidential &&
+      (roomBoundary === undefined || permitsPlaintext(roomBoundary)) &&
+      sessionController.getSnapshot().status !== 'forbidden'
+    ) {
+      void sessionController.connect()
+    }
+  }, [confidential, isRemoteMode, organisationId, roomBoundary, sessionController])
+
   useEffect(() => {
     const scheduled = saveTimersRef.current
     return () => {
@@ -582,11 +617,6 @@ export function WorkspaceCollaborativeDocs({
     }
   }, [])
 
-  const { controller: sessionController, session: collabSnapshot } = useSyncExternalStore(
-    controllerBridge.subscribe,
-    controllerBridge.getSnapshot
-  )
-
   const effectiveRole: DocumentAccessRole =
     currentDoc?.role === 'viewer' ||
     collabSnapshot.role === 'viewer' ||
@@ -594,10 +624,15 @@ export function WorkspaceCollaborativeDocs({
       ? 'viewer'
       : 'editor'
 
-  const canSeedRestMarkdown = maySeedFromMarkdown(isRemoteMode, collabSnapshot.status, confidential)
+  const canSeedRestMarkdown = maySeedFromMarkdown(
+    isRemoteMode,
+    collabSnapshot.status,
+    confidential,
+    roomBoundary
+  )
   const liveYjsOwnsBody =
     Boolean(sessionController) &&
-    collabSessionOwnsBody(isRemoteMode, collabSnapshot.status, confidential)
+    collabSessionOwnsBody(isRemoteMode, collabSnapshot.status, confidential, roomBoundary)
   const isMarkdownBodyReadOnly = effectiveRole === 'viewer' || liveYjsOwnsBody
   const markdownReadOnlyBanner =
     effectiveRole === 'viewer'
@@ -941,7 +976,9 @@ export function WorkspaceCollaborativeDocs({
     setIsSavingRemote(true)
     const run = () => {
       if (saveTimersRef.current.get(docId)?.run === run) saveTimersRef.current.delete(docId)
-      if (protectionRef.current?.required && patch.markdown !== undefined) {
+      const boundaryBlocked =
+        roomBoundaryRef.current !== undefined && !permitsPlaintext(roomBoundaryRef.current)
+      if ((protectionRef.current?.required || boundaryBlocked) && patch.markdown !== undefined) {
         settleSavingIndicator()
         return
       }

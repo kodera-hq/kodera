@@ -2,9 +2,13 @@
 // best-effort: browser policy must not prevent in-memory logout or navigation.
 
 /**
- * Espace's device cache of channel messages (`features/espace/matrix/timelineCache.ts`). Named
- * here, not imported, so signing out never loads Espace's code; a test keeps the names equal.
+ * Espace's encrypted device vault (`features/espace/matrix/encryptedCache.ts`) and legacy
+ * timeline database (`features/espace/matrix/timelineCache.ts`). Named here as lightweight string
+ * constants, never statically imported, so the entry bundle stays lean and sign-out / principal
+ * switches always purge both databases whether or not Espace was opened in this tab.
  */
+export const ESPACE_VAULT_DATABASE = 'kodera.espace-vault.v1'
+export const ESPACE_VAULT_WIPE_CHANNEL = 'kodera.espace-vault.wipe.v1'
 export const ESPACE_TIMELINE_DATABASE = 'kodera-espace-timelines'
 
 /**
@@ -18,6 +22,8 @@ export const DOCS_COLLAB_REGISTRY_KEY = 'kodera.web.docs-collab-dbs'
 export const PUSH_COPY_CACHE = 'kodera-push-copy-v1'
 
 const cleanupListeners = new Set<() => void>()
+const espaceVaultCleanupListeners = new Set<() => void>()
+const docsCollabCleanupListeners = new Set<() => void>()
 
 /**
  * Registers an in-memory teardown hook (for example closing an open `y-indexeddb` handle) before
@@ -27,6 +33,28 @@ export function registerLocalSessionCleanup(listener: () => void): () => void {
   cleanupListeners.add(listener)
   return () => {
     cleanupListeners.delete(listener)
+  }
+}
+
+/**
+ * Registers an Espace vault cryptographic teardown hook invoked on sign-out, principal switch,
+ * session termination, and GDPR Art. 17 erasure before IndexedDB deletion.
+ */
+export function registerEspaceVaultCleanup(listener: () => void): () => void {
+  espaceVaultCleanupListeners.add(listener)
+  return () => {
+    espaceVaultCleanupListeners.delete(listener)
+  }
+}
+
+/**
+ * Registers a collaborative Yjs IndexedDB handle teardown hook invoked before `kodera-docs-yjs:*`
+ * databases are deleted on sign-out, principal switch, session termination, or GDPR erasure.
+ */
+export function registerDocsCollabCleanup(listener: () => void): () => void {
+  docsCollabCleanupListeners.add(listener)
+  return () => {
+    docsCollabCleanupListeners.delete(listener)
   }
 }
 
@@ -42,6 +70,87 @@ function readRegisteredDocsDatabases(): string[] {
     )
   } catch {
     return []
+  }
+}
+
+export function purgeEspaceVaultDatabases(): void {
+  for (const listener of [...espaceVaultCleanupListeners]) {
+    try {
+      listener()
+    } catch {
+      // Never block vault wipe on a listener error.
+    }
+  }
+  try {
+    if (typeof BroadcastChannel === 'function') {
+      const channel = new BroadcastChannel(ESPACE_VAULT_WIPE_CHANNEL)
+      channel.postMessage({ type: 'wipe' })
+      channel.close()
+    }
+  } catch {
+    // Ignore restricted BroadcastChannel environments.
+  }
+  try {
+    const idb = globalThis.indexedDB
+    if (idb !== undefined && typeof idb.deleteDatabase === 'function') {
+      idb.deleteDatabase(ESPACE_VAULT_DATABASE)
+      idb.deleteDatabase(ESPACE_TIMELINE_DATABASE)
+    }
+  } catch {
+    // Ignore restricted IndexedDB environments.
+  }
+}
+
+export function purgeDocsCollabDatabases(clearRegistryKey = false): void {
+  for (const listener of [...docsCollabCleanupListeners]) {
+    try {
+      listener()
+    } catch {
+      // Never block docs database purge on a listener error.
+    }
+  }
+  const docsDatabases = readRegisteredDocsDatabases()
+  if (clearRegistryKey) {
+    try {
+      if (window.localStorage.getItem(DOCS_COLLAB_REGISTRY_KEY) !== null) {
+        window.localStorage.removeItem(DOCS_COLLAB_REGISTRY_KEY)
+      }
+    } catch {
+      // Ignore restricted localStorage environments.
+    }
+  }
+  try {
+    const idb = globalThis.indexedDB
+    if (idb !== undefined && typeof idb.deleteDatabase === 'function') {
+      idb.deleteDatabase(DOCS_COLLAB_DATABASE)
+      for (const dbName of docsDatabases) {
+        idb.deleteDatabase(dbName)
+      }
+      if (typeof idb.databases === 'function') {
+        void idb
+          .databases()
+          .then((entries) => {
+            for (const entry of entries) {
+              if (
+                typeof entry.name === 'string' &&
+                entry.name.startsWith(DOCS_COLLAB_DATABASE_PREFIX) &&
+                !docsDatabases.includes(entry.name)
+              ) {
+                try {
+                  idb.deleteDatabase(entry.name)
+                } catch {
+                  // Ignore late IndexedDB refusal.
+                }
+              }
+            }
+          })
+          .catch(() => {
+            // Ignore unsupported/refused databases() enumeration.
+          })
+      }
+    }
+  } catch {
+    // No IndexedDB here (a private window may refuse it): nothing was kept either.
   }
 }
 
@@ -84,44 +193,8 @@ export function clearLocalSessionStorage(options?: ClearLocalSessionOptions): vo
     }
   }
 
-  const docsDatabases = readRegisteredDocsDatabases()
-
-  try {
-    // Deleted whether or not Espace or Docs was opened in this tab; another tab holding it open
-    // delays the deletion until it closes, and it happens then.
-    const idb = globalThis.indexedDB
-    if (idb !== undefined) {
-      idb.deleteDatabase(ESPACE_TIMELINE_DATABASE)
-      idb.deleteDatabase(DOCS_COLLAB_DATABASE)
-      for (const dbName of docsDatabases) {
-        idb.deleteDatabase(dbName)
-      }
-      if (typeof idb.databases === 'function') {
-        void idb
-          .databases()
-          .then((entries) => {
-            for (const entry of entries) {
-              if (
-                typeof entry.name === 'string' &&
-                entry.name.startsWith(DOCS_COLLAB_DATABASE_PREFIX) &&
-                !docsDatabases.includes(entry.name)
-              ) {
-                try {
-                  idb.deleteDatabase(entry.name)
-                } catch {
-                  // Ignore late IndexedDB refusal.
-                }
-              }
-            }
-          })
-          .catch(() => {
-            // Ignore unsupported/refused databases() enumeration.
-          })
-      }
-    }
-  } catch {
-    // No IndexedDB here (a private window may refuse it): nothing was kept either.
-  }
+  purgeEspaceVaultDatabases()
+  purgeDocsCollabDatabases(false)
 
   for (const kind of ['sessionStorage', 'localStorage'] as const) {
     try {

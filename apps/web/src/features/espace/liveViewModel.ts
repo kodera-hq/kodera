@@ -25,9 +25,11 @@ import type {
   EspaceSnapshot,
   History,
   MemberView,
+  OutboxStatusEntry,
   RoomJoinState,
   RoomSummary,
   SendOptions,
+  WorkspaceRuntimeContext,
 } from './matrix/store'
 
 export type { RoomJoinState }
@@ -129,6 +131,9 @@ export interface EspaceStoreLike {
   ensureJoined?: (roomIds: readonly string[]) => void
   getJoinState?: (roomId: string) => RoomJoinState | undefined
   getRoomBoundary?: (roomId: string) => RoomBoundary
+  getOutboxStatus?: (roomId?: string) => readonly OutboxStatusEntry[]
+  setWorkspaceContext?: (context: WorkspaceRuntimeContext) => void
+  markConfidentialRoom?: (roomId: string) => void
   getConfidentialMediaSession?: (roomId: string) => ConfidentialMediaSession | null
   canSendMessage?: (roomId: string) => boolean
   canReact?: (roomId: string) => boolean

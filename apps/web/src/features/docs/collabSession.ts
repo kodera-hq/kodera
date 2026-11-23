@@ -1,4 +1,5 @@
 import type { ConfidentialCollabCipher } from '../confidential/collab-crypto-client'
+import { permitsPlaintext, type RoomBoundary } from '../confidential/room-boundary'
 import * as decoding from 'lib0/decoding'
 import * as encoding from 'lib0/encoding'
 import { IndexeddbPersistence } from 'y-indexeddb'
@@ -14,6 +15,7 @@ import { ApiProblem } from '@/api/client'
 import {
   DOCS_COLLAB_DATABASE_PREFIX,
   DOCS_COLLAB_REGISTRY_KEY,
+  registerDocsCollabCleanup,
   registerLocalSessionCleanup,
 } from '@/auth/localSession'
 import type { DocumentAccessRole } from './pageTree'
@@ -74,6 +76,7 @@ export interface ConfidentialCollabPolicy {
 
 export interface CollabSessionOptions {
   readonly confidential?: ConfidentialCollabPolicy
+  readonly roomBoundary?: RoomBoundary | undefined
 
   readonly scopeKey: string
   readonly documentId: string
@@ -115,9 +118,14 @@ export function cursorSlotForClient(clientId: number, userId: string): CursorPal
 export function maySeedFromMarkdown(
   remote: boolean,
   status: CollabConnectionStatus,
-  confidential?: ConfidentialCollabPolicy
+  confidential?: ConfidentialCollabPolicy,
+  roomBoundary?: RoomBoundary
 ): boolean {
-  return confidential?.required !== true && (!remote || status === 'local')
+  return (
+    confidential?.required !== true &&
+    (roomBoundary === undefined || permitsPlaintext(roomBoundary)) &&
+    (!remote || status === 'local')
+  )
 }
 
 /**
@@ -126,9 +134,10 @@ export function maySeedFromMarkdown(
 export function collabSessionOwnsBody(
   remote: boolean,
   status: CollabConnectionStatus,
-  confidential?: ConfidentialCollabPolicy
+  confidential?: ConfidentialCollabPolicy,
+  roomBoundary?: RoomBoundary
 ): boolean {
-  return !maySeedFromMarkdown(remote, status, confidential)
+  return !maySeedFromMarkdown(remote, status, confidential, roomBoundary)
 }
 
 export function validateCollabWebSocketUrl(rawUrl: string):
@@ -207,6 +216,71 @@ export function recordDocsOfflineDatabase(dbName: string): void {
   }
 }
 
+export function purgeProtectedDocsOfflineDatabases(scopeKey: string, documentId: string): void {
+  const targetDb = buildDocsOfflineDatabaseName(scopeKey, documentId)
+  const safeScope = scopeKey.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 48)
+  const scopePrefix = `${DOCS_COLLAB_DATABASE_PREFIX}${safeScope}:`
+  const toDelete = new Set<string>([targetDb])
+
+  try {
+    const raw = globalThis.localStorage?.getItem(DOCS_COLLAB_REGISTRY_KEY)
+    if (raw) {
+      const parsed: unknown = JSON.parse(raw)
+      if (Array.isArray(parsed)) {
+        const kept: string[] = []
+        for (const item of parsed) {
+          if (typeof item !== 'string' || !item.startsWith(DOCS_COLLAB_DATABASE_PREFIX)) continue
+          if (item === targetDb || item.startsWith(scopePrefix)) {
+            toDelete.add(item)
+          } else {
+            kept.push(item)
+          }
+        }
+        if (kept.length > 0) {
+          globalThis.localStorage?.setItem(DOCS_COLLAB_REGISTRY_KEY, JSON.stringify(kept))
+        } else {
+          globalThis.localStorage?.removeItem(DOCS_COLLAB_REGISTRY_KEY)
+        }
+      }
+    }
+  } catch {
+    // Ignore restricted localStorage environments.
+  }
+
+  try {
+    const idb = globalThis.indexedDB
+    if (idb !== undefined && typeof idb.deleteDatabase === 'function') {
+      for (const dbName of toDelete) {
+        idb.deleteDatabase(dbName)
+      }
+      if (typeof idb.databases === 'function') {
+        void idb
+          .databases()
+          .then((entries) => {
+            for (const entry of entries) {
+              if (
+                typeof entry.name === 'string' &&
+                (entry.name === targetDb || entry.name.startsWith(scopePrefix)) &&
+                !toDelete.has(entry.name)
+              ) {
+                try {
+                  idb.deleteDatabase(entry.name)
+                } catch {
+                  // Ignore late IndexedDB refusal.
+                }
+              }
+            }
+          })
+          .catch(() => {
+            // Ignore unsupported databases() enumeration.
+          })
+      }
+    }
+  } catch {
+    // Ignore restricted IndexedDB environments.
+  }
+}
+
 export function computeReconnectDelayMs(attempt: number, baseMs = BASE_BACKOFF_MS): number {
   const exp = Math.min(Math.max(0, attempt), 8)
   return Math.min(baseMs * 2 ** exp, MAX_BACKOFF_MS)
@@ -237,6 +311,9 @@ export class CollabSessionController {
   private refreshedAfter4401 = false
   private destroyed = false
   private readonly confidential: ConfidentialCollabPolicy | undefined
+  private roomBoundary: RoomBoundary | undefined
+  private stickyProtected = false
+  private readonly enableOfflineBuffer: boolean
   private connectionGeneration = 0
   private outgoing = Promise.resolve()
   private incoming = Promise.resolve()
@@ -244,6 +321,7 @@ export class CollabSessionController {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private persistence: IndexeddbPersistence | null = null
   private unregisterLogoutCleanup: (() => void) | null = null
+  private unregisterDocsCleanup: (() => void) | null = null
   private readonly listeners = new Set<() => void>()
   private cachedSnapshot: CollabSessionSnapshot
 
@@ -257,6 +335,12 @@ export class CollabSessionController {
 
   constructor(options: CollabSessionOptions) {
     this.confidential = options.confidential
+    this.roomBoundary = options.roomBoundary
+    this.stickyProtected =
+      options.confidential?.required === true ||
+      options.roomBoundary === 'confidential-unavailable' ||
+      options.roomBoundary === 'invalid'
+    this.enableOfflineBuffer = options.enableOfflineBuffer !== false
     this.scopeKey = options.scopeKey
     this.documentId = options.documentId
     this.role = options.initialRole ?? 'editor'
@@ -272,7 +356,11 @@ export class CollabSessionController {
     // A server-backed session is not local even before `connect()`: an editor that saw `local`
     // would seed the document from Markdown and duplicate it once the server state arrives.
     if (this.fetchSession) this.status = 'connecting'
-    if (this.confidential && !this.hasCipherAuthority()) this.status = 'forbidden'
+    const nonOrdinaryBoundary =
+      this.roomBoundary !== undefined && !permitsPlaintext(this.roomBoundary)
+    if ((this.confidential && !this.hasCipherAuthority()) || (nonOrdinaryBoundary && !this.confidential)) {
+      this.status = 'forbidden'
+    }
     this.publishLocalAwareness(null)
     this.cachedSnapshot = this.buildSnapshot()
 
@@ -280,9 +368,15 @@ export class CollabSessionController {
     this.awareness.on('change', this.handleAwarenessChange)
     this.awareness.on('update', this.handleAwarenessBroadcast)
 
+    const forbidsPlaintextPersistence =
+      this.confidential?.required === true || nonOrdinaryBoundary
+    if (forbidsPlaintextPersistence) {
+      purgeProtectedDocsOfflineDatabases(this.scopeKey, this.documentId)
+    }
+
     const shouldEnableIdb =
-      this.confidential === undefined &&
-      options.enableOfflineBuffer !== false &&
+      !forbidsPlaintextPersistence &&
+      this.enableOfflineBuffer &&
       this.role !== 'viewer' &&
       typeof globalThis.indexedDB !== 'undefined' &&
       typeof globalThis.indexedDB?.open === 'function'
@@ -290,6 +384,14 @@ export class CollabSessionController {
     if (shouldEnableIdb) {
       this.setupOfflinePersistence()
     }
+  }
+
+  private isPlaintextBoundaryBlocked(): boolean {
+    return (
+      !this.confidential &&
+      (this.stickyProtected ||
+        (this.roomBoundary !== undefined && !permitsPlaintext(this.roomBoundary)))
+    )
   }
 
   private setupOfflinePersistence(): void {
@@ -303,15 +405,68 @@ export class CollabSessionController {
         this.offlineSynced = true
         this.emit()
       })
-      this.unregisterLogoutCleanup = registerLocalSessionCleanup(() => {
+      const closePersistence = () => {
         try {
           void persistence.destroy()
         } catch {
-          // Ignore teardown errors during logout.
+          // Ignore teardown errors during logout or principal switch.
         }
-      })
+      }
+      this.unregisterLogoutCleanup = registerLocalSessionCleanup(closePersistence)
+      this.unregisterDocsCleanup = registerDocsCollabCleanup(closePersistence)
     } catch {
       // IndexedDB unavailable or blocked; continue in-memory + WebSocket sync cleanly.
+    }
+  }
+
+  /**
+   * Updates the bound Matrix room protection boundary in live production workspaces.
+   * Non-ordinary boundaries immediately tear down plaintext Yjs IndexedDB persistence and purge
+   * `kodera-docs-yjs:*` databases; sticky confidential/invalid boundaries never downgrade back.
+   */
+  setRoomBoundary(nextBoundary: RoomBoundary | undefined): void {
+    if (this.destroyed) return
+    if (nextBoundary === 'confidential-unavailable' || nextBoundary === 'invalid') {
+      this.stickyProtected = true
+    }
+    const effectiveBoundary: RoomBoundary | undefined = this.stickyProtected
+      ? nextBoundary === 'confidential-unavailable' || nextBoundary === 'invalid'
+        ? nextBoundary
+        : 'invalid'
+      : nextBoundary
+    if (this.roomBoundary === effectiveBoundary) return
+    this.roomBoundary = effectiveBoundary
+
+    const nonOrdinaryBoundary =
+      this.roomBoundary !== undefined && !permitsPlaintext(this.roomBoundary)
+    const forbidsPlaintextPersistence =
+      this.confidential?.required === true || nonOrdinaryBoundary || this.stickyProtected
+
+    if (forbidsPlaintextPersistence) {
+      this.destroyOfflinePersistenceAndPurge()
+      if (!this.confidential) {
+        const socket = this.ws
+        this.ws = null
+        ++this.connectionGeneration
+        this.clearReconnectTimer()
+        this.transitionStatus('forbidden')
+        socket?.close(4403, 'protected collaboration refused')
+      }
+      return
+    }
+
+    // Cold-start `'unknown'` resolved to positively verified `'ordinary' | 'community'`:
+    if (
+      this.persistence === null &&
+      this.enableOfflineBuffer &&
+      this.role !== 'viewer' &&
+      typeof globalThis.indexedDB !== 'undefined' &&
+      typeof globalThis.indexedDB?.open === 'function'
+    ) {
+      this.setupOfflinePersistence()
+    }
+    if (!this.confidential && this.status === 'forbidden') {
+      this.transitionStatus(this.fetchSession ? 'connecting' : 'local')
     }
   }
 
@@ -490,7 +645,29 @@ export class CollabSessionController {
     )
   }
 
+  private destroyOfflinePersistenceAndPurge(): void {
+    if (this.unregisterLogoutCleanup) {
+      this.unregisterLogoutCleanup()
+      this.unregisterLogoutCleanup = null
+    }
+    if (this.unregisterDocsCleanup) {
+      this.unregisterDocsCleanup()
+      this.unregisterDocsCleanup = null
+    }
+    if (this.persistence) {
+      try {
+        void this.persistence.destroy()
+      } catch {
+        // Ignore IDB destroy errors.
+      }
+      this.persistence = null
+    }
+    this.offlineSynced = false
+    purgeProtectedDocsOfflineDatabases(this.scopeKey, this.documentId)
+  }
+
   private quarantine(): void {
+    this.destroyOfflinePersistenceAndPurge()
     const socket = this.ws
     this.ws = null
     ++this.connectionGeneration
@@ -569,7 +746,7 @@ export class CollabSessionController {
 
   async connect(): Promise<void> {
     if (this.destroyed || !this.fetchSession || this.status === 'forbidden') return
-    if (!this.hasCipherAuthority()) {
+    if (!this.hasCipherAuthority() || this.isPlaintextBoundaryBlocked()) {
       this.quarantine()
       return
     }
@@ -582,7 +759,7 @@ export class CollabSessionController {
       grant = await this.fetchSession()
     } catch (error) {
       if (this.destroyed || generation !== this.connectionGeneration) return
-      if (this.confidential) {
+      if (this.confidential || this.isPlaintextBoundaryBlocked()) {
         this.quarantine()
         return
       }
@@ -600,7 +777,7 @@ export class CollabSessionController {
       return
     }
     if (this.destroyed || generation !== this.connectionGeneration) return
-    if (!this.hasCipherAuthority()) {
+    if (!this.hasCipherAuthority() || this.isPlaintextBoundaryBlocked()) {
       this.quarantine()
       return
     }

@@ -31,7 +31,7 @@ import type {
   ConfidentialChannelFlags,
   OmniboxCollectionDescriptor,
 } from '../command-palette/omniboxIndex'
-import { permitsPlaintext } from '../confidential/room-boundary'
+import { permitsPlaintext, type RoomBoundary } from '../confidential/room-boundary'
 import type { ChannelDoc } from '../docs/ChannelDocsEditor'
 import { MessagingOrganisation } from '../messaging/organisationContext'
 import type { Notification } from '../notifications/notificationFeed'
@@ -149,6 +149,9 @@ export interface EspaceLiveViewProps {
    * « Ce239589 A4bd … » as the member's own name.
    */
   readonly accountName?: string | undefined
+  readonly ownerId?: string | undefined
+  readonly membershipId?: string | undefined
+  readonly membershipActive?: boolean | undefined
   readonly defaultMembersOpen?: boolean | undefined
   readonly focusedDocs?: boolean | undefined
   readonly activeCanvasMode?: CanvasMode | undefined
@@ -158,6 +161,13 @@ export interface EspaceLiveViewProps {
   readonly onOpenDocument?: ((doc: ChannelDoc) => void) | undefined
   readonly onOpenCollection?: ((id: string) => void) | undefined
   readonly docsCanvasSlot?: ReactNode | undefined
+  readonly onActiveChannelBoundaryChange?:
+    | ((context: {
+        readonly channelId: string | undefined
+        readonly roomBoundary: RoomBoundary | undefined
+        readonly isConfidential: boolean
+      }) => void)
+    | undefined
   /** Channels the server flags as the proximity room; see `isProximityChannel`. */
   readonly proximityChannelIds?: ReadonlySet<string> | undefined
   /** Draws the proximity panel above a flagged channel's timeline. */
@@ -255,11 +265,15 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
   navigationPending = false,
   onReconnect,
   accountName,
+  ownerId,
+  membershipId,
+  membershipActive,
   defaultMembersOpen = false,
   focusedDocs = false,
   activeCanvasMode = 'chat',
   onChangeCanvasMode,
   docsCanvasSlot,
+  onActiveChannelBoundaryChange,
   documents = NO_DOCUMENTS,
   collections,
   onOpenDocument,
@@ -313,7 +327,16 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
     inLiveCall,
     deviceSettings,
     signedOut,
-  } = useEspaceRuntime({ injectedStore, injectedCall, session, workspace })
+  } = useEspaceRuntime({
+    injectedStore,
+    injectedCall,
+    session,
+    workspace,
+    channelId,
+    ownerId,
+    membershipId,
+    membershipActive,
+  })
 
   const [viewingCallStage, setViewingCallStage] = useState(false)
   const [callDetached, setCallDetached] = useState(false)
@@ -1033,6 +1056,38 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
     closeChannelChooser()
     onCreateInCategory?.(category)
   })
+
+  const activeChannelFlags = activeChannel as
+    | (WorkspaceChannel & ConfidentialChannelFlags)
+    | null
+    | undefined
+  const activeDocsIsConfidential =
+    activeChannelFlags?.isConfidential === true ||
+    activeChannelFlags?.is_confidential === true ||
+    roomBoundary === 'confidential-unavailable' ||
+    roomBoundary === 'invalid'
+  const activeDocsBoundary: RoomBoundary | undefined = activeDocsIsConfidential
+    ? roomBoundary !== undefined && !permitsPlaintext(roomBoundary)
+      ? roomBoundary
+      : 'confidential-unavailable'
+    : roomBoundary !== undefined
+      ? roomBoundary
+      : activeStore.getRoomBoundary !== undefined
+        ? 'unknown'
+        : undefined
+  const activeChannelIdForDocs = activeChannel?.id
+  useLayoutEffect(() => {
+    onActiveChannelBoundaryChange?.({
+      channelId: activeChannelIdForDocs,
+      roomBoundary: activeDocsBoundary,
+      isConfidential: activeDocsIsConfidential,
+    })
+  }, [
+    activeChannelIdForDocs,
+    activeDocsBoundary,
+    activeDocsIsConfidential,
+    onActiveChannelBoundaryChange,
+  ])
 
   const activeChannelName =
     activeChannel !== null && activeChannel !== undefined ? channelLabel(activeChannel, t) : ''

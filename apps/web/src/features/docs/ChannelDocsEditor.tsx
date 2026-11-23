@@ -1,6 +1,7 @@
 import {
   lazy,
   Suspense,
+  useEffect,
   useId,
   useMemo,
   useState,
@@ -12,6 +13,8 @@ import { Button } from '../../ui/Button/Button'
 import { InlineAlert } from '../../ui/InlineAlert/InlineAlert'
 import { cx } from '../../ui/cx'
 import { TOUCH_TARGET } from '../../ui/touchTarget'
+import { permitsPlaintext, type RoomBoundary } from '../confidential/room-boundary'
+import { purgeProtectedDocsOfflineDatabases } from './collabSession'
 import { BacklinksFooter } from './BacklinksFooter'
 import { channelDocsMessages } from './channelDocsMessages'
 import type { DocumentComment, DocumentMember } from './documentComments'
@@ -75,6 +78,8 @@ export function ChannelDocsEditor({
   onNavigateDocument,
   members = [],
   author,
+  roomBoundary,
+  isConfidential,
 }: {
   readonly channelId: string
   readonly channelName: string
@@ -84,6 +89,8 @@ export function ChannelDocsEditor({
   readonly onNavigateDocument?: ((doc: ChannelDoc) => void) | undefined
   readonly members?: readonly DocumentMember[]
   readonly author?: DocumentMember | undefined
+  readonly roomBoundary?: RoomBoundary | undefined
+  readonly isConfidential?: boolean | undefined
 }) {
   const { t, i18n } = useTranslation()
   const locale = i18n.resolvedLanguage === 'en' ? 'en' : 'fr'
@@ -92,21 +99,30 @@ export function ChannelDocsEditor({
   const templateId = useId()
   const parentSelectId = useId()
 
+  const protectedBoundary =
+    isConfidential === true || (roomBoundary !== undefined && !permitsPlaintext(roomBoundary))
+
+  useEffect(() => {
+    if (!protectedBoundary) return
+    purgeProtectedDocsOfflineDatabases(channelId, '*')
+  }, [channelId, protectedBoundary])
+
   const [template, setTemplate] = useState<ChannelDocTemplateChoice>('blank')
   const [editorMode, setEditorMode] = useState<'markdown' | 'blocks'>('markdown')
   const [status, setStatus] = useState<string | null>(null)
   const [publishing, setPublishing] = useState(false)
 
   const docs = useMemo(
-    () => workspace.docs.filter((doc) => doc.channelId === channelId),
-    [workspace.docs, channelId]
+    () => (protectedBoundary ? [] : workspace.docs.filter((doc) => doc.channelId === channelId)),
+    [workspace.docs, channelId, protectedBoundary]
   )
   const treeNodes = useMemo(() => buildDocumentTree(docs), [docs])
   const selectedId = workspace.selectedByChannel[channelId]
   const currentNode =
     treeNodes.find((node) => node.doc.id === selectedId) ?? treeNodes[0]
   const current = currentNode?.doc
-  const currentRole: DocumentAccessRole = current?.role === 'viewer' ? 'viewer' : 'editor'
+  const currentRole: DocumentAccessRole =
+    protectedBoundary || current?.role === 'viewer' ? 'viewer' : 'editor'
 
   const resolveTemplateMarkdown = (choice: ChannelDocTemplateChoice): string => {
     if (choice === 'blank' || choice === 'meeting' || choice === 'decision') {
@@ -116,6 +132,7 @@ export function ChannelDocsEditor({
   }
 
   const create = (parentId: string | null = null) => {
+    if (protectedBoundary) return
     if (workspace.docs.length >= 64) {
       setStatus(copy.limit)
       return
