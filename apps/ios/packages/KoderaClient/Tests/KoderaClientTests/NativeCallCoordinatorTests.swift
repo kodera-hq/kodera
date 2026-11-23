@@ -366,7 +366,7 @@ private actor CallChatFixture: ChannelConversationTransport {
     }
 
     func testLimitedTimelineRecoversOlderAnswersAndBoundsPagination() async throws {
-        for mode in ["answer", "cursor", "cycle", "budget", "empty"] {
+        for mode in ["answer", "emptyPage", "cursor", "cycle", "budget", "noEnd"] {
             let chat = CallChatFixture(); let media = CallMediaFixture(); let presenter = CallPresenterFixture()
             let coordinator = try NativeCallCoordinator(organisationId: callOrg, localPartyId: "local",
                 resolver: ImmediateCallResolver(), media: media, conversation: chat, now: { 100 })
@@ -377,19 +377,19 @@ private actor CallChatFixture: ChannelConversationTransport {
             await chat.setEvents(Array(repeating: message, count: 25))
             await chat.limitTimeline(["!room:example.org"], prevBatch: "gap")
             await chat.setPages([
-                "gap": MatrixTimelinePage(events: mode == "empty" ? [] : Array(repeating: message, count: 50),
-                    endToken: mode == "cursor" ? "one" : "older"),
-                "older": MatrixTimelinePage(events: mode == "answer" ? [answer] : [message], endToken: mode == "cycle" ? "gap" : "third"),
+                "gap": MatrixTimelinePage(events: mode == "emptyPage" || mode == "noEnd" ? [] : Array(repeating: message, count: 50),
+                    endToken: mode == "noEnd" ? nil : mode == "cursor" ? "one" : "older"),
+                "older": MatrixTimelinePage(events: mode == "answer" || mode == "emptyPage" ? [answer] : [message], endToken: mode == "cycle" ? "gap" : "third"),
                 "third": MatrixTimelinePage(events: [message], endToken: "fourth"),
                 "fourth": MatrixTimelinePage(events: [message], endToken: "fifth"),
                 "fifth": MatrixTimelinePage(events: [answer], endToken: nil),
             ])
             await coordinator.pollCompanionTimeline()
             let requests = await chat.backfillRequests()
-            let count = mode == "empty" || mode == "cursor" ? 1 : mode == "answer" || mode == "cycle" ? 2 : 4
+            let count = mode == "noEnd" || mode == "cursor" ? 1 : mode == "answer" || mode == "emptyPage" || mode == "cycle" ? 2 : 4
             XCTAssertEqual(requests.count, count)
             XCTAssertEqual(requests.first, "!room:example.org|gap|one|50")
-            if mode == "answer" {
+            if mode == "answer" || mode == "emptyPage" {
                 XCTAssertNil(coordinator.call); XCTAssertEqual(media.disconnects, 1)
                 XCTAssertEqual(presenter.reasons, [.answeredElsewhere])
             } else {

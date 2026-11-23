@@ -239,8 +239,7 @@ class NativeCallCoordinator(
                 if (!owns(owner, current.wake.callId)) return
                 consumeCallEvents(page.events, current.wake.callId)
             }
-            if (page.events.isEmpty()) break
-            from = page.endToken ?: break
+            from = page.endToken?.takeIf { it.isNotEmpty() } ?: break
         }
         synchronized(lock) {
             if (owns(owner, current.wake.callId) && companionBackfill?.batch?.nextBatch == batch.nextBatch) companionBackfill = null

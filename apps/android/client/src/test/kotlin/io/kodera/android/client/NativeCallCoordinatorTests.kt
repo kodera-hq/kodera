@@ -195,7 +195,7 @@ class NativeCallCoordinatorTests {
         coordinator.end(CALL)
     }
     @Test fun limitedTimelineRecoversOlderAnswersAndBoundsPagination() {
-        for (mode in listOf("answer", "cursor", "cycle", "budget", "empty")) {
+        for (mode in listOf("answer", "emptyPage", "cursor", "cycle", "budget", "noEnd")) {
             val chat = ChatFixture(); val media = MediaFixture(); val presenter = PresenterFixture()
             val coordinator = NativeCallCoordinator(ORG, "local", resolver(), media, chat, { 100 })
             coordinator.bind(presenter); coordinator.receive(wake()); coordinator.answer(CALL)
@@ -203,16 +203,16 @@ class NativeCallCoordinatorTests {
             val answer = MatrixRawTimelineEvent("m.call.answer", "\$answer", chat.ownUserId, 100, callId = CALL, callPartyId = "other")
             chat.events = List(25) { message }; chat.limitedRooms = setOf("!room:example.org"); chat.prevBatch = "gap"
             chat.pages = mapOf(
-                "gap" to MatrixTimelinePage(if (mode == "empty") emptyList() else List(50) { message }, if (mode == "cursor") "one" else "older"),
-                "older" to MatrixTimelinePage(listOf(if (mode == "answer") answer else message), if (mode == "cycle") "gap" else "third"),
+                "gap" to MatrixTimelinePage(if (mode == "emptyPage" || mode == "noEnd") emptyList() else List(50) { message }, if (mode == "noEnd") null else if (mode == "cursor") "one" else "older"),
+                "older" to MatrixTimelinePage(listOf(if (mode == "answer" || mode == "emptyPage") answer else message), if (mode == "cycle") "gap" else "third"),
                 "third" to MatrixTimelinePage(listOf(message), "fourth"),
                 "fourth" to MatrixTimelinePage(listOf(message), "fifth"),
                 "fifth" to MatrixTimelinePage(listOf(answer), null),
             )
             coordinator.pollCompanionTimeline()
-            val count = when (mode) { "empty", "cursor" -> 1; "answer", "cycle" -> 2; else -> 4 }
+            val count = when (mode) { "noEnd", "cursor" -> 1; "answer", "emptyPage", "cycle" -> 2; else -> 4 }
             assertEquals(count, chat.pageRequests.size); assertEquals("!room:example.org|gap|one|50", chat.pageRequests.first())
-            if (mode == "answer") {
+            if (mode == "answer" || mode == "emptyPage") {
                 assertNull(coordinator.currentCall()); assertEquals(1, media.disconnects.get())
                 assertEquals(listOf(NativeRingPhase.ANSWERED_ELSEWHERE), presenter.reasons)
             } else {

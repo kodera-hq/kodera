@@ -240,7 +240,7 @@ public final class NativeCallCoordinator {
             let page = try await self.conversation.backfillRoomPage(roomId: call.roomId, fromToken: from, toToken: since, limit: 50)
             guard self.owns(owner, call.wake.callId) else { return }
             self.consumeCallEvents(page.events, callId: call.wake.callId)
-            guard !page.events.isEmpty, let end = page.endToken else { break }
+            guard let end = page.endToken, !end.isEmpty else { break }
             from = end
         }
         if self.owns(owner, call.wake.callId), self.companionBackfill?.batch.nextBatch == batch.nextBatch {
