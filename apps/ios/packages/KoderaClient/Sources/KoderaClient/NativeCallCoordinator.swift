@@ -1,6 +1,10 @@
 import Foundation
 import KoderaDomain
 
+enum NativeCallClock {
+    static func timestamp(_ date: Date = Date()) -> UInt64 { UInt64(max(0, date.timeIntervalSince1970)) }
+}
+
 public struct AuthenticatedNativeCall: Equatable, Sendable {
     public let wake: NativeCallWake
     public let roomId: String
@@ -47,12 +51,13 @@ public final class NativeCallCoordinator {
     private var generation: UInt64 = 0
     private var activeId: String?
     private var answerRequested = false
+    private var pendingAnswer: CheckedContinuation<Void, any Error>?
     private var audioActive = false
     private var muted = false
     private var stopped = false
 
     public init(organisationId: String, localPartyId: String, resolver: any NativeCallResolving, media: any LiveKitWebRTCSession,
-                conversation: any ChannelConversationTransport, now: @escaping @Sendable () -> UInt64 = { UInt64(Date().timeIntervalSince1970) }) throws {
+                conversation: any ChannelConversationTransport, now: @escaping @Sendable () -> UInt64 = { UInt64(max(0, Date().timeIntervalSince1970)) }) throws {
         guard !localPartyId.isEmpty, localPartyId.utf8.count <= 128 else { throw KoderaMobileFfiError.invalidInput }
         self.localPartyId = localPartyId
         ring = try NativeCallRing(organisationId: organisationId); self.resolver = resolver; self.media = media
@@ -91,18 +96,29 @@ public final class NativeCallCoordinator {
     public func answer(callId: String) async throws {
         guard !stopped, activeId == callId, ring.records[callId]?.phase == .ringing, !answerRequested else { throw KoderaMobileFfiError.invalidInput }
         answerRequested = true
-        if let call { try await connect(owner: generation, call: call) }
+        let owner = generation
+        try await withCheckedThrowingContinuation { continuation in
+            pendingAnswer = continuation
+            if let call {
+                Task { @MainActor in
+                    do { try await connect(owner: owner, call: call) }
+                    catch { if owns(owner, callId) { finish(.revoked) } }
+                }
+            }
+        }
     }
     private func connect(owner: UInt64, call: AuthenticatedNativeCall) async throws {
         do {
+            guard owns(owner, call.wake.callId) else { throw KoderaMobileFfiError.authenticationFailed }
             try call.wake.validate(now: now())
             try ring.transition(callId: call.wake.callId, to: .connecting)
             try await media.connect(call)
-            guard owns(owner, call.wake.callId) else { return }
+            guard owns(owner, call.wake.callId) else { throw KoderaMobileFfiError.authenticationFailed }
             try ring.transition(callId: call.wake.callId, to: .connected)
             try await media.microphone(enabled: audioActive && !muted)
-            guard owns(owner, call.wake.callId) else { return }
+            guard owns(owner, call.wake.callId) else { throw KoderaMobileFfiError.authenticationFailed }
             presenter?.connected(callId: call.wake.callId)
+            let answer = pendingAnswer; pendingAnswer = nil; answer?.resume()
         } catch {
             if owns(owner, call.wake.callId) { finish(.revoked) }
             throw error
@@ -111,7 +127,11 @@ public final class NativeCallCoordinator {
     public func setMuted(_ value: Bool) async throws {
         muted = value
         guard let id = activeId, ring.records[id]?.phase == .connected else { return }
-        do { try await media.microphone(enabled: audioActive && !value) } catch { finish(.revoked); throw error }
+        let owner = generation
+        do {
+            try await media.microphone(enabled: audioActive && !value)
+            guard owns(owner, id) else { throw KoderaMobileFfiError.authenticationFailed }
+        } catch { if owns(owner, id) { finish(.revoked) }; throw error }
     }
     public func audioSession(active: Bool) async {
         guard !stopped else { return }
@@ -145,6 +165,7 @@ public final class NativeCallCoordinator {
     }
     public func consumeAuthenticatedSync(_ batch: MatrixSyncBatch) {
         guard let call else { return }
+        if batch.authorityLostRooms.contains(call.roomId) { finish(.revoked); return }
         for event in batch.roomEvents[call.roomId] ?? [] {
             if event.type == "m.call.answer", event.sender == conversation.ownUserId,
                !event.isRedactedUnsigned, event.callId == call.wake.callId,
@@ -171,6 +192,8 @@ public final class NativeCallCoordinator {
     private func owns(_ owner: UInt64, _ id: String) -> Bool { !stopped && generation == owner && activeId == id }
     private func finish(_ reason: NativeRingPhase) {
         generation &+= 1
+        let answer = pendingAnswer; pendingAnswer = nil
+        answer?.resume(throwing: KoderaMobileFfiError.authenticationFailed)
         let id = activeId; activeId = nil; call = nil; answerRequested = false; muted = false; audioActive = false
         media.disconnect()
         if reason == .revoked { stopped = true; ring.revoke() }

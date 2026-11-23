@@ -199,6 +199,8 @@ public struct PersistedMatrixSession: Equatable, Sendable {
 public struct MatrixSyncBatch: Equatable, Sendable {
     public let nextBatch: String
     public var plaintextAllowedRooms: Set<String> = []
+    /// Explicit loss of membership or previously established Matrix room authority.
+    public var authorityLostRooms: Set<String> = []
     public let roomEvents: [String: [MatrixRawTimelineEvent]]
     public let roomDeltas: [String: MatrixRoomSyncDelta]
 
@@ -621,6 +623,7 @@ public actor MatrixRoomClient {
         }
         var batch = MatrixSyncBatch(nextBatch: nextBatch, roomDeltas: roomDeltas)
         if (try? requirePlaintextAllowed(origin: homeserverOrigin, roomId: roomId)) != nil { batch.plaintextAllowedRooms.insert(roomId) }
+        if security[securityKey(homeserverOrigin, roomId)]?.matrixKnown != true { batch.authorityLostRooms.insert(roomId) }
         completed = true
         return batch
     }

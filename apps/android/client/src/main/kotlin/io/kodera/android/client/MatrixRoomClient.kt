@@ -242,6 +242,7 @@ data class MatrixSyncBatch(
     val roomEvents: Map<String, List<MatrixRawTimelineEvent>>,
     val roomDeltas: Map<String, MatrixRoomSyncDelta> = roomEvents.mapValues { MatrixRoomSyncDelta(it.value) },
     val plaintextAllowedRooms: Set<String> = emptySet(),
+    val authorityLostRooms: Set<String> = emptySet(),
 ) {
     companion object {
         fun fromDeltas(nextBatch: String, deltas: Map<String, MatrixRoomSyncDelta>): MatrixSyncBatch =
@@ -644,7 +645,11 @@ class MatrixRoomClient private constructor(
             }
             val allowed = runCatching { requirePlaintextAllowed(homeserverOrigin, roomId) }.isSuccess
             completed = true
-            return MatrixSyncBatch.fromDeltas(nextBatch = nextBatch, deltas = roomDeltas).copy(plaintextAllowedRooms = if (allowed) setOf(roomId) else emptySet())
+            val authorityLost = synchronized(securityLock) { security[securityKey(homeserverOrigin, roomId)]?.matrixKnown != true }
+            return MatrixSyncBatch.fromDeltas(nextBatch = nextBatch, deltas = roomDeltas).copy(
+                plaintextAllowedRooms = if (allowed) setOf(roomId) else emptySet(),
+                authorityLostRooms = if (authorityLost) setOf(roomId) else emptySet(),
+            )
         } finally {
             if (!completed) synchronized(securityLock) { security[securityKey(homeserverOrigin, roomId)]?.matrixKnown = false }
         }

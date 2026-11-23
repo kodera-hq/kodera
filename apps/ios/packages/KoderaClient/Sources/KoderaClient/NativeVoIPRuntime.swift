@@ -74,7 +74,7 @@ public final class NativeVoIPRuntime: NSObject, @preconcurrency PKPushRegistryDe
         guard type == .voIP else { completion(); return }
         let raw = (try? JSONSerialization.data(withJSONObject: payload.dictionaryPayload)) ?? Data()
         let completionBox = VoIPPushCompletion(completion)
-        delivery.receive(raw, now: UInt64(Date().timeIntervalSince1970)) { completionBox.finish() }
+        delivery.receive(raw, now: NativeCallClock.timestamp()) { completionBox.finish() }
     }
     public func report(uuid: UUID, completion: @escaping @MainActor (Bool) -> Void) {
         let update = CXCallUpdate()

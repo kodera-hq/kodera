@@ -1,5 +1,6 @@
 package io.kodera.android.client
 
+import io.kodera.android.domain.KoderaMobileFfiFailure
 import io.kodera.android.domain.NativeCallRing
 import io.kodera.android.domain.NativeCallWake
 import io.kodera.android.domain.NativeRingPhase
@@ -41,6 +42,8 @@ class NativeCallCoordinator(
 ) {
     init { require(localPartyId.isNotEmpty() && localPartyId.toByteArray().size <= 128) }
     private val lock = Any()
+    // A retired connect must finish closing before a subsequent connect can open.
+    private val mediaLock = Any()
     private val ring = NativeCallRing(organisationId)
     private var generation = 0L
     private var activeId: String? = null
@@ -53,10 +56,13 @@ class NativeCallCoordinator(
     fun bind(presenter: NativeCallPresenter) = synchronized(lock) { this.presenter = presenter }
     fun phase(callId: String): NativeRingPhase? = synchronized(lock) { ring.records[callId]?.phase }
     fun currentCall(): AuthenticatedNativeCall? = synchronized(lock) { call }
+    fun ownership(callId: String): Long? = synchronized(lock) { if (!stopped && activeId == callId) generation else null }
+    fun ownsCall(callId: String, owner: Long): Boolean = owns(owner, callId)
     fun receive(wake: NativeCallWake) {
         val owner = synchronized(lock) {
             check(!stopped)
-            ring.observe(wake, now())
+            // Admission errors describe an untrusted wake, never loss of the active call's authority.
+            try { ring.observe(wake, now()) } catch (_: KoderaMobileFfiFailure) { return }
             if (wake.state != NativeRingPhase.RINGING) {
                 if (activeId == wake.callId) finish(wake.state)
                 return
@@ -81,14 +87,17 @@ class NativeCallCoordinator(
             throw failure
         }
     }
-    fun answer(callId: String) {
+    fun answer(callId: String, expectedOwner: Long? = null, activateAudio: Boolean = false) {
         val context = synchronized(lock) {
+            if (expectedOwner != null && !owns(expectedOwner, callId)) return
             check(!stopped && activeId == callId && ring.records[callId]?.phase == NativeRingPhase.RINGING && !answerRequested)
+            if (activateAudio) audioSession(true)
+            if (expectedOwner != null && !owns(expectedOwner, callId)) return
             answerRequested = true; call?.let { generation to it }
         }
         context?.let { connect(it.first, it.second) }
     }
-    private fun connect(owner: Long, call: AuthenticatedNativeCall) {
+    private fun connect(owner: Long, call: AuthenticatedNativeCall): Unit = synchronized(mediaLock) {
         try {
             synchronized(lock) {
                 if (!owns(owner, call.wake.callId)) return
@@ -96,12 +105,14 @@ class NativeCallCoordinator(
             }
             media.connect(call)
             synchronized(lock) {
-                if (!owns(owner, call.wake.callId)) return
+                if (!owns(owner, call.wake.callId)) { media.disconnect(); return }
                 ring.transition(call.wake.callId, NativeRingPhase.CONNECTED)
                 media.microphone(audioActive && !muted); presenter?.connected(call.wake.callId)
             }
         } catch (failure: Exception) {
-            synchronized(lock) { if (owns(owner, call.wake.callId)) finish(NativeRingPhase.REVOKED) }; throw failure
+            synchronized(lock) {
+                if (owns(owner, call.wake.callId)) finish(NativeRingPhase.REVOKED) else media.disconnect()
+            }; throw failure
         }
     }
     fun setMuted(value: Boolean) = synchronized(lock) {
@@ -151,6 +162,7 @@ class NativeCallCoordinator(
     }
     fun consumeAuthenticatedSync(batch: MatrixSyncBatch) = synchronized(lock) {
         val current = call ?: return@synchronized
+        if (current.roomId in batch.authorityLostRooms) { finish(NativeRingPhase.REVOKED); return@synchronized }
         if (batch.roomEvents[current.roomId].orEmpty().any {
             it.type == "m.call.answer" && it.sender == conversation.ownUserId && !it.isRedactedUnsigned &&
                 it.callId == current.wake.callId && !it.callPartyId.isNullOrEmpty() && it.callPartyId != localPartyId

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- End native calls when room authority is lost, fence retired media and audio ownership, and preserve active calls when duplicate wakes are refused.
+
 - Resolve conversation security through the session workspace loader.
 
 - Clear conversation drafts and attachment retries after definitive workspace access loss.

@@ -17,6 +17,8 @@ private struct ImmediateCallResolver: NativeCallResolving {
     }
 }
 private actor HeldCallResolver: NativeCallResolving {
+    private let fails: Bool
+    init(fails: Bool = false) { self.fails = fails }
     private var entered = false
     private var waiters: [CheckedContinuation<Void, Never>] = []
     private var gate: CheckedContinuation<Void, Never>?
@@ -28,34 +30,61 @@ private actor HeldCallResolver: NativeCallResolving {
         await withCheckedContinuation { continuation in
             gate = continuation; entered = true; waiters.forEach { $0.resume() }; waiters.removeAll()
         }
+        if fails { throw KoderaMobileFfiError.authenticationFailed }
         return try AuthenticatedNativeCall(wake: wake, roomId: "!room:example.org", callerLabel: "Member")
+    }
+}
+@MainActor private final class CallMediaGate {
+    private var entered = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+    private var operation: CheckedContinuation<Void, any Error>?
+    func wait() async throws {
+        try await withCheckedThrowingContinuation { continuation in
+            operation = continuation; entered = true
+            waiters.forEach { $0.resume() }; waiters.removeAll()
+        }
+    }
+    func waitUntilEntered() async {
+        if entered { return }; await withCheckedContinuation { waiters.append($0) }
+    }
+    func release(failing: Bool = false) {
+        let operation = operation; self.operation = nil
+        if failing { operation?.resume(throwing: KoderaMobileFfiError.authenticationFailed) } else { operation?.resume() }
     }
 }
 @MainActor private final class CallMediaFixture: LiveKitWebRTCSession {
     var connections = 0; var disconnects = 0; var microphoneValues: [Bool] = []; var networks = 0
-    func connect(_ call: AuthenticatedNativeCall) async throws { connections += 1 }
-    func microphone(enabled: Bool) async throws { microphoneValues.append(enabled) }
+    var connectGate: CallMediaGate?; var microphoneGate: CallMediaGate?
+    func connect(_ call: AuthenticatedNativeCall) async throws { connections += 1; try await connectGate?.wait() }
+    func microphone(enabled: Bool) async throws { microphoneValues.append(enabled); try await microphoneGate?.wait() }
     func audioSession(active: Bool) {}
     func networkPathChanged() async throws { networks += 1 }
     func disconnect() { disconnects += 1 }
 }
 @MainActor private final class CallPresenterFixture: NativeCallPresenting {
     var reasons: [NativeRingPhase] = []; var metadataCount = 0
+    var onEnded: (() -> Void)?
     func metadata(_ call: AuthenticatedNativeCall) { metadataCount += 1 }
     func connected(callId: String) {}
-    func ended(callId: String, reason: NativeRingPhase) { reasons.append(reason) }
+    func ended(callId: String, reason: NativeRingPhase) { reasons.append(reason); onEnded?() }
 }
 private actor CallChatFixture: ChannelConversationTransport {
     nonisolated let ownUserId = "@member:example.org"
     private var events: [MatrixRawTimelineEvent] = []
     private var refuse = false
+    private var lostRooms: Set<String> = []
+    private var syncFailure: MatrixClientFailure?
+    func loseAuthority(_ rooms: Set<String>) { lostRooms = rooms }
+    func failSync(_ failure: MatrixClientFailure) { syncFailure = failure }
     func deny() { refuse = true }
     func setEvents(_ value: [MatrixRawTimelineEvent]) { events = value }
     func bootstrapRoom(organisationId: String, channelId: String) async throws(MatrixClientFailure) -> (roomId: String, initialBatch: MatrixSyncBatch) {
         ("!room:example.org", MatrixSyncBatch(nextBatch: "one", roomEvents: [:]))
     }
     func syncRoom(roomId: String, since: String?) async throws(MatrixClientFailure) -> MatrixSyncBatch {
-        MatrixSyncBatch(nextBatch: "two", roomEvents: [roomId: events])
+        if let syncFailure { throw syncFailure }
+        var batch = MatrixSyncBatch(nextBatch: "two", roomEvents: [roomId: events])
+        batch.authorityLostRooms = lostRooms; return batch
     }
     func sendMessage(roomId: String, transactionId: String, body: String, replyToEventId: String?, attachments: [AttachmentMetadataRef]) async throws(MatrixClientFailure) -> String {
         if refuse { throw .notFound }; return "$sent"
@@ -114,6 +143,117 @@ private actor CallChatFixture: ChannelConversationTransport {
         do { try await coordinator.receive(callWake()); XCTFail("unauthorized wake must fail") } catch {}
         XCTAssertNil(coordinator.call); XCTAssertTrue(coordinator.ring.records.isEmpty)
         XCTAssertEqual(media.connections, 0); XCTAssertEqual(presenter.reasons, [.revoked])
+    }
+    func testSyncMembershipLossRevokesOnlyTheCallsRoom() async throws {
+        let media = CallMediaFixture(); let chat = CallChatFixture()
+        let coordinator = try NativeCallCoordinator(organisationId: callOrg, localPartyId: "local", resolver: ImmediateCallResolver(), media: media, conversation: chat, now: { 100 })
+        try await coordinator.receive(callWake()); try await coordinator.answer(callId: callId)
+        await chat.loseAuthority(["!unrelated:example.org"])
+        _ = try await coordinator.syncCompanionTimeline(since: "one"); XCTAssertNotNil(coordinator.call)
+        await chat.loseAuthority(["!room:example.org"])
+        _ = try await coordinator.syncCompanionTimeline(since: "two")
+        XCTAssertNil(coordinator.call); XCTAssertTrue(coordinator.ring.records.isEmpty); XCTAssertEqual(media.disconnects, 1)
+    }
+    func testSyncNotFoundAndForbiddenRevokeMedia() async throws {
+        for failure in [MatrixClientFailure.notFound, .forbidden] {
+            let media = CallMediaFixture(); let chat = CallChatFixture()
+            let coordinator = try NativeCallCoordinator(organisationId: callOrg, localPartyId: "local", resolver: ImmediateCallResolver(), media: media, conversation: chat, now: { 100 })
+            try await coordinator.receive(callWake()); try await coordinator.answer(callId: callId)
+            await chat.failSync(failure)
+            do { _ = try await coordinator.syncCompanionTimeline(since: "one"); XCTFail("Authority failure must propagate") } catch {}
+            XCTAssertNil(coordinator.call); XCTAssertTrue(coordinator.ring.records.isEmpty); XCTAssertEqual(media.disconnects, 1)
+        }
+    }
+    func testAnswerWaitsForResolutionAndMediaConnection() async throws {
+        let resolver = HeldCallResolver(); let media = CallMediaFixture(); let gate = CallMediaGate()
+        media.connectGate = gate
+        let coordinator = try NativeCallCoordinator(organisationId: callOrg, localPartyId: "local", resolver: resolver, media: media, conversation: CallChatFixture(), now: { 100 })
+        let receiving = Task { try await coordinator.receive(callWake()) }
+        await resolver.waitUntilEntered()
+        var started = false; var completed = false
+        let answering = Task { started = true; try await coordinator.answer(callId: callId); completed = true }
+        while !started { await Task.yield() }
+        XCTAssertFalse(completed); await resolver.release(); await gate.waitUntilEntered()
+        XCTAssertFalse(completed); gate.release()
+        try await receiving.value; try await answering.value
+        XCTAssertTrue(completed); XCTAssertEqual(coordinator.ring.records[callId]?.phase, .connected)
+    }
+    func testPendingAnswerFailsImmediatelyWhenRevokedDuringResolution() async throws {
+        let resolver = HeldCallResolver(); let media = CallMediaFixture()
+        let coordinator = try NativeCallCoordinator(organisationId: callOrg, localPartyId: "local", resolver: resolver, media: media, conversation: CallChatFixture(), now: { 100 })
+        let receiving = Task { try await coordinator.receive(callWake()) }
+        await resolver.waitUntilEntered()
+        var started = false
+        let answering = Task { started = true; try await coordinator.answer(callId: callId) }
+        while !started { await Task.yield() }
+        coordinator.revoke()
+        do { try await answering.value; XCTFail("Retired answer must fail") } catch {}
+        await resolver.release(); try await receiving.value
+        XCTAssertEqual(media.connections, 0)
+    }
+    func testPendingAnswerFailsOnResolutionAuthorizationFailure() async throws {
+        let resolver = HeldCallResolver(fails: true); let media = CallMediaFixture()
+        let coordinator = try NativeCallCoordinator(organisationId: callOrg, localPartyId: "local", resolver: resolver, media: media, conversation: CallChatFixture(), now: { 100 })
+        let receiving = Task { try await coordinator.receive(callWake()) }
+        await resolver.waitUntilEntered()
+        var started = false
+        let answering = Task { started = true; try await coordinator.answer(callId: callId) }
+        while !started { await Task.yield() }
+        await resolver.release()
+        do { try await receiving.value; XCTFail("Resolution must fail") } catch {}
+        do { try await answering.value; XCTFail("Answer must fail") } catch {}
+        XCTAssertNil(coordinator.call); XCTAssertEqual(media.connections, 0)
+    }
+    func testPendingAnswerFailsOnConnectionFailure() async throws {
+        let resolver = HeldCallResolver(); let media = CallMediaFixture(); let gate = CallMediaGate()
+        media.connectGate = gate
+        let coordinator = try NativeCallCoordinator(organisationId: callOrg, localPartyId: "local", resolver: resolver, media: media, conversation: CallChatFixture(), now: { 100 })
+        let receiving = Task { try await coordinator.receive(callWake()) }
+        await resolver.waitUntilEntered()
+        var started = false
+        let answering = Task { started = true; try await coordinator.answer(callId: callId) }
+        while !started { await Task.yield() }
+        await resolver.release(); await gate.waitUntilEntered(); gate.release(failing: true)
+        do { try await receiving.value; XCTFail("Connection must fail") } catch {}
+        do { try await answering.value; XCTFail("Answer must fail") } catch {}
+        XCTAssertNil(coordinator.call); XCTAssertTrue(coordinator.ring.records.isEmpty)
+    }
+    func testObsoleteMuteFailurePreservesSubsequentCall() async throws {
+        let media = CallMediaFixture()
+        let coordinator = try NativeCallCoordinator(organisationId: callOrg, localPartyId: "local", resolver: ImmediateCallResolver(), media: media, conversation: CallChatFixture(), now: { 100 })
+        try await coordinator.receive(callWake()); try await coordinator.answer(callId: callId)
+        let gate = CallMediaGate(); media.microphoneGate = gate
+        let muting = Task { try await coordinator.setMuted(true) }
+        await gate.waitUntilEntered(); coordinator.end(callId: callId); media.microphoneGate = nil
+        let nextId = "44444444-4444-4444-8444-444444444444"
+        let next = try NativeCallWake(callId: nextId, organisationId: callOrg, channelId: callChannel, epoch: 1, state: .ringing, expiresAt: 130)
+        try await coordinator.receive(next); try await coordinator.answer(callId: nextId)
+        gate.release(failing: true)
+        do { try await muting.value; XCTFail("Old mute must fail") } catch {}
+        XCTAssertEqual(coordinator.call?.wake.callId, nextId); XCTAssertEqual(coordinator.ring.records[nextId]?.phase, .connected)
+        XCTAssertEqual(media.disconnects, 1)
+    }
+    func testRejectedSyntheticReportsStillDeliverCancellations() async throws {
+        for state in [NativeRingPhase.answeredElsewhere, .ended] {
+            let media = CallMediaFixture()
+            let coordinator = try NativeCallCoordinator(organisationId: callOrg, localPartyId: "local", resolver: ImmediateCallResolver(), media: media, conversation: CallChatFixture(), now: { 100 })
+            try await coordinator.receive(callWake()); try await coordinator.answer(callId: callId)
+            let presenter = CallPresenterFixture(); coordinator.bind(presenter)
+            let cancelled = XCTestExpectation(description: "Cancellation reaches the active call")
+            presenter.onEnded = { cancelled.fulfill() }
+            let reporter = ImmediateReporterFixture(); let delivery = VoIPPushDelivery(reporter: reporter, coordinator: coordinator)
+            var completions = 0
+            delivery.receive(try JSONEncoder().encode(callWake(state, epoch: 2)), now: 100) { completions += 1 }
+            reporter.completions[0](false); reporter.completions[0](false)
+            let result = await XCTWaiter.fulfillment(of: [cancelled], timeout: 2)
+            XCTAssertEqual(result, .completed)
+            XCTAssertEqual(completions, 1); XCTAssertNil(coordinator.call); XCTAssertEqual(media.disconnects, 1)
+            XCTAssertEqual(coordinator.ring.records[callId]?.phase, state)
+        }
+    }
+    func testPreEpochClockClampsWithoutTrapping() {
+        XCTAssertEqual(NativeCallClock.timestamp(Date(timeIntervalSince1970: -1)), 0)
+        XCTAssertEqual(NativeCallClock.timestamp(Date(timeIntervalSince1970: 123.9)), 123)
     }
     func testEveryInvalidDeliveryReportsSynchronouslyAndCompletesBeforeNetwork() throws {
         let coordinator = try NativeCallCoordinator(organisationId: callOrg, localPartyId: "local", resolver: ImmediateCallResolver(), media: CallMediaFixture(), conversation: CallChatFixture(), now: { 100 })

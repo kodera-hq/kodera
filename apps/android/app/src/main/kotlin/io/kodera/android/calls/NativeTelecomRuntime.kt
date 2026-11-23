@@ -29,12 +29,13 @@ import android.telecom.PhoneAccountHandle
 import android.telecom.TelecomManager
 import io.kodera.android.R
 import io.kodera.android.client.AuthenticatedNativeCall
+import io.kodera.android.client.NativeCallAudioFocus
+import io.kodera.android.client.NativeCallWakeData
 import io.kodera.android.client.NativeCallCoordinator
 import io.kodera.android.client.NativeCallPresenter
-import io.kodera.android.domain.NativeCallWake
 import io.kodera.android.domain.NativeRingPhase
-import org.json.JSONObject
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.atomic.AtomicReference
 
 /** Install only for a provisioned authenticated call session; never from untrusted intent extras. */
@@ -54,6 +55,11 @@ class NativeTelecomRuntime(private val context: Context, val coordinator: Native
             if (change == AudioManager.AUDIOFOCUS_LOSS) coordinator.revoke()
             else coordinator.audioSession(change == AudioManager.AUDIOFOCUS_GAIN)
         }.build()
+    private val audioFocus = NativeCallAudioFocus(
+        request = { audio.requestAudioFocus(focus) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED },
+        abandon = { audio.abandonAudioFocusRequest(focus) },
+        communicationMode = { audio.mode = if (it) AudioManager.MODE_IN_COMMUNICATION else AudioManager.MODE_NORMAL },
+    )
     private val network = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) { work { coordinator.networkPathChanged() } }
     }
@@ -72,21 +78,13 @@ class NativeTelecomRuntime(private val context: Context, val coordinator: Native
     fun stop() {
         if (!current.compareAndSet(this, null)) return
         coordinator.revoke(); main.removeCallbacks(expiry)
-        runCatching { connectivity.unregisterNetworkCallback(network) }; audio.abandonAudioFocusRequest(focus)
+        runCatching { connectivity.unregisterNetworkCallback(network) }; audioFocus.release()
         telecom.unregisterPhoneAccount(account); worker.shutdownNow()
     }
     /** Entry point for a provisioned messaging provider's high-priority data callback. No notification payload is accepted. */
     fun onFcmCallWake(data: Map<String, String>, highPriority: Boolean, hasNotification: Boolean = false) {
-        check(highPriority && !hasNotification)
-        val keys = setOf("call_id", "organisation_id", "channel_id", "epoch", "state", "expires_at")
-        require(data.keys == keys)
-        val raw = JSONObject()
-        for ((key, value) in data) {
-            if (key == "epoch" || key == "expires_at") {
-                val number = value.toLong(); require(number.toString() == value); raw.put(key, number)
-            } else raw.put(key, value)
-        }
-        val wake = NativeCallWake.admit(raw.toString().toByteArray(), System.currentTimeMillis() / 1000)
+        if (current.get() !== this || !highPriority || hasNotification) return
+        val wake = NativeCallWakeData.admit(data, System.currentTimeMillis() / 1000) ?: return
         // Cancellation bypasses the worker so it cannot queue behind a blocked authenticated lookup.
         if (wake.state == NativeRingPhase.RINGING) work { coordinator.receive(wake) } else coordinator.receive(wake)
     }
@@ -123,11 +121,16 @@ class NativeTelecomRuntime(private val context: Context, val coordinator: Native
         } catch (_: Exception) { coordinator.end(id); service.stopSelf() }
     }
     private fun answerWithFocus(id: String) = work {
-        if (coordinator.currentCall()?.wake?.callId != id || coordinator.phase(id) != NativeRingPhase.RINGING) return@work
-        check(context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED)
-        if (audio.requestAudioFocus(focus) != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) { coordinator.end(id); return@work }
-        audio.mode = AudioManager.MODE_IN_COMMUNICATION
-        coordinator.audioSession(true); coordinator.answer(id)
+        val owner = coordinator.ownership(id) ?: return@work
+        fun stillOwned() = current.get() === this && coordinator.ownsCall(id, owner)
+        if (!stillOwned() || coordinator.phase(id) != NativeRingPhase.RINGING) return@work
+        try {
+            check(context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED)
+            if (!audioFocus.acquire(id, ::stillOwned)) { if (stillOwned()) coordinator.end(id); return@work }
+            if (!stillOwned()) return@work
+            coordinator.answer(id, expectedOwner = owner, activateAudio = true)
+        } catch (_: Exception) { if (stillOwned()) coordinator.end(id) }
+        finally { if (!stillOwned()) audioFocus.release(id) }
     }
     internal fun end(id: String, declined: Boolean) { coordinator.end(id, declined) }
     internal fun muted(id: String, muted: Boolean) = work { if (coordinator.currentCall()?.wake?.callId == id) coordinator.setMuted(muted) }
@@ -138,17 +141,20 @@ class NativeTelecomRuntime(private val context: Context, val coordinator: Native
         connections[callId]?.setActive()
         notifications.notify(callId.hashCode(), notification(callId, incoming = false))
     }
-    override fun ended(callId: String, reason: NativeRingPhase) = onMain {
-        val cause = when (reason) {
-            NativeRingPhase.ANSWERED_ELSEWHERE -> DisconnectCause.ANSWERED_ELSEWHERE
-            NativeRingPhase.DECLINED -> DisconnectCause.REJECTED
-            NativeRingPhase.EXPIRED -> DisconnectCause.MISSED
-            NativeRingPhase.REVOKED -> DisconnectCause.ERROR
-            else -> DisconnectCause.REMOTE
+    // Always enqueue: releasing focus must never take its lock while the coordinator state lock is held.
+    override fun ended(callId: String, reason: NativeRingPhase) {
+        main.post {
+            val cause = when (reason) {
+                NativeRingPhase.ANSWERED_ELSEWHERE -> DisconnectCause.ANSWERED_ELSEWHERE
+                NativeRingPhase.DECLINED -> DisconnectCause.REJECTED
+                NativeRingPhase.EXPIRED -> DisconnectCause.MISSED
+                NativeRingPhase.REVOKED -> DisconnectCause.ERROR
+                else -> DisconnectCause.REMOTE
+            }
+            connections.remove(callId)?.apply { setDisconnected(DisconnectCause(cause)); destroy() }
+            notifications.cancel(callId.hashCode()); audioFocus.release(callId)
+            foreground?.stopForeground(Service.STOP_FOREGROUND_REMOVE); foreground?.stopSelf(); foreground = null
         }
-        connections.remove(callId)?.apply { setDisconnected(DisconnectCause(cause)); destroy() }
-        notifications.cancel(callId.hashCode()); audio.abandonAudioFocusRequest(focus); audio.mode = AudioManager.MODE_NORMAL
-        foreground?.stopForeground(Service.STOP_FOREGROUND_REMOVE); foreground?.stopSelf(); foreground = null
     }
     private fun notification(id: String, incoming: Boolean): Notification {
         val end = action(id, "end")
@@ -171,7 +177,10 @@ class NativeTelecomRuntime(private val context: Context, val coordinator: Native
     private fun onMain(body: () -> Unit) { if (Looper.myLooper() == Looper.getMainLooper()) body() else main.post(body) }
     private fun work(body: () -> Unit) {
         if (worker.isShutdown) return
-        worker.execute { runCatching(body).onFailure { coordinator.revoke() } }
+        try {
+            // Operations own their failure fences; an obsolete failure cannot revoke a later call.
+            worker.execute { if (current.get() === this) runCatching(body) }
+        } catch (_: RejectedExecutionException) { /* Stop raced with queue submission. */ }
     }
     companion object {
         internal val current = AtomicReference<NativeTelecomRuntime?>()

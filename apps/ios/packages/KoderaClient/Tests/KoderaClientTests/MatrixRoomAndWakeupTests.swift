@@ -125,6 +125,29 @@ final class MatrixRoomAndWakeupTests: XCTestCase {
         }
     }
 
+    func testSyncExposesRoomAuthorityLossAndRetainsItAfterLeave() async throws {
+        let origin = "https://atelier.matrix.kodera.io"
+        let client = MatrixRoomClient(coreRequester: try makeRequester(), loopback: .refuse, protocolClass: URLProtocolFixture.self)
+        await client.bindChannelSecurity(organisationId: Self.orgId, channelId: Self.channelId, origin: origin, roomId: Self.roomId, isConfidential: false)
+        func sync(_ rooms: [String: Any], since: String?) async throws -> MatrixSyncBatch {
+            let payload: [String: Any] = ["next_batch": "s1", "rooms": rooms]
+            URLProtocolFixture.install(.body(status: 200, headers: Self.jsonHeaders, chunks: [try JSONSerialization.data(withJSONObject: payload)]))
+            return try await client.sync(homeserverOrigin: origin, matrixAccessToken: "token", roomId: Self.roomId, since: since)
+        }
+        let initial = try await sync(["join": [Self.roomId: ["state": ["events": []], "timeline": ["events": []]]]], since: nil)
+        XCTAssertTrue(initial.authorityLostRooms.isEmpty)
+        let unchanged = try await sync([:], since: "one")
+        XCTAssertTrue(unchanged.authorityLostRooms.isEmpty)
+        let unrelated = try await sync(["leave": ["!other:example.org": [:]]], since: "two")
+        XCTAssertTrue(unrelated.authorityLostRooms.isEmpty)
+        let left = try await sync(["leave": [Self.roomId: [:]]], since: "three")
+        XCTAssertEqual(left.authorityLostRooms, [Self.roomId]); XCTAssertTrue(left.plaintextAllowedRooms.isEmpty)
+        let stillLost = try await sync([:], since: "four")
+        XCTAssertEqual(stillLost.authorityLostRooms, [Self.roomId])
+        let cleared = try await sync([:], since: nil)
+        XCTAssertEqual(cleared.authorityLostRooms, [Self.roomId])
+    }
+
     func testMalformedIncrementalStateRevokesPlaintextWithoutSendHTTP() async throws {
         let origin = "https://atelier.matrix.kodera.io"
         for malformed: Any in [["events": NSNull()], 123, "bad", NSNull(), ["events": [:]]] {

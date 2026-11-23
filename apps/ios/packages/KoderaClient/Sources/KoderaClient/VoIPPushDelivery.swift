@@ -28,12 +28,12 @@ public final class VoIPPushDelivery {
         reporter.report(uuid: uuid) { [self] accepted in
             guard !didComplete else { return }; didComplete = true
             completion()
-            guard accepted else {
+            guard accepted || wake?.state == .answeredElsewhere || wake?.state == .ended else {
                 if isNewRing, let wake { reported.removeValue(forKey: wake.callId); coordinator.end(callId: wake.callId) }
                 return
             }
             guard let wake else { reporter.end(uuid: uuid, reason: .expired); return }
-            if !isNewRing { reporter.end(uuid: uuid, reason: wake.state == .answeredElsewhere ? .answeredElsewhere : .ended) }
+            if accepted && !isNewRing { reporter.end(uuid: uuid, reason: wake.state == .answeredElsewhere ? .answeredElsewhere : .ended) }
             // A duplicate live ring is reported and ended independently of the original call.
             if wake.state == .ringing && !isNewRing { return }
             Task { @MainActor [self] in
