@@ -286,6 +286,10 @@ ALLOWED_SECRETS = {
         "apps/billing/configuration.py refuses any other key"
     ),
     "KODERA_STRIPE_WEBHOOK_SECRET": "the billing provider's webhook signing secret",
+    "KODERA_SYNAPSE_ADMIN_TOKEN": (
+        "an application secret: the internal Matrix homeserver admin access token the "
+        "coexistence replay worker sends queued imports and inbound coexistence events with"
+    ),
 }
 # Inside a setting's value: a key or field shaped like a credential, and the one §2 admits there.
 ALLOWED_NESTED = {"DATABASES['default']['PASSWORD']": "the API's own database, §2's first row"}

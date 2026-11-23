@@ -34,6 +34,7 @@ pub(super) fn expected_service_build_spec(service_name: &str) -> Option<ServiceB
             allow_vite_args: true,
         }),
         "agent-state-init"
+        | "api-admission"
         | "media-socket-init"
         | "media-storage-worker"
         | "proximity-broker"
@@ -585,6 +586,16 @@ pub(super) fn validate_service_command_argv(
         }
         "tenant-agent" => argv == ["python", "-m", "tenant_agent", "run"],
         "room-access" => argv == ["python", "-m", "room_access"],
+        "api-admission" => argv == [
+            "python",
+            "-m",
+            "config.edge_admission",
+            "--bind",
+            "0.0.0.0:8080",
+            "--upstream",
+            "server:8000",
+            "--require-trusted-edge",
+        ],
         "valkey" => argv == ["valkey-server", "--save", "60", "1", "--loglevel", "warning"],
         "livekit" => argv == ["--config", "/etc/livekit.yaml"],
         "keycloak" => argv == ["start", "--optimized"] || argv == ["start"],

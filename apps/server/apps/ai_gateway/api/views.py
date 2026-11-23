@@ -48,7 +48,12 @@ def policy(request: HttpRequest, organisation_id: UUID) -> HttpResponse:
             )
         )
 
-    return http.serve(request, {"GET": get, "PUT": put}, organisation_id)
+    return http.serve(
+        request,
+        {"GET": get, "PUT": put},
+        organisation_id,
+        operations=(permissions.GET_POLICY, permissions.PUT_POLICY),
+    )
 
 
 @declares(permissions.PUT_CHANNEL_POLICY)
@@ -65,7 +70,9 @@ def channel_policy(request: HttpRequest, organisation_id: UUID, channel_id: UUID
             )
         )
 
-    return http.serve(request, {"PUT": put}, organisation_id)
+    return http.serve(
+        request, {"PUT": put}, organisation_id, operations=(permissions.PUT_CHANNEL_POLICY,)
+    )
 
 
 @declares(permissions.PUT_CONSENT)
@@ -81,7 +88,7 @@ def consent(request: HttpRequest, organisation_id: UUID) -> HttpResponse:
             )
         )
 
-    return http.serve(request, {"PUT": put}, organisation_id)
+    return http.serve(request, {"PUT": put}, organisation_id, operations=(permissions.PUT_CONSENT,))
 
 
 @declares(permissions.TRANSCRIBE_VOICE_NOTE)
@@ -132,6 +139,7 @@ def transcribe(request: HttpRequest, organisation_id: UUID, attachment_id: UUID)
             request,
             {"POST": unprepared},
             organisation_id,
+            operations=(permissions.TRANSCRIBE_VOICE_NOTE,),
             prepare=prepare,
             replay_authorize=replay_auth,
         )

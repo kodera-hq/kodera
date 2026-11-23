@@ -1451,6 +1451,74 @@ def test_http_channel_map_confidential_refusal_and_operator_worker_drain(
     assert operator_mod.require_operator_profile is not None
 
 
+def test_dispatch_extension_coexistence_refuses_pending_matrix_work_without_transport(
+    world, settings, monkeypatch
+) -> None:
+    """Pending Matrix work (queued replay rows and a queued inbound bridge event) with no
+    configured homeserver/token/transport factory refuses with CommandError and drains nothing."""
+    from django.core.management import call_command
+    from django.core.management.base import CommandError
+
+    from apps.extensions.management.commands import dispatch_extension_coexistence as cmd_mod
+
+    org, workspace, members, tokens = world
+    channel = _create_channel(workspace, name="pending-matrix-room", is_confidential=False)
+
+    batch = ImportBatch.objects.create(
+        workspace=workspace,
+        creator=members[0],
+        source="slack",
+        archive_sha256="b" * 64,
+        state="pending",
+    )
+    queued = ImportedObject.objects.create(
+        workspace=workspace,
+        batch=batch,
+        source="slack",
+        external_key="msg-pending-1",
+        source_sha256="c" * 64,
+        channel=channel,
+        matrix_txn_id="kodera-imp-" + "a" * 32,
+        replay_state="queued_matrix",
+        replay_payload={"text": "pending matrix replay"},
+    )
+    bridge = coexistence.create_bridge(
+        verified=tokens[0],
+        organisation_id=org.id,
+        channel_id=channel.id,
+        source="slack",
+        external_workspace_id="TPEND",
+        external_channel_id="CPEND",
+        outbound_endpoint="https://hooks.example.org/pending",
+        signing_secret="p" * 36,
+    )
+    guard = CoexistenceReplayGuard.objects.create(
+        bridge=bridge,
+        external_event_id="EvPending01",
+        event_sha256="d" * 64,
+        direction="inbound",
+        state="queued",
+    )
+
+    monkeypatch.setattr(cmd_mod, "require_operator_profile", lambda: None)
+    settings.KODERA_SYNAPSE_URL = None
+    settings.KODERA_SYNAPSE_ADMIN_TOKEN = None
+    settings.KODERA_SYNAPSE_SERVER_NAME = ""
+    settings.KODERA_MATRIX_REPLAY_TRANSPORT_FACTORY = None
+    with pytest.raises(CommandError, match="no Matrix replay transport configured"):
+        call_command(
+            "dispatch_extension_coexistence",
+            "--once",
+            "--organisation",
+            str(org.id),
+            stdout=io.StringIO(),
+        )
+    queued.refresh_from_db()
+    guard.refresh_from_db()
+    assert queued.replay_state == "queued_matrix"
+    assert guard.state == "queued"
+
+
 def test_authority_revocation_during_attachment_fetch_and_compensating_redact(
     world, monkeypatch
 ) -> None:

@@ -156,6 +156,7 @@ def import_preview(request: HttpRequest, organisation_id: UUID) -> HttpResponse:
         request,
         organisation_id=organisation_id,
         handlers={"POST": post},
+        operations=(PREVIEW_WORKSPACE_IMPORT,),
         idempotent_post=False,
     )
 
@@ -220,6 +221,7 @@ def import_execute(request: HttpRequest, organisation_id: UUID) -> HttpResponse:
         request,
         organisation_id=organisation_id,
         handlers={"POST": post},
+        operations=(EXECUTE_WORKSPACE_IMPORT,),
         idempotent_post=not is_dry_run,
     )
 
@@ -274,6 +276,7 @@ def coexistence_bridges(request: HttpRequest, organisation_id: UUID) -> HttpResp
         request,
         organisation_id=organisation_id,
         handlers={"GET": get, "POST": post},
+        operations=(LIST_COEXISTENCE_BRIDGES, CREATE_COEXISTENCE_BRIDGE),
         idempotent_post=True,
     )
 
@@ -292,6 +295,7 @@ def coexistence_bridge(
         request,
         organisation_id=organisation_id,
         handlers={"DELETE": delete},
+        operations=(REVOKE_COEXISTENCE_BRIDGE,),
         idempotent_post=False,
     )
 

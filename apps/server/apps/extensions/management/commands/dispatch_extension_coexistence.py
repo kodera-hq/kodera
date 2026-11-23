@@ -19,6 +19,7 @@ class Command(BaseCommand):
 
     def handle(self, *args: Any, **options: Any) -> None:
         require_operator_profile()
+        import importlib
         import json
 
         from apps.extensions import coexistence, imports
@@ -33,9 +34,29 @@ class Command(BaseCommand):
         synapse_server = str(getattr(settings, "KODERA_SYNAPSE_SERVER_NAME", "") or "")
         transport_factory = getattr(settings, "KODERA_MATRIX_REPLAY_TRANSPORT_FACTORY", None)
 
+        factory_configured = callable(transport_factory) or (
+            isinstance(transport_factory, str) and bool(transport_factory)
+        )
         matrix_transport = None
         if callable(transport_factory):
             matrix_transport = transport_factory()
+        elif isinstance(transport_factory, str) and transport_factory:
+            module_name, _, attribute = transport_factory.rpartition(".")
+            if not module_name or not attribute:
+                raise CommandError(
+                    "KODERA_MATRIX_REPLAY_TRANSPORT_FACTORY must be a dotted Python path"
+                )
+            try:
+                factory = getattr(importlib.import_module(module_name), attribute)
+            except (ImportError, AttributeError):
+                raise CommandError(
+                    "KODERA_MATRIX_REPLAY_TRANSPORT_FACTORY does not resolve to a dotted path"
+                ) from None
+            if not callable(factory):
+                raise CommandError(
+                    "KODERA_MATRIX_REPLAY_TRANSPORT_FACTORY does not name a callable"
+                )
+            matrix_transport = factory()
         elif (
             isinstance(synapse_url, str)
             and synapse_url
@@ -46,6 +67,29 @@ class Command(BaseCommand):
                 synapse_url, synapse_token, synapse_server
             )
 
+        if matrix_transport is None:
+            # Like dispatch_bug_reports' required flags and run_deliveries' mail transport: an
+            # unconfigured run refuses before it drains anything, so an idle cron run fails
+            # loudly instead of silently returning zeros. Names only, never a value.
+            missing = [
+                name
+                for name, present in (
+                    ("KODERA_SYNAPSE_URL", isinstance(synapse_url, str) and bool(synapse_url)),
+                    (
+                        "KODERA_SYNAPSE_ADMIN_TOKEN",
+                        isinstance(synapse_token, str) and bool(synapse_token),
+                    ),
+                    ("KODERA_MATRIX_REPLAY_TRANSPORT_FACTORY", factory_configured),
+                )
+                if not present
+            ]
+            raise CommandError(
+                "no Matrix replay transport configured (missing: "
+                + ", ".join(missing)
+                + "); set KODERA_SYNAPSE_URL and KODERA_SYNAPSE_ADMIN_TOKEN, or "
+                "KODERA_MATRIX_REPLAY_TRANSPORT_FACTORY; nothing drained"
+            )
+
         summary: dict[str, Any] = {
             "imports": {"replayed": 0, "skipped_unready": 0, "obsoleted": 0},
             "inbound": {"delivered": 0, "retryable": 0, "obsoleted": 0},
@@ -53,15 +97,14 @@ class Command(BaseCommand):
                 organisation_id=org_id, limit=max_jobs
             ),
         }
-        if matrix_transport is not None:
-            summary["imports"] = imports.drain_queued_matrix_imports(
-                matrix_transport=matrix_transport,
-                organisation_id=org_id,
-                limit=max_jobs,
-            )
-            summary["inbound"] = coexistence.drain_coexistence_inbound(
-                matrix_transport=matrix_transport,
-                organisation_id=org_id,
-                limit=max_jobs,
-            )
+        summary["imports"] = imports.drain_queued_matrix_imports(
+            matrix_transport=matrix_transport,
+            organisation_id=org_id,
+            limit=max_jobs,
+        )
+        summary["inbound"] = coexistence.drain_coexistence_inbound(
+            matrix_transport=matrix_transport,
+            organisation_id=org_id,
+            limit=max_jobs,
+        )
         self.stdout.write(json.dumps(summary, sort_keys=True))

@@ -7,6 +7,7 @@ import hashlib
 import io
 import json
 import secrets
+import threading
 from dataclasses import replace
 from typing import Any
 from uuid import UUID, uuid4
@@ -1475,3 +1476,143 @@ def test_mistral_operator_credential_revocable_byom_and_eager_non_eu_host_refusa
         replace(tokens[0], authorized_party="Voice_Bot"),
     ):
         assert e2ee_services.is_ai_or_service_actor(suffixed_tok) is True
+
+
+class _BlockingAdapter:
+    """Provider adapter that parks inside `transcribe` until the test releases it, so a second
+    concurrent request with the same Idempotency-Key is observable while the first is in flight."""
+
+    provider_id = "mistral"
+
+    def __init__(self) -> None:
+        self.transcriptions: list[tuple[AiTranscriptionRequest, str]] = []
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    @property
+    def is_eu_sovereign(self) -> bool:
+        return True
+
+    def complete(self, request: AiCompletionRequest, *, scope_key: str) -> AiCompletionResult:
+        raise AssertionError("the concurrent fence test only transcribes")
+
+    def transcribe(
+        self, request: AiTranscriptionRequest, *, scope_key: str
+    ) -> AiTranscriptionResult:
+        self.transcriptions.append((request, scope_key))
+        self.entered.set()
+        assert self.release.wait(timeout=30), "the in-flight request was never released"
+        return AiTranscriptionResult(
+            text="Point produit confirmé à 14h.",
+            language=request.language or "fr",
+            provider=self.provider_id,
+            model=request.model,
+        )
+
+
+def test_concurrent_same_key_transcription_fenced_before_second_provider_call(
+    world: Any, http: Any, gateway: Any
+) -> None:
+    org, workspace, _, _ = world
+    client, credentials = http
+    owner_cred = credentials[0]
+    member_cred = credentials[3]
+    channel = _create_channel(workspace, name="Fenced Voice Notes", ai_enabled=True)
+    adapter = _BlockingAdapter()
+
+    upload_resp = client.post(
+        f"/api/v1/organisations/{org.id}/workspace/attachments/uploads",
+        data=json.dumps(
+            {
+                "filename": "standup.ogg",
+                "contentType": "audio/ogg",
+                "sizeBytes": len(OGG_VOICE_BYTES),
+                "sha256": hashlib.sha256(OGG_VOICE_BYTES).hexdigest(),
+                "channelId": str(channel.id),
+            }
+        ),
+        content_type="application/json",
+        **_auth_headers(member_cred, key=str(uuid4())),
+    )
+    assert upload_resp.status_code == 201
+    attachment_id = upload_resp.json()["attachmentId"]
+    complete_resp = client.post(
+        f"/api/v1/organisations/{org.id}/workspace/attachments/{attachment_id}/complete",
+        data=b"",
+        content_type="application/json",
+        **_auth_headers(member_cred, key=str(uuid4())),
+    )
+    assert complete_resp.status_code == 200
+
+    with override_settings(
+        KODERA_AI_GATEWAY_ENABLED=True,
+        KODERA_AI_PROVIDER_ADAPTER=adapter,
+        KODERA_AI_ATTACHMENT_BYTES_LOADER=lambda _row: OGG_VOICE_BYTES,
+    ):
+        put_org = client.put(
+            f"/api/v1/organisations/{org.id}/workspace/ai/policy",
+            data=json.dumps(
+                {
+                    "enabled": True,
+                    "provider": "mistral",
+                    "providerRegion": "eu",
+                    "euSovereignOnly": True,
+                    "model": "voxtral-mini-latest",
+                }
+            ),
+            content_type="application/json",
+            **_auth_headers(owner_cred, key=str(uuid4())),
+        )
+        assert put_org.status_code == 200
+        put_consent = client.put(
+            f"/api/v1/organisations/{org.id}/workspace/ai/consent",
+            data=json.dumps({"enabled": True}),
+            content_type="application/json",
+            **_auth_headers(member_cred, key=str(uuid4())),
+        )
+        assert put_consent.status_code == 200
+
+        idem_key = str(uuid4())
+        url = (
+            f"/api/v1/organisations/{org.id}/workspace/attachments/{attachment_id}"
+            "/actions/transcribe"
+        )
+        body = json.dumps({"language": "fr"})
+        outcome: list[Any] = []
+
+        def first_request() -> None:
+            try:
+                outcome.append(
+                    client.post(
+                        url,
+                        data=body,
+                        content_type="application/json",
+                        **_auth_headers(member_cred, key=idem_key),
+                    )
+                )
+            finally:
+                connection.close()
+
+        worker = threading.Thread(target=first_request)
+        worker.start()
+        assert adapter.entered.wait(timeout=30), "the first request never reached the provider"
+
+        # A concurrent duplicate with the SAME fresh Idempotency-Key is fenced with a 409
+        # conflict BEFORE the provider transcription runs a second time.
+        duplicate = client.post(
+            url,
+            data=body,
+            content_type="application/json",
+            **_auth_headers(member_cred, key=idem_key),
+        )
+        assert duplicate.status_code == 409
+        assert duplicate["Content-Type"].startswith("application/problem+json")
+        assert duplicate.json()["type"].endswith("/idempotency-key-in-flight")
+        assert len(adapter.transcriptions) == 1
+
+        adapter.release.set()
+        worker.join(timeout=30)
+        assert not worker.is_alive()
+        assert outcome and outcome[0].status_code == 200
+        # Provider I/O ran exactly once: the fence held before any second adapter call.
+        assert len(adapter.transcriptions) == 1

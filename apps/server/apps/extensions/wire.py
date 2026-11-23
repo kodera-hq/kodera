@@ -32,6 +32,16 @@ class ExtensionRefusedError(ValueError):
         self.reason, self.status = reason, status
 
 
+class ExtensionIdentityUnknownError(ExtensionRefusedError):
+    """A verified customer token whose `(iss, sub)` resolves no stored identity (AUTHZ.md §2 step 6).
+
+    Mapped by the HTTP layer to the one shared `403 identity-unknown` answer, never to the
+    generic `forbidden` problem."""
+
+    def __init__(self) -> None:
+        super().__init__("identity-unknown", 403)
+
+
 def canonical(value: Any) -> bytes:
     try:
         raw = json.dumps(

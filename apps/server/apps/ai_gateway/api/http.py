@@ -11,9 +11,11 @@ from django.conf import settings
 from django.core.exceptions import RequestDataTooBig
 from django.http import HttpRequest, HttpResponse
 
-from core.api import idempotency, lanes
+from core.api import idempotency, lanes, problems
 from core.api.guarded_replay import respond_once
 from core.api.idempotency import StoredResponse
+from core.api.scopes import Operation
+from core.idempotency.store import Scope
 from services.identity.access_tokens import TokenVerificationError, VerifiedAccessToken
 from services.identity.trusted_issuers import verify_configured_token
 
@@ -31,7 +33,15 @@ def json_response(payload: Any, status: int = 200) -> HttpResponse:
     return HttpResponse(encoded, status=status, content_type="application/json")
 
 
-def problem(failure: AiGatewayRefusalError, request_id: str) -> HttpResponse:
+def problem(
+    failure: AiGatewayRefusalError, request_id: str, operation_id: str = ""
+) -> HttpResponse:
+    if failure.status == 403 and (
+        failure.kind == "identity-unknown" or failure.reason == "identity-unknown"
+    ):
+        # AUTHZ.md §2 step 6: a verified token with no stored identity gets the one shared
+        # answer and its one WARNING line, never the generic forbidden problem.
+        return problems.identity_unknown(request_id, operation_id)
     kinds = {
         400: "malformed-request",
         401: "unauthenticated",
@@ -99,14 +109,21 @@ def serve(
     handlers: dict[str, Handler],
     organisation_id: UUID,
     *,
+    operations: tuple[Operation, ...] = (),
     prepare: Callable[[VerifiedAccessToken, str], Handler] | None = None,
     replay_authorize: Callable[[VerifiedAccessToken], None] | None = None,
 ) -> HttpResponse:
     req_id = responses.request_id(request)
     method = (request.method or "").upper()
+    operation_id = next(
+        (operation.operation_id for operation in operations if operation.method.upper() == method),
+        "",
+    )
     try:
         if method not in handlers:
-            response = problem(AiGatewayRefusalError(405, None, "method-not-allowed"), req_id)
+            response = problem(
+                AiGatewayRefusalError(405, None, "method-not-allowed"), req_id, operation_id
+            )
             response["Allow"] = ", ".join(sorted(handlers))
             return responses.finish(response, req_id)
         verified, lane = verify_configured_token(
@@ -120,68 +137,87 @@ def serve(
         handler = handlers[method]
         prepared_failure: AiGatewayRefusalError | None = None
         supplied = request.headers.get(idempotency.KEY_HEADER, "")
-        if (
-            method == "POST"
-            and prepare is not None
-            and not idempotency.is_missing(supplied)
-            and not idempotency.is_malformed(supplied)
-            and idempotency.scope_for(
-                request, issuer=verified.issuer, subject=verified.subject, key=supplied
-            )
-            is not None
-            and not idempotency.holds_answer(
-                request, issuer=verified.issuer, subject=verified.subject, key=supplied
-            )
-        ):
-            try:
-                handler = prepare(verified, req_id)
-            except AiGatewayRefusalError as failure:
-                prepared_failure = failure
-
-        def execute() -> HttpResponse:
-            try:
-                if prepared_failure is not None:
-                    raise prepared_failure
-                return handler(verified, req_id)
-            except AiGatewayRefusalError as failure:
-                return problem(failure, req_id)
-
-        if method == "POST":
-
-            def effect() -> StoredResponse:
-                result = execute()
-                return StoredResponse(
-                    status=result.status_code,
-                    body=result.content,
-                    content_type=result.get("Content-Type", "application/json"),
-                    etag=result.get("ETag"),
+        fence: Scope | None = None
+        try:
+            if (
+                method == "POST"
+                and prepare is not None
+                and not idempotency.is_missing(supplied)
+                and not idempotency.is_malformed(supplied)
+            ):
+                scope = idempotency.scope_for(
+                    request, issuer=verified.issuer, subject=verified.subject, key=supplied
                 )
-
-            def check_authority(event: Any) -> None:
-                authorize(verified, organisation_id)
-                status = getattr(event, "status", None)
-                if (
-                    replay_authorize is not None
-                    and isinstance(status, int)
-                    and 200 <= status <= 299
+                if scope is not None and not idempotency.holds_answer(
+                    request, issuer=verified.issuer, subject=verified.subject, key=supplied
                 ):
-                    replay_authorize(verified)
+                    # Claim durable per-(scope, key) execution ownership BEFORE prepare() runs
+                    # any external I/O: a concurrent duplicate key is fenced here with a 409
+                    # conflict instead of consuming provider work and refunding it afterwards.
+                    if not idempotency.claim_execution(scope):
+                        return responses.finish(
+                            idempotency.render(idempotency.in_flight_problem(req_id)), req_id
+                        )
+                    fence = scope
+                    try:
+                        handler = prepare(verified, req_id)
+                    except AiGatewayRefusalError as failure:
+                        prepared_failure = failure
 
-            response = respond_once(
-                request,
-                issuer=verified.issuer,
-                subject=verified.subject,
-                request_id=req_id,
-                handler=effect,
-                policy=quota_replay_policy(),
-                authority=check_authority,
-            )
-        else:
-            response = execute()
+            def execute() -> HttpResponse:
+                try:
+                    if prepared_failure is not None:
+                        raise prepared_failure
+                    return handler(verified, req_id)
+                except AiGatewayRefusalError as failure:
+                    return problem(failure, req_id, operation_id)
+
+            if method == "POST":
+
+                def effect() -> StoredResponse:
+                    result = execute()
+                    return StoredResponse(
+                        status=result.status_code,
+                        body=result.content,
+                        content_type=result.get("Content-Type", "application/json"),
+                        etag=result.get("ETag"),
+                    )
+
+                def check_authority(event: Any) -> None:
+                    authorize(verified, organisation_id)
+                    status = getattr(event, "status", None)
+                    if (
+                        replay_authorize is not None
+                        and isinstance(status, int)
+                        and 200 <= status <= 299
+                    ):
+                        replay_authorize(verified)
+
+                response = respond_once(
+                    request,
+                    issuer=verified.issuer,
+                    subject=verified.subject,
+                    request_id=req_id,
+                    handler=effect,
+                    policy=quota_replay_policy(),
+                    authority=check_authority,
+                )
+            else:
+                response = execute()
+        finally:
+            # The stored answer (or the rolled-back attempt) now owns the scope durably, so the
+            # session claim can go; a prepare that raised before provider work completed leaves
+            # nothing to fence, and a completed one reconciled its budget inside the step.
+            if fence is not None:
+                idempotency.release_execution(fence)
     except TokenVerificationError:
-        response = problem(AiGatewayRefusalError(401, None, "unauthenticated"), req_id)
+        response = problem(
+            AiGatewayRefusalError(401, None, "unauthenticated"), req_id, operation_id
+        )
     except RequestDataTooBig:
-        response = problem(AiGatewayRefusalError(400, None, "malformed-request"), req_id)
+        response = problem(
+            AiGatewayRefusalError(400, None, "malformed-request"), req_id, operation_id
+        )
     except AiGatewayRefusalError as failure:
-        response = problem(failure, req_id)
+        response = problem(failure, req_id, operation_id)
     return responses.finish(response, req_id)

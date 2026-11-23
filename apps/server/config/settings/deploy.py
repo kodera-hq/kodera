@@ -26,12 +26,16 @@ from config.environment import (
     intake_admitted,
     ios_app_ids,
     legal_text_origin,
+    matrix_replay_transport_factory,
     mutation_rate_per_minute,
     staff_admin_hosts,
     staff_issuer,
     staff_oidc_issuer,
     staff_oidc_jwks_url,
     staff_ops_hosts,
+    synapse_admin_token,
+    synapse_server_name,
+    synapse_url,
     tenant_app_urls,
     trusted_edge,
 )
@@ -189,3 +193,10 @@ KODERA_AI_SEAL_KEY = ai_seal_key(os.environ)
 KODERA_AI_MISTRAL_API_KEY = ai_mistral_api_key(os.environ)
 KODERA_AI_ACTOR_SUBJECTS = ai_actor_subjects(os.environ)
 KODERA_AI_CLIENT_IDS = ai_client_ids(os.environ)
+
+# Optional Matrix worker settings for dispatch_extension_coexistence; unset, the command refuses
+# to run rather than silently draining nothing.
+KODERA_SYNAPSE_URL = synapse_url(os.environ)
+KODERA_SYNAPSE_ADMIN_TOKEN = synapse_admin_token(os.environ)
+KODERA_SYNAPSE_SERVER_NAME = synapse_server_name(os.environ)
+KODERA_MATRIX_REPLAY_TRANSPORT_FACTORY = matrix_replay_transport_factory(os.environ)

@@ -6,10 +6,12 @@ use super::CommunityDeployError;
 pub(super) fn is_admitted_service_user(service_name: &str, user_val: &str) -> bool {
     match service_name {
         "agent-state-init" | "media-socket-init" | "proximity-socket-init" => user_val == "0:0",
-        "media-storage-worker" => user_val == "10001:10001",
+        "api-admission" | "media-storage-worker" => user_val == "10001:10001",
         _ => false,
     }
 }
+
+const API_ADMISSION_ADMITTED_ENV_KEYS: &[&str] = &["KODERA_TRUSTED_EDGE_ADDRESSES"];
 
 const CADDY_ADMITTED_ENV_KEYS: &[&str] =
     &["KODERA_ACME_EMAIL", "KODERA_DOMAIN", "KODERA_MATRIX_DOMAIN"];
@@ -158,6 +160,7 @@ const fn slice_is_strictly_sorted_ascii(items: &[&str]) -> bool {
 }
 
 const _: () = {
+    assert!(slice_is_strictly_sorted_ascii(API_ADMISSION_ADMITTED_ENV_KEYS));
     assert!(slice_is_strictly_sorted_ascii(CADDY_ADMITTED_ENV_KEYS));
     assert!(slice_is_strictly_sorted_ascii(DB_ADMITTED_ENV_KEYS));
     assert!(slice_is_strictly_sorted_ascii(LIVEKIT_ADMITTED_ENV_KEYS));
@@ -180,6 +183,7 @@ const _: () = {
 /// admit zero environment keys).
 pub fn admitted_service_environment_keys(service_name: &str) -> &'static [&'static str] {
     match service_name {
+        "api-admission" => API_ADMISSION_ADMITTED_ENV_KEYS,
         "caddy" => CADDY_ADMITTED_ENV_KEYS,
         "db" => DB_ADMITTED_ENV_KEYS,
         "livekit" => LIVEKIT_ADMITTED_ENV_KEYS,

@@ -13,14 +13,15 @@ from django.core.exceptions import RequestDataTooBig
 from django.db import transaction
 from django.http import HttpRequest, HttpResponse
 
-from core.api import lanes
+from core.api import lanes, problems
 from core.api.idempotency import StoredResponse, respond_once
+from core.api.scopes import Operation
 from core.db.ids import new_uuid7
 from services.identity.access_tokens import MAX_TOKEN, TokenVerificationError, VerifiedAccessToken
 from services.identity.trusted_issuers import verify_configured_token
 
 from ..services import read_admin
-from ..wire import ExtensionRefusedError
+from ..wire import ExtensionIdentityUnknownError, ExtensionRefusedError
 
 REQUEST_ID = re.compile(r"[A-Za-z0-9_-]{8,64}\Z")
 MAX_JSON_BODY = 1024 * 1024  # Matches body_guard.py 1 MiB /api/* ceiling.
@@ -160,10 +161,19 @@ def serve_authenticated(
     *,
     organisation_id: UUID,
     handlers: dict[str, Handler],
+    operations: tuple[Operation, ...] = (),
     idempotent_post: bool = True,
 ) -> HttpResponse:
     req_id = request_id(request)
     method = request.method or ""
+    operation_id = next(
+        (
+            operation.operation_id
+            for operation in operations
+            if operation.method.upper() == method.upper()
+        ),
+        "",
+    )
     try:
         if method not in handlers:
             return finish(problem(405, req_id, allowed=list(handlers.keys())), req_id)
@@ -178,6 +188,9 @@ def serve_authenticated(
         def run_handler() -> HttpResponse:
             try:
                 return handlers[method](verified, req_id)
+            except ExtensionIdentityUnknownError:
+                # AUTHZ.md §2 step 6: the one shared answer and its one WARNING line.
+                return problems.identity_unknown(req_id, operation_id)
             except ExtensionRefusedError as refused:
                 return problem(refused.status, req_id, reason=refused.reason)
 
@@ -204,6 +217,8 @@ def serve_authenticated(
                 response["Retry-After"] = "1"
         else:
             response = run_handler()
+    except ExtensionIdentityUnknownError:
+        response = problems.identity_unknown(req_id, operation_id)
     except TokenVerificationError:
         response = problem(401, req_id)
     except RequestDataTooBig:

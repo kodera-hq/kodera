@@ -24,7 +24,21 @@ from apps.orgs.selectors import (
 from core.db.ids import new_uuid7
 
 from .models import Delivery, Installation, WorkspaceCutoff
-from .wire import EVENTS, MAX_GRACE_SECONDS, ExtensionRefusedError, event_payload
+from .wire import (
+    EVENTS,
+    MAX_GRACE_SECONDS,
+    ExtensionIdentityUnknownError,
+    ExtensionRefusedError,
+    event_payload,
+)
+
+
+def _refused(refused: documents.RefusalError) -> ExtensionRefusedError:
+    """A document-context refusal keeps its status, except the unknown principal, which is
+    AUTHZ.md §2 step 6 and must surface as the shared `identity-unknown` answer."""
+    if refused.status == 403 and refused.kind == "identity-unknown":
+        return ExtensionIdentityUnknownError()
+    return ExtensionRefusedError("extension_workspace_refused", refused.status)
 
 
 def read_admin(verified, organisation_id):
@@ -35,7 +49,7 @@ def read_admin(verified, organisation_id):
     try:
         workspace_id, principal = documents.read_context(verified, organisation_id)
     except documents.RefusalError as refused:
-        raise ExtensionRefusedError("extension_workspace_refused", refused.status) from None
+        raise _refused(refused) from None
     if principal.role not in {"org_owner", "org_admin"}:
         raise ExtensionRefusedError("extension_owner_or_admin_required", 403)
     return workspace_id, principal
@@ -46,7 +60,10 @@ def admin(verified, organisation_id):
         raise ExtensionRefusedError("extension_workspace_absent", 404)
     if WorkspaceCutoff.objects.filter(organisation_id=organisation_id).exists():
         raise ExtensionRefusedError("extension_workspace_cut_off", 410)
-    _, initial = documents.read_context(verified, organisation_id)
+    try:
+        _, initial = documents.read_context(verified, organisation_id)
+    except documents.RefusalError as refused:
+        raise _refused(refused) from None
     initial_user_id = membership_user_id(membership_id=initial.membership_id)
     lock_erasure_cutoff_fences(organisation_id=organisation_id, user_id=initial_user_id)
     user_id = lock_membership_fence(membership_id=initial.membership_id)
@@ -57,7 +74,10 @@ def admin(verified, organisation_id):
     if WorkspaceCutoff.objects.filter(organisation_id=organisation_id).exists():
         raise ExtensionRefusedError("extension_workspace_cut_off", 410)
     # Re-read current authority after locking advisories -> m -> i -> u -> o -> w so any prior revocation wins.
-    workspace_id, principal = documents.write_context(verified, organisation_id)
+    try:
+        workspace_id, principal = documents.write_context(verified, organisation_id)
+    except documents.RefusalError as refused:
+        raise _refused(refused) from None
     if (
         principal.membership_id != initial.membership_id
         or principal.identity_id != initial.identity_id
