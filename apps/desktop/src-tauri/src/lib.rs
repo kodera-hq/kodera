@@ -20,6 +20,7 @@ pub mod csp_policy;
 pub mod deeplink;
 pub mod gui;
 pub mod keychain;
+pub mod media_controls;
 pub mod notifications;
 pub mod oidc_loopback;
 mod proximity_node;
@@ -32,10 +33,11 @@ pub mod window_state;
 mod workspace_session;
 
 pub use commands::{
-    begin_desktop_oidc_pkce_loopback, complete_desktop_oidc_pkce_callback, configure_desktop_ptt,
+    begin_desktop_oidc_pkce_loopback, clear_desktop_organisation_keychain,
+    complete_desktop_oidc_pkce_callback, configure_desktop_media_capture, configure_desktop_ptt,
     delete_desktop_keychain_credential, deploy_desktop_community_stack,
-    dispatch_desktop_notification, get_desktop_ptt_state, get_desktop_tray_state,
-    inspect_desktop_self_host_health, load_desktop_keychain_credential,
+    dispatch_desktop_notification, get_desktop_media_capture_state, get_desktop_ptt_state,
+    get_desktop_tray_state, inspect_desktop_self_host_health, load_desktop_keychain_credential,
     preflight_desktop_community_stack, prepare_desktop_community_stack,
     restore_desktop_window_bounds, route_desktop_deep_link, set_desktop_ptt_pressed,
     set_desktop_unread_badge, store_desktop_keychain_credential, trigger_desktop_tray_menu_action,
@@ -60,12 +62,20 @@ pub use gui::{
     GUI_DEFAULT_WIDTH, GUI_MIN_HEIGHT, GUI_MIN_WIDTH,
 };
 pub use keychain::{
-    build_keychain_slot, metadata_exposes_secret, validate_keychain_account_id,
-    validate_keychain_service_id, KeychainCredentialStatus, KeychainCredentialStore, KeychainError,
-    KeychainSecretKind, KeychainSessionMetadata, KeychainSlotDescriptor, OsKeychainCommandSpec,
-    OsKeychainPlatform, RedactedSessionSecret, KEYCHAIN_SERVICE_NAMESPACE,
-    MAX_KEYCHAIN_ACCOUNT_BYTES, MAX_KEYCHAIN_SECRET_BYTES, MAX_KEYCHAIN_SERVICE_BYTES,
-    MAX_KEYCHAIN_SLOTS_PER_ORG, MIN_KEYCHAIN_SECRET_BYTES,
+    build_keychain_slot, default_keychain_index_path, metadata_exposes_secret,
+    validate_keychain_account_id, validate_keychain_service_id, EphemeralKeychainBackend,
+    KeychainBackend, KeychainCredentialStatus, KeychainCredentialStore, KeychainError,
+    KeychainPersistence, KeychainSecretKind, KeychainSessionMetadata, KeychainSlotDescriptor,
+    KeychainStoreOutcome, OsKeychainCommandSpec, OsKeychainExecOutput, OsKeychainPlatform,
+    OsKeychainProcessRunner, OsNativeKeychainBackend, RedactedSessionSecret,
+    StdOsKeychainProcessRunner, DEFAULT_OS_KEYCHAIN_TIMEOUT_MS, KEYCHAIN_SERVICE_NAMESPACE,
+    MAX_KEYCHAIN_ACCOUNT_BYTES, MAX_KEYCHAIN_INDEX_BYTES, MAX_KEYCHAIN_SECRET_BYTES,
+    MAX_KEYCHAIN_SERVICE_BYTES, MAX_KEYCHAIN_SLOTS_PER_ORG,
+    MAX_MACOS_SECURITY_INTERACTIVE_LINE_BYTES, MIN_KEYCHAIN_SECRET_BYTES,
+};
+pub use media_controls::{
+    MediaCaptureController, MediaCaptureError, MediaCaptureStateSnapshot, ScreenShareSurface,
+    MAX_MEDIA_DEVICE_ID_BYTES,
 };
 pub use notifications::{
     DesktopNotificationRequest, DispatchedNotification, DockBadgeSnapshot, NotificationCenter,

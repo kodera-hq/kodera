@@ -2,9 +2,9 @@
 
 use crate::{
     sanitize_and_clamp_window_state, CommunityCommandRunner, DeepLinkAdmissionPolicy,
-    DesktopProximityNode, KeychainCredentialStore, MonitorWorkArea, NotificationCenter,
-    OidcIssuerAllowlist, OidcPkceSession, PttController, RestoredWindowPlacement,
-    StdProcessCommunityRunner, TrayController,
+    DesktopProximityNode, KeychainCredentialStore, MediaCaptureController, MonitorWorkArea,
+    NotificationCenter, OidcIssuerAllowlist, OidcPkceSession, PttController,
+    RestoredWindowPlacement, StdProcessCommunityRunner, TrayController,
 };
 use kodera_rs::{
     curated_desktop_themes, decode_shareable_theme, encode_shareable_theme,
@@ -38,6 +38,7 @@ pub struct DesktopWorkspaceSession {
     pub(crate) deep_link_policy: DeepLinkAdmissionPolicy,
     pub(crate) tray: TrayController,
     pub(crate) ptt: PttController,
+    pub(crate) media_capture: MediaCaptureController,
     pub(crate) monitors: Vec<MonitorWorkArea>,
     pub(crate) window_placement: RestoredWindowPlacement,
     pub(crate) notifications: NotificationCenter,
@@ -76,6 +77,7 @@ impl DesktopWorkspaceSession {
             deep_link_policy: DeepLinkAdmissionPolicy::kodera_default(),
             tray: TrayController::new(),
             ptt: PttController::new(),
+            media_capture: MediaCaptureController::new(),
             monitors,
             window_placement,
             notifications: NotificationCenter::new(),
@@ -601,11 +603,12 @@ impl DesktopWorkspaceSession {
         self.deep_link_policy = DeepLinkAdmissionPolicy::kodera_default();
         self.tray.clear();
         self.ptt.clear();
+        self.media_capture.clear();
         self.monitors = vec![MonitorWorkArea::fallback_primary()];
         self.window_placement = sanitize_and_clamp_window_state(None, &self.monitors)
             .expect("fallback primary monitor geometry is valid");
         self.notifications.clear();
-        self.keychain_store.clear_all();
+        self.keychain_store.clear_ram_cache();
         self.oidc_allowlist = OidcIssuerAllowlist::kodera_default();
         if let Some(mut pending) = self.pending_oidc.take() {
             pending.clear();

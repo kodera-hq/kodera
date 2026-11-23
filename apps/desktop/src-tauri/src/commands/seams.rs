@@ -5,9 +5,10 @@ use crate::{
     AdmittedDeepLink, CommunityDeployReport, CommunityPreflightReport, CommunityPreflightSpec,
     CommunityPrepareReport, CommunityPrepareSpec, DesktopNotificationRequest,
     DesktopWorkspaceSession, DispatchedNotification, DockBadgeSnapshot, KeychainCredentialStatus,
-    KeychainSecretKind, KeychainSessionMetadata, OidcCallbackOutcome, OidcLoopbackSessionReady,
-    PttStateSnapshot, RestoredWindowPlacement, SelfHostHealthReport, TrayCallKind,
-    TrayMenuActionOutcome, TrayMenuItemId, TrayStateSnapshot,
+    KeychainSecretKind, KeychainSessionMetadata, KeychainStoreOutcome, MediaCaptureStateSnapshot,
+    OidcCallbackOutcome, OidcLoopbackSessionReady, PttStateSnapshot, RestoredWindowPlacement,
+    ScreenShareSurface, SelfHostHealthReport, TrayCallKind, TrayMenuActionOutcome, TrayMenuItemId,
+    TrayStateSnapshot,
 };
 
 /// Rust-callable Tauri command seams bound to the active [`DesktopWorkspaceSession`].
@@ -69,6 +70,34 @@ pub fn get_desktop_ptt_state(
 ) -> Result<PttStateSnapshot, DesktopCommandError> {
     session
         .ptt_state(organisation_id)
+        .map_err(DesktopCommandError::Core)
+}
+
+pub fn configure_desktop_media_capture(
+    session: &mut DesktopWorkspaceSession,
+    organisation_id: &str,
+    preferred_surface: ScreenShareSurface,
+    system_audio_loopback: bool,
+    noise_suppression: bool,
+    preferred_audio_input_id: Option<&str>,
+    preferred_audio_output_id: Option<&str>,
+) -> Result<MediaCaptureStateSnapshot, DesktopCommandError> {
+    session.configure_media_capture(
+        organisation_id,
+        preferred_surface,
+        system_audio_loopback,
+        noise_suppression,
+        preferred_audio_input_id,
+        preferred_audio_output_id,
+    )
+}
+
+pub fn get_desktop_media_capture_state(
+    session: &DesktopWorkspaceSession,
+    organisation_id: &str,
+) -> Result<MediaCaptureStateSnapshot, DesktopCommandError> {
+    session
+        .media_capture_state(organisation_id)
         .map_err(DesktopCommandError::Core)
 }
 
@@ -144,7 +173,7 @@ pub fn store_desktop_keychain_credential(
     issued_at_unix_secs: u64,
     expires_at_unix_secs: Option<u64>,
     raw_secret: &str,
-) -> Result<KeychainSessionMetadata, DesktopCommandError> {
+) -> Result<KeychainStoreOutcome, DesktopCommandError> {
     session.store_keychain_credential(
         organisation_id,
         secret_kind,
@@ -154,6 +183,13 @@ pub fn store_desktop_keychain_credential(
         expires_at_unix_secs,
         raw_secret,
     )
+}
+
+pub fn clear_desktop_organisation_keychain(
+    session: &mut DesktopWorkspaceSession,
+    organisation_id: &str,
+) -> Result<usize, DesktopCommandError> {
+    session.clear_organisation_keychain(organisation_id)
 }
 
 pub fn load_desktop_keychain_credential(

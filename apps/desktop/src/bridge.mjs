@@ -20,11 +20,17 @@ export const MAX_UNREAD_BADGE_COUNT = 99_999;
 export const MAX_DIRECT_BADGE_COUNT = 99;
 export const REDACTED_NOTIFICATION_PREVIEW = 'New message in Kodera';
 export const COMMUNITY_TLS_MODES = /** @type {const} */ (['acme', 'internal', 'off']);
+export const SCREEN_SHARE_SURFACES = /** @type {const} */ (['monitor', 'window', 'browser_tab']);
+export const MAX_MEDIA_DEVICE_ID_BYTES = 128;
 
 const VALID_SECRET_KINDS = new Set(['matrix-session', 'oidc-refresh', 'mls-store-key']);
 const VALID_CALL_STATES = new Set(['none', 'voice', 'video']);
 const VALID_TRAY_ACTIONS = new Set(TRAY_MENU_ITEM_IDS);
 const VALID_TLS_MODES = new Set(COMMUNITY_TLS_MODES);
+const VALID_SCREEN_SHARE_SURFACES = new Set(SCREEN_SHARE_SURFACES);
+const CANONICAL_MODIFIER_ORDER = /** @type {const} */ (['Ctrl', 'Alt', 'Shift', 'Super']);
+const PRINTABLE_ASCII_DEVICE_ID_RE = /^[\u0020-\u007e]{1,128}$/u;
+const ASCII_NON_SPACE_CHORD_RE = /^[\u0021-\u007e]{1,64}$/u;
 
 const BIDI_OR_CONTROL_RE = /[\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069\ufeff]/u;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
@@ -249,6 +255,342 @@ function validateCommunityTlsMode(rawMode) {
 }
 
 /**
+ * @param {string} rawChord
+ * @returns {{
+ *   canonical: string,
+ *   modifiers: Set<'Ctrl' | 'Alt' | 'Shift' | 'Super'>,
+ *   triggerLabel: string,
+ *   hasCommandModifier: boolean,
+ * }}
+ */
+function parsePttChordSpec(rawChord) {
+  if (typeof rawChord !== 'string' || !ASCII_NON_SPACE_CHORD_RE.test(rawChord)) {
+    throw new RangeError('invalid_key_chord');
+  }
+  /** @type {Set<'Ctrl' | 'Alt' | 'Shift' | 'Super'>} */
+  const modifiers = new Set();
+  /** @type {{ label: string, requiresCommandMod: boolean } | null} */
+  let trigger = null;
+
+  for (const part of rawChord.split('+')) {
+    if (part.length === 0) {
+      throw new RangeError('invalid_key_chord');
+    }
+    const lower = part.toLowerCase();
+    /** @type {'Ctrl' | 'Alt' | 'Shift' | 'Super' | null} */
+    let mod = null;
+    if (part === 'CommandOrControl' || lower === 'ctrl' || lower === 'control') {
+      mod = 'Ctrl';
+    } else if (lower === 'alt' || lower === 'option') {
+      mod = 'Alt';
+    } else if (lower === 'shift') {
+      mod = 'Shift';
+    } else if (lower === 'super' || lower === 'meta' || lower === 'cmd' || lower === 'command') {
+      mod = 'Super';
+    }
+    if (mod !== null) {
+      if (modifiers.has(mod)) {
+        throw new RangeError('duplicate_modifier');
+      }
+      modifiers.add(mod);
+      continue;
+    }
+
+    if (
+      lower === 'enter'
+      || lower === 'return'
+      || lower === 'tab'
+      || lower === 'backspace'
+      || lower === 'delete'
+      || lower === 'del'
+      || lower === 'escape'
+      || lower === 'esc'
+    ) {
+      throw new RangeError('reserved_system_chord');
+    }
+
+    /** @type {{ label: string, requiresCommandMod: boolean } | null} */
+    let parsedTrigger = null;
+    if (part.length === 1) {
+      if (/^[A-Za-z]$/u.test(part)) {
+        parsedTrigger = { label: part.toUpperCase(), requiresCommandMod: true };
+      } else if (/^[0-9]$/u.test(part)) {
+        parsedTrigger = { label: part, requiresCommandMod: true };
+      } else {
+        const punctMap = /** @type {Record<string, string>} */ ({
+          '`': 'Backquote',
+          '-': 'Minus',
+          '=': 'Equal',
+          '[': 'BracketLeft',
+          ']': 'BracketRight',
+          '\\': 'Backslash',
+          ';': 'Semicolon',
+          "'": 'Quote',
+          ',': 'Comma',
+          '.': 'Period',
+          '/': 'Slash',
+        });
+        if (Object.hasOwn(punctMap, part)) {
+          parsedTrigger = { label: punctMap[part], requiresCommandMod: true };
+        }
+      }
+    } else if (/^[Ff][1-9][0-9]?$/u.test(part)) {
+      const fnNum = Number(part.slice(1));
+      if (fnNum >= 1 && fnNum <= 24) {
+        parsedTrigger = { label: `F${fnNum}`, requiresCommandMod: fnNum < 13 };
+      }
+    } else {
+      const namedMap = /** @type {Record<string, { label: string, requiresCommandMod: boolean }>} */ ({
+        space: { label: 'Space', requiresCommandMod: true },
+        backquote: { label: 'Backquote', requiresCommandMod: true },
+        minus: { label: 'Minus', requiresCommandMod: true },
+        equal: { label: 'Equal', requiresCommandMod: true },
+        bracketleft: { label: 'BracketLeft', requiresCommandMod: true },
+        bracketright: { label: 'BracketRight', requiresCommandMod: true },
+        backslash: { label: 'Backslash', requiresCommandMod: true },
+        semicolon: { label: 'Semicolon', requiresCommandMod: true },
+        quote: { label: 'Quote', requiresCommandMod: true },
+        comma: { label: 'Comma', requiresCommandMod: true },
+        period: { label: 'Period', requiresCommandMod: true },
+        slash: { label: 'Slash', requiresCommandMod: true },
+        capslock: { label: 'CapsLock', requiresCommandMod: true },
+        scrolllock: { label: 'ScrollLock', requiresCommandMod: false },
+        pause: { label: 'Pause', requiresCommandMod: false },
+        insert: { label: 'Insert', requiresCommandMod: true },
+      });
+      if (Object.hasOwn(namedMap, lower)) {
+        parsedTrigger = namedMap[lower];
+      }
+    }
+
+    if (parsedTrigger === null) {
+      throw new RangeError('invalid_key_chord');
+    }
+    if (trigger !== null) {
+      throw new RangeError('multiple_trigger_keys');
+    }
+    trigger = parsedTrigger;
+  }
+
+  if (trigger === null) {
+    throw new RangeError('missing_trigger_key');
+  }
+
+  const hasCommandModifier = modifiers.has('Ctrl') || modifiers.has('Alt') || modifiers.has('Super');
+  if (trigger.requiresCommandMod && !hasCommandModifier) {
+    throw new RangeError('unsafe_typing_key_without_modifier');
+  }
+
+  const onlyMod = (/** @type {'Ctrl' | 'Alt' | 'Shift' | 'Super'} */ expected) =>
+    modifiers.size === 1 && modifiers.has(expected);
+  if (
+    (trigger.label === 'F4' && onlyMod('Alt'))
+    || (trigger.label === 'Q' && (onlyMod('Ctrl') || onlyMod('Super')))
+    || (trigger.label === 'L' && onlyMod('Super'))
+    || (trigger.label === 'W' && (onlyMod('Ctrl') || onlyMod('Super')))
+  ) {
+    throw new RangeError('reserved_system_chord');
+  }
+
+  const ordered = CANONICAL_MODIFIER_ORDER.filter((m) => modifiers.has(m));
+  return {
+    canonical: [...ordered, trigger.label].join('+'),
+    modifiers,
+    triggerLabel: trigger.label,
+    hasCommandModifier,
+  };
+}
+
+/**
+ * @param {string} rawChord
+ * @returns {string}
+ */
+function validateAndCanonicalizePttChord(rawChord) {
+  return parsePttChordSpec(rawChord).canonical;
+}
+
+/**
+ * @param {string | null | undefined} rawChord
+ */
+function tryParsePttChordSpec(rawChord) {
+  if (typeof rawChord !== 'string' || rawChord.length === 0) {
+    return null;
+  }
+  try {
+    return parsePttChordSpec(rawChord);
+  } catch {
+    return null;
+  }
+}
+
+const DIRECT_PTT_EVENT_CODES = new Set([
+  'Space',
+  'Backquote',
+  'Minus',
+  'Equal',
+  'BracketLeft',
+  'BracketRight',
+  'Backslash',
+  'Semicolon',
+  'Quote',
+  'Comma',
+  'Period',
+  'Slash',
+  'CapsLock',
+  'ScrollLock',
+  'Pause',
+  'Insert',
+]);
+
+/**
+ * Maps a W3C DOM `KeyboardEvent` (`code` primary, `key` fallback) to a canonical PTT trigger label.
+ *
+ * @param {Record<string, unknown> | null | undefined} event
+ * @returns {string | null}
+ */
+function resolveTriggerLabelFromKeyboardEvent(event) {
+  const code = typeof event?.code === 'string' ? event.code : '';
+  if (code.length > 0) {
+    if (/^Key[A-Z]$/u.test(code)) {
+      return code.slice(3);
+    }
+    if (/^Digit[0-9]$/u.test(code)) {
+      return code.slice(5);
+    }
+    if (/^F(?:[1-9]|1[0-9]|2[0-4])$/u.test(code)) {
+      return code;
+    }
+    if (DIRECT_PTT_EVENT_CODES.has(code)) {
+      return code;
+    }
+    return null;
+  }
+  const key = typeof event?.key === 'string' ? event.key : '';
+  if (key === ' ') {
+    return 'Space';
+  }
+  if (key.length === 1 && /^[A-Za-z]$/u.test(key)) {
+    return key.toUpperCase();
+  }
+  if (key.length === 1 && /^[0-9]$/u.test(key)) {
+    return key;
+  }
+  if (/^F(?:[1-9]|1[0-9]|2[0-4])$/iu.test(key)) {
+    return key.toUpperCase();
+  }
+  return null;
+}
+
+/**
+ * @param {Record<string, unknown> | null | undefined} event
+ * @returns {'Ctrl' | 'Alt' | 'Shift' | 'Super' | null}
+ */
+function resolveModifierFromKeyboardEvent(event) {
+  const code = typeof event?.code === 'string' ? event.code : '';
+  const key = typeof event?.key === 'string' ? event.key : '';
+  if (code === 'ControlLeft' || code === 'ControlRight' || key === 'Control') {
+    return 'Ctrl';
+  }
+  if (code === 'AltLeft' || code === 'AltRight' || key === 'Alt') {
+    return 'Alt';
+  }
+  if (code === 'ShiftLeft' || code === 'ShiftRight' || key === 'Shift') {
+    return 'Shift';
+  }
+  if (
+    code === 'MetaLeft'
+    || code === 'MetaRight'
+    || code === 'OSLeft'
+    || code === 'OSRight'
+    || key === 'Meta'
+    || key === 'Super'
+  ) {
+    return 'Super';
+  }
+  return null;
+}
+
+/**
+ * Returns `true` when `target` is an editable form control or `contenteditable` region.
+ *
+ * @param {unknown} target
+ * @returns {boolean}
+ */
+function isEditableEventTarget(target) {
+  if (!target || typeof target !== 'object') {
+    return false;
+  }
+  const elem = /** @type {Record<string, unknown>} */ (target);
+  if (elem.isContentEditable === true) {
+    return true;
+  }
+  if (typeof elem.contentEditable === 'string') {
+    const mode = elem.contentEditable.toLowerCase();
+    if (mode === 'true' || mode === '' || mode === 'plaintext-only') {
+      return true;
+    }
+  }
+  if (typeof elem.tagName === 'string') {
+    const tag = elem.tagName.toUpperCase();
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
+      return true;
+    }
+  }
+  if (typeof elem.closest === 'function') {
+    try {
+      const match = elem.closest(
+        'input, textarea, select, [contenteditable]:not([contenteditable="false"])',
+      );
+      if (match) {
+        return true;
+      }
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+/**
+ * @param {Record<string, unknown> | null | undefined} response
+ * @param {boolean} supported
+ */
+function normalizePttStateResponse(response, supported) {
+  const optInEnabled = response?.opt_in_enabled === true || response?.optInEnabled === true;
+  const binding = typeof response?.binding === 'string' ? response.binding : null;
+  const transmitting = response?.transmitting === true;
+  const rawSince = response?.transmitting_since_ms ?? response?.transmittingSinceMs;
+  const transmittingSinceMs =
+    transmitting && typeof rawSince === 'number' && Number.isFinite(rawSince) ? rawSince : null;
+  return {
+    supported,
+    optInEnabled,
+    binding,
+    transmitting,
+    transmittingSinceMs,
+  };
+}
+
+/**
+ * @param {unknown} rawDeviceId
+ * @param {string} errorCode
+ * @returns {string | null}
+ */
+function validateOptionalMediaDeviceId(rawDeviceId, errorCode) {
+  if (rawDeviceId === undefined || rawDeviceId === null) {
+    return null;
+  }
+  if (
+    typeof rawDeviceId !== 'string'
+    || rawDeviceId.trim() !== rawDeviceId
+    || !PRINTABLE_ASCII_DEVICE_ID_RE.test(rawDeviceId)
+  ) {
+    throw new RangeError(errorCode);
+  }
+  return rawDeviceId;
+}
+
+/**
  * Creates a typed Kodera Desktop IPC client with automatic Tauri v2 detection and safe browser
  * no-op fallback.
  *
@@ -267,6 +609,14 @@ export function createDesktopClient(options = {}) {
   ];
   const globalObject = options.globalObject ?? globalThis;
   let nextCallbackId = 1;
+  /** @type {ReturnType<typeof parsePttChordSpec> | null} */
+  let activePttSpec = null;
+  let activePttListenerCount = 0;
+  let webviewPttPressed = false;
+  let inFlightPttPressCount = 0;
+  let pttSessionGeneration = 0;
+  /** @type {(() => void) | null} */
+  let detachWebviewPttResponders = null;
 
   function isTrustedNativeFrame(requireInternalAsset = false) {
     if (typeof globalObject !== 'object' || globalObject === null) {
@@ -351,6 +701,237 @@ export function createDesktopClient(options = {}) {
     };
   }
 
+  /**
+   * @param {string | null} orgId
+   */
+  function sendBestEffortPttReleaseForOrg(orgId) {
+    if (!orgId) {
+      return;
+    }
+    const internals = getInternals();
+    if (!internals) {
+      return;
+    }
+    try {
+      Promise.resolve(
+        internals.invoke('set_ptt_pressed', {
+          organisation_id: orgId,
+          pressed: false,
+          now_ms: Date.now(),
+        }),
+      ).catch(() => {});
+    } catch {
+      // Best-effort release of previous or stale organisation PTT gate.
+    }
+  }
+
+  /**
+   * @param {boolean} pressed
+   * @param {string | null} [targetOrgId]
+   * @param {number} [expectedGeneration]
+   */
+  async function invokeWebviewResponderPttPressed(
+    pressed,
+    targetOrgId = activeOrganisationId,
+    expectedGeneration = pttSessionGeneration,
+  ) {
+    const internals = getInternals();
+    if (!internals || !targetOrgId) {
+      if (expectedGeneration === pttSessionGeneration) {
+        webviewPttPressed = false;
+      }
+      return;
+    }
+    let organisationId = null;
+    try {
+      organisationId = requireOrganisationId(targetOrgId);
+    } catch {
+      if (expectedGeneration === pttSessionGeneration) {
+        webviewPttPressed = false;
+      }
+      return;
+    }
+    if (pressed && expectedGeneration === pttSessionGeneration) {
+      inFlightPttPressCount += 1;
+    }
+    try {
+      const response = /** @type {Record<string, unknown> | null} */ (
+        await internals.invoke('set_ptt_pressed', {
+          organisation_id: organisationId,
+          pressed,
+          now_ms: Date.now(),
+        })
+      );
+      if (expectedGeneration !== pttSessionGeneration) {
+        if (
+          pressed
+          && response?.ok !== false
+          && (activeOrganisationId === null || activeOrganisationId === organisationId)
+        ) {
+          sendBestEffortPttReleaseForOrg(organisationId);
+        }
+        return;
+      }
+      if (response?.ok === false) {
+        if (pressed) {
+          webviewPttPressed = false;
+        }
+      } else if (typeof response?.transmitting === 'boolean') {
+        webviewPttPressed = response.transmitting;
+      }
+    } catch {
+      if (expectedGeneration === pttSessionGeneration && pressed) {
+        webviewPttPressed = false;
+      }
+    } finally {
+      if (pressed && expectedGeneration === pttSessionGeneration && inFlightPttPressCount > 0) {
+        inFlightPttPressCount -= 1;
+      }
+    }
+  }
+
+  function releaseWebviewResponderPttUnconditionally() {
+    if (!webviewPttPressed) {
+      return;
+    }
+    webviewPttPressed = false;
+    void invokeWebviewResponderPttPressed(false);
+  }
+
+  function syncWebviewPttResponders() {
+    const shouldAttach =
+      (activePttListenerCount > 0 || activePttSpec !== null)
+      && activeOrganisationId !== null
+      && getInternals() !== null
+      && typeof globalObject === 'object'
+      && globalObject !== null
+      && typeof /** @type {Record<string, unknown>} */ (globalObject).addEventListener === 'function'
+      && typeof /** @type {Record<string, unknown>} */ (globalObject).removeEventListener === 'function';
+
+    if (!shouldAttach) {
+      if (detachWebviewPttResponders) {
+        const detach = detachWebviewPttResponders;
+        detachWebviewPttResponders = null;
+        detach();
+      }
+      return;
+    }
+    if (detachWebviewPttResponders) {
+      return;
+    }
+
+    const winTarget = /** @type {{
+      addEventListener: (type: string, fn: (ev: any) => void) => void,
+      removeEventListener: (type: string, fn: (ev: any) => void) => void,
+      document?: {
+        visibilityState?: string,
+        hidden?: boolean,
+        hasFocus?: () => boolean,
+        addEventListener?: (type: string, fn: (ev: any) => void) => void,
+        removeEventListener?: (type: string, fn: (ev: any) => void) => void,
+      } | null,
+    }} */ (globalObject);
+    const docTarget = winTarget.document && typeof winTarget.document === 'object'
+      ? winTarget.document
+      : null;
+
+    /** @param {Record<string, unknown> | null | undefined} ev */
+    const onKeyDown = (ev) => {
+      if (!activePttSpec || !activeOrganisationId || ev?.repeat === true) {
+        return;
+      }
+      if (docTarget?.visibilityState === 'hidden' || docTarget?.hidden === true) {
+        return;
+      }
+      if (typeof docTarget?.hasFocus === 'function' && docTarget.hasFocus() === false) {
+        return;
+      }
+      const triggerLabel = resolveTriggerLabelFromKeyboardEvent(ev);
+      if (triggerLabel !== activePttSpec.triggerLabel) {
+        return;
+      }
+      const exactModifiersMatch =
+        Boolean(ev?.ctrlKey) === activePttSpec.modifiers.has('Ctrl')
+        && Boolean(ev?.altKey) === activePttSpec.modifiers.has('Alt')
+        && Boolean(ev?.shiftKey) === activePttSpec.modifiers.has('Shift')
+        && Boolean(ev?.metaKey) === activePttSpec.modifiers.has('Super');
+      if (!exactModifiersMatch) {
+        return;
+      }
+      // Ignore editable targets unless an explicit command-modifier chord (`Ctrl`/`Alt`/`Super`) matched.
+      if (isEditableEventTarget(ev?.target) && !activePttSpec.hasCommandModifier) {
+        return;
+      }
+      if (typeof ev?.preventDefault === 'function') {
+        ev.preventDefault();
+      }
+      if (!webviewPttPressed) {
+        webviewPttPressed = true;
+        void invokeWebviewResponderPttPressed(true);
+      }
+    };
+
+    /** @param {Record<string, unknown> | null | undefined} ev */
+    const onKeyUp = (ev) => {
+      if (!webviewPttPressed) {
+        return;
+      }
+      if (!activePttSpec) {
+        releaseWebviewResponderPttUnconditionally();
+        return;
+      }
+      const triggerLabel = resolveTriggerLabelFromKeyboardEvent(ev);
+      const liftedMod = resolveModifierFromKeyboardEvent(ev);
+      const requiredModifiersHeld =
+        (!activePttSpec.modifiers.has('Ctrl') || (Boolean(ev?.ctrlKey) && liftedMod !== 'Ctrl'))
+        && (!activePttSpec.modifiers.has('Alt') || (Boolean(ev?.altKey) && liftedMod !== 'Alt'))
+        && (!activePttSpec.modifiers.has('Shift') || (Boolean(ev?.shiftKey) && liftedMod !== 'Shift'))
+        && (!activePttSpec.modifiers.has('Super') || (Boolean(ev?.metaKey) && liftedMod !== 'Super'));
+      if (triggerLabel === activePttSpec.triggerLabel || !requiredModifiersHeld) {
+        releaseWebviewResponderPttUnconditionally();
+      }
+    };
+
+    const onBlur = () => {
+      releaseWebviewResponderPttUnconditionally();
+    };
+
+    const onVisibilityChange = () => {
+      if (!docTarget || docTarget.visibilityState === 'hidden' || docTarget.hidden === true) {
+        releaseWebviewResponderPttUnconditionally();
+      }
+    };
+
+    winTarget.addEventListener('keydown', onKeyDown);
+    winTarget.addEventListener('keyup', onKeyUp);
+    winTarget.addEventListener('blur', onBlur);
+    if (typeof docTarget?.addEventListener === 'function') {
+      docTarget.addEventListener('visibilitychange', onVisibilityChange);
+    } else {
+      winTarget.addEventListener('visibilitychange', onVisibilityChange);
+    }
+
+    detachWebviewPttResponders = () => {
+      winTarget.removeEventListener('keydown', onKeyDown);
+      winTarget.removeEventListener('keyup', onKeyUp);
+      winTarget.removeEventListener('blur', onBlur);
+      if (typeof docTarget?.removeEventListener === 'function') {
+        docTarget.removeEventListener('visibilitychange', onVisibilityChange);
+      } else {
+        winTarget.removeEventListener('visibilitychange', onVisibilityChange);
+      }
+    };
+  }
+
+  /**
+   * @param {{ optInEnabled: boolean, binding: string | null, transmitting: boolean }} normalized
+   */
+  function applyNormalizedPttState(normalized) {
+    activePttSpec = normalized.optInEnabled ? tryParsePttChordSpec(normalized.binding) : null;
+    webviewPttPressed = normalized.transmitting;
+    syncWebviewPttResponders();
+  }
+
   return {
     isNativeDesktop() {
       return getInternals() !== null;
@@ -364,11 +945,22 @@ export function createDesktopClient(options = {}) {
      * @param {string | null} organisationId
      */
     setOrganisationId(organisationId) {
-      if (organisationId === null) {
-        activeOrganisationId = null;
+      const nextOrg = organisationId === null ? null : requireOrganisationId(organisationId);
+      if (nextOrg === activeOrganisationId) {
+        syncWebviewPttResponders();
         return;
       }
-      activeOrganisationId = requireOrganisationId(organisationId);
+      const prevOrgId = activeOrganisationId;
+      const shouldReleasePrevOrg = webviewPttPressed || inFlightPttPressCount > 0;
+      pttSessionGeneration += 1;
+      inFlightPttPressCount = 0;
+      activePttSpec = null;
+      webviewPttPressed = false;
+      activeOrganisationId = nextOrg;
+      syncWebviewPttResponders();
+      if (shouldReleasePrevOrg && prevOrgId !== null) {
+        sendBestEffortPttReleaseForOrg(prevOrgId);
+      }
     },
 
     async getAppMetadata() {
@@ -616,6 +1208,369 @@ export function createDesktopClient(options = {}) {
 
     /**
      * @param {{
+     *   optIn: boolean,
+     *   chord?: string | null,
+     * }} input
+     */
+    async configurePushToTalk(input) {
+      if (!input || typeof input !== 'object' || typeof input.optIn !== 'boolean') {
+        throw new TypeError('invalid_ptt_input');
+      }
+      const hasChord = input.chord !== undefined && input.chord !== null;
+      if (!input.optIn && hasChord) {
+        throw new RangeError('ptt_not_opted_in');
+      }
+      const canonicalChord = hasChord
+        ? validateAndCanonicalizePttChord(/** @type {string} */ (input.chord))
+        : null;
+      const internals = getInternals();
+      if (!internals) {
+        return {
+          supported: false,
+          optInEnabled: input.optIn,
+          binding: canonicalChord,
+          transmitting: false,
+          transmittingSinceMs: null,
+        };
+      }
+      const organisationId = requireOrganisationId(activeOrganisationId);
+      /** @type {Record<string, unknown>} */
+      const args = {
+        organisation_id: organisationId,
+        opt_in: input.optIn,
+      };
+      if (canonicalChord !== null) {
+        args.chord = canonicalChord;
+      }
+      const callGen = pttSessionGeneration;
+      const response = /** @type {Record<string, unknown> | null} */ (
+        await internals.invoke('configure_ptt', args)
+      );
+      if (response?.ok === false) {
+        throw new Error(typeof response.error === 'string' ? response.error : 'ptt_command_failed');
+      }
+      const normalized = typeof response?.opt_in_enabled === 'boolean'
+        ? normalizePttStateResponse(response, true)
+        : {
+          supported: true,
+          optInEnabled: input.optIn,
+          binding: canonicalChord,
+          transmitting: false,
+          transmittingSinceMs: null,
+        };
+      if (callGen === pttSessionGeneration) {
+        applyNormalizedPttState(normalized);
+      }
+      return normalized;
+    },
+
+    /**
+     * @param {boolean} pressed
+     * @param {number} [nowMs]
+     */
+    async setPushToTalkPressed(pressed, nowMs = Date.now()) {
+      if (typeof pressed !== 'boolean') {
+        throw new TypeError('invalid_ptt_pressed');
+      }
+      if (!Number.isInteger(nowMs) || nowMs < 0) {
+        throw new RangeError('invalid_ptt_timestamp');
+      }
+      const internals = getInternals();
+      if (!internals) {
+        return {
+          supported: false,
+          optInEnabled: false,
+          binding: null,
+          transmitting: false,
+          transmittingSinceMs: null,
+        };
+      }
+      const organisationId = requireOrganisationId(activeOrganisationId);
+      const callGen = pttSessionGeneration;
+      if (pressed) {
+        inFlightPttPressCount += 1;
+      }
+      /** @type {Record<string, unknown> | null} */
+      let response = null;
+      try {
+        response = /** @type {Record<string, unknown> | null} */ (
+          await internals.invoke('set_ptt_pressed', {
+            organisation_id: organisationId,
+            pressed,
+            now_ms: nowMs,
+          })
+        );
+      } finally {
+        if (pressed && callGen === pttSessionGeneration && inFlightPttPressCount > 0) {
+          inFlightPttPressCount -= 1;
+        }
+      }
+      if (callGen !== pttSessionGeneration) {
+        if (
+          pressed
+          && response?.ok !== false
+          && (activeOrganisationId === null || activeOrganisationId === organisationId)
+        ) {
+          sendBestEffortPttReleaseForOrg(organisationId);
+        }
+      }
+      if (response?.ok === false) {
+        throw new Error(typeof response.error === 'string' ? response.error : 'ptt_command_failed');
+      }
+      const normalized = typeof response?.opt_in_enabled === 'boolean'
+        ? normalizePttStateResponse(response, true)
+        : {
+          supported: true,
+          optInEnabled: true,
+          binding: activePttSpec?.canonical ?? null,
+          transmitting: pressed,
+          transmittingSinceMs: pressed ? nowMs : null,
+        };
+      if (callGen === pttSessionGeneration) {
+        applyNormalizedPttState(normalized);
+      }
+      return normalized;
+    },
+
+    async getPushToTalkState() {
+      const internals = getInternals();
+      if (!internals) {
+        return {
+          supported: false,
+          optInEnabled: false,
+          binding: null,
+          transmitting: false,
+          transmittingSinceMs: null,
+        };
+      }
+      const organisationId = requireOrganisationId(activeOrganisationId);
+      const callGen = pttSessionGeneration;
+      const response = /** @type {Record<string, unknown> | null} */ (
+        await internals.invoke('get_ptt_state', {
+          organisation_id: organisationId,
+        })
+      );
+      if (response?.ok === false) {
+        throw new Error(typeof response.error === 'string' ? response.error : 'ptt_command_failed');
+      }
+      const normalized = normalizePttStateResponse(response, true);
+      if (callGen === pttSessionGeneration) {
+        applyNormalizedPttState(normalized);
+      }
+      return normalized;
+    },
+
+    /**
+     * @param {(event: {
+     *   optInEnabled: boolean,
+     *   binding: string | null,
+     *   transmitting: boolean,
+     *   transmittingSinceMs: number | null,
+     * }) => void} listener
+     */
+    async listenPushToTalk(listener) {
+      if (typeof listener !== 'function') {
+        throw new TypeError('invalid_ptt_listener');
+      }
+      const unlistenNative = await listenNativeEvent('kodera://ptt-state', (eventPayload) => {
+        const inner =
+          eventPayload && typeof eventPayload === 'object' && 'payload' in eventPayload
+            ? /** @type {Record<string, unknown>} */ (eventPayload).payload
+            : eventPayload;
+        /** @type {Record<string, unknown> | null} */
+        let parsed = null;
+        if (typeof inner === 'string') {
+          try {
+            const candidate = JSON.parse(inner);
+            if (candidate && typeof candidate === 'object') {
+              parsed = /** @type {Record<string, unknown>} */ (candidate);
+            }
+          } catch {
+            return;
+          }
+        } else if (inner && typeof inner === 'object') {
+          parsed = /** @type {Record<string, unknown>} */ (inner);
+        }
+        if (!parsed) {
+          return;
+        }
+        const normalized = normalizePttStateResponse(parsed, true);
+        if (activeOrganisationId !== null) {
+          applyNormalizedPttState(normalized);
+        }
+        listener({
+          optInEnabled: normalized.optInEnabled,
+          binding: normalized.binding,
+          transmitting: normalized.transmitting,
+          transmittingSinceMs: normalized.transmittingSinceMs,
+        });
+      });
+      activePttListenerCount += 1;
+      syncWebviewPttResponders();
+      let listening = true;
+      return async () => {
+        if (!listening) {
+          return;
+        }
+        listening = false;
+        activePttListenerCount = Math.max(0, activePttListenerCount - 1);
+        if (activePttListenerCount === 0) {
+          releaseWebviewResponderPttUnconditionally();
+        }
+        syncWebviewPttResponders();
+        await unlistenNative();
+      };
+    },
+
+    /**
+     * @param {{
+     *   preferredSurface?: 'monitor' | 'window' | 'browser_tab',
+     *   systemAudioLoopback?: boolean,
+     *   noiseSuppression?: boolean,
+     *   preferredAudioInputId?: string | null,
+     *   preferredAudioOutputId?: string | null,
+     * }} input
+     */
+    async configureMediaCapture(input) {
+      if (!input || typeof input !== 'object') {
+        throw new TypeError('invalid_media_capture_input');
+      }
+      const rawSurface = input.preferredSurface ?? 'monitor';
+      if (
+        typeof rawSurface !== 'string'
+        || !VALID_SCREEN_SHARE_SURFACES.has(
+          /** @type {'monitor' | 'window' | 'browser_tab'} */ (rawSurface),
+        )
+      ) {
+        throw new RangeError('invalid_screen_share_surface');
+      }
+      const preferredSurface = /** @type {'monitor' | 'window' | 'browser_tab'} */ (rawSurface);
+      const systemAudioLoopback = input.systemAudioLoopback ?? false;
+      if (typeof systemAudioLoopback !== 'boolean') {
+        throw new TypeError('invalid_system_audio_loopback');
+      }
+      const noiseSuppression = input.noiseSuppression ?? true;
+      if (typeof noiseSuppression !== 'boolean') {
+        throw new TypeError('invalid_noise_suppression');
+      }
+      const preferredAudioInputId = validateOptionalMediaDeviceId(
+        input.preferredAudioInputId,
+        'invalid_audio_input_device_id',
+      );
+      const preferredAudioOutputId = validateOptionalMediaDeviceId(
+        input.preferredAudioOutputId,
+        'invalid_audio_output_device_id',
+      );
+
+      const internals = getInternals();
+      if (!internals) {
+        return {
+          supported: false,
+          preferredSurface,
+          systemAudioLoopback,
+          noiseSuppression,
+          preferredAudioInputId,
+          preferredAudioOutputId,
+        };
+      }
+      const organisationId = requireOrganisationId(activeOrganisationId);
+      /** @type {Record<string, unknown>} */
+      const args = {
+        organisation_id: organisationId,
+        preferred_surface: preferredSurface,
+        system_audio_loopback: systemAudioLoopback,
+        noise_suppression: noiseSuppression,
+      };
+      if (preferredAudioInputId !== null) {
+        args.preferred_audio_input_id = preferredAudioInputId;
+      }
+      if (preferredAudioOutputId !== null) {
+        args.preferred_audio_output_id = preferredAudioOutputId;
+      }
+      const response = /** @type {Record<string, unknown> | null} */ (
+        await internals.invoke('configure_media_capture', args)
+      );
+      if (response?.ok === false) {
+        throw new Error(typeof response.error === 'string' ? response.error : 'media_capture_failed');
+      }
+      const respSurface = response?.preferred_surface;
+      const effectiveSurface =
+        typeof respSurface === 'string'
+        && VALID_SCREEN_SHARE_SURFACES.has(
+          /** @type {'monitor' | 'window' | 'browser_tab'} */ (respSurface),
+        )
+          ? /** @type {'monitor' | 'window' | 'browser_tab'} */ (respSurface)
+          : preferredSurface;
+      return {
+        supported: true,
+        preferredSurface: effectiveSurface,
+        systemAudioLoopback:
+          typeof response?.system_audio_loopback === 'boolean'
+            ? response.system_audio_loopback
+            : systemAudioLoopback,
+        noiseSuppression:
+          typeof response?.noise_suppression === 'boolean'
+            ? response.noise_suppression
+            : noiseSuppression,
+        preferredAudioInputId:
+          typeof response?.preferred_audio_input_id === 'string'
+            ? response.preferred_audio_input_id
+            : preferredAudioInputId,
+        preferredAudioOutputId:
+          typeof response?.preferred_audio_output_id === 'string'
+            ? response.preferred_audio_output_id
+            : preferredAudioOutputId,
+      };
+    },
+
+    async getMediaCaptureState() {
+      const internals = getInternals();
+      if (!internals) {
+        return {
+          supported: false,
+          preferredSurface: /** @type {'monitor' | 'window' | 'browser_tab'} */ ('monitor'),
+          systemAudioLoopback: false,
+          noiseSuppression: true,
+          preferredAudioInputId: null,
+          preferredAudioOutputId: null,
+        };
+      }
+      const organisationId = requireOrganisationId(activeOrganisationId);
+      const response = /** @type {Record<string, unknown> | null} */ (
+        await internals.invoke('get_media_capture_state', {
+          organisation_id: organisationId,
+        })
+      );
+      if (response?.ok === false) {
+        throw new Error(typeof response.error === 'string' ? response.error : 'media_capture_failed');
+      }
+      const respSurface = response?.preferred_surface;
+      const preferredSurface =
+        typeof respSurface === 'string'
+        && VALID_SCREEN_SHARE_SURFACES.has(
+          /** @type {'monitor' | 'window' | 'browser_tab'} */ (respSurface),
+        )
+          ? /** @type {'monitor' | 'window' | 'browser_tab'} */ (respSurface)
+          : /** @type {'monitor' | 'window' | 'browser_tab'} */ ('monitor');
+      return {
+        supported: true,
+        preferredSurface,
+        systemAudioLoopback: Boolean(response?.system_audio_loopback),
+        noiseSuppression:
+          typeof response?.noise_suppression === 'boolean' ? response.noise_suppression : true,
+        preferredAudioInputId:
+          typeof response?.preferred_audio_input_id === 'string'
+            ? response.preferred_audio_input_id
+            : null,
+        preferredAudioOutputId:
+          typeof response?.preferred_audio_output_id === 'string'
+            ? response.preferred_audio_output_id
+            : null,
+      };
+    },
+
+    /**
+     * @param {{
      *   title: string,
      *   body: string,
      *   routeUri?: string | null,
@@ -773,11 +1728,12 @@ export function createDesktopClient(options = {}) {
           matrix_user_id: matrixUserId,
         })
       );
-      const persistedToOsKeychain = response?.native_keychain === true;
+      const present = Boolean(response?.present);
+      const persistedToOsKeychain = present && response?.native_keychain === true;
       return {
-        present: Boolean(response?.present),
+        present,
         nativeKeychain: persistedToOsKeychain,
-        ephemeralProcessVault: !persistedToOsKeychain,
+        ephemeralProcessVault: present && !persistedToOsKeychain,
         serviceName:
           typeof response?.service_name === 'string'
             ? response.service_name
@@ -810,11 +1766,12 @@ export function createDesktopClient(options = {}) {
           matrix_user_id: matrixUserId,
         })
       );
-      const persistedToOsKeychain = response?.native_keychain === true;
+      const present = Boolean(response?.present);
+      const persistedToOsKeychain = present && response?.native_keychain === true;
       return {
-        present: Boolean(response?.present),
+        present,
         nativeKeychain: persistedToOsKeychain,
-        ephemeralProcessVault: !persistedToOsKeychain,
+        ephemeralProcessVault: present && !persistedToOsKeychain,
         serviceName:
           typeof response?.service_name === 'string'
             ? response.service_name

@@ -91,10 +91,25 @@ const APPIMAGE_TYPE2_MAGIC = Buffer.from([0x41, 0x49, 0x02]); // AI\x02 at bytes
 const SQUASHFS_LE_MAGIC = Buffer.from([0x68, 0x73, 0x71, 0x73]); // 'hsqs' (SquashFS 4.0 LE)
 const SQUASHFS_SUPERBLOCK_MIN_BYTES = 96;
 const SAFE_PATH_RE = /^[A-Za-z0-9._:/\\-]+$/u;
+const CONTROL_CHAR_RE = /[\u0000-\u001f\u007f]/u;
+const APPLE_TEAM_ID_RE = /^[A-Z0-9]{10}$/u;
+const APPLE_KEYCHAIN_PROFILE_RE = /^[A-Za-z0-9._-]{1,128}$/u;
+const APPLE_API_KEY_ID_RE = /^[A-Z0-9]{8,32}$/u;
+const APPLE_API_ISSUER_UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
+const WINDOWS_CERT_THUMBPRINT_RE = /^[0-9A-Fa-f]{40,64}$/u;
+const TIMESTAMP_URL_RE = /^https:\/\/[^\s\u0000-\u001f\u007f"'`]+$/iu;
+const DEFAULT_WINDOWS_TIMESTAMP_URL = 'https://timestamp.digicert.com';
 
 function bundlerUnavailableError(detail) {
   const err = new Error(`appimage_packager_unavailable:${detail}`);
   err.exitCode = 69;
+  return err;
+}
+
+function signingPolicyError(detail) {
+  const err = new Error(`release_signing_policy:${detail}`);
+  err.exitCode = 78;
   return err;
 }
 
@@ -332,6 +347,26 @@ function findMatchingFile(dir, suffix) {
         stack.push(full);
       } else if (entry.isFile() && entry.name.endsWith(suffix)) {
         return full;
+      }
+    }
+  }
+  return null;
+}
+
+function findMatchingDir(dir, dirName) {
+  if (!existsSync(dir)) {
+    return null;
+  }
+  const stack = [dir];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      const full = join(current, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name === dirName) {
+          return full;
+        }
+        stack.push(full);
       }
     }
   }
@@ -579,9 +614,416 @@ export function renderMacosInfoPlist(conf) {
   </dict></array>
   <key>NSHighResolutionCapable</key>
   <true/>
+  <key>NSCameraUsageDescription</key>
+  <string>Kodera uses your camera when you join video calls or share video in rooms.</string>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Kodera uses your microphone for voice calls and Push-to-Talk transmission in rooms.</string>
 </dict>
 </plist>
 `;
+}
+
+export function ensureMacosInfoPlistUsageKeys(infoPlistPath, conf) {
+  if (!existsSync(infoPlistPath)) {
+    mkdirSync(dirname(infoPlistPath), { recursive: true });
+    writeFileSync(infoPlistPath, renderMacosInfoPlist(conf), 'utf8');
+    return;
+  }
+  let xml = readFileSync(infoPlistPath, 'utf8');
+  const additions = [];
+  if (!xml.includes('<key>NSCameraUsageDescription</key>')) {
+    additions.push(
+      '  <key>NSCameraUsageDescription</key>\n  <string>Kodera uses your camera when you join video calls or share video in rooms.</string>',
+    );
+  }
+  if (!xml.includes('<key>NSMicrophoneUsageDescription</key>')) {
+    additions.push(
+      '  <key>NSMicrophoneUsageDescription</key>\n  <string>Kodera uses your microphone for voice calls and Push-to-Talk transmission in rooms.</string>',
+    );
+  }
+  if (additions.length === 0) {
+    return;
+  }
+  const closingIdx = xml.lastIndexOf('</dict>');
+  if (closingIdx === -1) {
+    throw new Error('macos_info_plist_malformed');
+  }
+  xml = `${xml.slice(0, closingIdx)}${additions.join('\n')}\n${xml.slice(closingIdx)}`;
+  writeFileSync(infoPlistPath, xml, 'utf8');
+}
+
+export function renderMacosEntitlementsPlist() {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+  <key>com.apple.security.device.audio-input</key>
+  <true/>
+  <key>com.apple.security.device.camera</key>
+  <true/>
+  <key>com.apple.security.network.client</key>
+  <true/>
+</dict>
+</plist>
+`;
+}
+
+function cleanEnvField(raw, fieldName) {
+  if (raw === undefined || raw === null) {
+    return '';
+  }
+  const str = String(raw).trim();
+  if (CONTROL_CHAR_RE.test(str)) {
+    throw signingPolicyError(`invalid_control_character:${fieldName}`);
+  }
+  return str;
+}
+
+export function resolveReleaseSigningPolicy(target, env = process.env) {
+  if (target !== 'macos' && target !== 'linux' && target !== 'windows') {
+    throw new Error(`invalid_target:${String(target)}`);
+  }
+  const requireRaw = cleanEnvField(env.KODERA_REQUIRE_SIGNED_RELEASE, 'KODERA_REQUIRE_SIGNED_RELEASE');
+  const requireSigned = requireRaw === '1' || requireRaw.toLowerCase() === 'true';
+
+  if (target === 'macos') {
+    const signingIdentity = cleanEnvField(env.APPLE_SIGNING_IDENTITY, 'APPLE_SIGNING_IDENTITY');
+    const keychainProfile = cleanEnvField(env.APPLE_KEYCHAIN_PROFILE, 'APPLE_KEYCHAIN_PROFILE');
+    const keychainPath = cleanEnvField(env.APPLE_KEYCHAIN_PATH, 'APPLE_KEYCHAIN_PATH');
+    const apiKeyPath = cleanEnvField(env.APPLE_API_KEY_PATH, 'APPLE_API_KEY_PATH');
+    const apiKeyId = cleanEnvField(env.APPLE_API_KEY_ID, 'APPLE_API_KEY_ID');
+    const apiIssuer = cleanEnvField(env.APPLE_API_ISSUER, 'APPLE_API_ISSUER');
+    const appleTeamId = cleanEnvField(env.APPLE_TEAM_ID, 'APPLE_TEAM_ID');
+    const appleId = cleanEnvField(env.APPLE_ID, 'APPLE_ID');
+    const applePassword = cleanEnvField(env.APPLE_PASSWORD, 'APPLE_PASSWORD');
+
+    if (keychainProfile.length > 0 && !APPLE_KEYCHAIN_PROFILE_RE.test(keychainProfile)) {
+      throw signingPolicyError('invalid_apple_keychain_profile');
+    }
+    if (
+      keychainPath.length > 0
+      && (keychainPath.includes('..') || !SAFE_PATH_RE.test(keychainPath))
+    ) {
+      throw signingPolicyError('invalid_apple_keychain_path');
+    }
+    if (
+      apiKeyPath.length > 0
+      && (apiKeyPath.includes('..') || !SAFE_PATH_RE.test(apiKeyPath))
+    ) {
+      throw signingPolicyError('invalid_apple_api_key_path');
+    }
+    if (apiKeyId.length > 0 && !APPLE_API_KEY_ID_RE.test(apiKeyId)) {
+      throw signingPolicyError('invalid_apple_api_key_id');
+    }
+    if (apiIssuer.length > 0 && !APPLE_API_ISSUER_UUID_RE.test(apiIssuer)) {
+      throw signingPolicyError('invalid_apple_api_issuer');
+    }
+    if (appleTeamId.length > 0 && !APPLE_TEAM_ID_RE.test(appleTeamId)) {
+      throw signingPolicyError('invalid_apple_team_id');
+    }
+
+    const signEnabled = signingIdentity.length > 0;
+    const isAdHoc = signingIdentity === '-';
+    // Mode A: pre-provisioned keychain profile (+ optional keychain path).
+    const hasKeychainProfileMode = keychainProfile.length > 0;
+    // Mode B: App Store Connect API Key (.p8 path + key ID + optional UUID issuer).
+    const hasApiKeyMode = apiKeyPath.length > 0 && apiKeyId.length > 0;
+    const hasPartialApiKey =
+      (apiKeyPath.length > 0 || apiKeyId.length > 0 || apiIssuer.length > 0) && !hasApiKeyMode;
+    const hasOrphanKeychainPath = keychainPath.length > 0 && !hasKeychainProfileMode;
+    const hasRawApplePasswordVars =
+      appleTeamId.length > 0 || appleId.length > 0 || applePassword.length > 0;
+    const hasNotaryConfig = hasKeychainProfileMode || hasApiKeyMode;
+
+    if (hasPartialApiKey || hasOrphanKeychainPath) {
+      throw signingPolicyError('macos_incomplete_notarization_credentials');
+    }
+    if (requireSigned) {
+      if (!signEnabled || isAdHoc) {
+        throw signingPolicyError('macos_developer_id_required');
+      }
+      if (!hasNotaryConfig) {
+        throw signingPolicyError('macos_notarization_credentials_required');
+      }
+    }
+    if (signEnabled && !isAdHoc && !hasNotaryConfig && hasRawApplePasswordVars) {
+      // Fail closed if raw APPLE_ID/APPLE_PASSWORD is supplied without Mode A or Mode B:
+      // raw passwords are never placed on CLI argv or passed through interactive /dev/tty prompts.
+      throw signingPolicyError('macos_notarization_credentials_required');
+    }
+
+    return Object.freeze({
+      target: 'macos',
+      requireSigned,
+      signEnabled,
+      isAdHoc,
+      signingIdentity: signEnabled ? signingIdentity : null,
+      notarizeEnabled: signEnabled && !isAdHoc && hasNotaryConfig,
+      notaryAuthMode: hasKeychainProfileMode
+        ? 'keychain_profile'
+        : hasApiKeyMode
+          ? 'api_key'
+          : null,
+      keychainProfile: keychainProfile || null,
+      keychainPath: keychainPath || null,
+      apiKeyPath: apiKeyPath || null,
+      apiKeyId: apiKeyId || null,
+      apiIssuer: apiIssuer || null,
+    });
+  }
+
+  if (target === 'windows') {
+    const thumbprint = cleanEnvField(
+      env.WINDOWS_CERTIFICATE_THUMBPRINT,
+      'WINDOWS_CERTIFICATE_THUMBPRINT',
+    );
+    const rawTimestamp = cleanEnvField(env.WINDOWS_TIMESTAMP_URL, 'WINDOWS_TIMESTAMP_URL');
+    const timestampUrl = rawTimestamp.length > 0 ? rawTimestamp : DEFAULT_WINDOWS_TIMESTAMP_URL;
+
+    if (thumbprint.length > 0 && !WINDOWS_CERT_THUMBPRINT_RE.test(thumbprint)) {
+      throw signingPolicyError('invalid_windows_certificate_thumbprint');
+    }
+    if (!TIMESTAMP_URL_RE.test(timestampUrl)) {
+      throw signingPolicyError('invalid_windows_timestamp_url');
+    }
+    if (requireSigned && thumbprint.length === 0) {
+      throw signingPolicyError('windows_certificate_thumbprint_required');
+    }
+
+    return Object.freeze({
+      target: 'windows',
+      requireSigned,
+      signEnabled: thumbprint.length > 0,
+      certificateThumbprint: thumbprint.length > 0 ? thumbprint.toUpperCase() : null,
+      timestampUrl,
+    });
+  }
+
+  return Object.freeze({
+    target: 'linux',
+    requireSigned,
+    signEnabled: false,
+  });
+}
+
+export function defaultStepRunner(cmd, args, options = {}) {
+  const spawnFn = typeof options.spawnImpl === 'function' ? options.spawnImpl : spawnSync;
+  const res = spawnFn(cmd, args, {
+    cwd: options.cwd ?? repoRoot,
+    env: options.env ?? process.env,
+    stdio:
+      options.input !== undefined
+        ? ['pipe', 'ignore', 'ignore']
+        : (options.stdio ?? 'inherit'),
+    input: options.input,
+    encoding: 'utf8',
+  });
+  if (res.error) {
+    const errCode =
+      typeof /** @type {any} */ (res.error).code === 'string'
+        ? /** @type {any} */ (res.error).code
+        : 'SPAWN_ERROR';
+    // Strip raw `res.error` (`spawnargs`, `path`, `syscall`) so secrets or sensitive paths never leak.
+    throw new Error(`signing_tool_spawn_error:${errCode}`);
+  }
+  return { status: res.status ?? 1 };
+}
+
+function runRedactedStep(runner, stepLabel, cmd, args, options = {}) {
+  const res = runner(cmd, args, options);
+  if (!res || res.status !== 0) {
+    throw new Error(`signing_step_failed:${stepLabel}:exit_${String(res?.status ?? 1)}`);
+  }
+}
+
+export function signAndVerifyMacosAppBundle({
+  appDir,
+  entitlementsPath,
+  policy,
+  runner = defaultStepRunner,
+}) {
+  if (!policy.signEnabled || !policy.signingIdentity) {
+    return;
+  }
+  const signArgs = [
+    '--force',
+    '--options',
+    'runtime',
+    ...(policy.isAdHoc ? [] : ['--timestamp']),
+    '--entitlements',
+    entitlementsPath,
+    '--sign',
+    policy.signingIdentity,
+    appDir,
+  ];
+  runRedactedStep(runner, 'macos_codesign_app', 'codesign', signArgs);
+  runRedactedStep(runner, 'macos_verify_app', 'codesign', [
+    '--verify',
+    '--deep',
+    '--strict',
+    '--verbose=2',
+    appDir,
+  ]);
+}
+
+export function signNotarizeAndVerifyMacosDmg({
+  dmgPath,
+  appDir = null,
+  policy,
+  runner = defaultStepRunner,
+}) {
+  if (!policy.signEnabled || !policy.signingIdentity) {
+    return;
+  }
+  const dmgSignArgs = [
+    '--force',
+    ...(policy.isAdHoc ? [] : ['--timestamp']),
+    '--sign',
+    policy.signingIdentity,
+    dmgPath,
+  ];
+  runRedactedStep(runner, 'macos_codesign_dmg', 'codesign', dmgSignArgs);
+  runRedactedStep(runner, 'macos_verify_dmg', 'codesign', ['--verify', '--verbose=2', dmgPath]);
+
+  if (policy.notarizeEnabled) {
+    if (policy.keychainProfile) {
+      const submitArgs = [
+        'notarytool',
+        'submit',
+        dmgPath,
+        '--keychain-profile',
+        policy.keychainProfile,
+        ...(policy.keychainPath ? ['--keychain', policy.keychainPath] : []),
+        '--wait',
+      ];
+      runRedactedStep(runner, 'macos_notarytool_submit', 'xcrun', submitArgs);
+    } else if (policy.apiKeyPath && policy.apiKeyId) {
+      const submitArgs = [
+        'notarytool',
+        'submit',
+        dmgPath,
+        '--key',
+        policy.apiKeyPath,
+        '--key-id',
+        policy.apiKeyId,
+        ...(policy.apiIssuer ? ['--issuer', policy.apiIssuer] : []),
+        '--wait',
+      ];
+      runRedactedStep(runner, 'macos_notarytool_submit', 'xcrun', submitArgs);
+    } else {
+      throw signingPolicyError('macos_notarization_credentials_required');
+    }
+    runRedactedStep(runner, 'macos_stapler_staple', 'xcrun', ['stapler', 'staple', dmgPath]);
+    runRedactedStep(runner, 'macos_stapler_validate', 'xcrun', ['stapler', 'validate', dmgPath]);
+    if (appDir) {
+      runRedactedStep(runner, 'macos_stapler_staple_app', 'xcrun', ['stapler', 'staple', appDir]);
+      runRedactedStep(runner, 'macos_stapler_validate_app', 'xcrun', [
+        'stapler',
+        'validate',
+        appDir,
+      ]);
+      runRedactedStep(runner, 'macos_verify_stapled_app', 'codesign', [
+        '--verify',
+        '--deep',
+        '--strict',
+        '--verbose=2',
+        appDir,
+      ]);
+    }
+  }
+}
+
+export function finalizeMacosReleaseBundles({
+  appDir,
+  conf,
+  outDir,
+  scratchDir,
+  signingPolicy,
+  runner = defaultStepRunner,
+}) {
+  ensureMacosInfoPlistUsageKeys(join(appDir, 'Contents', 'Info.plist'), conf);
+  const entitlementsPath = join(scratchDir, 'entitlements.plist');
+  writeFileSync(entitlementsPath, renderMacosEntitlementsPlist(), 'utf8');
+
+  // 1. Sign and verify Kodera.app BEFORE creating DMG or updater `.app.tar.gz`.
+  signAndVerifyMacosAppBundle({
+    appDir,
+    entitlementsPath,
+    policy: signingPolicy,
+    runner,
+  });
+
+  // 2. Build, sign, notarize, and staple DMG + Kodera.app BEFORE archiving `.app.tar.gz` so
+  //    extracted Kodera.app carries both hardened Developer ID signature and stapled ticket.
+  const dmgStage = join(scratchDir, 'dmg-root');
+  rmSync(dmgStage, { recursive: true, force: true });
+  stageMacosDiskImage(appDir, dmgStage);
+  const dmgOut = join(outDir, 'kodera-desktop-macos-universal.dmg');
+  runRedactedStep(runner, 'macos_hdiutil_create', 'hdiutil', [
+    'create',
+    '-volname',
+    conf.productName,
+    '-srcfolder',
+    dmgStage,
+    '-ov',
+    '-format',
+    'UDZO',
+    dmgOut,
+  ]);
+  signNotarizeAndVerifyMacosDmg({
+    dmgPath: dmgOut,
+    appDir,
+    policy: signingPolicy,
+    runner,
+  });
+
+  // 3. Archive `.app.tar.gz` from the signed, notarized, stapled, verified Kodera.app bundle.
+  const appTarGz = join(outDir, 'kodera-desktop-macos-universal.app.tar.gz');
+  runRedactedStep(runner, 'macos_archive_app_tar', 'tar', [
+    '-czf',
+    appTarGz,
+    '-C',
+    dirname(appDir),
+    'Kodera.app',
+  ]);
+}
+
+export function signAndVerifyWindowsArtifacts({
+  signtoolBin,
+  artifacts,
+  policy,
+  runner = defaultStepRunner,
+}) {
+  if (!policy.signEnabled || !policy.certificateThumbprint) {
+    return;
+  }
+  if (typeof signtoolBin !== 'string' || signtoolBin.trim().length === 0) {
+    throw signingPolicyError('windows_signtool_missing');
+  }
+  for (const artifactPath of artifacts) {
+    runRedactedStep(runner, 'windows_signtool_sign', signtoolBin, [
+      'sign',
+      '/fd',
+      'SHA256',
+      '/sha1',
+      policy.certificateThumbprint,
+      '/tr',
+      policy.timestampUrl,
+      '/td',
+      'SHA256',
+      artifactPath,
+    ]);
+    runRedactedStep(runner, 'windows_signtool_verify', signtoolBin, [
+      'verify',
+      '/pa',
+      '/v',
+      artifactPath,
+    ]);
+  }
 }
 
 export function renderDebianControl(conf) {
@@ -599,7 +1041,7 @@ export function renderDebianControl(conf) {
   ].join('\n');
 }
 
-function packageMacosHost(conf, outDir) {
+function packageMacosHost(conf, outDir, signingPolicy) {
   const targetDir = resolveCargoTargetDir();
   runChecked('rustup', ['target', 'add', 'aarch64-apple-darwin', 'x86_64-apple-darwin']);
   for (const rustTarget of ['aarch64-apple-darwin', 'x86_64-apple-darwin']) {
@@ -643,23 +1085,13 @@ function packageMacosHost(conf, outDir) {
     copyFileSync(join(tauriDir, 'icons', 'icon.icns'), join(resourcesDir, 'icon.icns'));
     stagePackagedWebAssets('macos', appDir, webDistDir);
 
-    const appTarGz = join(outDir, 'kodera-desktop-macos-universal.app.tar.gz');
-    runChecked('tar', ['-czf', appTarGz, '-C', scratch, 'Kodera.app']);
-
-    const dmgStage = join(scratch, 'dmg-root');
-    stageMacosDiskImage(appDir, dmgStage);
-    const dmgOut = join(outDir, 'kodera-desktop-macos-universal.dmg');
-    runChecked('hdiutil', [
-      'create',
-      '-volname',
-      conf.productName,
-      '-srcfolder',
-      dmgStage,
-      '-ov',
-      '-format',
-      'UDZO',
-      dmgOut,
-    ]);
+    finalizeMacosReleaseBundles({
+      appDir,
+      conf,
+      outDir,
+      scratchDir: scratch,
+      signingPolicy,
+    });
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
@@ -810,7 +1242,124 @@ function resolveWindowsTool(candidates) {
   return null;
 }
 
-function packageWindowsHost(conf, outDir) {
+function resolveWindowsSigntool(env = process.env) {
+  return resolveWindowsTool([
+    ...(env.KODERA_WINDOWS_SIGNTOOL_PATH ? [env.KODERA_WINDOWS_SIGNTOOL_PATH] : []),
+    'signtool.exe',
+    'C:\\Program Files (x86)\\Windows Kits\\10\\App Certification Kit\\signtool.exe',
+  ]);
+}
+
+export function finalizeWindowsReleaseBundles({
+  builtExe,
+  conf,
+  outDir,
+  scratchDir,
+  sourceWebDir = webDistDir,
+  iconPath = join(tauriDir, 'icons', 'icon.ico'),
+  signtoolBin = null,
+  signingPolicy,
+  env = process.env,
+  runner = defaultStepRunner,
+  resolveTool = resolveWindowsTool,
+}) {
+  const stageDir = join(scratchDir, 'Kodera');
+  mkdirSync(stageDir, { recursive: true });
+  const stagedExe = join(stageDir, 'kodera-desktop.exe');
+  const stagedIco = join(stageDir, 'icon.ico');
+  copyFileSync(builtExe, stagedExe);
+  copyFileSync(iconPath, stagedIco);
+  const { stagedWebDir } = stagePackagedWebAssets('windows', stageDir, sourceWebDir);
+
+  // 1. Sign & verify inner `kodera-desktop.exe` BEFORE building `.msi` or `-setup.exe` (zero Cargo relinking!).
+  signAndVerifyWindowsArtifacts({
+    signtoolBin,
+    artifacts: [stagedExe],
+    policy: signingPolicy,
+    runner,
+  });
+
+  // 2. MSI installer via WiX Toolset (candle + light, or wix v4+) built from signed `stagedExe`.
+  const msiOut = join(outDir, 'kodera-desktop-windows-x64.msi');
+  const candleBin = resolveTool([
+    'candle.exe',
+    'C:\\Program Files (x86)\\WiX Toolset v3.14\\bin\\candle.exe',
+    'C:\\Program Files (x86)\\WiX Toolset v3.11\\bin\\candle.exe',
+  ]);
+  const lightBin = resolveTool([
+    'light.exe',
+    'C:\\Program Files (x86)\\WiX Toolset v3.14\\bin\\light.exe',
+    'C:\\Program Files (x86)\\WiX Toolset v3.11\\bin\\light.exe',
+  ]);
+  if (candleBin && lightBin) {
+    const wxsPath = join(scratchDir, 'kodera.wxs');
+    const wixobjPath = join(scratchDir, 'kodera.wixobj');
+    const wxsXml = renderWixV3Xml({ conf, stagedExe, stagedIco, stagedWebDir });
+    writeFileSync(wxsPath, wxsXml, 'utf8');
+    runRedactedStep(runner, 'windows_wix_candle', candleBin, [
+      '-nologo',
+      '-arch',
+      'x64',
+      '-out',
+      wixobjPath,
+      wxsPath,
+    ]);
+    runRedactedStep(runner, 'windows_wix_light', lightBin, [
+      '-nologo',
+      '-sval',
+      '-out',
+      msiOut,
+      wixobjPath,
+    ]);
+  } else {
+    const wix4Bin = resolveTool(['wix.exe', 'wix']);
+    if (!wix4Bin) {
+      throw new Error('wix_toolset_missing_on_windows_runner');
+    }
+    const wxs4Path = join(scratchDir, 'kodera-v4.wxs');
+    const wxs4Xml = renderWixV4Xml({ conf, stagedExe, stagedIco, stagedWebDir });
+    writeFileSync(wxs4Path, wxs4Xml, 'utf8');
+    runRedactedStep(runner, 'windows_wix_v4', wix4Bin, [
+      'build',
+      '-arch',
+      'x64',
+      '-o',
+      msiOut,
+      wxs4Path,
+    ]);
+  }
+
+  // 3. NSIS setup executable (`-setup.exe`) built from signed `stagedExe`.
+  const setupOut = join(outDir, 'kodera-desktop-windows-x64-setup.exe');
+  const makensisBin = resolveTool([
+    ...(env.KODERA_NSIS_MAKENSIS_PATH ? [env.KODERA_NSIS_MAKENSIS_PATH] : []),
+    'makensis.exe',
+    'C:\\Program Files (x86)\\NSIS\\makensis.exe',
+    'C:\\Program Files\\NSIS\\makensis.exe',
+  ]);
+  if (!makensisBin) {
+    throw new Error('nsis_makensis_missing_on_windows_runner');
+  }
+  const nsiPath = join(scratchDir, 'installer.nsi');
+  const nsiScript = renderNsisScript({ conf, setupOut, stagedExe, stagedIco, stagedWebDir });
+  writeFileSync(nsiPath, nsiScript, 'utf8');
+  runRedactedStep(runner, 'windows_nsis_makensis', makensisBin, ['/V2', nsiPath]);
+
+  // 4. Sign & verify outer `.msi` and `-setup.exe` installers.
+  signAndVerifyWindowsArtifacts({
+    signtoolBin,
+    artifacts: [msiOut, setupOut],
+    policy: signingPolicy,
+    runner,
+  });
+}
+
+function packageWindowsHost(conf, outDir, signingPolicy) {
+  const signtoolBin = signingPolicy.signEnabled ? resolveWindowsSigntool() : null;
+  if (signingPolicy.signEnabled && !signtoolBin) {
+    throw signingPolicyError('windows_signtool_missing');
+  }
+
   const targetDir = resolveCargoTargetDir();
   runChecked('cargo', [
     'build',
@@ -828,96 +1377,46 @@ function packageWindowsHost(conf, outDir) {
 
   const scratch = mkdtempSync(join(tmpdir(), 'kodera-win-pkg-'));
   try {
-    const stageDir = join(scratch, 'Kodera');
-    mkdirSync(stageDir, { recursive: true });
-    const stagedExe = join(stageDir, 'kodera-desktop.exe');
-    const stagedIco = join(stageDir, 'icon.ico');
-    copyFileSync(builtExe, stagedExe);
-    copyFileSync(join(tauriDir, 'icons', 'icon.ico'), stagedIco);
-    const { stagedWebDir } = stagePackagedWebAssets('windows', stageDir, webDistDir);
-
-    // 1. MSI installer via WiX Toolset (candle + light, or wix v4+)
-    const msiOut = join(outDir, 'kodera-desktop-windows-x64.msi');
-    const candleBin = resolveWindowsTool([
-      'candle.exe',
-      'C:\\Program Files (x86)\\WiX Toolset v3.14\\bin\\candle.exe',
-      'C:\\Program Files (x86)\\WiX Toolset v3.11\\bin\\candle.exe',
-    ]);
-    const lightBin = resolveWindowsTool([
-      'light.exe',
-      'C:\\Program Files (x86)\\WiX Toolset v3.14\\bin\\light.exe',
-      'C:\\Program Files (x86)\\WiX Toolset v3.11\\bin\\light.exe',
-    ]);
-    if (candleBin && lightBin) {
-      const wxsPath = join(scratch, 'kodera.wxs');
-      const wixobjPath = join(scratch, 'kodera.wixobj');
-      const wxsXml = renderWixV3Xml({ conf, stagedExe, stagedIco, stagedWebDir });
-      writeFileSync(wxsPath, wxsXml, 'utf8');
-      runChecked(candleBin, ['-nologo', '-arch', 'x64', '-out', wixobjPath, wxsPath]);
-      runChecked(lightBin, ['-nologo', '-sval', '-out', msiOut, wixobjPath]);
-    } else {
-      const wix4Bin = resolveWindowsTool(['wix.exe', 'wix']);
-      if (!wix4Bin) {
-        throw new Error('wix_toolset_missing_on_windows_runner');
-      }
-      const wxs4Path = join(scratch, 'kodera-v4.wxs');
-      const wxs4Xml = renderWixV4Xml({ conf, stagedExe, stagedIco, stagedWebDir });
-      writeFileSync(wxs4Path, wxs4Xml, 'utf8');
-      runChecked(wix4Bin, ['build', '-arch', 'x64', '-o', msiOut, wxs4Path]);
-    }
-
-    // 2. NSIS setup executable (-setup.exe)
-    const setupOut = join(outDir, 'kodera-desktop-windows-x64-setup.exe');
-    const makensisBin = resolveWindowsTool([
-      ...(process.env.KODERA_NSIS_MAKENSIS_PATH
-        ? [process.env.KODERA_NSIS_MAKENSIS_PATH]
-        : []),
-      'makensis.exe',
-      'C:\\Program Files (x86)\\NSIS\\makensis.exe',
-      'C:\\Program Files\\NSIS\\makensis.exe',
-    ]);
-    if (!makensisBin) {
-      throw new Error('nsis_makensis_missing_on_windows_runner');
-    }
-    const nsiPath = join(scratch, 'installer.nsi');
-    const nsiScript = renderNsisScript({ conf, setupOut, stagedExe, stagedIco, stagedWebDir });
-    writeFileSync(nsiPath, nsiScript, 'utf8');
-    runChecked(makensisBin, ['/V2', nsiPath]);
+    finalizeWindowsReleaseBundles({
+      builtExe,
+      conf,
+      outDir,
+      scratchDir: scratch,
+      signtoolBin,
+      signingPolicy,
+      env: process.env,
+    });
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
 }
 
-function collectTauriBundleOutputs(tauriBin, target, outDir) {
-  const bundleDir = join(resolveCargoTargetDir(), 'release', 'bundle');
+function collectTauriBundleOutputs(tauriBin, target, conf, outDir, signingPolicy) {
+  const targetDir = resolveCargoTargetDir();
+  const bundleDir = join(targetDir, 'release', 'bundle');
   if (target === 'macos') {
-    runChecked(tauriBin, ['build', '--target', 'universal-apple-darwin', '--bundles', 'dmg,app'], {
+    runChecked(tauriBin, ['build', '--target', 'universal-apple-darwin', '--bundles', 'app'], {
       cwd: desktopDir,
     });
-    const univBundleDir = join(
-      resolveCargoTargetDir(),
-      'universal-apple-darwin',
-      'release',
-      'bundle',
-    );
-    const dmg = findMatchingFile(univBundleDir, '.dmg') ?? findMatchingFile(bundleDir, '.dmg');
-    const appTar =
-      findMatchingFile(univBundleDir, '.app.tar.gz') ?? findMatchingFile(bundleDir, '.app.tar.gz');
-    if (!dmg) {
-      throw new Error('tauri_bundle_missing_dmg');
+    const univBundleDir = join(targetDir, 'universal-apple-darwin', 'release', 'bundle');
+    const builtAppDir =
+      findMatchingDir(univBundleDir, 'Kodera.app') ?? findMatchingDir(bundleDir, 'Kodera.app');
+    if (!builtAppDir) {
+      throw new Error('tauri_bundle_missing_app');
     }
-    copyFileSync(dmg, join(outDir, 'kodera-desktop-macos-universal.dmg'));
-    if (appTar) {
-      copyFileSync(appTar, join(outDir, 'kodera-desktop-macos-universal.app.tar.gz'));
-    } else {
-      const appFolder = join(univBundleDir, 'macos', 'Kodera.app');
-      runChecked('tar', [
-        '-czf',
-        join(outDir, 'kodera-desktop-macos-universal.app.tar.gz'),
-        '-C',
-        dirname(appFolder),
-        'Kodera.app',
-      ]);
+    const scratch = mkdtempSync(join(tmpdir(), 'kodera-tauri-macos-'));
+    try {
+      const stagedAppDir = join(scratch, 'Kodera.app');
+      cpSync(builtAppDir, stagedAppDir, { recursive: true });
+      finalizeMacosReleaseBundles({
+        appDir: stagedAppDir,
+        conf,
+        outDir,
+        scratchDir: scratch,
+        signingPolicy,
+      });
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
     }
     return;
   }
@@ -935,14 +1434,29 @@ function collectTauriBundleOutputs(tauriBin, target, outDir) {
     copyFileSync(deb, join(outDir, 'kodera-desktop-linux-amd64.deb'));
     return;
   }
-  runChecked(tauriBin, ['build', '--bundles', 'msi,nsis'], { cwd: desktopDir });
-  const msi = findMatchingFile(bundleDir, '.msi');
-  const setupExe = findMatchingFile(bundleDir, '-setup.exe');
-  if (!msi || !setupExe) {
-    throw new Error('tauri_bundle_missing_windows_installers');
+  const signtoolBin = signingPolicy.signEnabled ? resolveWindowsSigntool() : null;
+  if (signingPolicy.signEnabled && !signtoolBin) {
+    throw signingPolicyError('windows_signtool_missing');
   }
-  copyFileSync(msi, join(outDir, 'kodera-desktop-windows-x64.msi'));
-  copyFileSync(setupExe, join(outDir, 'kodera-desktop-windows-x64-setup.exe'));
+  // Build binary only (`--no-bundle`), then sign `stagedExe` and build/sign `.msi` + `-setup.exe`
+  // via `finalizeWindowsReleaseBundles` so Cargo never relinks and strips Authenticode!
+  runChecked(tauriBin, ['build', '--no-bundle'], { cwd: desktopDir });
+  const builtExe = join(targetDir, 'release', 'kodera-desktop.exe');
+  runChecked(builtExe, ['--self-check']);
+  const scratch = mkdtempSync(join(tmpdir(), 'kodera-tauri-win-'));
+  try {
+    finalizeWindowsReleaseBundles({
+      builtExe,
+      conf,
+      outDir,
+      scratchDir: scratch,
+      signtoolBin,
+      signingPolicy,
+      env: process.env,
+    });
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
 }
 
 export function verifyStagedAssets(target, outDir) {
@@ -1020,6 +1534,231 @@ function runSelftest() {
   const plist = renderMacosInfoPlist(conf);
   assert.match(plist, /<string>kodera-desktop<\/string>/u);
   assert.match(plist, new RegExp(`<string>${escapeXml(conf.identifier)}</string>`, 'u'));
+  assert.match(plist, /<key>NSMicrophoneUsageDescription<\/key>/u);
+  assert.match(plist, /<key>NSCameraUsageDescription<\/key>/u);
+
+  const entitlements = renderMacosEntitlementsPlist();
+  assert.equal(entitlements, renderMacosEntitlementsPlist(), 'entitlements.plist must be deterministic');
+  assert.match(entitlements, /<key>com\.apple\.security\.device\.audio-input<\/key>\s*<true\/>/u);
+  assert.match(entitlements, /<key>com\.apple\.security\.device\.camera<\/key>\s*<true\/>/u);
+  assert.match(entitlements, /<key>com\.apple\.security\.cs\.allow-jit<\/key>\s*<true\/>/u);
+  assert.match(
+    entitlements,
+    /<key>com\.apple\.security\.cs\.allow-unsigned-executable-memory<\/key>\s*<true\/>/u,
+  );
+  assert.match(entitlements, /<key>com\.apple\.security\.network\.client<\/key>\s*<true\/>/u);
+  assert.ok(!entitlements.includes('disable-library-validation'));
+  assert.ok(!entitlements.includes('allow-dyld-environment-variables'));
+
+  // Signing & notarization policy positive, fail-closed, and secret-redaction tests.
+  const unsignedMacPolicy = resolveReleaseSigningPolicy('macos', {});
+  assert.equal(unsignedMacPolicy.signEnabled, false);
+  assert.equal(unsignedMacPolicy.notarizeEnabled, false);
+
+  assert.throws(
+    () => resolveReleaseSigningPolicy('macos', { KODERA_REQUIRE_SIGNED_RELEASE: '1' }),
+    (err) => err instanceof Error
+      && err.message === 'release_signing_policy:macos_developer_id_required'
+      && err.exitCode === 78,
+  );
+  assert.throws(
+    () =>
+      resolveReleaseSigningPolicy('macos', {
+        KODERA_REQUIRE_SIGNED_RELEASE: '1',
+        APPLE_SIGNING_IDENTITY: '-',
+      }),
+    (err) => err instanceof Error
+      && err.message === 'release_signing_policy:macos_developer_id_required'
+      && err.exitCode === 78,
+  );
+  assert.throws(
+    () =>
+      resolveReleaseSigningPolicy('macos', {
+        KODERA_REQUIRE_SIGNED_RELEASE: '1',
+        APPLE_SIGNING_IDENTITY: 'Developer ID Application: Example Corp (TEAMID1234)',
+      }),
+    (err) => err instanceof Error
+      && err.message === 'release_signing_policy:macos_notarization_credentials_required'
+      && err.exitCode === 78,
+  );
+  assert.throws(
+    () => resolveReleaseSigningPolicy('windows', { KODERA_REQUIRE_SIGNED_RELEASE: '1' }),
+    (err) => err instanceof Error
+      && err.message === 'release_signing_policy:windows_certificate_thumbprint_required'
+      && err.exitCode === 78,
+  );
+  assert.throws(
+    () =>
+      resolveReleaseSigningPolicy('windows', {
+        WINDOWS_CERTIFICATE_THUMBPRINT: 'not-a-hex-thumbprint;calc',
+      }),
+    /invalid_windows_certificate_thumbprint/u,
+  );
+  assert.throws(
+    () =>
+      resolveReleaseSigningPolicy('windows', {
+        WINDOWS_CERTIFICATE_THUMBPRINT: 'a'.repeat(40),
+        WINDOWS_TIMESTAMP_URL: 'file:///C:/bad',
+      }),
+    /invalid_windows_timestamp_url/u,
+  );
+  assert.throws(
+    () =>
+      resolveReleaseSigningPolicy('windows', {
+        WINDOWS_CERTIFICATE_THUMBPRINT: 'a'.repeat(40),
+        WINDOWS_TIMESTAMP_URL: 'http://timestamp.digicert.com',
+      }),
+    /invalid_windows_timestamp_url/u,
+  );
+
+  // Spawn error sanitization: raw `spawnargs` or secret env/args never leak if spawning a tool fails.
+  assert.throws(
+    () =>
+      defaultStepRunner('nonexistent-codesign-tool', ['--secret-arg', 'TOP_SECRET_SPAWN_ARG'], {
+        spawnImpl() {
+          const spawnErr = /** @type {any} */ (
+            new Error('spawnSync nonexistent-codesign-tool ENOENT TOP_SECRET_SPAWN_ARG')
+          );
+          spawnErr.code = 'ENOENT';
+          spawnErr.spawnargs = ['--secret-arg', 'TOP_SECRET_SPAWN_ARG'];
+          return { status: null, error: spawnErr };
+        },
+      }),
+    (err) => err instanceof Error
+      && err.message === 'signing_tool_spawn_error:ENOENT'
+      && !err.message.includes('TOP_SECRET_SPAWN_ARG')
+      && !('spawnargs' in err),
+  );
+
+  // Mode A: Pre-provisioned `APPLE_KEYCHAIN_PROFILE` (+ optional `APPLE_KEYCHAIN_PATH`) — zero password env var needed.
+  const profileMacEnv = {
+    KODERA_REQUIRE_SIGNED_RELEASE: '1',
+    APPLE_SIGNING_IDENTITY: 'Developer ID Application: Example Corp (TEAMID1234)',
+    APPLE_KEYCHAIN_PROFILE: 'kodera-ci-notary',
+    APPLE_KEYCHAIN_PATH: '/Users/runner/Library/Keychains/notary.keychain-db',
+  };
+  const profileMacPolicy = resolveReleaseSigningPolicy('macos', profileMacEnv);
+  assert.equal(profileMacPolicy.signEnabled, true);
+  assert.equal(profileMacPolicy.notarizeEnabled, true);
+  assert.equal(profileMacPolicy.notaryAuthMode, 'keychain_profile');
+  assert.equal(profileMacPolicy.keychainProfile, 'kodera-ci-notary');
+  assert.equal(
+    profileMacPolicy.keychainPath,
+    '/Users/runner/Library/Keychains/notary.keychain-db',
+  );
+
+  // Mode B: App Store Connect API Key (`APPLE_API_KEY_PATH` + `APPLE_API_KEY_ID` + `APPLE_API_ISSUER`) — zero argv secrets.
+  const apiKeyMacEnv = {
+    KODERA_REQUIRE_SIGNED_RELEASE: '1',
+    APPLE_SIGNING_IDENTITY: 'Developer ID Application: Example Corp (TEAMID1234)',
+    APPLE_API_KEY_PATH: '/Users/runner/secrets/AuthKey_ABC1234567.p8',
+    APPLE_API_KEY_ID: 'ABC1234567',
+    APPLE_API_ISSUER: ['00000000', '0000', '4000', '8000', '000000000001'].join('-'),
+  };
+  const apiKeyMacPolicy = resolveReleaseSigningPolicy('macos', apiKeyMacEnv);
+  assert.equal(apiKeyMacPolicy.signEnabled, true);
+  assert.equal(apiKeyMacPolicy.notarizeEnabled, true);
+  assert.equal(apiKeyMacPolicy.notaryAuthMode, 'api_key');
+
+  // Raw `APPLE_ID` + `APPLE_PASSWORD` without Mode A or Mode B MUST fail closed (never put APPLE_PASSWORD on argv or /dev/tty).
+  const secretNotaryToken = 'NOTARY_APP_SPECIFIC_SECRET_999';
+  assert.throws(
+    () =>
+      resolveReleaseSigningPolicy('macos', {
+        KODERA_REQUIRE_SIGNED_RELEASE: '1',
+        APPLE_SIGNING_IDENTITY: 'Developer ID Application: Example Corp (TEAMID1234)',
+        APPLE_TEAM_ID: 'TEAMID1234',
+        APPLE_ID: 'release@kodera.io',
+        APPLE_PASSWORD: secretNotaryToken,
+      }),
+    (err) => err instanceof Error
+      && err.message === 'release_signing_policy:macos_notarization_credentials_required'
+      && err.exitCode === 78
+      && !err.message.includes(secretNotaryToken),
+  );
+
+  /** @type {Array<{ cmd: string, args: string[] }>} */
+  const macSteps = [];
+  signAndVerifyMacosAppBundle({
+    appDir: '/tmp/Kodera.app',
+    entitlementsPath: '/tmp/entitlements.plist',
+    policy: apiKeyMacPolicy,
+    runner(cmd, args) {
+      macSteps.push({ cmd, args });
+      return { status: 0 };
+    },
+  });
+  signNotarizeAndVerifyMacosDmg({
+    dmgPath: '/tmp/kodera-desktop-macos-universal.dmg',
+    appDir: '/tmp/Kodera.app',
+    policy: apiKeyMacPolicy,
+    runner(cmd, args) {
+      macSteps.push({ cmd, args });
+      return { status: 0 };
+    },
+  });
+  assert.deepEqual(
+    macSteps.map((s) => `${s.cmd}:${s.args[0]}`),
+    [
+      'codesign:--force',
+      'codesign:--verify',
+      'codesign:--force',
+      'codesign:--verify',
+      'xcrun:notarytool',
+      'xcrun:stapler',
+      'xcrun:stapler',
+      'xcrun:stapler',
+      'xcrun:stapler',
+      'codesign:--verify',
+    ],
+  );
+  assert.ok(macSteps[0].args.includes('--entitlements'));
+  assert.ok(macSteps[4].args.includes('--key'));
+  assert.ok(macSteps[4].args.includes('--key-id'));
+  assert.ok(macSteps[4].args.includes('--issuer'));
+  assert.ok(macSteps[4].args.includes('--wait'));
+  assert.ok(!macSteps[4].args.includes('--password'));
+
+  assert.throws(
+    () =>
+      signNotarizeAndVerifyMacosDmg({
+        dmgPath: '/tmp/kodera-desktop-macos-universal.dmg',
+        policy: profileMacPolicy,
+        runner(cmd, args) {
+          if (cmd === 'xcrun' && args[0] === 'notarytool') {
+            assert.ok(args.includes('--keychain-profile'));
+            assert.ok(args.includes('--keychain'));
+            assert.ok(!args.includes('--password'));
+            return { status: 1 };
+          }
+          return { status: 0 };
+        },
+      }),
+    (err) => err instanceof Error
+      && err.message === 'signing_step_failed:macos_notarytool_submit:exit_1',
+  );
+
+  const signedWinPolicy = resolveReleaseSigningPolicy('windows', {
+    KODERA_REQUIRE_SIGNED_RELEASE: '1',
+    WINDOWS_CERTIFICATE_THUMBPRINT: '0123456789abcdef0123456789abcdef01234567',
+  });
+  assert.equal(signedWinPolicy.signEnabled, true);
+  assert.equal(signedWinPolicy.timestampUrl, 'https://timestamp.digicert.com');
+  /** @type {Array<{ cmd: string, args: string[] }>} */
+  const winSteps = [];
+  signAndVerifyWindowsArtifacts({
+    signtoolBin: 'C:\\SDK\\signtool.exe',
+    artifacts: ['C:\\out\\kodera.msi', 'C:\\out\\kodera-setup.exe'],
+    policy: signedWinPolicy,
+    runner(cmd, args) {
+      winSteps.push({ cmd, args });
+      return { status: 0 };
+    },
+  });
+  assert.deepEqual(
+    winSteps.map((s) => s.args[0]),
+    ['sign', 'verify', 'sign', 'verify'],
+  );
 
   const control = renderDebianControl(conf);
   assert.match(
@@ -1211,6 +1950,106 @@ function runSelftest() {
       assert.ok(lstatSync(join(imageStage, 'Applications')).isSymbolicLink());
       assert.equal(readlinkSync(join(imageStage, 'Applications')), '/Applications');
       assert.match(readFileSync(join(imageStage, 'Install Kodera.txt'), 'utf8'), /Drag Kodera.app onto Applications/);
+
+      // Verify `finalizeMacosReleaseBundles` parity (TCC Info.plist injection + entitlements +
+      // sign/verify `.app` -> build/sign/notarize/staple `.dmg` + staple/verify `.app` BEFORE `.app.tar.gz`).
+      const parityScratch = join(scratch, 'macos-parity');
+      const parityOut = join(scratch, 'macos-parity-out');
+      const parityApp = join(parityScratch, 'Kodera.app');
+      mkdirSync(join(parityApp, 'Contents', 'MacOS'), { recursive: true });
+      mkdirSync(parityOut, { recursive: true });
+      writeFileSync(
+        join(parityApp, 'Contents', 'Info.plist'),
+        '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleName</key><string>Kodera</string></dict></plist>',
+        'utf8',
+      );
+      writeFileSync(join(parityApp, 'Contents', 'MacOS', 'kodera-desktop'), 'stub', 'utf8');
+      /** @type {string[]} */
+      const finalizeOrder = [];
+      finalizeMacosReleaseBundles({
+        appDir: parityApp,
+        conf,
+        outDir: parityOut,
+        scratchDir: parityScratch,
+        signingPolicy: profileMacPolicy,
+        runner(cmd, args) {
+          finalizeOrder.push(`${cmd}:${args[0]}`);
+          if (cmd === 'hdiutil') {
+            writeFileSync(args[args.length - 1], 'dmg-bytes', 'utf8');
+          } else if (cmd === 'tar') {
+            writeFileSync(args[1], 'targz-bytes', 'utf8');
+          }
+          return { status: 0 };
+        },
+      });
+      const updatedPlist = readFileSync(join(parityApp, 'Contents', 'Info.plist'), 'utf8');
+      assert.match(updatedPlist, /<key>NSCameraUsageDescription<\/key>/u);
+      assert.match(updatedPlist, /<key>NSMicrophoneUsageDescription<\/key>/u);
+      assert.equal(existsSync(join(parityScratch, 'entitlements.plist')), true);
+      assert.deepEqual(finalizeOrder, [
+        'codesign:--force',
+        'codesign:--verify',
+        'hdiutil:create',
+        'codesign:--force',
+        'codesign:--verify',
+        'xcrun:notarytool',
+        'xcrun:stapler',
+        'xcrun:stapler',
+        'xcrun:stapler',
+        'xcrun:stapler',
+        'codesign:--verify',
+        'tar:-czf',
+      ]);
+      verifyStagedAssets('macos', parityOut);
+
+      // Verify `finalizeWindowsReleaseBundles` parity: signs & verifies `stagedExe` FIRST, builds
+      // `.msi` and `-setup.exe` without relinking, then signs & verifies both installers!
+      const winParityScratch = join(scratch, 'win-parity');
+      const winParityOut = join(scratch, 'win-parity-out');
+      mkdirSync(winParityScratch, { recursive: true });
+      mkdirSync(winParityOut, { recursive: true });
+      const winStubExe = join(winParityScratch, 'built-kodera-desktop.exe');
+      writeFileSync(winStubExe, 'MZ-signed-candidate', 'utf8');
+      /** @type {string[]} */
+      const winFinalizeOrder = [];
+      finalizeWindowsReleaseBundles({
+        builtExe: winStubExe,
+        conf,
+        outDir: winParityOut,
+        scratchDir: winParityScratch,
+        sourceWebDir: spaSource,
+        signtoolBin: 'signtool.exe',
+        signingPolicy: signedWinPolicy,
+        resolveTool(candidates) {
+          if (candidates.includes('wix.exe')) return 'wix.exe';
+          if (candidates.includes('makensis.exe')) return 'makensis.exe';
+          return null;
+        },
+        runner(cmd, args) {
+          winFinalizeOrder.push(`${cmd}:${args[0]}`);
+          if (cmd === 'wix.exe') {
+            writeFileSync(args[4], 'msi-bytes', 'utf8');
+          } else if (cmd === 'makensis.exe') {
+            writeFileSync(
+              join(winParityOut, 'kodera-desktop-windows-x64-setup.exe'),
+              'nsis-bytes',
+              'utf8',
+            );
+          }
+          return { status: 0 };
+        },
+      });
+      assert.deepEqual(winFinalizeOrder, [
+        'signtool.exe:sign',
+        'signtool.exe:verify',
+        'wix.exe:build',
+        'makensis.exe:/V2',
+        'signtool.exe:sign',
+        'signtool.exe:verify',
+        'signtool.exe:sign',
+        'signtool.exe:verify',
+      ]);
+      verifyStagedAssets('windows', winParityOut);
     }
     assert.match(renderMacosInfoPlist({ productName: 'Kodera', identifier: 'io.kodera.desktop', version: '0.1.0' }), /CFBundleURLSchemes/);
     verifyStagedAssets('macos', scratch);
@@ -1242,6 +2081,8 @@ function main() {
     return;
   }
 
+  const signingPolicy = resolveReleaseSigningPolicy(args.target, process.env);
+
   runChecked(process.execPath, [join(desktopDir, 'scripts', 'generate-bootstrap-css.mjs')], {
     cwd: desktopDir,
   });
@@ -1263,13 +2104,13 @@ function main() {
   const tauriBin = resolveTauriCli();
 
   if (tauriBin) {
-    collectTauriBundleOutputs(tauriBin, args.target, outAbs);
+    collectTauriBundleOutputs(tauriBin, args.target, conf, outAbs, signingPolicy);
   } else if (args.target === 'macos') {
-    packageMacosHost(conf, outAbs);
+    packageMacosHost(conf, outAbs, signingPolicy);
   } else if (args.target === 'linux') {
     packageLinuxHost(conf, outAbs);
   } else {
-    packageWindowsHost(conf, outAbs);
+    packageWindowsHost(conf, outAbs, signingPolicy);
   }
 
   verifyStagedAssets(args.target, outAbs);
@@ -1277,6 +2118,7 @@ function main() {
     JSON.stringify({
       target: args.target,
       outDir: outAbs,
+      signed: signingPolicy.signEnabled,
       assets: EXPECTED_RELEASE_ASSETS[args.target],
     }),
   );

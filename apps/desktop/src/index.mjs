@@ -19,8 +19,10 @@ export {
 export {
   COMMUNITY_TLS_MODES,
   MAX_DIRECT_BADGE_COUNT,
+  MAX_MEDIA_DEVICE_ID_BYTES,
   MAX_UNREAD_BADGE_COUNT,
   REDACTED_NOTIFICATION_PREVIEW,
+  SCREEN_SHARE_SURFACES,
   createDesktopClient,
   formatUnreadBadgeLabel,
 } from './bridge.mjs';

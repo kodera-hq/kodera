@@ -8,9 +8,15 @@ import {
   type DesktopDeepLinkEvent,
   type DesktopUpdateStatus,
   type KoderaDesktopClient,
+  type MediaCaptureStateResult,
+  type PushToTalkStateEvent,
+  type PushToTalkStateResult,
+  type ScreenShareSurfaceSlug,
   type TrayMenuActionId,
   COMMUNITY_TLS_MODES,
   DESKTOP_APP_IDENTIFIER,
+  MAX_MEDIA_DEVICE_ID_BYTES,
+  SCREEN_SHARE_SURFACES,
   TRAY_MENU_ITEM_IDS,
   createDesktopClient,
   formatUnreadBadgeLabel,
@@ -54,6 +60,36 @@ export async function verifyDesktopTypeContract(): Promise<void> {
   await client.setUnreadCount(3);
   await client.updateTrayState({ unreadCount: 3, callState: 'voice', muted: false });
   await client.triggerTrayAction('toggle_mute');
+
+  const surfaces: readonly ScreenShareSurfaceSlug[] = SCREEN_SHARE_SURFACES;
+  const maxDeviceBytes: 128 = MAX_MEDIA_DEVICE_ID_BYTES;
+  void surfaces;
+  void maxDeviceBytes;
+
+  const pttConfigured: PushToTalkStateResult = await client.configurePushToTalk({
+    optIn: true,
+    chord: 'Ctrl+Shift+Space',
+  });
+  const pttPressed: PushToTalkStateResult = await client.setPushToTalkPressed(true, 1000);
+  const pttState: PushToTalkStateResult = await client.getPushToTalkState();
+  const stopPttListen = await client.listenPushToTalk((ev: PushToTalkStateEvent) => {
+    void ev.transmitting;
+  });
+  await stopPttListen();
+  void pttConfigured;
+  void pttPressed;
+  void pttState;
+
+  const mediaConfigured: MediaCaptureStateResult = await client.configureMediaCapture({
+    preferredSurface: 'window',
+    systemAudioLoopback: true,
+    noiseSuppression: true,
+    preferredAudioInputId: 'usb-mic-01',
+    preferredAudioOutputId: 'headphones-01',
+  });
+  const mediaState: MediaCaptureStateResult = await client.getMediaCaptureState();
+  void mediaConfigured;
+  void mediaState;
   await client.sendNotification({
     title: 'Channel alert',
     body: 'New activity',

@@ -291,7 +291,13 @@ impl DesktopShellHost {
     }
 
     /// Provisions an active organisation workspace session inside the host shell.
+    ///
+    /// Always tears down and zeroizes any previously active organisation session BEFORE validating
+    /// or constructing the replacement session so a failed `init_session` never leaves a prior
+    /// organisation active.
     pub fn provision_session(&mut self, organisation_id: &str) -> Result<(), DesktopCommandError> {
+        self.clear_active_session();
+        self.tray_menu = TrayController::new().menu_model(false);
         let salt = kodera_rs::sha256(format!("kodera-desktop-host:{organisation_id}").as_bytes());
         let session = DesktopWorkspaceSession::new(organisation_id, salt, HashSet::new(), 64)
             .map_err(DesktopCommandError::Core)?;
@@ -303,6 +309,54 @@ impl DesktopShellHost {
             .map_err(DesktopCommandError::Core)?;
         self.session = Some(session);
         Ok(())
+    }
+
+    pub(crate) fn is_ptt_transmitting(&self) -> bool {
+        let Some(session) = self.session.as_ref() else {
+            return false;
+        };
+        let Some(org) = session.organisation_id() else {
+            return false;
+        };
+        session
+            .ptt_state(org)
+            .map(|st| {
+                matches!(
+                    st.transmission,
+                    crate::PttTransmissionState::Transmitting { .. }
+                )
+            })
+            .unwrap_or(false)
+    }
+
+    pub(crate) fn current_ptt_state_json(&self) -> Option<String> {
+        let session = self.session.as_ref()?;
+        let org = session.organisation_id()?;
+        let snapshot = session.ptt_state(org).ok()?;
+        Some(serialize_ptt_state_json(&snapshot))
+    }
+
+    /// Executes an already-parsed [`crate::DesktopCommandRequest`] against the active host session.
+    pub(crate) fn execute_active_webview_command(
+        &mut self,
+        request: crate::DesktopCommandRequest,
+    ) -> (String, bool) {
+        let Some(session) = &mut self.session else {
+            return (
+                r#"{"ok":false,"error":"session_not_initialized"}"#.to_owned(),
+                false,
+            );
+        };
+        let response = session.execute_command(request);
+        if let Some(org) = session.organisation_id().map(str::to_owned) {
+            if let Ok(win) = session.window_placement(&org) {
+                self.window_placement = win;
+            }
+            if let Ok(menu) = session.tray_menu(&org) {
+                self.tray_menu = menu;
+            }
+        }
+        serialize_command_response(response)
     }
 
     /// Replaces the local `docker` CLI runner on the active workspace session (used by
@@ -321,6 +375,79 @@ impl DesktopShellHost {
                     .ok()
             })
             .is_some()
+    }
+
+    /// Replaces the keychain backend on the active workspace session (used by deterministic tests).
+    pub fn configure_keychain_backend(
+        &mut self,
+        organisation_id: &str,
+        backend: std::sync::Arc<dyn crate::KeychainBackend>,
+    ) -> bool {
+        self.session
+            .as_mut()
+            .and_then(|session| {
+                session
+                    .configure_keychain_backend(organisation_id, backend)
+                    .ok()
+            })
+            .is_some()
+    }
+
+    pub(crate) fn force_release_ptt_on_focus_loss(&mut self) -> Option<String> {
+        let session = self.session.as_mut()?;
+        let snapshot = session.force_release_ptt_if_transmitting()?;
+        if let Some(org) = session.organisation_id().map(str::to_owned) {
+            if let Ok(menu) = session.tray_menu(&org) {
+                self.tray_menu = menu;
+            }
+        }
+        Some(serialize_ptt_state_json(&snapshot))
+    }
+
+    pub(crate) fn handle_ptt_modifiers_changed(
+        &mut self,
+        active_modifiers: &std::collections::BTreeSet<crate::PttModifier>,
+    ) -> Option<String> {
+        let session = self.session.as_mut()?;
+        let snapshot = session.handle_ptt_modifiers_changed(active_modifiers)?;
+        if let Some(org) = session.organisation_id().map(str::to_owned) {
+            if let Ok(menu) = session.tray_menu(&org) {
+                self.tray_menu = menu;
+            }
+        }
+        Some(serialize_ptt_state_json(&snapshot))
+    }
+
+    pub(crate) fn handle_ptt_key_event(
+        &mut self,
+        active_modifiers: &std::collections::BTreeSet<crate::PttModifier>,
+        trigger: crate::PttTriggerKey,
+        pressed: bool,
+        now_ms: u64,
+    ) -> Option<String> {
+        let session = self.session.as_mut()?;
+        let snapshot = session.handle_ptt_key_event(active_modifiers, trigger, pressed, now_ms)?;
+        if let Some(org) = session.organisation_id().map(str::to_owned) {
+            if let Ok(menu) = session.tray_menu(&org) {
+                self.tray_menu = menu;
+            }
+        }
+        Some(serialize_ptt_state_json(&snapshot))
+    }
+
+    pub(crate) fn toggle_tray_mute(&mut self) -> Option<bool> {
+        let session = self.session.as_mut()?;
+        let org = session.organisation_id()?.to_owned();
+        let outcome = session
+            .trigger_tray_menu_action(&org, TrayMenuItemId::ToggleMute)
+            .ok()?;
+        if let Ok(menu) = session.tray_menu(&org) {
+            self.tray_menu = menu;
+        }
+        match outcome {
+            crate::TrayMenuActionOutcome::MuteToggled { muted, .. } => Some(muted),
+            _ => None,
+        }
     }
 
     /// Processes a single JSON line from `--ipc-stdio`. Returns `(json_reply, should_quit)`.
@@ -424,7 +551,7 @@ fn parse_init_session_op(trimmed: &str) -> Option<String> {
     let prefix = r#"{"host_op":"init_session","organisation_id":""#;
     let rest = trimmed.strip_prefix(prefix)?;
     let org_id = rest.strip_suffix(r#""}"#)?;
-    if org_id.is_empty() || org_id.len() > 64 || org_id.contains('"') || org_id.contains('\\') {
+    if org_id.len() > 64 || org_id.contains('"') || org_id.contains('\\') {
         return None;
     }
     Some(org_id.to_owned())
@@ -514,9 +641,21 @@ fn serialize_command_response(response: DesktopCommandResponse) -> (String, bool
             false,
         ),
         DesktopCommandResponse::DeepLink(link) => (serialize_admitted_deep_link(&link), false),
+        DesktopCommandResponse::PttState(p) => (serialize_ptt_state_json(&p), false),
+        DesktopCommandResponse::MediaCaptureState(m) => (
+            format!(
+                r#"{{"ok":true,"type":"media_capture_state","preferred_surface":"{}","system_audio_loopback":{},"noise_suppression":{},"preferred_audio_input_id":{},"preferred_audio_output_id":{}}}"#,
+                m.preferred_surface.as_str(),
+                m.system_audio_loopback,
+                m.noise_suppression,
+                optional_json_str(m.preferred_audio_input_id.as_deref()),
+                optional_json_str(m.preferred_audio_output_id.as_deref()),
+            ),
+            false,
+        ),
         DesktopCommandResponse::KeychainMetadata(m) => (
             format!(
-                r#"{{"ok":true,"type":"keychain_metadata","service_name":"{}","account_name":"{}","device_id":"{}","issued_at_unix_secs":{}}}"#,
+                r#"{{"ok":true,"type":"keychain_metadata","service_name":"{}","account_name":"{}","device_id":"{}","issued_at_unix_secs":{},"native_keychain":false}}"#,
                 json_escape(&m.slot.service_name),
                 json_escape(&m.slot.account_name),
                 json_escape(&m.device_id),
@@ -524,12 +663,24 @@ fn serialize_command_response(response: DesktopCommandResponse) -> (String, bool
             ),
             false,
         ),
+        DesktopCommandResponse::KeychainStored(o) => (
+            format!(
+                r#"{{"ok":true,"type":"keychain_metadata","service_name":"{}","account_name":"{}","device_id":"{}","issued_at_unix_secs":{},"native_keychain":{}}}"#,
+                json_escape(&o.slot.service_name),
+                json_escape(&o.slot.account_name),
+                json_escape(&o.metadata.device_id),
+                o.metadata.issued_at_unix_secs,
+                o.native_keychain,
+            ),
+            false,
+        ),
         DesktopCommandResponse::KeychainStatus(s) => (
             format!(
-                r#"{{"ok":true,"type":"keychain_status","service_name":"{}","account_name":"{}","present":{}}}"#,
+                r#"{{"ok":true,"type":"keychain_status","service_name":"{}","account_name":"{}","present":{},"native_keychain":{}}}"#,
                 json_escape(&s.slot.service_name),
                 json_escape(&s.slot.account_name),
                 s.present,
+                s.native_keychain,
             ),
             false,
         ),
@@ -623,15 +774,30 @@ fn serialize_command_response(response: DesktopCommandResponse) -> (String, bool
             r#"{"ok":true,"type":"workspace_session_cleared"}"#.to_owned(),
             false,
         ),
-        DesktopCommandResponse::Error(err) => (
-            format!(r#"{{"ok":false,"error":"{}"}}"#, command_error_slug(&err)),
-            false,
-        ),
+        DesktopCommandResponse::Error(err) => (serialize_command_error_json(&err), false),
         _ => (
             r#"{"ok":true,"type":"command_completed"}"#.to_owned(),
             false,
         ),
     }
+}
+
+pub(crate) fn serialize_command_error_json(err: &DesktopCommandError) -> String {
+    format!(r#"{{"ok":false,"error":"{}"}}"#, command_error_slug(err))
+}
+
+fn serialize_ptt_state_json(p: &crate::PttStateSnapshot) -> String {
+    let (transmitting, since_ms) = match p.transmission {
+        crate::PttTransmissionState::Inactive => (false, "null".to_owned()),
+        crate::PttTransmissionState::Transmitting { since_ms } => (true, since_ms.to_string()),
+    };
+    format!(
+        r#"{{"ok":true,"type":"ptt_state","opt_in_enabled":{},"binding":{},"transmitting":{},"transmitting_since_ms":{}}}"#,
+        p.opt_in_enabled,
+        optional_json_str(p.binding.as_deref()),
+        transmitting,
+        since_ms,
+    )
 }
 
 fn serialize_admitted_deep_link(link: &AdmittedDeepLink) -> String {
@@ -655,6 +821,7 @@ fn command_error_slug(err: &DesktopCommandError) -> String {
         DesktopCommandError::SecretInPublicPlan => "secret_in_public_plan".to_owned(),
         DesktopCommandError::DeepLink(d) => format!("deep_link:{d}"),
         DesktopCommandError::TrayPtt(t) => format!("tray_ptt:{t}"),
+        DesktopCommandError::MediaCapture(m) => format!("media_capture:{m}"),
         DesktopCommandError::Keychain(k) => format!("keychain:{k}"),
         DesktopCommandError::SelfHostHealth(h) => format!("self_host_health:{h}"),
         DesktopCommandError::WindowState(w) => format!("window_state:{w}"),

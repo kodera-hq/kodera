@@ -225,6 +225,14 @@ fn audit_workspace() -> DesktopWorkspaceSession {
         .configure_ptt(ORG, true, Some("Ctrl+Shift+Space"))
         .unwrap();
     state
+        .configure_keychain_backend(
+            ORG,
+            std::sync::Arc::new(crate::EphemeralKeychainBackend::with_clock(
+                std::sync::Arc::new(|| 1_762_520_100),
+            )),
+        )
+        .unwrap();
+    state
         .store_keychain_credential(
             ORG,
             KeychainSecretKind::OidcRefresh,

@@ -222,6 +222,21 @@ impl DesktopCommandRequest {
                 now_ms: take_integer(&mut fields, "now_ms")?,
             },
             "get_ptt_state" => Self::GetPttState { organisation_id },
+            "configure_media_capture" => Self::ConfigureMediaCapture {
+                organisation_id,
+                preferred_surface: take_string(&mut fields, "preferred_surface")?,
+                system_audio_loopback: take_bool(&mut fields, "system_audio_loopback")?,
+                noise_suppression: take_bool(&mut fields, "noise_suppression")?,
+                preferred_audio_input_id: take_optional_string(
+                    &mut fields,
+                    "preferred_audio_input_id",
+                )?,
+                preferred_audio_output_id: take_optional_string(
+                    &mut fields,
+                    "preferred_audio_output_id",
+                )?,
+            },
+            "get_media_capture_state" => Self::GetMediaCaptureState { organisation_id },
             "validate_keychain_metadata" => Self::ValidateKeychainMetadata {
                 organisation_id,
                 secret_kind: take_string(&mut fields, "secret_kind")?,
@@ -315,6 +330,28 @@ impl DesktopCommandRequest {
             return Err(DesktopCommandError::InvalidRequest);
         }
         Ok(request)
+    }
+
+    pub(crate) fn parse_select_stack_dir_org_id(
+        raw_json: &str,
+    ) -> Result<String, DesktopCommandError> {
+        if raw_json.len() > MAX_IPC_COMMAND_BYTES {
+            return Err(DesktopCommandError::RequestTooLarge);
+        }
+        let mut fields = FlatCommandParser {
+            raw: raw_json,
+            offset: 0,
+        }
+        .parse()?;
+        let command = take_string(&mut fields, "command")?;
+        if command != "select_community_stack_dir" {
+            return Err(DesktopCommandError::InvalidRequest);
+        }
+        let organisation_id = take_string(&mut fields, "organisation_id")?;
+        if !fields.is_empty() {
+            return Err(DesktopCommandError::InvalidRequest);
+        }
+        Ok(organisation_id)
     }
 }
 

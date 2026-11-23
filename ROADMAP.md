@@ -38,9 +38,9 @@ Kodera is a public open-core monorepo: nothing listed here is held back from the
 - [ ] End-to-end native push delivery and device/provider qualification
 - [x] Reproducible native candidate verification and reviewed SPDX SBOM provenance gates across desktop and mobile targets
 - [x] Web Push notifications that wake the web client without carrying message text
-- [x] Origin-fenced Tauri v2 desktop shell and bridge (`@kodera/desktop`) with `kodera://` / `matrix:` deep-links, tray controls, opt-in Push-to-Talk, zeroized process credential vault, and direct GitHub Releases multi-OS desktop (`.dmg`, `.AppImage`, `.deb`, `.msi`, `-setup.exe`) and Android (`.apk`) distribution workflow with `SHA256SUMS.txt`
+- [x] Origin-fenced Tauri v2 desktop shell and bridge (`@kodera/desktop`) with `kodera://` / `matrix:` deep-links, tray/mute and media-capture controls, opt-in Push-to-Talk with focus-loss release safety, persistent OS keychain backend (`security` / `secret-tool` / `PasswordVault`) with atomic `0600` metadata index and zeroized RAM cache, macOS Hardened Runtime entitlements/`notarytool` and Windows `signtool.exe` release-signing hooks, and direct GitHub Releases multi-OS desktop (`.dmg`, `.AppImage`, `.deb`, `.msi`, `-setup.exe`) and Android (`.apk`) distribution workflow with `SHA256SUMS.txt`
 - [x] Automated self-host stack deployment and preflight orchestration inside the Kodera Desktop self-host wizard
-- [ ] Persistent OS keychain backend wiring, background iOS PushKit provisioning, OS-notarised desktop installers for macOS and Windows, and published Apple App Store / Google Play companion listings
+- [ ] Operator certificate provisioning for OS-notarised macOS and Authenticode-signed Windows public installers, background iOS PushKit provisioning, and published Apple App Store / Google Play companion listings
 
 ## Track 4 — Confidential Rooms & Federation (`Status: Transport & device primitives shipped; group coordinators in progress`)
 

@@ -81,10 +81,25 @@ export function buildPackagingPlan(target, env = process.env) {
   }
   const spec = OS_TARGETS[target];
   const conf = JSON.parse(readFileSync(join(tauriDir, 'tauri.conf.json'), 'utf8'));
-  const presentKeys = spec.signingEnvKeys.filter(
+  const hasMacKeychainProfile =
+    target === 'macos'
+    && typeof env.APPLE_KEYCHAIN_PROFILE === 'string'
+    && env.APPLE_KEYCHAIN_PROFILE.trim().length > 0;
+  const hasMacApiKey =
+    target === 'macos'
+    && typeof env.APPLE_API_KEY_PATH === 'string'
+    && env.APPLE_API_KEY_PATH.trim().length > 0
+    && typeof env.APPLE_API_KEY_ID === 'string'
+    && env.APPLE_API_KEY_ID.trim().length > 0;
+  const effectiveKeys = hasMacKeychainProfile
+    ? ['APPLE_SIGNING_IDENTITY', 'APPLE_KEYCHAIN_PROFILE', 'TAURI_SIGNING_PRIVATE_KEY']
+    : hasMacApiKey
+      ? ['APPLE_SIGNING_IDENTITY', 'APPLE_API_KEY_PATH', 'APPLE_API_KEY_ID', 'TAURI_SIGNING_PRIVATE_KEY']
+      : spec.signingEnvKeys;
+  const presentKeys = effectiveKeys.filter(
     (key) => typeof env[key] === 'string' && env[key].trim().length > 0,
   );
-  const missingKeys = spec.signingEnvKeys.filter((key) => !presentKeys.includes(key));
+  const missingKeys = effectiveKeys.filter((key) => !presentKeys.includes(key));
 
   return {
     identifier: conf.identifier,

@@ -104,6 +104,36 @@ fn w5_d1_commands_synchronize_tray_ptt_health_and_redact_keychain_secrets() {
         get_desktop_tray_state(&state, OTHER_ORG).unwrap().indicator,
         crate::TrayIndicator::Idle
     );
+
+    // Media capture preferences validate inputs, apply per organisation, and reset on switch.
+    let updated_media = configure_desktop_media_capture(
+        &mut state,
+        OTHER_ORG,
+        crate::ScreenShareSurface::BrowserTab,
+        true,
+        false,
+        Some("mic-external-xlr"),
+        Some("dac-line-out"),
+    )
+    .unwrap();
+    assert_eq!(
+        updated_media.preferred_surface,
+        crate::ScreenShareSurface::BrowserTab
+    );
+    assert!(updated_media.system_audio_loopback);
+    assert!(!updated_media.noise_suppression);
+    state
+        .switch_organisation(ORG, [0x42; 32], HashSet::from([[1; 32]]), 4)
+        .unwrap();
+    let reset_media = get_desktop_media_capture_state(&state, ORG).unwrap();
+    assert_eq!(
+        reset_media.preferred_surface,
+        crate::ScreenShareSurface::Monitor
+    );
+    assert!(!reset_media.system_audio_loopback);
+    assert!(reset_media.noise_suppression);
+    assert!(reset_media.preferred_audio_input_id.is_none());
+    assert!(reset_media.preferred_audio_output_id.is_none());
 }
 
 #[test]

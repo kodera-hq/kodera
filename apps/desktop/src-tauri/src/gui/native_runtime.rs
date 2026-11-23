@@ -3,15 +3,16 @@
 use super::*;
 use crate::{
     load_window_state, sanitize_and_clamp_window_state, save_window_state_atomic,
-    verify_embedded_tauri_conf_csp, DesktopShellError, MonitorWorkArea, SavedWindowState,
-    WindowBounds,
+    verify_embedded_tauri_conf_csp, DesktopShellError, MonitorWorkArea, PttModifier, PttTriggerKey,
+    SavedWindowState, WindowBounds,
 };
 use crate::{DeepLinkAdmissionPolicy, DesktopShellHost, MAX_IPC_COMMAND_BYTES};
 use std::borrow::Cow;
 use tao::{
     dpi::{LogicalPosition, LogicalSize},
-    event::{Event, WindowEvent},
+    event::{ElementState, Event, WindowEvent},
     event_loop::{ControlFlow, EventLoopBuilder},
+    keyboard::{KeyCode, ModifiersState},
     window::WindowBuilder,
 };
 use wry::{
@@ -121,6 +122,105 @@ fn collect_monitors<T>(event_loop: &tao::event_loop::EventLoop<T>) -> Vec<Monito
         out.push(MonitorWorkArea::fallback_primary());
     }
     out
+}
+
+pub(super) fn modifiers_from_tao(mods: ModifiersState) -> BTreeSet<PttModifier> {
+    let mut set = BTreeSet::new();
+    if mods.control_key() {
+        set.insert(PttModifier::Ctrl);
+    }
+    if mods.alt_key() {
+        set.insert(PttModifier::Alt);
+    }
+    if mods.shift_key() {
+        set.insert(PttModifier::Shift);
+    }
+    if mods.super_key() {
+        set.insert(PttModifier::Super);
+    }
+    set
+}
+
+pub(super) fn trigger_key_from_tao(code: KeyCode) -> Option<PttTriggerKey> {
+    match code {
+        KeyCode::KeyA => Some(PttTriggerKey::Letter('A')),
+        KeyCode::KeyB => Some(PttTriggerKey::Letter('B')),
+        KeyCode::KeyC => Some(PttTriggerKey::Letter('C')),
+        KeyCode::KeyD => Some(PttTriggerKey::Letter('D')),
+        KeyCode::KeyE => Some(PttTriggerKey::Letter('E')),
+        KeyCode::KeyF => Some(PttTriggerKey::Letter('F')),
+        KeyCode::KeyG => Some(PttTriggerKey::Letter('G')),
+        KeyCode::KeyH => Some(PttTriggerKey::Letter('H')),
+        KeyCode::KeyI => Some(PttTriggerKey::Letter('I')),
+        KeyCode::KeyJ => Some(PttTriggerKey::Letter('J')),
+        KeyCode::KeyK => Some(PttTriggerKey::Letter('K')),
+        KeyCode::KeyL => Some(PttTriggerKey::Letter('L')),
+        KeyCode::KeyM => Some(PttTriggerKey::Letter('M')),
+        KeyCode::KeyN => Some(PttTriggerKey::Letter('N')),
+        KeyCode::KeyO => Some(PttTriggerKey::Letter('O')),
+        KeyCode::KeyP => Some(PttTriggerKey::Letter('P')),
+        KeyCode::KeyQ => Some(PttTriggerKey::Letter('Q')),
+        KeyCode::KeyR => Some(PttTriggerKey::Letter('R')),
+        KeyCode::KeyS => Some(PttTriggerKey::Letter('S')),
+        KeyCode::KeyT => Some(PttTriggerKey::Letter('T')),
+        KeyCode::KeyU => Some(PttTriggerKey::Letter('U')),
+        KeyCode::KeyV => Some(PttTriggerKey::Letter('V')),
+        KeyCode::KeyW => Some(PttTriggerKey::Letter('W')),
+        KeyCode::KeyX => Some(PttTriggerKey::Letter('X')),
+        KeyCode::KeyY => Some(PttTriggerKey::Letter('Y')),
+        KeyCode::KeyZ => Some(PttTriggerKey::Letter('Z')),
+        KeyCode::Digit0 => Some(PttTriggerKey::Digit('0')),
+        KeyCode::Digit1 => Some(PttTriggerKey::Digit('1')),
+        KeyCode::Digit2 => Some(PttTriggerKey::Digit('2')),
+        KeyCode::Digit3 => Some(PttTriggerKey::Digit('3')),
+        KeyCode::Digit4 => Some(PttTriggerKey::Digit('4')),
+        KeyCode::Digit5 => Some(PttTriggerKey::Digit('5')),
+        KeyCode::Digit6 => Some(PttTriggerKey::Digit('6')),
+        KeyCode::Digit7 => Some(PttTriggerKey::Digit('7')),
+        KeyCode::Digit8 => Some(PttTriggerKey::Digit('8')),
+        KeyCode::Digit9 => Some(PttTriggerKey::Digit('9')),
+        KeyCode::Space => Some(PttTriggerKey::Space),
+        KeyCode::Backquote => Some(PttTriggerKey::Backquote),
+        KeyCode::Minus => Some(PttTriggerKey::Minus),
+        KeyCode::Equal => Some(PttTriggerKey::Equal),
+        KeyCode::BracketLeft => Some(PttTriggerKey::BracketLeft),
+        KeyCode::BracketRight => Some(PttTriggerKey::BracketRight),
+        KeyCode::Backslash => Some(PttTriggerKey::Backslash),
+        KeyCode::Semicolon => Some(PttTriggerKey::Semicolon),
+        KeyCode::Quote => Some(PttTriggerKey::Quote),
+        KeyCode::Comma => Some(PttTriggerKey::Comma),
+        KeyCode::Period => Some(PttTriggerKey::Period),
+        KeyCode::Slash => Some(PttTriggerKey::Slash),
+        KeyCode::CapsLock => Some(PttTriggerKey::CapsLock),
+        KeyCode::ScrollLock => Some(PttTriggerKey::ScrollLock),
+        KeyCode::Pause => Some(PttTriggerKey::Pause),
+        KeyCode::Insert => Some(PttTriggerKey::Insert),
+        KeyCode::F1 => Some(PttTriggerKey::Function(1)),
+        KeyCode::F2 => Some(PttTriggerKey::Function(2)),
+        KeyCode::F3 => Some(PttTriggerKey::Function(3)),
+        KeyCode::F4 => Some(PttTriggerKey::Function(4)),
+        KeyCode::F5 => Some(PttTriggerKey::Function(5)),
+        KeyCode::F6 => Some(PttTriggerKey::Function(6)),
+        KeyCode::F7 => Some(PttTriggerKey::Function(7)),
+        KeyCode::F8 => Some(PttTriggerKey::Function(8)),
+        KeyCode::F9 => Some(PttTriggerKey::Function(9)),
+        KeyCode::F10 => Some(PttTriggerKey::Function(10)),
+        KeyCode::F11 => Some(PttTriggerKey::Function(11)),
+        KeyCode::F12 => Some(PttTriggerKey::Function(12)),
+        KeyCode::F13 => Some(PttTriggerKey::Function(13)),
+        KeyCode::F14 => Some(PttTriggerKey::Function(14)),
+        KeyCode::F15 => Some(PttTriggerKey::Function(15)),
+        KeyCode::F16 => Some(PttTriggerKey::Function(16)),
+        KeyCode::F17 => Some(PttTriggerKey::Function(17)),
+        KeyCode::F18 => Some(PttTriggerKey::Function(18)),
+        KeyCode::F19 => Some(PttTriggerKey::Function(19)),
+        KeyCode::F20 => Some(PttTriggerKey::Function(20)),
+        KeyCode::F21 => Some(PttTriggerKey::Function(21)),
+        KeyCode::F22 => Some(PttTriggerKey::Function(22)),
+        KeyCode::F23 => Some(PttTriggerKey::Function(23)),
+        KeyCode::F24 => Some(PttTriggerKey::Function(24)),
+        _ => None,
+    }
 }
 
 pub(super) fn configure_gui_window_builder(
@@ -362,6 +462,56 @@ pub fn launch_desktop_gui(options: DesktopGuiOptions) -> Result<(), DesktopShell
                 live_state.maximized = window.is_maximized();
             }
             Event::WindowEvent {
+                event: WindowEvent::Focused(focused),
+                ..
+            } => {
+                for js in bridge.set_window_focused(focused) {
+                    let _ = webview.evaluate_script(&js);
+                }
+            }
+            Event::WindowEvent {
+                event: WindowEvent::ModifiersChanged(mods),
+                ..
+            } => {
+                for js in bridge.handle_modifiers_changed(modifiers_from_tao(mods)) {
+                    let _ = webview.evaluate_script(&js);
+                }
+            }
+            Event::WindowEvent {
+                event:
+                    WindowEvent::KeyboardInput {
+                        event,
+                        is_synthetic,
+                        ..
+                    },
+                ..
+            } => {
+                if event.physical_key == KeyCode::AudioVolumeMute
+                    && event.state == ElementState::Pressed
+                    && !event.repeat
+                    && !is_synthetic
+                {
+                    for js in bridge.handle_native_mute_toggle() {
+                        let _ = webview.evaluate_script(&js);
+                    }
+                } else if let Some(trigger) = trigger_key_from_tao(event.physical_key) {
+                    let now_ms = kodera_rs::system_unix_ms();
+                    match event.state {
+                        ElementState::Pressed if !is_synthetic && !event.repeat => {
+                            for js in bridge.handle_key_chord_event(trigger, true, now_ms) {
+                                let _ = webview.evaluate_script(&js);
+                            }
+                        }
+                        ElementState::Released => {
+                            for js in bridge.handle_key_chord_event(trigger, false, now_ms) {
+                                let _ = webview.evaluate_script(&js);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Event::WindowEvent {
                 event: WindowEvent::CloseRequested,
                 ..
             } => {
@@ -382,6 +532,7 @@ pub fn launch_desktop_gui(options: DesktopGuiOptions) -> Result<(), DesktopShell
                 window.set_visible(true);
                 window.set_minimized(false);
                 window.set_focus();
+                let _ = bridge.set_window_focused(true);
                 for js in bridge.enqueue_deep_link(admitted) {
                     let _ = webview.evaluate_script(&js);
                 }
