@@ -326,56 +326,25 @@ def matrix_authority(
     if action not in {"join", "event", "invite", "create", "call", "directory", "session"}:
         return denied
     guest = SingleChannelGuestGrant.objects.filter(matrix_user_id=user_id).first()
+    # Session probes have no room in the request; their authority is still bounded by
+    # the grant's room and its bilateral agreement, including after invalidation.
+    authority_room = guest.matrix_room_id if guest is not None and action == "session" else room_id
+    agreements = Q(matrix_room_id=authority_room)
     if guest is not None:
-        identity = current_identity_by_id(identity_id=guest.guest_identity_id)
-        allowed = (
-            getattr(settings, "KODERA_CHANNEL_GOVERNANCE_ENABLED", False) is True
-            and guest.organisation_id == organisation_id
-            and (guest.matrix_room_id == room_id or action == "session")
-            and guest.revoked_at is None
-            and guest.expires_at > timezone.now()
-            and identity is not None
-            and not has_privacy_cutoff(organisation_id=organisation_id, user_id=identity[0].id)
-            and action in {"join", "event", "call", "session"}
-            and (action != "call" or guest.allow_calls)
-            and Channel.objects.filter(id=guest.single_channel_id, lifecycle="active").exists()
-            and active_organisation(organisation_id=organisation_id)
+        # A grant cannot rename a bridged channel's room to evade its agreement.
+        agreements |= Q(channel_id=guest.single_channel_id) | Q(
+            partner_channel_id=guest.single_channel_id
         )
-        return {"allowed": allowed, "role": "single_channel_guest", "revision": 1}
-    agreement = PartnerChannelAgreement.objects.filter(matrix_room_id=room_id).first()
-    if agreement is None:
-        return {"allowed": True, "role": "unmanaged", "revision": 0}
-    if organisation_id not in {agreement.organisation_id, agreement.partner_organisation_id}:
-        return denied
-    if getattr(settings, "KODERA_CHANNEL_GOVERNANCE_ENABLED", False) is not True:
-        return denied
+    agreement = PartnerChannelAgreement.objects.filter(agreements).first()
     server = user_id.partition(":")[2]
-    remote = (
-        agreement.partner_homeserver
-        if organisation_id == agreement.organisation_id
-        else agreement.local_homeserver
-    )
-    if has_privacy_cutoff(organisation_id=agreement.organisation_id) or has_privacy_cutoff(
-        organisation_id=agreement.partner_organisation_id
-    ):
-        return denied
-    if server != remote:
-        return {
-            "allowed": agreement.state == "active"
-            and server
-            == (
-                agreement.local_homeserver
-                if organisation_id == agreement.organisation_id
-                else agreement.partner_homeserver
-            ),
-            "role": "local",
-            "revision": agreement.revision,
-        }
-    allowed = (
-        agreement.state == "active"
+    partner_allowed = agreement is None or (
+        getattr(settings, "KODERA_CHANNEL_GOVERNANCE_ENABLED", False) is True
+        and agreement.matrix_room_id == authority_room
+        and organisation_id in {agreement.organisation_id, agreement.partner_organisation_id}
+        and server in {agreement.local_homeserver, agreement.partner_homeserver}
+        and agreement.state == "active"
         and not has_privacy_cutoff(organisation_id=agreement.organisation_id)
         and not has_privacy_cutoff(organisation_id=agreement.partner_organisation_id)
-        and action in {"join", "event", "call"}
         and active_organisation(organisation_id=agreement.organisation_id)
         and active_organisation(organisation_id=agreement.partner_organisation_id)
         and Channel.objects.filter(
@@ -383,7 +352,50 @@ def matrix_authority(
         ).count()
         == 2
     )
-    return {"allowed": allowed, "role": "partner", "revision": agreement.revision}
+    if guest is not None:
+        identity = current_identity_by_id(identity_id=guest.guest_identity_id)
+        # Either participating agent may resolve this exact guest room. The grant
+        # remains owned by its issuing organisation; it grants no partner membership.
+        guest_scope = guest.organisation_id == organisation_id
+        if agreement is not None:
+            guest_scope = (
+                guest.organisation_id,
+                guest.single_channel_id,
+            ) in {
+                (agreement.organisation_id, agreement.channel_id),
+                (agreement.partner_organisation_id, agreement.partner_channel_id),
+            }
+        allowed = (
+            partner_allowed
+            and guest_scope
+            and getattr(settings, "KODERA_CHANNEL_GOVERNANCE_ENABLED", False) is True
+            and (guest.matrix_room_id == room_id or action == "session")
+            and guest.revoked_at is None
+            and guest.expires_at > timezone.now()
+            and identity is not None
+            and not has_privacy_cutoff(
+                organisation_id=guest.organisation_id, user_id=identity[0].id
+            )
+            and action in {"join", "event", "call", "session"}
+            and (action != "call" or guest.allow_calls)
+            and Channel.objects.filter(id=guest.single_channel_id, lifecycle="active").exists()
+            and active_organisation(organisation_id=guest.organisation_id)
+        )
+        return {"allowed": allowed, "role": "single_channel_guest", "revision": 1}
+    if agreement is None:
+        return {"allowed": True, "role": "unmanaged", "revision": 0}
+    if not partner_allowed:
+        return denied
+    local_server = (
+        agreement.local_homeserver
+        if organisation_id == agreement.organisation_id
+        else agreement.partner_homeserver
+    )
+    return {
+        "allowed": server == local_server or action in {"join", "event", "call"},
+        "role": "local" if server == local_server else "partner",
+        "revision": agreement.revision,
+    }
 
 
 @transaction.atomic

@@ -304,8 +304,8 @@ def test_organisation_erasure_removes_bilateral_and_guest_children(governed):
         SingleChannelGuestGrant,
     )
 
-    result = proposal(governed)
     test_guest_is_confined_across_rooms_homeservers_and_actions(governed)
+    result = proposal(governed)
     bridges.transition(
         verified=governed[0][3][0],
         organisation_id=governed[0][0].id,
@@ -422,3 +422,255 @@ def test_governance_issuance_is_disabled_until_operator_activation(governed, set
         ]
         is False
     )
+
+
+@pytest.fixture(params=[("host", "local"), ("host", "peer"), ("peer", "local"), ("peer", "peer")])
+def bridged_guest(governed, request):
+    """Either organisation may grant a guest from either configured homeserver."""
+    from apps.engine_intents.services import issue_credential
+    from apps.workspaces.models import PartnerChannelAgreement, SingleChannelGuestGrant
+    from services.identity.access_tokens import VerifiedAccessToken
+
+    world, peer, channels = governed
+    host = world[0]
+    channels = [
+        Channel.objects.create(
+            workspace=channel.workspace,
+            kind="audio",
+            name="Shared audio",
+            position=1,
+            lifecycle="active",
+        )
+        for channel in channels
+    ]
+    result = proposal((world, peer, channels))
+    owner = Membership.objects.get(organisation=peer, role="org_owner")
+    owner_identity = Identity.objects.get(organisation=peer, user=owner.user)
+    peer_token = VerifiedAccessToken(
+        peer.issuer,
+        owner_identity.subject,
+        ("kodera-server",),
+        0,
+        2**31,
+        None,
+        None,
+        None,
+        None,
+        email_verified=True,
+    )
+    bridges.transition(
+        verified=peer_token,
+        organisation_id=peer.id,
+        agreement_id=result["id"],
+        body={"revision": 1, "action": "activate"},
+        request_id=str(uuid4()),
+    )
+    side, home = request.param
+    org, channel, token = (
+        (host, channels[0], world[3][0]) if side == "host" else (peer, channels[1], peer_token)
+    )
+    user = User.objects.create(email="bridge-guest@example.org")
+    identity_org = host if home == "local" else peer
+    identity = Identity.objects.create(
+        user=user,
+        organisation=identity_org,
+        issuer=identity_org.issuer,
+        realm=identity_org.realm,
+        subject=str(uuid4()),
+        email=user.email,
+    )
+    guest_user = "@guest:" + ("local.example.org" if home == "local" else "peer.example.org")
+    grant = bridges.grant_guest(
+        verified=token,
+        organisation_id=org.id,
+        body={
+            "guestIdentityId": str(identity.id),
+            "matrixUserId": guest_user,
+            "channelId": str(channel.id),
+            "matrixRoomId": result["matrixRoomId"],
+            "expiresAt": (timezone.now() + timedelta(hours=1)).isoformat(),
+            "allowCalls": True,
+        },
+        request_id=str(uuid4()),
+    )
+    return {
+        "agreement": PartnerChannelAgreement.objects.get(id=result["id"]),
+        "grant": SingleChannelGuestGrant.objects.get(id=grant["id"]),
+        "credentials": [issue_credential(organisation_id=o.id)[1] for o in (host, peer)],
+        "orgs": [host.id, peer.id],
+        "tokens": [world[3][0], peer_token],
+    }
+
+
+def invalidate_bridge_guest(fixture, reason, monkeypatch):
+    """Invalidate stored authority while leaving Matrix membership and policy stale."""
+    agreement, grant = fixture["agreement"], fixture["grant"]
+    if reason in {"suspended", "revoked"}:
+        bridges.transition(
+            verified=fixture["tokens"][0],
+            organisation_id=fixture["orgs"][0],
+            agreement_id=agreement.id,
+            body={
+                "revision": agreement.revision,
+                "action": "suspend" if reason == "suspended" else "revoke",
+            },
+            request_id=str(uuid4()),
+        )
+    elif reason == "proposed":
+        for revision, action in [
+            (agreement.revision, "suspend"),
+            (agreement.revision + 1, "repropose"),
+        ]:
+            bridges.transition(
+                verified=fixture["tokens"][0],
+                organisation_id=fixture["orgs"][0],
+                agreement_id=agreement.id,
+                body={"revision": revision, "action": action},
+                request_id=str(uuid4()),
+            )
+    elif reason == "guest-revoked":
+        index = fixture["orgs"].index(grant.organisation_id)
+        bridges.revoke_guest(
+            verified=fixture["tokens"][index],
+            organisation_id=grant.organisation_id,
+            grant_id=grant.id,
+            request_id=str(uuid4()),
+        )
+    elif reason == "guest-expired":
+        monkeypatch.setattr(
+            bridges.timezone, "now", lambda: grant.expires_at + timedelta(seconds=1)
+        )
+    else:
+        raise AssertionError(reason)
+
+
+@pytest.mark.parametrize(
+    "reason", ["suspended", "revoked", "proposed", "guest-revoked", "guest-expired"]
+)
+def test_both_agents_intersect_guest_and_partner_authority(bridged_guest, reason, monkeypatch):
+    from apps.engine_intents.services import channel_authority, issue_credential
+
+    grant = bridged_guest["grant"]
+    for credential in bridged_guest["credentials"]:
+        for action in ["join", "event", "call", "session"]:
+            room = "" if action == "session" else grant.matrix_room_id
+            assert (
+                channel_authority(
+                    token=credential, room_id=room, user_id=grant.matrix_user_id, action=action
+                )["allowed"]
+                is True
+            )
+        for action in ["invite", "create", "directory"]:
+            assert (
+                channel_authority(
+                    token=credential,
+                    room_id=grant.matrix_room_id,
+                    user_id=grant.matrix_user_id,
+                    action=action,
+                )["allowed"]
+                is False
+            )
+        for room in ["!other:local.example.org", "!other:peer.example.org"]:
+            for action in ["join", "event", "call"]:
+                assert (
+                    channel_authority(
+                        token=credential, room_id=room, user_id=grant.matrix_user_id, action=action
+                    )["allowed"]
+                    is False
+                )
+    # Another organisation's valid credential gains no authority over this guest.
+    with transaction.atomic():
+        stranger = Organisation.objects.create(
+            slug="stranger",
+            realm="stranger",
+            name="Stranger",
+            state="active",
+            issuer="https://identity.example.org/realms/stranger",
+        )
+        SlugReservation.objects.create(
+            organisation=stranger,
+            slug="stranger",
+            namespace="organisation",
+            state="permanent",
+            protected_at=timezone.now(),
+        )
+        owner = Membership.objects.get(organisation_id=bridged_guest["orgs"][0], role="org_owner")
+        Identity.objects.create(
+            user=owner.user,
+            organisation=stranger,
+            issuer=stranger.issuer,
+            realm="stranger",
+            subject=str(uuid4()),
+            email=owner.user.email,
+        )
+        Membership.objects.create(
+            organisation=stranger,
+            user=owner.user,
+            role="org_owner",
+            state="active",
+            accepted_at=timezone.now(),
+        )
+    _, credential = issue_credential(organisation_id=stranger.id)
+    assert (
+        channel_authority(
+            token=credential,
+            room_id=grant.matrix_room_id,
+            user_id=grant.matrix_user_id,
+            action="join",
+        )["allowed"]
+        is False
+    )
+    invalidate_bridge_guest(bridged_guest, reason, monkeypatch)
+    for credential in bridged_guest["credentials"]:
+        for action in ["join", "event", "call", "session"]:
+            decision = channel_authority(
+                token=credential,
+                room_id="" if action == "session" else grant.matrix_room_id,
+                user_id=grant.matrix_user_id,
+                action=action,
+            )
+            assert decision["allowed"] is False
+            assert decision["role"] == "single_channel_guest"
+
+
+def test_guest_cannot_rename_a_bridged_channel_to_bypass_agreement(bridged_guest):
+    from apps.engine_intents.services import channel_authority
+    from apps.workspaces.models import SingleChannelGuestGrant
+
+    original = bridged_guest["grant"]
+    org = Organisation.objects.get(id=original.organisation_id)
+    user = User.objects.create(email="mismatched-guest@example.org")
+    guest = Identity.objects.create(
+        user=user,
+        organisation=org,
+        issuer=org.issuer,
+        realm=org.realm,
+        subject=str(uuid4()),
+        email=user.email,
+    )
+    index = bridged_guest["orgs"].index(org.id)
+    result = bridges.grant_guest(
+        verified=bridged_guest["tokens"][index],
+        organisation_id=org.id,
+        body={
+            "guestIdentityId": str(guest.id),
+            "matrixUserId": "@mismatched:peer.example.org",
+            "channelId": str(original.single_channel_id),
+            "matrixRoomId": "!renamed:local.example.org",
+            "expiresAt": (timezone.now() + timedelta(hours=1)).isoformat(),
+            "allowCalls": True,
+        },
+        request_id=str(uuid4()),
+    )
+    grant = SingleChannelGuestGrant.objects.get(id=result["id"])
+    for credential in bridged_guest["credentials"]:
+        for action in ["join", "event", "call", "session"]:
+            assert (
+                channel_authority(
+                    token=credential,
+                    room_id=grant.matrix_room_id,
+                    user_id=grant.matrix_user_id,
+                    action=action,
+                )["allowed"]
+                is False
+            )

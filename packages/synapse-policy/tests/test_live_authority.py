@@ -124,3 +124,88 @@ def test_two_policy_homeservers_admit_only_live_bilateral_shared_room():
     publication = event('m.room.topic', AGENT, state=True, topic='Shared')
     publication.room_id = room
     assert run(peer.check_event_allowed(publication, state))[0] is False
+
+
+@pytest.mark.parametrize('guest_home', ['acme-sa.kodera.io', 'partner.example.org'])
+@pytest.mark.parametrize('invalidation', ['suspended', 'revoked', 'proposed', 'guest-revoked', 'guest-expired'])
+def test_guest_on_either_homeserver_needs_live_grant_and_bilateral_agreement(guest_home, invalidation):
+    from test_federation import partner_state
+    from test_policy import ALLOWED, FakeApi, SERVER, event, run
+
+    partner = 'partner.example.org'
+    room, guest = '!shared:' + SERVER, '@guest:' + guest_home
+    state = partner_state()
+    content = state[('io.kodera.room.policy', '')].content
+    content.update(members=[], local_members=[])
+    state[('m.room.member', guest)] = SimpleNamespace(content={'membership': 'join'})
+
+    class Core:
+        agreement = 'active'
+        grant = 'active'
+
+        def __init__(self):
+            self.calls = []
+
+        async def get_json(self, url, args, headers):
+            credential = headers['Authorization'][0]
+            assert credential in {'Bearer host-agent', 'Bearer peer-agent'}
+            self.calls.append((credential, args['user_id'], args['room_id'], args['action']))
+            is_guest = args['user_id'] == guest
+            allowed = self.agreement == 'active' and (
+                self.grant == 'active' if is_guest else True
+            ) and (
+                args['room_id'] == room and args['action'] in {'join', 'event', 'call'}
+                or is_guest and args['room_id'] == '' and args['action'] == 'session'
+            )
+            return {'allowed': allowed, 'role': 'single_channel_guest' if is_guest else 'local', 'revision': 2}
+
+    core, policies = Core(), []
+    for server, other, token in [(SERVER, partner, 'host-agent'), (partner, SERVER, 'peer-agent')]:
+        class LocalApi(FakeApi):
+            def __init__(self, local):
+                super().__init__({room: state})
+                self.local = local
+                self.http_client = core
+
+            def is_mine(self, user):
+                return user.endswith(':' + self.local)
+
+        api = LocalApi(server)
+        policy = KoderaPolicy({
+            'agent_user_id': '@kodera-agent:' + server,
+            'federation_domain_allowlist': [other],
+            'core_authority_origin': 'https://core.example.org',
+            'core_authority_token': token,
+        }, api)
+        policies.append(policy)
+
+    message = event('m.room.message', guest, state=False)
+    message.room_id = room
+    join = event('m.room.member', guest, membership='join')
+    join.room_id, join.state_key = room, guest
+    for policy in policies:
+        assert run(policy.user_may_join_room(guest, room, True)) == ALLOWED
+        assert run(policy.check_event_allowed(join, state))[0]
+        assert run(policy.check_event_allowed(message, state))[0]
+        assert run(policy.check_event_for_spam(message)) == ALLOWED
+        assert run(policy.request_allowed(guest, '/_matrix/client/v3/rooms/' + room + '/messages', 'GET'))
+        assert run(policy.request_allowed(guest, '/_matrix/client/v3/account/whoami', 'GET'))
+        assert not run(policy.request_allowed(guest, '/_matrix/client/v3/user_directory/search', 'POST'))
+        assert run(policy.user_may_join_room(guest, '!other:' + SERVER, True)) == Codes.FORBIDDEN
+        assert run(policy.user_may_create_room(guest, {'is_direct': True})) == Codes.FORBIDDEN
+        assert run(policy._authority.decide(guest, room, 'call'))['allowed']
+    if invalidation.startswith('guest-'):
+        core.grant = invalidation.removeprefix('guest-')
+    else:
+        core.agreement = invalidation
+    for policy in policies:
+        assert run(policy.user_may_join_room(guest, room, True)) == Codes.FORBIDDEN
+        assert not run(policy.check_event_allowed(join, state))[0]
+        assert not run(policy.check_event_allowed(message, state))[0]
+        assert run(policy.check_event_for_spam(message)) == Codes.FORBIDDEN
+        assert not run(policy.request_allowed(guest, '/_matrix/client/v3/rooms/' + room + '/messages', 'GET'))
+        assert not run(policy.request_allowed(guest, '/_matrix/client/v3/account/whoami', 'GET'))
+        assert not run(policy._authority.decide(guest, room, 'call'))['allowed']
+    assert {call[0] for call in core.calls} == {'Bearer host-agent', 'Bearer peer-agent'}
+    assert content['members'] == content['local_members'] == []
+    assert state[('m.room.member', guest)].content['membership'] == 'join'
