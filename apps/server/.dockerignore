@@ -417,3 +417,14 @@ config/settings/deploy_worker.py
 !apps/ai_gateway/api/responses.py
 !apps/ai_gateway/api/urls.py
 !apps/ai_gateway/api/views.py
+
+# Default-disabled inter-org channel governance, guest scope gate, and MLS directory; no migrations.
+!apps/workspaces/bridges.py
+!apps/workspaces/guest_http.py
+!apps/workspaces/api/bridges.py
+!apps/confidential/__init__.py
+!apps/confidential/apps.py
+!apps/confidential/models.py
+!apps/confidential/services.py
+!apps/confidential/api/__init__.py
+!apps/confidential/api/views.py

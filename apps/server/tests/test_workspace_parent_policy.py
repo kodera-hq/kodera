@@ -973,6 +973,10 @@ WARM_POOL_TABLE = "workspaces_warmpoolallocation"
 TEMPLATE_APP_TABLE = "workspaces_workspacetemplateapplication"
 AI_POLICY_TABLE = "workspaces_workspaceaipolicy"
 AI_CONSENT_TABLE = "workspaces_memberaiconsent"
+PARTNER_AGREEMENT_TABLE = "workspaces_partnerchannelagreement"
+PARTNER_REVISION_TABLE = "workspaces_partnerchannelagreementrevision"
+GUEST_GRANT_TABLE = "workspaces_singlechannelguestgrant"
+SESSION_EVICTION_TABLE = "workspaces_sessioneviction"
 NOTICE_TABLE = "workspaces_channelnotice"
 ESPACE_OBJECTS = {
     ("column", "workspaces_channel", "room_state"),
@@ -1015,11 +1019,22 @@ def without_warm_pool(objects):
         ("function", "workspace_ai_account_cutoff_guard", ""),
         ("function", "workspace_ai_erasure_hook", ""),
         ("function", "account_ai_consent_erasure_hook", ""),
+        ("function", "channel_governance_guard", ""),
     }
     return {
         key: value
         for key, value in objects.items()
-        if key[1] not in {WARM_POOL_TABLE, TEMPLATE_APP_TABLE, AI_POLICY_TABLE, AI_CONSENT_TABLE}
+        if key[1]
+        not in {
+            WARM_POOL_TABLE,
+            TEMPLATE_APP_TABLE,
+            AI_POLICY_TABLE,
+            AI_CONSENT_TABLE,
+            PARTNER_AGREEMENT_TABLE,
+            PARTNER_REVISION_TABLE,
+            GUEST_GRANT_TABLE,
+            SESSION_EVICTION_TABLE,
+        }
         and key not in template_app_shared
     }
 

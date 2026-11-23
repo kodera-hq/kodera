@@ -34,7 +34,7 @@ const collections = operations.filter((op) => op.isList)
 describe('the generated handlers', () => {
   it('cover every operation in the contract', () => {
     // A count that silently drops to zero would make every assertion below vacuous.
-    expect(operations.length).toBe(212)
+    expect(operations.length).toBe(220)
     expect(collections.length).toBeGreaterThan(20)
   })
 
