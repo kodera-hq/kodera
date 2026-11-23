@@ -895,6 +895,15 @@ class SessionController internal constructor(
             workerExecutor = workers,
             fence = conversationFence,
             initialForeground = _isForeground.value,
+            onAuthenticatedSync = { roomId, batch ->
+                if (!conversationFence.isInvalidated) nativeCalls?.coordinator?.consumeAuthenticatedSync(batch, roomId)
+            },
+            onTransportFailure = { failure ->
+                if (!conversationFence.isInvalidated) nativeCalls?.coordinator?.consumeTransportFailure(failure)
+            },
+            onSecurityBoundaryChanged = {
+                if (!conversationFence.isInvalidated) nativeCalls?.coordinator?.revoke()
+            },
         )
     }
 
@@ -903,7 +912,7 @@ class SessionController internal constructor(
         requireMain()
         check(phase is SessionPhase.SignedIn && member is MemberState.Loaded)
         val scope = activeConversation?.scope ?: error("channel unavailable")
-        check(scope.kind == ChannelKind.AUDIO)
+        check(scope.kind == ChannelKind.AUDIO && activeConversation?.isConfidential == false)
         val transport = activeMatrixTransport ?: error("transport unavailable")
         nativeCalls?.stop(); nativeCalls = null
         val coordinator = NativeCallCoordinator(scope.organisationId, localPartyId, resolver, media, transport, clockUnixSeconds)

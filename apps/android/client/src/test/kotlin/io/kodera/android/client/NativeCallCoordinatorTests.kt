@@ -16,7 +16,7 @@ private open class MediaFixture : LiveKitWebRTCSession {
     val connects = AtomicInteger(); val disconnects = AtomicInteger(); val networks = AtomicInteger()
     var microphone = false
     override fun connect(call: AuthenticatedNativeCall) { connects.incrementAndGet() }
-    override fun disconnect() { disconnects.incrementAndGet() }
+    override fun disconnect() { disconnects.incrementAndGet(); microphone = false }
     override fun microphone(enabled: Boolean) { microphone = enabled }
     override fun audioSession(active: Boolean) {}
     override fun networkPathChanged() { networks.incrementAndGet() }
@@ -27,10 +27,10 @@ private class ChatFixture : ChannelConversationTransport {
     var events = emptyList<MatrixRawTimelineEvent>()
     var lostRooms = emptySet<String>()
     var syncFailure: MatrixClientError? = null
-    override fun bootstrapRoom(organisationId: String, channelId: String) = BootstrappedMatrixRoom("!room:example.org", MatrixSyncBatch("one", emptyMap()))
+    override fun bootstrapRoom(organisationId: String, channelId: String) = BootstrappedMatrixRoom("!room:example.org", MatrixSyncBatch("one", emptyMap(), plaintextAllowedRooms = setOf("!room:example.org")))
     override fun syncRoom(roomId: String, since: String?): MatrixSyncBatch {
         syncFailure?.let { throw MatrixClientException(it) }
-        return MatrixSyncBatch("two", mapOf(roomId to events), authorityLostRooms = lostRooms)
+        return MatrixSyncBatch("two", mapOf(roomId to events), plaintextAllowedRooms = setOf(roomId), authorityLostRooms = lostRooms)
     }
     override fun sendMessage(roomId: String, transactionId: String, body: String, replyToEventId: String?, attachments: List<AttachmentMetadataRef>): String {
         check(!refuse); return "\$sent"
@@ -102,6 +102,43 @@ class NativeCallCoordinatorTests {
             assertThrows(MatrixClientException::class.java) { coordinator.syncCompanionTimeline("one") }
             assertNull(coordinator.currentCall()); assertNull(coordinator.phase(CALL)); assertEquals(1, media.disconnects.get())
         }
+    }
+    @Test fun liveSyncPlaintextExclusionRevokesRingingAndConnectedCalls() {
+        for (connected in listOf(false, true)) {
+            val media = MediaFixture(); val presenter = PresenterFixture()
+            val coordinator = NativeCallCoordinator(ORG, "local", resolver(), media, ChatFixture(), { 100 })
+            coordinator.bind(presenter); coordinator.receive(wake())
+            if (connected) { coordinator.answer(CALL); coordinator.audioSession(true) }
+            coordinator.consumeAuthenticatedSync(MatrixSyncBatch("other", mapOf("!other:example.org" to emptyList())), "!other:example.org")
+            assertNotNull(coordinator.currentCall())
+            coordinator.consumeAuthenticatedSync(MatrixSyncBatch("blocked", emptyMap()), "!room:example.org")
+            assertNull(coordinator.currentCall()); assertNull(coordinator.phase(CALL)); assertFalse(media.microphone)
+            assertEquals(1, media.disconnects.get()); assertEquals(listOf(NativeRingPhase.REVOKED), presenter.reasons)
+        }
+    }
+    @Test fun liveAuthorityFailuresAndLateCancellationWakesAreSafe() {
+        for (failure in listOf(MatrixClientError.NOT_FOUND, MatrixClientError.FORBIDDEN, MatrixClientError.UNAUTHORIZED,
+            MatrixClientError.PLAINTEXT_FORBIDDEN, MatrixClientError.PROTOCOL_VIOLATION, MatrixClientError.IDENTITY_UNAVAILABLE)) {
+            val media = MediaFixture(); val presenter = PresenterFixture()
+            val coordinator = NativeCallCoordinator(ORG, "local", resolver(), media, ChatFixture(), { 100 })
+            coordinator.bind(presenter); coordinator.receive(wake()); coordinator.answer(CALL)
+            coordinator.consumeTransportFailure(MatrixClientException(MatrixClientError.SERVICE_UNAVAILABLE))
+            assertNotNull(coordinator.currentCall())
+            coordinator.consumeTransportFailure(MatrixClientException(failure))
+            coordinator.receive(wake(NativeRingPhase.ANSWERED_ELSEWHERE, 2))
+            coordinator.receive(wake(NativeRingPhase.ENDED, 3)); coordinator.receive(wake(epoch = 4))
+            assertNull(coordinator.currentCall()); assertNull(coordinator.phase(CALL))
+            assertEquals(1, media.disconnects.get()); assertEquals(listOf(NativeRingPhase.REVOKED), presenter.reasons)
+        }
+    }
+    @Test fun audioFocusRevocationDiscardsLateCancellationWakes() {
+        val media = MediaFixture(); val presenter = PresenterFixture()
+        val coordinator = NativeCallCoordinator(ORG, "local", resolver(), media, ChatFixture(), { 100 })
+        coordinator.bind(presenter); coordinator.receive(wake()); coordinator.answer(CALL); coordinator.audioSession(true)
+        coordinator.revoke()
+        coordinator.receive(wake(NativeRingPhase.ANSWERED_ELSEWHERE, 2)); coordinator.receive(wake(NativeRingPhase.ENDED, 3))
+        assertNull(coordinator.currentCall()); assertNull(coordinator.phase(CALL)); assertFalse(media.microphone)
+        assertEquals(listOf(NativeRingPhase.REVOKED), presenter.reasons); assertEquals(1, media.disconnects.get())
     }
     @Test fun replayAndCapacityRejectionsPreserveTheActiveCall() {
         for (connected in listOf(false, true)) {
@@ -183,6 +220,7 @@ class NativeCallCoordinatorTests {
         coordinator.receive(wake()); coordinator.answer(CALL); chat.refuse = true
         assertThrows(IllegalStateException::class.java) { coordinator.sendCompanionMessage("Denied") }
         assertNull(coordinator.currentCall()); assertNull(coordinator.phase(CALL)); assertEquals(1, media.disconnects.get())
-        assertThrows(IllegalStateException::class.java) { coordinator.receive(wake()) }
+        coordinator.receive(wake())
+        assertNull(coordinator.currentCall()); assertNull(coordinator.phase(CALL)); assertEquals(1, media.connects.get())
     }
 }

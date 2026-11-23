@@ -1214,7 +1214,7 @@ class Wave5ParitySessionTests {
 
             drainUntil("bootstrap B live & catch-up sync completed") {
                 controller.workspace is WorkspaceViewState.Loaded &&
-                    openConv.isBootstrapped &&
+                    openConv.isBootstrapped && !openConv.isSyncing &&
                     openConv.syncStatusRes == R.string.conversation_status_live &&
                     syncHits.get() >= syncHitsBeforeReleaseB + 2
             }

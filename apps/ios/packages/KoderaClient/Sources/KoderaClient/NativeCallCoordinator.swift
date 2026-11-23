@@ -84,7 +84,7 @@ public final class NativeCallCoordinator {
             guard owns(owner, wake.callId) else { return }
             guard room.roomId == resolved.roomId else { throw KoderaMobileFfiError.organisationMismatch }
             try wake.validate(now: now())
-            call = resolved; consumeAuthenticatedSync(room.initialBatch)
+            call = resolved; consumeAuthenticatedSync(room.initialBatch, roomId: room.roomId)
             guard owns(owner, wake.callId) else { return }
             presenter?.metadata(resolved)
             if answerRequested { try await connect(owner: owner, call: resolved) }
@@ -159,19 +159,30 @@ public final class NativeCallCoordinator {
         do {
             let batch = try await conversation.syncRoom(roomId: call.roomId, since: since)
             guard owns(owner, call.wake.callId) else { throw KoderaMobileFfiError.authenticationFailed }
-            consumeAuthenticatedSync(batch)
+            consumeAuthenticatedSync(batch, roomId: call.roomId)
             return batch
         } catch { if owns(owner, call.wake.callId) { finish(.revoked) }; throw error }
     }
-    public func consumeAuthenticatedSync(_ batch: MatrixSyncBatch) {
-        guard let call else { return }
-        if batch.authorityLostRooms.contains(call.roomId) { finish(.revoked); return }
-        for event in batch.roomEvents[call.roomId] ?? [] {
+    public func consumeAuthenticatedSync(_ batch: MatrixSyncBatch, roomId: String? = nil) {
+        guard let id = activeId, let currentRoomId = call?.roomId ?? roomId else { return }
+        if batch.authorityLostRooms.contains(currentRoomId) ||
+            ((roomId == nil || roomId == currentRoomId) && !batch.plaintextAllowedRooms.contains(currentRoomId)) {
+            finish(.revoked); return
+        }
+        for event in batch.roomEvents[currentRoomId] ?? [] {
             if event.type == "m.call.answer", event.sender == conversation.ownUserId,
-               !event.isRedactedUnsigned, event.callId == call.wake.callId,
+               !event.isRedactedUnsigned, event.callId == id,
                let party = event.callPartyId, !party.isEmpty, party != localPartyId {
                 finish(.answeredElsewhere); return
             }
+        }
+    }
+    /// Forwarded by the session's live conversation consumer, including bootstrap failures.
+    public func consumeTransportFailure(_ failure: MatrixClientFailure) {
+        switch failure {
+        case .notFound, .forbidden, .unauthorized, .plaintextForbidden, .protocolViolation,
+             .signedOut, .signedOutNotWiped, .identityUnavailable: revoke()
+        default: break
         }
     }
     /// Only authenticated, scope-correlated Matrix m.call.answer / call membership events enter here.

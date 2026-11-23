@@ -60,7 +60,7 @@ class NativeCallCoordinator(
     fun ownsCall(callId: String, owner: Long): Boolean = owns(owner, callId)
     fun receive(wake: NativeCallWake) {
         val owner = synchronized(lock) {
-            check(!stopped)
+            if (stopped) return
             // Admission errors describe an untrusted wake, never loss of the active call's authority.
             try { ring.observe(wake, now()) } catch (_: KoderaMobileFfiFailure) { return }
             if (wake.state != NativeRingPhase.RINGING) {
@@ -77,7 +77,7 @@ class NativeCallCoordinator(
             synchronized(lock) {
                 if (!owns(owner, wake.callId)) return
                 check(room.roomId == resolved.roomId); wake.validate(now())
-                call = resolved; consumeAuthenticatedSync(room.initialBatch)
+                call = resolved; consumeAuthenticatedSync(room.initialBatch, room.roomId)
                 if (!owns(owner, wake.callId)) return
                 presenter?.ringing(resolved)
             }
@@ -153,20 +153,32 @@ class NativeCallCoordinator(
         try {
             val batch = conversation.syncRoom(context.second.roomId, since)
             synchronized(lock) {
-                check(owns(context.first, context.second.wake.callId)); consumeAuthenticatedSync(batch)
+                check(owns(context.first, context.second.wake.callId)); consumeAuthenticatedSync(batch, context.second.roomId)
             }
             return batch
         } catch (failure: Exception) {
             synchronized(lock) { if (owns(context.first, context.second.wake.callId)) finish(NativeRingPhase.REVOKED) }; throw failure
         }
     }
-    fun consumeAuthenticatedSync(batch: MatrixSyncBatch) = synchronized(lock) {
-        val current = call ?: return@synchronized
-        if (current.roomId in batch.authorityLostRooms) { finish(NativeRingPhase.REVOKED); return@synchronized }
-        if (batch.roomEvents[current.roomId].orEmpty().any {
+    fun consumeAuthenticatedSync(batch: MatrixSyncBatch, roomId: String? = null) = synchronized(lock) {
+        val id = activeId ?: return@synchronized
+        val currentRoomId = call?.roomId ?: roomId ?: return@synchronized
+        if (currentRoomId in batch.authorityLostRooms ||
+            ((roomId == null || roomId == currentRoomId) && currentRoomId !in batch.plaintextAllowedRooms)
+        ) { finish(NativeRingPhase.REVOKED); return@synchronized }
+        if (batch.roomEvents[currentRoomId].orEmpty().any {
             it.type == "m.call.answer" && it.sender == conversation.ownUserId && !it.isRedactedUnsigned &&
-                it.callId == current.wake.callId && !it.callPartyId.isNullOrEmpty() && it.callPartyId != localPartyId
+                it.callId == id && !it.callPartyId.isNullOrEmpty() && it.callPartyId != localPartyId
         }) finish(NativeRingPhase.ANSWERED_ELSEWHERE)
+    }
+    /** Forwarded by the session's live conversation consumer, including bootstrap failures. */
+    fun consumeTransportFailure(failure: MatrixClientException) {
+        when (failure.reason) {
+            MatrixClientError.NOT_FOUND, MatrixClientError.FORBIDDEN, MatrixClientError.UNAUTHORIZED,
+            MatrixClientError.PLAINTEXT_FORBIDDEN, MatrixClientError.PROTOCOL_VIOLATION,
+            MatrixClientError.SIGNED_OUT, MatrixClientError.IDENTITY_UNAVAILABLE -> revoke()
+            else -> Unit
+        }
     }
     /** Only scope-correlated authenticated Matrix answer/call-membership events enter here. */
     fun answeredElsewhere(callId: String, organisationId: String, channelId: String) = synchronized(lock) {

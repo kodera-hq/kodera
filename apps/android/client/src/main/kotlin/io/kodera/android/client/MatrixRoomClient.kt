@@ -645,7 +645,7 @@ class MatrixRoomClient private constructor(
             }
             val allowed = runCatching { requirePlaintextAllowed(homeserverOrigin, roomId) }.isSuccess
             completed = true
-            val authorityLost = synchronized(securityLock) { security[securityKey(homeserverOrigin, roomId)]?.matrixKnown != true }
+            val authorityLost = !allowed
             return MatrixSyncBatch.fromDeltas(nextBatch = nextBatch, deltas = roomDeltas).copy(
                 plaintextAllowedRooms = if (allowed) setOf(roomId) else emptySet(),
                 authorityLostRooms = if (authorityLost) setOf(roomId) else emptySet(),

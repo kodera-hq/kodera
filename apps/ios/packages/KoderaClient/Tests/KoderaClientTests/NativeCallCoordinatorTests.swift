@@ -79,12 +79,14 @@ private actor CallChatFixture: ChannelConversationTransport {
     func deny() { refuse = true }
     func setEvents(_ value: [MatrixRawTimelineEvent]) { events = value }
     func bootstrapRoom(organisationId: String, channelId: String) async throws(MatrixClientFailure) -> (roomId: String, initialBatch: MatrixSyncBatch) {
-        ("!room:example.org", MatrixSyncBatch(nextBatch: "one", roomEvents: [:]))
+        var batch = MatrixSyncBatch(nextBatch: "one", roomEvents: [:])
+        batch.plaintextAllowedRooms = ["!room:example.org"]
+        return ("!room:example.org", batch)
     }
     func syncRoom(roomId: String, since: String?) async throws(MatrixClientFailure) -> MatrixSyncBatch {
         if let syncFailure { throw syncFailure }
         var batch = MatrixSyncBatch(nextBatch: "two", roomEvents: [roomId: events])
-        batch.authorityLostRooms = lostRooms; return batch
+        batch.authorityLostRooms = lostRooms; batch.plaintextAllowedRooms = [roomId]; return batch
     }
     func sendMessage(roomId: String, transactionId: String, body: String, replyToEventId: String?, attachments: [AttachmentMetadataRef]) async throws(MatrixClientFailure) -> String {
         if refuse { throw .notFound }; return "$sent"
@@ -161,6 +163,30 @@ private actor CallChatFixture: ChannelConversationTransport {
             try await coordinator.receive(callWake()); try await coordinator.answer(callId: callId)
             await chat.failSync(failure)
             do { _ = try await coordinator.syncCompanionTimeline(since: "one"); XCTFail("Authority failure must propagate") } catch {}
+            XCTAssertNil(coordinator.call); XCTAssertTrue(coordinator.ring.records.isEmpty); XCTAssertEqual(media.disconnects, 1)
+        }
+    }
+    func testLiveSyncPlaintextExclusionRevokesRingingAndConnectedCalls() async throws {
+        for connected in [false, true] {
+            let media = CallMediaFixture(); let presenter = CallPresenterFixture()
+            let coordinator = try NativeCallCoordinator(organisationId: callOrg, localPartyId: "local", resolver: ImmediateCallResolver(), media: media, conversation: CallChatFixture(), now: { 100 })
+            coordinator.bind(presenter); try await coordinator.receive(callWake())
+            if connected { try await coordinator.answer(callId: callId); await coordinator.audioSession(active: true) }
+            coordinator.consumeAuthenticatedSync(MatrixSyncBatch(nextBatch: "other", roomEvents: ["!other:example.org": []]), roomId: "!other:example.org")
+            XCTAssertNotNil(coordinator.call)
+            // A security boundary can exclude plaintext without dropping Matrix membership or emitting timeline events.
+            coordinator.consumeAuthenticatedSync(MatrixSyncBatch(nextBatch: "blocked", roomEvents: [:]), roomId: "!room:example.org")
+            XCTAssertNil(coordinator.call); XCTAssertTrue(coordinator.ring.records.isEmpty)
+            XCTAssertEqual(media.disconnects, 1); XCTAssertEqual(presenter.reasons, [.revoked])
+        }
+    }
+    func testLiveTransportAuthorityFailuresRevokeButTransientFailuresPreserveCall() async throws {
+        for failure in [MatrixClientFailure.notFound, .forbidden, .unauthorized, .plaintextForbidden, .protocolViolation, .identityUnavailable] {
+            let media = CallMediaFixture()
+            let coordinator = try NativeCallCoordinator(organisationId: callOrg, localPartyId: "local", resolver: ImmediateCallResolver(), media: media, conversation: CallChatFixture(), now: { 100 })
+            try await coordinator.receive(callWake()); try await coordinator.answer(callId: callId)
+            coordinator.consumeTransportFailure(.serviceUnavailable); XCTAssertNotNil(coordinator.call)
+            coordinator.consumeTransportFailure(failure)
             XCTAssertNil(coordinator.call); XCTAssertTrue(coordinator.ring.records.isEmpty); XCTAssertEqual(media.disconnects, 1)
         }
     }

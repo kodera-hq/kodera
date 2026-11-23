@@ -69,10 +69,12 @@ import androidx.compose.ui.unit.IntOffset
 import io.kodera.android.R
 import io.kodera.android.client.AttachmentUploadPayload
 import io.kodera.android.client.ChannelConversationTransport
+import io.kodera.android.client.MatrixClientException
 import io.kodera.android.client.MatrixDeliveryStatus
 import io.kodera.android.client.MatrixRawTimelineEvent
 import io.kodera.android.client.MatrixReactionSummary
 import io.kodera.android.client.MatrixRoomClient
+import io.kodera.android.client.MatrixSyncBatch
 import io.kodera.android.client.MatrixTimelineMessage
 import io.kodera.android.client.MatrixTimelineReducer
 import io.kodera.android.client.SessionFence
@@ -142,6 +144,9 @@ class ChannelConversationController(
     private val workerExecutor: Executor = Executor { it.run() },
     val fence: SessionFence = SessionFence(),
     initialForeground: Boolean = true,
+    private val onAuthenticatedSync: (String, MatrixSyncBatch) -> Unit = { _, _ -> },
+    private val onTransportFailure: (MatrixClientException) -> Unit = {},
+    private val onSecurityBoundaryChanged: () -> Unit = {},
 ) {
     private data class FailedOutbound(
         val body: String,
@@ -241,8 +246,9 @@ class ChannelConversationController(
             (composerText.trim().isNotEmpty() || stagedAttachments.isNotEmpty())
 
     fun updateChannelSecurity(confidential: Boolean?) {
-        if (isConfidential == confidential) return
+        if (isCleared || isConfidential == confidential) return
         isConfidential = confidential
+        if (confidential != false) onSecurityBoundaryChanged()
         plaintextAllowed = false
         syncStatusRes = R.string.conversation_status_secure_transport_required
         transport?.updateChannelSecurity(scope.organisationId, scope.channelId, confidential)
@@ -335,6 +341,7 @@ class ChannelConversationController(
                 if (wasCleared) return@execute
                 isSyncing = false
                 result.onSuccess { boot ->
+                    onAuthenticatedSync(boot.roomId, boot.initialBatch)
                     val snapshot = synchronized(lock) {
                         reducer.updateOwnUserId(activeTransport.ownUserId)
                         roomId = boot.roomId
@@ -353,7 +360,8 @@ class ChannelConversationController(
                     if (shouldCatchUpAfterSso) {
                         refreshSync()
                     }
-                }.onFailure {
+                }.onFailure { failure ->
+                    if (failure is MatrixClientException) onTransportFailure(failure)
                     syncStatusRes = R.string.conversation_status_offline
                 }
             }
@@ -390,6 +398,10 @@ class ChannelConversationController(
             }
             val result = runCatching {
                 val batch = activeTransport.syncRoom(currentRoom, currentSince, cycleFence)
+                // Deliver authority and answer events before optional backfill can block.
+                mainExecutor.execute {
+                    if (!isCleared && !cycleFence.isInvalidated) onAuthenticatedSync(currentRoom, batch)
+                }
                 val delta = batch.roomDeltas[currentRoom]
                 val prevBatch = delta?.prevBatch
                 val backfilled: List<MatrixRawTimelineEvent> =
@@ -401,6 +413,10 @@ class ChannelConversationController(
                                 MatrixRoomClient.SYNC_TIMELINE_LIMIT,
                                 cycleFence,
                             )
+                        }.onFailure { failure ->
+                            mainExecutor.execute {
+                                if (!isCleared && !cycleFence.isInvalidated && failure is MatrixClientException) onTransportFailure(failure)
+                            }
                         }.getOrDefault(emptyList())
                     } else {
                         emptyList()
@@ -434,7 +450,8 @@ class ChannelConversationController(
                     messages = snapshot
                     plaintextAllowed = isConfidential == false && batch.plaintextAllowedRooms.contains(currentRoom)
                     syncStatusRes = if (plaintextAllowed) R.string.conversation_status_live else R.string.conversation_status_secure_transport_required
-                }.onFailure {
+                }.onFailure { failure ->
+                    if (failure is MatrixClientException) onTransportFailure(failure)
                     plaintextAllowed = false
                     requiresFullSync = true
                     syncStatusRes = R.string.conversation_status_offline
@@ -548,7 +565,8 @@ class ChannelConversationController(
                             reducer.applyEvents(listOf(syntheticEvent))
                             reducer.messages()
                         }
-                    }.onFailure {
+                    }.onFailure { failure ->
+                        if (failure is MatrixClientException) onTransportFailure(failure)
                         syncStatusRes = R.string.conversation_status_offline
                     }
                 }
@@ -662,7 +680,8 @@ class ChannelConversationController(
                         reducer.messages()
                     }
                     syncStatusRes = R.string.conversation_status_live
-                }.onFailure {
+                }.onFailure { failure ->
+                    if (failure is MatrixClientException) onTransportFailure(failure)
                     messages = synchronized(lock) {
                         failedOutbounds[transactionId] = FailedOutbound(body, replyToEventId, remaining, completedRefs)
                         reducer.markOptimisticFailed(transactionId)

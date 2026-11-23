@@ -25,7 +25,7 @@ public final class NativeVoIPRuntime: NSObject, @preconcurrency PKPushRegistryDe
     @preconcurrency CXProviderDelegate, ImmediateVoIPReporting, NativeCallPresenting {
     private let provider: CXProvider
     private let controller = CXCallController()
-    private let coordinator: NativeCallCoordinator
+    public let coordinator: NativeCallCoordinator
     private let tokens: any VoIPTokenRegistering
     private var registry: PKPushRegistry?
     private var delivery: VoIPPushDelivery!

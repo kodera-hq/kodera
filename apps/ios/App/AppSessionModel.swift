@@ -505,7 +505,19 @@ final class AppSessionModel: ObservableObject {
             scope: scope,
             transport: transport,
             fence: conversationFence,
-            initialForeground: isForegroundActive
+            initialForeground: isForegroundActive,
+            onAuthenticatedSync: { [weak self] roomId, batch in
+                guard !conversationFence.isInvalidated else { return }
+                self?.nativeCalls?.coordinator.consumeAuthenticatedSync(batch, roomId: roomId)
+            },
+            onTransportFailure: { [weak self] failure in
+                guard !conversationFence.isInvalidated else { return }
+                self?.nativeCalls?.coordinator.consumeTransportFailure(failure)
+            },
+            onSecurityBoundaryChanged: { [weak self] in
+                guard !conversationFence.isInvalidated else { return }
+                self?.nativeCalls?.coordinator.revoke()
+            }
         )
     }
 
@@ -524,7 +536,7 @@ final class AppSessionModel: ObservableObject {
     func provisionNativeCalls(localPartyId: String, resolver: any NativeCallResolving,
                               media: any LiveKitWebRTCSession, tokens: any VoIPTokenRegistering) throws {
         guard case .signedIn = phase, case .loaded = member,
-              let scope = activeConversation?.scope, scope.kind == .audio,
+              let scope = activeConversation?.scope, scope.kind == .audio, activeConversation?.isConfidential == false,
               let transport = activeMatrixTransport else { throw KoderaMobileFfiError.authenticationFailed }
         nativeCalls?.stop()
         let coordinator = try NativeCallCoordinator(organisationId: scope.organisationId, localPartyId: localPartyId,

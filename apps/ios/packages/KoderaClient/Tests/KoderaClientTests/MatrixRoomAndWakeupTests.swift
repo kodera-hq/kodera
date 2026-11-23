@@ -148,6 +148,29 @@ final class MatrixRoomAndWakeupTests: XCTestCase {
         XCTAssertEqual(cleared.authorityLostRooms, [Self.roomId])
     }
 
+    func testSecurityTransitionsExposeAuthorityLossWithoutMembershipLoss() async throws {
+        let origin = "https://atelier.matrix.kodera.io"
+        for boundary in ["m.room.encryption", "io.kodera.room.security", "io.kodera.room.confidential", "core-confidential", "core-unknown"] {
+            let client = MatrixRoomClient(coreRequester: try makeRequester(), loopback: .refuse, protocolClass: URLProtocolFixture.self)
+            await client.bindChannelSecurity(organisationId: Self.orgId, channelId: Self.channelId, origin: origin, roomId: Self.roomId, isConfidential: false)
+            func sync(events: [[String: Any]], since: String?) async throws -> MatrixSyncBatch {
+                let room: [String: Any] = ["state": ["events": []], "timeline": ["events": events]]
+                let payload: [String: Any] = ["next_batch": "s", "rooms": ["join": [Self.roomId: room]]]
+                URLProtocolFixture.install(.body(status: 200, headers: Self.jsonHeaders, chunks: [try JSONSerialization.data(withJSONObject: payload)]))
+                return try await client.sync(homeserverOrigin: origin, matrixAccessToken: "token", roomId: Self.roomId, since: since)
+            }
+            let initial = try await sync(events: [], since: nil)
+            XCTAssertEqual(initial.plaintextAllowedRooms, [Self.roomId]); XCTAssertTrue(initial.authorityLostRooms.isEmpty)
+            if boundary.hasPrefix("core-") {
+                await client.updateChannelSecurity(organisationId: Self.orgId, channelId: Self.channelId, isConfidential: boundary == "core-confidential" ? true : nil)
+            }
+            let batch = try await sync(events: boundary.hasPrefix("core-") ? [] : [["type": boundary, "state_key": "", "content": [:]]], since: initial.nextBatch)
+            XCTAssertTrue(batch.plaintextAllowedRooms.isEmpty); XCTAssertEqual(batch.authorityLostRooms, [Self.roomId])
+            let unchanged = try await sync(events: [], since: batch.nextBatch)
+            XCTAssertEqual(unchanged.authorityLostRooms, [Self.roomId])
+        }
+    }
+
     func testMalformedIncrementalStateRevokesPlaintextWithoutSendHTTP() async throws {
         let origin = "https://atelier.matrix.kodera.io"
         for malformed: Any in [["events": NSNull()], 123, "bad", NSNull(), ["events": [:]]] {

@@ -45,6 +45,9 @@ final class ChannelConversationModel: ObservableObject {
     let scope: ChannelConversationScope
     let fence: SessionFence
     private let transport: (any ChannelConversationTransport)?
+    private let onAuthenticatedSync: (String, MatrixSyncBatch) -> Void
+    private let onTransportFailure: (MatrixClientFailure) -> Void
+    private let onSecurityBoundaryChanged: () -> Void
     private var reducer: MatrixTimelineReducer
     private var roomId: String?
     private var requiresFullSync = false
@@ -70,8 +73,14 @@ final class ChannelConversationModel: ObservableObject {
         transport: (any ChannelConversationTransport)? = nil,
         ownUserId: String = "@me:kodera.local",
         fence: SessionFence = SessionFence(),
-        initialForeground: Bool = true
+        initialForeground: Bool = true,
+        onAuthenticatedSync: @escaping (String, MatrixSyncBatch) -> Void = { _, _ in },
+        onTransportFailure: @escaping (MatrixClientFailure) -> Void = { _ in },
+        onSecurityBoundaryChanged: @escaping () -> Void = {}
     ) {
+        self.onAuthenticatedSync = onAuthenticatedSync
+        self.onTransportFailure = onTransportFailure
+        self.onSecurityBoundaryChanged = onSecurityBoundaryChanged
         self.scope = scope
         self.isConfidential = scope.isConfidential
         self.transport = transport
@@ -107,8 +116,9 @@ final class ChannelConversationModel: ObservableObject {
     }
 
     func updateChannelSecurity(isConfidential: Bool?) {
-        guard self.isConfidential != isConfidential else { return }
+        guard !fence.isInvalidated, self.isConfidential != isConfidential else { return }
         self.isConfidential = isConfidential
+        if isConfidential != false { onSecurityBoundaryChanged() }
         plaintextAllowed = false
         syncStateKey = "conversation.status_secure_transport_required"
         launchFencedTask { [weak self] in
@@ -162,6 +172,7 @@ final class ChannelConversationModel: ObservableObject {
             if reducer.ownUserId != transport.ownUserId {
                 reducer = MatrixTimelineReducer(ownUserId: transport.ownUserId)
             }
+            onAuthenticatedSync(bootstrapped.roomId, bootstrapped.initialBatch)
             roomId = bootstrapped.roomId
             plaintextAllowed = isConfidential == false && bootstrapped.initialBatch.plaintextAllowedRooms.contains(bootstrapped.roomId)
             sinceToken = bootstrapped.initialBatch.nextBatch
@@ -174,7 +185,8 @@ final class ChannelConversationModel: ObservableObject {
             }
             syncStateKey = plaintextAllowed ? "conversation.status_live" : "conversation.status_secure_transport_required"
         } catch {
-            guard !fence.isInvalidated else { return }
+            guard !fence.isInvalidated, !Task.isCancelled else { return }
+            onTransportFailure(error)
             syncStateKey = "conversation.status_offline"
         }
     }
@@ -194,17 +206,23 @@ final class ChannelConversationModel: ObservableObject {
         do {
             let batch = try await transport.syncRoom(roomId: currentRoomId, since: requiresFullSync ? nil : sinceToken)
             guard !fence.isInvalidated, !Task.isCancelled else { return }
+            onAuthenticatedSync(currentRoomId, batch)
             plaintextAllowed = isConfidential == false && batch.plaintextAllowedRooms.contains(currentRoomId)
             requiresFullSync = false
             sinceToken = batch.nextBatch
             if let delta = batch.roomDeltas[currentRoomId] {
                 var backfilled: [MatrixRawTimelineEvent] = []
                 if delta.limited, let prevBatch = delta.prevBatch, !prevBatch.isEmpty {
-                    backfilled = (try? await transport.backfillRoomMessages(
-                        roomId: currentRoomId,
-                        fromToken: prevBatch,
-                        limit: MatrixRoomClient.syncTimelineLimit
-                    )) ?? []
+                    do {
+                        backfilled = try await transport.backfillRoomMessages(
+                            roomId: currentRoomId,
+                            fromToken: prevBatch,
+                            limit: MatrixRoomClient.syncTimelineLimit
+                        )
+                    } catch {
+                        guard !fence.isInvalidated, !Task.isCancelled else { return }
+                        onTransportFailure(error)
+                    }
                     guard !fence.isInvalidated, !Task.isCancelled else { return }
                 }
                 if delta.limited || !delta.events.isEmpty {
@@ -214,7 +232,8 @@ final class ChannelConversationModel: ObservableObject {
             }
             syncStateKey = plaintextAllowed ? "conversation.status_live" : "conversation.status_secure_transport_required"
         } catch {
-            guard !fence.isInvalidated else { return }
+            guard !fence.isInvalidated, !Task.isCancelled else { return }
+            onTransportFailure(error)
             plaintextAllowed = false
             requiresFullSync = true
             syncStateKey = "conversation.status_offline"
@@ -347,7 +366,8 @@ final class ChannelConversationModel: ObservableObject {
                 }
                 messages = reducer.messages
             } catch {
-                guard !fence.isInvalidated else { return }
+                guard !fence.isInvalidated, !Task.isCancelled else { return }
+                onTransportFailure(error)
                 syncStateKey = "conversation.status_offline"
             }
             return
@@ -468,7 +488,8 @@ final class ChannelConversationModel: ObservableObject {
             messages = reducer.messages
             syncStateKey = plaintextAllowed ? "conversation.status_live" : "conversation.status_secure_transport_required"
         } catch {
-            guard !fence.isInvalidated else { return }
+            guard !fence.isInvalidated, !Task.isCancelled else { return }
+            onTransportFailure(error)
             failedOutbounds[transactionId] = FailedOutbound(
                 body: body,
                 replyToEventId: replyToEventId,
