@@ -24,6 +24,7 @@ use std::fmt;
 mod native_scope;
 pub use native_scope::{NativeCryptoError, NativeRoomScope, MAX_NATIVE_MESSAGE_BYTES};
 
+pub mod mobile_calls;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod mobile_ffi;
 #[cfg(not(target_arch = "wasm32"))]

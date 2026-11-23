@@ -99,6 +99,8 @@ public struct MatrixRawTimelineEvent: Equatable, Sendable {
     public let redactsEventId: String?
     public let transactionId: String?
     public let isRedactedUnsigned: Bool
+    public let callId: String?
+    public let callPartyId: String?
     public let attachments: [AttachmentMetadataRef]
 
     public init(
@@ -116,8 +118,11 @@ public struct MatrixRawTimelineEvent: Equatable, Sendable {
         redactsEventId: String? = nil,
         transactionId: String? = nil,
         isRedactedUnsigned: Bool = false,
-        attachments: [AttachmentMetadataRef] = []
+        attachments: [AttachmentMetadataRef] = [],
+        callId: String? = nil,
+        callPartyId: String? = nil
     ) {
+        self.callId = callId; self.callPartyId = callPartyId
         self.type = type
         self.eventId = eventId
         self.sender = sender

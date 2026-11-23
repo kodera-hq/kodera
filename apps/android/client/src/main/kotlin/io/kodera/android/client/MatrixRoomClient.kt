@@ -1692,6 +1692,8 @@ class MatrixRoomClient private constructor(
                 transactionId = transactionId,
                 isRedactedUnsigned = isRedactedUnsigned,
                 attachments = attachments,
+                callId = (content?.get("call_id") as? JsonValue.StringValue)?.value,
+                callPartyId = (content?.get("party_id") as? JsonValue.StringValue)?.value,
             )
         }
 

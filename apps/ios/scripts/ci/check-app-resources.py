@@ -69,7 +69,7 @@ PINNED_COPY = {
     ("session.sign_out_hint", "en"): "Signs you out of the Kodera app on all your Apple devices.",
 }
 
-FORBIDDEN_PLIST_KEYS = ("CFBundleURLTypes", "NSAppTransportSecurity", "UIBackgroundModes")
+FORBIDDEN_PLIST_KEYS = ("CFBundleURLTypes", "NSAppTransportSecurity")
 ASSOCIATED_DOMAINS = (
     "webcredentials:auth.kodera.io",
     "applinks:community.kodera.io",
@@ -293,11 +293,15 @@ def association_findings(root):
     except (plistlib.InvalidFileException, ValueError, ExpatError):
         return ["App/Kodera.entitlements must be a valid associated-domains plist"]
     if not isinstance(entitlements, dict) or set(entitlements) != {
-        "com.apple.developer.associated-domains"
+        "com.apple.developer.associated-domains", "aps-environment"
     }:
-        errors.append("App/Kodera.entitlements must declare only associated domains; no push or other entitlement is admitted")
+        errors.append("App/Kodera.entitlements must declare only associated domains and the reviewed push entitlement")
     elif entitlements["com.apple.developer.associated-domains"] != list(ASSOCIATED_DOMAINS):
         errors.append("App/Kodera.entitlements must declare exactly the three approved associated domains")
+
+    if (isinstance(entitlements, dict) and "aps-environment" in entitlements
+            and entitlements.get("aps-environment") != "$(APS_ENVIRONMENT)"):
+        errors.append("aps environment must follow the reviewed build setting")
 
     project = read_bytes(root / "project.yml").decode("utf-8", "replace")
     # This gate intentionally admits the checked-in XcodeGen block form, not YAML
@@ -390,13 +394,15 @@ def findings(root):
     for key in FORBIDDEN_PLIST_KEYS:
         if key in info:
             errors.append(f"Info.plist declares {key}, a capability this app has not qualified")
+    if info.get("UIBackgroundModes") != ["audio", "voip"]:
+        errors.append("Info.plist must declare exactly audio and voip background modes")
     if info.get("NSBonjourServices") != ["_kodera-prox._udp"]:
         errors.append("Info.plist must declare only the foreground proximity Bonjour service")
     for key in info:
         if key.startswith("NSLocation"):
             errors.append("Info.plist requests location access; proximity uses no location permission")
     privacy = read_json(app / "Resources/InfoPlist.xcstrings")
-    privacy_keys = {"NSBluetoothAlwaysUsageDescription", "NSLocalNetworkUsageDescription"}
+    privacy_keys = {"NSBluetoothAlwaysUsageDescription", "NSLocalNetworkUsageDescription", "NSMicrophoneUsageDescription"}
     if privacy.get("sourceLanguage") != SOURCE_LANGUAGE or set(privacy.get("strings", {})) != privacy_keys:
         errors.append("InfoPlist.xcstrings must contain exactly the French-source proximity permission descriptions")
     for key in sorted(privacy_keys):

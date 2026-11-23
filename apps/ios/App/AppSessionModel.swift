@@ -59,6 +59,7 @@ final class AppSessionModel: ObservableObject {
     private var activeSessionFence = SessionFence()
     private var activeVaultOrganisationId: String?
     private var registeredPushDeviceId: String?
+    private(set) var nativeCalls: NativeVoIPRuntime?
     private var activeMatrixTransport: MatrixChannelConversationTransport?
     private var activeMatrixSession: PersistedMatrixSession?
     /// The signed-in session's Core clients: one `CoreRequester`, bound to the configured Core origin and
@@ -487,6 +488,7 @@ final class AppSessionModel: ObservableObject {
               let scope = ChannelConversationScope(organisationId: organisationId, channel: channel) else {
             return
         }
+        nativeCalls?.stop(); nativeCalls = nil
         activeConversation?.clear()
         let conversationFence = SessionFence()
         let parentFenceToken = activeSessionFence.registerCancellation {
@@ -518,7 +520,21 @@ final class AppSessionModel: ObservableObject {
         return state.workspace == .unavailable(.forbidden) || state.workspace == .unavailable(.notFound) || state.workspace == .targetUnavailable
     }
 
+    /// Provisioned adapters share the selected audio channel's authenticated timeline and session fence.
+    func provisionNativeCalls(localPartyId: String, resolver: any NativeCallResolving,
+                              media: any LiveKitWebRTCSession, tokens: any VoIPTokenRegistering) throws {
+        guard case .signedIn = phase, case .loaded = member,
+              let scope = activeConversation?.scope, scope.kind == .audio,
+              let transport = activeMatrixTransport else { throw KoderaMobileFfiError.authenticationFailed }
+        nativeCalls?.stop()
+        let coordinator = try NativeCallCoordinator(organisationId: scope.organisationId, localPartyId: localPartyId,
+            resolver: resolver, media: media, conversation: transport)
+        let runtime = NativeVoIPRuntime(coordinator: coordinator, tokens: tokens)
+        nativeCalls = runtime; runtime.start()
+    }
+
     func closeChannel() {
+        nativeCalls?.stop(); nativeCalls = nil
         activeConversation?.clear()
         activeConversation = nil
         activeMatrixTransport = nil

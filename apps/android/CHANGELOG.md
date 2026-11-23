@@ -45,6 +45,11 @@ Status: Kodera for Android is in development; no store release is recorded here.
 
 - Reject nil entity identifiers before session or network admission, bound voice/Docs scope metadata and rendered names/titles as valid scalar UTF-8, and retain only validated bounded snapshots of caller-supplied rosters and pad lists. Fence disposed or replaced emergency-card actions by their current organisation while preserving the signed wire protocol; align the bilingual around-me antenna heading above the workspace channels.
 
+### Native calls
+
+- Add opaque, expiring call wakes and bounded ring cancellation history shared with the native core. Answering on another device stops ringing without a missed-call indicator.
+- Add session-owned system call adapters, audio ownership and network handoff hooks, and authenticated audio-channel companion timeline integration. Provider registration, media SDK provisioning and device qualification remain deployment work.
+
 ### Added
 
 - Scoped local theme sharing, profile and permission simulation, and bounded Markdown drafts with bilingual preferences controls. Canonical pure-black monogram, three theme modes and four curated palettes are previewed locally; the default app supplies no fabricated member or document.

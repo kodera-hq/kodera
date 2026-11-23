@@ -281,6 +281,7 @@ fn dispatch_json(input: &[u8]) -> Result<String, MobileFfiError> {
         "attachment_mime_validate" => handle_attachment_mime_validate(&root),
         "reaction_validate" => handle_reaction_validate(&root),
         "wakeup_envelope_admit" => handle_wakeup_envelope_admit(&root),
+        "call_wake_admit" => handle_call_wake_admit(&root),
         _ => Err(MobileFfiError::UnknownOp),
     }
 }
@@ -1191,6 +1192,57 @@ fn handle_wakeup_envelope_admit(
         admitted.organisation_id.as_str(),
         admitted.sync_hint
     ))
+}
+
+/// Strict call-specific decoder, independent of the legacy message-sync wake schema.
+pub fn admit_call_wake(
+    raw: &[u8],
+    now: u64,
+) -> Result<crate::mobile_calls::CallWake, MobileFfiError> {
+    use crate::mobile_calls::{CallWake, RingPhase};
+    let obj = StrictFfiJson::parse_object(raw, MAX_WAKEUP_ENVELOPE_BYTES)?;
+    ensure_allowed_keys(
+        &obj,
+        &[
+            "call_id",
+            "organisation_id",
+            "channel_id",
+            "epoch",
+            "state",
+            "expires_at",
+        ],
+    )?;
+    let wake = CallWake {
+        call_id: parse_org_field(&obj, "call_id")?,
+        organisation_id: parse_org_field(&obj, "organisation_id")?,
+        channel_id: parse_org_field(&obj, "channel_id")?,
+        epoch: obj
+            .get("epoch")
+            .and_then(FfiJsonValue::as_u64)
+            .ok_or(MobileFfiError::InvalidInput)?,
+        expires_at: obj
+            .get("expires_at")
+            .and_then(FfiJsonValue::as_u64)
+            .ok_or(MobileFfiError::InvalidInput)?,
+        state: match required_str(&obj, "state")? {
+            "ringing" => RingPhase::Ringing,
+            "answered_elsewhere" => RingPhase::AnsweredElsewhere,
+            "ended" => RingPhase::Ended,
+            _ => return Err(MobileFfiError::InvalidInput),
+        },
+    };
+    wake.validate(now)?;
+    Ok(wake)
+}
+fn handle_call_wake_admit(root: &BTreeMap<String, FfiJsonValue>) -> Result<String, MobileFfiError> {
+    ensure_allowed_keys(root, &["op", "payload_hex", "now"])?;
+    let now = root
+        .get("now")
+        .and_then(FfiJsonValue::as_u64)
+        .ok_or(MobileFfiError::InvalidInput)?;
+    let w = admit_call_wake(&decode_lower_hex(required_str(root, "payload_hex")?)?, now)?;
+    Ok(format!("{{\"ok\":true,\"call_id\":\"{}\",\"organisation_id\":\"{}\",\"channel_id\":\"{}\",\"epoch\":{},\"state\":\"{}\",\"expires_at\":{}}}",
+        w.call_id.as_str(), w.organisation_id.as_str(), w.channel_id.as_str(), w.epoch, w.state.wire(), w.expires_at))
 }
 
 // ---------------------------------------------------------------------------

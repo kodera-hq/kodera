@@ -48,7 +48,7 @@ Status: Domain models, client coordinators and `dark` / `light` (`@kodera/design
 `App/Kodera.entitlements` declares only `webcredentials:auth.kodera.io`, `applinks:community.kodera.io` and `applinks:app.kodera.io`. The application target binds this plist through `CODE_SIGN_ENTITLEMENTS` and the public team identifier `UF5852SF57`; it excludes the plist from copied App sources. Resource checks refuse altered domains, capabilities, entitlement binding and team identity. This source configuration does not establish a signed provisioning profile, deployed Apple association document, inbound `onOpenURL` routing, TestFlight upload or installed-device Universal Links. No push entitlement or background mode is admitted.
 
 - **Three-category community structure and Universal Matrix Invitations:** `CommunityWorkspaceBlueprint` models the canonical `community.kodera.io` workspace (`Community`, `Core Kodera`, `Design Partners`) with localized FR/EN audience subtitles and federated partner badges. `UniversalMatrixInvitation` and `ChannelInviteCoordinator` build and parse `https://matrix.to/#/...`, `matrix:r/<alias>:<domain>?action=join`, `matrix:roomid/...`, `matrix:u/...`, canonical `#alias:domain` and `@user:domain` targets while rejecting malformed MXIDs and single-label or numeric hosts. `ChannelInviteSheet` copies links to the clipboard without opening external web pages and reports unprovisioned remote room-invite transports honestly.
-- **OS CallKit and payload-free PushKit coordinator:** `PayloadFreePushEnvelope`, `CallSessionState` and `CallKitPushCoordinator` enforce Core's payload-free push invariant (`wakeup_id`, `organisation_id`, `sync_hint` only), rejecting or stripping any relay field carrying room titles, sender names or message plaintext before resolving encrypted call descriptors over the authenticated session and driving `idle -> ringing -> connecting -> active -> muted/held -> ended/failed` transitions (`CXProviderConfiguration.includesCallsInRecents = false`). `App/Info.plist` declares no `UIBackgroundModes` until live VoIP entitlement qualification.
+- **OS CallKit and payload-free PushKit coordinator:** `PayloadFreePushEnvelope`, `CallSessionState` and `CallKitPushCoordinator` enforce Core's payload-free push invariant (`wakeup_id`, `organisation_id`, `sync_hint` only), rejecting or stripping any relay field carrying room titles, sender names or message plaintext before resolving encrypted call descriptors over the authenticated session and driving `idle -> ringing -> connecting -> active -> muted/held -> ended/failed` transitions (`CXProviderConfiguration.includesCallsInRecents = false`). `NativeVoIPRuntime` adds the provisioned PushKit delivery path; `App/Info.plist` restricts background modes to audio and VoIP. Signed-device qualification remains pending.
 - **Universal passkey assertion verification:** `KoderaAuth` implements `PasskeyDeviceBinding` and `PasskeyPlatformAssertionBridge` (`ASAuthorizationPlatformPublicKeyCredential`) aligned with `kodera-rs` `passkey_binding`, enforcing strict `clientDataJSON` parsing, WebAuthn Level 3 UP+UV authenticator flags (`0x05`, `0x0D`, `0x1D` under `.universal`, or `0x05`-only under `.strictNonBackupable`, rejecting invalid `0x15`, `AT`, `ED`, and RFU bits), monotonic counters, bounded challenge lifetimes and P-256 ES256 signatures.
 
 ## Companion scope
@@ -100,3 +100,34 @@ Native codec fixtures qualify the exact native v1 schema only. The existing Web 
 ## Local lifecycle audit coverage
 
 The host client suite exercises an integrated local preview journey across workspace preferences, themes, Docs, polls, sound and voice, then replaces its organisation and refuses captured old callbacks. Voice and Docs channel scopes compare exact UTF-8 bytes, so canonical-equivalent Unicode spellings do not mask a channel transition. Native entity and session boundaries reject nil UUIDs; the format-only UUID helper retains its narrower syntax contract and checks length before iterating without allocating a copy. These are local reducer and contract tests, not live service, radio, simulator UI or device accessibility qualification.
+
+## Native call adapters
+
+Status: Implemented and covered by host tests; provider provisioning and device qualification remain pending.
+
+`NativeCallRing` follows the Rust call reducer and shared admission vectors through
+`call_wake_admit`. Wakes contain only call, organisation and channel UUIDs, a
+monotonic epoch, a ring/cancel state and a Unix-seconds expiry within 60 seconds.
+Cancellation tombstones prevent reordered delivery from ringing again.
+
+`NativeVoIPRuntime` owns PushKit token updates and invalidation, synchronous
+CallKit reporting before authenticated metadata resolution, lock-screen actions,
+CallKit audio activation and network callbacks. Every malformed, expired,
+unauthorized or duplicate VoIP delivery receives a report; temporary duplicate
+reports never end the original call. Calls stay out of Recents. Audio capture is
+disabled until the system hands over its audio session.
+
+The app session can provision this runtime with an authenticated resolver, token
+registration port and `LiveKitWebRTCSession` driver for its selected audio channel.
+The driver must connect with capture disabled and synchronously cancel its SDK
+operations on disconnect. It owns credential acquisition and SDK reconnection;
+relay data never supplies credentials or caller metadata. The existing
+`MatrixChannelConversationTransport` supplies the companion timeline. An
+own-user `m.call.answer` from another party or an opaque server cancel dismisses
+the native call. Confidential authority loss and 404 terminate and clear call
+state. Closing the channel or retiring the app session tears down the runtime.
+
+The checked-in application does not configure a relay or a LiveKit SDK driver.
+No new SDK dependency is installed. APNs environment follows the reviewed Debug
+and Release build settings; signed provisioning and physical-device testing are
+still required. Background capabilities are restricted to audio and VoIP.

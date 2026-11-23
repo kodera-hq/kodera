@@ -32,6 +32,22 @@
           }
         }
       }
+    },
+    "NSMicrophoneUsageDescription": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Utiliser votre microphone uniquement lorsque vous répondez ou rejoignez un appel."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use your microphone only when you answer or join a call."
+          }
+        }
+      }
     }
   },
   "version": "1.0"

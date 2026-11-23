@@ -369,4 +369,7 @@
     <string name="conversation_delivery_failed">Échec de l’envoi</string>
     <string name="conversation_sync_refresh">Actualiser</string>
     <string name="conversation_status_secure_transport_required">L’envoi est désactivé tant qu’un salon public n’est pas vérifié. Les salons confidentiels et chiffrés nécessitent la messagerie sécurisée.</string>
+    <string name="native_call_channel">Appels</string>
+    <string name="native_call_answer">Répondre</string>
+    <string name="native_call_end">Terminer</string>
 </resources>

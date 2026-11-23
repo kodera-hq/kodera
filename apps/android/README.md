@@ -43,10 +43,10 @@ A check-in is shown under a `ProximityHandle`, never a name: a pseudonym the mem
 
 ## Community workspace, Matrix invitations, Telecom wakeup and universal Passkeys
 
-Status: Domain models, session coordinators and `dark` / `light` (`@kodera/design-tokens`) Jetpack Compose surfaces verified in JVM unit suites; live Matrix homeserver transport, `ConnectionService` system registration and `CredentialManager` provider ceremonies remain external.
+Status: Domain models, session coordinators and `dark` / `light` (`@kodera/design-tokens`) Jetpack Compose surfaces verified in JVM unit suites; live Matrix homeserver transport, `CredentialManager` provider ceremonies and live call-provider provisioning remain external.
 
 - **Three-category community structure and Universal Matrix Invitations:** `CommunityWorkspaceBlueprint` models the canonical `community.kodera.io` workspace (`Community`, `Core Kodera`, `Design Partners`) with localized FR/EN audience subtitles, private-by-default internal room guards and federated Matrix partner badges (`Element`, `Tchap`, `Cinny`). `UniversalMatrixInvitation` and `ChannelInviteCoordinator` build and validate RFC-compliant `matrix:r/<alias>:<domain>?action=join&via=...`, `matrix:roomid/...`, `matrix:u/...`, canonical `matrix.to` links, `#alias:domain` and `@localpart:domain` targets while rejecting malformed identifiers and injection characters. `ChannelInviteSheet` copies links to the clipboard inside the app with zero external browser launch and reports unprovisioned remote room-invite transports honestly.
-- **Android Telecom / `ConnectionService` and payload-free push wakeup:** `PayloadFreePushEnvelope`, `CallSessionState` and `TelecomPushCoordinator` enforce Core's payload-free `UnifiedPush` and `FCM` wakeup invariant (`wakeup_id`, `org_id`/`organisation_id`, `room_hash`/`sync_hint`, `epoch_ms`), refusing any push envelope carrying message plaintext, room titles or caller names before resolving call descriptors over an authenticated session and driving `Idle -> WakeupPending -> Ringing -> Connecting -> Connected -> OnHold -> Ended/Rejected` transitions (mute, hold, speaker/earpiece route, answer, decline, hangup). `AndroidManifest.xml` declares `INTERNET` and the reviewed foreground Bluetooth/nearby Wi-Fi permissions, with `neverForLocation` where supported, and exports zero background services.
+- **Android Telecom / `ConnectionService` and payload-free push wakeup:** `PayloadFreePushEnvelope`, `CallSessionState` and `TelecomPushCoordinator` enforce Core's payload-free `UnifiedPush` and `FCM` wakeup invariant (`wakeup_id`, `org_id`/`organisation_id`, `room_hash`/`sync_hint`, `epoch_ms`), refusing any push envelope carrying message plaintext, room titles or caller names before resolving call descriptors over an authenticated session and driving `Idle -> WakeupPending -> Ringing -> Connecting -> Connected -> OnHold -> Ended/Rejected` transitions (mute, hold, speaker/earpiece route, answer, decline, hangup). `AndroidManifest.xml` declares `INTERNET` and the reviewed foreground Bluetooth/nearby Wi-Fi permissions, with `neverForLocation` where supported, and declares one Telecom binder-protected self-managed call service plus a non-exported action receiver.
 - **Universal ES256 Passkey device binding:** `PasskeyDeviceBinding` and `PasskeySessionCoordinator` verify WebAuthn / Android `CredentialManager` ES256 (`P-256`, COSE alg `-7`) registrations and assertions with zero AAGUID lock-in. Under default `PasskeyBackupPolicy.UNIVERSAL` (WebAuthn Level 3 §6.5), hardware FIDO2 security keys (`0x05`), platform biometric / Google Password Manager passkeys (`0x0D`/`0x1D`) and self-hosted Vaultwarden / Bitwarden `"Citadel"` software passkeys (`0x0D`/`0x1D`, including zeroed AAGUID `00000000-0000-0000-0000-000000000000`) verify cleanly while invalid `BS=1, BE=0` (`0x15`), missing `UP`/`UV`, RFU/extension flags, non-canonical DER signatures and replayed non-zero counters are rejected.
 
 ## Voice control foundation
@@ -103,3 +103,34 @@ The Domain theme codec uses exact `kodera-theme:v1:` codes capped at2,048 UTF-8 
 Entity and session admission requires canonical non-nil UUIDs; the format-only helper remains separate. Voice and Docs local scope metadata retains the existing256-byte bound, rejecting malformed UTF-16, controls and format characters before UTF-8 retention. This local metadata bound differs by one byte from the iOS255-byte helper; actual Core entity channel IDs are canonical UUIDs. Proximity-card actions use a disposable current-organisation lease before message-ID generation or queue mutation. The `#proximity` label and antenna do not change the signed frame v1 wire.
 
 Proximity frame v1 authenticates signed plaintext, not tenant intent or confidential content. Organisation beacons are public filtering tags and are outside the signature transcript. If a signing key is admitted by two organisations, retagging a valid frame with the second public beacon remains admissible there. Live provisioning therefore needs organisation-distinct signing keys or a reviewed future organisation-bound wire format; ordinary Core membership does not establish radio authority. Host JVM and compiler checks do not qualify physical BLE, device TalkBack or delivery.
+
+## Native call adapters
+
+Status: Implemented and covered by JVM tests; provider provisioning and device qualification remain pending.
+
+`NativeCallRing` follows the shared Rust reducer and admission vectors through
+`call_wake_admit`: only call, organisation and channel UUIDs, a monotonic epoch,
+a ring/cancel state and a Unix-seconds expiry within 60 seconds enter the relay.
+The bounded tombstone store rejects reordering and replay without evicting live
+cancellations. A cancellation stops ringing with `ANSWERED_ELSEWHERE` and creates
+no missed-call notification.
+
+`NativeTelecomRuntime` registers a `CAPABILITY_SELF_MANAGED` phone account for a
+provisioned app session. `KoderaConnectionService` is protected by
+`BIND_TELECOM_CONNECTION_SERVICE`; notification action intents target a private
+receiver. Answer starts the phone-call/microphone foreground owner, acquires audio
+focus, and only then allows media capture. Telecom controls Bluetooth, speaker,
+earpiece and mute; connectivity callbacks notify the media reconnection seam.
+Microphone permission must already have been granted by the platform consent UI.
+
+The runtime's FCM entry accepts only high-priority data wakes, validates canonical
+numeric strings and rejects notification payloads. It is an entry seam for a
+provisioned messaging provider; no FCM SDK or provider credential is added here.
+The `LiveKitWebRTCSession` driver must connect with capture disabled and cancel
+owned SDK operations on disconnect. The selected audio channel shares its
+existing authenticated Matrix transport for companion chat and correlated
+own-user `m.call.answer` signals from another party. A 404 or confidential
+authority loss stops media and clears transient call state. Channel closure,
+organisation changes and sign-out tear down the runtime. The checked-in app
+provisions neither a media SDK driver nor a messaging provider; lock-screen,
+Bluetooth and handoff behavior still require device qualification.

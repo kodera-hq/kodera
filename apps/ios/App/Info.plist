@@ -53,6 +53,10 @@
 	<array>
 		<string>_kodera-prox._udp</string>
 	</array>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Use your microphone only when you answer or join a call.</string>
+	<key>UIBackgroundModes</key>
+	<array><string>audio</string><string>voip</string></array>
 	<key>UIAppFonts</key>
 	<array>
 		<string>Fonts/Inter-Regular.ttf</string>

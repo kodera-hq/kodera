@@ -39,6 +39,11 @@ Status: Kodera for iOS is in development; no store release is recorded here.
 
 ## Unreleased
 
+### Native calls
+
+- Add opaque, expiring call wakes and bounded ring cancellation history shared with the native core. Answering on another device stops ringing without a missed-call indicator.
+- Add session-owned system call adapters, audio ownership and network handoff hooks, and authenticated audio-channel companion timeline integration. Provider registration, media SDK provisioning and device qualification remain deployment work.
+
 ### Added
 
 - Explicit local workspace studio for validated shareable themes, profile/rank policy arithmetic and bounded Markdown drafts with escaped export. A current text-channel scope and explicit preview activation are required; no remote authority, collaboration or persistence is provided.

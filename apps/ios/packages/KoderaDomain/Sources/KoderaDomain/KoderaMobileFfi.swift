@@ -895,6 +895,21 @@ public struct KoderaMobileFfiBridge: PacketDispatcher {
             let out = "{\"ok\":true,\"valid\":\(valid)}"
             return try KoderaFfiPacket(payload: Data(out.utf8), status: 0)
 
+        case "call_wake_admit":
+            try Self.ensureAllowedKeys(dict, allowed: ["op", "payload_hex", "now"])
+            guard let hex = dict["payload_hex"]?.stringValue, let now = dict["now"]?.uint64Value else { throw KoderaMobileFfiError.invalidInput }
+            let data = try Self.decodeHex(hex)
+            let obj = try StrictFfiJson.parseObject(data, byteLimit: 4096)
+            try Self.ensureAllowedKeys(obj, allowed: ["call_id", "organisation_id", "channel_id", "epoch", "state", "expires_at"])
+            guard let callId = obj["call_id"]?.stringValue, let org = obj["organisation_id"]?.stringValue,
+                  let channel = obj["channel_id"]?.stringValue, let epoch = obj["epoch"]?.uint64Value,
+                  let state = obj["state"]?.stringValue.flatMap(NativeRingPhase.init(rawValue:)),
+                  let expiry = obj["expires_at"]?.uint64Value else { throw KoderaMobileFfiError.invalidInput }
+            let wake = try NativeCallWake(callId: callId, organisationId: org, channelId: channel, epoch: epoch, state: state, expiresAt: expiry)
+            try wake.validate(now: now)
+            let out = "{\"ok\":true,\"call_id\":\"\(callId)\",\"organisation_id\":\"\(org)\",\"channel_id\":\"\(channel)\",\"epoch\":\(epoch),\"state\":\"\(state.rawValue)\",\"expires_at\":\(expiry)}"
+            return try KoderaFfiPacket(payload: Data(out.utf8), status: 0)
+
         case "wakeup_envelope_admit":
             try Self.ensureAllowedKeys(dict, allowed: ["op", "payload_hex"])
             guard let payloadHex = dict["payload_hex"]?.stringValue else {

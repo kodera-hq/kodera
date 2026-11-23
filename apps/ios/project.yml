@@ -49,8 +49,12 @@ targets:
         INFOPLIST_FILE: App/Info.plist
         CODE_SIGN_ENTITLEMENTS: App/Kodera.entitlements
         DEVELOPMENT_TEAM: UF5852SF57
+        APS_ENVIRONMENT: development
         TARGETED_DEVICE_FAMILY: "1,2"
         GENERATE_INFOPLIST_FILE: "NO"
+      configs:
+        Release:
+          APS_ENVIRONMENT: production
     dependencies:
       - package: KoderaDomain
       - package: KoderaClient

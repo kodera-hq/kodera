@@ -74,3 +74,21 @@ Licensed under `Apache-2.0`.
 ## Workspace preferences and local Docs
 
 `workspace_prefs` re-exports a strict dependency-free five-RGB `kodera-theme:v1:` codec, four curated presets, pure-black monogram constants, validated profile metadata, rank-based preview IAM and transactional local Docs documents. Share codes are capped at 2048 UTF-8 bytes with standard canonical base64 and exact JSON schemas. Profiles and IAM are correlation/preview data, never authenticated membership or permission grants. Docs bodies are capped at 64 KiB; quoted frontmatter exports remain literal Markdown. The desktop [local seam contract](../../apps/desktop/src-tauri/WORKSPACE-PREFERENCES.md) records byte limits, format-control policy, IPC differences and unprovisioned behavior.
+
+## Native call wakes
+
+Status: Implemented deterministic reducer and packet admission binding.
+
+`mobile_calls::CallRingMachine` scopes a bounded, non-evicting live replay store
+to one authenticated organisation. `CallWake` accepts only opaque UUID call,
+organisation and channel identifiers, a positive monotonic epoch, a ring/cancel
+state and a Unix-seconds expiry within 60 seconds. Terminal call states cannot
+reopen inside the retained window. Connecting calls can expire; connected calls
+survive the original ring deadline. Canceled and revoked calls never become
+missed calls. Local authority loss clears the store.
+
+`mobile_ffi::admit_call_wake` and the safe packet operation `call_wake_admit`
+reject unknown fields, duplicate keys, malformed identifiers, non-integral
+numbers and stale deadlines. Swift and Kotlin typed bindings exercise the same
+`vectors/mobile-call-wake-v1.txt` cases. They follow the existing injectable safe
+packet bridge; no unmangled native symbol or installed media SDK is claimed.

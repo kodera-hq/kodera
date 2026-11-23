@@ -1510,7 +1510,9 @@ public actor MatrixRoomClient {
             redactsEventId: redactsEventId,
             transactionId: transactionId,
             isRedactedUnsigned: isRedactedUnsigned,
-            attachments: attachments
+            attachments: attachments,
+            callId: content?["call_id"]?.string,
+            callPartyId: content?["party_id"]?.string
         )
     }
 

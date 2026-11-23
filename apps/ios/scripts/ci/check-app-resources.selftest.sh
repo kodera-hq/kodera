@@ -38,15 +38,15 @@ cases = [
     ("malformed entitlement plist", "malformed", None, "valid associated-domains plist", 1),
     ("truncated XML entitlement plist", "truncated", None, "valid associated-domains plist", 1),
     ("missing associated domains", {}, None, "declare only associated domains", 1),
-    ("unqualified push entitlement", {**entitlements, "aps-environment": "production"}, None, "declare only associated domains", 1),
+    ("unqualified push entitlement", {**entitlements, "aps-environment": "production"}, None, "aps environment must follow", 1),
     ("unqualified background entitlement", {**entitlements, "UIBackgroundModes": ["voip"]}, None, "declare only associated domains", 1),
-    ("missing approved domain", {domains: entitlements[domains][:-1]}, None, "exactly the three", 1),
-    ("extra domain", {domains: entitlements[domains] + ["applinks:extra.kodera.io"]}, None, "exactly the three", 1),
-    ("wildcard domain", {domains: ["webcredentials:*.kodera.io", *entitlements[domains][1:]]}, None, "exactly the three", 1),
-    ("foreign domain", {domains: ["webcredentials:auth.example.org", *entitlements[domains][1:]]}, None, "exactly the three", 1),
-    ("duplicate domain", {domains: entitlements[domains] + [entitlements[domains][0]]}, None, "exactly the three", 1),
-    ("non-array domains", {domains: entitlements[domains][0]}, None, "exactly the three", 1),
-    ("wrong association service", {domains: ["applinks:auth.kodera.io", *entitlements[domains][1:]]}, None, "exactly the three", 1),
+    ("missing approved domain", {**entitlements, domains: entitlements[domains][:-1]}, None, "exactly the three", 1),
+    ("extra domain", {**entitlements, domains: entitlements[domains] + ["applinks:extra.kodera.io"]}, None, "exactly the three", 1),
+    ("wildcard domain", {**entitlements, domains: ["webcredentials:*.kodera.io", *entitlements[domains][1:]]}, None, "exactly the three", 1),
+    ("foreign domain", {**entitlements, domains: ["webcredentials:auth.example.org", *entitlements[domains][1:]]}, None, "exactly the three", 1),
+    ("duplicate domain", {**entitlements, domains: entitlements[domains] + [entitlements[domains][0]]}, None, "exactly the three", 1),
+    ("non-array domains", {**entitlements, domains: entitlements[domains][0]}, None, "exactly the three", 1),
+    ("wrong association service", {**entitlements, domains: ["applinks:auth.kodera.io", *entitlements[domains][1:]]}, None, "exactly the three", 1),
     ("missing entitlement binding", entitlements, project.replace("        CODE_SIGN_ENTITLEMENTS: App/Kodera.entitlements\n", ""), "CODE_SIGN_ENTITLEMENTS exactly", 1),
     ("wrong entitlement binding", entitlements, project.replace("CODE_SIGN_ENTITLEMENTS: App/Kodera.entitlements", "CODE_SIGN_ENTITLEMENTS: App/Other.entitlements"), "CODE_SIGN_ENTITLEMENTS exactly", 1),
     ("missing team binding", entitlements, project.replace("        DEVELOPMENT_TEAM: UF5852SF57\n", ""), "DEVELOPMENT_TEAM exactly", 1),
@@ -291,7 +291,7 @@ expect_refusal "relaxed transport security" 1 \
 
 fresh; edit_plist Info.plist 'd["UIBackgroundModes"] = ["fetch"]'
 expect_refusal "declared background modes" 1 \
-  "Info.plist declares UIBackgroundModes, a capability this app has not qualified"
+  "Info.plist must declare exactly audio and voip background modes"
 
 # Deployment keys are allowed only as their own build-setting reference.
 fresh; edit_plist Info.plist 'd["KoderaCoreOrigin"] = "https://core.example"'
