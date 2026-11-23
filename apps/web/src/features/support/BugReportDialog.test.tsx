@@ -58,7 +58,7 @@ describe('BugReportDialog', () => {
       />
     )
 
-    await user.click(screen.getByRole('button', { name: 'Report a technical bug (zero-PII)' }))
+    await user.click(screen.getByRole('button', { name: 'Report a technical bug' }))
 
     const preview = screen.getByTestId('bug-report-json-preview')
     const parsedPreview = JSON.parse(preview.textContent ?? '{}')
@@ -100,7 +100,7 @@ describe('BugReportDialog', () => {
       />
     )
 
-    await user.click(screen.getByRole('button', { name: 'Report a technical bug (zero-PII)' }))
+    await user.click(screen.getByRole('button', { name: 'Report a technical bug' }))
 
     const noteField = screen.getByLabelText('Optional diagnostic note (max 500 characters)')
     await user.type(
@@ -152,7 +152,7 @@ describe('BugReportDialog', () => {
       />
     )
 
-    await user.click(screen.getByRole('button', { name: 'Report a technical bug (zero-PII)' }))
+    await user.click(screen.getByRole('button', { name: 'Report a technical bug' }))
 
     const errorField = screen.getByLabelText('Diagnostic error code')
     await user.clear(errorField)
@@ -199,7 +199,7 @@ describe('BugReportDialog', () => {
       />
     )
 
-    await user.click(screen.getByRole('button', { name: 'Report a technical bug (zero-PII)' }))
+    await user.click(screen.getByRole('button', { name: 'Report a technical bug' }))
 
     const fileInput = screen.getByLabelText(/Optional blurred screenshot/)
     const rawFile = new File([new Uint8Array([1, 2, 3, 4])], 'capture.png', { type: 'image/png' })
@@ -259,7 +259,7 @@ describe('BugReportDialog', () => {
       />
     )
 
-    await user.click(screen.getByRole('button', { name: 'Report a technical bug (zero-PII)' }))
+    await user.click(screen.getByRole('button', { name: 'Report a technical bug' }))
     const submitBtn = screen.getByRole('button', { name: 'Send diagnostic report' })
 
     await user.click(submitBtn)

@@ -2,7 +2,7 @@ import type { BugComponent, BugNoteRefusalCode } from './bugReportScrubber'
 
 const messages = {
   en: {
-    trigger: 'Report a technical bug (zero-PII)',
+    trigger: 'Report a technical bug',
     hintTrigger: 'Send an anonymised diagnostic snapshot without personal or workspace data.',
     title: 'Report a technical bug',
     description:
@@ -62,7 +62,7 @@ const messages = {
     receiptFingerprint: 'Fingerprint',
   },
   fr: {
-    trigger: 'Signaler un bug technique (zéro donnée personnelle)',
+    trigger: 'Signaler un bug technique',
     hintTrigger:
       'Transmettez un diagnostic technique anonymisé sans identifiant personnel ni nom d’espace.',
     title: 'Signaler un bug technique',
