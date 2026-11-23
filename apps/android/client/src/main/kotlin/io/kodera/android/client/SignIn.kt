@@ -74,6 +74,8 @@ class AcceptedOwner internal constructor(val session: Session, internal val serv
     fun refresh() { service.accessTokenFor(this, true) }
     /** Explicit sign-out of this owner only; a replacement is left untouched. Blocks. */
     fun signOut() { service.signOutFor(this) }
+    /** Returns the authenticated OIDC `sub` identity bound to this exact owner, or null if retired/absent. */
+    fun authenticatedSubject(): String? = service.authenticatedSubjectFor(this)
     override fun toString(): String = "AcceptedOwner(<redacted>)"
 }
 

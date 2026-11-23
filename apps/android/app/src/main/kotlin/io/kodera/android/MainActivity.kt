@@ -95,6 +95,9 @@ class MainActivity : ComponentActivity() {
                         onProximityConsent = ::requestProximityConsent,
                         inviteCoordinator = session.inviteCoordinator,
                         passkeyCoordinator = session.passkeyCoordinator,
+                        activeConversation = session.activeConversation,
+                        onOpenChannel = session::openChannel,
+                        onCloseChannel = session::closeChannel,
                     )
                     else -> OrganisationEntryScreen(state = model.state, onSlugChanged = model::updateSlug,
                         onLookup = model::lookup, onClear = model::clear, onCancel = model::cancelLookup,

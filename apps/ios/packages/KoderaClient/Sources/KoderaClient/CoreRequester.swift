@@ -134,22 +134,47 @@ public actor CoreRequester {
 
     /// `GET` of `path` on the Core origin, such as `/api/v1/me`.
     func get(path: String) async -> CoreReply {
-        await send(path: path, jsonBody: nil)
+        await get(path: path, query: [])
+    }
+
+    /// `GET` of `path` with a strictly validated Core pagination query (`cursor`, `limit`).
+    func get(path: String, query: [(String, String)]) async -> CoreReply {
+        await send(method: "GET", path: path, query: query, jsonBody: nil, idempotencyKey: nil)
     }
 
     /// Bounded JSON POST through the same origin, owner, refresh and response policy as GET.
-    func post(path: String, jsonBody: Data) async -> CoreReply {
+    func post(path: String, jsonBody: Data, idempotencyKey: String? = nil) async -> CoreReply {
         guard jsonBody.count <= StrictJSON.byteLimit else { return .tooLarge }
-        return await send(path: path, jsonBody: jsonBody)
+        return await send(method: "POST", path: path, query: [], jsonBody: jsonBody, idempotencyKey: idempotencyKey)
     }
 
-    private func send(path: String, jsonBody: Data?) async -> CoreReply {
-        guard Self.staysOnOrigin(path), let url = URL(string: origin + path) else { return .pathRefused }
+    /// Bounded JSON PUT through the same origin, owner, refresh and response policy as GET.
+    func put(path: String, jsonBody: Data) async -> CoreReply {
+        guard jsonBody.count <= StrictJSON.byteLimit else { return .tooLarge }
+        return await send(method: "PUT", path: path, query: [], jsonBody: jsonBody, idempotencyKey: nil)
+    }
+
+    /// Authorised DELETE on the Core origin without request body.
+    func delete(path: String) async -> CoreReply {
+        await send(method: "DELETE", path: path, query: [], jsonBody: nil, idempotencyKey: nil)
+    }
+
+    private func send(
+        method: String,
+        path: String,
+        query: [(String, String)],
+        jsonBody: Data?,
+        idempotencyKey: String?
+    ) async -> CoreReply {
+        guard Self.staysOnOrigin(path),
+              let encodedQuery = Self.encodeAdmittedQuery(query),
+              Self.admitsIdempotencyKey(idempotencyKey),
+              let url = URL(string: origin + path + encodedQuery) else { return .pathRefused }
         guard !closed.isClosed else { return .transport(.other) }
         let first: AccessToken
         do { first = try await tokens.accessToken(forceRefresh: false) }
         catch { return Self.reply(error) }
-        switch await attempt(url, token: first.value, jsonBody: jsonBody) {
+        switch await attempt(url, method: method, token: first.value, jsonBody: jsonBody, idempotencyKey: idempotencyKey) {
         case let .done(reply): return reply
         case .unauthorized: break
         }
@@ -159,7 +184,7 @@ public actor CoreRequester {
         let second: AccessToken
         do { second = try await tokens.accessToken(forceRefresh: true) }
         catch { return Self.reply(error) }
-        switch await attempt(url, token: second.value, jsonBody: jsonBody) {
+        switch await attempt(url, method: method, token: second.value, jsonBody: jsonBody, idempotencyKey: idempotencyKey) {
         case let .done(reply): return reply
         case .unauthorized: return await endSession(servedBy: second.session)
         }
@@ -202,6 +227,51 @@ public actor CoreRequester {
         }
     }
 
+    static func encodeAdmittedQuery(_ query: [(String, String)]) -> String? {
+        guard !query.isEmpty else { return "" }
+        var seen: Set<String> = []
+        var parts: [String] = []
+        parts.reserveCapacity(query.count)
+        for (name, value) in query {
+            guard seen.insert(name).inserted else { return nil }
+            switch name {
+            case "cursor":
+                let bytes = Array(value.utf8)
+                guard (1...512).contains(bytes.count) else { return nil }
+                var encoded = ""
+                encoded.reserveCapacity(bytes.count + 8)
+                for byte in bytes {
+                    if isUnreserved(byte) {
+                        encoded.append(Character(UnicodeScalar(byte)))
+                    } else if byte == UInt8(ascii: ":") {
+                        encoded.append("%3A")
+                    } else {
+                        return nil
+                    }
+                }
+                parts.append("cursor=" + encoded)
+            case "limit":
+                let bytes = Array(value.utf8)
+                guard !bytes.isEmpty,
+                      bytes.first != UInt8(ascii: "0"),
+                      bytes.allSatisfy({ (UInt8(ascii: "0")...UInt8(ascii: "9")).contains($0) }),
+                      let parsed = Int(value),
+                      (1...200).contains(parsed) else {
+                    return nil
+                }
+                parts.append("limit=" + value)
+            default:
+                return nil
+            }
+        }
+        return "?" + parts.joined(separator: "&")
+    }
+
+    static func admitsIdempotencyKey(_ idempotencyKey: String?) -> Bool {
+        guard let idempotencyKey else { return true }
+        return TrustPolicy.canonicalNonNilUUID(idempotencyKey)
+    }
+
     private static func reply(_ failure: AccessTokenFailure) -> CoreReply {
         switch failure {
         case .signedOut: .signedOut
@@ -212,14 +282,23 @@ public actor CoreRequester {
 
     private enum Attempt { case done(CoreReply), unauthorized }
 
-    private func attempt(_ url: URL, token: String, jsonBody: Data?) async -> Attempt {
+    private func attempt(
+        _ url: URL,
+        method: String,
+        token: String,
+        jsonBody: Data?,
+        idempotencyKey: String?
+    ) async -> Attempt {
         // Checked again here: the requester may have been invalidated while the token was fetched.
         guard !Task.isCancelled, !closed.isClosed else { return .done(.transport(.other)) }
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
-        request.httpMethod = jsonBody == nil ? "GET" : "POST"
+        request.httpMethod = method
         if let jsonBody {
             request.httpBody = jsonBody
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        }
+        if let idempotencyKey {
+            request.setValue(idempotencyKey, forHTTPHeaderField: "Idempotency-Key")
         }
         request.httpShouldHandleCookies = false
         request.setValue("Bearer " + token, forHTTPHeaderField: "Authorization")

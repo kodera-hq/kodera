@@ -17,30 +17,52 @@ import io.kodera.android.auth.BrowserAuthorization
 import io.kodera.android.auth.SessionStorage
 import io.kodera.android.client.AcceptedOwner
 import io.kodera.android.client.AccessTokenException
+import io.kodera.android.client.ChannelConversationTransport
 import io.kodera.android.client.CoreMeClient
 import io.kodera.android.client.CoreRequester
 import io.kodera.android.client.CoreWorkspaceClient
 import io.kodera.android.client.CoreProximityClient
+import io.kodera.android.client.KoderaSignInService
+import io.kodera.android.client.MatrixChannelConversationTransport
+import io.kodera.android.client.MatrixClientError
+import io.kodera.android.client.MatrixClientException
+import io.kodera.android.client.MatrixHttpStub
+import io.kodera.android.client.MatrixRoomClient
+import io.kodera.android.client.MatrixSsoAuthorizer
+import io.kodera.android.client.MeFailure
+import io.kodera.android.client.MeOutcome
+import io.kodera.android.client.MemberOrganisation
+import io.kodera.android.client.MemberProfile
+import io.kodera.android.client.PersistedMatrixSession
 import io.kodera.android.client.ProximityBootstrap
+import io.kodera.android.client.PushWakeupCoordinator
+import io.kodera.android.client.RustSessionVault
+import io.kodera.android.client.Session
+import io.kodera.android.client.SessionEndCause
+import io.kodera.android.client.SessionEnded
+import io.kodera.android.client.SessionFence
+import io.kodera.android.client.SignInException
+import io.kodera.android.client.SignInFailure
+import io.kodera.android.client.SignInService
+import io.kodera.android.client.TokenStoreException
+import io.kodera.android.client.WorkspaceChannel
 import io.kodera.android.client.WorkspaceFailure
 import io.kodera.android.client.WorkspaceOutcome
 import io.kodera.android.client.WorkspaceSnapshot
 import io.kodera.android.domain.ChannelRoomState
-import io.kodera.android.client.KoderaSignInService
-import io.kodera.android.client.MeFailure
-import io.kodera.android.client.MeOutcome
-import io.kodera.android.client.Session
-import io.kodera.android.client.SessionEndCause
-import io.kodera.android.client.SessionEnded
-import io.kodera.android.client.SignInException
-import io.kodera.android.client.SignInFailure
-import io.kodera.android.client.SignInService
+import io.kodera.android.domain.TrustPolicy
+import io.kodera.android.domain.UuidV7Identifier
+import io.kodera.android.domain.ZeroPayloadWakeupEnvelope
 import io.kodera.android.entry.Deployment
 import io.kodera.android.entry.DeploymentConfiguration
 import io.kodera.android.proximity.AndroidBleGattProximityDriver
 import io.kodera.android.proximity.AndroidNsdMdnsProximityDriver
 import io.kodera.android.proximity.RuntimeProximityPermissionChecker
 import io.kodera.android.proximity.VoluntaryProximitySessionController
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import java.io.File
 import java.security.SecureRandom
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
@@ -129,9 +151,36 @@ class SessionController internal constructor(
     val voluntaryProximityController: VoluntaryProximitySessionController? = null,
     private val fetchProximity: (CoreProximityClient, String) -> ProximityBootstrap? = CoreProximityClient::bootstrap,
     private val clockUnixSeconds: () -> Long = { System.currentTimeMillis() / 1_000L },
+    private val rustSessionVault: RustSessionVault? = null,
+    private val sessionStateDir: File? = null,
+    private val registerPush: (PushWakeupCoordinator, String, String, String, String) -> Unit =
+        { client, deviceId, endpoint, p256dh, auth -> client.registerDeviceWakeup(deviceId, endpoint, p256dh, auth) },
+    private val revokePush: (PushWakeupCoordinator, String) -> Unit = PushWakeupCoordinator::revokeOnSignOut,
+    private val matrixSsoAuthorizer: MatrixSsoAuthorizer? = null,
+    private val matrixHttpStub: MatrixHttpStub? = null,
+    private val conversationTransportFactory: ((
+        ChannelConversationScope,
+        CoreRequester?,
+        AcceptedOwner?,
+        MemberOrganisation?,
+        String?,
+        SessionFence,
+    ) -> ChannelConversationTransport?)? = null,
 ) : AutoCloseable {
     // Exact service-issued receipt returned by the accepted sign-in or restore.
     @Volatile private var generation: AcceptedOwner? = null
+    @Volatile private var activeSessionFence = SessionFence()
+    private val vaultStateLock = Any()
+    @Volatile private var vaultNotWiped = false
+    private var inMemoryVaultDeviceId: String? = null
+    @Volatile private var registeredPushDeviceId: String? = null
+    private var activeMemberProfile: MemberProfile? = null
+    private var activeMemberOrganisation: MemberOrganisation? = null
+    private var activeVaultOrganisationId: String? = null
+    private var activeMatrixTransport: MatrixChannelConversationTransport? = null
+    @Volatile private var activeMatrixSession: PersistedMatrixSession? = null
+    private val _isForeground = MutableStateFlow(false)
+    val isForeground: StateFlow<Boolean> = _isForeground.asStateFlow()
     private var readTicket = Any()
     private var targetOrganisation: String? = null
     private var loading = false
@@ -164,6 +213,8 @@ class SessionController internal constructor(
     val proximityV2Controller = ProximityV2CheckInController()
     val inviteCoordinator = ChannelInviteCoordinator()
     val passkeyCoordinator = PasskeySessionCoordinator()
+    var activeConversation by mutableStateOf<ChannelConversationController?>(null)
+        private set
 
     /** Whether this build can sign in at all; when false, entry says sign-in is not offered yet. */
     val signInConfigured: Boolean get() = service != null
@@ -236,8 +287,40 @@ class SessionController internal constructor(
         requireMain()
         if (closed || started) return
         started = true
-        val owner = service ?: run { phase = SessionPhase.SignedOut; return }
+        if (phase == SessionPhase.SignedOut && notice == R.string.session_not_wiped) {
+            phase = SessionPhase.Restoring
+        }
+        val owner = service ?: run {
+            if (vaultNotWiped || unwipedMarkerExists()) {
+                workers.execute {
+                    val wiped = wipeVaultBlocking(clearPushDeviceId = true)
+                    main.execute {
+                        if (!closed) {
+                            if (!wiped) started = false
+                            phase = SessionPhase.SignedOut
+                            notice = if (wiped) null else R.string.session_not_wiped
+                        }
+                    }
+                }
+            } else {
+                phase = SessionPhase.SignedOut
+            }
+            return
+        }
         workers.execute {
+            if (vaultNotWiped || unwipedMarkerExists()) {
+                val wiped = wipeVaultBlocking(clearPushDeviceId = true)
+                if (wiped) {
+                    runCatching { owner.signOut() }
+                }
+                main.execute {
+                    if (closed || phase != SessionPhase.Restoring) return@execute
+                    if (!wiped) started = false
+                    phase = SessionPhase.SignedOut
+                    notice = if (wiped) null else R.string.session_not_wiped
+                }
+                return@execute
+            }
             val session = owner.restoreAccepted()
             main.execute {
                 if (closed || phase != SessionPhase.Restoring) return@execute
@@ -255,6 +338,14 @@ class SessionController internal constructor(
         notice = null
         stranded = false
         workers.execute {
+            if (!ensurePreviousSessionWipedOnWorker()) {
+                main.execute {
+                    if (closed || phase != SessionPhase.SigningIn) return@execute
+                    phase = SessionPhase.SignedOut
+                    notice = R.string.session_not_wiped
+                }
+                return@execute
+            }
             val outcome = try { Result.success(owner.signInAccepted(issuer)) } catch (error: SignInException) { Result.failure(error) }
             main.execute {
                 if (closed || phase != SessionPhase.SigningIn) return@execute
@@ -289,6 +380,8 @@ class SessionController internal constructor(
         requireMain()
         if (closed || resumed) return
         resumed = true
+        _isForeground.value = true
+        activeConversation?.onForegroundChanged(true)
         voluntaryProximityController?.onForegroundChanged(true)
         proximityV2Controller.onForeground()
         invalidateRead()
@@ -301,6 +394,8 @@ class SessionController internal constructor(
         if (closed || (!resumed && proximityPermissionPause == null)) return
         proximityPermissionPause = null
         resumed = false
+        _isForeground.value = false
+        activeConversation?.onForegroundChanged(false)
         voluntaryProximityController?.onForegroundChanged(false)
         proximityV2Controller.onBackground()
         inviteCoordinator.dismissSheet(null)
@@ -330,13 +425,58 @@ class SessionController internal constructor(
         requireMain()
         if (closed || phase !is SessionPhase.SignedIn) return
         val owner = generation ?: return
+        val pushDeviceId = registeredPushDeviceId ?: readPersistedPushDeviceId()
+        val matrixToLogout = activeMatrixTransport
+        val retainedMatrixSession = activeMatrixSession
+        val vaultOrgAtSignOut = activeVaultOrganisationId ?: activeMemberOrganisation?.id ?: targetOrganisation
+        activeMatrixTransport = null
+        activeMatrixSession = null
+        registeredPushDeviceId = null
+        activeMemberProfile = null
+        activeMemberOrganisation = null
+        activeVaultOrganisationId = null
         generation = null
+        val retiringFence = rotateSessionFence()
         invalidateRead()
         endCore()
         phase = SessionPhase.SignedOut
         member = MemberState.Loading
         notice = null
-        workers.execute { owner.signOut() }
+        val coreOrigin = deployment.coreApiOrigin
+        workers.execute {
+            if (pushDeviceId != null && coreOrigin != null) {
+                val tempRequester = try {
+                    CoreRequester(coreOrigin, DevelopmentBuild.loopback, owner)
+                } catch (_: IllegalArgumentException) {
+                    null
+                }
+                tempRequester?.use { requester ->
+                    runCatching { revokePush(PushWakeupCoordinator(requester), pushDeviceId) }
+                }
+            }
+            val sessionFromVault = retainedMatrixSession ?: readPersistedMatrixSessionForLogout(vaultOrgAtSignOut)
+            val loggedOutViaTransport = runCatching { matrixToLogout?.logoutIfAuthenticated() ?: false }.getOrDefault(false)
+            runCatching { matrixToLogout?.close() }
+            if (!loggedOutViaTransport && sessionFromVault != null) {
+                runCatching {
+                    MatrixRoomClient.logoutStandalone(
+                        homeserverOrigin = sessionFromVault.homeserverOrigin,
+                        matrixAccessToken = sessionFromVault.accessToken,
+                        loopback = DevelopmentBuild.loopback,
+                        httpStub = matrixHttpStub,
+                    )
+                }
+            }
+            val wiped = wipeVaultBlocking(clearPushDeviceId = true, retiringFence = retiringFence)
+            if (!wiped) {
+                main.execute {
+                    if (!closed && phase == SessionPhase.SignedOut) {
+                        notice = R.string.session_not_wiped
+                    }
+                }
+            }
+            owner.signOut()
+        }
     }
 
     /**
@@ -349,10 +489,28 @@ class SessionController internal constructor(
         // The sign-in that replaced it speaks for itself: this controller signs in only from signed-out,
         // and that sign-in's own outcome sets the phase.
         if (event.cause == SessionEndCause.REPLACED) {
+            val matrixToClose = activeMatrixTransport
+            activeMatrixTransport = null
+            activeMatrixSession = null
+            registeredPushDeviceId = null
+            activeMemberProfile = null
+            activeMemberOrganisation = null
+            activeVaultOrganisationId = null
             generation = null
+            val retiringFence = rotateSessionFence()
             invalidateRead()
             endCore()
             if (phase is SessionPhase.SignedIn) member = MemberState.CoreUnavailable
+            if (matrixToClose != null || rustSessionVault != null || sessionStateDir != null) {
+                workers.execute {
+                    runCatching { matrixToClose?.close() }
+                    if (!wipeVaultBlocking(clearPushDeviceId = true, retiringFence = retiringFence)) {
+                        main.execute {
+                            if (!closed) notice = R.string.session_not_wiped
+                        }
+                    }
+                }
+            }
             return
         }
         // Signing out or in already: nothing shown to leave.
@@ -361,12 +519,32 @@ class SessionController internal constructor(
     }
 
     private fun leaveEndedSession() {
+        val matrixToClose = activeMatrixTransport
+        activeMatrixTransport = null
+        activeMatrixSession = null
+        registeredPushDeviceId = null
+        activeMemberProfile = null
+        activeMemberOrganisation = null
+        activeVaultOrganisationId = null
         generation = null
+        val retiringFence = rotateSessionFence()
         invalidateRead()
         endCore()
         phase = SessionPhase.SignedOut
         member = MemberState.Loading
         notice = R.string.session_ended
+        if (matrixToClose != null || rustSessionVault != null || sessionStateDir != null) {
+            workers.execute {
+                runCatching { matrixToClose?.close() }
+                if (!wipeVaultBlocking(clearPushDeviceId = true, retiringFence = retiringFence)) {
+                    main.execute {
+                        if (!closed && phase == SessionPhase.SignedOut) {
+                            notice = R.string.session_not_wiped
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /** Reports actual owner adoption so a declined current pending entry can settle. Main thread only. */
@@ -375,6 +553,7 @@ class SessionController internal constructor(
         // Every way out of a session closes its requester (signOut, onSessionEnded, close). Closed here
         // too, so a path that enters without one of them can never leave a requester or pool open behind it.
         if (closed || accepted.isRetired) return false
+        rotateSessionFence()
         invalidateRead()
         generation = accepted
         endCore()
@@ -407,6 +586,8 @@ class SessionController internal constructor(
                     null -> member = MemberState.CoreUnavailable
                     is MeOutcome.Member -> {
                         val organisation = outcome.profile.organisations.singleOrNull { it.realm == signedIn.session.realm }
+                        activeMemberProfile = outcome.profile
+                        activeMemberOrganisation = organisation
                         configureSessionCoordinators(organisation?.id)
                         member = MemberState.Loaded(outcome.profile.displayName ?: outcome.profile.email, organisation?.name)
                         if (resumed) {
@@ -421,7 +602,10 @@ class SessionController internal constructor(
                         if (owner?.isSignedIn == true) member = MemberState.CoreUnavailable else leaveEndedSession()
                     }
                     is MeOutcome.Unavailable -> {
-                        if (outcome.failure == MeFailure.Forbidden) configureSessionCoordinators(null)
+                        if (outcome.failure == MeFailure.Forbidden) {
+                            activeMemberOrganisation = null
+                            configureSessionCoordinators(null)
+                        }
                         member = MemberState.of(outcome.failure)
                     }
                 }
@@ -481,6 +665,8 @@ class SessionController internal constructor(
                     // The system permission dialog is visible; no radio capability survives focus loss.
                     proximityPermissionPause = ticket
                     resumed = false
+                    _isForeground.value = false
+                    activeConversation?.onForegroundChanged(false)
                     radio.onForegroundChanged(false)
                     radio.clearProvisioning()
                     proximityV2Controller.onBackground()
@@ -495,6 +681,8 @@ class SessionController internal constructor(
                 if (current) {
                     proximityPermissionPause = null
                     resumed = true
+                    _isForeground.value = true
+                    activeConversation?.onForegroundChanged(true)
                     radio.onForegroundChanged(true)
                     proximityV2Controller.onForeground()
                 }
@@ -649,25 +837,351 @@ class SessionController internal constructor(
      * The session's one requester, handed to every Core client of the session (A2 adds its own here).
      * Null when Core is not configured or its origin is refused.
      */
+    fun openChannel(channel: WorkspaceChannel, organisationId: String) {
+        requireMain()
+        if (closed || phase !is SessionPhase.SignedIn || member !is MemberState.Loaded) return
+        val snapshot = (workspace as? WorkspaceViewState.Loaded)?.snapshot ?: return
+        if (snapshot.organisationId != organisationId) return
+        val scope = ChannelConversationScope.fromChannel(organisationId, channel) ?: return
+        closeChannel()
+        val conversationFence = SessionFence()
+        activeSessionFence.registerCancellation { conversationFence.invalidate() }
+        val ownerSubject = generation?.authenticatedSubject()
+        val transport = if (conversationTransportFactory != null) {
+            conversationTransportFactory.invoke(
+                scope,
+                core?.requester,
+                generation,
+                activeMemberOrganisation,
+                ownerSubject,
+                conversationFence,
+            )
+        } else {
+            buildProductionConversationTransport(scope, conversationFence)
+        }
+        val ownId = transport?.ownUserId
+            ?: ownerSubject?.let { sub ->
+                val slug = activeMemberOrganisation?.slug?.lowercase()
+                val domain = deployment.coreApiOrigin?.let { MatrixRoomClient.deriveMatrixDomain(it, DevelopmentBuild.loopback) }
+                if (slug != null && domain != null) "@$sub:$slug.$domain" else "@me:kodera.local"
+            }
+            ?: "@me:kodera.local"
+        activeConversation = ChannelConversationController(
+            scope = scope,
+            transport = transport,
+            ownUserId = ownId,
+            mainExecutor = main,
+            workerExecutor = workers,
+            fence = conversationFence,
+            initialForeground = _isForeground.value,
+        )
+    }
+
+    fun closeChannel() {
+        requireMain()
+        activeConversation?.clear()
+        activeConversation = null
+        val matrixToClose = activeMatrixTransport
+        activeMatrixTransport = null
+        if (matrixToClose != null) {
+            workers.execute { runCatching { matrixToClose.close() } }
+        }
+    }
+
+    /** Registers a payload-free wakeup endpoint (`endpoint`, `p256dh`, `auth`) on Core for the active session. */
+    fun registerPushWakeup(
+        deviceId: String,
+        endpoint: String,
+        p256dh: String,
+        auth: String,
+        onComplete: ((Boolean) -> Unit)? = null,
+    ) {
+        requireMain()
+        if (closed || phase !is SessionPhase.SignedIn) {
+            onComplete?.invoke(false)
+            return
+        }
+        val owner = generation ?: run { onComplete?.invoke(false); return }
+        val clients = core ?: run { onComplete?.invoke(false); return }
+        val fenceSnapshot = activeSessionFence
+        workers.execute {
+            if (fenceSnapshot.isInvalidated || owner.isRetired) {
+                main.execute { onComplete?.invoke(false) }
+                return@execute
+            }
+            val succeeded = runCatching {
+                registerPush(clients.pushWakeup, deviceId, endpoint, p256dh, auth)
+            }.isSuccess
+            if (succeeded && !fenceSnapshot.isInvalidated && !owner.isRetired) {
+                persistPushDeviceId(deviceId)
+                registeredPushDeviceId = deviceId
+            }
+            main.execute { onComplete?.invoke(succeeded) }
+        }
+    }
+
+    /** Admits a zero-payload wakeup envelope (`kodera-rs` schema) and triggers a fenced sync if a conversation is open. */
+    fun handleIncomingPushWakeup(rawPayload: ByteArray): Boolean {
+        requireMain()
+        if (closed || phase !is SessionPhase.SignedIn) return false
+        val orgId = activeMemberOrganisation?.id ?: targetOrganisation ?: return false
+        val envelope = runCatching { ZeroPayloadWakeupEnvelope.admit(rawPayload) }.getOrNull() ?: return false
+        if (envelope.organisationId != orgId) return false
+        activeConversation?.refreshSync()
+        return true
+    }
+
+    private fun buildProductionConversationTransport(
+        scope: ChannelConversationScope,
+        conversationFence: SessionFence,
+    ): ChannelConversationTransport? {
+        val requester = core?.requester ?: return null
+        val owner = generation ?: return null
+        val coreOrigin = deployment.coreApiOrigin ?: return null
+        val org = activeMemberOrganisation?.takeIf { it.id == scope.organisationId } ?: return null
+        val matrixDomain = MatrixRoomClient.deriveMatrixDomain(coreOrigin, DevelopmentBuild.loopback) ?: return null
+        val vaultDeviceId = loadOrCreateVaultDeviceId()
+        val vault = rustSessionVault
+        val roomClient = MatrixRoomClient(
+            coreRequester = requester,
+            loopback = DevelopmentBuild.loopback,
+            fence = conversationFence,
+            httpStub = matrixHttpStub,
+        )
+        val ssoAuthorizer = matrixSsoAuthorizer ?: MatrixSsoAuthorizer { request ->
+            backend?.authorizeMatrixSso(request)
+                ?: throw MatrixClientException(MatrixClientError.IDENTITY_UNAVAILABLE)
+        }
+        val transport = MatrixChannelConversationTransport(
+            roomClient = roomClient,
+            organisationId = scope.organisationId,
+            organisationSlug = org.slug,
+            matrixDomain = matrixDomain,
+            vaultDeviceId = vaultDeviceId,
+            owner = owner,
+            ssoAuthorizer = ssoAuthorizer,
+            loadVault = { orgId, devId ->
+                if (conversationFence.isInvalidated || owner.isRetired) null
+                else vault?.open(orgId, devId)
+            },
+            saveVault = { orgId, devId, bytes ->
+                if (vault != null) {
+                    vault.sealIfActive(orgId, devId, bytes) {
+                        !conversationFence.isInvalidated && !owner.isRetired
+                    } != null
+                } else {
+                    !conversationFence.isInvalidated && !owner.isRetired
+                }
+            },
+            onSessionEstablished = { established ->
+                if (!conversationFence.isInvalidated && !owner.isRetired) {
+                    activeMatrixSession = established
+                }
+            },
+        )
+        activeMatrixTransport = transport
+        return transport
+    }
+
     private fun coreClients(owner: AcceptedOwner): CoreClients? {
         val origin = deployment.coreApiOrigin ?: return null
         val requester = try { CoreRequester(origin, DevelopmentBuild.loopback, owner) }
             catch (_: IllegalArgumentException) { return null }
-        return CoreClients(requester, CoreMeClient(requester), CoreWorkspaceClient(requester), CoreProximityClient(requester))
+        return CoreClients(
+            requester,
+            CoreMeClient(requester),
+            CoreWorkspaceClient(requester),
+            CoreProximityClient(requester),
+            PushWakeupCoordinator(requester),
+        )
     }
 
     private fun configureSessionCoordinators(organisationId: String?) {
+        val currentOpenOrg = activeConversation?.scope?.organisationId
+        if (currentOpenOrg != null && currentOpenOrg != organisationId) {
+            closeChannel()
+        }
+        val previousVaultOrg = activeVaultOrganisationId
+        if (organisationId != null && previousVaultOrg != null && previousVaultOrg != organisationId) {
+            val retiringFence = rotateSessionFence()
+            closeChannel()
+            activeMatrixSession = null
+            activeVaultOrganisationId = organisationId
+            if (rustSessionVault != null || sessionStateDir != null) {
+                workers.execute {
+                    if (!wipeVaultBlocking(clearPushDeviceId = false, retiringFence = retiringFence)) {
+                        main.execute {
+                            if (!closed) {
+                                if (phase is SessionPhase.SignedIn) {
+                                    val owner = generation
+                                    generation = null
+                                    invalidateRead()
+                                    endCore()
+                                    phase = SessionPhase.SignedOut
+                                    member = MemberState.Loading
+                                    if (owner != null) workers.execute { owner.signOut() }
+                                }
+                                notice = R.string.session_not_wiped
+                            }
+                        }
+                    }
+                }
+            }
+        } else if (organisationId != null) {
+            activeVaultOrganisationId = organisationId
+        }
         runCatching { telecomCoordinator.configureOrganisation(organisationId) }
         runCatching { proximityV2Controller.configureOrganisation(organisationId) }
         inviteCoordinator.configureOrganisation(organisationId)
         passkeyCoordinator.configureOrganisation(organisationId)
     }
 
+    private fun rotateSessionFence(): SessionFence {
+        val previous = activeSessionFence
+        activeSessionFence = SessionFence()
+        previous.invalidate()
+        return previous
+    }
+
     /** Closes the ended session's requester, once: a request still in flight finishes and is fenced. */
     private fun endCore() {
+        closeChannel()
         configureSessionCoordinators(null)
         core?.requester?.close()
         core = null
+    }
+
+    private fun readPersistedVaultDeviceIdForLogout(): String? = synchronized(vaultStateLock) {
+        val dir = sessionStateDir
+        if (dir != null) {
+            val file = SessionStorage.vaultDeviceIdFile(dir)
+            val existing = runCatching { file.readText(Charsets.UTF_8).trim() }.getOrNull()
+            if (existing != null && TrustPolicy.canonicalNonNilUUID(existing)) {
+                return existing
+            }
+        }
+        inMemoryVaultDeviceId
+    }
+
+    private fun readPersistedMatrixSessionForLogout(organisationId: String?): PersistedMatrixSession? {
+        val orgId = organisationId ?: return null
+        val vault = rustSessionVault ?: return null
+        val deviceId = readPersistedVaultDeviceIdForLogout() ?: return null
+        return runCatching {
+            vault.open(orgId, deviceId)?.let(PersistedMatrixSession::decodeVaultBytes)
+        }.getOrNull()
+    }
+
+    private fun loadOrCreateVaultDeviceId(): String = synchronized(vaultStateLock) {
+        val dir = sessionStateDir
+        if (dir != null) {
+            val file = SessionStorage.vaultDeviceIdFile(dir)
+            val existing = runCatching { file.readText(Charsets.UTF_8).trim() }.getOrNull()
+            if (existing != null && TrustPolicy.canonicalNonNilUUID(existing)) {
+                return existing
+            }
+            val fresh = UuidV7Identifier.mint().toString()
+            runCatching {
+                dir.mkdirs()
+                file.writeText(fresh, Charsets.UTF_8)
+            }
+            return fresh
+        }
+        val mem = inMemoryVaultDeviceId
+        if (mem != null) return mem
+        return UuidV7Identifier.mint().toString().also { inMemoryVaultDeviceId = it }
+    }
+
+    private fun persistPushDeviceId(deviceId: String) {
+        synchronized(vaultStateLock) {
+            val dir = sessionStateDir ?: return
+            runCatching {
+                dir.mkdirs()
+                SessionStorage.pushDeviceIdFile(dir).writeText(deviceId, Charsets.UTF_8)
+            }
+        }
+    }
+
+    private fun readPersistedPushDeviceId(): String? = synchronized(vaultStateLock) {
+        val dir = sessionStateDir ?: return null
+        val file = SessionStorage.pushDeviceIdFile(dir)
+        if (!file.isFile) return null
+        val raw = runCatching { file.readText(Charsets.UTF_8).trim() }.getOrNull() ?: return null
+        raw.takeIf { it.isNotEmpty() }
+    }
+
+    private fun unwipedMarkerExists(): Boolean = synchronized(vaultStateLock) {
+        val dir = sessionStateDir ?: return false
+        SessionStorage.unwipedMarkerFile(dir).exists()
+    }
+
+    private fun markVaultUnwipedLocked() {
+        vaultNotWiped = true
+        val dir = sessionStateDir ?: return
+        runCatching {
+            dir.mkdirs()
+            SessionStorage.unwipedMarkerFile(dir).writeText("1", Charsets.UTF_8)
+        }
+    }
+
+    private fun clearVaultUnwipedMarkerLocked(): Boolean {
+        val dir = sessionStateDir ?: run {
+            vaultNotWiped = false
+            return true
+        }
+        val marker = SessionStorage.unwipedMarkerFile(dir)
+        if (marker.exists() && !marker.delete()) {
+            vaultNotWiped = true
+            return false
+        }
+        vaultNotWiped = false
+        return true
+    }
+
+    private fun wipeVaultBlocking(
+        clearPushDeviceId: Boolean,
+        retiringFence: SessionFence? = null,
+    ): Boolean = synchronized(vaultStateLock) {
+        var ok = true
+        val vault = rustSessionVault
+        if (vault != null) {
+            try {
+                vault.retireAndWipe {
+                    retiringFence?.invalidate()
+                }
+            } catch (_: TokenStoreException) {
+                ok = false
+            }
+        } else {
+            retiringFence?.invalidate()
+        }
+        inMemoryVaultDeviceId = null
+        val dir = sessionStateDir
+        if (dir != null) {
+            val deviceFile = SessionStorage.vaultDeviceIdFile(dir)
+            if (deviceFile.exists() && !deviceFile.delete()) {
+                ok = false
+            }
+            if (clearPushDeviceId) {
+                val pushFile = SessionStorage.pushDeviceIdFile(dir)
+                if (pushFile.exists() && !pushFile.delete()) {
+                    ok = false
+                }
+            }
+        }
+        if (ok) {
+            if (!clearVaultUnwipedMarkerLocked()) {
+                ok = false
+            }
+        } else {
+            markVaultUnwipedLocked()
+        }
+        ok
+    }
+
+    private fun ensurePreviousSessionWipedOnWorker(): Boolean {
+        if (!vaultNotWiped && !unwipedMarkerExists()) return true
+        return wipeVaultBlocking(clearPushDeviceId = true)
     }
 
     /** The current session's requester, for host tests. */
@@ -678,7 +1192,13 @@ class SessionController internal constructor(
         requireMain()
         if (closed) return
         closed = true
+        _isForeground.value = false
         generation = null
+        activeMatrixSession = null
+        activeMemberProfile = null
+        activeMemberOrganisation = null
+        activeVaultOrganisationId = null
+        rotateSessionFence()
         invalidateRead()
         endCore()
         telecomCoordinator.stop()
@@ -689,8 +1209,13 @@ class SessionController internal constructor(
         passkeyCoordinator.clear()
     }
 
-    private class CoreClients(val requester: CoreRequester, val me: CoreMeClient, val workspace: CoreWorkspaceClient,
-        val proximity: CoreProximityClient)
+    private class CoreClients(
+        val requester: CoreRequester,
+        val me: CoreMeClient,
+        val workspace: CoreWorkspaceClient,
+        val proximity: CoreProximityClient,
+        val pushWakeup: PushWakeupCoordinator,
+    )
 
     /** IN_PROGRESS has no notice: another sign-in is already open, and its own outcome will speak. */
     @StringRes
@@ -726,8 +1251,17 @@ class SessionController internal constructor(
                 VoluntaryProximitySessionController(AndroidBleGattProximityDriver(context, permissions),
                     AndroidNsdMdnsProximityDriver(context, permissions), permissions)
             } else null
-            return SessionController(deployment, backend, service, Executor { task -> handler.post(task) },
-                { Looper.myLooper() == Looper.getMainLooper() }, workers, voluntaryProximityController = radio)
+            return SessionController(
+                deployment = deployment,
+                backend = backend,
+                service = service,
+                main = Executor { task -> handler.post(task) },
+                onMainThread = { Looper.myLooper() == Looper.getMainLooper() },
+                workers = workers,
+                voluntaryProximityController = radio,
+                rustSessionVault = SessionStorage.rustVault(context),
+                sessionStateDir = SessionStorage.sessionDirectory(context.filesDir),
+            )
         }
     }
 }

@@ -24,6 +24,14 @@ use std::fmt;
 mod native_scope;
 pub use native_scope::{NativeCryptoError, NativeRoomScope, MAX_NATIVE_MESSAGE_BYTES};
 
+#[cfg(not(target_arch = "wasm32"))]
+pub mod mobile_ffi;
+#[cfg(not(target_arch = "wasm32"))]
+pub use mobile_ffi::{
+    invoke_json, invoke_packet, KoderaFfiPacket, PacketDispatcher, RustPacketDispatcher,
+    KODERA_FFI_PACKET_CAPACITY,
+};
+
 #[cfg(all(
     feature = "native-crypto",
     any(test, all(target_arch = "wasm32", feature = "browser-bindings"))

@@ -26,6 +26,24 @@ public struct WorkspaceChannel: Equatable, Sendable {
     public let topic: String
     public let lifecycle: WorkspaceChannelLifecycle
     public let roomState: WorkspaceChannelRoomState
+
+    public init(
+        id: String,
+        kind: WorkspaceChannelKind,
+        name: String,
+        templateKey: String?,
+        topic: String,
+        lifecycle: WorkspaceChannelLifecycle,
+        roomState: WorkspaceChannelRoomState
+    ) {
+        self.id = id
+        self.kind = kind
+        self.name = name
+        self.templateKey = templateKey
+        self.topic = topic
+        self.lifecycle = lifecycle
+        self.roomState = roomState
+    }
 }
 
 public struct WorkspaceCategory: Equatable, Sendable {

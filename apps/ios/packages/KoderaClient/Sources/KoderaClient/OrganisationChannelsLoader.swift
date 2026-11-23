@@ -62,6 +62,8 @@ public final class OrganisationChannelsLoader {
     }
 
     public private(set) var state = State() { didSet { onChange(state) } }
+    public private(set) var loadedMemberProfile: MemberProfile?
+    public private(set) var loadedOrganisation: MemberOrganisation?
     public var onChange: @MainActor (State) -> Void
     public var onEffect: @MainActor (Effect) -> Void
     private var owner: Owner?
@@ -151,6 +153,8 @@ public final class OrganisationChannelsLoader {
         readTask?.cancel()
         readTask = nil
         ticket = UUID(); target = nil; loading = false
+        loadedMemberProfile = nil
+        loadedOrganisation = nil
         state.workspace = .hidden
     }
     private func loadMember() {
@@ -189,6 +193,8 @@ public final class OrganisationChannelsLoader {
         case let .member(profile):
             let matching = profile.organisations.filter { $0.realm == owner.realm }
             let organisation = matching.count == 1 ? matching[0] : nil
+            loadedMemberProfile = profile
+            loadedOrganisation = organisation
             state.member = .loaded(name: profile.displayName ?? profile.email, organisation: organisation?.name)
             guard let organisation else { state.workspace = .targetUnavailable; return }
             guard let fetch = owner.fetchWorkspace else { state.workspace = .unavailable(.serviceUnavailable); return }

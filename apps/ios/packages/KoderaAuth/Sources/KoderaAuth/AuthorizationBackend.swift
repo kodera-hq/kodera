@@ -5,9 +5,14 @@ import KoderaDomain
 public struct StoredGrant: Equatable, Sendable {
     public let issuer: String
     public let archive: Data
-    public init(issuer: String, archive: Data) {
+    public let subject: String?
+    public init(issuer: String, archive: Data, subject: String? = nil) {
         self.issuer = issuer
         self.archive = archive
+        self.subject = subject
+    }
+    public static func == (lhs: StoredGrant, rhs: StoredGrant) -> Bool {
+        lhs.issuer == rhs.issuer && lhs.archive == rhs.archive
     }
 }
 
@@ -38,4 +43,12 @@ public protocol AuthorizationBackend: Sendable {
     /// Best effort: revoke the refresh token at the issuer's RFC 7009 endpoint, if it publishes one.
     /// Called by the explicit sign-out only.
     func revoke(grant: StoredGrant, issuer: AdmittedIssuer, configuration: SignInConfiguration) async
+    /// Returns the authenticated OIDC `sub` claim bound to `grant` (from the verified ID token).
+    func authenticatedSubject(for grant: StoredGrant) -> String?
+}
+
+extension AuthorizationBackend {
+    public func authenticatedSubject(for grant: StoredGrant) -> String? {
+        grant.subject
+    }
 }

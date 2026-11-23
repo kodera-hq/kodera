@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add `KoderaMobileFfiBridge`, `UuidV7Identifier`, `Kdv1SessionVaultCodec` (`RustSessionVault` persisted under `filesDir/session/rust-vault.bin` with Android Keystore AES-256-GCM bound to `(organisation_id, device_id)` AAD and verified byte-for-byte against `packages/kodera-rs/vectors/mobile-ffi-v1.txt`), `MatrixRoomClient`, `MatrixTimelineReducer`, `PushWakeupCoordinator`, and interactive `ChannelConversationScreen` (`LazyColumn` for active text and audio companion channels with multiline composer, `OpenDocument` attachments, haptic swipe-to-reply, single-grapheme emoji reactions, and native `ACTION_SEND` chooser via `StartActivityForResult`).
+
 - Sync generated `@kodera/design-tokens` `0.8.0` bindings (`Dark` *Dark Precision* default theme and `Light` *Light Givre*), unify bundled sans font resources and `OFL-inter.txt` on `Inter`, and retire `Plus Jakarta Sans`.
 
 - Load complete 500-channel workspaces with maximum-length UTF-8 topics within a bounded 4 MiB response.

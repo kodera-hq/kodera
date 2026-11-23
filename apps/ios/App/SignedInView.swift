@@ -20,6 +20,17 @@ struct SignedInView: View {
     }
 
     var body: some View {
+        if let activeConversation = session.activeConversation {
+            ChannelConversationView(
+                model: activeConversation,
+                onBack: session.closeChannel
+            )
+        } else {
+            dashboardScrollView
+        }
+    }
+
+    private var dashboardScrollView: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: KoderaTokens.Space.s8) {
                 VStack(alignment: .leading, spacing: KoderaTokens.Space.s4) {
@@ -219,7 +230,7 @@ struct SignedInView: View {
     private var workspaceSection: some View {
         VStack(alignment: .leading, spacing: KoderaTokens.Space.s4) {
             Text("workspace.title").font(NativeTypography.heading).accessibilityAddTraits(.isHeader)
-            Text("workspace.readonly_hint").font(NativeTypography.caption).foregroundStyle(palette.ink2)
+            Text("workspace.open_channel_hint").font(NativeTypography.caption).foregroundStyle(palette.ink2)
             if session.workspace == .loading { ProgressView().accessibilityHidden(true) }
             if let key = workspaceStatusKey {
                 Text(LocalizedStringKey(key)).foregroundStyle(palette.ink2)
@@ -295,8 +306,30 @@ struct SignedInView: View {
         )
         return VStack(alignment: .leading, spacing: KoderaTokens.Space.s2) {
             HStack(alignment: .center, spacing: KoderaTokens.Space.s2) {
-                Text(verbatim: channel.name).font(NativeTypography.body)
-                Spacer(minLength: KoderaTokens.Space.s2)
+                if channel.lifecycle == .active {
+                    Button {
+                        session.openChannel(channel, organisationId: organisationId)
+                    } label: {
+                        HStack(spacing: KoderaTokens.Space.s2) {
+                            Image(systemName: channel.kind == .audio ? "waveform" : "number")
+                                .foregroundStyle(palette.accentInk)
+                                .accessibilityHidden(true)
+                            Text(verbatim: channel.name)
+                                .font(NativeTypography.emphasis)
+                                .foregroundStyle(palette.ink)
+                            Spacer(minLength: KoderaTokens.Space.s2)
+                            Text("workspace.open_channel_action")
+                                .font(NativeTypography.caption)
+                                .foregroundStyle(palette.accentInk)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: KoderaTokens.Space.s12, alignment: .leading)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    Text(verbatim: channel.name).font(NativeTypography.body)
+                    Spacer(minLength: KoderaTokens.Space.s2)
+                }
                 if channel.lifecycle == .active, let inviteScope {
                     Button {
                         presentInviteSheet(scope: inviteScope)
@@ -304,6 +337,7 @@ struct SignedInView: View {
                         Text("invite.open_button")
                             .font(NativeTypography.caption)
                             .foregroundStyle(palette.accentInk)
+                            .frame(minHeight: KoderaTokens.Space.s10)
                     }
                     .buttonStyle(.bordered)
                 }
@@ -313,6 +347,8 @@ struct SignedInView: View {
             Text(LocalizedStringKey(roomKey(channel.roomState))).font(NativeTypography.caption).foregroundStyle(palette.ink2)
             if channel.lifecycle == .archived { Text("workspace.channel_archived").font(NativeTypography.caption).foregroundStyle(palette.ink3) }
         }
+        .padding(KoderaTokens.Space.s3)
+        .background(palette.muted, in: RoundedRectangle(cornerRadius: KoderaTokens.Radius.md))
         .fixedSize(horizontal: false, vertical: true)
     }
 

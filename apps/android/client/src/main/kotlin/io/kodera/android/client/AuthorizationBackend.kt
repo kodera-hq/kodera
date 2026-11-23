@@ -4,7 +4,7 @@ import io.kodera.android.domain.AdmittedIssuer
 import io.kodera.android.domain.IssuerAdmission
 
 /** An opaque, serialised grant (AppAuth's `AuthState` JSON) and the issuer it belongs to. Secret. */
-class StoredGrant(val issuer: String, val state: String) {
+class StoredGrant(val issuer: String, val state: String, val subject: String? = null) {
     override fun equals(other: Any?): Boolean = other is StoredGrant && issuer == other.issuer && state == other.state
     override fun hashCode(): Int = listOf(issuer, state).hashCode()
     override fun toString(): String = "StoredGrant(<redacted>)"
@@ -40,6 +40,9 @@ interface AuthorizationBackend {
      * Called for an explicit sign-out only (see [KoderaSignInService]).
      */
     fun revoke(grant: StoredGrant, issuer: AdmittedIssuer, configuration: SignInConfiguration)
+
+    /** Returns the authenticated OIDC `sub` claim bound to [grant] (from the verified ID token). */
+    fun authenticatedSubject(grant: StoredGrant): String? = grant.subject
 }
 
 /** The checks a backend runs on the issuer's discovery document before any code or token moves. */
