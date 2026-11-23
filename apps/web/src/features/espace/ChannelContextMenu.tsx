@@ -32,6 +32,8 @@ export interface ChannelMenuActions {
   /** Whether the channel is muted, which names the toggle. */
   isMuted?: ((channelId: string) => boolean) | undefined
   onInvite?: ((target: ChannelMenuTarget) => void) | undefined
+  /** Whether the member may invite into the channel; defaults to `true` when omitted. */
+  canInvite?: ((channelId: string) => boolean) | undefined
   onCopyLink?: ((target: ChannelMenuTarget) => void) | undefined
   onPermissions?: ((target: ChannelMenuTarget) => void) | undefined
   /** Whether the member administers the channel: only then are its permissions offered. */
@@ -102,7 +104,7 @@ export function ChannelContextMenu({
           },
         ]
       : []),
-    ...(actions.onInvite
+    ...(actions.onInvite && (actions.canInvite === undefined || actions.canInvite(target.channelId))
       ? [
           {
             key: 'invite',

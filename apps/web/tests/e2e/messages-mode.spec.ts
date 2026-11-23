@@ -18,7 +18,7 @@ test('Messages uses a wide master/detail view, filters locally and returns to Pr
   await expect(master.locator('[data-testid^="simple-feed-row-"]').first()).toContainText(
     /arrivals|arrivées/i
   )
-  const search = master.getByRole('searchbox', { name: 'Rechercher (⌘K)' })
+  const search = master.getByRole('searchbox', { name: 'Filtrer les conversations' })
   await search.fill('support')
   await expect(master.locator('[data-testid^="simple-feed-row-"]')).toHaveCount(1)
   await search.clear()

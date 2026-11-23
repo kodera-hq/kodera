@@ -876,6 +876,10 @@ def set_lifecycle(*, write: Write, channel_id: UUID, lifecycle: str) -> ChannelR
         return row
     if row.lifecycle not in (Channel.Lifecycle.ACTIVE, Channel.Lifecycle.ARCHIVED):
         raise StructureStateError((Channel.Lifecycle.ACTIVE, Channel.Lifecycle.ARCHIVED))
+    if lifecycle == Channel.Lifecycle.ARCHIVED:
+        Workspace.objects.filter(id=write.workspace_id, default_channel_id=row.id).update(
+            default_channel_id=None, updated_at=timezone.now()
+        )
     Channel.objects.filter(id=row.id).update(
         lifecycle=lifecycle, version=F("version") + 1, updated_at=timezone.now()
     )

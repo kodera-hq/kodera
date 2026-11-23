@@ -1216,7 +1216,8 @@ class Wave5ParitySessionTests {
                 controller.workspace is WorkspaceViewState.Loaded &&
                     openConv.isBootstrapped && !openConv.isSyncing &&
                     openConv.syncStatusRes == R.string.conversation_status_live &&
-                    syncHits.get() >= syncHitsBeforeReleaseB + 2
+                    syncHits.get() >= syncHitsBeforeReleaseB + 2 &&
+                    !openConv.isSyncing
             }
             assertEquals("Must not trigger duplicate SSO on resume", 3, ssoAuthorizerCalls.get())
 
@@ -1246,7 +1247,9 @@ class Wave5ParitySessionTests {
             assertTrue(openConv.isForeground.value)
             drainUntil("workspace reloaded on foreground") { controller.workspace is WorkspaceViewState.Loaded }
             openConv.refreshSync()
-            drainUntil("foreground /sync resumed") { syncHits.get() > hitsWhileBackgrounded }
+            drainUntil("foreground /sync resumed") {
+                syncHits.get() > hitsWhileBackgrounded && !openConv.isSyncing
+            }
 
             // 4. Regression (Item 6): Navigate Back (`closeChannel()`) BEFORE `signOut()` ->
             // `signOut()` MUST still execute `POST /_matrix/client/v3/logout` before wiping `RustSessionVault`!

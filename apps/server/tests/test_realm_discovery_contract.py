@@ -97,7 +97,7 @@ DISCOVERY_SCHEMAS = (
 # Rebound at 0.54.0: workspace import dry-run/execution, live coexistence bridges, three-tier AI policy/consent, and voice-note transcription; discovery unchanged.
 # Rebound at 0.55.0: authoritative workspace channel confidentiality; discovery unchanged.
 # Rebound at 0.57.0: optional workspace identity and preferences; protected bootstrap and discovery semantics unchanged.
-UNCHANGED_SHA = "1069314d03a07daaf622dda8eed8028cd18a4376de89e3eac930965426889dd9"
+UNCHANGED_SHA = "9d94e08edc714691afbc4f216d82cd5cec8dc31dd5df2bbf0189a215edab5e78"
 # Approved schema/key semantics; prose is removed before hashing.
 # Rebound at 0.26.0: discoverRealm declares 403 forbidden, a browser request refused from its
 # headers before any quota charge; the rest of the discovery wire is unchanged.

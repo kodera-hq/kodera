@@ -149,6 +149,7 @@ export interface SimpleMessagingSidebarProps {
   readonly onChannelToggleMute?: ((target: ChannelMenuTarget) => void) | undefined
   readonly isChannelMuted?: ((channelId: string) => boolean) | undefined
   readonly onChannelInvite?: ((target: ChannelMenuTarget) => void) | undefined
+  readonly canInviteChannel?: ((channelId: string) => boolean) | undefined
   readonly onChannelCopyLink?: ((target: ChannelMenuTarget) => void) | undefined
   readonly onChannelPermissions?: ((target: ChannelMenuTarget) => void) | undefined
   readonly canManageChannel?: ((channelId: string) => boolean) | undefined
@@ -185,6 +186,7 @@ function SimpleMessagingSidebarView({
   onChannelToggleMute,
   isChannelMuted,
   onChannelInvite,
+  canInviteChannel,
   onChannelCopyLink,
   onChannelPermissions,
   canManageChannel,
@@ -356,15 +358,13 @@ function SimpleMessagingSidebarView({
         <div className="flex flex-col gap-2">
           {narrow && simulation ? null : (
             <div className="flex items-center gap-1">
-              {narrow ? null : (
-                <div className="min-w-0 flex-1">
-                  <OrganisationHeader
-                    name={workspace.display_name || organisationName}
-                    slug={org}
-                    logoUrl={workspace.logo_url}
-                  />
-                </div>
-              )}
+              <div className="min-w-0 flex-1">
+                <OrganisationHeader
+                  name={workspace.display_name || organisationName}
+                  slug={org}
+                  logoUrl={workspace.logo_url}
+                />
+              </div>
               {simulation ? null : (
                 <NotificationCenter
                   store={store}
@@ -655,6 +655,7 @@ function SimpleMessagingSidebarView({
         onToggleMute={onChannelToggleMute}
         isMuted={isChannelMuted}
         onInvite={onChannelInvite}
+        canInvite={canInviteChannel}
         onCopyLink={onChannelCopyLink}
         onPermissions={onChannelPermissions}
         canManage={canManageChannel}

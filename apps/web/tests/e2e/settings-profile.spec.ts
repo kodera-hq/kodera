@@ -187,6 +187,7 @@ test('profile updates are visible in messages, profile cards and after reload', 
     /^@[^:]+:community\.kodera\.io$/
   )
   await page.keyboard.press('Escape')
+  await page.getByRole('link', { name: 'announcements', exact: true }).click()
   await page
     .getByRole('textbox', { name: 'Message dans #announcements', exact: true })
     .fill('Profile integration check')

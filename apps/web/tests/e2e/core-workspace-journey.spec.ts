@@ -154,7 +154,7 @@ test('mobile onboarding keeps the current conversation behind an accessible moda
   await page.getByRole('menuitem', { name: /Créer.*nouvel espace/ }).click()
   await expect(page.getByRole('dialog')).toBeInViewport()
   await expect(
-    page.getByRole('textbox', { name: 'Message dans #announcements', exact: true })
+    page.getByRole('textbox', { name: 'Message dans #arrivals', exact: true })
   ).toHaveCount(0)
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
   await page.keyboard.press('Escape')

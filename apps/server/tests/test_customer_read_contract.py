@@ -1124,7 +1124,7 @@ N4_VERSION = "0.57.0"
 # Rebound at 0.53.0: push subscription platform, bounded foreground presence leases, and zero-PII createBugReport; no N4 bytes changed.
 # Rebound at 0.55.0: authoritative workspace channel confidentiality; N4 assurance guards unchanged.
 # Rebound at 0.57.0: optional workspace identity and preferences; protected bootstrap and discovery semantics unchanged.
-N4_OLD_CONTRACT = "5cc4d329e04523026c9ca697797203418ba3ae8d0106db95951d24b7fa2973bd"
+N4_OLD_CONTRACT = "e66387f271c0413b9900de5725bb3c645134662f6c23d52feb7c3691b0cad89d"
 # Rebound at 0.20.0 (2026-10-22): CONVENTIONS.md §6 gains the order-in-progress and invoice-issued rows and a changelog line.
 # Rebound at 0.24.0 (2026-10-22): CONVENTIONS.md §6's invoice-issued row narrowed, and a changelog line.
 # Rebound at 0.28.0: CONVENTIONS.md §6 gains the identity-unknown row and a changelog line.

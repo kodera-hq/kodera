@@ -139,9 +139,9 @@ export function WorkspaceProfilePanel({
   const profile = useMemo(
     () =>
       query.data
-        ? { ...query.data.value, display_name: query.data.value.display_name || organisationName }
+        ? { ...query.data.value, display_name: query.data.value.display_name ?? '' }
         : undefined,
-    [query.data, organisationName]
+    [query.data]
   )
   const [draft, setDraft] = useDraft<WorkspaceProfile>(profile)
   const [newTrait, setNewTrait] = useState({ icon: '', label: '' })
@@ -161,6 +161,8 @@ export function WorkspaceProfilePanel({
 
   const etag = query.data.etag
   const dirty = JSON.stringify(draft) !== JSON.stringify(profile)
+  const trimmedDisplayName = (draft.display_name ?? '').trim()
+  const displayNameValid = trimmedDisplayName === '' || trimmedDisplayName.length >= 2
   const addTrait = (trait: ProfileTrait) => {
     const icon = trait.icon.trim()
     const label = trait.label.trim()
@@ -178,7 +180,7 @@ export function WorkspaceProfilePanel({
     void updateWorkspaceProfile(
       organisationId,
       {
-        display_name: (draft.display_name ?? organisationName).trim(),
+        display_name: trimmedDisplayName,
         logo_url: draft.logo_url ?? '',
         default_ui_mode: draft.default_ui_mode ?? 'pro',
         default_channel_id: draft.default_channel_id ?? null,
@@ -218,9 +220,9 @@ export function WorkspaceProfilePanel({
       <div className="flex flex-col gap-5">
         <TextField
           label={copy.profileName}
-          value={draft.display_name ?? organisationName}
+          value={draft.display_name ?? ''}
+          placeholder={organisationName}
           disabled={!canEdit}
-          minLength={2}
           maxLength={80}
           onChange={(event) => setDraft({ ...draft, display_name: event.target.value })}
           help={copy.profileNameHint}
@@ -422,7 +424,7 @@ export function WorkspaceProfilePanel({
           <div className="flex items-center gap-3">
             <Button
               variant="primary"
-              disabled={!dirty || (draft.display_name ?? organisationName).trim().length < 2}
+              disabled={!dirty || !displayNameValid}
               loading={busy}
               onClick={save}
             >
@@ -442,7 +444,7 @@ export function WorkspaceProfilePanel({
       <div className="flex flex-col gap-2">
         <p className="text-xs font-semibold text-c-ink-3">{copy.profilePreview}</p>
         <ServerPreviewCard
-          name={draft.display_name || organisationName}
+          name={trimmedDisplayName || organisationName}
           logoUrl={draft.logo_url}
           description={draft.description}
           banner={draft.banner_preset}

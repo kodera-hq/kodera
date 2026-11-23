@@ -664,4 +664,34 @@ describe('SimpleMessagingSidebar & Workspace UI Mode', () => {
     )
     expect(document.querySelector('[data-timeline-row="$o2"][data-shown="true"]')).toBeNull()
   })
+
+  it('retains OrganisationHeader on narrow mobile viewports in Messages mode and gates channel invites on allow_member_invites', async () => {
+    setUiMode('messages')
+    const baseStore = createFixtureStore()
+    const restrictedWorkspace: Workspace = {
+      ...WORKSPACE,
+      display_name: 'Studio Mobile',
+      allow_member_invites: false,
+    }
+    const view = render(
+      <PaletteProvider>
+        <EspaceLiveView
+          org="acme"
+          organisationName="Acme SA"
+          workspace={restrictedWorkspace}
+          channelId={GENERAL}
+          store={baseStore}
+        />
+      </PaletteProvider>
+    )
+    const sidebar = screen.getByTestId('simple-messaging-sidebar')
+    expect(within(sidebar).getByText('Studio Mobile')).toBeVisible()
+    expect(screen.queryByTestId('espace-channel-invite-btn')).toBeNull()
+
+    const row = within(sidebar).getByTestId(`simple-feed-row-channel:${GENERAL}`)
+    fireEvent.contextMenu(row)
+    const menu = await screen.findByRole('menu')
+    expect(within(menu).queryByRole('menuitem', { name: /Inviter/i })).toBeNull()
+    view.unmount()
+  })
 })

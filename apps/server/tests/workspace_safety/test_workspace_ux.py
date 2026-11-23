@@ -128,3 +128,107 @@ def test_bootstrap_preferences_never_disclose_a_hidden_landing_channel(world):
     view = read_workspace(verified=tokens[3], organisation_id=org.id)
     assert not view.uncategorised_channels and not view.categories
     assert view.default_channel_id is None and view.arrivals_channel_id is None
+
+
+def test_archiving_default_channel_clears_pointer_and_erasure_scrubs_identity(world):
+    from datetime import timedelta
+
+    from django.db import IntegrityError
+    from django.utils import timezone
+    from test_core_erasure import operator as make_staff_operator
+    from test_workspace_ux import raster
+
+    from apps.orgs.erasure_services import begin_erasure, purge_core
+    from apps.workspaces import administration
+    from apps.workspaces.models import Channel, ResourcePolicy, Workspace
+    from apps.workspaces.structure import read_workspace
+
+    org, workspace, _, tokens = world
+    policy = ResourcePolicy.objects.create(workspace=workspace, visibility="organisation")
+    landing = Channel.objects.create(
+        workspace=workspace,
+        name="general",
+        kind="text",
+        lifecycle="active",
+        room_state="ready",
+        position=0,
+        policy_mode="inherit",
+    )
+    custom_arrivals = Channel.objects.create(
+        workspace=workspace,
+        name="bienvenue",
+        kind="text",
+        lifecycle="active",
+        room_state="ready",
+        position=1,
+        policy_mode="inherit",
+    )
+    archived_arrivals = Channel.objects.create(
+        workspace=workspace,
+        name="arrivals",
+        template_key="arrivals",
+        kind="text",
+        lifecycle="archived",
+        room_state="ready",
+        position=2,
+        policy_mode="inherit",
+    )
+    audio_arrivals = Channel.objects.create(
+        workspace=workspace,
+        name="arrivals",
+        kind="audio",
+        lifecycle="active",
+        room_state="ready",
+        position=3,
+        policy_mode="inherit",
+    )
+    Workspace.objects.filter(id=workspace.id).update(
+        default_policy=policy,
+        display_name="Custom Studio",
+        logo_url=raster(),
+        default_channel_id=landing.id,
+        arrivals_channel_id=custom_arrivals.id,
+    )
+
+    # Archiving the channel referenced by default_channel_id clears the pointer cleanly
+    # and falls back to arrivals_channel_id (ignoring archived/audio arrivals).
+    owner_args = {"verified": tokens[0], "organisation_id": org.id}
+    administration.authorise(**owner_args)
+    with transaction.atomic():
+        write = administration.begin(**owner_args, request_id=str(uuid4()))
+        administration.set_lifecycle(
+            write=write, channel_id=landing.id, lifecycle=Channel.Lifecycle.ARCHIVED
+        )
+    workspace.refresh_from_db()
+    assert workspace.default_channel_id is None
+    assert audio_arrivals.lifecycle == "active" and archived_arrivals.lifecycle == "archived"
+
+    view = read_workspace(verified=tokens[0], organisation_id=org.id)
+    assert view.default_channel_id == custom_arrivals.id
+
+    # Assigning an archived channel directly is still refused by workspace_ux_guard.
+    with pytest.raises(IntegrityError), transaction.atomic():
+        Workspace.objects.filter(id=workspace.id).update(default_channel_id=landing.id)
+
+    # Point default_channel_id at an active channel, then archive that channel in SQL and verify
+    # unrelated workspace updates and unarchiving do not wedge on workspace_ux_guard.
+    Workspace.objects.filter(id=workspace.id).update(default_channel_id=custom_arrivals.id)
+    Channel.objects.filter(id=custom_arrivals.id).update(lifecycle="archived")
+    Workspace.objects.filter(id=workspace.id).update(description="Still mutable")
+    Channel.objects.filter(id=custom_arrivals.id).update(lifecycle="active")
+
+    # GDPR Art. 17 organisation erasure scrubs display_name, logo_url, and default_channel_id.
+    staff = make_staff_operator()
+    erasure = begin_erasure(
+        organisation_id=org.id,
+        instruction_ref="GDPR-ART17-H26",
+        instruction_sha256="a" * 64,
+        purge_not_before=timezone.now() - timedelta(seconds=1),
+        actor_identity_id=staff.id,
+    )
+    purge_core(erasure.id)
+    workspace.refresh_from_db()
+    assert workspace.display_name == ""
+    assert workspace.logo_url == ""
+    assert workspace.default_channel_id is None
+    assert workspace.description == ""

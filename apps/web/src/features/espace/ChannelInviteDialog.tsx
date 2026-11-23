@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '../../ui/Button/Button'
 import { CopyableField } from '../../ui/CopyableField/CopyableField'
 import { Dialog } from '../../ui/Dialog/Dialog'
+import type { FocusTarget } from '../../ui/returnFocus'
 import { InlineAlert } from '../../ui/InlineAlert/InlineAlert'
 import { QrPanel } from '../../ui/QrPanel/QrPanel'
 import { TextField } from '../../ui/TextField/TextField'
@@ -19,6 +20,8 @@ export function ChannelInviteDialog({
   store,
   unavailable,
   triggerRef,
+  hideTrigger = false,
+  returnFocusTo,
 }: {
   org: string
   channel: WorkspaceChannel
@@ -26,6 +29,8 @@ export function ChannelInviteDialog({
   store: EspaceStoreLike
   unavailable: boolean
   triggerRef?: Ref<HTMLButtonElement>
+  hideTrigger?: boolean | undefined
+  returnFocusTo?: FocusTarget | undefined
 }) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
@@ -37,37 +42,57 @@ export function ChannelInviteDialog({
   }
   // Remount the form on every opening, discarding late responses.
   return (
-    <Dialog
-      open={open}
-      onOpenChange={setOpen}
-      title={t('console.workspace.channel-invite.title')}
-      description={t('console.workspace.channel-invite.description', { channel: channel.name })}
-      closeLabel={t('console.common.action-close')}
-      initialFocus={input}
-      trigger={
-        <Button
+    <>
+      {hideTrigger ? (
+        <button
           ref={triggerRef}
-          variant="secondary"
-          size="sm"
+          type="button"
+          hidden
+          tabIndex={-1}
+          aria-hidden="true"
           disabled={unavailable}
-          data-testid="espace-channel-invite-btn"
-        >
-          {t('console.workspace.channel-invite.action-open')}
-        </Button>
-      }
-    >
-      {open ? (
-        <InviteForm
-          key={room.roomId}
-          org={org}
-          channel={channel}
-          room={room}
-          store={store}
-          unavailable={unavailable}
-          input={input}
+          onClick={() => {
+            if (!unavailable) setOpen(true)
+          }}
         />
       ) : null}
-    </Dialog>
+      <Dialog
+        open={open}
+        onOpenChange={setOpen}
+        title={t('console.workspace.channel-invite.title')}
+        description={t('console.workspace.channel-invite.description', { channel: channel.name })}
+        closeLabel={t('console.common.action-close')}
+        initialFocus={input}
+        {...(returnFocusTo === undefined ? {} : { returnFocusTo })}
+        {...(hideTrigger
+          ? {}
+          : {
+              trigger: (
+                <Button
+                  ref={triggerRef}
+                  variant="secondary"
+                  size="sm"
+                  disabled={unavailable}
+                  data-testid="espace-channel-invite-btn"
+                >
+                  {t('console.workspace.channel-invite.action-open')}
+                </Button>
+              ),
+            })}
+      >
+        {open ? (
+          <InviteForm
+            key={room.roomId}
+            org={org}
+            channel={channel}
+            room={room}
+            store={store}
+            unavailable={unavailable}
+            input={input}
+          />
+        ) : null}
+      </Dialog>
+    </>
   )
 }
 

@@ -53,6 +53,8 @@ export interface EspaceChannelHeaderProps {
   membersPanelId: string
   headingRef: RefObject<HTMLHeadingElement | null>
   inviteTrigger: RefObject<HTMLButtonElement | null>
+  inviteReturnFocus?: RefObject<HTMLElement | null> | undefined
+  canInvite?: boolean | undefined
   membersTrigger: RefObject<HTMLButtonElement | null>
   audioRooms: readonly ChannelSearchEntry[]
   simpleMode?: boolean | undefined
@@ -86,6 +88,8 @@ export function EspaceChannelHeader({
   membersPanelId,
   headingRef,
   inviteTrigger,
+  inviteReturnFocus,
+  canInvite = true,
   membersTrigger,
   audioRooms,
   simpleMode = false,
@@ -251,7 +255,7 @@ export function EspaceChannelHeader({
           </div>
         ) : null}
       </div>
-      {!simpleMode &&
+      {canInvite &&
       directRoomId === null &&
       activeRoom !== undefined &&
       activeChannel != null &&
@@ -260,6 +264,8 @@ export function EspaceChannelHeader({
         <ChannelInviteDialog
           key={`${org}:${activeRoom.roomId}`}
           triggerRef={inviteTrigger}
+          hideTrigger={simpleMode}
+          returnFocusTo={simpleMode ? inviteReturnFocus : undefined}
           org={org}
           channel={activeChannel}
           room={activeRoom}

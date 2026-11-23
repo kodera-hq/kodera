@@ -17,7 +17,8 @@ import { TOUCH_TARGET_HEIGHT } from '../../ui/touchTarget'
 import { UniversalSearch } from '../command-palette/UniversalSearch'
 import type { ChannelSearchEntry } from './ChannelSearch'
 import { OrganisationHeader } from './OrganisationHeader'
-import { categoryLabel, channelLabel, channelUsable } from './workspace'
+import { useWorkspaceLogo } from './useWorkspaceLogo'
+import { arrivalsFirst, categoryLabel, channelLabel, channelUsable } from './workspace'
 import type { Workspace, WorkspaceCategory, WorkspaceChannel } from './workspace'
 
 const ROW =
@@ -188,7 +189,7 @@ export interface ChannelSidebarProps {
 export function ChannelSidebar({
   org,
   organisationName,
-  workspace,
+  workspace: incomingWorkspace,
   currentId,
   variant,
   onNavigate,
@@ -197,12 +198,20 @@ export function ChannelSidebar({
   const { t } = useTranslation()
   const headingId = useId()
   const routerNavigate = useNavigate()
+  const workspace = arrivalsFirst(incomingWorkspace)
+  const displayLabel = workspace.display_name || organisationName
+  const logoSrc = useWorkspaceLogo(workspace.logo_url)
   const uncategorised = workspace.uncategorised_channels
   const navigate = onNavigate === undefined ? {} : { onNavigate }
   // Only what a row would open: a text channel whose room exists.
   const openable = (channels: readonly WorkspaceChannel[]) =>
     channels.filter((channel) => channel.kind === 'text' && channelUsable(channel))
   const searchEntries: ChannelSearchEntry[] = [
+    ...openable(uncategorised).map((channel) => ({
+      id: channel.id,
+      label: channelLabel(channel, t),
+      kind: 'text' as const,
+    })),
     ...workspace.categories.flatMap((category) =>
       openable(category.channels).map((channel) => ({
         id: channel.id,
@@ -211,11 +220,6 @@ export function ChannelSidebar({
         category: categoryLabel(category, t),
       }))
     ),
-    ...openable(uncategorised).map((channel) => ({
-      id: channel.id,
-      label: channelLabel(channel, t),
-      kind: 'text' as const,
-    })),
   ]
 
   function openFromSearch(entry: ChannelSearchEntry): HTMLElement | null {
@@ -237,15 +241,18 @@ export function ChannelSidebar({
         // The organisation, then the search, as on the reference screen (p02): the drawer's own
         // title already names the list, and the phone's top bar carries the organisation.
         <div className="flex flex-col gap-3">
-          <OrganisationHeader name={organisationName} slug={org} />
+          <OrganisationHeader name={displayLabel} slug={org} logoUrl={workspace.logo_url} />
           <h2 id={headingId} className="sr-only">
             {t('console.workspace.sidebar.title')}
           </h2>
           <UniversalSearch entries={searchEntries} onChoose={openFromSearch} shortcut />
         </div>
       ) : (
-        <div className="flex flex-col gap-1 px-2">
-          <p className="truncate text-md font-semibold text-c-ink">{organisationName}</p>
+        <div className="flex items-center gap-2 px-2">
+          {logoSrc ? (
+            <img src={logoSrc} alt="" className="h-6 w-6 shrink-0 rounded-md object-cover" />
+          ) : null}
+          <p className="truncate text-md font-semibold text-c-ink">{displayLabel}</p>
           <h2 id={headingId} className="sr-only">
             {t('console.workspace.sidebar.title')}
           </h2>
@@ -253,15 +260,6 @@ export function ChannelSidebar({
       )}
       {actionSlot}
       <ul className="flex flex-col gap-3">
-        {workspace.categories.map((category) => (
-          <CategoryGroup
-            key={category.id}
-            org={org}
-            category={category}
-            currentId={currentId}
-            {...navigate}
-          />
-        ))}
         {uncategorised.length === 0 ? null : (
           <li>
             <ul className="flex flex-col gap-1">
@@ -277,6 +275,15 @@ export function ChannelSidebar({
             </ul>
           </li>
         )}
+        {workspace.categories.map((category) => (
+          <CategoryGroup
+            key={category.id}
+            org={org}
+            category={category}
+            currentId={currentId}
+            {...navigate}
+          />
+        ))}
       </ul>
     </nav>
   )

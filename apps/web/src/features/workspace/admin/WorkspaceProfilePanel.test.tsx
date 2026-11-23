@@ -107,6 +107,7 @@ describe('Profil de l’espace', () => {
     await waitFor(() => expect(api.updateWorkspaceProfile).toHaveBeenCalledTimes(1))
     const [, patch, etag] = api.updateWorkspaceProfile.mock.calls[0]!
     expect(etag).toBe('"p1"')
+    expect(patch.display_name).toBe('')
     expect(patch.traits.map((trait: { label: string }) => trait.label)).toEqual([
       'R&D',
       'Design',
@@ -114,6 +115,28 @@ describe('Profil de l’espace', () => {
       'Communauté',
     ])
     expect(await screen.findByText('Modifications enregistrées.')).toBeVisible()
+  })
+
+  it('allows clearing a custom display name back to follow the organisation name', async () => {
+    const user = userEvent.setup()
+    api.getWorkspaceProfile.mockResolvedValue({
+      value: { ...PROFILE, display_name: 'Studio' },
+      etag: '"p-custom"',
+    })
+    renderPanel(<WorkspaceProfilePanel organisationId={ORG} organisationName="Acme" canEdit />)
+    const name = await screen.findByRole('textbox', { name: 'Nom de l’espace' })
+    expect(name).toHaveValue('Studio')
+    await user.clear(name)
+    const preview = screen.getByRole('figure', { name: 'Aperçu de la carte de l’espace' })
+    expect(within(preview).getByText('Acme')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Enregistrer' }))
+    await waitFor(() =>
+      expect(api.updateWorkspaceProfile).toHaveBeenCalledWith(
+        ORG,
+        expect.objectContaining({ display_name: '' }),
+        '"p-custom"'
+      )
+    )
   })
 
   it('explains a concurrent edit in words and never shows a status code', async () => {

@@ -109,3 +109,33 @@ def without_confidential(objects):
         "confidential channel designation inventory is incomplete"
     )
     return {key: value for key, value in objects.items() if key not in CONFIDENTIAL_OBJECTS}
+
+
+GOVERNANCE_TABLES = frozenset(
+    {
+        "workspaces_partnerchannelagreement",
+        "workspaces_partnerchannelagreementrevision",
+        "workspaces_singlechannelguestgrant",
+        "workspaces_sessioneviction",
+    }
+)
+GOVERNANCE_OBJECTS = frozenset(
+    {
+        *(("relation", table, table) for table in GOVERNANCE_TABLES),
+        *(("trigger", table, "governance_scope") for table in GOVERNANCE_TABLES),
+        ("function", "channel_governance_guard", ""),
+    }
+)
+
+
+def without_governance(objects):
+    if not any(key[1] in GOVERNANCE_TABLES for key in objects):
+        return objects
+    assert GOVERNANCE_OBJECTS <= objects.keys(), (
+        "partner channel and guest governance inventory is incomplete"
+    )
+    return {
+        key: value
+        for key, value in objects.items()
+        if key[1] not in GOVERNANCE_TABLES and key not in GOVERNANCE_OBJECTS
+    }

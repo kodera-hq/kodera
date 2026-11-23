@@ -100,13 +100,12 @@ def profile_with_etag(
             raise RefusalError(422)
         for field, value in data.items():
             if field == "display_name":
-                if (
-                    not isinstance(value, str)
-                    or not _storable_text(value)
-                    or not 2 <= len(value.strip()) <= 80
-                ):
+                if not isinstance(value, str) or not _storable_text(value):
                     raise RefusalError(422)
-                value = value.strip()
+                if value != "":
+                    if not 2 <= len(value.strip()) <= 80:
+                        raise RefusalError(422)
+                    value = value.strip()
             elif field == "logo_url":
                 try:
                     value = validate_logo(value)

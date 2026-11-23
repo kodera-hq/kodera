@@ -271,6 +271,7 @@ export interface ChannelSidebarProps {
   onChannelToggleMute?: ((target: ChannelMenuTarget) => void) | undefined
   isChannelMuted?: ((channelId: string) => boolean) | undefined
   onChannelInvite?: ((target: ChannelMenuTarget) => void) | undefined
+  canInviteChannel?: ((channelId: string) => boolean) | undefined
   onChannelCopyLink?: ((target: ChannelMenuTarget) => void) | undefined
   /** A channel's permissions, offered only where `canManageChannel` says the member may. */
   onChannelPermissions?: ((target: ChannelMenuTarget) => void) | undefined
@@ -324,6 +325,7 @@ function ChannelSidebarView({
   onChannelToggleMute,
   isChannelMuted,
   onChannelInvite,
+  canInviteChannel,
   onChannelCopyLink,
   onChannelPermissions,
   canManageChannel,
@@ -674,6 +676,7 @@ function ChannelSidebarView({
         onToggleMute={onChannelToggleMute}
         isMuted={isChannelMuted}
         onInvite={onChannelInvite}
+        canInvite={canInviteChannel}
         onCopyLink={onChannelCopyLink}
         onPermissions={onChannelPermissions}
         canManage={canManageChannel}

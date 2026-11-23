@@ -973,10 +973,6 @@ WARM_POOL_TABLE = "workspaces_warmpoolallocation"
 TEMPLATE_APP_TABLE = "workspaces_workspacetemplateapplication"
 AI_POLICY_TABLE = "workspaces_workspaceaipolicy"
 AI_CONSENT_TABLE = "workspaces_memberaiconsent"
-PARTNER_AGREEMENT_TABLE = "workspaces_partnerchannelagreement"
-PARTNER_REVISION_TABLE = "workspaces_partnerchannelagreementrevision"
-GUEST_GRANT_TABLE = "workspaces_singlechannelguestgrant"
-SESSION_EVICTION_TABLE = "workspaces_sessioneviction"
 NOTICE_TABLE = "workspaces_channelnotice"
 ESPACE_OBJECTS = {
     ("column", "workspaces_channel", "room_state"),
@@ -1000,11 +996,17 @@ def without_warm_pool(objects):
     """0008 owns only the warm-pool table; retain every unrelated schema object."""
     from workspace_documents.schema_inventory import without_documents
     from workspace_quotas.schema_inventory import without_quotas
-    from workspace_safety.iam_schema_inventory import without_confidential, without_iam
+    from workspace_safety.iam_schema_inventory import (
+        without_confidential,
+        without_governance,
+        without_iam,
+    )
     from workspace_safety.schema_inventory import without_moderation
 
     objects = without_moderation(
-        without_documents(without_quotas(without_iam(without_confidential(objects))))
+        without_documents(
+            without_quotas(without_iam(without_confidential(without_governance(objects))))
+        )
     )
     assert ("relation", WARM_POOL_TABLE, WARM_POOL_TABLE) in objects
     assert ("constraint", WARM_POOL_TABLE, "warm_pool_offer_valid") in objects
@@ -1019,7 +1021,6 @@ def without_warm_pool(objects):
         ("function", "workspace_ai_account_cutoff_guard", ""),
         ("function", "workspace_ai_erasure_hook", ""),
         ("function", "account_ai_consent_erasure_hook", ""),
-        ("function", "channel_governance_guard", ""),
     }
     return {
         key: value
@@ -1030,10 +1031,6 @@ def without_warm_pool(objects):
             TEMPLATE_APP_TABLE,
             AI_POLICY_TABLE,
             AI_CONSENT_TABLE,
-            PARTNER_AGREEMENT_TABLE,
-            PARTNER_REVISION_TABLE,
-            GUEST_GRANT_TABLE,
-            SESSION_EVICTION_TABLE,
         }
         and key not in template_app_shared
     }

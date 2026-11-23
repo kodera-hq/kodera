@@ -101,6 +101,26 @@ def test_profile_trim_logo_replace_remove_preferences_and_stale_write(monkeypatc
     assert stale.value.status == 412
     patch(**arguments, if_match=after, data={"logo_url": ""})
     assert row.logo_url == ""
+    cleared, _ = patch(**arguments, if_match=service.profile_etag(row), data={"display_name": ""})
+    assert cleared["display_name"] == "" and row.display_name == ""
+
+
+def test_api_writer_role_grants_update_on_all_workspace_ux_columns():
+    from core.db.api_writer_role import UPDATE_COLUMNS, grant_statements
+
+    ux_columns = {
+        "display_name",
+        "logo_url",
+        "default_ui_mode",
+        "default_channel_id",
+        "allow_member_channel_creation",
+        "allow_member_invites",
+        "allow_link_previews",
+    }
+    assert {("workspaces_workspace", col) for col in ux_columns} <= set(UPDATE_COLUMNS)
+    grants = set(grant_statements("kodera_api"))
+    for col in ux_columns:
+        assert f'GRANT UPDATE ("{col}") ON TABLE "workspaces_workspace" TO "kodera_api"' in grants
 
 
 @pytest.mark.parametrize(

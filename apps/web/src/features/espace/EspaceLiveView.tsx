@@ -894,6 +894,17 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
     setAttachmentRoom(staged ? activeRoomId : null)
   )
   const inviteTrigger = useRef<HTMLButtonElement>(null)
+  const inviteReturnFocus = useRef<HTMLElement | null>(null)
+  const canInviteChannel = useCallback(
+    (id: string) => {
+      if (workspace.allow_member_invites !== false) return true
+      const resolved = snapshot.channels.get(id)
+      if (resolved?.state !== 'resolved') return false
+      const role = profileRoleIn(activeStore, resolved.roomId, viewerId)
+      return role === 'admin' || role === 'maintainer'
+    },
+    [workspace.allow_member_invites, snapshot.channels, activeStore, viewerId]
+  )
   const canInvite =
     (workspace.allow_member_invites !== false ||
       (activeRoomId !== null &&
@@ -1402,6 +1413,8 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
     )
   })
   const inviteFromChannelMenu = useStableHandler((target: ChannelMenuTarget) => {
+    if (!canInviteChannel(target.channelId)) return
+    inviteReturnFocus.current = target.trigger ?? null
     if (target.kind === 'audio') {
       window.dispatchEvent(
         new CustomEvent(WORKSPACE_COMMAND_EVENT, {
@@ -1577,6 +1590,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
         onChannelToggleMute={toggleChannelMute}
         isChannelMuted={isChannelMuted}
         onChannelInvite={inviteFromChannelMenu}
+        canInviteChannel={canInviteChannel}
         onChannelCopyLink={copyChannelLink}
         onChannelPermissions={openChannelPermissions}
         canManageChannel={canManageChannel}
@@ -1629,6 +1643,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
         onChannelToggleMute={toggleChannelMute}
         isChannelMuted={isChannelMuted}
         onChannelInvite={inviteFromChannelMenu}
+        canInviteChannel={canInviteChannel}
         onChannelCopyLink={copyChannelLink}
         onChannelPermissions={openChannelPermissions}
         canManageChannel={canManageChannel}
@@ -1786,6 +1801,8 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
               membersPanelId={membersPanelId}
               headingRef={headingRef}
               inviteTrigger={inviteTrigger}
+              inviteReturnFocus={inviteReturnFocus}
+              canInvite={canInvite}
               membersTrigger={membersTrigger}
               audioRooms={audioRooms}
               simpleMode={uiMode === 'messages'}

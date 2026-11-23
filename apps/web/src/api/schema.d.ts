@@ -5197,7 +5197,7 @@ export interface components {
         };
         /** WorkspaceProfilePatch */
         WorkspaceProfilePatch: {
-            /** @description Trimmed workspace display name; empty on existing workspaces until customized. */
+            /** @description Trimmed workspace display name (2–80 characters), or empty to clear the override and follow the organisation name. */
             display_name?: string;
             /** @description Validated PNG, JPEG or WebP base64 data URL, at most 2 MiB decoded; empty clears the logo. External URLs are refused. */
             logo_url?: string;

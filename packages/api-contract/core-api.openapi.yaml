@@ -13789,9 +13789,8 @@ components:
       properties:
         display_name:
           type: string
-          minLength: 2
           maxLength: 80
-          description: Trimmed workspace display name; empty on existing workspaces until customized.
+          description: Trimmed workspace display name (2–80 characters), or empty to clear the override and follow the organisation name.
         logo_url:
           type: string
           maxLength: 2796236

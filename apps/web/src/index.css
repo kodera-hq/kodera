@@ -640,6 +640,7 @@
   }
   [data-ui-mode='messages'] article[data-own] {
     width: fit-content;
+    min-width: 5.5rem;
     max-width: 85%;
     padding: var(--sp-3);
     margin-block: var(--sp-2);
@@ -724,10 +725,17 @@
     height: var(--sp-12);
     min-height: var(--sp-12);
   }
+  [data-ui-mode='messages'] .messages-detail article[data-own] {
+    min-width: 5.5rem;
+  }
   [data-ui-mode='messages'] .messages-detail form [role='toolbar'] {
     display: none;
   }
-  [data-ui-mode='messages'] .messages-detail form:focus-within [role='toolbar'] {
+  [data-ui-mode='messages'] .messages-detail form:focus-within [role='toolbar'],
+  [data-ui-mode='messages']
+    .messages-detail
+    form
+    [role='toolbar']:has([aria-expanded='true'], [data-state='open']) {
     display: flex;
   }
 }

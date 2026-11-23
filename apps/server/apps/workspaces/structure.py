@@ -155,6 +155,12 @@ def read_workspace(*, verified: VerifiedAccessToken, organisation_id: UUID) -> W
             *(channel for category in categories for channel in category.channels),
         ]
         visible_ids = {channel.id for channel in visible_channels}
+        active_text_channels = [
+            channel
+            for channel in visible_channels
+            if channel.kind == "text" and channel.lifecycle == "active"
+        ]
+        active_text_ids = {channel.id for channel in active_text_channels}
         return WorkspaceView(
             organisation_id=organisation_id,
             setup=setup,
@@ -169,18 +175,20 @@ def read_workspace(*, verified: VerifiedAccessToken, organisation_id: UUID) -> W
             logo_url=identity.logo_url,
             default_ui_mode=identity.default_ui_mode,
             default_channel_id=(
-                identity.default_channel_id if identity.default_channel_id in visible_ids else None
-            )
-            or next(
-                (
-                    channel.id
-                    for channel in [
-                        *uncategorised,
-                        *(c for category in categories for c in category.channels),
-                    ]
-                    if is_arrivals(channel.name, channel.template_key)
-                ),
-                None,
+                identity.default_channel_id
+                if identity.default_channel_id in active_text_ids
+                else (
+                    identity.arrivals_channel_id
+                    if identity.arrivals_channel_id in active_text_ids
+                    else next(
+                        (
+                            channel.id
+                            for channel in active_text_channels
+                            if is_arrivals(channel.name, channel.template_key)
+                        ),
+                        None,
+                    )
+                )
             ),
             allow_member_channel_creation=identity.allow_member_channel_creation,
             allow_member_invites=identity.allow_member_invites,
@@ -297,8 +305,8 @@ def _visible_structure(
         for channel in own
         if channel.id == arrivals_id or is_arrivals(channel.name, channel.template_key)
     ]
-    for category_id, own in visible.items():
-        visible[category_id] = [channel for channel in own if channel not in arrivals]
+    for cat_id, own in list(visible.items()):
+        visible[cat_id] = [channel for channel in own if channel not in arrivals]
     visible[None] = [*arrivals, *visible.get(None, [])]
     shown = []
     for pk, name, key, category_default in categories:
