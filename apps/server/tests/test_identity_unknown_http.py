@@ -406,6 +406,14 @@ CASES = (
         ("apps.support.tickets.authorise",),
     ),
     Case(
+        "createBugReport",
+        "apps.support.api.views.bug_reports",
+        "post",
+        ORG,
+        "apps.support.bug_reports.BugReportCallerUnknownError",
+        ("apps.support.bug_reports.authorise",),
+    ),
+    Case(
         "requestAccountExport",
         "apps.orgs.api.privacy.account_exports",
         "post",

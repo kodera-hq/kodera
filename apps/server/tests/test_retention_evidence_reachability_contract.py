@@ -3226,6 +3226,7 @@ def migration_create_model_names(
             "django.db.models.BinaryField",
             "django.db.models.BooleanField",
             "django.db.models.CASCADE",
+            "django.db.models.CharField",
             "django.db.models.CheckConstraint",
             "django.db.models.DateTimeField",
             "django.db.models.Deferrable.DEFERRED",

@@ -96,11 +96,13 @@ def test_workspace_registration_is_explicit_per_profile(profile, has_workspace):
             "Category",
             "Channel",
             "ChannelNotice",
+            "MemberAiConsent",
             "ResourcePolicy",
             "ResourcePolicyRule",
             "WarmPoolAllocation",
             "Workspace",
             "WorkspaceAbuseReport",
+            "WorkspaceAiPolicy",
             "WorkspaceChannelRoleOverride",
             "WorkspaceInviteLink",
             "WorkspaceInviteRedemption",
@@ -109,6 +111,7 @@ def test_workspace_registration_is_explicit_per_profile(profile, has_workspace):
             "WorkspaceModerator",
             "WorkspaceQuota",
             "WorkspaceRole",
+            "WorkspaceTemplateApplication",
         ]
         if has_workspace
         else []
