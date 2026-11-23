@@ -217,6 +217,14 @@ public struct MatrixSyncBatch: Equatable, Sendable {
     }
 }
 
+public struct MatrixTimelinePage: Sendable {
+    public let events: [MatrixRawTimelineEvent]
+    public let endToken: String?
+    public init(events: [MatrixRawTimelineEvent], endToken: String?) {
+        self.events = events; self.endToken = endToken
+    }
+}
+
 public struct AttachmentUploadPayload: Equatable, Sendable {
     public let filename: String
     public let contentType: AttachmentMimeType
@@ -271,6 +279,7 @@ public protocol ChannelConversationTransport: Sendable {
         channelId: String,
         payload: AttachmentUploadPayload
     ) async throws(MatrixClientFailure) -> AttachmentMetadataRef
+    func backfillRoomPage(roomId: String, fromToken: String, toToken: String?, limit: Int) async throws(MatrixClientFailure) -> MatrixTimelinePage
     func backfillRoomMessages(
         roomId: String,
         fromToken: String,
@@ -280,6 +289,10 @@ public protocol ChannelConversationTransport: Sendable {
 
 public extension ChannelConversationTransport {
     func updateChannelSecurity(organisationId: String, channelId: String, isConfidential: Bool?) async {}
+
+    func backfillRoomPage(roomId: String, fromToken: String, toToken: String?, limit: Int) async throws(MatrixClientFailure) -> MatrixTimelinePage {
+        MatrixTimelinePage(events: try await self.backfillRoomMessages(roomId: roomId, fromToken: fromToken, limit: limit), endToken: nil)
+    }
 
     func backfillRoomMessages(
         roomId: String,
@@ -305,6 +318,18 @@ public actor MatrixRoomClient {
         return String(decoding: try! JSONSerialization.data(withJSONObject: filter, options: [.sortedKeys]), as: UTF8.self)
     }
 
+    // Actors are reentrant across HTTP waits; serialize the complete room-knowledge transaction.
+    private var syncing = false
+    private var syncWaiters: [CheckedContinuation<Void, Never>] = []
+    private func acquireSync() async {
+        if !self.syncing { self.syncing = true; return }
+        await withCheckedContinuation { self.syncWaiters.append($0) }
+    }
+    private func releaseSync() {
+        if self.syncWaiters.isEmpty { self.syncing = false }
+        else { self.syncWaiters.removeFirst().resume() }
+    }
+
     private struct RoomSecurity {
         var corePublic: Bool
         var matrixKnown = false
@@ -318,7 +343,7 @@ public actor MatrixRoomClient {
     func bindChannelSecurity(organisationId: String, channelId: String, origin: String, roomId: String, isConfidential: Bool?) {
         let key = securityKey(origin, roomId)
         let previous = security[key]
-        security[key] = RoomSecurity(corePublic: isConfidential == false, blocked: previous?.blocked == true || isConfidential == true)
+        security[key] = RoomSecurity(corePublic: isConfidential == false, matrixKnown: previous?.matrixKnown == true, blocked: previous?.blocked == true || isConfidential == true)
         channelRooms[organisationId + ":" + channelId] = key
     }
 
@@ -529,6 +554,10 @@ public actor MatrixRoomClient {
             }
         }
         guard (try? MatrixRoomId(roomId)) != nil else { throw .invalidInput }
+        await self.acquireSync()
+        defer { self.releaseSync() }
+        // A queued incremental reader may have captured its cursor before another reader failed.
+        let since = self.security[self.securityKey(homeserverOrigin, roomId)]?.matrixKnown == true ? since : nil
         var completed = false
         defer {
             if !completed { security[securityKey(homeserverOrigin, roomId)]?.matrixKnown = false }
@@ -636,29 +665,30 @@ public actor MatrixRoomClient {
         fromToken: String,
         limit: Int = syncTimelineLimit
     ) async throws(MatrixClientFailure) -> [MatrixRawTimelineEvent] {
-        try validateHomeserverOriginAndToken(homeserverOrigin: homeserverOrigin, matrixAccessToken: matrixAccessToken)
-        guard (try? MatrixRoomId(roomId)) != nil,
-              !fromToken.isEmpty,
-              fromToken.utf8.count <= 256,
-              fromToken.utf8.allSatisfy({ $0 >= 0x21 && $0 <= 0x7E }),
-              (1...50).contains(limit) else {
-            throw .invalidInput
+        try await self.fetchRoomMessagePage(homeserverOrigin: homeserverOrigin, matrixAccessToken: matrixAccessToken,
+            roomId: roomId, fromToken: fromToken, toToken: nil, limit: limit).events
+    }
+
+    public func fetchRoomMessagePage(
+        homeserverOrigin: String, matrixAccessToken: String, roomId: String,
+        fromToken: String, toToken: String?, limit: Int
+    ) async throws(MatrixClientFailure) -> MatrixTimelinePage {
+        try self.validateHomeserverOriginAndToken(homeserverOrigin: homeserverOrigin, matrixAccessToken: matrixAccessToken)
+        func validToken(_ value: String) -> Bool {
+            !value.isEmpty && value.utf8.count <= 256 && value.utf8.allSatisfy { $0 >= 0x21 && $0 <= 0x7E }
         }
+        guard (try? MatrixRoomId(roomId)) != nil, validToken(fromToken),
+              toToken.map(validToken) ?? true, (1...50).contains(limit) else { throw .invalidInput }
         let encodedRoom = Self.percentEncodePathSegment(roomId)
-        let encodedFrom = Self.percentEncodeQueryComponent(fromToken)
-        guard let url = URL(
-            string: "\(homeserverOrigin)/_matrix/client/v3/rooms/\(encodedRoom)/messages?from=\(encodedFrom)&dir=b&limit=\(limit)"
-        ) else {
-            throw .invalidInput
-        }
-        let root = try await matrixJSONRequest(
-            url: url,
-            method: "GET",
-            matrixAccessToken: matrixAccessToken,
-            jsonBody: nil
-        )
-        let chunk = root["chunk"]?.array ?? []
-        return chunk.compactMap(Self.decodeTimelineEvent).reversed()
+        var query = "from=\(Self.percentEncodeQueryComponent(fromToken))&dir=b&limit=\(limit)"
+        if let toToken { query += "&to=\(Self.percentEncodeQueryComponent(toToken))" }
+        guard let url = URL(string: "\(homeserverOrigin)/_matrix/client/v3/rooms/\(encodedRoom)/messages?\(query)") else { throw .invalidInput }
+        let root = try await self.matrixJSONRequest(url: url, method: "GET", matrixAccessToken: matrixAccessToken,
+            jsonBody: nil, responseByteLimit: Self.syncResponseByteLimit)
+        guard let chunk = root["chunk"]?.array, chunk.count <= limit else { throw .protocolViolation }
+        let end = root["end"]?.string
+        if let rawEnd = root["end"], rawEnd.string == nil || !validToken(rawEnd.string ?? "") { throw .protocolViolation }
+        return MatrixTimelinePage(events: chunk.compactMap(Self.decodeTimelineEvent).reversed(), endToken: end)
     }
 
     public static let defaultSsoCallbackURI = "io.kodera.app:/oauth2redirect"
@@ -1863,6 +1893,13 @@ public actor MatrixChannelConversationTransport: ChannelConversationTransport {
                 roomId: roomId,
                 since: since
             )
+        }
+    }
+
+    public func backfillRoomPage(roomId: String, fromToken: String, toToken: String?, limit: Int) async throws(MatrixClientFailure) -> MatrixTimelinePage {
+        try await self.withAuthenticatedRetry { origin, token in
+            try await self.roomClient.fetchRoomMessagePage(homeserverOrigin: origin, matrixAccessToken: token,
+                roomId: roomId, fromToken: fromToken, toToken: toToken, limit: limit)
         }
     }
 

@@ -13,6 +13,7 @@ final class URLProtocolFixture: URLProtocol, @unchecked Sendable {
         case redirect(status: Int, location: String)
         case failure(URLError.Code)
         case hold
+        case gated(status: Int, data: Data, gate: URLProtocolResponseGate)
     }
     private final class Storage: @unchecked Sendable {
         let lock = NSLock()
@@ -102,6 +103,12 @@ final class URLProtocolFixture: URLProtocol, @unchecked Sendable {
             }
             DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(100)) { answer.run() }
         case let .failure(code): client?.urlProtocol(self, didFailWithError: URLError(code))
+        case let .gated(status, data, gate):
+            let answer = Deferred { [self] in
+                guard !self.instanceLock.withLock({ self.instanceStopped }) else { return }
+                self.send(status: status, headers: ["Content-Type": "application/json"], chunks: [data], finish: true)
+            }
+            gate.start { answer.run() }
         case .hold: break
         }
     }
@@ -125,6 +132,32 @@ final class URLProtocolFixture: URLProtocol, @unchecked Sendable {
 private final class Deferred: @unchecked Sendable {
     let run: () -> Void
     init(_ run: @escaping () -> Void) { self.run = run }
+}
+
+final class URLProtocolResponseGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var answer: (@Sendable () -> Void)?
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+    func start(_ answer: @escaping @Sendable () -> Void) {
+        let waiters = self.lock.withLock {
+            self.answer = answer
+            let current = self.waiters; self.waiters = []; return current
+        }
+        waiters.forEach { $0.resume() }
+    }
+    func waitUntilStarted() async {
+        await withCheckedContinuation { continuation in
+            let started = self.lock.withLock {
+                if self.answer != nil { return true }
+                self.waiters.append(continuation); return false
+            }
+            if started { continuation.resume() }
+        }
+    }
+    func release() {
+        let answer = self.lock.withLock { let current = self.answer; self.answer = nil; return current }
+        answer?()
+    }
 }
 
 enum DiscoveryFixtures {

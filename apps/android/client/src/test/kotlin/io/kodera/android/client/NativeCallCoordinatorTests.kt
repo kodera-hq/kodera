@@ -30,16 +30,28 @@ private class ChatFixture : ChannelConversationTransport {
     var syncFailure: MatrixClientError? = null
     var limitedRooms = emptySet<String>()
     var recoveryBatch: MatrixSyncBatch? = null
+    var initialBatch: MatrixSyncBatch? = null
+    var beforeBackfill: (() -> Unit)? = null
+    var prevBatch: String? = null
+    var pages = emptyMap<String, MatrixTimelinePage>()
+    var pageFailure: MatrixClientError? = null
+    val pageRequests = mutableListOf<String>()
+    override fun backfillRoomPage(roomId: String, fromToken: String, toToken: String?, limit: Int): MatrixTimelinePage {
+        pageRequests += "$roomId|$fromToken|${toToken ?: "nil"}|$limit"
+        beforeBackfill?.invoke()
+        pageFailure?.let { throw MatrixClientException(it) }
+        return pages[fromToken] ?: MatrixTimelinePage(emptyList(), null)
+    }
     var beforeSync: (() -> Unit)? = null
     val syncRequests = java.util.concurrent.CopyOnWriteArrayList<String?>()
-    override fun bootstrapRoom(organisationId: String, channelId: String) = BootstrappedMatrixRoom("!room:example.org", MatrixSyncBatch("one", emptyMap(), plaintextAllowedRooms = setOf("!room:example.org")))
+    override fun bootstrapRoom(organisationId: String, channelId: String) = BootstrappedMatrixRoom("!room:example.org", initialBatch ?: MatrixSyncBatch("one", emptyMap(), plaintextAllowedRooms = setOf("!room:example.org")))
     override fun syncRoom(roomId: String, since: String?): MatrixSyncBatch {
         syncRequests += since
         beforeSync?.invoke()
         syncFailure?.let { throw MatrixClientException(it) }
         if (since == null) recoveryBatch?.let { return it }
         val deltas = limitedRooms.associateWith { MatrixRoomSyncDelta(emptyList(), limited = true) }.toMutableMap()
-        deltas[roomId] = MatrixRoomSyncDelta(events, limited = roomId in limitedRooms)
+        deltas[roomId] = MatrixRoomSyncDelta(events, limited = roomId in limitedRooms, prevBatch = prevBatch)
         return MatrixSyncBatch.fromDeltas("two", deltas).copy(plaintextAllowedRooms = setOf(roomId), authorityLostRooms = lostRooms)
     }
     override fun sendMessage(roomId: String, transactionId: String, body: String, replyToEventId: String?, attachments: List<AttachmentMetadataRef>): String {
@@ -60,8 +72,156 @@ private class PresenterFixture : NativeCallPresenter {
 }
 class NativeCallCoordinatorTests {
     private fun resolver() = NativeCallResolver { AuthenticatedNativeCall(it, "!room:example.org", "Member") }
+    @Test fun overlappingMatrixReadersRecoverRoomKnowledgeBeforeUsingQueuedCursor() {
+        CoreRequester("https://core.test", LoopbackPolicy.REFUSE, FakeTokens()).use { requester ->
+            val entered = CountDownLatch(1); val release = CountDownLatch(1)
+            val cursors = java.util.concurrent.CopyOnWriteArrayList<String?>()
+            val count = AtomicInteger()
+            val state = """{"next_batch":"known","rooms":{"join":{"!room:example.org":{"state":{"events":[]},"timeline":{"events":[]}}}}}""".toByteArray()
+            val stub = MatrixHttpStub { request ->
+                cursors += request.url.toHttpUrl().queryParameter("since")
+                if (count.incrementAndGet() == 2) {
+                    entered.countDown(); check(release.await(5, TimeUnit.SECONDS)); MatrixHttpReply(503)
+                } else MatrixHttpReply(200, state)
+            }
+            MatrixRoomClient(requester, LoopbackPolicy.REFUSE, httpStub = stub).use { client ->
+                val origin = "https://atelier.matrix.kodera.io"; val room = "!room:example.org"
+                client.bindChannelSecurity(ORG, CHANNEL, origin, room, false)
+                client.sync(origin, "token", roomId = room)
+                val failure = AtomicReference<Throwable?>(); val result = AtomicReference<MatrixSyncBatch?>()
+                val ui = Thread { failure.set(assertThrows(MatrixClientException::class.java) { client.sync(origin, "token", roomId = room) }) }
+                val companion = Thread { try { result.set(client.sync(origin, "token", since = "stale", roomId = room)) } catch (error: Throwable) { failure.set(error) } }
+                ui.start()
+                try {
+                    assertTrue(entered.await(5, TimeUnit.SECONDS)); companion.start()
+                } finally { release.countDown(); ui.join(5000); if (companion.state != Thread.State.NEW) companion.join(5000) }
+                assertFalse(ui.isAlive); assertFalse(companion.isAlive)
+                assertEquals(MatrixClientError.SERVICE_UNAVAILABLE, (failure.get() as? MatrixClientException)?.reason)
+                assertEquals(setOf(room), result.get()?.plaintextAllowedRooms); assertEquals(emptySet<String>(), result.get()?.authorityLostRooms)
+                client.requirePlaintextAllowed(origin, room); assertEquals(listOf(null, null, null), cursors)
+            }
+        }
+    }
+    @Test fun matrixBackwardPageBoundsRequestAndDecodesOlderCallAnswer() {
+        CoreRequester("https://core.test", LoopbackPolicy.REFUSE, FakeTokens()).use { requester ->
+            val stub = MatrixHttpStub { request ->
+                val url = request.url.toHttpUrl()
+                assertEquals("gap", url.queryParameter("from")); assertEquals("one", url.queryParameter("to"))
+                assertEquals("b", url.queryParameter("dir")); assertEquals("50", url.queryParameter("limit"))
+                MatrixHttpReply(200, """{"chunk":[{"type":"m.call.answer","event_id":"${'$'}answer","sender":"@member:example.org","origin_server_ts":100,"content":{"call_id":"$CALL","party_id":"other"}}],"end":"older"}""".toByteArray())
+            }
+            MatrixRoomClient(requester, LoopbackPolicy.REFUSE, httpStub = stub).use { client ->
+                val page = client.fetchRoomMessagePage("https://atelier.matrix.kodera.io", "token", "!room:example.org", "gap", "one", 50)
+                assertEquals("older", page.endToken); assertEquals(CALL, page.events.single().callId); assertEquals("other", page.events.single().callPartyId)
+            }
+        }
+    }
+    @Test fun answerOrRetirementDuringBootstrapBackfillCannotReconnectOrEndTheNextCall() {
+        for (retired in listOf(false, true)) {
+            val chat = ChatFixture(); val media = MediaFixture(); val presenter = PresenterFixture()
+            chat.initialBatch = MatrixSyncBatch.fromDeltas("one", mapOf("!room:example.org" to MatrixRoomSyncDelta(emptyList(), limited = true, prevBatch = "gap")))
+                .copy(plaintextAllowedRooms = setOf("!room:example.org"))
+            val answer = MatrixRawTimelineEvent("m.call.answer", "\$old", chat.ownUserId, 100, callId = CALL, callPartyId = if (retired) "other" else "local")
+            chat.pages = mapOf("gap" to MatrixTimelinePage(listOf(answer), null))
+            val entered = CountDownLatch(1); val release = CountDownLatch(1)
+            chat.beforeBackfill = { entered.countDown(); check(release.await(5, TimeUnit.SECONDS)) }
+            val coordinator = NativeCallCoordinator(ORG, "local", resolver(), media, chat, { 100 })
+            coordinator.bind(presenter)
+            val failure = AtomicReference<Throwable?>()
+            val receiving = Thread { try { coordinator.receive(wake()) } catch (error: Throwable) { failure.set(error) } }
+            receiving.start()
+            val nextId = "55555555-5555-4555-8555-555555555555"
+            try {
+                assertTrue(entered.await(5, TimeUnit.SECONDS))
+                if (retired) {
+                    coordinator.end(CALL); chat.beforeBackfill = null
+                    coordinator.receive(wake().copy(callId = nextId))
+                } else coordinator.answer(CALL)
+            } finally { release.countDown(); receiving.join(5000) }
+            assertFalse(receiving.isAlive); assertNull(failure.get())
+            assertEquals(if (retired) nextId else CALL, coordinator.currentCall()?.wake?.callId)
+            assertEquals(if (retired) 0 else 1, media.connects.get()); assertEquals(if (retired) 1 else 0, media.disconnects.get())
+            assertEquals(if (retired) listOf(NativeRingPhase.ENDED) else emptyList(), presenter.reasons)
+            coordinator.end(if (retired) nextId else CALL)
+        }
+    }
+    @Test fun limitedUIBatchRetainsItsExactGapForTheCompanion() {
+        val chat = ChatFixture(); val media = MediaFixture(); val presenter = PresenterFixture()
+        val coordinator = NativeCallCoordinator(ORG, "local", resolver(), media, chat, { 100 })
+        coordinator.bind(presenter); coordinator.receive(wake())
+        val uiBatch = MatrixSyncBatch.fromDeltas("ui", mapOf("!room:example.org" to MatrixRoomSyncDelta(emptyList(), limited = true, prevBatch = "ui-gap")))
+            .copy(plaintextAllowedRooms = setOf("!room:example.org"))
+        val answer = MatrixRawTimelineEvent("m.call.answer", "\$older", chat.ownUserId, 100, callId = CALL, callPartyId = "other")
+        chat.pages = mapOf("ui-gap" to MatrixTimelinePage(listOf(answer), "one"))
+        coordinator.consumeAuthenticatedSync(uiBatch, "!room:example.org"); coordinator.pollCompanionTimeline()
+        assertTrue(chat.syncRequests.isEmpty()); assertEquals(listOf("!room:example.org|ui-gap|one|50"), chat.pageRequests)
+        assertNull(coordinator.currentCall()); assertEquals(1, media.disconnects.get())
+        assertEquals(listOf(NativeRingPhase.ANSWERED_ELSEWHERE), presenter.reasons)
+    }
+    @Test fun pendingUIBackfillRetriesTransientFailureAndRevokesAuthorityFailure() {
+        for (failure in listOf(MatrixClientError.SERVICE_UNAVAILABLE, MatrixClientError.FORBIDDEN)) {
+            val chat = ChatFixture(); val media = MediaFixture()
+            val coordinator = NativeCallCoordinator(ORG, "local", resolver(), media, chat, { 100 })
+            coordinator.receive(wake())
+            val batch = MatrixSyncBatch.fromDeltas("ui", mapOf("!room:example.org" to MatrixRoomSyncDelta(emptyList(), limited = true, prevBatch = "gap")))
+                .copy(plaintextAllowedRooms = setOf("!room:example.org"))
+            coordinator.consumeAuthenticatedSync(batch, "!room:example.org")
+            chat.pageFailure = failure; coordinator.pollCompanionTimeline()
+            if (failure == MatrixClientError.FORBIDDEN) { assertNull(coordinator.currentCall()); assertEquals(1, media.disconnects.get()) }
+            else {
+                assertNotNull(coordinator.currentCall()); assertEquals(0, media.disconnects.get())
+                chat.pageFailure = null; coordinator.pollCompanionTimeline()
+                assertEquals(listOf("!room:example.org|gap|one|50", "!room:example.org|gap|one|50"), chat.pageRequests)
+                assertEquals(listOf<String?>(null), chat.syncRequests); coordinator.end(CALL)
+            }
+        }
+    }
+    @Test fun forwardedUIFailureCannotBeOverwrittenByAnInFlightCompanionPoll() {
+        val chat = ChatFixture(); val media = MediaFixture()
+        val coordinator = NativeCallCoordinator(ORG, "local", resolver(), media, chat, { 100 })
+        coordinator.receive(wake())
+        val entered = CountDownLatch(1); val release = CountDownLatch(1)
+        chat.beforeSync = { entered.countDown(); check(release.await(5, TimeUnit.SECONDS)) }
+        val polling = Thread { coordinator.pollCompanionTimeline() }
+        polling.start()
+        try {
+            assertTrue(entered.await(5, TimeUnit.SECONDS))
+            coordinator.consumeTransportFailure(MatrixClientException(MatrixClientError.SERVICE_UNAVAILABLE))
+        } finally { release.countDown(); polling.join(5000) }
+        assertFalse(polling.isAlive); chat.beforeSync = null
+        coordinator.pollCompanionTimeline()
+        assertEquals(listOf("one", null), chat.syncRequests)
+        assertNotNull(coordinator.currentCall()); assertEquals(0, media.disconnects.get())
+        coordinator.end(CALL)
+    }
+    @Test fun limitedTimelineRecoversOlderAnswersAndBoundsPagination() {
+        for (mode in listOf("answer", "cursor", "cycle", "budget", "empty")) {
+            val chat = ChatFixture(); val media = MediaFixture(); val presenter = PresenterFixture()
+            val coordinator = NativeCallCoordinator(ORG, "local", resolver(), media, chat, { 100 })
+            coordinator.bind(presenter); coordinator.receive(wake()); coordinator.answer(CALL)
+            val message = MatrixRawTimelineEvent("m.room.message", "\$message", "@peer:example.org", 100)
+            val answer = MatrixRawTimelineEvent("m.call.answer", "\$answer", chat.ownUserId, 100, callId = CALL, callPartyId = "other")
+            chat.events = List(25) { message }; chat.limitedRooms = setOf("!room:example.org"); chat.prevBatch = "gap"
+            chat.pages = mapOf(
+                "gap" to MatrixTimelinePage(if (mode == "empty") emptyList() else List(50) { message }, if (mode == "cursor") "one" else "older"),
+                "older" to MatrixTimelinePage(listOf(if (mode == "answer") answer else message), if (mode == "cycle") "gap" else "third"),
+                "third" to MatrixTimelinePage(listOf(message), "fourth"),
+                "fourth" to MatrixTimelinePage(listOf(message), "fifth"),
+                "fifth" to MatrixTimelinePage(listOf(answer), null),
+            )
+            coordinator.pollCompanionTimeline()
+            val count = when (mode) { "empty", "cursor" -> 1; "answer", "cycle" -> 2; else -> 4 }
+            assertEquals(count, chat.pageRequests.size); assertEquals("!room:example.org|gap|one|50", chat.pageRequests.first())
+            if (mode == "answer") {
+                assertNull(coordinator.currentCall()); assertEquals(1, media.disconnects.get())
+                assertEquals(listOf(NativeRingPhase.ANSWERED_ELSEWHERE), presenter.reasons)
+            } else {
+                assertNotNull(coordinator.currentCall()); assertEquals(0, media.disconnects.get()); coordinator.end(CALL)
+            }
+        }
+    }
     @Test fun realMatrixClientRecoversCompanionPollAfter503WithoutFalseAuthorityLoss() {
-        for (connected in listOf(false, true)) {
+        for ((connected, viaUI) in listOf(false to false, false to true, true to false, true to true)) {
             CoreRequester("https://core.test", LoopbackPolicy.REFUSE, FakeTokens()).use { requester ->
                 val snapshot = WorkspaceSnapshot(ORG, WorkspaceState.INITIALISED,
                     WorkspaceSetup(WorkspaceSetupState.READY, null), false,
@@ -101,7 +261,10 @@ class NativeCallCoordinatorTests {
                         if (connected) { coordinator.answer(CALL); coordinator.audioSession(true) }
                         val owner = coordinator.ownership(CALL)
                         assertEquals(CALL, coordinator.currentCall()?.wake?.callId)
-                        coordinator.pollCompanionTimeline() // 503 clears the real client's matrixKnown.
+                        if (viaUI) {
+                            val failure = assertThrows(MatrixClientException::class.java) { transport.syncRoom("!room:example.org", "ui") }
+                            coordinator.consumeTransportFailure(failure)
+                        } else coordinator.pollCompanionTimeline()
                         assertEquals(CALL, coordinator.currentCall()?.wake?.callId); assertEquals(0, media.disconnects.get())
                         assertEquals(connected, media.microphone); assertTrue(presenter.reasons.isEmpty())
                         coordinator.pollCompanionTimeline() // Full 200 sync must restore matrixKnown.
@@ -110,7 +273,7 @@ class NativeCallCoordinatorTests {
                         assertEquals(0, media.disconnects.get()); assertEquals(connected, media.microphone)
                         assertTrue(presenter.reasons.isEmpty())
                         coordinator.pollCompanionTimeline()
-                        assertEquals(listOf(null, "one", null, "recovered"), cursors)
+                        assertEquals(listOf(null, if (viaUI) "ui" else "one", null, "recovered"), cursors)
                         assertNull(coordinator.currentCall()); assertEquals(1, media.disconnects.get()); assertFalse(media.microphone)
                         assertEquals(listOf(NativeRingPhase.ANSWERED_ELSEWHERE), presenter.reasons)
                     }
@@ -118,7 +281,6 @@ class NativeCallCoordinatorTests {
             }
         }
     }
-
     @Test fun companionPollResetsCursorAfterTransientFailuresWithoutRetiringCall() {
         for (connected in listOf(false, true)) {
             for (failure in listOf(MatrixClientError.SERVICE_UNAVAILABLE, MatrixClientError.TRANSPORT, MatrixClientError.RATE_LIMITED)) {

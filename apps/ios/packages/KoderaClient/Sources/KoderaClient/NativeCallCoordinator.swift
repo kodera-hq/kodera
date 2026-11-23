@@ -56,6 +56,12 @@ public final class NativeCallCoordinator {
     private var muted = false
     private var stopped = false
     private var companionSince: String?
+    private struct CompanionBackfill {
+        let batch: MatrixSyncBatch
+        let since: String?
+    }
+    private var companionBackfill: CompanionBackfill?
+    private var companionCursorRevision: UInt64 = 0
     private var companionPollOwner: UInt64?
 
     public init(organisationId: String, localPartyId: String, resolver: any NativeCallResolving, media: any LiveKitWebRTCSession,
@@ -88,11 +94,13 @@ public final class NativeCallCoordinator {
             guard owns(owner, wake.callId) else { return }
             guard room.roomId == resolved.roomId else { throw KoderaMobileFfiError.organisationMismatch }
             try wake.validate(now: now())
-            call = resolved; companionSince = room.initialBatch.nextBatch
+            call = resolved; companionSince = room.initialBatch.roomDeltas[room.roomId]?.limited == true ? nil : room.initialBatch.nextBatch
             consumeAuthenticatedSync(room.initialBatch, roomId: room.roomId)
+            do { try await self.recoverLimitedTimeline(room.initialBatch, call: resolved, since: nil, owner: owner) }
+            catch { if self.owns(owner, wake.callId), let failure = error as? MatrixClientFailure { self.consumeTransportFailure(failure) } }
             guard owns(owner, wake.callId) else { return }
             presenter?.metadata(resolved)
-            if answerRequested { try await connect(owner: owner, call: resolved) }
+            if answerRequested, self.ring.records[wake.callId]?.phase == .ringing { try await connect(owner: owner, call: resolved) }
         } catch {
             if owns(owner, wake.callId) { finish(.revoked) }
             throw error
@@ -165,6 +173,7 @@ public final class NativeCallCoordinator {
             let batch = try await conversation.syncRoom(roomId: call.roomId, since: since)
             guard owns(owner, call.wake.callId) else { throw KoderaMobileFfiError.authenticationFailed }
             consumeAuthenticatedSync(batch, roomId: call.roomId)
+            try await self.recoverLimitedTimeline(batch, call: call, since: since, owner: owner)
             return batch
         } catch {
             if owns(owner, call.wake.callId), let failure = error as? MatrixClientFailure { consumeTransportFailure(failure) }
@@ -176,16 +185,24 @@ public final class NativeCallCoordinator {
         guard let call, companionPollOwner == nil else { return }
         let owner = generation
         companionPollOwner = owner
+        let cursorRevision = self.companionCursorRevision
         defer { if companionPollOwner == owner { companionPollOwner = nil } }
         do {
+            if let gap = self.companionBackfill {
+                try await self.recoverLimitedTimeline(gap.batch, call: call, since: gap.since, owner: owner)
+                guard self.owns(owner, call.wake.callId) else { return }
+            }
             let batch = try await syncCompanionTimeline(since: companionSince)
-            if owns(owner, call.wake.callId) {
+            if owns(owner, call.wake.callId), self.companionCursorRevision == cursorRevision {
                 // Re-read the room without an incremental cursor after an omitted timeline segment.
                 companionSince = batch.roomDeltas[call.roomId]?.limited == true ? nil : batch.nextBatch
             }
         } catch {
             // Failed sync clears Matrix room knowledge; recover it with a full sync for this owner.
-            if self.owns(owner, call.wake.callId) { self.companionSince = nil }
+            if self.owns(owner, call.wake.callId) {
+                self.companionSince = nil
+                if let failure = error as? MatrixClientFailure { self.consumeTransportFailure(failure) }
+            }
         }
     }
     public func consumeAuthenticatedSync(_ batch: MatrixSyncBatch, roomId: String? = nil) {
@@ -194,7 +211,18 @@ public final class NativeCallCoordinator {
             ((roomId == nil || roomId == currentRoomId) && !batch.plaintextAllowedRooms.contains(currentRoomId)) {
             finish(.revoked); return
         }
-        for event in batch.roomEvents[currentRoomId] ?? [] {
+        // Retain the UI's exact gap until the companion can recover it outside the state consumer.
+        if let delta = batch.roomDeltas[currentRoomId], delta.limited {
+            if delta.prevBatch != nil, self.companionBackfill == nil {
+                self.companionBackfill = CompanionBackfill(batch: batch, since: self.companionSince)
+            }
+            self.companionSince = nil
+            self.companionCursorRevision &+= 1
+        }
+        self.consumeCallEvents(batch.roomEvents[currentRoomId] ?? [], callId: id)
+    }
+    private func consumeCallEvents(_ events: [MatrixRawTimelineEvent], callId id: String) {
+        for event in events {
             if event.type == "m.call.answer", event.sender == conversation.ownUserId,
                !event.isRedactedUnsigned, event.callId == id,
                let party = event.callPartyId, !party.isEmpty, party != localPartyId {
@@ -202,12 +230,31 @@ public final class NativeCallCoordinator {
             }
         }
     }
+    /// At most 200 older events, stopping at the prior sync cursor or a non-advancing page.
+    private func recoverLimitedTimeline(_ batch: MatrixSyncBatch, call: AuthenticatedNativeCall, since: String?, owner: UInt64) async throws {
+        guard self.owns(owner, call.wake.callId), let delta = batch.roomDeltas[call.roomId], delta.limited,
+              var from = delta.prevBatch else { return }
+        var visited: Set<String> = []
+        for _ in 0..<4 {
+            guard from != since, visited.insert(from).inserted, self.owns(owner, call.wake.callId) else { break }
+            let page = try await self.conversation.backfillRoomPage(roomId: call.roomId, fromToken: from, toToken: since, limit: 50)
+            guard self.owns(owner, call.wake.callId) else { return }
+            self.consumeCallEvents(page.events, callId: call.wake.callId)
+            guard !page.events.isEmpty, let end = page.endToken else { break }
+            from = end
+        }
+        if self.owns(owner, call.wake.callId), self.companionBackfill?.batch.nextBatch == batch.nextBatch {
+            self.companionBackfill = nil
+        }
+    }
     /// Forwarded by the session's live conversation consumer, including bootstrap failures.
     public func consumeTransportFailure(_ failure: MatrixClientFailure) {
         switch failure {
         case .notFound, .forbidden, .unauthorized, .plaintextForbidden, .protocolViolation,
              .signedOut, .signedOutNotWiped, .identityUnavailable: revoke()
-        default: break
+        default:
+            self.companionSince = nil
+            self.companionCursorRevision &+= 1
         }
     }
     /// Only authenticated, scope-correlated Matrix m.call.answer / call membership events enter here.
@@ -231,7 +278,7 @@ public final class NativeCallCoordinator {
         let answer = pendingAnswer; pendingAnswer = nil
         answer?.resume(throwing: KoderaMobileFfiError.authenticationFailed)
         let id = activeId; activeId = nil; call = nil; answerRequested = false; muted = false; audioActive = false
-        companionSince = nil; companionPollOwner = nil
+        companionSince = nil; companionPollOwner = nil; self.companionBackfill = nil
         media.disconnect()
         if reason == .revoked { stopped = true; ring.revoke() }
         if let id {

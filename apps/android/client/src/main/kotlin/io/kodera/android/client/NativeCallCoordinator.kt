@@ -53,6 +53,9 @@ class NativeCallCoordinator(
     private var muted = false
     private var stopped = false
     private var companionSince: String? = null
+    private data class CompanionBackfill(val batch: MatrixSyncBatch, val since: String?)
+    private var companionBackfill: CompanionBackfill? = null
+    private var companionCursorRevision = 0L
     private var companionPollOwner: Long? = null
     private var presenter: NativeCallPresenter? = null
     fun bind(presenter: NativeCallPresenter) = synchronized(lock) { this.presenter = presenter }
@@ -81,12 +84,14 @@ class NativeCallCoordinator(
             synchronized(lock) {
                 if (!owns(owner, wake.callId)) return
                 check(room.roomId == resolved.roomId); wake.validate(now())
-                call = resolved; companionSince = room.initialBatch.nextBatch
+                call = resolved; companionSince = if (room.initialBatch.roomDeltas[room.roomId]?.limited == true) null else room.initialBatch.nextBatch
                 consumeAuthenticatedSync(room.initialBatch, room.roomId)
                 if (!owns(owner, wake.callId)) return
-                presenter?.ringing(resolved)
             }
-            if (synchronized(lock) { answerRequested && owns(owner, wake.callId) }) connect(owner, resolved)
+            try { recoverLimitedTimeline(room.initialBatch, resolved, null, owner) }
+            catch (failure: MatrixClientException) { synchronized(lock) { if (owns(owner, wake.callId)) consumeTransportFailure(failure) } }
+            synchronized(lock) { if (!owns(owner, wake.callId)) return; presenter?.ringing(resolved) }
+            if (synchronized(lock) { answerRequested && owns(owner, wake.callId) && ring.records[wake.callId]?.phase == NativeRingPhase.RINGING }) connect(owner, resolved)
         } catch (failure: Exception) {
             synchronized(lock) { if (owns(owner, wake.callId)) finish(NativeRingPhase.REVOKED) }
             throw failure
@@ -105,7 +110,7 @@ class NativeCallCoordinator(
     private fun connect(owner: Long, call: AuthenticatedNativeCall): Unit = synchronized(mediaLock) {
         try {
             synchronized(lock) {
-                if (!owns(owner, call.wake.callId)) return
+                if (!owns(owner, call.wake.callId) || ring.records[call.wake.callId]?.phase != NativeRingPhase.RINGING) return
                 call.wake.validate(now()); ring.transition(call.wake.callId, NativeRingPhase.CONNECTING)
             }
             media.connect(call)
@@ -163,6 +168,7 @@ class NativeCallCoordinator(
             synchronized(lock) {
                 check(owns(owner, current.wake.callId)); consumeAuthenticatedSync(batch, current.roomId)
             }
+            recoverLimitedTimeline(batch, current, since, owner)
             return batch
         } catch (failure: Exception) {
             synchronized(lock) {
@@ -170,29 +176,35 @@ class NativeCallCoordinator(
             }; throw failure
         }
     }
+    private data class CompanionPoll(val owner: Long, val call: AuthenticatedNativeCall, val since: String?, val cursorRevision: Long, val backfill: CompanionBackfill?)
     /** Runtime timer entry point. The call's room is monitored independently of the selected UI. */
     fun pollCompanionTimeline() {
         val context = synchronized(lock) {
             val current = call ?: return
             if (companionPollOwner != null) return
             companionPollOwner = generation
-            Triple(generation, current, companionSince)
+            CompanionPoll(generation, current, companionSince, companionCursorRevision, companionBackfill)
         }
         try {
-            val batch = syncCompanionTimeline(context.first, context.second, context.third)
+            context.backfill?.let { recoverLimitedTimeline(it.batch, context.call, it.since, context.owner) }
+            if (!owns(context.owner, context.call.wake.callId)) return
+            val batch = syncCompanionTimeline(context.owner, context.call, context.since)
             synchronized(lock) {
-                if (owns(context.first, context.second.wake.callId)) {
+                if (owns(context.owner, context.call.wake.callId) && companionCursorRevision == context.cursorRevision) {
                     // Re-read the room without an incremental cursor after an omitted timeline segment.
-                    companionSince = if (batch.roomDeltas[context.second.roomId]?.limited == true) null else batch.nextBatch
+                    companionSince = if (batch.roomDeltas[context.call.roomId]?.limited == true) null else batch.nextBatch
                 }
             }
-        } catch (_: Exception) {
+        } catch (failure: Exception) {
             // Failed sync clears Matrix room knowledge; recover it with a full sync for this owner.
             synchronized(lock) {
-                if (owns(context.first, context.second.wake.callId)) companionSince = null
+                if (owns(context.owner, context.call.wake.callId)) {
+                    companionSince = null
+                    if (failure is MatrixClientException) consumeTransportFailure(failure)
+                }
             }
         } finally {
-            synchronized(lock) { if (companionPollOwner == context.first) companionPollOwner = null }
+            synchronized(lock) { if (companionPollOwner == context.owner) companionPollOwner = null }
         }
     }
     fun consumeAuthenticatedSync(batch: MatrixSyncBatch, roomId: String? = null) = synchronized(lock) {
@@ -201,18 +213,46 @@ class NativeCallCoordinator(
         if (currentRoomId in batch.authorityLostRooms ||
             ((roomId == null || roomId == currentRoomId) && currentRoomId !in batch.plaintextAllowedRooms)
         ) { finish(NativeRingPhase.REVOKED); return@synchronized }
-        if (batch.roomEvents[currentRoomId].orEmpty().any {
+        // Retain the UI's exact gap for recovery outside the state consumer's lock.
+        val delta = batch.roomDeltas[currentRoomId]
+        if (delta?.limited == true) {
+            if (delta.prevBatch != null && companionBackfill == null) companionBackfill = CompanionBackfill(batch, companionSince)
+            companionSince = null; companionCursorRevision += 1
+        }
+        consumeCallEvents(batch.roomEvents[currentRoomId].orEmpty(), id)
+    }
+    private fun consumeCallEvents(events: List<MatrixRawTimelineEvent>, id: String) {
+        if (events.any {
             it.type == "m.call.answer" && it.sender == conversation.ownUserId && !it.isRedactedUnsigned &&
                 it.callId == id && !it.callPartyId.isNullOrEmpty() && it.callPartyId != localPartyId
         }) finish(NativeRingPhase.ANSWERED_ELSEWHERE)
     }
+    /** At most 200 older events, bounded by the prior sync cursor and advancing page tokens. */
+    private fun recoverLimitedTimeline(batch: MatrixSyncBatch, current: AuthenticatedNativeCall, since: String?, owner: Long) {
+        val delta = batch.roomDeltas[current.roomId]?.takeIf { it.limited } ?: return
+        var from = delta.prevBatch ?: return
+        val visited = mutableSetOf<String>()
+        for (pageIndex in 0 until 4) {
+            if (from == since || !visited.add(from) || !owns(owner, current.wake.callId)) break
+            val page = conversation.backfillRoomPage(current.roomId, from, since, 50)
+            synchronized(lock) {
+                if (!owns(owner, current.wake.callId)) return
+                consumeCallEvents(page.events, current.wake.callId)
+            }
+            if (page.events.isEmpty()) break
+            from = page.endToken ?: break
+        }
+        synchronized(lock) {
+            if (owns(owner, current.wake.callId) && companionBackfill?.batch?.nextBatch == batch.nextBatch) companionBackfill = null
+        }
+    }
     /** Forwarded by the session's live conversation consumer, including bootstrap failures. */
-    fun consumeTransportFailure(failure: MatrixClientException) {
+    fun consumeTransportFailure(failure: MatrixClientException) = synchronized(lock) {
         when (failure.reason) {
             MatrixClientError.NOT_FOUND, MatrixClientError.FORBIDDEN, MatrixClientError.UNAUTHORIZED,
             MatrixClientError.PLAINTEXT_FORBIDDEN, MatrixClientError.PROTOCOL_VIOLATION,
             MatrixClientError.SIGNED_OUT, MatrixClientError.IDENTITY_UNAVAILABLE -> revoke()
-            else -> Unit
+            else -> { companionSince = null; companionCursorRevision += 1 }
         }
     }
     /** Only scope-correlated authenticated Matrix answer/call-membership events enter here. */
@@ -231,7 +271,7 @@ class NativeCallCoordinator(
     private fun owns(owner: Long, id: String) = synchronized(lock) { !stopped && generation == owner && activeId == id }
     private fun finish(reason: NativeRingPhase) {
         generation += 1; val id = activeId; activeId = null; call = null; answerRequested = false; muted = false; audioActive = false
-        companionSince = null; companionPollOwner = null
+        companionSince = null; companionPollOwner = null; companionBackfill = null
         media.disconnect()
         if (reason == NativeRingPhase.REVOKED) { stopped = true; ring.revoke() }
         if (id != null) {

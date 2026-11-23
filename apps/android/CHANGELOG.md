@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Preserve calls across overlapping UI and companion sync failures, and recover older call answers through bounded timeline backfill.
+
 - Restore Matrix room security knowledge with a full sync after a temporary native call polling failure.
 
 - Preserve native calls across temporary Matrix sync failures, recover limited timelines, and end expired rings before replacement.

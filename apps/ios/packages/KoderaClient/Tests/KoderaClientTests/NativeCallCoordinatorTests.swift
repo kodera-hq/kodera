@@ -86,6 +86,22 @@ private actor CallChatFixture: ChannelConversationTransport {
     private var syncFailure: MatrixClientFailure?
     private var limitedRooms: Set<String> = []
     private var recoveryBatch: MatrixSyncBatch?
+    private var initialBatch: MatrixSyncBatch?
+    private var holdBackfill = false
+    private var pageGate: CheckedContinuation<Void, Never>?
+    private var pageWaiters: [CheckedContinuation<Void, Never>] = []
+    func setInitialBatch(_ batch: MatrixSyncBatch) { self.initialBatch = batch }
+    func holdNextBackfill() { self.holdBackfill = true }
+    func waitUntilBackfillEntered() async {
+        if self.pageGate != nil { return }
+        await withCheckedContinuation { self.pageWaiters.append($0) }
+    }
+    func releaseBackfill() { self.pageGate?.resume(); self.pageGate = nil }
+    private var prevBatch: String?
+    private var pages: [String: MatrixTimelinePage] = [:]
+    private var pageFailure: MatrixClientFailure?
+    func failBackfill(_ failure: MatrixClientFailure?) { self.pageFailure = failure }
+    private var pageRequests: [String] = []
     private var plaintextBlocked = false
     private var syncRequests: [String] = []
     private var holdSync = false
@@ -101,7 +117,21 @@ private actor CallChatFixture: ChannelConversationTransport {
     func releaseSync() { syncGate?.resume(); syncGate = nil }
     func loseAuthority(_ rooms: Set<String>) { lostRooms = rooms }
     func failSync(_ failure: MatrixClientFailure?) { syncFailure = failure }
-    func limitTimeline(_ rooms: Set<String>) { limitedRooms = rooms }
+    func limitTimeline(_ rooms: Set<String>, prevBatch: String? = nil) { limitedRooms = rooms; self.prevBatch = prevBatch }
+    func setPages(_ pages: [String: MatrixTimelinePage]) { self.pages = pages }
+    func backfillRequests() -> [String] { self.pageRequests }
+    func backfillRoomPage(roomId: String, fromToken: String, toToken: String?, limit: Int) async throws(MatrixClientFailure) -> MatrixTimelinePage {
+        self.pageRequests.append("\(roomId)|\(fromToken)|\(toToken ?? "nil")|\(limit)")
+        if self.holdBackfill {
+            self.holdBackfill = false
+            await withCheckedContinuation { continuation in
+                self.pageGate = continuation
+                self.pageWaiters.forEach { $0.resume() }; self.pageWaiters = []
+            }
+        }
+        if let pageFailure { throw pageFailure }
+        return self.pages[fromToken] ?? MatrixTimelinePage(events: [], endToken: nil)
+    }
     func recoverWith(_ batch: MatrixSyncBatch) { recoveryBatch = batch }
     func deny() { refuse = true }
     func setEvents(_ value: [MatrixRawTimelineEvent]) { events = value }
@@ -111,6 +141,7 @@ private actor CallChatFixture: ChannelConversationTransport {
             batch.plaintextAllowedRooms = [selectedRoom]
             return (selectedRoom, batch)
         }
+        if let initialBatch { return ("!room:example.org", initialBatch) }
         var batch = MatrixSyncBatch(nextBatch: "one", roomEvents: [:])
         batch.plaintextAllowedRooms = ["!room:example.org"]
         return ("!room:example.org", batch)
@@ -131,7 +162,7 @@ private actor CallChatFixture: ChannelConversationTransport {
         if let syncFailure { throw syncFailure }
         if since == nil, let recoveryBatch { return recoveryBatch }
         var deltas = Dictionary(uniqueKeysWithValues: limitedRooms.map { ($0, MatrixRoomSyncDelta(events: [], limited: true)) })
-        deltas[roomId] = MatrixRoomSyncDelta(events: events, limited: limitedRooms.contains(roomId))
+        deltas[roomId] = MatrixRoomSyncDelta(events: events, limited: limitedRooms.contains(roomId), prevBatch: prevBatch)
         var batch = MatrixSyncBatch(nextBatch: "two", roomDeltas: deltas)
         batch.authorityLostRooms = lostRooms; batch.plaintextAllowedRooms = plaintextBlocked ? [] : [roomId]; return batch
     }
@@ -151,7 +182,7 @@ private actor CallChatFixture: ChannelConversationTransport {
 
 @MainActor final class NativeCallCoordinatorTests: XCTestCase {
     func testRealMatrixClientRecoversCompanionPollAfter503WithoutFalseAuthorityLoss() async throws {
-        for connected in [false, true] {
+        for (connected, viaUI) in [(false, false), (false, true), (true, false), (true, true)] {
             let requester = try CoreRequester(coreApiOrigin: "https://core.test", loopback: .refuse,
                 tokens: FakeTokens(), protocolClass: URLProtocolFixture.self, timeout: 2)
             let client = MatrixRoomClient(coreRequester: requester, loopback: .refuse, protocolClass: URLProtocolFixture.self)
@@ -185,7 +216,10 @@ private actor CallChatFixture: ChannelConversationTransport {
             coordinator.bind(presenter); try await coordinator.receive(callWake())
             if connected { try await coordinator.answer(callId: callId); await coordinator.audioSession(active: true) }
             XCTAssertEqual(coordinator.call?.wake.callId, callId)
-            await coordinator.pollCompanionTimeline() // 503 clears the real client's matrixKnown.
+            if viaUI {
+                do { _ = try await transport.syncRoom(roomId: "!room:example.org", since: "ui"); XCTFail("Expected UI failure") }
+                catch { coordinator.consumeTransportFailure(error) }
+            } else { await coordinator.pollCompanionTimeline() }
             XCTAssertEqual(coordinator.call?.wake.callId, callId); XCTAssertEqual(media.disconnects, 0)
             XCTAssertEqual(media.microphoneEnabled, connected); XCTAssertTrue(presenter.reasons.isEmpty)
             await coordinator.pollCompanionTimeline() // Full 200 sync must restore matrixKnown.
@@ -198,9 +232,170 @@ private actor CallChatFixture: ChannelConversationTransport {
             let cursors = requests.map { request in
                 URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "since" }?.value
             }
-            XCTAssertEqual(cursors, [nil, "one", nil, "recovered"])
+            XCTAssertEqual(cursors, [nil, viaUI ? "ui" : "one", nil, "recovered"])
             XCTAssertNil(coordinator.call); XCTAssertEqual(media.disconnects, 1)
             XCTAssertFalse(media.microphoneEnabled); XCTAssertEqual(presenter.reasons, [.answeredElsewhere])
+        }
+    }
+
+    func testOverlappingMatrixReadersRecoverRoomKnowledgeBeforeUsingQueuedCursor() async throws {
+        let requester = try CoreRequester(coreApiOrigin: "https://core.test", loopback: .refuse,
+            tokens: FakeTokens(), protocolClass: URLProtocolFixture.self, timeout: 2)
+        let client = MatrixRoomClient(coreRequester: requester, loopback: .refuse, protocolClass: URLProtocolFixture.self)
+        let origin = "https://atelier.matrix.kodera.io"; let room = "!room:example.org"
+        await client.bindChannelSecurity(organisationId: callOrg, channelId: callChannel, origin: origin, roomId: room, isConfidential: false)
+        let state = Data("{\"next_batch\":\"known\",\"rooms\":{\"join\":{\"!room:example.org\":{\"state\":{\"events\":[]},\"timeline\":{\"events\":[]}}}}}".utf8)
+        URLProtocolFixture.install(.body(status: 200, headers: ["Content-Type": "application/json"], chunks: [state]))
+        _ = try await client.sync(homeserverOrigin: origin, matrixAccessToken: "token", roomId: room)
+        let gate = URLProtocolResponseGate()
+        URLProtocolFixture.install(sequence: [.gated(status: 503, data: Data("{}".utf8), gate: gate),
+            .body(status: 200, headers: ["Content-Type": "application/json"], chunks: [state])])
+        let ui = Task { try await client.sync(homeserverOrigin: origin, matrixAccessToken: "token", roomId: room) }
+        await gate.waitUntilStarted()
+        let companion = Task { try await client.sync(homeserverOrigin: origin, matrixAccessToken: "token", roomId: room, since: "stale") }
+        // Give the queued reader an actor hop while the UI's full sync is still in flight.
+        await Task.yield()
+        gate.release()
+        do { _ = try await ui.value; XCTFail("Expected UI 503") } catch { XCTAssertEqual(error as? MatrixClientFailure, .serviceUnavailable) }
+        let batch = try await companion.value
+        XCTAssertEqual(batch.plaintextAllowedRooms, [room]); XCTAssertTrue(batch.authorityLostRooms.isEmpty)
+        try await client.requirePlaintextAllowed(origin: origin, roomId: room)
+        let cursors = URLProtocolFixture.requests.map { URLComponents(url: $0.url!, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "since" }?.value }
+        XCTAssertEqual(cursors, [nil, nil])
+    }
+
+    func testMatrixBackwardPageBoundsRequestAndDecodesOlderCallAnswer() async throws {
+        let requester = try CoreRequester(coreApiOrigin: "https://core.test", loopback: .refuse,
+            tokens: FakeTokens(), protocolClass: URLProtocolFixture.self, timeout: 2)
+        let client = MatrixRoomClient(coreRequester: requester, loopback: .refuse, protocolClass: URLProtocolFixture.self)
+        let json = "{\"chunk\":[{\"type\":\"m.call.answer\",\"event_id\":\"$answer\",\"sender\":\"@member:example.org\",\"origin_server_ts\":100,\"content\":{\"call_id\":\"\(callId)\",\"party_id\":\"other\"}}],\"end\":\"older\"}"
+        URLProtocolFixture.install(.body(status: 200, headers: ["Content-Type": "application/json"], chunks: [Data(json.utf8)]))
+        let page = try await client.fetchRoomMessagePage(homeserverOrigin: "https://atelier.matrix.kodera.io", matrixAccessToken: "token",
+            roomId: "!room:example.org", fromToken: "gap", toToken: "one", limit: 50)
+        XCTAssertEqual(page.endToken, "older"); XCTAssertEqual(page.events.first?.callId, callId)
+        XCTAssertEqual(page.events.first?.callPartyId, "other")
+        let query = try XCTUnwrap(URLComponents(url: URLProtocolFixture.requests[0].url!, resolvingAgainstBaseURL: false))
+        let values = Dictionary(uniqueKeysWithValues: (query.queryItems ?? []).map { ($0.name, $0.value ?? "") })
+        XCTAssertEqual(values, ["from": "gap", "to": "one", "dir": "b", "limit": "50"])
+    }
+
+    func testAnswerOrRetirementDuringBootstrapBackfillCannotReconnectOrEndTheNextCall() async throws {
+        for retired in [false, true] {
+            let chat = CallChatFixture(); let media = CallMediaFixture(); let presenter = CallPresenterFixture()
+            var batch = MatrixSyncBatch(nextBatch: "one", roomDeltas: ["!room:example.org": MatrixRoomSyncDelta(events: [], limited: true, prevBatch: "gap")])
+            batch.plaintextAllowedRooms = ["!room:example.org"]
+            await chat.setInitialBatch(batch); await chat.holdNextBackfill()
+            let answer = MatrixRawTimelineEvent(type: "m.call.answer", eventId: "$old", sender: chat.ownUserId,
+                originServerTs: 100, callId: callId, callPartyId: retired ? "other" : "local")
+            await chat.setPages(["gap": MatrixTimelinePage(events: [answer], endToken: nil)])
+            let coordinator = try NativeCallCoordinator(organisationId: callOrg, localPartyId: "local",
+                resolver: ImmediateCallResolver(), media: media, conversation: chat, now: { 100 })
+            coordinator.bind(presenter)
+            let receiving = Task { try await coordinator.receive(callWake()) }
+            await chat.waitUntilBackfillEntered()
+            let nextId = "55555555-5555-4555-8555-555555555555"
+            if retired {
+                coordinator.end(callId: callId)
+                let wake = try NativeCallWake(callId: nextId, organisationId: callOrg, channelId: callChannel, epoch: 1, state: .ringing, expiresAt: 130)
+                try await coordinator.receive(wake)
+            } else { try await coordinator.answer(callId: callId) }
+            await chat.releaseBackfill(); try await receiving.value
+            XCTAssertEqual(coordinator.call?.wake.callId, retired ? nextId : callId)
+            XCTAssertEqual(media.connections, retired ? 0 : 1)
+            XCTAssertEqual(media.disconnects, retired ? 1 : 0)
+            XCTAssertEqual(presenter.reasons, retired ? [.ended] : [])
+            coordinator.end(callId: retired ? nextId : callId)
+        }
+    }
+
+    func testLimitedUIBatchRetainsItsExactGapForTheCompanion() async throws {
+        let chat = CallChatFixture(); let media = CallMediaFixture(); let presenter = CallPresenterFixture()
+        let coordinator = try NativeCallCoordinator(organisationId: callOrg, localPartyId: "local",
+            resolver: ImmediateCallResolver(), media: media, conversation: chat, now: { 100 })
+        coordinator.bind(presenter); try await coordinator.receive(callWake())
+        var uiBatch = MatrixSyncBatch(nextBatch: "ui", roomDeltas: ["!room:example.org": MatrixRoomSyncDelta(events: [], limited: true, prevBatch: "ui-gap")])
+        uiBatch.plaintextAllowedRooms = ["!room:example.org"]
+        let answer = MatrixRawTimelineEvent(type: "m.call.answer", eventId: "$older", sender: chat.ownUserId,
+            originServerTs: 100, callId: callId, callPartyId: "other")
+        await chat.setPages(["ui-gap": MatrixTimelinePage(events: [answer], endToken: "one")])
+        coordinator.consumeAuthenticatedSync(uiBatch, roomId: "!room:example.org")
+        await coordinator.pollCompanionTimeline()
+        let syncs = await chat.requests(); let pages = await chat.backfillRequests()
+        XCTAssertTrue(syncs.isEmpty); XCTAssertEqual(pages, ["!room:example.org|ui-gap|one|50"])
+        XCTAssertNil(coordinator.call); XCTAssertEqual(media.disconnects, 1)
+        XCTAssertEqual(presenter.reasons, [.answeredElsewhere])
+    }
+
+    func testPendingUIBackfillRetriesTransientFailureAndRevokesAuthorityFailure() async throws {
+        for failure in [MatrixClientFailure.serviceUnavailable, .forbidden] {
+            let chat = CallChatFixture(); let media = CallMediaFixture()
+            let coordinator = try NativeCallCoordinator(organisationId: callOrg, localPartyId: "local",
+                resolver: ImmediateCallResolver(), media: media, conversation: chat, now: { 100 })
+            try await coordinator.receive(callWake())
+            var batch = MatrixSyncBatch(nextBatch: "ui", roomDeltas: ["!room:example.org": MatrixRoomSyncDelta(events: [], limited: true, prevBatch: "gap")])
+            batch.plaintextAllowedRooms = ["!room:example.org"]
+            coordinator.consumeAuthenticatedSync(batch, roomId: "!room:example.org")
+            await chat.failBackfill(failure); await coordinator.pollCompanionTimeline()
+            if failure == .forbidden { XCTAssertNil(coordinator.call); XCTAssertEqual(media.disconnects, 1) }
+            else {
+                XCTAssertNotNil(coordinator.call); XCTAssertEqual(media.disconnects, 0)
+                await chat.failBackfill(nil); await coordinator.pollCompanionTimeline()
+                let pages = await chat.backfillRequests(); let syncs = await chat.requests()
+                XCTAssertEqual(pages, ["!room:example.org|gap|one|50", "!room:example.org|gap|one|50"])
+                XCTAssertEqual(syncs, ["!room:example.org|nil"])
+                coordinator.end(callId: callId)
+            }
+        }
+    }
+
+    func testForwardedUIFailureCannotBeOverwrittenByAnInFlightCompanionPoll() async throws {
+        let chat = CallChatFixture(); let media = CallMediaFixture()
+        let coordinator = try NativeCallCoordinator(organisationId: callOrg, localPartyId: "local",
+            resolver: ImmediateCallResolver(), media: media, conversation: chat, now: { 100 })
+        try await coordinator.receive(callWake())
+        await chat.holdNextSync()
+        let polling = Task { await coordinator.pollCompanionTimeline() }
+        await chat.waitUntilSyncEntered()
+        coordinator.consumeTransportFailure(.serviceUnavailable)
+        await chat.releaseSync(); await polling.value
+        await coordinator.pollCompanionTimeline()
+        let requests = await chat.requests()
+        XCTAssertEqual(requests, ["!room:example.org|one", "!room:example.org|nil"])
+        XCTAssertNotNil(coordinator.call); XCTAssertEqual(media.disconnects, 0)
+        coordinator.end(callId: callId)
+    }
+
+    func testLimitedTimelineRecoversOlderAnswersAndBoundsPagination() async throws {
+        for mode in ["answer", "cursor", "cycle", "budget", "empty"] {
+            let chat = CallChatFixture(); let media = CallMediaFixture(); let presenter = CallPresenterFixture()
+            let coordinator = try NativeCallCoordinator(organisationId: callOrg, localPartyId: "local",
+                resolver: ImmediateCallResolver(), media: media, conversation: chat, now: { 100 })
+            coordinator.bind(presenter); try await coordinator.receive(callWake()); try await coordinator.answer(callId: callId)
+            let message = MatrixRawTimelineEvent(type: "m.room.message", eventId: "$message", sender: "@peer:example.org", originServerTs: 100)
+            let answer = MatrixRawTimelineEvent(type: "m.call.answer", eventId: "$answer", sender: chat.ownUserId,
+                originServerTs: 100, callId: callId, callPartyId: "other")
+            await chat.setEvents(Array(repeating: message, count: 25))
+            await chat.limitTimeline(["!room:example.org"], prevBatch: "gap")
+            await chat.setPages([
+                "gap": MatrixTimelinePage(events: mode == "empty" ? [] : Array(repeating: message, count: 50),
+                    endToken: mode == "cursor" ? "one" : "older"),
+                "older": MatrixTimelinePage(events: mode == "answer" ? [answer] : [message], endToken: mode == "cycle" ? "gap" : "third"),
+                "third": MatrixTimelinePage(events: [message], endToken: "fourth"),
+                "fourth": MatrixTimelinePage(events: [message], endToken: "fifth"),
+                "fifth": MatrixTimelinePage(events: [answer], endToken: nil),
+            ])
+            await coordinator.pollCompanionTimeline()
+            let requests = await chat.backfillRequests()
+            let count = mode == "empty" || mode == "cursor" ? 1 : mode == "answer" || mode == "cycle" ? 2 : 4
+            XCTAssertEqual(requests.count, count)
+            XCTAssertEqual(requests.first, "!room:example.org|gap|one|50")
+            if mode == "answer" {
+                XCTAssertNil(coordinator.call); XCTAssertEqual(media.disconnects, 1)
+                XCTAssertEqual(presenter.reasons, [.answeredElsewhere])
+            } else {
+                XCTAssertNotNil(coordinator.call); XCTAssertEqual(media.disconnects, 0)
+                coordinator.end(callId: callId)
+            }
         }
     }
 
