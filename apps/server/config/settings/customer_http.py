@@ -58,7 +58,11 @@ from core.sealing import key_from_environment
 from .persistence import *
 
 ROOT_URLCONF = "config.customer_urls"
-MIDDLEWARE = [*MIDDLEWARE, "apps.workspaces.quota_http.QuotaRefusalMiddleware", "apps.workspaces.guest_http.GuestScopeMiddleware"]
+MIDDLEWARE = [
+    *MIDDLEWARE,
+    "apps.workspaces.quota_http.QuotaRefusalMiddleware",
+    "apps.workspaces.guest_http.GuestScopeMiddleware",
+]
 CUSTOMER_HTTP_APPS = (
     "apps.jobs",
     "apps.audit",
@@ -173,3 +177,6 @@ KODERA_MATRIX_REPLAY_TRANSPORT_FACTORY = matrix_replay_transport_factory(os.envi
 # Operator attests live authority and edge request-scope configuration before sharing.
 
 KODERA_CHANNEL_GOVERNANCE_ENABLED = channel_governance_enabled(os.environ)
+KODERA_GOVERNANCE_AUTHORITY_CONFIGURED = (
+    os.environ.get("KODERA_GOVERNANCE_AUTHORITY_CONFIGURED") == "true"
+)

@@ -123,10 +123,9 @@ class KoderaPolicy:
             resource = _make_dm_member_resource(self)
             if resource is not None:
                 api.register_web_resource("/_synapse/client/kodera/v1/dm_member", resource)
-            if self._authority is not None:
-                scope = _make_scope_resource(self)
-                if scope is not None:
-                    api.register_web_resource("/_synapse/client/kodera/v1/request_scope", scope)
+            scope = _make_scope_resource(self)
+            if scope is not None:
+                api.register_web_resource("/_synapse/client/kodera/v1/request_scope", scope)
 
     @staticmethod
     def parse_config(config: dict[str, Any]) -> dict[str, Any]:
@@ -171,7 +170,14 @@ class KoderaPolicy:
             if mode == "partner" and not servers:
                 raise ConfigError("partner federation_mode requires a nonempty global allowlist")
             parsed["federation_mode"] = mode
+        governance = config.get("channel_governance_enabled", False)
+        if type(governance) is not bool:
+            raise ConfigError("channel_governance_enabled must be a boolean")
+        mode = parsed.get("federation_mode", "partner" if servers else "closed")
         origin, token = config.get("core_authority_origin"), config.get("core_authority_token")
+        if (governance or mode == "partner") and not origin:
+            raise ConfigError("Channel governance and partner federation require Core authority")
+        parsed["channel_governance_enabled"] = governance
         if origin is not None or token is not None:
             if not valid_origin(origin) or not isinstance(token, str) or not token or any(c.isspace() for c in token):
                 raise ConfigError("Core authority requires an HTTPS origin and a nonempty credential")
@@ -665,7 +671,8 @@ class KoderaPolicy:
         room, action = request
         if action == 'session':
             return await self._live_allows(user, '', 'session')
-        return await self._live_allows(user, room, action)
+        scoped = await self._authority.decide(user, room, action)
+        return scoped['allowed'] is True and scoped['role'] == 'single_channel_guest'
 
     def _governance_valid(self, policy_event: Any) -> bool:
         content = getattr(policy_event, "content", {})
@@ -912,7 +919,7 @@ def _make_scope_resource(policy):
         async def _async_render_GET(self, request):
             path = request.getHeader('X-Original-URI')
             method = request.getHeader('X-Original-Method')
-            if public_request(path, method):
+            if policy._authority is None or public_request(path, method) or method == 'OPTIONS':
                 return 200, {'allowed': True}
             requester = await policy._api.get_user_by_req(request)
             if not await policy.request_allowed(requester.user.to_string(), path, method):

@@ -209,3 +209,57 @@ def test_guest_on_either_homeserver_needs_live_grant_and_bilateral_agreement(gue
     assert {call[0] for call in core.calls} == {'Bearer host-agent', 'Bearer peer-agent'}
     assert content['members'] == content['local_members'] == []
     assert state[('m.room.member', guest)].content['membership'] == 'join'
+
+
+@pytest.mark.parametrize('configuration', [
+    {'channel_governance_enabled': True},
+    {'federation_mode': 'partner', 'federation_domain_allowlist': ['peer.example.org']},
+    {'federation_domain_allowlist': ['peer.example.org']},
+])
+@pytest.mark.parametrize('wiring', [{}, {'core_authority_origin': 'https://core.example.org'}, {'core_authority_token': 'synthetic'}])
+def test_governed_startup_requires_complete_authority(configuration, wiring):
+    from conftest import ConfigError
+
+    with pytest.raises(ConfigError):
+        KoderaPolicy.parse_config({'agent_user_id': '@agent:example.org', **configuration, **wiring})
+    parsed = KoderaPolicy.parse_config({
+        'agent_user_id': '@agent:example.org', **configuration,
+        'core_authority_origin': 'https://core.example.org', 'core_authority_token': 'synthetic',
+    })
+    assert parsed['core_authority_origin'] == 'https://core.example.org'
+
+
+@pytest.mark.parametrize('path,method', [
+    ('/_matrix/client/v3/user_directory/search', 'POST'),
+    ('/_matrix/client/v3/profile/@owner:other.example.org', 'GET'),
+    ('/_matrix/client/v3/profile/@owner:other.example.org/avatar_url', 'GET'),
+    ('/_matrix/client/v3/publicRooms', 'GET'),
+    ('/_matrix/client/v3/publicRooms', 'POST'),
+    ('/_matrix/client/v3/directory/room/%23private%3Aexample.org', 'GET'),
+    ('/_matrix/client/v1/media/download/example.org/media', 'GET'),
+])
+def test_edge_scope_resource_refuses_guest_enumeration_profile_and_media(monkeypatch, path, method):
+    import sys
+    from kodera_synapse_policy import _make_scope_resource
+    from conftest import SynapseError
+
+    monkeypatch.setitem(sys.modules, 'synapse.http.server', SimpleNamespace(DirectServeJsonResource=object))
+    api = Api()
+    async def requester(request):
+        return SimpleNamespace(user=SimpleNamespace(to_string=lambda: '@guest:example.org'))
+    api.get_user_by_req = requester
+    policy = KoderaPolicy({'agent_user_id': '@agent:example.org'}, api)
+    policy._authority = Live()
+    request = SimpleNamespace(getHeader=lambda key: {'X-Original-URI': path, 'X-Original-Method': method}.get(key))
+    with pytest.raises(SynapseError) as failure:
+        asyncio.run(_make_scope_resource(policy)._async_render_GET(request))
+    assert failure.value.code == 403
+
+
+def test_guest_room_request_cannot_use_unmanaged_foreign_decision():
+    policy = KoderaPolicy({'agent_user_id': '@agent:example.org'}, Api())
+    class Scoped:
+        async def decide(self, user, room, action):
+            return {'allowed': bool(room), 'role': 'unmanaged' if room else 'single_channel_guest'}
+    policy._authority = Scoped()
+    assert not asyncio.run(policy.request_allowed('@guest:example.org', '/_matrix/client/v3/rooms/!unbridged:example.org/messages', 'GET'))

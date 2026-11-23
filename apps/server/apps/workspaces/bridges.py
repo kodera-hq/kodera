@@ -14,6 +14,7 @@ from django.utils.dateparse import parse_datetime
 from apps.audit.services import record_workspace_resource_event
 from apps.identity.selectors import current_identity, current_identity_by_id
 from apps.orgs.selectors import active_organisation, has_privacy_cutoff, person_has_membership
+from apps.tenancy.selectors import organisation_matrix_homeservers
 from services.identity.access_tokens import VerifiedAccessToken
 
 from .models import (
@@ -33,8 +34,39 @@ HISTORY_NOTICE = (
 )
 
 
+def _enforcement_ready() -> bool:
+    return (
+        getattr(settings, "KODERA_CHANNEL_GOVERNANCE_ENABLED", False) is True
+        and getattr(settings, "KODERA_GOVERNANCE_AUTHORITY_CONFIGURED", False) is True
+    )
+
+
+def _guest_binding(
+    identity: Any, organisation_id: UUID, channel: Channel, user: str, room: str
+) -> bool:
+    """Canonical subject localpart plus an independently scoped homeserver binding."""
+    subject = identity.subject.lower()
+    if re.fullmatch(r"[a-z0-9._=/+\-]{1,255}", subject) is None:
+        return False
+    domains: set[str] = set()
+    if identity.organisation_id == organisation_id:
+        domains.update(organisation_matrix_homeservers(organisation_id=organisation_id))
+    agreement = PartnerChannelAgreement.objects.filter(
+        Q(organisation_id=organisation_id, channel_id=channel.id)
+        | Q(partner_organisation_id=organisation_id, partner_channel_id=channel.id),
+        state="active",
+        matrix_room_id=room,
+    ).first()
+    if agreement is not None:
+        if identity.organisation_id == agreement.organisation_id:
+            domains.add(agreement.local_homeserver)
+        elif identity.organisation_id == agreement.partner_organisation_id:
+            domains.add(agreement.partner_homeserver)
+    return any(user == f"@{subject}:{domain}" for domain in domains)
+
+
 def _enabled() -> None:
-    if getattr(settings, "KODERA_CHANNEL_GOVERNANCE_ENABLED", False) is not True:
+    if not _enforcement_ready():
         raise RefusalError(503, "service-unavailable")
 
 
@@ -104,7 +136,7 @@ def overview(*, verified: VerifiedAccessToken, organisation_id: UUID) -> dict[st
     ).order_by("id")
     guests = SingleChannelGuestGrant.objects.filter(organisation_id=organisation_id).order_by("id")
     return {
-        "enforcementReady": getattr(settings, "KODERA_CHANNEL_GOVERNANCE_ENABLED", False) is True,
+        "enforcementReady": _enforcement_ready(),
         "agreements": [_agreement(row) for row in agreements[:200]],
         "guests": [_guest(row) for row in guests[:200]],
     }
@@ -260,6 +292,8 @@ def grant_guest(
         or (body.get("allowCalls") is True and channel.kind != "audio")
     ):
         raise RefusalError(422)
+    if not _guest_binding(identity[1], organisation_id, channel, user, room):
+        raise RefusalError(422)
     # Lock the identity through its owning selector so concurrent grants cannot race.
     from apps.identity.selectors import lock_guest_identity
 
@@ -325,7 +359,24 @@ def matrix_authority(
     denied = {"allowed": False, "role": "none", "revision": 0}
     if action not in {"join", "event", "invite", "create", "call", "directory", "session"}:
         return denied
-    guest = SingleChannelGuestGrant.objects.filter(matrix_user_id=user_id).first()
+    # Scope before classification: a foreign grant cannot rename a tenant's own user.
+    peer_agreements = PartnerChannelAgreement.objects.filter(
+        Q(organisation_id=organisation_id) | Q(partner_organisation_id=organisation_id)
+    )
+    if room_id:
+        peer_agreements = peer_agreements.filter(matrix_room_id=room_id)
+    peer_scope = Q(organisation_id=organisation_id)
+    for peer in peer_agreements:
+        peer_scope |= Q(
+            organisation_id=peer.organisation_id,
+            single_channel_id=peer.channel_id,
+            matrix_room_id=peer.matrix_room_id,
+        ) | Q(
+            organisation_id=peer.partner_organisation_id,
+            single_channel_id=peer.partner_channel_id,
+            matrix_room_id=peer.matrix_room_id,
+        )
+    guest = SingleChannelGuestGrant.objects.filter(peer_scope, matrix_user_id=user_id).first()
     # Session probes have no room in the request; their authority is still bounded by
     # the grant's room and its bilateral agreement, including after invalidation.
     authority_room = guest.matrix_room_id if guest is not None and action == "session" else room_id
@@ -338,7 +389,7 @@ def matrix_authority(
     agreement = PartnerChannelAgreement.objects.filter(agreements).first()
     server = user_id.partition(":")[2]
     partner_allowed = agreement is None or (
-        getattr(settings, "KODERA_CHANNEL_GOVERNANCE_ENABLED", False) is True
+        _enforcement_ready()
         and agreement.matrix_room_id == authority_room
         and organisation_id in {agreement.organisation_id, agreement.partner_organisation_id}
         and server in {agreement.local_homeserver, agreement.partner_homeserver}
@@ -368,7 +419,7 @@ def matrix_authority(
         allowed = (
             partner_allowed
             and guest_scope
-            and getattr(settings, "KODERA_CHANNEL_GOVERNANCE_ENABLED", False) is True
+            and _enforcement_ready()
             and (guest.matrix_room_id == room_id or action == "session")
             and guest.revoked_at is None
             and guest.expires_at > timezone.now()

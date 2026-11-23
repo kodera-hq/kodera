@@ -104,11 +104,13 @@ def test_the_room_access_id_is_optional():
         "agent_user_id": AGENT,
         "room_access_user_id": None,
         "federation_domain_allowlist": [],
+        "channel_governance_enabled": False,
     }
     assert KoderaPolicy.parse_config({"agent_user_id": AGENT, "room_access_user_id": ROOM_ACCESS}) == {
         "agent_user_id": AGENT,
         "room_access_user_id": ROOM_ACCESS,
         "federation_domain_allowlist": [],
+        "channel_governance_enabled": False,
     }
 
 

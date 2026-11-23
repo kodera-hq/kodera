@@ -194,7 +194,8 @@ Status: Implemented (operator configuration required)
 
 Configure `core_authority_origin` with the exact HTTPS Core origin and
 `core_authority_token` with an existing credential for this organisation's agent.
-Both are required together. The credential stays in runtime configuration. Joins,
+Both are required together. `channel_governance_enabled: true` and partner federation
+(including an inferred partner mode) refuse startup without both. The credential stays in runtime configuration. Joins,
 invites, room creation and local/federated event admission consult Core live, without
 positive caching. Authority outages deny access. The immutable room federation ACL,
 Matrix native authorization, bans and channel governance still apply. A suspended
@@ -218,5 +219,9 @@ the existing client API surface.
 Before enabling `KODERA_CHANNEL_GOVERNANCE_ENABLED=true` on Core, qualify the edge,
 both homeservers' hooks, organisation-bound credentials and room-access live checks
 using a direct Matrix client. The default-off Core gate prevents issuance on an
-unconfigured deployment; setting it is an operator attestation, not an automatic
-network probe. Neither tests nor configuration examples claim deployed qualification.
+unconfigured deployment. Core also requires `KODERA_GOVERNANCE_AUTHORITY_CONFIGURED=true`
+as an operator attestation, not an automatic network probe. Community wires this
+subrequest in both Caddy topologies, including generated partner overlays; the scope
+resource is a no-op only when governance and partner federation are disabled and no
+authority is configured. Profile, directory and media requests are outside the guest
+allowlist. Neither tests nor configuration examples claim deployed qualification.

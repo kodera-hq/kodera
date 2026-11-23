@@ -68,6 +68,9 @@ ISOLATED_ROOM_ACCESS_SECRETS = (
 )
 
 EXPECTED_PUBLIC_ENV_DEFAULTS = {
+    "KODERA_CHANNEL_GOVERNANCE_ENABLED": "false",
+    "KODERA_GOVERNANCE_AUTHORITY_CONFIGURED": "false",
+    "KODERA_CORE_AUTHORITY_ORIGIN": "",
     "KODERA_DOMAIN": "chat.example.org",
     "KODERA_ACME_EMAIL": "ops@example.org",
     "DJANGO_ALLOWED_HOSTS": "chat.example.org,127.0.0.1,server",
@@ -880,6 +883,35 @@ def run_proximity_selftest(compose_text: str) -> int:
     return 0
 
 
+GOVERNANCE_WIRING = {
+    "server": {
+        "KODERA_SYNAPSE_SERVER_NAME": "${KODERA_DOMAIN:-chat.example.org}",
+        "KODERA_CHANNEL_GOVERNANCE_ENABLED": "${KODERA_CHANNEL_GOVERNANCE_ENABLED:-false}",
+        "KODERA_GOVERNANCE_AUTHORITY_CONFIGURED": "${KODERA_GOVERNANCE_AUTHORITY_CONFIGURED:-false}",
+    },
+    "synapse": {
+        "KODERA_CHANNEL_GOVERNANCE_ENABLED": "${KODERA_CHANNEL_GOVERNANCE_ENABLED:-false}",
+        "KODERA_CORE_AUTHORITY_ORIGIN": "${KODERA_CORE_AUTHORITY_ORIGIN:-}",
+        "KODERA_AGENT_TOKEN": "${KODERA_AGENT_TOKEN:-}",
+    },
+    "room-access": {
+        "ROOM_ACCESS_CHANNEL_GOVERNANCE_ENABLED": "${KODERA_CHANNEL_GOVERNANCE_ENABLED:-false}",
+        "ROOM_ACCESS_CORE_AUTHORITY_ORIGIN": "${KODERA_CORE_AUTHORITY_ORIGIN:-}",
+        "ROOM_ACCESS_CORE_AUTHORITY_TOKEN": "${KODERA_AGENT_TOKEN:-}",
+    },
+}
+
+
+def check_governance_wiring(compose_text: str) -> list[str]:
+    services = parse_compose_services(compose_text)
+    return [
+        f"governance wiring missing or changed: {service}.{key}"
+        for service, expected in GOVERNANCE_WIRING.items()
+        for key, value in expected.items()
+        if service not in services or services[service].environment.get(key) != value
+    ]
+
+
 def check_community_deploy(
     compose_text: str,
     env_text: str,
@@ -889,6 +921,7 @@ def check_community_deploy(
 
     env_map, env_parse_errors = parse_env_example(env_text)
     errors.extend(env_parse_errors)
+    errors.extend(check_governance_wiring(compose_text))
 
     # 1. Every variable referenced in docker-compose.yml is documented in .env.example,
     #    public defaults match SelfHostDeploymentPlan, and secrets use CHANGE_ME_ placeholders.
@@ -1577,6 +1610,12 @@ REVIEWED_CADDY_CONDITIONAL_HEADERS = (
     'header ?Referrer-Policy "strict-origin-when-cross-origin"',
     f'header ?Permissions-Policy "{PERMISSIONS_POLICY_VALUE}"',
 )
+REVIEWED_SCOPE_LINES = (
+    "uri /_synapse/client/kodera/v1/request_scope",
+    "header_up X-Original-URI {uri}",
+    "header_up X-Original-Method {method}",
+    "import client_address",
+)
 REVIEWED_CADDY_REWRITES = {"rewrite * /token": "room-access:8095"}
 SINGLE_CADDY_SITES: dict[str, frozenset[str]] = {REVIEWED_CADDY_SITE: frozenset(ALLOWED_PUBLIC_ROUTES)}
 # Split topology (README.md, "Topologies"): the web client is served from its own static origin,
@@ -1775,6 +1814,10 @@ def _check_caddy(
                     if child.blocks or child.lines != ["max_size 1MiB"]:
                         errors.append(f"{label} must set the reviewed API body limit: max_size 1MiB")
                     continue
+                if child.header == "forward_auth synapse:8008":
+                    if child.blocks or tuple(child.lines) != REVIEWED_SCOPE_LINES:
+                        errors.append(f"{label} must retain the exact Matrix request-scope gate")
+                    continue
                 words = child.header.split()
                 if words[:1] != ["reverse_proxy"] or len(words) != 2 or child.blocks:
                     errors.append(f"{label} has an unreviewed block in a handle: '{_directive(child.header)}'")
@@ -1796,6 +1839,12 @@ def _check_caddy(
                     if option not in directives:
                         errors.append(f"{label} must set the reviewed reverse_proxy option for '{words[1]}': '{option}'")
                 upstreams.append((words[1], directives))
+            scopes = [child for child in block.blocks if child.header.startswith("forward_auth")]
+            if any(upstream == "synapse:8008" for upstream, _ in upstreams):
+                if len(scopes) != 1 or scopes[0].header != "forward_auth synapse:8008" or tuple(scopes[0].lines) != REVIEWED_SCOPE_LINES:
+                    errors.append(f"{label} must retain the exact Matrix request-scope gate")
+            elif scopes:
+                errors.append(f"{label} must scope forward_auth to Matrix client traffic")
             body_limits = [child for child in block.blocks if child.header == "request_body"]
             if any(upstream == "api-admission:8080" for upstream, _ in upstreams):
                 if len(body_limits) != 1 or body_limits[0].lines != ["max_size 1MiB"] or body_limits[0].blocks:
@@ -1998,11 +2047,11 @@ def check_synapse_config(source: str) -> list[str]:
         problems = []
         if closed.get("federation_domain_whitelist") != [] or "federation" in listener_names(closed) or closed.get("trusted_key_servers") != []:
             problems.append("Synapse federation must be closed by default (empty whitelist, no federation listener, no key server)")
-        opened = configure(_existing_homeserver(), {FEDERATION_ENV_NAME: "b.example.org, a.example.org"})
+        opened = configure(_existing_homeserver(), {FEDERATION_ENV_NAME: "b.example.org, a.example.org", "KODERA_CORE_AUTHORITY_ORIGIN": "https://core.example.org", "KODERA_AGENT_TOKEN": "synthetic"})
         if opened.get("federation_domain_whitelist") != ["a.example.org", "b.example.org"] or "federation" not in listener_names(opened):
             problems.append("Synapse federation opt-in must be the operator's explicit allowlist")
         for unsafe in ("*", "localhost", "partner.internal", "a.example.org,*"):
-            if not _refuses(lambda unsafe=unsafe: configure(_existing_homeserver(), {FEDERATION_ENV_NAME: unsafe})):
+            if not _refuses(lambda unsafe=unsafe: configure(_existing_homeserver(), {FEDERATION_ENV_NAME: unsafe, "KODERA_CORE_AUTHORITY_ORIGIN": "https://core.example.org", "KODERA_AGENT_TOKEN": "synthetic"})):
                 problems.append("Synapse federation allowlist must refuse a wildcard or private server name")
                 break
         public = configure(_existing_homeserver(), {"KODERA_FEDERATION_MODE": "open"})
@@ -2021,11 +2070,22 @@ def check_synapse_config(source: str) -> list[str]:
         return problems
 
     def policy() -> list[str]:
+        if not any(item.get("module") == "kodera_synapse_policy.KoderaPolicy" for item in closed.get("modules", [])):
+            return ["Synapse room-policy module is missing or misconfigured"]
+        wired = {"KODERA_CHANNEL_GOVERNANCE_ENABLED": "true", "KODERA_CORE_AUTHORITY_ORIGIN": "https://core.example.org", "KODERA_AGENT_TOKEN": "synthetic"}
+        enabled = configure(_existing_homeserver(), wired)
+        config = next(item["config"] for item in enabled["modules"] if item.get("module") == "kodera_synapse_policy.KoderaPolicy")
+        if config.get("channel_governance_enabled") is not True or config.get("core_authority_origin") != wired["KODERA_CORE_AUTHORITY_ORIGIN"] or config.get("core_authority_token") != "synthetic":
+            return ["Synapse governance authority wiring is missing"]
+        for missing in ("KODERA_CORE_AUTHORITY_ORIGIN", "KODERA_AGENT_TOKEN"):
+            if not _refuses(lambda: configure(_existing_homeserver(), {key: value for key, value in wired.items() if key != missing})):
+                return ["Synapse governance must refuse incomplete authority"]
         wanted = {"module": "kodera_synapse_policy.KoderaPolicy", "config": {
             "agent_user_id": "@kodera-agent:chat.example.org",
             "room_access_user_id": "@kodera-rooms:chat.example.org",
             "federation_domain_allowlist": [],
             "federation_mode": "closed",
+            "channel_governance_enabled": False,
         }}
         modules = closed.get("modules") or []
         if modules.count(wanted) != 1 or {"module": "operator.module"} not in modules:
@@ -2507,9 +2567,11 @@ def preflight_env(env_example_text: str, env_text: str) -> list[str]:
     synapse_issuer = actual.get(SYNAPSE_OIDC_ISSUER_ENV_NAME, "").strip("'\"")
     synapse_secret = actual.get(SYNAPSE_OIDC_ENV_NAME, "").strip("'\"")
     for key in example:
-        if key in ("KODERA_STAFF_ISSUER", FEDERATION_ENV_NAME, FEDERATION_MODE_ENV_NAME, "KODERA_MATRIX_PARTNER_CHANNELS", SYNAPSE_OIDC_ISSUER_ENV_NAME, TOPOLOGY_ENV_NAME, "KODERA_CONSOLE_CLIENT_ID", "KODERA_IOS_APP_IDS", "KODERA_ANDROID_ASSETLINKS_SHA256", "KODERA_MEDIA_SECRETS_SOURCE", "KODERA_ATTACHMENT_BASE", "KODERA_API_INGRESS_SUBNET", "KODERA_CADDY_API_ADDRESS", "KODERA_SERVER_API_ADDRESS", "KODERA_ADMISSION_API_ADDRESS") and not actual.get(key, "").strip("'\""):
+        if key in ("KODERA_CORE_AUTHORITY_ORIGIN", "KODERA_CHANNEL_GOVERNANCE_ENABLED", "KODERA_GOVERNANCE_AUTHORITY_CONFIGURED", "KODERA_STAFF_ISSUER", FEDERATION_ENV_NAME, FEDERATION_MODE_ENV_NAME, "KODERA_MATRIX_PARTNER_CHANNELS", SYNAPSE_OIDC_ISSUER_ENV_NAME, TOPOLOGY_ENV_NAME, "KODERA_CONSOLE_CLIENT_ID", "KODERA_IOS_APP_IDS", "KODERA_ANDROID_ASSETLINKS_SHA256", "KODERA_MEDIA_SECRETS_SOURCE", "KODERA_ATTACHMENT_BASE", "KODERA_API_INGRESS_SUBNET", "KODERA_CADDY_API_ADDRESS", "KODERA_SERVER_API_ADDRESS", "KODERA_ADMISSION_API_ADDRESS") and not actual.get(key, "").strip("'\""):
             continue  # Empty optional configuration retains the reviewed Compose defaults.
-        if key == SYNAPSE_OIDC_ENV_NAME and not community_enabled and synapse_issuer:
+        if key in AGENT_ENV_NAMES and actual.get("KODERA_CORE_AUTHORITY_ORIGIN", "").strip("'\""):
+            pass  # Isolated governed deployments also enroll an organisation agent.
+        elif key == SYNAPSE_OIDC_ENV_NAME and not community_enabled and synapse_issuer:
             pass  # An isolated self-host may sign members in to Synapse with its own realm.
         elif key in (*COMMUNITY_KEYS, *AGENT_ENV_NAMES, SYNAPSE_OIDC_ENV_NAME) and not community_enabled:
             if actual.get(key, "").strip("'\""):
@@ -2770,6 +2832,24 @@ def quotes_host(message: str, host: str) -> bool:
 
 
 def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
+    for service, expected in GOVERNANCE_WIRING.items():
+        for key, value in expected.items():
+            pattern = r"(?ms)^  " + re.escape(service) + r":\n.*?(?=^  [a-z][a-z0-9-]*:|^volumes:|\Z)"
+            match = re.search(pattern, compose_text)
+            assert match is not None
+            changed = compose_text[:match.start()] + match[0].replace(f"      {key}: {value}\n", "", 1) + compose_text[match.end():]
+            if f"governance wiring missing or changed: {service}.{key}" not in check_governance_wiring(changed):
+                print(f"[FAIL] governance wiring mutation escaped: {service}.{key}", file=sys.stderr)
+                return 1
+    for file_name in ("Caddyfile", "Caddyfile.split"):
+        source = (ROOT / "deploy/community" / file_name).read_text()
+        check = check_caddy_routes if file_name == "Caddyfile" else check_split_caddy_routes
+        gate = "\t\tforward_auth synapse:8008 {\n" + "".join("\t\t\t" + line + "\n" for line in REVIEWED_SCOPE_LINES) + "\t\t}\n"
+        for line in REVIEWED_SCOPE_LINES:
+            changed = source.replace(gate, gate.replace("\t\t\t" + line + "\n", "", 1), 1)
+            if not any("request-scope gate" in error for error in check(changed)):
+                print(f"[FAIL] Matrix scope mutation escaped: {file_name} {line}", file=sys.stderr)
+                return 1
     baseline_errors = check_community_deploy(compose_text, env_text, caddyfile_text)
     if baseline_errors:
         print(
@@ -3598,7 +3678,7 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
     filled = "\n".join(
         f"{key}='{trust}'" if key == "KODERA_AUTH_TRUST"
         else f"{key}=https://id.example.net" if key == "KODERA_OIDC_PROVIDER_ORIGIN"
-        else f"{key}=" if key in ("KODERA_STAFF_ISSUER", FEDERATION_ENV_NAME, FEDERATION_MODE_ENV_NAME, "KODERA_MATRIX_PARTNER_CHANNELS", SYNAPSE_OIDC_ISSUER_ENV_NAME)
+        else f"{key}=" if key in ("KODERA_CORE_AUTHORITY_ORIGIN", "KODERA_CHANNEL_GOVERNANCE_ENABLED", "KODERA_GOVERNANCE_AUTHORITY_CONFIGURED", "KODERA_STAFF_ISSUER", FEDERATION_ENV_NAME, FEDERATION_MODE_ENV_NAME, "KODERA_MATRIX_PARTNER_CHANNELS", SYNAPSE_OIDC_ISSUER_ENV_NAME)
         else f"{key}=" if key in ("KODERA_CONSOLE_CLIENT_ID", "KODERA_IOS_APP_IDS", "KODERA_ANDROID_ASSETLINKS_SHA256", "KODERA_ATTACHMENT_BASE")
         else f"{key}=console" if key == "KODERA_OIDC_CLIENT_ID"
         else f"{key}=media_secrets" if key == "KODERA_MEDIA_SECRETS_SOURCE"
@@ -3626,6 +3706,18 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
             return 1
     if preflight_env(env_text, filled):
         print(f"[FAIL] preflight refuses a complete .env: {preflight_env(env_text, filled)}", file=sys.stderr)
+        return 1
+    governed = filled
+    for key, value in {
+        "KODERA_CHANNEL_GOVERNANCE_ENABLED": "true",
+        "KODERA_GOVERNANCE_AUTHORITY_CONFIGURED": "true",
+        "KODERA_CORE_AUTHORITY_ORIGIN": "https://core.example.org",
+        "KODERA_AGENT_TOKEN": "synthetic-agent",
+        "KODERA_SYNAPSE_TOKEN": "synthetic-synapse",
+    }.items():
+        governed = re.sub(r"(?m)^" + key + r"=.*$", key + "=" + value, governed)
+    if preflight_env(env_text, governed):
+        print("[FAIL] preflight refuses an isolated governed deployment", file=sys.stderr)
         return 1
     for label, mutate, expected in preflight_cases:
         source = env_text if label == "a placeholder is left" else filled
@@ -3823,6 +3915,12 @@ SYNAPSE_CONFIG_MUTATIONS: tuple[tuple[str, str, str, str], ...] = (
      "Synapse federation must be closed by default"),
     ("the federation allowlist accepts a wildcard", 'if len(name) > 253 or any(len(label) > 63 for label in name.split(".")) or not re.fullmatch(PUBLIC_DOMAIN, name) or name.endswith((*PRIVATE_SUFFIXES, ".invalid", ".test", ".example", ".onion")):', 'if False:',
      "Synapse federation allowlist must refuse a wildcard or private server name"),
+    ("governance flag dropped", 'policy_config["channel_governance_enabled"] = governance == "true"', 'policy_config["channel_governance_enabled"] = False',
+     "Synapse governance authority wiring is missing"),
+    ("governance origin requirement dropped", 'if (governance == "true" or mode == "partner") and not origin:', 'if False:',
+     "Synapse governance must refuse incomplete authority"),
+    ("governance credential requirement dropped", 'or not credential or any(c.isspace() for c in credential):', 'or any(c.isspace() for c in credential):',
+     "Synapse governance must refuse incomplete authority"),
     ("the room-policy module is missing", '    modules.append({"module": MODULE, "config": {', '    dict({"module": MODULE, "config": {',
      "Synapse room-policy module is missing or misconfigured"),
     ("the room-access account is not named to the policy", '"room_access_user_id": f"@kodera-rooms:{server}",', '',

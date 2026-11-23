@@ -102,7 +102,16 @@ class Config:
             env.get("ROOM_ACCESS_CORE_AUTHORITY_ORIGIN", ""),
             env.get("ROOM_ACCESS_CORE_AUTHORITY_TOKEN", ""),
         )
-        if (origin or token) and (
+        governance = env.get("ROOM_ACCESS_CHANNEL_GOVERNANCE_ENABLED", "false")
+        if governance not in {"true", "false"}:
+            raise ConfigError("ROOM_ACCESS_CHANNEL_GOVERNANCE_ENABLED must be true or false")
+        if governance == "true" and not origin:
+            raise ConfigError("Channel governance requires ROOM_ACCESS_CORE_AUTHORITY_ORIGIN")
+        # Community shares its polling agent credential even before governance activation.
+        # With no authority origin and governance off, no authority client is constructed.
+        if not origin:
+            token = ""
+        if origin and (
             _HTTPS_ORIGIN.fullmatch(origin) is None or not token or any(c.isspace() for c in token)
         ):
             raise ConfigError("Core authority requires an HTTPS origin and a nonempty credential")

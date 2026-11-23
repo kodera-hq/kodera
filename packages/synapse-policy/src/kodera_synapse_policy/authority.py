@@ -64,6 +64,14 @@ def guest_request(path, method):
 
 
 def public_request(path, method):
+    if not isinstance(path, str):
+        return False
+    path = path.partition('?')[0]
+    if method == 'GET' and (
+        path == '/_synapse/client/oidc/callback'
+        or re.fullmatch(r'/_matrix/client/v3/login/sso/redirect(?:/[A-Za-z0-9_-]+)?', path)
+    ):
+        return True
     return (path == '/_matrix/client/versions' and method == 'GET'
             or path == '/_matrix/client/v3/login' and method in {'GET', 'POST'}
             or path == '/_matrix/client/v3/refresh' and method == 'POST')

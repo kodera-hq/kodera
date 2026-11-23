@@ -17,8 +17,14 @@ pytestmark = pytest.mark.django_db(transaction=True)
 
 
 @pytest.fixture
-def governed(world, settings):
+def governed(world, settings, monkeypatch):
     settings.KODERA_CHANNEL_GOVERNANCE_ENABLED = True
+    settings.KODERA_GOVERNANCE_AUTHORITY_CONFIGURED = True
+    monkeypatch.setattr(
+        bridges,
+        "organisation_matrix_homeservers",
+        lambda **kw: frozenset({"local.example.org", "acme.kodera.io"}),
+    )
     org, workspace, members, tokens = world
     slug = "partner-" + uuid4().hex[:10]
     with transaction.atomic():
@@ -55,7 +61,7 @@ def governed(world, settings):
     peer = Workspace.objects.create(organisation=partner)
     channels = [
         Channel.objects.create(
-            workspace=target, kind="text", name="Shared", position=0, lifecycle="active"
+            workspace=target, kind="text", name="Shared", position=10, lifecycle="active"
         )
         for target in (workspace, peer)
     ]
@@ -133,7 +139,7 @@ def test_guest_is_confined_across_rooms_homeservers_and_actions(governed):
         organisation=world[0],
         issuer=world[0].issuer,
         realm=world[0].realm,
-        subject=str(uuid4()),
+        subject="guest",
         email=user.email,
     )
     result = bridges.grant_guest(
@@ -141,7 +147,7 @@ def test_guest_is_confined_across_rooms_homeservers_and_actions(governed):
         organisation_id=world[0].id,
         body={
             "guestIdentityId": str(identity.id),
-            "matrixUserId": "@guest:peer.example.org",
+            "matrixUserId": "@guest:local.example.org",
             "channelId": str(channels[0].id),
             "matrixRoomId": "!guest:local.example.org",
             "expiresAt": (timezone.now() + timedelta(hours=1)).isoformat(),
@@ -160,13 +166,13 @@ def test_guest_is_confined_across_rooms_homeservers_and_actions(governed):
         assert not bridges.matrix_authority(
             organisation_id=world[0].id,
             room_id=room,
-            user_id="@guest:peer.example.org",
+            user_id="@guest:local.example.org",
             action=action,
         )["allowed"]
     assert bridges.matrix_authority(
         organisation_id=world[0].id,
         room_id="!guest:local.example.org",
-        user_id="@guest:peer.example.org",
+        user_id="@guest:local.example.org",
         action="event",
     )["allowed"]
     bridges.revoke_guest(
@@ -178,7 +184,7 @@ def test_guest_is_confined_across_rooms_homeservers_and_actions(governed):
     assert not bridges.matrix_authority(
         organisation_id=world[0].id,
         room_id="!guest:local.example.org",
-        user_id="@guest:peer.example.org",
+        user_id="@guest:local.example.org",
         action="event",
     )["allowed"]
 
@@ -369,7 +375,7 @@ def test_audio_guest_tokens_and_existing_calls_stop_at_expiry(governed, monkeypa
         organisation=world[0],
         issuer=world[0].issuer,
         realm=world[0].realm,
-        subject=str(uuid4()),
+        subject=ALICE[1:].partition(":")[0],
         email=user.email,
     )
     expires = timezone.now() + timedelta(hours=1)
@@ -476,7 +482,7 @@ def bridged_guest(governed, request):
         organisation=identity_org,
         issuer=identity_org.issuer,
         realm=identity_org.realm,
-        subject=str(uuid4()),
+        subject="guest",
         email=user.email,
     )
     guest_user = "@guest:" + ("local.example.org" if home == "local" else "peer.example.org")
@@ -572,12 +578,17 @@ def test_both_agents_intersect_guest_and_partner_authority(bridged_guest, reason
             )
         for room in ["!other:local.example.org", "!other:peer.example.org"]:
             for action in ["join", "event", "call"]:
-                assert (
-                    channel_authority(
-                        token=credential, room_id=room, user_id=grant.matrix_user_id, action=action
-                    )["allowed"]
-                    is False
+                result = channel_authority(
+                    token=credential, room_id=room, user_id=grant.matrix_user_id, action=action
                 )
+                issuing = (
+                    credential
+                    == bridged_guest["credentials"][
+                        bridged_guest["orgs"].index(grant.organisation_id)
+                    ]
+                )
+                assert result["allowed"] is (not issuing)
+                assert result["role"] == ("single_channel_guest" if issuing else "unmanaged")
     # Another organisation's valid credential gains no authority over this guest.
     with transaction.atomic():
         stranger = Organisation.objects.create(
@@ -634,43 +645,159 @@ def test_both_agents_intersect_guest_and_partner_authority(bridged_guest, reason
 
 
 def test_guest_cannot_rename_a_bridged_channel_to_bypass_agreement(bridged_guest):
-    from apps.engine_intents.services import channel_authority
     from apps.workspaces.models import SingleChannelGuestGrant
 
     original = bridged_guest["grant"]
-    org = Organisation.objects.get(id=original.organisation_id)
-    user = User.objects.create(email="mismatched-guest@example.org")
+    index = bridged_guest["orgs"].index(original.organisation_id)
+    before = SingleChannelGuestGrant.objects.count()
+    with pytest.raises(bridges.RefusalError) as failure:
+        bridges.grant_guest(
+            verified=bridged_guest["tokens"][index],
+            organisation_id=original.organisation_id,
+            body={
+                "guestIdentityId": str(original.guest_identity_id),
+                "matrixUserId": "@mismatched:peer.example.org",
+                "channelId": str(original.single_channel_id),
+                "matrixRoomId": "!renamed:local.example.org",
+                "expiresAt": (timezone.now() + timedelta(hours=1)).isoformat(),
+            },
+            request_id=str(uuid4()),
+        )
+    assert failure.value.status == 422
+    assert SingleChannelGuestGrant.objects.count() == before
+
+
+def test_foreign_admin_cannot_bind_a_victim_mxid_or_classify_its_rooms(governed):
+    from apps.workspaces.models import SingleChannelGuestGrant
+
+    world, victim, channels = governed
+    guest_user = User.objects.create(email="attacker-guest@example.org")
     guest = Identity.objects.create(
-        user=user,
-        organisation=org,
-        issuer=org.issuer,
-        realm=org.realm,
-        subject=str(uuid4()),
-        email=user.email,
+        user=guest_user,
+        organisation=world[0],
+        issuer=world[0].issuer,
+        realm=world[0].realm,
+        subject="owner",
+        email=guest_user.email,
     )
-    index = bridged_guest["orgs"].index(org.id)
+    body = {
+        "guestIdentityId": str(guest.id),
+        "matrixUserId": "@owner:victim.example.org",
+        "channelId": str(channels[0].id),
+        "matrixRoomId": "!guest:local.example.org",
+        "expiresAt": (timezone.now() + timedelta(hours=1)).isoformat(),
+    }
+    with pytest.raises(bridges.RefusalError) as failure:
+        bridges.grant_guest(
+            verified=world[3][0], organisation_id=world[0].id, body=body, request_id=str(uuid4())
+        )
+    assert failure.value.status == 422
+    assert not SingleChannelGuestGrant.objects.exists()
+    # Also cover a pre-fix poisoned row: classification must scope before MXID lookup.
+    SingleChannelGuestGrant.objects.create(
+        organisation=world[0],
+        guest_identity_id=guest.id,
+        single_channel=channels[0],
+        matrix_user_id=body["matrixUserId"],
+        matrix_room_id=body["matrixRoomId"],
+        expires_at=timezone.now() + timedelta(hours=1),
+    )
+    for action in ["event", "join", "directory", "session", "call"]:
+        assert bridges.matrix_authority(
+            organisation_id=victim.id,
+            room_id="!own:victim.example.org",
+            user_id=body["matrixUserId"],
+            action=action,
+        ) == {"allowed": True, "role": "unmanaged", "revision": 0}
+
+
+@pytest.mark.parametrize("user", ["@other:local.example.org", "@guest:victim.example.org"])
+def test_identity_subject_and_homeserver_must_both_match(governed, user):
+    world, _, channels = governed
+    person = User.objects.create(email="binding@example.org")
+    identity = Identity.objects.create(
+        user=person,
+        organisation=world[0],
+        issuer=world[0].issuer,
+        realm=world[0].realm,
+        subject="guest",
+        email=person.email,
+    )
+    with pytest.raises(bridges.RefusalError) as failure:
+        bridges.grant_guest(
+            verified=world[3][0],
+            organisation_id=world[0].id,
+            body={
+                "guestIdentityId": str(identity.id),
+                "matrixUserId": user,
+                "channelId": str(channels[0].id),
+                "matrixRoomId": "!guest:local.example.org",
+                "expiresAt": (timezone.now() + timedelta(hours=1)).isoformat(),
+            },
+            request_id=str(uuid4()),
+        )
+    assert failure.value.status == 422
+
+
+def test_missing_authority_attestation_disables_management(governed, settings):
+    settings.KODERA_GOVERNANCE_AUTHORITY_CONFIGURED = False
+    with pytest.raises(bridges.RefusalError) as failure:
+        proposal(governed)
+    assert failure.value.status == 503
+    assert (
+        bridges.overview(verified=governed[0][3][0], organisation_id=governed[0][0].id)[
+            "enforcementReady"
+        ]
+        is False
+    )
+
+
+def test_guest_binding_uses_the_owned_tenant_homeserver(governed, settings, monkeypatch):
+    from apps.tenancy.models import Tenant
+    from apps.tenancy.selectors import organisation_matrix_homeservers
+
+    world, _, channels = governed
+    settings.KODERA_TENANT_APP_URLS = {"messaging": "https://{slug}.example.org"}
+    monkeypatch.setattr(bridges, "organisation_matrix_homeservers", organisation_matrix_homeservers)
+    Tenant.objects.create(
+        organisation=world[0],
+        slug="local",
+        name="Local",
+        status="active",
+        status_changed_at=timezone.now(),
+        pack_code="test",
+        capacity_tier_code="test",
+        apps=["messaging"],
+    )
+    person = User.objects.create(email="tenant-binding@example.org")
+    identity = Identity.objects.create(
+        user=person,
+        organisation=world[0],
+        issuer=world[0].issuer,
+        realm=world[0].realm,
+        subject="guest",
+        email=person.email,
+    )
+    body = {
+        "guestIdentityId": str(identity.id),
+        "matrixUserId": "@guest:victim.example.org",
+        "channelId": str(channels[0].id),
+        "matrixRoomId": "!guest:victim.example.org",
+        "expiresAt": (timezone.now() + timedelta(hours=1)).isoformat(),
+    }
+    with pytest.raises(bridges.RefusalError) as failure:
+        bridges.grant_guest(
+            verified=world[3][0], organisation_id=world[0].id, body=body, request_id=str(uuid4())
+        )
+    assert failure.value.status == 422
     result = bridges.grant_guest(
-        verified=bridged_guest["tokens"][index],
-        organisation_id=org.id,
+        verified=world[3][0],
+        organisation_id=world[0].id,
         body={
-            "guestIdentityId": str(guest.id),
-            "matrixUserId": "@mismatched:peer.example.org",
-            "channelId": str(original.single_channel_id),
-            "matrixRoomId": "!renamed:local.example.org",
-            "expiresAt": (timezone.now() + timedelta(hours=1)).isoformat(),
-            "allowCalls": True,
+            **body,
+            "matrixUserId": "@guest:local.example.org",
+            "matrixRoomId": "!guest:local.example.org",
         },
         request_id=str(uuid4()),
     )
-    grant = SingleChannelGuestGrant.objects.get(id=result["id"])
-    for credential in bridged_guest["credentials"]:
-        for action in ["join", "event", "call", "session"]:
-            assert (
-                channel_authority(
-                    token=credential,
-                    room_id=grant.matrix_room_id,
-                    user_id=grant.matrix_user_id,
-                    action=action,
-                )["allowed"]
-                is False
-            )
+    assert result["matrixUserId"] == "@guest:local.example.org"

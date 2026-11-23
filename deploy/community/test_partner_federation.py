@@ -34,6 +34,10 @@ class PartnerConfig(unittest.TestCase):
                 self.assertNotIn("/_synapse/admin", caddy)
                 self.assertNotIn("@matrix path /_matrix/*", caddy)
                 self.assertIn("respond 404", caddy)
+                self.assertIn("handle @matrix {\n\t\tforward_auth synapse:8008", caddy)
+                federation = caddy.split("handle @federation {", 1)[1].split("@matrix path", 1)[0]
+                self.assertNotIn("forward_auth", federation)
+                self.assertIn("reverse_proxy synapse:8008", federation)
                 self.assertEqual(
                     "@server_discovery path" in caddy, topology == "single"
                 )

@@ -17,10 +17,15 @@ markers. Matrix history already replicated to a partner homeserver cannot be rem
 erased. The API and management panel disclose this before agreement creation.
 
 A single-channel guest grant is distinct from organisation membership. It binds a
-known enabled identity and exact Matrix user to one organisation and channel, with a
+known enabled identity and canonical Matrix user to one organisation and channel, with a
 bounded expiry and explicit revocation. It grants no directory, search, alias,
 invitation, direct-message, template or unrelated document access. Guest identities
 cannot simultaneously acquire ordinary workspace admission through a guest grant.
+The localpart is the lowercased identity subject; its domain comes from the owned
+tenant's operator URL template, the operator-bound default Community server, or the
+identity organisation's homeserver in an active agreement for the exact room.
+Administrators cannot substitute arbitrary MXIDs. Foreign grants are considered only
+for the agreement-bound room; an unrelated tenant's ordinary rooms stay unmanaged.
 
 Synapse and room-access consult the credential-bound Core authority endpoint without
 positive caching. Errors deny governed access. Synapse checks creation, joins,
@@ -62,8 +67,15 @@ or independent verification of the client's MLS transcript.
 Core defaults `KODERA_CHANNEL_GOVERNANCE_ENABLED` to false. An operator enables it
 only after configuring the Synapse HTTPS authority origin/organisation agent
 credential, room-access authority origin/credential, and the edge request-scope
-subrequest documented in the policy package. The flag is an operator attestation;
-it does not probe the edge. Existing explicit immutable partner-room provisioning
+subrequest documented in the policy package. Core additionally requires `KODERA_GOVERNANCE_AUTHORITY_CONFIGURED=true` as an
+explicit operator attestation; it does not probe the edge. Synapse rejects governance
+or partner federation without its authority origin and credential. room-access rejects
+`ROOM_ACCESS_CHANNEL_GOVERNANCE_ENABLED=true` without its authority origin and credential.
+Community wires the shared `KODERA_CORE_AUTHORITY_ORIGIN` and `KODERA_AGENT_TOKEN`
+into both services. This must be an internal HTTPS Core origin exposing `/agent/v1/`;
+the public Community ingress deliberately refuses that route. Both Caddy topologies
+install the Synapse `request_scope` subrequest on client API traffic, and generated
+partner overlays retain it while routing federation separately. Existing explicit immutable partner-room provisioning
 still creates the room and pins its homeservers; the agreement does not convert
 an internal room into a federated room. Both channel identifiers and the shared
 Matrix room reference must be exchanged by the administrators.

@@ -153,6 +153,20 @@ def configure(document, environment=None):
         "federation_mode": mode,
     }})
 
+    governance = environment.get("KODERA_CHANNEL_GOVERNANCE_ENABLED", "false")
+    if governance not in ("true", "false"):
+        raise ValueError("KODERA_CHANNEL_GOVERNANCE_ENABLED must be true or false")
+    policy_config = next((item["config"] for item in modules if item.get("module") == MODULE), {})
+    policy_config["channel_governance_enabled"] = governance == "true"
+    origin = environment.get("KODERA_CORE_AUTHORITY_ORIGIN", "")
+    credential = environment.get("KODERA_AGENT_TOKEN", "")
+    if (governance == "true" or mode == "partner") and not origin:
+        raise ValueError("Governance and partner federation require KODERA_CORE_AUTHORITY_ORIGIN")
+    if origin:
+        if not re.fullmatch(r"https://" + PUBLIC_DOMAIN + r"(?::[0-9]{1,5})?", origin) or not credential or any(c.isspace() for c in credential):
+            raise ValueError("Core authority requires an HTTPS origin and agent credential")
+        policy_config.update(core_authority_origin=origin, core_authority_token=credential)
+
     # PostgreSQL only. The password is read by libpq from PGPASSWORD, never written here.
     document["database"] = {"name": "psycopg2", "args": {
         "user": "synapse", "database": "synapse", "host": DATABASE_HOST, "cp_min": 2, "cp_max": 10,

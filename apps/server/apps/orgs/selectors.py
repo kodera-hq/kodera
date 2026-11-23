@@ -416,3 +416,8 @@ def has_privacy_cutoff(*, organisation_id: UUID, user_id: UUID | None = None) ->
             [organisation_id, user_id],
         )
         return bool(cursor.fetchone()[0])
+
+
+def organisation_is_default_community(*, organisation_id: UUID) -> bool:
+    """Only the operator-bound default Community organisation owns the local server."""
+    return Organisation.objects.filter(id=organisation_id, is_default_community=True).exists()

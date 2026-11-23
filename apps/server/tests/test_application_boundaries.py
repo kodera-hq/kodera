@@ -31,7 +31,7 @@ def test_deployed_stack_blocks_guest_membership_invites_and_directory(
         organisation=org,
         issuer=org.issuer,
         realm=org.realm,
-        subject=str(uuid4()),
+        subject="guest",
         email=user.email,
     )
     grant = bridges.grant_guest(
@@ -39,7 +39,7 @@ def test_deployed_stack_blocks_guest_membership_invites_and_directory(
         organisation_id=org.id,
         body={
             "guestIdentityId": str(guest.id),
-            "matrixUserId": "@guest:peer.example.org",
+            "matrixUserId": "@guest:local.example.org",
             "channelId": str(governed[2][0].id),
             "matrixRoomId": "!guest:local.example.org",
             "expiresAt": (timezone.now() + timedelta(hours=1)).isoformat(),
