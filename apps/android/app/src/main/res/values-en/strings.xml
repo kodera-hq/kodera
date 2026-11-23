@@ -369,4 +369,7 @@
     <string name="conversation_delivery_failed">Delivery failed</string>
     <string name="conversation_sync_refresh">Refresh</string>
     <string name="conversation_status_secure_transport_required">Sending is disabled until a public room is verified. Confidential and encrypted rooms require secure messaging support.</string>
+    <string name="native_call_channel">Calls</string>
+    <string name="native_call_answer">Answer</string>
+    <string name="native_call_end">End</string>
 </resources>

@@ -242,6 +242,7 @@ data class MatrixSyncBatch(
     val roomEvents: Map<String, List<MatrixRawTimelineEvent>>,
     val roomDeltas: Map<String, MatrixRoomSyncDelta> = roomEvents.mapValues { MatrixRoomSyncDelta(it.value) },
     val plaintextAllowedRooms: Set<String> = emptySet(),
+    val authorityLostRooms: Set<String> = emptySet(),
 ) {
     companion object {
         fun fromDeltas(nextBatch: String, deltas: Map<String, MatrixRoomSyncDelta>): MatrixSyncBatch =
@@ -252,6 +253,8 @@ data class MatrixSyncBatch(
             )
     }
 }
+
+data class MatrixTimelinePage(val events: List<MatrixRawTimelineEvent>, val endToken: String?)
 
 class AttachmentUploadPayload(
     rawFilename: String,
@@ -315,6 +318,8 @@ interface ChannelConversationTransport {
         channelId: String,
         payload: AttachmentUploadPayload,
     ): AttachmentMetadataRef
+    fun backfillRoomPage(roomId: String, fromToken: String, toToken: String?, limit: Int): MatrixTimelinePage =
+        MatrixTimelinePage(backfillRoomMessages(roomId, fromToken, limit), null)
     fun backfillRoomMessages(
         roomId: String,
         fromToken: String,
@@ -339,6 +344,8 @@ class MatrixRoomClient private constructor(
     private val httpClient: OkHttpClient,
 ) : AutoCloseable {
 
+    // Serialize HTTP and room-knowledge updates across UI and companion readers.
+    private val syncLock = Any()
     private data class RoomSecurity(val corePublic: Boolean, var matrixKnown: Boolean = false, var blocked: Boolean = false)
     private val securityLock = Any()
     private val security = HashMap<String, RoomSecurity>()
@@ -348,7 +355,8 @@ class MatrixRoomClient private constructor(
     internal fun bindChannelSecurity(organisationId: String, channelId: String, origin: String, roomId: String, isConfidential: Boolean?) {
         synchronized(securityLock) {
             val key = securityKey(origin, roomId)
-            security[key] = RoomSecurity(isConfidential == false, blocked = security[key]?.blocked == true || isConfidential == true)
+            val previous = security[key]
+            security[key] = RoomSecurity(isConfidential == false, matrixKnown = previous?.matrixKnown == true, blocked = previous?.blocked == true || isConfidential == true)
             channelRooms["$organisationId:$channelId"] = key
         }
     }
@@ -541,20 +549,24 @@ class MatrixRoomClient private constructor(
         since: String? = null,
         roomId: String,
         extraFence: SessionFence? = null,
-    ): MatrixSyncBatch {
+    ): MatrixSyncBatch = synchronized(syncLock) {
         validateHomeserverOriginAndToken(homeserverOrigin, matrixAccessToken)
         if (since != null && (since.isEmpty() || since.length > 256 || !TrustPolicy.isVisibleASCII(since))) {
             throw MatrixClientException(MatrixClientError.INVALID_INPUT)
         }
         if (runCatching { MatrixRoomId.parse(roomId) }.isFailure) throw MatrixClientException(MatrixClientError.INVALID_INPUT)
+        // A queued reader's cursor may predate another reader's transport failure.
+        val effectiveSince = synchronized(securityLock) {
+            if (security[securityKey(homeserverOrigin, roomId)]?.matrixKnown == true) since else null
+        }
         var completed = false
         try {
-            if (since == null) synchronized(securityLock) { security[securityKey(homeserverOrigin, roomId)]?.matrixKnown = false }
+            if (effectiveSince == null) synchronized(securityLock) { security[securityKey(homeserverOrigin, roomId)]?.matrixKnown = false }
             val encodedFilter = percentEncodeSegment(boundedSyncFilterJson(roomId))
             val query = buildString {
                 append("filter=").append(encodedFilter).append("&timeout=0")
-                if (since != null) {
-                    append("&since=").append(percentEncodeSegment(since))
+                if (effectiveSince != null) {
+                    append("&since=").append(percentEncodeSegment(effectiveSince))
                 }
             }
             val root = matrixJsonRequest(
@@ -625,7 +637,7 @@ class MatrixRoomClient private constructor(
                     }
                     synchronized(securityLock) {
                         val state = security.getOrPut(securityKey(homeserverOrigin, roomId)) { RoomSecurity(false) }
-                        if (since == null) state.matrixKnown = stateEvents != null
+                        if (effectiveSince == null) state.matrixKnown = stateEvents != null
                         // Only security types are requested; unclassified entries also block plaintext.
                         if (!stateEvents.isNullOrEmpty()) state.blocked = true
                         for (event in (stateEvents ?: emptyList()) + rawEvents) {
@@ -644,7 +656,11 @@ class MatrixRoomClient private constructor(
             }
             val allowed = runCatching { requirePlaintextAllowed(homeserverOrigin, roomId) }.isSuccess
             completed = true
-            return MatrixSyncBatch.fromDeltas(nextBatch = nextBatch, deltas = roomDeltas).copy(plaintextAllowedRooms = if (allowed) setOf(roomId) else emptySet())
+            val authorityLost = !allowed
+            return MatrixSyncBatch.fromDeltas(nextBatch = nextBatch, deltas = roomDeltas).copy(
+                plaintextAllowedRooms = if (allowed) setOf(roomId) else emptySet(),
+                authorityLostRooms = if (authorityLost) setOf(roomId) else emptySet(),
+            )
         } finally {
             if (!completed) synchronized(securityLock) { security[securityKey(homeserverOrigin, roomId)]?.matrixKnown = false }
         }
@@ -660,26 +676,32 @@ class MatrixRoomClient private constructor(
         limit: Int = SYNC_TIMELINE_LIMIT,
         extraFence: SessionFence? = null,
     ): List<MatrixRawTimelineEvent> {
+        return fetchRoomMessagePage(homeserverOrigin, matrixAccessToken, roomId, fromToken, null, limit, extraFence).events
+    }
+
+    fun fetchRoomMessagePage(
+        homeserverOrigin: String, matrixAccessToken: String, roomId: String,
+        fromToken: String, toToken: String?, limit: Int, extraFence: SessionFence? = null,
+    ): MatrixTimelinePage {
         validateHomeserverOriginAndToken(homeserverOrigin, matrixAccessToken)
-        if (runCatching { MatrixRoomId.parse(roomId) }.isFailure ||
-            fromToken.isEmpty() ||
-            fromToken.length > 256 ||
-            !TrustPolicy.isVisibleASCII(fromToken) ||
-            limit !in 1..50
-        ) {
-            throw MatrixClientException(MatrixClientError.INVALID_INPUT)
-        }
+        fun validToken(value: String) = value.isNotEmpty() && value.length <= 256 && TrustPolicy.isVisibleASCII(value)
+        if (runCatching { MatrixRoomId.parse(roomId) }.isFailure || !validToken(fromToken) ||
+            (toToken != null && !validToken(toToken)) || limit !in 1..50
+        ) throw MatrixClientException(MatrixClientError.INVALID_INPUT)
         val encodedRoom = percentEncodeSegment(roomId)
-        val encodedFrom = percentEncodeSegment(fromToken)
+        val query = "from=${percentEncodeSegment(fromToken)}&dir=b&limit=$limit" +
+            (toToken?.let { "&to=${percentEncodeSegment(it)}" } ?: "")
         val root = matrixJsonRequest(
-            url = "$homeserverOrigin/_matrix/client/v3/rooms/$encodedRoom/messages?from=$encodedFrom&dir=b&limit=$limit",
-            method = "GET",
-            matrixAccessToken = matrixAccessToken,
-            jsonBody = null,
-            extraFence = extraFence,
+            url = "$homeserverOrigin/_matrix/client/v3/rooms/$encodedRoom/messages?$query",
+            method = "GET", matrixAccessToken = matrixAccessToken, jsonBody = null,
+            extraFence = extraFence, responseByteLimit = SYNC_RESPONSE_BYTE_LIMIT,
         )
-        val chunk = (root["chunk"] as? JsonValue.ArrayValue)?.values ?: emptyList()
-        return chunk.mapNotNull(::decodeTimelineEvent).asReversed()
+        val chunk = (root["chunk"] as? JsonValue.ArrayValue)?.values
+            ?: throw MatrixClientException(MatrixClientError.PROTOCOL_VIOLATION)
+        if (chunk.size > limit) throw MatrixClientException(MatrixClientError.PROTOCOL_VIOLATION)
+        val end = (root["end"] as? JsonValue.StringValue)?.value
+        if (root.containsKey("end") && (end == null || !validToken(end))) throw MatrixClientException(MatrixClientError.PROTOCOL_VIOLATION)
+        return MatrixTimelinePage(chunk.mapNotNull(::decodeTimelineEvent).asReversed(), end)
     }
 
     /**
@@ -1692,6 +1714,8 @@ class MatrixRoomClient private constructor(
                 transactionId = transactionId,
                 isRedactedUnsigned = isRedactedUnsigned,
                 attachments = attachments,
+                callId = (content?.get("call_id") as? JsonValue.StringValue)?.value,
+                callPartyId = (content?.get("party_id") as? JsonValue.StringValue)?.value,
             )
         }
 
@@ -2034,6 +2058,11 @@ class MatrixChannelConversationTransport private constructor(
     ): MatrixSyncBatch = withAuthenticatedRetry(syncFence) { origin, token, activeSyncFence ->
         roomClient.sync(origin, token, since, roomId = roomId, extraFence = activeSyncFence)
     }
+
+    override fun backfillRoomPage(roomId: String, fromToken: String, toToken: String?, limit: Int): MatrixTimelinePage =
+        withAuthenticatedRetry { origin, token, activeSyncFence ->
+            roomClient.fetchRoomMessagePage(origin, token, roomId, fromToken, toToken, limit, activeSyncFence)
+        }
 
     override fun backfillRoomMessages(roomId: String, fromToken: String, limit: Int): List<MatrixRawTimelineEvent> =
         backfillRoomMessages(roomId, fromToken, limit, null)

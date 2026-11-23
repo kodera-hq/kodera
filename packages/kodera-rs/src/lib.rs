@@ -21,9 +21,15 @@
 use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::fmt;
 
+// Enable the browser randomness backend for transitive getrandom 0.2 consumers.
+#[cfg(all(feature = "browser-bindings", target_arch = "wasm32"))]
+use getrandom_legacy as _;
+
 mod native_scope;
 pub use native_scope::{NativeCryptoError, NativeRoomScope, MAX_NATIVE_MESSAGE_BYTES};
 
+#[cfg(not(target_arch = "wasm32"))]
+pub mod mobile_calls;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod mobile_ffi;
 #[cfg(not(target_arch = "wasm32"))]

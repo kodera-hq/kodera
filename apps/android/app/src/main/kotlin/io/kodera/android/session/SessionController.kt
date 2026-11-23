@@ -15,6 +15,11 @@ import io.kodera.android.auth.AppAuthBackend
 import io.kodera.android.auth.AuthorizationPresenter
 import io.kodera.android.auth.BrowserAuthorization
 import io.kodera.android.auth.SessionStorage
+import io.kodera.android.calls.NativeTelecomRuntime
+import io.kodera.android.client.NativeCallCoordinator
+import io.kodera.android.client.NativeCallResolver
+import io.kodera.android.client.LiveKitWebRTCSession
+import io.kodera.android.domain.ChannelKind
 import io.kodera.android.client.AcceptedOwner
 import io.kodera.android.client.AccessTokenException
 import io.kodera.android.client.ChannelConversationTransport
@@ -178,6 +183,8 @@ class SessionController internal constructor(
     private var activeMemberProfile: MemberProfile? = null
     private var activeMemberOrganisation: MemberOrganisation? = null
     private var activeVaultOrganisationId: String? = null
+    var nativeCalls: NativeTelecomRuntime? = null
+        private set
     private var activeMatrixTransport: MatrixChannelConversationTransport? = null
     @Volatile private var activeMatrixSession: PersistedMatrixSession? = null
     private val _isForeground = MutableStateFlow(false)
@@ -888,11 +895,34 @@ class SessionController internal constructor(
             workerExecutor = workers,
             fence = conversationFence,
             initialForeground = _isForeground.value,
+            onAuthenticatedSync = { roomId, batch ->
+                if (!conversationFence.isInvalidated) nativeCalls?.coordinator?.consumeAuthenticatedSync(batch, roomId)
+            },
+            onTransportFailure = { failure ->
+                if (!conversationFence.isInvalidated) nativeCalls?.coordinator?.consumeTransportFailure(failure)
+            },
+            onSecurityBoundaryChanged = {
+                if (!conversationFence.isInvalidated) nativeCalls?.coordinator?.revoke()
+            },
         )
+    }
+
+    /** Provisioned call adapters share the selected audio channel's authenticated transport. */
+    fun provisionNativeCalls(context: Context, localPartyId: String, resolver: NativeCallResolver, media: LiveKitWebRTCSession) {
+        requireMain()
+        check(phase is SessionPhase.SignedIn && member is MemberState.Loaded)
+        val scope = activeConversation?.scope ?: error("channel unavailable")
+        check(scope.kind == ChannelKind.AUDIO && activeConversation?.isConfidential == false)
+        val transport = activeMatrixTransport ?: error("transport unavailable")
+        nativeCalls?.stop(); nativeCalls = null
+        val coordinator = NativeCallCoordinator(scope.organisationId, localPartyId, resolver, media, transport, clockUnixSeconds)
+        val runtime = NativeTelecomRuntime(context.applicationContext, coordinator)
+        runtime.start(); nativeCalls = runtime
     }
 
     fun closeChannel() {
         requireMain()
+        nativeCalls?.stop(); nativeCalls = null
         activeConversation?.clear()
         activeConversation = null
         val matrixToClose = activeMatrixTransport

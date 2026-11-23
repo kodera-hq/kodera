@@ -259,7 +259,7 @@ fresh; replace $M/AndroidManifest.xml 'android:roundIcon="@mipmap/ic_launcher_ro
 expect_refusal "an unapproved round launcher icon reference" 1 'AndroidManifest.xml does not set android:roundIcon="@mipmap/ic_launcher_round"'
 
 fresh; printf '<manifest xmlns:android="http://schemas.android.com/apk/res/android"><uses-permission android:name="android.permission.INTERNET"/></manifest>\n' > "$work/$M/AndroidManifest.xml"
-expect_refusal "a manifest with no application element" 8 'AndroidManifest.xml does not set android:allowBackup="false"'
+expect_refusal "a manifest with no application element" 9 'AndroidManifest.xml does not set android:allowBackup="false"'
 
 fresh; replace $M/AndroidManifest.xml '<application' '<uses-permission android:name="android.permission.CAMERA"/><application'
 expect_refusal "an extra permission" 1 "AndroidManifest.xml permissions differ from the reviewed foreground radio allowlist"
@@ -948,7 +948,31 @@ printf '%s\n' "$_out" | grep -qF "Nothing was checked." || fail "--merged: a mal
 [ "$_status" -eq 2 ] || fail "--merged: a malformed manifest exited $_status, not 2"
 cases=$((cases + 1)); printf '  ok  --merged: a malformed manifest is could not look (exit 2)\n'
 
+# Native call service exceptions remain protected by the exact system binder permission.
+fresh; replace $M/AndroidManifest.xml 'android.permission.BIND_TELECOM_CONNECTION_SERVICE' 'android.permission.INTERNET'
+expect_refusal "a call service with a weaker binder permission" 2 "AndroidManifest.xml exports a service"
+fresh; replace $M/AndroidManifest.xml 'android.telecom.ConnectionService' 'android.intent.action.VIEW'
+expect_refusal "a call service accepting another intent" 1 "Call service must carry only the Telecom binder action"
+fresh; replace $M/AndroidManifest.xml 'phoneCall|microphone' 'location'
+expect_refusal "a call service with unrelated foreground ownership" 1 "Call service must declare exactly phoneCall|microphone"
+
+# The native action receiver cannot be opened to arbitrary applications.
+fresh; replace $M/AndroidManifest.xml 'android:name=".calls.NativeCallActionReceiver" android:exported="false"' 'android:name=".calls.NativeCallActionReceiver" android:exported="true"'
+expect_refusal "an exported call action receiver" 1 "AndroidManifest.xml exports a receiver"
+
+call_merged() {
+  merged_fresh
+  replace $F '</application>' '<service android:name="io.kodera.android.calls.KoderaConnectionService" android:exported="true" android:permission="android.permission.BIND_TELECOM_CONNECTION_SERVICE" android:foregroundServiceType="phoneCall|microphone"><intent-filter><action android:name="android.telecom.ConnectionService" /></intent-filter></service></application>'
+}
+call_merged; run_merged
+[ "$_status" -eq 0 ] || fail "the approved merged call service was refused: $_out"
+cases=$((cases + 1)); printf '  ok  --merged: approved native call service\n'
+call_merged; replace $F 'android.permission.BIND_TELECOM_CONNECTION_SERVICE' 'android.permission.INTERNET'
+expect_merged_refusal "a call service without its system binder permission" 1 "merged manifest exports io.kodera.android.calls.KoderaConnectionService without requiring android.permission.BIND_TELECOM_CONNECTION_SERVICE"
+call_merged; replace $F 'phoneCall|microphone' 'location'
+expect_merged_refusal "a call service with unrelated merged foreground ownership" 1 "merged call service must declare exactly phoneCall|microphone"
+
 # A harness that aborted early, or a case list that shrank, must not pass.
-expected_cases=180
+expected_cases=187
 [ "$cases" -eq "$expected_cases" ] || fail "ran $cases cases, expected $expected_cases"
 echo "self-test passed: $cases cases, each proved by its own message, finding count AND exit status"

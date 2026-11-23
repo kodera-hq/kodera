@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Preserve calls across overlapping UI and companion sync failures, and recover older call answers through bounded timeline backfill.
+
+- Restore Matrix room security knowledge with a full sync after a temporary native call polling failure.
+
+- Preserve native calls across temporary Matrix sync failures, recover limited timelines, and end expired rings before replacement.
+
+- Monitor the native call's own room for answers and authority changes while another channel is selected.
+
+- Revoke native call media from live conversation authority and security changes, and discard late cancellation wakes after revocation.
+
+- End native calls when room authority is lost, fence retired media and audio ownership, and preserve active calls when duplicate wakes are refused.
+
 - Resolve conversation security through the session workspace loader.
 
 - Reject malformed incremental room state before plaintext sends.
@@ -44,6 +56,11 @@ Status: Kodera for Android is in development; no store release is recorded here.
 - Verify and sign emergency frames on Android 8 to 12, whose platform provider has no Ed25519: the platform provider is used where it has Ed25519 and a bundled BouncyCastle lightweight implementation otherwise, with the same RFC 8032 bytes either way.
 
 - Reject nil entity identifiers before session or network admission, bound voice/Docs scope metadata and rendered names/titles as valid scalar UTF-8, and retain only validated bounded snapshots of caller-supplied rosters and pad lists. Fence disposed or replaced emergency-card actions by their current organisation while preserving the signed wire protocol; align the bilingual around-me antenna heading above the workspace channels.
+
+### Native calls
+
+- Add opaque, expiring call wakes and bounded ring cancellation history shared with the native core. Answering on another device stops ringing without a missed-call indicator.
+- Add session-owned system call adapters, audio ownership and network handoff hooks, and authenticated audio-channel companion timeline integration. Provider registration, media SDK provisioning and device qualification remain deployment work.
 
 ### Added
 

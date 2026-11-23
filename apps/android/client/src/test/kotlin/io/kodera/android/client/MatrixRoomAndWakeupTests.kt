@@ -160,6 +160,32 @@ class MatrixRoomAndWakeupTests {
     }
 
     @Test
+    fun syncExposesRoomAuthorityLossAndRetainsItAfterLeave() {
+        val origin = "https://atelier.matrix.kodera.io"
+        var rooms = """{"join":{"$roomId":{"state":{"events":[]},"timeline":{"events":[]}}}}"""
+        val interceptor = Interceptor { chain ->
+            Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1).code(200).message("OK")
+                .body("""{"next_batch":"s1","rooms":$rooms}""".toResponseBody("application/json".toMediaType())).build()
+        }
+        CoreRequester("https://core.test", LoopbackPolicy.REFUSE, FakeTokens()).use { requester ->
+            MatrixRoomClient(requester, LoopbackPolicy.REFUSE, interceptor).use { client ->
+                client.bindChannelSecurity(orgId, channelId, origin, roomId, false)
+                assertTrue(client.sync(origin, "token", roomId = roomId).authorityLostRooms.isEmpty())
+                rooms = "{}"
+                assertTrue(client.sync(origin, "token", roomId = roomId, since = "one").authorityLostRooms.isEmpty())
+                rooms = """{"leave":{"!other:example.org":{}}}"""
+                assertTrue(client.sync(origin, "token", roomId = roomId, since = "two").authorityLostRooms.isEmpty())
+                rooms = """{"leave":{"$roomId":{}}}"""
+                val left = client.sync(origin, "token", roomId = roomId, since = "three")
+                assertEquals(setOf(roomId), left.authorityLostRooms); assertTrue(left.plaintextAllowedRooms.isEmpty())
+                rooms = "{}"
+                assertEquals(setOf(roomId), client.sync(origin, "token", roomId = roomId, since = "four").authorityLostRooms)
+                assertEquals(setOf(roomId), client.sync(origin, "token", roomId = roomId).authorityLostRooms)
+            }
+        }
+    }
+
+    @Test
     fun malformedIncrementalStateRevokesPlaintextWithoutSendHTTP() {
         val origin = "https://atelier.matrix.kodera.io"
         for (malformed in listOf("""{"events":null}""", "123", "\"bad\"", "null", """{"events":{}}""")) {
@@ -188,6 +214,31 @@ class MatrixRoomAndWakeupTests {
                         client.sendTextMessage(origin, "token", roomId, txn1, "secret")
                     }.reason)
                     assertTrue(requests.isEmpty())
+                }
+            }
+        }
+    }
+
+    @Test
+    fun securityTransitionsExposeAuthorityLossWithoutMembershipLoss() {
+        val origin = "https://atelier.matrix.kodera.io"
+        for (boundary in listOf("m.room.encryption", "io.kodera.room.security", "io.kodera.room.confidential", "core-confidential", "core-unknown")) {
+            var events = "[]"
+            val interceptor = Interceptor { chain ->
+                Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1).code(200).message("OK")
+                    .body("""{"next_batch":"s","rooms":{"join":{"$roomId":{"state":{"events":[]},"timeline":{"events":$events}}}}}""".toResponseBody("application/json".toMediaType())).build()
+            }
+            CoreRequester("https://core.test", LoopbackPolicy.REFUSE, FakeTokens()).use { requester ->
+                MatrixRoomClient(requester, LoopbackPolicy.REFUSE, interceptor).use { client ->
+                    client.bindChannelSecurity(orgId, channelId, origin, roomId, false)
+                    val initial = client.sync(origin, "token", roomId = roomId)
+                    assertEquals(setOf(roomId), initial.plaintextAllowedRooms); assertTrue(initial.authorityLostRooms.isEmpty())
+                    if (boundary.startsWith("core-")) client.updateChannelSecurity(orgId, channelId, if (boundary == "core-confidential") true else null)
+                    else events = """[{"type":"$boundary","state_key":"","content":{}}]"""
+                    val batch = client.sync(origin, "token", roomId = roomId, since = initial.nextBatch)
+                    assertTrue(batch.plaintextAllowedRooms.isEmpty()); assertEquals(setOf(roomId), batch.authorityLostRooms)
+                    events = "[]"
+                    assertEquals(setOf(roomId), client.sync(origin, "token", roomId = roomId, since = batch.nextBatch).authorityLostRooms)
                 }
             }
         }

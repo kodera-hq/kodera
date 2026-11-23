@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Preserve calls across overlapping UI and companion sync failures, and recover older call answers through bounded timeline backfill.
+
+- Restore Matrix room security knowledge with a full sync after a temporary native call polling failure.
+
+- Preserve native calls across temporary Matrix sync failures, recover limited timelines, and end expired rings before replacement.
+
+- Monitor the native call's own room for answers and authority changes while another channel is selected.
+
+- Revoke native call media from live conversation authority and security changes, and discard late cancellation wakes after revocation.
+
+- End native calls when room authority is lost, fence retired media and audio ownership, and preserve active calls when duplicate wakes are refused.
+
 - Resolve conversation security through the session workspace loader.
 
 - Clear conversation drafts and attachment retries after definitive workspace access loss.
@@ -38,6 +50,11 @@
 Status: Kodera for iOS is in development; no store release is recorded here.
 
 ## Unreleased
+
+### Native calls
+
+- Add opaque, expiring call wakes and bounded ring cancellation history shared with the native core. Answering on another device stops ringing without a missed-call indicator.
+- Add session-owned system call adapters, audio ownership and network handoff hooks, and authenticated audio-channel companion timeline integration. Provider registration, media SDK provisioning and device qualification remain deployment work.
 
 ### Added
 

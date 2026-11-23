@@ -910,6 +910,15 @@ class KoderaMobileFfiBridge(
                 KoderaFfiPacket(resp.toByteArray(Charsets.UTF_8), status = 0)
             }
 
+            "call_wake_admit" -> {
+                ensureAllowedKeys(obj, setOf("op", "payload_hex", "now"))
+                val hex = (obj["payload_hex"] as? MiniJsonVal.Str)?.value ?: throw KoderaMobileFfiFailure(KoderaMobileFfiError.INVALID_INPUT)
+                val now = (obj["now"] as? MiniJsonVal.Num)?.value ?: throw KoderaMobileFfiFailure(KoderaMobileFfiError.INVALID_INPUT)
+                val w = decodeNativeCallWake(decodeHex(hex), now)
+                val out = """{"ok":true,"call_id":"${w.callId}","organisation_id":"${w.organisationId}","channel_id":"${w.channelId}","epoch":${w.epoch},"state":"${w.state.wire}","expires_at":${w.expiresAt}}"""
+                KoderaFfiPacket(out.toByteArray(), status = 0)
+            }
+
             "wakeup_envelope_admit" -> {
                 ensureAllowedKeys(obj, setOf("op", "payload_hex"))
                 val payloadHex = (obj["payload_hex"] as? MiniJsonVal.Str)?.value
@@ -1210,4 +1219,16 @@ private class MiniFfiJson(private val text: String) {
             return MiniFfiJson(text).parseRootObject()
         }
     }
+}
+
+/** Strict parser shared by the typed call binding and local packet driver. */
+internal fun decodeNativeCallWake(data: ByteArray, now: Long, response: Boolean = false): NativeCallWake {
+    if (data.size > 4096) NativeCallWake.fail(KoderaMobileFfiError.CAPACITY_EXCEEDED)
+    val obj = MiniFfiJson.parseObject(data)
+    val allowed = setOf("call_id", "organisation_id", "channel_id", "epoch", "state", "expires_at") + if (response) setOf("ok") else emptySet()
+    if (obj.keys.any { it !in allowed }) NativeCallWake.fail(KoderaMobileFfiError.UNEXPECTED_FIELD)
+    fun str(key: String) = (obj[key] as? MiniJsonVal.Str)?.value ?: NativeCallWake.fail(KoderaMobileFfiError.INVALID_INPUT)
+    fun num(key: String) = (obj[key] as? MiniJsonVal.Num)?.value ?: NativeCallWake.fail(KoderaMobileFfiError.INVALID_INPUT)
+    val state = NativeRingPhase.entries.firstOrNull { it.wire == str("state") } ?: NativeCallWake.fail(KoderaMobileFfiError.INVALID_INPUT)
+    return NativeCallWake(str("call_id"), str("organisation_id"), str("channel_id"), num("epoch"), state, num("expires_at")).also { it.validate(now) }
 }

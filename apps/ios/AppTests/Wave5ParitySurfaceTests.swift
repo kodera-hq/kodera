@@ -54,6 +54,64 @@ final class Wave5ParitySurfaceTests: XCTestCase {
         XCTAssertTrue(model.stagedAttachments.isEmpty)
     }
 
+    func testLiveConversationRevokesNativeCallsAtAuthorityAndSecurityBoundaries() async throws {
+        let roomId = "!general:atelier.matrix.kodera.io"
+        let channelId = "22222222-2222-4222-8222-222222222222"
+        let callId = "33333333-3333-4333-8333-333333333333"
+        for connected in [false, true] {
+            for boundary in ["answer", "leave", "plaintext", "notFound", "forbidden", "backfill", "confidential", "unknown"] {
+                let transport = MockConversationTransport(); let media = ConversationCallMedia()
+                let coordinator = try NativeCallCoordinator(organisationId: orgId, localPartyId: "local",
+                    resolver: ConversationCallResolver(roomId: roomId), media: media, conversation: transport, now: { 100 })
+                let channel = WorkspaceChannel(id: channelId, kind: .audio, name: "audio", templateKey: nil, topic: "", lifecycle: .active, roomState: .ready, isConfidential: false)
+                let model = ChannelConversationModel(scope: try XCTUnwrap(ChannelConversationScope(organisationId: orgId, channel: channel)), transport: transport,
+                    onAuthenticatedSync: { coordinator.consumeAuthenticatedSync($1, roomId: $0) },
+                    onTransportFailure: { coordinator.consumeTransportFailure($0) },
+                    onSecurityBoundaryChanged: { coordinator.revoke() })
+                let wake = try NativeCallWake(callId: callId, organisationId: orgId, channelId: channelId, epoch: 1, state: .ringing, expiresAt: 130)
+                try await coordinator.receive(wake); await model.bootstrap()
+                if connected { try await coordinator.answer(callId: callId); await coordinator.audioSession(active: true) }
+                XCTAssertNotNil(coordinator.call)
+                if boundary == "confidential" || boundary == "unknown" {
+                    model.updateChannelSecurity(isConfidential: boundary == "confidential" ? true : nil)
+                } else if boundary == "notFound" || boundary == "forbidden" {
+                    await transport.failSync(boundary == "notFound" ? .notFound : .forbidden)
+                    await model.refreshSync()
+                } else if boundary == "backfill" {
+                    await transport.configureLimitedSync(roomId: roomId, prevBatch: "previous", backfilled: [], postGap: [])
+                    await transport.failBackfill(.forbidden); await model.refreshSync()
+                } else {
+                    var batch = MatrixSyncBatch(nextBatch: "boundary", roomEvents: [:])
+                    if boundary == "answer" {
+                        batch = MatrixSyncBatch(nextBatch: "answer", roomEvents: [roomId: [MatrixRawTimelineEvent(type: "m.call.answer", eventId: "$answer", sender: transport.ownUserId, originServerTs: 100, callId: callId, callPartyId: "other")]])
+                        batch.plaintextAllowedRooms = [roomId]
+                    } else if boundary == "leave" { batch.authorityLostRooms = [roomId] }
+                    await transport.setSyncBatch(batch); await model.refreshSync()
+                }
+                XCTAssertNil(coordinator.call, boundary); XCTAssertEqual(media.disconnects, 1, boundary)
+                XCTAssertFalse(media.microphoneEnabled, boundary)
+                if boundary == "answer" { XCTAssertEqual(coordinator.ring.records[callId]?.phase, .answeredElsewhere) }
+                else { XCTAssertTrue(coordinator.ring.records.isEmpty, boundary) }
+                model.clear()
+            }
+        }
+    }
+
+    func testConversationBootstrapFailureReachesOwnerAndClearFencesCallbacks() async throws {
+        let channel = WorkspaceChannel(id: "22222222-2222-4222-8222-222222222222", kind: .audio, name: "audio", templateKey: nil, topic: "", lifecycle: .active, roomState: .ready, isConfidential: false)
+        let transport = MockConversationTransport()
+        var failures: [MatrixClientFailure] = []; var syncs = 0; var securityChanges = 0
+        let model = ChannelConversationModel(scope: try XCTUnwrap(ChannelConversationScope(organisationId: orgId, channel: channel)), transport: transport,
+            onAuthenticatedSync: { _, _ in syncs += 1 },
+            onTransportFailure: { failures.append($0) },
+            onSecurityBoundaryChanged: { securityChanges += 1 })
+        await transport.failBootstrap(.notFound); await model.bootstrap()
+        XCTAssertEqual(failures, [.notFound]); XCTAssertEqual(syncs, 0)
+        await transport.failBootstrap(nil); await model.bootstrap(); XCTAssertEqual(syncs, 1)
+        model.clear(); await model.refreshSync(); model.updateChannelSecurity(isConfidential: true)
+        XCTAssertEqual(syncs, 1); XCTAssertEqual(securityChanges, 0)
+    }
+
     func testConfidentialAndUnknownConversationMetadataDisableComposer() throws {
         for confidential: Bool? in [true, nil] {
             let channel = WorkspaceChannel(id: "22222222-2222-4222-8222-222222222222", kind: .text, name: "private", templateKey: nil, topic: "", lifecycle: .active, roomState: .ready, isConfidential: confidential)
@@ -886,6 +944,13 @@ private actor MockConversationTransport: ChannelConversationTransport {
     nonisolated let ownUserId = "@alice:atelier.matrix.kodera.io"
     private var shouldFailNextSend = false
     private var counter = 0
+    private var backfillFailure: MatrixClientFailure?
+    func failBackfill(_ failure: MatrixClientFailure) { backfillFailure = failure }
+    private var bootstrapFailure: MatrixClientFailure?
+    func failBootstrap(_ failure: MatrixClientFailure?) { bootstrapFailure = failure }
+    private var syncFailure: MatrixClientFailure?
+    func failSync(_ failure: MatrixClientFailure) { syncFailure = failure }
+    func setSyncBatch(_ batch: MatrixSyncBatch) { pendingLimitedBatch = batch }
     private var pendingLimitedBatch: MatrixSyncBatch?
     private var pendingBackfill: [MatrixRawTimelineEvent] = []
 
@@ -913,6 +978,7 @@ private actor MockConversationTransport: ChannelConversationTransport {
         organisationId: String,
         channelId: String
     ) async throws(MatrixClientFailure) -> (roomId: String, initialBatch: MatrixSyncBatch) {
+        if let bootstrapFailure { throw bootstrapFailure }
         let roomId = "!general:atelier.matrix.kodera.io"
         var batch = MatrixSyncBatch(
             nextBatch: "s1",
@@ -934,6 +1000,7 @@ private actor MockConversationTransport: ChannelConversationTransport {
     }
 
     func syncRoom(roomId: String, since: String?) async throws(MatrixClientFailure) -> MatrixSyncBatch {
+        if let syncFailure { throw syncFailure }
         if let batch = pendingLimitedBatch {
             pendingLimitedBatch = nil
             return batch
@@ -948,6 +1015,7 @@ private actor MockConversationTransport: ChannelConversationTransport {
         fromToken: String,
         limit: Int
     ) async throws(MatrixClientFailure) -> [MatrixRawTimelineEvent] {
+        if let backfillFailure { throw backfillFailure }
         let items = pendingBackfill
         pendingBackfill = []
         return items
@@ -1009,4 +1077,19 @@ private actor MockConversationTransport: ChannelConversationTransport {
             sizeBytes: payload.data.count
         )
     }
+}
+
+private struct ConversationCallResolver: NativeCallResolving {
+    let roomId: String
+    func resolve(_ wake: NativeCallWake) async throws -> AuthenticatedNativeCall {
+        try AuthenticatedNativeCall(wake: wake, roomId: roomId, callerLabel: "Member")
+    }
+}
+@MainActor private final class ConversationCallMedia: LiveKitWebRTCSession {
+    var disconnects = 0; var microphoneEnabled = false
+    func connect(_ call: AuthenticatedNativeCall) async throws {}
+    func microphone(enabled: Bool) async throws { microphoneEnabled = enabled }
+    func audioSession(active: Bool) {}
+    func networkPathChanged() async throws {}
+    func disconnect() { disconnects += 1; microphoneEnabled = false }
 }

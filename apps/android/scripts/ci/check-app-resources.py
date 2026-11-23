@@ -94,7 +94,11 @@ PINNED_COPY = {
 ANDROID = "{http://schemas.android.com/apk/res/android}"
 ALLOWED_PERMISSIONS = ["android.permission.INTERNET", "android.permission.BLUETOOTH_ADVERTISE",
     "android.permission.BLUETOOTH_SCAN", "android.permission.BLUETOOTH_CONNECT",
-    "android.permission.NEARBY_WIFI_DEVICES"]
+    "android.permission.NEARBY_WIFI_DEVICES", "android.permission.MANAGE_OWN_CALLS",
+    "android.permission.RECORD_AUDIO", "android.permission.ACCESS_NETWORK_STATE",
+    "android.permission.MODIFY_AUDIO_SETTINGS", "android.permission.POST_NOTIFICATIONS",
+    "android.permission.FOREGROUND_SERVICE", "android.permission.FOREGROUND_SERVICE_PHONE_CALL",
+    "android.permission.FOREGROUND_SERVICE_MICROPHONE"]
 PROXIMITY_LOCATION_FREE = {"android.permission.BLUETOOTH_SCAN", "android.permission.NEARBY_WIFI_DEVICES"}
 LAUNCHER_ACTIONS = {"android.intent.action.MAIN"}
 LAUNCHER_CATEGORIES = {"android.intent.category.LAUNCHER"}
@@ -170,7 +174,11 @@ PROFILE_ACTIONS = ("INSTALL_PROFILE", "SKIP_FILE", "SAVE_PROFILE", "BENCHMARK_OP
 # elements, each the exact set of its attributes: one allowed scheme per
 # filter, never a blanket pass for any <data>.
 REDIRECT_DATA = frozenset({frozenset({("scheme", "io.kodera.app")})})
+CALL_SERVICE = "io.kodera.android.calls.KoderaConnectionService"
+CALL_BIND_PERMISSION = "android.permission.BIND_TELECOM_CONNECTION_SERVICE"
+CALL_SERVICE_ACTION = "android.telecom.ConnectionService"
 MERGED_EXPORTED = {
+    CALL_SERVICE: ("service", CALL_BIND_PERMISSION, [({CALL_SERVICE_ACTION}, set(), frozenset())]),
     "io.kodera.android.MainActivity": (
         "activity", None, [({"android.intent.action.MAIN"}, {"android.intent.category.LAUNCHER"}, frozenset())]),
     "androidx.profileinstaller.ProfileInstallReceiver": (
@@ -380,13 +388,28 @@ def findings(root):
     for intent_filter in manifest.iter("intent-filter"):
         actions = {a.get(ANDROID + "name") for a in intent_filter.findall("action")}
         categories = {c.get(ANDROID + "name") for c in intent_filter.findall("category")}
+        is_call_service = any(intent_filter in list(service) and service.get(ANDROID + "name") == ".calls.KoderaConnectionService"
+                              and service.get(ANDROID + "permission") == CALL_BIND_PERMISSION
+                              and service.get(ANDROID + "exported") == "true" for service in manifest.iter("service"))
+        if is_call_service:
+            if actions != {CALL_SERVICE_ACTION} or categories or intent_filter.findall("data"):
+                errors.append("Call service must carry only the Telecom binder action")
+            continue
         if actions != LAUNCHER_ACTIONS or categories != LAUNCHER_CATEGORIES or intent_filter.findall("data"):
             errors.append("AndroidManifest.xml declares an intent filter other than MAIN/LAUNCHER")
     for tag in ("provider", "receiver", "service"):
         for component in manifest.iter(tag):
+            if (tag == "service" and component.get(ANDROID + "name") == ".calls.KoderaConnectionService"
+                    and component.get(ANDROID + "permission") == CALL_BIND_PERMISSION
+                    and component.get(ANDROID + "exported") == "true"):
+                continue
             if exposed(component):
                 errors.append(f"AndroidManifest.xml exports a {tag} ({component.get(ANDROID + 'name')})")
 
+    services = list(manifest.iter("service"))
+    call_services = [c for c in services if c.get(ANDROID + "name") == ".calls.KoderaConnectionService"]
+    if len(call_services) != 1 or call_services[0].get(ANDROID + "foregroundServiceType") != "phoneCall|microphone":
+        errors.append("Call service must declare exactly phoneCall|microphone foreground ownership")
     errors += backup_findings(main)
     errors += launcher_icon_findings(main)
     errors += network_findings(src)
@@ -649,6 +672,8 @@ def merged_findings(path, release=False):
             errors.append(f"merged manifest exports {component.tag} {name}, outside the allowlist")
             continue
         tag, permission, allowed = MERGED_EXPORTED[name]
+        if name == CALL_SERVICE and component.get(ANDROID + "foregroundServiceType") != "phoneCall|microphone":
+            errors.append("merged call service must declare exactly phoneCall|microphone foreground ownership")
         if component.tag != tag:
             errors.append(f"merged manifest exports {name} as <{component.tag}>, not <{tag}>")
         if component.get(ANDROID + "targetActivity") is not None:

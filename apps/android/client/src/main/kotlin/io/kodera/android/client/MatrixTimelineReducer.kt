@@ -55,6 +55,8 @@ data class MatrixRawTimelineEvent(
     val transactionId: String? = null,
     val isRedactedUnsigned: Boolean = false,
     val attachments: List<AttachmentMetadataRef> = emptyList(),
+    val callId: String? = null,
+    val callPartyId: String? = null,
 )
 
 /** Per-room incremental `/sync` delta including Matrix `limited` gap metadata. */

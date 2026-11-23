@@ -43,3 +43,19 @@ provider is provisioned by these source changes.
 The tests inspect provider request bytes, verify VAPID signatures, exercise
 current-member cursor/read boundaries and check dead-endpoint/replacement/lease
 races against disposable PostgreSQL. All provider effects are owned test doubles.
+
+## Internal native call wake classification
+
+Status: Implemented classifier; native provider dispatch remains unprovisioned.
+
+`call_wake.classify` admits exactly six opaque fields (`call_id`,
+`organisation_id`, `channel_id`, `epoch`, `state`, `expires_at`), rejects duplicate
+JSON keys and non-integral or stale times, and limits expiry to 60 seconds. It
+rechecks current recipient membership, organisation state, audio-channel access
+and room readiness through application service/selector ports. Confidential
+channels fail closed until a device-bound MLS authority port is provisioned.
+Foreground presence suppresses ringing only; `answered_elsewhere` and `ended`
+remain eligible so a stale device cannot keep ringing. No caller name, title,
+message or media token reaches this envelope. Reclassify at dispatch rather than
+retaining an old admission. No public contract, outbox schema or provider sender
+is changed by this internal classification port.
