@@ -4335,6 +4335,110 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/organisations/{organisation_id}/workspace/imports/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Simulate a workspace archive import with zero database or Matrix mutations
+         * @description Runs a read-only dry-run simulation of a Slack, Discord, or Notion export archive for an active owner or admin. Never persists import batches, documents, collections, audit rows, or Matrix events, and never grants local privileges from external administrator flags.
+         */
+        post: operations["previewWorkspaceImport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/imports/execute": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Execute a bounded idempotent workspace archive import step
+         * @description Imports up to 25 archive items per bounded step for an active owner or admin, replaying mapped non-confidential channels idempotently with deterministic Matrix transaction identifiers while preserving existing local member roles.
+         */
+        post: operations["executeWorkspaceImport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/coexistence/bridges": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List workspace coexistence bridges
+         * @description Returns bounded live coexistence bridges configured for the organisation workspace without exposing signing secret material.
+         */
+        get: operations["listCoexistenceBridges"];
+        put?: never;
+        /**
+         * Create a bounded live coexistence bridge on a non-confidential text channel
+         * @description Creates a sealed Slack or Discord coexistence bridge pairing one active non-confidential text channel with one external workspace/channel pair and a validated HTTPS outbound endpoint.
+         */
+        post: operations["createCoexistenceBridge"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/coexistence/bridges/{bridge_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Revoke a workspace coexistence bridge
+         * @description Permanently revokes a coexistence bridge and zeroes its sealed signing secret.
+         */
+        delete: operations["revokeCoexistenceBridge"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/coexistence/bridges/{bridge_id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Receive a signed external coexistence event for anti-echo Matrix delivery
+         * @description Public inbound endpoint exempt from OIDC bearer tokens and verified in constant time via HMAC-SHA256 within a 300-second replay window before JSON parsing. Enforces anti-echo loop guards, delivery-time owner/admin authority, and non-confidential target channel state.
+         */
+        post: operations["receiveCoexistenceEvent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -12479,6 +12583,237 @@ export interface components {
             devices: components["schemas"]["ConfidentialDevice"][];
             envelopes: components["schemas"]["ConfidentialEnvelope"][];
         };
+        /** @enum {string} */
+        WorkspaceImportSource: "slack" | "discord" | "notion";
+        WorkspaceImportPreviewRequest: {
+            source: components["schemas"]["WorkspaceImportSource"];
+            /** @description Inline base64-encoded ZIP archive strictly smaller than 512 KiB; mutually exclusive with attachmentId. */
+            inlineArchiveBase64?: string;
+            /**
+             * Format: uuid
+             * @description Uploaded workspace attachment identifier for archives up to 20 MiB; mutually exclusive with inlineArchiveBase64.
+             */
+            attachmentId?: string;
+            channelMap?: {
+                [key: string]: string;
+            };
+        };
+        WorkspaceImportExecuteRequest: {
+            source: components["schemas"]["WorkspaceImportSource"];
+            inlineArchiveBase64?: string;
+            /** Format: uuid */
+            attachmentId?: string;
+            /** @default false */
+            dryRun: boolean;
+            /** @default 25 */
+            limit: number;
+            channelMap?: {
+                [key: string]: string;
+            };
+        };
+        WorkspaceImportDryRunCounts: {
+            channels_total: number;
+            channels_existing: number;
+            channels_to_create: number;
+            messages_total: number;
+            thread_replies_total: number;
+            docs_pages_total: number;
+            collections_total: number;
+            collection_rows_total: number;
+            members_matched: number;
+            members_unmatched: number;
+            already_imported_reused: number;
+            omitted_assets: number;
+        };
+        WorkspaceImportMemberMapping: {
+            external_id: string;
+            display_name: string;
+            /** Format: uuid */
+            matched_membership_id: string | null;
+            /** @constant */
+            local_role_preserved: true;
+        };
+        /** @enum {string} */
+        WorkspaceImportWarningCode: "external_admin_privilege_ignored" | "confidential_target_channel_skipped" | "unsupported_assets_omitted" | "quota_headroom_exceeded";
+        /**
+         * @example {
+         *       "source": "slack",
+         *       "archive_sha256": "000000000000000000000000000000000000000000000000000000000000a1b2",
+         *       "dry_run": true,
+         *       "counts": {
+         *         "channels_total": 2,
+         *         "channels_existing": 1,
+         *         "channels_to_create": 1,
+         *         "messages_total": 14,
+         *         "thread_replies_total": 3,
+         *         "docs_pages_total": 2,
+         *         "collections_total": 0,
+         *         "collection_rows_total": 0,
+         *         "members_matched": 2,
+         *         "members_unmatched": 1,
+         *         "already_imported_reused": 0,
+         *         "omitted_assets": 0
+         *       },
+         *       "member_mappings": [
+         *         {
+         *           "external_id": "U01ALICE",
+         *           "display_name": "Alice Martin",
+         *           "matched_membership_id": "01950000-0000-7000-8000-0000000000b1",
+         *           "local_role_preserved": true
+         *         }
+         *       ],
+         *       "warnings": []
+         *     }
+         */
+        WorkspaceImportDryRunReport: {
+            source: components["schemas"]["WorkspaceImportSource"];
+            archive_sha256: string;
+            dry_run: boolean;
+            counts: components["schemas"]["WorkspaceImportDryRunCounts"];
+            member_mappings: components["schemas"]["WorkspaceImportMemberMapping"][];
+            warnings: components["schemas"]["WorkspaceImportWarningCode"][];
+        };
+        /**
+         * @example {
+         *       "batch_id": "01950000-0000-7000-8000-0000000000b2",
+         *       "source": "slack",
+         *       "state": "complete",
+         *       "imported": 2,
+         *       "reused": 0,
+         *       "remaining": 0,
+         *       "omitted_assets": 0,
+         *       "replayed_messages": 14,
+         *       "reused_messages": 0,
+         *       "warnings": []
+         *     }
+         */
+        WorkspaceImportResponse: {
+            /** Format: uuid */
+            batch_id?: string;
+            source: components["schemas"]["WorkspaceImportSource"];
+            /** @enum {string} */
+            state?: "pending" | "partial" | "complete";
+            dry_run?: boolean;
+            archive_sha256?: string;
+            imported?: number;
+            reused?: number;
+            remaining?: number;
+            omitted_assets?: number;
+            complete?: boolean;
+            queued_messages?: number;
+            replayed_messages?: number;
+            reused_messages?: number;
+            counts?: components["schemas"]["WorkspaceImportDryRunCounts"];
+            member_mappings?: components["schemas"]["WorkspaceImportMemberMapping"][];
+            warnings?: components["schemas"]["WorkspaceImportWarningCode"][];
+        } & {
+            [key: string]: unknown;
+        };
+        /** @enum {string} */
+        CoexistenceBridgeSource: "slack" | "discord";
+        /**
+         * @example {
+         *       "id": "01950000-0000-7000-8000-0000000000c1",
+         *       "workspaceId": "01950000-0000-7000-8000-0000000000c2",
+         *       "channelId": "01950000-0000-7000-8000-0000000000c3",
+         *       "creatorMembershipId": "01950000-0000-7000-8000-0000000000c4",
+         *       "source": "slack",
+         *       "externalWorkspaceId": "T01EXTERNAL",
+         *       "externalChannelId": "C01GENERAL",
+         *       "outboundEndpoint": "https://hooks.example.com/services/bridge",
+         *       "active": true,
+         *       "revokedAt": null,
+         *       "createdAt": "2026-11-23T00:00:00Z",
+         *       "updatedAt": "2026-11-23T00:00:00Z"
+         *     }
+         */
+        CoexistenceBridge: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            workspaceId: string;
+            /** Format: uuid */
+            channelId: string;
+            /** Format: uuid */
+            creatorMembershipId: string;
+            source: components["schemas"]["CoexistenceBridgeSource"];
+            externalWorkspaceId: string;
+            externalChannelId: string;
+            /** Format: uri */
+            outboundEndpoint: string;
+            active: boolean;
+            /** Format: date-time */
+            revokedAt: string | null;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        /**
+         * @example {
+         *       "bridges": [
+         *         {
+         *           "id": "01950000-0000-7000-8000-0000000000c1",
+         *           "workspaceId": "01950000-0000-7000-8000-0000000000c2",
+         *           "channelId": "01950000-0000-7000-8000-0000000000c3",
+         *           "creatorMembershipId": "01950000-0000-7000-8000-0000000000c4",
+         *           "source": "slack",
+         *           "externalWorkspaceId": "T01EXTERNAL",
+         *           "externalChannelId": "C01GENERAL",
+         *           "outboundEndpoint": "https://hooks.example.com/services/bridge",
+         *           "active": true,
+         *           "revokedAt": null,
+         *           "createdAt": "2026-11-23T00:00:00Z",
+         *           "updatedAt": "2026-11-23T00:00:00Z"
+         *         }
+         *       ]
+         *     }
+         */
+        CoexistenceBridgeListResponse: {
+            bridges: components["schemas"]["CoexistenceBridge"][];
+        };
+        CoexistenceBridgeCreateRequest: {
+            /** Format: uuid */
+            channelId: string;
+            source: components["schemas"]["CoexistenceBridgeSource"];
+            externalWorkspaceId: string;
+            externalChannelId: string;
+            /** Format: uri */
+            outboundEndpoint: string;
+            signingSecret: string;
+        };
+        /** @description Signed Slack Events API or Discord coexistence event payload verified via HMAC before parsing. */
+        CoexistenceInboundEvent: {
+            [key: string]: unknown;
+        };
+        /**
+         * @example {
+         *       "accepted": true,
+         *       "queued": true,
+         *       "status": "queued",
+         *       "bridgeId": "01950000-0000-7000-8000-0000000000c1",
+         *       "channelId": "01950000-0000-7000-8000-0000000000c3",
+         *       "externalEventId": "Ev01EXTERNAL",
+         *       "matrixEventId": null,
+         *       "matrixTxnId": "kodera-coex-00000000000000000000000000000001",
+         *       "validatedAttachmentMimes": []
+         *     }
+         */
+        CoexistenceEventReceipt: {
+            accepted: boolean;
+            queued?: boolean;
+            /** @enum {string} */
+            status: "queued" | "delivered" | "duplicate" | "ignored_echo" | "ignored_event";
+            /** Format: uuid */
+            bridgeId?: string;
+            /** Format: uuid */
+            channelId?: string;
+            externalEventId?: string;
+            reason?: string;
+            matrixEventId?: string | null;
+            matrixTxnId?: string;
+            validatedAttachmentMimes?: string[];
+        };
     };
     responses: {
         /** @description The request body or its parameters are malformed. */
@@ -12717,6 +13052,7 @@ export interface components {
         AttachmentId: string;
         DocumentId: string;
         DeviceId: string;
+        BridgeId: string;
         /** @description Required compatibility header only for discoverRealm. Validate then discard. Every request is a fresh charged current lookup, including identical, different-body and concurrent reuse. This operation is explicitly exempt from generic 24-hour response replay, fingerprint, key-reuse and in-flight rules. No key or response is stored; no Idempotency-Replayed header or idempotency 409 is emitted. Other POST operations retain the generic IdempotencyKey parameter and rules. */
         DiscoveryCompatibilityKey: string;
         /**
@@ -23480,6 +23816,283 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+        };
+    };
+    previewWorkspaceImport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceImportPreviewRequest"];
+            };
+        };
+        responses: {
+            /** @description Zero-mutation dry-run simulation report. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceImportDryRunReport"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["UpstreamUnavailable"];
+        };
+    };
+    executeWorkspaceImport: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceImportExecuteRequest"];
+            };
+        };
+        responses: {
+            /** @description Bounded import execution or dry-run report. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceImportResponse"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["UpstreamUnavailable"];
+        };
+    };
+    listCoexistenceBridges: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Coexistence bridges for the workspace. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CoexistenceBridgeListResponse"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    createCoexistenceBridge: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CoexistenceBridgeCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Coexistence bridge created. */
+            201: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CoexistenceBridge"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    revokeCoexistenceBridge: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                bridge_id: components["parameters"]["BridgeId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Coexistence bridge revoked. */
+            204: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    receiveCoexistenceEvent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                bridge_id: components["parameters"]["BridgeId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CoexistenceInboundEvent"];
+            };
+        };
+        responses: {
+            /** @description Signed coexistence event verified and delivered to Matrix. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CoexistenceEventReceipt"];
+                };
+            };
+            /** @description Signed coexistence event verified and durably queued for Matrix worker delivery. */
+            202: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CoexistenceEventReceipt"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            422: components["responses"]["ValidationError"];
+            502: components["responses"]["UpstreamUnavailable"];
+            503: components["responses"]["UpstreamUnavailable"];
         };
     };
 }

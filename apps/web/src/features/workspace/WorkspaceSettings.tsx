@@ -675,7 +675,7 @@ export default function WorkspaceSettings({
           restricted
         )
       case 'extensions':
-        return <ExtensionsCatalogPanel channels={runtime?.channels} />
+        return <ExtensionsCatalogPanel channels={runtime?.channels} organisationId={organisationId} />
       case 'moderation':
         return canManage ? <ModerationPanel organisationId={organisationId} /> : restricted
       case 'audit':

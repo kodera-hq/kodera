@@ -6472,6 +6472,162 @@ export const EXAMPLES = {
     idempotent: true,
     requiresIfMatch: false,
   },
+  "previewWorkspaceImport": {
+    operationId: "previewWorkspaceImport",
+    method: "post",
+    path: "/organisations/{organisation_id}/workspace/imports/preview",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "source": "slack",
+      "archive_sha256": "000000000000000000000000000000000000000000000000000000000000a1b2",
+      "dry_run": true,
+      "counts": {
+        "channels_total": 2,
+        "channels_existing": 1,
+        "channels_to_create": 1,
+        "messages_total": 14,
+        "thread_replies_total": 3,
+        "docs_pages_total": 2,
+        "collections_total": 0,
+        "collection_rows_total": 0,
+        "members_matched": 2,
+        "members_unmatched": 1,
+        "already_imported_reused": 0,
+        "omitted_assets": 0
+      },
+      "member_mappings": [
+        {
+          "external_id": "U01ALICE",
+          "display_name": "Alice Martin",
+          "matched_membership_id": "01950000-0000-7000-8000-0000000000b1",
+          "local_role_preserved": true
+        }
+      ],
+      "warnings": []
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "executeWorkspaceImport": {
+    operationId: "executeWorkspaceImport",
+    method: "post",
+    path: "/organisations/{organisation_id}/workspace/imports/execute",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "batch_id": "01950000-0000-7000-8000-0000000000b2",
+      "source": "slack",
+      "state": "complete",
+      "imported": 2,
+      "reused": 0,
+      "remaining": 0,
+      "omitted_assets": 0,
+      "replayed_messages": 14,
+      "reused_messages": 0,
+      "warnings": []
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "listCoexistenceBridges": {
+    operationId: "listCoexistenceBridges",
+    method: "get",
+    path: "/organisations/{organisation_id}/workspace/coexistence/bridges",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "bridges": [
+        {
+          "id": "01950000-0000-7000-8000-0000000000c1",
+          "workspaceId": "01950000-0000-7000-8000-0000000000c2",
+          "channelId": "01950000-0000-7000-8000-0000000000c3",
+          "creatorMembershipId": "01950000-0000-7000-8000-0000000000c4",
+          "source": "slack",
+          "externalWorkspaceId": "T01EXTERNAL",
+          "externalChannelId": "C01GENERAL",
+          "outboundEndpoint": "https://hooks.example.com/services/bridge",
+          "active": true,
+          "revokedAt": null,
+          "createdAt": "2026-11-23T00:00:00Z",
+          "updatedAt": "2026-11-23T00:00:00Z"
+        }
+      ]
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "createCoexistenceBridge": {
+    operationId: "createCoexistenceBridge",
+    method: "post",
+    path: "/organisations/{organisation_id}/workspace/coexistence/bridges",
+    status: 201,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "id": "01950000-0000-7000-8000-0000000000c1",
+      "workspaceId": "01950000-0000-7000-8000-0000000000c2",
+      "channelId": "01950000-0000-7000-8000-0000000000c3",
+      "creatorMembershipId": "01950000-0000-7000-8000-0000000000c4",
+      "source": "slack",
+      "externalWorkspaceId": "T01EXTERNAL",
+      "externalChannelId": "C01GENERAL",
+      "outboundEndpoint": "https://hooks.example.com/services/bridge",
+      "active": true,
+      "revokedAt": null,
+      "createdAt": "2026-11-23T00:00:00Z",
+      "updatedAt": "2026-11-23T00:00:00Z"
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "revokeCoexistenceBridge": {
+    operationId: "revokeCoexistenceBridge",
+    method: "delete",
+    path: "/organisations/{organisation_id}/workspace/coexistence/bridges/{bridge_id}",
+    status: 204,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: null,
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "receiveCoexistenceEvent": {
+    operationId: "receiveCoexistenceEvent",
+    method: "post",
+    path: "/coexistence/bridges/{bridge_id}/events",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "accepted": true,
+      "queued": true,
+      "status": "queued",
+      "bridgeId": "01950000-0000-7000-8000-0000000000c1",
+      "channelId": "01950000-0000-7000-8000-0000000000c3",
+      "externalEventId": "Ev01EXTERNAL",
+      "matrixEventId": null,
+      "matrixTxnId": "kodera-coex-00000000000000000000000000000001",
+      "validatedAttachmentMimes": []
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
 } satisfies Record<string, OperationExample>
 
 export type OperationId = keyof typeof EXAMPLES

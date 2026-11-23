@@ -427,6 +427,17 @@ def assert_image_boundary(ignore):
         "!apps/extensions/apps.py",
         "!apps/extensions/models.py",
         "!apps/extensions/expiry.py",
+        "!apps/extensions/wire.py",
+        "!apps/extensions/services.py",
+        "!apps/extensions/import_parsers.py",
+        "!apps/extensions/member_matching.py",
+        "!apps/extensions/imports.py",
+        "!apps/extensions/coexistence.py",
+        "!apps/extensions/api/__init__.py",
+        "!apps/extensions/api/http.py",
+        "!apps/extensions/api/permissions.py",
+        "!apps/extensions/api/urls.py",
+        "!apps/extensions/api/views.py",
         "!apps/docs/__init__.py",
         "!apps/docs/apps.py",
         "!apps/docs/access.py",
@@ -1048,26 +1059,42 @@ def test_every_dev_controller_source_pin_matches_the_pinned_file():
     assert stale == [], f"a dev controller pin is stale: {stale}"
 
 
+EXTENSION_RUNTIME_SOURCES = (
+    "apps/extensions/__init__.py",
+    "apps/extensions/apps.py",
+    "apps/extensions/models.py",
+    "apps/extensions/expiry.py",
+    "apps/extensions/wire.py",
+    "apps/extensions/services.py",
+    "apps/extensions/import_parsers.py",
+    "apps/extensions/member_matching.py",
+    "apps/extensions/imports.py",
+    "apps/extensions/coexistence.py",
+    "apps/extensions/api/__init__.py",
+    "apps/extensions/api/http.py",
+    "apps/extensions/api/permissions.py",
+    "apps/extensions/api/urls.py",
+    "apps/extensions/api/views.py",
+)
+
 EXTENSION_PRIVATE_SOURCES = (
     "apps/extensions/dispatcher.py",
-    "apps/extensions/services.py",
     "apps/extensions/digest.py",
-    "apps/extensions/imports.py",
-    "apps/extensions/import_parsers.py",
     "apps/extensions/retention.py",
-    "apps/extensions/wire.py",
     "apps/extensions/management/caller.py",
     "apps/extensions/management/commands/dispatch_extensions.py",
+    "apps/extensions/management/commands/dispatch_extension_coexistence.py",
+    "apps/extensions/management/commands/import_workspace.py",
+    "apps/extensions/management/commands/manage_extension.py",
+    "apps/extensions/management/commands/purge_extension_payloads.py",
+    "apps/extensions/management/commands/schedule_digest.py",
+    "apps/extensions/management/commands/set_digest_consent.py",
 )
 
 
 def test_extension_image_carries_only_inert_registration():
     files = set(image_files(ROOT))
-    assert {
-        "apps/extensions/__init__.py",
-        "apps/extensions/apps.py",
-        "apps/extensions/models.py",
-    } <= files
+    assert set(EXTENSION_RUNTIME_SOURCES) <= files
     assert files.isdisjoint(EXTENSION_PRIVATE_SOURCES)
 
 

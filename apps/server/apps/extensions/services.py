@@ -27,6 +27,20 @@ from .models import Delivery, Installation, WorkspaceCutoff
 from .wire import EVENTS, MAX_GRACE_SECONDS, ExtensionRefusedError, event_payload
 
 
+def read_admin(verified, organisation_id):
+    if not organisation_exists(organisation_id=organisation_id):
+        raise ExtensionRefusedError("extension_workspace_absent", 404)
+    if WorkspaceCutoff.objects.filter(organisation_id=organisation_id).exists():
+        raise ExtensionRefusedError("extension_workspace_cut_off", 410)
+    try:
+        workspace_id, principal = documents.read_context(verified, organisation_id)
+    except documents.RefusalError as refused:
+        raise ExtensionRefusedError("extension_workspace_refused", refused.status) from None
+    if principal.role not in {"org_owner", "org_admin"}:
+        raise ExtensionRefusedError("extension_owner_or_admin_required", 403)
+    return workspace_id, principal
+
+
 def admin(verified, organisation_id):
     if not organisation_exists(organisation_id=organisation_id):
         raise ExtensionRefusedError("extension_workspace_absent", 404)
@@ -190,7 +204,67 @@ def enqueue(
             row.id,
             {"delivery_id": str(delivery.id), "event_type": event_type},
         )
+        if event_type == "message.created":
+            raw_ch = data.get("channel_id")
+            raw_ev = data.get("matrix_event_id") or data.get("event_id")
+            raw_sender = data.get("sender")
+            raw_text = data.get("text")
+            if (
+                isinstance(raw_ch, (str, UUID))
+                and isinstance(raw_ev, str)
+                and isinstance(raw_sender, str)
+                and isinstance(raw_text, str)
+            ):
+                try:
+                    ch_uuid = raw_ch if isinstance(raw_ch, UUID) else UUID(raw_ch)
+                except ValueError:
+                    ch_uuid = None
+                if ch_uuid is not None:
+                    from . import coexistence
+
+                    coexistence.enqueue_outbound_coexistence(
+                        workspace_id=workspace_id,
+                        channel_id=ch_uuid,
+                        matrix_event_id=raw_ev,
+                        sender=raw_sender,
+                        sender_display_name=str(data.get("sender_display_name") or raw_sender),
+                        text=raw_text,
+                        msgtype=str(data.get("msgtype") or "m.text"),
+                        metadata=data.get("metadata")
+                        if isinstance(data.get("metadata"), dict)
+                        else None,
+                    )
     return delivery
+
+
+@transaction.atomic
+def emit_channel_message(
+    *,
+    verified,
+    organisation_id: UUID,
+    channel_id: UUID,
+    matrix_event_id: str,
+    sender: str,
+    sender_display_name: str,
+    text: str,
+    msgtype: str = "m.text",
+    metadata: dict[str, Any] | None = None,
+) -> int:
+    """Enqueue durable outbound coexistence deliveries for a local channel message."""
+    from . import coexistence
+
+    workspace_id, _ = admin(verified, organisation_id)
+    queued = coexistence.enqueue_outbound_coexistence(
+        workspace_id=workspace_id,
+        channel_id=channel_id,
+        matrix_event_id=matrix_event_id,
+        sender=sender,
+        sender_display_name=sender_display_name,
+        text=text,
+        msgtype=msgtype,
+        metadata=metadata,
+    )
+    return len(queued)
 
 
 @transaction.atomic

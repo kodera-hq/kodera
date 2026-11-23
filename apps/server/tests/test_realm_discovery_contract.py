@@ -90,7 +90,8 @@ DISCOVERY_SCHEMAS = (
 # Rebound at 0.51.0: attachment channel/room scope, upload cancellation, moderator revocation, and confidential channel creation; discovery unchanged.
 # Rebound at 0.52.0: audio companion chat read_only access and WorkspaceTemplate v2 personas/customization; discovery unchanged.
 # Rebound at 0.53.0: push subscription platform, bounded foreground presence leases, and zero-PII createBugReport; discovery unchanged.
-UNCHANGED_SHA = "a319fd3a7aa32bdc949892fb6c645c88d02eee7cc8c1b31f93e8be6e24860807"
+# Rebound at 0.54.0: workspace import dry-run/execution and live coexistence bridges; discovery unchanged.
+UNCHANGED_SHA = "c40f5e0030f0ef7492594177b5a34a6104575739b4963a6ca858961bd2ed3cda"
 # Approved schema/key semantics; prose is removed before hashing.
 # Rebound at 0.26.0: discoverRealm declares 403 forbidden, a browser request refused from its
 # headers before any quota charge; the rest of the discovery wire is unchanged.

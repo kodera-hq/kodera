@@ -12,7 +12,8 @@ Installation, rotation, queue, reconciliation and inspection services require cu
 owner/admin authority. Organisation, workspace and current actor locks serialize revocation;
 dispatch checks the creator's current owner/admin membership and identity again. A revoked or
 cut-off workspace cannot start another installation or send a queued delivery. The API image
-contains only inert model registration; it receives no dispatcher, importer, mail or operator code.
+admits only the customer-served workspace migrator dry-run/execution and bounded coexistence
+bridge HTTP modules; operator dispatch, mail digest, retention sweep and CLI commands remain excluded.
 
 `manage_extension` supports install/rotate/revoke/inspect/enqueue/reconcile. The organisation
 and installation are explicit; an authenticated customer access token arrives on stdin, never
@@ -62,13 +63,26 @@ work. Property display edits and prior imported pages are preserved; restoring c
 permits an explicit later resume. The existing document create/patch and Collection services enforce Yjs, permissions,
 tree rules, database quotas and conditional row writes.
 
-ZIP input is capped at 20 MiB, 40 MiB expanded, 2 MiB per entry, 1000 entries and 100:1 compression;
-only Stored and Deflate codecs are admitted before any member opens. BZIP2/LZMA and unknown
-codecs, normalized path conflicts, traversal, symlinks and encrypted archives are rejected. At most
-500 normalized objects and 200 CSV data rows are accepted. Imported HTML/SVG and remote images
-never execute or fetch; active blocks are stripped, links/mentions are inert, and unsupported
-attachments are counted as omitted. Rich platform blocks, reactions and attachments are not
-reconstructed. Native import golden fixtures use synthetic data only.
+ZIP input is capped at 20 MiB, 40 MiB expanded, 2 MiB per entry, 1000 entries and 100:1 compression,
+enforced via streaming 64 KiB chunk decompression before materializing entry bytes so forged
+central-directory `file_size` headers cannot bypass limits; only Stored and Deflate codecs are
+admitted before any member opens. Discord exports accept both raw `.json` channel files and `.zip`
+archives. Binary media assets (`.pdf`, `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.ogg`, `.oga`,
+`.webm`) are verified against magic-byte MIME headers and rejected if disguised markup/script
+markers are present. Zero-mutation dry-run (`imports.preview` / `dry_run=True`) runs under
+`SET LOCAL transaction_read_only = on`, matches non-bot emails read-only against active
+organisation memberships without granting local privileges or creating accounts, and reports
+pre-flight warnings. Idempotent Matrix room/thread history replay uses deterministic `kodera-imp-...`
+transaction IDs with `m.thread` relations, strictly refuses confidential channels (`403`) on both
+HTTP queueing and worker replay, queues `queued_matrix` records when `matrix_transport` is absent,
+and drains via `dispatch_extension_coexistence --once`. Bounded live coexistence bridges
+(`CoexistenceBridge` and 7-day `CoexistenceReplayGuard`, included in erasure receiver inventory as
+`urn:kodera:coexistence-bridge:UUID:endpoint-sha256:HASH`) seal signing secrets with AAD
+`kodera-coexistence-v1:` + `org_id` + `bridge_id`, verify 300-second HMAC freshness in constant
+time before acquiring row locks, queue verified HTTP events (`202`), enforce anti-echo loop guards,
+re-verify owner/admin authority and non-confidential channel state around every delivery (with
+compensating Matrix redaction on concurrent revocation and retryable network failures), and route
+egress through `apps.media.outbound.request(..., pool="webhook")`.
 
 ## Opt-in digest and existing outbox
 

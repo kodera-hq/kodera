@@ -922,6 +922,10 @@ AUDIT_FIELDS = {
     ),
     "import_started": frozenset({"source", "archive_sha256"}),
     "object_imported": frozenset({"source", "document_id", "source_sha256"}),
+    "message_queued": frozenset({"source", "channel_id", "matrix_txn_id", "source_sha256"}),
+    "message_replayed": frozenset({"source", "channel_id", "matrix_txn_id", "source_sha256"}),
+    "coexistence_bridge_created": frozenset({"source", "channel_id"}),
+    "coexistence_bridge_revoked": frozenset({"source", "channel_id"}),
     "digest_consent_changed": frozenset({"enabled", "consent_version"}),
 }
 
@@ -934,7 +938,7 @@ def record_extension_event(
     target_id: UUID,
     metadata: object,
 ) -> None:
-    """Only the eight registered extension actions and their closed metadata shapes."""
+    """Only the registered extension actions and their closed metadata shapes."""
     fields = AUDIT_FIELDS.get(action)
     if fields is None or not isinstance(metadata, dict) or set(metadata) != fields:
         raise ValueError("extension audit action or metadata refused")

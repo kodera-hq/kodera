@@ -97,6 +97,11 @@
       "path": "/organisations/{organisation_id}/workspace/channels"
     },
     {
+      "operation_id": "createCoexistenceBridge",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/workspace/coexistence/bridges"
+    },
+    {
       "operation_id": "createCommunitySupportTicket",
       "method": "POST",
       "path": "/community/support/tickets"
@@ -190,6 +195,11 @@
       "operation_id": "discoverRealm",
       "method": "POST",
       "path": "/auth/discover"
+    },
+    {
+      "operation_id": "executeWorkspaceImport",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/workspace/imports/execute"
     },
     {
       "operation_id": "generateDpa",
@@ -417,6 +427,11 @@
       "path": "/catalog/capacity-tiers"
     },
     {
+      "operation_id": "listCoexistenceBridges",
+      "method": "GET",
+      "path": "/organisations/{organisation_id}/workspace/coexistence/bridges"
+    },
+    {
       "operation_id": "listConfidentialEnvelopes",
       "method": "GET",
       "path": "/organisations/{organisation_id}/confidential/rooms/{room_id}/envelopes"
@@ -562,6 +577,11 @@
       "path": "/invitations/preview"
     },
     {
+      "operation_id": "previewWorkspaceImport",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/workspace/imports/preview"
+    },
+    {
       "operation_id": "previewWorkspaceInvite",
       "method": "POST",
       "path": "/workspace-invites/preview"
@@ -590,6 +610,11 @@
       "operation_id": "queryWorkspaceCollection",
       "method": "POST",
       "path": "/organisations/{organisation_id}/workspace/collections/{collection_id}/query"
+    },
+    {
+      "operation_id": "receiveCoexistenceEvent",
+      "method": "POST",
+      "path": "/coexistence/bridges/{bridge_id}/events"
     },
     {
       "operation_id": "receiveStripeWebhook",
@@ -655,6 +680,11 @@
       "operation_id": "retireConfidentialParticipant",
       "method": "POST",
       "path": "/organisations/{organisation_id}/confidential/rooms/{room_id}/participants/retire"
+    },
+    {
+      "operation_id": "revokeCoexistenceBridge",
+      "method": "DELETE",
+      "path": "/organisations/{organisation_id}/workspace/coexistence/bridges/{bridge_id}"
     },
     {
       "operation_id": "revokeConfidentialDevice",

@@ -305,4 +305,10 @@ export const handlers: HttpHandler[] = [
   http.post(BASE + "/organisations/:organisation_id/confidential/rooms/:room_id/participants/retire", ({ request }) => answerIdempotent(EXAMPLES["retireConfidentialParticipant"], request)),
   http.get(BASE + "/organisations/:organisation_id/confidential/rooms/:room_id/envelopes", () => answer(EXAMPLES["listConfidentialEnvelopes"])),
   http.post(BASE + "/organisations/:organisation_id/confidential/rooms/:room_id/envelopes", ({ request }) => answerIdempotent(EXAMPLES["sendConfidentialEnvelope"], request)),
+  http.post(BASE + "/organisations/:organisation_id/workspace/imports/preview", () => answer(EXAMPLES["previewWorkspaceImport"])),
+  http.post(BASE + "/organisations/:organisation_id/workspace/imports/execute", ({ request }) => answerIdempotent(EXAMPLES["executeWorkspaceImport"], request)),
+  http.get(BASE + "/organisations/:organisation_id/workspace/coexistence/bridges", () => answer(EXAMPLES["listCoexistenceBridges"])),
+  http.post(BASE + "/organisations/:organisation_id/workspace/coexistence/bridges", ({ request }) => answerIdempotent(EXAMPLES["createCoexistenceBridge"], request)),
+  http.delete(BASE + "/organisations/:organisation_id/workspace/coexistence/bridges/:bridge_id", () => answer(EXAMPLES["revokeCoexistenceBridge"])),
+  http.post(BASE + "/coexistence/bridges/:bridge_id/events", () => answer(EXAMPLES["receiveCoexistenceEvent"])),
 ]

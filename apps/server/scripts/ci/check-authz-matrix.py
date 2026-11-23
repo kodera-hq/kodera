@@ -135,6 +135,7 @@ ANONYMOUS_OPERATIONS = frozenset(
         "requestPassportMagicLink",
         "verifyPassportMagicLink",
         "receiveStripeWebhook",
+        "receiveCoexistenceEvent",
     }
 )
 

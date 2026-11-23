@@ -41,6 +41,7 @@ COMMANDS = [
     "manage_statutory_retention",
     "dispatch_push",
     "dispatch_extensions",
+    "dispatch_extension_coexistence",
     "purge_extension_payloads",
     "import_workspace",
     "manage_extension",

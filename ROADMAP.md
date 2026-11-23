@@ -10,7 +10,7 @@ Kodera is a public open-core monorepo: nothing listed here is held back from the
 
 - [x] Unified `@kodera/*` monorepo (`apps/`, `packages/`, `extensions/`, `deploy/community/`, `ee/`)
 - [x] `@kodera/design-tokens` ("Cobalt × Kodera — givre") with automated contrast & grammar CI gates
-- [x] `kodera-server` OpenAPI 3.1 contract-first control plane (`0.53.0`), ADR-0003 secret isolation & `room_access` sidecar
+- [x] `kodera-server` OpenAPI 3.1 contract-first control plane (`0.54.0`), ADR-0003 secret isolation & `room_access` sidecar
 - [x] Matrix-backed channels and LiveKit audio rooms in the web client, governed by `kodera-synapse-policy`
 - [x] `kodera-rs` zero-unsafe Rust core (`UuidV7`, `Ed25519` traits, OpenMLS/Megolm primitives, durable device/session state, universal ES256 passkey binding, `#proximity` frame v1/v2 codecs)
 - [x] `@kodera/extension-sdk` HMAC-signed webhooks and 23 reference implementations (the `/hello` starter plus 22 domain connectors) with a generated catalogue
@@ -27,7 +27,7 @@ Kodera is a public open-core monorepo: nothing listed here is held back from the
 - [x] Native Docs & Collections: a block editor inside `apps/web` (ProseMirror/Tiptap and Yjs, MIT-licensed, no GPL add-on), PostgreSQL document permissions and a Yjs sync service, page trees, wikilinks, backlinks, search, and typed Collections (`Table`, `Kanban` and `List` views)
 - [x] Workspace moderation, reusable invite links, scoped attachments, text-only unfurling, notification history and payload-free Web Push
 - [x] Transactional workspace quotas, Factur-X `380`/`381` PDF/A-3 + XML deterministic invoice ledger, VIES VAT evidence, supervised dunning, Stripe billing webhook verification, and GDPR Art. 17/20 signed exports and erasure (`KODERA_BILLING_ENABLED=false` on self-hosted Community)
-- [x] Extension runtime v2 in the control plane: scoped workspace installation, key rotation, reconciliation, dual-key HMAC signed webhook/slash-command delivery with pinned-IP SSRF guards, and bounded `Slack` / `Discord` / `Notion` importers
+- [x] Extension runtime v2 in the control plane: scoped workspace installation, key rotation, reconciliation, dual-key HMAC signed webhook/slash-command delivery with pinned-IP SSRF guards, bounded `Slack` / `Discord` / `Notion` importers with streaming 64 KiB archive decompression, magic-byte MIME validation, zero-mutation dry-run simulation, verified-email member matching (zero privilege escalation), idempotent Matrix room/thread history replay, and bounded live coexistence bridges on non-confidential channels
 - [x] `Kodera Passport`: signed PKCE cross-workspace magic-link sign-in, multi-organisation workspace switcher and account-erasure integration alongside per-realm OIDC + WebAuthn passkeys
 - [x] Hosted Community tenant promotion, identity-provider cutover to `auth.kodera.io` and release evidence
 - [ ] Backup/restore rehearsal and subsequent exact-release deployment acceptance

@@ -376,11 +376,23 @@ config/settings/deploy_worker.py
 !apps/workspaces/quota_http.py
 !apps/workspaces/api/quotas.py
 
-# Inert extension persistence only; dispatch/import/mail/operator code is excluded.
+# Customer workspace migrator dry-run/execution and bounded coexistence bridge routes;
+# operator dispatch, mail digest, retention sweep and CLI commands remain excluded.
 !apps/extensions/__init__.py
 !apps/extensions/apps.py
 !apps/extensions/models.py
 !apps/extensions/expiry.py
+!apps/extensions/wire.py
+!apps/extensions/services.py
+!apps/extensions/import_parsers.py
+!apps/extensions/member_matching.py
+!apps/extensions/imports.py
+!apps/extensions/coexistence.py
+!apps/extensions/api/__init__.py
+!apps/extensions/api/http.py
+!apps/extensions/api/permissions.py
+!apps/extensions/api/urls.py
+!apps/extensions/api/views.py
 
 # Default-disabled confidential transport; no migrations or operator writers.
 !apps/e2ee/__init__.py

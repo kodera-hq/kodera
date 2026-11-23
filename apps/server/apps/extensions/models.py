@@ -22,6 +22,7 @@ class Installation(StoredModel):
     revoked_at = models.DateTimeField(null=True)
 
     class Meta:
+        app_label = "extensions"
         constraints = [
             models.CheckConstraint(
                 name="extension_rotation_fields",
@@ -49,6 +50,7 @@ class Delivery(StoredModel):
     outcome = models.TextField(null=True)  # noqa: DJ001 - absent until an attempt
 
     class Meta:
+        app_label = "extensions"
         constraints = [
             models.UniqueConstraint(
                 fields=["installation", "event_key"], name="extension_event_once"
@@ -91,6 +93,7 @@ class DeliveryAttempt(StoredModel):
     response_status = models.IntegerField(null=True)
 
     class Meta:
+        app_label = "extensions"
         constraints = [
             models.UniqueConstraint(fields=["delivery", "number"], name="extension_attempt_once"),
             models.CheckConstraint(
@@ -118,6 +121,7 @@ class ImportBatch(StoredModel):
     report = models.JSONField(default=dict)
 
     class Meta:
+        app_label = "extensions"
         constraints = [
             models.UniqueConstraint(
                 fields=["workspace", "source", "archive_sha256"], name="extension_import_once"
@@ -138,15 +142,156 @@ class ImportedObject(StoredModel):
     source = models.TextField()
     external_key = models.TextField()
     source_sha256 = models.TextField()
-    document = models.ForeignKey("docs.Document", on_delete=models.RESTRICT)
+    document = models.ForeignKey("docs.Document", on_delete=models.RESTRICT, null=True)
+    channel = models.ForeignKey("workspaces.Channel", on_delete=models.RESTRICT, null=True)
+    matrix_txn_id = models.TextField(null=True)  # noqa: DJ001 - absent on native document imports
+    matrix_event_id = models.TextField(null=True)  # noqa: DJ001 - absent until Matrix replay succeeds
+    replay_state = models.TextField(default="complete")
+    thread_parent_key = models.TextField(null=True)  # noqa: DJ001 - absent on root messages and docs
+    replay_payload = models.JSONField(null=True)
     collection = models.ForeignKey("docs.Collection", on_delete=models.RESTRICT, null=True)
     batch = models.ForeignKey(ImportBatch, on_delete=models.RESTRICT)
 
     class Meta:
+        app_label = "extensions"
         constraints = [
             models.UniqueConstraint(
                 fields=["workspace", "source", "external_key"], name="extension_import_object_once"
-            )
+            ),
+            models.CheckConstraint(
+                name="extension_import_object_target",
+                condition=(Q(document__isnull=False, channel__isnull=True))
+                | (Q(document__isnull=True, channel__isnull=False)),
+            ),
+            models.CheckConstraint(
+                name="extension_import_object_replay_state",
+                condition=(
+                    Q(
+                        replay_state="complete",
+                        document__isnull=False,
+                        channel__isnull=True,
+                        replay_payload__isnull=True,
+                    )
+                    | Q(
+                        replay_state="queued_matrix",
+                        document__isnull=True,
+                        channel__isnull=False,
+                        matrix_txn_id__isnull=False,
+                        matrix_event_id__isnull=True,
+                        replay_payload__isnull=False,
+                    )
+                    | Q(
+                        replay_state="replayed",
+                        document__isnull=True,
+                        channel__isnull=False,
+                        matrix_txn_id__isnull=False,
+                        matrix_event_id__isnull=False,
+                        replay_payload__isnull=True,
+                    )
+                    | Q(
+                        replay_state="obsolete",
+                        document__isnull=True,
+                        channel__isnull=False,
+                        replay_payload__isnull=True,
+                    )
+                ),
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["replay_state", "created_at"], name="extension_import_replay_idx"),
+        ]
+
+
+class CoexistenceBridge(StoredModel):
+    workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.RESTRICT)
+    channel = models.ForeignKey("workspaces.Channel", on_delete=models.RESTRICT)
+    creator = models.ForeignKey("orgs.Membership", on_delete=models.RESTRICT)
+    source = models.TextField()
+    external_workspace_id = models.TextField()
+    external_channel_id = models.TextField()
+    outbound_endpoint = models.TextField()
+    sealed_signing_secret = models.BinaryField()
+    revoked_at = models.DateTimeField(null=True)
+
+    class Meta:
+        app_label = "extensions"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["workspace", "source", "external_workspace_id", "external_channel_id"],
+                condition=Q(revoked_at__isnull=True),
+                name="extension_coexistence_ext_pair_active_once",
+            ),
+            models.UniqueConstraint(
+                fields=["workspace", "channel", "source"],
+                condition=Q(revoked_at__isnull=True),
+                name="extension_coexistence_channel_active_once",
+            ),
+            models.CheckConstraint(
+                name="extension_coexistence_source",
+                condition=Q(source__in=("slack", "discord")),
+            ),
+            models.CheckConstraint(
+                name="extension_coexistence_ext_ids",
+                condition=Q(external_workspace_id__regex=r"^[A-Za-z0-9_.-]{1,128}$")
+                & Q(external_channel_id__regex=r"^[A-Za-z0-9_.-]{1,128}$"),
+            ),
+        ]
+
+
+class CoexistenceReplayGuard(StoredModel):
+    bridge = models.ForeignKey(CoexistenceBridge, on_delete=models.RESTRICT)
+    external_event_id = models.TextField()
+    event_sha256 = models.TextField()
+    direction = models.TextField()
+    state = models.TextField(default="queued")
+    lease_id = models.UUIDField(null=True)
+    lease_expires_at = models.DateTimeField(null=True)
+    attempts = models.IntegerField(default=0)
+    matrix_txn_id = models.TextField(null=True)  # noqa: DJ001 - absent on outbound events
+    matrix_event_id = models.TextField(null=True)  # noqa: DJ001 - populated on Matrix delivery/origin
+    sanitized_payload = models.JSONField(null=True)
+    expires_at = models.DateTimeField(default=delivery_expiry)
+
+    class Meta:
+        app_label = "extensions"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["bridge", "external_event_id"], name="extension_coexistence_event_once"
+            ),
+            models.CheckConstraint(
+                name="extension_coexistence_direction",
+                condition=Q(direction__in=("inbound", "outbound")),
+            ),
+            models.CheckConstraint(
+                name="extension_coexistence_digest",
+                condition=Q(event_sha256__regex=r"^[a-f0-9]{64}$"),
+            ),
+            models.CheckConstraint(
+                name="extension_coexistence_state",
+                condition=Q(
+                    state__in=("queued", "in_flight", "delivered", "retryable_failed", "obsolete")
+                ),
+            ),
+            models.CheckConstraint(
+                name="extension_coexistence_attempts",
+                condition=Q(attempts__gte=0, attempts__lte=8),
+            ),
+            models.CheckConstraint(
+                name="extension_coexistence_lease",
+                condition=Q(
+                    state="in_flight", lease_id__isnull=False, lease_expires_at__isnull=False
+                )
+                | ~Q(state="in_flight") & Q(lease_id__isnull=True, lease_expires_at__isnull=True),
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["expires_at"], name="extension_coexist_exp_idx"),
+            models.Index(
+                fields=["bridge", "direction", "event_sha256"], name="extension_coexist_hash_idx"
+            ),
+            models.Index(
+                fields=["direction", "state", "created_at"], name="extension_coexist_due_idx"
+            ),
         ]
 
 
@@ -160,6 +305,7 @@ class DigestConsent(StoredModel):
     revoked_at = models.DateTimeField(null=True)
 
     class Meta:
+        app_label = "extensions"
         constraints = [
             models.CheckConstraint(
                 name="extension_digest_locale", condition=Q(locale__in=("en", "fr"))
@@ -182,6 +328,7 @@ class DigestJob(StoredModel):
     delivery_id = models.UUIDField(null=True, unique=True)
 
     class Meta:
+        app_label = "extensions"
         constraints = [
             models.UniqueConstraint(
                 fields=["consent", "period_start", "period_end"],
@@ -207,6 +354,7 @@ class DeliveryDecision(StoredModel):
     evidence_ref = models.TextField()
 
     class Meta:
+        app_label = "extensions"
         constraints = [
             models.CheckConstraint(
                 name="extension_decision_observed",
@@ -225,6 +373,9 @@ class WorkspaceCutoff(models.Model):
     organisation_id = models.UUIDField(primary_key=True)
     cutoff_at = models.DateTimeField()
 
+    class Meta:
+        app_label = "extensions"
+
     def __str__(self) -> str:
         return f"extension cutoff {self.organisation_id}"
 
@@ -238,6 +389,7 @@ class ErasureAdmission(models.Model):
     inventory_sha256 = models.TextField()
 
     class Meta:
+        app_label = "extensions"
         constraints = [
             models.CheckConstraint(
                 name="extension_erasure_inventory_digest",

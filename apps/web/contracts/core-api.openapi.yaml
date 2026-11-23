@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Kodera Core API
-  version: 0.53.0
+  version: 0.54.0
   summary: Control plane of kodera.io, consumed by kodera-web and by staff operators.
   description: |
     The Core API is the only backend of `kodera-web` (console ADR-0003) and the system of
@@ -15,14 +15,14 @@ info:
       exception: no Idempotency-Key or durable response replay; each request checks current
       membership, checkin counters reject replay, and checkout is naturally repeatable.
       Proximity epoch_expires_at and presence expires_at are bounded integer Unix seconds.
-    - Every other `POST` but `previewInvitation` requires an `Idempotency-Key` header. Except `discoverRealm`, whose
+    - Every other `POST` but `previewInvitation` and `previewWorkspaceImport` requires an `Idempotency-Key` header. Except `discoverRealm`, whose
       dedicated parameter specifies compatibility-only semantics for a non-mutating lookup,
       the key is stored with the request fingerprint; same key/body replays the first
       response and changed body returns `idempotency-key-reuse`. `discoverRealm` stores
       no key, body fingerprint or response and evaluates every request independently
-      under its quotas. `previewInvitation` is a read sent as a `POST` so that its token
-      travels in a body rather than a URL: it takes no `Idempotency-Key`, ignores one sent
-      anyway, and stores nothing.
+      under its quotas. `previewInvitation` and `previewWorkspaceImport` are reads sent as `POST`s so that their token or archive
+      travels in a body rather than a URL: they take no `Idempotency-Key`, ignore one sent
+      anyway, and store nothing.
     - Every response carries `X-Request-Id`. It is the correlation id in logs and audit
       events, and is echoed in the `request_id` member of every problem document.
     - Errors are RFC 9457 problem documents (`application/problem+json`). The registry of
@@ -10802,6 +10802,286 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
 
+  /organisations/{organisation_id}/workspace/imports/preview:
+    post:
+      operationId: previewWorkspaceImport
+      summary: Simulate a workspace archive import with zero database or Matrix mutations
+      description: 'Runs a read-only dry-run simulation of a Slack, Discord, or Notion export archive for an active
+        owner or admin. Never persists import batches, documents, collections, audit rows, or Matrix events, and never
+        grants local privileges from external administrator flags.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_import:act
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkspaceImportPreviewRequest'
+      responses:
+        '200':
+          description: Zero-mutation dry-run simulation report.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceImportDryRunReport'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/UpstreamUnavailable'
+
+  /organisations/{organisation_id}/workspace/imports/execute:
+    post:
+      operationId: executeWorkspaceImport
+      summary: Execute a bounded idempotent workspace archive import step
+      description: 'Imports up to 25 archive items per bounded step for an active owner or admin, replaying mapped
+        non-confidential channels idempotently with deterministic Matrix transaction identifiers while preserving
+        existing local member roles.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_import:create
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkspaceImportExecuteRequest'
+      responses:
+        '200':
+          description: Bounded import execution or dry-run report.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceImportResponse'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/UpstreamUnavailable'
+
+  /organisations/{organisation_id}/workspace/coexistence/bridges:
+    get:
+      operationId: listCoexistenceBridges
+      summary: List workspace coexistence bridges
+      description: 'Returns bounded live coexistence bridges configured for the organisation workspace without
+        exposing signing secret material.'
+      tags:
+      - Workspace
+      x-kodera-scope: coexistence_bridge:read
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      responses:
+        '200':
+          description: Coexistence bridges for the workspace.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CoexistenceBridgeListResponse'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    post:
+      operationId: createCoexistenceBridge
+      summary: Create a bounded live coexistence bridge on a non-confidential text channel
+      description: 'Creates a sealed Slack or Discord coexistence bridge pairing one active non-confidential text
+        channel with one external workspace/channel pair and a validated HTTPS outbound endpoint.'
+      tags:
+      - Workspace
+      x-kodera-scope: coexistence_bridge:create
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CoexistenceBridgeCreateRequest'
+      responses:
+        '201':
+          description: Coexistence bridge created.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CoexistenceBridge'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /organisations/{organisation_id}/workspace/coexistence/bridges/{bridge_id}:
+    delete:
+      operationId: revokeCoexistenceBridge
+      summary: Revoke a workspace coexistence bridge
+      description: 'Permanently revokes a coexistence bridge and zeroes its sealed signing secret.'
+      tags:
+      - Workspace
+      x-kodera-scope: coexistence_bridge:delete
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - $ref: '#/components/parameters/BridgeId'
+      responses:
+        '204':
+          description: Coexistence bridge revoked.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /coexistence/bridges/{bridge_id}/events:
+    post:
+      operationId: receiveCoexistenceEvent
+      summary: Receive a signed external coexistence event for anti-echo Matrix delivery
+      description: 'Public inbound endpoint exempt from OIDC bearer tokens and verified in constant time via HMAC-SHA256
+        within a 300-second replay window before JSON parsing. Enforces anti-echo loop guards, delivery-time owner/admin
+        authority, and non-confidential target channel state.'
+      tags:
+      - Workspace
+      security: []
+      x-kodera-scope: coexistence_bridge:act
+      x-kodera-authz:
+        roles:
+        - anonymous
+      parameters:
+      - $ref: '#/components/parameters/BridgeId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CoexistenceInboundEvent'
+      responses:
+        '200':
+          description: Signed coexistence event verified and delivered to Matrix.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CoexistenceEventReceipt'
+        '202':
+          description: Signed coexistence event verified and durably queued for Matrix worker delivery.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CoexistenceEventReceipt'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '502':
+          $ref: '#/components/responses/UpstreamUnavailable'
+        '503':
+          $ref: '#/components/responses/UpstreamUnavailable'
+
 
 components:
   x-audit-action-registry:
@@ -11111,6 +11391,13 @@ components:
         format: uuid
     DeviceId:
       name: device_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    BridgeId:
+      name: bridge_id
       in: path
       required: true
       schema:
@@ -21412,3 +21699,387 @@ components:
           sequence: 1
           senderDeviceId: 01950000-0000-7000-8000-0000000000a2
           ciphertext: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    WorkspaceImportSource:
+      type: string
+      enum:
+      - slack
+      - discord
+      - notion
+    WorkspaceImportPreviewRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - source
+      properties:
+        source:
+          $ref: '#/components/schemas/WorkspaceImportSource'
+        inlineArchiveBase64:
+          type: string
+          minLength: 1
+          maxLength: 700000
+          description: Inline base64-encoded ZIP archive strictly smaller than 512 KiB; mutually exclusive with attachmentId.
+        attachmentId:
+          type: string
+          format: uuid
+          description: Uploaded workspace attachment identifier for archives up to 20 MiB; mutually exclusive with inlineArchiveBase64.
+        channelMap:
+          type: object
+          maxProperties: 100
+          additionalProperties:
+            type: string
+            format: uuid
+    WorkspaceImportExecuteRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - source
+      properties:
+        source:
+          $ref: '#/components/schemas/WorkspaceImportSource'
+        inlineArchiveBase64:
+          type: string
+          minLength: 1
+          maxLength: 700000
+        attachmentId:
+          type: string
+          format: uuid
+        dryRun:
+          type: boolean
+          default: false
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 25
+          default: 25
+        channelMap:
+          type: object
+          maxProperties: 100
+          additionalProperties:
+            type: string
+            format: uuid
+    WorkspaceImportDryRunCounts:
+      type: object
+      additionalProperties: false
+      required:
+      - channels_total
+      - channels_existing
+      - channels_to_create
+      - messages_total
+      - thread_replies_total
+      - docs_pages_total
+      - collections_total
+      - collection_rows_total
+      - members_matched
+      - members_unmatched
+      - already_imported_reused
+      - omitted_assets
+      properties:
+        channels_total: { type: integer, minimum: 0 }
+        channels_existing: { type: integer, minimum: 0 }
+        channels_to_create: { type: integer, minimum: 0 }
+        messages_total: { type: integer, minimum: 0 }
+        thread_replies_total: { type: integer, minimum: 0 }
+        docs_pages_total: { type: integer, minimum: 0 }
+        collections_total: { type: integer, minimum: 0 }
+        collection_rows_total: { type: integer, minimum: 0 }
+        members_matched: { type: integer, minimum: 0 }
+        members_unmatched: { type: integer, minimum: 0 }
+        already_imported_reused: { type: integer, minimum: 0 }
+        omitted_assets: { type: integer, minimum: 0 }
+    WorkspaceImportMemberMapping:
+      type: object
+      additionalProperties: false
+      required:
+      - external_id
+      - display_name
+      - matched_membership_id
+      - local_role_preserved
+      properties:
+        external_id: { type: string, minLength: 1, maxLength: 160 }
+        display_name: { type: string, minLength: 1, maxLength: 120 }
+        matched_membership_id:
+          type: [string, 'null']
+          format: uuid
+        local_role_preserved:
+          type: boolean
+          const: true
+    WorkspaceImportWarningCode:
+      type: string
+      enum:
+      - external_admin_privilege_ignored
+      - confidential_target_channel_skipped
+      - unsupported_assets_omitted
+      - quota_headroom_exceeded
+    WorkspaceImportDryRunReport:
+      type: object
+      additionalProperties: false
+      required:
+      - source
+      - archive_sha256
+      - dry_run
+      - counts
+      - member_mappings
+      - warnings
+      properties:
+        source:
+          $ref: '#/components/schemas/WorkspaceImportSource'
+        archive_sha256:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        dry_run:
+          type: boolean
+        counts:
+          $ref: '#/components/schemas/WorkspaceImportDryRunCounts'
+        member_mappings:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkspaceImportMemberMapping'
+        warnings:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkspaceImportWarningCode'
+      examples:
+      - source: slack
+        archive_sha256: 000000000000000000000000000000000000000000000000000000000000a1b2
+        dry_run: true
+        counts:
+          channels_total: 2
+          channels_existing: 1
+          channels_to_create: 1
+          messages_total: 14
+          thread_replies_total: 3
+          docs_pages_total: 2
+          collections_total: 0
+          collection_rows_total: 0
+          members_matched: 2
+          members_unmatched: 1
+          already_imported_reused: 0
+          omitted_assets: 0
+        member_mappings:
+        - external_id: U01ALICE
+          display_name: Alice Martin
+          matched_membership_id: 01950000-0000-7000-8000-0000000000b1
+          local_role_preserved: true
+        warnings: []
+    WorkspaceImportResponse:
+      type: object
+      additionalProperties: true
+      required:
+      - source
+      properties:
+        batch_id:
+          type: string
+          format: uuid
+        source:
+          $ref: '#/components/schemas/WorkspaceImportSource'
+        state:
+          type: string
+          enum:
+          - pending
+          - partial
+          - complete
+        dry_run:
+          type: boolean
+        archive_sha256:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        imported:
+          type: integer
+          minimum: 0
+        reused:
+          type: integer
+          minimum: 0
+        remaining:
+          type: integer
+          minimum: 0
+        omitted_assets:
+          type: integer
+          minimum: 0
+        complete:
+          type: boolean
+        queued_messages:
+          type: integer
+          minimum: 0
+        replayed_messages:
+          type: integer
+          minimum: 0
+        reused_messages:
+          type: integer
+          minimum: 0
+        counts:
+          $ref: '#/components/schemas/WorkspaceImportDryRunCounts'
+        member_mappings:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkspaceImportMemberMapping'
+        warnings:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkspaceImportWarningCode'
+      examples:
+      - batch_id: 01950000-0000-7000-8000-0000000000b2
+        source: slack
+        state: complete
+        imported: 2
+        reused: 0
+        remaining: 0
+        omitted_assets: 0
+        replayed_messages: 14
+        reused_messages: 0
+        warnings: []
+    CoexistenceBridgeSource:
+      type: string
+      enum:
+      - slack
+      - discord
+    CoexistenceBridge:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - workspaceId
+      - channelId
+      - creatorMembershipId
+      - source
+      - externalWorkspaceId
+      - externalChannelId
+      - outboundEndpoint
+      - active
+      - revokedAt
+      - createdAt
+      - updatedAt
+      properties:
+        id: { type: string, format: uuid }
+        workspaceId: { type: string, format: uuid }
+        channelId: { type: string, format: uuid }
+        creatorMembershipId: { type: string, format: uuid }
+        source:
+          $ref: '#/components/schemas/CoexistenceBridgeSource'
+        externalWorkspaceId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^[A-Za-z0-9_.-]{1,128}$
+        externalChannelId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^[A-Za-z0-9_.-]{1,128}$
+        outboundEndpoint:
+          type: string
+          format: uri
+        active: { type: boolean }
+        revokedAt:
+          type: [string, 'null']
+          format: date-time
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+      examples:
+      - id: 01950000-0000-7000-8000-0000000000c1
+        workspaceId: 01950000-0000-7000-8000-0000000000c2
+        channelId: 01950000-0000-7000-8000-0000000000c3
+        creatorMembershipId: 01950000-0000-7000-8000-0000000000c4
+        source: slack
+        externalWorkspaceId: T01EXTERNAL
+        externalChannelId: C01GENERAL
+        outboundEndpoint: https://hooks.example.com/services/bridge
+        active: true
+        revokedAt: null
+        createdAt: '2026-11-23T00:00:00Z'
+        updatedAt: '2026-11-23T00:00:00Z'
+    CoexistenceBridgeListResponse:
+      type: object
+      additionalProperties: false
+      required:
+      - bridges
+      properties:
+        bridges:
+          type: array
+          items:
+            $ref: '#/components/schemas/CoexistenceBridge'
+      examples:
+      - bridges:
+        - id: 01950000-0000-7000-8000-0000000000c1
+          workspaceId: 01950000-0000-7000-8000-0000000000c2
+          channelId: 01950000-0000-7000-8000-0000000000c3
+          creatorMembershipId: 01950000-0000-7000-8000-0000000000c4
+          source: slack
+          externalWorkspaceId: T01EXTERNAL
+          externalChannelId: C01GENERAL
+          outboundEndpoint: https://hooks.example.com/services/bridge
+          active: true
+          revokedAt: null
+          createdAt: '2026-11-23T00:00:00Z'
+          updatedAt: '2026-11-23T00:00:00Z'
+    CoexistenceBridgeCreateRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - channelId
+      - source
+      - externalWorkspaceId
+      - externalChannelId
+      - outboundEndpoint
+      - signingSecret
+      properties:
+        channelId: { type: string, format: uuid }
+        source:
+          $ref: '#/components/schemas/CoexistenceBridgeSource'
+        externalWorkspaceId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^[A-Za-z0-9_.-]{1,128}$
+        externalChannelId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^[A-Za-z0-9_.-]{1,128}$
+        outboundEndpoint:
+          type: string
+          format: uri
+        signingSecret:
+          type: string
+          minLength: 16
+          maxLength: 256
+    CoexistenceInboundEvent:
+      type: object
+      additionalProperties: true
+      description: Signed Slack Events API or Discord coexistence event payload verified via HMAC before parsing.
+    CoexistenceEventReceipt:
+      type: object
+      additionalProperties: false
+      required:
+      - accepted
+      - status
+      properties:
+        accepted: { type: boolean }
+        queued: { type: boolean }
+        status:
+          type: string
+          enum:
+          - queued
+          - delivered
+          - duplicate
+          - ignored_echo
+          - ignored_event
+        bridgeId: { type: string, format: uuid }
+        channelId: { type: string, format: uuid }
+        externalEventId: { type: string }
+        reason: { type: string }
+        matrixEventId:
+          type: [string, 'null']
+        matrixTxnId: { type: string }
+        validatedAttachmentMimes:
+          type: array
+          items: { type: string }
+      examples:
+      - accepted: true
+        queued: true
+        status: queued
+        bridgeId: 01950000-0000-7000-8000-0000000000c1
+        channelId: 01950000-0000-7000-8000-0000000000c3
+        externalEventId: Ev01EXTERNAL
+        matrixEventId: null
+        matrixTxnId: kodera-coex-00000000000000000000000000000001
+        validatedAttachmentMimes: []
