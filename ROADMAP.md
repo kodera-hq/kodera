@@ -16,6 +16,7 @@ Kodera is a public open-core monorepo: nothing listed here is held back from the
 - [x] `@kodera/extension-sdk` HMAC-signed webhooks and 23 reference implementations (the `/hello` starter plus 22 domain connectors) with a generated catalogue
 - [x] Hardened `deploy/community` profile (Synapse on PostgreSQL, federation closed by default, rate limits, no public agent API), checked on every change
 - [x] End-to-end fresh-volume cold-start verification of `deploy/community` in CI, with measured runtime and memory footprint
+- [x] Companion self-host maintenance CLI (`deploy/community/kodera-ctl`) for ordered, health-gated upgrades with pre-quiesce image staging, write-quiesced atomic `0700`/`0600` PostgreSQL snapshots and automatic rollback, paired with the headless STUN/TURN UDP diagnostic probe (`deploy/community/webrtc_probe.py`) ([operations guide](./docs/self-hosting/kodera-ctl-and-webrtc-probe.md))
 
 ## Track 2 — Collaboration, Governance & Workspace Lifecycle (`Status: Implemented in tree; hosted Community cutover promoted`)
 
