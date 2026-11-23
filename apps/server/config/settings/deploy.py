@@ -59,7 +59,6 @@ ALLOWED_HOSTS = _validated["ALLOWED_HOSTS"]
 DATABASES = _validated["DATABASES"]
 DEBUG = False
 ROOT_URLCONF = "config.customer_urls"
-MIDDLEWARE = [*MIDDLEWARE, "apps.workspaces.guest_http.GuestScopeMiddleware"]
 INSTALLED_APPS = [
     *INSTALLED_APPS,
     "apps.identity",

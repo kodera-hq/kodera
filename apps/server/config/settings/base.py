@@ -22,6 +22,7 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "core.api.ee_billing.EnterpriseBillingMiddleware",
     "core.api.edition.EnterpriseEditionMiddleware",
+    "apps.workspaces.guest_http.GuestScopeMiddleware",
 ]
 REST_FRAMEWORK = {
     "UNICODE_JSON": True,
@@ -103,6 +104,8 @@ KODERA_AI_SEAL_KEY: bytes | None = None
 KODERA_AI_MISTRAL_API_KEY: str | None = None
 KODERA_AI_ACTOR_SUBJECTS: tuple[str, ...] = ()
 KODERA_AI_CLIENT_IDS: tuple[str, ...] = ()
+KODERA_CHANNEL_GOVERNANCE_ENABLED = False
+KODERA_GOVERNANCE_AUTHORITY_CONFIGURED = False
 # Optional Matrix worker settings for dispatch_extension_coexistence (queued Matrix history
 # imports and inbound coexistence deliveries). Each profile that runs the worker reads them from
 # its environment through config.environment's validators; unset, the command refuses to run

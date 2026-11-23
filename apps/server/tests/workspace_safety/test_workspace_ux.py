@@ -131,14 +131,11 @@ def test_bootstrap_preferences_never_disclose_a_hidden_landing_channel(world):
 
 
 def test_archiving_default_channel_clears_pointer_and_erasure_scrubs_identity(world):
-    from datetime import timedelta
-
     from django.db import IntegrityError
-    from django.utils import timezone
     from test_core_erasure import operator as make_staff_operator
     from test_workspace_ux import raster
 
-    from apps.orgs.erasure_services import begin_erasure, purge_core
+    from apps.orgs.erasure_services import begin_erasure, database_now, purge_core
     from apps.workspaces import administration
     from apps.workspaces.models import Channel, ResourcePolicy, Workspace
     from apps.workspaces.structure import read_workspace
@@ -221,9 +218,9 @@ def test_archiving_default_channel_clears_pointer_and_erasure_scrubs_identity(wo
     staff = make_staff_operator()
     erasure = begin_erasure(
         organisation_id=org.id,
-        instruction_ref="GDPR-ART17-H26",
+        instruction_ref="DEL-276",
         instruction_sha256="a" * 64,
-        purge_not_before=timezone.now() - timedelta(seconds=1),
+        purge_not_before=database_now(),
         actor_identity_id=staff.id,
     )
     purge_core(erasure.id)
