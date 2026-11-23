@@ -52,6 +52,7 @@ import {
   type ReactNode,
 } from 'react'
 import type { WorkspacePageRecord } from '../docs/WorkspaceCollaborativeDocs'
+import type { OmniboxCollectionDescriptor } from '../command-palette/omniboxIndex'
 import {
   createDemoWorkspaceStore,
   isDemoActive,
@@ -413,6 +414,29 @@ function LiveWorkspace({
   const [docsView, setDocsView] = useState<DocsWorkspaceView>(store ? 'team' : 'pages')
   const [workspacePages, setWorkspacePages] = useState<readonly WorkspacePageRecord[]>([])
   const [activeWorkspacePageId, setActiveWorkspacePageId] = useState<string | undefined>(undefined)
+  const [docsSurface, setDocsSurface] = useState<{
+    readonly key: number
+    readonly surface: 'blocks' | 'collections'
+  }>({ key: 0, surface: 'blocks' })
+  const omniboxCollections = useMemo<readonly OmniboxCollectionDescriptor[]>(
+    () => [
+      ...workspacePages.map((page) => ({
+        id: `workspace-page:${page.id}`,
+        title: page.title,
+        content: page.markdown,
+        propertiesText: `${page.role} ${page.updatedAt}`,
+        cacheKey: page,
+      })),
+      ...docsWorkspace.docs.map((doc) => ({
+        id: doc.id,
+        title: doc.title,
+        content: doc.content,
+        ...(doc.role ? { propertiesText: doc.role } : {}),
+        cacheKey: doc,
+      })),
+    ],
+    [workspacePages, docsWorkspace.docs]
+  )
   const channel = channelId
     ? liveWorkspace.categories
         .flatMap((category) => category.channels)
@@ -474,9 +498,41 @@ function LiveWorkspace({
             role: page.role,
           })),
         ]}
+        collections={omniboxCollections}
+        onOpenCollection={(itemId: string) => {
+          if (itemId === 'surface:collections') {
+            setDocsSurface((prev) => ({ key: prev.key + 1, surface: 'collections' }))
+            setDocsView('pages')
+            setCanvas('docs')
+            return
+          }
+          if (itemId.startsWith('workspace-page:')) {
+            setActiveWorkspacePageId(itemId.slice('workspace-page:'.length))
+            setDocsSurface((prev) =>
+              prev.surface === 'blocks' ? prev : { key: prev.key + 1, surface: 'blocks' }
+            )
+            setDocsView('pages')
+            setCanvas('docs')
+            return
+          }
+          const matchedDoc = docsWorkspace.docs.find((doc) => doc.id === itemId)
+          if (!matchedDoc) return
+          setDocsWorkspace((prev) => ({
+            ...prev,
+            selectedByChannel: { ...prev.selectedByChannel, [matchedDoc.channelId]: matchedDoc.id },
+          }))
+          setDocsView('team')
+          setCanvas('docs')
+          if (matchedDoc.channelId && matchedDoc.channelId !== channel?.id) {
+            void navigation.onNavigateChannel(matchedDoc.channelId)
+          }
+        }}
         onOpenDocument={(doc: ChannelDoc) => {
           if (doc.id.startsWith('workspace-page:')) {
             setActiveWorkspacePageId(doc.id.slice('workspace-page:'.length))
+            setDocsSurface((prev) =>
+              prev.surface === 'blocks' ? prev : { key: prev.key + 1, surface: 'blocks' }
+            )
             setDocsView('pages')
             setCanvas('docs')
             return
@@ -506,6 +562,8 @@ function LiveWorkspace({
                   }
                 >
                   <LazyWorkspaceCollaborativeDocs
+                    key={docsSurface.key}
+                    initialSurface={docsSurface.surface}
                     {...(store
                       ? {
                           localDocuments: workspacePages,

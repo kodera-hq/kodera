@@ -35,6 +35,10 @@ const messages = {
     system: 'Follow system',
     direct: 'Direct messages',
     noDirect: 'No direct conversations are available in this workspace.',
+    messages: 'Messages',
+    collections: 'Collections',
+    switchToSimple: 'Switch to Simple Messaging',
+    switchToPro: 'Switch to Pro Workspace',
   },
   fr: {
     actions: 'Actions',
@@ -73,6 +77,10 @@ const messages = {
     system: 'Suivre le système',
     direct: 'Messages directs',
     noDirect: 'Aucune conversation directe n’est disponible dans cet espace.',
+    messages: 'Messages',
+    collections: 'Collections',
+    switchToSimple: 'Basculer vers Messagerie Simple',
+    switchToPro: 'Basculer vers Espace Pro',
   },
 } as const
 export const paletteCopy = (locale?: string) => messages[locale?.startsWith('en') ? 'en' : 'fr']

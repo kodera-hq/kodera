@@ -12,17 +12,29 @@ export type PaletteSource = ChannelSearchProps & {
 export const OPEN_PALETTE = 'kodera:open-palette'
 class PaletteRegistry {
   private sources = new Map<object, { source: PaletteSource; priority: number }>()
+  private listeners = new Set<() => void>()
   private cached: PaletteSource | null | undefined = undefined
+  private emit() {
+    for (const listener of [...this.listeners]) listener()
+  }
+  subscribe = (listener: () => void) => {
+    this.listeners.add(listener)
+    return () => {
+      this.listeners.delete(listener)
+    }
+  }
   register(source: PaletteSource, priority: number) {
     const lease = {}
     this.sources.set(lease, { source, priority })
     this.cached = undefined
+    this.emit()
     return () => {
       this.sources.delete(lease)
       this.cached = undefined
+      this.emit()
     }
   }
-  read() {
+  read = () => {
     if (this.cached !== undefined) return this.cached
     if (this.sources.size === 0) {
       this.cached = null
@@ -41,6 +53,8 @@ class PaletteRegistry {
       if (next.directMessages === undefined && base.directMessages !== undefined)
         merged.directMessages = base.directMessages
       if (next.members === undefined && base.members !== undefined) merged.members = base.members
+      if (next.dynamicEntries === undefined && base.dynamicEntries !== undefined)
+        merged.dynamicEntries = base.dynamicEntries
     }
     this.cached = merged
     return merged

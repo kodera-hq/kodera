@@ -9,6 +9,7 @@ import { cssProperty } from '../../ui/cssom'
 import { cx } from '../../ui/cx'
 import { ActionIcon, type ActionIconName } from '../../ui/icons/ActionIcons'
 import { TOUCH_TARGET_HEIGHT } from '../../ui/touchTarget'
+import { uiModeCopy } from './uiModePreference'
 
 /** The row the menu was opened on, and where. */
 export interface ChannelMenuTarget {
@@ -24,6 +25,9 @@ export interface ChannelMenuTarget {
 /** What the view can do with a channel; each absent action is left out of the menu. */
 export interface ChannelMenuActions {
   onSettings?: ((target: ChannelMenuTarget) => void) | undefined
+  onToggleFavorite?: ((target: ChannelMenuTarget) => void) | undefined
+  /** Whether the channel is pinned as a favorite, which names the toggle. */
+  isFavorite?: ((channelId: string) => boolean) | undefined
   onToggleMute?: ((target: ChannelMenuTarget) => void) | undefined
   /** Whether the channel is muted, which names the toggle. */
   isMuted?: ((channelId: string) => boolean) | undefined
@@ -58,10 +62,22 @@ export function ChannelContextMenu({
   target: ChannelMenuTarget | null
   onClose: () => void
 }) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const modeCopy = uiModeCopy(i18n.resolvedLanguage)
   if (target === null) return null
+  const favorite = actions.isFavorite?.(target.channelId) === true
   const muted = actions.isMuted?.(target.channelId) === true
   const items: Item[] = [
+    ...(actions.onToggleFavorite
+      ? [
+          {
+            key: 'favorite',
+            icon: 'sparkle' as const,
+            label: favorite ? modeCopy.favoriteRemove : modeCopy.favoriteAdd,
+            run: actions.onToggleFavorite,
+          },
+        ]
+      : []),
     ...(actions.onSettings
       ? [
           {
@@ -150,9 +166,16 @@ export function ChannelContextMenu({
           align="start"
           sideOffset={4}
           onCloseAutoFocus={(event) => {
-            if (target.trigger?.isConnected) {
+            const trigger = target.trigger
+            if (!trigger?.isConnected) return
+            const focusSelector =
+              'a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])'
+            const destination = trigger.matches(focusSelector)
+              ? trigger
+              : trigger.querySelector<HTMLElement>(focusSelector)
+            if (destination) {
               event.preventDefault()
-              target.trigger.focus()
+              destination.focus()
             }
           }}
           className={cx(
