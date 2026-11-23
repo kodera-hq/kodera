@@ -67,6 +67,9 @@ def public_request(path, method):
     if not isinstance(path, str):
         return False
     path = path.partition('?')[0]
+    # Synapse validates the signed logout_token; no Matrix bearer token is sent.
+    if method == 'POST' and path == '/_synapse/client/oidc/backchannel_logout':
+        return True
     if method == 'GET' and (
         path == '/_synapse/client/oidc/callback'
         or re.fullmatch(r'/_matrix/client/v3/login/sso/redirect(?:/[A-Za-z0-9_-]+)?', path)

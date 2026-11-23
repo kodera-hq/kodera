@@ -256,6 +256,62 @@ def test_edge_scope_resource_refuses_guest_enumeration_profile_and_media(monkeyp
     assert failure.value.code == 403
 
 
+@pytest.mark.parametrize('path,method', [
+    ('/_synapse/client/oidc/backchannel_logout', 'POST'),
+    ('/_synapse/client/oidc/callback', 'GET'),
+    ('/_synapse/client/oidc/callback?code=synthetic&state=synthetic', 'GET'),
+])
+def test_edge_scope_oidc_routes_do_not_require_matrix_bearer(monkeypatch, path, method):
+    import sys
+    from kodera_synapse_policy import _make_scope_resource
+
+    monkeypatch.setitem(sys.modules, 'synapse.http.server', SimpleNamespace(DirectServeJsonResource=object))
+    api = Api()
+    async def requester(request):
+        pytest.fail('OIDC requests must reach Synapse without Matrix bearer authentication')
+    api.get_user_by_req = requester
+    policy = KoderaPolicy({'agent_user_id': '@agent:example.org'}, api)
+    live = policy._authority = Live()
+    request = SimpleNamespace(getHeader=lambda key: {'X-Original-URI': path, 'X-Original-Method': method}.get(key))
+    assert asyncio.run(_make_scope_resource(policy)._async_render_GET(request)) == (200, {'allowed': True})
+    assert live.calls == []
+
+
+@pytest.mark.parametrize('path,method', [
+    ('/_synapse/client/oidc/backchannel_logout', 'GET'),
+    ('/_synapse/client/oidc/backchannel_logout', 'PUT'),
+    ('/_synapse/client/oidc/callback', 'POST'),
+    ('/_synapse/client/oidc/callback', 'PUT'),
+] + [(path, method) for path in [
+    '/_synapse/client/oidc/backchannel_logout/',
+    '/_synapse/client/oidc/backchannel_logout/../callback',
+    '/_synapse/client/oidc/backchannel_logout/%2e%2e/callback',
+    '/_synapse/client/oidc/backchannel_logout/%252e%252e/callback',
+    '/_synapse/client/oidc/../oidc/backchannel_logout',
+    '/_synapse/client/oidc/%2e%2e/oidc/backchannel_logout',
+    '/_synapse/client/oidc/%252e%252e/oidc/backchannel_logout',
+    '/_synapse/client/oidc/callback/../backchannel_logout',
+    '/_synapse/client/oidc/callback/%2e%2e/backchannel_logout',
+] for method in ['GET', 'POST', 'PUT']])
+def test_edge_scope_oidc_exemption_is_exact_and_method_bound(monkeypatch, path, method):
+    import sys
+    from kodera_synapse_policy import _make_scope_resource
+    from conftest import SynapseError
+
+    monkeypatch.setitem(sys.modules, 'synapse.http.server', SimpleNamespace(DirectServeJsonResource=object))
+    api = Api()
+    async def requester(request):
+        return SimpleNamespace(user=SimpleNamespace(to_string=lambda: '@guest:example.org'))
+    api.get_user_by_req = requester
+    policy = KoderaPolicy({'agent_user_id': '@agent:example.org'}, api)
+    live = policy._authority = Live()
+    request = SimpleNamespace(getHeader=lambda key: {'X-Original-URI': path, 'X-Original-Method': method}.get(key))
+    with pytest.raises(SynapseError) as failure:
+        asyncio.run(_make_scope_resource(policy)._async_render_GET(request))
+    assert failure.value.code == 403
+    assert live.calls == [('@guest:example.org', '', 'directory')]
+
+
 def test_guest_room_request_cannot_use_unmanaged_foreign_decision():
     policy = KoderaPolicy({'agent_user_id': '@agent:example.org'}, Api())
     class Scoped:
