@@ -27,11 +27,11 @@ const contactType = 'https://kodera.io/problems/owner-claim-contact-unverified'
 const serviceType = 'https://kodera.io/problems/service-unavailable'
 const expectedLock = {
   repository: 'kodera-hq/kodera',
-  ref: 'blob:9802622e33546e208d813097c3ebe16e5347c748',
-  blob: '9802622e33546e208d813097c3ebe16e5347c748',
+  ref: 'blob:7169b24fee5fdc41950618280f7d229d72a4bf9a',
+  blob: '7169b24fee5fdc41950618280f7d229d72a4bf9a',
   path: 'packages/api-contract/core-api.openapi.yaml',
-  version: '0.54.0',
-  sha256: '9d8f30828cfaa21b0b1a4d8b7696ac2d64076f01c55e5f7f21b26338aaa43e89',
+  version: '0.55.0',
+  sha256: 'bb394ccfce980b2fd42ce1b140730149c56b1edfbe13d8eb5f4a919e978ce5bc',
 }
 const blobOidPattern = /^[0-9a-f]{40}(?![\s\S])/
 const maxPinnedBlobBytes = 4 * 1024 * 1024
@@ -222,7 +222,7 @@ describe('the immutable contract consumer', () => {
       }))
     ).toThrow('pinned git blob bytes')
     const staleVersion = Buffer.from(
-      raw.toString('utf8').replace('  version: 0.54.0', '  version: 0.51.0'),
+      raw.toString('utf8').replace('  version: 0.55.0', '  version: 0.51.0'),
       'utf8'
     )
     expect(() =>
@@ -353,10 +353,10 @@ describe('the immutable contract consumer', () => {
       'src/mocks/generated/problems.ts':
         '82377473578e293b1f7fcea3a987e250f4f58ef0a0e9d89bb959052a6266cc88',
       'src/mocks/generated/examples.ts':
-        '178f64cbb79389ae8141c8d258d2b2e0c19366e55d6187427e4996b914ad6f8c',
+        'b3f51d8f84dec251597fad9e3d922ea6779262b9bdc25c9c1ab1c1a6745f312a',
       'src/mocks/generated/handlers.ts':
         '624a24434b1953718fbe0bf8a7a0ec7fe49dd10fd631ae4de4c8365ff3501ae2',
-      'src/api/schema.d.ts': '5e7207be31e3c3be4739b2c43e68e3b394ce54ef776abb6be216feaf1da79a66',
+      'src/api/schema.d.ts': 'a95a51edeb7b043a070d20a5000564c5612812ba4dd1dc5ab7aeeb348fc86312',
     }
     for (const [path, expected] of Object.entries(hashes)) {
       expect(sha(readFileSync(join(root, path)))).toBe(expected)

@@ -8,7 +8,8 @@ export const pollMessages = {
     statusClosed: 'Sondage clôturé',
     modeMultiple: 'Choix multiple',
     modeSingle: 'Choix unique',
-    anonymousBadge: 'Vote anonyme',
+    errAnonymousUnsupported:
+      'Les votes Matrix révèlent leur auteur dans le salon ; les sondages anonymes ne sont pas disponibles.',
     createdBy: (name: string, votes: number, participants: number) =>
       `Proposé par ${name} • ${votes} vote(s) • ${participants} participant(s)`,
     expand: 'Développer ▾',
@@ -23,7 +24,7 @@ export const pollMessages = {
     callOverlayHide: 'Masquer le sondage',
     pillBadgeLabel: (question: string) => `Sondage actif : ${question}`,
     errNotPoll: 'La commande doit commencer par /poll.',
-    errUsage: 'Usage : /poll "Question ?" "Option A" "Option B" [--multiple] [--anonymous]',
+    errUsage: 'Usage : /poll "Question ?" "Option A" "Option B" [--multiple]',
     errUnclosedQuote: 'Guillemet non refermé dans la commande /poll.',
     errMinOptions: 'Un sondage requiert une question et au moins 2 options.',
     errEmptyQuestionOrOptions:
@@ -47,7 +48,8 @@ export const pollMessages = {
     statusClosed: 'Poll closed',
     modeMultiple: 'Multiple choice',
     modeSingle: 'Single choice',
-    anonymousBadge: 'Anonymous vote',
+    errAnonymousUnsupported:
+      'Matrix votes expose the sender in room history; anonymous polls are unavailable.',
     createdBy: (name: string, votes: number, participants: number) =>
       `Created by ${name} • ${votes} vote(s) • ${participants} participant(s)`,
     expand: 'Expand ▾',
@@ -61,7 +63,7 @@ export const pollMessages = {
     callOverlayHide: 'Hide poll',
     pillBadgeLabel: (question: string) => `Active poll: ${question}`,
     errNotPoll: 'Command must start with /poll.',
-    errUsage: 'Usage: /poll "Question?" "Option A" "Option B" [--multiple] [--anonymous]',
+    errUsage: 'Usage: /poll "Question?" "Option A" "Option B" [--multiple]',
     errUnclosedQuote: 'Unclosed quote in /poll command.',
     errMinOptions: 'A poll requires a question and at least 2 options.',
     errEmptyQuestionOrOptions: 'A poll requires a valid question and at least 2 non-empty options.',

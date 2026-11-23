@@ -29,8 +29,7 @@ export function PollCard({
   locale,
 }: PollCardProps) {
   const { i18n } = useTranslation()
-  const resolvedLocale: PollLocale =
-    locale ?? (i18n.resolvedLanguage === 'en' ? 'en' : 'fr')
+  const resolvedLocale: PollLocale = locale ?? (i18n.resolvedLanguage === 'en' ? 'en' : 'fr')
   const copy = pollMessages[resolvedLocale]
   const mayClose = canClose ?? (currentUserId !== '' && currentUserId === poll.createdBy)
 
@@ -69,11 +68,6 @@ export function PollCard({
             <span className="rounded-sm bg-c-muted px-2 py-1 font-mono text-xs font-medium text-c-ink-2">
               {poll.allowMultiple ? copy.modeMultiple : copy.modeSingle}
             </span>
-            {poll.anonymous ? (
-              <span className="rounded-sm bg-c-muted px-2 py-1 font-mono text-xs font-medium text-c-ink-2">
-                {copy.anonymousBadge}
-              </span>
-            ) : null}
           </div>
           <h3 id={headingId} className="text-md font-semibold text-c-ink">
             {poll.question}

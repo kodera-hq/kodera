@@ -7,8 +7,8 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
-from apps.identity.models import Identity
-from apps.orgs.models import Membership
+from apps.identity.selectors import enabled_email_user_ids
+from apps.orgs.selectors import active_membership_ids_by_user
 
 from .import_parsers import ImportedExternalUser, clean, identifier
 
@@ -81,29 +81,13 @@ def match_external_users(
 
     email_to_membership: dict[str, UUID | None] = {}
     if candidate_emails:
-        active_memberships = {
-            row.user_id: row.id
-            for row in Membership.objects.filter(
-                organisation_id=organisation_id,
-                state="active",
-                accepted_at__isnull=False,
-                deleted_at__isnull=True,
-                user__enabled=True,
-                user__deleted_at__isnull=True,
-            ).only("id", "user_id")
-        }
+        active_memberships = active_membership_ids_by_user(organisation_id=organisation_id)
         if active_memberships:
             for normalized in candidate_emails:
-                matched_user_ids = {
-                    ident.user_id
-                    for ident in Identity.objects.filter(
-                        organisation_id=organisation_id,
-                        enabled=True,
-                        deleted_at__isnull=True,
-                        email__iexact=normalized,
-                    ).only("id", "user_id")
-                    if ident.user_id in active_memberships
-                }
+                matched_user_ids = (
+                    enabled_email_user_ids(organisation_id=organisation_id, email=normalized)
+                    & active_memberships.keys()
+                )
                 if len(matched_user_ids) == 1:
                     only_user_id = next(iter(matched_user_ids))
                     email_to_membership[normalized] = active_memberships[only_user_id]

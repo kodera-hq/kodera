@@ -14,11 +14,7 @@ import {
 } from './pollState'
 
 export interface PollEventSink {
-  sendEvent?: (
-    roomId: string,
-    eventType: string,
-    content: Record<string, unknown>
-  ) => Promise<void>
+  sendEvent?: (roomId: string, eventType: string, content: Record<string, unknown>) => Promise<void>
 }
 
 export interface TimelinePollMessage {
@@ -49,25 +45,10 @@ function selectedIndexesForVoter(poll: ChannelPoll, voterId: string): number[] {
   return indexes
 }
 
-function mergePollStateOntoTarget(target: ChannelPoll, source: ChannelPoll): ChannelPoll {
-  const options = target.options.map((opt, idx) => {
-    const sourceVoters = source.options[idx]?.voterIds ?? []
-    const combined = Array.from(new Set([...opt.voterIds, ...sourceVoters]))
-    return {
-      ...opt,
-      voterIds: combined,
-    }
-  })
-  return {
-    ...target,
-    options,
-    closed: target.closed || source.closed,
-  }
-}
-
 class PollRuntimeStore {
   #localPolls = new Map<string, readonly ChannelPoll[]>()
-  #overrides = new Map<string, ChannelPoll>()
+  #overrides = new Map<string, Map<string, readonly number[]>>()
+  #closed = new Set<string>()
   #pendingVotes = new Map<string, Map<string, readonly number[]>>()
   #pendingCloses = new Set<string>()
   #version = 0
@@ -122,23 +103,20 @@ class PollRuntimeStore {
       else this.#localPolls.set(roomId, next)
     }
     this.#overrides.delete(pollId)
+    this.#closed.delete(pollId)
     this.#pendingVotes.delete(pollId)
     this.#pendingCloses.delete(pollId)
     this.#emit()
   }
 
-  vote(
-    poll: ChannelPoll,
-    optionId: string,
-    voterId: string,
-    sink?: PollEventSink
-  ): ChannelPoll {
-    const base = this.#overrides.get(poll.id) ?? poll
+  vote(poll: ChannelPoll, optionId: string, voterId: string, sink?: PollEventSink): ChannelPoll {
+    const base = this.#applyOverrides(poll)
     const next = castPollVote(base, optionId, voterId)
-    this.#overrides.set(poll.id, next)
-    this.#syncLocal(next)
-
     const optionIndexes = selectedIndexesForVoter(next, voterId)
+    const overrides = this.#overrides.get(poll.id) ?? new Map<string, readonly number[]>()
+    overrides.set(voterId, optionIndexes)
+    this.#overrides.set(poll.id, overrides)
+    this.#syncLocal(next)
     if (poll.id.startsWith('local-poll-')) {
       const byVoter = this.#pendingVotes.get(poll.id) ?? new Map<string, readonly number[]>()
       byVoter.set(voterId, optionIndexes)
@@ -150,7 +128,12 @@ class PollRuntimeStore {
           pollId: poll.id,
           optionIndexes,
         })
-        .catch(() => undefined)
+        .catch(() => {
+          if (this.#overrides.get(poll.id)?.get(voterId) === optionIndexes) {
+            this.#overrides.get(poll.id)?.delete(voterId)
+            this.#emit()
+          }
+        })
     }
 
     this.#emit()
@@ -158,10 +141,10 @@ class PollRuntimeStore {
   }
 
   close(poll: ChannelPoll, sink?: PollEventSink, actorMayClose = true): ChannelPoll {
-    const base = this.#overrides.get(poll.id) ?? poll
+    const base = this.#applyOverrides(poll)
     if (!actorMayClose) return base
     const next = closeChannelPoll(base)
-    this.#overrides.set(poll.id, next)
+    this.#closed.add(poll.id)
     this.#syncLocal(next)
 
     if (poll.id.startsWith('local-poll-')) {
@@ -184,6 +167,7 @@ class PollRuntimeStore {
     if (locals !== undefined) {
       for (const local of locals) {
         this.#overrides.delete(local.id)
+        this.#closed.delete(local.id)
         this.#pendingVotes.delete(local.id)
         this.#pendingCloses.delete(local.id)
       }
@@ -196,6 +180,7 @@ class PollRuntimeStore {
     if (
       this.#localPolls.size === 0 &&
       this.#overrides.size === 0 &&
+      this.#closed.size === 0 &&
       this.#pendingVotes.size === 0 &&
       this.#pendingCloses.size === 0
     ) {
@@ -203,6 +188,7 @@ class PollRuntimeStore {
     }
     this.#localPolls.clear()
     this.#overrides.clear()
+    this.#closed.clear()
     this.#pendingVotes.clear()
     this.#pendingCloses.clear()
     this.#emit()
@@ -262,13 +248,10 @@ class PollRuntimeStore {
       )
       if (matchIdx !== -1) {
         const matchedLocal = roomLocals.splice(matchIdx, 1)[0]!
-        const localState = this.#overrides.get(matchedLocal.id) ?? matchedLocal
-        const migrated = mergePollStateOntoTarget(
-          this.#overrides.get(msg.eventId) ?? base,
-          localState
-        )
-        this.#overrides.set(msg.eventId, migrated)
+        const localOverrides = this.#overrides.get(matchedLocal.id)
+        if (localOverrides !== undefined) this.#overrides.set(msg.eventId, localOverrides)
         this.#overrides.delete(matchedLocal.id)
+        if (this.#closed.delete(matchedLocal.id)) this.#closed.add(msg.eventId)
 
         const pendingVotes = this.#pendingVotes.get(matchedLocal.id)
         if (pendingVotes !== undefined) {
@@ -297,13 +280,41 @@ class PollRuntimeStore {
         else this.#localPolls.set(roomId, [...roomLocals])
       }
 
-      const override = this.#overrides.get(base.id)
-      const current = override !== undefined ? mergePollStateOntoTarget(base, override) : base
+      const current = this.#applyOverrides(base, true)
       synced.push(current)
     }
 
     if (synced.length === 0 && roomLocals.length === 0) return EMPTY_POLLS
     return [...synced, ...roomLocals].sort((a, b) => a.createdAt - b.createdAt)
+  }
+
+  #applyOverrides(poll: ChannelPoll, retireEcho = false): ChannelPoll {
+    const byVoter = this.#overrides.get(poll.id)
+    let current = poll
+    for (const [voter, indexes] of byVoter ?? []) {
+      const actual = selectedIndexesForVoter(poll, voter)
+      if (
+        retireEcho &&
+        actual.length === indexes.length &&
+        actual.every((i) => indexes.includes(i))
+      ) {
+        byVoter?.delete(voter)
+        continue
+      }
+      current = {
+        ...current,
+        options: current.options.map((option, index) => ({
+          ...option,
+          voterIds: [
+            ...option.voterIds.filter((id) => id !== voter),
+            ...(indexes.includes(index) ? [voter] : []),
+          ],
+        })),
+      }
+    }
+    if (byVoter?.size === 0) this.#overrides.delete(poll.id)
+    if (poll.closed) this.#closed.delete(poll.id)
+    return this.#closed.has(poll.id) ? closeChannelPoll(current) : current
   }
 
   #syncLocal(updated: ChannelPoll): void {

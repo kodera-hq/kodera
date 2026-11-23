@@ -72,7 +72,7 @@ const FORBIDDEN_PATTERNS: ReadonlyArray<readonly [BugNoteRefusalCode, RegExp]> =
         String.raw`(?<![A-Za-z0-9])A[KS]IA[A-Z0-9]{8,}`,
         String.raw`(?<![A-Za-z0-9])oc1_[0-9a-fA-F_-]{4,}`,
         String.raw`(?<![A-Za-z0-9])xox[baprs]-[A-Za-z0-9-]{4,}`,
-        String.raw`(?<![A-Za-z0-9_-])(?:access_token|refresh_token|id_token|session_token|auth_token|token|api_key|apikey|x_api_key|x-api-key|secret|client_secret|private_key|password|passwd|authorization|bearer|jwt|cookie|set-cookie)\s*[:=]\s*\S+`,
+        String.raw`(?<![A-Za-z0-9_-])["']?(?:access_token|refresh_token|id_token|session_token|auth_token|token|api_key|apikey|x_api_key|x-api-key|secret|client_secret|private_key|password|passwd|authorization|bearer|jwt|cookie|set-cookie)["']?\s*[:=]\s*["']?\S+`,
       ].join('|'),
       'i'
     ),

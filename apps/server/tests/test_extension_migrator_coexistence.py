@@ -24,7 +24,7 @@ from django.utils import timezone
 from test_extension_import_parsers import archive
 from test_intake_writer_role import INSUFFICIENT_PRIVILEGE, acting_as, refused
 from workspace_documents.test_services import native_engine as native_engine
-from workspace_safety.test_moderation import world as world
+from workspace_safety.test_moderation import world as moderation_world  # noqa: F401
 
 from apps.audit.models import AuditEvent
 from apps.docs.models import Collection, CollectionRow, Document
@@ -41,13 +41,29 @@ from apps.identity.models import Identity, User
 from apps.media import outbound
 from apps.media.models import Attachment
 from apps.orgs.models import Membership
-from apps.workspaces.models import Category, Channel, WorkspaceModerator, WorkspaceQuota
+from apps.workspaces.models import (
+    Category,
+    Channel,
+    ResourcePolicy,
+    WorkspaceModerator,
+    WorkspaceQuota,
+)
 from core.db.api_database_boundary import assert_writer_grants
 from core.db.api_writer_role import grant_statements
 from core.idempotency.models import IdempotencyRecord
 from core.sealing import SealError, unseal
 
 pytestmark = pytest.mark.django_db(transaction=True)
+
+
+@pytest.fixture
+def world(moderation_world):  # noqa: F811
+    org, workspace, members, tokens = moderation_world
+    workspace.default_policy = ResourcePolicy.objects.create(
+        workspace=workspace, visibility="organisation"
+    )
+    workspace.save(update_fields=["default_policy"])
+    return org, workspace, members, tokens
 
 
 def _forge_zip_declared_sizes(
@@ -901,27 +917,23 @@ def test_coexistence_bridge_sealing_aad_hmac_loop_guards_confidential_and_egress
             },
         }
     ).encode()
-    orig_select_for_update = Channel.objects.select_for_update
+    from apps.workspaces import selectors as workspace_selectors
 
-    class _ConfChannelQS:
-        def filter(self, **_kw: Any) -> _ConfChannelQS:
-            return self
-
-        def first(self) -> Channel:
-            fake_ch = Channel(
-                id=plain_ch.id,
-                workspace_id=workspace.id,
-                category_id=plain_ch.category_id,
-                kind="text",
-                name=plain_ch.name,
-                position=plain_ch.position,
-                lifecycle="active",
-                is_confidential=True,
-            )
-            return fake_ch
+    orig_channel_snapshot = workspace_selectors.channel_snapshot
 
     with monkeypatch.context() as mp:
-        mp.setattr(Channel.objects, "select_for_update", lambda *a, **k: _ConfChannelQS())
+        mp.setattr(
+            workspace_selectors,
+            "channel_snapshot",
+            lambda **_kw: workspace_selectors.ChannelSnapshot(
+                plain_ch.id,
+                plain_ch.name,
+                "text",
+                "active",
+                plain_ch.room_state,
+                True,
+            ),
+        )
         with pytest.raises(
             ExtensionRefusedError, match="coexistence_confidential_channel_refused"
         ) as flip_err:
@@ -934,7 +946,7 @@ def test_coexistence_bridge_sealing_aad_hmac_loop_guards_confidential_and_egress
                 room_id="!coex:acme.kodera.io",
             )
         assert flip_err.value.status == 403
-    assert Channel.objects.select_for_update == orig_select_for_update
+    assert workspace_selectors.channel_snapshot == orig_channel_snapshot
 
     # Archiving the channel refuses delivery (`403 coexistence_channel_inactive`).
     Channel.objects.filter(id=plain_ch.id).update(lifecycle="archived")
@@ -1122,7 +1134,7 @@ def test_http_endpoints_attachment_upload_path_writer_role_retention_and_erasure
             upload_expires_at=timezone.now() + timedelta(minutes=15),
             completed_at=timezone.now(),
         )
-        from apps.extensions.api import views as ext_views
+        from apps.extensions import services as extension_services
         from apps.media import services as media_services
 
         monkeypatch.setattr(
@@ -1135,7 +1147,7 @@ def test_http_endpoints_attachment_upload_path_writer_role_retention_and_erasure
                 "downloadUrl": "https://storage.example.org/export.zip",
             },
         )
-        monkeypatch.setattr(ext_views, "fetch_attachment_bytes", lambda **_kw: small_zip)
+        monkeypatch.setattr(extension_services, "fetch_attachment_bytes", lambda **_kw: small_zip)
 
         with acting_as(role):
             exec_resp = client.post(
@@ -2135,3 +2147,233 @@ def test_drain_recovers_expired_in_flight_inbound_and_outbound_leases(world, mon
     assert out_guard.state == "delivered"
     assert out_guard.lease_id is None
     assert out_guard.sanitized_payload is None
+
+
+def _deny_channel_member(channel: Channel, member: Membership) -> None:
+    from apps.workspaces.models import ResourcePolicy, ResourcePolicyRule
+
+    policy = ResourcePolicy.objects.create(workspace=channel.workspace, visibility="restricted")
+    channel.policy_mode = "explicit"
+    channel.explicit_policy = policy
+    channel.save(update_fields=["policy_mode", "explicit_policy"])
+    ResourcePolicyRule.objects.create(policy=policy, kind="deny_member", membership=member)
+
+
+def test_denied_admin_cannot_preview_import_or_create_bridge(world) -> None:
+    org, workspace, members, tokens = world
+    channel = _create_channel(workspace, name="restricted")
+    _deny_channel_member(channel, members[1])
+    raw = archive(
+        {
+            "channels.json": json.dumps([{"id": "C1", "name": "restricted"}]),
+            "restricted/2026-01-01.json": json.dumps([{"ts": "1.1", "text": "History"}]),
+        }
+    )
+    for operation in (imports.preview, imports.execute):
+        with pytest.raises(ExtensionRefusedError) as failure:
+            operation(
+                verified=tokens[1],
+                organisation_id=org.id,
+                source="slack",
+                raw=raw,
+                channel_map={"C1": channel.id},
+            )
+        assert failure.value.status == 403
+    with pytest.raises(ExtensionRefusedError) as failure:
+        coexistence.create_bridge(
+            verified=tokens[1],
+            organisation_id=org.id,
+            channel_id=channel.id,
+            source="slack",
+            external_workspace_id="T1",
+            external_channel_id="C1",
+            outbound_endpoint="https://hooks.example.org/test",
+            signing_secret="s" * 36,
+        )
+    assert failure.value.status == 403
+
+
+def test_channel_revoked_after_enqueue_blocks_worker_delivery(world, settings, monkeypatch) -> None:
+    org, workspace, members, tokens = world
+    channel = _create_channel(workspace, name="revoked-after-queue")
+    bridge = coexistence.create_bridge(
+        verified=tokens[1],
+        organisation_id=org.id,
+        channel_id=channel.id,
+        source="slack",
+        external_workspace_id="T1",
+        external_channel_id="C1",
+        outbound_endpoint="https://hooks.example.org/test",
+        signing_secret="s" * 36,
+    )
+    batch = ImportBatch.objects.create(
+        workspace=workspace, creator=members[1], source="slack", archive_sha256="a" * 64
+    )
+    row = ImportedObject.objects.create(
+        workspace=workspace,
+        batch=batch,
+        source="slack",
+        external_key="queued",
+        source_sha256="b" * 64,
+        channel=channel,
+        matrix_txn_id="kodera-imp-" + "a" * 32,
+        replay_state="queued_matrix",
+        replay_payload={"text": "History"},
+    )
+    now_ts = int(time.time())
+    payload = json.dumps(
+        {
+            "event_id": "EvQueued",
+            "team_id": "T1",
+            "event": {
+                "channel": "C1",
+                "user": "U1",
+                "text": "Pending bridge message",
+            },
+        }
+    ).encode()
+    coexistence.receive_webhook(
+        bridge_id=bridge.id,
+        raw_body=payload,
+        headers=_sign_coexistence("s" * 36, now_ts, payload),
+        now_ts=now_ts,
+    )
+    outbound_rows = coexistence.enqueue_outbound_coexistence(
+        workspace_id=workspace.id,
+        channel_id=channel.id,
+        matrix_event_id="$queued-outbound",
+        sender="@member:example.org",
+        sender_display_name="Member",
+        text="Pending outbound",
+    )
+    assert len(outbound_rows) == 1
+    _deny_channel_member(channel, members[1])
+    from django.db import transaction
+
+    with transaction.atomic(), pytest.raises(ExtensionRefusedError) as failure:
+        coexistence._lock_and_verify_bridge_authority(bridge_id=bridge.id)
+    assert failure.value.status == 403
+    payload = payload.replace(b"EvQueued", b"EvDenied")
+    with pytest.raises(ExtensionRefusedError) as failure:
+        coexistence.receive_webhook(
+            bridge_id=bridge.id,
+            raw_body=payload,
+            headers=_sign_coexistence("s" * 36, now_ts, payload),
+            now_ts=now_ts,
+        )
+    assert failure.value.status == 403
+    assert (
+        coexistence.enqueue_outbound_coexistence(
+            workspace_id=workspace.id,
+            channel_id=channel.id,
+            matrix_event_id="$denied-outbound",
+            sender="@member:example.org",
+            sender_display_name="Member",
+            text="Denied outbound",
+        )
+        == []
+    )
+
+    class ResolvingTransport(FakeSynapseTransport):
+        def resolve_channel_room(self, channel_id: uuid.UUID) -> str:
+            return "!restricted:example.org"
+
+    transport = ResolvingTransport()
+    from unittest.mock import Mock
+
+    from django.core.management import call_command
+
+    from apps.extensions.management.commands import dispatch_extension_coexistence as cmd_mod
+
+    request = Mock(side_effect=AssertionError("revoked bridge must not deliver"))
+    monkeypatch.setattr(outbound, "request", request)
+    monkeypatch.setattr(cmd_mod, "require_operator_profile", lambda: None)
+    settings.KODERA_MATRIX_REPLAY_TRANSPORT_FACTORY = lambda: transport
+    call_command(
+        "dispatch_extension_coexistence",
+        "--once",
+        "--organisation",
+        str(org.id),
+        stdout=io.StringIO(),
+    )
+    row.refresh_from_db()
+    assert row.replay_state == "obsolete"
+    assert not transport.calls
+    request.assert_not_called()
+    assert set(
+        CoexistenceReplayGuard.objects.filter(bridge=bridge).values_list("state", flat=True)
+    ) == {"obsolete"}
+
+
+@pytest.mark.parametrize("member_index", [0, 1])
+@pytest.mark.parametrize("denied_action", ["channel.view", "message.post"])
+@pytest.mark.parametrize("denial_source", ["policy", "override"])
+def test_channel_post_respects_explicit_denials_for_every_administrator(
+    world, member_index, denied_action, denial_source
+):
+    from apps.extensions.services import require_channel_post
+    from apps.workspaces.models import (
+        ResourcePolicyRule,
+        WorkspaceChannelRoleOverride,
+        WorkspaceMemberRole,
+        WorkspaceRole,
+    )
+
+    org, workspace, members, _ = world
+    member = members[member_index]
+    channel = _create_channel(workspace, name="denied-post")
+    require_channel_post(channel_id=channel.id, membership_id=member.id, organisation_id=org.id)
+    if denial_source == "policy":
+        policy = ResourcePolicy.objects.create(workspace=workspace, visibility="organisation")
+        channel.policy_mode = "explicit"
+        channel.explicit_policy = policy
+        channel.save(update_fields=["policy_mode", "explicit_policy"])
+        ResourcePolicyRule.objects.create(
+            policy=policy, kind="deny_capability", capability=denied_action
+        )
+    else:
+        role = WorkspaceRole.objects.create(
+            workspace=workspace, organisation_id=org.id, name="Importers", slug="importers"
+        )
+        WorkspaceMemberRole.objects.create(workspace=workspace, membership=member, role=role)
+        WorkspaceChannelRoleOverride.objects.create(
+            workspace=workspace,
+            channel=channel,
+            role=role,
+            allow=[cap for cap in ("channel.view", "message.post") if cap != denied_action],
+            deny=[denied_action],
+        )
+    with pytest.raises(ExtensionRefusedError) as failure:
+        require_channel_post(channel_id=channel.id, membership_id=member.id, organisation_id=org.id)
+    assert (failure.value.status, failure.value.reason) == (403, "extension_channel_access_refused")
+
+
+@pytest.mark.parametrize("member_index", [0, 1])
+def test_channel_post_refuses_missing_workspace_default_policy(world, member_index):
+    from apps.extensions.services import require_channel_post
+
+    org, workspace, members, _ = world
+    channel = _create_channel(workspace, name="unresolved-policy")
+    workspace.default_policy = None
+    workspace.save(update_fields=["default_policy"])
+    with pytest.raises(ExtensionRefusedError) as failure:
+        require_channel_post(
+            channel_id=channel.id, membership_id=members[member_index].id, organisation_id=org.id
+        )
+    assert (failure.value.status, failure.value.reason) == (403, "extension_channel_access_refused")
+
+
+@pytest.mark.parametrize("member_index", [0, 1])
+def test_channel_post_refuses_confidential_channel_by_default(world, member_index):
+    from apps.extensions.services import require_channel_post
+
+    org, workspace, members, _ = world
+    channel = _create_channel(workspace, name="confidential-post", is_confidential=True)
+    with pytest.raises(ExtensionRefusedError) as failure:
+        require_channel_post(
+            channel_id=channel.id, membership_id=members[member_index].id, organisation_id=org.id
+        )
+    assert (failure.value.status, failure.value.reason) == (
+        403,
+        "extension_confidential_channel_refused",
+    )

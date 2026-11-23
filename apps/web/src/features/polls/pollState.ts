@@ -156,10 +156,7 @@ function tryParseMultilinePoll(afterCommand: string): ParsePollCommandResult | n
   }
 }
 
-export function parsePollCommand(
-  input: string,
-  locale: PollLocale = 'fr'
-): ParsePollCommandResult {
+export function parsePollCommand(input: string, locale: PollLocale = 'fr'): ParsePollCommandResult {
   const copy = pollMessages[locale]
   const trimmed = input.trim()
   if (!trimmed.startsWith('/poll') || (trimmed.length > 5 && !/\s/u.test(trimmed[5]!))) {
@@ -178,7 +175,11 @@ export function parsePollCommand(
   }
 
   const multiline = tryParseMultilinePoll(afterCommand)
-  if (multiline !== null) return multiline
+  if (multiline !== null) {
+    return multiline.ok && multiline.anonymous
+      ? { ok: false, error: copy.errAnonymousUnsupported }
+      : multiline
+  }
 
   const { segments, flags, unclosedQuote } = tokenizePollArguments(afterCommand)
   if (unclosedQuote) {
@@ -190,6 +191,7 @@ export function parsePollCommand(
 
   const allowMultiple = flags.includes('--multiple') || flags.includes('--multi')
   const anonymous = flags.includes('--anonymous') || flags.includes('--anon')
+  if (anonymous) return { ok: false, error: copy.errAnonymousUnsupported }
 
   if (segments.length < 3) {
     return {
@@ -240,7 +242,7 @@ export function pollPayloadOf(content: unknown): PollWirePayload | undefined {
     question,
     options,
     allowMultiple: obj.allowMultiple === true,
-    anonymous: obj.anonymous === true,
+    anonymous: false,
   }
 }
 
@@ -281,7 +283,7 @@ export function createChannelPoll(params: CreateChannelPollParams): ChannelPoll 
     question: params.question.trim(),
     options,
     allowMultiple: Boolean(params.allowMultiple),
-    anonymous: Boolean(params.anonymous),
+    anonymous: false,
     closed: false,
     createdBy: params.createdBy,
     createdByName: params.createdByName,
@@ -289,11 +291,7 @@ export function createChannelPoll(params: CreateChannelPollParams): ChannelPoll 
   }
 }
 
-export function castPollVote(
-  poll: ChannelPoll,
-  optionId: string,
-  voterId: string
-): ChannelPoll {
+export function castPollVote(poll: ChannelPoll, optionId: string, voterId: string): ChannelPoll {
   if (poll.closed) {
     return poll
   }
@@ -378,15 +376,12 @@ export function computePollSummary(poll: ChannelPoll): PollComputedSummary {
   }
 }
 
-export function formatPollMarkdownForDocs(
-  poll: ChannelPoll,
-  locale: PollLocale = 'fr'
-): string {
+export function formatPollMarkdownForDocs(poll: ChannelPoll, locale: PollLocale = 'fr'): string {
   const copy = pollMessages[locale]
   const summary = computePollSummary(poll)
   const statusLabel = poll.closed ? copy.mdStatusClosed : copy.mdStatusOpen
   const modeLabel = poll.allowMultiple ? copy.modeMultiple : copy.modeSingle
-  const anonymityLabel = poll.anonymous ? copy.anonymousBadge : copy.mdNamedVote
+  const anonymityLabel = copy.mdNamedVote
 
   const lines: string[] = [
     copy.mdHeading(poll.question),

@@ -359,6 +359,7 @@ describe('the workspace, once it exists', () => {
         template_key: null,
         topic: 'Le chantier de Lille',
         lifecycle: 'archived',
+        is_confidential: false,
         room_state: 'ready',
       },
       {
@@ -368,6 +369,7 @@ describe('the workspace, once it exists', () => {
         template_key: 'lounge',
         topic: '',
         lifecycle: 'archived',
+        is_confidential: false,
         room_state: 'ready',
       },
     ]

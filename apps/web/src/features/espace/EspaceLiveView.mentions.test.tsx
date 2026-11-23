@@ -39,6 +39,7 @@ const WORKSPACE: Workspace = {
           template_key: 'general',
           topic: '',
           lifecycle: 'active',
+          is_confidential: false,
           room_state: 'ready',
         },
       ],

@@ -17,23 +17,23 @@ from django.db import IntegrityError, connection, transaction
 
 from apps.docs import collections, services as documents
 from apps.docs.errors import RefusalError
-from apps.identity.models import Identity, User
+from apps.identity import selectors as identities
 from apps.identity.selectors import lock_delivery_identity, lock_user_fence
-from apps.orgs.models import Membership, Organisation
+from apps.orgs import selectors as organisations
 from apps.orgs.selectors import (
     lock_erasure_cutoff_fences,
     lock_membership_fence,
     lock_organisation,
     organisation_exists,
 )
+from apps.workspaces import selectors as workspaces
 from apps.workspaces.channel_sets import lock_workspace
-from apps.workspaces.models import Channel, WorkspaceQuota
 from apps.workspaces.quotas import violation
 
 from .import_parsers import MAX_ARCHIVE, ImportedMessage, Item, Parsed, parse
 from .member_matching import inert_author_attribution, match_external_users
 from .models import ImportBatch, ImportedObject, WorkspaceCutoff
-from .services import admin, audit, read_admin
+from .services import admin, audit, read_admin, require_channel_post
 from .wire import ExtensionRefusedError
 
 
@@ -162,16 +162,6 @@ def _validate_source_and_raw(source: str, raw: bytes) -> None:
         raise ExtensionRefusedError("import_source_or_size_invalid")
 
 
-def _quota_pages_used(workspace_id: UUID) -> int:
-    with connection.cursor() as cursor:
-        cursor.execute("SELECT workspace_quota_usage(%s)", [workspace_id])
-        raw_usage = cursor.fetchone()[0]
-    usage = json.loads(raw_usage) if isinstance(raw_usage, str) else raw_usage
-    if isinstance(usage, dict) and type(usage.get("pages")) is int:
-        return int(usage["pages"])
-    return 0
-
-
 def preview(
     *,
     verified: Any,
@@ -188,18 +178,14 @@ def preview(
     with transaction.atomic():
         with connection.cursor() as cursor:
             cursor.execute("SET LOCAL transaction_read_only = on")
-        workspace_id, _ = read_admin(verified, organisation_id)
+        workspace_id, principal = read_admin(verified, organisation_id)
         member_match = match_external_users(
             organisation_id=organisation_id, external_users=parsed.external_users
         )
 
-        workspace_channels = list(
-            Channel.objects.filter(workspace_id=workspace_id, kind="text")
-            .exclude(lifecycle__in=("deletion_pending", "deleted"))
-            .only("id", "name", "is_confidential", "lifecycle")
-        )
+        workspace_channels = workspaces.importable_channel_snapshots(workspace_id=workspace_id)
         channels_by_id = {ch.id: ch for ch in workspace_channels}
-        channels_by_name: dict[str, list[Channel]] = {}
+        channels_by_name: dict[str, list[workspaces.ChannelSnapshot]] = {}
         for ch in workspace_channels:
             channels_by_name.setdefault(ch.name.casefold(), []).append(ch)
 
@@ -210,6 +196,13 @@ def preview(
         if channel_map:
             for mapped_id in channel_map.values():
                 target_ch = channels_by_id.get(mapped_id)
+                if target_ch is not None:
+                    require_channel_post(
+                        channel_id=target_ch.id,
+                        membership_id=principal.membership_id,
+                        organisation_id=organisation_id,
+                        allow_confidential_preview=True,
+                    )
                 if target_ch is not None and target_ch.is_confidential:
                     confidential_skipped = True
 
@@ -231,6 +224,13 @@ def preview(
                 candidates = channels_by_name.get(imp_ch.name.casefold(), [])
                 non_conf = [c for c in candidates if not c.is_confidential]
                 if non_conf:
+                    for candidate in non_conf:
+                        require_channel_post(
+                            channel_id=candidate.id,
+                            membership_id=principal.membership_id,
+                            organisation_id=organisation_id,
+                            allow_confidential_preview=True,
+                        )
                     channels_existing += 1
                 elif candidates:
                     confidential_skipped = True
@@ -271,10 +271,10 @@ def preview(
 
         doc_items_needed = 0 if matrix_mode else (len(parsed.items) - already_imported_reused)
         quota_exceeded = False
-        quota = WorkspaceQuota.objects.filter(workspace_id=workspace_id).first()
-        if quota is not None and quota.pages is not None and doc_items_needed > 0:
-            used_pages = _quota_pages_used(workspace_id)
-            if used_pages + doc_items_needed > quota.pages:
+        page_limit = workspaces.workspace_page_limit(workspace_id=workspace_id)
+        if page_limit is not None and doc_items_needed > 0:
+            used_pages = workspaces.workspace_pages_used(workspace_id=workspace_id)
+            if used_pages + doc_items_needed > page_limit:
                 quota_exceeded = True
 
         warnings: list[str] = []
@@ -477,7 +477,9 @@ def apply_item(
     return document_id, True
 
 
-def _validate_target_channel_locked(channel: Channel | None) -> Channel:
+def _validate_target_channel_locked(
+    channel: workspaces.ChannelSnapshot | None,
+) -> workspaces.ChannelSnapshot:
     if (
         channel is None
         or channel.kind != "text"
@@ -505,9 +507,15 @@ def _prepare_or_queue_matrix_step(
         workspace_id, principal = admin(verified, organisation_id)
         batch = ImportBatch.objects.select_for_update().get(id=batch_id, workspace_id=workspace_id)
         channel = _validate_target_channel_locked(
-            Channel.objects.select_for_update()
-            .filter(id=target_channel_id, workspace_id=workspace_id)
-            .first()
+            workspaces.channel_snapshot(
+                channel_id=target_channel_id, workspace_id=workspace_id, for_update=True
+            )
+        )
+        require_channel_post(
+            channel_id=channel.id,
+            membership_id=principal.membership_id,
+            organisation_id=organisation_id,
+            confidential_reason="import_confidential_channel_refused",
         )
         old = (
             ImportedObject.objects.select_for_update()
@@ -553,7 +561,7 @@ def _prepare_or_queue_matrix_step(
                 external_key=message.external_key,
                 source_sha256=message.sha256,
                 document=None,
-                channel=channel,
+                channel_id=channel.id,
                 matrix_txn_id=txn_id,
                 matrix_event_id=None,
                 replay_state="queued_matrix",
@@ -607,9 +615,15 @@ def _commit_matrix_step(
     workspace_id, principal = admin(verified, organisation_id)
     batch = ImportBatch.objects.select_for_update().get(id=batch_id, workspace_id=workspace_id)
     channel = _validate_target_channel_locked(
-        Channel.objects.select_for_update()
-        .filter(id=target_channel_id, workspace_id=workspace_id)
-        .first()
+        workspaces.channel_snapshot(
+            channel_id=target_channel_id, workspace_id=workspace_id, for_update=True
+        )
+    )
+    require_channel_post(
+        channel_id=channel.id,
+        membership_id=principal.membership_id,
+        organisation_id=organisation_id,
+        confidential_reason="import_confidential_channel_refused",
     )
     old = (
         ImportedObject.objects.select_for_update()
@@ -634,7 +648,7 @@ def _commit_matrix_step(
             external_key=message.external_key,
             source_sha256=message.sha256,
             document=None,
-            channel=channel,
+            channel_id=channel.id,
             matrix_txn_id=txn_id,
             matrix_event_id=event_id,
             replay_state="replayed",
@@ -689,12 +703,18 @@ def replay_matrix(
     # Pre-check every mapped channel under canonical lock BEFORE starting batch writes so
     # confidential targets refuse with 403 even when `matrix_transport` is None (`ADR-0003`).
     with transaction.atomic():
-        workspace_id, _ = admin(verified, organisation_id)
+        workspace_id, principal = admin(verified, organisation_id)
         for ch_uuid in set(channel_map.values()):
-            _validate_target_channel_locked(
-                Channel.objects.select_for_update()
-                .filter(id=ch_uuid, workspace_id=workspace_id)
-                .first()
+            channel = _validate_target_channel_locked(
+                workspaces.channel_snapshot(
+                    channel_id=ch_uuid, workspace_id=workspace_id, for_update=True
+                )
+            )
+            require_channel_post(
+                channel_id=channel.id,
+                membership_id=principal.membership_id,
+                organisation_id=organisation_id,
+                confidential_reason="import_confidential_channel_refused",
             )
         member_match = match_external_users(
             organisation_id=organisation_id, external_users=parsed.external_users
@@ -861,34 +881,26 @@ def replay_matrix(
 
 def _lock_and_verify_batch_creator_authority(
     *, object_id: UUID
-) -> tuple[UUID, ImportBatch, ImportedObject, Channel]:
+) -> tuple[UUID, ImportBatch, ImportedObject, workspaces.ChannelSnapshot]:
     """Acquire canonical `advisories -> m -> i -> u -> o -> w` locks for queued worker replay."""
-    initial = (
-        ImportedObject.objects.select_related("workspace", "batch__creator", "channel")
-        .filter(id=object_id)
-        .first()
-    )
+    initial = ImportedObject.objects.select_related("batch").filter(id=object_id).first()
     if initial is None or initial.channel_id is None:
         raise ExtensionRefusedError("import_object_absent", 404)
-    org_id: UUID = initial.workspace.organisation_id
+    org_id: UUID = workspaces.workspace_organisation(workspace_id=initial.workspace_id)
     if not organisation_exists(organisation_id=org_id):
         raise ExtensionRefusedError("extension_workspace_absent", 404)
     if WorkspaceCutoff.objects.filter(organisation_id=org_id).exists():
         raise ExtensionRefusedError("extension_workspace_cut_off", 410)
 
     creator_membership_id: UUID = initial.batch.creator_id
-    creator_user_id: UUID = initial.batch.creator.user_id
-    initial_identity = (
-        Identity.objects.filter(
-            organisation_id=org_id, user_id=creator_user_id, deleted_at__isnull=True
-        )
-        .order_by("id")
-        .first()
+    creator_user_id: UUID = organisations.membership_user_id(membership_id=initial.batch.creator_id)
+    initial_identity = identities.first_organisation_identity_id(
+        organisation_id=org_id, user_id=creator_user_id
     )
     lock_erasure_cutoff_fences(organisation_id=org_id, user_id=creator_user_id)
     locked_user_id = lock_membership_fence(membership_id=creator_membership_id)
     if initial_identity is not None:
-        lock_delivery_identity(identity_id=initial_identity.id)
+        lock_delivery_identity(identity_id=initial_identity)
     lock_user_fence(user_id=locked_user_id)
     if not lock_organisation(organisation_id=org_id):
         raise ExtensionRefusedError("extension_workspace_absent", 404)
@@ -896,25 +908,16 @@ def _lock_and_verify_batch_creator_authority(
         raise ExtensionRefusedError("extension_workspace_absent", 404)
     if WorkspaceCutoff.objects.filter(organisation_id=org_id).exists():
         raise ExtensionRefusedError("extension_workspace_cut_off", 410)
-    if not Organisation.objects.filter(id=org_id, state="active", deleted_at__isnull=True).exists():
+    if not organisations.active_organisation(organisation_id=org_id):
         raise ExtensionRefusedError("extension_organisation_inactive", 403)
 
     creator_active = (
-        Membership.objects.filter(
-            id=creator_membership_id,
-            organisation_id=org_id,
-            state="active",
-            accepted_at__isnull=False,
-            deleted_at__isnull=True,
-            role__in=("org_owner", "org_admin"),
-        ).exists()
-        and User.objects.filter(id=locked_user_id, enabled=True, deleted_at__isnull=True).exists()
-        and Identity.objects.filter(
-            organisation_id=org_id,
-            user_id=locked_user_id,
-            enabled=True,
-            deleted_at__isnull=True,
-        ).exists()
+        organisations.current_admin_role(
+            membership_id=creator_membership_id, organisation_id=org_id
+        )
+        is not None
+        and identities.enabled_user(user_id=locked_user_id)
+        and identities.delivery_identity_exists(organisation_id=org_id, user_id=locked_user_id)
     )
     if not creator_active:
         raise ExtensionRefusedError("import_creator_authority_revoked", 403)
@@ -924,9 +927,15 @@ def _lock_and_verify_batch_creator_authority(
     if row.channel_id is None:
         raise ExtensionRefusedError("import_object_absent", 404)
     channel = _validate_target_channel_locked(
-        Channel.objects.select_for_update()
-        .filter(id=row.channel_id, workspace_id=row.workspace_id)
-        .first()
+        workspaces.channel_snapshot(
+            channel_id=row.channel_id, workspace_id=row.workspace_id, for_update=True
+        )
+    )
+    require_channel_post(
+        channel_id=channel.id,
+        membership_id=creator_membership_id,
+        organisation_id=org_id,
+        confidential_reason="import_confidential_channel_refused",
     )
     return org_id, batch, row, channel
 

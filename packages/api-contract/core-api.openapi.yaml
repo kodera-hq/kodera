@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Kodera Core API
-  version: 0.54.0
+  version: 0.55.0
   summary: Control plane of kodera.io, consumed by kodera-web and by staff operators.
   description: |
     The Core API is the only backend of `kodera-web` (console ADR-0003) and the system of
@@ -15063,6 +15063,7 @@ components:
                   topic: ''
                   lifecycle: active
                   room_state: ready
+                  is_confidential: false
                 - id: 0192f3a4-5b6c-7d8e-9f01-23456789abd1
                   kind: text
                   name: general
@@ -15070,6 +15071,7 @@ components:
                   topic: ''
                   lifecycle: active
                   room_state: ready
+                  is_confidential: false
             - id: 0192f3a4-5b6c-7d8e-9f01-23456789abcf
               name: Team
               template_key: team
@@ -15081,6 +15083,7 @@ components:
                   topic: ''
                   lifecycle: active
                   room_state: pending
+                  is_confidential: false
           uncategorised_channels: []
         - organisation_id: 6f1d2e3c-8a4b-4c5d-9e6f-0a1b2c3d4e5f
           state: not_initialised
@@ -15176,7 +15179,7 @@ components:
       type: object
       title: WorkspaceChannel
       additionalProperties: false
-      required: [id, kind, name, template_key, topic, lifecycle, room_state]
+      required: [id, kind, name, template_key, topic, lifecycle, room_state, is_confidential]
       properties:
         id: { type: string, format: uuid }
         kind:
@@ -15194,6 +15197,9 @@ components:
           type: string
           enum: [active, archived]
           description: Only these two are ever returned; a channel in any other lifecycle is absent.
+        is_confidential:
+          type: boolean
+          description: Authoritative stored confidentiality designation. Plaintext clients require false.
         room_state:
           $ref: '#/components/schemas/ChannelRoomState'
           description: |

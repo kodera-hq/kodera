@@ -1,6 +1,22 @@
 {
   "sourceLanguage": "fr",
   "strings": {
+    "conversation.status_secure_transport_required": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sending is disabled until a public room is verified. Confidential and encrypted rooms require secure messaging support."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "L’envoi est désactivé tant qu’un salon public n’est pas vérifié. Les salons confidentiels et chiffrés nécessitent la messagerie sécurisée."
+          }
+        }
+      }
+    },
     "brand.name": {
       "localizations": {
         "fr": {

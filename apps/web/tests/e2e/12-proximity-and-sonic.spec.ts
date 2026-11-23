@@ -98,6 +98,7 @@ async function routeWorkspaceWithProximityChannel(page: Page): Promise<void> {
               template_key: string | null
               topic: string
               lifecycle: string
+              is_confidential: boolean
               room_state: string
             }>
           }>
@@ -112,6 +113,7 @@ async function routeWorkspaceWithProximityChannel(page: Page): Promise<void> {
             template_key: 'proximity',
             topic: 'Présence de proximité, pointage volontaire',
             lifecycle: 'active',
+            is_confidential: false,
             room_state: 'ready',
           })
         }

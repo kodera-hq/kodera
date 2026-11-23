@@ -477,9 +477,14 @@ public enum AttachmentMimeType: String, CaseIterable, Equatable, Sendable {
     case png = "image/png"
     case webp = "image/webp"
     case gif = "image/gif"
+    case oggAudio = "audio/ogg"
+    case webmAudio = "audio/webm"
+    case mp4Audio = "audio/mp4"
     case pdf = "application/pdf"
     case plainText = "text/plain"
     case octetStream = "application/octet-stream"
+
+    public var isAudio: Bool { [.oggAudio, .webmAudio, .mp4Audio].contains(self) }
 }
 
 public struct AttachmentMetadataRef: Equatable, Hashable, Sendable {
@@ -874,6 +879,12 @@ public struct KoderaMobileFfiBridge: PacketDispatcher {
                 "expected_generation", "wrapping_key_hex", "sealed_hex",
             ])
             throw KoderaMobileFfiError.featureDisabled
+
+        case "attachment_mime_validate":
+            try Self.ensureAllowedKeys(dict, allowed: ["op", "content_type"])
+            guard let mime = dict["content_type"]?.stringValue else { throw KoderaMobileFfiError.invalidInput }
+            let valid = AttachmentMimeType(rawValue: mime) != nil ? "true" : "false"
+            return try KoderaFfiPacket(payload: Data("{\"ok\":true,\"valid\":\(valid)}".utf8), status: 0)
 
         case "reaction_validate":
             try Self.ensureAllowedKeys(dict, allowed: ["op", "key"])

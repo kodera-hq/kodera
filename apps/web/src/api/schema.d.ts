@@ -6545,7 +6545,8 @@ export interface components {
          *               "template_key": "welcome",
          *               "topic": "",
          *               "lifecycle": "active",
-         *               "room_state": "ready"
+         *               "room_state": "ready",
+         *               "is_confidential": false
          *             },
          *             {
          *               "id": "0192f3a4-5b6c-7d8e-9f01-23456789abd1",
@@ -6554,7 +6555,8 @@ export interface components {
          *               "template_key": "general",
          *               "topic": "",
          *               "lifecycle": "active",
-         *               "room_state": "ready"
+         *               "room_state": "ready",
+         *               "is_confidential": false
          *             }
          *           ]
          *         },
@@ -6570,7 +6572,8 @@ export interface components {
          *               "template_key": "lounge",
          *               "topic": "",
          *               "lifecycle": "active",
-         *               "room_state": "pending"
+         *               "room_state": "pending",
+         *               "is_confidential": false
          *             }
          *           ]
          *         }
@@ -6694,6 +6697,8 @@ export interface components {
              * @enum {string}
              */
             lifecycle: "active" | "archived";
+            /** @description Authoritative stored confidentiality designation. Plaintext clients require false. */
+            is_confidential: boolean;
             /**
              * @description Whether the channel's Matrix room exists yet. A channel is `active` as soon as Core
              *     commits it; until a tenant agent acknowledges its room, the console shows it as not yet

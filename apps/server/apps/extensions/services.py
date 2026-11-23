@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+import urllib.error
+import urllib.request
 from datetime import datetime, timedelta
+from http.client import HTTPException
 from typing import Any
 from uuid import UUID
 
@@ -13,7 +16,8 @@ from django.utils import timezone
 from apps.audit.services import record_extension_event
 from apps.docs import services as documents
 from apps.identity.selectors import lock_delivery_identity, lock_user_fence
-from apps.media import outbound
+from apps.media import outbound, services as media_services
+from apps.media.context import RefusalError as MediaRefusalError
 from apps.orgs.selectors import (
     lock_erasure_cutoff_fences,
     lock_membership_fence,
@@ -23,6 +27,7 @@ from apps.orgs.selectors import (
 )
 from core.db.ids import new_uuid7
 
+from .import_parsers import MAX_ARCHIVE
 from .models import Delivery, Installation, WorkspaceCutoff
 from .wire import (
     EVENTS,
@@ -402,3 +407,85 @@ def reconcile(
         },
     )
     return decision
+
+
+def require_channel_post(
+    *,
+    channel_id: UUID,
+    membership_id: UUID,
+    organisation_id: UUID,
+    allow_confidential_preview: bool = False,
+    confidential_reason: str = "extension_confidential_channel_refused",
+) -> None:
+    """Resolve current channel access, including explicit administrator denials."""
+    from apps.orgs.selectors import current_admin_role, organisation_authority_revision
+    from apps.workspaces.channel_access import permits_channel_post
+    from apps.workspaces.selectors import is_confidential_channel
+
+    role = current_admin_role(membership_id=membership_id, organisation_id=organisation_id)
+    if role is None or not permits_channel_post(
+        channel_id=channel_id,
+        membership_id=membership_id,
+        organisation_id=organisation_id,
+        member_org_role=role,
+        authority_revision=organisation_authority_revision(organisation_id=organisation_id),
+    ):
+        raise ExtensionRefusedError("extension_channel_access_refused", 403)
+    if not allow_confidential_preview and is_confidential_channel(
+        channel_id=channel_id, organisation_id=organisation_id
+    ):
+        raise ExtensionRefusedError(confidential_reason, 403)
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args: Any, **kwargs: Any) -> None:
+        return None
+
+
+_STORAGE_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
+
+
+def fetch_attachment_bytes(*, download_url: str, max_bytes: int = MAX_ARCHIVE) -> bytes:
+    req = urllib.request.Request(  # noqa: S310 - presigned object-storage ticket from media Gateway
+        download_url,
+        headers={"Connection": "close"},
+        method="GET",
+    )
+    try:
+        with _STORAGE_OPENER.open(req, timeout=10.0) as resp:
+            if resp.status != 200:
+                raise ExtensionRefusedError("import_attachment_unavailable", 503)
+            chunks: list[bytes] = []
+            total = 0
+            while True:
+                chunk = resp.read(65536)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > max_bytes:
+                    raise ExtensionRefusedError("import_archive_bound", 413)
+                chunks.append(chunk)
+            return b"".join(chunks)
+    except ExtensionRefusedError:
+        raise
+    except (urllib.error.HTTPError, urllib.error.URLError, OSError, HTTPException):
+        raise ExtensionRefusedError("import_attachment_unavailable", 503) from None
+
+
+def read_import_attachment(*, verified: Any, organisation_id: UUID, attachment_id: UUID) -> bytes:
+    """Read and verify a scoped archive through the media service boundary."""
+    try:
+        ticket = media_services.get_attachment(
+            verified=verified,
+            organisation_id=organisation_id,
+            attachment_id=attachment_id,
+        )
+    except MediaRefusalError as refused:
+        raise ExtensionRefusedError("import_attachment_refused", refused.status) from None
+    size_bytes = ticket.get("sizeBytes")
+    if type(size_bytes) is not int or not 0 < size_bytes <= MAX_ARCHIVE:
+        raise ExtensionRefusedError("import_archive_bound", 413)
+    raw = fetch_attachment_bytes(download_url=str(ticket["downloadUrl"]), max_bytes=MAX_ARCHIVE)
+    if len(raw) != size_bytes or hashlib.sha256(raw).hexdigest() != ticket.get("sha256"):
+        raise ExtensionRefusedError("import_attachment_digest_mismatch", 409)
+    return raw

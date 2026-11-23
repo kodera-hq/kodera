@@ -115,6 +115,8 @@ const now = (): Date => new Date()
  * added to a screen without a seeded answer is a failing test rather than a
  * stray ACME row mid-demo. */
 export const DEMO_ROUTES: readonly string[] = [
+  'PUT /notifications/presence/:device_id',
+  'DELETE /notifications/presence/:device_id',
   'POST /workspaces/instant-claim',
   'POST /auth/discover',
   'GET /auth/passport/workspaces',
@@ -255,6 +257,23 @@ function demoPassportDirectory(
 const demoPassportSessionToken = (): string => `kp1.${'a'.repeat(32)}.demo`
 
 export const handlers: HttpHandler[] = [
+  http.put(`${BASE}/notifications/presence/:device_id`, async ({ params, request }) => {
+    const body = (await request.json()) as { platform: 'web' | 'desktop'; ttlSeconds?: number }
+    const ttlSeconds = body.ttlSeconds ?? 60
+    return HttpResponse.json(
+      {
+        deviceId: String(params.device_id),
+        platform: body.platform ?? 'web',
+        ttlSeconds,
+        expiresAt: new Date(Date.now() + ttlSeconds * 1000).toISOString(),
+      } satisfies components['schemas']['NotificationPresenceLease'],
+      { headers: headers() }
+    )
+  }),
+  http.delete(
+    `${BASE}/notifications/presence/:device_id`,
+    () => new HttpResponse(null, { status: 204, headers: headers() })
+  ),
   // A demo never allocates a Cloud tenant or fabricates a signed invitation.
   http.post(`${BASE}/workspaces/instant-claim`, () =>
     HttpResponse.json({ code: 'local-preview-only' }, { status: 503, headers: headers() })

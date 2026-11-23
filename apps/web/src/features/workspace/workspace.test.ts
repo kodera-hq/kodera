@@ -56,6 +56,7 @@ function channel(overrides: Partial<WorkspaceChannel>): WorkspaceChannel {
     template_key: null,
     topic: '',
     lifecycle: 'active',
+    is_confidential: false,
     room_state: 'ready',
     ...overrides,
   }
@@ -233,6 +234,19 @@ describe('requireWorkspace', () => {
     const workspace = readyWorkspace()
     workspace.categories[0]!.channels[0]!.lifecycle = 'deleted' as 'archived'
     expect(() => requireWorkspace(workspace)).toThrow()
+  })
+
+  it('preserves authoritative confidentiality and rejects missing or malformed flags', () => {
+    for (const value of [false, true]) {
+      const workspace = readyWorkspace()
+      workspace.categories[0]!.channels[0]!.is_confidential = value
+      expect(requireWorkspace(workspace).categories[0]!.channels[0]!.is_confidential).toBe(value)
+    }
+    for (const value of [undefined, null, 'false', 0]) {
+      const workspace = readyWorkspace()
+      Object.assign(workspace.categories[0]!.channels[0]!, { is_confidential: value })
+      expect(() => requireWorkspace(workspace)).toThrow()
+    }
   })
 
   it('refuses a room state the contract never returns', () => {

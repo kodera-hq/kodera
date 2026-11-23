@@ -228,6 +228,8 @@ def test_every_tenant_role_submits_allowlisted_report_and_outsiders_are_refused(
         ("Synapse " + "access_token=syt_" + "YWxpY2U_SyntheticMatrixToken", "api_credential"),
         ("Synapse refresh " + "syr_" + "YWxpY2U_SyntheticRefresh", "api_credential"),
         ("Synapse media " + "mda_" + "YWxpY2U_SyntheticMedia", "api_credential"),
+        ('{"access_token":"OpaqueCredentialOnlyLettersForAuditFixture"}', "api_credential"),
+        ("'api_key': 'SecretValue123'", "api_credential"),
         ("Bare assignment password=SyntheticPassword99", "api_credential"),
         ("Bare tok" + "en=" + "SyntheticSecret", "api_credential"),
         ("Header x-api-" + "key=" + "SyntheticKey", "api_credential"),

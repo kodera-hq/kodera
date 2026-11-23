@@ -20,6 +20,17 @@ final class MobileFfiVectorTests: XCTestCase {
         return pairs
     }
 
+    func testVoiceNoteMimeTypesRemainTypedAttachmentReferences() throws {
+        for wire in ["audio/ogg", "audio/webm", "audio/mp4"] {
+            let mime = try XCTUnwrap(AttachmentMimeType(rawValue: wire))
+            XCTAssertTrue(mime.isAudio)
+            let reference = try AttachmentMetadataRef(id: "01935800-0000-7000-8000-000000000077", filename: "voice", contentType: mime, sizeBytes: 32)
+            XCTAssertEqual(reference.contentType.rawValue, wire)
+        }
+        XCTAssertFalse(AttachmentMimeType.plainText.isAudio)
+        XCTAssertNil(AttachmentMimeType(rawValue: "audio/unknown"))
+    }
+
     func testUuidV7MatchesRustGoldenVectorAndRejectsInvalidForms() throws {
         let values = try sharedVectors()
         let unixTsMs = try XCTUnwrap(UInt64(try XCTUnwrap(values["unix_ts_ms"])))
@@ -187,6 +198,10 @@ final class MobileFfiVectorTests: XCTestCase {
             ("req_session_vault_open_json", "resp_session_vault_open_json"),
             ("req_session_envelope_observe_json", "resp_session_envelope_observe_json"),
             ("req_reaction_validate_json", "resp_reaction_validate_json"),
+            ("req_attachment_ogg_json", "resp_attachment_ogg_json"),
+            ("req_attachment_webm_json", "resp_attachment_webm_json"),
+            ("req_attachment_mp4_json", "resp_attachment_mp4_json"),
+            ("req_attachment_html_json", "resp_attachment_html_json"),
             ("req_wakeup_admit_json", "resp_wakeup_admit_json"),
         ] {
             let reqData = Data(try XCTUnwrap(values[reqKey]).utf8)

@@ -379,3 +379,25 @@ def previous_sweep_organisation_id(*, before_org: UUID) -> UUID | None:
         .values_list("id", flat=True)
         .first()
     )
+
+
+def active_membership_ids_by_user(*, organisation_id: UUID) -> dict[UUID, UUID]:
+    """Accepted active memberships of enabled people for read-only import matching."""
+    return dict(
+        _organisation_memberships(organisation_id=organisation_id)
+        .filter(user__enabled=True, user__deleted_at__isnull=True)
+        .values_list("user_id", "id")
+    )
+
+
+def current_admin_role(*, membership_id: UUID, organisation_id: UUID) -> str | None:
+    return (
+        _organisation_memberships(organisation_id=organisation_id)
+        .filter(id=membership_id, role__in=("org_owner", "org_admin"))
+        .values_list("role", flat=True)
+        .first()
+    )
+
+
+def organisation_authority_revision(*, organisation_id: UUID) -> int:
+    return Organisation.objects.values_list("authority_revision", flat=True).get(id=organisation_id)

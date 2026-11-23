@@ -4,23 +4,16 @@ from __future__ import annotations
 
 import base64
 import binascii
-import hashlib
-import urllib.error
-import urllib.request
-from http.client import HTTPException
 from typing import Any
 from uuid import UUID
 
 from django.core.exceptions import RequestDataTooBig
 from django.http import HttpRequest, HttpResponse
 
-from apps.media import services as media_services
-from apps.media.context import RefusalError as MediaRefusalError
 from core.api.scopes import declares
 from services.identity.access_tokens import VerifiedAccessToken
 
-from .. import coexistence, imports
-from ..import_parsers import MAX_ARCHIVE
+from .. import coexistence, imports, services
 from ..wire import ExtensionRefusedError
 from . import http
 from .permissions import (
@@ -33,41 +26,6 @@ from .permissions import (
 )
 
 MAX_INLINE_ARCHIVE_BYTES = 512 * 1024  # Strictly < 512 KiB inline preview cap.
-
-
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, *args: Any, **kwargs: Any) -> None:
-        return None
-
-
-_STORAGE_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
-
-
-def fetch_attachment_bytes(*, download_url: str, max_bytes: int = MAX_ARCHIVE) -> bytes:
-    req = urllib.request.Request(  # noqa: S310 - presigned object-storage ticket from media Gateway
-        download_url,
-        headers={"Connection": "close"},
-        method="GET",
-    )
-    try:
-        with _STORAGE_OPENER.open(req, timeout=10.0) as resp:
-            if resp.status != 200:
-                raise ExtensionRefusedError("import_attachment_unavailable", 503)
-            chunks: list[bytes] = []
-            total = 0
-            while True:
-                chunk = resp.read(65536)
-                if not chunk:
-                    break
-                total += len(chunk)
-                if total > max_bytes:
-                    raise ExtensionRefusedError("import_archive_bound", 413)
-                chunks.append(chunk)
-            return b"".join(chunks)
-    except ExtensionRefusedError:
-        raise
-    except (urllib.error.HTTPError, urllib.error.URLError, OSError, HTTPException):
-        raise ExtensionRefusedError("import_attachment_unavailable", 503) from None
 
 
 def _resolve_archive_bytes(
@@ -99,21 +57,9 @@ def _resolve_archive_bytes(
         return raw
 
     attachment_id = http.parse_uuid(attachment_raw)
-    try:
-        ticket = media_services.get_attachment(
-            verified=verified,
-            organisation_id=organisation_id,
-            attachment_id=attachment_id,
-        )
-    except MediaRefusalError as refused:
-        raise ExtensionRefusedError("import_attachment_refused", refused.status) from None
-    size_bytes = ticket.get("sizeBytes")
-    if type(size_bytes) is not int or not 0 < size_bytes <= MAX_ARCHIVE:
-        raise ExtensionRefusedError("import_archive_bound", 413)
-    raw = fetch_attachment_bytes(download_url=str(ticket["downloadUrl"]), max_bytes=MAX_ARCHIVE)
-    if len(raw) != size_bytes or hashlib.sha256(raw).hexdigest() != ticket.get("sha256"):
-        raise ExtensionRefusedError("import_attachment_digest_mismatch", 409)
-    return raw
+    return services.read_import_attachment(
+        verified=verified, organisation_id=organisation_id, attachment_id=attachment_id
+    )
 
 
 def _parse_channel_map(raw_map: Any) -> dict[str, UUID] | None:

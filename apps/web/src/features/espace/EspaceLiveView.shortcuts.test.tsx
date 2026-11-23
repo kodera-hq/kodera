@@ -25,6 +25,7 @@ function channel(id: string, name: string, kind: 'text' | 'audio' = 'text'): Wor
     template_key: null,
     topic: '',
     lifecycle: 'active',
+    is_confidential: false,
     room_state: 'ready',
   }
 }

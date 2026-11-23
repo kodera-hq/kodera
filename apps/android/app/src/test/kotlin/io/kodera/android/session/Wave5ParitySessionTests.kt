@@ -31,6 +31,7 @@ import io.kodera.android.client.StoredGrant
 import io.kodera.android.client.WorkspaceCategory
 import io.kodera.android.client.WorkspaceChannel
 import io.kodera.android.client.WorkspaceChannelLifecycle
+import io.kodera.android.client.WorkspaceFailure
 import io.kodera.android.client.WorkspaceOutcome
 import io.kodera.android.client.WorkspaceSetup
 import io.kodera.android.client.WorkspaceSetupState
@@ -595,6 +596,7 @@ class Wave5ParitySessionTests {
             topic = "Discussions",
             lifecycle = WorkspaceChannelLifecycle.ACTIVE,
             roomState = ChannelRoomState.READY,
+            isConfidential = false,
         )
         val activeAudio = WorkspaceChannel(
             id = "33333333-3333-4333-8333-333333333333",
@@ -604,6 +606,7 @@ class Wave5ParitySessionTests {
             topic = "Audio room",
             lifecycle = WorkspaceChannelLifecycle.ACTIVE,
             roomState = ChannelRoomState.READY,
+            isConfidential = false,
         )
         val archived = WorkspaceChannel(
             id = "44444444-4444-4444-8444-444444444444",
@@ -613,6 +616,7 @@ class Wave5ParitySessionTests {
             topic = "",
             lifecycle = WorkspaceChannelLifecycle.ARCHIVED,
             roomState = ChannelRoomState.READY,
+            isConfidential = false,
         )
 
         val textScope = checkNotNull(ChannelConversationScope.fromChannel(orgA, activeText))
@@ -632,6 +636,7 @@ class Wave5ParitySessionTests {
                     roomId = roomId,
                     initialBatch = MatrixSyncBatch(
                         nextBatch = "s1",
+                        plaintextAllowedRooms = setOf(roomId),
                         roomEvents = mapOf(
                             roomId to listOf(
                                 MatrixRawTimelineEvent(
@@ -649,7 +654,7 @@ class Wave5ParitySessionTests {
             }
 
             override fun syncRoom(roomId: String, since: String?): MatrixSyncBatch =
-                MatrixSyncBatch("s2", emptyMap())
+                MatrixSyncBatch("s2", emptyMap(), plaintextAllowedRooms = setOf(roomId))
 
             override fun sendMessage(
                 roomId: String,
@@ -741,6 +746,7 @@ class Wave5ParitySessionTests {
             topic = "",
             lifecycle = WorkspaceChannelLifecycle.ACTIVE,
             roomState = ChannelRoomState.READY,
+            isConfidential = false,
         )
         val scope = checkNotNull(ChannelConversationScope.fromChannel(orgA, channel))
 
@@ -771,6 +777,7 @@ class Wave5ParitySessionTests {
             topic = "",
             lifecycle = WorkspaceChannelLifecycle.ACTIVE,
             roomState = ChannelRoomState.READY,
+            isConfidential = false,
         )
         val scope = checkNotNull(ChannelConversationScope.fromChannel(orgA, channel))
         val mainQueue = LinkedBlockingQueue<Runnable>()
@@ -834,6 +841,7 @@ class Wave5ParitySessionTests {
             topic = "",
             lifecycle = WorkspaceChannelLifecycle.ACTIVE,
             roomState = ChannelRoomState.READY,
+            isConfidential = false,
         )
         val scope = checkNotNull(ChannelConversationScope.fromChannel(orgA, channel))
         val roomId = "!general:atelier.matrix.kodera.io"
@@ -847,6 +855,7 @@ class Wave5ParitySessionTests {
                     roomId = roomId,
                     initialBatch = MatrixSyncBatch(
                         nextBatch = "s1",
+                        plaintextAllowedRooms = setOf(roomId),
                         roomEvents = mapOf(
                             roomId to listOf(
                                 MatrixRawTimelineEvent(
@@ -882,9 +891,9 @@ class Wave5ParitySessionTests {
                                 prevBatch = "tok_gap",
                             )
                         ),
-                    )
+                    ).copy(plaintextAllowedRooms = setOf(roomId))
                 } else {
-                    MatrixSyncBatch("s2", emptyMap())
+                    MatrixSyncBatch("s2", emptyMap(), plaintextAllowedRooms = setOf(roomId))
                 }
 
             override fun backfillRoomMessages(roomId: String, fromToken: String, limit: Int): List<MatrixRawTimelineEvent> =
@@ -1000,6 +1009,7 @@ class Wave5ParitySessionTests {
             topic = "General",
             lifecycle = WorkspaceChannelLifecycle.ACTIVE,
             roomState = ChannelRoomState.READY,
+            isConfidential = false,
         )
         val snapshot = WorkspaceSnapshot(
             orgA,
@@ -1061,13 +1071,15 @@ class Wave5ParitySessionTests {
                         200,
                         """{"room_id":"!general:atelier.kodera.test"}""".toByteArray(Charsets.UTF_8),
                     )
+                path.startsWith("/_matrix/client/v3/rooms/") && path.endsWith("/join") ->
+                    io.kodera.android.client.MatrixHttpReply(200, """{"room_id":"!general:atelier.kodera.test"}""".toByteArray(Charsets.UTF_8))
                 path == "/_matrix/client/v3/sync" -> {
                     syncHits.incrementAndGet()
                     holdSyncEntered.get()?.countDown()
                     holdSyncRelease.get()?.await(2, TimeUnit.SECONDS)
                     io.kodera.android.client.MatrixHttpReply(
                         200,
-                        """{"next_batch":"s_live_${syncHits.get()}","rooms":{"join":{}}}""".toByteArray(Charsets.UTF_8),
+                        """{"next_batch":"s_live_${syncHits.get()}","rooms":{"join":{"!general:atelier.kodera.test":{"state":{"events":[]},"timeline":{"events":[]}}}}}""".toByteArray(Charsets.UTF_8),
                     )
                 }
                 path == "/_matrix/client/v3/logout" -> {
@@ -1303,6 +1315,80 @@ class Wave5ParitySessionTests {
         } finally {
             workers.shutdownNow()
             tempDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun workspaceNotFoundClearsConversationWhileServiceUnavailablePreservesDraft() {
+        val workers = Executors.newSingleThreadExecutor()
+        val mainQueue = LinkedBlockingQueue<Runnable>()
+        val testThread = Thread.currentThread()
+        fun drainUntil(label: String, predicate: () -> Boolean) {
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+            while (!predicate()) {
+                check(System.nanoTime() < deadline) { "Timed out waiting for $label" }
+                mainQueue.poll(20, TimeUnit.MILLISECONDS)?.run()
+            }
+        }
+        val client = "test-client"
+        val configuration = SignInConfiguration(
+            client, setOf(url(ConnectionPolicy.HTTPS, "auth.kodera.test")), LoopbackPolicy.REFUSE,
+        )
+        val backend = object : AuthorizationBackend {
+            override fun authorize(issuer: AdmittedIssuer, configuration: SignInConfiguration) =
+                StoredGrant(issuer.issuer, "workspace-grant", "member-subject")
+            override fun freshAccessToken(grant: StoredGrant, forceRefresh: Boolean) =
+                FreshToken("workspace-token", grant)
+            override fun revoke(grant: StoredGrant, issuer: AdmittedIssuer, configuration: SignInConfiguration) {}
+        }
+        val channel = WorkspaceChannel(
+            id = "22222222-2222-4222-8222-222222222222", kind = ChannelKind.TEXT,
+            name = "general", templateKey = "general", topic = "General",
+            lifecycle = WorkspaceChannelLifecycle.ACTIVE, roomState = ChannelRoomState.READY,
+            isConfidential = false,
+        )
+        val snapshot = WorkspaceSnapshot(
+            orgA, WorkspaceState.INITIALISED, WorkspaceSetup(WorkspaceSetupState.READY, null),
+            false, "99999999-9999-4999-8999-999999999999", emptyList(), listOf(channel),
+        )
+        val answer = AtomicReference<WorkspaceOutcome>(WorkspaceOutcome.Loaded(snapshot))
+        val profile = MemberProfile(orgA, "member@kodera.test", "Member", listOf(
+            MemberOrganisation(orgA, "atelier", "Atelier", "atelier", "org_owner", "active"),
+        ))
+        val controller = SessionController(
+            deployment = Deployment(null, configuration, url(ConnectionPolicy.HTTPS, "api.kodera.test"), null),
+            backend = null,
+            service = KoderaSignInService(configuration, InMemoryTokenStore(), backend),
+            main = Executor { mainQueue.add(it) },
+            onMainThread = { Thread.currentThread() === testThread }, workers = workers,
+            fetchMember = { MeOutcome.Member(profile) }, fetchWorkspace = { _, _ -> answer.get() },
+            conversationTransportFactory = { _, _, _, _, _, _ -> null },
+        )
+        try {
+            controller.onForeground()
+            controller.start()
+            drainUntil("signed out") { controller.phase == SessionPhase.SignedOut }
+            controller.signIn(url(ConnectionPolicy.HTTPS, "auth.kodera.test/realms/atelier"))
+            drainUntil("workspace loaded") { controller.workspace is WorkspaceViewState.Loaded }
+            controller.openChannel(channel, orgA)
+            val conversation = checkNotNull(controller.activeConversation)
+            conversation.updateComposerText("Unsent draft")
+
+            answer.set(WorkspaceOutcome.Unavailable(WorkspaceFailure.ServiceUnavailable))
+            controller.retryWorkspace()
+            drainUntil("temporary failure") { controller.workspace is WorkspaceViewState.Unavailable }
+            assertSame(conversation, controller.activeConversation)
+            assertFalse(conversation.isCleared)
+            assertEquals("Unsent draft", conversation.composerText)
+
+            answer.set(WorkspaceOutcome.Unavailable(WorkspaceFailure.NotFound))
+            controller.retryWorkspace()
+            drainUntil("authority lost") { controller.activeConversation == null }
+            assertTrue(conversation.isCleared)
+            assertEquals("", conversation.composerText)
+        } finally {
+            controller.close()
+            workers.shutdownNow()
         }
     }
 

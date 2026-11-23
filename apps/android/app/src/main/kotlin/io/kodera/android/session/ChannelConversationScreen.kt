@@ -104,6 +104,7 @@ data class ChannelConversationScope(
     val channelTopic: String,
     val kind: ChannelKind,
     val roomState: ChannelRoomState,
+    val isConfidential: Boolean? = null,
 ) {
     val key: String get() = "$organisationId:$channelId"
 
@@ -122,6 +123,7 @@ data class ChannelConversationScope(
                 channelTopic = channel.topic,
                 kind = channel.kind,
                 roomState = channel.roomState,
+                isConfidential = channel.isConfidential,
             )
         }
     }
@@ -152,6 +154,7 @@ class ChannelConversationController(
     private val reducer = MatrixTimelineReducer(transport?.ownUserId ?: ownUserId)
     private var roomId: String? = null
     private var sinceToken: String? = null
+    private var requiresFullSync = false
     private val failedOutbounds = HashMap<String, FailedOutbound>()
     private var localReactionCounter = 0
     private val _isForeground = MutableStateFlow(initialForeground)
@@ -227,8 +230,23 @@ class ChannelConversationController(
     var isSyncing by mutableStateOf(false)
         private set
 
+    var isConfidential by mutableStateOf(scope.isConfidential)
+        private set
+
+    var plaintextAllowed by mutableStateOf(false)
+        private set
+
     val canSend: Boolean
-        get() = composerText.trim().isNotEmpty() || stagedAttachments.isNotEmpty()
+        get() = !isCleared && _isForeground.value && isConfidential == false && (transport == null || plaintextAllowed) &&
+            (composerText.trim().isNotEmpty() || stagedAttachments.isNotEmpty())
+
+    fun updateChannelSecurity(confidential: Boolean?) {
+        if (isConfidential == confidential) return
+        isConfidential = confidential
+        plaintextAllowed = false
+        syncStatusRes = R.string.conversation_status_secure_transport_required
+        transport?.updateChannelSecurity(scope.organisationId, scope.channelId, confidential)
+    }
 
     fun updateComposerText(value: String) {
         if (!isCleared) composerText = value
@@ -251,6 +269,7 @@ class ChannelConversationController(
     }
 
     fun stageAttachment(payload: AttachmentUploadPayload) {
+        if (isConfidential != false || (transport != null && !plaintextAllowed)) return
         if (!isCleared && stagedAttachments.size < AttachmentMetadataRef.MAX_REFS_PER_MESSAGE) {
             stagedAttachments = stagedAttachments + payload
         }
@@ -329,7 +348,8 @@ class ChannelConversationController(
                         reducer.messages()
                     }
                     messages = snapshot
-                    syncStatusRes = R.string.conversation_status_live
+                    plaintextAllowed = isConfidential == false && boot.initialBatch.plaintextAllowedRooms.contains(boot.roomId)
+                    syncStatusRes = if (plaintextAllowed) R.string.conversation_status_live else R.string.conversation_status_secure_transport_required
                     if (shouldCatchUpAfterSso) {
                         refreshSync()
                     }
@@ -353,7 +373,7 @@ class ChannelConversationController(
             else if (syncInFlight) return
             else {
                 syncInFlight = true
-                Triple(roomId, sinceToken, syncCycleFence)
+                Triple(roomId, if (requiresFullSync) null else sinceToken, syncCycleFence)
             }
         }
         if (currentRoom == null) {
@@ -401,6 +421,7 @@ class ChannelConversationController(
                 result.onSuccess { (batch, backfilled) ->
                     val snapshot = synchronized(lock) {
                         reducer.updateOwnUserId(activeTransport.ownUserId)
+                        requiresFullSync = false
                         sinceToken = batch.nextBatch
                         val delta = batch.roomDeltas[currentRoom]
                         if (delta != null) {
@@ -411,8 +432,11 @@ class ChannelConversationController(
                         reducer.messages()
                     }
                     messages = snapshot
-                    syncStatusRes = R.string.conversation_status_live
+                    plaintextAllowed = isConfidential == false && batch.plaintextAllowedRooms.contains(currentRoom)
+                    syncStatusRes = if (plaintextAllowed) R.string.conversation_status_live else R.string.conversation_status_secure_transport_required
                 }.onFailure {
+                    plaintextAllowed = false
+                    requiresFullSync = true
                     syncStatusRes = R.string.conversation_status_offline
                 }
             }
@@ -480,6 +504,7 @@ class ChannelConversationController(
     }
 
     fun toggleReaction(message: MatrixTimelineMessage, emojiKey: String) {
+        if (isConfidential != false || (transport != null && !plaintextAllowed)) return
         if (isCleared || !canReact(message) || !ReactionKeyValidator.isValid(emojiKey)) return
         val liveTargetEventId = message.eventId ?: return
         expandedReactionMessageKey = null
@@ -592,6 +617,7 @@ class ChannelConversationController(
         stagedPayloads: List<AttachmentUploadPayload>,
         uploadedRefs: List<AttachmentMetadataRef>,
     ) {
+        if (isConfidential != false || (transport != null && !plaintextAllowed)) return
         val activeTransport = transport
         val currentRoom = synchronized(lock) { roomId }
         if (activeTransport == null || currentRoom == null || isCleared) {
@@ -858,7 +884,7 @@ private fun ConversationTopBar(
                     modifier = Modifier.semantics { heading() },
                 )
                 Text(
-                    text = stringResource(controller.syncStatusRes),
+                    text = stringResource(if (controller.isConfidential == false) controller.syncStatusRes else R.string.conversation_status_secure_transport_required),
                     style = NativeTypography.caption,
                     color = palette.ink3,
                 )
@@ -1017,7 +1043,7 @@ private fun ConversationMessageItem(
                                 .padding(horizontal = KoderaTokens.Space.s3, vertical = KoderaTokens.Space.s2),
                         ) {
                             Text(
-                                text = "📎 ${ref.filename}",
+                                text = "${if (ref.contentType.isAudio) "🎤" else "📎"} ${ref.filename}",
                                 style = NativeTypography.monoCaption,
                                 color = palette.accentInk,
                             )

@@ -38,6 +38,7 @@ function makeChannel(
     template_key: null,
     topic: '',
     lifecycle,
+    is_confidential: false,
     room_state: 'ready',
   }
 }

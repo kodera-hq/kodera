@@ -46,6 +46,7 @@ import javax.net.ssl.SSLException
 
 enum class MatrixClientError {
     INVALID_INPUT,
+    PLAINTEXT_FORBIDDEN,
     PROTOCOL_VIOLATION,
     UNAUTHORIZED,
     FORBIDDEN,
@@ -240,6 +241,7 @@ data class MatrixSyncBatch(
     val nextBatch: String,
     val roomEvents: Map<String, List<MatrixRawTimelineEvent>>,
     val roomDeltas: Map<String, MatrixRoomSyncDelta> = roomEvents.mapValues { MatrixRoomSyncDelta(it.value) },
+    val plaintextAllowedRooms: Set<String> = emptySet(),
 ) {
     companion object {
         fun fromDeltas(nextBatch: String, deltas: Map<String, MatrixRoomSyncDelta>): MatrixSyncBatch =
@@ -283,6 +285,7 @@ data class BootstrappedMatrixRoom(
 /** High-level conversation transport consumed by `:app` without exposing raw URLs in `:app`. */
 interface ChannelConversationTransport {
     val ownUserId: String
+    fun updateChannelSecurity(organisationId: String, channelId: String, isConfidential: Boolean?) {}
     fun bootstrapRoom(organisationId: String, channelId: String): BootstrappedMatrixRoom
     fun bootstrapRoom(
         organisationId: String,
@@ -327,7 +330,7 @@ interface ChannelConversationTransport {
 
 /**
  * Matrix Client-Server v3 room transport + Core-scoped 3-step attachment uploader.
- * Enforces origin validation, zero redirects, credential-free presigned `PUT`, and `<= 65,536`-byte JSON bounds.
+ * Enforces origin validation, zero redirects, credential-free presigned `PUT`, and bounded JSON responses.
  */
 class MatrixRoomClient private constructor(
     private val coreRequester: CoreRequester,
@@ -335,6 +338,62 @@ class MatrixRoomClient private constructor(
     private val fence: SessionFence,
     private val httpClient: OkHttpClient,
 ) : AutoCloseable {
+
+    private data class RoomSecurity(val corePublic: Boolean, var matrixKnown: Boolean = false, var blocked: Boolean = false)
+    private val securityLock = Any()
+    private val security = HashMap<String, RoomSecurity>()
+    private val channelRooms = HashMap<String, String>()
+    private fun securityKey(origin: String, roomId: String) = "$origin/$roomId"
+
+    internal fun bindChannelSecurity(organisationId: String, channelId: String, origin: String, roomId: String, isConfidential: Boolean?) {
+        synchronized(securityLock) {
+            val key = securityKey(origin, roomId)
+            security[key] = RoomSecurity(isConfidential == false, blocked = security[key]?.blocked == true || isConfidential == true)
+            channelRooms["$organisationId:$channelId"] = key
+        }
+    }
+
+    internal fun updateChannelSecurity(organisationId: String, channelId: String, isConfidential: Boolean?) {
+        synchronized(securityLock) {
+            val key = channelRooms["$organisationId:$channelId"] ?: return
+            security[key]?.let { state ->
+                security[key] = state.copy(corePublic = isConfidential == false, blocked = state.blocked || isConfidential == true)
+            }
+        }
+    }
+
+    fun requirePlaintextAllowed(origin: String, roomId: String) {
+        fence.checkActive()
+        synchronized(securityLock) {
+            val state = security[securityKey(origin, roomId)]
+            if (state == null || !state.corePublic || !state.matrixKnown || state.blocked) {
+                throw MatrixClientException(MatrixClientError.PLAINTEXT_FORBIDDEN)
+            }
+        }
+    }
+
+    private fun requireUploadAllowed(organisationId: String, channelId: String) {
+        fence.checkActive()
+        synchronized(securityLock) {
+            val state = channelRooms["$organisationId:$channelId"]?.let { security[it] }
+            if (state == null || !state.corePublic || !state.matrixKnown || state.blocked) {
+                throw MatrixClientException(MatrixClientError.PLAINTEXT_FORBIDDEN)
+            }
+        }
+    }
+
+    internal fun channelConfidentiality(organisationId: String, channelId: String): Boolean? {
+        val result = CoreWorkspaceClient(coreRequester).fetch(organisationId)
+        return workspaceChannelConfidentiality(result, channelId)
+    }
+
+
+    fun joinRoom(homeserverOrigin: String, matrixAccessToken: String, roomId: String) {
+        validateHomeserverOriginAndToken(homeserverOrigin, matrixAccessToken)
+        if (runCatching { MatrixRoomId.parse(roomId) }.isFailure) throw MatrixClientException(MatrixClientError.INVALID_INPUT)
+        val root = matrixJsonRequest("$homeserverOrigin/_matrix/client/v3/rooms/${percentEncodeSegment(roomId)}/join", "POST", matrixAccessToken, "{}".toByteArray())
+        if ((root["room_id"] as? JsonValue.StringValue)?.value != roomId) throw MatrixClientException(MatrixClientError.PROTOCOL_VIOLATION)
+    }
 
     constructor(
         coreRequester: CoreRequester,
@@ -475,53 +534,122 @@ class MatrixRoomClient private constructor(
         }
     }
 
-    /** Runs a bounded Matrix `/sync` (`lazy_load_members: true`, `timeline.limit: 25`, `<= 65,536` bytes). */
+    /** Runs a bounded Matrix `/sync` (`timeline.limit: 25`, security state limit 16, `<= 262,144` bytes). */
     fun sync(
         homeserverOrigin: String,
         matrixAccessToken: String,
         since: String? = null,
+        roomId: String,
         extraFence: SessionFence? = null,
     ): MatrixSyncBatch {
         validateHomeserverOriginAndToken(homeserverOrigin, matrixAccessToken)
         if (since != null && (since.isEmpty() || since.length > 256 || !TrustPolicy.isVisibleASCII(since))) {
             throw MatrixClientException(MatrixClientError.INVALID_INPUT)
         }
-        val encodedFilter = percentEncodeSegment(BOUNDED_SYNC_FILTER_JSON)
-        val query = buildString {
-            append("filter=").append(encodedFilter).append("&timeout=0")
-            if (since != null) {
-                append("&since=").append(percentEncodeSegment(since))
+        if (runCatching { MatrixRoomId.parse(roomId) }.isFailure) throw MatrixClientException(MatrixClientError.INVALID_INPUT)
+        var completed = false
+        try {
+            if (since == null) synchronized(securityLock) { security[securityKey(homeserverOrigin, roomId)]?.matrixKnown = false }
+            val encodedFilter = percentEncodeSegment(boundedSyncFilterJson(roomId))
+            val query = buildString {
+                append("filter=").append(encodedFilter).append("&timeout=0")
+                if (since != null) {
+                    append("&since=").append(percentEncodeSegment(since))
+                }
             }
-        }
-        val root = matrixJsonRequest(
-            url = "$homeserverOrigin/_matrix/client/v3/sync?$query",
-            method = "GET",
-            matrixAccessToken = matrixAccessToken,
-            jsonBody = null,
-            extraFence = extraFence,
-        )
-        val nextBatch = (root["next_batch"] as? JsonValue.StringValue)?.value
-        if (nextBatch.isNullOrEmpty()) {
-            throw MatrixClientException(MatrixClientError.PROTOCOL_VIOLATION)
-        }
-        val roomDeltas = LinkedHashMap<String, MatrixRoomSyncDelta>()
-        val joined = ((root["rooms"] as? JsonValue.ObjectValue)?.fields?.get("join") as? JsonValue.ObjectValue)?.fields
-        if (joined != null) {
-            for ((roomKey, roomVal) in joined) {
-                if (runCatching { MatrixRoomId.parse(roomKey) }.isFailure) continue
-                val timelineObj = ((roomVal as? JsonValue.ObjectValue)?.fields?.get("timeline") as? JsonValue.ObjectValue)?.fields
-                val rawEvents = (timelineObj?.get("events") as? JsonValue.ArrayValue)?.values ?: emptyList()
-                val limited = (timelineObj?.get("limited") as? JsonValue.BooleanValue)?.value ?: false
-                val prevBatch = (timelineObj?.get("prev_batch") as? JsonValue.StringValue)?.value
-                roomDeltas[roomKey] = MatrixRoomSyncDelta(
-                    events = rawEvents.mapNotNull(::decodeTimelineEvent),
-                    limited = limited,
-                    prevBatch = prevBatch,
-                )
+            val root = matrixJsonRequest(
+                url = "$homeserverOrigin/_matrix/client/v3/sync?$query",
+                method = "GET",
+                matrixAccessToken = matrixAccessToken,
+                jsonBody = null,
+                extraFence = extraFence,
+                responseByteLimit = SYNC_RESPONSE_BYTE_LIMIT,
+            )
+            val nextBatch = (root["next_batch"] as? JsonValue.StringValue)?.value
+            if (nextBatch.isNullOrEmpty()) {
+                throw MatrixClientException(MatrixClientError.PROTOCOL_VIOLATION)
             }
+            val roomDeltas = LinkedHashMap<String, MatrixRoomSyncDelta>()
+            if (root.containsKey("rooms")) {
+                val roomsObj = (root["rooms"] as? JsonValue.ObjectValue)?.fields
+                    ?: throw MatrixClientException(MatrixClientError.PROTOCOL_VIOLATION)
+                if (roomsObj.containsKey("leave")) {
+                    val leaveObj = (roomsObj["leave"] as? JsonValue.ObjectValue)?.fields
+                        ?: throw MatrixClientException(MatrixClientError.PROTOCOL_VIOLATION)
+                    if (leaveObj.containsKey(roomId)) {
+                        synchronized(securityLock) {
+                            security[securityKey(homeserverOrigin, roomId)]?.matrixKnown = false
+                        }
+                    }
+                }
+                if (roomsObj.containsKey("join") && roomsObj["join"] !is JsonValue.ObjectValue) {
+                    throw MatrixClientException(MatrixClientError.PROTOCOL_VIOLATION)
+                }
+            }
+            val joined = ((root["rooms"] as? JsonValue.ObjectValue)?.fields?.get("join") as? JsonValue.ObjectValue)?.fields
+            if (joined != null) {
+                for ((roomKey, roomVal) in joined) {
+                    val roomObject = (roomVal as? JsonValue.ObjectValue)?.fields
+                        ?: throw MatrixClientException(MatrixClientError.PROTOCOL_VIOLATION)
+                    if (roomKey != roomId) throw MatrixClientException(MatrixClientError.PROTOCOL_VIOLATION)
+                    if (((root["rooms"] as? JsonValue.ObjectValue)?.fields?.get("leave") as? JsonValue.ObjectValue)?.fields?.containsKey(roomId) == true) {
+                        throw MatrixClientException(MatrixClientError.PROTOCOL_VIOLATION)
+                    }
+                    if (roomObject.containsKey("timeline")) {
+                        val tlObject = (roomObject["timeline"] as? JsonValue.ObjectValue)?.fields
+                        if (tlObject == null || (tlObject.containsKey("events") && tlObject["events"] !is JsonValue.ArrayValue)) {
+                            throw MatrixClientException(MatrixClientError.PROTOCOL_VIOLATION)
+                        }
+                    }
+                    val timelineObj = (roomObject["timeline"] as? JsonValue.ObjectValue)?.fields
+                    val rawEvents = (timelineObj?.get("events") as? JsonValue.ArrayValue)?.values ?: emptyList()
+                    if (roomObject.containsKey("state")) {
+                        val stateObject = (roomObject["state"] as? JsonValue.ObjectValue)?.fields
+                        if (stateObject == null || (stateObject.containsKey("events") && stateObject["events"] !is JsonValue.ArrayValue)) {
+                            synchronized(securityLock) {
+                                val state = security.getOrPut(securityKey(homeserverOrigin, roomId)) { RoomSecurity(false) }
+                                state.matrixKnown = false
+                                state.blocked = true
+                            }
+                            throw MatrixClientException(MatrixClientError.PROTOCOL_VIOLATION)
+                        }
+                    }
+                    val stateEvents = ((roomObject["state"] as? JsonValue.ObjectValue)?.fields?.get("events") as? JsonValue.ArrayValue)?.values
+                    if (rawEvents.size > SYNC_TIMELINE_LIMIT || (stateEvents?.size ?: 0) >= 16) throw MatrixClientException(MatrixClientError.PROTOCOL_VIOLATION)
+                    for (event in (stateEvents ?: emptyList()) + rawEvents) {
+                        val eventObj = (event as? JsonValue.ObjectValue)?.fields
+                            ?: throw MatrixClientException(MatrixClientError.PROTOCOL_VIOLATION)
+                        if (eventObj.containsKey("type") && eventObj["type"] !is JsonValue.StringValue) {
+                            throw MatrixClientException(MatrixClientError.PROTOCOL_VIOLATION)
+                        }
+                    }
+                    synchronized(securityLock) {
+                        val state = security.getOrPut(securityKey(homeserverOrigin, roomId)) { RoomSecurity(false) }
+                        if (since == null) state.matrixKnown = stateEvents != null
+                        // Only security types are requested; unclassified entries also block plaintext.
+                        if (!stateEvents.isNullOrEmpty()) state.blocked = true
+                        for (event in (stateEvents ?: emptyList()) + rawEvents) {
+                            val type = ((event as? JsonValue.ObjectValue)?.fields?.get("type") as? JsonValue.StringValue)?.value
+                            if (type in setOf("m.room.encryption", "io.kodera.room.security", "io.kodera.room.confidential")) state.blocked = true
+                        }
+                    }
+                    val limited = (timelineObj?.get("limited") as? JsonValue.BooleanValue)?.value ?: false
+                    val prevBatch = (timelineObj?.get("prev_batch") as? JsonValue.StringValue)?.value
+                    roomDeltas[roomKey] = MatrixRoomSyncDelta(
+                        events = rawEvents.mapNotNull(::decodeTimelineEvent),
+                        limited = limited,
+                        prevBatch = prevBatch,
+                    )
+                }
+            }
+            val allowed = runCatching { requirePlaintextAllowed(homeserverOrigin, roomId) }.isSuccess
+            completed = true
+            return MatrixSyncBatch.fromDeltas(nextBatch = nextBatch, deltas = roomDeltas).copy(plaintextAllowedRooms = if (allowed) setOf(roomId) else emptySet())
+        } finally {
+            if (!completed) synchronized(securityLock) { security[securityKey(homeserverOrigin, roomId)]?.matrixKnown = false }
         }
-        return MatrixSyncBatch.fromDeltas(nextBatch = nextBatch, deltas = roomDeltas)
     }
+
 
     /** Backfills timeline messages prior to `fromToken` (`dir=b`) when an incremental `/sync` reports `limited: true`. */
     fun fetchRoomMessages(
@@ -871,6 +999,7 @@ class MatrixRoomClient private constructor(
         targetEventId: String,
         reason: String? = null,
     ): String {
+        requirePlaintextAllowed(homeserverOrigin, roomId)
         validateHomeserverOriginAndToken(homeserverOrigin, matrixAccessToken)
         if (runCatching { MatrixRoomId.parse(roomId) }.isFailure ||
             runCatching { UuidV7Identifier.parse(transactionId) }.isFailure ||
@@ -938,6 +1067,7 @@ class MatrixRoomClient private constructor(
         channelId: String,
         payload: AttachmentUploadPayload,
     ): AttachmentMetadataRef {
+        requireUploadAllowed(organisationId, channelId)
         if (!TrustPolicy.canonicalNonNilUUID(organisationId) || !TrustPolicy.canonicalNonNilUUID(channelId)) {
             throw MatrixClientException(MatrixClientError.INVALID_INPUT)
         }
@@ -966,6 +1096,7 @@ class MatrixRoomClient private constructor(
         val ticket = decodeUploadTicket(ticketBytes, loopback)
 
         // Step 2: Credential-free presigned PUT (ZERO Authorization, Cookie, or redirect following).
+        requireUploadAllowed(organisationId, channelId)
         val putBuilder = Request.Builder()
             .url(ticket.uploadUrl)
             .put(rawBytes.toRequestBody(null))
@@ -992,6 +1123,7 @@ class MatrixRoomClient private constructor(
         }
 
         // Step 3: Complete upload on Core and verify server-confirmed SHA-256 & byte size.
+        requireUploadAllowed(organisationId, channelId)
         val completeReply = coreRequester.post(
             path = "/api/v1/organisations/$organisationId/workspace/attachments/${ticket.attachmentId}/complete",
             jsonBody = "{}".toByteArray(Charsets.UTF_8),
@@ -1011,6 +1143,7 @@ class MatrixRoomClient private constructor(
         transactionId: String,
         payload: JsonObject,
     ): String {
+        requirePlaintextAllowed(homeserverOrigin, roomId)
         val bodyBytes = payload.toString().toByteArray(Charsets.UTF_8)
         if (bodyBytes.size > JSON_BYTE_LIMIT) {
             throw MatrixClientException(MatrixClientError.PAYLOAD_TOO_LARGE)
@@ -1036,12 +1169,14 @@ class MatrixRoomClient private constructor(
         matrixAccessToken: String,
         jsonBody: ByteArray?,
         extraFence: SessionFence? = null,
+        responseByteLimit: Int = JSON_BYTE_LIMIT,
     ): Map<String, JsonValue> = matrixJsonRequestInternal(
         url = url,
         method = method,
         bearerToken = matrixAccessToken,
         jsonBody = jsonBody,
         extraFence = extraFence,
+        responseByteLimit = responseByteLimit,
     )
 
     private fun matrixJsonRequestInternal(
@@ -1050,6 +1185,7 @@ class MatrixRoomClient private constructor(
         bearerToken: String?,
         jsonBody: ByteArray?,
         extraFence: SessionFence? = null,
+        responseByteLimit: Int = JSON_BYTE_LIMIT,
     ): Map<String, JsonValue> {
         val builder = Request.Builder()
             .url(url)
@@ -1072,10 +1208,10 @@ class MatrixRoomClient private constructor(
                 }
                 when (response.code) {
                     200 -> {
-                        val bytes = readBounded(response, JSON_BYTE_LIMIT)
+                        val bytes = readBounded(response, responseByteLimit)
                             ?: throw MatrixClientException(MatrixClientError.PROTOCOL_VIOLATION)
                         try {
-                            StrictJson.parse(bytes, JSON_BYTE_LIMIT).objectValue()
+                            StrictJson.parse(bytes, responseByteLimit).objectValue()
                         } catch (_: Exception) {
                             throw MatrixClientException(MatrixClientError.PROTOCOL_VIOLATION)
                         }
@@ -1165,8 +1301,19 @@ class MatrixRoomClient private constructor(
         const val JSON_BYTE_LIMIT: Int = 65_536
         const val DEFAULT_SSO_CALLBACK_URI: String = "io.kodera.app:/oauth2redirect"
         const val SSO_CALLBACK_SCHEME: String = "io.kodera.app"
-        const val BOUNDED_SYNC_FILTER_JSON: String =
-            """{"room":{"state":{"lazy_load_members":true},"timeline":{"limit":25}}}"""
+        const val SYNC_RESPONSE_BYTE_LIMIT = 262_144
+        fun boundedSyncFilterJson(roomId: String): String = JsonObject().apply {
+            add("room", JsonObject().apply {
+                add("rooms", JsonArray().apply { add(roomId) })
+                add("state", JsonObject().apply {
+                    addProperty("limit", 16)
+                    add("types", JsonArray().apply { add("m.room.encryption"); add("io.kodera.room.security"); add("io.kodera.room.confidential") })
+                })
+                add("timeline", JsonObject().apply { addProperty("limit", SYNC_TIMELINE_LIMIT) })
+                for (section in listOf("ephemeral", "account_data")) add(section, JsonObject().apply { add("types", JsonArray()) })
+            })
+            for (section in listOf("presence", "account_data")) add(section, JsonObject().apply { add("types", JsonArray()) })
+        }.toString()
         private val SSO_CSPRNG = SecureRandom()
 
         /** Builds `{homeserverOrigin}/_matrix/client/v3/login/sso/redirect?redirectUrl=...` with a 32-byte cryptographic `state`. */
@@ -1601,6 +1748,7 @@ class MatrixChannelConversationTransport private constructor(
     private val matrixDomain: String,
     private val matrixServerName: String,
     private val authStrategy: AuthStrategy,
+    private val fetchWorkspace: ((String) -> WorkspaceOutcome)?,
 ) : ChannelConversationTransport, AutoCloseable {
 
     private sealed interface AuthStrategy {
@@ -1631,6 +1779,7 @@ class MatrixChannelConversationTransport private constructor(
         matrixDomain: String,
         matrixServerName: String,
         matrixAccessToken: String,
+        fetchWorkspace: ((String) -> WorkspaceOutcome)? = null,
     ) : this(
         initialOwnUserId = ownUserId,
         roomClient = roomClient,
@@ -1638,6 +1787,7 @@ class MatrixChannelConversationTransport private constructor(
         matrixDomain = matrixDomain.lowercase(),
         matrixServerName = matrixServerName,
         authStrategy = AuthStrategy.StaticToken(matrixAccessToken),
+        fetchWorkspace = fetchWorkspace,
     )
 
     constructor(
@@ -1652,6 +1802,7 @@ class MatrixChannelConversationTransport private constructor(
         loadVault: (String, String) -> ByteArray?,
         saveVault: (String, String, ByteArray) -> Boolean,
         onSessionEstablished: ((PersistedMatrixSession) -> Unit)? = null,
+        fetchWorkspace: ((String) -> WorkspaceOutcome)? = null,
     ) : this(
         initialOwnUserId = "@${initialExpectedSubject ?: "member"}:${organisationSlug.lowercase()}.${matrixDomain.lowercase()}",
         roomClient = roomClient,
@@ -1667,6 +1818,7 @@ class MatrixChannelConversationTransport private constructor(
             saveVault = saveVault,
             onSessionEstablished = onSessionEstablished,
         ),
+        fetchWorkspace = fetchWorkspace,
     )
 
     constructor(
@@ -1680,6 +1832,7 @@ class MatrixChannelConversationTransport private constructor(
         loadVault: (String, String) -> ByteArray?,
         saveVault: (String, String, ByteArray) -> Boolean,
         onSessionEstablished: ((PersistedMatrixSession) -> Unit)? = null,
+        fetchWorkspace: ((String) -> WorkspaceOutcome)? = null,
     ) : this(
         roomClient = roomClient,
         organisationId = organisationId,
@@ -1696,6 +1849,7 @@ class MatrixChannelConversationTransport private constructor(
         loadVault = loadVault,
         saveVault = saveVault,
         onSessionEstablished = onSessionEstablished,
+        fetchWorkspace = fetchWorkspace,
     )
 
     fun logoutIfAuthenticated(): Boolean {
@@ -1841,6 +1995,10 @@ class MatrixChannelConversationTransport private constructor(
         }
     }
 
+    override fun updateChannelSecurity(organisationId: String, channelId: String, isConfidential: Boolean?) {
+        roomClient.updateChannelSecurity(organisationId, channelId, isConfidential)
+    }
+
     override fun bootstrapRoom(organisationId: String, channelId: String): BootstrappedMatrixRoom =
         bootstrapRoom(organisationId, channelId, null)
 
@@ -1855,9 +2013,13 @@ class MatrixChannelConversationTransport private constructor(
         // Bootstrap (`/.well-known` -> SSO Custom Tab + `/login` -> room directory -> initial `/sync`)
         // is fenced strictly by `roomClient.fence` (session/conversation lifetime) so Activity
         // backgrounding during the SSO Custom Tab never invalidates the single-use `loginToken`.
+        val confidential = if (fetchWorkspace != null) workspaceChannelConfidentiality(fetchWorkspace.invoke(organisationId), channelId)
+            else roomClient.channelConfidentiality(organisationId, channelId)
         return withAuthenticatedRetry(syncFence = null) { origin, token, _ ->
             val roomId = roomClient.resolveChannelRoomId(origin, token, channelId, matrixServerName, extraFence = null)
-            val batch = roomClient.sync(origin, token, since = null, extraFence = null)
+            roomClient.bindChannelSecurity(organisationId, channelId, origin, roomId.rawValue, confidential)
+            roomClient.joinRoom(origin, token, roomId.rawValue)
+            val batch = roomClient.sync(origin, token, since = null, roomId = roomId.rawValue, extraFence = null)
             BootstrappedMatrixRoom(roomId.rawValue, batch)
         }
     }
@@ -1870,7 +2032,7 @@ class MatrixChannelConversationTransport private constructor(
         since: String?,
         syncFence: SessionFence?,
     ): MatrixSyncBatch = withAuthenticatedRetry(syncFence) { origin, token, activeSyncFence ->
-        roomClient.sync(origin, token, since, extraFence = activeSyncFence)
+        roomClient.sync(origin, token, since, roomId = roomId, extraFence = activeSyncFence)
     }
 
     override fun backfillRoomMessages(roomId: String, fromToken: String, limit: Int): List<MatrixRawTimelineEvent> =
@@ -1885,28 +2047,34 @@ class MatrixChannelConversationTransport private constructor(
         roomClient.fetchRoomMessages(origin, token, roomId, fromToken, limit, extraFence = activeSyncFence)
     }
 
+    private fun <T> withPlaintextRoom(roomId: String, block: (String, String, SessionFence?) -> T): T {
+        val origin = synchronized(stateLock) { cachedHomeserverOrigin } ?: throw MatrixClientException(MatrixClientError.PLAINTEXT_FORBIDDEN)
+        roomClient.requirePlaintextAllowed(origin, roomId)
+        return withAuthenticatedRetry(block = block)
+    }
+
     override fun sendMessage(
         roomId: String,
         transactionId: String,
         body: String,
         replyToEventId: String?,
         attachments: List<AttachmentMetadataRef>,
-    ): String = withAuthenticatedRetry { origin, token, _ ->
+    ): String = withPlaintextRoom(roomId) { origin, token, _ ->
         roomClient.sendTextMessage(origin, token, roomId, transactionId, body, replyToEventId, attachments)
     }
 
     override fun editMessage(roomId: String, transactionId: String, targetEventId: String, newBody: String): String =
-        withAuthenticatedRetry { origin, token, _ ->
+        withPlaintextRoom(roomId) { origin, token, _ ->
             roomClient.editMessage(origin, token, roomId, transactionId, targetEventId, newBody)
         }
 
     override fun redactEvent(roomId: String, transactionId: String, targetEventId: String): String =
-        withAuthenticatedRetry { origin, token, _ ->
+        withPlaintextRoom(roomId) { origin, token, _ ->
             roomClient.redactEvent(origin, token, roomId, transactionId, targetEventId)
         }
 
     override fun sendReaction(roomId: String, transactionId: String, targetEventId: String, emojiKey: String): String =
-        withAuthenticatedRetry { origin, token, _ ->
+        withPlaintextRoom(roomId) { origin, token, _ ->
             roomClient.sendReaction(origin, token, roomId, transactionId, targetEventId, emojiKey)
         }
 
@@ -1915,4 +2083,23 @@ class MatrixChannelConversationTransport private constructor(
         channelId: String,
         payload: AttachmentUploadPayload,
     ): AttachmentMetadataRef = roomClient.uploadChannelAttachment(organisationId, channelId, payload)
+}
+
+internal fun workspaceChannelConfidentiality(result: WorkspaceOutcome, channelId: String): Boolean? {
+    when (result) {
+        WorkspaceOutcome.SignedOut -> throw MatrixClientException(MatrixClientError.SIGNED_OUT)
+        is WorkspaceOutcome.Unavailable -> when (val failure = result.failure) {
+            WorkspaceFailure.Forbidden -> throw MatrixClientException(MatrixClientError.FORBIDDEN)
+            WorkspaceFailure.NotFound -> throw MatrixClientException(MatrixClientError.NOT_FOUND)
+            WorkspaceFailure.ProtocolViolation -> throw MatrixClientException(MatrixClientError.PROTOCOL_VIOLATION)
+            WorkspaceFailure.ServiceUnavailable -> throw MatrixClientException(MatrixClientError.SERVICE_UNAVAILABLE)
+            WorkspaceFailure.IdentityUnavailable -> throw MatrixClientException(MatrixClientError.IDENTITY_UNAVAILABLE)
+            is WorkspaceFailure.Transport -> throw MatrixClientException(MatrixClientError.TRANSPORT, failure.reason)
+        }
+        is WorkspaceOutcome.Loaded -> Unit
+    }
+    val channels = result.workspace.uncategorisedChannels + result.workspace.categories.flatMap { it.channels }
+    val channel = channels.firstOrNull { it.id == channelId && it.lifecycle == WorkspaceChannelLifecycle.ACTIVE }
+        ?: throw MatrixClientException(MatrixClientError.FORBIDDEN)
+    return channel.isConfidential
 }

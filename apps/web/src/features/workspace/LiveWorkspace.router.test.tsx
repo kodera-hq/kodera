@@ -31,6 +31,7 @@ const channel = (id: string, name: string) => ({
   template_key: name,
   topic: '',
   lifecycle: 'active' as const,
+  is_confidential: false,
   room_state: 'ready' as const,
 })
 

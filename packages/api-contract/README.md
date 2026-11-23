@@ -2,7 +2,7 @@
 
 Canonical OpenAPI specifications shared across `apps/server`, `apps/web`, `apps/desktop`, `apps/ios`, and `apps/android`.
 
-Status: Active. `core-api.openapi.yaml` is at `0.54.0` and `agent-api.openapi.yaml` at `0.8.0`.
+Status: Active. `core-api.openapi.yaml` is at `0.55.0` and `agent-api.openapi.yaml` at `0.8.0`.
 
 - `core-api.openapi.yaml`: Kodera Control Plane & Workspace HTTP API.
 - `agent-api.openapi.yaml`: Kodera Tenant Agent internal reconciliation contract.

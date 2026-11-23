@@ -46,6 +46,7 @@ import io.kodera.android.client.SignInFailure
 import io.kodera.android.client.SignInService
 import io.kodera.android.client.TokenStoreException
 import io.kodera.android.client.WorkspaceChannel
+import io.kodera.android.client.WorkspaceChannelLifecycle
 import io.kodera.android.client.WorkspaceFailure
 import io.kodera.android.client.WorkspaceOutcome
 import io.kodera.android.client.WorkspaceSnapshot
@@ -831,6 +832,19 @@ class SessionController internal constructor(
                 else { leaveEndedSession(); WorkspaceViewState.Hidden }
             }
         }
+        if (outcome is WorkspaceOutcome.Loaded) {
+            activeConversation?.let { conversation ->
+                val channels = outcome.workspace.uncategorisedChannels + outcome.workspace.categories.flatMap { it.channels }
+                val channel = channels.firstOrNull { it.id == conversation.scope.channelId }
+                if (outcome.workspace.organisationId != conversation.scope.organisationId || channel == null || channel.lifecycle != WorkspaceChannelLifecycle.ACTIVE) closeChannel()
+                else conversation.updateChannelSecurity(channel.isConfidential)
+            }
+        } else if (
+            outcome is WorkspaceOutcome.Unavailable &&
+            (outcome.failure == WorkspaceFailure.Forbidden || outcome.failure == WorkspaceFailure.NotFound)
+        ) {
+            closeChannel()
+        }
     }
 
     /**
@@ -935,7 +949,8 @@ class SessionController internal constructor(
         scope: ChannelConversationScope,
         conversationFence: SessionFence,
     ): ChannelConversationTransport? {
-        val requester = core?.requester ?: return null
+        val clients = core ?: return null
+        val requester = clients.requester
         val owner = generation ?: return null
         val coreOrigin = deployment.coreApiOrigin ?: return null
         val org = activeMemberOrganisation?.takeIf { it.id == scope.organisationId } ?: return null
@@ -954,6 +969,7 @@ class SessionController internal constructor(
         }
         val transport = MatrixChannelConversationTransport(
             roomClient = roomClient,
+            fetchWorkspace = { orgId -> this.fetchWorkspace(clients.workspace, orgId) },
             organisationId = scope.organisationId,
             organisationSlug = org.slug,
             matrixDomain = matrixDomain,

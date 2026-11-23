@@ -120,6 +120,7 @@ function directChannelOf(roomId: string, name: string): WorkspaceChannel {
     template_key: null,
     topic: '',
     lifecycle: 'active',
+    is_confidential: false,
     room_state: 'ready',
   } as WorkspaceChannel
 }

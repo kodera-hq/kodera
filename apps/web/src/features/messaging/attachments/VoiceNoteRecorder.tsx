@@ -3,7 +3,7 @@
 // plaintext audio. Enforces a 90s auto-stop recording ceiling and renders pure icon-only buttons
 // so composer toolbar density stays minimal.
 
-import { useEffect, useRef, useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { cx } from '../../../ui/cx'
 import { CloseIcon } from '../../../ui/icons/Close'
@@ -12,6 +12,7 @@ import { Tooltip } from '../../../ui/Tooltip/Tooltip'
 import { TOUCH_TARGET } from '../../../ui/touchTarget'
 import type { AttachmentQueue } from './attachmentQueue'
 import type { VoiceNoteMimeType } from './attachmentRefs'
+import { useMessagingOrganisation } from '../organisationContext'
 import { voiceNoteMessages } from './voiceNoteMessages'
 
 export const MAX_VOICE_NOTE_DURATION_MS = 90_000
@@ -82,9 +83,22 @@ export function VoiceNoteRecorder({
 }: VoiceNoteRecorderProps) {
   const { i18n } = useTranslation()
   const copy = voiceNoteMessages[i18n.resolvedLanguage === 'en' ? 'en' : 'fr']
+  const organisationId = useMessagingOrganisation()
   const [recording, setRecording] = useState(false)
   const [error, setError] = useState(false)
 
+  const [scope, setScope] = useState({ organisationId, roomId, plaintextPermitted, uploads })
+  if (
+    scope.organisationId !== organisationId ||
+    scope.roomId !== roomId ||
+    scope.plaintextPermitted !== plaintextPermitted ||
+    scope.uploads !== uploads
+  ) {
+    setScope({ organisationId, roomId, plaintextPermitted, uploads })
+    setRecording(false)
+  }
+  const captureGenerationRef = useRef(0)
+  const pendingStartRef = useRef(false)
   const mountedRef = useRef(true)
   const streamRef = useRef<MediaStream | null>(null)
   const recorderRef = useRef<MediaRecorder | null>(null)
@@ -122,9 +136,10 @@ export function VoiceNoteRecorder({
     recorderRef.current = null
   }
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     mountedRef.current = true
     return () => {
+      captureGenerationRef.current += 1
       mountedRef.current = false
       discardRef.current = true
       try {
@@ -136,7 +151,7 @@ export function VoiceNoteRecorder({
       }
       releaseCapture()
     }
-  }, [roomId])
+  }, [organisationId, roomId, plaintextPermitted, uploads])
 
   const isDisabled = disabled || !plaintextPermitted || uploads === null
 
@@ -159,19 +174,33 @@ export function VoiceNoteRecorder({
   }
 
   const startRecording = async () => {
-    if (isDisabled || recording) return
+    if (isDisabled || recording || pendingStartRef.current) return
     setError(false)
     const getUserMedia = globalThis.navigator?.mediaDevices?.getUserMedia
     if (typeof getUserMedia !== 'function' || typeof MediaRecorder === 'undefined') {
       setError(true)
       return
     }
+    const generation = captureGenerationRef.current
+    pendingStartRef.current = true
     try {
       const stream = await getUserMedia.call(globalThis.navigator.mediaDevices, { audio: true })
-      if (!mountedRef.current || !plaintextPermitted || uploads === null) {
-        for (const t of stream.getTracks()) t.stop()
+      if (
+        generation !== captureGenerationRef.current ||
+        !mountedRef.current ||
+        !plaintextPermitted ||
+        uploads === null
+      ) {
+        for (const track of stream.getTracks()) {
+          try {
+            track.stop()
+          } catch {
+            /* Release every track even if one stop fails. */
+          }
+        }
         return
       }
+      streamRef.current = stream
       const chosen = selectRecorderFormat()
       const recorder = chosen.recorderMime
         ? new MediaRecorder(stream, { mimeType: chosen.recorderMime })
@@ -212,12 +241,14 @@ export function VoiceNoteRecorder({
       }
 
       recorder.ondataavailable = (event: BlobEvent) => {
+        if (generation !== captureGenerationRef.current) return
         if (event.data && event.data.size > 0) {
           chunksRef.current.push(event.data)
         }
       }
 
       recorder.onstop = () => {
+        if (generation !== captureGenerationRef.current) return
         const shouldDiscard = discardRef.current
         const recordedChunks = chunksRef.current
         const durationMs = Math.min(
@@ -232,7 +263,12 @@ export function VoiceNoteRecorder({
           setRecording(false)
           onRecordingChange?.(false)
         }
-        if (shouldDiscard || recordedChunks.length === 0 || uploads === null || !plaintextPermitted) {
+        if (
+          shouldDiscard ||
+          recordedChunks.length === 0 ||
+          uploads === null ||
+          !plaintextPermitted
+        ) {
           return
         }
         const blob = new Blob(recordedChunks, { type: chosen.contentType })
@@ -250,12 +286,15 @@ export function VoiceNoteRecorder({
       setRecording(true)
       onRecordingChange?.(true)
     } catch {
+      if (generation !== captureGenerationRef.current) return
       releaseCapture()
       if (mountedRef.current) {
         setRecording(false)
         onRecordingChange?.(false)
         setError(true)
       }
+    } finally {
+      pendingStartRef.current = false
     }
   }
 

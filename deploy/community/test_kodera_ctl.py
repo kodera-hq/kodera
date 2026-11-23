@@ -7,6 +7,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import secrets
 import shlex
 import shutil
@@ -489,6 +490,39 @@ class KoderaCtlPreflightAndSecurityTests(unittest.TestCase):
             latest = ctl.resolve_and_verify_backup(stack, "latest")
             self.assertEqual(latest.backup_id, rec1.backup_id)
 
+    def test_config_snapshots_reject_tampering_before_stops_and_allow_legacy_backups(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="kodera-ctl-config-") as tmp:
+            stack = Path(tmp).resolve() / "stack"
+            _populate_stack_dir(stack)
+            env_file = stack / ".env"
+            env_file.write_text(ctl._make_valid_test_env_text(), encoding="utf-8")
+            env_file.chmod(0o600)
+            ctx = ctl.preflight_stack(
+                env_file=env_file, stack_dir=stack, skip_preflight_http=True, invoke_deploy_cli=False
+            )
+            record = ctl.create_backup(ctx, runner=_RecordingRunner())
+            snapshot = record.backup_dir / "config-Caddyfile"
+            original = snapshot.read_bytes()
+            self.assertEqual(stat.S_IMODE(snapshot.stat().st_mode), 0o600)
+            snapshot.write_bytes(original + b"# altered\n")
+            rollback_runner = _RecordingRunner()
+            with self.assertRaisesRegex(ctl.CtlRollbackError, "corrupted config snapshot"):
+                ctl.execute_rollback(
+                    env_file=env_file, stack_dir=stack, runner=rollback_runner,
+                    skip_preflight_http=True, skip_webrtc_probe=True, invoke_deploy_cli=False,
+                )
+            self.assertEqual(rollback_runner.calls, [])
+            self.assertEqual((stack / "Caddyfile").read_bytes(), original)
+
+            # Backups made before config capture remain readable and never restore unknown files.
+            manifest = dict(record.manifest)
+            manifest.pop("config_snapshots")
+            ctl._write_atomic_0600_bytes(
+                record.backup_dir, "manifest.json", json.dumps(manifest).encode()
+            )
+            legacy = ctl.resolve_and_verify_backup(stack, record.backup_id)
+            self.assertEqual(ctl._load_recovery_config(legacy), {})
+
     def test_complete_immutable_sha256_inventory_rejects_empty_missing_or_mutable_tags(self) -> None:
         with tempfile.TemporaryDirectory(prefix="kodera-ctl-inv-") as tmp:
             stack = Path(tmp).resolve() / "stack"
@@ -529,6 +563,110 @@ class KoderaCtlPreflightAndSecurityTests(unittest.TestCase):
 
 
 class KoderaCtlUpgradeAndRollbackTests(unittest.TestCase):
+    def test_cached_target_image_does_not_make_new_service_part_of_previous_stack(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="kodera-ctl-cached-target-") as tmp:
+            stack = Path(tmp).resolve() / "stack"
+            _populate_stack_dir(stack)
+            env_file = stack / ".env"
+            env_file.write_text(ctl._make_valid_test_env_text(), encoding="utf-8")
+            env_file.chmod(0o600)
+            ctx = ctl.preflight_stack(
+                env_file=env_file, stack_dir=stack,
+                skip_preflight_http=True, invoke_deploy_cli=False,
+            )
+            runner = _RecordingRunner(omit_ps_services={"api-admission"})
+            images = ctl.capture_running_images(ctx, runner)
+            self.assertEqual(images["api-admission"], {"state": "new_service"})
+            self.assertNotIn("api-admission", ctl.validate_recovery_images(ctx, images, runner))
+            broken_existing = _RecordingRunner(missing_local_images={_service_sha256("server")})
+            with self.assertRaises(ctl.CtlBackupError):
+                ctl.capture_running_images(ctx, broken_existing)
+
+    def test_upgrade_from_stack_without_new_service_and_rollback_removes_it(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory(prefix="kodera-ctl-new-service-") as tmp:
+            stack = Path(tmp).resolve() / "stack"
+            _populate_stack_dir(stack)
+            env_file = stack / ".env"
+            env_file.write_text(ctl._make_valid_test_env_text(), encoding="utf-8")
+            env_file.chmod(0o600)
+            ctx = ctl.preflight_stack(
+                env_file=env_file, stack_dir=stack, skip_preflight_http=True,
+                invoke_deploy_cli=False,
+            )
+            upgraded_config = {
+                name: (stack / name).read_bytes() for name in ctl.RECOVERY_CONFIG_FILES
+                if (stack / name).exists()
+            }
+            upgraded_config["compose.yaml"] = upgraded_config["docker-compose.yml"]
+            previous_config = {}
+            for name, payload in upgraded_config.items():
+                text = payload.decode().replace("api-admission:8080", "server:8000")
+                if name.endswith((".yml", ".yaml")):
+                    text = re.sub(r"^  api-admission:\n.*?(?=^  [a-zA-Z]|\Z)", "", text, flags=re.M | re.S)
+                    text = text.replace("      api-admission:\n        condition: service_healthy\n", "")
+                previous_config[name] = text.encode()
+                (stack / name).write_bytes(text.encode())
+
+            class ConfigChangingRunner(_RecordingRunner):
+                def __call__(self, argv, **kwargs):
+                    if "pull" in argv:
+                        for name, payload in upgraded_config.items():
+                            (stack / name).write_bytes(payload)
+                    if "up" in argv and "--no-build" in argv:
+                        # Every recovery restart must see the old service and routing definitions.
+                        for name, payload in previous_config.items():
+                            self_test.assertEqual((stack / name).read_bytes(), payload)
+                    return super().__call__(argv, **kwargs)
+
+            self_test = self
+            runner = ConfigChangingRunner(
+                omit_ps_services={"api-admission"},
+                missing_local_images={_service_sha256("api-admission")},
+                on_migrate=lambda: setattr(runner, "fail_internal_server_ready", True),
+            )
+            def restored_http(url, timeout):
+                self.assertTrue(runner.caddy_open)
+                self.assertEqual((stack / "Caddyfile").read_bytes(), previous_config["Caddyfile"])
+                self.assertNotIn(b"api-admission:8080", (stack / "Caddyfile").read_bytes())
+                if url.endswith("/health/live"):
+                    return ctl.HttpResponseData(200, b'{"status":"alive"}')
+                if url.endswith("/health/ready"):
+                    return ctl.HttpResponseData(200, b'{"status":"ready","database":"reachable"}')
+                if url.endswith("/_matrix/client/versions"):
+                    return ctl.HttpResponseData(200, b'{"versions":["v1.11"]}')
+                return ctl.HttpResponseData(404, b"{}")
+
+            # Isolate recovery from the current-release deployment guardrail, which rejects
+            # historical routing by design; the validated target context is unchanged.
+            with mock.patch.object(ctl, "preflight_stack", return_value=ctx):
+                result = ctl.execute_upgrade(
+                    env_file=env_file,
+                    stack_dir=stack,
+                    runner=runner,
+                    skip_preflight_http=True,
+                    skip_webrtc_probe=True,
+                    http_fetcher=restored_http,
+                    invoke_deploy_cli=False,
+                )
+            self.assertEqual(result["status"], "auto_rolled_back")
+            self.assertTrue(runner.caddy_open)
+            for name, payload in previous_config.items():
+                self.assertEqual((stack / name).read_bytes(), payload)
+            record = ctl.resolve_and_verify_backup(stack, "latest")
+            self.assertEqual(set(record.manifest["config_snapshots"]), set(previous_config))
+            self.assertEqual(ctl._load_recovery_config(record), previous_config)
+            self.assertEqual(record.manifest["new_services"], ["api-admission"])
+            self.assertNotIn("api-admission", record.manifest["runtime_services"])
+            self.assertTrue(
+                any(c[-4:] == ["rm", "--force", "--stop", "api-admission"] for c in runner.calls)
+            )
+            recovery_ups = [c for c in runner.calls if "up" in c and "--no-build" in c]
+            self.assertFalse(any(c[-1] == "api-admission" for c in recovery_ups))
+            build_index = next(i for i, c in enumerate(runner.calls) if c[-1] == "build")
+            self.assertTrue(any(c[:2] == ["docker", "inspect"] for c in runner.calls[:build_index]))
+
     def test_caddy_stays_closed_until_pre_rollback_gates_pass_preserving_accepted_writes(self) -> None:
         with (
             tempfile.TemporaryDirectory(prefix="kodera-ctl-caddy-gate-") as tmp,

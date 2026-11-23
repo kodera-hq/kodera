@@ -145,10 +145,7 @@ describe('bugReportScrubber allowlist & detectors', () => {
 describe('inspectBugReportNote secret blocker & PII scrubber', () => {
   it.each([
     ['bearer_token', ['Header leaked Bearer ', 'sample_session_credential'].join('')],
-    [
-      'jwt_token',
-      ['Token eyJhbGciOiJSUzI1NiJ9', 'eyJzdWIiOiJ1c2VyIn0', 'c2lnbmF0dXJl'].join('.'),
-    ],
+    ['jwt_token', ['Token eyJhbGciOiJSUzI1NiJ9', 'eyJzdWIiOiJ1c2VyIn0', 'c2lnbmF0dXJl'].join('.')],
     ['api_credential', ['Stripe rk', 'live', '9876543210abcdef'].join('_')],
     ['api_credential', ['GitHub ghp', '1234567890abcdef'].join('_')],
     ['api_credential', ['GitHub PAT github', 'pat', '1234567890abcdef'].join('_')],
@@ -156,6 +153,8 @@ describe('inspectBugReportNote secret blocker & PII scrubber', () => {
     ['api_credential', ['Synapse refresh syr', 'YWxpY2U', 'refresh'].join('_')],
     ['api_credential', ['Synapse media mda', 'YWxpY2U', 'media'].join('_')],
     ['api_credential', ['Bare assignment pass', 'word: ', 'sample_value'].join('')],
+    ['api_credential', '{"access_token":"OpaqueCredentialOnlyLettersForAuditFixture"}'],
+    ['api_credential', "'api_key': 'SecretValue123'"],
     ['api_credential', ['Bare tok', 'en=', 'SyntheticSecret'].join('')],
     ['api_credential', ['Header x-api-', 'key: ', 'SyntheticKey'].join('')],
     ['api_credential', ['Session coo', 'kie=', 'sid_sample'].join('')],

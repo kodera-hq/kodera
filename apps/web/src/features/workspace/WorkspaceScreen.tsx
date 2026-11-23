@@ -745,6 +745,7 @@ function LiveWorkspace({
               access: options.access,
               template_key: null,
               lifecycle: 'active',
+              is_confidential: false,
               room_state: 'ready',
             }
             store?.addChannel?.(created)

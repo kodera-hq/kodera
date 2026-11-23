@@ -847,3 +847,40 @@ def change_access(
     record(write, "workspace.channel_access_changed", row.id, metadata)
     emit(write, "channel.access_changed")
     return after
+
+
+def permits_channel_post(
+    *,
+    channel_id: UUID,
+    membership_id: UUID,
+    organisation_id: UUID,
+    member_org_role: str,
+    authority_revision: int,
+) -> bool:
+    """Fail closed on absent channels or unresolved policies, including administrator denials."""
+    if not Channel.objects.filter(
+        id=channel_id,
+        workspace__organisation_id=organisation_id,
+        workspace__default_policy_id__isnull=False,
+    ).exists():
+        return False
+    try:
+        access = resolve(channel_id)
+    except (Channel.DoesNotExist, WorkspaceUnavailableError):
+        return False
+    # Extension replay never uses the interactive administrator bypass for policy denials.
+    if access.denied & {"channel.view", "message.post"}:
+        return False
+    return may_view(
+        access,
+        organisation_id=organisation_id,
+        membership_id=membership_id,
+        authority_revision=authority_revision,
+    ) and may_perform(
+        access,
+        action="message.post",
+        member_org_role=member_org_role,
+        organisation_id=organisation_id,
+        membership_id=membership_id,
+        authority_revision=authority_revision,
+    )

@@ -21,11 +21,7 @@ import { transformOutsideCode } from '../messaging/formatting'
 import { useMessagingOrganisation } from '../messaging/organisationContext'
 import { RichComposerInput } from '../messaging/RichComposerInput'
 import { pollMessages } from '../polls/pollMessages'
-import {
-  parsePollCommand,
-  pollFallbackBody,
-  type PollWirePayload,
-} from '../polls/pollState'
+import { parsePollCommand, pollFallbackBody, type PollWirePayload } from '../polls/pollState'
 import { pollStore } from '../polls/pollStore'
 import { useDraftSlice, type DraftChannel } from './draftChannel'
 import { replaceShortcodes } from './emoji'
@@ -378,7 +374,7 @@ function MessageComposerView({
         question: parsed.question,
         options: parsed.options,
         allowMultiple: parsed.allowMultiple,
-        anonymous: parsed.anonymous,
+        anonymous: false,
       }
       const authorName =
         store.getOwnProfile?.()?.displayName ??

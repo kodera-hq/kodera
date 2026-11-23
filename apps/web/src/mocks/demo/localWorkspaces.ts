@@ -207,6 +207,7 @@ export function localWorkspace(claim: ClaimedWorkspace): components['schemas']['
             claim.payload.templateId === 'proximity' && item.name === 'proximity'
               ? 'proximity'
               : null,
+          is_confidential: false,
           room_state: 'ready',
           topic: '',
         })),

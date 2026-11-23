@@ -167,6 +167,7 @@ const WORKSPACE: Workspace = {
           template_key: 'general',
           topic: 'Discussions de toute l’équipe',
           lifecycle: 'active',
+          is_confidential: false,
           room_state: 'ready',
         },
       ],

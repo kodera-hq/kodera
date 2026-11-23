@@ -840,7 +840,8 @@ export const EXAMPLES = {
               "template_key": "welcome",
               "topic": "",
               "lifecycle": "active",
-              "room_state": "ready"
+              "room_state": "ready",
+              "is_confidential": false
             },
             {
               "id": "0192f3a4-5b6c-7d8e-9f01-23456789abd1",
@@ -849,7 +850,8 @@ export const EXAMPLES = {
               "template_key": "general",
               "topic": "",
               "lifecycle": "active",
-              "room_state": "ready"
+              "room_state": "ready",
+              "is_confidential": false
             }
           ]
         },
@@ -865,7 +867,8 @@ export const EXAMPLES = {
               "template_key": "lounge",
               "topic": "",
               "lifecycle": "active",
-              "room_state": "pending"
+              "room_state": "pending",
+              "is_confidential": false
             }
           ]
         }

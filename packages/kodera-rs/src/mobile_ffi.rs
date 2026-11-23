@@ -278,6 +278,7 @@ fn dispatch_json(input: &[u8]) -> Result<String, MobileFfiError> {
         "session_envelope_verify_and_observe" => handle_session_envelope_observe(&root),
         "mls_device_create" => handle_mls_device_create(&root),
         "mls_device_restore" => handle_mls_device_restore(&root),
+        "attachment_mime_validate" => handle_attachment_mime_validate(&root),
         "reaction_validate" => handle_reaction_validate(&root),
         "wakeup_envelope_admit" => handle_wakeup_envelope_admit(&root),
         _ => Err(MobileFfiError::UnknownOp),
@@ -940,6 +941,31 @@ fn is_emoji_pictographic_base(cp: u32) -> bool {
             | 0x3299
             | 0x1F000..=0x1FAFF
     )
+}
+
+/// MIME allowlist shared with native mobile attachment references.
+pub fn validate_attachment_mime(content_type: &str) -> bool {
+    matches!(
+        content_type,
+        "image/jpeg"
+            | "image/png"
+            | "image/webp"
+            | "image/gif"
+            | "application/pdf"
+            | "text/plain"
+            | "application/octet-stream"
+            | "audio/ogg"
+            | "audio/webm"
+            | "audio/mp4"
+    )
+}
+
+fn handle_attachment_mime_validate(
+    root: &BTreeMap<String, FfiJsonValue>,
+) -> Result<String, MobileFfiError> {
+    ensure_allowed_keys(root, &["op", "content_type"])?;
+    let valid = validate_attachment_mime(required_str(root, "content_type")?);
+    Ok(format!("{{\"ok\":true,\"valid\":{valid}}}"))
 }
 
 fn handle_reaction_validate(
@@ -1755,6 +1781,17 @@ mod tests {
         }
     }
 
+    #[test]
+    fn attachment_mime_vectors_match_mobile() {
+        let vectors = load_mobile_vectors();
+        for kind in ["ogg", "webm", "mp4", "html"] {
+            let (status, body) =
+                super::invoke_json(vectors[&format!("req_attachment_{kind}_json")].as_bytes());
+            assert_eq!(status, KODERA_FFI_STATUS_OK);
+            assert_eq!(body, vectors[&format!("resp_attachment_{kind}_json")]);
+        }
+    }
+
     #[cfg(feature = "openmls-engine")]
     #[test]
     fn unified_wire_schema_golden_vectors_round_trip() {
@@ -1774,6 +1811,10 @@ mod tests {
                 "resp_session_envelope_observe_json",
             ),
             ("req_reaction_validate_json", "resp_reaction_validate_json"),
+            ("req_attachment_ogg_json", "resp_attachment_ogg_json"),
+            ("req_attachment_webm_json", "resp_attachment_webm_json"),
+            ("req_attachment_mp4_json", "resp_attachment_mp4_json"),
+            ("req_attachment_html_json", "resp_attachment_html_json"),
             ("req_wakeup_admit_json", "resp_wakeup_admit_json"),
         ] {
             let (code, status, body) = invoke_packet_json(&vectors[req_key]);

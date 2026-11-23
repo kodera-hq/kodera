@@ -1061,8 +1061,8 @@ N4_PATH = "/organisations/{organisation_id}/bootstrap"
 # Rebound at 0.51.0: attachment channel/room scope, upload cancellation, moderator revocation, and confidential channel creation; assurance guards unchanged.
 # Rebound at 0.52.0: audio companion chat read_only access and WorkspaceTemplate v2 personas/customization; assurance guards unchanged.
 # Rebound at 0.53.0: push subscription platform, bounded foreground presence leases, and zero-PII createBugReport; assurance guards unchanged.
-# Rebound at 0.54.0: workspace import dry-run/execution, live coexistence bridges, three-tier AI policy/consent, and voice-note transcription; assurance guards unchanged.
-N4_VERSION = "0.54.0"
+# Rebound at 0.55.0: authoritative workspace channel confidentiality; N4 assurance guards unchanged.
+N4_VERSION = "0.55.0"
 # Rebound at 0.19.0 (2026-10-21, on top of 0.18.1): the notice-contacts delta and the Plan example's EU hosting.
 # Rebound at 0.22.0: the ten structure operations, their schemas and Problem.reason's first value;
 # then room_state on WorkspaceChannel, the starter's lounge (template version 2) and AppCode messaging;
@@ -1117,8 +1117,8 @@ N4_VERSION = "0.54.0"
 # Rebound at 0.51.0: attachment channel/room scope, upload cancellation, moderator revocation, and confidential channel creation; no N4 bytes changed.
 # Rebound at 0.52.0: audio companion chat read_only access and WorkspaceTemplate v2 personas/customization; no N4 bytes changed.
 # Rebound at 0.53.0: push subscription platform, bounded foreground presence leases, and zero-PII createBugReport; no N4 bytes changed.
-# Rebound at 0.54.0: workspace import dry-run/execution, live coexistence bridges, three-tier AI policy/consent, and voice-note transcription; no N4 bytes changed.
-N4_OLD_CONTRACT = "327ae0636073f152ace1bf35ae070bd764cc0237bfa4dbb2679bea549cd6def3"
+# Rebound at 0.55.0: authoritative workspace channel confidentiality; N4 assurance guards unchanged.
+N4_OLD_CONTRACT = "ddfab1bef3c64ac088e1656537e98d169a1d7eed5294f314e3fa7a55e1e0e679"
 # Rebound at 0.20.0 (2026-10-22): CONVENTIONS.md §6 gains the order-in-progress and invoice-issued rows and a changelog line.
 # Rebound at 0.24.0 (2026-10-22): CONVENTIONS.md §6's invoice-issued row narrowed, and a changelog line.
 # Rebound at 0.28.0: CONVENTIONS.md §6 gains the identity-unknown row and a changelog line.

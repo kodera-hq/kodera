@@ -21,18 +21,18 @@ from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.utils import timezone
 
-from apps.identity.models import Identity, User
+from apps.identity import selectors as identities
 from apps.identity.selectors import lock_delivery_identity, lock_user_fence
 from apps.media import outbound
-from apps.orgs.models import Membership, Organisation
+from apps.orgs import selectors as organisations
 from apps.orgs.selectors import (
     lock_erasure_cutoff_fences,
     lock_membership_fence,
     lock_organisation,
     organisation_exists,
 )
+from apps.workspaces import selectors as workspaces
 from apps.workspaces.channel_sets import lock_workspace
-from apps.workspaces.models import Channel
 from core import sealing
 from core.db.ids import new_uuid7
 
@@ -40,7 +40,7 @@ from .import_parsers import MAX_FILE, clean, identifier, verify_asset_magic
 from .imports import MatrixReplayTransport, try_compensating_redact
 from .member_matching import inert_author_attribution
 from .models import CoexistenceBridge, CoexistenceReplayGuard, WorkspaceCutoff
-from .services import admin, audit, read_admin
+from .services import admin, audit, read_admin, require_channel_post
 from .wire import ExtensionRefusedError, canonical, signature as sign_v1
 
 SEAL_AAD_PREFIX = b"kodera-coexistence-v1:"
@@ -200,10 +200,8 @@ def create_bridge(
 
     with transaction.atomic():
         workspace_id, principal = admin(verified, organisation_id)
-        channel = (
-            Channel.objects.select_for_update()
-            .filter(id=channel_id, workspace_id=workspace_id)
-            .first()
+        channel = workspaces.channel_snapshot(
+            channel_id=channel_id, workspace_id=workspace_id, for_update=True
         )
         if channel is None or channel.kind != "text":
             raise ExtensionRefusedError("coexistence_channel_absent", 404)
@@ -211,6 +209,12 @@ def create_bridge(
             raise ExtensionRefusedError("coexistence_confidential_channel_refused", 403)
         if channel.lifecycle != "active":
             raise ExtensionRefusedError("coexistence_channel_inactive", 409)
+        require_channel_post(
+            channel_id=channel.id,
+            membership_id=principal.membership_id,
+            organisation_id=organisation_id,
+            confidential_reason="coexistence_confidential_channel_refused",
+        )
         active_count = CoexistenceBridge.objects.filter(
             workspace_id=workspace_id, revoked_at__isnull=True
         ).count()
@@ -222,7 +226,7 @@ def create_bridge(
             row = CoexistenceBridge.objects.create(
                 id=bridge_id,
                 workspace_id=workspace_id,
-                channel=channel,
+                channel_id=channel.id,
                 creator_id=principal.membership_id,
                 source=source,
                 external_workspace_id=ext_ws,
@@ -279,39 +283,31 @@ def _lock_and_verify_bridge_authority(
     *,
     bridge_id: UUID,
     hmac_check: tuple[str, str, int, bytes] | None = None,
-) -> tuple[UUID, CoexistenceBridge, Channel, str]:
+) -> tuple[UUID, CoexistenceBridge, workspaces.ChannelSnapshot, str]:
     """Acquire canonical `advisories -> m -> i -> u -> o -> w` locks and verify live bridge invariants."""
-    initial = (
-        CoexistenceBridge.objects.select_related("workspace", "creator")
-        .filter(id=bridge_id)
-        .first()
-    )
+    initial = CoexistenceBridge.objects.filter(id=bridge_id).first()
     if initial is None:
         if hmac_check is not None:
             raise ExtensionRefusedError("coexistence_signature_invalid", 401)
         raise ExtensionRefusedError("coexistence_bridge_absent", 404)
 
-    org_id: UUID = initial.workspace.organisation_id
+    org_id: UUID = workspaces.workspace_organisation(workspace_id=initial.workspace_id)
     if not organisation_exists(organisation_id=org_id):
         raise ExtensionRefusedError("extension_workspace_absent", 404)
     if WorkspaceCutoff.objects.filter(organisation_id=org_id).exists():
         raise ExtensionRefusedError("extension_workspace_cut_off", 410)
 
     creator_membership_id: UUID = initial.creator_id
-    creator_user_id: UUID = initial.creator.user_id
-    initial_identity = (
-        Identity.objects.filter(
-            organisation_id=org_id, user_id=creator_user_id, deleted_at__isnull=True
-        )
-        .order_by("id")
-        .first()
+    creator_user_id: UUID = organisations.membership_user_id(membership_id=initial.creator_id)
+    initial_identity = identities.first_organisation_identity_id(
+        organisation_id=org_id, user_id=creator_user_id
     )
 
     # Canonical lock order: advisories -> m -> i -> u -> o -> w
     lock_erasure_cutoff_fences(organisation_id=org_id, user_id=creator_user_id)
     locked_user_id = lock_membership_fence(membership_id=creator_membership_id)
     if initial_identity is not None:
-        lock_delivery_identity(identity_id=initial_identity.id)
+        lock_delivery_identity(identity_id=initial_identity)
     lock_user_fence(user_id=locked_user_id)
     if not lock_organisation(organisation_id=org_id):
         raise ExtensionRefusedError("extension_workspace_absent", 404)
@@ -346,39 +342,32 @@ def _lock_and_verify_bridge_authority(
             scheme=scheme, provided_sig=provided_sig, secret=secret, ts=ts, raw_body=raw_body
         )
 
-    if not Organisation.objects.filter(id=org_id, state="active", deleted_at__isnull=True).exists():
+    if not organisations.active_organisation(organisation_id=org_id):
         raise ExtensionRefusedError("coexistence_organisation_inactive", 403)
 
     creator_active = (
-        Membership.objects.filter(
-            id=bridge.creator_id,
-            organisation_id=org_id,
-            state="active",
-            accepted_at__isnull=False,
-            deleted_at__isnull=True,
-            role__in=("org_owner", "org_admin"),
-        ).exists()
-        and User.objects.filter(id=locked_user_id, enabled=True, deleted_at__isnull=True).exists()
-        and Identity.objects.filter(
-            organisation_id=org_id,
-            user_id=locked_user_id,
-            enabled=True,
-            deleted_at__isnull=True,
-        ).exists()
+        organisations.current_admin_role(membership_id=bridge.creator_id, organisation_id=org_id)
+        is not None
+        and identities.enabled_user(user_id=locked_user_id)
+        and identities.delivery_identity_exists(organisation_id=org_id, user_id=locked_user_id)
     )
     if not creator_active:
         raise ExtensionRefusedError("coexistence_creator_authority_revoked", 403)
 
-    channel = (
-        Channel.objects.select_for_update()
-        .filter(id=bridge.channel_id, workspace_id=bridge.workspace_id)
-        .first()
+    channel = workspaces.channel_snapshot(
+        channel_id=bridge.channel_id, workspace_id=bridge.workspace_id, for_update=True
     )
     if channel is None or channel.kind != "text" or channel.lifecycle != "active":
         raise ExtensionRefusedError("coexistence_channel_inactive", 403)
     if channel.is_confidential:
         raise ExtensionRefusedError("coexistence_confidential_channel_refused", 403)
 
+    require_channel_post(
+        channel_id=channel.id,
+        membership_id=bridge.creator_id,
+        organisation_id=org_id,
+        confidential_reason="coexistence_confidential_channel_refused",
+    )
     return org_id, bridge, channel, secret
 
 
@@ -437,14 +426,14 @@ def _verify_inbound_hmac_prelock(
     *, bridge_id: UUID, scheme: str, provided_sig: str, ts: int, raw_body: bytes
 ) -> tuple[UUID, CoexistenceBridge]:
     """Authenticate HMAC-SHA256 before acquiring any advisory or row locks."""
-    initial = CoexistenceBridge.objects.select_related("workspace").filter(id=bridge_id).first()
+    initial = CoexistenceBridge.objects.filter(id=bridge_id).first()
     dummy_digest = hmac.new(
         b"0" * 32, f"v1:{ts}:".encode("ascii") + raw_body, hashlib.sha256
     ).hexdigest()
     if initial is None:
         hmac.compare_digest(dummy_digest, provided_sig)
         raise ExtensionRefusedError("coexistence_signature_invalid", 401)
-    org_id: UUID = initial.workspace.organisation_id
+    org_id: UUID = workspaces.workspace_organisation(workspace_id=initial.workspace_id)
     if WorkspaceCutoff.objects.filter(organisation_id=org_id).exists():
         hmac.compare_digest(dummy_digest, provided_sig)
         raise ExtensionRefusedError("extension_workspace_cut_off", 410)
@@ -923,7 +912,7 @@ def enqueue_outbound_coexistence(
         raise ExtensionRefusedError("coexistence_sender_invalid", 422)
     if _is_agent_or_echo_sender(sender, msgtype, metadata):
         return []
-    channel = Channel.objects.filter(id=channel_id, workspace_id=workspace_id).first()
+    channel = workspaces.channel_snapshot(channel_id=channel_id, workspace_id=workspace_id)
     if channel is None or channel.kind != "text" or channel.lifecycle != "active":
         return []
     if channel.is_confidential:
@@ -941,6 +930,15 @@ def enqueue_outbound_coexistence(
         revoked_at__isnull=True,
     ).order_by("id")
     for bridge in bridges:
+        try:
+            require_channel_post(
+                channel_id=channel.id,
+                membership_id=bridge.creator_id,
+                organisation_id=workspaces.workspace_organisation(workspace_id=workspace_id),
+                confidential_reason="coexistence_confidential_channel_refused",
+            )
+        except ExtensionRefusedError:
+            continue
         echo_digest = content_echo_sha256(bridge.id, cleaned_text)
         guard, created = CoexistenceReplayGuard.objects.get_or_create(
             bridge=bridge,
@@ -1039,12 +1037,12 @@ def forward_outbound(
 
     # 1. Read endpoint and pre-resolve pinned DNS addresses BEFORE acquiring the pre-send
     # authority lock so revocation during DNS aborts before any HTTP byte is transmitted.
-    initial = CoexistenceBridge.objects.select_related("workspace").filter(id=bridge_id).first()
+    initial = CoexistenceBridge.objects.filter(id=bridge_id).first()
     if initial is None:
         raise ExtensionRefusedError("coexistence_bridge_absent", 404)
     if initial.revoked_at is not None or not bytes(initial.sealed_signing_secret):
         raise ExtensionRefusedError("coexistence_bridge_revoked", 403)
-    initial_org_id: UUID = initial.workspace.organisation_id
+    initial_org_id: UUID = workspaces.workspace_organisation(workspace_id=initial.workspace_id)
     deadline = time.monotonic() + 5.0
     resolved_addrs: list[tuple[Any, ...]] | None = None
     try:

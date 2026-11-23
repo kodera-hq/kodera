@@ -1124,7 +1124,7 @@ def capture_running_images(
     *,
     error_cls: type[CtlError] = CtlBackupError,
 ) -> dict[str, dict[str, str]]:
-    """Capture a complete, immutable `sha256:` `image_id` inventory for every expected service."""
+    """Capture deployed service images and explicitly mark newly introduced target services."""
     gate = deploy_gate()
     compose_text = read_regular_utf8_nofollow(ctx.stack_dir / "docker-compose.yml", error_cls=error_cls)
     services_spec = gate.parse_compose_services(compose_text)
@@ -1133,6 +1133,7 @@ def capture_running_images(
     )
     expected_set = set(expected)
 
+    present_services: set[str] = set()
     recorded: dict[str, dict[str, str]] = {svc: {} for svc in expected}
     for svc_name in expected:
         spec = services_spec.get(svc_name)
@@ -1142,13 +1143,16 @@ def capture_running_images(
     base_argv = build_compose_argv(ctx)
     # 1. Inspect running & exited one-shot containers (`ps -a`) for exact container `.Image` sha256 IDs.
     ps_res = _invoke_runner(ctx, runner, [*base_argv, "ps", "-a", "--format", "json"], timeout=30.0)
-    if ps_res.returncode == 0 and ps_res.stdout.strip():
+    if ps_res.returncode != 0:
+        raise error_cls("cannot inspect previously deployed containers")
+    if ps_res.stdout.strip():
         for entry in _parse_json_lines_or_array(ps_res.stdout):
             svc = str(entry.get("Service") or entry.get("service") or "").strip()
             cid = str(entry.get("ID") or entry.get("Id") or "").strip()
             img_label = str(entry.get("Image") or "").strip()
             if svc not in expected_set:
                 continue
+            present_services.add(svc)
             info = recorded[svc]
             if img_label:
                 info["running_tag"] = img_label
@@ -1222,6 +1226,14 @@ def capture_running_images(
                         info.setdefault("running_tag", ref)
                     break
 
+    initializers = set(socket_init_services(governance_enabled=ctx.governance_enabled))
+    for svc in expected:
+        if svc not in present_services and (
+            svc not in initializers or not recorded[svc].get("image_id")
+        ):
+            # A cached target image does not prove that a runtime service was deployed.
+            # Removed one-shot initializer containers may still use their verified local image.
+            recorded[svc] = {"state": "new_service"}
     validate_recovery_images(ctx, recorded, runner, error_cls=error_cls)
     return recorded
 
@@ -1233,7 +1245,7 @@ def validate_recovery_images(
     *,
     error_cls: type[CtlError] = CtlRollbackError,
 ) -> dict[str, str]:
-    """Require a locally verified immutable `sha256:` `image_id` for EVERY expected service."""
+    """Verify immutable deployed images, admitting explicit new-service markers for target additions."""
     if not isinstance(images_map, Mapping) or not images_map:
         raise error_cls("recovery image inventory is missing or empty")
 
@@ -1245,6 +1257,10 @@ def validate_recovery_images(
         meta = images_map.get(svc)
         if not isinstance(meta, Mapping):
             raise error_cls(f"recovery image inventory missing required service '{svc}'")
+        if meta == {"state": "new_service"}:
+            if svc in {"db", "synapse-db", "server", "caddy"}:
+                raise error_cls(f"required deployed service '{svc}' is absent")
+            continue
         image_id = str(meta.get("image_id") or "").strip()
         if not IMAGE_ID_RE.fullmatch(image_id):
             raise error_cls(
@@ -1346,12 +1362,68 @@ def _stream_pg_dump(
     }
 
 
+RECOVERY_CONFIG_FILES = (
+    "Caddyfile", "Caddyfile.split", "docker-compose.yml", "compose.yaml", "docker-compose.split.yml",
+)
+
+
+def _capture_recovery_config(ctx: StackContext) -> dict[str, bytes]:
+    """Capture routing and service definitions before any upgrade staging mutation."""
+    captured = {}
+    for name in RECOVERY_CONFIG_FILES:
+        path = verify_child_no_symlink(ctx.stack_dir, name, error_cls=CtlBackupError)
+        if path.exists():
+            captured[name] = read_regular_bytes_nofollow(path, error_cls=CtlBackupError)
+    return captured
+
+
+def _load_recovery_config(record: BackupRecord) -> dict[str, bytes]:
+    """Verify optional config snapshots; legacy database-only backups remain readable."""
+    snapshots = record.manifest.get("config_snapshots", {})
+    if not isinstance(snapshots, dict):
+        raise CtlRollbackError("invalid config snapshot inventory")
+    captured = {}
+    for name, meta in snapshots.items():
+        if name not in RECOVERY_CONFIG_FILES or not isinstance(meta, dict):
+            raise CtlRollbackError("invalid config snapshot entry")
+        filename = f"config-{name}"
+        if meta.get("filename") != filename:
+            raise CtlRollbackError("invalid config snapshot filename")
+        path = verify_child_no_symlink(record.backup_dir, filename, error_cls=CtlRollbackError)
+        try:
+            _hash_regular_0600_file(path)
+            payload = read_regular_bytes_nofollow(path, error_cls=CtlRollbackError)
+        except CtlBackupError as exc:
+            raise CtlRollbackError(str(exc)) from None
+        actual_sha, actual_size = hashlib.sha256(payload).hexdigest(), len(payload)
+        expected_sha = meta.get("sha256")
+        if (
+            not isinstance(expected_sha, str)
+            or not SHA256_HEX_RE.fullmatch(expected_sha)
+            or not hmac.compare_digest(actual_sha, expected_sha)
+            or actual_size != meta.get("size_bytes")
+        ):
+            raise CtlRollbackError(f"tampered or corrupted config snapshot: {name}")
+        captured[name] = payload
+    return captured
+
+
+def _restore_recovery_config(ctx: StackContext, captured: Mapping[str, bytes]) -> None:
+    """Replace each previous config atomically while ingress and writers are stopped."""
+    try:
+        for name, payload in captured.items():
+            _write_atomic_0600_bytes(ctx.stack_dir, name, payload)
+    except CtlBackupError as exc:
+        raise CtlRollbackError(str(exc)) from None
+
+
 def create_backup(
     ctx: StackContext,
     *,
     runner: CommandRunner | None = None,
     backup_id_override: str | None = None,
     pre_captured_images: dict[str, dict[str, str]] | None = None,
+    pre_captured_config: Mapping[str, bytes] | None = None,
 ) -> BackupRecord:
     """Create an atomic backup via `.kodera-backups/.staging-<id>-<pid>` -> `<id>` rename."""
     active_runner = default_command_runner if runner is None else runner
@@ -1397,6 +1469,17 @@ def create_backup(
         else:
             images = capture_running_images(ctx, active_runner, error_cls=CtlBackupError)
 
+        config = _capture_recovery_config(ctx) if pre_captured_config is None else pre_captured_config
+        config_snapshots = {}
+        for name, payload in config.items():
+            filename = f"config-{name}"
+            _write_atomic_0600_bytes(staging_dir, filename, payload)
+            config_snapshots[name] = {
+                "filename": filename,
+                "sha256": hashlib.sha256(payload).hexdigest(),
+                "size_bytes": len(payload),
+            }
+
         core_dump = _stream_pg_dump(
             ctx,
             active_runner,
@@ -1418,6 +1501,7 @@ def create_backup(
 
         manifest: dict[str, object] = {
             "schema_version": 1,
+            "config_snapshots": config_snapshots,
             "backup_id": backup_id,
             "created_at": utc_now.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "topology": ctx.topology,
@@ -1427,14 +1511,19 @@ def create_backup(
             "postgres_db": ctx.postgres_db,
             "synapse_db_user": "synapse",
             "synapse_db_name": "synapse",
-            "runtime_services": list(
-                topological_service_order(ctx.topology, governance_enabled=ctx.governance_enabled)
-            ),
+            "runtime_services": [
+                svc for svc in topological_service_order(
+                    ctx.topology, governance_enabled=ctx.governance_enabled
+                ) if images[svc].get("state") != "new_service"
+            ],
             "dumps": {
                 "kodera_server": core_dump,
                 "synapse": synapse_dump,
             },
             "images": images,
+            "new_services": sorted(
+                svc for svc, meta in images.items() if meta.get("state") == "new_service"
+            ),
         }
 
         manifest_bytes = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode()
@@ -1562,7 +1651,9 @@ def resolve_and_verify_backup(stack_dir: Path, backup_selector: str = "latest") 
                 f"tampered or corrupted backup refused: SHA-256/size mismatch on {expected_filename}"
             )
 
-    return BackupRecord(backup_id=selected_id, backup_dir=snapshot_dir, manifest=manifest)
+    record = BackupRecord(backup_id=selected_id, backup_dir=snapshot_dir, manifest=manifest)
+    _load_recovery_config(record)
+    return record
 
 
 def _verify_internal_backend_readiness(
@@ -1948,9 +2039,12 @@ def _start_pinned_backends_and_probe_no_deps(
     webrtc_port_override: int | None,
     webrtc_prober: WebRtcProbeFn,
     error_cls: type[CtlError],
+    recovery_services: Mapping[str, str] | None = None,
 ) -> dict[str, object]:
     """Start socket-init + backend services (`--no-build --no-deps`) and verify readiness + WebRTC BEFORE `caddy`."""
     for init_svc in socket_init_services(governance_enabled=ctx.governance_enabled):
+        if recovery_services is not None and init_svc not in recovery_services:
+            continue
         _run_checked(
             ctx,
             runner,
@@ -1960,6 +2054,8 @@ def _start_pinned_backends_and_probe_no_deps(
             timeout=120.0,
         )
     for svc in backend_runtime_services(ctx.topology, governance_enabled=ctx.governance_enabled):
+        if recovery_services is not None and svc not in recovery_services:
+            continue
         _run_checked(
             ctx,
             runner,
@@ -1976,6 +2072,20 @@ def _start_pinned_backends_and_probe_no_deps(
         webrtc_prober=webrtc_prober,
         error_cls=error_cls,
     )
+
+
+def _remove_new_recovery_services(
+    ctx: StackContext, runner: CommandRunner, images: Mapping[str, object]
+) -> None:
+    added = sorted(
+        svc for svc, meta in images.items()
+        if isinstance(meta, Mapping) and meta.get("state") == "new_service"
+    )
+    if added:
+        _run_checked(
+            ctx, runner, [*build_compose_argv(ctx), "rm", "--force", "--stop", *added],
+            phase="remove-new-services", error_cls=CtlRollbackError,
+        )
 
 
 def execute_rollback(
@@ -2007,6 +2117,7 @@ def execute_rollback(
         invoke_deploy_cli=invoke_deploy_cli,
     )
     record = resolve_and_verify_backup(ctx.stack_dir, backup_selector)
+    recovery_config = _load_recovery_config(record)
 
     raw_images = record.manifest.get("images")
     # Require a complete, locally verified `sha256:` image_id inventory BEFORE stopping services!
@@ -2042,6 +2153,9 @@ def execute_rollback(
         phase="stop-write-services",
         error_cls=CtlRollbackError,
     )
+
+    _remove_new_recovery_services(ctx, active_runner, images_map)
+    _restore_recovery_config(ctx, recovery_config)
 
     # 2. Ensure PostgreSQL containers run from their pinned sha256 images with `--no-build --no-deps`.
     _run_checked(
@@ -2082,6 +2196,7 @@ def execute_rollback(
         webrtc_port_override=webrtc_port_override,
         webrtc_prober=active_webrtc,
         error_cls=CtlRollbackError,
+        recovery_services=pinned_refs,
     )
 
     # 5. Open `caddy` last and verify public HTTP + closed 404 isolation, failing closed on error.
@@ -2101,7 +2216,7 @@ def execute_rollback(
         "env_matched_backup": hmac.compare_digest(
             ctx.env_sha256, str(record.manifest.get("env_sha256", ""))
         ),
-        "restored_services": list(runtime_services),
+        "restored_services": [svc for svc in runtime_services if svc in pinned_refs],
         "postflight": {
             "http": observed_http,
             "webrtc": webrtc_result,
@@ -2173,6 +2288,7 @@ def execute_upgrade(
 
     # 1. Capture complete immutable `sha256:` recovery inventory BEFORE `pull`/`build` mutates tags,
     # then stage new images while running services continue serving without interruption.
+    pre_stage_config = _capture_recovery_config(ctx)
     pre_stage_images = capture_running_images(
         ctx, active_runner, error_cls=CtlUpgradeError
     )
@@ -2232,6 +2348,7 @@ def execute_upgrade(
             ctx,
             runner=active_runner,
             pre_captured_images=pre_stage_images,
+            pre_captured_config=pre_stage_config,
         )
 
         # 4. Run socket-init containers and schema/role migrator with `--no-deps`.
@@ -2300,6 +2417,8 @@ def execute_upgrade(
                 override = _prepare_rollback_image_override(
                     ctx, rec_tmp, pre_stage_images, pinned_pre, active_runner
                 )
+                _remove_new_recovery_services(ctx, active_runner, pre_stage_images)
+                _restore_recovery_config(ctx, pre_stage_config)
                 recover_argv = build_compose_argv(ctx, extra_compose_files=(override,))
                 _start_pinned_backends_and_probe_no_deps(
                     ctx,
@@ -2309,6 +2428,7 @@ def execute_upgrade(
                     webrtc_port_override=webrtc_port_override,
                     webrtc_prober=active_webrtc,
                     error_cls=CtlRollbackError,
+                    recovery_services=pinned_pre,
                 )
                 _open_caddy_and_verify_public_http(
                     ctx,

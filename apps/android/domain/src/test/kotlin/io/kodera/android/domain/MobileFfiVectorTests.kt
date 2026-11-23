@@ -31,6 +31,18 @@ class MobileFfiVectorTests {
     }
 
     @Test
+    fun voiceNoteMimeTypesRemainTypedAttachmentReferences() {
+        for (wire in listOf("audio/ogg", "audio/webm", "audio/mp4")) {
+            val mime = AttachmentMimeType.fromWire(wire)!!
+            assertTrue(mime.isAudio)
+            val reference = AttachmentMetadataRef.create("01935800-0000-7000-8000-000000000077", "voice", mime, 32)
+            assertEquals(wire, reference.contentType.wireValue)
+        }
+        assertFalse(AttachmentMimeType.PLAIN_TEXT.isAudio)
+        assertEquals(null, AttachmentMimeType.fromWire("audio/unknown"))
+    }
+
+    @Test
     fun uuidV7MatchesRustGoldenVectorAndRejectsInvalidForms() {
         val vectors = loadSharedVectors()
         val unixTsMs = vectors.getValue("unix_ts_ms").toLong()
@@ -150,6 +162,10 @@ class MobileFfiVectorTests {
             "req_session_vault_open_json" to "resp_session_vault_open_json",
             "req_session_envelope_observe_json" to "resp_session_envelope_observe_json",
             "req_reaction_validate_json" to "resp_reaction_validate_json",
+            "req_attachment_ogg_json" to "resp_attachment_ogg_json",
+            "req_attachment_webm_json" to "resp_attachment_webm_json",
+            "req_attachment_mp4_json" to "resp_attachment_mp4_json",
+            "req_attachment_html_json" to "resp_attachment_html_json",
             "req_wakeup_admit_json" to "resp_wakeup_admit_json",
         )
         for ((reqKey, respKey) in unifiedPairs) {
