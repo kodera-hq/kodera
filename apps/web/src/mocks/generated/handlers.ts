@@ -187,6 +187,7 @@ export const handlers: HttpHandler[] = [
   http.delete(BASE + "/domains/:domain_id", () => answer(EXAMPLES["deleteDomain"])),
   http.post(BASE + "/domains/:domain_id/actions/verify", ({ request }) => answerIdempotent(EXAMPLES["verifyDomain"], request)),
   http.post(BASE + "/community/support/tickets", ({ request }) => answerIdempotent(EXAMPLES["createCommunitySupportTicket"], request)),
+  http.post(BASE + "/organisations/:organisation_id/support/bug-reports", ({ request }) => answerIdempotent(EXAMPLES["createBugReport"], request)),
   http.get(BASE + "/support/tickets", () => answer(EXAMPLES["listSupportTickets"])),
   http.post(BASE + "/support/tickets", ({ request }) => answerIdempotent(EXAMPLES["createSupportTicket"], request)),
   http.get(BASE + "/support/tickets/:ticket_id", () => answer(EXAMPLES["getSupportTicket"])),

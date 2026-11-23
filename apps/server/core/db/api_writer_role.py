@@ -131,6 +131,8 @@ SELECT = (
     # caller's and the organisation's recent tickets, which the creation limits count.
     "tenancy_tenant",
     "support_supportticket",
+    "support_bugreport",
+    "support_bugreportrateevent",
     # Public billing catalogue reads (/api/v1/catalog/*) and createTenant (QUICK_WORKSPACE.md §4)
     # read published plans, packs, capacity tiers and offered prices: catalogue rows, no personal data.
     "billing_plan",
@@ -249,7 +251,9 @@ INSERT = (
     "orgs_membership",
     # A support ticket (SUPPORT_TICKETS.md): the row only. Its mail mark is the operator's to set,
     # so no column of it is granted for UPDATE; its audit row and stored answer are granted above.
+    # `support_bugreport` is omitted from table-wide INSERT and governed strictly by INSERT_COLUMNS.
     "support_supportticket",
+    "support_bugreportrateevent",
     # createTenant (QUICK_WORKSPACE.md §4): the tenant, its DPA and the acceptance of the CGV and
     # the DPA for it. Its `tenant.ordered` and `dpa.accepted` rows are audit rows, granted above.
     "tenancy_tenant",
@@ -543,6 +547,11 @@ UPDATE_COLUMNS = (
     ("orgs_invitation", "revoked_at"),
     ("orgs_invitation", "updated_at"),
     ("orgs_membership", "accepted_at"),
+    # Zero-PII bug report deduplication coalesces only `occurrences` and `updated_at`; worker
+    # dispatch fields (`dispatched_at`, `github_issue_number`, `dispatch_attempts`,
+    # `last_dispatch_error`) and `support_bugreportcircuitstate` remain operator-only.
+    ("support_bugreport", "occurrences"),
+    ("support_bugreport", "updated_at"),
     # createTenant supersedes an older unaccepted DPA, and accepts the one it records (legal
     # services prepare_dpa and record_agreements); the update also covers their
     # `SELECT ... FOR UPDATE` of the DPA rows.
@@ -685,6 +694,7 @@ DELETE = (
     "media_attachment",
     "media_previewadmission",
     "notifications_presencelease",
+    "support_bugreportrateevent",
 )
 EXECUTE_FUNCTIONS = (
     "workspace_iam_permissions(jsonb)",
@@ -723,18 +733,62 @@ SELECT_COLUMNS = (
     ),
 )
 
+# SQL column-level INSERT restriction: `support_bugreport` grants `kodera_api` INSERT strictly on
+# collector-owned diagnostic columns; worker-owned claim and GitHub dispatch columns (`claimed_at`,
+# `claim_token`, `dispatched_at`, `github_issue_number`, `dispatch_attempts`, `last_dispatch_error`)
+# populate from SQL DEFAULTs and cannot be forged by the HTTP API role.
+INSERT_COLUMNS = (
+    *(
+        ("support_bugreport", column)
+        for column in (
+            "id",
+            "created_at",
+            "updated_at",
+            "build_id",
+            "component",
+            "error_code",
+            "device_class",
+            "consent",
+            "sanitized_note",
+            "screenshot_content_type",
+            "screenshot_bytes",
+            "screenshot_sha256",
+            "dedup_fingerprint",
+            "occurrences",
+        )
+    ),
+)
+
+
+def revoke_broad_insert_statements(role: str) -> list[str]:
+    """Revoke table-wide INSERT on column-scoped INSERT_COLUMNS tables before applying column grants."""
+    if ROLE.fullmatch(role) is None:
+        raise ValueError("a role name is a lower-case identifier")
+    column_insert_tables = sorted({table for table, _ in INSERT_COLUMNS})
+    return [f'REVOKE INSERT ON TABLE "{table}" FROM "{role}"' for table in column_insert_tables]
+
 
 def grant_statements(role: str) -> list[str]:
     """The GRANT statements for `role`, a lower-case PostgreSQL identifier."""
     if ROLE.fullmatch(role) is None:
         raise ValueError("a role name is a lower-case identifier")
+    column_insert_tables = {table for table, _ in INSERT_COLUMNS}
     statements = [f'GRANT USAGE ON SCHEMA public TO "{role}"']
     statements += [f'GRANT SELECT ON TABLE "{table}" TO "{role}"' for table in SELECT]
     statements += [
         f'GRANT SELECT ("{column}") ON TABLE "{table}" TO "{role}"'
         for table, column in SELECT_COLUMNS
     ]
-    statements += [f'GRANT INSERT ON TABLE "{table}" TO "{role}"' for table in INSERT]
+    statements += revoke_broad_insert_statements(role)
+    statements += [
+        f'GRANT INSERT ON TABLE "{table}" TO "{role}"'
+        for table in INSERT
+        if table not in column_insert_tables
+    ]
+    statements += [
+        f'GRANT INSERT ("{column}") ON TABLE "{table}" TO "{role}"'
+        for table, column in INSERT_COLUMNS
+    ]
     statements += [
         f'GRANT UPDATE ("{column}") ON TABLE "{table}" TO "{role}"'
         for table, column in UPDATE_COLUMNS

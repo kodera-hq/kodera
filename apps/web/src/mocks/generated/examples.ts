@@ -3225,6 +3225,25 @@ export const EXAMPLES = {
     idempotent: true,
     requiresIfMatch: false,
   },
+  "createBugReport": {
+    operationId: "createBugReport",
+    method: "post",
+    path: "/organisations/{organisation_id}/support/bug-reports",
+    status: 201,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "id": "01900000-0000-7000-8000-000000000099",
+      "status": "queued",
+      "dedup_fingerprint": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+      "occurrences": 1,
+      "created_at": "2026-11-23T00:00:00Z"
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
   "listSupportTickets": {
     operationId: "listSupportTickets",
     method: "get",

@@ -4260,6 +4260,70 @@ paths:
         '429': { $ref: '#/components/responses/RateLimited' }
         '500': { $ref: '#/components/responses/InternalError' }
 
+  /organisations/{organisation_id}/support/bug-reports:
+    post:
+      operationId: createBugReport
+      summary: Submit a zero-PII in-app diagnostic bug report
+      description: |
+        Accepts a closed allowlist of technical diagnostic metadata from an authenticated
+        current member of `organisation_id`. Persists zero foreign keys to User, Identity,
+        Membership, Organisation, or Tenant, and zero email addresses, IP addresses, or slugs.
+
+        `consent` must be `true` whenever `note` or `screenshot` is supplied; supplying either
+        while `consent` is `false` is refused with `422 validation-error`. `note`, when given,
+        is refused (`422`) if it contains credentials, tokens, PEM headers, invitation/claim/magic
+        paths, or URLs, and any residual emails, UUIDs, IP addresses, Matrix IDs, phone numbers,
+        or organisation/tenant slugs are scrubbed before storage. `screenshot`, when given, must
+        be blurred (`blurred: true`), at most 256 KiB decoded, match `image/png` or `image/webp`
+        magic bytes, and carry zero `tEXt`/`iTXt`/`zTXt`/`eXIf`/`tIME` or `EXIF`/`XMP` metadata
+        chunks (`422` otherwise).
+
+        Enforces three keyed-HMAC rolling one-hour rate buckets (`5/h` per member, `20/h` per
+        organisation, `200/h` global -> `429` with `Retry-After`), coalesces duplicate reports
+        within 24 hours (`status: deduplicated`), and caps undispatched queue depth at 500
+        (`503` with `Retry-After: 60`).
+      tags: [Support]
+      x-kodera-scope: 'support_ticket:create'
+      x-kodera-authz:
+        roles: [org_owner, org_admin, org_billing, org_member]
+      parameters:
+        - $ref: '#/components/parameters/OrganisationId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BugReportCreateRequest' }
+      responses:
+        '201':
+          description: Zero-PII bug report queued or coalesced into an existing 24h fingerprint.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            Idempotency-Replayed: { $ref: '#/components/headers/IdempotencyReplayed' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BugReportReceipt' }
+        '400': { $ref: '#/components/responses/MalformedRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+        '503':
+          description: Undispatched bug-report triage queue is full; nothing was stored.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            Retry-After:
+              required: true
+              schema: { type: integer, minimum: 1 }
+              example: 60
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /support/tickets:
     get:
       operationId: listSupportTickets
@@ -16825,6 +16889,85 @@ components:
           priority: P1
           queue: identity-access
           confirmation: ticket-created
+
+    BugReportScreenshotInput:
+      type: object
+      additionalProperties: false
+      required: [contentType, blurred, dataBase64]
+      properties:
+        contentType:
+          type: string
+          enum: ['image/png', 'image/webp']
+        blurred:
+          type: boolean
+          const: true
+        dataBase64:
+          type: string
+          minLength: 16
+          maxLength: 349528
+          pattern: '^[A-Za-z0-9+/]+={0,2}$'
+      examples:
+        - contentType: image/png
+          blurred: true
+          dataBase64: iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==
+
+    BugReportCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [build_id, component, error_code, device_class, consent]
+      properties:
+        build_id:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: '^[A-Za-z0-9._+-]{1,64}$'
+        component:
+          type: string
+          enum: [workspace, messaging, calls, docs, files, auth, billing, settings, confidential, desktop, mobile, other]
+        error_code:
+          type: string
+          minLength: 1
+          maxLength: 80
+          pattern: '^[A-Z0-9_.:-]{1,80}$'
+        device_class:
+          type: string
+          enum: [web-desktop, web-mobile, desktop-macos, desktop-linux, desktop-windows, ios, android]
+        consent:
+          type: boolean
+          description: Must be `true` whenever `note` or `screenshot` is provided; `422` otherwise.
+        note:
+          type: string
+          minLength: 1
+          maxLength: 500
+        screenshot:
+          $ref: '#/components/schemas/BugReportScreenshotInput'
+      examples:
+        - build_id: web-0.52.0
+          component: calls
+          error_code: LIVEKIT_ICE_TIMEOUT
+          device_class: web-desktop
+          consent: false
+
+    BugReportReceipt:
+      type: object
+      additionalProperties: false
+      required: [id, status, dedup_fingerprint, occurrences, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        status: { type: string, enum: [queued, deduplicated] }
+        dedup_fingerprint:
+          type: string
+          minLength: 64
+          maxLength: 64
+          pattern: '^[0-9a-f]{64}$'
+        occurrences: { type: integer, minimum: 1 }
+        created_at: { type: string, format: date-time }
+      examples:
+        - id: '01900000-0000-7000-8000-000000000099'
+          status: queued
+          dedup_fingerprint: '9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08'
+          occurrences: 1
+          created_at: '2026-11-23T00:00:00Z'
 
     SupportTicket:
       type: object

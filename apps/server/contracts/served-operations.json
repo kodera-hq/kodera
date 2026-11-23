@@ -82,6 +82,11 @@
       "path": "/organisations/{organisation_id}/workspace/attachments/uploads"
     },
     {
+      "operation_id": "createBugReport",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/support/bug-reports"
+    },
+    {
       "operation_id": "createCategory",
       "method": "POST",
       "path": "/organisations/{organisation_id}/workspace/categories"

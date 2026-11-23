@@ -252,6 +252,7 @@ config/settings/deploy_worker.py
 !apps/support/__init__.py
 !apps/support/apps.py
 !apps/support/models.py
+!apps/support/bug_reports.py
 !apps/support/tickets.py
 !apps/support/api/__init__.py
 !apps/support/api/permissions.py

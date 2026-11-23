@@ -1115,8 +1115,8 @@ N4_VERSION = "0.53.0"
 # Rebound at 0.50.0: granular workspace roles, overrides, profile, bans, and audit logs; no N4 bytes changed.
 # Rebound at 0.51.0: attachment channel/room scope, upload cancellation, moderator revocation, and confidential channel creation; no N4 bytes changed.
 # Rebound at 0.52.0: audio companion chat read_only access and WorkspaceTemplate v2 personas/customization; no N4 bytes changed.
-# Rebound at 0.53.0: push subscription platform and bounded foreground presence leases; no N4 bytes changed.
-N4_OLD_CONTRACT = "1fc99c0d7d7191166c4ee12b091d7818e837d17600e455b5473e334daac93877"
+# Rebound at 0.53.0: push subscription platform, bounded foreground presence leases, and zero-PII createBugReport; no N4 bytes changed.
+N4_OLD_CONTRACT = "b8e4e7f77e92b6fb5131bdeab9d58e54f0024c3fe9fb97ae934af0bb36a69b6a"
 # Rebound at 0.20.0 (2026-10-22): CONVENTIONS.md §6 gains the order-in-progress and invoice-issued rows and a changelog line.
 # Rebound at 0.24.0 (2026-10-22): CONVENTIONS.md §6's invoice-issued row narrowed, and a changelog line.
 # Rebound at 0.28.0: CONVENTIONS.md §6 gains the identity-unknown row and a changelog line.

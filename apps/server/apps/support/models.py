@@ -112,3 +112,193 @@ class SupportTicket(StoredModel):
 
     def __str__(self) -> str:
         return f"support ticket {self.id} {self.state}"
+
+
+BUG_COMPONENTS = (
+    "workspace",
+    "messaging",
+    "calls",
+    "docs",
+    "files",
+    "auth",
+    "billing",
+    "settings",
+    "confidential",
+    "desktop",
+    "mobile",
+    "other",
+)
+BUG_DEVICE_CLASSES = (
+    "web-desktop",
+    "web-mobile",
+    "desktop-macos",
+    "desktop-linux",
+    "desktop-windows",
+    "ios",
+    "android",
+)
+BUG_SCREENSHOT_CONTENT_TYPES = ("image/png", "image/webp")
+BUG_RATE_TIERS = ("member", "org", "global")
+MAX_SCREENSHOT_BYTES = 256 * 1024
+
+
+class BugReport(StoredModel):
+    """Zero-PII in-app diagnostic bug report queued for private GitHub App triage.
+
+    Intentionally carries zero foreign keys to User, Identity, Membership, Organisation, or Tenant,
+    and zero email addresses, IP addresses, or organisation/tenant slugs.
+    """
+
+    build_id = models.TextField()
+    component = models.TextField()
+    error_code = models.TextField()
+    device_class = models.TextField()
+    consent = models.BooleanField(default=False)
+    sanitized_note = models.TextField(default="", blank=True)
+    screenshot_content_type = models.TextField(null=True, blank=True)  # noqa: DJ001
+    screenshot_bytes = models.BinaryField(null=True, blank=True)
+    screenshot_sha256 = models.TextField(null=True, blank=True)  # noqa: DJ001
+    dedup_fingerprint = models.TextField()
+    occurrences = models.PositiveIntegerField(default=1)
+    claimed_at = models.DateTimeField(null=True, blank=True, db_default=None)
+    claim_token = models.CharField(max_length=64, default="", db_default="", blank=True)
+    dispatched_at = models.DateTimeField(null=True, blank=True, db_default=None)
+    github_issue_number = models.PositiveIntegerField(null=True, blank=True, db_default=None)
+    dispatch_attempts = models.PositiveIntegerField(default=0, db_default=0)
+    last_dispatch_error = models.TextField(default="", db_default="", blank=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                name="support_bugreport_component_valid",
+                condition=Q(component__in=BUG_COMPONENTS),
+            ),
+            models.CheckConstraint(
+                name="support_bugreport_device_valid",
+                condition=Q(device_class__in=BUG_DEVICE_CLASSES),
+            ),
+            models.CheckConstraint(
+                name="support_bugreport_build_len",
+                condition=Q(build_id__length__range=(1, 64)),
+            ),
+            models.CheckConstraint(
+                name="support_bugreport_error_len",
+                condition=Q(error_code__length__range=(1, 80)),
+            ),
+            models.CheckConstraint(
+                name="support_bugreport_note_len",
+                condition=Q(sanitized_note__length__lte=2048),
+            ),
+            models.CheckConstraint(
+                name="support_bugreport_dedup_len",
+                condition=Q(dedup_fingerprint__length=64),
+            ),
+            models.CheckConstraint(
+                name="support_bugreport_occurrences_pos",
+                condition=Q(occurrences__gte=1),
+            ),
+            models.CheckConstraint(
+                name="support_bugreport_consent_required",
+                condition=Q(consent=True)
+                | Q(
+                    sanitized_note="",
+                    screenshot_content_type__isnull=True,
+                    screenshot_bytes__isnull=True,
+                    screenshot_sha256__isnull=True,
+                ),
+            ),
+            models.CheckConstraint(
+                name="support_bugreport_screenshot_coherent",
+                condition=Q(
+                    screenshot_content_type__isnull=True,
+                    screenshot_bytes__isnull=True,
+                    screenshot_sha256__isnull=True,
+                )
+                | Q(
+                    screenshot_content_type__in=BUG_SCREENSHOT_CONTENT_TYPES,
+                    screenshot_bytes__isnull=False,
+                    screenshot_sha256__length=64,
+                ),
+            ),
+            models.CheckConstraint(
+                name="support_bugreport_dispatched_scrubbed",
+                condition=Q(dispatched_at__isnull=True)
+                | Q(
+                    sanitized_note="",
+                    screenshot_content_type__isnull=True,
+                    screenshot_bytes__isnull=True,
+                    screenshot_sha256__isnull=True,
+                    claimed_at__isnull=True,
+                    claim_token="",
+                ),
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["dedup_fingerprint", "created_at"],
+                name="support_bugreport_dedup_24h",
+            ),
+            models.Index(
+                fields=["created_at"],
+                condition=Q(dispatched_at__isnull=True),
+                name="support_bugreport_undispatched",
+            ),
+            models.Index(
+                fields=["dispatched_at"],
+                condition=Q(dispatched_at__isnull=False),
+                name="support_bugreport_dispatched",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"bug report {self.id} {self.component}:{self.error_code}"
+
+
+class BugReportRateEvent(StoredModel):
+    """Rolling 1-hour rate-limit event storing only irreversible keyed-HMAC digests."""
+
+    tier = models.TextField()
+    bucket_digest = models.TextField()
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                name="support_bugrate_tier_valid",
+                condition=Q(tier__in=BUG_RATE_TIERS),
+            ),
+            models.CheckConstraint(
+                name="support_bugrate_digest_len",
+                condition=Q(bucket_digest__length=64),
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["tier", "bucket_digest", "created_at"],
+                name="support_bugrate_window",
+            ),
+            models.Index(fields=["created_at"], name="support_bugrate_created"),
+        ]
+
+    def __str__(self) -> str:
+        return f"bug report rate event {self.id} {self.tier}"
+
+
+class BugReportCircuitState(StoredModel):
+    """Worker-owned upstream GitHub triage circuit-breaker state."""
+
+    singleton = models.BooleanField(default=True, unique=True)
+    consecutive_failures = models.PositiveIntegerField(default=0)
+    opened_until = models.DateTimeField(null=True, blank=True)
+    last_failure_at = models.DateTimeField(null=True, blank=True)
+    last_error_code = models.TextField(default="", blank=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                name="support_bugcircuit_singleton",
+                condition=Q(singleton=True),
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"bug report circuit failures={self.consecutive_failures}"

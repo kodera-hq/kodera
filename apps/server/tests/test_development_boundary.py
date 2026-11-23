@@ -361,6 +361,7 @@ def assert_image_boundary(ignore):
         "!apps/support/__init__.py",
         "!apps/support/apps.py",
         "!apps/support/models.py",
+        "!apps/support/bug_reports.py",
         "!apps/support/tickets.py",
         "!apps/support/api/__init__.py",
         "!apps/support/api/permissions.py",
@@ -628,6 +629,8 @@ OPERATOR_MODULES = (
     "apps/jobs/management/commands/sweep_jobs.py",
     "apps/tenancy/operator_status.py",
     "apps/tenancy/management/commands/tenant_status.py",
+    "apps/support/github_triage.py",
+    "apps/support/management/commands/dispatch_bug_reports.py",
 )
 
 
