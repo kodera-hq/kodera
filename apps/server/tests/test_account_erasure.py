@@ -11,7 +11,7 @@ from workspace_safety.test_moderation import world as world
 from apps.docs.models import Document, DocumentSnapshot, DocumentUpdate
 from apps.engine_intents.models import EngineChannelSet, EngineKnownSubject, EngineMemberSet
 from apps.identity.models import Identity, User
-from apps.notifications.models import Notification, PushSubscription
+from apps.notifications.models import Notification, PresenceLease, PushSubscription
 from apps.orgs import member_set_hooks
 from apps.orgs.account_erasure_services import begin_account_erasure, purge_account_core
 from apps.orgs.erasure_services import database_now
@@ -76,6 +76,8 @@ def test_account_intent_emits_real_erasure_sets_and_purges_only_personal_contact
     assert principal.email == f"erased:{principal.id}" and principal.subject == original_subject
     assert not PushSubscription.objects.filter(membership=members[0]).exists()
     assert not Notification.objects.filter(membership=members[0]).exists()
+    assert not PresenceLease.objects.filter(membership=members[0]).exists()
+    assert result["counts"]["presence_leases"] == 1
     # No individual account intent owns shared documents, Yjs history or uploaded workspace content.
     assert Document.objects.filter(pk=document.id, markdown="Synthetic private body").exists()
     assert DocumentSnapshot.objects.filter(document=document).exists()

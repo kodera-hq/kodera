@@ -1,4 +1,6 @@
-"""Scoped inbox, sealed device subscriptions and leased empty-wakeup deliveries."""
+"""Scoped inbox, sealed device subscriptions, foreground presence leases and empty wakeups."""
+
+from datetime import timedelta
 
 from django.db import models
 
@@ -28,6 +30,7 @@ class PushSubscription(StoredModel):
     organisation = models.ForeignKey("orgs.Organisation", on_delete=models.RESTRICT)
     membership = models.ForeignKey("orgs.Membership", on_delete=models.RESTRICT)
     device_id = models.UUIDField()
+    platform = models.TextField(default="web")
     version = models.UUIDField()
     endpoint_digest = models.TextField()
     sealed_subscription = models.BinaryField()
@@ -45,6 +48,45 @@ class PushSubscription(StoredModel):
             models.CheckConstraint(
                 condition=models.Q(endpoint_digest__regex=r"^[a-f0-9]{64}$"),
                 name="push_endpoint_digest_valid",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(platform__in=["web", "desktop", "ios", "android"]),
+                name="push_subscription_platform_valid",
+            ),
+        ]
+
+
+class PresenceLease(StoredModel):
+    organisation = models.ForeignKey("orgs.Organisation", on_delete=models.RESTRICT)
+    membership = models.ForeignKey("orgs.Membership", on_delete=models.RESTRICT)
+    device_id = models.UUIDField()
+    platform = models.TextField()
+    expires_at = models.DateTimeField()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organisation", "membership", "device_id"],
+                name="presence_lease_device_unique",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(platform__in=["web", "desktop"]),
+                name="presence_lease_platform_valid",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(expires_at__gt=models.F("updated_at"))
+                    & models.Q(
+                        expires_at__lte=models.F("updated_at") + timedelta(seconds=90),
+                    )
+                ),
+                name="presence_lease_ttl_bound",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["organisation", "membership", "expires_at"],
+                name="presence_lease_active",
             ),
         ]
 

@@ -48,7 +48,7 @@ api.{$KODERA_MATRIX_DOMAIN} {
 		request_body {
 			max_size 1MiB
 		}
-		reverse_proxy server:8000 {
+		reverse_proxy api-admission:8080 {
 			import client_address
 		}
 	}
@@ -59,7 +59,7 @@ api.{$KODERA_MATRIX_DOMAIN} {
 		request_body {
 			max_size 1MiB
 		}
-		reverse_proxy server:8000 {
+		reverse_proxy api-admission:8080 {
 			import client_address
 		}
 	}

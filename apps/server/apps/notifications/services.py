@@ -1,8 +1,9 @@
-"""Current-principal inbox operations and sealed device subscriptions."""
+"""Current-principal inbox operations, foreground presence leases and sealed device subscriptions."""
 
 import hashlib
 import json
 from collections.abc import Sequence
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -21,7 +22,13 @@ from core import sealing
 from services.identity.access_tokens import VerifiedAccessToken
 
 from . import push
-from .models import Notification, PushOutbox, PushSubscription
+from .models import Notification, PresenceLease, PushOutbox, PushSubscription
+
+PUSH_PLATFORMS: tuple[str, ...] = ("web", "desktop", "ios", "android")
+FOREGROUND_PRESENCE_PLATFORMS: tuple[str, ...] = ("web", "desktop")
+MOBILE_PUSH_PLATFORMS: tuple[str, ...] = ("ios", "android")
+DEFAULT_PRESENCE_TTL_SECONDS = 60
+MAX_PRESENCE_TTL_SECONDS = 90
 
 
 def seal_key() -> bytes:
@@ -31,15 +38,28 @@ def seal_key() -> bytes:
     return value
 
 
-def associated(row: PushSubscription) -> bytes:
+def associated_v1(row: PushSubscription) -> bytes:
     return f"kodera-push:v1:{row.id}:{row.organisation_id}:{row.membership_id}:{row.device_id}:{row.version}".encode()
 
 
+def associated(row: PushSubscription) -> bytes:
+    return (
+        f"kodera-push:v2:{row.id}:{row.organisation_id}:{row.membership_id}:"
+        f"{row.device_id}:{row.version}:{row.platform}"
+    ).encode()
+
+
 def subscription_data(row: PushSubscription) -> dict[str, str]:
+    key = seal_key()
+    ciphertext = bytes(row.sealed_subscription)
     try:
-        result = json.loads(
-            sealing.unseal(seal_key(), associated(row), bytes(row.sealed_subscription))
-        )
+        try:
+            raw = sealing.unseal(key, associated(row), ciphertext)
+        except sealing.SealError:
+            if row.platform != "web":
+                raise
+            raw = sealing.unseal(key, associated_v1(row), ciphertext)
+        result = json.loads(raw)
         if (
             not isinstance(result, dict)
             or set(result) != {"endpoint", "p256dh", "auth"}
@@ -65,6 +85,9 @@ def public_key() -> str:
 def put_subscription(
     *, verified: VerifiedAccessToken, device_id: UUID, body: dict[str, Any], request_id: str
 ) -> None:
+    raw_platform = body.get("platform", "web")
+    if not isinstance(raw_platform, str) or raw_platform not in PUSH_PLATFORMS:
+        raise RefusalError(422)
     with transaction.atomic():
         initial = read_caller(verified)
     public_key()
@@ -79,6 +102,7 @@ def put_subscription(
     _store_subscription(
         verified=verified,
         device_id=device_id,
+        platform=raw_platform,
         material=material,
         key=key,
         organisation_id=initial.organisation_id,
@@ -91,6 +115,7 @@ def _store_subscription(
     *,
     verified: VerifiedAccessToken,
     device_id: UUID,
+    platform: str,
     material: dict[str, str],
     key: bytes,
     organisation_id: UUID,
@@ -128,7 +153,7 @@ def _store_subscription(
         )
         .first()
     )
-    if row is not None and row.revoked_at is None:
+    if row is not None and row.revoked_at is None and row.platform == platform:
         try:
             if subscription_data(row) == material:
                 return
@@ -140,6 +165,7 @@ def _store_subscription(
             membership_id=principal.membership_id,
             device_id=device_id,
         )
+    row.platform = platform
     row.version, row.revoked_at = uuid4(), None
     row.endpoint_digest = hashlib.sha256(material["endpoint"].encode()).hexdigest()
     row.sealed_subscription = sealing.seal(
@@ -152,6 +178,7 @@ def _store_subscription(
             else:
                 row.save(
                     update_fields=[
+                        "platform",
                         "version",
                         "revoked_at",
                         "endpoint_digest",
@@ -162,6 +189,110 @@ def _store_subscription(
     except IntegrityError:
         raise RefusalError(409) from None
     audit(principal, "workspace.push_subscription.updated", row.id, request_id)
+
+
+@transaction.atomic
+def put_presence(
+    *, verified: VerifiedAccessToken, device_id: UUID, body: dict[str, Any], request_id: str
+) -> dict[str, Any]:
+    del request_id
+    platform = body.get("platform")
+    ttl_seconds = body.get("ttlSeconds", DEFAULT_PRESENCE_TTL_SECONDS)
+    if (
+        not isinstance(platform, str)
+        or platform not in FOREGROUND_PRESENCE_PLATFORMS
+        or type(ttl_seconds) is not int
+        or not 1 <= ttl_seconds <= MAX_PRESENCE_TTL_SECONDS
+    ):
+        raise RefusalError(422)
+    initial = read_caller(verified)
+    member = for_workspace(
+        organisation_id=initial.organisation_id, membership_id=initial.membership_id, lock=False
+    )
+    if member is None:
+        raise RefusalError(403)
+    lock_erasure_cutoff_fences(organisation_id=initial.organisation_id, user_id=member.user_id)
+    if (
+        for_workspace(organisation_id=initial.organisation_id, membership_id=initial.membership_id)
+        is None
+    ):
+        raise RefusalError(403)
+    principal = caller(verified, initial.organisation_id)
+    if (
+        for_workspace(
+            organisation_id=principal.organisation_id,
+            membership_id=principal.membership_id,
+            lock=False,
+        )
+        is None
+    ):
+        raise RefusalError(403)
+    row = (
+        PresenceLease.objects.select_for_update()
+        .filter(
+            organisation_id=principal.organisation_id,
+            membership_id=principal.membership_id,
+            device_id=device_id,
+        )
+        .first()
+    )
+    now = timezone.now()
+    expires_at = now + timedelta(seconds=ttl_seconds)
+    try:
+        with transaction.atomic():
+            if row is None:
+                row = PresenceLease(
+                    organisation_id=principal.organisation_id,
+                    membership_id=principal.membership_id,
+                    device_id=device_id,
+                    platform=platform,
+                    expires_at=expires_at,
+                )
+                row.save(force_insert=True)
+            else:
+                PresenceLease.objects.filter(pk=row.pk).update(
+                    platform=platform,
+                    expires_at=expires_at,
+                    updated_at=now,
+                )
+    except IntegrityError:
+        raise RefusalError(409) from None
+    return {
+        "deviceId": str(device_id),
+        "platform": platform,
+        "expiresAt": expires_at.astimezone(UTC).isoformat().replace("+00:00", "Z"),
+        "ttlSeconds": ttl_seconds,
+    }
+
+
+@transaction.atomic
+def delete_presence(*, verified: VerifiedAccessToken, device_id: UUID, request_id: str) -> None:
+    del request_id
+    initial = read_caller(verified)
+    member = for_workspace(
+        organisation_id=initial.organisation_id, membership_id=initial.membership_id, lock=False
+    )
+    if member is None:
+        raise RefusalError(403)
+    lock_erasure_cutoff_fences(organisation_id=initial.organisation_id, user_id=member.user_id)
+    principal = caller(verified, initial.organisation_id)
+    PresenceLease.objects.select_for_update().filter(
+        organisation_id=principal.organisation_id,
+        membership_id=principal.membership_id,
+        device_id=device_id,
+    ).delete()
+
+
+def has_active_foreground_presence(
+    *, organisation_id: UUID, membership_id: UUID, now: datetime | None = None
+) -> bool:
+    ref = timezone.now() if now is None else now
+    return PresenceLease.objects.filter(
+        organisation_id=organisation_id,
+        membership_id=membership_id,
+        platform__in=FOREGROUND_PRESENCE_PLATFORMS,
+        expires_at__gt=ref,
+    ).exists()
 
 
 @transaction.atomic
@@ -329,14 +460,19 @@ def record(
         resource_id=resource_id,
     )
     now = timezone.now()
+    subscriptions = PushSubscription.objects.filter(
+        organisation_id=organisation_id,
+        membership_id=membership_id,
+        revoked_at__isnull=True,
+    )
+    if has_active_foreground_presence(
+        organisation_id=organisation_id, membership_id=membership_id, now=now
+    ):
+        subscriptions = subscriptions.exclude(platform__in=MOBILE_PUSH_PLATFORMS)
     PushOutbox.objects.bulk_create(
         [
             PushOutbox(subscription=sub, subscription_version=sub.version, available_at=now)
-            for sub in PushSubscription.objects.filter(
-                organisation_id=organisation_id,
-                membership_id=membership_id,
-                revoked_at__isnull=True,
-            )
+            for sub in subscriptions
         ]
     )
     return row

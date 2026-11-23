@@ -72,6 +72,7 @@ SELECT = (
     "notifications_notification",
     "notifications_pushsubscription",
     "notifications_pushoutbox",
+    "notifications_presencelease",
     # Native workspace documents, per-document grants, wikilinks, compacted snapshots and updates.
     "docs_document",
     "docs_documentgrant",
@@ -199,6 +200,7 @@ INSERT = (
     "notifications_notification",
     "notifications_pushsubscription",
     "notifications_pushoutbox",
+    "notifications_presencelease",
     # Native workspace documents, wikilinks, snapshots and journal updates (grants stay excluded).
     "docs_document",
     "docs_documentlink",
@@ -458,11 +460,15 @@ UPDATE_COLUMNS = (
     ("media_attachment", "updated_at"),
     ("notifications_notification", "read_at"),
     ("notifications_notification", "updated_at"),
+    ("notifications_pushsubscription", "platform"),
     ("notifications_pushsubscription", "version"),
     ("notifications_pushsubscription", "endpoint_digest"),
     ("notifications_pushsubscription", "sealed_subscription"),
     ("notifications_pushsubscription", "revoked_at"),
     ("notifications_pushsubscription", "updated_at"),
+    ("notifications_presencelease", "platform"),
+    ("notifications_presencelease", "expires_at"),
+    ("notifications_presencelease", "updated_at"),
     # Native workspace document tree/content mutations, soft-delete, snapshot compaction and links;
     # ownership, visibility, creator, channel binding and journal rows stay immutable.
     ("docs_document", "parent_id"),
@@ -678,6 +684,7 @@ DELETE = (
     "ee_scim_session",
     "media_attachment",
     "media_previewadmission",
+    "notifications_presencelease",
 )
 EXECUTE_FUNCTIONS = (
     "workspace_iam_permissions(jsonb)",

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Kodera Core API
-  version: 0.52.0
+  version: 0.53.0
   summary: Control plane of kodera.io, consumed by kodera-web and by staff operators.
   description: |
     The Core API is the only backend of `kodera-web` (console ADR-0003) and the system of
@@ -7263,6 +7263,88 @@ paths:
           $ref: '#/components/responses/ValidationError'
         '429':
           $ref: '#/components/responses/RateLimited'
+  /notifications/presence/{device_id}:
+    put:
+      operationId: putNotificationPresence
+      summary: Renew foreground notification presence lease
+      description: 'Organisation is derived from the verified issuer; current active membership is checked on every
+        request. Foreground web and desktop clients renew a bounded server-enforced lease (<= 90 seconds) so mobile
+        push wakeups are suppressed while the member is active on desktop or web without hiding inbox entries.'
+      tags:
+      - Workspace
+      x-kodera-scope: presence_lease:update
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/DeviceId'
+      responses:
+        '200':
+          description: Active foreground presence lease recorded.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationPresenceLease'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NotificationPresenceRequest'
+    delete:
+      operationId: deleteNotificationPresence
+      summary: Delete foreground notification presence lease
+      description: 'Immediately clears this device''s foreground presence lease so mobile push wakeups resume without
+        waiting for TTL expiry.'
+      tags:
+      - Workspace
+      x-kodera-scope: presence_lease:delete
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/DeviceId'
+      responses:
+        '204':
+          description: Successful operation.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
   /push/subscriptions/{device_id}:
     put:
       operationId: putPushSubscription
@@ -12712,9 +12794,66 @@ components:
           minLength: 22
           maxLength: 22
           pattern: ^[A-Za-z0-9_-]+$
+        platform:
+          type: string
+          enum:
+          - web
+          - desktop
+          - ios
+          - android
+          default: web
       description: Subscription belongs to this authenticated user and device only. Validate the decoded P-256
         point and 16-byte auth secret. Endpoint uses the same public-address, pinned transport policy as unfurl;
         do not permit a push endpoint to become an SSRF proxy. Dead 404/410 subscriptions are pruned.
+    NotificationPresenceRequest:
+      type: object
+      title: NotificationPresenceRequest
+      additionalProperties: false
+      required:
+      - platform
+      properties:
+        platform:
+          type: string
+          enum:
+          - web
+          - desktop
+        ttlSeconds:
+          type: integer
+          minimum: 1
+          maximum: 90
+          default: 60
+      description: Ephemeral foreground presence lease renewal for an active web or desktop session, bounded to at most 90 seconds.
+    NotificationPresenceLease:
+      type: object
+      title: NotificationPresenceLease
+      additionalProperties: false
+      required:
+      - deviceId
+      - platform
+      - expiresAt
+      - ttlSeconds
+      properties:
+        deviceId:
+          type: string
+          format: uuid
+        platform:
+          type: string
+          enum:
+          - web
+          - desktop
+        expiresAt:
+          type: string
+          format: date-time
+        ttlSeconds:
+          type: integer
+          minimum: 1
+          maximum: 90
+      examples:
+      - deviceId: 0195c000-0000-7000-8000-000000000001
+        platform: desktop
+        expiresAt: '2026-11-23T00:01:00Z'
+        ttlSeconds: 60
+      description: Active foreground presence lease bound to the caller's membership and device.
     WorkspaceDocumentRequest:
       type: object
       title: WorkspaceDocumentRequest

@@ -4,8 +4,9 @@
 #
 #   docker compose -f docker-compose.yml -f docker-compose.split.yml up -d
 #
-# It changes only what the topology needs; `scripts/ci/check-community-deploy.py` refuses anything
-# else. Set KODERA_TOPOLOGY=split in .env too: Synapse refuses to start when the two disagree.
+# It changes only what the topology needs (`api-admission` on `api_ingress` is inherited unchanged);
+# `scripts/ci/check-community-deploy.py` refuses anything else.
+# Set KODERA_TOPOLOGY=split in .env too: Synapse refuses to start when the two disagree.
 
 services:
   caddy:

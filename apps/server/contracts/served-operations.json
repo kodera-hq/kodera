@@ -152,6 +152,11 @@
       "path": "/organisations/{organisation_id}/workspace/categories/{category_id}"
     },
     {
+      "operation_id": "deleteNotificationPresence",
+      "method": "DELETE",
+      "path": "/notifications/presence/{device_id}"
+    },
+    {
       "operation_id": "deletePushSubscription",
       "method": "DELETE",
       "path": "/push/subscriptions/{device_id}"
@@ -560,6 +565,11 @@
       "operation_id": "publishConfidentialKeyPackage",
       "method": "POST",
       "path": "/organisations/{organisation_id}/confidential/key-packages"
+    },
+    {
+      "operation_id": "putNotificationPresence",
+      "method": "PUT",
+      "path": "/notifications/presence/{device_id}"
     },
     {
       "operation_id": "putPushSubscription",

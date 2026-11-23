@@ -34,6 +34,7 @@ def validate(document: dict[str, Any]) -> None:
             "0.50.0",
             "0.51.0",
             "0.52.0",
+            "0.53.0",
         },
         "wave4 version",
     )

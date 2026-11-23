@@ -27,11 +27,11 @@ const contactType = 'https://kodera.io/problems/owner-claim-contact-unverified'
 const serviceType = 'https://kodera.io/problems/service-unavailable'
 const expectedLock = {
   repository: 'kodera-hq/kodera',
-  ref: 'blob:01f071a2c08388daf3f2e789395cee58591b4814',
-  blob: '01f071a2c08388daf3f2e789395cee58591b4814',
+  ref: 'blob:6149edef68c857699adc009b373c001f95207f1d',
+  blob: '6149edef68c857699adc009b373c001f95207f1d',
   path: 'packages/api-contract/core-api.openapi.yaml',
-  version: '0.52.0',
-  sha256: '0da6b22434be9d230a457e7b71f80cd635150c045ccea57172d3e8b54e054ec3',
+  version: '0.53.0',
+  sha256: '2901d9b2de0959927b6d9336f329b45e2f99a768da0e22935387c727bf713823',
 }
 const blobOidPattern = /^[0-9a-f]{40}(?![\s\S])/
 const maxPinnedBlobBytes = 4 * 1024 * 1024
@@ -222,7 +222,7 @@ describe('the immutable contract consumer', () => {
       }))
     ).toThrow('pinned git blob bytes')
     const staleVersion = Buffer.from(
-      raw.toString('utf8').replace('  version: 0.52.0', '  version: 0.50.0'),
+      raw.toString('utf8').replace('  version: 0.53.0', '  version: 0.50.0'),
       'utf8'
     )
     expect(() =>
@@ -343,20 +343,20 @@ describe('the immutable contract consumer', () => {
 
   it('retains every operation, collection, schema, problem and protected mock byte', () => {
     const ops = operations(spec)
-    expect(ops).toHaveLength(198)
-    expect(new Set(ops.map((op) => op.operationId)).size).toBe(198)
+    expect(ops).toHaveLength(200)
+    expect(new Set(ops.map((op) => op.operationId)).size).toBe(200)
     expect(ops.filter((op) => op.isList)).toHaveLength(35)
-    expect(Object.keys(spec.components.schemas)).toHaveLength(302)
+    expect(Object.keys(spec.components.schemas)).toHaveLength(304)
     expect(problems(spec)).toHaveLength(44)
     expect(PROBLEM_TYPES).toHaveLength(44)
     const hashes = {
       'src/mocks/generated/problems.ts':
         '82377473578e293b1f7fcea3a987e250f4f58ef0a0e9d89bb959052a6266cc88',
       'src/mocks/generated/examples.ts':
-        'd39d941668d2f4403594d7551fc829c1036c22872d79a0d53de5669183f16888',
+        '6afad556e9648e42b47844f3476f4b82b0da0efb40c18585efe685c1b38ca1a4',
       'src/mocks/generated/handlers.ts':
-        '54396cfddaa15201bb3d2660ec9d52230f732d9fa33e4538296e2bb11ce7294c',
-      'src/api/schema.d.ts': 'eff18638998e9a10d17ab3af64fcab41be1a83d4ce0e13ea540409a770bff256',
+        '641492d005e60c953158952ec409322c7568809da6ff85e9c719130f85c0cfbc',
+      'src/api/schema.d.ts': '380f167b8083b851727796a1beeef9911c43e4c6f1d5d5825c713d0de126edac',
     }
     for (const [path, expected] of Object.entries(hashes)) {
       expect(sha(readFileSync(join(root, path)))).toBe(expected)

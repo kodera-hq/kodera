@@ -5331,6 +5331,37 @@ export const EXAMPLES = {
     idempotent: false,
     requiresIfMatch: false,
   },
+  "putNotificationPresence": {
+    operationId: "putNotificationPresence",
+    method: "put",
+    path: "/notifications/presence/{device_id}",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "deviceId": "0195c000-0000-7000-8000-000000000001",
+      "platform": "desktop",
+      "expiresAt": "2026-11-23T00:01:00Z",
+      "ttlSeconds": 60
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "deleteNotificationPresence": {
+    operationId: "deleteNotificationPresence",
+    method: "delete",
+    path: "/notifications/presence/{device_id}",
+    status: 204,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: null,
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
   "putPushSubscription": {
     operationId: "putPushSubscription",
     method: "put",

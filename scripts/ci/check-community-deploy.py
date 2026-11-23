@@ -81,6 +81,7 @@ EXPECTED_PUBLIC_ENV_DEFAULTS = {
     "KODERA_API_INGRESS_SUBNET": "172.30.240.0/28",
     "KODERA_CADDY_API_ADDRESS": "172.30.240.2",
     "KODERA_SERVER_API_ADDRESS": "172.30.240.3",
+    "KODERA_ADMISSION_API_ADDRESS": "172.30.240.4",
     "POSTGRES_USER": "kodera",
     "POSTGRES_DB": "kodera_server",
 }
@@ -101,7 +102,7 @@ REQUIRED_SECRET_ENV_KEYS = (
     "LIVEKIT_API_SECRET",
 )
 
-HEALTHCHECK_REQUIRED_SERVICES = ("db", "valkey", "server", "synapse", "synapse-db", "yjs-collab", "media-storage-worker")
+HEALTHCHECK_REQUIRED_SERVICES = ("db", "valkey", "server", "api-admission", "synapse", "synapse-db", "yjs-collab", "media-storage-worker")
 
 # Public configuration that has no usable default: the operator's own identity provider.
 REQUIRED_PLACEHOLDER_KEYS = (
@@ -139,7 +140,7 @@ MOBILE_ASSOCIATION_ROUTES: frozenset[str] = frozenset(
 )
 CLOSED_INTERNAL_SERVER_ROUTES = ("/agent", "/agent/*", "/staff", "/staff/*")
 ALLOWED_PUBLIC_ROUTES: dict[str, frozenset[str]] = {
-    "server:8000": frozenset({"/api/*", "/health/*", *MOBILE_ASSOCIATION_ROUTES}),
+    "api-admission:8080": frozenset({"/api/*", "/health/*", *MOBILE_ASSOCIATION_ROUTES}),
     "yjs-collab:8098": frozenset({"/documents/collab"}),
     "room-access:8095": frozenset({"/_kodera/rooms/token"}),
     "synapse:8008": frozenset({
@@ -338,10 +339,25 @@ def console_configuration_errors(environment: dict[str, str]) -> list[str]:
 
 SINGLE_CONSOLE_ORIGINS_EXPRESSION = "https://${KODERA_DOMAIN:-chat.example.org}"
 SPLIT_CONSOLE_ORIGINS_EXPRESSION = "https://${KODERA_DOMAIN:?Set KODERA_DOMAIN to the web client host}"
-TRUSTED_EDGE_EXPRESSION = "${KODERA_CADDY_API_ADDRESS:-172.30.240.2}/32"
+ADMISSION_TRUSTED_EDGE_EXPRESSION = "${KODERA_CADDY_API_ADDRESS:-172.30.240.2}/32"
+TRUSTED_EDGE_EXPRESSION = "${KODERA_ADMISSION_API_ADDRESS:-172.30.240.4}/32"
 CADDY_API_ADDRESS_EXPRESSION = "${KODERA_CADDY_API_ADDRESS:-172.30.240.2}"
 SERVER_API_ADDRESS_EXPRESSION = "${KODERA_SERVER_API_ADDRESS:-172.30.240.3}"
+ADMISSION_API_ADDRESS_EXPRESSION = "${KODERA_ADMISSION_API_ADDRESS:-172.30.240.4}"
 API_INGRESS_SUBNET_EXPRESSION = "${KODERA_API_INGRESS_SUBNET:-172.30.240.0/28}"
+ADMISSION_COMMAND = [
+    "python",
+    "-m",
+    "config.edge_admission",
+    "--bind",
+    "0.0.0.0:8080",
+    "--upstream",
+    "server:8000",
+    "--require-trusted-edge",
+]
+ADMISSION_HEALTH_CODE = (
+    "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/_admission/live', timeout=2)"
+)
 WEB_ATTACHMENT_ENTRYPOINT_LINE = (
     '\'if [ -n "$${KODERA_ATTACHMENT_BASE:-}" ]; then set -- "$$@" --attachment-base "$$KODERA_ATTACHMENT_BASE"; fi; '
     'exec node /app/static.mjs --root /srv/console --host 0.0.0.0 "$$@"\''
@@ -374,12 +390,72 @@ def service_section_lines(service: ServiceSpec, section: str) -> list[str]:
 
 
 def edge_ingress_runtime_errors(services: dict[str, ServiceSpec], compose_text: str) -> list[str]:
-    """Ensure Caddy has a dedicated static IP on api_ingress and server trusts only that proxy."""
+    """Ensure Caddy, api-admission and server form a static three-hop chain on api_ingress."""
     errors: list[str] = []
     server = services.get("server")
     caddy = services.get("caddy")
+    admission = services.get("api-admission")
+    if admission is None:
+        errors.append("api_ingress requires the hardened api-admission service")
+    else:
+        allowed_keys = {
+            "mem_limit",
+            "build",
+            "user",
+            "read_only",
+            "cap_drop",
+            "security_opt",
+            "command",
+            "restart",
+            "environment",
+            "depends_on",
+            "healthcheck",
+            "networks",
+        }
+        keys = [
+            line.strip().split(":", 1)[0]
+            for line in admission.raw_lines
+            if len(line) - len(line.lstrip()) == 4
+        ]
+        if set(keys) != allowed_keys or len(keys) != len(set(keys)) or section_entries(admission, "volumes") or section_entries(admission, "ports"):
+            errors.append("api-admission must retain only reviewed service keys with no volumes, capabilities or published ports")
+        if (
+            admission.mem_limit != "128m"
+            or admission.restart != "unless-stopped"
+            or service_scalar(admission, "user") != '"10001:10001"'
+            or service_scalar(admission, "read_only") != "true"
+            or service_scalar(admission, "cap_drop") != '["ALL"]'
+            or service_scalar(admission, "security_opt") != '["no-new-privileges:true"]'
+            or admission.dockerfile != "Dockerfile"
+            or "context: ../../apps/server" not in [line.strip() for line in admission.raw_lines]
+        ):
+            errors.append("api-admission must retain the reviewed identity, sandbox, build and lifecycle")
+        if not command_matches(admission, ADMISSION_COMMAND):
+            errors.append("api-admission must run the reviewed edge_admission command with --require-trusted-edge")
+        if admission.environment != {"KODERA_TRUSTED_EDGE_ADDRESSES": ADMISSION_TRUSTED_EDGE_EXPRESSION}:
+            errors.append("api-admission must trust X-Forwarded-For only from KODERA_CADDY_API_ADDRESS/32")
+        if admission.depends_on_conditions != {"server": "service_healthy"}:
+            errors.append("api-admission must wait for healthy server")
+        try:
+            health = json.loads(admission.healthcheck_test or "null")
+        except ValueError:
+            health = None
+        health_lines = [line.strip() for line in admission.raw_lines if line.startswith("      ")]
+        if (
+            not admission.has_healthcheck
+            or health != ["CMD", "python", "-c", ADMISSION_HEALTH_CODE]
+            or any(line.startswith(("disable:", "start_interval:")) for line in health_lines)
+        ):
+            errors.append("api-admission requires the loopback /_admission/live healthcheck")
+        if service_section_lines(admission, "networks") != [
+            "api_ingress:",
+            f"  ipv4_address: {ADMISSION_API_ADDRESS_EXPRESSION}",
+        ]:
+            errors.append("api-admission must attach only to api_ingress with static KODERA_ADMISSION_API_ADDRESS")
+    if caddy is None or caddy.depends_on_conditions.get("api-admission") != "service_healthy":
+        errors.append("caddy must wait for healthy api-admission")
     if server is None or server.environment.get("KODERA_TRUSTED_EDGE_ADDRESSES") != TRUSTED_EDGE_EXPRESSION:
-        errors.append("server must trust X-Forwarded-For only from KODERA_CADDY_API_ADDRESS/32")
+        errors.append("server must trust X-Forwarded-For only from KODERA_ADMISSION_API_ADDRESS/32")
     if caddy is None or service_section_lines(caddy, "networks") != [
         "edge:",
         "api_ingress:",
@@ -397,10 +473,10 @@ def edge_ingress_runtime_errors(services: dict[str, ServiceSpec], compose_text: 
         if svc is None or service_section_lines(svc, "networks") != ["default:", "edge:"]:
             errors.append(f"service '{name}' must attach to default and edge without api_ingress")
     for svc in services.values():
-        if svc.name in {"caddy", "server"}:
+        if svc.name in {"caddy", "api-admission", "server"}:
             continue
         if any("api_ingress" in line for line in service_section_lines(svc, "networks")):
-            errors.append("api_ingress may attach only caddy and server")
+            errors.append("api_ingress may attach only caddy, api-admission and server")
     normalized_tail = "\n".join(
         line.split("#", 1)[0].rstrip()
         for line in compose_text.splitlines()
@@ -569,11 +645,62 @@ def run_media_console_selftest(compose: str, env: str, caddy: str, split: str) -
            "server must set KODERA_CONSOLE_ORIGINS to the configured web origin")
     mutate("KODERA_TRUSTED_EDGE_ADDRESSES removed", "server",
            "      KODERA_TRUSTED_EDGE_ADDRESSES: " + TRUSTED_EDGE_EXPRESSION, "",
-           "server must trust X-Forwarded-For only from KODERA_CADDY_API_ADDRESS/32")
+           "server must trust X-Forwarded-For only from KODERA_ADMISSION_API_ADDRESS/32")
     mutate("KODERA_TRUSTED_EDGE_ADDRESSES widened", "server",
            "      KODERA_TRUSTED_EDGE_ADDRESSES: " + TRUSTED_EDGE_EXPRESSION,
            "      KODERA_TRUSTED_EDGE_ADDRESSES: 0.0.0.0/0",
-           "server must trust X-Forwarded-For only from KODERA_CADDY_API_ADDRESS/32")
+           "server must trust X-Forwarded-For only from KODERA_ADMISSION_API_ADDRESS/32")
+    mutate("server trusts caddy directly bypassing api-admission", "server",
+           "      KODERA_TRUSTED_EDGE_ADDRESSES: " + TRUSTED_EDGE_EXPRESSION,
+           "      KODERA_TRUSTED_EDGE_ADDRESSES: " + ADMISSION_TRUSTED_EDGE_EXPRESSION,
+           "server must trust X-Forwarded-For only from KODERA_ADMISSION_API_ADDRESS/32")
+    admission_block = re.search(
+        r"(?ms)^  api-admission:\n.*?(?=^  [a-z][a-z0-9-]*:|^volumes:)", compose
+    ).group()
+    cases.append(("api-admission absent", compose.replace(admission_block, "", 1),
+                  "api_ingress requires the hardened api-admission service"))
+    for key, bad in (
+        ("read_only", "false"),
+        ("cap_drop", "[]"),
+        ("security_opt", "[]"),
+        ("user", '"0:0"'),
+        ("mem_limit", "1g"),
+        ("restart", "always"),
+    ):
+        original = next(line for line in admission_block.splitlines() if line.startswith("    " + key + ":"))
+        mutate(f"api-admission {key} changed", "api-admission", original, "    " + key + ": " + bad,
+               "api-admission must retain the reviewed identity, sandbox, build and lifecycle")
+    for key, value in (
+        ("ports", "\n      - 8080:8080"),
+        ("volumes", "\n      - media_socket:/run/kodera-media:ro"),
+        ("cap_add", '["NET_ADMIN"]'),
+        ("profiles", "[optional]"),
+    ):
+        mutate(f"api-admission unreviewed {key}", "api-admission", "    mem_limit:",
+               "    " + key + ": " + value + "\n    mem_limit:",
+               "api-admission must retain only reviewed service keys with no volumes, capabilities or published ports")
+    mutate("api-admission drops --require-trusted-edge", "api-admission",
+           ', "--require-trusted-edge"', "",
+           "api-admission must run the reviewed edge_admission command with --require-trusted-edge")
+    mutate("api-admission KODERA_TRUSTED_EDGE_ADDRESSES widened", "api-admission",
+           "      KODERA_TRUSTED_EDGE_ADDRESSES: " + ADMISSION_TRUSTED_EDGE_EXPRESSION,
+           "      KODERA_TRUSTED_EDGE_ADDRESSES: 0.0.0.0/0",
+           "api-admission must trust X-Forwarded-For only from KODERA_CADDY_API_ADDRESS/32")
+    mutate("api-admission joins default network", "api-admission",
+           "      api_ingress:", "      default:\n      api_ingress:",
+           "api-admission must attach only to api_ingress with static KODERA_ADMISSION_API_ADDRESS")
+    mutate("api-admission loses static IP", "api-admission",
+           "        ipv4_address: " + ADMISSION_API_ADDRESS_EXPRESSION + "\n", "",
+           "api-admission must attach only to api_ingress with static KODERA_ADMISSION_API_ADDRESS")
+    mutate("api-admission server health race", "api-admission",
+           "      server:\n        condition: service_healthy",
+           "      server:\n        condition: service_started",
+           "api-admission must wait for healthy server")
+    cases.append(("api-admission healthcheck removed", drop_service_key(compose, "api-admission", "healthcheck"),
+                  "api-admission requires the loopback /_admission/live healthcheck"))
+    mutate("caddy skips waiting for api-admission", "caddy",
+           "      api-admission:\n        condition: service_healthy\n", "",
+           "caddy must wait for healthy api-admission")
     mutate("caddy shares default network", "caddy", "      edge:", "      default:\n      edge:",
            "caddy must attach to edge and api_ingress with static KODERA_CADDY_API_ADDRESS only")
     mutate("caddy loses static API ingress IP", "caddy",
@@ -848,6 +975,7 @@ def check_community_deploy(
         "valkey",
         "migrate",
         "server",
+        "api-admission",
         "yjs-collab",
         "web",
         "room-access",
@@ -1089,8 +1217,8 @@ def check_community_deploy(
         errors.append("Caddyfile must reference '{$KODERA_ACME_EMAIL}'")
     if "reverse_proxy room-access:8095" not in caddyfile_text:
         errors.append("Caddyfile must proxy room-access token endpoint to 'room-access:8095'")
-    if "reverse_proxy server:8000" not in caddyfile_text:
-        errors.append("Caddyfile must proxy API routes to 'server:8000'")
+    if "reverse_proxy api-admission:8080" not in caddyfile_text:
+        errors.append("Caddyfile must proxy API routes to 'api-admission:8080'")
     errors.extend(check_caddy_routes(caddyfile_text))
 
     # 7. Both topologies run from this file. Nothing may wait for the web client, which the split
@@ -1329,7 +1457,10 @@ def compose_structure_errors(compose_text: str, file_name: str = "docker-compose
             section = key
             if key == "network_mode":
                 errors.append(f"service '{service}' must not publish a port: network_mode is refused, every service stays on the stack's own network")
-            elif key not in REVIEWED_SERVICE_KEYS and not (service in {"proximity-socket-init", "media-socket-init", "media-storage-worker"} and key in {"read_only", "cap_drop", "cap_add", "security_opt"}):
+            elif key not in REVIEWED_SERVICE_KEYS and not (
+                (service in {"proximity-socket-init", "media-socket-init", "media-storage-worker"} and key in {"read_only", "cap_drop", "cap_add", "security_opt"})
+                or (service == "api-admission" and key in {"read_only", "cap_drop", "security_opt"})
+            ):
                 errors.append(f"service '{service}' uses an unreviewed key '{key}'")
             elif key == "ports" and service not in PUBLISHING_SERVICES:
                 errors.append(
@@ -1361,6 +1492,7 @@ def compose_structure_errors(compose_text: str, file_name: str = "docker-compose
             if not (
                 (service == "caddy" and stripped == f"ipv4_address: {CADDY_API_ADDRESS_EXPRESSION}")
                 or (service == "server" and stripped == f"ipv4_address: {SERVER_API_ADDRESS_EXPRESSION}")
+                or (service == "api-admission" and stripped == f"ipv4_address: {ADMISSION_API_ADDRESS_EXPRESSION}")
             ):
                 errors.append(f"{where(number)}: service '{service}' has an unreviewed network option")
     return errors
@@ -1454,7 +1586,7 @@ SPLIT_API_SITE = "api.{$KODERA_MATRIX_DOMAIN}"
 SPLIT_MATRIX_SITE = "matrix.{$KODERA_DOMAIN}"
 SPLIT_LIVEKIT_SITE = "livekit.{$KODERA_DOMAIN}"
 SPLIT_CADDY_SITES: dict[str, frozenset[str]] = {
-    SPLIT_API_SITE: frozenset({"server:8000", "yjs-collab:8098"}),
+    SPLIT_API_SITE: frozenset({"api-admission:8080", "yjs-collab:8098"}),
     SPLIT_MATRIX_SITE: frozenset({"synapse:8008", "room-access:8095"}),
     SPLIT_LIVEKIT_SITE: frozenset({"livekit:7880"}),
 }
@@ -1466,7 +1598,7 @@ SYNAPSE_STRIP_EXPOSED_SERVER = (
     'header_down Access-Control-Expose-Headers "(?i)(?:,\\s*server(\\s*,|$)|^\\s*server\\s*,\\s*|^\\s*server\\s*$)" "$1"'
 )
 SINGLE_PROXY_OPTIONS: dict[tuple[str, str], tuple[str, ...]] = {
-    (REVIEWED_CADDY_SITE, "server:8000"): (),
+    (REVIEWED_CADDY_SITE, "api-admission:8080"): (),
     (REVIEWED_CADDY_SITE, "synapse:8008"): (
         SPLIT_SYNAPSE_CORS,
         SYNAPSE_STRIP_SERVER,
@@ -1474,7 +1606,7 @@ SINGLE_PROXY_OPTIONS: dict[tuple[str, str], tuple[str, ...]] = {
     ),
 }
 SPLIT_PROXY_OPTIONS: dict[tuple[str, str], tuple[str, ...]] = {
-    (SPLIT_API_SITE, "server:8000"): (),
+    (SPLIT_API_SITE, "api-admission:8080"): (),
     (SPLIT_MATRIX_SITE, "synapse:8008"): (
         SPLIT_SYNAPSE_CORS,
         SYNAPSE_STRIP_SERVER,
@@ -1665,7 +1797,7 @@ def _check_caddy(
                         errors.append(f"{label} must set the reviewed reverse_proxy option for '{words[1]}': '{option}'")
                 upstreams.append((words[1], directives))
             body_limits = [child for child in block.blocks if child.header == "request_body"]
-            if any(upstream == "server:8000" for upstream, _ in upstreams):
+            if any(upstream == "api-admission:8080" for upstream, _ in upstreams):
                 if len(body_limits) != 1 or body_limits[0].lines != ["max_size 1MiB"] or body_limits[0].blocks:
                     errors.append(f"{label} must set the reviewed API body limit: max_size 1MiB")
             elif body_limits:
@@ -1694,6 +1826,12 @@ def _check_caddy(
                     errors.append(f"{label} site '{site.header}' proxies to '{upstream}', which is not reviewed for that site")
                 allowed = ALLOWED_PUBLIC_ROUTES.get(upstream)
                 if allowed is None:
+                    if upstream == "server:8000" and matcher in matchers:
+                        for path in matchers[matcher]:
+                            if path.startswith("/agent"):
+                                errors.append(f"{label} must not expose the agent API to the internet (got '{path}')")
+                            elif path == "/staff" or path.startswith("/staff/"):
+                                errors.append(f"{label} must not expose the staff plane to the internet (got '{path}')")
                     errors.append(f"{label} proxies '{block.header}' to an unreviewed upstream '{upstream}'")
                     continue
                 if matcher not in matchers:
@@ -1703,9 +1841,9 @@ def _check_caddy(
                     if path in allowed:
                         routed_to_upstream.setdefault(upstream, set()).add(path)
                         continue
-                    if upstream == "server:8000" and path.startswith("/agent"):
+                    if upstream == "api-admission:8080" and path.startswith("/agent"):
                         errors.append(f"{label} must not expose the agent API to the internet (got '{path}')")
-                    elif upstream == "server:8000" and (path == "/staff" or path.startswith("/staff/")):
+                    elif upstream == "api-admission:8080" and (path == "/staff" or path.startswith("/staff/")):
                         errors.append(f"{label} must not expose the staff plane to the internet (got '{path}')")
                     elif upstream == "synapse:8008":
                         errors.append(
@@ -1716,12 +1854,12 @@ def _check_caddy(
                         errors.append(f"{label} exposes an unreviewed route to '{upstream}': '{path}'")
         if header_blocks != 1 or tuple(conditional_headers) != REVIEWED_CADDY_CONDITIONAL_HEADERS:
             errors.append(f"{label} response headers differ from the reviewed set")
-        if "server:8000" in site_upstreams.get(site.header, frozenset()):
-            server_routes = routed_to_upstream.get("server:8000", set())
+        if "api-admission:8080" in site_upstreams.get(site.header, frozenset()):
+            server_routes = routed_to_upstream.get("api-admission:8080", set())
             for required_route in sorted(MOBILE_ASSOCIATION_ROUTES):
                 if required_route not in server_routes:
                     errors.append(
-                        f"{label} must proxy mobile association route '{required_route}' to 'server:8000'"
+                        f"{label} must proxy mobile association route '{required_route}' to 'api-admission:8080'"
                     )
             for closed_route in CLOSED_INTERNAL_SERVER_ROUTES:
                 if closed_route not in closed_paths:
@@ -2369,7 +2507,7 @@ def preflight_env(env_example_text: str, env_text: str) -> list[str]:
     synapse_issuer = actual.get(SYNAPSE_OIDC_ISSUER_ENV_NAME, "").strip("'\"")
     synapse_secret = actual.get(SYNAPSE_OIDC_ENV_NAME, "").strip("'\"")
     for key in example:
-        if key in ("KODERA_STAFF_ISSUER", FEDERATION_ENV_NAME, FEDERATION_MODE_ENV_NAME, "KODERA_MATRIX_PARTNER_CHANNELS", SYNAPSE_OIDC_ISSUER_ENV_NAME, TOPOLOGY_ENV_NAME, "KODERA_CONSOLE_CLIENT_ID", "KODERA_IOS_APP_IDS", "KODERA_ANDROID_ASSETLINKS_SHA256", "KODERA_MEDIA_SECRETS_SOURCE", "KODERA_ATTACHMENT_BASE", "KODERA_API_INGRESS_SUBNET", "KODERA_CADDY_API_ADDRESS", "KODERA_SERVER_API_ADDRESS") and not actual.get(key, "").strip("'\""):
+        if key in ("KODERA_STAFF_ISSUER", FEDERATION_ENV_NAME, FEDERATION_MODE_ENV_NAME, "KODERA_MATRIX_PARTNER_CHANNELS", SYNAPSE_OIDC_ISSUER_ENV_NAME, TOPOLOGY_ENV_NAME, "KODERA_CONSOLE_CLIENT_ID", "KODERA_IOS_APP_IDS", "KODERA_ANDROID_ASSETLINKS_SHA256", "KODERA_MEDIA_SECRETS_SOURCE", "KODERA_ATTACHMENT_BASE", "KODERA_API_INGRESS_SUBNET", "KODERA_CADDY_API_ADDRESS", "KODERA_SERVER_API_ADDRESS", "KODERA_ADMISSION_API_ADDRESS") and not actual.get(key, "").strip("'\""):
             continue  # Empty optional configuration retains the reviewed Compose defaults.
         if key == SYNAPSE_OIDC_ENV_NAME and not community_enabled and synapse_issuer:
             pass  # An isolated self-host may sign members in to Synapse with its own realm.
@@ -2523,6 +2661,7 @@ def preflight_env(env_example_text: str, env_text: str) -> list[str]:
     subnet_raw = actual.get("KODERA_API_INGRESS_SUBNET", "").strip().strip("'\"") or "172.30.240.0/28"
     caddy_ip_raw = actual.get("KODERA_CADDY_API_ADDRESS", "").strip().strip("'\"") or "172.30.240.2"
     server_ip_raw = actual.get("KODERA_SERVER_API_ADDRESS", "").strip().strip("'\"") or "172.30.240.3"
+    admission_ip_raw = actual.get("KODERA_ADMISSION_API_ADDRESS", "").strip().strip("'\"") or "172.30.240.4"
     ingress_net: ipaddress.IPv4Network | None = None
     try:
         candidate_net = ipaddress.IPv4Network(subnet_raw, strict=True)
@@ -2539,6 +2678,7 @@ def preflight_env(env_example_text: str, env_text: str) -> list[str]:
         errors.append("KODERA_API_INGRESS_SUBNET must be a strict private IPv4 subnet (/24 to /29)")
     caddy_ip: ipaddress.IPv4Address | None = None
     server_ip: ipaddress.IPv4Address | None = None
+    admission_ip: ipaddress.IPv4Address | None = None
     try:
         caddy_ip = ipaddress.IPv4Address(caddy_ip_raw)
         if ingress_net is not None and (
@@ -2557,8 +2697,19 @@ def preflight_env(env_example_text: str, env_text: str) -> list[str]:
             errors.append("KODERA_SERVER_API_ADDRESS must be a usable container IPv4 address inside KODERA_API_INGRESS_SUBNET")
     except ValueError:
         errors.append("KODERA_SERVER_API_ADDRESS must be a usable container IPv4 address inside KODERA_API_INGRESS_SUBNET")
+    try:
+        admission_ip = ipaddress.IPv4Address(admission_ip_raw)
+        if ingress_net is not None and (
+            admission_ip not in ingress_net
+            or admission_ip in {ingress_net.network_address, ingress_net.broadcast_address, ingress_net.network_address + 1}
+        ):
+            errors.append("KODERA_ADMISSION_API_ADDRESS must be a usable container IPv4 address inside KODERA_API_INGRESS_SUBNET")
+    except ValueError:
+        errors.append("KODERA_ADMISSION_API_ADDRESS must be a usable container IPv4 address inside KODERA_API_INGRESS_SUBNET")
     if caddy_ip is not None and server_ip is not None and caddy_ip == server_ip:
         errors.append("KODERA_CADDY_API_ADDRESS and KODERA_SERVER_API_ADDRESS must be distinct usable container IPv4 addresses")
+    if admission_ip is not None and (admission_ip == caddy_ip or admission_ip == server_ip):
+        errors.append("KODERA_ADMISSION_API_ADDRESS must be distinct from KODERA_CADDY_API_ADDRESS and KODERA_SERVER_API_ADDRESS")
     attachment_base = actual.get("KODERA_ATTACHMENT_BASE", "").strip().strip("'\"")
     if attachment_base:
         host_domain = actual.get("KODERA_DOMAIN", "").strip().strip("'\"")
@@ -2633,7 +2784,8 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
         ("API body limit widened", lambda c, e, cf: (c, e, cf.replace("max_size 1MiB", "max_size 2MiB", 1)), "max_size 1MiB"),
         ("Matrix body timeout shortened", lambda c, e, cf: (c, e, cf.replace("read_body 300s", "read_body 10s")), "global options differ"),
         ("API body placeholder added", lambda c, e, cf: (c, e, cf.replace("handle @api {", "handle @api {\n\t\t@invalid_api_body not vars_regexp {http.request.body} (?s).*", 1)), "unreviewed directive in a handle"),
-        ("API request buffering added", lambda c, e, cf: (c, e, cf.replace("reverse_proxy server:8000 {", "reverse_proxy server:8000 {\n\t\t\trequest_buffers 1MiB", 1)), "unreviewed reverse_proxy option"),
+        ("API request buffering added", lambda c, e, cf: (c, e, cf.replace("reverse_proxy api-admission:8080 {", "reverse_proxy api-admission:8080 {\n\t\t\trequest_buffers 1MiB", 1)), "unreviewed reverse_proxy option"),
+        ("Caddy bypasses api-admission and proxies directly to server:8000", lambda c, e, cf: (c, e, cf.replace("reverse_proxy api-admission:8080 {", "reverse_proxy server:8000 {", 1)), "proxies 'handle @api' to an unreviewed upstream 'server:8000'"),
         (
             "Caddy waits for the web client the split topology does not start",
             lambda c, e, cf: (c.replace("    depends_on:\n      server:\n        condition: service_healthy\n      room-access:",
@@ -2880,10 +3032,10 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
     server_edition = "      KODERA_EDITION: community\n"
     site_open = "{$KODERA_DOMAIN} {\n"
     api_matcher = "\t@api path /api/* /health/*\n"
-    api_proxy = "\t\treverse_proxy server:8000 {\n\t\t\timport client_address\n\t\t}\n"
+    api_proxy = "\t\treverse_proxy api-admission:8080 {\n\t\t\timport client_address\n\t\t}\n"
     shadow_site = (
         "admin.example.org {\n\t@api path /agent/*\n\thandle @api {\n"
-        "\t\treverse_proxy server:8000 {\n\t\t\timport client_address\n\t\t}\n\t}\n}\n\n"
+        "\t\treverse_proxy api-admission:8080 {\n\t\t\timport client_address\n\t\t}\n\t}\n}\n\n"
     )
 
     def compose_case(label: str, old: str, new: str, expected: str) -> tuple[str, MutationFn, str]:
@@ -2974,7 +3126,7 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
                    "Caddyfile has an unreviewed block in a site block: 'handle_path'"),
         caddy_case("an upstream option that was not reviewed", api_proxy,
                    api_proxy.replace("import client_address", "import client_address\n\t\t\theader_up Host internal.example.org"),
-                   "Caddyfile has an unreviewed reverse_proxy option for 'server:8000': 'header_up Host'"),
+                   "Caddyfile has an unreviewed reverse_proxy option for 'api-admission:8080': 'header_up Host'"),
         caddy_case("the snippet gains a directive", "\theader_up -Forwarded\n", "\theader_up -Forwarded\n\theader_up X-Internal-Token secret\n",
                    "Caddyfile snippet 'client_address' differs from the reviewed one"),
         caddy_case("a security response header is dropped", '\theader ?X-Frame-Options "DENY"\n', "",
@@ -3160,7 +3312,7 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
         ),
         (
             "the agent API is exposed through its own handle",
-            lambda c, e, cf: (c, e, cf.replace("\t\trespond 404\n\t}\n\n\t@api", "\t\treverse_proxy server:8000\n\t}\n\n\t@api", 1)),
+            lambda c, e, cf: (c, e, cf.replace("\t\trespond 404\n\t}\n\n\t@api", "\t\treverse_proxy api-admission:8080\n\t}\n\n\t@api", 1)),
             "Caddyfile must not expose the agent API to the internet (got '/agent')",
         ),
         (
@@ -3179,7 +3331,7 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
         (
             "the client address override is removed from every upstream",
             lambda c, e, cf: (c, e, cf.replace("\theader_up X-Forwarded-For {remote_host}\n", "", 1)),
-            "Caddyfile must overwrite X-Forwarded-For with the peer address for 'server:8000'",
+            "Caddyfile must overwrite X-Forwarded-For with the peer address for 'api-admission:8080'",
         ),
         (
             "the client's own X-Forwarded-For is passed on",
@@ -3229,7 +3381,7 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
         (
             "an unreviewed route reaches the API",
             lambda c, e, cf: (c, e, cf.replace("@api path /api/* /health/*", "@api path /api/* /health/* /admin/*", 1)),
-            "Caddyfile exposes an unreviewed route to 'server:8000': '/admin/*'",
+            "Caddyfile exposes an unreviewed route to 'api-admission:8080': '/admin/*'",
         ),
         (
             "Apple Universal Links association route is removed from Caddyfile",
@@ -3238,7 +3390,7 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
                 e,
                 cf.replace(" /.well-known/apple-app-site-association", "", 1),
             ),
-            "Caddyfile must proxy mobile association route '/.well-known/apple-app-site-association' to 'server:8000'",
+            "Caddyfile must proxy mobile association route '/.well-known/apple-app-site-association' to 'api-admission:8080'",
         ),
         (
             "Android App Links assetlinks.json route is removed from Caddyfile",
@@ -3247,7 +3399,7 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
                 e,
                 cf.replace(" /.well-known/assetlinks.json", "", 1),
             ),
-            "Caddyfile must proxy mobile association route '/.well-known/assetlinks.json' to 'server:8000'",
+            "Caddyfile must proxy mobile association route '/.well-known/assetlinks.json' to 'api-admission:8080'",
         ),
         (
             "mobile association handle block is removed from Caddyfile",
@@ -3259,7 +3411,7 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
                     "\t@mobile_association path /.well-known/apple-app-site-association /.well-known/assetlinks.json\n"
                     "\thandle @mobile_association {\n"
                     "\t\trequest_body {\n\t\t\tmax_size 1MiB\n\t\t}\n"
-                    "\t\treverse_proxy server:8000 {\n"
+                    "\t\treverse_proxy api-admission:8080 {\n"
                     "\t\t\timport client_address\n"
                     "\t\t}\n"
                     "\t}\n",
@@ -3267,7 +3419,7 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
                     1,
                 ),
             ),
-            "Caddyfile must proxy mobile association route '/.well-known/apple-app-site-association' to 'server:8000'",
+            "Caddyfile must proxy mobile association route '/.well-known/apple-app-site-association' to 'api-admission:8080'",
         ),
         (
             "wildcard /.well-known/* steals Matrix discovery from web:8080",
@@ -3280,7 +3432,7 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
                     1,
                 ),
             ),
-            "Caddyfile exposes an unreviewed route to 'server:8000': '/.well-known/*'",
+            "Caddyfile exposes an unreviewed route to 'api-admission:8080': '/.well-known/*'",
         ),
         (
             "the staff plane is exposed on Community customer ingress",
@@ -3406,6 +3558,21 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
             "KODERA_CADDY_API_ADDRESS and KODERA_SERVER_API_ADDRESS must be distinct usable container IPv4 addresses",
         ),
         (
+            "Admission API address sits outside KODERA_API_INGRESS_SUBNET",
+            lambda env: re.sub(r"(?m)^KODERA_ADMISSION_API_ADDRESS=.*$", "KODERA_ADMISSION_API_ADDRESS=172.30.241.4", env),
+            "KODERA_ADMISSION_API_ADDRESS must be a usable container IPv4 address inside KODERA_API_INGRESS_SUBNET",
+        ),
+        (
+            "Admission API address collides with KODERA_CADDY_API_ADDRESS",
+            lambda env: re.sub(r"(?m)^KODERA_ADMISSION_API_ADDRESS=.*$", "KODERA_ADMISSION_API_ADDRESS=172.30.240.2", env),
+            "KODERA_ADMISSION_API_ADDRESS must be distinct from KODERA_CADDY_API_ADDRESS and KODERA_SERVER_API_ADDRESS",
+        ),
+        (
+            "Admission API address collides with KODERA_SERVER_API_ADDRESS",
+            lambda env: re.sub(r"(?m)^KODERA_ADMISSION_API_ADDRESS=.*$", "KODERA_ADMISSION_API_ADDRESS=172.30.240.3", env),
+            "KODERA_ADMISSION_API_ADDRESS must be distinct from KODERA_CADDY_API_ADDRESS and KODERA_SERVER_API_ADDRESS",
+        ),
+        (
             "KODERA_ATTACHMENT_BASE is a bare origin without bucket path",
             lambda env: re.sub(r"(?m)^KODERA_ATTACHMENT_BASE=.*$", "KODERA_ATTACHMENT_BASE=https://media.example.net/", env),
             "KODERA_ATTACHMENT_BASE must be a dedicated public https://<host>/<path>/ prefix outside the Core API and OIDC origins",
@@ -3436,6 +3603,7 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
         else f"{key}=172.30.240.0/28" if key == "KODERA_API_INGRESS_SUBNET"
         else f"{key}=172.30.240.2" if key == "KODERA_CADDY_API_ADDRESS"
         else f"{key}=172.30.240.3" if key == "KODERA_SERVER_API_ADDRESS"
+        else f"{key}=172.30.240.4" if key == "KODERA_ADMISSION_API_ADDRESS"
         else f"{key}=single" if key == TOPOLOGY_ENV_NAME
         else f"{key}=" if key in (*COMMUNITY_KEYS, *AGENT_ENV_NAMES, SYNAPSE_OIDC_ENV_NAME)
         else f"{key}={base64.urlsafe_b64encode(bytes([i % 256]) * 32).decode('ascii')}" if "BASE64URL_32" in value
@@ -3765,7 +3933,9 @@ SPLIT_MUTATIONS: tuple[SplitMutation, ...] = (
     ("API body limit widened", "caddy", _first("max_size 1MiB", "max_size 2MiB"), "max_size 1MiB"),
     ("Matrix body timeout shortened", "caddy", _first("read_body 300s", "read_body 10s"), "global options differ"),
     ("API body placeholder added", "caddy", _first("handle @api {", "handle @api {\n\t\t@invalid_api_body not vars_regexp {http.request.body} (?s).*"), "unreviewed directive in a handle"),
-    ("API request buffering added", "caddy", _first("reverse_proxy server:8000 {", "reverse_proxy server:8000 {\n\t\t\trequest_buffers 1MiB"), "unreviewed reverse_proxy option"),
+    ("API request buffering added", "caddy", _first("reverse_proxy api-admission:8080 {", "reverse_proxy api-admission:8080 {\n\t\t\trequest_buffers 1MiB"), "unreviewed reverse_proxy option"),
+    ("split API origin bypasses api-admission directly to server:8000", "caddy", _first("reverse_proxy api-admission:8080 {", "reverse_proxy server:8000 {"),
+     "Caddyfile.split proxies 'handle @api' to an unreviewed upstream 'server:8000'"),
     ("the API origin routes the agent API", "caddy", _first("@api path /api/* /health/*", "@api path /api/* /health/* /agent/*"),
      "Caddyfile.split must not expose the agent API to the internet (got '/agent/*')"),
     ("the API origin exposes the staff plane", "caddy", _first("@api path /api/* /health/*", "@api path /api/* /health/* /staff/*"),
@@ -3773,12 +3943,12 @@ SPLIT_MUTATIONS: tuple[SplitMutation, ...] = (
     ("the API origin drops the staff 404 guard", "caddy", _first("@internal path /agent /agent/* /staff /staff/*", "@internal path /agent /agent/*"),
      "Caddyfile.split must answer 404 on internal or staff path '/staff/*'"),
     ("the API origin drops Apple Universal Links association", "caddy", _first(" /.well-known/apple-app-site-association", ""),
-     "Caddyfile.split must proxy mobile association route '/.well-known/apple-app-site-association' to 'server:8000'"),
+     "Caddyfile.split must proxy mobile association route '/.well-known/apple-app-site-association' to 'api-admission:8080'"),
     ("the API origin drops Android App Links assetlinks.json", "caddy", _first(" /.well-known/assetlinks.json", ""),
-     "Caddyfile.split must proxy mobile association route '/.well-known/assetlinks.json' to 'server:8000'"),
+     "Caddyfile.split must proxy mobile association route '/.well-known/assetlinks.json' to 'api-admission:8080'"),
     ("the API origin widens /.well-known/* onto discovery paths", "caddy",
      _first("@mobile_association path /.well-known/apple-app-site-association /.well-known/assetlinks.json", "@mobile_association path /.well-known/*"),
-     "Caddyfile.split exposes an unreviewed route to 'server:8000': '/.well-known/*'"),
+     "Caddyfile.split exposes an unreviewed route to 'api-admission:8080': '/.well-known/*'"),
     ("the Matrix origin routes federation", "caddy", _first("/_synapse/client/*", "/_synapse/client/* /_matrix/federation/*"),
      "federation must be closed by default: Caddyfile.split must route only the Matrix client API, never federation, key or admin routes (got '/_matrix/federation/*')"),
     ("the Matrix origin routes the key API", "caddy", _first("/_synapse/client/*", "/_synapse/client/* /_matrix/key/*"),
@@ -3804,17 +3974,17 @@ SPLIT_MUTATIONS: tuple[SplitMutation, ...] = (
      "Caddyfile.split response headers differ from the reviewed set"),
     ("Synapse grants a wildcard origin", "caddy", _first(SPLIT_SYNAPSE_CORS, 'header_down Access-Control-Allow-Origin "*"'),
      "Caddyfile.split has an unreviewed reverse_proxy option for 'synapse:8008': 'header_down Access-Control-Allow-Origin'"),
-    ("the API is answered on the signalling origin", "caddy", _first("reverse_proxy livekit:7880 {", "reverse_proxy server:8000 {"),
-     "Caddyfile.split site 'livekit.{$KODERA_DOMAIN}' proxies to 'server:8000', which is not reviewed for that site"),
+    ("the API is answered on the signalling origin", "caddy", _first("reverse_proxy livekit:7880 {", "reverse_proxy api-admission:8080 {"),
+     "Caddyfile.split site 'livekit.{$KODERA_DOMAIN}' proxies to 'api-admission:8080', which is not reviewed for that site"),
     ("room-access is answered on the API origin", "caddy", _first("@api path /api/* /health/*", "@api path /_kodera/rooms/token"),
-     "Caddyfile.split exposes an unreviewed route to 'server:8000': '/_kodera/rooms/token'"),
+     "Caddyfile.split exposes an unreviewed route to 'api-admission:8080': '/_kodera/rooms/token'"),
     ("an unrouted API path falls through to the web client", "caddy",
      _first("\thandle {\n\t\trespond 404\n\t}", "\thandle {\n\t\treverse_proxy web:8080 {\n\t\t\timport client_address\n\t\t}\n\t}"),
      "Caddyfile.split catch-all must answer 404, never proxy (got 'web:8080')"),
     ("the signalling origin answers unrouted paths", "caddy", _last("\n\thandle {\n\t\trespond 404\n\t}", ""),
      "Caddyfile.split site 'livekit.{$KODERA_DOMAIN}' must answer 404 for every path it does not route"),
     ("a client-supplied address reaches the API", "caddy", _first("\t\t\timport client_address\n", ""),
-     "Caddyfile.split must overwrite X-Forwarded-For with the peer address for 'server:8000'"),
+     "Caddyfile.split must overwrite X-Forwarded-For with the peer address for 'api-admission:8080'"),
     ("the stack serves the web origin too", "caddy", _last("}\n", "}\n\n{$KODERA_DOMAIN} {\n\thandle {\n\t\trespond 404\n\t}\n}\n"),
      "Caddyfile.split must hold exactly the site blocks api.{$KODERA_MATRIX_DOMAIN}, matrix.{$KODERA_DOMAIN}, livekit.{$KODERA_DOMAIN}, in that order"),
     ("a forwarded address is believed", "caddy", _first("\temail {$KODERA_ACME_EMAIL}\n", "\temail {$KODERA_ACME_EMAIL}\n\tservers {\n\t\ttrusted_proxies static private_ranges\n\t}\n"),
@@ -3843,6 +4013,8 @@ SPLIT_MUTATIONS: tuple[SplitMutation, ...] = (
      "service 'synapse' must not publish a port"),
     ("an unreviewed service is changed", "override", lambda text: text + "  db:\n    mem_limit: 4g\n",
      "docker-compose.split.yml changes an unreviewed service 'db'"),
+    ("split override tampers with api-admission", "override", lambda text: text + "  api-admission:\n    mem_limit: 512m\n",
+     "docker-compose.split.yml changes an unreviewed service 'api-admission'"),
     ("the server image is replaced", "override", _first("  server:\n", "  server:\n    image: example.org/server:latest\n"),
      "docker-compose.split.yml changes an unreviewed key 'image' of service 'server'"),
     ("an undocumented variable is read", "override", _first("wss://livekit.${KODERA_DOMAIN", "wss://livekit.${KODERA_SIGNALLING_HOST:?x}${KODERA_DOMAIN"),

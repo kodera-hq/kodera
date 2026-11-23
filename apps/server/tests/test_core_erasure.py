@@ -12,7 +12,7 @@ from workspace_safety.test_moderation import world as world
 from apps.docs.models import Collection, CollectionRow, Document, DocumentSnapshot, DocumentUpdate
 from apps.identity.models import Identity, StaffRole, User
 from apps.media.models import Attachment
-from apps.notifications.models import Notification, PushOutbox, PushSubscription
+from apps.notifications.models import Notification, PresenceLease, PushOutbox, PushSubscription
 from apps.orgs.erasure_services import (
     AbsenceProof,
     ErasureScope,
@@ -93,6 +93,13 @@ def seed(world):
     Notification.objects.create(
         organisation=org, membership=members[0], kind="document", resource_id=doc.id
     )
+    PresenceLease.objects.create(
+        organisation=org,
+        membership=members[0],
+        device_id=uuid4(),
+        platform="desktop",
+        expires_at=timezone.now() + timedelta(seconds=60),
+    )
     return doc, attachment, principal
 
 
@@ -119,6 +126,7 @@ def test_real_core_payloads_are_deleted_while_missing_remote_adapters_hold_compl
         PushSubscription,
         PushOutbox,
         Notification,
+        PresenceLease,
     ]:
         assert not model.objects.exists(), model.__name__
     principal.refresh_from_db()

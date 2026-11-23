@@ -67,9 +67,24 @@ class Gateway:
     def call(
         self, operation: str, obj: ObjectDescriptor | ObjectKey | str | dict[str, Any]
     ) -> dict[str, Any]:
-        if operation == "attachment_prefix":
+        if operation in {"attachment_prefix", "attachment_prefix_objects"}:
             if not isinstance(obj, dict):
                 raise StorageRefusedError()
+            if operation == "attachment_prefix_objects":
+                if (
+                    set(obj) != {"organisationId", "continuation"}
+                    or not isinstance(obj["organisationId"], str)
+                    or (
+                        obj["continuation"] is not None
+                        and (
+                            not isinstance(obj["continuation"], str)
+                            or not obj["continuation"]
+                            or len(obj["continuation"]) > 4096
+                            or not obj["continuation"].isascii()
+                        )
+                    )
+                ):
+                    raise StorageRefusedError()
             object_message = obj
         else:
             if isinstance(obj, dict) or (
@@ -129,6 +144,41 @@ class Gateway:
                     )
                 ):
                     raise StorageRefusedError()
+            elif operation == "attachment_prefix_objects":
+                prefix = f"organisations/{object_message['organisationId']}/attachments/"
+                if (
+                    not isinstance(result, dict)
+                    or set(result) != {"objects", "continuation"}
+                    or not isinstance(result["objects"], list)
+                    or len(result["objects"]) > 10
+                    or (
+                        result["continuation"] is not None
+                        and (
+                            not isinstance(result["continuation"], str)
+                            or not result["continuation"]
+                            or result["continuation"] == object_message["continuation"]
+                            or len(result["continuation"]) > 4096
+                            or not result["continuation"].isascii()
+                        )
+                    )
+                ):
+                    raise StorageRefusedError()
+                for entry in result["objects"]:
+                    if (
+                        not isinstance(entry, dict)
+                        or set(entry) != {"key", "last_modified"}
+                        or not isinstance(entry["key"], str)
+                        or not entry["key"].startswith(prefix)
+                        or len(entry["key"].encode("utf-8")) > 1024
+                        or any(part in {".", ".."} for part in entry["key"].split("/"))
+                        or not isinstance(entry["last_modified"], str)
+                        or not entry["last_modified"]
+                        or len(entry["last_modified"]) > 64
+                    ):
+                        raise StorageRefusedError()
+                    parsed_lm = datetime.fromisoformat(entry["last_modified"])
+                    if parsed_lm.tzinfo is None:
+                        raise StorageRefusedError()
             elif operation == "verify":
                 if (
                     not isinstance(result, dict)
@@ -252,5 +302,25 @@ def attachment_prefix(
             "organisationId": str(organisation_id),
             "continuation": continuation,
             "key": key,
+        },
+    )
+
+
+def attachment_prefix_objects(
+    organisation_id: UUID,
+    *,
+    continuation: str | None = None,
+    socket_path: str | None = None,
+) -> dict[str, Any]:
+    """List one bounded S3 attachment page with UTC `last_modified` timestamps."""
+    if socket_path is None:
+        from django.conf import settings
+
+        socket_path = getattr(settings, "KODERA_MEDIA_GATEWAY_SOCKET", None)
+    return Gateway(socket_path).call(
+        "attachment_prefix_objects",
+        {
+            "organisationId": str(organisation_id),
+            "continuation": continuation,
         },
     )

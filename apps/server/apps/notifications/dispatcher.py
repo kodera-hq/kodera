@@ -14,7 +14,12 @@ from apps.media.context import RefusalError
 
 from . import push
 from .models import PushOutbox, PushSubscription
-from .services import public_key, subscription_data
+from .services import (
+    MOBILE_PUSH_PLATFORMS,
+    has_active_foreground_presence,
+    public_key,
+    subscription_data,
+)
 
 
 @dataclass(frozen=True)
@@ -121,10 +126,16 @@ def dispatch_claim(job: Claim, private_key: ec.EllipticCurvePrivateKey, subject:
     result = push.Result("obsolete")
     try:
         if subscription is not None and eligible(subscription):
-            if push.public_key(private_key) != public_key():
-                raise RefusalError(503, "service-unavailable")
-            data = subscription_data(subscription)
-            result = push.send(data["endpoint"], private_key, subject)
+            if subscription.platform in MOBILE_PUSH_PLATFORMS and has_active_foreground_presence(
+                organisation_id=subscription.organisation_id,
+                membership_id=subscription.membership_id,
+            ):
+                result = push.Result("obsolete")
+            else:
+                if push.public_key(private_key) != public_key():
+                    raise RefusalError(503, "service-unavailable")
+                data = subscription_data(subscription)
+                result = push.send(data["endpoint"], private_key, subject)
     except outbound.BlockedTargetError:
         result = push.Result("refused")
     except (outbound.FetchError, OSError, RefusalError, ValueError):

@@ -3452,6 +3452,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/notifications/presence/{device_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Renew foreground notification presence lease
+         * @description Organisation is derived from the verified issuer; current active membership is checked on every request. Foreground web and desktop clients renew a bounded server-enforced lease (<= 90 seconds) so mobile push wakeups are suppressed while the member is active on desktop or web without hiding inbox entries.
+         */
+        put: operations["putNotificationPresence"];
+        post?: never;
+        /**
+         * Delete foreground notification presence lease
+         * @description Immediately clears this device's foreground presence lease so mobile push wakeups resume without waiting for TTL expiry.
+         */
+        delete: operations["deleteNotificationPresence"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/push/subscriptions/{device_id}": {
         parameters: {
             query?: never;
@@ -4933,6 +4957,40 @@ export interface components {
             endpoint: string;
             p256dh: string;
             auth: string;
+            /**
+             * @default web
+             * @enum {string}
+             */
+            platform: "web" | "desktop" | "ios" | "android";
+        };
+        /**
+         * NotificationPresenceRequest
+         * @description Ephemeral foreground presence lease renewal for an active web or desktop session, bounded to at most 90 seconds.
+         */
+        NotificationPresenceRequest: {
+            /** @enum {string} */
+            platform: "web" | "desktop";
+            /** @default 60 */
+            ttlSeconds: number;
+        };
+        /**
+         * NotificationPresenceLease
+         * @description Active foreground presence lease bound to the caller's membership and device.
+         * @example {
+         *       "deviceId": "0195c000-0000-7000-8000-000000000001",
+         *       "platform": "desktop",
+         *       "expiresAt": "2026-11-23T00:01:00Z",
+         *       "ttlSeconds": 60
+         *     }
+         */
+        NotificationPresenceLease: {
+            /** Format: uuid */
+            deviceId: string;
+            /** @enum {string} */
+            platform: "web" | "desktop";
+            /** Format: date-time */
+            expiresAt: string;
+            ttlSeconds: number;
         };
         /**
          * WorkspaceDocumentRequest
@@ -20125,6 +20183,67 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    putNotificationPresence: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                device_id: components["parameters"]["DeviceId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NotificationPresenceRequest"];
+            };
+        };
+        responses: {
+            /** @description Active foreground presence lease recorded. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationPresenceLease"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    deleteNotificationPresence: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                device_id: components["parameters"]["DeviceId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful operation. */
+            204: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
             422: components["responses"]["ValidationError"];
             429: components["responses"]["RateLimited"];
         };

@@ -355,3 +355,27 @@ def organisation_slug_or_none(*, organisation_id: UUID) -> str | None:
         .values_list("slug", flat=True)
         .first()
     )
+
+
+def attachment_sweep_organisation_ids(
+    *,
+    after_org: UUID | None = None,
+    include_after_org: bool = False,
+    limit: int = 50,
+) -> tuple[UUID, ...]:
+    """Return undeleted customer organisation IDs ordered by UUID for bounded S3 orphan sweeps."""
+    qs = Organisation.objects.filter(deleted_at__isnull=True).exclude(realm="kodera-staff")
+    if after_org is not None:
+        qs = qs.filter(id__gte=after_org) if include_after_org else qs.filter(id__gt=after_org)
+    return tuple(qs.order_by("id").values_list("id", flat=True)[:limit])
+
+
+def previous_sweep_organisation_id(*, before_org: UUID) -> UUID | None:
+    """Return the immediate predecessor undeleted customer organisation ID before `before_org`."""
+    return (
+        Organisation.objects.filter(deleted_at__isnull=True, id__lt=before_org)
+        .exclude(realm="kodera-staff")
+        .order_by("-id")
+        .values_list("id", flat=True)
+        .first()
+    )

@@ -13,7 +13,7 @@ from test_core_erasure import begin, seed
 from workspace_safety.test_moderation import world as make_world, world as world
 
 from apps.billing.models import FiscalPeriod
-from apps.notifications.models import Notification, PushSubscription
+from apps.notifications.models import Notification, PresenceLease, PushSubscription
 from core.db.ids import new_uuid7
 from core.db.retention_worker_role import admission_grant_statements, grant_statements
 
@@ -96,7 +96,9 @@ def test_restricted_admission_temp_relations_cannot_hide_overlap_or_invent_timez
 
 
 @pytest.mark.parametrize("cutoff", ["workspace", "account"])
-@pytest.mark.parametrize("resource", ["attachment", "subscription", "notification"])
+@pytest.mark.parametrize(
+    "resource", ["attachment", "subscription", "notification", "presence_lease"]
+)
 def test_old_cutoff_payload_cannot_move_to_valid_live_other_scope(world, cutoff, resource):
     _, attachment, _ = seed(world)
     other, _, other_members, _ = make_world.__wrapped__()
@@ -116,6 +118,10 @@ def test_old_cutoff_payload_cannot_move_to_valid_live_other_scope(world, cutoff,
         ),
         "notification": (
             Notification.objects.get(membership=world[2][0]),
+            {"organisation_id": other.id, "membership_id": other_members[0].id},
+        ),
+        "presence_lease": (
+            PresenceLease.objects.get(membership=world[2][0]),
             {"organisation_id": other.id, "membership_id": other_members[0].id},
         ),
     }

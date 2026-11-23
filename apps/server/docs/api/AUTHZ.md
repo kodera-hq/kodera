@@ -129,6 +129,7 @@ Read as: what each role may do to each resource. `own` means "rows belonging to 
 | `PrivacyAccount` | create, read self | create, read self | create, read self | create, read self | — | — | — | — |
 | `WorkspaceSearch` | read own | read own | read own | read own | — | — | — | — |
 | `PushSubscription` | read, update, delete self | read, update, delete self | read, update, delete self | read, update, delete self | — | — | — | — |
+| `PresenceLease` | update, delete self | update, delete self | update, delete self | update, delete self | — | — | — | — |
 | `ConfidentialDevice` | create, act self | create, act self | create, act self | create, act self | — | — | — | — |
 | `ConfidentialKeyPackage` | create, act own | create, act own | create own | create own | — | — | — | — |
 | `ConfidentialRoom` | create, act own | create, act own | act own | act own | — | — | — | — |
