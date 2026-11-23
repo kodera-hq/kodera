@@ -159,10 +159,13 @@ def serve(
                             idempotency.render(idempotency.in_flight_problem(req_id)), req_id
                         )
                     fence = scope
-                    try:
-                        handler = prepare(verified, req_id)
-                    except AiGatewayRefusalError as failure:
-                        prepared_failure = failure
+                    if not idempotency.holds_answer(
+                        request, issuer=verified.issuer, subject=verified.subject, key=supplied
+                    ):
+                        try:
+                            handler = prepare(verified, req_id)
+                        except AiGatewayRefusalError as failure:
+                            prepared_failure = failure
 
             def execute() -> HttpResponse:
                 try:

@@ -799,3 +799,190 @@ fn compose_image_digest_ports_entrypoint_and_sensitive_root_policies_enforce_str
         );
     }
 }
+
+#[test]
+fn api_admission_hardening_is_mandatory_in_raw_yaml_and_resolved_json() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let repo_root = manifest_dir.join("../../..");
+    // The canonical community manifests keep passing with their fully hardened block.
+    assert_eq!(
+        validate_compose_file_policy(&repo_root.join("deploy/community/docker-compose.yml")),
+        Ok(())
+    );
+    assert_eq!(
+        validate_compose_file_policy(
+            &repo_root.join("packages/create-kodera/assets/docker-compose.yml")
+        ),
+        Ok(())
+    );
+
+    let image = "ghcr.io/kodera/server:0.1.1@sha256:1111111111111111111111111111111111111111111111111111111111111111";
+    let hardened = format!(
+        "services:\n  api-admission:\n    image: {image}\n    read_only: true\n    cap_drop: [\"ALL\"]\n    security_opt: [\"no-new-privileges:true\"]\n    networks:\n      api_ingress:\n        ipv4_address: 172.30.240.4\n"
+    );
+
+    // 1. Positive: inline-form and block-form hardened blocks both pass the raw YAML scanner.
+    let fixture = TempStackFixture::new_with_compose();
+    fs::write(fixture.dir.join("docker-compose.yml"), &hardened).unwrap();
+    assert_eq!(
+        validate_compose_file_policy(&fixture.dir.join("docker-compose.yml")),
+        Ok(())
+    );
+
+    let block_form = format!(
+        "services:\n  api-admission:\n    image: {image}\n    read_only: true\n    cap_drop:\n      - ALL\n    security_opt:\n      - no-new-privileges:true\n    networks:\n      - api_ingress\n"
+    );
+    let fixture = TempStackFixture::new_with_compose();
+    fs::write(fixture.dir.join("docker-compose.yml"), &block_form).unwrap();
+    assert_eq!(
+        validate_compose_file_policy(&fixture.dir.join("docker-compose.yml")),
+        Ok(())
+    );
+
+    // 2. Negative: every relaxed, missing, or extra hardening directive is refused in raw YAML.
+    let networks_block = "    networks:\n      api_ingress:\n        ipv4_address: 172.30.240.4\n";
+    let relaxed_yaml = [
+        hardened.replace("    read_only: true\n", "    read_only: false\n"),
+        hardened.replace("    read_only: true\n", ""),
+        hardened.replace("    cap_drop: [\"ALL\"]\n", ""),
+        hardened.replace("    cap_drop: [\"ALL\"]\n", "    cap_drop: []\n"),
+        hardened.replace("    cap_drop: [\"ALL\"]\n", "    cap_drop:\n"),
+        hardened.replace("    security_opt: [\"no-new-privileges:true\"]\n", ""),
+        hardened.replace(
+            "    security_opt: [\"no-new-privileges:true\"]\n",
+            "    security_opt: []\n",
+        ),
+        hardened.replace(networks_block, ""),
+        hardened.replace(
+            "      api_ingress:\n        ipv4_address: 172.30.240.4\n",
+            "      default:\n",
+        ),
+        hardened.replace("        ipv4_address: 172.30.240.4\n", "      edge:\n"),
+        hardened.replace(networks_block, "    networks: [api_ingress, edge]\n"),
+        hardened.replace(networks_block, "    networks: []\n"),
+        hardened.replace(
+            "      api_ingress:\n        ipv4_address: 172.30.240.4\n",
+            "      api_ingress:\n        aliases:\n          - admission\n",
+        ),
+        format!("{hardened}    volumes:\n      - postgres_data:/data\n"),
+    ];
+    for bad_yaml in relaxed_yaml {
+        let fixture = TempStackFixture::new_with_compose();
+        fs::write(fixture.dir.join("docker-compose.yml"), &bad_yaml).unwrap();
+        assert_eq!(
+            validate_compose_file_policy(&fixture.dir.join("docker-compose.yml")),
+            Err(CommunityDeployError::ComposeConfigInvalid),
+            "expected ComposeConfigInvalid for YAML:\n{bad_yaml}"
+        );
+    }
+
+    // 3. Positive & negative in the resolved `docker compose config --format json` AST.
+    let fixture = TempStackFixture::new_with_compose();
+    let canonical_dir = fs::canonicalize(&fixture.dir).unwrap();
+    let base_admission = serde_json::json!({
+        "name": "community",
+        "services": {
+            "api-admission": {
+                "image": image,
+                "read_only": true,
+                "cap_drop": ["ALL"],
+                "security_opt": ["no-new-privileges:true"],
+                "networks": { "api_ingress": { "ipv4_address": "172.30.240.4" } }
+            }
+        }
+    });
+    assert_eq!(
+        validate_resolved_compose_config_json(&base_admission.to_string(), &canonical_dir),
+        Ok(())
+    );
+
+    // A bare network attachment and an empty volume list stay admitted.
+    let mut relaxed_ok = base_admission.clone();
+    relaxed_ok["services"]["api-admission"]["networks"] =
+        serde_json::json!({ "api_ingress": null });
+    relaxed_ok["services"]["api-admission"]["volumes"] = serde_json::json!([]);
+    assert_eq!(
+        validate_resolved_compose_config_json(&relaxed_ok.to_string(), &canonical_dir),
+        Ok(())
+    );
+
+    fn mutated(base: &serde_json::Value, mutate: impl FnOnce(&mut serde_json::Value)) -> String {
+        let mut cloned = base.clone();
+        mutate(&mut cloned);
+        cloned.to_string()
+    }
+
+    let bad_jsons = [
+        mutated(&base_admission, |v| {
+            v["services"]["api-admission"]["read_only"] = serde_json::json!(false);
+        }),
+        mutated(&base_admission, |v| {
+            v["services"]["api-admission"]["read_only"] = serde_json::json!("true");
+        }),
+        mutated(&base_admission, |v| {
+            v["services"]["api-admission"]
+                .as_object_mut()
+                .unwrap()
+                .remove("read_only");
+        }),
+        mutated(&base_admission, |v| {
+            v["services"]["api-admission"]["cap_drop"] = serde_json::json!([]);
+        }),
+        mutated(&base_admission, |v| {
+            v["services"]["api-admission"]
+                .as_object_mut()
+                .unwrap()
+                .remove("cap_drop");
+        }),
+        mutated(&base_admission, |v| {
+            v["services"]["api-admission"]["security_opt"] = serde_json::json!([]);
+        }),
+        mutated(&base_admission, |v| {
+            v["services"]["api-admission"]
+                .as_object_mut()
+                .unwrap()
+                .remove("security_opt");
+        }),
+        mutated(&base_admission, |v| {
+            v["services"]["api-admission"]["networks"] = serde_json::json!({
+                "api_ingress": { "ipv4_address": "172.30.240.4" },
+                "edge": null
+            });
+        }),
+        mutated(&base_admission, |v| {
+            v["services"]["api-admission"]["networks"] = serde_json::json!({ "default": null });
+        }),
+        mutated(&base_admission, |v| {
+            v["services"]["api-admission"]["networks"] = serde_json::json!({});
+        }),
+        mutated(&base_admission, |v| {
+            v["services"]["api-admission"]
+                .as_object_mut()
+                .unwrap()
+                .remove("networks");
+        }),
+        mutated(&base_admission, |v| {
+            v["services"]["api-admission"]["networks"] = serde_json::json!(["api_ingress"]);
+        }),
+        mutated(&base_admission, |v| {
+            v["services"]["api-admission"]["networks"] =
+                serde_json::json!({ "api_ingress": { "aliases": ["admission"] } });
+        }),
+        mutated(&base_admission, |v| {
+            v["services"]["api-admission"]["networks"] =
+                serde_json::json!({ "api_ingress": { "ipv4_address": "" } });
+        }),
+        mutated(&base_admission, |v| {
+            v["services"]["api-admission"]["volumes"] = serde_json::json!([
+                { "type": "volume", "source": "postgres_data", "target": "/data" }
+            ]);
+        }),
+    ];
+    for bad_json in bad_jsons {
+        assert_eq!(
+            validate_resolved_compose_config_json(&bad_json, &canonical_dir),
+            Err(CommunityDeployError::ComposeConfigInvalid),
+            "expected ComposeConfigInvalid for resolved JSON: {bad_json}"
+        );
+    }
+}

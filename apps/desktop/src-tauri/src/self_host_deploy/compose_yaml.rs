@@ -4,10 +4,11 @@ use super::compose_env::{
     admitted_service_environment_keys, is_admitted_service_env_var, is_admitted_service_user,
 };
 use super::compose_service_policy::{
-    expected_service_build_spec, is_admitted_named_volume_source, is_admitted_service_image,
-    is_admitted_vite_build_arg_key, is_admitted_yaml_build_context,
+    ensure_api_admission_hardening, expected_service_build_spec, is_admitted_named_volume_source,
+    is_admitted_service_image, is_admitted_vite_build_arg_key, is_admitted_yaml_build_context,
     matches_canonical_synapse_entrypoint_script, matches_canonical_web_entrypoint_script,
     validate_compose_volume_entry, validate_service_command_argv, validate_yaml_port_entry,
+    API_ADMISSION_ONLY_NETWORK, API_ADMISSION_SERVICE_NAME,
 };
 use super::{
     CommunityDeployError, ADMITTED_COMMUNITY_COMPOSE_SERVICES, ADMITTED_COMPOSE_SERVICE_DIRECTIVES,
@@ -278,6 +279,18 @@ struct YamlArgvBlockState {
     script_lines: Vec<String>,
 }
 
+/// Per-service tracking of the mandatory `api-admission` hardening while the scanner walks one
+/// service block; `finalize_yaml_service` enforces the complete set when the block ends.
+#[derive(Default)]
+struct YamlApiAdmissionState {
+    read_only_true: bool,
+    cap_drop_all: bool,
+    security_opt_no_new_privileges: bool,
+    networks: Vec<String>,
+    net_item_indent: Option<usize>,
+    volumes_nonempty: bool,
+}
+
 fn finalize_yaml_build_block(state: &mut YamlBuildBlockState) -> Result<(), CommunityDeployError> {
     if state.active && (!state.saw_context || !state.saw_dockerfile) {
         return Err(CommunityDeployError::ComposeConfigInvalid);
@@ -346,14 +359,25 @@ fn finalize_yaml_service(
     saw_image_or_build: &mut bool,
     build_state: &mut YamlBuildBlockState,
     argv_state: &mut YamlArgvBlockState,
+    api_state: &mut YamlApiAdmissionState,
 ) -> Result<(), CommunityDeployError> {
     finalize_yaml_build_block(build_state)?;
     finalize_yaml_argv_block(argv_state)?;
     if current_service.is_some() && !*saw_image_or_build {
         return Err(CommunityDeployError::ComposeConfigInvalid);
     }
+    if current_service.as_deref() == Some(API_ADMISSION_SERVICE_NAME) {
+        ensure_api_admission_hardening(
+            api_state.read_only_true,
+            api_state.cap_drop_all,
+            api_state.security_opt_no_new_privileges,
+            &api_state.networks,
+            api_state.volumes_nonempty,
+        )?;
+    }
     *current_service = None;
     *saw_image_or_build = false;
+    *api_state = YamlApiAdmissionState::default();
     Ok(())
 }
 
@@ -407,6 +431,7 @@ pub(super) fn validate_compose_file_policy(
     let mut current_directive_inline_scalar = false;
     let mut build_state = YamlBuildBlockState::default();
     let mut argv_state = YamlArgvBlockState::default();
+    let mut api_state = YamlApiAdmissionState::default();
     let mut env_item_indent: Option<usize> = None;
     let mut top_vol_indent: Option<usize> = None;
     let mut top_net_indent: Option<usize> = None;
@@ -462,6 +487,7 @@ pub(super) fn validate_compose_file_policy(
                 &mut current_service_has_image_or_build,
                 &mut build_state,
                 &mut argv_state,
+                &mut api_state,
             )?;
             service_indent = None;
             directive_indent = None;
@@ -517,6 +543,7 @@ pub(super) fn validate_compose_file_policy(
                         &mut current_service_has_image_or_build,
                         &mut build_state,
                         &mut argv_state,
+                        &mut api_state,
                     )?;
                     directive_indent = None;
                     current_directive = None;
@@ -547,6 +574,7 @@ pub(super) fn validate_compose_file_policy(
                     finalize_yaml_build_block(&mut build_state)?;
                     finalize_yaml_argv_block(&mut argv_state)?;
                     env_item_indent = None;
+                    api_state.net_item_indent = None;
                     let Some((dir_raw, dir_rest_raw)) = uncommented.split_once(':') else {
                         return Err(CommunityDeployError::ComposeConfigInvalid);
                     };
@@ -636,11 +664,56 @@ pub(super) fn validate_compose_file_policy(
                         "cap_drop" => {
                             if !rest.is_empty() {
                                 validate_inline_cap_drop_list(rest)?;
+                                if current_service.as_deref() == Some(API_ADMISSION_SERVICE_NAME)
+                                    && rest
+                                        .strip_prefix('[')
+                                        .and_then(|s| s.strip_suffix(']'))
+                                        .is_some_and(|inner| !inner.trim().is_empty())
+                                {
+                                    api_state.cap_drop_all = true;
+                                }
                             }
                         }
                         "security_opt" => {
                             if !rest.is_empty() {
                                 validate_inline_security_opt_list(rest)?;
+                                if current_service.as_deref() == Some(API_ADMISSION_SERVICE_NAME)
+                                    && rest
+                                        .strip_prefix('[')
+                                        .and_then(|s| s.strip_suffix(']'))
+                                        .is_some_and(|inner| !inner.trim().is_empty())
+                                {
+                                    api_state.security_opt_no_new_privileges = true;
+                                }
+                            }
+                        }
+                        "read_only" => {
+                            if current_service.as_deref() == Some(API_ADMISSION_SERVICE_NAME) {
+                                if unquote_yaml_scalar(rest)? != "true" {
+                                    return Err(CommunityDeployError::ComposeConfigInvalid);
+                                }
+                                api_state.read_only_true = true;
+                            }
+                        }
+                        "networks" => {
+                            if current_service.as_deref() == Some(API_ADMISSION_SERVICE_NAME)
+                                && !rest.is_empty()
+                            {
+                                let Some(inner) =
+                                    rest.strip_prefix('[').and_then(|s| s.strip_suffix(']'))
+                                else {
+                                    return Err(CommunityDeployError::ComposeConfigInvalid);
+                                };
+                                if inner.trim().is_empty() {
+                                    return Err(CommunityDeployError::ComposeConfigInvalid);
+                                }
+                                for token in inner.split(',') {
+                                    let name = unquote_yaml_scalar(token.trim())?;
+                                    if name != API_ADMISSION_ONLY_NETWORK {
+                                        return Err(CommunityDeployError::ComposeConfigInvalid);
+                                    }
+                                    api_state.networks.push(name.to_owned());
+                                }
                             }
                         }
                         "volumes" if !rest.is_empty() && rest != "[]" => {
@@ -736,6 +809,10 @@ pub(super) fn validate_compose_file_policy(
                         }
                     }
                     Some("volumes") => {
+                        if current_service.as_deref() == Some(API_ADMISSION_SERVICE_NAME) {
+                            // The edge-admission service mounts nothing, not even a named volume.
+                            return Err(CommunityDeployError::ComposeConfigInvalid);
+                        }
                         let Some(volume_spec) = uncommented.strip_prefix("- ") else {
                             return Err(CommunityDeployError::ComposeConfigInvalid);
                         };
@@ -762,6 +839,9 @@ pub(super) fn validate_compose_file_policy(
                         if !is_admitted_cap_drop_token(cap_spec) {
                             return Err(CommunityDeployError::ComposeConfigInvalid);
                         }
+                        if current_service.as_deref() == Some(API_ADMISSION_SERVICE_NAME) {
+                            api_state.cap_drop_all = true;
+                        }
                     }
                     Some("security_opt") => {
                         let Some(opt_spec) = uncommented.strip_prefix("- ") else {
@@ -770,6 +850,9 @@ pub(super) fn validate_compose_file_policy(
                         let opt = opt_spec.trim().trim_matches(|c| matches!(c, '"' | '\''));
                         if opt != "no-new-privileges:true" {
                             return Err(CommunityDeployError::ComposeConfigInvalid);
+                        }
+                        if current_service.as_deref() == Some(API_ADMISSION_SERVICE_NAME) {
+                            api_state.security_opt_no_new_privileges = true;
                         }
                     }
                     Some("ports") => {
@@ -835,7 +918,49 @@ pub(super) fn validate_compose_file_policy(
                             }
                         }
                     }
-                    Some("depends_on" | "healthcheck" | "networks" | "profiles") => {}
+                    Some("networks") => {
+                        if current_service.as_deref() == Some(API_ADMISSION_SERVICE_NAME) {
+                            let n_ind = *api_state.net_item_indent.get_or_insert(indent);
+                            if indent < n_ind {
+                                return Err(CommunityDeployError::ComposeConfigInvalid);
+                            }
+                            if indent == n_ind {
+                                // A network attachment line: `- name` list form or `name:` map form.
+                                if let Some(item) = uncommented.strip_prefix("- ") {
+                                    let name = unquote_yaml_scalar(item)?;
+                                    if name != API_ADMISSION_ONLY_NETWORK {
+                                        return Err(CommunityDeployError::ComposeConfigInvalid);
+                                    }
+                                    api_state.networks.push(name.to_owned());
+                                } else {
+                                    let Some((name_raw, val_raw)) = uncommented.split_once(':')
+                                    else {
+                                        return Err(CommunityDeployError::ComposeConfigInvalid);
+                                    };
+                                    let name = name_raw.trim();
+                                    let val = val_raw.trim();
+                                    if name != API_ADMISSION_ONLY_NETWORK
+                                        || (!val.is_empty() && val != "null" && val != "{}")
+                                    {
+                                        return Err(CommunityDeployError::ComposeConfigInvalid);
+                                    }
+                                    api_state.networks.push(name.to_owned());
+                                }
+                            } else {
+                                // Deeper lines configure the one admitted network: only a
+                                // static IPv4 address may follow, nothing else.
+                                let Some((key_raw, val_raw)) = uncommented.split_once(':') else {
+                                    return Err(CommunityDeployError::ComposeConfigInvalid);
+                                };
+                                if key_raw.trim() != "ipv4_address"
+                                    || unquote_yaml_scalar(val_raw.trim())?.is_empty()
+                                {
+                                    return Err(CommunityDeployError::ComposeConfigInvalid);
+                                }
+                            }
+                        }
+                    }
+                    Some("depends_on" | "healthcheck" | "profiles") => {}
                     _ => return Err(CommunityDeployError::ComposeConfigInvalid),
                 }
             }
@@ -896,6 +1021,7 @@ pub(super) fn validate_compose_file_policy(
         &mut current_service_has_image_or_build,
         &mut build_state,
         &mut argv_state,
+        &mut api_state,
     )?;
 
     if !saw_services_root || service_count == 0 {

@@ -67,6 +67,7 @@ from config.workspace_features import (
     ai_gateway_enabled,
     ai_seal_key,
 )
+from core.api import idempotency as idempotency_api
 from core.sealing import SealError, unseal
 from dev.api_writer_role import grant_statements
 
@@ -1615,4 +1616,129 @@ def test_concurrent_same_key_transcription_fenced_before_second_provider_call(
         assert not worker.is_alive()
         assert outcome and outcome[0].status_code == 200
         # Provider I/O ran exactly once: the fence held before any second adapter call.
+
+
+def test_completion_boundary_recheck_after_claim_skips_prepare_and_replays_stored_receipt(
+    world: Any, http: Any, gateway: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    org, workspace, _, _ = world
+    client, credentials = http
+    owner_cred = credentials[0]
+    member_cred = credentials[3]
+    channel = _create_channel(workspace, name="Completion Boundary Voice", ai_enabled=True)
+    adapter = FakeEuAdapter()
+
+    upload_resp = client.post(
+        f"/api/v1/organisations/{org.id}/workspace/attachments/uploads",
+        data=json.dumps(
+            {
+                "filename": "boundary.ogg",
+                "contentType": "audio/ogg",
+                "sizeBytes": len(OGG_VOICE_BYTES),
+                "sha256": hashlib.sha256(OGG_VOICE_BYTES).hexdigest(),
+                "channelId": str(channel.id),
+            }
+        ),
+        content_type="application/json",
+        **_auth_headers(member_cred, key=str(uuid4())),
+    )
+    assert upload_resp.status_code == 201
+    attachment_id = upload_resp.json()["attachmentId"]
+    complete_resp = client.post(
+        f"/api/v1/organisations/{org.id}/workspace/attachments/{attachment_id}/complete",
+        data=b"",
+        content_type="application/json",
+        **_auth_headers(member_cred, key=str(uuid4())),
+    )
+    assert complete_resp.status_code == 200
+
+    with override_settings(
+        KODERA_AI_GATEWAY_ENABLED=True,
+        KODERA_AI_PROVIDER_ADAPTER=adapter,
+        KODERA_AI_ATTACHMENT_BYTES_LOADER=lambda _row: OGG_VOICE_BYTES,
+    ):
+        put_org = client.put(
+            f"/api/v1/organisations/{org.id}/workspace/ai/policy",
+            data=json.dumps(
+                {
+                    "enabled": True,
+                    "provider": "mistral",
+                    "providerRegion": "eu",
+                    "euSovereignOnly": True,
+                    "model": "voxtral-mini-latest",
+                }
+            ),
+            content_type="application/json",
+            **_auth_headers(owner_cred, key=str(uuid4())),
+        )
+        assert put_org.status_code == 200
+        put_consent = client.put(
+            f"/api/v1/organisations/{org.id}/workspace/ai/consent",
+            data=json.dumps({"enabled": True}),
+            content_type="application/json",
+            **_auth_headers(member_cred, key=str(uuid4())),
+        )
+        assert put_consent.status_code == 200
+
+        idem_key = str(uuid4())
+        url = (
+            f"/api/v1/organisations/{org.id}/workspace/attachments/{attachment_id}"
+            "/actions/transcribe"
+        )
+        body = json.dumps({"language": "fr"})
+
+        # Request A completes and stores its 200 receipt under the shared key.
+        first = client.post(
+            url,
+            data=body,
+            content_type="application/json",
+            **_auth_headers(member_cred, key=idem_key),
+        )
+        assert first.status_code == 200
+        assert first.json()["text"] == "Point produit confirmé à 14h."
+        assert len(adapter.transcriptions) == 1
+        spent_after_first = WorkspaceAiPolicy.objects.get(organisation=org).monthly_spent_micros
+        assert spent_after_first > 0
+
+        # Request B races the completion boundary: its first receipt lookup runs while the
+        # stored answer is not visible yet, so force that first holds_answer() to False and
+        # delegate every later call to the real store, which by then holds A's receipt.
+        events: list[str] = []
+        real_holds_answer = idempotency_api.holds_answer
+        real_claim_execution = idempotency_api.claim_execution
+        checks = {"count": 0}
+
+        def raced_holds_answer(*args: Any, **kwargs: Any) -> bool:
+            checks["count"] += 1
+            events.append("check")
+            if checks["count"] == 1:
+                return False
+            return real_holds_answer(*args, **kwargs)
+
+        def spied_claim_execution(scope: Any) -> bool:
+            events.append("claim")
+            return real_claim_execution(scope)
+
+        monkeypatch.setattr(idempotency_api, "holds_answer", raced_holds_answer)
+        monkeypatch.setattr(idempotency_api, "claim_execution", spied_claim_execution)
+
+        second = client.post(
+            url,
+            data=body,
+            content_type="application/json",
+            **_auth_headers(member_cred, key=idem_key),
+        )
+
+        # The post-claim recheck ran strictly AFTER claim_execution: check -> claim -> check.
+        assert events == ["check", "claim", "check"]
+        assert second.status_code == 200
+        assert second["Idempotency-Replayed"] == "true"
+        assert second.content == first.content
+        # prepare() was skipped entirely: no second adapter call, and the budget charged by
+        # Request A is neither charged again nor refunded.
+        assert len(adapter.transcriptions) == 1
+        assert (
+            WorkspaceAiPolicy.objects.get(organisation=org).monthly_spent_micros
+            == spent_after_first
+        )
         assert len(adapter.transcriptions) == 1

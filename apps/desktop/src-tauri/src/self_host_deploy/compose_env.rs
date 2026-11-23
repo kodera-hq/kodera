@@ -160,7 +160,9 @@ const fn slice_is_strictly_sorted_ascii(items: &[&str]) -> bool {
 }
 
 const _: () = {
-    assert!(slice_is_strictly_sorted_ascii(API_ADMISSION_ADMITTED_ENV_KEYS));
+    assert!(slice_is_strictly_sorted_ascii(
+        API_ADMISSION_ADMITTED_ENV_KEYS
+    ));
     assert!(slice_is_strictly_sorted_ascii(CADDY_ADMITTED_ENV_KEYS));
     assert!(slice_is_strictly_sorted_ascii(DB_ADMITTED_ENV_KEYS));
     assert!(slice_is_strictly_sorted_ascii(LIVEKIT_ADMITTED_ENV_KEYS));

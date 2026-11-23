@@ -50,6 +50,37 @@ pub(super) fn expected_service_build_spec(service_name: &str) -> Option<ServiceB
     }
 }
 
+/// The community edge-admission service whose hardening is mandatory, not optional.
+pub(super) const API_ADMISSION_SERVICE_NAME: &str = "api-admission";
+
+/// The single network the edge-admission service may attach to.
+pub(super) const API_ADMISSION_ONLY_NETWORK: &str = "api_ingress";
+
+/// Mandatory hardening for the `api-admission` edge service, enforced identically by the raw
+/// YAML scanner and the resolved-JSON validator: a read-only root filesystem, every capability
+/// dropped, `no-new-privileges`, attachment to `api_ingress` only (optionally with a static
+/// `ipv4_address`), and no volume mounts. A missing directive fails exactly like a relaxed one.
+pub(super) fn ensure_api_admission_hardening(
+    read_only_true: bool,
+    cap_drop_all: bool,
+    security_opt_no_new_privileges: bool,
+    networks: &[String],
+    volumes_nonempty: bool,
+) -> Result<(), CommunityDeployError> {
+    if !read_only_true
+        || !cap_drop_all
+        || !security_opt_no_new_privileges
+        || volumes_nonempty
+        || networks.len() != 1
+        || networks
+            .first()
+            .is_none_or(|name| name.as_str() != API_ADMISSION_ONLY_NETWORK)
+    {
+        return Err(CommunityDeployError::ComposeConfigInvalid);
+    }
+    Ok(())
+}
+
 pub(super) fn is_admitted_vite_build_arg_key(key: &str) -> bool {
     key.starts_with("VITE_")
         && key.len() > 5
