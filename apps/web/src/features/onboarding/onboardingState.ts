@@ -126,3 +126,115 @@ export function resetOnboardingCompleted(): void {
     // Ignore storage removal errors in restricted environments
   }
 }
+
+export const ACTIVATION_STORAGE_PREFIX = 'kodera.onboarding.activation.v1.'
+
+export const ACTIVATION_TASK_IDS = [
+  'identity_template',
+  'theme_sonic',
+  'invite_member',
+  'first_message_or_call',
+] as const
+
+export type ActivationTaskId = (typeof ACTIVATION_TASK_IDS)[number]
+
+export interface ActivationChecklistState {
+  readonly org: string
+  readonly completed: readonly ActivationTaskId[]
+  readonly dismissed: boolean
+}
+
+function normalizeOrgKey(org: string): string {
+  return org.trim().toLowerCase()
+}
+
+export function activationChecklistStorageKey(org: string): string {
+  return `${ACTIVATION_STORAGE_PREFIX}${normalizeOrgKey(org)}`
+}
+
+function isActivationTaskId(value: unknown): value is ActivationTaskId {
+  return typeof value === 'string' && (ACTIVATION_TASK_IDS as readonly string[]).includes(value)
+}
+
+function canonicalizeTasks(tasks: readonly unknown[]): readonly ActivationTaskId[] {
+  const seen = new Set<ActivationTaskId>()
+  for (const item of tasks) {
+    if (isActivationTaskId(item)) seen.add(item)
+  }
+  return ACTIVATION_TASK_IDS.filter((id) => seen.has(id))
+}
+
+function writeActivationChecklist(state: ActivationChecklistState): void {
+  const normalizedOrg = normalizeOrgKey(state.org)
+  if (!normalizedOrg || typeof localStorage === 'undefined') return
+  try {
+    localStorage.setItem(
+      activationChecklistStorageKey(normalizedOrg),
+      JSON.stringify({
+        completed: state.completed,
+        dismissed: state.dismissed,
+      })
+    )
+  } catch {
+    // Ignore storage write errors in restricted environments
+  }
+}
+
+export function readActivationChecklist(
+  org: string,
+  defaultCompleted: readonly ActivationTaskId[] = []
+): ActivationChecklistState {
+  const normalizedOrg = normalizeOrgKey(org)
+  const fallback: ActivationChecklistState = {
+    org: normalizedOrg,
+    completed: canonicalizeTasks(defaultCompleted),
+    dismissed: false,
+  }
+  if (!normalizedOrg || typeof localStorage === 'undefined') return fallback
+  try {
+    const raw = localStorage.getItem(activationChecklistStorageKey(normalizedOrg))
+    if (raw === null) return fallback
+    const parsed: unknown = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return fallback
+    const record = parsed as Record<string, unknown>
+    const completed = Array.isArray(record.completed)
+      ? canonicalizeTasks(record.completed)
+      : fallback.completed
+    return {
+      org: normalizedOrg,
+      completed,
+      dismissed: record.dismissed === true,
+    }
+  } catch {
+    return fallback
+  }
+}
+
+export function completeActivationTask(
+  org: string,
+  taskId: ActivationTaskId
+): ActivationChecklistState {
+  const current = readActivationChecklist(org)
+  if (!isActivationTaskId(taskId) || current.completed.includes(taskId)) {
+    writeActivationChecklist(current)
+    return current
+  }
+  const next: ActivationChecklistState = {
+    org: current.org,
+    completed: canonicalizeTasks([...current.completed, taskId]),
+    dismissed: current.dismissed,
+  }
+  writeActivationChecklist(next)
+  return next
+}
+
+export function dismissActivationChecklist(org: string): ActivationChecklistState {
+  const current = readActivationChecklist(org)
+  const next: ActivationChecklistState = {
+    org: current.org,
+    completed: current.completed,
+    dismissed: true,
+  }
+  writeActivationChecklist(next)
+  return next
+}

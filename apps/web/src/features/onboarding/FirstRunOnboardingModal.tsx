@@ -1,24 +1,40 @@
-import { track } from '../../analytics/track'
 import * as Modal from '@radix-ui/react-dialog'
+import { useEffect, useId, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import { track } from '../../analytics/track'
 import { isOrganisationSlug } from '../../api/organisationSlug'
+import { Button } from '../../ui/Button/Button'
+import { cx } from '../../ui/cx'
+import { soundEngine } from '../sounds/SoundEngine'
+import { ClaimWorkspaceSummary } from './ClaimWorkspaceSummary'
 import {
-  instantClaimWorkspace,
+  CONNECTOR_IDS,
   InstantClaimError,
+  instantClaimWorkspace,
+  isClaimConnectorId,
   localClaim,
   TEMPLATE_CHANNELS,
-  type InstantClaimPayload,
+  type ClaimConnectorId,
+  type ClaimCustomization,
   type ClaimedWorkspace,
+  type InstantClaimPayload,
   type TemplateId,
 } from './instantClaimClient'
 import { onboardingCopy } from './onboardingMessages'
-import { ClaimWorkspaceSummary } from './ClaimWorkspaceSummary'
+import {
+  completeActivationTask,
+  markOnboardingCompleted,
+  type OnboardingStepId,
+} from './onboardingState'
+import {
+  CONNECTOR_LABELS,
+  getTemplatePersona,
+  resolveCustomChannelDraft,
+  resolveSelectionTemplateId,
+  type StarterChannelDescriptor,
+  type TemplateSelectionId,
+} from './TemplatePersonaCatalog'
 import { TerminalDeployCommand } from './TerminalDeployCommand'
-import { useEffect, useId, useRef, useState } from 'react'
-import { useTranslation } from 'react-i18next'
-import { Button } from '../../ui/Button/Button'
-import { soundEngine } from '../sounds/SoundEngine'
-import type { OnboardingStepId } from './onboardingState'
-import { markOnboardingCompleted } from './onboardingState'
 
 export interface FirstRunOnboardingModalProps {
   readonly claimMode?: 'cloud' | 'preview' | undefined
@@ -39,7 +55,15 @@ export interface FirstRunOnboardingModalProps {
   readonly onDismiss: () => void
 }
 
+interface TemplateCustomizationState {
+  readonly templateId: TemplateId
+  readonly excluded: readonly string[]
+  readonly customChannels: readonly StarterChannelDescriptor[]
+  readonly connectors: readonly ClaimConnectorId[] | null
+}
+
 export const STUDIO_CHANNELS = TEMPLATE_CHANNELS['audiovisual-production']
+
 export function FirstRunOnboardingModal({
   open,
   claimMode,
@@ -53,9 +77,11 @@ export function FirstRunOnboardingModal({
   onDismiss,
 }: FirstRunOnboardingModalProps) {
   const { t, i18n } = useTranslation()
+  const locale = i18n.resolvedLanguage?.startsWith('en') ? 'en' : 'fr'
   const copy = onboardingCopy(i18n.resolvedLanguage)
   const heading = useId()
   const slugHint = useId()
+  const customChannelInputId = useId()
 
   const [step, setStep] = useState(0)
   const [name, setName] = useState('')
@@ -68,6 +94,12 @@ export function FirstRunOnboardingModal({
   const [busy, setBusy] = useState(false)
   const [refused, setRefused] = useState(false)
   const [localRefused, setLocalRefused] = useState(false)
+  const [customizationState, setCustomizationState] = useState<TemplateCustomizationState | null>(
+    null
+  )
+  const [customChannelDraft, setCustomChannelDraft] = useState('')
+  const [customChannelKind, setCustomChannelKind] = useState<'text' | 'audio'>('text')
+
   const currentRequest = useRef<AbortController | null>(null)
   const requestEpoch = useRef(0)
   const intent = useRef({ signature: '', key: '' })
@@ -87,6 +119,7 @@ export function FirstRunOnboardingModal({
   const validSlug = localMode
     ? isOrganisationSlug(slug)
     : /^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$/u.test(slug)
+
   useEffect(
     () => () => {
       requestEpoch.current++
@@ -95,21 +128,134 @@ export function FirstRunOnboardingModal({
     },
     [open]
   )
-  const canonicalTemplate: TemplateId =
-    (
-      {
-        audiovisual: 'audiovisual-production',
-        'studio-tech': 'tech-studio',
-        'conseil-b2b': 'b2b-advisory',
-        'secteur-public': 'public-sector',
-        proximity: 'proximity',
-        'open-source': 'open-source-community',
-      } as Record<string, TemplateId>
-    )[selectedTemplate] ?? 'tech-studio'
+
+  const canonicalTemplate = resolveSelectionTemplateId(selectedTemplate)
+  const persona = getTemplatePersona(canonicalTemplate)
+  const activeCustomization: TemplateCustomizationState =
+    customizationState?.templateId === canonicalTemplate
+      ? customizationState
+      : {
+          templateId: canonicalTemplate,
+          excluded: [],
+          customChannels: [],
+          connectors: null,
+        }
+
+  const excludedSet = new Set(activeCustomization.excluded)
+  const allChannels: readonly StarterChannelDescriptor[] = [
+    ...persona.starterChannels,
+    ...activeCustomization.customChannels,
+  ]
+  const enabledChannels = allChannels.filter((channel) => !excludedSet.has(channel.templateKey))
+  const enabledTextCount = enabledChannels.filter((channel) => channel.kind === 'text').length
+
+  const rawConnectors = activeCustomization.connectors ?? persona.defaultConnectors
+  const validatedConnectors = [...new Set(rawConnectors.filter(isClaimConnectorId))].slice(0, 10)
+
+  const selectTemplateOption = (nextSelection: string) => {
+    setTemplate(nextSelection)
+    setCustomizationState(null)
+    setCustomChannelDraft('')
+    setCustomChannelKind('text')
+  }
+
+  const toggleChannel = (channel: StarterChannelDescriptor) => {
+    const currentlyEnabled = !excludedSet.has(channel.templateKey)
+    if (currentlyEnabled && channel.kind === 'text' && enabledTextCount <= 1) {
+      return
+    }
+    const nextExcluded = currentlyEnabled
+      ? [...activeCustomization.excluded, channel.templateKey]
+      : activeCustomization.excluded.filter((key) => key !== channel.templateKey)
+    setCustomizationState({
+      ...activeCustomization,
+      excluded: nextExcluded,
+    })
+  }
+
+  const removeCustomChannel = (templateKey: string) => {
+    const target = activeCustomization.customChannels.find((ch) => ch.templateKey === templateKey)
+    if (target !== undefined && !excludedSet.has(templateKey) && target.kind === 'text') {
+      if (enabledTextCount <= 1) return
+    }
+    setCustomizationState({
+      ...activeCustomization,
+      excluded: activeCustomization.excluded.filter((item) => item !== templateKey),
+      customChannels: activeCustomization.customChannels.filter(
+        (ch) => ch.templateKey !== templateKey
+      ),
+    })
+  }
+
+  const resolvedCustomKey = resolveCustomChannelDraft(customChannelDraft, allChannels)
+
+  const addCustomChannel = () => {
+    if (resolvedCustomKey === null || activeCustomization.customChannels.length >= 16) {
+      return
+    }
+    const targetCategoryKey =
+      customChannelKind === 'audio' ? persona.defaultAudioCategoryKey : persona.defaultCategoryKey
+    setCustomizationState({
+      ...activeCustomization,
+      customChannels: [
+        ...activeCustomization.customChannels,
+        {
+          categoryKey: targetCategoryKey,
+          templateKey: resolvedCustomKey,
+          name: resolvedCustomKey,
+          kind: customChannelKind,
+        },
+      ],
+    })
+    setCustomChannelDraft('')
+  }
+
+  const toggleConnector = (connectorId: ClaimConnectorId) => {
+    if (!isClaimConnectorId(connectorId)) return
+    const exists = validatedConnectors.includes(connectorId)
+    if (!exists && validatedConnectors.length >= 10) return
+    const nextConnectors = exists
+      ? validatedConnectors.filter((id) => id !== connectorId)
+      : [...validatedConnectors, connectorId]
+    setCustomizationState({
+      ...activeCustomization,
+      connectors: nextConnectors,
+    })
+  }
+
+  const recordInitialActivation = (orgSlug: string) => {
+    completeActivationTask(orgSlug, 'identity_template')
+    completeActivationTask(orgSlug, 'theme_sonic')
+  }
+
   const finish = async () => {
     if (currentRequest.current) return
     setRefused(false)
     setLocalRefused(false)
+
+    const excludedStarterKeys = persona.starterChannels
+      .map((ch) => ch.templateKey)
+      .filter((key) => excludedSet.has(key))
+    const activeCustomAdditions = activeCustomization.customChannels
+      .filter((ch) => !excludedSet.has(ch.templateKey))
+      .map((ch) => ({
+        categoryKey: ch.categoryKey,
+        name: ch.name,
+        kind: ch.kind,
+      }))
+    const customization: ClaimCustomization | undefined =
+      excludedStarterKeys.length > 0 || activeCustomAdditions.length > 0
+        ? {
+            includeAudioChannels: true,
+            includeCollections: true,
+            includeStarterDocs: true,
+            ...(excludedStarterKeys.length > 0 ? { excludedChannelKeys: excludedStarterKeys } : {}),
+            ...(activeCustomAdditions.length > 0
+              ? { additionalChannels: activeCustomAdditions }
+              : {}),
+          }
+        : undefined
+
     const payload: InstantClaimPayload = {
       organizationName: name.trim(),
       slug,
@@ -117,8 +263,8 @@ export function FirstRunOnboardingModal({
       templateId: canonicalTemplate,
       themeId: theme === 'black' ? 'real-black' : theme === 'dark' ? 'ardoise' : 'givre',
       soundPackId: soundEngine.getPreferences().pack,
-      enabledConnectors:
-        canonicalTemplate === 'audiovisual-production' ? ['frameio-review-bridge'] : [],
+      enabledConnectors: validatedConnectors,
+      ...(customization === undefined ? {} : { customization }),
     }
     // Local preview creation remains inside the registered demo capability.
     if (localMode) {
@@ -130,6 +276,7 @@ export function FirstRunOnboardingModal({
         const claimed = localClaim(payload)
         onClaimed?.(claimed)
         onConfigure?.({ name: name.trim(), hosting, template: selectedTemplate, theme })
+        recordInitialActivation(payload.slug)
         setResult(claimed)
         markOnboardingCompleted()
         track('onboarding_completed', { mode: localMode ? 'local' : 'cloud' })
@@ -152,6 +299,7 @@ export function FirstRunOnboardingModal({
         idempotencyKey: intent.current.key,
       })
       if (controller.signal.aborted || epoch !== requestEpoch.current) return
+      recordInitialActivation(payload.slug)
       setResult(claimed)
       onClaimed?.(claimed)
       markOnboardingCompleted()
@@ -162,6 +310,7 @@ export function FirstRunOnboardingModal({
     } catch (error) {
       if (controller.signal.aborted || epoch !== requestEpoch.current) return
       if (error instanceof InstantClaimError && error.kind === 'unavailable') {
+        recordInitialActivation(payload.slug)
         setResult(localClaim(payload))
         onConfigure?.({ name: name.trim(), hosting, template: selectedTemplate, theme })
         markOnboardingCompleted()
@@ -175,6 +324,7 @@ export function FirstRunOnboardingModal({
       }
     }
   }
+
   const [wasOpen, setWasOpen] = useState(open)
   if (wasOpen !== open) {
     setWasOpen(open)
@@ -188,6 +338,9 @@ export function FirstRunOnboardingModal({
       setLocalRefused(false)
       setTheme(initialThemeMode ?? (isDarkTheme ? 'dark' : 'light'))
       setCopied(false)
+      setCustomizationState(null)
+      setCustomChannelDraft('')
+      setCustomChannelKind('text')
     }
   }
 
@@ -204,19 +357,38 @@ export function FirstRunOnboardingModal({
         }
       />
     ) : null
+
   const titles = [
     t('console.onboarding.studio.identity'),
     t('console.onboarding.studio.template'),
     t('console.onboarding.studio.finish'),
   ]
-  const templates = [
+  const templates: readonly (readonly [TemplateSelectionId, string])[] = [
     ['audiovisual', copy.studioTemplate],
     ['studio-tech', copy.productTemplate],
     ['conseil-b2b', t('console.onboarding.studio.consulting')],
+    ['association-coop', copy.associationTemplate],
     ['secteur-public', copy.publicTemplate],
+    ['blank', copy.blankTemplate],
     ['proximity', t('console.onboarding.studio.proximity')],
-    ...(previewMode ? [['open-source', copy.communityTemplate]] : []),
+    ...(previewMode ? ([['open-source', copy.communityTemplate]] as const) : []),
   ]
+
+  const orderedConnectors: readonly ClaimConnectorId[] = [
+    ...persona.defaultConnectors,
+    ...CONNECTOR_IDS.filter((id) => !persona.defaultConnectors.includes(id)),
+  ]
+
+  const channelDisplayName = (channelName: string) =>
+    channelName === 'stage-control'
+      ? t('console.onboarding.studio.stage')
+      : channelName === 'editing-room'
+        ? t('console.onboarding.studio.editing')
+        : channelName === 'proximity'
+          ? // A label only: the channel is still named `proximity`.
+            t('console.onboarding.studio.channel-proximity')
+          : channelName
+
   return (
     <Modal.Root
       open={open}
@@ -317,7 +489,7 @@ export function FirstRunOnboardingModal({
                     <select
                       className="rounded-md border border-c-border bg-c-surface p-3 text-c-ink focus-visible:ring"
                       value={selectedTemplate}
-                      onChange={(e) => setTemplate(e.target.value)}
+                      onChange={(e) => selectTemplateOption(e.target.value)}
                     >
                       {templates.map(([id, label]) => (
                         <option key={id} value={id}>
@@ -326,34 +498,232 @@ export function FirstRunOnboardingModal({
                       ))}
                     </select>
                   </label>
+                  <div
+                    role="group"
+                    aria-label={copy.personaGroupLabel}
+                    className="grid grid-cols-2 gap-2 narrow:grid-cols-1"
+                  >
+                    {templates.map(([selectionId, label]) => {
+                      const cardPersona = getTemplatePersona(
+                        resolveSelectionTemplateId(selectionId)
+                      )
+                      const active = selectedTemplate === selectionId
+                      return (
+                        <button
+                          key={selectionId}
+                          type="button"
+                          data-persona-card={cardPersona.templateId}
+                          aria-pressed={active}
+                          onClick={() => selectTemplateOption(selectionId)}
+                          className={cx(
+                            'flex min-h-10 flex-col items-start gap-1 rounded-md border p-3 text-left transition-colors duration-fast focus-visible:ring focus-visible:outline-hidden motion-reduce:transition-none',
+                            active
+                              ? 'border-c-accent-ink bg-c-accent-soft text-c-ink'
+                              : 'border-c-border bg-c-surface text-c-ink hover:bg-c-sunken'
+                          )}
+                        >
+                          <span className="flex w-full items-center justify-between gap-2">
+                            <span className="text-sm font-semibold">{label}</span>
+                            <span className="rounded-full bg-c-sunken px-2 py-1 font-mono text-xs text-c-accent-ink">
+                              {copy.setupBadge}
+                            </span>
+                          </span>
+                          <span className="text-xs text-c-ink-2">
+                            {cardPersona.summary[locale]}
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                  <div className="flex flex-col gap-2 rounded-md border border-c-border-soft bg-c-sunken p-3">
+                    <span className="text-xs font-semibold text-c-ink">
+                      {copy.starterChannelsGroup}
+                    </span>
+                    <div
+                      role="group"
+                      aria-label={copy.starterChannelsGroup}
+                      className="flex flex-wrap gap-2"
+                    >
+                      {persona.starterChannels.map((channel) => {
+                        const enabled = !excludedSet.has(channel.templateKey)
+                        return (
+                          <button
+                            key={channel.templateKey}
+                            type="button"
+                            data-channel-chip={channel.templateKey}
+                            aria-pressed={enabled}
+                            onClick={() => toggleChannel(channel)}
+                            className={cx(
+                              'inline-flex min-h-8 items-center gap-1 rounded-full border px-3 py-1 text-xs font-medium transition-colors duration-fast focus-visible:ring focus-visible:outline-hidden motion-reduce:transition-none',
+                              enabled
+                                ? 'border-c-accent-ink bg-c-surface text-c-ink'
+                                : 'border-c-border bg-c-muted text-c-ink-3'
+                            )}
+                          >
+                            <span aria-hidden="true">{channel.kind === 'audio' ? '🔊' : '#'}</span>
+                            <span>{channelDisplayName(channel.name)}</span>
+                          </button>
+                        )
+                      })}
+                      {activeCustomization.customChannels.map((channel) => {
+                        const enabled = !excludedSet.has(channel.templateKey)
+                        return (
+                          <div key={channel.templateKey} className="inline-flex items-center gap-1">
+                            <button
+                              type="button"
+                              data-channel-chip={channel.templateKey}
+                              aria-pressed={enabled}
+                              onClick={() => toggleChannel(channel)}
+                              className={cx(
+                                'inline-flex min-h-8 items-center gap-1 rounded-full border px-3 py-1 text-xs font-medium transition-colors duration-fast focus-visible:ring focus-visible:outline-hidden motion-reduce:transition-none',
+                                enabled
+                                  ? 'border-c-accent-ink bg-c-surface text-c-ink'
+                                  : 'border-c-border bg-c-muted text-c-ink-3'
+                              )}
+                            >
+                              <span aria-hidden="true">
+                                {channel.kind === 'audio' ? '🔊' : '#'}
+                              </span>
+                              <span>{channel.name}</span>
+                            </button>
+                            <button
+                              type="button"
+                              aria-label={`${copy.removeCustomChannel} ${channel.name}`}
+                              onClick={() => removeCustomChannel(channel.templateKey)}
+                              className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-c-border bg-c-surface text-xs text-c-ink-3 hover:bg-c-muted focus-visible:ring focus-visible:outline-hidden motion-reduce:transition-none"
+                            >
+                              ×
+                            </button>
+                          </div>
+                        )
+                      })}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2 pt-1">
+                      <label htmlFor={customChannelInputId} className="sr-only">
+                        {copy.customChannelLabel}
+                      </label>
+                      <input
+                        id={customChannelInputId}
+                        type="text"
+                        maxLength={64}
+                        value={customChannelDraft}
+                        placeholder={copy.customChannelPlaceholder}
+                        onChange={(e) =>
+                          setCustomChannelDraft(
+                            e.target.value.replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, '')
+                          )
+                        }
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault()
+                            addCustomChannel()
+                          }
+                        }}
+                        className="min-h-8 min-w-0 flex-1 rounded-md border border-c-border-input bg-c-surface px-3 py-1 text-xs text-c-ink placeholder:text-c-placeholder focus-visible:ring focus-visible:outline-hidden"
+                      />
+                      <div
+                        role="group"
+                        aria-label={copy.customChannelKindGroup}
+                        className="inline-flex items-center gap-1"
+                      >
+                        <button
+                          type="button"
+                          aria-pressed={customChannelKind === 'text'}
+                          onClick={() => setCustomChannelKind('text')}
+                          className={cx(
+                            'min-h-8 rounded-md border px-2 py-1 text-xs font-medium focus-visible:ring focus-visible:outline-hidden motion-reduce:transition-none',
+                            customChannelKind === 'text'
+                              ? 'border-c-accent-ink bg-c-accent-soft text-c-ink'
+                              : 'border-c-border bg-c-surface text-c-ink-2'
+                          )}
+                        >
+                          # {copy.customChannelText}
+                        </button>
+                        <button
+                          type="button"
+                          aria-pressed={customChannelKind === 'audio'}
+                          onClick={() => setCustomChannelKind('audio')}
+                          className={cx(
+                            'min-h-8 rounded-md border px-2 py-1 text-xs font-medium focus-visible:ring focus-visible:outline-hidden motion-reduce:transition-none',
+                            customChannelKind === 'audio'
+                              ? 'border-c-accent-ink bg-c-accent-soft text-c-ink'
+                              : 'border-c-border bg-c-surface text-c-ink-2'
+                          )}
+                        >
+                          🔊 {copy.customChannelAudio}
+                        </button>
+                      </div>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        disabled={
+                          resolvedCustomKey === null ||
+                          activeCustomization.customChannels.length >= 16
+                        }
+                        onClick={addCustomChannel}
+                      >
+                        {copy.addChannel}
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="flex flex-col gap-2 rounded-md border border-c-border-soft bg-c-sunken p-3">
+                    <span className="text-xs font-semibold text-c-ink">{copy.connectors}</span>
+                    <div role="group" aria-label={copy.connectors} className="flex flex-wrap gap-2">
+                      {orderedConnectors.map((connectorId) => {
+                        const enabled = validatedConnectors.includes(connectorId)
+                        return (
+                          <button
+                            key={connectorId}
+                            type="button"
+                            data-connector-chip={connectorId}
+                            aria-pressed={enabled}
+                            onClick={() => toggleConnector(connectorId)}
+                            className={cx(
+                              'inline-flex min-h-8 items-center gap-1 rounded-full border px-3 py-1 text-xs font-medium transition-colors duration-fast focus-visible:ring focus-visible:outline-hidden motion-reduce:transition-none',
+                              enabled
+                                ? 'border-c-accent-ink bg-c-accent-soft text-c-ink'
+                                : 'border-c-border bg-c-surface text-c-ink-2 hover:bg-c-muted'
+                            )}
+                          >
+                            <span>{CONNECTOR_LABELS[connectorId][locale]}</span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
                   <section
                     aria-label={t('console.onboarding.studio.preview')}
-                    className="rounded-md border border-c-border p-4"
+                    className="flex flex-col gap-2 rounded-md border border-c-border p-4"
                   >
                     <ul>
-                      {TEMPLATE_CHANNELS[canonicalTemplate].map((channel, index) => (
-                        <li key={channel}>
-                          {index > 3 ? '🔊 ' : '#'}
-                          {channel === 'stage-control'
-                            ? t('console.onboarding.studio.stage')
-                            : channel === 'editing-room'
-                              ? t('console.onboarding.studio.editing')
-                              : channel === 'proximity'
-                                ? // A label only: the channel is still named `proximity`.
-                                  t('console.onboarding.studio.channel-proximity')
-                                : channel}
+                      {enabledChannels.map((channel) => (
+                        <li key={channel.templateKey}>
+                          {channel.kind === 'audio' ? '🔊 ' : '#'}
+                          {channelDisplayName(channel.name)}
                         </li>
                       ))}
                     </ul>
-                    {selectedTemplate === 'audiovisual' ? (
-                      <>
-                        <p>{t('console.onboarding.studio.roles')}</p>
-                        <p>{t('console.onboarding.studio.pad')}</p>
-                        <p>{t('console.onboarding.studio.integrations-studio')}</p>
-                      </>
-                    ) : (
-                      <p>{t('console.onboarding.studio.integrations-tech')}</p>
-                    )}
+                    <p className="text-xs text-c-ink-2">
+                      <strong>{copy.rolesHeading} :</strong>{' '}
+                      {selectedTemplate === 'audiovisual'
+                        ? t('console.onboarding.studio.roles')
+                        : persona.recommendedRoles[locale].map((role) => `@${role}`).join(' · ')}
+                    </p>
+                    <p className="text-xs text-c-ink-2">
+                      <strong>{copy.docsCollectionsHeading} :</strong>{' '}
+                      {selectedTemplate === 'audiovisual'
+                        ? t('console.onboarding.studio.pad')
+                        : `${persona.starterDocsSummary[locale]} · ${persona.starterCollectionsSummary[locale]}`}
+                    </p>
+                    <p className="text-xs text-c-ink-3">
+                      {selectedTemplate === 'audiovisual'
+                        ? t('console.onboarding.studio.integrations-studio')
+                        : validatedConnectors.length > 0
+                          ? validatedConnectors
+                              .map((id) => CONNECTOR_LABELS[id][locale])
+                              .join(' · ')
+                          : t('console.onboarding.studio.integrations-tech')}
+                    </p>
                   </section>
                 </div>
               ) : (

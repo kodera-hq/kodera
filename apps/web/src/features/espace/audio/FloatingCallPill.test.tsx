@@ -333,4 +333,59 @@ describe('FloatingCallPill', () => {
       vi.unstubAllGlobals()
     }
   })
+
+  it('renders companionChat button with aria-expanded, 99+ unread badge cap, and clears badge when open', async () => {
+    const user = userEvent.setup()
+    const onToggle = vi.fn()
+    const view = setup({
+      companionChat: {
+        open: false,
+        unread: 140,
+        label: 'Discussion de l’appel (99+)',
+        onToggle,
+      },
+    })
+    const pill = screen.getByTestId('floating-call-pill')
+    const chatBtn = within(pill).getByRole('button', { name: 'Discussion de l’appel (99+)' })
+    expect(chatBtn).toHaveAttribute('aria-expanded', 'false')
+    expect(within(pill).getByTestId('companion-chat-unread')).toHaveTextContent('99+')
+
+    await user.click(chatBtn)
+    expect(onToggle).toHaveBeenCalledTimes(1)
+
+    view.rerender(
+      <FloatingCallPill
+        label="Appel en cours"
+        room="office-hours"
+        status="connected"
+        statusLabel="Connecté"
+        muted={false}
+        deafened={false}
+        companionChat={{
+          open: true,
+          unread: 0,
+          label: 'Discussion de l’appel',
+          onToggle,
+        }}
+        onToggleMute={vi.fn()}
+        onToggleDeafen={vi.fn()}
+        onOpenCall={vi.fn()}
+        onRedock={vi.fn()}
+        onLeave={vi.fn()}
+        labels={{
+          mute: 'Couper le micro',
+          deafen: 'Couper le son',
+          leave: 'Quitter',
+          openCall: 'Ouvrir la scène d’appel',
+          redock: 'Rattacher à la barre latérale',
+        }}
+      />
+    )
+    expect(
+      within(screen.getByTestId('floating-call-pill')).getByRole('button', {
+        name: 'Discussion de l’appel',
+      })
+    ).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.queryByTestId('companion-chat-unread')).toBeNull()
+  })
 })

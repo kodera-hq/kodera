@@ -149,6 +149,14 @@ export interface AudioDockMediaToggle {
   onToggle: () => void
 }
 
+/** In-call companion chat toggle and live unread indicator (`ADR-0018`). */
+export interface AudioDockCompanionChat {
+  readonly open: boolean
+  readonly unread: number
+  readonly label: string
+  readonly onToggle: () => void
+}
+
 export interface AudioDockProps {
   /** The region's accessible name, e.g. « Appel en cours ». */
   participants?: readonly {
@@ -221,6 +229,10 @@ export interface AudioDockProps {
    * of the preview camera or the « not available » one.
    */
   media?: { camera: AudioDockMediaToggle; screen?: AudioDockMediaToggle }
+  /** Optional 1:1 audio-channel companion chat drawer/split-pane toggle. */
+  companionChat?: AudioDockCompanionChat
+  /** Ref to the companion chat toggle button so focus returns to it after closing. */
+  companionChatButtonRef?: Ref<HTMLButtonElement>
 }
 
 // Filled only when connected; a hollow ring while the call is not yet, or no
@@ -285,16 +297,7 @@ interface ControlProps {
   onClick: () => void
 }
 
-function Control({
-  layout,
-  label,
-  glyph,
-  tone,
-  pressed,
-  busy,
-  buttonRef,
-  onClick,
-}: ControlProps) {
+function Control({ layout, label, glyph, tone, pressed, busy, buttonRef, onClick }: ControlProps) {
   return (
     <Tooltip content={label} names>
       <button
@@ -342,6 +345,8 @@ export function AudioDock({
   localParticipantId,
   previewCamera = false,
   media,
+  companionChat,
+  companionChatButtonRef,
 }: AudioDockProps) {
   const [cameraActive, setCameraActive] = useState(false)
   // Starts empty, then the caller scales it; never a `style` attribute (src/ui/cssom.ts).
@@ -556,7 +561,9 @@ export function AudioDock({
                     name={person.name}
                     identity={person.id}
                     size="lg"
-                    {...(person.onAvatarError === undefined ? {} : { onError: person.onAvatarError })}
+                    {...(person.onAvatarError === undefined
+                      ? {}
+                      : { onError: person.onAvatarError })}
                     {...(person.avatarSrc === undefined ? {} : { src: person.avatarSrc })}
                   />
                 )}
@@ -584,7 +591,13 @@ export function AudioDock({
           </ul>
         </div>
       ) : null}
-      <div className={CONTROLS[layout]}>
+      <div
+        className={
+          layout === 'sidebar' && companionChat !== undefined && hasLabel(companionChat.label)
+            ? 'grid grid-cols-4 gap-1'
+            : CONTROLS[layout]
+        }
+      >
         {media !== undefined ? (
           <>
             {isCompact && media.screen?.on === true ? (
@@ -667,6 +680,34 @@ export function AudioDock({
           pressed={deafened}
           onClick={onToggleDeafen}
         />
+        {companionChat !== undefined && hasLabel(companionChat.label) ? (
+          <Tooltip content={companionChat.label} names>
+            <button
+              ref={companionChatButtonRef}
+              type="button"
+              aria-label={companionChat.label}
+              aria-expanded={companionChat.open}
+              onClick={companionChat.onToggle}
+              className={cx(
+                'relative motion-reduce:transition-none',
+                CONTROL_BASE,
+                CONTROL_SHAPE[layout],
+                companionChat.open ? TONE.pressed : TONE.idle
+              )}
+            >
+              <StudioGlyph name="message" />
+              {!companionChat.open && companionChat.unread > 0 ? (
+                <span
+                  aria-hidden="true"
+                  data-testid="companion-chat-unread"
+                  className="pointer-events-none absolute -top-1 -right-1 min-w-5 rounded-full bg-c-action px-1 text-center text-xs font-bold text-c-on-inverse tabular-nums"
+                >
+                  {companionChat.unread > 99 ? '99+' : companionChat.unread}
+                </span>
+              ) : null}
+            </button>
+          </Tooltip>
+        ) : null}
         {(isCompact || layout === 'banner') && onDetach !== undefined && hasLabel(labels.detach) ? (
           <Control
             layout={layout}
