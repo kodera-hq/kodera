@@ -6,6 +6,7 @@ import os
 import socket
 import subprocess
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -121,11 +122,11 @@ unfurl.unfurl = fetch
     }
     log = tmp_path / "gunicorn.log"
 
-    def request(method, path, body=None):
+    def request_full(method, path, body=None, idempotency_key=None):
         conn = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
         headers = {
             "Content-Type": "application/json",
-            "Idempotency-Key": str(uuid4()),
+            "Idempotency-Key": idempotency_key or str(uuid4()),
             "Authorization": "Bearer " + credential,
         }
         try:
@@ -133,9 +134,13 @@ unfurl.unfurl = fetch
                 method, path, body=None if body is None else json.dumps(body), headers=headers
             )
             response = conn.getresponse()
-            return response.status, response.read()
+            return response.status, response.read(), dict(response.getheaders())
         finally:
             conn.close()
+
+    def request(method, path, body=None):
+        status, payload, _ = request_full(method, path, body=body)
+        return status, payload
 
     partial = []
     with log.open("w") as output:
@@ -169,24 +174,36 @@ unfurl.unfurl = fetch
             else:
                 pytest.fail("Gunicorn did not start: " + log.read_text())
             base = f"/api/v1/organisations/{org.id}/workspace"
-            for _ in range(16):
-                sock = socket.create_connection(("127.0.0.1", port), timeout=3)
-                sock.sendall(
-                    b"POST /api/v1/slow HTTP/1.1\r\nHost: 127.0.0.1\r\n"
-                    b"Content-Length: 1048575\r\n\r\nx"
-                )
-                partial.append(sock)
-            time.sleep(0.3)
-            with ThreadPoolExecutor(8) as pool:
-                results = list(
-                    pool.map(lambda i: request("GET", base if i % 2 else "/health/live"), range(32))
-                )
-            assert all(status == 200 for status, _ in results), (results, log.read_text()[-6000:])
-            for sock in partial:
-                sock.shutdown(socket.SHUT_WR)
-                sock.close()
-            partial.clear()
-            time.sleep(0.3)
+
+            def open_slow_body_sockets(count: int) -> None:
+                for _ in range(count):
+                    sock = socket.create_connection(("127.0.0.1", port), timeout=3)
+                    sock.sendall(
+                        b"POST /api/v1/slow HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+                        b"Content-Length: 1048575\r\n\r\nx"
+                    )
+                    partial.append(sock)
+
+            def drain_slow_sockets() -> None:
+                for sock in partial:
+                    try:
+                        sock.shutdown(socket.SHUT_WR)
+                    except OSError:
+                        pass
+                for sock in partial:
+                    sock.settimeout(3)
+                    chunks = []
+                    try:
+                        while chunk := sock.recv(4096):
+                            chunks.append(chunk)
+                    except OSError:
+                        pass
+                    finally:
+                        sock.close()
+                    raw_reply = b"".join(chunks)
+                    assert raw_reply.startswith((b"HTTP/1.1 400 ", b"HTTP/1.1 503 ")), raw_reply
+                partial.clear()
+
             from cryptography.hazmat.primitives.asymmetric import ec
 
             from apps.notifications import push
@@ -196,8 +213,58 @@ unfurl.unfurl = fetch
                 "p256dh": push.public_key(ec.generate_private_key(ec.SECP256R1())),
                 "auth": push.encode(bytes(16)),
             }
-            operations = [
+
+            open_slow_body_sockets(16)
+            # Wait deterministically until all 4 BodyGuard slots (2 workers * 2 slots) are saturated.
+            with ThreadPoolExecutor(4) as sat_pool:
+                for _ in range(40):
+                    probe = list(
+                        sat_pool.map(
+                            lambda _: request("POST", "/api/v1/saturate-probe", {"probe": 1})[0],
+                            range(4),
+                        )
+                    )
+                    if probe == [503] * 4:
+                        break
+                    time.sleep(0.025)
+                else:
+                    pytest.fail(
+                        "Slow-body sockets did not saturate all 4 BodyGuard slots: " + str(probe)
+                    )
+            with ThreadPoolExecutor(8) as pool:
+                results = list(
+                    pool.map(lambda i: request("GET", base if i % 2 else "/health/live"), range(32))
+                )
+            assert all(status == 200 for status, _ in results), (results, log.read_text()[-6000:])
+            # Drain every slow-body socket to server EOF (confirming BodyGuard slot release on every
+            # accepted connection) and prove all 4 BodyGuard slots reach Django (404, never 503)
+            # without consuming per-member upload/unfurl rate-limit budgets.
+            drain_slow_sockets()
+            with ThreadPoolExecutor(4) as drain_pool:
+                for _ in range(60):
+                    drained = list(
+                        drain_pool.map(
+                            lambda idx: request("POST", "/api/v1/drain-probe", {"probe": idx})[0],
+                            range(4),
+                        )
+                    )
+                    if drained == [404] * 4:
+                        break
+                    time.sleep(0.025)
+                else:
+                    pytest.fail(
+                        "BodyGuard slots did not drain across both workers: "
+                        + str(drained)
+                        + "\n"
+                        + log.read_text()[-6000:]
+                    )
+            # Each worker holds BODY_READ_SLOTS = 2 body-reader slots (`config/body_guard.py`).
+            # Pair at most 2 concurrent body-bearing requests with 2 concurrent bodiless GETs so
+            # even if the OS kernel routes an entire 4-request batch onto one worker, steady-state
+            # execution is 100% deterministic; separately verify idempotent retry under >2 body bursts.
+            batch_a = [
                 ("GET", base, None, 200),
+                ("GET", "/health/live", None, 200),
                 (
                     "POST",
                     base + "/attachments/uploads",
@@ -210,15 +277,89 @@ unfurl.unfurl = fetch
                     },
                     201,
                 ),
-                ("PUT", "/api/v1/push/subscriptions/" + str(uuid4()), subscription, 204),
+                ("POST", base + "/unfurl", {"url": "https://public.example.org/page"}, 200),
+            ]
+            subscription_id = str(uuid4())
+            batch_b = [
+                ("GET", base, None, 200),
+                ("GET", "/health/live", None, 200),
+                ("PUT", "/api/v1/push/subscriptions/" + subscription_id, subscription, 204),
                 ("POST", base + "/unfurl", {"url": "https://public.example.org/page"}, 200),
             ]
             with ThreadPoolExecutor(4) as pool:
                 for _ in range(4):
-                    results = list(pool.map(lambda op: request(*op[:3]), operations))
-                    assert [status for status, _ in results] == [op[3] for op in operations], (
-                        results
+                    results = list(pool.map(lambda op: request(*op[:3]), batch_a))
+                    assert [status for status, _ in results] == [op[3] for op in batch_a], results
+                    results_b = list(pool.map(lambda op: request(*op[:3]), batch_b))
+                    assert [status for status, _ in results_b] == [op[3] for op in batch_b], (
+                        results_b
                     )
+
+            # Deterministically saturate all 4 BodyGuard slots across both workers so the 6-way
+            # upload burst MUST exercise `503` + `Retry-After: 1` + idempotent retry on every run.
+            open_slow_body_sockets(12)
+            with ThreadPoolExecutor(4) as sat_pool:
+                for _ in range(40):
+                    probe = list(
+                        sat_pool.map(
+                            lambda _: request("POST", "/api/v1/saturate-probe", {"probe": 2})[0],
+                            range(4),
+                        )
+                    )
+                    if probe == [503] * 4:
+                        break
+                    time.sleep(0.025)
+                else:
+                    pytest.fail("Burst setup did not saturate all 4 BodyGuard slots: " + str(probe))
+
+            seen_lock = threading.Lock()
+            completed_initial = 0
+            ready_for_release = threading.Event()
+            slots_released = threading.Event()
+
+            def burst_with_retry(index: int) -> tuple[int, bool]:
+                nonlocal completed_initial
+                idem = str(uuid4())
+                body = {
+                    "filename": f"burst-{index}.txt",
+                    "contentType": "text/plain",
+                    "sizeBytes": 1,
+                    "sha256": f"{index:064x}",
+                    "channelId": str(channel.id),
+                }
+                status, raw, headers = request_full(
+                    "POST", base + "/attachments/uploads", body=body, idempotency_key=idem
+                )
+                saw_503 = status == 503
+                if saw_503:
+                    assert headers.get("Retry-After") == "1", (status, headers, raw)
+                    assert json.loads(raw) == {"detail": "Request body reader capacity busy."}
+                with seen_lock:
+                    completed_initial += 1
+                    if completed_initial == 6:
+                        ready_for_release.set()
+                assert slots_released.wait(timeout=5.0), "Timed out waiting for slow-body release"
+                for _ in range(30):
+                    if status != 503:
+                        break
+                    assert headers.get("Retry-After") == "1", (status, headers, raw)
+                    assert json.loads(raw) == {"detail": "Request body reader capacity busy."}
+                    time.sleep(0.05)
+                    status, raw, headers = request_full(
+                        "POST",
+                        base + "/attachments/uploads",
+                        body=body,
+                        idempotency_key=idem,
+                    )
+                return status, saw_503
+
+            with ThreadPoolExecutor(6) as burst_pool:
+                futures = [burst_pool.submit(burst_with_retry, idx) for idx in range(6)]
+                assert ready_for_release.wait(timeout=5.0), "Initial burst requests did not finish"
+                drain_slow_sockets()
+                slots_released.set()
+                burst_results = [future.result(timeout=10.0) for future in futures]
+            assert burst_results == [(201, True)] * 6, burst_results
         finally:
             for sock in partial:
                 sock.close()

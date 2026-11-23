@@ -14,6 +14,7 @@ from django.utils import timezone
 
 from apps.audit.services import record_workspace_resource_event
 from apps.orgs.selectors import collection_person_is_current
+from core.api.pagination import clamp_page_rows
 from services.identity.access_tokens import VerifiedAccessToken
 
 from . import collection_schema as schema, services
@@ -203,12 +204,13 @@ def list_collections(*, verified, organisation_id, cursor, limit):
     if after is not None:
         rows = rows.filter(id__lt=after)
     selected = list(rows.order_by("-id")[: limit + 1])
+    emitted, data, more = clamp_page_rows(
+        selected, limit=limit, render=lambda row: wire(row, principal)
+    )
     return {
-        "data": [wire(row, principal) for row in selected[:limit]],
-        "has_more": len(selected) > limit,
-        "next_cursor": signing.dumps(str(selected[limit - 1].id), salt=salt)
-        if len(selected) > limit
-        else None,
+        "data": data,
+        "has_more": more,
+        "next_cursor": signing.dumps(str(emitted[-1].id), salt=salt) if more and emitted else None,
     }
 
 
@@ -304,10 +306,13 @@ def query(
             else field.desc(nulls_last=True)
         )
     selected = list(rows.order_by(*ordering, "document_id")[offset : offset + limit + 1])
+    emitted, data, more = clamp_page_rows(selected, limit=limit, render=row_wire)
     return {
-        "data": [row_wire(row) for row in selected[:limit]],
-        "has_more": len(selected) > limit,
-        "next_cursor": signing.dumps(offset + limit, salt=salt) if len(selected) > limit else None,
+        "data": data,
+        "has_more": more,
+        "next_cursor": signing.dumps(offset + len(emitted), salt=salt)
+        if more and emitted
+        else None,
     }
 
 

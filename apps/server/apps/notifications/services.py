@@ -2,13 +2,13 @@
 
 import hashlib
 import json
+from collections.abc import Sequence
 from typing import Any
 from uuid import UUID, uuid4
 
 from django.apps import apps
 from django.conf import settings
 from django.core import signing
-from django.core.exceptions import ObjectDoesNotExist
 from django.db import IntegrityError, connection, transaction
 from django.utils import timezone
 
@@ -193,39 +193,66 @@ def wire(row: Notification) -> dict[str, Any]:
     }
 
 
-def visible(row: Notification, principal: TenantCaller, verified: VerifiedAccessToken) -> bool:
-    if row.kind == "moderation":
-        return row.resource_id == principal.membership_id
-    if row.kind == "mention":
-        from apps.workspaces.channel_access import may_view, resolve
-        from apps.workspaces.structure import WorkspaceUnavailableError
+def _visible_ids(
+    rows: Sequence[Notification], principal: TenantCaller, verified: VerifiedAccessToken
+) -> set[UUID]:
+    if not rows:
+        return set()
+    allowed: set[UUID] = set()
+    mention_rows: list[Notification] = []
+    document_rows: list[Notification] = []
+    for row in rows:
+        if row.kind == "moderation":
+            if row.resource_id == principal.membership_id:
+                allowed.add(row.id)
+        elif row.kind == "invitation":
+            allowed.add(row.id)
+        elif row.kind == "mention":
+            if row.organisation_id == principal.organisation_id:
+                mention_rows.append(row)
+        elif row.kind == "document":
+            document_rows.append(row)
 
-        if not Notification.objects.filter(
-            pk=row.id,
-            organisation_id=principal.organisation_id,
-            organisation__workspace__channel__id=row.resource_id,
-        ).exists():
-            return False
-        try:
-            access = resolve(row.resource_id)
-        except (ObjectDoesNotExist, WorkspaceUnavailableError):
-            return False
-        return may_view(
-            access,
-            organisation_id=principal.organisation_id,
-            membership_id=principal.membership_id,
-            authority_revision=principal.authority_revision,
-        )
-    if row.kind == "document":
-        if not apps.is_installed("apps.docs"):
-            return False
+    if mention_rows:
+        from apps.workspaces.channel_access import may_view, resolve_channels
+        from apps.workspaces.selectors import workspace_id_for
+
+        workspace_id = workspace_id_for(organisation_id=principal.organisation_id)
+        if workspace_id is not None:
+            access_by_channel = resolve_channels(
+                workspace_id, {row.resource_id for row in mention_rows}
+            )
+            viewable_channels = {
+                channel_id
+                for channel_id, access in access_by_channel.items()
+                if may_view(
+                    access,
+                    organisation_id=principal.organisation_id,
+                    membership_id=principal.membership_id,
+                    authority_revision=principal.authority_revision,
+                )
+            }
+            allowed.update(row.id for row in mention_rows if row.resource_id in viewable_channels)
+
+    if document_rows and apps.is_installed("apps.docs"):
         # A missing document-policy adapter fails closed until the docs application is installed.
         try:
-            from apps.docs.access import document_visible
+            from apps.docs.access import visible_document_ids
         except ImportError:
-            return False
-        return bool(document_visible(principal, row.resource_id, verified=verified))
-    return row.kind == "invitation"
+            visible_docs: set[UUID] = set()
+        else:
+            visible_docs = visible_document_ids(
+                principal,
+                {row.resource_id for row in document_rows},
+                verified=verified,
+            )
+        allowed.update(row.id for row in document_rows if row.resource_id in visible_docs)
+
+    return allowed
+
+
+def visible(row: Notification, principal: TenantCaller, verified: VerifiedAccessToken) -> bool:
+    return row.id in _visible_ids((row,), principal, verified)
 
 
 @transaction.atomic
@@ -250,8 +277,9 @@ def inbox(*, verified: VerifiedAccessToken, cursor: str | None, limit: int) -> d
     scanned = list(rows.order_by("-id")[: limit + 1])
     more = len(scanned) > limit
     selected = scanned[:limit]
+    allowed = _visible_ids(selected, principal, verified)
     return {
-        "data": [wire(row) for row in selected if visible(row, principal, verified)],
+        "data": [wire(row) for row in selected if row.id in allowed],
         "has_more": more,
         "next_cursor": signing.dumps(str(selected[-1].id), salt=salt) if more else None,
     }
@@ -271,7 +299,9 @@ def mark_read(*, verified: VerifiedAccessToken, ids: list[UUID], request_id: str
         organisation_id=principal.organisation_id, membership_id=principal.membership_id, id__in=ids
     )
     selected = list(rows)
-    if len(selected) != len(ids) or not all(visible(row, principal, verified) for row in selected):
+    if len(selected) != len(ids) or len(_visible_ids(selected, principal, verified)) != len(
+        selected
+    ):
         raise RefusalError(404)
     rows.filter(read_at__isnull=True).update(read_at=timezone.now(), updated_at=timezone.now())
     audit(principal, "workspace.notification.read", principal.membership_id, request_id)

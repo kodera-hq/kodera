@@ -416,11 +416,20 @@ def test_inmemory_erased_row_commitment_detects_actor_and_action_tampering() -> 
     )
 
     # Removing `erasure_commitment` or retaining `metadata` / `source_ip` also fails!
-    assert verify_ledger_sequence((replace(scrubbed_evt, erasure_commitment=None), next_evt))[0] is False
-    assert verify_ledger_sequence((replace(scrubbed_evt, source_ip="198.51.100.0/24"), next_evt))[0] is False
-    assert verify_ledger_sequence((replace(scrubbed_evt, metadata={"leak": "x"}), next_evt))[0] is False
+    assert (
+        verify_ledger_sequence((replace(scrubbed_evt, erasure_commitment=None), next_evt))[0]
+        is False
+    )
+    assert (
+        verify_ledger_sequence((replace(scrubbed_evt, source_ip="198.51.100.0/24"), next_evt))[0]
+        is False
+    )
+    assert (
+        verify_ledger_sequence((replace(scrubbed_evt, metadata={"leak": "x"}), next_evt))[0]
+        is False
+    )
 
-    # `Codex P2-3`: Pipe-delimited field-boundary shifting (`actor_label="erased", action="member|targeted"`
+    # Pipe-delimited field-boundary shifting (`actor_label="erased", action="member|targeted"`
     # vs `actor_label="erased|member", action="targeted"`) is rejected by length-prefixed row MAC!
     pipe_eid = str(uuid4())
     pipe_hash = compute_domain_sha256(

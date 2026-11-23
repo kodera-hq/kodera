@@ -4,6 +4,8 @@ import hashlib
 from uuid import UUID
 
 from django.db import transaction
+from django.db.models import IntegerField, QuerySet
+from django.db.models.functions import Length
 
 from .documents import Renderer, Validator, render_facturx, snapshot_of
 from .integrity import IntegrityRefusedError
@@ -61,15 +63,34 @@ def publish(
         return artifact
 
 
+def artifact_metadata_queryset() -> QuerySet[BillingArtifact]:
+    """Select artifact digest and byte-length columns while deferring PDF/XML binary blobs."""
+    return BillingArtifact.objects.defer("pdf", "xml").annotate(
+        _pdf_size=Length("pdf", output_field=IntegerField()),
+        _xml_size=Length("xml", output_field=IntegerField()),
+    )
+
+
 def metadata(row: Invoice | CreditNote) -> dict[str, object]:
-    key = "invoice_id" if isinstance(row, Invoice) else "credit_note_id"
-    artifact = BillingArtifact.objects.filter(**{key: row.id}).first()
+    if "billingartifact" in row._state.fields_cache:
+        cached = row._state.fields_cache["billingartifact"]
+        artifact = cached if isinstance(cached, BillingArtifact) else None
+    else:
+        key = "invoice_id" if isinstance(row, Invoice) else "credit_note_id"
+        artifact = artifact_metadata_queryset().filter(**{key: row.id}).first()
     if artifact is None:
         return {
             "facturx_type_code": "380" if isinstance(row, Invoice) else "381",
             "xml_available": False,
         }
-    verify_artifact(artifact)
+    if snapshot_of(row).sha256 != artifact.snapshot_sha256:
+        raise IntegrityRefusedError("billing_artifact_digest_mismatch")
+    pdf_size = getattr(artifact, "_pdf_size", None)
+    xml_size = getattr(artifact, "_xml_size", None)
+    if not isinstance(pdf_size, int):
+        pdf_size = len(artifact.pdf)
+    if not isinstance(xml_size, int):
+        xml_size = len(artifact.xml)
     return {
         "facturx_type_code": "380" if isinstance(row, Invoice) else "381",
         "xml_available": True,
@@ -77,13 +98,13 @@ def metadata(row: Invoice | CreditNote) -> dict[str, object]:
         "artifacts": {
             kind: {
                 "sha256": digest,
-                "size_bytes": len(payload),
+                "size_bytes": size_bytes,
                 "content_type": content_type,
                 "filename": f"{row.number}.{kind}",
             }
-            for kind, digest, payload, content_type in (
-                ("pdf", artifact.pdf_sha256, artifact.pdf, "application/pdf"),
-                ("xml", artifact.xml_sha256, artifact.xml, "application/xml"),
+            for kind, digest, size_bytes, content_type in (
+                ("pdf", artifact.pdf_sha256, pdf_size, "application/pdf"),
+                ("xml", artifact.xml_sha256, xml_size, "application/xml"),
             )
         },
     }

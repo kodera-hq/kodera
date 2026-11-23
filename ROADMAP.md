@@ -10,7 +10,7 @@ Kodera is a public open-core monorepo: nothing listed here is held back from the
 
 - [x] Unified `@kodera/*` monorepo (`apps/`, `packages/`, `extensions/`, `deploy/community/`, `ee/`)
 - [x] `@kodera/design-tokens` ("Cobalt × Kodera — givre") with automated contrast & grammar CI gates
-- [x] `kodera-server` OpenAPI 3.1 contract-first control plane (`0.47.0`), ADR-0003 secret isolation & `room_access` sidecar
+- [x] `kodera-server` OpenAPI 3.1 contract-first control plane (`0.51.0`), ADR-0003 secret isolation & `room_access` sidecar
 - [x] Matrix-backed channels and LiveKit audio rooms in the web client, governed by `kodera-synapse-policy`
 - [x] `kodera-rs` zero-unsafe Rust core (`UuidV7`, `Ed25519` traits, OpenMLS/Megolm primitives, durable device/session state, universal ES256 passkey binding, `#proximity` frame v1/v2 codecs)
 - [x] `@kodera/extension-sdk` HMAC-signed webhooks and 23 reference implementations (the `/hello` starter plus 22 domain connectors) with a generated catalogue
@@ -44,7 +44,7 @@ Kodera is a public open-core monorepo: nothing listed here is held back from the
 
 ## Track 4 — Confidential Rooms & Federation (`Status: Transport & device primitives shipped; group coordinators in progress`)
 
-- [x] Cryptographic primitives, device lifecycle, durable session state, modern `openmls_*` crypto-provider generation, `wasm32` browser device-proof bindings and LiveKit media-frame encryption seams in `packages/kodera-rs` (scoped OpenMLS RFC 9420 and Vodozemac Megolm), paired with atomic browser IndexedDB confidential vault storage (`apps/web/src/features/confidential/`), and default-off `/api/v1/organisations/{organisation_id}/confidential/*` opaque envelope and HPKE KeyPackage relay (`0.47.0`)
+- [x] Cryptographic primitives, device lifecycle, durable session state, modern `openmls_*` crypto-provider generation, `wasm32` browser device-proof bindings and LiveKit media-frame encryption seams in `packages/kodera-rs` (scoped OpenMLS RFC 9420 and Vodozemac Megolm), paired with atomic browser IndexedDB confidential vault storage (`apps/web/src/features/confidential/`), and default-off `/api/v1/organisations/{organisation_id}/confidential/*` opaque envelope and HPKE KeyPackage relay (`0.51.0`)
 - [x] Opt-in open Matrix federation (`KODERA_FEDERATION_MODE=open`, closed by default on `deploy/community`) alongside explicit partner-room federation governance in `packages/synapse-policy` (`0.1.6`)
 - [x] Refusal of plaintext fallback and room-store quarantine for unavailable confidential or unclassified sessions (#180)
 - [x] Worker-isolated attachment/Pages/LiveKit media cryptographic capabilities (#169, #177, #182), local SAS device comparison and `KVKB1` encrypted local key archives (#183)

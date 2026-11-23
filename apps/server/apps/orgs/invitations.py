@@ -46,6 +46,7 @@ from apps.outbox.realm_enqueue import (
     enqueue_realm_access,
     enqueue_realm_account,
 )
+from core.api.pagination import clamp_page_rows
 from core.idempotency.store import MetadataAuthority, ReplayAuthority
 from core.sealing import seal
 from services.identity.access_tokens import VerifiedAccessToken
@@ -682,6 +683,26 @@ def parse_query(query: dict[str, list[str]]) -> tuple[int, str | None, str | Non
     return limit, state, cursor
 
 
+def _wire_projection(view: InvitationView) -> dict[str, object]:
+    body: dict[str, object] = {
+        "id": str(view.id),
+        "organisation_id": str(view.organisation_id),
+        "email": view.email,
+        "role": view.role,
+        "state": view.state,
+        "realm": view.realm,
+        "invited_by": str(view.invited_by),
+        "expires_at": view.expires_at.isoformat(),
+        "accepted_at": None if view.accepted_at is None else view.accepted_at.isoformat(),
+        "membership_id": None if view.membership_id is None else str(view.membership_id),
+        "last_sent_at": None if view.last_sent_at is None else view.last_sent_at.isoformat(),
+        "created_at": view.created_at.isoformat(),
+    }
+    if view.sent_count:
+        body["sent_count"] = view.sent_count
+    return body
+
+
 def list_invitations(
     *, caller: TenantCaller, limit: int, state: str | None, cursor: str | None
 ) -> Page:
@@ -700,9 +721,10 @@ def list_invitations(
             rows = rows.filter(id__lt=after)
         found = list(rows.order_by("-id")[: limit + 1])
         realm = _realm(caller.organisation_id)
-    page = tuple(_view(row, realm, now) for row in found[:limit])
-    more = len(found) > limit
-    return Page(page, _encode_cursor(caller, state, page[-1].id) if more else None)
+    candidates = [_view(row, realm, now) for row in found]
+    emitted, _, more = clamp_page_rows(candidates, limit=limit, render=_wire_projection)
+    page = tuple(emitted)
+    return Page(page, _encode_cursor(caller, state, page[-1].id) if more and page else None)
 
 
 # ---------------------------------------------------------------------------- writes ----

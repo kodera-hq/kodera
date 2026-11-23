@@ -316,6 +316,139 @@ def resolve_all(workspace_id: UUID) -> dict[UUID, tuple[Access, str, str]]:
     return found
 
 
+def resolve_channels(workspace_id: UUID, channel_ids: Iterable[UUID]) -> dict[UUID, Access]:
+    """Batch-resolve stored access for candidate channels in `workspace_id` in O(1) queries.
+
+    Channels outside `workspace_id` or missing a valid policy/rule resolution are omitted, matching
+    per-channel `resolve(channel_id)` catching `(Channel.DoesNotExist, WorkspaceUnavailableError)`.
+    """
+    target_ids = set(channel_ids)
+    if not target_ids:
+        return {}
+    channels = list(
+        Channel.objects.filter(workspace_id=workspace_id, id__in=target_ids).values_list(
+            "id",
+            "kind",
+            "lifecycle",
+            "policy_mode",
+            "explicit_policy_id",
+            "category_id",
+        )
+    )
+    if not channels:
+        return {}
+    default: UUID | None = None
+    if any(mode != EXPLICIT for _, _, _, mode, _, _ in channels):
+        default = (
+            Workspace.objects.filter(id=workspace_id)
+            .values_list("default_policy_id", flat=True)
+            .first()
+        )
+    category_ids = {
+        category_id
+        for _, _, _, mode, _, category_id in channels
+        if mode != EXPLICIT and category_id is not None
+    }
+    category_defaults: dict[UUID, UUID | None] = (
+        dict(
+            Category.objects.filter(workspace_id=workspace_id, id__in=category_ids).values_list(
+                "id", "default_policy_id"
+            )
+        )
+        if category_ids
+        else {}
+    )
+    chosen: dict[UUID, UUID] = {}
+    for pk, _, _, mode, explicit, category_id in channels:
+        policy_id: UUID | None
+        if mode == EXPLICIT:
+            policy_id = explicit
+        else:
+            inherited = category_defaults.get(category_id) if category_id is not None else None
+            policy_id = inherited if inherited is not None else default
+        if policy_id is not None:
+            chosen[pk] = policy_id
+    if not chosen:
+        return {}
+    policies = {
+        pk: (revision, visibility)
+        for pk, revision, visibility in ResourcePolicy.objects.filter(
+            workspace_id=workspace_id, id__in=set(chosen.values())
+        ).values_list("id", "revision", "visibility")
+    }
+    if not policies:
+        return {}
+    rules = {pk: _Rules(set(), set(), set()) for pk in policies}
+    invalid_policies: set[UUID] = set()
+    for policy_id, kind, member, capability in ResourcePolicyRule.objects.filter(
+        policy_id__in=set(policies)
+    ).values_list("policy_id", "kind", "membership_id", "capability"):
+        if kind == ResourcePolicyRule.Kind.ALLOW_MEMBER and member is not None:
+            rules[policy_id].allow.add(member)
+        elif kind == ResourcePolicyRule.Kind.DENY_MEMBER and member is not None:
+            rules[policy_id].deny.add(member)
+        elif kind == ResourcePolicyRule.Kind.DENY_CAPABILITY and capability is not None:
+            rules[policy_id].denied.add(capability)
+        else:
+            invalid_policies.add(policy_id)
+    valid_channels = [
+        (pk, kind, lifecycle, mode, chosen[pk])
+        for pk, kind, lifecycle, mode, _, _ in channels
+        if pk in chosen and chosen[pk] in policies and chosen[pk] not in invalid_policies
+    ]
+    if not valid_channels:
+        return {}
+    valid_ids = [pk for pk, *_ in valid_channels]
+    overrides_by_channel: dict[UUID, list[tuple[str, tuple[str, ...], tuple[str, ...]]]] = {}
+    referenced_role_ids: set[UUID] = set()
+    for ch_id, role_id, allow_caps, deny_caps in (
+        WorkspaceChannelRoleOverride.objects.filter(
+            workspace_id=workspace_id, channel_id__in=valid_ids
+        )
+        .order_by("channel_id", "role_id")
+        .values_list("channel_id", "role_id", "allow", "deny")
+    ):
+        overrides_by_channel.setdefault(ch_id, []).append(
+            (str(role_id), tuple(allow_caps), tuple(deny_caps))
+        )
+        referenced_role_ids.add(role_id)
+    roles_by_member: dict[UUID, set[str]] = {}
+    if referenced_role_ids:
+        for membership_id, role_id in WorkspaceMemberRole.objects.filter(
+            workspace_id=workspace_id, role_id__in=referenced_role_ids
+        ).values_list("membership_id", "role_id"):
+            roles_by_member.setdefault(membership_id, set()).add(str(role_id))
+    found: dict[UUID, Access] = {}
+    for pk, kind, lifecycle, mode, policy_id in valid_channels:
+        revision, visibility = policies[policy_id]
+        rule = rules[policy_id]
+        ch_overrides = tuple(overrides_by_channel.get(pk, ()))
+        ch_member_roles: tuple[tuple[UUID, tuple[str, ...]], ...] = ()
+        if ch_overrides:
+            ch_role_set = {role_id_str for role_id_str, _, _ in ch_overrides}
+            ch_member_roles = tuple(
+                (m_id, tuple(sorted(r_ids & ch_role_set)))
+                for m_id, r_ids in sorted(roles_by_member.items(), key=lambda item: str(item[0]))
+                if r_ids & ch_role_set
+            )
+        found[pk] = Access(
+            channel_id=pk,
+            kind=kind,
+            lifecycle=lifecycle,
+            mode=mode,
+            policy_id=policy_id,
+            revision=revision,
+            visibility=visibility,
+            allow_members=_members(rule.allow),
+            deny_members=_members(rule.deny),
+            denied=frozenset(rule.denied),
+            channel_overrides=ch_overrides,
+            override_member_roles=ch_member_roles,
+            overrides_loaded=True,
+        )
+    return found
+
+
 def _channel_role_context(
     *,
     channel_id: UUID,

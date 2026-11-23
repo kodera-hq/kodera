@@ -48,11 +48,25 @@ const COMPANION_RULES = [
   [BILLING_DESTINATION, 'names a billing destination'],
 ];
 
+function collectRustSources(dir, relPrefix = 'src') {
+  const results = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+    const rel = `${relPrefix}/${entry.name}`;
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      results.push(...collectRustSources(full, rel));
+    } else if (entry.isFile() && entry.name.endsWith('.rs')) {
+      results.push(rel);
+    }
+  }
+  return results;
+}
+
 function companionSurface() {
   const surface = new Map();
   const addTauri = (path) => surface.set(path, readFileSync(join(tauriDir, path), 'utf8'));
-  for (const name of readdirSync(join(tauriDir, 'src')).sort()) {
-    if (name.endsWith('.rs')) addTauri(`src/${name}`);
+  for (const relPath of collectRustSources(join(tauriDir, 'src'))) {
+    addTauri(relPath);
   }
   for (const name of readdirSync(join(tauriDir, 'capabilities')).sort()) {
     addTauri(`capabilities/${name}`);
@@ -72,8 +86,11 @@ function companionSurface() {
 
 function verifyCompanionSurface(surface) {
   assert.ok(
-    surface.size >= 10 && surface.has('src/commands.rs') && surface.has('../src/bridge.mjs'),
-    'companion surface must include the desktop Rust and TypeScript sources',
+    surface.size >= 10
+      && surface.has('src/commands.rs')
+      && surface.has('src/gui/ipc_bridge.rs')
+      && surface.has('../src/bridge.mjs'),
+    'companion surface must include the desktop Rust (including nested submodules) and TypeScript sources',
   );
   for (const [path, text] of surface) {
     for (const [pattern, finding] of COMPANION_RULES) {
@@ -331,6 +348,7 @@ function selftest() {
     ['a console orders address', /capabilities\/default\.json names a billing destination: "https:\/\/console\.example\.org\/acme\/order"/u,
       'capabilities/default.json', '\n"https://console.example.org/acme/order"\n'],
     ['a relative plans path', /src\/commands\.rs names a billing destination: "\\"\/plans\\""/u, 'src/commands.rs', '\nconst PATH: &str = "/plans";\n'],
+    ['nested submodule commercial wording', /src\/gui\/ipc_bridge\.rs carries commercial wording: "upsell"/u, 'src/gui/ipc_bridge.rs', '\n// upsell modal\n'],
   ];
   for (const [name, diagnostic, path, addition] of commercial) {
     const mutated = new Map(surface);

@@ -19,6 +19,7 @@ from apps.orgs.actor_selectors import TenantCaller
 from apps.workspaces.channel_sets import lock_workspace
 from apps.workspaces.moderation import RefusalError as WorkspaceRefusal, authorise_workspace
 from apps.workspaces.selectors import workspace_id_for
+from core.api.pagination import clamp_page_rows
 from services.identity.access_tokens import VerifiedAccessToken
 
 from . import engine, tickets, titles, tree
@@ -480,12 +481,13 @@ def list_documents(
     if after is not None:
         rows = rows.filter(id__lt=after)
     selected = list(rows.order_by("-id")[: limit + 1])
-    more = len(selected) > limit
-    selected = selected[:limit]
+    emitted, data, more = clamp_page_rows(
+        selected, limit=limit, render=lambda row: wire(row, row._permission)
+    )
     return {
-        "data": [wire(row, row._permission) for row in selected],
+        "data": data,
         "has_more": more,
-        "next_cursor": signing.dumps(str(selected[-1].id), salt=salt) if more else None,
+        "next_cursor": signing.dumps(str(emitted[-1].id), salt=salt) if more and emitted else None,
     }
 
 
@@ -601,15 +603,21 @@ def search(
             ],
         )
         found = database.fetchall()
-    more = len(found) > limit
-    found = found[:limit]
+    emitted, data, more = clamp_page_rows(
+        found,
+        limit=limit,
+        render=lambda row: {
+            "id": str(row[0]),
+            "kind": row[1],
+            "title": row[2],
+            "excerpt": row[3],
+        },
+    )
     return {
-        "data": [
-            {"id": str(row[0]), "kind": row[1], "title": row[2], "excerpt": row[3]} for row in found
-        ],
+        "data": data,
         "has_more": more,
-        "next_cursor": signing.dumps([str(found[-1][0]), found[-1][1]], salt=salt)
-        if more
+        "next_cursor": signing.dumps([str(emitted[-1][0]), emitted[-1][1]], salt=salt)
+        if more and emitted
         else None,
     }
 

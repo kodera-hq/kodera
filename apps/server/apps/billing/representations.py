@@ -186,7 +186,8 @@ def invoice(row: Invoice, *, staff: bool = False) -> JSON:
                 "period_start": instant(line.period_start),
                 "period_end": instant(line.period_end),
             }
-            for line in row.lines.order_by("position")
+            # Prefetched in position order by the selector; read in order otherwise.
+            for line in sorted(row.lines.all(), key=lambda line: line.position)
         ],
         "total_excl_vat": money(row.total_excl_vat_minor, currency),
         "vat_amount": money(row.vat_amount_minor, currency),

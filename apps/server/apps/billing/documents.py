@@ -80,7 +80,7 @@ class Snapshot:
 
 def snapshot_of(row: object) -> Snapshot:
     """Read only invoice/credit-note frozen columns and lines, never catalogue or profile rows."""
-    from .models import CreditNote, Invoice
+    from .models import CreditNote, CreditNoteLine, Invoice, InvoiceLine
 
     if not isinstance(row, (Invoice, CreditNote)):
         raise IntegrityRefusedError("document_kind")
@@ -90,6 +90,9 @@ def snapshot_of(row: object) -> Snapshot:
     country = row.issuer_country
     if country is None:
         raise IntegrityRefusedError("document_issuer_country_missing")
+    stored_lines: list[InvoiceLine | CreditNoteLine] = (
+        list(row.lines.all()) if isinstance(row, Invoice) else list(row.lines.all())
+    )
     return Snapshot(
         number=row.number or "",
         type_code="381" if credit else "380",
@@ -127,7 +130,7 @@ def snapshot_of(row: object) -> Snapshot:
                 line.period_start,
                 line.period_end,
             )
-            for line in row.lines.order_by("position")
+            for line in sorted(stored_lines, key=lambda item: item.position)
         ),
         net_minor=row.total_excl_vat_minor,
         vat_minor=row.vat_amount_minor,

@@ -157,7 +157,9 @@ def append_staff_audit_entry(
 
 def verify_staff_audit_chain(scope_key: str = "fleet") -> dict[str, object]:
     """Verify contiguous sequence numbers, `previous_hash` links, and SHA-256 digests."""
-    entries = list(StaffAuditEntry.objects.filter(scope_key=scope_key).order_by("sequence_no", "id"))
+    entries = list(
+        StaffAuditEntry.objects.filter(scope_key=scope_key).order_by("sequence_no", "id")
+    )
     if not entries:
         return {
             "scope_key": scope_key,
