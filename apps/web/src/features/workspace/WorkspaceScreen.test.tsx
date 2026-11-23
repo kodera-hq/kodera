@@ -1638,7 +1638,7 @@ it('puts community onboarding, connectors, Docs and persisted themes in the rout
   expect(await screen.findByTestId('espace-live')).toHaveTextContent('@member:community.kodera.io')
   expect(beginMatrixSignIn).not.toHaveBeenCalled()
   act(() => openWorkspaceCommand('extensions'))
-  expect(screen.getByRole('dialog')).toHaveTextContent('Frame.io')
+  await waitFor(() => expect(screen.getByRole('dialog')).toHaveTextContent('Frame.io'))
   await user.keyboard('{Escape}')
   act(() => openWorkspaceCommand('configure'))
   expect(screen.getByRole('dialog')).toHaveTextContent('Nom de l’espace')

@@ -20,12 +20,7 @@ import { getMatrixSession, subscribeMatrixSession } from '@/auth/matrix'
 import { permitsPlaintext, type RoomBoundary } from '../../confidential/room-boundary'
 import { serverNameOf } from '../homeserver'
 import type { MessageView } from './timeline'
-import {
-  CACHE_WRITE_DELAY_MS,
-  CACHED_MESSAGES,
-  isCachedMessage,
-  MAX_AGE_MS,
-} from './timelineCache'
+import { CACHE_WRITE_DELAY_MS, CACHED_MESSAGES, isCachedMessage, MAX_AGE_MS } from './timelineCache'
 
 export const ESPACE_VAULT_DATABASE = SESSION_VAULT_DATABASE
 export const LEGACY_TIMELINE_DATABASE = ESPACE_TIMELINE_DATABASE
@@ -145,6 +140,8 @@ interface VaultOwnerRow {
   readonly membershipId: string
   readonly deviceId: string
   readonly incarnation: string
+  // Owner metadata is the durable purge fence, shared by independent tab coordinators.
+  readonly purgeEpoch?: number
   readonly status: 'active' | 'revoked'
   key?: CryptoKey | undefined
 }
@@ -159,6 +156,32 @@ interface EncryptedVaultRow {
   readonly savedAt: number
   readonly iv: ArrayBuffer
   readonly ciphertext: ArrayBuffer
+}
+
+/** Compare persisted ciphertext snapshots without expanding their bytes into JSON. */
+function sameVaultRows(before: readonly unknown[], after: readonly unknown[]): boolean {
+  if (before.length !== after.length) return false
+  const sameBytes = (a: ArrayBuffer | undefined, b: ArrayBuffer | undefined) => {
+    if (!a || !b) return a === b
+    if (a.byteLength !== b.byteLength) return false
+    const right = new Uint8Array(b)
+    return new Uint8Array(a).every((value, index) => value === right[index])
+  }
+  return before.every((raw, index) => {
+    const current = after[index]
+    if (!raw || typeof raw !== 'object' || !current || typeof current !== 'object') {
+      return raw === current
+    }
+    const left = raw as Partial<EncryptedVaultRow>
+    const right = current as Partial<EncryptedVaultRow>
+    return (
+      (
+        ['id', 'ownerKey', 'incarnation', 'kind', 'roomId', 'verifiedBoundary', 'savedAt'] as const
+      ).every((field) => left[field] === right[field]) &&
+      sameBytes(left.iv, right.iv) &&
+      sameBytes(left.ciphertext, right.ciphertext)
+    )
+  })
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -1456,6 +1479,7 @@ export class EspaceVault {
       membershipId: snapshot.owner.membershipId,
       deviceId: snapshot.owner.deviceId,
       incarnation: crypto.randomUUID(),
+      purgeEpoch: (snapshot.owner.purgeEpoch ?? 0) + 1,
       status: 'active',
       key: newKey,
     }
@@ -1616,11 +1640,29 @@ export class EspaceVault {
     }
 
     if (this.#closed) return
-    await runVaultTx(
+    const committed = await runVaultTx(
       this.#db,
       'readwrite',
       async (tx) => {
-        await this.#liveOwner(tx)
+        const currentOwner = await this.#liveOwner(tx)
+        if (
+          currentOwner.incarnation !== snapshot.owner.incarnation ||
+          (currentOwner.purgeEpoch ?? 0) !== (snapshot.owner.purgeEpoch ?? 0)
+        )
+          return false
+
+        // Crypto runs outside IDB transactions. Revalidate every row before replacing the
+        // snapshot so a cross-tab deletion or newer write can never be rolled back.
+        for (const [storeName, prior] of [
+          ['rooms', snapshot.roomRows],
+          ['outbox', snapshot.outboxRows],
+          ['drafts', snapshot.draftRows],
+        ] as const) {
+          const current = await idbRequest(
+            tx.objectStore(storeName).index('ownerKey').getAll(this.#ownerKey)
+          )
+          if (!sameVaultRows(prior, current)) return false
+        }
         await idbRequest(tx.objectStore('owners').put(nextOwner))
 
         const replaceStoreRows = async (
@@ -1655,10 +1697,15 @@ export class EspaceVault {
             } satisfies QuarantineMarkerRow)
           )
         }
+        return true
       },
       this.#alive,
       this.#transactions
     )
+    if (!committed) {
+      // Retry this purge against the surviving state and key, never the stale snapshot.
+      return this.#purgeRoomAndRotateOwnerKey(roomId, options)
+    }
     this.#syncOwnerAcrossHandles(nextOwner)
   }
 
@@ -2038,6 +2085,7 @@ export class EspaceVault {
                     membershipId: row.membershipId,
                     deviceId: row.deviceId,
                     incarnation: row.incarnation,
+                    purgeEpoch: (row.purgeEpoch ?? 0) + 1,
                     status: 'revoked',
                   } satisfies VaultOwnerRow)
                 }
@@ -2050,6 +2098,7 @@ export class EspaceVault {
                   membershipId: this.#principal.membershipId,
                   deviceId: this.#principal.deviceId,
                   incarnation: this.#cachedIncarnation,
+                  purgeEpoch: 1,
                   status: 'revoked',
                 } satisfies VaultOwnerRow)
               }
@@ -2159,6 +2208,7 @@ export function wipeEspaceVault(
                       membershipId: row.membershipId,
                       deviceId: row.deviceId,
                       incarnation: row.incarnation,
+                      purgeEpoch: (row.purgeEpoch ?? 0) + 1,
                       status: 'revoked',
                     } satisfies VaultOwnerRow)
                   )

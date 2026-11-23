@@ -38,6 +38,7 @@ describe('Localized PollCard, /poll composer integration, and live call poll ove
       options: ['Yes', 'Tomorrow'],
       createdBy: VIEWER,
       createdByName: 'Alice',
+      createdAt: 1_762_510_800_000,
     })
     const onVote = vi.fn()
     const onClose = vi.fn()
@@ -155,12 +156,13 @@ describe('Localized PollCard, /poll composer integration, and live call poll ove
         ROOM,
         expect.stringContaining('Ordre du jour ?'),
         expect.objectContaining({
-          poll: {
+          poll: expect.objectContaining({
             question: 'Ordre du jour ?',
             options: ['Audio', 'Sécurité'],
             allowMultiple: false,
             anonymous: false,
-          },
+            clientPollId: expect.stringMatching(/^local-poll-/),
+          }),
         })
       )
     )
@@ -241,6 +243,7 @@ describe('Localized PollCard, /poll composer integration, and live call poll ove
       options: ['Today', 'Monday'],
       createdBy: VIEWER,
       createdByName: 'Alice',
+      createdAt: 1_762_510_800_000,
     })
     const { rerender, unmount } = render(
       <PollCard
@@ -277,6 +280,7 @@ describe('Localized PollCard, /poll composer integration, and live call poll ove
       },
       createdBy: VIEWER,
       createdByName: 'Alice',
+      createdAt: 1_762_510_800_000,
     })
     pollStore.vote(localPoll, `${localPoll.id}-opt-2`, VIEWER, { sendEvent })
     const derived = pollStore.derivePolls(
@@ -389,6 +393,7 @@ describe('Localized PollCard, /poll composer integration, and live call poll ove
       },
       createdBy: VIEWER,
       createdByName: 'Alice',
+      createdAt: 1_762_510_800_000,
     })
     expect(pollStore.derivePolls(ROOM, [], 'Alice')).toHaveLength(1)
     registerMatrixSession({

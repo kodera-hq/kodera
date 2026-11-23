@@ -1417,6 +1417,20 @@ def _restore_recovery_config(ctx: StackContext, captured: Mapping[str, bytes]) -
         raise CtlRollbackError(str(exc)) from None
 
 
+def _restore_recovery_routing(ctx: StackContext, images: Mapping[str, object]) -> None:
+    """Remove routes to an admission service absent from the recovered deployment."""
+    if images.get("api-admission") != {"state": "new_service"}:
+        return
+    for name in ("Caddyfile", "Caddyfile.split"):
+        path = verify_child_no_symlink(ctx.stack_dir, name, error_cls=CtlRollbackError)
+        if path.exists():
+            payload = read_regular_bytes_nofollow(path, error_cls=CtlRollbackError)
+            if b"api-admission:8080" in payload:
+                _restore_recovery_config(
+                    ctx, {name: payload.replace(b"api-admission:8080", b"server:8000")}
+                )
+
+
 def create_backup(
     ctx: StackContext,
     *,
@@ -1426,6 +1440,9 @@ def create_backup(
     pre_captured_config: Mapping[str, bytes] | None = None,
 ) -> BackupRecord:
     """Create an atomic backup via `.kodera-backups/.staging-<id>-<pid>` -> `<id>` rename."""
+    # Standalone backups preserve the checkout at invocation, before image inspection or dumps.
+    # Upgrade supplies its own pre-staging snapshot; existing backup directories are immutable.
+    config = _capture_recovery_config(ctx) if pre_captured_config is None else pre_captured_config
     active_runner = default_command_runner if runner is None else runner
     backup_root = ensure_backup_root(ctx.stack_dir)
     utc_now = datetime.now(timezone.utc)
@@ -1469,7 +1486,6 @@ def create_backup(
         else:
             images = capture_running_images(ctx, active_runner, error_cls=CtlBackupError)
 
-        config = _capture_recovery_config(ctx) if pre_captured_config is None else pre_captured_config
         config_snapshots = {}
         for name, payload in config.items():
             filename = f"config-{name}"
@@ -2156,6 +2172,7 @@ def execute_rollback(
 
     _remove_new_recovery_services(ctx, active_runner, images_map)
     _restore_recovery_config(ctx, recovery_config)
+    _restore_recovery_routing(ctx, images_map)
 
     # 2. Ensure PostgreSQL containers run from their pinned sha256 images with `--no-build --no-deps`.
     _run_checked(
@@ -2419,6 +2436,7 @@ def execute_upgrade(
                 )
                 _remove_new_recovery_services(ctx, active_runner, pre_stage_images)
                 _restore_recovery_config(ctx, pre_stage_config)
+                _restore_recovery_routing(ctx, pre_stage_images)
                 recover_argv = build_compose_argv(ctx, extra_compose_files=(override,))
                 _start_pinned_backends_and_probe_no_deps(
                     ctx,

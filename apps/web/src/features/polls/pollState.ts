@@ -10,6 +10,7 @@ export interface PollWirePayload {
   readonly options: readonly string[]
   readonly allowMultiple: boolean
   readonly anonymous: boolean
+  readonly clientPollId?: string | undefined
 }
 
 export interface PollOption {
@@ -238,11 +239,18 @@ export function pollPayloadOf(content: unknown): PollWirePayload | undefined {
     .filter((item) => item.length > 0 && item.length <= 200)
     .slice(0, MAX_POLL_OPTIONS)
   if (options.length < 2) return undefined
+  const clientPollId =
+    typeof obj.clientPollId === 'string' &&
+    obj.clientPollId.trim().length > 0 &&
+    obj.clientPollId.trim().length <= 128
+      ? obj.clientPollId.trim()
+      : undefined
   return {
     question,
     options,
     allowMultiple: obj.allowMultiple === true,
     anonymous: false,
+    ...(clientPollId === undefined ? {} : { clientPollId }),
   }
 }
 

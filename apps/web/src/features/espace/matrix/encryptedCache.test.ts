@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  buildVaultAad,
   ESPACE_VAULT_DATABASE,
   EspaceVaultError,
   LEGACY_TIMELINE_DATABASE,
@@ -12,10 +13,7 @@ import {
 } from './encryptedCache'
 import type { MessageView } from './timeline'
 import { createTestVaultIndexedDb } from './testVaultIdb'
-import {
-  requestAccountDeletion,
-  requestWorkspaceDeletion,
-} from '../../workspace/privacyApi'
+import { requestAccountDeletion, requestWorkspaceDeletion } from '../../workspace/privacyApi'
 
 const PRINCIPAL_A: EspaceVaultPrincipal = {
   ownerId: '@alice:matrix.acme.kodera.test',
@@ -189,12 +187,7 @@ describe('Espace encrypted cold-start & offline outbox vault (kodera.espace-vaul
       ...idb.peekStoreRows(ESPACE_VAULT_DATABASE, 'quarantine').values(),
     ] as Array<Record<string, unknown>>
     expect(quarantineRows).toHaveLength(1)
-    expect(Object.keys(quarantineRows[0]!).sort()).toEqual([
-      'id',
-      'markedAt',
-      'ownerKey',
-      'roomId',
-    ])
+    expect(Object.keys(quarantineRows[0]!).sort()).toEqual(['id', 'markedAt', 'ownerKey', 'roomId'])
     expect(quarantineRows[0]!.roomId).toBe(ROOM_SECRET)
 
     // Round-trip decryption succeeds for the exact bound principal.
@@ -556,6 +549,100 @@ describe('Espace encrypted cold-start & offline outbox vault (kodera.espace-vaul
     expect((await handleB.coldStartRead(undefined, room3)).activeRoom?.messages[0]?.body).toBe(
       'keep-three'
     )
+  })
+
+  it('retries a stale cross-tab rotation without resurrecting a room purged by another coordinator', async () => {
+    const idb = createTestVaultIndexedDb()
+    // Distinct factory identities model separate JS realms sharing the same IDB database.
+    const tabA = await openEspaceVault(PRINCIPAL_A, { idb, delayMs: 0 })
+    const tabB = await openEspaceVault(PRINCIPAL_A, { idb: { ...idb }, delayMs: 0 })
+    vaults.push(tabA, tabB)
+    const keep = '!keep:matrix.acme.kodera.test'
+    for (const room of [ROOM_GENERAL, ROOM_SECRET, keep]) {
+      tabA.scheduleRoomSave(room, 'ordinary', [sampleMessage(`$${room}`, room)])
+      await tabA.putDraft(room, 'ordinary', `draft-${room}`, '')
+      await tabA.putOutbox({
+        clientTxnId: `txn-${room}`,
+        roomId: room,
+        verifiedBoundary: 'ordinary',
+        body: room,
+        content: { msgtype: 'm.text', body: room },
+      })
+    }
+    tabA.scheduleSidebarSave(
+      [ROOM_GENERAL, ROOM_SECRET, keep].map((roomId) => ({
+        roomId, name: roomId, alias: null, verifiedBoundary: 'ordinary', kind: 'text',
+        unread: 0, mentions: 0,
+      })),
+      [['general', ROOM_GENERAL], ['secret', ROOM_SECRET], ['keep', keep]]
+    )
+    await tabA.flush()
+    const oldDraft = [...idb.peekStoreRows(ESPACE_VAULT_DATABASE, 'drafts').values()].find(
+      (row) => (row as { roomId: string }).roomId === ROOM_SECRET
+    ) as { iv: ArrayBuffer; ciphertext: ArrayBuffer; incarnation: string }
+    const oldOwner = [...idb.peekStoreRows(ESPACE_VAULT_DATABASE, 'owners').values()][0] as {
+      key: CryptoKey
+    }
+    const algorithm = {
+      name: 'AES-GCM',
+      iv: oldDraft.iv,
+      additionalData: buildVaultAad(
+        PRINCIPAL_A,
+        oldDraft.incarnation,
+        'draft',
+        ROOM_SECRET,
+        'ordinary'
+      ),
+    }
+    expect(
+      new TextDecoder().decode(
+        await crypto.subtle.decrypt(algorithm, oldOwner.key, oldDraft.ciphertext)
+      )
+    ).toContain(`draft-${ROOM_SECRET}`)
+    let release!: () => void
+    let snapshotReady!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const ready = new Promise<void>((resolve) => {
+      snapshotReady = resolve
+    })
+    const encrypt = crypto.subtle.encrypt.bind(crypto.subtle)
+    const spy = vi.spyOn(crypto.subtle, 'encrypt').mockImplementationOnce(async (...args) => {
+      snapshotReady()
+      await gate
+      return encrypt(...args)
+    })
+    const staleRotation = tabA.forgetRoom(ROOM_GENERAL)
+    try {
+      await ready
+      await tabB.forgetRoom(ROOM_SECRET)
+    } finally {
+      release()
+    }
+    await staleRotation
+    spy.mockRestore()
+
+    for (const room of [ROOM_GENERAL, ROOM_SECRET]) {
+      expect(await tabB.readDraft(room)).toBeNull()
+      expect((await tabA.coldStartRead(undefined, room)).activeRoom).toBeNull()
+      for (const store of ['rooms', 'drafts', 'outbox']) {
+        const rows = [...idb.peekStoreRows(ESPACE_VAULT_DATABASE, store).values()] as Array<{
+          roomId: string
+        }>
+        expect(rows.some((row) => row.roomId === room)).toBe(false)
+      }
+    }
+    expect((await tabB.readDraft(keep))?.text).toBe(`draft-${keep}`)
+    const owner = [...idb.peekStoreRows(ESPACE_VAULT_DATABASE, 'owners').values()][0] as {
+      key: CryptoKey
+      purgeEpoch: number
+    }
+    const sidebar = (await tabB.coldStartRead(undefined, keep)).sidebar
+    expect(sidebar?.rooms.map((room) => room.roomId)).toEqual([keep])
+    expect(sidebar?.channels).toEqual([['keep', keep]])
+    expect(owner.purgeEpoch).toBe(2)
+    await expect(crypto.subtle.decrypt(algorithm, owner.key, oldDraft.ciphertext)).rejects.toThrow()
   })
 
   it('refcounts open handles so closeImmediate on one handle never zeros a surviving peer handle CryptoKey after rotation', async () => {

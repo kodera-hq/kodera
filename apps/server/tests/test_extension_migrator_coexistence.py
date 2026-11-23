@@ -21,7 +21,7 @@ from customer_http_fixtures import configure, http_signer as http_signer, token,
 from django.db import IntegrityError, connection
 from django.test import Client
 from django.utils import timezone
-from test_extension_import_parsers import archive
+from test_extension_import_parsers import archive, many_user_slack_archive
 from test_intake_writer_role import INSUFFICIENT_PRIVILEGE, acting_as, refused
 from workspace_documents.test_services import native_engine as native_engine
 from workspace_safety.test_moderation import world as moderation_world  # noqa: F401
@@ -2377,3 +2377,61 @@ def test_channel_post_refuses_confidential_channel_by_default(world, member_inde
         403,
         "extension_confidential_channel_refused",
     )
+
+
+@pytest.mark.parametrize("matrix_mode", [False, True])
+def test_ten_thousand_slack_users_return_bounded_preview_execute_and_replay(
+    world, native_engine, http_signer, settings, matrix_mode
+) -> None:
+    org, workspace, members, tokens = world
+    channel = _create_channel(workspace, name="large-user-import")
+    now = int(time.time())
+    configure(settings, [trust_entry(http_signer, org.issuer, expires_at=now + 600)])
+    bearer = token(
+        http_signer,
+        org.issuer,
+        subject=tokens[0].subject,
+        email_verified=True,
+        iat=now,
+        nbf=now,
+        exp=now + 300,
+    )
+    raw = many_user_slack_archive()
+    body: dict[str, Any] = {
+        "source": "slack",
+        "inlineArchiveBase64": base64.b64encode(raw).decode("ascii"),
+    }
+    if matrix_mode:
+        body["channelMap"] = {"C1": str(channel.id)}
+    client = Client()
+    for action in ("preview", "execute"):
+        response = client.post(
+            f"/api/v1/organisations/{org.id}/workspace/imports/{action}",
+            data=json.dumps(body),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {bearer}",
+            HTTP_IDEMPOTENCY_KEY=f"large-users-{action}",
+        )
+        assert response.status_code == 200, response.content
+        assert len(response.content) < 128 * 1024
+        report = response.json()
+        assert len(report["member_mappings"]) == imports.MAX_RESPONSE_MEMBER_MAPPINGS
+        if action == "preview":
+            assert report["counts"]["members_unmatched"] == 10_000
+        assert "unsupported_assets_omitted" in report["warnings"]
+    if not matrix_mode:
+        return
+    transport = FakeSynapseTransport()
+    replay = imports.replay_matrix(
+        verified=tokens[0],
+        organisation_id=org.id,
+        source="slack",
+        raw=raw,
+        channel_map={"C1": channel.id},
+        matrix_transport=transport,
+        room_map={channel.id: "!large-user-import:matrix.example.test"},
+        limit=1,
+    )
+    assert len(json.dumps(replay).encode()) < 128 * 1024
+    assert len(replay["member_mappings"]) == imports.MAX_RESPONSE_MEMBER_MAPPINGS
+    assert "member-09999" in json.dumps(transport.calls)

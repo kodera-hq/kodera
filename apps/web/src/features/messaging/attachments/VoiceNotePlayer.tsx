@@ -1,6 +1,5 @@
-// Inline async voice-note player with credential-free presigned blob playback, URL.revokeObjectURL
-// lifecycle cleanup, 1x / 1.5x / 2x playback speed control, quantized waveform bars, and
-// collapsible opt-in server-side AI transcription.
+// Credential-free voice-note decoding and CSP-safe Web Audio playback with lifecycle cleanup,
+// seek and speed controls, quantized waveform bars, and opt-in server-side transcription.
 
 import { useEffect, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -62,14 +61,19 @@ function VoiceNotePlayerInner({ attachment, organisationId }: VoiceNotePlayerPro
   const copy = voiceNoteMessages[locale]
   const transcriptBodyId = useId()
 
-  const audioRef = useRef<HTMLAudioElement | null>(null)
-  const objectUrlRef = useRef<string | null>(null)
+  const contextRef = useRef<AudioContext | null>(null)
+  const bufferRef = useRef<AudioBuffer | null>(null)
+  const sourceRef = useRef<AudioBufferSourceNode | null>(null)
+  const offsetRef = useRef(0)
+  const startedAtRef = useRef(0)
+  const rateRef = useRef<VoiceNoteSpeed>(1)
   const abortRef = useRef<AbortController | null>(null)
   const transcribeAbortRef = useRef<AbortController | null>(null)
   const mountedRef = useRef(true)
 
   const [loadingAudio, setLoadingAudio] = useState(false)
   const [playing, setPlaying] = useState(false)
+  const [audioReady, setAudioReady] = useState(false)
   const [playbackRate, setPlaybackRate] = useState<VoiceNoteSpeed>(1)
   const [audioError, setAudioError] = useState(false)
   const [progressRatio, setProgressRatio] = useState(0)
@@ -79,53 +83,118 @@ function VoiceNotePlayerInner({ attachment, organisationId }: VoiceNotePlayerPro
   const [transcriptExpanded, setTranscriptExpanded] = useState(true)
   const [transcribeNotice, setTranscribeNotice] = useState<string | null>(null)
 
+  const position = () => {
+    const elapsed =
+      sourceRef.current !== null && contextRef.current !== null
+        ? (contextRef.current.currentTime - startedAtRef.current) * rateRef.current
+        : 0
+    return Math.min(bufferRef.current?.duration ?? 0, offsetRef.current + elapsed)
+  }
+
+  const stopSource = () => {
+    const source = sourceRef.current
+    sourceRef.current = null
+    if (source !== null) {
+      source.onended = null
+      source.stop()
+      source.disconnect()
+    }
+  }
+
   useEffect(() => {
     mountedRef.current = true
-    const audioElement = audioRef.current
-
     return () => {
       mountedRef.current = false
       abortRef.current?.abort()
       abortRef.current = null
       transcribeAbortRef.current?.abort()
       transcribeAbortRef.current = null
-      if (audioElement !== null) {
-        audioElement.pause()
-        audioElement.removeAttribute('src')
-      }
-      if (objectUrlRef.current !== null) {
-        URL.revokeObjectURL(objectUrlRef.current)
-        objectUrlRef.current = null
-      }
+      stopSource()
+      bufferRef.current = null
+      const context = contextRef.current
+      contextRef.current = null
+      if (context !== null) void context.close().catch(() => undefined)
     }
   }, [])
 
-  const cyclePlaybackRate = () => {
-    const idx = PLAYBACK_SPEEDS.indexOf(playbackRate)
-    const next = PLAYBACK_SPEEDS[(idx + 1) % PLAYBACK_SPEEDS.length] ?? 1
-    setPlaybackRate(next)
-    if (audioRef.current !== null) {
-      audioRef.current.playbackRate = next
+  useEffect(() => {
+    if (!playing) return
+    const timer = setInterval(() => {
+      const context = contextRef.current
+      const buffer = bufferRef.current
+      if (sourceRef.current !== null && context !== null && buffer !== null) {
+        const elapsed = (context.currentTime - startedAtRef.current) * rateRef.current
+        setProgressRatio(Math.min(1, (offsetRef.current + elapsed) / buffer.duration))
+      }
+    }, 100)
+    return () => clearInterval(timer)
+  }, [playing])
+
+  const startSource = () => {
+    const context = contextRef.current
+    const buffer = bufferRef.current
+    if (context === null || buffer === null || !mountedRef.current) return
+    if (offsetRef.current >= buffer.duration) offsetRef.current = 0
+    const source = context.createBufferSource()
+    source.buffer = buffer
+    source.playbackRate.value = rateRef.current
+    source.connect(context.destination)
+    source.onended = () => {
+      if (sourceRef.current !== source) return
+      source.disconnect()
+      sourceRef.current = null
+      offsetRef.current = 0
+      if (mountedRef.current) {
+        setPlaying(false)
+        setProgressRatio(0)
+      }
     }
+    startedAtRef.current = context.currentTime
+    try {
+      source.start(0, offsetRef.current)
+    } catch (error) {
+      source.disconnect()
+      throw error
+    }
+    sourceRef.current = source
+    setPlaying(true)
+  }
+
+  const cyclePlaybackRate = () => {
+    const idx = PLAYBACK_SPEEDS.indexOf(rateRef.current)
+    const next = PLAYBACK_SPEEDS[(idx + 1) % PLAYBACK_SPEEDS.length] ?? 1
+    offsetRef.current = position()
+    startedAtRef.current = contextRef.current?.currentTime ?? 0
+    rateRef.current = next
+    setPlaybackRate(next)
+    if (sourceRef.current !== null) sourceRef.current.playbackRate.value = next
+  }
+
+  const seek = (ratio: number) => {
+    const buffer = bufferRef.current
+    if (buffer === null) return
+    const wasPlaying = sourceRef.current !== null
+    stopSource()
+    const nextRatio = Math.max(0, Math.min(1, ratio))
+    if (nextRatio === 1) {
+      offsetRef.current = 0
+      setProgressRatio(0)
+      setPlaying(false)
+      return
+    }
+    offsetRef.current = nextRatio * buffer.duration
+    setProgressRatio(nextRatio)
+    if (wasPlaying) startSource()
   }
 
   const togglePlay = async () => {
     if (organisationId === null) return
     setAudioError(false)
-    const el = audioRef.current
-    if (el === null) return
-
-    if (objectUrlRef.current !== null) {
-      el.playbackRate = playbackRate
-      if (playing) {
-        el.pause()
-      } else {
-        try {
-          await el.play()
-        } catch {
-          if (mountedRef.current) setAudioError(true)
-        }
-      }
+    if (sourceRef.current !== null) {
+      offsetRef.current = position()
+      setProgressRatio(offsetRef.current / (bufferRef.current?.duration ?? 1))
+      stopSource()
+      setPlaying(false)
       return
     }
 
@@ -134,30 +203,38 @@ function VoiceNotePlayerInner({ attachment, organisationId }: VoiceNotePlayerPro
     abortRef.current = abort
     setLoadingAudio(true)
     try {
-      const { data } = await coreApi().GET(
-        '/organisations/{organisation_id}/workspace/attachments/{attachment_id}',
-        {
-          params: { path: { organisation_id: organisationId, attachment_id: attachment.id } },
-          signal: abort.signal,
-        }
-      )
-      const href = safeHttpsDownloadUrl(data?.downloadUrl)
-      if (href === null) throw new Error('voice-note-unavailable')
-      const blob = await loadVoiceNoteBlob(href, attachment, abort.signal)
+      // Create/resume during the user gesture, before fetching or decoding the attachment.
+      const context = contextRef.current ?? new AudioContext()
+      contextRef.current = context
+      await context.resume()
       if (abort.signal.aborted || !mountedRef.current) return
-      const createdUrl = URL.createObjectURL(blob)
-      objectUrlRef.current = createdUrl
-      el.src = createdUrl
-      el.playbackRate = playbackRate
-      await el.play()
+      if (bufferRef.current === null) {
+        const { data } = await coreApi().GET(
+          '/organisations/{organisation_id}/workspace/attachments/{attachment_id}',
+          {
+            params: { path: { organisation_id: organisationId, attachment_id: attachment.id } },
+            signal: abort.signal,
+          }
+        )
+        const href = safeHttpsDownloadUrl(data?.downloadUrl)
+        if (href === null) throw new Error('voice-note-unavailable')
+        const blob = await loadVoiceNoteBlob(href, attachment, abort.signal)
+        if (abort.signal.aborted || !mountedRef.current) return
+        const buffer = await context.decodeAudioData(await blob.arrayBuffer())
+        if (abort.signal.aborted || !mountedRef.current) return
+        bufferRef.current = buffer
+        setAudioReady(true)
+      }
+      if (abort.signal.aborted || !mountedRef.current) return
+      startSource()
     } catch {
       if (!abort.signal.aborted && mountedRef.current) {
+        stopSource()
+        setPlaying(false)
         setAudioError(true)
       }
     } finally {
-      if (abortRef.current === abort && mountedRef.current) {
-        setLoadingAudio(false)
-      }
+      if (abortRef.current === abort && mountedRef.current) setLoadingAudio(false)
     }
   }
 
@@ -218,25 +295,6 @@ function VoiceNotePlayerInner({ attachment, organisationId }: VoiceNotePlayerPro
       data-testid="voice-note-player"
       className="flex max-w-[384px] flex-col gap-2 rounded-lg border border-c-border bg-c-sunken p-3"
     >
-      {/* Hidden native media element drives decoded Blob playback while custom controls stay CSP-clean */}
-      {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-      <audio
-        ref={audioRef}
-        preload="none"
-        onPlay={() => setPlaying(true)}
-        onPause={() => setPlaying(false)}
-        onEnded={() => {
-          setPlaying(false)
-          setProgressRatio(0)
-        }}
-        onTimeUpdate={(event) => {
-          const media = event.currentTarget
-          if (Number.isFinite(media.duration) && media.duration > 0) {
-            setProgressRatio(Math.min(1, Math.max(0, media.currentTime / media.duration)))
-          }
-        }}
-        className="hidden"
-      />
       <div className="flex items-center gap-2">
         <button
           type="button"
@@ -280,6 +338,18 @@ function VoiceNotePlayerInner({ attachment, organisationId }: VoiceNotePlayerPro
               />
             ))}
           </div>
+          <input
+            type="range"
+            data-testid="voice-note-seek"
+            aria-label={copy.seek}
+            min={0}
+            max={1}
+            step={0.01}
+            value={progressRatio}
+            disabled={!audioReady}
+            onChange={(event) => seek(Number(event.currentTarget.value))}
+            className="w-full accent-c-accent"
+          />
           <div className="flex items-center justify-between gap-2 text-xs text-c-ink-3">
             <span className="truncate">{cleanText(attachment.filename, 80)}</span>
             <span className="shrink-0 font-mono tabular-nums">

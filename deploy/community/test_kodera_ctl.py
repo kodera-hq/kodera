@@ -582,6 +582,63 @@ class KoderaCtlUpgradeAndRollbackTests(unittest.TestCase):
             with self.assertRaises(ctl.CtlBackupError):
                 ctl.capture_running_images(ctx, broken_existing)
 
+    def test_post_checkout_admission_routes_are_rewritten_before_recovery_postflight(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="kodera-ctl-post-checkout-") as tmp:
+            stack = Path(tmp).resolve() / "stack"
+            _populate_stack_dir(stack)
+            env_file = stack / ".env"
+            env_file.write_text(ctl._make_valid_test_env_text(), encoding="utf-8")
+            env_file.chmod(0o600)
+            ctx = ctl.preflight_stack(
+                env_file=env_file, stack_dir=stack, skip_preflight_http=True,
+                invoke_deploy_cli=False,
+            )
+            (stack / "compose.yaml").write_bytes((stack / "docker-compose.yml").read_bytes())
+            checked_out = ctl._capture_recovery_config(ctx)
+            self.assertEqual(set(checked_out), set(ctl.RECOVERY_CONFIG_FILES))
+            # A standalone backup made before checkout must survive subsequent upgrade snapshots.
+            previous = {
+                name: payload.replace(b"api-admission:8080", b"server:8000")
+                for name, payload in checked_out.items()
+            }
+            ctl._restore_recovery_config(ctx, previous)
+            prior_backup = ctl.create_backup(ctx, runner=_RecordingRunner())
+            ctl._restore_recovery_config(ctx, checked_out)
+            for name in ("Caddyfile", "Caddyfile.split"):
+                self.assertIn(b"api-admission:8080", (stack / name).read_bytes())
+
+            def assert_routing(_runner):
+                for name in ("Caddyfile", "Caddyfile.split"):
+                    payload = (stack / name).read_bytes()
+                    self.assertNotIn(b"api-admission:8080", payload)
+                    self.assertIn(b"server:8000", payload)
+
+            runner = _RecordingRunner(
+                omit_ps_services={"api-admission"}, fail_on_subcommand="migrate",
+                on_caddy_start=assert_routing,
+            )
+            def restored_http(url, timeout):
+                assert_routing(runner)
+                if url.endswith("/health/live"):
+                    return ctl.HttpResponseData(200, b'{"status":"alive"}')
+                if url.endswith("/health/ready"):
+                    return ctl.HttpResponseData(200, b'{"status":"ready","database":"reachable"}')
+                if url.endswith("/_matrix/client/versions"):
+                    return ctl.HttpResponseData(200, b'{"versions":["v1.11"]}')
+                return ctl.HttpResponseData(404, b"{}")
+
+            result = ctl.execute_upgrade(
+                env_file=env_file, stack_dir=stack, runner=runner,
+                skip_preflight_http=True, skip_webrtc_probe=True,
+                http_fetcher=restored_http, invoke_deploy_cli=False,
+            )
+            self.assertEqual(result["status"], "auto_rolled_back")
+            self.assertTrue(runner.caddy_open)
+            self.assertEqual(ctl._load_recovery_config(prior_backup), previous)
+            latest = ctl.resolve_and_verify_backup(stack, str(result["backup_id"]))
+            self.assertEqual(latest.manifest["images"]["api-admission"], {"state": "new_service"})
+            self.assertEqual(ctl._load_recovery_config(latest), checked_out)
+
     def test_upgrade_from_stack_without_new_service_and_rollback_removes_it(
         self,
     ) -> None:

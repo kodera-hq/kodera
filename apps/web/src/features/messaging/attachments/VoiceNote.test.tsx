@@ -2,6 +2,10 @@ import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import '../../../i18n'
+import {
+  FakeVoiceAudioContext,
+  installVoiceAudioContext,
+} from '../../../../tests/fakeVoiceAudioContext'
 import { MessagingOrganisation } from '../organisationContext'
 import { AttachmentQueue } from './attachmentQueue'
 import { MessageAttachments } from './MessageAttachments'
@@ -27,7 +31,9 @@ const ORG_ID = '00000000-0000-7000-8000-000000000099'
 const ATTACHMENT_ID = '00000000-0000-7000-8000-000000000077'
 const OGG_BYTES = new Uint8Array([0x4f, 0x67, 0x67, 0x53, 0x00, 0x02, 0x00, 0x00])
 const WEBM_BYTES = new Uint8Array([0x1a, 0x45, 0xdf, 0xa3, 0x9f, 0x42, 0x86, 0x81])
-const MP4_BYTES = new Uint8Array([0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x4d, 0x34, 0x41, 0x20])
+const MP4_BYTES = new Uint8Array([
+  0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x4d, 0x34, 0x41, 0x20,
+])
 const UPLOADED_ATTACHMENT = {
   id: ATTACHMENT_ID,
   filename: 'note.ogg',
@@ -163,12 +169,10 @@ describe('Async Voice Notes preflight, recording guardrail, playback, and AI tra
     })
   })
 
-  it('plays presigned voice-note Blob, revokes object URL on cleanup, and handles 403/200 AI transcription', async () => {
+  it('decodes presigned voice notes, closes the context on cleanup, and handles 403/200 transcription', async () => {
     const user = userEvent.setup()
-    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:https://app.kodera.io/voice-note-1')
-    const revokeSpy = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined)
-    const playSpy = vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined)
-    vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined)
+    installVoiceAudioContext()
+    const createUrl = vi.spyOn(URL, 'createObjectURL')
 
     getMock.mockResolvedValue({
       data: {
@@ -219,7 +223,9 @@ describe('Async Voice Notes preflight, recording guardrail, playback, and AI tra
 
     expect(screen.getByTestId('voice-note-player')).toBeInTheDocument()
     await user.click(screen.getByTestId('voice-note-play-toggle'))
-    await waitFor(() => expect(playSpy).toHaveBeenCalled())
+    await waitFor(() =>
+      expect(FakeVoiceAudioContext.instances[0]?.sources[0]?.start).toHaveBeenCalled()
+    )
     expect(getFromStorageMock).toHaveBeenCalledWith(
       'https://storage.kodera.io/voice-note.ogg',
       expect.objectContaining({ credentials: 'omit', referrerPolicy: 'no-referrer' })
@@ -275,7 +281,8 @@ describe('Async Voice Notes preflight, recording guardrail, playback, and AI tra
       </MessagingOrganisation.Provider>
     )
     expect(screen.queryByTestId('voice-note-transcript')).toBeNull()
-    expect(revokeSpy).toHaveBeenCalledWith('blob:https://app.kodera.io/voice-note-1')
+    expect(FakeVoiceAudioContext.instances[0]?.close).toHaveBeenCalledOnce()
+    expect(createUrl).not.toHaveBeenCalled()
 
     view.unmount()
   })

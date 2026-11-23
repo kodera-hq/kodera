@@ -315,7 +315,7 @@ export class DraftMemory {
           await vault.deleteDraft(roomId).catch(() => undefined)
           return
         }
-        await vault.putDraft(roomId, currentBoundary, text, threadText)
+        await vault.putDraft(roomId, currentBoundary, text, threadText).catch(() => undefined)
         return
       }
 
@@ -458,7 +458,7 @@ export class DraftMemory {
       if (vaultSupported(this.idb)) {
         const vault = await this.ensureVault(owner)
         if (vault === null || owner !== this.owner || this.terminal(owner)) return
-        const payload = await vault.readDraft(roomId)
+        const payload = await vault.readDraft(roomId).catch(() => null)
         if (payload !== null) {
           restored = { text: payload.text, threadText: payload.threadText }
         }

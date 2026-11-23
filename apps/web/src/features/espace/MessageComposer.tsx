@@ -387,8 +387,10 @@ function MessageComposerView({
             payload,
             createdBy: viewerId,
             createdByName: authorName,
+            requireClientPollId: true,
           })
-          Promise.resolve(store.send(roomId, pollFallbackBody(payload), { poll: payload })).catch(
+          const wirePayload: PollWirePayload = { ...payload, clientPollId: optimistic.id }
+          Promise.resolve(store.send(roomId, pollFallbackBody(payload), { poll: wirePayload })).catch(
             () => {
               pollStore.removeLocalPoll(roomId, optimistic.id)
               const sendErr = pollMessages[locale].errSendFailed

@@ -51,6 +51,8 @@ class PollRuntimeStore {
   #closed = new Set<string>()
   #pendingVotes = new Map<string, Map<string, readonly number[]>>()
   #pendingCloses = new Set<string>()
+  #requiresClientId = new Set<string>()
+  #knownEvents = new Map<string, Set<string>>()
   #version = 0
   #listeners = new Set<() => void>()
   #serial = 0
@@ -76,8 +78,12 @@ class PollRuntimeStore {
     readonly createdBy: string
     readonly createdByName: string
     readonly createdAt?: number
+    readonly requireClientPollId?: boolean
   }): ChannelPoll {
     const id = `local-poll-${++this.#serial}-${Date.now()}`
+    if (params.requireClientPollId === true) {
+      this.#requiresClientId.add(id)
+    }
     const poll = createChannelPoll({
       id,
       roomId: params.roomId,
@@ -106,6 +112,7 @@ class PollRuntimeStore {
     this.#closed.delete(pollId)
     this.#pendingVotes.delete(pollId)
     this.#pendingCloses.delete(pollId)
+    this.#requiresClientId.delete(pollId)
     this.#emit()
   }
 
@@ -170,9 +177,11 @@ class PollRuntimeStore {
         this.#closed.delete(local.id)
         this.#pendingVotes.delete(local.id)
         this.#pendingCloses.delete(local.id)
+        this.#requiresClientId.delete(local.id)
       }
       this.#localPolls.delete(roomId)
     }
+    this.#knownEvents.delete(roomId)
     this.#emit()
   }
 
@@ -182,7 +191,8 @@ class PollRuntimeStore {
       this.#overrides.size === 0 &&
       this.#closed.size === 0 &&
       this.#pendingVotes.size === 0 &&
-      this.#pendingCloses.size === 0
+      this.#pendingCloses.size === 0 &&
+      this.#knownEvents.size === 0
     ) {
       return
     }
@@ -191,6 +201,8 @@ class PollRuntimeStore {
     this.#closed.clear()
     this.#pendingVotes.clear()
     this.#pendingCloses.clear()
+    this.#requiresClientId.clear()
+    this.#knownEvents.clear()
     this.#emit()
   }
 
@@ -203,9 +215,13 @@ class PollRuntimeStore {
     if (roomId === null) return EMPTY_POLLS
     const synced: ChannelPoll[] = []
     const roomLocals = [...(this.#localPolls.get(roomId) ?? EMPTY_POLLS)]
+    const knownEvents = this.#knownEvents.get(roomId) ?? new Set<string>()
+    this.#knownEvents.set(roomId, knownEvents)
 
     for (const msg of timeline) {
       if (msg.redacted || msg.poll === undefined) continue
+      const alreadyIngested = knownEvents.has(msg.eventId)
+      knownEvents.add(msg.eventId)
 
       const initialVotesByOptionIndex: Record<number, string[]> = {}
       if (msg.pollResponses !== undefined) {
@@ -242,12 +258,27 @@ class PollRuntimeStore {
         }
       }
 
-      // Migrate optimistic `local-poll-*` state onto the synced Matrix `eventId` on echo.
-      const matchIdx = roomLocals.findIndex(
-        (local) => local.createdBy === msg.sender && local.question === msg.poll!.question
-      )
+      // Reconcile strictly by outbound `clientPollId` when bound (or, for uncorrelated callers,
+      // only for non-historical events at/after `local.createdAt` matching the full payload tuple).
+      const echoedClientId = msg.poll.clientPollId
+      const payloadMatches = (local: ChannelPoll): boolean =>
+        local.question === msg.poll!.question &&
+        local.allowMultiple === msg.poll!.allowMultiple &&
+        local.options.length === msg.poll!.options.length &&
+        local.options.every((option, index) => option.label === msg.poll!.options[index])
+      const matchIdx = roomLocals.findIndex((local) => {
+        if (alreadyIngested || local.createdBy !== msg.sender || !payloadMatches(local)) {
+          return false
+        }
+        if (echoedClientId !== undefined) {
+          return local.id === echoedClientId
+        }
+        if (this.#requiresClientId.has(local.id)) return false
+        return msg.ts >= local.createdAt
+      })
       if (matchIdx !== -1) {
         const matchedLocal = roomLocals.splice(matchIdx, 1)[0]!
+        this.#requiresClientId.delete(matchedLocal.id)
         const localOverrides = this.#overrides.get(matchedLocal.id)
         if (localOverrides !== undefined) this.#overrides.set(msg.eventId, localOverrides)
         this.#overrides.delete(matchedLocal.id)

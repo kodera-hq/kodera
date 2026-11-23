@@ -31,10 +31,28 @@ from apps.workspaces.channel_sets import lock_workspace
 from apps.workspaces.quotas import violation
 
 from .import_parsers import MAX_ARCHIVE, ImportedMessage, Item, Parsed, parse
-from .member_matching import inert_author_attribution, match_external_users
+from .member_matching import MemberMatchResult, inert_author_attribution, match_external_users
 from .models import ImportBatch, ImportedObject, WorkspaceCutoff
 from .services import admin, audit, read_admin, require_channel_post
 from .wire import ExtensionRefusedError
+
+MAX_RESPONSE_MEMBER_MAPPINGS = 250
+
+
+def response_member_mappings(
+    member_match: MemberMatchResult, warnings: list[str]
+) -> list[dict[str, Any]]:
+    """Bound wire reports while retaining the complete match result for attribution.
+
+    OpenAPI 0.55.0 has a closed warning enum: use its omission warning rather than
+    introducing an incompatible truncation code. Archive order is deterministic.
+    """
+    if (
+        len(member_match.mappings) > MAX_RESPONSE_MEMBER_MAPPINGS
+        and "unsupported_assets_omitted" not in warnings
+    ):
+        warnings.append("unsupported_assets_omitted")
+    return [mapping.to_dict() for mapping in member_match.mappings[:MAX_RESPONSE_MEMBER_MAPPINGS]]
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -307,7 +325,7 @@ def preview(
                 "already_imported_reused": already_imported_reused,
                 "omitted_assets": parsed.omitted_assets,
             },
-            "member_mappings": [mapping.to_dict() for mapping in member_match.mappings],
+            "member_mappings": response_member_mappings(member_match, warnings),
             "warnings": warnings,
         }
 
@@ -871,7 +889,7 @@ def replay_matrix(
         "replayed_messages": replayed_count,
         "reused_messages": reused_count,
         "remaining": max(0, len(parsed.messages) - len(outcomes)),
-        "member_mappings": [mapping.to_dict() for mapping in member_match.mappings],
+        "member_mappings": response_member_mappings(member_match, warnings),
         "warnings": warnings,
         "objects": outcomes,
     }
@@ -1181,7 +1199,7 @@ def execute(
         "reused": reused_count,
         "remaining": max(0, len(parsed.items) - len(outcomes)),
         "omitted_assets": parsed.omitted_assets,
-        "member_mappings": [mapping.to_dict() for mapping in member_match.mappings],
+        "member_mappings": response_member_mappings(member_match, warnings),
         "warnings": warnings,
         "objects": outcomes,
     }

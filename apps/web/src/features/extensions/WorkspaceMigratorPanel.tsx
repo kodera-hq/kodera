@@ -154,7 +154,11 @@ export function WorkspaceMigratorPanel({
     const payloadBase =
       archiveMode === 'inline'
         ? { source, inlineArchiveBase64: inlineBase64, ...(channelMap ? { channelMap } : {}) }
-        : { source, attachmentId: attachmentId.trim().toLowerCase(), ...(channelMap ? { channelMap } : {}) }
+        : {
+            source,
+            attachmentId: attachmentId.trim().toLowerCase(),
+            ...(channelMap ? { channelMap } : {}),
+          }
 
     setImportBusy(true)
     try {
@@ -375,7 +379,7 @@ export function WorkspaceMigratorPanel({
                 className="rounded-md border border-c-border-input bg-c-surface px-3 py-2 text-sm text-c-ink focus-visible:ring focus-visible:outline-hidden"
               />
               {selectedFileName ? (
-                <span className="font-mono text-xs text-c-ink-3">{selectedFileName}</span>
+                <span className="break-all font-mono text-xs text-c-ink-3">{selectedFileName}</span>
               ) : null}
             </div>
           ) : (
@@ -483,7 +487,7 @@ export function WorkspaceMigratorPanel({
                 <span className="text-sm font-semibold text-c-ink">{copy.dryRunTitle}</span>
                 <StatusPill state="info">{dryRunReport.source}</StatusPill>
               </div>
-              <p className="font-mono text-xs text-c-ink-3">
+              <p className="break-all font-mono text-xs text-c-ink-3">
                 {copy.shaLabel} {dryRunReport.archive_sha256}
               </p>
 
@@ -541,7 +545,9 @@ export function WorkspaceMigratorPanel({
                       >
                         <span className="font-medium text-c-ink">
                           {mapping.display_name}{' '}
-                          <span className="font-mono text-c-ink-3">({mapping.external_id})</span>
+                          <span className="break-all font-mono text-c-ink-3">
+                            ({mapping.external_id})
+                          </span>
                         </span>
                         <StatusPill
                           state={mapping.matched_membership_id ? 'success' : 'neutral'}
@@ -771,11 +777,13 @@ export function WorkspaceMigratorPanel({
                     key={bridge.id}
                     className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-c-border-soft bg-c-surface px-3 py-2 text-xs"
                   >
-                    <div className="flex flex-col gap-1">
-                      <span className="font-mono font-semibold text-c-ink">
+                    <div className="flex min-w-0 flex-col gap-1">
+                      <span className="break-all font-mono font-semibold text-c-ink">
                         {bridge.source} • {bridge.externalWorkspaceId}/{bridge.externalChannelId}
                       </span>
-                      <span className="font-mono text-c-ink-3">{bridge.outboundEndpoint}</span>
+                      <span className="break-all font-mono text-c-ink-3">
+                        {bridge.outboundEndpoint}
+                      </span>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
                       <StatusPill state={bridge.active ? 'success' : 'neutral'}>

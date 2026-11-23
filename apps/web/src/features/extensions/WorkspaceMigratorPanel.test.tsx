@@ -181,6 +181,11 @@ describe('WorkspaceMigratorPanel & lazy ExtensionsCatalogPanel integration', () 
 
       const reportRegion = await screen.findByTestId('migrator-dry-run-report')
       expect(within(reportRegion).getByText('18')).toBeInTheDocument()
+      expect(
+        within(reportRegion).getByText(
+          /000000000000000000000000000000000000000000000000000000000000a1b2/
+        )
+      ).toHaveClass('break-all')
       expect(within(reportRegion).getByText('external_admin_privilege_ignored')).toBeInTheDocument()
       expect(within(reportRegion).getByText(/Alice Martin/i)).toBeInTheDocument()
       expect(within(reportRegion).getByText(/local role preserved/i)).toBeInTheDocument()

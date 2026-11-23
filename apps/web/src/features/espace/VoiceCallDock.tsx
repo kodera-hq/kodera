@@ -51,7 +51,6 @@ import { pollMessages } from '../polls/pollMessages'
 import { pollStore } from '../polls/pollStore'
 import { profileMessages } from '../profile/profileMessages'
 import { usePassportServices } from '../profile/passportContext'
-import { SoundboardPopover } from '../sounds/SoundboardPopover'
 import { studioMessages } from '../workspace/studioMessages'
 import type { Workspace } from '../workspace/workspace'
 import type { CallProblem, CallQuality, VideoProblem } from './audio/call'
@@ -124,6 +123,9 @@ const QUALITY_KEY: Record<CallQuality, MessageKey> = {
 const VideoStage = lazy(() => import('./video/VideoStage'))
 // Loaded only when the member opens the in-call companion chat pane/drawer.
 const LazyCallCompanionChatDrawer = lazy(() => import('./CallCompanionChatDrawer'))
+const LazySoundboardPopover = lazy(() =>
+  import('../sounds/SoundboardPopover').then((module) => ({ default: module.SoundboardPopover }))
+)
 
 const COMPANION_COPY = {
   fr: {
@@ -1247,11 +1249,13 @@ function VoiceCallDockView({
                 {...(dockLayout === 'studio'
                   ? {
                       soundboard: (
-                        <SoundboardPopover
-                          roomId={callSnapshot.roomId}
-                          listenOnly={callSnapshot.listenOnly}
-                          deafened={callSnapshot.deafened}
-                        />
+                        <Suspense fallback={null}>
+                          <LazySoundboardPopover
+                            roomId={callSnapshot.roomId}
+                            listenOnly={callSnapshot.listenOnly}
+                            deafened={callSnapshot.deafened}
+                          />
+                        </Suspense>
                       ),
                     }
                   : {})}
