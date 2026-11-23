@@ -162,6 +162,7 @@ export const DEMO_ROUTES: readonly string[] = [
   'POST /organisations/:organisation_id/orders',
   'POST /organisations/:organisation_id/dpa',
   'POST /organisations/:organisation_id/tenants',
+  'POST /organisations/:organisation_id/support/bug-reports',
   'POST /support/tickets',
   'POST /community/support/tickets',
   'POST /invitations/:invitation_id/actions/resend',
@@ -804,6 +805,18 @@ export const handlers: HttpHandler[] = [
   http.delete(
     `${BASE}/organisations/:organisation_id/enrolment-tokens/:enrolment_token_id`,
     () => new HttpResponse(null, { status: 204, headers: headers() })
+  ),
+  http.post(`${BASE}/organisations/:organisation_id/support/bug-reports`, () =>
+    HttpResponse.json(
+      {
+        id: crypto.randomUUID(),
+        status: 'queued',
+        dedup_fingerprint: '0'.repeat(64),
+        occurrences: 1,
+        created_at: now().toISOString(),
+      } satisfies components['schemas']['BugReportReceipt'],
+      { status: 201, headers: { ...headers(), 'Idempotency-Replayed': 'false' } }
+    )
   ),
   // The workspace (11-workspace.md): the starter template, which names no company, already
   // created for the demo's organisation; creating it again changes nothing, as the API answers.
