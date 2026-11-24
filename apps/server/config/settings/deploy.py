@@ -26,6 +26,8 @@ from config.environment import (
     intake_admitted,
     ios_app_ids,
     legal_text_origin,
+    livekit_room_service_config,
+    matrix_domain_suffix,
     matrix_replay_transport_factory,
     mutation_rate_per_minute,
     staff_admin_hosts,
@@ -42,6 +44,7 @@ from config.environment import (
 from config.workspace_features import (
     ai_gateway_enabled,
     ai_seal_key,
+    calendar_seal_key,
     channel_governance_enabled,
     confidential_relay_enabled,
     media_gateway_socket,
@@ -78,6 +81,8 @@ INSTALLED_APPS = [
     "apps.docs",
     "apps.e2ee",
     "apps.confidential",
+    "apps.ai_gateway",
+    "apps.calendar",
 ]
 KODERA_LOOPBACK_ISSUERS = False
 KODERA_AUTH_TRUST = auth_trust(os.environ)
@@ -195,13 +200,21 @@ KODERA_AI_SEAL_KEY = ai_seal_key(os.environ)
 KODERA_AI_MISTRAL_API_KEY = ai_mistral_api_key(os.environ)
 KODERA_AI_ACTOR_SUBJECTS = ai_actor_subjects(os.environ)
 KODERA_AI_CLIENT_IDS = ai_client_ids(os.environ)
+KODERA_CALENDAR_SEAL_KEY = calendar_seal_key(os.environ)
 
 # Optional Matrix worker settings for dispatch_extension_coexistence; unset, the command refuses
 # to run rather than silently draining nothing.
 KODERA_SYNAPSE_URL = synapse_url(os.environ)
 KODERA_SYNAPSE_ADMIN_TOKEN = synapse_admin_token(os.environ)
 KODERA_SYNAPSE_SERVER_NAME = synapse_server_name(os.environ)
+KODERA_MATRIX_DOMAIN_SUFFIX = matrix_domain_suffix(os.environ)
 KODERA_MATRIX_REPLAY_TRANSPORT_FACTORY = matrix_replay_transport_factory(os.environ)
+(
+    KODERA_LIVEKIT_ROOM_SERVICE_URL,
+    KODERA_LIVEKIT_API_KEY,
+    KODERA_LIVEKIT_API_SECRET,
+) = livekit_room_service_config(os.environ)
+KODERA_LIVEKIT_ALLOW_INTERNAL_URL = os.environ.get("KODERA_LIVEKIT_ALLOW_INTERNAL_URL") == "true"
 
 # Operator attests live authority and edge request-scope configuration before sharing.
 

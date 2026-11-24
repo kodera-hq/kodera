@@ -50,6 +50,14 @@ READERS = {
     "membership:read": DIRECTORY_ROLES,
     # getHelpContext: every tenant role.
     "support_ticket:read": frozenset({"org_owner", "org_admin", "org_billing", "org_member"}),
+    # Community workspace monetization (Volet A boosts & Volet B VIP passes / Connect / DAC7).
+    "workspace_monetization:read": frozenset(
+        {"org_owner", "org_admin", "org_billing", "org_member"}
+    ),
+    "workspace_monetization:create": frozenset({"org_owner", "org_admin"}),
+    "workspace_monetization:act": frozenset(
+        {"org_owner", "org_admin", "org_billing", "org_member"}
+    ),
 }
 
 

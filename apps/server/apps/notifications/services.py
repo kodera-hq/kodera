@@ -497,3 +497,131 @@ def record_moderation(*, organisation_id: UUID, membership_id: UUID) -> None:
             kind="moderation",
             resource_id=membership_id,
         )
+
+
+def disarm_rehearsal_outbound(
+    *,
+    now: datetime,
+    excluded_organisation_ids: Sequence[UUID] = (),
+    excluded_user_ids: Sequence[UUID] = (),
+) -> dict[str, int]:
+    """Drain pending/in-flight push outbox rows and revoke push subscriptions in rehearsal DB."""
+    if not connection.in_atomic_block:
+        raise RuntimeError("disarm_rehearsal_outbound requires an enclosing atomic transaction")
+
+    outbox_qs = PushOutbox.objects.filter(state__in=("pending", "in_flight"))
+    sub_qs = PushSubscription.objects.filter(revoked_at__isnull=True)
+    if excluded_organisation_ids:
+        outbox_qs = outbox_qs.exclude(subscription__organisation_id__in=excluded_organisation_ids)
+        sub_qs = sub_qs.exclude(organisation_id__in=excluded_organisation_ids)
+    if excluded_user_ids:
+        outbox_qs = outbox_qs.exclude(subscription__membership__user_id__in=excluded_user_ids)
+        sub_qs = sub_qs.exclude(membership__user_id__in=excluded_user_ids)
+
+    push_outbox_disarmed = outbox_qs.update(
+        state="obsolete",
+        lease_id=None,
+        lease_expires_at=None,
+        updated_at=now,
+    )
+    push_subscriptions_revoked = sub_qs.update(
+        revoked_at=now,
+        updated_at=now,
+    )
+    return {
+        "push_outbox_disarmed": push_outbox_disarmed,
+        "push_subscriptions_revoked": push_subscriptions_revoked,
+    }
+
+
+def count_residual_rows_for_organisation(*, organisation_id: UUID) -> int:
+    """Count any remaining notification, push subscription, outbox, or presence rows for an erased org."""
+    return (
+        Notification.objects.filter(organisation_id=organisation_id).count()
+        + PushOutbox.objects.filter(subscription__organisation_id=organisation_id).count()
+        + PushSubscription.objects.filter(organisation_id=organisation_id).count()
+        + PresenceLease.objects.filter(organisation_id=organisation_id).count()
+    )
+
+
+def count_residual_rows_for_user(*, user_id: UUID) -> int:
+    """Count any remaining notification, push subscription, outbox, or presence rows for an erased user."""
+    return (
+        Notification.objects.filter(membership__user_id=user_id).count()
+        + PushOutbox.objects.filter(subscription__membership__user_id=user_id).count()
+        + PushSubscription.objects.filter(membership__user_id=user_id).count()
+        + PresenceLease.objects.filter(membership__user_id=user_id).count()
+    )
+
+
+def purge_rows_for_user(*, user_id: UUID) -> int:
+    """Delete notification, push outbox, push subscription, and presence rows for `user_id`."""
+    c_outbox, _ = PushOutbox.objects.filter(subscription__membership__user_id=user_id).delete()
+    c_sub, _ = PushSubscription.objects.filter(membership__user_id=user_id).delete()
+    c_notif, _ = Notification.objects.filter(membership__user_id=user_id).delete()
+    c_pres, _ = PresenceLease.objects.filter(membership__user_id=user_id).delete()
+    return int(c_outbox + c_sub + c_notif + c_pres)
+
+
+def drain_snapshot_in_flight_leases(*, now: datetime) -> int:
+    """Drain frozen `state='in_flight'` push outbox leases from a point-in-time backup snapshot."""
+    if not connection.in_atomic_block:
+        raise RuntimeError(
+            "drain_snapshot_in_flight_leases requires an enclosing atomic transaction"
+        )
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT DISTINCT s.organisation_id FROM notifications_pushoutbox q "
+            "JOIN notifications_pushsubscription s ON s.id = q.subscription_id "
+            "JOIN orgs_privacyerasure pe ON pe.organisation_reference = s.organisation_id "
+            "WHERE q.state = 'in_flight' "
+            "ORDER BY s.organisation_id"
+        )
+        fenced_orgs = [row[0] for row in cursor.fetchall()]
+
+        cursor.execute(
+            "SELECT DISTINCT m.user_id FROM notifications_pushoutbox q "
+            "JOIN notifications_pushsubscription s ON s.id = q.subscription_id "
+            "JOIN orgs_membership m ON m.id = s.membership_id "
+            "JOIN orgs_accounterasure ae ON ae.user_reference = m.user_id "
+            "WHERE q.state = 'in_flight' "
+            "ORDER BY m.user_id"
+        )
+        fenced_users = [row[0] for row in cursor.fetchall()]
+
+        for org_id in fenced_orgs:
+            cursor.execute(
+                "INSERT INTO public.retention_worker_context "
+                "VALUES (pg_backend_pid(), txid_current(), 'erase', 'orgs_organisation', %s, '{}')",
+                [org_id],
+            )
+        for uid in fenced_users:
+            cursor.execute(
+                "INSERT INTO public.retention_worker_context "
+                "VALUES (pg_backend_pid(), txid_current(), 'account', 'identity_user', %s, '{}')",
+                [uid],
+            )
+        try:
+            cursor.execute(
+                "UPDATE notifications_pushoutbox "
+                "SET state = 'obsolete', lease_id = NULL, lease_expires_at = NULL, updated_at = %s "
+                "WHERE state = 'in_flight'",
+                [now],
+            )
+            drained = int(cursor.rowcount or 0)
+        finally:
+            for uid in fenced_users:
+                cursor.execute(
+                    "DELETE FROM public.retention_worker_context "
+                    "WHERE backend = pg_backend_pid() AND transaction = txid_current() "
+                    "  AND purpose = 'account' AND source_table = 'identity_user' AND source_id = %s",
+                    [uid],
+                )
+            for org_id in fenced_orgs:
+                cursor.execute(
+                    "DELETE FROM public.retention_worker_context "
+                    "WHERE backend = pg_backend_pid() AND transaction = txid_current() "
+                    "  AND purpose = 'erase' AND source_table = 'orgs_organisation' AND source_id = %s",
+                    [org_id],
+                )
+    return drained

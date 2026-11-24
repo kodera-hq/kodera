@@ -6,7 +6,13 @@
 
 import { http, HttpResponse, type HttpHandler } from 'msw/http'
 import type { components } from '@/api/schema'
+import { ORGANISATION_ID } from './seed'
 import { problem } from '../problem'
+
+type WorkspaceSecurityPosture = components['schemas']['WorkspaceSecurityPosture']
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const DEMO_WORKSPACE_ID = '5eed0000-0000-4000-8000-000000000099'
 
 export const GOVERNANCE_DEMO_ROUTES: readonly string[] = [
   'GET /organisations/:organisation_id/workspace/profile',
@@ -25,7 +31,82 @@ export const GOVERNANCE_DEMO_ROUTES: readonly string[] = [
   'POST /organisations/:organisation_id/workspace/partner-agreements/:agreement_id/actions/transition',
   'POST /organisations/:organisation_id/workspace/guest-grants',
   'POST /organisations/:organisation_id/workspace/guest-grants/:grant_id/actions/revoke',
+  'GET /organisations/:organisation_id/workspace/security-posture',
+  'POST /organisations/:organisation_id/workspace/security-posture/actions/remediate',
 ]
+
+function demoSecurityPosture(rawOrganisationId: unknown): WorkspaceSecurityPosture {
+  const organisationId =
+    typeof rawOrganisationId === 'string' && UUID_PATTERN.test(rawOrganisationId)
+      ? rawOrganisationId
+      : ORGANISATION_ID
+  return {
+    organisation_id: organisationId,
+    workspace_id: DEMO_WORKSPACE_ID,
+    score: 70,
+    max_score: 100,
+    grade: 'C',
+    passing_checks: 4,
+    total_checks: 6,
+    fixable_checks: 2,
+    checks: [
+      {
+        id: 'invite_hygiene',
+        status: 'pass',
+        earned_points: 20,
+        max_points: 20,
+        remediation_action: 'cap_unbounded_invites',
+        fix_available: false,
+        affected_count: 0,
+      },
+      {
+        id: 'sovereign_ai_boundary',
+        status: 'pass',
+        earned_points: 20,
+        max_points: 20,
+        remediation_action: 'enforce_eu_sovereign_ai',
+        fix_available: false,
+        affected_count: 0,
+      },
+      {
+        id: 'security_alert_routing',
+        status: 'warn',
+        earned_points: 0,
+        max_points: 15,
+        remediation_action: 'provision_security_alerts_channel',
+        fix_available: true,
+        affected_count: 1,
+      },
+      {
+        id: 'extension_secret_rotation',
+        status: 'pass',
+        earned_points: 15,
+        max_points: 15,
+        remediation_action: 'rotate_stale_extension_keys',
+        fix_available: false,
+        affected_count: 0,
+      },
+      {
+        id: 'least_privilege_roles',
+        status: 'pass',
+        earned_points: 15,
+        max_points: 15,
+        remediation_action: 'strip_excess_role_permissions',
+        fix_available: false,
+        affected_count: 0,
+      },
+      {
+        id: 'confidential_room_readiness',
+        status: 'warn',
+        earned_points: 0,
+        max_points: 15,
+        remediation_action: 'provision_confidential_channel',
+        fix_available: true,
+        affected_count: 1,
+      },
+    ],
+  }
+}
 
 const BLANK_PROFILE = {
   display_name: '',
@@ -85,5 +166,9 @@ export function governanceDemoHandlers(
     http.post(`${workspace}/partner-agreements/:agreement_id/actions/transition`, refused),
     http.post(`${workspace}/guest-grants`, refused),
     http.post(`${workspace}/guest-grants/:grant_id/actions/revoke`, refused),
+    http.get(`${workspace}/security-posture`, ({ params }) =>
+      HttpResponse.json(demoSecurityPosture(params.organisation_id), { headers: headers() })
+    ),
+    http.post(`${workspace}/security-posture/actions/remediate`, refused),
   ]
 }

@@ -1135,3 +1135,123 @@ def get_completed_attachment(
         size_bytes=row.size_bytes,
         sha256=row.sha256,
     )
+
+
+def list_completed_attachments(
+    *,
+    excluded_organisation_ids: tuple[UUID, ...] = (),
+    excluded_attachment_ids: tuple[UUID, ...] = (),
+) -> tuple[CompletedAttachmentSnapshot, ...]:
+    """Return all completed, non-cancelled attachment snapshots outside erased scopes."""
+    qs = Attachment.objects.filter(completed_at__isnull=False, cancelled_at__isnull=True)
+    if excluded_organisation_ids:
+        qs = qs.exclude(organisation_id__in=excluded_organisation_ids)
+    if excluded_attachment_ids:
+        qs = qs.exclude(id__in=excluded_attachment_ids)
+    return tuple(
+        CompletedAttachmentSnapshot(
+            id=row.id,
+            organisation_id=row.organisation_id,
+            uploader_id=row.uploader_id,
+            channel_id=row.channel_id,
+            room_id=row.room_id,
+            filename=row.filename,
+            content_type=row.content_type,
+            size_bytes=row.size_bytes,
+            sha256=row.sha256,
+        )
+        for row in qs.order_by("organisation_id", "id")
+    )
+
+
+def count_attachments_for_organisation(*, organisation_id: UUID) -> int:
+    """Count remaining attachment rows belonging to `organisation_id`."""
+    return Attachment.objects.filter(organisation_id=organisation_id).count()
+
+
+def count_attachments_by_ids(*, attachment_ids: tuple[UUID, ...]) -> int:
+    """Count remaining attachment rows matching `attachment_ids`."""
+    if not attachment_ids:
+        return 0
+    return Attachment.objects.filter(id__in=attachment_ids).count()
+
+
+def list_personal_attachments_for_user(*, user_id: UUID) -> tuple[dict[str, Any], ...]:
+    """List personal default-community attachment metadata uploaded by `user_id`."""
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT a.id::text, a.organisation_id::text, a.upload_expires_at "
+            "FROM media_attachment a "
+            "JOIN orgs_membership m ON m.id = a.uploader_id "
+            "JOIN orgs_organisation o ON o.id = a.organisation_id "
+            "WHERE m.user_id = %s AND o.is_default_community "
+            "ORDER BY a.id",
+            [user_id],
+        )
+        rows = cursor.fetchall()
+    return tuple(
+        {
+            "id": str(att_id),
+            "organisation_id": str(org_id),
+            "upload_expires_at": exp.isoformat() if exp is not None else None,
+        }
+        for att_id, org_id, exp in rows
+    )
+
+
+def scrub_and_delete_user_attachments_in_account_context(
+    *,
+    user_id: UUID,
+    extra_personal_attachment_ids: tuple[UUID, ...] = (),
+    now: datetime,
+) -> int:
+    """Scrub B2B uploader filenames and delete personal community attachments inside account worker context."""
+    extra = [str(aid) for aid in extra_personal_attachment_ids]
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "UPDATE media_attachment a "
+            "SET filename = 'erased-' || a.id::text || '.bin', updated_at = %s "
+            "FROM orgs_membership m, orgs_organisation o "
+            "WHERE m.id = a.uploader_id "
+            "  AND o.id = a.organisation_id "
+            "  AND m.user_id = %s "
+            "  AND NOT o.is_default_community "
+            "  AND a.filename <> 'erased-' || a.id::text || '.bin'",
+            [now, user_id],
+        )
+        scrubbed = int(cursor.rowcount or 0)
+        cursor.execute(
+            "DELETE FROM media_attachment a "
+            "WHERE a.id::text = ANY(%s) "
+            "   OR EXISTS ("
+            "     SELECT 1 FROM orgs_membership m "
+            "     JOIN orgs_organisation o ON o.id = a.organisation_id "
+            "     WHERE m.id = a.uploader_id AND m.user_id = %s AND o.is_default_community"
+            "   )",
+            [extra, user_id],
+        )
+        deleted = int(cursor.rowcount or 0)
+    return scrubbed + deleted
+
+
+def count_residual_user_attachment_pii(
+    *,
+    user_id: UUID,
+    extra_personal_attachment_ids: tuple[UUID, ...] = (),
+) -> int:
+    """Count remaining personal attachments or unscrubbed B2B filenames for an erased person."""
+    extra = [str(aid) for aid in extra_personal_attachment_ids]
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT count(*) FROM media_attachment a "
+            "LEFT JOIN orgs_membership m ON m.id = a.uploader_id "
+            "LEFT JOIN orgs_organisation o ON o.id = a.organisation_id "
+            "WHERE a.id::text = ANY(%s) "
+            "   OR (m.user_id = %s AND ("
+            "     COALESCE(o.is_default_community, false) "
+            "     OR a.filename <> 'erased-' || a.id::text || '.bin'"
+            "   ))",
+            [extra, user_id],
+        )
+        row = cursor.fetchone()
+    return int(row[0]) if row is not None else 0

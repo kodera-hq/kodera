@@ -106,6 +106,7 @@ KODERA_AI_ACTOR_SUBJECTS: tuple[str, ...] = ()
 KODERA_AI_CLIENT_IDS: tuple[str, ...] = ()
 KODERA_CHANNEL_GOVERNANCE_ENABLED = False
 KODERA_GOVERNANCE_AUTHORITY_CONFIGURED = False
+KODERA_CALENDAR_SEAL_KEY: bytes | None = None
 # Optional Matrix worker settings for dispatch_extension_coexistence (queued Matrix history
 # imports and inbound coexistence deliveries). Each profile that runs the worker reads them from
 # its environment through config.environment's validators; unset, the command refuses to run
@@ -114,7 +115,12 @@ KODERA_GOVERNANCE_AUTHORITY_CONFIGURED = False
 KODERA_SYNAPSE_URL: str | None = None
 KODERA_SYNAPSE_ADMIN_TOKEN: str | None = None
 KODERA_SYNAPSE_SERVER_NAME: str = ""
+KODERA_MATRIX_DOMAIN_SUFFIX: str = "kodera.io"
 KODERA_MATRIX_REPLAY_TRANSPORT_FACTORY: str | None = None
+KODERA_LIVEKIT_ROOM_SERVICE_URL: str | None = None
+KODERA_LIVEKIT_API_KEY: str | None = None
+KODERA_LIVEKIT_API_SECRET: str | None = None
+KODERA_LIVEKIT_ALLOW_INTERNAL_URL: bool = False
 
 from core.db.ee_erasure import install_ee_erasure_key_sync as _install_ee_erasure_key_sync  # noqa: E402
 

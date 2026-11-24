@@ -10,7 +10,6 @@ import { WORKSPACE_COMMAND_EVENT, type WorkspaceCommand } from './WorkspaceMenu'
 import { workspaceMenuCopy } from './workspaceMenuMessages'
 import { registerThemeShare, useActiveThemeShare } from './themeSharing'
 import { ThemeStudioModal } from '../appearance/ThemeStudioModal'
-import { ChannelCreateDialog } from './ChannelCreateDialog'
 import {
   ChannelDocsEditor,
   createChannelDocsWorkspace,
@@ -304,6 +303,9 @@ const LazyExtensionsCatalogPanel = lazy(() =>
   import('../extensions/ExtensionsCatalogPanel').then((module) => ({
     default: module.ExtensionsCatalogPanel,
   }))
+)
+const LazyChannelCreateDialog = lazy(() =>
+  import('./ChannelCreateDialog').then((module) => ({ default: module.ChannelCreateDialog }))
 )
 
 const demoWorkspaceViews = new WeakMap<
@@ -733,35 +735,37 @@ function LiveWorkspace({
         {...(store ? {} : { onReconnect: () => void espace.open() })}
       />
       {createCategory ? (
-        <ChannelCreateDialog
-          open
-          category={createCategory}
-          existingNames={liveWorkspace.categories.flatMap((category) =>
-            category.channels.map((item) => item.name)
-          )}
-          onClose={() => setCreateCategory(null)}
-          onCreate={(name, kind, options) => {
-            const created: WorkspaceChannel & { access: 'members' | 'invite' } = {
-              id: `local-${crypto.randomUUID()}`,
-              name,
-              kind,
-              topic: options.topic,
-              access: options.access,
-              template_key: null,
-              lifecycle: 'active',
-              is_confidential: false,
-              room_state: 'ready',
-            }
-            store?.addChannel?.(created)
-            setLocalChannels((previous) => ({
-              ...previous,
-              [createCategory.id]: [...(previous[createCategory.id] ?? []), created],
-            }))
-            setCreateCategory(null)
-            setCanvas('chat')
-            void navigation.onNavigateChannel(created.id)
-          }}
-        />
+        <Suspense fallback={null}>
+          <LazyChannelCreateDialog
+            open
+            category={createCategory}
+            existingNames={liveWorkspace.categories.flatMap((category) =>
+              category.channels.map((item) => item.name)
+            )}
+            onClose={() => setCreateCategory(null)}
+            onCreate={(name, kind, options) => {
+              const created: WorkspaceChannel & { access: 'members' | 'invite' } = {
+                id: `local-${crypto.randomUUID()}`,
+                name,
+                kind,
+                topic: options.topic,
+                access: options.access,
+                template_key: null,
+                lifecycle: 'active',
+                is_confidential: false,
+                room_state: 'ready',
+              }
+              store?.addChannel?.(created)
+              setLocalChannels((previous) => ({
+                ...previous,
+                [createCategory.id]: [...(previous[createCategory.id] ?? []), created],
+              }))
+              setCreateCategory(null)
+              setCanvas('chat')
+              void navigation.onNavigateChannel(created.id)
+            }}
+          />
+        </Suspense>
       ) : null}
     </>
   )

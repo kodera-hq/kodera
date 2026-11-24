@@ -24,6 +24,11 @@ const LazyWorkspaceFilesPanel = lazy(() =>
 const LazyCallsSurfaceView = lazy(() =>
   import('./CallsSurfaceView').then((module) => ({ default: module.CallsSurfaceView }))
 )
+const LazyCalendarSurfaceView = lazy(() =>
+  import('../calendar/CalendarSurfaceView').then((module) => ({
+    default: module.CalendarSurfaceView,
+  }))
+)
 
 export interface EspaceCanvasPanesProps {
   signedOut: boolean
@@ -108,6 +113,16 @@ export function EspaceCanvasPanes({
         <Suspense fallback={<Skeleton shape="block" />}>
           <LazyExtensionsCatalogPanel channels={searchEntries} />
         </Suspense>
+      ) : null}
+      {effectiveCanvasMode === 'calendar' ? (
+        <div
+          data-testid="espace-calendar-canvas"
+          className="canvas-enter flex min-h-0 flex-1 flex-col"
+        >
+          <Suspense fallback={<Skeleton shape="block" />}>
+            <LazyCalendarSurfaceView organisationId={workspace.organisation_id} />
+          </Suspense>
+        </div>
       ) : null}
       {effectiveCanvasMode === 'files' ? (
         <div

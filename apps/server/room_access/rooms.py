@@ -4,6 +4,11 @@ import hashlib
 
 POLICY = "io.kodera.room.policy"
 OCCUPANCY = "io.kodera.room.occupancy"
+CONFIDENTIAL = "io.kodera.room.confidential"
+ENCRYPTION = "m.room.encryption"
+CREATE = "m.room.create"
+MLS_V1_ALGORITHM = "io.kodera.mls.v1"
+SFRAME_V1_MEDIA = "sframe-v1"
 
 
 def livekit_room(room_id: str) -> str:

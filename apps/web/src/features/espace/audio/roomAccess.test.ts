@@ -67,11 +67,16 @@ describe('requestRoomToken', () => {
     expect(init.cache).toBe('no-store')
   })
 
-  it('reads a listen-only grant', async () => {
-    const { fetchImpl } = serving(answer(200, { ...GRANT, listen_only: true }))
+  it('reads a listen-only grant and parses boolean e2ee_required while rejecting non-boolean e2ee_required', async () => {
+    const { fetchImpl } = serving(
+      answer(200, { ...GRANT, listen_only: true, e2ee_required: true })
+    )
     await expect(requestRoomToken(HS, 't', ROOM, SERVER, fetchImpl)).resolves.toMatchObject({
       listenOnly: true,
+      e2eeRequired: true,
     })
+    const { fetchImpl: badFetch } = serving(answer(200, { ...GRANT, e2ee_required: 'true' }))
+    expect(await problemOf(requestRoomToken(HS, 't', ROOM, SERVER, badFetch))).toBe('malformed')
   })
 
   it.each([

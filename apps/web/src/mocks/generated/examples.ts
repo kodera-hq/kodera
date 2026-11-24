@@ -6189,7 +6189,7 @@ export const EXAMPLES = {
       "workspace_id": "01950000-0000-7000-8000-0000000000a1",
       "event_scope": "default",
       "epoch": 2000000,
-      "epoch_mac_key": "c8cd9f607c5ec478b461588173cf777b2a54ca74bd936c48e92329139f092a0a",
+      "epoch_mac_key": "0000000000000000000000000000000000000000000000000000000000000000",
       "epoch_expires_at": 1800000900,
       "epoch_rotation_seconds": 900
     },
@@ -6742,6 +6742,138 @@ export const EXAMPLES = {
     idempotent: false,
     requiresIfMatch: false,
   },
+  "getWorkspaceMonetization": {
+    operationId: "getWorkspaceMonetization",
+    method: "get",
+    path: "/organisations/{organisation_id}/workspace/monetization",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "workspace_id": "00000000-0000-7000-8000-000000000010",
+      "boost_packs": [],
+      "hosting_credits": [],
+      "vip_tiers": [],
+      "connect_account": null,
+      "dac7_summary": null
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "createWorkspaceBoostCheckout": {
+    operationId: "createWorkspaceBoostCheckout",
+    method: "post",
+    path: "/organisations/{organisation_id}/workspace/monetization/boosts/checkout",
+    status: 201,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "boost_grant_id": "00000000-0000-7000-8000-000000000021",
+      "invoice_id": "00000000-0000-7000-8000-000000000022",
+      "invoice_number": "KODERA-2026-00001",
+      "vat_regime": "fr_standard",
+      "vat_rate_bp": 2000,
+      "net_amount_minor": 2900,
+      "vat_amount_minor": 580,
+      "gross_amount_minor": 3480,
+      "checkout_session_id": "cs_fake_000001",
+      "checkout_url": "https://pay.fake.invalid/checkout/cs_fake_000001"
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "startCreatorConnectOnboarding": {
+    operationId: "startCreatorConnectOnboarding",
+    method: "post",
+    path: "/organisations/{organisation_id}/workspace/monetization/connect/onboarding",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "connect_account_id": "00000000-0000-7000-8000-000000000031",
+      "stripe_connect_account_id": "acct_fake000001",
+      "onboarding_state": "onboarding_link_issued",
+      "onboarding_url": "https://connect.fake.invalid/setup/acct_fake000001",
+      "expires_at": "2026-06-15T12:15:00Z"
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "createVipTierOffer": {
+    operationId: "createVipTierOffer",
+    method: "post",
+    path: "/organisations/{organisation_id}/workspace/monetization/vip-tiers",
+    status: 201,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "id": "00000000-0000-7000-8000-000000000041",
+      "code": "vip-gold",
+      "name": "Salon VIP Or",
+      "description": null,
+      "billing_period": "monthly",
+      "currency": "EUR",
+      "price_excl_vat_minor": 1500,
+      "granted_workspace_role_id": "00000000-0000-7000-8000-000000000042",
+      "granted_channel_ids": [
+        "00000000-0000-7000-8000-000000000043"
+      ],
+      "active": true
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "createVipPassCheckout": {
+    operationId: "createVipPassCheckout",
+    method: "post",
+    path: "/organisations/{organisation_id}/workspace/monetization/vip-passes/checkout",
+    status: 201,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "vip_entitlement_id": "00000000-0000-7000-8000-000000000051",
+      "tier_id": "00000000-0000-7000-8000-000000000041",
+      "vat_regime": "fr_standard",
+      "vat_rate_bp": 2000,
+      "gross_excl_vat_minor": 1500,
+      "vat_amount_minor": 300,
+      "total_incl_vat_minor": 1800,
+      "application_fee_amount_minor": 150,
+      "reserved_recovery_minor": 0,
+      "creator_net_minor": 1350,
+      "checkout_session_id": "cs_fake_000002",
+      "checkout_url": "https://pay.fake.invalid/checkout/cs_fake_000002"
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "exportWorkspaceDac7Report": {
+    operationId: "exportWorkspaceDac7Report",
+    method: "get",
+    path: "/organisations/{organisation_id}/workspace/monetization/dac7-report",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "directive": "2021/514/EU",
+      "reporting_year": 2026,
+      "sellers": []
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
   "getChannelGovernance": {
     operationId: "getChannelGovernance",
     method: "get",
@@ -6917,6 +7049,625 @@ export const EXAMPLES = {
     body: {
       "deviceId": "01950000-0000-7000-8000-0000000000a1",
       "revision": 1
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "listCalendarEvents": {
+    operationId: "listCalendarEvents",
+    method: "get",
+    path: "/organisations/{organisation_id}/workspace/calendar/events",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "data": [
+        {
+          "id": "00000000-0000-7000-8000-000000000101",
+          "uid": "00000000-0000-7000-8000-000000000101@kodera.calendar",
+          "title": "Synchronisation produit hebdomadaire",
+          "description": "Revue de feuille de route et arbitrages.",
+          "location": "Salle Givre",
+          "startsAt": "2026-06-08T09:00:00Z",
+          "endsAt": "2026-06-08T09:45:00Z",
+          "timezone": "Europe/Paris",
+          "rrule": "FREQ=WEEKLY;BYDAY=MO",
+          "status": "confirmed",
+          "visibility": "workspace",
+          "attendees": [],
+          "alarmMinutesBefore": 15,
+          "visioUrl": "https://visio.kodera.io/hebdo-produit",
+          "agendaDocUrl": "",
+          "sourceId": null,
+          "revision": 1,
+          "updatedAt": "2026-06-01T08:00:00Z"
+        }
+      ]
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "createCalendarEvent": {
+    operationId: "createCalendarEvent",
+    method: "post",
+    path: "/organisations/{organisation_id}/workspace/calendar/events",
+    status: 201,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562",
+      "ETag": "\"000000000000000000000000000000000000000000000000000000000000e7a9\""
+    },
+    body: {
+      "id": "00000000-0000-7000-8000-000000000101",
+      "uid": "00000000-0000-7000-8000-000000000101@kodera.calendar",
+      "title": "Synchronisation produit hebdomadaire",
+      "description": "Revue de feuille de route et arbitrages.",
+      "location": "Salle Givre",
+      "startsAt": "2026-06-08T09:00:00Z",
+      "endsAt": "2026-06-08T09:45:00Z",
+      "timezone": "Europe/Paris",
+      "rrule": "FREQ=WEEKLY;BYDAY=MO",
+      "status": "confirmed",
+      "visibility": "workspace",
+      "attendees": [
+        {
+          "email": "camille@kodera.io",
+          "name": "Camille Laurent",
+          "partstat": "ACCEPTED",
+          "role": "REQ-PARTICIPANT"
+        }
+      ],
+      "alarmMinutesBefore": 15,
+      "visioUrl": "https://visio.kodera.io/hebdo-produit",
+      "agendaDocUrl": "https://console.kodera.io/docs/00000000-0000-7000-8000-000000000201",
+      "sourceId": null,
+      "revision": 1,
+      "updatedAt": "2026-06-01T08:00:00Z"
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "updateCalendarEvent": {
+    operationId: "updateCalendarEvent",
+    method: "patch",
+    path: "/organisations/{organisation_id}/workspace/calendar/events/{event_id}",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562",
+      "ETag": "\"000000000000000000000000000000000000000000000000000000000000e7a9\""
+    },
+    body: {
+      "id": "00000000-0000-7000-8000-000000000101",
+      "uid": "00000000-0000-7000-8000-000000000101@kodera.calendar",
+      "title": "Synchronisation produit hebdomadaire",
+      "description": "Revue de feuille de route et arbitrages.",
+      "location": "Salle Givre",
+      "startsAt": "2026-06-08T09:00:00Z",
+      "endsAt": "2026-06-08T09:45:00Z",
+      "timezone": "Europe/Paris",
+      "rrule": "FREQ=WEEKLY;BYDAY=MO",
+      "status": "confirmed",
+      "visibility": "workspace",
+      "attendees": [
+        {
+          "email": "camille@kodera.io",
+          "name": "Camille Laurent",
+          "partstat": "ACCEPTED",
+          "role": "REQ-PARTICIPANT"
+        }
+      ],
+      "alarmMinutesBefore": 15,
+      "visioUrl": "https://visio.kodera.io/hebdo-produit",
+      "agendaDocUrl": "https://console.kodera.io/docs/00000000-0000-7000-8000-000000000201",
+      "sourceId": null,
+      "revision": 1,
+      "updatedAt": "2026-06-01T08:00:00Z"
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: true,
+  },
+  "deleteCalendarEvent": {
+    operationId: "deleteCalendarEvent",
+    method: "delete",
+    path: "/organisations/{organisation_id}/workspace/calendar/events/{event_id}",
+    status: 204,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: null,
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "exportCalendarIcs": {
+    operationId: "exportCalendarIcs",
+    method: "get",
+    path: "/organisations/{organisation_id}/workspace/calendar/events.ics",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "filename": "kodera-workspace-calendar.ics",
+      "ics": "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Kodera//Sovereign Smart Calendar//EN\r\nCALSCALE:GREGORIAN\r\nMETHOD:PUBLISH\r\nEND:VCALENDAR\r\n"
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "listCaldavSources": {
+    operationId: "listCaldavSources",
+    method: "get",
+    path: "/organisations/{organisation_id}/workspace/calendar/sources",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "data": [
+        {
+          "id": "00000000-0000-7000-8000-000000000102",
+          "name": "Agenda La Suite Numerique",
+          "provider": "lasuite",
+          "calendarUrl": "https://agenda.numerique.gouv.fr/caldav/equipe/",
+          "principalUsername": "equipe@kodera.io",
+          "enabled": true,
+          "hasSyncToken": true,
+          "lastSyncedAt": "2026-06-01T08:05:00Z",
+          "lastErrorCode": null,
+          "createdAt": "2026-06-01T08:00:00Z"
+        }
+      ]
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "createCaldavSource": {
+    operationId: "createCaldavSource",
+    method: "post",
+    path: "/organisations/{organisation_id}/workspace/calendar/sources",
+    status: 201,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "id": "00000000-0000-7000-8000-000000000102",
+      "name": "Agenda La Suite Numerique",
+      "provider": "lasuite",
+      "calendarUrl": "https://agenda.numerique.gouv.fr/caldav/equipe/",
+      "principalUsername": "equipe@kodera.io",
+      "enabled": true,
+      "hasSyncToken": true,
+      "lastSyncedAt": "2026-06-01T08:05:00Z",
+      "lastErrorCode": null,
+      "createdAt": "2026-06-01T08:00:00Z"
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "deleteCaldavSource": {
+    operationId: "deleteCaldavSource",
+    method: "delete",
+    path: "/organisations/{organisation_id}/workspace/calendar/sources/{source_id}",
+    status: 204,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: null,
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "syncCaldavSource": {
+    operationId: "syncCaldavSource",
+    method: "post",
+    path: "/organisations/{organisation_id}/workspace/calendar/sources/{source_id}/actions/sync",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "sourceId": "00000000-0000-7000-8000-000000000102",
+      "upserted": 3,
+      "removed": 0,
+      "fullResync": false,
+      "syncedAt": "2026-06-01T08:10:00Z"
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "listBookingPages": {
+    operationId: "listBookingPages",
+    method: "get",
+    path: "/organisations/{organisation_id}/workspace/calendar/booking-pages",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "data": [
+        {
+          "id": "00000000-0000-7000-8000-000000000103",
+          "slug": "echange-architecture-kodera",
+          "title": "Point architecture souveraine",
+          "description": "Creneau de 30 minutes avec lien Kodera Visio automatique.",
+          "timezone": "Europe/Paris",
+          "durationMinutes": 30,
+          "bufferMinutes": 10,
+          "availabilityWindows": [
+            {
+              "weekday": 0,
+              "start": "09:00",
+              "end": "17:00"
+            }
+          ],
+          "visioUrl": "https://visio.kodera.io/point-architecture",
+          "agendaDocUrl": "",
+          "active": true,
+          "revision": 1,
+          "createdAt": "2026-06-01T08:00:00Z"
+        }
+      ]
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "createBookingPage": {
+    operationId: "createBookingPage",
+    method: "post",
+    path: "/organisations/{organisation_id}/workspace/calendar/booking-pages",
+    status: 201,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "id": "00000000-0000-7000-8000-000000000103",
+      "slug": "echange-architecture-kodera",
+      "title": "Point architecture souveraine",
+      "description": "Creneau de 30 minutes avec lien Kodera Visio automatique.",
+      "timezone": "Europe/Paris",
+      "durationMinutes": 30,
+      "bufferMinutes": 10,
+      "availabilityWindows": [
+        {
+          "weekday": 0,
+          "start": "09:00",
+          "end": "17:00"
+        }
+      ],
+      "visioUrl": "https://visio.kodera.io/point-architecture",
+      "agendaDocUrl": "",
+      "active": true,
+      "revision": 1,
+      "createdAt": "2026-06-01T08:00:00Z"
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "deleteBookingPage": {
+    operationId: "deleteBookingPage",
+    method: "delete",
+    path: "/organisations/{organisation_id}/workspace/calendar/booking-pages/{booking_page_id}",
+    status: 204,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: null,
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "getPublicBookingPage": {
+    operationId: "getPublicBookingPage",
+    method: "get",
+    path: "/booking/{booking_slug}",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "slug": "echange-architecture-kodera",
+      "title": "Point architecture souveraine",
+      "description": "Creneau de 30 minutes avec lien Kodera Visio automatique.",
+      "timezone": "Europe/Paris",
+      "durationMinutes": 30,
+      "visioAvailable": true,
+      "slots": [
+        {
+          "startsAt": "2026-06-08T10:00:00Z",
+          "endsAt": "2026-06-08T10:30:00Z"
+        }
+      ]
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "reservePublicBookingSlot": {
+    operationId: "reservePublicBookingSlot",
+    method: "post",
+    path: "/booking/{booking_slug}/reservations",
+    status: 201,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "reservationId": "00000000-0000-7000-8000-000000000104",
+      "slug": "echange-architecture-kodera",
+      "title": "Point architecture souveraine",
+      "startsAt": "2026-06-08T10:00:00Z",
+      "endsAt": "2026-06-08T10:30:00Z",
+      "timezone": "Europe/Paris",
+      "visioUrl": "https://visio.kodera.io/point-architecture",
+      "agendaDocUrl": "",
+      "status": "confirmed",
+      "cancellationToken": "bkc_00000000000000000000000000000000",
+      "ics": "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Kodera//Sovereign Smart Calendar//EN\r\nCALSCALE:GREGORIAN\r\nMETHOD:REQUEST\r\nEND:VCALENDAR\r\n"
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "cancelPublicBookingReservation": {
+    operationId: "cancelPublicBookingReservation",
+    method: "post",
+    path: "/booking/{booking_slug}/reservations/{reservation_id}/actions/cancel",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "reservationId": "00000000-0000-7000-8000-000000000104",
+      "status": "cancelled",
+      "cancelledAt": "2026-06-02T09:00:00Z",
+      "ics": "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Kodera//Sovereign Smart Calendar//EN\r\nCALSCALE:GREGORIAN\r\nMETHOD:CANCEL\r\nEND:VCALENDAR\r\n"
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "getWorkspaceSecurityPosture": {
+    operationId: "getWorkspaceSecurityPosture",
+    method: "get",
+    path: "/organisations/{organisation_id}/workspace/security-posture",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "organisation_id": "00000000-0000-7000-8000-000000000001",
+      "workspace_id": "00000000-0000-7000-8000-000000000002",
+      "score": 85,
+      "max_score": 100,
+      "grade": "B",
+      "passing_checks": 5,
+      "total_checks": 6,
+      "fixable_checks": 1,
+      "checks": [
+        {
+          "id": "invite_hygiene",
+          "status": "pass",
+          "earned_points": 20,
+          "max_points": 20,
+          "remediation_action": "cap_unbounded_invites",
+          "fix_available": false,
+          "affected_count": 0
+        },
+        {
+          "id": "sovereign_ai_boundary",
+          "status": "pass",
+          "earned_points": 20,
+          "max_points": 20,
+          "remediation_action": "enforce_eu_sovereign_ai",
+          "fix_available": false,
+          "affected_count": 0
+        },
+        {
+          "id": "security_alert_routing",
+          "status": "warn",
+          "earned_points": 0,
+          "max_points": 15,
+          "remediation_action": "provision_security_alerts_channel",
+          "fix_available": true,
+          "affected_count": 1
+        },
+        {
+          "id": "extension_secret_rotation",
+          "status": "pass",
+          "earned_points": 15,
+          "max_points": 15,
+          "remediation_action": "rotate_stale_extension_keys",
+          "fix_available": false,
+          "affected_count": 0
+        },
+        {
+          "id": "least_privilege_roles",
+          "status": "pass",
+          "earned_points": 15,
+          "max_points": 15,
+          "remediation_action": "strip_excess_role_permissions",
+          "fix_available": false,
+          "affected_count": 0
+        },
+        {
+          "id": "confidential_room_readiness",
+          "status": "pass",
+          "earned_points": 15,
+          "max_points": 15,
+          "remediation_action": "provision_confidential_channel",
+          "fix_available": false,
+          "affected_count": 0
+        }
+      ]
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "remediateWorkspaceSecurityPosture": {
+    operationId: "remediateWorkspaceSecurityPosture",
+    method: "post",
+    path: "/organisations/{organisation_id}/workspace/security-posture/actions/remediate",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "requested_action": "fix_all_safe",
+      "applied_actions": [
+        "provision_security_alerts_channel"
+      ],
+      "score_before": 85,
+      "posture": {
+        "organisation_id": "00000000-0000-7000-8000-000000000001",
+        "workspace_id": "00000000-0000-7000-8000-000000000002",
+        "score": 100,
+        "max_score": 100,
+        "grade": "A",
+        "passing_checks": 6,
+        "total_checks": 6,
+        "fixable_checks": 0,
+        "checks": [
+          {
+            "id": "invite_hygiene",
+            "status": "pass",
+            "earned_points": 20,
+            "max_points": 20,
+            "remediation_action": "cap_unbounded_invites",
+            "fix_available": false,
+            "affected_count": 0
+          },
+          {
+            "id": "sovereign_ai_boundary",
+            "status": "pass",
+            "earned_points": 20,
+            "max_points": 20,
+            "remediation_action": "enforce_eu_sovereign_ai",
+            "fix_available": false,
+            "affected_count": 0
+          },
+          {
+            "id": "security_alert_routing",
+            "status": "pass",
+            "earned_points": 15,
+            "max_points": 15,
+            "remediation_action": "provision_security_alerts_channel",
+            "fix_available": false,
+            "affected_count": 0
+          },
+          {
+            "id": "extension_secret_rotation",
+            "status": "pass",
+            "earned_points": 15,
+            "max_points": 15,
+            "remediation_action": "rotate_stale_extension_keys",
+            "fix_available": false,
+            "affected_count": 0
+          },
+          {
+            "id": "least_privilege_roles",
+            "status": "pass",
+            "earned_points": 15,
+            "max_points": 15,
+            "remediation_action": "strip_excess_role_permissions",
+            "fix_available": false,
+            "affected_count": 0
+          },
+          {
+            "id": "confidential_room_readiness",
+            "status": "pass",
+            "earned_points": 15,
+            "max_points": 15,
+            "remediation_action": "provision_confidential_channel",
+            "fix_available": false,
+            "affected_count": 0
+          }
+        ]
+      }
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "translateChannelMessage": {
+    operationId: "translateChannelMessage",
+    method: "post",
+    path: "/organisations/{organisation_id}/workspace/channels/{channel_id}/actions/translate-message",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "channelId": "00000000-0000-7000-8000-000000000002",
+      "eventId": "$event_demo_001",
+      "translatedText": "Deployment confirmed for Thursday.",
+      "targetLanguage": "en",
+      "sourceLanguage": "fr",
+      "provider": "mistral",
+      "model": "mistral-small-latest",
+      "ephemeral": true
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "getLiveCallCaptionSession": {
+    operationId: "getLiveCallCaptionSession",
+    method: "get",
+    path: "/organisations/{organisation_id}/workspace/channels/{channel_id}/call-captions/session",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "session": null
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "updateLiveCallCaptionSession": {
+    operationId: "updateLiveCallCaptionSession",
+    method: "post",
+    path: "/organisations/{organisation_id}/workspace/channels/{channel_id}/call-captions/session",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "session": null
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "transcribeLiveCallChunk": {
+    operationId: "transcribeLiveCallChunk",
+    method: "post",
+    path: "/organisations/{organisation_id}/workspace/channels/{channel_id}/call-captions/chunks",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "sessionId": "00000000-0000-7000-8000-000000000210",
+      "channelId": "00000000-0000-7000-8000-000000000002",
+      "sourceText": "Bonjour a toute l equipe.",
+      "translatedText": "Hello to the whole team.",
+      "sourceLanguage": "fr",
+      "targetLanguage": "en",
+      "provider": "mistral",
+      "model": "voxtral-mini-latest",
+      "ephemeral": true
     },
     isList: false,
     idempotent: true,

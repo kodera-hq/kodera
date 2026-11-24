@@ -92,6 +92,8 @@ EXTENSIONS = "apps.extensions.api.views"
 EXTENSIONS_HTTP = "apps.extensions.api.http"
 AI_GATEWAY = "apps.ai_gateway.api.views"
 AI_GATEWAY_HTTP = "apps.ai_gateway.api.http"
+CALENDAR = "apps.calendar.api.views"
+CALENDAR_HTTP = "apps.calendar.api.http"
 STRUCTURE_SERVICES = (
     STRUCTURE + ".authorise",
     STRUCTURE + ".read_administration",
@@ -609,6 +611,70 @@ CASES = (
             ("putChannelAiPolicy", "channel_policy", "put", {**ORG, "channel_id": ROW}),
             ("putMemberAiConsent", "consent", "put", ORG),
             ("transcribeVoiceNote", "transcribe", "post", {**ORG, "attachment_id": ROW}),
+            ("translateChannelMessage", "translate_message", "post", {**ORG, "channel_id": ROW}),
+            ("getLiveCallCaptionSession", "call_captions_session", "get", {**ORG, "channel_id": ROW}),
+            ("updateLiveCallCaptionSession", "call_captions_session", "post", {**ORG, "channel_id": ROW}),
+            ("transcribeLiveCallChunk", "call_captions_chunks", "post", {**ORG, "channel_id": ROW}),
+        )
+    ),
+    # The H3.1 community workspace monetization routes resolve the caller via billing access.
+    Case(
+        "getWorkspaceMonetization",
+        "apps.billing.api.monetization.workspace_monetization",
+        "get",
+        ORG,
+        "apps.billing.callers.BillingCallerUnknownError",
+        ("apps.billing.api.monetization.read_as_member",),
+    ),
+    Case(
+        "exportWorkspaceDac7Report",
+        "apps.billing.api.monetization.dac7_report_export",
+        "get",
+        ORG,
+        "apps.billing.callers.BillingCallerUnknownError",
+        ("apps.billing.api.monetization.read_as_member",),
+    ),
+    *(
+        Case(
+            operation,
+            "apps.billing.api.monetization." + view,
+            "post",
+            ORG,
+            "apps.billing.callers.BillingCallerUnknownError",
+            ("apps.billing.monetization_services." + target,),
+        )
+        for operation, view, target in (
+            ("createWorkspaceBoostCheckout", "boost_checkout", "start_boost_checkout_for_caller"),
+            ("startCreatorConnectOnboarding", "connect_onboarding", "start_connect_onboarding_for_caller"),
+            ("createVipTierOffer", "vip_tiers", "create_vip_tier_for_caller"),
+            ("createVipPassCheckout", "vip_pass_checkout", "start_vip_pass_checkout_for_caller"),
+        )
+    ),
+    # The workspace calendar and booking management routes resolve the caller before any handler runs.
+    *(
+        Case(
+            operation,
+            CALENDAR + "." + view,
+            method,
+            kwargs,
+            "apps.calendar.errors.CalendarRefusalError",
+            (CALENDAR_HTTP + ".authorize",),
+            error_args=(403, None, "identity-unknown"),
+            verifier=CALENDAR_HTTP,
+        )
+        for operation, view, method, kwargs in (
+            ("listCalendarEvents", "events", "get", ORG),
+            ("createCalendarEvent", "events", "post", ORG),
+            ("updateCalendarEvent", "event_detail", "patch", {**ORG, "event_id": ROW}),
+            ("deleteCalendarEvent", "event_detail", "delete", {**ORG, "event_id": ROW}),
+            ("exportCalendarIcs", "export_ics", "get", ORG),
+            ("listCaldavSources", "sources", "get", ORG),
+            ("createCaldavSource", "sources", "post", ORG),
+            ("deleteCaldavSource", "source_detail", "delete", {**ORG, "source_id": ROW}),
+            ("syncCaldavSource", "source_sync", "post", {**ORG, "source_id": ROW}),
+            ("listBookingPages", "booking_pages", "get", ORG),
+            ("createBookingPage", "booking_pages", "post", ORG),
+            ("deleteBookingPage", "booking_page_detail", "delete", {**ORG, "booking_page_id": ROW}),
         )
     ),
 )
@@ -755,6 +821,9 @@ def test_every_customer_operation_that_resolves_a_principal_is_listed():
         # Signed provider webhook: it authenticates the bridge HMAC, not a customer OIDC
         # principal, so it never answers identity-unknown.
         "receiveCoexistenceEvent",
+        "getPublicBookingPage",
+        "reservePublicBookingSlot",
+        "cancelPublicBookingReservation",
         # Everything else routed through include(): the staff lane under staff/v1/ and the
         # workspace-safety, docs, media, notifications, proximity and e2ee urlconfs, which this
         # suite does not drive — their own acceptance suites answer for them.
@@ -798,6 +867,7 @@ def test_every_customer_operation_that_resolves_a_principal_is_listed():
         "getWorkspaceCollectionRow",
         "getWorkspaceDocument",
         "getWorkspaceProfile",
+        "getWorkspaceSecurityPosture",
         "grantStaffRole",
         "listAbuseReports",
         "listConfidentialEnvelopes",
@@ -824,6 +894,7 @@ def test_every_customer_operation_that_resolves_a_principal_is_listed():
         "redeemWorkspaceInvite",
         "registerConfidentialDevice",
         "registerStaffIssuerSnapshot",
+        "remediateWorkspaceSecurityPosture",
         "resolveAbuseReport",
         "resolveProximityTokens",
         "retireConfidentialParticipant",

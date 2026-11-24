@@ -350,7 +350,13 @@ def make_token_server(
                 log.warning("token refused: an upstream failed", exc_info=True)
                 return self._send(503, {"error": "unavailable"})
             return self._send(
-                200, {"url": grant.url, "token": grant.token, "listen_only": grant.listen_only}
+                200,
+                {
+                    "url": grant.url,
+                    "token": grant.token,
+                    "listen_only": grant.listen_only,
+                    "e2ee_required": grant.e2ee_required,
+                },
             )
 
         def _rate_limited(self, wait: int) -> None:

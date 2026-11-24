@@ -22,9 +22,21 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, TypeGuard
+from uuid import UUID
 
 from .clients import LiveKit, Matrix, UpstreamError
-from .rooms import OCCUPANCY, POLICY, identity, livekit_room, user_of
+from .rooms import (
+    CONFIDENTIAL,
+    CREATE,
+    ENCRYPTION,
+    MLS_V1_ALGORITHM,
+    OCCUPANCY,
+    POLICY,
+    SFRAME_V1_MEDIA,
+    identity,
+    livekit_room,
+    user_of,
+)
 
 log = logging.getLogger("room_access")
 SCREEN_SHARE, CAMERA = ("SCREEN_SHARE", 3), ("CAMERA", 1)
@@ -35,6 +47,7 @@ class Grant:
     url: str
     token: str
     listen_only: bool
+    e2ee_required: bool = False
 
 
 class RefusedError(Exception):
@@ -59,9 +72,6 @@ def _source(track: dict[str, Any]) -> Any:
     return track.get("source")
 
 
-CONFIDENTIAL = "io.kodera.room.confidential"
-ENCRYPTION = "m.room.encryption"
-CREATE = "m.room.create"
 AI_LOCALPART_PREFIXES = (
     "_kodera_ai",
     "kodera_ai",
@@ -89,6 +99,33 @@ def _is_ai_user(user_id: str, ai_users: frozenset[str], *, agent_user: str = "")
     return local.startswith(AI_LOCALPART_PREFIXES) or local.endswith(AI_LOCALPART_SUFFIXES)
 
 
+def _canonical_uuid_str(value: Any) -> str | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return str(UUID(value))
+    except ValueError:
+        return None
+
+
+def _policy_e2ee_media_valid(policy: dict[str, Any]) -> bool:
+    e2ee_media = policy.get("e2ee_media")
+    if e2ee_media not in (None, SFRAME_V1_MEDIA):
+        return False
+    rekey_required = policy.get("rekey_required")
+    if rekey_required is not None and type(rekey_required) is not bool:
+        return False
+    for key in (CONFIDENTIAL, "confidential"):
+        marker = policy.get(key)
+        if marker is not None and type(marker) is not bool:
+            return False
+    if (policy.get(CONFIDENTIAL) is True or policy.get("confidential") is True) and (
+        e2ee_media != SFRAME_V1_MEDIA
+    ):
+        return False
+    return not (e2ee_media == SFRAME_V1_MEDIA and policy.get("ai_enabled", False) is True)
+
+
 def _active_audio_policy(policy: dict[str, Any] | None) -> TypeGuard[dict[str, Any]]:
     """A missing, retired or malformed policy cannot admit or retain a media participant."""
     return (
@@ -97,9 +134,8 @@ def _active_audio_policy(policy: dict[str, Any] | None) -> TypeGuard[dict[str, A
         and policy["version"] == 1
         and policy.get("kind") == "audio"
         and policy.get("archived") is False
-        and policy.get(CONFIDENTIAL) in (None, False)
-        and policy.get("confidential") in (None, False)
         and type(policy.get("ai_enabled", False)) is bool
+        and _policy_e2ee_media_valid(policy)
         and type(policy.get("listen_only")) is bool
         and isinstance(policy.get("may_publish"), list)
         and all(isinstance(user, str) for user in policy["may_publish"])
@@ -178,6 +214,7 @@ class Service:
     agent: str  # the tenant agent's Matrix account: the only sender of a policy that counts
     token_ttl_s: int = 600
     ai_users: frozenset[str] = frozenset()
+    e2ee_room_ready: Callable[[str, dict[str, Any]], bool] | None = None
     stats: Stats = field(default_factory=Stats)
     _rooms: dict[str, str] = field(default_factory=dict)  # LiveKit room → Matrix room
     _published: dict[str, Any] = field(default_factory=dict)  # LiveKit room → occupancy written
@@ -226,6 +263,55 @@ class Service:
             return False
         return _audience_allows({**policy, "members": [*members, user]}, user, self.agent)
 
+    def _matrix_confidential_state_ready(self, room_id: str, policy: dict[str, Any]) -> bool:
+        """Verify authoritative Matrix confidential room state (`epoch >= 1`, `rekey_required is False`)."""
+        if "rekey_required" in policy and policy["rekey_required"] is not False:
+            return False
+        create_event = self.matrix.state_event(room_id, CREATE)
+        if not isinstance(create_event, dict) or create_event.get("sender") != self.agent:
+            return False
+        create_content = create_event.get("content")
+        if not isinstance(create_content, dict) or create_content.get(CONFIDENTIAL) not in (
+            True,
+            MLS_V1_ALGORITHM,
+        ):
+            return False
+        enc_event = self.matrix.state_event(room_id, ENCRYPTION)
+        if not isinstance(enc_event, dict) or enc_event.get("sender") != self.agent:
+            return False
+        enc_content = enc_event.get("content")
+        if not isinstance(enc_content, dict) or enc_content.get("algorithm") != MLS_V1_ALGORITHM:
+            return False
+        conf_event = self.matrix.state_event(room_id, CONFIDENTIAL)
+        if not isinstance(conf_event, dict) or conf_event.get("sender") != self.agent:
+            return False
+        conf_content = conf_event.get("content")
+        if not isinstance(conf_content, dict):
+            return False
+        if conf_content.get("rekey_required") is not False:
+            return False
+        epoch = conf_content.get("epoch")
+        if type(epoch) is not int or not (1 <= epoch <= 2**53 - 1):
+            return False
+        if "algorithm" in conf_content and conf_content["algorithm"] != MLS_V1_ALGORITHM:
+            return False
+        conf_uuid = _canonical_uuid_str(conf_content.get("room_id"))
+        if conf_uuid is None:
+            return False
+        if policy.get("e2ee_room_id") is not None:
+            policy_uuid = _canonical_uuid_str(policy.get("e2ee_room_id"))
+            if policy_uuid is None or policy_uuid != conf_uuid:
+                return False
+        return True
+
+    def _confidential_e2ee_state_ready(self, room_id: str, policy: dict[str, Any]) -> bool:
+        """Fail closed (`403`) unless BOTH authoritative Matrix room state AND `e2ee_room_ready` confirm readiness."""
+        if self.e2ee_room_ready is None:
+            return False
+        if not self._matrix_confidential_state_ready(room_id, policy):
+            return False
+        return bool(self.e2ee_room_ready(room_id, policy))
+
     # -- the token ---------------------------------------------------------------------------
 
     def grant(
@@ -253,13 +339,19 @@ class Service:
         if self.authority is not None and not self.authority.allows(user_id, room_id):
             raise RefusedError(403)
         policy = self._policy(room_id)
-        # One answer for "no such room", "not an audio room", "archived" and "not a member".
+        if not _active_audio_policy(policy):
+            raise RefusedError(403)
+        confidential = _room_is_confidential_or_encrypted(self.matrix, room_id, policy)
+        sframe_e2ee = policy.get("e2ee_media") == SFRAME_V1_MEDIA
+        # Confidential or encrypted audio rooms require explicit `e2ee_media == "sframe-v1"`.
         if (
-            not _active_audio_policy(policy)
-            or _room_is_confidential_or_encrypted(self.matrix, room_id, policy)
+            (confidential and not sframe_e2ee)
             or not self._audience(policy, user_id, room_id)
             or self.matrix.membership(room_id, user_id) != "join"
         ):
+            raise RefusedError(403)
+        e2ee_required = bool(confidential or sframe_e2ee)
+        if e2ee_required and not self._confidential_e2ee_state_ready(room_id, policy):
             raise RefusedError(403)
         name = livekit_room(room_id)
         # Idempotent, and needed each time: LiveKit closes an empty room after its timeout.
@@ -272,7 +364,7 @@ class Service:
         token = self.livekit.token(
             name, identity(user_id, device_id), can_publish=not listen_only, ttl_s=self.token_ttl_s
         )
-        return Grant(self.ws_url, token, listen_only)
+        return Grant(self.ws_url, token, listen_only, e2ee_required=e2ee_required)
 
     # -- guard and occupancy -----------------------------------------------------------------
 
@@ -309,8 +401,14 @@ class Service:
                 if participants
                 else False
             )
-            active_audio = _active_audio_policy(policy) and not confidential
-            ai_allowed = active_audio and (policy.get("ai_enabled") is True)
+            sframe_e2ee = isinstance(policy, dict) and policy.get("e2ee_media") == SFRAME_V1_MEDIA
+            e2ee_required = bool(confidential or sframe_e2ee)
+            active_audio = (
+                _active_audio_policy(policy)
+                and (not confidential or sframe_e2ee)
+                and (not e2ee_required or self._confidential_e2ee_state_ready(room_id, policy))
+            )
+            ai_allowed = active_audio and not e2ee_required and (policy.get("ai_enabled") is True)
             # Invalidated policy is enough to remove everyone, even if membership is unreadable.
             joined = self.matrix.joined_members(room_id) if participants and active_audio else set()
             may_publish = set(policy["may_publish"]) if active_audio else set()

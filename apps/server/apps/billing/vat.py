@@ -31,31 +31,107 @@ REGIMES: dict[str, Regime] = {
     )
 }
 
-EU_MEMBER_STATES = frozenset(
-    "AT BE BG CY CZ DE DK EE ES FI FR GR HR HU IE IT LT LU LV MT NL PL PT RO SE SI SK".split()
+EU_OSS_REGIME_CODE = "eu_oss"
+EU_OSS_MENTION = (
+    "TVA de l'État membre de consommation — régime UE OSS "
+    "(art. 259 D CGI / art. 369 bis directive 2006/112/CE)"
 )
+
+# Statutory standard VAT rates in basis points (100 bp = 1.00 %) across all 27 EU member states
+# for cross-border B2C electronically supplied services under the Union One-Stop Shop (EU OSS).
+EU_OSS_RATES_BP: dict[str, int] = {
+    "AT": 2000,
+    "BE": 2100,
+    "BG": 2000,
+    "CY": 1900,
+    "CZ": 2100,
+    "DE": 1900,
+    "DK": 2500,
+    "EE": 2400,
+    "ES": 2100,
+    "FI": 2550,
+    "FR": 2000,
+    "GR": 2400,
+    "HR": 2500,
+    "HU": 2700,
+    "IE": 2300,
+    "IT": 2200,
+    "LT": 2100,
+    "LU": 1700,
+    "LV": 2100,
+    "MT": 1800,
+    "NL": 2100,
+    "PL": 2300,
+    "PT": 2300,
+    "RO": 2100,
+    "SE": 2500,
+    "SI": 2200,
+    "SK": 2300,
+}
+
+EU_MEMBER_STATES = frozenset(EU_OSS_RATES_BP)
+LEDGER_VAT_REGIMES = (*REGIMES, EU_OSS_REGIME_CODE)
 
 
 ALPHA_2 = re.compile(r"[A-Z]{2}\Z")
 
 
-def regime(code: str) -> Regime:
+def oss_rate_bp(country: str) -> int:
+    """Statutory standard VAT rate in basis points for an EU member state (`country`)."""
+    if not ALPHA_2.match(country):
+        raise ValueError(f"{country!r} is not an ISO 3166-1 alpha-2 country code")
+    try:
+        return EU_OSS_RATES_BP[country]
+    except KeyError:
+        raise ValueError(f"{country!r} is not an EU member state") from None
+
+
+def oss_regime_for(*, country: str) -> Regime:
+    """VAT regime for a B2C consumer established in `country` when supplied from France."""
+    if not ALPHA_2.match(country):
+        raise ValueError(f"{country!r} is not an ISO 3166-1 alpha-2 country code")
+    if country == "FR":
+        return REGIMES["fr_standard"]
+    if country in EU_OSS_RATES_BP:
+        return Regime(EU_OSS_REGIME_CODE, EU_OSS_RATES_BP[country], EU_OSS_MENTION)
+    return REGIMES["outside_eu"]
+
+
+def regime(code: str, *, country: str | None = None) -> Regime:
+    if code == EU_OSS_REGIME_CODE:
+        if country is None:
+            raise ValueError("eu_oss requires a consumption EU member-state country code")
+        if not ALPHA_2.match(country) or country not in EU_OSS_RATES_BP or country == "FR":
+            raise ValueError(f"{country!r} is not a cross-border EU OSS consumption state")
+        return Regime(EU_OSS_REGIME_CODE, EU_OSS_RATES_BP[country], EU_OSS_MENTION)
     try:
         return REGIMES[code]
     except KeyError:
         raise ValueError(f"{code!r} is not a VAT regime") from None
 
 
-def regime_for(*, country: str, vat_number_validated: bool, exempt: bool = False) -> Regime:
-    """The regime for a business customer established in `country` (ISO 3166-1 alpha-2).
+def regime_for(
+    *,
+    country: str,
+    vat_number_validated: bool = False,
+    exempt: bool = False,
+    b2c: bool = False,
+) -> Regime:
+    """The regime for a customer established in `country` (ISO 3166-1 alpha-2).
 
-    A customer elsewhere in the EU without a validated VAT number is charged French VAT: the
-    fallback BILLING_MODEL.md §3 avoids by requiring a number, never a silent 0 %.
+    For B2B (`b2c=False`), a customer elsewhere in the EU without a validated VAT number is
+    charged French VAT: the fallback BILLING_MODEL.md §3 avoids by requiring a number, never a
+    silent 0 %. For cross-border EU B2C (`b2c=True`), Union OSS (`eu_oss`) applies the member
+    state of consumption's statutory VAT rate (`EU_OSS_RATES_BP[country]`).
     """
     if not ALPHA_2.match(country):
         raise ValueError(f"{country!r} is not an ISO 3166-1 alpha-2 country code")
     if exempt:
         return REGIMES["exempt"]
+    if b2c:
+        if vat_number_validated:
+            raise ValueError("a B2C supply cannot claim VIES reverse charge")
+        return oss_regime_for(country=country)
     if country == "FR":
         return REGIMES["fr_standard"]
     if country in EU_MEMBER_STATES:

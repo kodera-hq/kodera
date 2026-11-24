@@ -12,6 +12,7 @@ const paths = {
   docs: ['M5 3h9l5 5v13H5zM14 3v5h5', 'M9 12h6M9 16h6'],
   drive: ['M3 8l9-5 9 5v11H3z', 'M3 8l9 5 9-5M12 13v6'],
   files: ['M3 6h7l2 3h9v12H3z', 'M7 3h11v6M7 13h10M7 17h6'],
+  calendar: ['M4 5h16v16H4zM4 10h16M8 3v4M16 3v4', 'M8 14h3v3H8zM14 14h2'],
   integrations: ['M3 3h6v6H3zM15 15h6v6h-6zM9 6h6v9', 'M3 15h6v6H3zM15 3h6v6h-6z'],
   shield: ['M12 2l8 4v6c0 5-8 10-8 10S4 17 4 12V6z', 'M8 12l3 3 5-6'],
   passport: ['M5 3h14v18H5z', 'M9 8a3 3 0 1 0 6 0 3 3 0 0 0-6 0M8 16h8'],

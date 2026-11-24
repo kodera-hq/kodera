@@ -158,10 +158,12 @@ def test_identity_mfa_enrolled_is_the_bounded_current_local_totp_fact(contract):
 ORGANISATION_SLUG_PATTERN = r"^[a-z0-9][a-z0-9-]{3,18}[a-z0-9](?![\s\S])"
 TENANT_SLUG_PATTERN = r"^[a-z0-9][a-z0-9-]{1,30}[a-z0-9](?![\s\S])"
 WORKSPACE_ROLE_SLUG_PATTERN = r"^[a-z][a-z0-9_-]{0,63}$"
+BOOKING_PAGE_SLUG_PATTERN = r"^[a-z0-9][a-z0-9-]{1,78}[a-z0-9](?![\s\S])"
 SLUG_RULES = {
     "organisation": ORGANISATION_SLUG_PATTERN,
     "tenant": TENANT_SLUG_PATTERN,
     "workspace_role": WORKSPACE_ROLE_SLUG_PATTERN,
+    "booking_page": BOOKING_PAGE_SLUG_PATTERN,
 }
 SLUG_CASES = {
     "organisation": [
@@ -201,6 +203,18 @@ SLUG_CASES = {
         ("Builders", False),
         ("role name", False),
     ],
+    "booking_page": [
+        ("abc", True),
+        ("a" * 80, True),
+        ("a-b", True),
+        ("ab", False),
+        ("a" * 81, False),
+        ("-abc", False),
+        ("abc-", False),
+        ("a_bc", False),
+        ("Abc", False),
+        ("abc\n", False),
+    ],
 }
 
 # A field carries a slug when its pattern has the slug shape, whatever its
@@ -232,6 +246,7 @@ SLUG_NAME = re.compile(
 TENANT_WORD = re.compile(r"tenant|slug[-_]?availability", re.IGNORECASE)
 ORGANISATION_WORD = re.compile(rf"organi[sz]ation|realm|{ORG_WORD}", re.IGNORECASE)
 WORKSPACE_ROLE_WORD = re.compile(r"workspace_role", re.IGNORECASE)
+BOOKING_PAGE_WORD = re.compile(r"booking_page|public_booking|booking_slug", re.IGNORECASE)
 # Values under these keywords are data or prose, never a field. A property may
 # carry one of these names, so the rule never applies inside `properties`.
 NOT_A_SCHEMA = {"example", "examples", "default", "enum", "const", "description", "summary"}
@@ -285,6 +300,15 @@ WORKSPACE_ROLE_SLUG_LOCATIONS = tuple(
         "WorkspaceRolePatch",
     )
 )
+BOOKING_PAGE_SLUG_LOCATIONS = tuple(
+    ("core-api", ("components", "schemas", name, "properties", "slug"))
+    for name in (
+        "BookingPage",
+        "BookingPageCreateRequest",
+        "PublicBookingPage",
+        "PublicBookingReservation",
+    )
+)
 
 
 def load_contracts():
@@ -332,6 +356,7 @@ def classify_slug(context):
                 ("tenant", TENANT_WORD),
                 ("organisation", ORGANISATION_WORD),
                 ("workspace_role", WORKSPACE_ROLE_WORD),
+                ("booking_page", BOOKING_PAGE_WORD),
             )
             if word.search(words(token))
         }
@@ -578,6 +603,7 @@ def test_every_slug_field_in_both_contracts_carries_the_rule_its_context_names()
             *TENANT_SLUG_LOCATIONS,
             *ORGANISATION_SLUG_LOCATIONS,
             *WORKSPACE_ROLE_SLUG_LOCATIONS,
+            *BOOKING_PAGE_SLUG_LOCATIONS,
         )
     }
     assert expected <= found, "the walk no longer finds: " + "; ".join(sorted(expected - found))
@@ -1067,7 +1093,8 @@ N4_PATH = "/organisations/{organisation_id}/bootstrap"
 # Rebound at 0.53.0: push subscription platform, bounded foreground presence leases, and zero-PII createBugReport; assurance guards unchanged.
 # Rebound at 0.55.0: authoritative workspace channel confidentiality; N4 assurance guards unchanged.
 # Rebound at 0.57.0: optional workspace identity and preferences; protected bootstrap and discovery semantics unchanged.
-N4_VERSION = "0.57.0"
+# Rebound at 0.58.0: community boosts, VIP Connect, live AI translation/captions, smart calendar/booking, and cybersecurity posture; N4 assurance guards unchanged.
+N4_VERSION = "0.58.0"
 # Rebound at 0.19.0 (2026-10-21, on top of 0.18.1): the notice-contacts delta and the Plan example's EU hosting.
 # Rebound at 0.22.0: the ten structure operations, their schemas and Problem.reason's first value;
 # then room_state on WorkspaceChannel, the starter's lounge (template version 2) and AppCode messaging;
@@ -1124,7 +1151,8 @@ N4_VERSION = "0.57.0"
 # Rebound at 0.53.0: push subscription platform, bounded foreground presence leases, and zero-PII createBugReport; no N4 bytes changed.
 # Rebound at 0.55.0: authoritative workspace channel confidentiality; N4 assurance guards unchanged.
 # Rebound at 0.57.0: optional workspace identity and preferences; protected bootstrap and discovery semantics unchanged.
-N4_OLD_CONTRACT = "e66387f271c0413b9900de5725bb3c645134662f6c23d52feb7c3691b0cad89d"
+# Rebound at 0.58.0: community boosts, VIP Connect, live AI translation/captions, smart calendar/booking, and cybersecurity posture; N4 assurance guards unchanged.
+N4_OLD_CONTRACT = "190dc6c2c640ec4770b92297f87033486738d27e8474c49b34e5d088536c603a"
 # Rebound at 0.20.0 (2026-10-22): CONVENTIONS.md §6 gains the order-in-progress and invoice-issued rows and a changelog line.
 # Rebound at 0.24.0 (2026-10-22): CONVENTIONS.md §6's invoice-issued row narrowed, and a changelog line.
 # Rebound at 0.28.0: CONVENTIONS.md §6 gains the identity-unknown row and a changelog line.
@@ -1148,7 +1176,9 @@ N4_OLD_CONTRACT = "e66387f271c0413b9900de5725bb3c645134662f6c23d52feb7c3691b0cad
 # Rebound for open-core monorepo unification; no N4 clause changed.
 # Rebound at 0.39.0: a changelog line for the reserved organisation slugs.
 # Rebound at 0.47.0: Confidential stream conventions; assurance clauses remain checked.
-N4_OLD_CONVENTIONS = "f4bc5e9558ff9823a60f5c849599aa1a8a0f19f042c1640e9772dfc3b230b4fb"
+# Rebound at 0.56.0: Sovereign smart calendar and public booking conventions; assurance clauses remain checked.
+# Rebound at 0.58.0: Ephemeral AI translation and live call caption conventions; assurance clauses remain checked.
+N4_OLD_CONVENTIONS = "a5928fffce74358fdb215edcf40e6c598102d9b0186e607c39dfc0a2c5fd1415"
 # Rebound: FIRST_OWNER_BOOTSTRAP.md §8.2 check 4 and its decision paragraph name the recent
 # `auth_time` requirement and the Console's `max_age`; no N4 clause changed. Rebound again for
 # the 2 s future tolerance, the commit-time bound, `max_age=0` and "narrows"; no N4 clause changed.

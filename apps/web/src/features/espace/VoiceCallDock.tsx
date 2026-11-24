@@ -126,6 +126,9 @@ const LazyCallCompanionChatDrawer = lazy(() => import('./CallCompanionChatDrawer
 const LazySoundboardPopover = lazy(() =>
   import('../sounds/SoundboardPopover').then((module) => ({ default: module.SoundboardPopover }))
 )
+const LazyLiveCallCaptionsBar = lazy(() =>
+  import('./ai/LiveCallCaptionsBar').then((module) => ({ default: module.LiveCallCaptionsBar }))
+)
 
 const COMPANION_COPY = {
   fr: {
@@ -559,6 +562,17 @@ function VoiceCallDockView({
   const people = preJoin
     ? (callRoom?.occupancy?.participants ?? []).filter((id) => id !== viewerId)
     : callSnapshot.participants
+  const callParticipantIds = useMemo(() => {
+    const seen = new Set<string>()
+    const list: string[] = []
+    for (const candidate of [viewerId, ...people]) {
+      if (candidate !== '' && !seen.has(candidate)) {
+        seen.add(candidate)
+        list.push(candidate)
+      }
+    }
+    return list
+  }, [viewerId, people])
   const videos = callSnapshot.videos ?? []
   const attachVideo = realCall?.attachVideo
   const setCamera = realCall?.setCameraEnabled
@@ -604,6 +618,12 @@ function VoiceCallDockView({
   const pendingFocusRef = useRef<'detach' | 'redock' | null>(null)
   const [companionOpen, setCompanionOpen] = useState(false)
   const currentCallRoomId = callLive && channel !== null ? channel.roomId : null
+  const effectiveCallInstanceId =
+    (callSnapshot.status === 'connected' || callSnapshot.status === 'reconnecting') &&
+    callSnapshot.callInstanceId !== undefined &&
+    callSnapshot.callInstanceId.trim() !== ''
+      ? callSnapshot.callInstanceId.trim()
+      : undefined
   const [activeCompanionRoomId, setActiveCompanionRoomId] = useState<string | null>(
     currentCallRoomId
   )
@@ -1116,6 +1136,27 @@ function VoiceCallDockView({
                 ) : null}
               </div>
             ) : null}
+            {call.mode !== 'local-preview' ? (
+              <Suspense fallback={null}>
+                <LazyLiveCallCaptionsBar
+                  organisationId={organisationId}
+                  channelId={channel.channelId}
+                  callInstanceId={effectiveCallInstanceId}
+                  participants={callParticipantIds}
+                  permitsPlaintext={!companionProtectionUnavailable}
+                  visible={placement === 'stage'}
+                  localSpeakerLabel={nameOf(viewerId)}
+                  resolveSpeakerName={(userId) => nameOf(userId)}
+                  publishCaptionPacket={call.publishCallCaptionPacket}
+                  subscribeCaptionPackets={call.subscribeCallCaptionPackets}
+                  localAudioTrack={
+                    callSnapshot.muted || callSnapshot.deafened || callSnapshot.listenOnly
+                      ? null
+                      : (call.localMicTrack?.() ?? null)
+                  }
+                />
+              </Suspense>
+            ) : null}
             {isFloating ? (
               <FloatingCallPill
                 asSection={false}
@@ -1149,9 +1190,7 @@ function VoiceCallDockView({
                           trackSource={call.localMicTrack}
                           levelSampler={call.micLevel}
                           muted={
-                            callSnapshot.muted ||
-                            callSnapshot.deafened ||
-                            callSnapshot.listenOnly
+                            callSnapshot.muted || callSnapshot.deafened || callSnapshot.listenOnly
                           }
                           connected={callSnapshot.status === 'connected'}
                           surface="inverse"
@@ -1236,9 +1275,7 @@ function VoiceCallDockView({
                           trackSource={call.localMicTrack}
                           levelSampler={call.micLevel}
                           muted={
-                            callSnapshot.muted ||
-                            callSnapshot.deafened ||
-                            callSnapshot.listenOnly
+                            callSnapshot.muted || callSnapshot.deafened || callSnapshot.listenOnly
                           }
                           connected={callSnapshot.status === 'connected'}
                           surface="inverse"

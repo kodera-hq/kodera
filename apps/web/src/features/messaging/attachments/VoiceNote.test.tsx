@@ -221,7 +221,7 @@ describe('Async Voice Notes preflight, recording guardrail, playback, and AI tra
       </MessagingOrganisation.Provider>
     )
 
-    expect(screen.getByTestId('voice-note-player')).toBeInTheDocument()
+    expect(await screen.findByTestId('voice-note-player')).toBeInTheDocument()
     await user.click(screen.getByTestId('voice-note-play-toggle'))
     await waitFor(() =>
       expect(FakeVoiceAudioContext.instances[0]?.sources[0]?.start).toHaveBeenCalled()

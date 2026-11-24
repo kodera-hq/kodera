@@ -11,14 +11,25 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Callable
 from typing import Any
+from uuid import UUID
 
 import jwt
 
-from .rooms import POLICY
+from .rooms import CONFIDENTIAL, CREATE, ENCRYPTION, MLS_V1_ALGORITHM, POLICY, SFRAME_V1_MEDIA
 
 _LOCALPART = re.compile(r"[a-z0-9._=\-/+]{1,255}")
 _ROOM_ID = re.compile(r"!([!-9;-~]{1,128}:[A-Za-z0-9.:-]{1,253}|[A-Za-z0-9_-]{43})")
+
+
+def _canonical_uuid(value: Any) -> str | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return str(UUID(value))
+    except ValueError:
+        return None
 
 
 class UpstreamError(Exception):
@@ -207,6 +218,90 @@ class Matrix:
         self._call(
             "PUT", f"/_matrix/client/v3/rooms/{_q(room_id)}/state/{_q(event_type)}/", content
         )
+
+    def confidential_e2ee_ready(
+        self, room_id: str, agent_user: str, policy: dict[str, Any] | None = None
+    ) -> bool:
+        """Authoritative Synapse state check for an SFrame v1 confidential audio room.
+
+        Fails closed unless the room carries agent-authored MLS encryption/creation markers and an
+        agent-authored `io.kodera.room.confidential` record with `epoch >= 1` and
+        `rekey_required is False`.
+        """
+        if (
+            not isinstance(room_id, str)
+            or len(room_id) > 255
+            or _ROOM_ID.fullmatch(room_id) is None
+            or not isinstance(agent_user, str)
+            or not agent_user.startswith("@")
+            or ":" not in agent_user
+        ):
+            return False
+        if policy is not None and (
+            not isinstance(policy, dict)
+            or ("rekey_required" in policy and policy["rekey_required"] is not False)
+        ):
+            return False
+
+        policy_event = self.state_event(room_id, POLICY)
+        if not isinstance(policy_event, dict) or policy_event.get("sender") != agent_user:
+            return False
+        live_policy = policy_event.get("content")
+        if (
+            not isinstance(live_policy, dict)
+            or live_policy.get("e2ee_media") != SFRAME_V1_MEDIA
+            or live_policy.get("ai_enabled", False) is not False
+            or ("rekey_required" in live_policy and live_policy["rekey_required"] is not False)
+        ):
+            return False
+
+        create_event = self.state_event(room_id, CREATE)
+        if not isinstance(create_event, dict) or create_event.get("sender") != agent_user:
+            return False
+        create_content = create_event.get("content")
+        if not isinstance(create_content, dict) or create_content.get(CONFIDENTIAL) not in (
+            True,
+            MLS_V1_ALGORITHM,
+        ):
+            return False
+
+        enc_event = self.state_event(room_id, ENCRYPTION)
+        if not isinstance(enc_event, dict) or enc_event.get("sender") != agent_user:
+            return False
+        enc_content = enc_event.get("content")
+        if not isinstance(enc_content, dict) or enc_content.get("algorithm") != MLS_V1_ALGORITHM:
+            return False
+
+        conf_event = self.state_event(room_id, CONFIDENTIAL)
+        if not isinstance(conf_event, dict) or conf_event.get("sender") != agent_user:
+            return False
+        conf_content = conf_event.get("content")
+        if not isinstance(conf_content, dict):
+            return False
+        if conf_content.get("rekey_required") is not False:
+            return False
+        epoch = conf_content.get("epoch")
+        if type(epoch) is not int or not (1 <= epoch <= 2**53 - 1):
+            return False
+        if "algorithm" in conf_content and conf_content["algorithm"] != MLS_V1_ALGORITHM:
+            return False
+        conf_uuid = _canonical_uuid(conf_content.get("room_id"))
+        if conf_uuid is None:
+            return False
+        for candidate in (
+            live_policy.get("e2ee_room_id"),
+            policy.get("e2ee_room_id") if isinstance(policy, dict) else None,
+        ):
+            if candidate is not None:
+                parsed = _canonical_uuid(candidate)
+                if parsed is None or parsed != conf_uuid:
+                    return False
+        return True
+
+    def confidential_room_ready_checker(
+        self, agent_user: str
+    ) -> Callable[[str, dict[str, Any]], bool]:
+        return lambda room_id, policy: self.confidential_e2ee_ready(room_id, agent_user, policy)
 
     def _whoami_self(self) -> str:
         if self._me is None:

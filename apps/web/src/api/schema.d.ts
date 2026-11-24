@@ -4525,6 +4525,126 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/organisations/{organisation_id}/workspace/monetization": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read workspace community boosts, VIP tiers, and Connect/DAC7 status
+         * @description Returns Volet A boost packs, active hosting credits, Volet B VIP tier offers, and (for owner/admin/billing callers) creator Connect status and annual DAC7 summary.
+         */
+        get: operations["getWorkspaceMonetization"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/monetization/boosts/checkout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Issue a Core Factur-X 380 invoice and Web Checkout session for a workspace boost
+         * @description Enforces Art. L221-28 explicit 14-day withdrawal waiver for B2C buyers, issues a Core Factur-X 380 invoice, and returns a card-only Stripe Checkout session URL.
+         */
+        post: operations["createWorkspaceBoostCheckout"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/monetization/connect/onboarding": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Initiate or resume durable Stripe Connect Express onboarding for VIP monetization
+         * @description Owner/admin only. Persists durable onboarding intent and connected account id before issuing a resumable onboarding link, sealing any DAC7 TIN with AES-256-GCM.
+         */
+        post: operations["startCreatorConnectOnboarding"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/monetization/vip-tiers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create a VIP tier offer and gate workspace channels to the granted VIP role
+         * @description Owner/admin only. Requires an active CreatorConnectAccount and preserves owner/admin access and inherited DENY rules when restricting channels.
+         */
+        post: operations["createVipTierOffer"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/monetization/vip-passes/checkout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create a Stripe Connect destination Checkout session for a member VIP pass
+         * @description Enforces Art. L221-28 B2C withdrawal waiver, reserves negative-balance recovery into application_fee_amount, and returns a card-only Connect Checkout URL.
+         */
+        post: operations["createVipPassCheckout"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/monetization/dac7-report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export the workspace creator annual DAC7 tax report as JSON or OECD DPI XML
+         * @description Owner/billing only. Exports annual and quarterly EU Directive 2021/514 seller consideration, transaction counts, and prior-year DPI2 corrections.
+         */
+        get: operations["exportWorkspaceDac7Report"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/organisations/{organisation_id}/workspace/channel-governance": {
         parameters: {
             query?: never;
@@ -4679,6 +4799,346 @@ export interface paths {
          * @description Publish a revisioned public cross-signing and device-verification bundle. Requires current registered-device proof using signing operation publish-verification-bundle with null room coordinate and the existing confidential relay statement format. The master signs the self-signing statement and the self-signing key signs the device-verification statement: compact sorted JSON containing purpose, organisationId, membershipId, deviceId, revision, masterKey, selfSigningKey and signingKey. This proves key possession, not out-of-band human identity verification. Private keys, archives and MLS group secrets are refused.
          */
         post: operations["publishDeviceVerificationBundle"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/calendar/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List workspace smart calendar events within a bounded window
+         * @description Returns workspace-shared events, redacted busy-only blocks, and the caller's own private events intersecting the requested UTC window.
+         */
+        get: operations["listCalendarEvents"];
+        put?: never;
+        /**
+         * Create a workspace smart calendar event
+         * @description Creates a workspace, busy-only, or private calendar event with optional RFC 5545 recurrence rule, attendees, alarm, Kodera Visio link, and collaborative Yjs agenda document link.
+         */
+        post: operations["createCalendarEvent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/calendar/events/{event_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete a workspace calendar event
+         * @description Deletes a calendar event owned by the caller or administered by an organisation owner/admin.
+         */
+        delete: operations["deleteCalendarEvent"];
+        options?: never;
+        head?: never;
+        /**
+         * Update a workspace calendar event under ETag optimistic concurrency
+         * @description Updates a calendar event owned by the caller or administered by an organisation owner/admin when If-Match matches the current revision.
+         */
+        patch: operations["updateCalendarEvent"];
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/calendar/events.ics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export visible workspace calendar events as RFC 5545 iCalendar
+         * @description Serializes visible workspace events into an injection-safe CRLF 75-octet folded VCALENDAR feed (JSON envelope by default or raw text/calendar when requested via Accept).
+         */
+        get: operations["exportCalendarIcs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/calendar/sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List configured CalDAV calendar sources
+         * @description Lists external sovereign CalDAV calendar sources (La Suite Numerique, Open-Xchange, Nextcloud, Generic) to organisation owners and administrators without disclosing sealed credentials.
+         */
+        get: operations["listCaldavSources"];
+        put?: never;
+        /**
+         * Configure a sealed HTTPS CalDAV source
+         * @description Seals CalDAV principal credentials with HKDF-AEAD bound to the organisation, workspace, and source identifiers after SSRF validation of the HTTPS collection URL.
+         */
+        post: operations["createCaldavSource"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/calendar/sources/{source_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove a CalDAV source and its sealed credentials
+         * @description Removes the CalDAV source row, its sealed credentials, and its imported source events.
+         */
+        delete: operations["deleteCaldavSource"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/calendar/sources/{source_id}/actions/sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run an SSRF-pinned incremental CalDAV sync-collection synchronization
+         * @description Executes a pinned-IP no-redirect HTTPS CalDAV sync-collection delta pull and ETag-checked upsert against the configured source.
+         */
+        post: operations["syncCaldavSource"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/calendar/booking-pages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List sovereign booking pages in the workspace
+         * @description Lists sovereign booking pages configured in the workspace.
+         */
+        get: operations["listBookingPages"];
+        put?: never;
+        /**
+         * Create a sovereign booking page
+         * @description Creates a public sovereign booking page backed by the host member's calendar availability without disclosing event titles or attendee PII.
+         */
+        post: operations["createBookingPage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/calendar/booking-pages/{booking_page_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Deactivate a sovereign booking page
+         * @description Deactivates a sovereign booking page owned by the caller or administered by an organisation owner/admin.
+         */
+        delete: operations["deleteBookingPage"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/booking/{booking_slug}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read public sovereign booking page metadata and zero-PII free slots
+         * @description Public endpoint returning free availability intervals computed after subtracting busy calendar events and buffers without disclosing any calendar event title, attendee, or internal identifier.
+         */
+        get: operations["getPublicBookingPage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/booking/{booking_slug}/reservations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Atomically reserve an available public booking slot
+         * @description Serializes slot reservation under SELECT ... FOR UPDATE and SQL overlap guard, returning a single-disclosure cancellation token (stored SHA-256 hashed) and a downloadable RFC 5545 .ics invitation. Return no Idempotency-Replayed header.
+         */
+        post: operations["reservePublicBookingSlot"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/booking/{booking_slug}/reservations/{reservation_id}/actions/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel a public booking reservation with its single-disclosure token
+         * @description Verifies the cancellation token against its stored SHA-256 digest in constant time, releases the reserved slot, and returns an RFC 5545 METHOD:CANCEL payload. Return no Idempotency-Replayed header.
+         */
+        post: operations["cancelPublicBookingReservation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/security-posture": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read the workspace cybersecurity posture score and check breakdown
+         * @description Computes the deterministic 0–100 workspace cybersecurity posture score across six weighted governance, sovereign AI, alert routing, extension secret rotation, least-privilege role, and confidential room checks. Owner/admin only; responses are Cache-Control: no-store.
+         */
+        get: operations["getWorkspaceSecurityPosture"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/security-posture/actions/remediate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Apply a 1-click safe workspace cybersecurity posture remediation
+         * @description Atomically applies a single safe posture remediation check or all safe remediations under the organisation and workspace locks, records an audit event, and returns the updated 0–100 posture report. Owner/admin only.
+         */
+        post: operations["remediateWorkspaceSecurityPosture"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/channels/{channel_id}/actions/translate-message": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ephemerally translate a written channel message
+         * @description Evaluates all three OFF-by-default AI consent tiers (org -> channel -> member), refuses confidential, E2EE, and DM/unclassified rooms with 403, and returns ephemeral translated text without mutating Matrix events or persisting message text. Return no Idempotency-Replayed header.
+         */
+        post: operations["translateChannelMessage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/channels/{channel_id}/call-captions/session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read current live call caption consent session for a channel
+         * @description Returns the active or most recent live call caption consent session state for a non-confidential channel, or null when none exists.
+         */
+        get: operations["getLiveCallCaptionSession"];
+        put?: never;
+        /**
+         * Start, consent, sync roster, pause, withdraw, or end a live call caption session
+         * @description Transitions the durable multi-party live call caption consent state machine, auto-pausing on unconsented participant join and immediately stopping on consent withdrawal.
+         */
+        post: operations["updateLiveCallCaptionSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/channels/{channel_id}/call-captions/chunks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Transcribe and translate a bounded live call audio chunk under all-party consent
+         * @description Verifies active 100% participant consent and matching session generation before and after provider execution, returning ephemeral source and translated subtitle text without database persistence. Return no Idempotency-Replayed header.
+         */
+        post: operations["transcribeLiveCallChunk"];
         delete?: never;
         options?: never;
         head?: never;
@@ -12547,7 +13007,7 @@ export interface components {
          *       "workspace_id": "01950000-0000-7000-8000-0000000000a1",
          *       "event_scope": "default",
          *       "epoch": 2000000,
-         *       "epoch_mac_key": "c8cd9f607c5ec478b461588173cf777b2a54ca74bd936c48e92329139f092a0a",
+         *       "epoch_mac_key": "0000000000000000000000000000000000000000000000000000000000000000",
          *       "epoch_expires_at": 1800000900,
          *       "epoch_rotation_seconds": 900
          *     }
@@ -13494,6 +13954,1021 @@ export interface components {
             language: string | null;
             provider: string;
             model: string;
+        };
+        /**
+         * WorkspaceMonetizationOverview
+         * @example {
+         *       "workspace_id": "00000000-0000-7000-8000-000000000010",
+         *       "boost_packs": [],
+         *       "hosting_credits": [],
+         *       "vip_tiers": [],
+         *       "connect_account": null,
+         *       "dac7_summary": null
+         *     }
+         */
+        WorkspaceMonetizationOverview: {
+            /** Format: uuid */
+            workspace_id: string;
+            boost_packs: {
+                code: string;
+                name: string;
+                net_amount_minor: number;
+                credit_amount_minor: number;
+                seats_delta: number;
+                storage_bytes_delta: number;
+                duration_days: number;
+                currency: string;
+            }[];
+            hosting_credits: {
+                /** Format: uuid */
+                id: string;
+                /** Format: uuid */
+                boost_grant_id: string;
+                pack_code: string;
+                granted_minor: number;
+                consumed_minor: number;
+                refunded_minor: number;
+                remaining_minor: number;
+                state: string;
+                expires_at: string | null;
+            }[];
+            vip_tiers: components["schemas"]["VipTierOfferItem"][];
+            connect_account: {
+                [key: string]: unknown;
+            } | null;
+            dac7_summary: {
+                [key: string]: unknown;
+            } | null;
+        };
+        /** WorkspaceBoostCheckoutRequest */
+        WorkspaceBoostCheckoutRequest: {
+            pack_code: string;
+            /** @enum {string} */
+            customer_kind: "b2c" | "b2b";
+            customer_country: string;
+            customer_legal_name?: string;
+            customer_address_line1?: string;
+            customer_postal_code?: string;
+            customer_city?: string;
+            /** Format: uri */
+            return_url: string;
+            /** @enum {string} */
+            locale?: "fr" | "en";
+            quantity?: number;
+            withdrawal_waiver_accepted: boolean;
+            /** Format: date-time */
+            withdrawal_waiver_at?: string | null;
+            withdrawal_waiver_statement?: string | null;
+        };
+        /**
+         * WorkspaceBoostCheckoutResult
+         * @example {
+         *       "boost_grant_id": "00000000-0000-7000-8000-000000000021",
+         *       "invoice_id": "00000000-0000-7000-8000-000000000022",
+         *       "invoice_number": "KODERA-2026-00001",
+         *       "vat_regime": "fr_standard",
+         *       "vat_rate_bp": 2000,
+         *       "net_amount_minor": 2900,
+         *       "vat_amount_minor": 580,
+         *       "gross_amount_minor": 3480,
+         *       "checkout_session_id": "cs_fake_000001",
+         *       "checkout_url": "https://pay.fake.invalid/checkout/cs_fake_000001"
+         *     }
+         */
+        WorkspaceBoostCheckoutResult: {
+            /** Format: uuid */
+            boost_grant_id: string;
+            /** Format: uuid */
+            invoice_id: string;
+            invoice_number: string | null;
+            vat_regime: string;
+            vat_rate_bp: number;
+            net_amount_minor: number;
+            vat_amount_minor: number;
+            gross_amount_minor: number;
+            checkout_session_id: string;
+            /** Format: uri */
+            checkout_url: string;
+        };
+        /** CreatorConnectOnboardingRequest */
+        CreatorConnectOnboardingRequest: {
+            seller_legal_name: string;
+            tax_residence_country: string;
+            tax_tin?: string | null;
+            /** Format: uri */
+            refresh_url: string;
+            /** Format: uri */
+            return_url: string;
+        };
+        /**
+         * CreatorConnectOnboardingResult
+         * @example {
+         *       "connect_account_id": "00000000-0000-7000-8000-000000000031",
+         *       "stripe_connect_account_id": "acct_fake000001",
+         *       "onboarding_state": "onboarding_link_issued",
+         *       "onboarding_url": "https://connect.fake.invalid/setup/acct_fake000001",
+         *       "expires_at": "2026-06-15T12:15:00Z"
+         *     }
+         */
+        CreatorConnectOnboardingResult: {
+            /** Format: uuid */
+            connect_account_id: string;
+            stripe_connect_account_id: string | null;
+            onboarding_state: string;
+            /** Format: uri */
+            onboarding_url: string;
+            /** Format: date-time */
+            expires_at: string;
+        };
+        /** VipTierOfferCreateRequest */
+        VipTierOfferCreateRequest: {
+            code: string;
+            name: string;
+            description?: string | null;
+            /** @enum {string} */
+            billing_period: "monthly" | "yearly" | "one_time";
+            price_excl_vat_minor: number;
+            /** Format: uuid */
+            granted_workspace_role_id: string;
+            granted_channel_ids: string[];
+        };
+        /**
+         * VipTierOfferItem
+         * @example {
+         *       "id": "00000000-0000-7000-8000-000000000041",
+         *       "code": "vip-gold",
+         *       "name": "Salon VIP Or",
+         *       "description": null,
+         *       "billing_period": "monthly",
+         *       "currency": "EUR",
+         *       "price_excl_vat_minor": 1500,
+         *       "granted_workspace_role_id": "00000000-0000-7000-8000-000000000042",
+         *       "granted_channel_ids": [
+         *         "00000000-0000-7000-8000-000000000043"
+         *       ],
+         *       "active": true
+         *     }
+         */
+        VipTierOfferItem: {
+            /** Format: uuid */
+            id: string;
+            code: string;
+            name: string;
+            description?: string | null;
+            billing_period: string;
+            currency: string;
+            price_excl_vat_minor: number;
+            /** Format: uuid */
+            granted_workspace_role_id: string;
+            granted_channel_ids: string[];
+            active: boolean;
+        };
+        /** VipPassCheckoutRequest */
+        VipPassCheckoutRequest: {
+            /** Format: uuid */
+            tier_id: string;
+            /** @enum {string} */
+            customer_kind: "b2c" | "b2b";
+            buyer_country: string;
+            /** Format: uri */
+            return_url: string;
+            /** @enum {string} */
+            locale?: "fr" | "en";
+            withdrawal_waiver_accepted: boolean;
+            /** Format: date-time */
+            withdrawal_waiver_at?: string | null;
+            withdrawal_waiver_statement?: string | null;
+        };
+        /**
+         * VipPassCheckoutResult
+         * @example {
+         *       "vip_entitlement_id": "00000000-0000-7000-8000-000000000051",
+         *       "tier_id": "00000000-0000-7000-8000-000000000041",
+         *       "vat_regime": "fr_standard",
+         *       "vat_rate_bp": 2000,
+         *       "gross_excl_vat_minor": 1500,
+         *       "vat_amount_minor": 300,
+         *       "total_incl_vat_minor": 1800,
+         *       "application_fee_amount_minor": 150,
+         *       "reserved_recovery_minor": 0,
+         *       "creator_net_minor": 1350,
+         *       "checkout_session_id": "cs_fake_000002",
+         *       "checkout_url": "https://pay.fake.invalid/checkout/cs_fake_000002"
+         *     }
+         */
+        VipPassCheckoutResult: {
+            /** Format: uuid */
+            vip_entitlement_id: string;
+            /** Format: uuid */
+            tier_id: string;
+            vat_regime: string;
+            vat_rate_bp: number;
+            gross_excl_vat_minor: number;
+            vat_amount_minor: number;
+            total_incl_vat_minor: number;
+            application_fee_amount_minor: number;
+            reserved_recovery_minor: number;
+            creator_net_minor: number;
+            checkout_session_id: string;
+            /** Format: uri */
+            checkout_url: string;
+        };
+        /**
+         * Dac7ExportDocument
+         * @example {
+         *       "directive": "2021/514/EU",
+         *       "reporting_year": 2026,
+         *       "sellers": []
+         *     }
+         */
+        Dac7ExportDocument: {
+            directive: string;
+            reporting_year: number;
+            sellers: {
+                [key: string]: unknown;
+            }[];
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * CalendarAttendee
+         * @example {
+         *       "email": "camille@kodera.io",
+         *       "name": "Camille Laurent",
+         *       "partstat": "ACCEPTED",
+         *       "role": "REQ-PARTICIPANT"
+         *     }
+         */
+        CalendarAttendee: {
+            /** Format: email */
+            email: string;
+            name?: string;
+            /** @enum {string} */
+            partstat?: "NEEDS-ACTION" | "ACCEPTED" | "DECLINED" | "TENTATIVE";
+            /** @enum {string} */
+            role?: "REQ-PARTICIPANT" | "OPT-PARTICIPANT" | "CHAIR" | "NON-PARTICIPANT";
+        };
+        /**
+         * CalendarEvent
+         * @example {
+         *       "id": "00000000-0000-7000-8000-000000000101",
+         *       "uid": "00000000-0000-7000-8000-000000000101@kodera.calendar",
+         *       "title": "Synchronisation produit hebdomadaire",
+         *       "description": "Revue de feuille de route et arbitrages.",
+         *       "location": "Salle Givre",
+         *       "startsAt": "2026-06-08T09:00:00Z",
+         *       "endsAt": "2026-06-08T09:45:00Z",
+         *       "timezone": "Europe/Paris",
+         *       "rrule": "FREQ=WEEKLY;BYDAY=MO",
+         *       "status": "confirmed",
+         *       "visibility": "workspace",
+         *       "attendees": [
+         *         {
+         *           "email": "camille@kodera.io",
+         *           "name": "Camille Laurent",
+         *           "partstat": "ACCEPTED",
+         *           "role": "REQ-PARTICIPANT"
+         *         }
+         *       ],
+         *       "alarmMinutesBefore": 15,
+         *       "visioUrl": "https://visio.kodera.io/hebdo-produit",
+         *       "agendaDocUrl": "https://console.kodera.io/docs/00000000-0000-7000-8000-000000000201",
+         *       "sourceId": null,
+         *       "revision": 1,
+         *       "updatedAt": "2026-06-01T08:00:00Z"
+         *     }
+         */
+        CalendarEvent: {
+            /** Format: uuid */
+            id: string;
+            uid: string;
+            title: string;
+            description: string;
+            location: string;
+            /** Format: date-time */
+            startsAt: string;
+            /** Format: date-time */
+            endsAt: string;
+            timezone: string;
+            rrule: string;
+            /** @enum {string} */
+            status: "confirmed" | "tentative" | "cancelled";
+            /** @enum {string} */
+            visibility: "workspace" | "private" | "busy_only";
+            attendees: components["schemas"]["CalendarAttendee"][];
+            alarmMinutesBefore: number | null;
+            visioUrl: string;
+            agendaDocUrl: string;
+            /** Format: uuid */
+            sourceId: string | null;
+            revision: number;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        /**
+         * CalendarEventList
+         * @example {
+         *       "data": [
+         *         {
+         *           "id": "00000000-0000-7000-8000-000000000101",
+         *           "uid": "00000000-0000-7000-8000-000000000101@kodera.calendar",
+         *           "title": "Synchronisation produit hebdomadaire",
+         *           "description": "Revue de feuille de route et arbitrages.",
+         *           "location": "Salle Givre",
+         *           "startsAt": "2026-06-08T09:00:00Z",
+         *           "endsAt": "2026-06-08T09:45:00Z",
+         *           "timezone": "Europe/Paris",
+         *           "rrule": "FREQ=WEEKLY;BYDAY=MO",
+         *           "status": "confirmed",
+         *           "visibility": "workspace",
+         *           "attendees": [],
+         *           "alarmMinutesBefore": 15,
+         *           "visioUrl": "https://visio.kodera.io/hebdo-produit",
+         *           "agendaDocUrl": "",
+         *           "sourceId": null,
+         *           "revision": 1,
+         *           "updatedAt": "2026-06-01T08:00:00Z"
+         *         }
+         *       ]
+         *     }
+         */
+        CalendarEventList: {
+            data: components["schemas"]["CalendarEvent"][];
+        };
+        /** CalendarEventCreateRequest */
+        CalendarEventCreateRequest: {
+            title: string;
+            description?: string;
+            location?: string;
+            /** Format: date-time */
+            startsAt: string;
+            /** Format: date-time */
+            endsAt: string;
+            timezone?: string;
+            rrule?: string;
+            /** @enum {string} */
+            visibility?: "workspace" | "private" | "busy_only";
+            attendees?: components["schemas"]["CalendarAttendee"][];
+            alarmMinutesBefore?: number | null;
+            visioUrl?: string;
+            agendaDocUrl?: string;
+        };
+        /** CalendarEventPatchRequest */
+        CalendarEventPatchRequest: {
+            title?: string;
+            description?: string;
+            location?: string;
+            /** Format: date-time */
+            startsAt?: string;
+            /** Format: date-time */
+            endsAt?: string;
+            /** @enum {string} */
+            status?: "confirmed" | "tentative" | "cancelled";
+            /** @enum {string} */
+            visibility?: "workspace" | "private" | "busy_only";
+            rrule?: string;
+            visioUrl?: string;
+            agendaDocUrl?: string;
+        };
+        /**
+         * CalendarIcsExport
+         * @example {
+         *       "filename": "kodera-workspace-calendar.ics",
+         *       "ics": "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Kodera//Sovereign Smart Calendar//EN\r\nCALSCALE:GREGORIAN\r\nMETHOD:PUBLISH\r\nEND:VCALENDAR\r\n"
+         *     }
+         */
+        CalendarIcsExport: {
+            filename: string;
+            ics: string;
+        };
+        /**
+         * CaldavSource
+         * @example {
+         *       "id": "00000000-0000-7000-8000-000000000102",
+         *       "name": "Agenda La Suite Numerique",
+         *       "provider": "lasuite",
+         *       "calendarUrl": "https://agenda.numerique.gouv.fr/caldav/equipe/",
+         *       "principalUsername": "equipe@kodera.io",
+         *       "enabled": true,
+         *       "hasSyncToken": true,
+         *       "lastSyncedAt": "2026-06-01T08:05:00Z",
+         *       "lastErrorCode": null,
+         *       "createdAt": "2026-06-01T08:00:00Z"
+         *     }
+         */
+        CaldavSource: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            /** @enum {string} */
+            provider: "lasuite" | "open_xchange" | "nextcloud" | "generic";
+            calendarUrl: string;
+            principalUsername: string;
+            enabled: boolean;
+            hasSyncToken: boolean;
+            /** Format: date-time */
+            lastSyncedAt: string | null;
+            lastErrorCode: string | null;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        /**
+         * CaldavSourceList
+         * @example {
+         *       "data": [
+         *         {
+         *           "id": "00000000-0000-7000-8000-000000000102",
+         *           "name": "Agenda La Suite Numerique",
+         *           "provider": "lasuite",
+         *           "calendarUrl": "https://agenda.numerique.gouv.fr/caldav/equipe/",
+         *           "principalUsername": "equipe@kodera.io",
+         *           "enabled": true,
+         *           "hasSyncToken": true,
+         *           "lastSyncedAt": "2026-06-01T08:05:00Z",
+         *           "lastErrorCode": null,
+         *           "createdAt": "2026-06-01T08:00:00Z"
+         *         }
+         *       ]
+         *     }
+         */
+        CaldavSourceList: {
+            data: components["schemas"]["CaldavSource"][];
+        };
+        /** CaldavSourceCreateRequest */
+        CaldavSourceCreateRequest: {
+            name: string;
+            /** @enum {string} */
+            provider?: "lasuite" | "open_xchange" | "nextcloud" | "generic";
+            calendarUrl: string;
+            username: string;
+            password: string;
+        };
+        /**
+         * CaldavSyncResult
+         * @example {
+         *       "sourceId": "00000000-0000-7000-8000-000000000102",
+         *       "upserted": 3,
+         *       "removed": 0,
+         *       "fullResync": false,
+         *       "syncedAt": "2026-06-01T08:10:00Z"
+         *     }
+         */
+        CaldavSyncResult: {
+            /** Format: uuid */
+            sourceId: string;
+            upserted: number;
+            removed: number;
+            fullResync: boolean;
+            /** Format: date-time */
+            syncedAt: string;
+        };
+        /**
+         * BookingAvailabilityWindow
+         * @example {
+         *       "weekday": 0,
+         *       "start": "09:00",
+         *       "end": "17:00"
+         *     }
+         */
+        BookingAvailabilityWindow: {
+            weekday: number;
+            start: string;
+            end: string;
+        };
+        /**
+         * BookingPage
+         * @example {
+         *       "id": "00000000-0000-7000-8000-000000000103",
+         *       "slug": "echange-architecture-kodera",
+         *       "title": "Point architecture souveraine",
+         *       "description": "Creneau de 30 minutes avec lien Kodera Visio automatique.",
+         *       "timezone": "Europe/Paris",
+         *       "durationMinutes": 30,
+         *       "bufferMinutes": 10,
+         *       "availabilityWindows": [
+         *         {
+         *           "weekday": 0,
+         *           "start": "09:00",
+         *           "end": "17:00"
+         *         }
+         *       ],
+         *       "visioUrl": "https://visio.kodera.io/point-architecture",
+         *       "agendaDocUrl": "",
+         *       "active": true,
+         *       "revision": 1,
+         *       "createdAt": "2026-06-01T08:00:00Z"
+         *     }
+         */
+        BookingPage: {
+            /** Format: uuid */
+            id: string;
+            slug: string;
+            title: string;
+            description: string;
+            timezone: string;
+            /** @enum {integer} */
+            durationMinutes: 15 | 30 | 45 | 60;
+            bufferMinutes: number;
+            availabilityWindows: components["schemas"]["BookingAvailabilityWindow"][];
+            visioUrl: string;
+            agendaDocUrl: string;
+            active: boolean;
+            revision: number;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        /**
+         * BookingPageList
+         * @example {
+         *       "data": [
+         *         {
+         *           "id": "00000000-0000-7000-8000-000000000103",
+         *           "slug": "echange-architecture-kodera",
+         *           "title": "Point architecture souveraine",
+         *           "description": "Creneau de 30 minutes avec lien Kodera Visio automatique.",
+         *           "timezone": "Europe/Paris",
+         *           "durationMinutes": 30,
+         *           "bufferMinutes": 10,
+         *           "availabilityWindows": [
+         *             {
+         *               "weekday": 0,
+         *               "start": "09:00",
+         *               "end": "17:00"
+         *             }
+         *           ],
+         *           "visioUrl": "https://visio.kodera.io/point-architecture",
+         *           "agendaDocUrl": "",
+         *           "active": true,
+         *           "revision": 1,
+         *           "createdAt": "2026-06-01T08:00:00Z"
+         *         }
+         *       ]
+         *     }
+         */
+        BookingPageList: {
+            data: components["schemas"]["BookingPage"][];
+        };
+        /** BookingPageCreateRequest */
+        BookingPageCreateRequest: {
+            slug: string;
+            title: string;
+            description?: string;
+            timezone?: string;
+            /** @enum {integer} */
+            durationMinutes?: 15 | 30 | 45 | 60;
+            bufferMinutes?: number;
+            availabilityWindows: components["schemas"]["BookingAvailabilityWindow"][];
+            visioUrl?: string;
+            agendaDocUrl?: string;
+        };
+        /**
+         * PublicBookingSlot
+         * @example {
+         *       "startsAt": "2026-06-08T10:00:00Z",
+         *       "endsAt": "2026-06-08T10:30:00Z"
+         *     }
+         */
+        PublicBookingSlot: {
+            /** Format: date-time */
+            startsAt: string;
+            /** Format: date-time */
+            endsAt: string;
+        };
+        /**
+         * PublicBookingPage
+         * @example {
+         *       "slug": "echange-architecture-kodera",
+         *       "title": "Point architecture souveraine",
+         *       "description": "Creneau de 30 minutes avec lien Kodera Visio automatique.",
+         *       "timezone": "Europe/Paris",
+         *       "durationMinutes": 30,
+         *       "visioAvailable": true,
+         *       "slots": [
+         *         {
+         *           "startsAt": "2026-06-08T10:00:00Z",
+         *           "endsAt": "2026-06-08T10:30:00Z"
+         *         }
+         *       ]
+         *     }
+         */
+        PublicBookingPage: {
+            slug: string;
+            title: string;
+            description: string;
+            timezone: string;
+            /** @enum {integer} */
+            durationMinutes: 15 | 30 | 45 | 60;
+            visioAvailable: boolean;
+            slots: components["schemas"]["PublicBookingSlot"][];
+        };
+        /** PublicBookingReserveRequest */
+        PublicBookingReserveRequest: {
+            /** Format: date-time */
+            startsAt: string;
+            guestName: string;
+            /** Format: email */
+            guestEmail: string;
+            guestNotes?: string;
+        };
+        /**
+         * PublicBookingReservation
+         * @example {
+         *       "reservationId": "00000000-0000-7000-8000-000000000104",
+         *       "slug": "echange-architecture-kodera",
+         *       "title": "Point architecture souveraine",
+         *       "startsAt": "2026-06-08T10:00:00Z",
+         *       "endsAt": "2026-06-08T10:30:00Z",
+         *       "timezone": "Europe/Paris",
+         *       "visioUrl": "https://visio.kodera.io/point-architecture",
+         *       "agendaDocUrl": "",
+         *       "status": "confirmed",
+         *       "cancellationToken": "bkc_00000000000000000000000000000000",
+         *       "ics": "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Kodera//Sovereign Smart Calendar//EN\r\nCALSCALE:GREGORIAN\r\nMETHOD:REQUEST\r\nEND:VCALENDAR\r\n"
+         *     }
+         */
+        PublicBookingReservation: {
+            /** Format: uuid */
+            reservationId: string;
+            slug: string;
+            title: string;
+            /** Format: date-time */
+            startsAt: string;
+            /** Format: date-time */
+            endsAt: string;
+            timezone: string;
+            visioUrl: string;
+            agendaDocUrl: string;
+            /** @enum {string} */
+            status: "confirmed";
+            cancellationToken: string;
+            ics: string;
+        };
+        /** PublicBookingCancelRequest */
+        PublicBookingCancelRequest: {
+            cancellationToken: string;
+        };
+        /**
+         * PublicBookingCancelResult
+         * @example {
+         *       "reservationId": "00000000-0000-7000-8000-000000000104",
+         *       "status": "cancelled",
+         *       "cancelledAt": "2026-06-02T09:00:00Z",
+         *       "ics": "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Kodera//Sovereign Smart Calendar//EN\r\nCALSCALE:GREGORIAN\r\nMETHOD:CANCEL\r\nEND:VCALENDAR\r\n"
+         *     }
+         */
+        PublicBookingCancelResult: {
+            /** Format: uuid */
+            reservationId: string;
+            /** @enum {string} */
+            status: "cancelled";
+            /** Format: date-time */
+            cancelledAt: string;
+            ics: string;
+        };
+        /**
+         * WorkspaceSecurityPostureCheck
+         * @example {
+         *       "id": "invite_hygiene",
+         *       "status": "pass",
+         *       "earned_points": 20,
+         *       "max_points": 20,
+         *       "remediation_action": "cap_unbounded_invites",
+         *       "fix_available": false,
+         *       "affected_count": 0
+         *     }
+         */
+        WorkspaceSecurityPostureCheck: {
+            /** @enum {string} */
+            id: "invite_hygiene" | "sovereign_ai_boundary" | "security_alert_routing" | "extension_secret_rotation" | "least_privilege_roles" | "confidential_room_readiness";
+            /** @enum {string} */
+            status: "pass" | "warn";
+            earned_points: number;
+            max_points: number;
+            /** @enum {string} */
+            remediation_action: "cap_unbounded_invites" | "enforce_eu_sovereign_ai" | "provision_security_alerts_channel" | "rotate_stale_extension_keys" | "strip_excess_role_permissions" | "provision_confidential_channel";
+            fix_available: boolean;
+            affected_count: number;
+        };
+        /**
+         * WorkspaceSecurityPosture
+         * @example {
+         *       "organisation_id": "00000000-0000-7000-8000-000000000001",
+         *       "workspace_id": "00000000-0000-7000-8000-000000000002",
+         *       "score": 85,
+         *       "max_score": 100,
+         *       "grade": "B",
+         *       "passing_checks": 5,
+         *       "total_checks": 6,
+         *       "fixable_checks": 1,
+         *       "checks": [
+         *         {
+         *           "id": "invite_hygiene",
+         *           "status": "pass",
+         *           "earned_points": 20,
+         *           "max_points": 20,
+         *           "remediation_action": "cap_unbounded_invites",
+         *           "fix_available": false,
+         *           "affected_count": 0
+         *         },
+         *         {
+         *           "id": "sovereign_ai_boundary",
+         *           "status": "pass",
+         *           "earned_points": 20,
+         *           "max_points": 20,
+         *           "remediation_action": "enforce_eu_sovereign_ai",
+         *           "fix_available": false,
+         *           "affected_count": 0
+         *         },
+         *         {
+         *           "id": "security_alert_routing",
+         *           "status": "warn",
+         *           "earned_points": 0,
+         *           "max_points": 15,
+         *           "remediation_action": "provision_security_alerts_channel",
+         *           "fix_available": true,
+         *           "affected_count": 1
+         *         },
+         *         {
+         *           "id": "extension_secret_rotation",
+         *           "status": "pass",
+         *           "earned_points": 15,
+         *           "max_points": 15,
+         *           "remediation_action": "rotate_stale_extension_keys",
+         *           "fix_available": false,
+         *           "affected_count": 0
+         *         },
+         *         {
+         *           "id": "least_privilege_roles",
+         *           "status": "pass",
+         *           "earned_points": 15,
+         *           "max_points": 15,
+         *           "remediation_action": "strip_excess_role_permissions",
+         *           "fix_available": false,
+         *           "affected_count": 0
+         *         },
+         *         {
+         *           "id": "confidential_room_readiness",
+         *           "status": "pass",
+         *           "earned_points": 15,
+         *           "max_points": 15,
+         *           "remediation_action": "provision_confidential_channel",
+         *           "fix_available": false,
+         *           "affected_count": 0
+         *         }
+         *       ]
+         *     }
+         */
+        WorkspaceSecurityPosture: {
+            /** Format: uuid */
+            organisation_id: string;
+            /** Format: uuid */
+            workspace_id: string;
+            score: number;
+            max_score: number;
+            /** @enum {string} */
+            grade: "A" | "B" | "C" | "D" | "E" | "F";
+            passing_checks: number;
+            total_checks: number;
+            fixable_checks: number;
+            checks: components["schemas"]["WorkspaceSecurityPostureCheck"][];
+        };
+        /**
+         * WorkspaceSecurityPostureRemediateRequest
+         * @example {
+         *       "action": "fix_all_safe"
+         *     }
+         */
+        WorkspaceSecurityPostureRemediateRequest: {
+            /** @enum {string} */
+            action: "cap_unbounded_invites" | "enforce_eu_sovereign_ai" | "provision_security_alerts_channel" | "rotate_stale_extension_keys" | "strip_excess_role_permissions" | "provision_confidential_channel" | "fix_all_safe";
+        };
+        /**
+         * WorkspaceSecurityPostureRemediateResponse
+         * @example {
+         *       "requested_action": "fix_all_safe",
+         *       "applied_actions": [
+         *         "provision_security_alerts_channel"
+         *       ],
+         *       "score_before": 85,
+         *       "posture": {
+         *         "organisation_id": "00000000-0000-7000-8000-000000000001",
+         *         "workspace_id": "00000000-0000-7000-8000-000000000002",
+         *         "score": 100,
+         *         "max_score": 100,
+         *         "grade": "A",
+         *         "passing_checks": 6,
+         *         "total_checks": 6,
+         *         "fixable_checks": 0,
+         *         "checks": [
+         *           {
+         *             "id": "invite_hygiene",
+         *             "status": "pass",
+         *             "earned_points": 20,
+         *             "max_points": 20,
+         *             "remediation_action": "cap_unbounded_invites",
+         *             "fix_available": false,
+         *             "affected_count": 0
+         *           },
+         *           {
+         *             "id": "sovereign_ai_boundary",
+         *             "status": "pass",
+         *             "earned_points": 20,
+         *             "max_points": 20,
+         *             "remediation_action": "enforce_eu_sovereign_ai",
+         *             "fix_available": false,
+         *             "affected_count": 0
+         *           },
+         *           {
+         *             "id": "security_alert_routing",
+         *             "status": "pass",
+         *             "earned_points": 15,
+         *             "max_points": 15,
+         *             "remediation_action": "provision_security_alerts_channel",
+         *             "fix_available": false,
+         *             "affected_count": 0
+         *           },
+         *           {
+         *             "id": "extension_secret_rotation",
+         *             "status": "pass",
+         *             "earned_points": 15,
+         *             "max_points": 15,
+         *             "remediation_action": "rotate_stale_extension_keys",
+         *             "fix_available": false,
+         *             "affected_count": 0
+         *           },
+         *           {
+         *             "id": "least_privilege_roles",
+         *             "status": "pass",
+         *             "earned_points": 15,
+         *             "max_points": 15,
+         *             "remediation_action": "strip_excess_role_permissions",
+         *             "fix_available": false,
+         *             "affected_count": 0
+         *           },
+         *           {
+         *             "id": "confidential_room_readiness",
+         *             "status": "pass",
+         *             "earned_points": 15,
+         *             "max_points": 15,
+         *             "remediation_action": "provision_confidential_channel",
+         *             "fix_available": false,
+         *             "affected_count": 0
+         *           }
+         *         ]
+         *       }
+         *     }
+         */
+        WorkspaceSecurityPostureRemediateResponse: {
+            /** @enum {string} */
+            requested_action: "cap_unbounded_invites" | "enforce_eu_sovereign_ai" | "provision_security_alerts_channel" | "rotate_stale_extension_keys" | "strip_excess_role_permissions" | "provision_confidential_channel" | "fix_all_safe";
+            applied_actions: ("cap_unbounded_invites" | "enforce_eu_sovereign_ai" | "provision_security_alerts_channel" | "rotate_stale_extension_keys" | "strip_excess_role_permissions" | "provision_confidential_channel")[];
+            score_before: number;
+            posture: components["schemas"]["WorkspaceSecurityPosture"];
+        };
+        /**
+         * SupportedTranslationLanguage
+         * @enum {string}
+         */
+        SupportedTranslationLanguage: "fr" | "en" | "de" | "es" | "it" | "nl" | "pt" | "pl";
+        /** ChannelMessageTranslationRequest */
+        ChannelMessageTranslationRequest: {
+            text: string;
+            targetLanguage: components["schemas"]["SupportedTranslationLanguage"];
+            sourceLanguage?: string;
+            eventId?: string;
+            roomId?: string;
+        };
+        /**
+         * ChannelMessageTranslationResult
+         * @example {
+         *       "channelId": "00000000-0000-7000-8000-000000000002",
+         *       "eventId": "$event_demo_001",
+         *       "translatedText": "Deployment confirmed for Thursday.",
+         *       "targetLanguage": "en",
+         *       "sourceLanguage": "fr",
+         *       "provider": "mistral",
+         *       "model": "mistral-small-latest",
+         *       "ephemeral": true
+         *     }
+         */
+        ChannelMessageTranslationResult: {
+            /** Format: uuid */
+            channelId: string;
+            eventId: string | null;
+            translatedText: string;
+            targetLanguage: components["schemas"]["SupportedTranslationLanguage"];
+            sourceLanguage: string;
+            provider: string;
+            model: string;
+            ephemeral: boolean;
+        };
+        /**
+         * LiveCallSessionState
+         * @enum {string}
+         */
+        LiveCallSessionState: "awaiting_all_consents" | "active" | "paused_unconsented_participant" | "stopped_withdrawn" | "ended";
+        /**
+         * LiveCallParticipantConsentState
+         * @enum {string}
+         */
+        LiveCallParticipantConsentState: "pending" | "consented" | "withdrawn";
+        /**
+         * LiveCallCaptionSessionView
+         * @example {
+         *       "sessionId": "00000000-0000-7000-8000-000000000210",
+         *       "callInstanceId": "RM_livekit_demo_01",
+         *       "channelId": "00000000-0000-7000-8000-000000000002",
+         *       "state": "active",
+         *       "targetLanguage": "en",
+         *       "rosterCount": 2,
+         *       "consentedCount": 2,
+         *       "unconsentedCount": 0,
+         *       "allConsented": true,
+         *       "callerConsentState": "consented",
+         *       "callerMemberAiConsent": true,
+         *       "generation": 1,
+         *       "expiresAt": "2026-06-08T10:35:00Z"
+         *     }
+         */
+        LiveCallCaptionSessionView: {
+            /** Format: uuid */
+            sessionId: string;
+            callInstanceId?: string;
+            /** Format: uuid */
+            channelId: string;
+            state: components["schemas"]["LiveCallSessionState"];
+            targetLanguage: components["schemas"]["SupportedTranslationLanguage"];
+            rosterCount: number;
+            consentedCount: number;
+            unconsentedCount: number;
+            allConsented: boolean;
+            callerConsentState: components["schemas"]["LiveCallParticipantConsentState"];
+            callerMemberAiConsent: boolean;
+            generation: number;
+            /** Format: date-time */
+            expiresAt?: string;
+        };
+        /**
+         * LiveCallCaptionSessionEnvelope
+         * @example {
+         *       "session": null
+         *     }
+         */
+        LiveCallCaptionSessionEnvelope: {
+            session: components["schemas"]["LiveCallCaptionSessionView"] | null;
+        };
+        /** LiveCallCaptionSessionUpdateRequest */
+        LiveCallCaptionSessionUpdateRequest: {
+            /** @enum {string} */
+            action: "start" | "consent" | "sync_roster" | "leave" | "withdraw" | "end" | "set_language";
+            /** Format: uuid */
+            sessionId?: string;
+            callInstanceId?: string;
+            targetLanguage?: components["schemas"]["SupportedTranslationLanguage"];
+            participantMembershipIds?: string[];
+            participantUserIds?: string[];
+            grantCallConsent?: boolean;
+            roomId?: string;
+        };
+        /** LiveCallChunkTranscriptionRequest */
+        LiveCallChunkTranscriptionRequest: {
+            /** Format: uuid */
+            sessionId: string;
+            generation: number;
+            audioBase64: string;
+            contentType?: string;
+            filename?: string;
+            targetLanguage?: components["schemas"]["SupportedTranslationLanguage"];
+            participantMembershipIds?: string[];
+            participantUserIds?: string[];
+            roomId?: string;
+        };
+        /**
+         * LiveCallChunkTranscriptionResult
+         * @example {
+         *       "sessionId": "00000000-0000-7000-8000-000000000210",
+         *       "channelId": "00000000-0000-7000-8000-000000000002",
+         *       "sourceText": "Bonjour a toute l equipe.",
+         *       "translatedText": "Hello to the whole team.",
+         *       "sourceLanguage": "fr",
+         *       "targetLanguage": "en",
+         *       "provider": "mistral",
+         *       "model": "voxtral-mini-latest",
+         *       "ephemeral": true
+         *     }
+         */
+        LiveCallChunkTranscriptionResult: {
+            /** Format: uuid */
+            sessionId: string;
+            /** Format: uuid */
+            channelId: string;
+            sourceText: string;
+            translatedText: string;
+            sourceLanguage: string;
+            targetLanguage: components["schemas"]["SupportedTranslationLanguage"];
+            provider: string;
+            model: string;
+            ephemeral: boolean;
         };
     };
     responses: {
@@ -24981,6 +26456,347 @@ export interface operations {
             503: components["responses"]["UpstreamUnavailable"];
         };
     };
+    getWorkspaceMonetization: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Workspace community monetization overview. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceMonetizationOverview"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    createWorkspaceBoostCheckout: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceBoostCheckoutRequest"];
+            };
+        };
+        responses: {
+            /** @description Pending workspace boost grant, Core invoice, and Web Checkout URL. */
+            201: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceBoostCheckoutResult"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            502: components["responses"]["UpstreamUnavailable"];
+        };
+    };
+    startCreatorConnectOnboarding: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreatorConnectOnboardingRequest"];
+            };
+        };
+        responses: {
+            /** @description Resumable Stripe Connect onboarding link and persisted account state. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreatorConnectOnboardingResult"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            502: components["responses"]["UpstreamUnavailable"];
+        };
+    };
+    createVipTierOffer: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VipTierOfferCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Created VIP tier offer. */
+            201: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VipTierOfferItem"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    createVipPassCheckout: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VipPassCheckoutRequest"];
+            };
+        };
+        responses: {
+            /** @description Pending VIP membership entitlement and Connect Web Checkout URL. */
+            201: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VipPassCheckoutResult"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            502: components["responses"]["UpstreamUnavailable"];
+        };
+    };
+    exportWorkspaceDac7Report: {
+        parameters: {
+            query?: {
+                /** @description Calendar reporting year (Europe/Paris). */
+                year?: number;
+                /** @description Export wire format (`json` or `xml`). */
+                format?: "json" | "xml";
+            };
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Exported DAC7 report document. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Dac7ExportDocument"];
+                    "application/xml": string;
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
     getChannelGovernance: {
         parameters: {
             query?: never;
@@ -25683,6 +27499,1013 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+        };
+    };
+    listCalendarEvents: {
+        parameters: {
+            query?: {
+                /** @description Inclusive UTC window start in RFC 3339 format. */
+                from?: string;
+                /** @description Exclusive UTC window end in RFC 3339 format. */
+                to?: string;
+            };
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Calendar events visible to the caller in the requested window. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CalendarEventList"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    createCalendarEvent: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CalendarEventCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Calendar event created. */
+            201: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    ETag: components["headers"]["ETag"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CalendarEvent"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    deleteCalendarEvent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                event_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Calendar event deleted. */
+            204: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    updateCalendarEvent: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description The `ETag` of the representation this change was computed against. Required on every
+                 *     `PATCH` (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
+                 *     Stale: `412 precondition-failed`, carrying the current tag, and the client re-reads and
+                 *     re-applies rather than overwriting a change it never saw.
+                 *
+                 *     The example is the same value the `ETag` header returns, and is deliberately non-random
+                 *     for the reason given there.
+                 */
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                event_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CalendarEventPatchRequest"];
+            };
+        };
+        responses: {
+            /** @description Calendar event updated. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    ETag: components["headers"]["ETag"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CalendarEvent"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            412: components["responses"]["PreconditionFailed"];
+            422: components["responses"]["ValidationError"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    exportCalendarIcs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description RFC 5545 iCalendar export envelope or raw text/calendar stream. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CalendarIcsExport"];
+                    "text/calendar": string;
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    listCaldavSources: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description CalDAV sources configured for the workspace. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaldavSourceList"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    createCaldavSource: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CaldavSourceCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description CalDAV source created with sealed credentials. */
+            201: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaldavSource"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["UpstreamUnavailable"];
+        };
+    };
+    deleteCaldavSource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description CalDAV source removed. */
+            204: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    syncCaldavSource: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Incremental CalDAV synchronization completed. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaldavSyncResult"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["UpstreamUnavailable"];
+        };
+    };
+    listBookingPages: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Sovereign booking pages in the workspace. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BookingPageList"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    createBookingPage: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BookingPageCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Sovereign booking page created. */
+            201: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BookingPage"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    deleteBookingPage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                booking_page_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Sovereign booking page deactivated. */
+            204: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    getPublicBookingPage: {
+        parameters: {
+            query?: {
+                from?: string;
+                to?: string;
+            };
+            header?: never;
+            path: {
+                booking_slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Zero-PII public booking page and free availability slots. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublicBookingPage"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    reservePublicBookingSlot: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                booking_slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PublicBookingReserveRequest"];
+            };
+        };
+        responses: {
+            /** @description Slot reserved atomically with RFC 5545 invite and cancellation token. */
+            201: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublicBookingReservation"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    cancelPublicBookingReservation: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                booking_slug: string;
+                reservation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PublicBookingCancelRequest"];
+            };
+        };
+        responses: {
+            /** @description Booking reservation cancelled. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublicBookingCancelResult"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    getWorkspaceSecurityPosture: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current workspace cybersecurity posture report. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceSecurityPosture"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["WorkspaceBusy"];
+        };
+    };
+    remediateWorkspaceSecurityPosture: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceSecurityPostureRemediateRequest"];
+            };
+        };
+        responses: {
+            /** @description Posture remediation applied and updated score returned. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceSecurityPostureRemediateResponse"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["WorkspaceBusy"];
+        };
+    };
+    translateChannelMessage: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                /** @description Identifier of the non-confidential workspace channel. */
+                channel_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChannelMessageTranslationRequest"];
+            };
+        };
+        responses: {
+            /** @description Ephemeral channel message translation. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChannelMessageTranslationResult"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["WorkspaceBusy"];
+        };
+    };
+    getLiveCallCaptionSession: {
+        parameters: {
+            query?: {
+                /** @description Optional caption session identifier to inspect. */
+                sessionId?: string;
+                /** @description Optional LiveKit call instance identifier to bind or inspect. */
+                callInstanceId?: string;
+            };
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                /** @description Identifier of the non-confidential workspace channel. */
+                channel_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Live call caption consent session state. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LiveCallCaptionSessionEnvelope"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["WorkspaceBusy"];
+        };
+    };
+    updateLiveCallCaptionSession: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                /** @description Identifier of the non-confidential workspace channel. */
+                channel_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LiveCallCaptionSessionUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated live call caption consent session state. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LiveCallCaptionSessionEnvelope"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["WorkspaceBusy"];
+        };
+    };
+    transcribeLiveCallChunk: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                /** @description Identifier of the non-confidential workspace channel. */
+                channel_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LiveCallChunkTranscriptionRequest"];
+            };
+        };
+        responses: {
+            /** @description Ephemeral live call chunk transcription and translation. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LiveCallChunkTranscriptionResult"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["WorkspaceBusy"];
         };
     };
 }

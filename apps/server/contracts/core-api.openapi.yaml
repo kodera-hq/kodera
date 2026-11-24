@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Kodera Core API
-  version: 0.57.0
+  version: 0.58.0
   summary: Control plane of kodera.io, consumed by kodera-web and by staff operators.
   description: |
     The Core API is the only backend of `kodera-web` (console ADR-0003) and the system of
@@ -11320,6 +11320,300 @@ paths:
         '503':
           $ref: '#/components/responses/UpstreamUnavailable'
 
+  /organisations/{organisation_id}/workspace/monetization:
+    get:
+      operationId: getWorkspaceMonetization
+      summary: Read workspace community boosts, VIP tiers, and Connect/DAC7 status
+      description: 'Returns Volet A boost packs, active hosting credits, Volet B VIP tier offers, and (for owner/admin/billing callers) creator Connect status and annual DAC7 summary.'
+      tags:
+      - Billing
+      x-kodera-scope: workspace_monetization:read
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      responses:
+        '200':
+          description: Workspace community monetization overview.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceMonetizationOverview'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /organisations/{organisation_id}/workspace/monetization/boosts/checkout:
+    post:
+      operationId: createWorkspaceBoostCheckout
+      summary: Issue a Core Factur-X 380 invoice and Web Checkout session for a workspace boost
+      description: 'Enforces Art. L221-28 explicit 14-day withdrawal waiver for B2C buyers, issues a Core Factur-X 380 invoice, and returns a card-only Stripe Checkout session URL.'
+      tags:
+      - Billing
+      x-kodera-scope: workspace_monetization:act
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkspaceBoostCheckoutRequest'
+      responses:
+        '201':
+          description: Pending workspace boost grant, Core invoice, and Web Checkout URL.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceBoostCheckoutResult'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          $ref: '#/components/responses/UpstreamUnavailable'
+
+  /organisations/{organisation_id}/workspace/monetization/connect/onboarding:
+    post:
+      operationId: startCreatorConnectOnboarding
+      summary: Initiate or resume durable Stripe Connect Express onboarding for VIP monetization
+      description: 'Owner/admin only. Persists durable onboarding intent and connected account id before issuing a resumable onboarding link, sealing any DAC7 TIN with AES-256-GCM.'
+      tags:
+      - Billing
+      x-kodera-scope: workspace_monetization:create
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatorConnectOnboardingRequest'
+      responses:
+        '200':
+          description: Resumable Stripe Connect onboarding link and persisted account state.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreatorConnectOnboardingResult'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          $ref: '#/components/responses/UpstreamUnavailable'
+
+  /organisations/{organisation_id}/workspace/monetization/vip-tiers:
+    post:
+      operationId: createVipTierOffer
+      summary: Create a VIP tier offer and gate workspace channels to the granted VIP role
+      description: 'Owner/admin only. Requires an active CreatorConnectAccount and preserves owner/admin access and inherited DENY rules when restricting channels.'
+      tags:
+      - Billing
+      x-kodera-scope: workspace_monetization:create
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VipTierOfferCreateRequest'
+      responses:
+        '201':
+          description: Created VIP tier offer.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VipTierOfferItem'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /organisations/{organisation_id}/workspace/monetization/vip-passes/checkout:
+    post:
+      operationId: createVipPassCheckout
+      summary: Create a Stripe Connect destination Checkout session for a member VIP pass
+      description: 'Enforces Art. L221-28 B2C withdrawal waiver, reserves negative-balance recovery into application_fee_amount, and returns a card-only Connect Checkout URL.'
+      tags:
+      - Billing
+      x-kodera-scope: workspace_monetization:act
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VipPassCheckoutRequest'
+      responses:
+        '201':
+          description: Pending VIP membership entitlement and Connect Web Checkout URL.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VipPassCheckoutResult'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          $ref: '#/components/responses/UpstreamUnavailable'
+
+  /organisations/{organisation_id}/workspace/monetization/dac7-report:
+    get:
+      operationId: exportWorkspaceDac7Report
+      summary: Export the workspace creator annual DAC7 tax report as JSON or OECD DPI XML
+      description: 'Owner/billing only. Exports annual and quarterly EU Directive 2021/514 seller consideration, transaction counts, and prior-year DPI2 corrections.'
+      tags:
+      - Billing
+      x-kodera-scope: workspace_monetization:read
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_billing
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - name: year
+        in: query
+        required: false
+        description: Calendar reporting year (Europe/Paris).
+        schema:
+          type: integer
+          minimum: 2023
+          maximum: 9999
+      - name: format
+        in: query
+        required: false
+        description: Export wire format (`json` or `xml`).
+        schema:
+          type: string
+          enum:
+          - json
+          - xml
+      responses:
+        '200':
+          description: Exported DAC7 report document.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Dac7ExportDocument'
+            application/xml:
+              schema:
+                type: string
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
 
   /organisations/{organisation_id}/workspace/channel-governance:
     get:
@@ -12036,6 +12330,622 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/DeviceVerificationPublication'
+
+  /organisations/{organisation_id}/workspace/calendar/events:
+    get:
+      operationId: listCalendarEvents
+      summary: "List workspace smart calendar events within a bounded window"
+      description: "Returns workspace-shared events, redacted busy-only blocks, and the caller's own private events intersecting the requested UTC window."
+      tags: [Workspace]
+      x-kodera-scope: "workspace_calendar:read"
+      x-kodera-authz: { roles: [org_owner, org_admin, org_billing, org_member] }
+      parameters:
+        - { "$ref": "#/components/parameters/OrganisationId" }
+        - { name: "from", in: "query", required: false, description: "Inclusive UTC window start in RFC 3339 format.", schema: { type: "string", format: "date-time" } }
+        - { name: "to", in: "query", required: false, description: "Exclusive UTC window end in RFC 3339 format.", schema: { type: "string", format: "date-time" } }
+      responses:
+        '200': { description: "Calendar events visible to the caller in the requested window.", headers: { X-Request-Id: { "$ref": "#/components/headers/XRequestId" } }, content: { application/json: { schema: { "$ref": "#/components/schemas/CalendarEventList" } } } }
+        '400': { "$ref": "#/components/responses/MalformedRequest" }
+        '401': { "$ref": "#/components/responses/Unauthenticated" }
+        '403': { "$ref": "#/components/responses/Forbidden" }
+        '404': { "$ref": "#/components/responses/NotFound" }
+        '422': { "$ref": "#/components/responses/ValidationError" }
+        '429': { "$ref": "#/components/responses/RateLimited" }
+    post:
+      operationId: createCalendarEvent
+      summary: "Create a workspace smart calendar event"
+      description: "Creates a workspace, busy-only, or private calendar event with optional RFC 5545 recurrence rule, attendees, alarm, Kodera Visio link, and collaborative Yjs agenda document link."
+      tags: [Workspace]
+      x-kodera-scope: "workspace_calendar:create"
+      x-kodera-authz: { roles: [org_owner, org_admin, org_billing, org_member] }
+      parameters:
+        - { "$ref": "#/components/parameters/OrganisationId" }
+        - { "$ref": "#/components/parameters/IdempotencyKey" }
+      requestBody: { required: true, content: { application/json: { schema: { "$ref": "#/components/schemas/CalendarEventCreateRequest" } } } }
+      responses:
+        '201': { description: "Calendar event created.", headers: { X-Request-Id: { "$ref": "#/components/headers/XRequestId" }, ETag: { "$ref": "#/components/headers/ETag" }, Idempotency-Replayed: { "$ref": "#/components/headers/IdempotencyReplayed" } }, content: { application/json: { schema: { "$ref": "#/components/schemas/CalendarEvent" } } } }
+        '400': { "$ref": "#/components/responses/MalformedRequest" }
+        '401': { "$ref": "#/components/responses/Unauthenticated" }
+        '403': { "$ref": "#/components/responses/Forbidden" }
+        '404': { "$ref": "#/components/responses/NotFound" }
+        '409': { "$ref": "#/components/responses/Conflict" }
+        '422': { "$ref": "#/components/responses/ValidationError" }
+        '429': { "$ref": "#/components/responses/RateLimited" }
+  /organisations/{organisation_id}/workspace/calendar/events/{event_id}:
+    patch:
+      operationId: updateCalendarEvent
+      summary: "Update a workspace calendar event under ETag optimistic concurrency"
+      description: "Updates a calendar event owned by the caller or administered by an organisation owner/admin when If-Match matches the current revision."
+      tags: [Workspace]
+      x-kodera-scope: "workspace_calendar:update"
+      x-kodera-authz: { roles: [org_owner, org_admin, org_billing, org_member] }
+      parameters:
+        - { "$ref": "#/components/parameters/OrganisationId" }
+        - { name: "event_id", in: "path", required: true, schema: { type: "string", format: "uuid" } }
+        - { "$ref": "#/components/parameters/IfMatch" }
+      requestBody: { required: true, content: { application/json: { schema: { "$ref": "#/components/schemas/CalendarEventPatchRequest" } } } }
+      responses:
+        '200': { description: "Calendar event updated.", headers: { X-Request-Id: { "$ref": "#/components/headers/XRequestId" }, ETag: { "$ref": "#/components/headers/ETag" } }, content: { application/json: { schema: { "$ref": "#/components/schemas/CalendarEvent" } } } }
+        '400': { "$ref": "#/components/responses/MalformedRequest" }
+        '401': { "$ref": "#/components/responses/Unauthenticated" }
+        '403': { "$ref": "#/components/responses/Forbidden" }
+        '404': { "$ref": "#/components/responses/NotFound" }
+        '412': { "$ref": "#/components/responses/PreconditionFailed" }
+        '422': { "$ref": "#/components/responses/ValidationError" }
+        '428': { "$ref": "#/components/responses/PreconditionRequired" }
+        '429': { "$ref": "#/components/responses/RateLimited" }
+    delete:
+      operationId: deleteCalendarEvent
+      summary: "Delete a workspace calendar event"
+      description: "Deletes a calendar event owned by the caller or administered by an organisation owner/admin."
+      tags: [Workspace]
+      x-kodera-scope: "workspace_calendar:delete"
+      x-kodera-authz: { roles: [org_owner, org_admin, org_billing, org_member] }
+      parameters:
+        - { "$ref": "#/components/parameters/OrganisationId" }
+        - { name: "event_id", in: "path", required: true, schema: { type: "string", format: "uuid" } }
+      responses:
+        '204': { description: "Calendar event deleted.", headers: { X-Request-Id: { "$ref": "#/components/headers/XRequestId" } } }
+        '400': { "$ref": "#/components/responses/MalformedRequest" }
+        '401': { "$ref": "#/components/responses/Unauthenticated" }
+        '403': { "$ref": "#/components/responses/Forbidden" }
+        '404': { "$ref": "#/components/responses/NotFound" }
+        '429': { "$ref": "#/components/responses/RateLimited" }
+  /organisations/{organisation_id}/workspace/calendar/events.ics:
+    get:
+      operationId: exportCalendarIcs
+      summary: "Export visible workspace calendar events as RFC 5545 iCalendar"
+      description: "Serializes visible workspace events into an injection-safe CRLF 75-octet folded VCALENDAR feed (JSON envelope by default or raw text/calendar when requested via Accept)."
+      tags: [Workspace]
+      x-kodera-scope: "workspace_calendar:export"
+      x-kodera-authz: { roles: [org_owner, org_admin, org_billing, org_member] }
+      parameters:
+        - { "$ref": "#/components/parameters/OrganisationId" }
+      responses:
+        '200': { description: "RFC 5545 iCalendar export envelope or raw text/calendar stream.", headers: { X-Request-Id: { "$ref": "#/components/headers/XRequestId" } }, content: { application/json: { schema: { "$ref": "#/components/schemas/CalendarIcsExport" } }, text/calendar: { schema: { type: "string" }, examples: { default: { value: "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Kodera//Sovereign Smart Calendar//EN\r\nCALSCALE:GREGORIAN\r\nMETHOD:PUBLISH\r\nEND:VCALENDAR\r\n" } } } } }
+        '400': { "$ref": "#/components/responses/MalformedRequest" }
+        '401': { "$ref": "#/components/responses/Unauthenticated" }
+        '403': { "$ref": "#/components/responses/Forbidden" }
+        '404': { "$ref": "#/components/responses/NotFound" }
+        '429': { "$ref": "#/components/responses/RateLimited" }
+  /organisations/{organisation_id}/workspace/calendar/sources:
+    get:
+      operationId: listCaldavSources
+      summary: "List configured CalDAV calendar sources"
+      description: "Lists external sovereign CalDAV calendar sources (La Suite Numerique, Open-Xchange, Nextcloud, Generic) to organisation owners and administrators without disclosing sealed credentials."
+      tags: [Workspace]
+      x-kodera-scope: "caldav_source:read"
+      x-kodera-authz: { roles: [org_owner, org_admin] }
+      parameters:
+        - { "$ref": "#/components/parameters/OrganisationId" }
+      responses:
+        '200': { description: "CalDAV sources configured for the workspace.", headers: { X-Request-Id: { "$ref": "#/components/headers/XRequestId" } }, content: { application/json: { schema: { "$ref": "#/components/schemas/CaldavSourceList" } } } }
+        '400': { "$ref": "#/components/responses/MalformedRequest" }
+        '401': { "$ref": "#/components/responses/Unauthenticated" }
+        '403': { "$ref": "#/components/responses/Forbidden" }
+        '404': { "$ref": "#/components/responses/NotFound" }
+        '429': { "$ref": "#/components/responses/RateLimited" }
+    post:
+      operationId: createCaldavSource
+      summary: "Configure a sealed HTTPS CalDAV source"
+      description: "Seals CalDAV principal credentials with HKDF-AEAD bound to the organisation, workspace, and source identifiers after SSRF validation of the HTTPS collection URL."
+      tags: [Workspace]
+      x-kodera-scope: "caldav_source:create"
+      x-kodera-authz: { roles: [org_owner, org_admin] }
+      parameters:
+        - { "$ref": "#/components/parameters/OrganisationId" }
+        - { "$ref": "#/components/parameters/IdempotencyKey" }
+      requestBody: { required: true, content: { application/json: { schema: { "$ref": "#/components/schemas/CaldavSourceCreateRequest" } } } }
+      responses:
+        '201': { description: "CalDAV source created with sealed credentials.", headers: { X-Request-Id: { "$ref": "#/components/headers/XRequestId" }, Idempotency-Replayed: { "$ref": "#/components/headers/IdempotencyReplayed" } }, content: { application/json: { schema: { "$ref": "#/components/schemas/CaldavSource" } } } }
+        '400': { "$ref": "#/components/responses/MalformedRequest" }
+        '401': { "$ref": "#/components/responses/Unauthenticated" }
+        '403': { "$ref": "#/components/responses/Forbidden" }
+        '404': { "$ref": "#/components/responses/NotFound" }
+        '409': { "$ref": "#/components/responses/Conflict" }
+        '422': { "$ref": "#/components/responses/ValidationError" }
+        '429': { "$ref": "#/components/responses/RateLimited" }
+        '503': { "$ref": "#/components/responses/UpstreamUnavailable" }
+  /organisations/{organisation_id}/workspace/calendar/sources/{source_id}:
+    delete:
+      operationId: deleteCaldavSource
+      summary: "Remove a CalDAV source and its sealed credentials"
+      description: "Removes the CalDAV source row, its sealed credentials, and its imported source events."
+      tags: [Workspace]
+      x-kodera-scope: "caldav_source:delete"
+      x-kodera-authz: { roles: [org_owner, org_admin] }
+      parameters:
+        - { "$ref": "#/components/parameters/OrganisationId" }
+        - { name: "source_id", in: "path", required: true, schema: { type: "string", format: "uuid" } }
+      responses:
+        '204': { description: "CalDAV source removed.", headers: { X-Request-Id: { "$ref": "#/components/headers/XRequestId" } } }
+        '400': { "$ref": "#/components/responses/MalformedRequest" }
+        '401': { "$ref": "#/components/responses/Unauthenticated" }
+        '403': { "$ref": "#/components/responses/Forbidden" }
+        '404': { "$ref": "#/components/responses/NotFound" }
+        '429': { "$ref": "#/components/responses/RateLimited" }
+  /organisations/{organisation_id}/workspace/calendar/sources/{source_id}/actions/sync:
+    post:
+      operationId: syncCaldavSource
+      summary: "Run an SSRF-pinned incremental CalDAV sync-collection synchronization"
+      description: "Executes a pinned-IP no-redirect HTTPS CalDAV sync-collection delta pull and ETag-checked upsert against the configured source."
+      tags: [Workspace]
+      x-kodera-scope: "caldav_source:act"
+      x-kodera-authz: { roles: [org_owner, org_admin] }
+      parameters:
+        - { "$ref": "#/components/parameters/OrganisationId" }
+        - { name: "source_id", in: "path", required: true, schema: { type: "string", format: "uuid" } }
+        - { "$ref": "#/components/parameters/IdempotencyKey" }
+      responses:
+        '200': { description: "Incremental CalDAV synchronization completed.", headers: { X-Request-Id: { "$ref": "#/components/headers/XRequestId" }, Idempotency-Replayed: { "$ref": "#/components/headers/IdempotencyReplayed" } }, content: { application/json: { schema: { "$ref": "#/components/schemas/CaldavSyncResult" } } } }
+        '400': { "$ref": "#/components/responses/MalformedRequest" }
+        '401': { "$ref": "#/components/responses/Unauthenticated" }
+        '403': { "$ref": "#/components/responses/Forbidden" }
+        '404': { "$ref": "#/components/responses/NotFound" }
+        '409': { "$ref": "#/components/responses/Conflict" }
+        '422': { "$ref": "#/components/responses/ValidationError" }
+        '429': { "$ref": "#/components/responses/RateLimited" }
+        '503': { "$ref": "#/components/responses/UpstreamUnavailable" }
+  /organisations/{organisation_id}/workspace/calendar/booking-pages:
+    get:
+      operationId: listBookingPages
+      summary: "List sovereign booking pages in the workspace"
+      description: "Lists sovereign booking pages configured in the workspace."
+      tags: [Workspace]
+      x-kodera-scope: "booking_page:read"
+      x-kodera-authz: { roles: [org_owner, org_admin, org_billing, org_member] }
+      parameters:
+        - { "$ref": "#/components/parameters/OrganisationId" }
+      responses:
+        '200': { description: "Sovereign booking pages in the workspace.", headers: { X-Request-Id: { "$ref": "#/components/headers/XRequestId" } }, content: { application/json: { schema: { "$ref": "#/components/schemas/BookingPageList" } } } }
+        '400': { "$ref": "#/components/responses/MalformedRequest" }
+        '401': { "$ref": "#/components/responses/Unauthenticated" }
+        '403': { "$ref": "#/components/responses/Forbidden" }
+        '404': { "$ref": "#/components/responses/NotFound" }
+        '429': { "$ref": "#/components/responses/RateLimited" }
+    post:
+      operationId: createBookingPage
+      summary: "Create a sovereign booking page"
+      description: "Creates a public sovereign booking page backed by the host member's calendar availability without disclosing event titles or attendee PII."
+      tags: [Workspace]
+      x-kodera-scope: "booking_page:create"
+      x-kodera-authz: { roles: [org_owner, org_admin, org_billing, org_member] }
+      parameters:
+        - { "$ref": "#/components/parameters/OrganisationId" }
+        - { "$ref": "#/components/parameters/IdempotencyKey" }
+      requestBody: { required: true, content: { application/json: { schema: { "$ref": "#/components/schemas/BookingPageCreateRequest" } } } }
+      responses:
+        '201': { description: "Sovereign booking page created.", headers: { X-Request-Id: { "$ref": "#/components/headers/XRequestId" }, Idempotency-Replayed: { "$ref": "#/components/headers/IdempotencyReplayed" } }, content: { application/json: { schema: { "$ref": "#/components/schemas/BookingPage" } } } }
+        '400': { "$ref": "#/components/responses/MalformedRequest" }
+        '401': { "$ref": "#/components/responses/Unauthenticated" }
+        '403': { "$ref": "#/components/responses/Forbidden" }
+        '404': { "$ref": "#/components/responses/NotFound" }
+        '409': { "$ref": "#/components/responses/Conflict" }
+        '422': { "$ref": "#/components/responses/ValidationError" }
+        '429': { "$ref": "#/components/responses/RateLimited" }
+  /organisations/{organisation_id}/workspace/calendar/booking-pages/{booking_page_id}:
+    delete:
+      operationId: deleteBookingPage
+      summary: "Deactivate a sovereign booking page"
+      description: "Deactivates a sovereign booking page owned by the caller or administered by an organisation owner/admin."
+      tags: [Workspace]
+      x-kodera-scope: "booking_page:delete"
+      x-kodera-authz: { roles: [org_owner, org_admin, org_billing, org_member] }
+      parameters:
+        - { "$ref": "#/components/parameters/OrganisationId" }
+        - { name: "booking_page_id", in: "path", required: true, schema: { type: "string", format: "uuid" } }
+      responses:
+        '204': { description: "Sovereign booking page deactivated.", headers: { X-Request-Id: { "$ref": "#/components/headers/XRequestId" } } }
+        '400': { "$ref": "#/components/responses/MalformedRequest" }
+        '401': { "$ref": "#/components/responses/Unauthenticated" }
+        '403': { "$ref": "#/components/responses/Forbidden" }
+        '404': { "$ref": "#/components/responses/NotFound" }
+        '429': { "$ref": "#/components/responses/RateLimited" }
+  /booking/{booking_slug}:
+    get:
+      operationId: getPublicBookingPage
+      summary: "Read public sovereign booking page metadata and zero-PII free slots"
+      description: "Public endpoint returning free availability intervals computed after subtracting busy calendar events and buffers without disclosing any calendar event title, attendee, or internal identifier."
+      tags: [Workspace]
+      security: []
+      x-kodera-scope: "booking_page:read"
+      x-kodera-authz: { roles: [anonymous] }
+      parameters:
+        - { name: "booking_slug", in: "path", required: true, schema: { type: "string", minLength: 3, maxLength: 80, pattern: "^[a-z0-9][a-z0-9-]{1,78}[a-z0-9](?![\\s\\S])" } }
+        - { name: "from", in: "query", required: false, schema: { type: "string", format: "date-time" } }
+        - { name: "to", in: "query", required: false, schema: { type: "string", format: "date-time" } }
+      responses:
+        '200': { description: "Zero-PII public booking page and free availability slots.", headers: { X-Request-Id: { "$ref": "#/components/headers/XRequestId" } }, content: { application/json: { schema: { "$ref": "#/components/schemas/PublicBookingPage" } } } }
+        '400': { "$ref": "#/components/responses/MalformedRequest" }
+        '404': { "$ref": "#/components/responses/NotFound" }
+        '422': { "$ref": "#/components/responses/ValidationError" }
+        '429': { "$ref": "#/components/responses/RateLimited" }
+  /booking/{booking_slug}/reservations:
+    post:
+      operationId: reservePublicBookingSlot
+      summary: "Atomically reserve an available public booking slot"
+      description: "Serializes slot reservation under SELECT ... FOR UPDATE and SQL overlap guard, returning a single-disclosure cancellation token (stored SHA-256 hashed) and a downloadable RFC 5545 .ics invitation. Return no Idempotency-Replayed header."
+      tags: [Workspace]
+      security: []
+      x-kodera-scope: "booking_page:act"
+      x-kodera-authz: { roles: [anonymous] }
+      parameters:
+        - { name: "booking_slug", in: "path", required: true, schema: { type: "string", minLength: 3, maxLength: 80, pattern: "^[a-z0-9][a-z0-9-]{1,78}[a-z0-9](?![\\s\\S])" } }
+        - { "$ref": "#/components/parameters/IdempotencyKey" }
+      requestBody: { required: true, content: { application/json: { schema: { "$ref": "#/components/schemas/PublicBookingReserveRequest" } } } }
+      responses:
+        '201': { description: "Slot reserved atomically with RFC 5545 invite and cancellation token.", headers: { X-Request-Id: { "$ref": "#/components/headers/XRequestId" } }, content: { application/json: { schema: { "$ref": "#/components/schemas/PublicBookingReservation" } } } }
+        '400': { "$ref": "#/components/responses/MalformedRequest" }
+        '404': { "$ref": "#/components/responses/NotFound" }
+        '409': { "$ref": "#/components/responses/Conflict" }
+        '422': { "$ref": "#/components/responses/ValidationError" }
+        '429': { "$ref": "#/components/responses/RateLimited" }
+  /booking/{booking_slug}/reservations/{reservation_id}/actions/cancel:
+    post:
+      operationId: cancelPublicBookingReservation
+      summary: "Cancel a public booking reservation with its single-disclosure token"
+      description: "Verifies the cancellation token against its stored SHA-256 digest in constant time, releases the reserved slot, and returns an RFC 5545 METHOD:CANCEL payload. Return no Idempotency-Replayed header."
+      tags: [Workspace]
+      security: []
+      x-kodera-scope: "booking_page:act"
+      x-kodera-authz: { roles: [anonymous] }
+      parameters:
+        - { name: "booking_slug", in: "path", required: true, schema: { type: "string", minLength: 3, maxLength: 80, pattern: "^[a-z0-9][a-z0-9-]{1,78}[a-z0-9](?![\\s\\S])" } }
+        - { name: "reservation_id", in: "path", required: true, schema: { type: "string", format: "uuid" } }
+        - { "$ref": "#/components/parameters/IdempotencyKey" }
+      requestBody: { required: true, content: { application/json: { schema: { "$ref": "#/components/schemas/PublicBookingCancelRequest" } } } }
+      responses:
+        '200': { description: "Booking reservation cancelled.", headers: { X-Request-Id: { "$ref": "#/components/headers/XRequestId" } }, content: { application/json: { schema: { "$ref": "#/components/schemas/PublicBookingCancelResult" } } } }
+        '400': { "$ref": "#/components/responses/MalformedRequest" }
+        '403': { "$ref": "#/components/responses/Forbidden" }
+        '404': { "$ref": "#/components/responses/NotFound" }
+        '409': { "$ref": "#/components/responses/Conflict" }
+        '422': { "$ref": "#/components/responses/ValidationError" }
+        '429': { "$ref": "#/components/responses/RateLimited" }
+
+  /organisations/{organisation_id}/workspace/security-posture:
+    get:
+      operationId: getWorkspaceSecurityPosture
+      summary: Read the workspace cybersecurity posture score and check breakdown
+      description: 'Computes the deterministic 0–100 workspace cybersecurity posture score across six weighted governance, sovereign AI, alert routing, extension secret rotation, least-privilege role, and confidential room checks. Owner/admin only; responses are Cache-Control: no-store.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace:read
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      responses:
+        '200':
+          description: Current workspace cybersecurity posture report.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceSecurityPosture'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/WorkspaceBusy'
+
+  /organisations/{organisation_id}/workspace/security-posture/actions/remediate:
+    post:
+      operationId: remediateWorkspaceSecurityPosture
+      summary: Apply a 1-click safe workspace cybersecurity posture remediation
+      description: 'Atomically applies a single safe posture remediation check or all safe remediations under the organisation and workspace locks, records an audit event, and returns the updated 0–100 posture report. Owner/admin only.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace:act
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkspaceSecurityPostureRemediateRequest'
+      responses:
+        '200':
+          description: Posture remediation applied and updated score returned.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceSecurityPostureRemediateResponse'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/WorkspaceBusy'
+
+
+  /organisations/{organisation_id}/workspace/channels/{channel_id}/actions/translate-message:
+    post:
+      operationId: translateChannelMessage
+      summary: Ephemerally translate a written channel message
+      description: 'Evaluates all three OFF-by-default AI consent tiers (org -> channel -> member), refuses confidential, E2EE, and DM/unclassified rooms with 403, and returns ephemeral translated text without mutating Matrix events or persisting message text. Return no Idempotency-Replayed header.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_ai:act
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - name: channel_id
+        in: path
+        required: true
+        description: Identifier of the non-confidential workspace channel.
+        schema:
+          type: string
+          format: uuid
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChannelMessageTranslationRequest'
+      responses:
+        '200':
+          description: Ephemeral channel message translation.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChannelMessageTranslationResult'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/WorkspaceBusy'
+
+  /organisations/{organisation_id}/workspace/channels/{channel_id}/call-captions/session:
+    get:
+      operationId: getLiveCallCaptionSession
+      summary: Read current live call caption consent session for a channel
+      description: 'Returns the active or most recent live call caption consent session state for a non-confidential channel, or null when none exists.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_ai:read
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - name: channel_id
+        in: path
+        required: true
+        description: Identifier of the non-confidential workspace channel.
+        schema:
+          type: string
+          format: uuid
+      - name: sessionId
+        in: query
+        required: false
+        description: Optional caption session identifier to inspect.
+        schema:
+          type: string
+          format: uuid
+      - name: callInstanceId
+        in: query
+        required: false
+        description: Optional LiveKit call instance identifier to bind or inspect.
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+      responses:
+        '200':
+          description: Live call caption consent session state.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LiveCallCaptionSessionEnvelope'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/WorkspaceBusy'
+    post:
+      operationId: updateLiveCallCaptionSession
+      summary: Start, consent, sync roster, pause, withdraw, or end a live call caption session
+      description: 'Transitions the durable multi-party live call caption consent state machine, auto-pausing on unconsented participant join and immediately stopping on consent withdrawal.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_ai:act
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - name: channel_id
+        in: path
+        required: true
+        description: Identifier of the non-confidential workspace channel.
+        schema:
+          type: string
+          format: uuid
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LiveCallCaptionSessionUpdateRequest'
+      responses:
+        '200':
+          description: Updated live call caption consent session state.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LiveCallCaptionSessionEnvelope'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/WorkspaceBusy'
+
+  /organisations/{organisation_id}/workspace/channels/{channel_id}/call-captions/chunks:
+    post:
+      operationId: transcribeLiveCallChunk
+      summary: Transcribe and translate a bounded live call audio chunk under all-party consent
+      description: 'Verifies active 100% participant consent and matching session generation before and after provider execution, returning ephemeral source and translated subtitle text without database persistence. Return no Idempotency-Replayed header.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_ai:act
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - name: channel_id
+        in: path
+        required: true
+        description: Identifier of the non-confidential workspace channel.
+        schema:
+          type: string
+          format: uuid
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LiveCallChunkTranscriptionRequest'
+      responses:
+        '200':
+          description: Ephemeral live call chunk transcription and translation.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LiveCallChunkTranscriptionResult'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/WorkspaceBusy'
 
 components:
   x-audit-action-registry:
@@ -22196,7 +23106,7 @@ components:
       - workspace_id: 01950000-0000-7000-8000-0000000000a1
         event_scope: default
         epoch: 2000000
-        epoch_mac_key: c8cd9f607c5ec478b461588173cf777b2a54ca74bd936c48e92329139f092a0a
+        epoch_mac_key: '0000000000000000000000000000000000000000000000000000000000000000'
         epoch_expires_at: 1800000900
         epoch_rotation_seconds: 900
     ProximityRadioCheckInRequest:
@@ -23846,3 +24756,1353 @@ components:
         language: fr
         provider: mistral
         model: voxtral-mini-latest
+    WorkspaceMonetizationOverview:
+      type: object
+      title: WorkspaceMonetizationOverview
+      additionalProperties: false
+      required:
+      - workspace_id
+      - boost_packs
+      - hosting_credits
+      - vip_tiers
+      - connect_account
+      - dac7_summary
+      properties:
+        workspace_id:
+          type: string
+          format: uuid
+        boost_packs:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required:
+            - code
+            - name
+            - net_amount_minor
+            - credit_amount_minor
+            - seats_delta
+            - storage_bytes_delta
+            - duration_days
+            - currency
+            properties:
+              code:
+                type: string
+              name:
+                type: string
+              net_amount_minor:
+                type: integer
+              credit_amount_minor:
+                type: integer
+              seats_delta:
+                type: integer
+              storage_bytes_delta:
+                type: integer
+              duration_days:
+                type: integer
+              currency:
+                type: string
+        hosting_credits:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required:
+            - id
+            - boost_grant_id
+            - pack_code
+            - granted_minor
+            - consumed_minor
+            - refunded_minor
+            - remaining_minor
+            - state
+            - expires_at
+            properties:
+              id:
+                type: string
+                format: uuid
+              boost_grant_id:
+                type: string
+                format: uuid
+              pack_code:
+                type: string
+              granted_minor:
+                type: integer
+              consumed_minor:
+                type: integer
+              refunded_minor:
+                type: integer
+              remaining_minor:
+                type: integer
+              state:
+                type: string
+              expires_at:
+                type:
+                - string
+                - 'null'
+        vip_tiers:
+          type: array
+          items:
+            $ref: '#/components/schemas/VipTierOfferItem'
+        connect_account:
+          type:
+          - object
+          - 'null'
+          additionalProperties: true
+        dac7_summary:
+          type:
+          - object
+          - 'null'
+          additionalProperties: true
+      examples:
+      - workspace_id: 00000000-0000-7000-8000-000000000010
+        boost_packs: []
+        hosting_credits: []
+        vip_tiers: []
+        connect_account: null
+        dac7_summary: null
+    WorkspaceBoostCheckoutRequest:
+      type: object
+      title: WorkspaceBoostCheckoutRequest
+      additionalProperties: false
+      required:
+      - pack_code
+      - customer_kind
+      - customer_country
+      - return_url
+      - withdrawal_waiver_accepted
+      properties:
+        pack_code:
+          type: string
+        customer_kind:
+          type: string
+          enum:
+          - b2c
+          - b2b
+        customer_country:
+          type: string
+          minLength: 2
+          maxLength: 2
+        customer_legal_name:
+          type: string
+        customer_address_line1:
+          type: string
+        customer_postal_code:
+          type: string
+        customer_city:
+          type: string
+        return_url:
+          type: string
+          format: uri
+        locale:
+          type: string
+          enum:
+          - fr
+          - en
+        quantity:
+          type: integer
+          minimum: 1
+          maximum: 1000
+        withdrawal_waiver_accepted:
+          type: boolean
+        withdrawal_waiver_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        withdrawal_waiver_statement:
+          type:
+          - string
+          - 'null'
+    WorkspaceBoostCheckoutResult:
+      type: object
+      title: WorkspaceBoostCheckoutResult
+      additionalProperties: false
+      required:
+      - boost_grant_id
+      - invoice_id
+      - invoice_number
+      - vat_regime
+      - vat_rate_bp
+      - net_amount_minor
+      - vat_amount_minor
+      - gross_amount_minor
+      - checkout_session_id
+      - checkout_url
+      properties:
+        boost_grant_id:
+          type: string
+          format: uuid
+        invoice_id:
+          type: string
+          format: uuid
+        invoice_number:
+          type:
+          - string
+          - 'null'
+        vat_regime:
+          type: string
+        vat_rate_bp:
+          type: integer
+        net_amount_minor:
+          type: integer
+        vat_amount_minor:
+          type: integer
+        gross_amount_minor:
+          type: integer
+        checkout_session_id:
+          type: string
+        checkout_url:
+          type: string
+          format: uri
+      examples:
+      - boost_grant_id: 00000000-0000-7000-8000-000000000021
+        invoice_id: 00000000-0000-7000-8000-000000000022
+        invoice_number: KODERA-2026-00001
+        vat_regime: fr_standard
+        vat_rate_bp: 2000
+        net_amount_minor: 2900
+        vat_amount_minor: 580
+        gross_amount_minor: 3480
+        checkout_session_id: cs_fake_000001
+        checkout_url: https://pay.fake.invalid/checkout/cs_fake_000001
+    CreatorConnectOnboardingRequest:
+      type: object
+      title: CreatorConnectOnboardingRequest
+      additionalProperties: false
+      required:
+      - seller_legal_name
+      - tax_residence_country
+      - refresh_url
+      - return_url
+      properties:
+        seller_legal_name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        tax_residence_country:
+          type: string
+          minLength: 2
+          maxLength: 2
+        tax_tin:
+          type:
+          - string
+          - 'null'
+        refresh_url:
+          type: string
+          format: uri
+        return_url:
+          type: string
+          format: uri
+    CreatorConnectOnboardingResult:
+      type: object
+      title: CreatorConnectOnboardingResult
+      additionalProperties: false
+      required:
+      - connect_account_id
+      - stripe_connect_account_id
+      - onboarding_state
+      - onboarding_url
+      - expires_at
+      properties:
+        connect_account_id:
+          type: string
+          format: uuid
+        stripe_connect_account_id:
+          type:
+          - string
+          - 'null'
+        onboarding_state:
+          type: string
+        onboarding_url:
+          type: string
+          format: uri
+        expires_at:
+          type: string
+          format: date-time
+      examples:
+      - connect_account_id: 00000000-0000-7000-8000-000000000031
+        stripe_connect_account_id: acct_fake000001
+        onboarding_state: onboarding_link_issued
+        onboarding_url: https://connect.fake.invalid/setup/acct_fake000001
+        expires_at: '2026-06-15T12:15:00Z'
+    VipTierOfferCreateRequest:
+      type: object
+      title: VipTierOfferCreateRequest
+      additionalProperties: false
+      required:
+      - code
+      - name
+      - billing_period
+      - price_excl_vat_minor
+      - granted_workspace_role_id
+      - granted_channel_ids
+      properties:
+        code:
+          type: string
+          minLength: 1
+          maxLength: 64
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        description:
+          type:
+          - string
+          - 'null'
+        billing_period:
+          type: string
+          enum:
+          - monthly
+          - yearly
+          - one_time
+        price_excl_vat_minor:
+          type: integer
+          minimum: 1
+        granted_workspace_role_id:
+          type: string
+          format: uuid
+        granted_channel_ids:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            format: uuid
+    VipTierOfferItem:
+      type: object
+      title: VipTierOfferItem
+      additionalProperties: false
+      required:
+      - id
+      - code
+      - name
+      - billing_period
+      - currency
+      - price_excl_vat_minor
+      - granted_workspace_role_id
+      - granted_channel_ids
+      - active
+      properties:
+        id:
+          type: string
+          format: uuid
+        code:
+          type: string
+        name:
+          type: string
+        description:
+          type:
+          - string
+          - 'null'
+        billing_period:
+          type: string
+        currency:
+          type: string
+        price_excl_vat_minor:
+          type: integer
+        granted_workspace_role_id:
+          type: string
+          format: uuid
+        granted_channel_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+        active:
+          type: boolean
+      examples:
+      - id: 00000000-0000-7000-8000-000000000041
+        code: vip-gold
+        name: Salon VIP Or
+        description: null
+        billing_period: monthly
+        currency: EUR
+        price_excl_vat_minor: 1500
+        granted_workspace_role_id: 00000000-0000-7000-8000-000000000042
+        granted_channel_ids:
+        - 00000000-0000-7000-8000-000000000043
+        active: true
+    VipPassCheckoutRequest:
+      type: object
+      title: VipPassCheckoutRequest
+      additionalProperties: false
+      required:
+      - tier_id
+      - customer_kind
+      - buyer_country
+      - return_url
+      - withdrawal_waiver_accepted
+      properties:
+        tier_id:
+          type: string
+          format: uuid
+        customer_kind:
+          type: string
+          enum:
+          - b2c
+          - b2b
+        buyer_country:
+          type: string
+          minLength: 2
+          maxLength: 2
+        return_url:
+          type: string
+          format: uri
+        locale:
+          type: string
+          enum:
+          - fr
+          - en
+        withdrawal_waiver_accepted:
+          type: boolean
+        withdrawal_waiver_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        withdrawal_waiver_statement:
+          type:
+          - string
+          - 'null'
+    VipPassCheckoutResult:
+      type: object
+      title: VipPassCheckoutResult
+      additionalProperties: false
+      required:
+      - vip_entitlement_id
+      - tier_id
+      - vat_regime
+      - vat_rate_bp
+      - gross_excl_vat_minor
+      - vat_amount_minor
+      - total_incl_vat_minor
+      - application_fee_amount_minor
+      - reserved_recovery_minor
+      - creator_net_minor
+      - checkout_session_id
+      - checkout_url
+      properties:
+        vip_entitlement_id:
+          type: string
+          format: uuid
+        tier_id:
+          type: string
+          format: uuid
+        vat_regime:
+          type: string
+        vat_rate_bp:
+          type: integer
+        gross_excl_vat_minor:
+          type: integer
+        vat_amount_minor:
+          type: integer
+        total_incl_vat_minor:
+          type: integer
+        application_fee_amount_minor:
+          type: integer
+        reserved_recovery_minor:
+          type: integer
+        creator_net_minor:
+          type: integer
+        checkout_session_id:
+          type: string
+        checkout_url:
+          type: string
+          format: uri
+      examples:
+      - vip_entitlement_id: 00000000-0000-7000-8000-000000000051
+        tier_id: 00000000-0000-7000-8000-000000000041
+        vat_regime: fr_standard
+        vat_rate_bp: 2000
+        gross_excl_vat_minor: 1500
+        vat_amount_minor: 300
+        total_incl_vat_minor: 1800
+        application_fee_amount_minor: 150
+        reserved_recovery_minor: 0
+        creator_net_minor: 1350
+        checkout_session_id: cs_fake_000002
+        checkout_url: https://pay.fake.invalid/checkout/cs_fake_000002
+    Dac7ExportDocument:
+      type: object
+      title: Dac7ExportDocument
+      additionalProperties: true
+      required:
+      - directive
+      - reporting_year
+      - sellers
+      properties:
+        directive:
+          type: string
+        reporting_year:
+          type: integer
+        sellers:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+      examples:
+      - directive: 2021/514/EU
+        reporting_year: 2026
+        sellers: []
+
+    CalendarAttendee:
+      type: object
+      title: CalendarAttendee
+      additionalProperties: false
+      required: [email]
+      properties:
+        email: { type: "string", format: "email", maxLength: 254 }
+        name: { type: "string", maxLength: 128 }
+        partstat: { type: "string", enum: ["NEEDS-ACTION", "ACCEPTED", "DECLINED", "TENTATIVE"] }
+        role: { type: "string", enum: ["REQ-PARTICIPANT", "OPT-PARTICIPANT", "CHAIR", "NON-PARTICIPANT"] }
+      examples:
+        - { email: "camille@kodera.io", name: "Camille Laurent", partstat: "ACCEPTED", role: "REQ-PARTICIPANT" }
+    CalendarEvent:
+      type: object
+      title: CalendarEvent
+      additionalProperties: false
+      required: [id, uid, title, description, location, startsAt, endsAt, timezone, rrule, status, visibility, attendees, alarmMinutesBefore, visioUrl, agendaDocUrl, sourceId, revision, updatedAt]
+      properties:
+        id: { type: "string", format: "uuid" }
+        uid: { type: "string", maxLength: 255 }
+        title: { type: "string", minLength: 1, maxLength: 255 }
+        description: { type: "string", maxLength: 8192 }
+        location: { type: "string", maxLength: 512 }
+        startsAt: { type: "string", format: "date-time" }
+        endsAt: { type: "string", format: "date-time" }
+        timezone: { type: "string", minLength: 1, maxLength: 64 }
+        rrule: { type: "string", maxLength: 512 }
+        status: { type: "string", enum: ["confirmed", "tentative", "cancelled"] }
+        visibility: { type: "string", enum: ["workspace", "private", "busy_only"] }
+        attendees: { type: "array", maxItems: 100, items: { "$ref": "#/components/schemas/CalendarAttendee" } }
+        alarmMinutesBefore: { type: ["integer", "null"], minimum: 0, maximum: 10080 }
+        visioUrl: { type: "string", maxLength: 2048 }
+        agendaDocUrl: { type: "string", maxLength: 2048 }
+        sourceId: { type: ["string", "null"], format: "uuid" }
+        revision: { type: "integer", minimum: 1 }
+        updatedAt: { type: "string", format: "date-time" }
+      examples:
+        - { id: "00000000-0000-7000-8000-000000000101", uid: "00000000-0000-7000-8000-000000000101@kodera.calendar", title: "Synchronisation produit hebdomadaire", description: "Revue de feuille de route et arbitrages.", location: "Salle Givre", startsAt: "2026-06-08T09:00:00Z", endsAt: "2026-06-08T09:45:00Z", timezone: "Europe/Paris", rrule: "FREQ=WEEKLY;BYDAY=MO", status: "confirmed", visibility: "workspace", attendees: [{ email: "camille@kodera.io", name: "Camille Laurent", partstat: "ACCEPTED", role: "REQ-PARTICIPANT" }], alarmMinutesBefore: 15, visioUrl: "https://visio.kodera.io/hebdo-produit", agendaDocUrl: "https://console.kodera.io/docs/00000000-0000-7000-8000-000000000201", sourceId: null, revision: 1, updatedAt: "2026-06-01T08:00:00Z" }
+    CalendarEventList:
+      type: object
+      title: CalendarEventList
+      additionalProperties: false
+      required: [data]
+      properties:
+        data: { type: "array", items: { "$ref": "#/components/schemas/CalendarEvent" } }
+      examples:
+        - { data: [{ id: "00000000-0000-7000-8000-000000000101", uid: "00000000-0000-7000-8000-000000000101@kodera.calendar", title: "Synchronisation produit hebdomadaire", description: "Revue de feuille de route et arbitrages.", location: "Salle Givre", startsAt: "2026-06-08T09:00:00Z", endsAt: "2026-06-08T09:45:00Z", timezone: "Europe/Paris", rrule: "FREQ=WEEKLY;BYDAY=MO", status: "confirmed", visibility: "workspace", attendees: [], alarmMinutesBefore: 15, visioUrl: "https://visio.kodera.io/hebdo-produit", agendaDocUrl: "", sourceId: null, revision: 1, updatedAt: "2026-06-01T08:00:00Z" }] }
+    CalendarEventCreateRequest:
+      type: object
+      title: CalendarEventCreateRequest
+      additionalProperties: false
+      required: [title, startsAt, endsAt]
+      properties:
+        title: { type: "string", minLength: 1, maxLength: 255 }
+        description: { type: "string", maxLength: 8192 }
+        location: { type: "string", maxLength: 512 }
+        startsAt: { type: "string", format: "date-time" }
+        endsAt: { type: "string", format: "date-time" }
+        timezone: { type: "string", minLength: 1, maxLength: 64 }
+        rrule: { type: "string", maxLength: 512 }
+        visibility: { type: "string", enum: ["workspace", "private", "busy_only"] }
+        attendees: { type: "array", maxItems: 100, items: { "$ref": "#/components/schemas/CalendarAttendee" } }
+        alarmMinutesBefore: { type: ["integer", "null"], minimum: 0, maximum: 10080 }
+        visioUrl: { type: "string", maxLength: 2048 }
+        agendaDocUrl: { type: "string", maxLength: 2048 }
+    CalendarEventPatchRequest:
+      type: object
+      title: CalendarEventPatchRequest
+      additionalProperties: false
+      properties:
+        title: { type: "string", minLength: 1, maxLength: 255 }
+        description: { type: "string", maxLength: 8192 }
+        location: { type: "string", maxLength: 512 }
+        startsAt: { type: "string", format: "date-time" }
+        endsAt: { type: "string", format: "date-time" }
+        status: { type: "string", enum: ["confirmed", "tentative", "cancelled"] }
+        visibility: { type: "string", enum: ["workspace", "private", "busy_only"] }
+        rrule: { type: "string", maxLength: 512 }
+        visioUrl: { type: "string", maxLength: 2048 }
+        agendaDocUrl: { type: "string", maxLength: 2048 }
+    CalendarIcsExport:
+      type: object
+      title: CalendarIcsExport
+      additionalProperties: false
+      required: [filename, ics]
+      properties:
+        filename: { type: "string", minLength: 1, maxLength: 128 }
+        ics: { type: "string" }
+      examples:
+        - { filename: "kodera-workspace-calendar.ics", ics: "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Kodera//Sovereign Smart Calendar//EN\r\nCALSCALE:GREGORIAN\r\nMETHOD:PUBLISH\r\nEND:VCALENDAR\r\n" }
+    CaldavSource:
+      type: object
+      title: CaldavSource
+      additionalProperties: false
+      required: [id, name, provider, calendarUrl, principalUsername, enabled, hasSyncToken, lastSyncedAt, lastErrorCode, createdAt]
+      properties:
+        id: { type: "string", format: "uuid" }
+        name: { type: "string", minLength: 1, maxLength: 128 }
+        provider: { type: "string", enum: ["lasuite", "open_xchange", "nextcloud", "generic"] }
+        calendarUrl: { type: "string", maxLength: 2048 }
+        principalUsername: { type: "string", minLength: 1, maxLength: 255 }
+        enabled: { type: "boolean" }
+        hasSyncToken: { type: "boolean" }
+        lastSyncedAt: { type: ["string", "null"], format: "date-time" }
+        lastErrorCode: { type: ["string", "null"], maxLength: 128 }
+        createdAt: { type: "string", format: "date-time" }
+      examples:
+        - { id: "00000000-0000-7000-8000-000000000102", name: "Agenda La Suite Numerique", provider: "lasuite", calendarUrl: "https://agenda.numerique.gouv.fr/caldav/equipe/", principalUsername: "equipe@kodera.io", enabled: true, hasSyncToken: true, lastSyncedAt: "2026-06-01T08:05:00Z", lastErrorCode: null, createdAt: "2026-06-01T08:00:00Z" }
+    CaldavSourceList:
+      type: object
+      title: CaldavSourceList
+      additionalProperties: false
+      required: [data]
+      properties:
+        data: { type: "array", items: { "$ref": "#/components/schemas/CaldavSource" } }
+      examples:
+        - { data: [{ id: "00000000-0000-7000-8000-000000000102", name: "Agenda La Suite Numerique", provider: "lasuite", calendarUrl: "https://agenda.numerique.gouv.fr/caldav/equipe/", principalUsername: "equipe@kodera.io", enabled: true, hasSyncToken: true, lastSyncedAt: "2026-06-01T08:05:00Z", lastErrorCode: null, createdAt: "2026-06-01T08:00:00Z" }] }
+    CaldavSourceCreateRequest:
+      type: object
+      title: CaldavSourceCreateRequest
+      additionalProperties: false
+      required: [name, calendarUrl, username, password]
+      properties:
+        name: { type: "string", minLength: 1, maxLength: 128 }
+        provider: { type: "string", enum: ["lasuite", "open_xchange", "nextcloud", "generic"] }
+        calendarUrl: { type: "string", maxLength: 2048 }
+        username: { type: "string", minLength: 1, maxLength: 255 }
+        password: { type: "string", minLength: 1, maxLength: 512 }
+    CaldavSyncResult:
+      type: object
+      title: CaldavSyncResult
+      additionalProperties: false
+      required: [sourceId, upserted, removed, fullResync, syncedAt]
+      properties:
+        sourceId: { type: "string", format: "uuid" }
+        upserted: { type: "integer", minimum: 0 }
+        removed: { type: "integer", minimum: 0 }
+        fullResync: { type: "boolean" }
+        syncedAt: { type: "string", format: "date-time" }
+      examples:
+        - { sourceId: "00000000-0000-7000-8000-000000000102", upserted: 3, removed: 0, fullResync: false, syncedAt: "2026-06-01T08:10:00Z" }
+    BookingAvailabilityWindow:
+      type: object
+      title: BookingAvailabilityWindow
+      additionalProperties: false
+      required: [weekday, start, end]
+      properties:
+        weekday: { type: "integer", minimum: 0, maximum: 6 }
+        start: { type: "string", minLength: 5, maxLength: 5, pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$" }
+        end: { type: "string", minLength: 5, maxLength: 5, pattern: "^(([01][0-9]|2[0-3]):[0-5][0-9]|24:00)$" }
+      examples:
+        - { weekday: 0, start: "09:00", end: "17:00" }
+    BookingPage:
+      type: object
+      title: BookingPage
+      additionalProperties: false
+      required: [id, slug, title, description, timezone, durationMinutes, bufferMinutes, availabilityWindows, visioUrl, agendaDocUrl, active, revision, createdAt]
+      properties:
+        id: { type: "string", format: "uuid" }
+        slug: { type: "string", minLength: 3, maxLength: 80, pattern: "^[a-z0-9][a-z0-9-]{1,78}[a-z0-9](?![\\s\\S])" }
+        title: { type: "string", minLength: 1, maxLength: 160 }
+        description: { type: "string", maxLength: 2048 }
+        timezone: { type: "string", minLength: 1, maxLength: 64 }
+        durationMinutes: { type: "integer", enum: [15, 30, 45, 60] }
+        bufferMinutes: { type: "integer", minimum: 0, maximum: 120 }
+        availabilityWindows: { type: "array", minItems: 1, maxItems: 28, items: { "$ref": "#/components/schemas/BookingAvailabilityWindow" } }
+        visioUrl: { type: "string", maxLength: 2048 }
+        agendaDocUrl: { type: "string", maxLength: 2048 }
+        active: { type: "boolean" }
+        revision: { type: "integer", minimum: 1 }
+        createdAt: { type: "string", format: "date-time" }
+      examples:
+        - { id: "00000000-0000-7000-8000-000000000103", slug: "echange-architecture-kodera", title: "Point architecture souveraine", description: "Creneau de 30 minutes avec lien Kodera Visio automatique.", timezone: "Europe/Paris", durationMinutes: 30, bufferMinutes: 10, availabilityWindows: [{ weekday: 0, start: "09:00", end: "17:00" }], visioUrl: "https://visio.kodera.io/point-architecture", agendaDocUrl: "", active: true, revision: 1, createdAt: "2026-06-01T08:00:00Z" }
+    BookingPageList:
+      type: object
+      title: BookingPageList
+      additionalProperties: false
+      required: [data]
+      properties:
+        data: { type: "array", items: { "$ref": "#/components/schemas/BookingPage" } }
+      examples:
+        - { data: [{ id: "00000000-0000-7000-8000-000000000103", slug: "echange-architecture-kodera", title: "Point architecture souveraine", description: "Creneau de 30 minutes avec lien Kodera Visio automatique.", timezone: "Europe/Paris", durationMinutes: 30, bufferMinutes: 10, availabilityWindows: [{ weekday: 0, start: "09:00", end: "17:00" }], visioUrl: "https://visio.kodera.io/point-architecture", agendaDocUrl: "", active: true, revision: 1, createdAt: "2026-06-01T08:00:00Z" }] }
+    BookingPageCreateRequest:
+      type: object
+      title: BookingPageCreateRequest
+      additionalProperties: false
+      required: [slug, title, availabilityWindows]
+      properties:
+        slug: { type: "string", minLength: 3, maxLength: 80, pattern: "^[a-z0-9][a-z0-9-]{1,78}[a-z0-9](?![\\s\\S])" }
+        title: { type: "string", minLength: 1, maxLength: 160 }
+        description: { type: "string", maxLength: 2048 }
+        timezone: { type: "string", minLength: 1, maxLength: 64 }
+        durationMinutes: { type: "integer", enum: [15, 30, 45, 60] }
+        bufferMinutes: { type: "integer", minimum: 0, maximum: 120 }
+        availabilityWindows: { type: "array", minItems: 1, maxItems: 28, items: { "$ref": "#/components/schemas/BookingAvailabilityWindow" } }
+        visioUrl: { type: "string", maxLength: 2048 }
+        agendaDocUrl: { type: "string", maxLength: 2048 }
+    PublicBookingSlot:
+      type: object
+      title: PublicBookingSlot
+      additionalProperties: false
+      required: [startsAt, endsAt]
+      properties:
+        startsAt: { type: "string", format: "date-time" }
+        endsAt: { type: "string", format: "date-time" }
+      examples:
+        - { startsAt: "2026-06-08T10:00:00Z", endsAt: "2026-06-08T10:30:00Z" }
+    PublicBookingPage:
+      type: object
+      title: PublicBookingPage
+      additionalProperties: false
+      required: [slug, title, description, timezone, durationMinutes, visioAvailable, slots]
+      properties:
+        slug: { type: "string", minLength: 3, maxLength: 80, pattern: "^[a-z0-9][a-z0-9-]{1,78}[a-z0-9](?![\\s\\S])" }
+        title: { type: "string" }
+        description: { type: "string" }
+        timezone: { type: "string" }
+        durationMinutes: { type: "integer", enum: [15, 30, 45, 60] }
+        visioAvailable: { type: "boolean" }
+        slots: { type: "array", items: { "$ref": "#/components/schemas/PublicBookingSlot" } }
+      examples:
+        - { slug: "echange-architecture-kodera", title: "Point architecture souveraine", description: "Creneau de 30 minutes avec lien Kodera Visio automatique.", timezone: "Europe/Paris", durationMinutes: 30, visioAvailable: true, slots: [{ startsAt: "2026-06-08T10:00:00Z", endsAt: "2026-06-08T10:30:00Z" }] }
+    PublicBookingReserveRequest:
+      type: object
+      title: PublicBookingReserveRequest
+      additionalProperties: false
+      required: [startsAt, guestName, guestEmail]
+      properties:
+        startsAt: { type: "string", format: "date-time" }
+        guestName: { type: "string", minLength: 1, maxLength: 160 }
+        guestEmail: { type: "string", format: "email", maxLength: 254 }
+        guestNotes: { type: "string", maxLength: 1024 }
+    PublicBookingReservation:
+      type: object
+      title: PublicBookingReservation
+      additionalProperties: false
+      required: [reservationId, slug, title, startsAt, endsAt, timezone, visioUrl, agendaDocUrl, status, cancellationToken, ics]
+      properties:
+        reservationId: { type: "string", format: "uuid" }
+        slug: { type: "string", minLength: 3, maxLength: 80, pattern: "^[a-z0-9][a-z0-9-]{1,78}[a-z0-9](?![\\s\\S])" }
+        title: { type: "string" }
+        startsAt: { type: "string", format: "date-time" }
+        endsAt: { type: "string", format: "date-time" }
+        timezone: { type: "string" }
+        visioUrl: { type: "string" }
+        agendaDocUrl: { type: "string" }
+        status: { type: "string", enum: ["confirmed"] }
+        cancellationToken: { type: "string", minLength: 16, maxLength: 128 }
+        ics: { type: "string" }
+      examples:
+        - { reservationId: "00000000-0000-7000-8000-000000000104", slug: "echange-architecture-kodera", title: "Point architecture souveraine", startsAt: "2026-06-08T10:00:00Z", endsAt: "2026-06-08T10:30:00Z", timezone: "Europe/Paris", visioUrl: "https://visio.kodera.io/point-architecture", agendaDocUrl: "", status: "confirmed", cancellationToken: "bkc_00000000000000000000000000000000", ics: "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Kodera//Sovereign Smart Calendar//EN\r\nCALSCALE:GREGORIAN\r\nMETHOD:REQUEST\r\nEND:VCALENDAR\r\n" }
+    PublicBookingCancelRequest:
+      type: object
+      title: PublicBookingCancelRequest
+      additionalProperties: false
+      required: [cancellationToken]
+      properties:
+        cancellationToken: { type: "string", minLength: 16, maxLength: 128 }
+    PublicBookingCancelResult:
+      type: object
+      title: PublicBookingCancelResult
+      additionalProperties: false
+      required: [reservationId, status, cancelledAt, ics]
+      properties:
+        reservationId: { type: "string", format: "uuid" }
+        status: { type: "string", enum: ["cancelled"] }
+        cancelledAt: { type: "string", format: "date-time" }
+        ics: { type: "string" }
+      examples:
+        - { reservationId: "00000000-0000-7000-8000-000000000104", status: "cancelled", cancelledAt: "2026-06-02T09:00:00Z", ics: "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Kodera//Sovereign Smart Calendar//EN\r\nCALSCALE:GREGORIAN\r\nMETHOD:CANCEL\r\nEND:VCALENDAR\r\n" }
+    WorkspaceSecurityPostureCheck:
+      type: object
+      title: WorkspaceSecurityPostureCheck
+      additionalProperties: false
+      required:
+      - id
+      - status
+      - earned_points
+      - max_points
+      - remediation_action
+      - fix_available
+      - affected_count
+      properties:
+        id:
+          type: string
+          enum:
+          - invite_hygiene
+          - sovereign_ai_boundary
+          - security_alert_routing
+          - extension_secret_rotation
+          - least_privilege_roles
+          - confidential_room_readiness
+        status:
+          type: string
+          enum:
+          - pass
+          - warn
+        earned_points:
+          type: integer
+          minimum: 0
+          maximum: 20
+        max_points:
+          type: integer
+          minimum: 15
+          maximum: 20
+        remediation_action:
+          type: string
+          enum:
+          - cap_unbounded_invites
+          - enforce_eu_sovereign_ai
+          - provision_security_alerts_channel
+          - rotate_stale_extension_keys
+          - strip_excess_role_permissions
+          - provision_confidential_channel
+        fix_available:
+          type: boolean
+        affected_count:
+          type: integer
+          minimum: 0
+      examples:
+      - id: invite_hygiene
+        status: pass
+        earned_points: 20
+        max_points: 20
+        remediation_action: cap_unbounded_invites
+        fix_available: false
+        affected_count: 0
+    WorkspaceSecurityPosture:
+      type: object
+      title: WorkspaceSecurityPosture
+      additionalProperties: false
+      required:
+      - organisation_id
+      - workspace_id
+      - score
+      - max_score
+      - grade
+      - passing_checks
+      - total_checks
+      - fixable_checks
+      - checks
+      properties:
+        organisation_id:
+          type: string
+          format: uuid
+        workspace_id:
+          type: string
+          format: uuid
+        score:
+          type: integer
+          minimum: 0
+          maximum: 100
+        max_score:
+          type: integer
+          minimum: 100
+          maximum: 100
+        grade:
+          type: string
+          enum:
+          - A
+          - B
+          - C
+          - D
+          - E
+          - F
+        passing_checks:
+          type: integer
+          minimum: 0
+          maximum: 6
+        total_checks:
+          type: integer
+          minimum: 6
+          maximum: 6
+        fixable_checks:
+          type: integer
+          minimum: 0
+          maximum: 6
+        checks:
+          type: array
+          minItems: 6
+          maxItems: 6
+          items:
+            $ref: '#/components/schemas/WorkspaceSecurityPostureCheck'
+      examples:
+      - organisation_id: 00000000-0000-7000-8000-000000000001
+        workspace_id: 00000000-0000-7000-8000-000000000002
+        score: 85
+        max_score: 100
+        grade: B
+        passing_checks: 5
+        total_checks: 6
+        fixable_checks: 1
+        checks:
+        - id: invite_hygiene
+          status: pass
+          earned_points: 20
+          max_points: 20
+          remediation_action: cap_unbounded_invites
+          fix_available: false
+          affected_count: 0
+        - id: sovereign_ai_boundary
+          status: pass
+          earned_points: 20
+          max_points: 20
+          remediation_action: enforce_eu_sovereign_ai
+          fix_available: false
+          affected_count: 0
+        - id: security_alert_routing
+          status: warn
+          earned_points: 0
+          max_points: 15
+          remediation_action: provision_security_alerts_channel
+          fix_available: true
+          affected_count: 1
+        - id: extension_secret_rotation
+          status: pass
+          earned_points: 15
+          max_points: 15
+          remediation_action: rotate_stale_extension_keys
+          fix_available: false
+          affected_count: 0
+        - id: least_privilege_roles
+          status: pass
+          earned_points: 15
+          max_points: 15
+          remediation_action: strip_excess_role_permissions
+          fix_available: false
+          affected_count: 0
+        - id: confidential_room_readiness
+          status: pass
+          earned_points: 15
+          max_points: 15
+          remediation_action: provision_confidential_channel
+          fix_available: false
+          affected_count: 0
+    WorkspaceSecurityPostureRemediateRequest:
+      type: object
+      title: WorkspaceSecurityPostureRemediateRequest
+      additionalProperties: false
+      required:
+      - action
+      properties:
+        action:
+          type: string
+          enum:
+          - cap_unbounded_invites
+          - enforce_eu_sovereign_ai
+          - provision_security_alerts_channel
+          - rotate_stale_extension_keys
+          - strip_excess_role_permissions
+          - provision_confidential_channel
+          - fix_all_safe
+      examples:
+      - action: fix_all_safe
+    WorkspaceSecurityPostureRemediateResponse:
+      type: object
+      title: WorkspaceSecurityPostureRemediateResponse
+      additionalProperties: false
+      required:
+      - requested_action
+      - applied_actions
+      - score_before
+      - posture
+      properties:
+        requested_action:
+          type: string
+          enum:
+          - cap_unbounded_invites
+          - enforce_eu_sovereign_ai
+          - provision_security_alerts_channel
+          - rotate_stale_extension_keys
+          - strip_excess_role_permissions
+          - provision_confidential_channel
+          - fix_all_safe
+        applied_actions:
+          type: array
+          items:
+            type: string
+            enum:
+            - cap_unbounded_invites
+            - enforce_eu_sovereign_ai
+            - provision_security_alerts_channel
+            - rotate_stale_extension_keys
+            - strip_excess_role_permissions
+            - provision_confidential_channel
+        score_before:
+          type: integer
+          minimum: 0
+          maximum: 100
+        posture:
+          $ref: '#/components/schemas/WorkspaceSecurityPosture'
+      examples:
+      - requested_action: fix_all_safe
+        applied_actions:
+        - provision_security_alerts_channel
+        score_before: 85
+        posture:
+          organisation_id: 00000000-0000-7000-8000-000000000001
+          workspace_id: 00000000-0000-7000-8000-000000000002
+          score: 100
+          max_score: 100
+          grade: A
+          passing_checks: 6
+          total_checks: 6
+          fixable_checks: 0
+          checks:
+          - id: invite_hygiene
+            status: pass
+            earned_points: 20
+            max_points: 20
+            remediation_action: cap_unbounded_invites
+            fix_available: false
+            affected_count: 0
+          - id: sovereign_ai_boundary
+            status: pass
+            earned_points: 20
+            max_points: 20
+            remediation_action: enforce_eu_sovereign_ai
+            fix_available: false
+            affected_count: 0
+          - id: security_alert_routing
+            status: pass
+            earned_points: 15
+            max_points: 15
+            remediation_action: provision_security_alerts_channel
+            fix_available: false
+            affected_count: 0
+          - id: extension_secret_rotation
+            status: pass
+            earned_points: 15
+            max_points: 15
+            remediation_action: rotate_stale_extension_keys
+            fix_available: false
+            affected_count: 0
+          - id: least_privilege_roles
+            status: pass
+            earned_points: 15
+            max_points: 15
+            remediation_action: strip_excess_role_permissions
+            fix_available: false
+            affected_count: 0
+          - id: confidential_room_readiness
+            status: pass
+            earned_points: 15
+            max_points: 15
+            remediation_action: provision_confidential_channel
+            fix_available: false
+            affected_count: 0
+    SupportedTranslationLanguage:
+      type: string
+      title: SupportedTranslationLanguage
+      enum:
+      - fr
+      - en
+      - de
+      - es
+      - it
+      - nl
+      - pt
+      - pl
+    ChannelMessageTranslationRequest:
+      type: object
+      title: ChannelMessageTranslationRequest
+      additionalProperties: false
+      required:
+      - text
+      - targetLanguage
+      properties:
+        text:
+          type: string
+          minLength: 1
+          maxLength: 8192
+        targetLanguage:
+          $ref: '#/components/schemas/SupportedTranslationLanguage'
+        sourceLanguage:
+          type: string
+          minLength: 2
+          maxLength: 16
+        eventId:
+          type: string
+          minLength: 1
+          maxLength: 255
+        roomId:
+          type: string
+          minLength: 4
+          maxLength: 255
+    ChannelMessageTranslationResult:
+      type: object
+      title: ChannelMessageTranslationResult
+      additionalProperties: false
+      required:
+      - channelId
+      - eventId
+      - translatedText
+      - targetLanguage
+      - sourceLanguage
+      - provider
+      - model
+      - ephemeral
+      properties:
+        channelId:
+          type: string
+          format: uuid
+        eventId:
+          type:
+          - string
+          - 'null'
+          minLength: 1
+          maxLength: 255
+        translatedText:
+          type: string
+        targetLanguage:
+          $ref: '#/components/schemas/SupportedTranslationLanguage'
+        sourceLanguage:
+          type: string
+        provider:
+          type: string
+        model:
+          type: string
+        ephemeral:
+          type: boolean
+      examples:
+      - channelId: 00000000-0000-7000-8000-000000000002
+        eventId: $event_demo_001
+        translatedText: Deployment confirmed for Thursday.
+        targetLanguage: en
+        sourceLanguage: fr
+        provider: mistral
+        model: mistral-small-latest
+        ephemeral: true
+    LiveCallSessionState:
+      type: string
+      title: LiveCallSessionState
+      enum:
+      - awaiting_all_consents
+      - active
+      - paused_unconsented_participant
+      - stopped_withdrawn
+      - ended
+    LiveCallParticipantConsentState:
+      type: string
+      title: LiveCallParticipantConsentState
+      enum:
+      - pending
+      - consented
+      - withdrawn
+    LiveCallCaptionSessionView:
+      type: object
+      title: LiveCallCaptionSessionView
+      additionalProperties: false
+      required:
+      - sessionId
+      - channelId
+      - state
+      - targetLanguage
+      - rosterCount
+      - consentedCount
+      - unconsentedCount
+      - allConsented
+      - callerConsentState
+      - callerMemberAiConsent
+      - generation
+      properties:
+        sessionId:
+          type: string
+          format: uuid
+        callInstanceId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        channelId:
+          type: string
+          format: uuid
+        state:
+          $ref: '#/components/schemas/LiveCallSessionState'
+        targetLanguage:
+          $ref: '#/components/schemas/SupportedTranslationLanguage'
+        rosterCount:
+          type: integer
+          minimum: 0
+        consentedCount:
+          type: integer
+          minimum: 0
+        unconsentedCount:
+          type: integer
+          minimum: 0
+        allConsented:
+          type: boolean
+        callerConsentState:
+          $ref: '#/components/schemas/LiveCallParticipantConsentState'
+        callerMemberAiConsent:
+          type: boolean
+        generation:
+          type: integer
+          minimum: 1
+        expiresAt:
+          type: string
+          format: date-time
+      examples:
+      - sessionId: 00000000-0000-7000-8000-000000000210
+        callInstanceId: RM_livekit_demo_01
+        channelId: 00000000-0000-7000-8000-000000000002
+        state: active
+        targetLanguage: en
+        rosterCount: 2
+        consentedCount: 2
+        unconsentedCount: 0
+        allConsented: true
+        callerConsentState: consented
+        callerMemberAiConsent: true
+        generation: 1
+        expiresAt: '2026-06-08T10:35:00Z'
+    LiveCallCaptionSessionEnvelope:
+      type: object
+      title: LiveCallCaptionSessionEnvelope
+      additionalProperties: false
+      required:
+      - session
+      properties:
+        session:
+          oneOf:
+          - $ref: '#/components/schemas/LiveCallCaptionSessionView'
+          - type: 'null'
+      examples:
+      - session: null
+    LiveCallCaptionSessionUpdateRequest:
+      type: object
+      title: LiveCallCaptionSessionUpdateRequest
+      additionalProperties: false
+      required:
+      - action
+      properties:
+        action:
+          type: string
+          enum:
+          - start
+          - consent
+          - sync_roster
+          - leave
+          - withdraw
+          - end
+          - set_language
+        sessionId:
+          type: string
+          format: uuid
+        callInstanceId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        targetLanguage:
+          $ref: '#/components/schemas/SupportedTranslationLanguage'
+        participantMembershipIds:
+          type: array
+          maxItems: 128
+          items:
+            type: string
+            format: uuid
+        participantUserIds:
+          type: array
+          maxItems: 128
+          items:
+            type: string
+            minLength: 3
+            maxLength: 255
+        grantCallConsent:
+          type: boolean
+        roomId:
+          type: string
+          minLength: 4
+          maxLength: 255
+    LiveCallChunkTranscriptionRequest:
+      type: object
+      title: LiveCallChunkTranscriptionRequest
+      additionalProperties: false
+      required:
+      - sessionId
+      - generation
+      - audioBase64
+      properties:
+        sessionId:
+          type: string
+          format: uuid
+        generation:
+          type: integer
+          minimum: 1
+        audioBase64:
+          type: string
+          minLength: 1
+          maxLength: 1400000
+        contentType:
+          type: string
+          minLength: 1
+          maxLength: 64
+        filename:
+          type: string
+          minLength: 1
+          maxLength: 255
+        targetLanguage:
+          $ref: '#/components/schemas/SupportedTranslationLanguage'
+        participantMembershipIds:
+          type: array
+          maxItems: 128
+          items:
+            type: string
+            format: uuid
+        participantUserIds:
+          type: array
+          maxItems: 128
+          items:
+            type: string
+            minLength: 3
+            maxLength: 255
+        roomId:
+          type: string
+          minLength: 4
+          maxLength: 255
+    LiveCallChunkTranscriptionResult:
+      type: object
+      title: LiveCallChunkTranscriptionResult
+      additionalProperties: false
+      required:
+      - sessionId
+      - channelId
+      - sourceText
+      - translatedText
+      - sourceLanguage
+      - targetLanguage
+      - provider
+      - model
+      - ephemeral
+      properties:
+        sessionId:
+          type: string
+          format: uuid
+        channelId:
+          type: string
+          format: uuid
+        sourceText:
+          type: string
+        translatedText:
+          type: string
+        sourceLanguage:
+          type: string
+        targetLanguage:
+          $ref: '#/components/schemas/SupportedTranslationLanguage'
+        provider:
+          type: string
+        model:
+          type: string
+        ephemeral:
+          type: boolean
+      examples:
+      - sessionId: 00000000-0000-7000-8000-000000000210
+        channelId: 00000000-0000-7000-8000-000000000002
+        sourceText: Bonjour a toute l equipe.
+        translatedText: Hello to the whole team.
+        sourceLanguage: fr
+        targetLanguage: en
+        provider: mistral
+        model: voxtral-mini-latest
+        ephemeral: true

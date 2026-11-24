@@ -54,3 +54,33 @@ GET_HELP_CONTEXT = Operation(
 RECEIVE_STRIPE_WEBHOOK = Operation(
     method="POST", operation_id="receiveStripeWebhook", scope="payment:act"
 )
+GET_WORKSPACE_MONETIZATION = Operation(
+    method="GET",
+    operation_id="getWorkspaceMonetization",
+    scope="workspace_monetization:read",
+)
+CREATE_WORKSPACE_BOOST_CHECKOUT = Operation(
+    method="POST",
+    operation_id="createWorkspaceBoostCheckout",
+    scope="workspace_monetization:act",
+)
+START_CREATOR_CONNECT_ONBOARDING = Operation(
+    method="POST",
+    operation_id="startCreatorConnectOnboarding",
+    scope="workspace_monetization:create",
+)
+CREATE_VIP_TIER_OFFER = Operation(
+    method="POST",
+    operation_id="createVipTierOffer",
+    scope="workspace_monetization:create",
+)
+CREATE_VIP_PASS_CHECKOUT = Operation(
+    method="POST",
+    operation_id="createVipPassCheckout",
+    scope="workspace_monetization:act",
+)
+EXPORT_WORKSPACE_DAC7_REPORT = Operation(
+    method="GET",
+    operation_id="exportWorkspaceDac7Report",
+    scope="workspace_monetization:read",
+)

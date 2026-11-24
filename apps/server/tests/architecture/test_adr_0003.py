@@ -274,6 +274,9 @@ ALLOWED_SECRETS = {
     "KODERA_AI_MISTRAL_API_KEY": (
         "an application secret: the optional EU-sovereign Mistral API key when managed AI is on"
     ),
+    "KODERA_CALENDAR_SEAL_KEY": (
+        "an application secret: the HKDF master key workspace CalDAV credentials are sealed with"
+    ),
     "KODERA_PUSH_VAPID_PUBLIC_KEY": (
         "public information: the uncompressed P-256 VAPID discovery point, validated by "
         "apps/notifications/push.py"
@@ -289,6 +292,14 @@ ALLOWED_SECRETS = {
     "KODERA_SYNAPSE_ADMIN_TOKEN": (
         "an application secret: the internal Matrix homeserver admin access token the "
         "coexistence replay worker sends queued imports and inbound coexistence events with"
+    ),
+    "KODERA_LIVEKIT_API_KEY": (
+        "an application secret: the optional LiveKit RoomService API key identifier the AI "
+        "gateway signs short-lived room-roster verification tokens with"
+    ),
+    "KODERA_LIVEKIT_API_SECRET": (
+        "an application secret: the optional LiveKit RoomService HS256 signing secret for "
+        "authoritative live-call caption roster verification"
     ),
 }
 # Inside a setting's value: a key or field shaped like a credential, and the one §2 admits there.

@@ -2,9 +2,11 @@ import type { ConfidentialMediaSession } from '../../confidential/media-crypto-c
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ConnectionState, DisconnectReason, Room, RoomEvent, Track } from 'livekit-client'
 import {
+  CALL_CAPTIONS_DATA_TOPIC,
   createCallController,
   matrixUserOf,
   ROOM_OPTIONS,
+  type CallCaptionPacket,
   type CallRoom,
   type CallControllerOptions,
   type CallSoundPort,
@@ -109,6 +111,9 @@ class FakeRoom {
       if (this.microphone?.track === track) this.microphone = undefined
       return undefined as unknown
     }),
+    publishData: vi.fn(
+      async (_data: Uint8Array, _options?: { reliable?: boolean; topic?: string }) => undefined
+    ),
   }
   connect = vi.fn(async (_url: string, _token: string) => {
     this.state = ConnectionState.Connected
@@ -2850,6 +2855,65 @@ describe('live media authority changes', () => {
     current.close()
     await call.leave()
   })
+
+  it('keeps an active confidential call alive across monotonic MLS epoch rotations (7 -> 8) and revokes on epoch rollback (8 -> 7)', async () => {
+    supportTransforms()
+    let currentEpoch = 7
+    let active = true
+    const listeners = new Set<() => void>()
+    const media: ConfidentialMediaSession = {
+      roomId: STANDUP,
+      get epoch() {
+        return currentEpoch
+      },
+      worker: {} as Worker,
+      isActive: () => active,
+      subscribeRevocation: (listener) => {
+        listeners.add(listener)
+        return () => {
+          listeners.delete(listener)
+        }
+      },
+      attach: vi.fn(async () => {}),
+      close: vi.fn(() => {
+        if (!active) return
+        active = false
+        for (const listener of [...listeners]) listener()
+      }),
+    }
+    let notify!: () => void
+    const { call, room } = setup({
+      protection: {
+        roomBoundary: () => 'confidential-unavailable',
+        mediaEncryption: () => media,
+        subscribeRoomBoundary: (listener) => {
+          notify = listener
+          return () => {}
+        },
+      },
+    })
+    await call.join(STANDUP)
+    expect(call.getSnapshot().status).toBe('connected')
+
+    // Monotonic forward rotation 7 -> 8 keeps call connected across both boundary & RoomEvent checks.
+    currentEpoch = 8
+    notify()
+    room().emit(RoomEvent.ActiveSpeakersChanged, [])
+    expect(call.getSnapshot().status).toBe('connected')
+    expect(room().disconnect).not.toHaveBeenCalled()
+    expect(media.close).not.toHaveBeenCalled()
+
+    // Rollback 8 -> 7 (even back to the initial epoch 7!) immediately revokes media encryption.
+    currentEpoch = 7
+    notify()
+    expect(media.close).toHaveBeenCalled()
+    expect(room().disconnect).toHaveBeenCalled()
+    expect(call.getSnapshot()).toMatchObject({
+      status: 'failed',
+      problem: 'media-encryption-revoked',
+    })
+    await call.leave()
+  })
 })
 
 it('does not retry a token request after protection authority changes during renewal', async () => {
@@ -2953,4 +3017,168 @@ it('stops a late ordinary microphone after its room becomes protected', async ()
   expect(room().liveMicrophone()).toBe(false)
   expect(call.getSnapshot().problem).toBe('media-encryption-revoked')
   await call.leave()
+})
+
+it('populates shared LiveKit room SID as callInstanceId on connect/reconnect and clears it on leave', async () => {
+  const { call, room } = setup()
+  let currentSid = 'RM_livekit_shared_1'
+  const getSid = vi.fn(async () => currentSid)
+
+  const joining = call.join(STANDUP)
+  ;(room() as unknown as { getSid?: () => Promise<string> }).getSid = getSid
+  expect(call.getSnapshot().callInstanceId).toBeUndefined()
+  await joining
+
+  expect(getSid).toHaveBeenCalled()
+  expect(call.getSnapshot()).toMatchObject({
+    status: 'connected',
+    roomId: STANDUP,
+    callInstanceId: 'RM_livekit_shared_1',
+  })
+
+  // Signal reconnect that rolls onto a new LiveKit room instance updates `callInstanceId`.
+  currentSid = 'RM_livekit_shared_2'
+  room().emit(RoomEvent.Reconnecting)
+  expect(call.getSnapshot()).toMatchObject({
+    status: 'reconnecting',
+    callInstanceId: 'RM_livekit_shared_1',
+  })
+  room().emit(RoomEvent.Reconnected)
+  await vi.waitFor(() => {
+    expect(call.getSnapshot().callInstanceId).toBe('RM_livekit_shared_2')
+  })
+
+  await call.leave()
+  expect(call.getSnapshot()).toMatchObject({ status: 'idle' })
+  expect(call.getSnapshot().callInstanceId).toBeUndefined()
+})
+
+it('hard-enforces server grant e2ee_required=true and refuses connecting in plaintext when SFrame worker E2EE is not active', async () => {
+  const { call, room } = setup({
+    answers: [
+      () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              url: 'wss://rtc.acme-sa.kodera.test',
+              token: LIVEKIT_TOKEN,
+              listen_only: false,
+              e2ee_required: true,
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          )
+        ),
+    ],
+  })
+  await call.join(STANDUP)
+  expect(room().connect).not.toHaveBeenCalled()
+  expect(call.getSnapshot().status).toBe('failed')
+  expect(call.getSnapshot().problem).toBe('media-encryption-unavailable')
+  await call.leave()
+})
+
+it('publishes and receives validated<=8KiB call caption DataChannel packets on ordinary rooms and hard-blocks confidential calls', async () => {
+  const { call, room } = setup()
+  await call.join(STANDUP)
+
+  const received: CallCaptionPacket[] = []
+  const unsub = call.subscribeCallCaptionPackets((pkt) => received.push(pkt))
+
+  const validPacket: CallCaptionPacket = {
+    v: 1,
+    callInstanceId: 'RM_cap_1',
+    sessionEpoch: 2,
+    segmentId: 'seg-1',
+    speakerLabel: 'Alice',
+    sourceLanguage: 'en',
+    text: 'Hello everyone',
+    translations: { fr: 'Bonjour à tous' },
+  }
+
+  expect(await call.publishCallCaptionPacket(validPacket)).toBe(true)
+  expect(room().localParticipant.publishData).toHaveBeenCalledTimes(1)
+  const [sentBytes, sentOptions] = room().localParticipant.publishData.mock.calls[0]!
+  expect(ArrayBuffer.isView(sentBytes)).toBe(true)
+  expect(sentOptions).toEqual({
+    reliable: true,
+    topic: CALL_CAPTIONS_DATA_TOPIC,
+  })
+
+  // Oversized (> 8 KiB) packet is refused without calling publishData again.
+  expect(
+    await call.publishCallCaptionPacket({
+      ...validPacket,
+      segmentId: 'seg-huge',
+      text: 'x'.repeat(2000),
+      translations: {
+        fr: 'a'.repeat(2000),
+        de: 'b'.repeat(2000),
+        es: 'c'.repeat(2000),
+        it: 'd'.repeat(2000),
+      },
+    })
+  ).toBe(false)
+  expect(room().localParticipant.publishData).toHaveBeenCalledTimes(1)
+
+  // Incoming DataReceived: ignores wrong topic, unauthenticated identity, and >8KiB frames; delivers valid packet.
+  const encodedValid = new TextEncoder().encode(
+    JSON.stringify({ ...validPacket, senderUserId: '@spoofed:acme-sa.kodera.test' })
+  )
+  room().emit(RoomEvent.DataReceived, encodedValid, { identity: `${BOB}|DEV2` }, undefined, 'other')
+  room().emit(
+    RoomEvent.DataReceived,
+    encodedValid,
+    { identity: 'not-a-matrix-id' },
+    undefined,
+    CALL_CAPTIONS_DATA_TOPIC
+  )
+  room().emit(
+    RoomEvent.DataReceived,
+    new Uint8Array(8193),
+    { identity: `${BOB}|DEV2` },
+    undefined,
+    CALL_CAPTIONS_DATA_TOPIC
+  )
+  expect(received).toHaveLength(0)
+
+  room().emit(
+    RoomEvent.DataReceived,
+    encodedValid,
+    { identity: `${BOB}|DEV2` },
+    undefined,
+    CALL_CAPTIONS_DATA_TOPIC
+  )
+  expect(received).toEqual([{ ...validPacket, senderUserId: BOB }])
+  unsub()
+  await call.leave()
+
+  // Confidential SFrame call hard-blocks both outbound publish and inbound DataReceived captions!
+  supportTransforms()
+  try {
+    const media = mediaCapability()
+    const prot = setup({
+      protection: {
+        roomBoundary: () => 'confidential-unavailable',
+        mediaEncryption: () => media,
+      },
+    })
+    await prot.call.join(STANDUP)
+    const protReceived: CallCaptionPacket[] = []
+    prot.call.subscribeCallCaptionPackets((pkt) => protReceived.push(pkt))
+
+    expect(await prot.call.publishCallCaptionPacket(validPacket)).toBe(false)
+    expect(prot.room().localParticipant.publishData).not.toHaveBeenCalled()
+
+    prot.room().emit(
+      RoomEvent.DataReceived,
+      encodedValid,
+      { identity: `${BOB}|DEV2` },
+      undefined,
+      CALL_CAPTIONS_DATA_TOPIC
+    )
+    expect(protReceived).toHaveLength(0)
+    await prot.call.leave()
+  } finally {
+    vi.unstubAllGlobals()
+  }
 })

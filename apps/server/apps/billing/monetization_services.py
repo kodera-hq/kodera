@@ -1,0 +1,397 @@
+"""Application orchestration for H3.1 community workspace monetization HTTP endpoints.
+
+Bridges `apps.billing.api.monetization` (which holds zero model or foreign-app imports) to
+`apps.billing.{boosts,vip_connect,dac7}` and workspace/identity selectors while keeping all
+outbound Stripe port calls strictly outside `transaction.atomic()`.
+"""
+
+from __future__ import annotations
+
+from dataclasses import asdict
+from datetime import datetime
+from typing import Any
+from uuid import UUID
+
+from django.db import transaction
+from django.utils import timezone
+
+from apps.identity.selectors import current_identity
+from apps.orgs.actor_selectors import TenantCaller
+from apps.workspaces.selectors import workspace_id_for
+from services.identity.access_tokens import VerifiedAccessToken
+
+from . import boosts, dac7, payments as payments_pkg, vip_connect
+from .access import READERS
+from .callers import BillingNotFoundError, require_role, tenant_caller
+from .models import (
+    CreatorConnectAccount,
+    VipTierOffer,
+    WorkspaceHostingCredit,
+)
+
+ADMIN_CONNECT_ROLES = frozenset({"org_owner", "org_admin"})
+DAC7_EXPORT_ROLES = frozenset({"org_owner", "org_billing"})
+
+
+def _resolve_workspace_or_not_found(organisation_id: UUID) -> UUID:
+    ws_id = workspace_id_for(organisation_id=organisation_id)
+    if ws_id is None:
+        raise BillingNotFoundError()
+    return ws_id
+
+
+def _resolve_caller_and_user(
+    *,
+    verified: VerifiedAccessToken,
+    organisation_id: UUID,
+    scope: str,
+    roles: frozenset[str] | None = None,
+) -> tuple[TenantCaller, UUID, UUID]:
+    with transaction.atomic():
+        caller = tenant_caller(verified=verified, organisation_id=organisation_id)
+        require_role(caller, roles=roles or READERS[scope], scope=scope)
+        resolved = current_identity(issuer=verified.issuer, subject=verified.subject)
+        if resolved is None:
+            raise BillingNotFoundError()
+        person, _ = resolved
+        ws_id = _resolve_workspace_or_not_found(organisation_id)
+        return caller, person.id, ws_id
+
+
+def read_workspace_monetization_overview(*, caller: TenantCaller) -> dict[str, Any]:
+    """Read Volet A boost packs, active hosting credits, VIP offers, and (for admins/billing)
+    creator Connect & DAC7 compliance overview in the caller's read-only snapshot."""
+    ws_id = _resolve_workspace_or_not_found(caller.organisation_id)
+    packs = [
+        {
+            "code": spec.code,
+            "name": spec.name,
+            "net_amount_minor": spec.net_amount_minor,
+            "credit_amount_minor": spec.credit_amount_minor,
+            "seats_delta": spec.seats_delta,
+            "storage_bytes_delta": spec.storage_bytes_delta,
+            "duration_days": spec.duration_days,
+            "currency": spec.currency,
+        }
+        for spec in boosts.BOOST_PACKS.values()
+    ]
+    credits = [
+        {
+            "id": str(c.id),
+            "boost_grant_id": str(c.boost_grant_id),
+            "pack_code": c.boost_grant.pack_code,
+            "granted_minor": c.granted_minor,
+            "consumed_minor": c.consumed_minor,
+            "refunded_minor": c.refunded_minor,
+            "remaining_minor": c.remaining_minor,
+            "state": c.state,
+            "expires_at": None if c.expires_at is None else c.expires_at.isoformat(),
+        }
+        for c in WorkspaceHostingCredit.objects.select_related("boost_grant")
+        .filter(organisation_id=caller.organisation_id, workspace_id=ws_id)
+        .order_by("-created_at", "-id")[:50]
+    ]
+    tiers = [
+        {
+            "id": str(t.id),
+            "code": t.code,
+            "name": t.name,
+            "description": t.description,
+            "billing_period": t.billing_period,
+            "currency": t.currency,
+            "price_excl_vat_minor": t.price_excl_vat_minor,
+            "granted_workspace_role_id": str(t.granted_workspace_role_id),
+            "granted_channel_ids": list(t.granted_channel_ids),
+            "active": t.active,
+        }
+        for t in VipTierOffer.objects.filter(
+            organisation_id=caller.organisation_id, workspace_id=ws_id, active=True
+        ).order_by("price_excl_vat_minor", "id")
+    ]
+
+    connect_payload: dict[str, Any] | None = None
+    dac7_payload: dict[str, Any] | None = None
+    if caller.role in {"org_owner", "org_admin", "org_billing"}:
+        acct = CreatorConnectAccount.objects.filter(
+            organisation_id=caller.organisation_id, workspace_id=ws_id
+        ).first()
+        if acct is not None:
+            connect_payload = {
+                "id": str(acct.id),
+                "onboarding_state": acct.onboarding_state,
+                "stripe_connect_account_id": acct.stripe_connect_account_id,
+                "charges_enabled": acct.charges_enabled,
+                "payouts_enabled": acct.payouts_enabled,
+                "details_submitted": acct.details_submitted,
+                "platform_fee_bps": acct.platform_fee_bps,
+                "negative_balance_minor": acct.negative_balance_minor,
+                "reserved_recovery_minor": acct.reserved_recovery_minor,
+                "tax_residence_country": acct.tax_residence_country,
+                "tin_sealed": bool(acct.sealed_tax_tin),
+                "last_operation_error": acct.last_operation_error,
+            }
+            year = timezone.now().year
+            report = dac7.build_dac7_annual_report_from_db(
+                reporting_year=year,
+                include_unsealed_tin=False,
+                organisation_id=caller.organisation_id,
+                include_statutory_erased=False,
+            )
+            seller_summary = next(
+                (s for s in report.sellers if s.connect_account_id == str(acct.id)),
+                None,
+            )
+            if seller_summary is not None:
+                dac7_payload = {
+                    "reporting_year": year,
+                    "transaction_count": seller_summary.transaction_count,
+                    "net_consideration_minor": seller_summary.net_consideration_minor,
+                    "platform_fees_minor": seller_summary.platform_fees_minor,
+                    "taxes_withheld_minor": seller_summary.taxes_withheld_minor,
+                    "reportable": seller_summary.reportable,
+                    "tin_present": seller_summary.tin_present,
+                }
+
+    return {
+        "workspace_id": str(ws_id),
+        "boost_packs": packs,
+        "hosting_credits": credits,
+        "vip_tiers": tiers,
+        "connect_account": connect_payload,
+        "dac7_summary": dac7_payload,
+    }
+
+
+def _parse_iso_datetime(raw: Any) -> datetime | None:
+    if raw is None or raw == "":
+        return None
+    if not isinstance(raw, str):
+        raise boosts.BoostValidationError("invalid ISO-8601 timestamp")
+    parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        raise boosts.BoostValidationError("timestamp must include timezone offset")
+    return parsed
+
+
+def start_boost_checkout_for_caller(
+    *,
+    verified: VerifiedAccessToken,
+    organisation_id: UUID,
+    idempotency_key: str,
+    payload: dict[str, Any],
+    provider: Any | None = None,
+) -> dict[str, Any]:
+    _, user_id, ws_id = _resolve_caller_and_user(
+        verified=verified,
+        organisation_id=organisation_id,
+        scope="workspace_monetization:act",
+    )
+    active_provider = provider if provider is not None else payments_pkg.configured_provider()
+    grant, invoice, link = boosts.create_boost_checkout(
+        organisation_id=organisation_id,
+        workspace_id=ws_id,
+        purchaser_user_id=user_id,
+        pack_code=str(payload.get("pack_code", "")),
+        customer_kind=str(payload.get("customer_kind", "b2c")),
+        customer_country=str(payload.get("customer_country", "")),
+        customer_legal_name=str(payload.get("customer_legal_name", "Membre Kodera")),
+        customer_address_line1=str(payload.get("customer_address_line1", "Adresse déclarée")),
+        customer_postal_code=str(payload.get("customer_postal_code", "00000")),
+        customer_city=str(payload.get("customer_city", "Ville")),
+        idempotency_key=idempotency_key,
+        return_url=str(payload.get("return_url", "")),
+        provider=active_provider,
+        withdrawal_waiver_accepted=bool(payload.get("withdrawal_waiver_accepted", False)),
+        withdrawal_waiver_at=_parse_iso_datetime(payload.get("withdrawal_waiver_at")),
+        withdrawal_waiver_statement=(
+            str(payload["withdrawal_waiver_statement"])
+            if payload.get("withdrawal_waiver_statement") is not None
+            else None
+        ),
+        quantity=int(payload.get("quantity", 1)),
+        locale=str(payload.get("locale", "fr")),
+    )
+    return {
+        "boost_grant_id": str(grant.id),
+        "invoice_id": str(invoice.id),
+        "invoice_number": invoice.number,
+        "vat_regime": grant.vat_regime,
+        "vat_rate_bp": grant.vat_rate_bp,
+        "net_amount_minor": grant.net_amount_minor,
+        "vat_amount_minor": grant.vat_amount_minor,
+        "gross_amount_minor": grant.gross_amount_minor,
+        "checkout_session_id": link.provider_ref,
+        "checkout_url": link.url,
+    }
+
+
+def start_connect_onboarding_for_caller(
+    *,
+    verified: VerifiedAccessToken,
+    organisation_id: UUID,
+    idempotency_key: str,
+    payload: dict[str, Any],
+    provider: Any | None = None,
+) -> dict[str, Any]:
+    _, user_id, ws_id = _resolve_caller_and_user(
+        verified=verified,
+        organisation_id=organisation_id,
+        scope="workspace_monetization:create",
+        roles=ADMIN_CONNECT_ROLES,
+    )
+    active_provider = provider if provider is not None else payments_pkg.configured_provider()
+    raw_tin = payload.get("tax_tin")
+    account, link = vip_connect.initiate_or_resume_connect_onboarding(
+        organisation_id=organisation_id,
+        workspace_id=ws_id,
+        owner_user_id=user_id,
+        seller_legal_name=str(payload.get("seller_legal_name", "")),
+        tax_residence_country=str(payload.get("tax_residence_country", "")),
+        raw_tax_tin=str(raw_tin) if isinstance(raw_tin, str) and raw_tin.strip() else None,
+        operation_idempotency_key=idempotency_key,
+        refresh_url=str(payload.get("refresh_url", "")),
+        return_url=str(payload.get("return_url", "")),
+        provider=active_provider,
+    )
+    return {
+        "connect_account_id": str(account.id),
+        "stripe_connect_account_id": account.stripe_connect_account_id,
+        "onboarding_state": account.onboarding_state,
+        "onboarding_url": link.url,
+        "expires_at": link.expires_at.isoformat(),
+    }
+
+
+def create_vip_tier_for_caller(
+    *,
+    verified: VerifiedAccessToken,
+    organisation_id: UUID,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    _, _, ws_id = _resolve_caller_and_user(
+        verified=verified,
+        organisation_id=organisation_id,
+        scope="workspace_monetization:create",
+        roles=ADMIN_CONNECT_ROLES,
+    )
+    raw_channels = payload.get("granted_channel_ids")
+    if not isinstance(raw_channels, list) or not raw_channels:
+        raise vip_connect.VipConnectValidationError("granted_channel_ids must be a non-empty list")
+    channel_ids = [UUID(str(cid)) for cid in raw_channels]
+    role_id = UUID(str(payload.get("granted_workspace_role_id", "")))
+    tier = vip_connect.create_vip_tier_offer(
+        organisation_id=organisation_id,
+        workspace_id=ws_id,
+        code=str(payload.get("code", "")),
+        name=str(payload.get("name", "")),
+        billing_period=str(payload.get("billing_period", "monthly")),
+        price_excl_vat_minor=int(payload.get("price_excl_vat_minor", 0)),
+        granted_workspace_role_id=role_id,
+        granted_channel_ids=channel_ids,
+        description=(
+            str(payload["description"]) if payload.get("description") is not None else None
+        ),
+    )
+    return {
+        "id": str(tier.id),
+        "code": tier.code,
+        "name": tier.name,
+        "billing_period": tier.billing_period,
+        "currency": tier.currency,
+        "price_excl_vat_minor": tier.price_excl_vat_minor,
+        "granted_workspace_role_id": str(tier.granted_workspace_role_id),
+        "granted_channel_ids": list(tier.granted_channel_ids),
+        "active": tier.active,
+    }
+
+
+def start_vip_pass_checkout_for_caller(
+    *,
+    verified: VerifiedAccessToken,
+    organisation_id: UUID,
+    idempotency_key: str,
+    payload: dict[str, Any],
+    provider: Any | None = None,
+) -> dict[str, Any]:
+    caller, user_id, ws_id = _resolve_caller_and_user(
+        verified=verified,
+        organisation_id=organisation_id,
+        scope="workspace_monetization:act",
+    )
+    active_provider = provider if provider is not None else payments_pkg.configured_provider()
+    tier_id = UUID(str(payload.get("tier_id", "")))
+    entitlement, link, quote = vip_connect.create_vip_pass_checkout(
+        organisation_id=organisation_id,
+        workspace_id=ws_id,
+        tier_id=tier_id,
+        membership_id=caller.membership_id,
+        buyer_user_id=user_id,
+        customer_kind=str(payload.get("customer_kind", "b2c")),
+        buyer_country=str(payload.get("buyer_country", "")),
+        idempotency_key=idempotency_key,
+        return_url=str(payload.get("return_url", "")),
+        provider=active_provider,
+        withdrawal_waiver_accepted=bool(payload.get("withdrawal_waiver_accepted", False)),
+        withdrawal_waiver_at=_parse_iso_datetime(payload.get("withdrawal_waiver_at")),
+        withdrawal_waiver_statement=(
+            str(payload["withdrawal_waiver_statement"])
+            if payload.get("withdrawal_waiver_statement") is not None
+            else None
+        ),
+        locale=str(payload.get("locale", "fr")),
+    )
+    return {
+        "vip_entitlement_id": str(entitlement.id),
+        "tier_id": str(entitlement.tier_id),
+        "vat_regime": entitlement.vat_regime,
+        "vat_rate_bp": entitlement.vat_rate_bp,
+        "gross_excl_vat_minor": entitlement.gross_excl_vat_minor,
+        "vat_amount_minor": entitlement.vat_amount_minor,
+        "total_incl_vat_minor": entitlement.total_incl_vat_minor,
+        "application_fee_amount_minor": entitlement.application_fee_amount_minor,
+        "reserved_recovery_minor": entitlement.reserved_recovery_minor,
+        "creator_net_minor": quote.creator_net_minor,
+        "checkout_session_id": link.provider_ref,
+        "checkout_url": link.url,
+    }
+
+
+def export_workspace_dac7_for_caller(
+    *,
+    caller: TenantCaller,
+    reporting_year: int,
+    export_format: str,
+) -> tuple[bytes, str]:
+    """Export the workspace creator's annual DAC7 report as JSON or OECD DPI XML."""
+    require_role(caller, roles=DAC7_EXPORT_ROLES, scope="workspace_monetization:read")
+    ws_id = _resolve_workspace_or_not_found(caller.organisation_id)
+    full_report = dac7.build_dac7_annual_report_from_db(
+        reporting_year=reporting_year,
+        include_unsealed_tin=True,
+        organisation_id=caller.organisation_id,
+        include_statutory_erased=False,
+    )
+    scoped_sellers = tuple(s for s in full_report.sellers if s.workspace_id == str(ws_id))
+    scoped_report = dac7.Dac7AnnualReport(
+        directive=full_report.directive,
+        reporting_year=full_report.reporting_year,
+        platform_operator_name=full_report.platform_operator_name,
+        platform_operator_country=full_report.platform_operator_country,
+        platform_operator_siren=full_report.platform_operator_siren,
+        total_sellers_evaluated=len(scoped_sellers),
+        reportable_seller_count=sum(1 for s in scoped_sellers if s.reportable),
+        sellers=scoped_sellers,
+        has_prior_year_corrections=any(bool(s.prior_year_corrections) for s in scoped_sellers),
+    )
+    if export_format == "xml":
+        return dac7.render_dac7_xml(scoped_report), "application/xml"
+    if export_format == "json":
+        return (
+            dac7.render_dac7_json(scoped_report),
+            "application/json",
+        )
+    raise ValueError(f"unsupported DAC7 export format {export_format!r}")
+
+
+def serialize_dac7_summary_dict(summary: dac7.Dac7SellerSummary) -> dict[str, Any]:
+    return asdict(summary)

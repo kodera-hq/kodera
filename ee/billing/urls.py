@@ -11,10 +11,15 @@ from __future__ import annotations
 from typing import cast
 
 from django.http import HttpRequest, HttpResponse
-from django.urls import re_path
+from django.urls import path, re_path
 from django.views.decorators.csrf import csrf_exempt
 
-from .api import MAX_BODY_BYTES, EnterpriseBillingRouter
+from .api import (
+    FINOPS_RECONCILE_PATH,
+    MAX_BODY_BYTES,
+    MAX_FINOPS_BODY_BYTES,
+    EnterpriseBillingRouter,
+)
 
 _DEFAULT_ROUTER = EnterpriseBillingRouter(backend="auto")
 
@@ -24,14 +29,15 @@ def get_router() -> EnterpriseBillingRouter:
 
 
 def _read_request_body(request: HttpRequest) -> bytes:
+    limit = MAX_FINOPS_BODY_BYTES if request.path == FINOPS_RECONCILE_PATH else MAX_BODY_BYTES
     environ = getattr(request, "environ", {})
     if environ.get("wsgi.input_terminated"):
-        return cast(bytes, environ["wsgi.input"].read(MAX_BODY_BYTES + 1))
+        return cast(bytes, environ["wsgi.input"].read(limit + 1))
     content_length = request.META.get("CONTENT_LENGTH", "")
     if isinstance(content_length, str) and content_length.isdigit():
-        if int(content_length) > MAX_BODY_BYTES:
-            return b"x" * (MAX_BODY_BYTES + 1)
-    return bytes(request.body[: MAX_BODY_BYTES + 1])
+        if int(content_length) > limit:
+            return b"x" * (limit + 1)
+    return bytes(request.body[: limit + 1])
 
 
 @csrf_exempt
@@ -54,5 +60,10 @@ def handle_django_request(request: HttpRequest) -> HttpResponse:
 
 
 urlpatterns = [
+    path(
+        "api/v1/ee/billing/finops/reconcile",
+        handle_django_request,
+        name="ee-billing-finops-reconcile",
+    ),
     re_path(r"^.*$", handle_django_request, name="ee-billing-dispatch"),
 ]

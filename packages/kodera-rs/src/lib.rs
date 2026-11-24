@@ -125,6 +125,19 @@ pub use proximity_handle::{
 #[cfg(test)]
 mod proximity_frame_vectors;
 
+pub mod sframe_media;
+pub use sframe_media::{
+    build_sframe_aad, derive_sframe_epoch_root_key, derive_sframe_sender_key,
+    ratchet_sframe_epoch_secret, SFrameCodecProfile, SFrameHeader, SFrameKeyId, SFrameMediaError,
+    SFrameReplayWindow, SFrameSenderKeyMaterial, SFrameTrackKind, MAX_SFRAME_EPOCH,
+    MAX_SFRAME_FRAME_BYTES, MAX_SFRAME_HEADER_BYTES, MAX_SFRAME_UNENCRYPTED_PREFIX_BYTES,
+    SFRAME_EPOCH_GRACE_MS, SFRAME_GCM_TAG_BYTES, SFRAME_KEY_BYTES, SFRAME_MEDIA_DOMAIN,
+    SFRAME_NONCE_BYTES, SFRAME_RATCHET_BITS, SFRAME_REPLAY_WINDOW_FRAMES,
+    SFRAME_SENDER_GENERATION_BYTES,
+};
+#[cfg(feature = "sframe-media")]
+pub use sframe_media::{open_sframe_media_frame, seal_sframe_media_frame, SFrameMediaSession};
+
 mod workspace_prefs;
 pub use workspace_prefs::{
     curated_desktop_themes, decode_shareable_theme, encode_shareable_theme,

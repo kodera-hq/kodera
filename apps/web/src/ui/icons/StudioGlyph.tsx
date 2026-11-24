@@ -4,6 +4,7 @@ const paths = {
   docs: 'M14 2H5v20h14V7l-5-5Zm0 0v6h5M8 12h8M8 16h6',
   calls: 'M5 3l4 1 1 5-3 2a15 15 0 0 0 6 6l2-3 5 1 1 4c-1 3-5 3-10-1C5 14 1 7 5 3Z',
   files: 'm3 7 9-5 9 5-9 5-9-5Zm0 5 9 5 9-5M3 17l9 5 9-5',
+  calendar: 'M4 5h16v16H4zM4 10h16M8 3v4M16 3v4',
   integrations: 'M3 3h6v6H3zM15 3h6v6h-6zM3 15h6v6H3zM15 15h6v6h-6z',
   bold: 'M6 3h7a5 5 0 0 1 0 9H6V3Zm0 9h8a5 5 0 0 1 0 9H6v-9Z',
   italic: 'M10 3h10M4 21h10M15 3 9 21',

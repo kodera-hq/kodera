@@ -32,6 +32,8 @@ APPS = [
     "apps.notifications",
     "apps.e2ee",
     "apps.confidential",
+    "apps.ai_gateway",
+    "apps.calendar",
     "core.idempotency",
 ]
 COMMANDS = [
@@ -95,6 +97,9 @@ COMMANDS = [
     "enrol_tenant_agent",
     "revoke_tenant_agent",
     "engine_member_sets_lag",
+    # Isolated backup/restore rehearsal guards and Enterprise FinOps attribution reconciliation.
+    "rehearse_restore_guards",
+    "reconcile_finops_attribution",
 ]
 
 
@@ -271,6 +276,7 @@ assert settings.KODERA_AUTH_TRUST == ()
 assert settings.KODERA_STAFF_ISSUER is None
 assert settings.KODERA_CONTACT_SEAL_KEY is None
 assert settings.KODERA_OUTBOX_SEAL_KEY is None
+assert settings.KODERA_CALENDAR_SEAL_KEY is None
 assert settings.KODERA_MAIL_TRANSPORT is None
 assert settings.KODERA_MAIL_LINK_ORIGINS == frozenset()
 try:
@@ -304,6 +310,7 @@ def test_operator_reads_existing_claim_and_mail_inputs_without_contact():
 assert settings.KODERA_INTAKE_ADMITTED is True
 assert settings.KODERA_CONTACT_SEAL_KEY == bytes(range(32))
 assert settings.KODERA_OUTBOX_SEAL_KEY == bytes(range(32))
+assert settings.KODERA_CALENDAR_SEAL_KEY == bytes(range(32))
 assert settings.KODERA_OWNER_CLAIM_LIFETIME_SECONDS == '3600'
 assert settings.KODERA_OWNER_CLAIM_LINK == 'https://console.synthetic.test/claim'
 assert settings.KODERA_MAIL_LINK_ORIGINS == frozenset({'https://console.synthetic.test'})
@@ -318,6 +325,7 @@ print(json.dumps({'configured': True}))
             "KODERA_INTAKE_ADMITTED": "1",
             "KODERA_CONTACT_SEAL_KEY": key,
             "KODERA_OUTBOX_SEAL_KEY": key,
+            "KODERA_CALENDAR_SEAL_KEY": key,
             "KODERA_OWNER_CLAIM_LIFETIME_SECONDS": "3600",
             "KODERA_OWNER_CLAIM_LINK": "https://console.synthetic.test/claim",
             "KODERA_MAIL_LINK_ORIGINS": "https://console.synthetic.test",
@@ -336,6 +344,7 @@ print(json.dumps({'configured': True}))
         {"KODERA_INTAKE_ADMITTED": "true"},
         {"KODERA_CONTACT_SEAL_KEY": "synthetic-private-sentinel"},
         {"KODERA_OUTBOX_SEAL_KEY": "synthetic-private-sentinel"},
+        {"KODERA_CALENDAR_SEAL_KEY": "synthetic-private-sentinel"},
         {"KODERA_AUTH_TRUST": "synthetic-private-sentinel"},
         {"KODERA_STAFF_ISSUER": "http://localhost/realms/kodera-staff"},
         {"KODERA_MAIL_LINK_ORIGINS": "https://console.synthetic.test/extra"},

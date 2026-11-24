@@ -1061,3 +1061,32 @@ def verification_context(
 @transaction.atomic
 def admit_directory(*, verified: VerifiedAccessToken, organisation_id: UUID) -> None:
     _context(verified, organisation_id)
+
+
+def purge_account_e2ee_in_account_context(*, user_id: UUID) -> None:
+    """Invoke `public.e2ee_purge_account` inside active `account` retention worker context."""
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT to_regprocedure('public.e2ee_purge_account(uuid)') IS NOT NULL")
+        if cursor.fetchone()[0]:
+            cursor.execute("SELECT public.e2ee_purge_account(%s)", [user_id])
+
+
+def count_residual_e2ee_for_organisation(*, organisation_id: UUID) -> int:
+    """Count remaining confidential relay resources belonging to an erased organisation."""
+    return int(
+        Envelope.objects.filter(organisation_id=organisation_id).count()
+        + KeyPackage.objects.filter(organisation_id=organisation_id).count()
+        + Participant.objects.filter(organisation_id=organisation_id).count()
+        + Room.objects.filter(organisation_id=organisation_id).count()
+        + Device.objects.filter(organisation_id=organisation_id).count()
+    )
+
+
+def count_residual_e2ee_for_user(*, user_id: UUID) -> int:
+    """Count unrevoked confidential devices or undiscarded key packages for an erased person."""
+    return int(
+        Device.objects.filter(membership__user_id=user_id, revoked_at__isnull=True).count()
+        + KeyPackage.objects.filter(
+            device__membership__user_id=user_id, package__isnull=False
+        ).count()
+    )

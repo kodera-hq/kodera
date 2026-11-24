@@ -42,6 +42,7 @@ from config.environment import (
     synapse_url,
 )
 from config.workspace_features import (
+    calendar_seal_key,
     media_gateway_socket,
     media_room_verifier_url,
     notification_settings,
@@ -71,6 +72,8 @@ INSTALLED_APPS = [
     "apps.extensions",
     "apps.e2ee",
     "apps.confidential",
+    "apps.ai_gateway",
+    "apps.calendar",
 ]
 
 # Plaintext SMTP only to a loopback address or `localhost` here; no deployed name is exempt.
@@ -132,6 +135,7 @@ KODERA_MEDIA_ROOM_VERIFIER_URL = media_room_verifier_url(os.environ)
 ) = collaboration_settings(os.environ)
 
 KODERA_EE_AUDIT_SIGNING_SEED = ee_audit_signing_seed(os.environ)
+KODERA_CALENDAR_SEAL_KEY = calendar_seal_key(os.environ)
 
 # Optional Matrix worker settings for dispatch_extension_coexistence, which runs on this operator
 # profile; unset, the command refuses to run rather than silently draining nothing.

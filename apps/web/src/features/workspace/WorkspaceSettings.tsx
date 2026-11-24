@@ -63,6 +63,12 @@ import { WorkspaceRolesPanel, type RoleAuthority } from './admin/WorkspaceRolesP
 
 const LazyChannelGovernancePanel = lazy(() => import('./admin/ChannelGovernancePanel'))
 
+const LazySecurityPosturePanel = lazy(() =>
+  import('./admin/SecurityPosturePanel').then((module) => ({
+    default: module.SecurityPosturePanel,
+  }))
+)
+
 const LazySoundsScreen = lazy(() =>
   import('../sounds/SoundsScreen').then((module) => ({ default: module.SoundsScreen }))
 )
@@ -679,6 +685,14 @@ export default function WorkspaceSettings({
       case 'extensions':
         return (
           <ExtensionsCatalogPanel channels={runtime?.channels} organisationId={organisationId} />
+        )
+      case 'posture':
+        return canManage ? (
+          <Suspense fallback={null}>
+            <LazySecurityPosturePanel organisationId={organisationId} />
+          </Suspense>
+        ) : (
+          restricted
         )
       case 'moderation':
         return canManage ? <ModerationPanel organisationId={organisationId} /> : restricted

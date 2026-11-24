@@ -25,13 +25,20 @@ class LineAmounts:
         return self.net_minor + self.vat_minor
 
 
+def vat_for_net_minor(net_minor: int, vat_rate_bp: int) -> int:
+    """`round(net × rate / 10000)` half-up, satisfying EN 16931 `BR-S-09`."""
+    if net_minor < 0:
+        raise ValueError("a net amount is never negative")
+    if not 0 <= vat_rate_bp <= BASIS_POINTS:
+        raise ValueError("a VAT rate is between 0 and 10000 basis points")
+    return round_half_up(net_minor * vat_rate_bp, BASIS_POINTS)
+
+
 def line_amounts(*, unit_amount_minor: int, quantity: int, vat_rate_bp: int) -> LineAmounts:
     """`net = unit × quantity`, `vat = round(net × rate / 10000)`."""
     if unit_amount_minor < 0:
         raise ValueError("a unit amount is never negative")
     if quantity < 1:
         raise ValueError("a quantity is at least 1")
-    if not 0 <= vat_rate_bp <= BASIS_POINTS:
-        raise ValueError("a VAT rate is between 0 and 10000 basis points")
     net = unit_amount_minor * quantity
-    return LineAmounts(net_minor=net, vat_minor=round_half_up(net * vat_rate_bp, BASIS_POINTS))
+    return LineAmounts(net_minor=net, vat_minor=vat_for_net_minor(net, vat_rate_bp))

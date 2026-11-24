@@ -115,7 +115,7 @@ export function auditCategory(action: string): Exclude<AuditCategory, 'all'> | n
   if (part.startsWith('document') || part.startsWith('collection')) return 'document'
   if (part.startsWith('attachment') || part.startsWith('url')) return 'content'
   if (part.startsWith('notification') || part.startsWith('push')) return 'notification'
-  if (part.startsWith('e2ee')) return 'security'
+  if (part.startsWith('e2ee') || part.startsWith('security')) return 'security'
   return null
 }
 

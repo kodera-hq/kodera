@@ -49,6 +49,8 @@ export interface RoomGrant {
   token: string
   /** The token cannot publish: the member may listen and not speak. */
   listenOnly: boolean
+  /** When true, the room-access server mandates active SFrame worker E2EE before connecting. */
+  e2eeRequired?: boolean
 }
 
 /**
@@ -102,11 +104,19 @@ function liveKitUrl(value: unknown, serverName: string): string | null {
 
 function grantOf(body: unknown, serverName: string): RoomGrant | null {
   if (body === null || typeof body !== 'object' || Array.isArray(body)) return null
-  const { url, token, listen_only: listenOnly } = body as Record<string, unknown>
+  const {
+    url,
+    token,
+    listen_only: listenOnly,
+    e2ee_required: e2eeRequired,
+  } = body as Record<string, unknown>
   const server = liveKitUrl(url, serverName)
   if (server === null || typeof token !== 'string' || token === '') return null
   if (typeof listenOnly !== 'boolean') return null
-  return { url: server, token, listenOnly }
+  if (e2eeRequired !== undefined && typeof e2eeRequired !== 'boolean') return null
+  return e2eeRequired === undefined
+    ? { url: server, token, listenOnly }
+    : { url: server, token, listenOnly, e2eeRequired }
 }
 
 const PROBLEMS: Partial<Record<number, RoomAccessProblem>> = {

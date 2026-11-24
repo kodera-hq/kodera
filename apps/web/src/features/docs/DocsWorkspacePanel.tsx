@@ -1,10 +1,14 @@
 import { MarkdownDraftEditor } from './MarkdownDraftEditor'
 import { cx } from '@/ui/cx'
 import { TOUCH_TARGET } from '@/ui/touchTarget'
-import { useId, useMemo, useState, type ReactNode } from 'react'
+import { lazy, Suspense, useId, useMemo, useState, type ReactNode } from 'react'
 import { DeveloperDocsHub } from './DeveloperDocsHub'
 import { developerDocsCopy } from './developerDocsMessages'
 import type { CommunityChannelId } from './documentationExport'
+
+const LazyWhiteboardCanvas = lazy(() =>
+  import('@/features/whiteboard/WhiteboardCanvas').then((m) => ({ default: m.WhiteboardCanvas }))
+)
 
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/ui/Button/Button'
@@ -20,13 +24,14 @@ import {
   validateExternalDocsUrl,
 } from './url'
 
-export type DocsWorkspaceView = 'team' | 'pages' | 'developer'
+export type DocsWorkspaceView = 'team' | 'pages' | 'whiteboard' | 'developer'
 
 export interface DocsWorkspacePanelProps {
   readonly view?: DocsWorkspaceView | undefined
   readonly onViewChange?: ((view: DocsWorkspaceView) => void) | undefined
   readonly teamPadsSlot?: ReactNode
   readonly workspacePagesSlot?: ReactNode
+  readonly whiteboardSlot?: ReactNode
   readonly onOpenSupportChannel?: ((id: CommunityChannelId) => void) | undefined
   readonly draftContent?: string | undefined
   readonly onDraftContentChange?: ((content: string) => void) | undefined
@@ -46,6 +51,7 @@ export function DocsWorkspacePanel({
   onViewChange,
   teamPadsSlot,
   workspacePagesSlot,
+  whiteboardSlot,
   onOpenSupportChannel,
   draftContent,
   onDraftContentChange,
@@ -61,6 +67,7 @@ export function DocsWorkspacePanel({
 }: DocsWorkspacePanelProps) {
   const { t, i18n } = useTranslation()
   const copy = developerDocsCopy(i18n.resolvedLanguage)
+  const whiteboardTabLabel = i18n.resolvedLanguage === 'en' ? 'Whiteboard' : 'Tableau blanc'
   // Same rule as the screen's: without channel pads to draw, the panel opens on the Pages it can
   // actually show rather than on the placeholder card.
   const [internalView, setInternalView] = useState<DocsWorkspaceView>(
@@ -205,8 +212,8 @@ export function DocsWorkspacePanel({
             what is not drawn there any more is the address of a pad the deployment does not
             serve. */}
         {(workspacePagesSlot !== undefined
-          ? (['team', 'pages', 'developer'] as const)
-          : (['team', 'developer'] as const)
+          ? (['team', 'pages', 'whiteboard', 'developer'] as const)
+          : (['team', 'whiteboard', 'developer'] as const)
         ).map((next) => (
           <button
             key={next}
@@ -229,13 +236,27 @@ export function DocsWorkspacePanel({
                 ? copy.team
                 : next === 'pages'
                   ? t('console.docs.collab.tree-title')
-                  : copy.developer}
+                  : next === 'whiteboard'
+                    ? whiteboardTabLabel
+                    : copy.developer}
             </span>
           </button>
         ))}
       </div>
       {selectedView === 'developer' ? (
         <DeveloperDocsHub onOpenSupportChannel={onOpenSupportChannel} />
+      ) : selectedView === 'whiteboard' ? (
+        (whiteboardSlot ?? (
+          <Suspense
+            fallback={
+              <p role="status" className="py-4 text-xs text-c-ink-3">
+                {whiteboardTabLabel}
+              </p>
+            }
+          >
+            <LazyWhiteboardCanvas participantName={channelName} />
+          </Suspense>
+        ))
       ) : selectedView === 'pages' && workspacePagesSlot !== undefined ? (
         workspacePagesSlot
       ) : (

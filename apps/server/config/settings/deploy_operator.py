@@ -28,6 +28,7 @@ from config.environment import (
     synapse_url,
     tenant_app_urls,
 )
+from config.workspace_features import calendar_seal_key
 from core.sealing import key_from_environment as contact_key_from_environment
 
 from .base import (
@@ -70,6 +71,8 @@ INSTALLED_APPS = [
     "apps.notifications",
     "apps.e2ee",
     "apps.confidential",
+    "apps.ai_gateway",
+    "apps.calendar",
     "core.idempotency",
 ]
 
@@ -89,6 +92,7 @@ KODERA_TENANT_APP_URLS = tenant_app_urls(os.environ)
 KODERA_BILLING_ENABLED = billing_enabled(os.environ)
 KODERA_CONTACT_SEAL_KEY = contact_key_from_environment(os.environ, "KODERA_CONTACT_SEAL_KEY")
 KODERA_OUTBOX_SEAL_KEY = key_from_environment(os.environ)
+KODERA_CALENDAR_SEAL_KEY = calendar_seal_key(os.environ)
 KODERA_MAIL_LINK_ORIGINS = origins_from_environment(os.environ)
 # Existing transport policy: STARTTLS remotely; plaintext only on loopback.
 KODERA_MAIL_TRANSPORT = transport_from_environment(os.environ, insecure_hosts=frozenset())

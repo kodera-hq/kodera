@@ -1,10 +1,11 @@
 """The Stripe adapter of the payment port: Checkout for card and SEPA Direct Debit, signed webhooks.
 
 Core issues the invoice, numbers it and computes its VAT; Stripe only collects. So a payment link
-is a Stripe Checkout Session in `payment` mode for the amount Core owes, card and `sepa_debit`,
-with Core's invoice id in its metadata, and a Stripe Customer created by Checkout for the payer.
-Stripe Billing's own invoices and subscriptions are not used: they would issue a second legal
-document with Stripe's numbering beside Core's, and Stripe Tax is out of scope.
+is a Stripe Checkout Session in `payment` mode for the amount Core owes, card and `sepa_debit` (or
+card-only for instant-activation Volet A boosts and Volet B Connect passes), with Core's invoice id
+in its metadata when settling a Core invoice, and a Stripe Customer created by Checkout for the
+payer. Stripe Billing's own invoices and subscriptions are not used: they would issue a second
+legal document with Stripe's numbering beside Core's, and Stripe Tax is out of scope.
 
 A delivery is verified by its `Stripe-Signature` (HMAC-SHA256 over `<timestamp>.<body>` with the
 endpoint secret), refused outside a five-minute window so a captured delivery cannot be replayed,
@@ -39,6 +40,9 @@ from typing import Any
 from uuid import uuid4
 
 from .port import (
+    CONNECT_ACCOUNT_ID,
+    ConnectAccountSnapshot,
+    ConnectOnboardingLink,
     EventRejectedError,
     LinkRequest,
     ProviderEvent,
@@ -60,6 +64,7 @@ MAX_SESSION = timedelta(hours=23, minutes=55)
 TIMEOUT_S = 10
 # The one line of an invoice's payment, as the payer reads it on Stripe's page.
 LINE_ITEM = {"fr": "Facture {number}", "en": "Invoice {number}"}
+VIP_LINE_ITEM = {"fr": "Pass VIP {number}", "en": "VIP Pass {number}"}
 # A withdrawal Stripe answers with one of these has nothing left to withdraw: the session is
 # already completed, expired or gone. Any other refusal (a revoked or under-scoped key) is raised.
 CLOSED = frozenset(
@@ -117,14 +122,21 @@ class StripeProvider:
 
     # --- outbound --------------------------------------------------------------------------------
 
-    def _call(self, method: str, path: str, params: list[tuple[str, str]]) -> dict[str, Any]:
+    def _call(
+        self,
+        method: str,
+        path: str,
+        params: list[tuple[str, str]],
+        *,
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
         body = urllib.parse.urlencode(params).encode()
         headers = {
             "Authorization": f"Bearer {self._secret_key}",
             "Stripe-Version": API_VERSION,
             "Content-Type": "application/x-www-form-urlencoded",
             # Nothing retries a call yet; the key names each one in Stripe's request log.
-            "Idempotency-Key": f"core-{uuid4()}",
+            "Idempotency-Key": idempotency_key or f"core-{uuid4()}",
         }
         status, answer = self._transport(method, API + path, headers, body)
         if status >= 500 or status == 429:
@@ -149,28 +161,66 @@ class StripeProvider:
             )
         now = datetime.fromtimestamp(self._clock(), UTC)
         expires_at = min(request.expires_at, now + MAX_SESSION)
-        invoice = str(request.invoice_id)
-        name = LINE_ITEM.get(request.locale, LINE_ITEM["fr"]).format(number=request.invoice_number)
-        session = self._call(
-            "POST",
-            "/checkout/sessions",
+        ref_id = str(request.invoice_id)
+        if request.checkout_label:
+            name = request.checkout_label
+        elif request.reference_kind == "vip_pass":
+            name = VIP_LINE_ITEM.get(request.locale, VIP_LINE_ITEM["fr"]).format(
+                number=request.invoice_number
+            )
+        else:
+            name = LINE_ITEM.get(request.locale, LINE_ITEM["fr"]).format(
+                number=request.invoice_number
+            )
+
+        params: list[tuple[str, str]] = [("mode", "payment")]
+        for idx, pm_type in enumerate(request.payment_methods):
+            params.append((f"payment_method_types[{idx}]", pm_type))
+        params.extend(
             [
-                ("mode", "payment"),
-                ("payment_method_types[0]", "card"),
-                ("payment_method_types[1]", "sepa_debit"),
                 ("line_items[0][quantity]", "1"),
                 ("line_items[0][price_data][currency]", request.currency.lower()),
                 ("line_items[0][price_data][unit_amount]", str(request.amount_minor)),
                 ("line_items[0][price_data][product_data][name]", name),
                 ("customer_creation", "always"),
-                ("client_reference_id", invoice),
-                ("metadata[core_invoice_id]", invoice),
-                ("payment_intent_data[metadata][core_invoice_id]", invoice),
+                ("client_reference_id", ref_id),
+            ]
+        )
+        if request.reference_kind == "invoice":
+            params.append(("metadata[core_invoice_id]", ref_id))
+            params.append(("payment_intent_data[metadata][core_invoice_id]", ref_id))
+        params.extend(
+            [
                 ("locale", request.locale),
                 ("success_url", request.return_url),
                 ("cancel_url", request.return_url),
                 ("expires_at", str(int(expires_at.timestamp()))),
-            ],
+            ]
+        )
+        if request.connect_destination_account is not None:
+            params.append(
+                (
+                    "payment_intent_data[transfer_data][destination]",
+                    request.connect_destination_account,
+                )
+            )
+            params.append(
+                (
+                    "payment_intent_data[application_fee_amount]",
+                    str(request.application_fee_amount_minor),
+                )
+            )
+        if request.metadata:
+            for key, value in sorted(request.metadata.items()):
+                lowered = key.lower()
+                if "tax" in lowered or "invoice_creation" in lowered:
+                    raise ProviderRefusedError("forbidden Stripe Checkout parameter")
+                params.append((f"metadata[{key}]", str(value)))
+                params.append((f"payment_intent_data[metadata][{key}]", str(value)))
+        session = self._call(
+            "POST",
+            "/checkout/sessions",
+            params,
         )
         try:
             return ProviderLink(
@@ -190,6 +240,68 @@ class StripeProvider:
         except StripeRefusedError as refused:
             if (refused.status, refused.code) not in CLOSED:
                 raise
+
+    def create_connect_account(
+        self,
+        *,
+        idempotency_key: str,
+        country: str,
+        seller_legal_name: str,
+        workspace_id: str,
+    ) -> ConnectAccountSnapshot:
+        decoded = self._call(
+            "POST",
+            "/accounts",
+            [
+                ("type", "express"),
+                ("country", country.upper()),
+                ("capabilities[card_payments][requested]", "true"),
+                ("capabilities[transfers][requested]", "true"),
+                ("business_profile[name]", seller_legal_name),
+                ("metadata[kodera_workspace_id]", workspace_id),
+            ],
+            idempotency_key=f"connect-acct-{idempotency_key}",
+        )
+        return _decode_connect_account(decoded)
+
+    def retrieve_connect_account(self, account_id: str) -> ConnectAccountSnapshot:
+        if not CONNECT_ACCOUNT_ID.fullmatch(account_id):
+            raise ProviderRefusedError("invalid Connect account id")
+        decoded = self._call(
+            "GET",
+            f"/accounts/{urllib.parse.quote(account_id, safe='')}",
+            [],
+        )
+        return _decode_connect_account(decoded)
+
+    def create_connect_onboarding_link(
+        self,
+        *,
+        account_id: str,
+        refresh_url: str,
+        return_url: str,
+    ) -> ConnectOnboardingLink:
+        if not CONNECT_ACCOUNT_ID.fullmatch(account_id):
+            raise ProviderRefusedError("invalid Connect account id")
+        decoded = self._call(
+            "POST",
+            "/account_links",
+            [
+                ("account", account_id),
+                ("refresh_url", refresh_url),
+                ("return_url", return_url),
+                ("type", "account_onboarding"),
+            ],
+        )
+        try:
+            return ConnectOnboardingLink(
+                url=str(decoded["url"]),
+                expires_at=datetime.fromtimestamp(int(decoded["expires_at"]), UTC),
+            )
+        except (KeyError, TypeError, ValueError):
+            raise ProviderUnavailableError(
+                "Stripe answered an account link without url or expires_at"
+            ) from None
 
     # --- inbound ---------------------------------------------------------------------------------
 
@@ -290,3 +402,29 @@ def _translate(
             occurred_at=occurred_at,
         )
     return None
+
+
+def _decode_connect_account(decoded: Mapping[str, Any]) -> ConnectAccountSnapshot:
+    account_id = str(decoded.get("id", ""))
+    if not CONNECT_ACCOUNT_ID.fullmatch(account_id):
+        raise ProviderUnavailableError("Stripe answered an account without a valid acct_ id")
+    requirements = decoded.get("requirements")
+    disabled_reason: str | None = None
+    if isinstance(requirements, Mapping):
+        raw_reason = requirements.get("disabled_reason")
+        if isinstance(raw_reason, str) and raw_reason.strip():
+            disabled_reason = raw_reason.strip()
+    raw_meta = decoded.get("metadata")
+    meta_dict: dict[str, str] = {}
+    if isinstance(raw_meta, Mapping):
+        for k, v in raw_meta.items():
+            if isinstance(k, str) and v is not None:
+                meta_dict[k] = str(v)
+    return ConnectAccountSnapshot(
+        account_id=account_id,
+        charges_enabled=bool(decoded.get("charges_enabled")),
+        payouts_enabled=bool(decoded.get("payouts_enabled")),
+        details_submitted=bool(decoded.get("details_submitted")),
+        restricted_reason=disabled_reason,
+        metadata=meta_dict,
+    )

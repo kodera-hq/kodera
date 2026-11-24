@@ -16,7 +16,7 @@ The hosted Community tenant is live: active tenant promotion, release evidence a
 
 ## Wave 10 client capabilities
 
-Status: In progress; OpenAPI 0.57.0, client primitives and operator-gated server discovery/publication implemented.
+Status: In progress; OpenAPI 0.58.0, client primitives, SFrame v1 confidential media framing, and operator-gated server discovery/publication implemented.
 
 Merged work in #169, #177, #180, #182 and #183 implements refusal of plaintext fallback and
 room quarantine, worker-isolated attachment encryption, confidential Pages updates/snapshots,

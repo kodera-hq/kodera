@@ -137,6 +137,18 @@ Roll back a stopped or degraded stack to a specific snapshot identifier:
   --json
 ```
 
+### Execute an isolated backup/restore rehearsal
+
+`kodera-ctl rehearse-restore` stages each input once from a single retained-`dir_fd` `O_NOFOLLOW` descriptor while verifying its SHA-256 digest, brings up a disposable Compose project (`-p kodera-rehearsal-<id>`) bound exclusively to `internal: true` bridge networks with zero host-bound public ports and outbound provider kill-switches (`KODERA_REHEARSAL_NO_EGRESS=1`), provisions restricted `kodera_api` and `kodera_collab` rehearsal roles with ephemeral random credentials before running `pg_restore`, streams any guard inputs into an ephemeral `10001:10001` `0400` volume, runs `manage.py rehearse_restore_guards --disarm-outbound` inside the pinned `migrate` operator image (neutralizing webhooks, coexistence bridges, WebPush, support GitHub triage, billing payment-link withdrawals, and mail outbox rows, replaying any post-backup GDPR Art. 17 erasure ledger across all local PII domains, and failing closed on missing, mismatched, unclassified, or unpurged S3 objects), probes internal readiness, tears down the rehearsal stack unconditionally, and writes a `0600` JSON receipt recording `rpo_seconds` and `rto_seconds`:
+
+```bash
+./deploy/community/kodera-ctl rehearse-restore \
+  --env-file deploy/community/.env \
+  --stack-dir deploy/community \
+  --backup latest \
+  --json
+```
+
 ### Run operational guardrail self-tests
 
 ```bash

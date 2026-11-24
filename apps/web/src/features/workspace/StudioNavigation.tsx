@@ -72,7 +72,14 @@ export function StudioNavigation({
   }, [compact, panel])
   const openCallsSurface = onOpenCalls ?? (onChange ? () => onChange('calls') : undefined)
   const entries: {
-    name: 'notifications' | 'messages' | 'docs' | 'calls' | 'files' | 'integrations'
+    name:
+      | 'notifications'
+      | 'messages'
+      | 'docs'
+      | 'calls'
+      | 'files'
+      | 'calendar'
+      | 'integrations'
     icon: StudioGlyphName
     action: () => void
     selected?: boolean
@@ -120,6 +127,12 @@ export function StudioNavigation({
               icon: 'files',
               action: onChange ? () => onChange('files') : () => setPanel('files'),
               ...(onChange ? { selected: mode === 'files' } : {}),
+            },
+            {
+              name: 'calendar',
+              icon: 'calendar',
+              action: () => onChange?.('calendar'),
+              selected: mode === 'calendar',
             },
             {
               name: 'integrations',
@@ -250,7 +263,10 @@ export function StudioNavigation({
                 ? 'dialog'
                 : undefined
             }
-            disabled={!onChange && (entry.name === 'docs' || entry.name === 'messages')}
+            disabled={
+              !onChange &&
+              (entry.name === 'docs' || entry.name === 'messages' || entry.name === 'calendar')
+            }
             data-testid={
               entry.name === 'docs'
                 ? 'workspace-docs-editor-toggle'
@@ -258,9 +274,11 @@ export function StudioNavigation({
                   ? 'espace-canvas-mode-chat'
                   : entry.name === 'files' && onChange
                     ? 'espace-canvas-mode-files'
-                    : entry.name === 'calls' && openCallsSurface && section !== 'call-entry'
-                      ? 'espace-canvas-mode-calls'
-                      : undefined
+                    : entry.name === 'calendar' && onChange
+                      ? 'espace-canvas-mode-calendar'
+                      : entry.name === 'calls' && openCallsSurface && section !== 'call-entry'
+                        ? 'espace-canvas-mode-calls'
+                        : undefined
             }
             className={`flex min-h-8 items-center gap-2 rounded-md px-2 py-1 text-left text-sm focus-visible:ring focus-visible:outline-hidden narrow:min-h-12 ${entry.selected ? 'bg-c-accent-soft font-bold text-c-accent-ink' : 'text-c-ink-2 hover:bg-c-muted'}`}
           >
@@ -275,7 +293,9 @@ export function StudioNavigation({
                       ? 'calls'
                       : entry.icon === 'files'
                         ? 'files'
-                        : 'integrations'
+                        : entry.icon === 'calendar'
+                          ? 'calendar'
+                          : 'integrations'
                 }
               />
             )}

@@ -85,9 +85,17 @@ export interface WorkspacePageRecord {
   readonly order?: number | undefined
 }
 
-export type WorkspaceEditorSurface = 'drive' | 'blocks' | 'markdown' | 'collections'
+export type WorkspaceEditorSurface =
+  | 'drive'
+  | 'blocks'
+  | 'markdown'
+  | 'whiteboard'
+  | 'collections'
 
 const LazyDocsCollectionView = lazy(() => import('./DocsCollectionView'))
+const LazyWhiteboardCanvas = lazy(() =>
+  import('@/features/whiteboard/WhiteboardCanvas').then((m) => ({ default: m.WhiteboardCanvas }))
+)
 
 const LIVE_COLLAB_MARKDOWN_READONLY_COPY: Readonly<Record<'fr' | 'en', string>> = {
   fr: 'Aperçu Markdown en lecture seule : la synchronisation collaborative en direct gère le contenu enrichi de cette page. Passez à l’éditeur de blocs pour modifier le document.',
@@ -1288,10 +1296,15 @@ export function WorkspaceCollaborativeDocs({
 
   const bodyReloadEpoch = currentDoc ? (bodyReloadEpochs.get(currentDoc.id) ?? 0) : 0
   const blockEditorKey = currentDoc ? `${currentDoc.id}#${bodyReloadEpoch}` : ''
-  const isSinglePageEditorSurface = editorSurface === 'blocks' || editorSurface === 'markdown'
+  const isSinglePageEditorSurface =
+    editorSurface === 'blocks' || editorSurface === 'markdown' || editorSurface === 'whiteboard'
+  const whiteboardTabLabel = i18n.resolvedLanguage === 'en' ? 'Whiteboard' : 'Tableau blanc'
+  const isWhiteboardConfidentialBlocked =
+    collabSnapshot.status === 'forbidden' ||
+    (roomBoundary !== undefined && !permitsPlaintext(roomBoundary) && !confidential)
 
   const surfaceModes: readonly WorkspaceEditorSurface[] = currentDoc
-    ? ['drive', 'blocks', 'markdown', 'collections']
+    ? ['drive', 'blocks', 'markdown', 'whiteboard', 'collections']
     : ['drive', 'blocks', 'collections']
 
   return (
@@ -1559,7 +1572,9 @@ export function WorkspaceCollaborativeDocs({
                         ? t('console.docs.collab.mode-blocks')
                         : mode === 'markdown'
                           ? t('console.docs.collab.mode-markdown')
-                          : collectionCopy.modeCollections}
+                          : mode === 'whiteboard'
+                            ? whiteboardTabLabel
+                            : collectionCopy.modeCollections}
                   </button>
                 ))}
               </div>
@@ -1781,6 +1796,31 @@ export function WorkspaceCollaborativeDocs({
                     />
                   }
                 />
+              ) : editorSurface === 'whiteboard' ? (
+                isWhiteboardConfidentialBlocked ? (
+                  <div data-testid="whiteboard-confidential-refused">
+                    <InlineAlert kind="error">
+                      {t('console.docs.collab.status-readonly')}
+                    </InlineAlert>
+                  </div>
+                ) : (
+                  <Suspense
+                    fallback={
+                      <p role="status" className="py-4 text-xs text-c-ink-3">
+                        {whiteboardTabLabel}
+                      </p>
+                    }
+                  >
+                    <LazyWhiteboardCanvas
+                      key={currentDoc.id}
+                      doc={ydocForEditor ?? sessionController?.ydoc}
+                      awareness={sessionController?.awareness}
+                      participantId={currentUser.id}
+                      participantName={currentUser.name}
+                      readOnly={effectiveRole === 'viewer'}
+                    />
+                  </Suspense>
+                )
               ) : (
                 <div className="w-full rounded-xl bg-c-page px-4 py-6 narrow:px-2 narrow:py-3">
                   <div className="mx-auto flex w-full max-w-[820px] flex-col gap-4 rounded-xl border border-c-border bg-c-surface p-8 shadow-card narrow:p-4">

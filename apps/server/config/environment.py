@@ -95,6 +95,7 @@ ADMITTED_SECRET_NAMES = frozenset(
         "KODERA_NOTIFICATION_SEAL_KEY",  # sealed per-device application data
         "KODERA_AI_SEAL_KEY",  # optional HKDF master key sealing BYOM AI configs
         "KODERA_AI_MISTRAL_API_KEY",  # optional EU-sovereign Mistral API key
+        "KODERA_CALENDAR_SEAL_KEY",  # optional HKDF master key sealing CalDAV source credentials
         "KODERA_PUSH_VAPID_PUBLIC_KEY",  # public P-256 discovery point
         "KODERA_CONTACT_SEAL_KEY",  # application secrets
         "KODERA_OUTBOX_SEAL_KEY",
@@ -106,6 +107,8 @@ ADMITTED_SECRET_NAMES = frozenset(
         "KODERA_STRIPE_WEBHOOK_SECRET",
         "KODERA_MAIL_SMTP_PASSWORD",  # transactional mail, the operator's sender
         "KODERA_SYNAPSE_ADMIN_TOKEN",  # optional Matrix worker homeserver admin access token
+        "KODERA_LIVEKIT_API_KEY",  # optional LiveKit RoomService API key for authoritative call rosters
+        "KODERA_LIVEKIT_API_SECRET",  # optional LiveKit RoomService API secret
         "KODERA_REALM_WORKER_SECRET_DIR",  # a path to per-realm secrets, never a secret
         "GPG_KEY",  # python image: the fingerprint of CPython's release signing key
     }
@@ -446,6 +449,29 @@ def synapse_server_name(environment: Mapping[str, str]) -> str:
     return value
 
 
+MATRIX_DOMAIN_SUFFIX = re.compile(
+    r"(?=.{1,253}\Z)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+\Z"
+)
+
+
+def matrix_domain_suffix(environment: Mapping[str, str]) -> str:
+    """The base DNS domain suffix under which tenant Matrix homeservers are named (`{slug}.<suffix>`).
+
+    Reads `KODERA_MATRIX_DOMAIN_SUFFIX` or `KODERA_MATRIX_DOMAIN`; unset or empty defaults to
+    `"kodera.io"`. Malformed values stop startup without reflecting the supplied string."""
+    raw = environment.get("KODERA_MATRIX_DOMAIN_SUFFIX", "").strip().lower()
+    if not raw:
+        raw = environment.get("KODERA_MATRIX_DOMAIN", "").strip().lower()
+    if not raw:
+        return "kodera.io"
+    clean = raw.lstrip(".")
+    if not clean or MATRIX_DOMAIN_SUFFIX.fullmatch(clean) is None:
+        raise ImproperlyConfigured(
+            "KODERA_MATRIX_DOMAIN_SUFFIX must be a valid lowercase multi-label DNS domain"
+        )
+    return clean
+
+
 DOTTED_PYTHON_PATH = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+\Z")
 
 
@@ -464,6 +490,65 @@ def matrix_replay_transport_factory(environment: Mapping[str, str]) -> str | Non
             "KODERA_MATRIX_REPLAY_TRANSPORT_FACTORY must be one dotted Python path, or unset"
         )
     return value
+
+
+def livekit_room_service_config(
+    environment: Mapping[str, str],
+) -> tuple[str | None, str | None, str | None]:
+    """Optional LiveKit RoomService endpoint and HS256 API credentials for authoritative live call
+    caption roster verification (`KODERA_LIVEKIT_ROOM_SERVICE_URL`, `KODERA_LIVEKIT_API_KEY`,
+    `KODERA_LIVEKIT_API_SECRET`).
+
+    All three must be unset/empty together, or all three must be valid together."""
+    raw_url = environment.get("KODERA_LIVEKIT_ROOM_SERVICE_URL", "").strip()
+    raw_key = environment.get("KODERA_LIVEKIT_API_KEY", "")
+    raw_secret = environment.get("KODERA_LIVEKIT_API_SECRET", "")
+    if not raw_url and not raw_key and not raw_secret:
+        return None, None, None
+    if not raw_url or not raw_key or not raw_secret:
+        raise ImproperlyConfigured(
+            "KODERA_LIVEKIT_ROOM_SERVICE_URL, KODERA_LIVEKIT_API_KEY and "
+            "KODERA_LIVEKIT_API_SECRET must be configured together, or all left unset"
+        )
+    refused_url = ImproperlyConfigured(
+        "KODERA_LIVEKIT_ROOM_SERVICE_URL must be http(s)://<host>[:port], with no path, query, "
+        "fragment or user"
+    )
+    if len(raw_url) > 2048 or any(ord(ch) <= 32 or ord(ch) == 127 for ch in raw_url):
+        raise refused_url
+    try:
+        parsed = urlsplit(raw_url)
+        port = parsed.port
+    except ValueError:
+        raise refused_url from None
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in ("", "/")
+        or parsed.query
+        or parsed.fragment
+        or (port is not None and not 1 <= port <= 65535)
+        or "\\" in parsed.netloc
+    ):
+        raise refused_url
+    for label, val, min_len, max_len in (
+        ("KODERA_LIVEKIT_API_KEY", raw_key, 1, 128),
+        ("KODERA_LIVEKIT_API_SECRET", raw_secret, 16, 512),
+    ):
+        upper = val.upper()
+        if (
+            not min_len <= len(val) <= max_len
+            or any(not (0x21 <= ord(ch) <= 0x7E) for ch in val)
+            or "PRIVATE" in upper
+            or val.startswith(("sk_live_", "sk_test_"))
+            or re.search(r"\bSCW[A-Z0-9]{17}\b", val) is not None
+        ):
+            raise ImproperlyConfigured(
+                f"{label} must be {min_len} to {max_len} printable non-whitespace ASCII characters"
+            )
+    return raw_url.rstrip("/"), raw_key, raw_secret
 
 
 STAFF_REALM_SUFFIX = "/realms/kodera-staff"
