@@ -76,7 +76,13 @@ def problem(
     return response
 
 
-def body(request: HttpRequest, fields: set[str], required: set[str]) -> dict[str, Any]:
+def body(
+    request: HttpRequest,
+    fields: set[str],
+    required: set[str],
+    *,
+    max_bytes: int = 16384,
+) -> dict[str, Any]:
     def unique(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
         result: dict[str, Any] = {}
         for name, value in pairs:
@@ -89,7 +95,7 @@ def body(request: HttpRequest, fields: set[str], required: set[str]) -> dict[str
         raise AiGatewayRefusalError(400, None, "malformed-request")
 
     content_type = (request.content_type or "").split(";")[0].strip().lower()
-    if content_type != "application/json" or len(request.body) > 16384:
+    if content_type != "application/json" or len(request.body) > max_bytes:
         raise AiGatewayRefusalError(400, None, "malformed-request")
     try:
         parsed = json.loads(
@@ -112,6 +118,7 @@ def serve(
     operations: tuple[Operation, ...] = (),
     prepare: Callable[[VerifiedAccessToken, str], Handler] | None = None,
     replay_authorize: Callable[[VerifiedAccessToken], None] | None = None,
+    ephemeral_response: bool = False,
 ) -> HttpResponse:
     req_id = responses.request_id(request)
     method = (request.method or "").upper()
@@ -176,9 +183,29 @@ def serve(
                     return problem(failure, req_id, operation_id)
 
             if method == "POST":
+                live_ephemeral_response: list[HttpResponse] = []
 
                 def effect() -> StoredResponse:
                     result = execute()
+                    if ephemeral_response and 200 <= result.status_code <= 299:
+                        # Zero DB persistence of ephemeral AI translations and call transcripts:
+                        # return the 2xx body only from process memory on the executing request and
+                        # persist a content-free 409 receipt in `idempotency_record`.
+                        live_ephemeral_response.append(result)
+                        receipt = problem(
+                            AiGatewayRefusalError(
+                                409,
+                                "ephemeral_output_not_replayed",
+                                "conflict",
+                            ),
+                            req_id,
+                            operation_id,
+                        )
+                        return StoredResponse(
+                            status=receipt.status_code,
+                            body=receipt.content,
+                            content_type=receipt.get("Content-Type", "application/problem+json"),
+                        )
                     return StoredResponse(
                         status=result.status_code,
                         body=result.content,
@@ -205,6 +232,8 @@ def serve(
                     policy=quota_replay_policy(),
                     authority=check_authority,
                 )
+                if live_ephemeral_response:
+                    response = live_ephemeral_response[0]
             else:
                 response = execute()
         finally:

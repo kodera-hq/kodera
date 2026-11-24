@@ -169,6 +169,7 @@ TENANT_SLUG_SCHEMAS = ("Tenant", "OrderRequest.tenant")
 CATALOGUE_PATH = re.compile(r"^/(catalog|catalogue|legal-documents|offers)(/|$)")
 CATALOGUE_WORD = re.compile(r"(?i)catalog|legal.?document|offer|plan|price|pack|capacity.?tier")
 KEY_PACKAGE_TOKEN = re.compile(r"(?i)\bkey[ _-]?packages?\b")
+VIP_TIER_OFFER_TOKEN = re.compile(r"(?i)\bvip[ _-]?tier[ _-]?offers?\b")
 CATALOGUE_MODEL = re.compile(r"^(Catalog|Offer|Plan|Price|Pack|CapacityTier|LegalDocument)")
 
 
@@ -617,10 +618,10 @@ def contract_write_operations(contract: Mapping[str, Any], pattern: str) -> list
 
 
 def catalogue_subject(value: str) -> str:
-    """Remove only cryptographic KeyPackage words, never a Pack prefix inside generic Package."""
+    """Remove non-catalogue cryptographic KeyPackage and workspace VipTierOffer tokens."""
     # Split canonical camelCase and underscore word delimiters before bounded token matching.
     words = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", value).replace("_", " ")
-    return KEY_PACKAGE_TOKEN.sub("", words)
+    return VIP_TIER_OFFER_TOKEN.sub("", KEY_PACKAGE_TOKEN.sub("", words))
 
 
 def catalogue_write_surface(contract: Mapping[str, Any], model_names: Sequence[str]) -> list[str]:

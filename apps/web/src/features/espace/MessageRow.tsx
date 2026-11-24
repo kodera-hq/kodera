@@ -3,7 +3,7 @@
 // replies, whether its thread is open), changes. A keystroke in the composer, a sound level in a
 // call or a sidebar being resized draws no message again.
 
-import { memo, useRef, useState } from 'react'
+import { lazy, memo, Suspense, useRef, useState } from 'react'
 import type { MouseEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { formatTime } from '../../i18n/format'
@@ -27,8 +27,16 @@ import type { MessageView } from './matrix/timeline'
 import { MessageText, type MentionMember } from './MessageText'
 import { isMatrixUserId } from './roomInvitations'
 import { MessageAttachments } from '../messaging/attachments/MessageAttachments'
+import { useMessagingOrganisation } from '../messaging/organisationContext'
 import { UnfurlCard } from '../messaging/unfurl/UnfurlCard'
+import { aiTranslationMessages } from './ai/aiTranslationMessages'
 import { ReactionPalette } from './ReactionPalette'
+
+const LazyMessageTranslationBlock = lazy(() =>
+  import('./ai/MessageTranslationBlock').then((module) => ({
+    default: module.MessageTranslationBlock,
+  }))
+)
 
 function uniqueThreadParticipants(replies: readonly MessageView[]): ThreadParticipant[] {
   const seen = new Set<string>()
@@ -77,6 +85,10 @@ export interface MessageRowProps extends MessageRowActions {
   mentionMembers?: readonly MentionMember[] | undefined
   /** Resolves a Matrix user ID to its authoritative room profile; never trusts sender HTML labels. */
   resolveMember?: ((userId: string) => MemberProfile) | undefined
+  /** Core channel UUID when rendered inside a non-DM workspace channel. */
+  channelId?: string | undefined
+  /** Whether room confidentiality boundary permits sovereign AI message translation. */
+  allowAiTranslate?: boolean | undefined
 }
 
 /** One mounted message; only activation reports a timeline opener to the view. */
@@ -107,9 +119,18 @@ function MessageRowView({
   onPin,
   mentionMembers,
   resolveMember,
+  channelId,
+  allowAiTranslate = false,
 }: MessageRowProps) {
   const { t, i18n } = useTranslation()
   const locale = i18n.resolvedLanguage === 'en' ? 'en' : 'fr'
+  const organisationId = useMessagingOrganisation()
+  const [translationOpen, setTranslationOpen] = useState(false)
+  const [activeMessageKey, setActiveMessageKey] = useState(msg.key)
+  if (activeMessageKey !== msg.key) {
+    setActiveMessageKey(msg.key)
+    setTranslationOpen(false)
+  }
   const actionsTrigger = useRef<HTMLButtonElement | null>(null)
   const inThread = placement === 'thread'
   const { profile, hasProfile } = useLocalProfile(viewerId)
@@ -169,7 +190,14 @@ function MessageRowView({
   const isOwn = msg.sender === viewerId
   const allowWrite = !isReadOnlyChannel && canWrite
   const allowReact = !isReadOnlyChannel && canReact
-  const hasMenuItems = allowReact || !inThread || isOwn
+  const canTranslate =
+    organisationId !== null &&
+    allowAiTranslate &&
+    channelId !== undefined &&
+    channelId !== '' &&
+    !msg.redacted &&
+    msg.body.trim() !== ''
+  const hasMenuItems = allowReact || !inThread || isOwn || canTranslate
   return (
     <TimelineMessage
       own={isOwn}
@@ -320,6 +348,14 @@ function MessageRowView({
                         },
                       ]
                     : []),
+                  ...(canTranslate
+                    ? [
+                        {
+                          label: aiTranslationMessages[locale].menuTranslate,
+                          onSelect: () => setTranslationOpen(true),
+                        },
+                      ]
+                    : []),
                   ...(isOwn && allowWrite
                     ? [
                         {
@@ -363,6 +399,18 @@ function MessageRowView({
       )}
       {msg.attachments === undefined ? null : <MessageAttachments refs={msg.attachments} />}
       {msg.redacted ? null : <UnfurlCard body={msg.body} />}
+      {translationOpen && canTranslate && organisationId !== null && channelId !== undefined ? (
+        <Suspense fallback={null}>
+          <LazyMessageTranslationBlock
+            key={`${msg.eventId}:${menuContextKey}`}
+            organisationId={organisationId}
+            channelId={channelId}
+            eventId={msg.eventId}
+            sourceText={msg.body}
+            onClose={() => setTranslationOpen(false)}
+          />
+        </Suspense>
+      ) : null}
     </TimelineMessage>
   )
 }

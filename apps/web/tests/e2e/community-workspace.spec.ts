@@ -427,22 +427,15 @@ test('a healthy session stays unobstructed after one minute and keyboard focus',
       coreArmed: true,
       failure: null,
     })
-    // The real SDK adopts the response before the new authority read can enter.
+    // The real SDK adopts the response before the new authority read can enter; same-session
+    // renewal with a usable token revalidates `/me` in place without concealing the shell.
     await expect
       .poll(async () => (await sessionGate(page)).coreHeldAfterTokenRelease)
       .toBeGreaterThan(0)
     expect(await sessionGate(page)).toMatchObject({ tokenStarted: 1, failure: null })
-    const retainedTrigger = page
-      .getByRole('button', {
-        name: /changer d’organisation/,
-        includeHidden: true,
-      })
-      .last()
-    await expect(retainedTrigger).toBeAttached()
-    await expect(
-      retainedTrigger.locator('xpath=ancestor::*[@hidden and @aria-hidden="true"]').first()
-    ).toBeAttached()
-    await expect(retainedTrigger).toBeHidden()
+    const retainedTrigger = page.getByRole('button', { name: /changer d’organisation/ }).last()
+    await expect(retainedTrigger).toBeVisible()
+    await expect(retainedTrigger.locator('xpath=ancestor::*[@hidden]')).toHaveCount(0)
     await expect(page.getByText(/Votre session va expirer/)).toHaveCount(0)
     expect(await sessionGate(page, 'releaseCoreOnly')).toMatchObject({
       tokenArmed: false,

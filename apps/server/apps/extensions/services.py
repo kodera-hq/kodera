@@ -489,3 +489,119 @@ def read_import_attachment(*, verified: Any, organisation_id: UUID, attachment_i
     if len(raw) != size_bytes or hashlib.sha256(raw).hexdigest() != ticket.get("sha256"):
         raise ExtensionRefusedError("import_attachment_digest_mismatch", 409)
     return raw
+
+
+def disarm_rehearsal_outbound(*, now: datetime) -> dict[str, int]:
+    """Neutralize all outbound extension & coexistence endpoints inside an isolated rehearsal DB."""
+    from django.db import connection
+    from django.db.models import Q
+
+    from .models import (
+        CoexistenceBridge,
+        CoexistenceReplayGuard,
+        DeliveryAttempt,
+        DigestConsent,
+        DigestJob,
+    )
+
+    if not connection.in_atomic_block:
+        raise RuntimeError("disarm_rehearsal_outbound requires an enclosing atomic transaction")
+
+    installations_revoked = Installation.objects.filter(revoked_at__isnull=True).update(
+        revoked_at=now,
+        updated_at=now,
+    )
+    DeliveryAttempt.objects.filter(outcome="started").update(
+        outcome="obsolete",
+        updated_at=now,
+    )
+    deliveries_obsoleted = Delivery.objects.filter(state__in=("pending", "in_flight")).update(
+        state="obsolete",
+        lease_id=None,
+        lease_expires_at=None,
+        outcome="rehearsal_disarmed",
+        updated_at=now,
+    )
+    bridges_revoked = CoexistenceBridge.objects.filter(revoked_at__isnull=True).update(
+        revoked_at=now,
+        sealed_signing_secret=b"",
+        updated_at=now,
+    )
+    secrets_zeroized = CoexistenceBridge.objects.filter(~Q(sealed_signing_secret=b"")).update(
+        sealed_signing_secret=b"",
+        updated_at=now,
+    )
+    replay_obsoleted = CoexistenceReplayGuard.objects.filter(
+        direction="outbound",
+        state__in=("queued", "in_flight", "retryable_failed"),
+    ).update(
+        state="obsolete",
+        lease_id=None,
+        lease_expires_at=None,
+        sanitized_payload=None,
+        updated_at=now,
+    )
+    DigestConsent.objects.filter(enabled=True).update(
+        enabled=False,
+        revoked_at=now,
+        updated_at=now,
+    )
+    digest_jobs_obsoleted = DigestJob.objects.filter(state="pending").update(
+        state="obsolete",
+        updated_at=now,
+    )
+    return {
+        "installations_revoked": installations_revoked,
+        "deliveries_obsoleted": deliveries_obsoleted,
+        "coexistence_bridges_revoked": bridges_revoked,
+        "coexistence_secrets_zeroized": bridges_revoked + secrets_zeroized,
+        "coexistence_outbound_obsoleted": replay_obsoleted,
+        "digest_jobs_obsoleted": digest_jobs_obsoleted,
+    }
+
+
+def record_workspace_cutoff(*, organisation_id: UUID, cutoff_at: datetime) -> bool:
+    """Persist an anti-resurrection WorkspaceCutoff marker for an erased organisation."""
+    _, created = WorkspaceCutoff.objects.get_or_create(
+        organisation_id=organisation_id,
+        defaults={"cutoff_at": cutoff_at},
+    )
+    return created
+
+
+def has_workspace_cutoff(*, organisation_id: UUID) -> bool:
+    """Return True when `organisation_id` is durably marked in `WorkspaceCutoff`."""
+    return WorkspaceCutoff.objects.filter(organisation_id=organisation_id).exists()
+
+
+def list_workspace_cutoff_ids() -> set[UUID]:
+    """Return all organisation IDs recorded in `WorkspaceCutoff`."""
+    return set(WorkspaceCutoff.objects.values_list("organisation_id", flat=True))
+
+
+def count_residual_extension_rows_for_organisation(*, organisation_id: UUID) -> int:
+    """Count unrevoked endpoints, unpurged webhook payloads, or unzeroized secrets for an erased org."""
+    from django.db.models import Q
+
+    from .models import CoexistenceBridge, DigestConsent
+
+    active_installations = Installation.objects.filter(
+        workspace__organisation_id=organisation_id,
+        revoked_at__isnull=True,
+    ).count()
+    unpurged_deliveries = Delivery.objects.filter(
+        installation__workspace__organisation_id=organisation_id,
+        purged_at__isnull=True,
+    ).count()
+    active_or_secret_bridges = (
+        CoexistenceBridge.objects.filter(
+            workspace__organisation_id=organisation_id,
+        )
+        .filter(Q(revoked_at__isnull=True) | ~Q(sealed_signing_secret=b""))
+        .count()
+    )
+    active_consents = DigestConsent.objects.filter(
+        membership__organisation_id=organisation_id,
+        enabled=True,
+    ).count()
+    return active_installations + unpurged_deliveries + active_or_secret_bridges + active_consents

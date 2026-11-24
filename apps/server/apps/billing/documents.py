@@ -16,6 +16,7 @@ from typing import Protocol
 from xml.etree import ElementTree as ET
 
 from .integrity import PARIS, IntegrityRefusedError
+from .vat import EU_OSS_RATES_BP, EU_OSS_REGIME_CODE
 
 NS = {
     "rsm": "urn:un:unece:uncefact:data:standard:CrossIndustryInvoice:100",
@@ -194,10 +195,22 @@ def _validate(s: Snapshot) -> None:
         or (s.type_code == "381" and not s.original_invoice_number)
     ):
         raise IntegrityRefusedError("document_snapshot_invalid")
-    if s.vat_regime not in {"fr_standard", "eu_reverse_charge", "exempt", "outside_eu"}:
+    if s.vat_regime not in {
+        "fr_standard",
+        "eu_reverse_charge",
+        "exempt",
+        "outside_eu",
+        EU_OSS_REGIME_CODE,
+    }:
         raise IntegrityRefusedError("document_vat_regime")
     if s.vat_regime == "eu_reverse_charge" and not s.buyer.vat_number:
         raise IntegrityRefusedError("document_vat_evidence_missing")
+    if s.vat_regime == EU_OSS_REGIME_CODE and (
+        s.buyer.country not in EU_OSS_RATES_BP
+        or s.buyer.country == s.seller.country
+        or not s.vat_mention
+    ):
+        raise IntegrityRefusedError("document_vat_oss_invalid")
     if any(not p.name or not p.address or len(p.country) != 2 for p in (s.seller, s.buyer)):
         raise IntegrityRefusedError("document_party_invalid")
     if len({line.position for line in s.lines}) != len(s.lines):
@@ -221,6 +234,11 @@ def _validate(s: Snapshot) -> None:
             or line.vat_rate_bp > 10_000
         ):
             raise IntegrityRefusedError("document_line_amounts")
+        if (
+            s.vat_regime == EU_OSS_REGIME_CODE
+            and line.vat_rate_bp != EU_OSS_RATES_BP[s.buyer.country]
+        ):
+            raise IntegrityRefusedError("document_vat_oss_invalid")
     if (
         sum(line.net_minor for line in s.lines) != s.net_minor
         or sum(line.vat_minor for line in s.lines) != s.vat_minor
@@ -246,9 +264,13 @@ def render_xml(s: Snapshot) -> bytes:
     if s.vat_mention:
         _add(_add(document, "ram:IncludedNote"), "ram:Content", s.vat_mention)
     transaction = _add(root, "rsm:SupplyChainTradeTransaction")
-    category = {"fr_standard": "S", "eu_reverse_charge": "AE", "exempt": "E", "outside_eu": "O"}[
-        s.vat_regime
-    ]
+    category = {
+        "fr_standard": "S",
+        EU_OSS_REGIME_CODE: "S",
+        "eu_reverse_charge": "AE",
+        "exempt": "E",
+        "outside_eu": "O",
+    }[s.vat_regime]
     totals: dict[int, list[int]] = defaultdict(lambda: [0, 0])
     for line in sorted(s.lines, key=lambda item: item.position):
         node = _add(transaction, "ram:IncludedSupplyChainTradeLineItem")
@@ -292,7 +314,7 @@ def render_xml(s: Snapshot) -> bytes:
         tax = _add(settlement, "ram:ApplicableTradeTax")
         _add(tax, "ram:CalculatedAmount", _money(vat))
         _add(tax, "ram:TypeCode", "VAT")
-        if s.vat_mention:
+        if category != "S" and s.vat_mention:
             _add(tax, "ram:ExemptionReason", s.vat_mention)
         _add(tax, "ram:BasisAmount", _money(net))
         _add(tax, "ram:CategoryCode", category)

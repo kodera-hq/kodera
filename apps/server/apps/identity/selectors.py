@@ -378,3 +378,177 @@ def enabled_email_user_ids(*, organisation_id: UUID, email: str) -> set[UUID]:
 def lock_guest_identity(*, identity_id: UUID) -> None:
     """Serialize guest grant creation without exporting a stored model."""
     Identity.objects.select_for_update().get(id=identity_id)
+
+
+def first_enabled_staff_operator_identity_id() -> UUID | None:
+    """First active `staff_operator` identity backed by an enabled person, or None."""
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT r.identity_id FROM identity_staffrole r "
+            "JOIN identity_identity i ON i.id = r.identity_id "
+            "JOIN identity_user u ON u.id = i.user_id "
+            "WHERE i.organisation_id IS NULL "
+            "  AND r.role = 'staff_operator' "
+            "  AND r.revoked_at IS NULL "
+            "  AND i.enabled AND i.deleted_at IS NULL "
+            "  AND u.enabled AND u.deleted_at IS NULL "
+            "ORDER BY r.id LIMIT 1"
+        )
+        found = cursor.fetchone()
+    return None if found is None else UUID(str(found[0]))
+
+
+def user_exists(*, user_id: UUID) -> bool:
+    return User.objects.filter(id=user_id).exists()
+
+
+def is_user_pii_purged(*, user_id: UUID) -> bool:
+    """Return True when the person is absent or disabled with erased email and display_name."""
+    row = User.objects.filter(id=user_id).values_list("enabled", "email", "display_name").first()
+    if row is None:
+        return True
+    enabled, email, display_name = row
+    return (not enabled) and email == f"erased:{user_id}" and display_name is None
+
+
+def count_unerased_identities_for_organisation(*, organisation_id: UUID) -> int:
+    """Count remaining enabled or un-scrubbed identity rows for an erased organisation."""
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT count(*) FROM identity_identity "
+            "WHERE organisation_id = %s AND (enabled OR email <> 'erased:' || id::text)",
+            [organisation_id],
+        )
+        row = cursor.fetchone()
+    return int(row[0]) if row is not None else 0
+
+
+def count_unerased_identities_for_user(*, user_id: UUID) -> int:
+    """Count remaining enabled or un-scrubbed identity rows for an erased person."""
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT count(*) FROM identity_identity "
+            "WHERE user_id = %s AND (enabled OR email <> 'erased:' || id::text)",
+            [user_id],
+        )
+        row = cursor.fetchone()
+    return int(row[0]) if row is not None else 0
+
+
+def count_unscrubbed_identity_subjects_for_organisation(*, organisation_id: UUID) -> int:
+    """Count identity rows in an erased organisation whose retained `subject` is un-pseudonymized."""
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT count(*) FROM identity_identity "
+            "WHERE organisation_id = %s AND subject <> 'erased:' || id::text",
+            [organisation_id],
+        )
+        row = cursor.fetchone()
+    return int(row[0]) if row is not None else 0
+
+
+def count_unscrubbed_identity_subjects_for_user(*, user_id: UUID) -> int:
+    """Count identity rows of an erased person whose retained `subject` is un-pseudonymized."""
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT count(*) FROM identity_identity "
+            "WHERE user_id = %s AND subject <> 'erased:' || id::text",
+            [user_id],
+        )
+        row = cursor.fetchone()
+    return int(row[0]) if row is not None else 0
+
+
+def person_email_sha256s(*, user_id: UUID) -> tuple[str, ...]:
+    """Return sorted SHA-256 hex digests of non-erased emails currently held on `user_id`."""
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT DISTINCT encode(sha256(convert_to(em, 'UTF8')), 'hex') FROM ("
+            "  SELECT lower(btrim(email)) AS em FROM identity_user WHERE id = %s "
+            "  UNION "
+            "  SELECT lower(btrim(email)) AS em FROM identity_identity WHERE user_id = %s"
+            ") raw WHERE em IS NOT NULL AND em <> '' AND em NOT LIKE 'erased:%%' "
+            "ORDER BY 1",
+            [user_id, user_id],
+        )
+        return tuple(str(row[0]) for row in cursor.fetchall())
+
+
+def person_principal_sha256s(*, user_id: UUID) -> tuple[str, ...]:
+    """Return sorted SHA-256 hex digests of `(issuer || NUL || subject)` for `user_id`."""
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT DISTINCT encode("
+            "  sha256(convert_to(issuer, 'UTF8') || decode('00', 'hex') || convert_to(subject, 'UTF8')), "
+            "  'hex'"
+            ") FROM identity_identity "
+            "WHERE user_id = %s AND subject NOT LIKE 'erased:%%' "
+            "ORDER BY 1",
+            [user_id],
+        )
+        return tuple(str(row[0]) for row in cursor.fetchall())
+
+
+def count_residual_passport_for_organisation(
+    *,
+    organisation_id: UUID,
+    unshared_user_ids: tuple[str, ...] = (),
+    unshared_email_sha256s: tuple[str, ...] = (),
+) -> int:
+    """Count remaining Kodera Passport operational rows belonging to an erased organisation."""
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT to_regclass('public.identity_passportworkspacecontext') IS NOT NULL")
+        if not cursor.fetchone()[0]:
+            return 0
+        cursor.execute(
+            "SELECT ("
+            "  SELECT count(*) FROM identity_passportworkspacecontext "
+            "  WHERE active_organisation_id = %s"
+            ") + ("
+            "  SELECT count(*) FROM identity_passportoutboxbinding "
+            "  WHERE organisation_id = %s"
+            ") + ("
+            "  SELECT count(*) FROM identity_passportmagiclinktoken t "
+            "  WHERE t.delivery_id IN ("
+            "    SELECT b.delivery_id FROM identity_passportoutboxbinding b WHERE b.organisation_id = %s"
+            "  ) OR (t.user_id IS NOT NULL AND t.user_id::text = ANY(%s)) "
+            "    OR (t.user_id IS NULL AND encode("
+            "      sha256(convert_to(lower(btrim(t.email_normalized)), 'UTF8')), 'hex'"
+            "    ) = ANY(%s))"
+            ")",
+            [
+                organisation_id,
+                organisation_id,
+                organisation_id,
+                list(unshared_user_ids),
+                list(unshared_email_sha256s),
+            ],
+        )
+        row = cursor.fetchone()
+    return int(row[0]) if row is not None else 0
+
+
+def count_residual_passport_for_user(
+    *,
+    user_id: UUID,
+    email_sha256s: tuple[str, ...] = (),
+) -> int:
+    """Count remaining Kodera Passport workspace contexts, magic-link tokens, or bindings for `user_id`."""
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT to_regclass('public.identity_passportworkspacecontext') IS NOT NULL")
+        if not cursor.fetchone()[0]:
+            return 0
+        cursor.execute(
+            "SELECT ("
+            "  SELECT count(*) FROM identity_passportworkspacecontext WHERE user_id = %s"
+            ") + ("
+            "  SELECT count(*) FROM identity_passportoutboxbinding WHERE user_id = %s"
+            ") + ("
+            "  SELECT count(*) FROM identity_passportmagiclinktoken t "
+            "  WHERE t.user_id = %s "
+            "     OR encode(sha256(convert_to(lower(btrim(t.email_normalized)), 'UTF8')), 'hex') = ANY(%s)"
+            ")",
+            [user_id, user_id, user_id, list(email_sha256s)],
+        )
+        row = cursor.fetchone()
+    return int(row[0]) if row is not None else 0

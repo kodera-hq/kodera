@@ -195,6 +195,72 @@ export interface CallSnapshot {
   connectionQuality?: CallQuality
   /** Per-participant connection quality, keyed by Matrix user id. */
   qualities?: Readonly<Record<string, CallQuality>>
+  /** Optional LiveKit or per-connection call instance identifier for per-call AI consent binding. */
+  callInstanceId?: string
+}
+
+export const CALL_CAPTIONS_DATA_TOPIC = 'kodera.call.captions.v1'
+export const MAX_CALL_CAPTION_PACKET_BYTES = 8192
+
+export interface CallCaptionPacket {
+  readonly v: 1
+  readonly callInstanceId: string
+  readonly sessionEpoch: number
+  readonly segmentId: string
+  readonly speakerLabel: string
+  readonly senderUserId?: string | undefined
+  readonly sourceLanguage: string
+  readonly text: string
+  readonly translations: Readonly<Record<string, string>>
+}
+
+const CAPTION_LANG_RE = /^[a-z]{2,8}$/u
+
+export function parseCallCaptionPacket(raw: unknown): CallCaptionPacket | null {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null
+  const r = raw as Record<string, unknown>
+  if (
+    r['v'] !== 1 ||
+    typeof r['callInstanceId'] !== 'string' ||
+    r['callInstanceId'].length === 0 ||
+    r['callInstanceId'].length > 128 ||
+    !Number.isSafeInteger(r['sessionEpoch']) ||
+    (r['sessionEpoch'] as number) < 1 ||
+    typeof r['segmentId'] !== 'string' ||
+    r['segmentId'].length === 0 ||
+    r['segmentId'].length > 128 ||
+    typeof r['speakerLabel'] !== 'string' ||
+    r['speakerLabel'].length > 80 ||
+    typeof r['sourceLanguage'] !== 'string' ||
+    !CAPTION_LANG_RE.test(r['sourceLanguage']) ||
+    typeof r['text'] !== 'string' ||
+    r['text'].trim().length === 0 ||
+    r['text'].length > 2048 ||
+    typeof r['translations'] !== 'object' ||
+    r['translations'] === null ||
+    Array.isArray(r['translations'])
+  ) {
+    return null
+  }
+  const entries = Object.entries(r['translations'] as Record<string, unknown>)
+  if (entries.length > 16) return null
+  const cleanTranslations: Record<string, string> = Object.create(null) as Record<string, string>
+  for (const [lang, value] of entries) {
+    if (!CAPTION_LANG_RE.test(lang) || typeof value !== 'string' || value.length > 2048) {
+      return null
+    }
+    cleanTranslations[lang] = value
+  }
+  return {
+    v: 1,
+    callInstanceId: r['callInstanceId'],
+    sessionEpoch: r['sessionEpoch'] as number,
+    segmentId: r['segmentId'],
+    speakerLabel: r['speakerLabel'].replace(/\p{Cc}/gu, ''),
+    sourceLanguage: r['sourceLanguage'],
+    text: r['text'],
+    translations: Object.freeze(cleanTranslations),
+  }
 }
 
 /** What the controller uses of a LiveKit `Room`; tests hand it a fake. */
@@ -211,7 +277,10 @@ export type CallRoom = Pick<
   | 'state'
   | 'canPlaybackAudio'
   | 'switchActiveDevice'
->
+> & {
+  readonly sid?: string
+  readonly getSid?: () => Promise<string>
+}
 
 /** What the controller uses of the sound engine; tests may hand a fake. */
 export type CallSoundPort = Pick<
@@ -454,6 +523,7 @@ interface LocalRetirement {
 interface Session {
   readonly scopeRoomId: string
   protectionRevoked: boolean
+  grantRequiresE2ee: boolean
   media: ConfidentialMediaSession | null
   mediaEpoch: number | null
   mediaBoundary: RoomBoundary | null
@@ -496,6 +566,7 @@ export class CallController {
   /** The microphone and output the member chose, applied to every call. */
   #deviceChoice: AudioDeviceChoice
   readonly #listeners = new Set<() => void>()
+  readonly #captionListeners = new Set<(packet: CallCaptionPacket) => void>()
   #snapshot: CallSnapshot = IDLE
   #room: CallRoom | null = null
   #session: Session | null = null
@@ -546,6 +617,47 @@ export class CallController {
   subscribe = (listener: () => void): (() => void) => {
     this.#listeners.add(listener)
     return () => this.#listeners.delete(listener)
+  }
+
+  subscribeCallCaptionPackets = (listener: (packet: CallCaptionPacket) => void): (() => void) => {
+    this.#captionListeners.add(listener)
+    return () => this.#captionListeners.delete(listener)
+  }
+
+  publishCallCaptionPacket = async (packet: CallCaptionPacket): Promise<boolean> => {
+    const session = this.#session
+    if (
+      session === null ||
+      session.closed ||
+      !this.#live() ||
+      session.media !== null ||
+      session.grantRequiresE2ee ||
+      !permitsPlaintext(this.#boundary(session.scopeRoomId))
+    ) {
+      return false
+    }
+    const validated = parseCallCaptionPacket(packet)
+    if (validated === null) return false
+    const encoded = new TextEncoder().encode(JSON.stringify(validated))
+    if (encoded.byteLength === 0 || encoded.byteLength > MAX_CALL_CAPTION_PACKET_BYTES) {
+      return false
+    }
+    const lp = session.room.localParticipant as {
+      permissions?: { canPublishData?: boolean }
+      publishData?: (
+        data: Uint8Array,
+        options?: { reliable?: boolean; topic?: string }
+      ) => Promise<void>
+    }
+    if (lp.permissions?.canPublishData === false || typeof lp.publishData !== 'function') {
+      return false
+    }
+    try {
+      await lp.publishData(encoded, { reliable: true, topic: CALL_CAPTIONS_DATA_TOPIC })
+      return true
+    } catch {
+      return false
+    }
   }
 
   getSnapshot = (): CallSnapshot => this.#snapshot
@@ -712,11 +824,30 @@ export class CallController {
         }
       )
       if (this.#session !== session) return
+      if (grant.e2eeRequired === true) {
+        session.grantRequiresE2ee = true
+        if (session.media === null) {
+          throw new MediaProtectionFailed('media-encryption-unavailable')
+        }
+        const { supportsConfidentialMediaTransforms } =
+          await import('../../confidential/media-crypto-client')
+        if (this.#session !== session) return
+        if (!supportsConfidentialMediaTransforms()) {
+          throw new MediaProtectionFailed('media-transforms-unavailable')
+        }
+        if (!session.media.isActive()) {
+          throw new MediaProtectionFailed('media-encryption-revoked')
+        }
+      }
       this.#requireMedia(session)
       await session.room.connect(grant.url, grant.token)
       if (this.#session !== session) return
       this.#requireMedia(session)
       // `connect` can resolve on a connection already gone (closed while it was being set up).
+      if (session.room.state !== ConnectionState.Connected) throw new Error('not connected')
+      const resolvedSid = await this.#readRoomSid(session)
+      if (this.#session !== session) return
+      this.#requireMedia(session)
       if (session.room.state !== ConnectionState.Connected) throw new Error('not connected')
       const canPublish = session.room.localParticipant.permissions?.canPublish !== false
       const listenOnly = grant.listenOnly || !canPublish
@@ -732,6 +863,7 @@ export class CallController {
         participants,
         self: matrixUserOf(session.room.localParticipant.identity),
         playbackBlocked: !session.room.canPlaybackAudio,
+        ...(resolvedSid === undefined ? {} : { callInstanceId: resolvedSid }),
       })
       try {
         this.#sounds.resetCooldowns?.()
@@ -1255,6 +1387,7 @@ export class CallController {
     if (patch.deafened !== undefined) this.#deafenRequested = patch.deafened
     const next = { ...this.#snapshot, ...patch }
     if (next.problem === undefined) delete next.problem
+    if (next.callInstanceId === undefined) delete next.callInstanceId
     this.#snapshot = this.#derive(next as CallSnapshot)
     for (const listener of this.#listeners) listener()
   }
@@ -1297,6 +1430,42 @@ export class CallController {
     return status === 'connected' || status === 'reconnecting'
   }
 
+  async #readRoomSid(session: Session): Promise<string | undefined> {
+    if (typeof session.room.getSid === 'function') {
+      let sidPromise: Promise<string | undefined>
+      try {
+        sidPromise = Promise.resolve(session.room.getSid()).then(
+          (val) => (typeof val === 'string' && val.trim() !== '' ? val.trim() : undefined),
+          () => undefined
+        )
+      } catch {
+        sidPromise = Promise.resolve(undefined)
+      }
+      const immediate = await Promise.race([
+        sidPromise,
+        Promise.resolve().then(() => Promise.resolve(undefined)),
+      ])
+      if (immediate !== undefined) return immediate
+      void sidPromise.then((lateSid) => {
+        if (lateSid !== undefined && this.#session === session && this.#live()) {
+          this.#set({ callInstanceId: lateSid })
+        }
+      })
+    }
+    if (typeof session.room.sid === 'string' && session.room.sid.trim() !== '') {
+      return session.room.sid.trim()
+    }
+    return undefined
+  }
+
+  #refreshCallInstanceId(session: Session): void {
+    void this.#readRoomSid(session).then((sid) => {
+      if (sid !== undefined && this.#session === session && this.#live()) {
+        this.#set({ callInstanceId: sid })
+      }
+    })
+  }
+
   #open(roomId: string, options?: RoomOptions): Session {
     // A protected call owns a fresh SDK room whose transforms exist before negotiation.
     if (options) this.#room = this.#createRoom({ ...ROOM_OPTIONS, ...options })
@@ -1308,6 +1477,7 @@ export class CallController {
     const session: Session = {
       scopeRoomId: roomId,
       protectionRevoked: false,
+      grantRequiresE2ee: false,
       media: null,
       mediaEpoch: null,
       mediaBoundary: null,
@@ -1415,6 +1585,9 @@ export class CallController {
         participants,
         qualities: Object.freeze(Object.fromEntries(session.qualities)),
       })
+      if (this.#snapshot.callInstanceId === undefined) {
+        this.#refreshCallInstanceId(session)
+      }
       if (this.#snapshot.status === 'connected') {
         const participantCount = participants.length
         try {
@@ -1427,6 +1600,33 @@ export class CallController {
     }
     on(RoomEvent.ParticipantConnected, roster('voice_peer_join'))
     on(RoomEvent.ParticipantDisconnected, roster('voice_peer_leave'))
+    on(RoomEvent.DataReceived, (payload, participant, _kind, topic) => {
+      if (
+        !mine() ||
+        topic !== CALL_CAPTIONS_DATA_TOPIC ||
+        session.media !== null ||
+        session.grantRequiresE2ee ||
+        !permitsPlaintext(this.#boundary(session.scopeRoomId)) ||
+        !ArrayBuffer.isView(payload) ||
+        payload.byteLength === 0 ||
+        payload.byteLength > MAX_CALL_CAPTION_PACKET_BYTES
+      ) {
+        return
+      }
+      const identity: unknown = participant?.identity
+      const senderUserId = typeof identity === 'string' ? matrixUserOf(identity) : null
+      if (senderUserId === null) return
+      let parsed: CallCaptionPacket | null
+      try {
+        const text = new TextDecoder('utf-8', { fatal: true }).decode(payload)
+        parsed = parseCallCaptionPacket(JSON.parse(text))
+      } catch {
+        return
+      }
+      if (parsed === null) return
+      const verifiedPacket: CallCaptionPacket = { ...parsed, senderUserId }
+      for (const listener of this.#captionListeners) listener(verifiedPacket)
+    })
     // However the microphone got published (a previous room's enable landing on this connection,
     // a republish after a reconnect), it goes again unless the member wants it now.
     on(RoomEvent.LocalTrackPublished, (publication) => {
@@ -1473,7 +1673,10 @@ export class CallController {
     on(RoomEvent.Reconnecting, reconnecting)
     on(RoomEvent.SignalReconnecting, reconnecting)
     on(RoomEvent.Reconnected, () => {
-      if (mine() && this.#snapshot.status === 'reconnecting') this.#set({ status: 'connected' })
+      if (mine() && this.#snapshot.status === 'reconnecting') {
+        this.#set({ status: 'connected' })
+        this.#refreshCallInstanceId(session)
+      }
     })
     on(RoomEvent.AudioPlaybackStatusChanged, () => {
       if (mine()) this.#set({ playbackBlocked: !room.canPlaybackAudio })
@@ -1837,14 +2040,19 @@ export class CallController {
   #mediaAuthorized(session: Session): boolean {
     const media = session.media
     const boundary = this.#boundary(session.scopeRoomId)
-    if (media === null) return permitsPlaintext(boundary)
-    return (
+    if (media === null) return !session.grantRequiresE2ee && permitsPlaintext(boundary)
+    const ok =
       media.isActive() &&
-      media.epoch === session.mediaEpoch &&
+      session.mediaEpoch !== null &&
+      Number.isSafeInteger(media.epoch) &&
+      media.epoch >= session.mediaEpoch &&
       media.roomId === session.scopeRoomId &&
       this.#mediaEncryption?.(session.scopeRoomId) === media &&
       boundary === session.mediaBoundary
-    )
+    if (ok && media.epoch > session.mediaEpoch!) {
+      session.mediaEpoch = media.epoch
+    }
+    return ok
   }
 
   #requireMedia(session: Session): void {

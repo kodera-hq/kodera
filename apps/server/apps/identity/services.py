@@ -1,6 +1,7 @@
 """Materialized identity reads after explicit opt-in canonical membership preparation."""
 
 from dataclasses import dataclass
+from datetime import datetime
 from uuid import UUID
 
 from django.conf import settings
@@ -138,3 +139,88 @@ def read_staff_community(*, verified: VerifiedAccessToken) -> CustomerRead:
         principal.id,
         mfa_enrolled,
     )
+
+
+def ensure_rehearsal_operator_identity() -> UUID:
+    """Return an active `staff_operator` identity ID, provisioning an isolated rehearsal operator if absent."""
+    from core.db.ids import new_uuid7
+
+    from .models import STAFF_REALM, Identity, StaffRole, User
+    from .selectors import first_enabled_staff_operator_identity_id
+
+    existing = first_enabled_staff_operator_identity_id()
+    if existing is not None:
+        return existing
+
+    with transaction.atomic():
+        existing = first_enabled_staff_operator_identity_id()
+        if existing is not None:
+            return existing
+        op_id = new_uuid7()
+        user = User.objects.create(email=f"rehearsal-operator-{op_id}@staff.invalid")
+        identity = Identity.objects.create(
+            user=user,
+            realm=STAFF_REALM,
+            issuer="https://rehearsal-operator.kodera.invalid/realms/kodera-staff",
+            subject=f"rehearsal-operator-{op_id}",
+            email=user.email,
+        )
+        StaffRole.objects.create(identity=identity, realm=STAFF_REALM, role="staff_operator")
+        return UUID(str(identity.id))
+
+
+def scrub_person_contacts_and_subjects_in_account_context(*, user_id: UUID, now: datetime) -> None:
+    """Scrub `identity_user` and `identity_identity` emails and subjects inside active account worker context."""
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "UPDATE identity_identity "
+            "SET email = 'erased:' || id::text, enabled = false, updated_at = %s "
+            "WHERE user_id = %s AND (enabled OR email <> 'erased:' || id::text)",
+            [now, user_id],
+        )
+        cursor.execute(
+            "UPDATE identity_identity "
+            "SET subject = 'erased:' || id::text, updated_at = %s "
+            "WHERE user_id = %s AND NOT enabled AND subject <> 'erased:' || id::text",
+            [now, user_id],
+        )
+        cursor.execute(
+            "UPDATE identity_user "
+            "SET email = 'erased:' || id::text, display_name = NULL, enabled = false, updated_at = %s "
+            "WHERE id = %s AND (enabled OR email <> 'erased:' || id::text OR display_name IS NOT NULL)",
+            [now, user_id],
+        )
+
+
+def scrub_passport_records_for_user(
+    *,
+    user_id: UUID,
+    email_sha256s: tuple[str, ...] = (),
+) -> int:
+    """Purge Kodera Passport workspace contexts, magic-link tokens, and outbox bindings for `user_id`."""
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT to_regclass('public.identity_passportworkspacecontext') IS NOT NULL")
+        if not cursor.fetchone()[0]:
+            return 0
+        cursor.execute(
+            "DELETE FROM identity_passportworkspacecontext WHERE user_id = %s",
+            [user_id],
+        )
+        c_ctx = int(cursor.rowcount or 0)
+        cursor.execute(
+            "DELETE FROM identity_passportmagiclinktoken t "
+            "WHERE t.user_id = %s "
+            "   OR encode(sha256(convert_to(lower(btrim(t.email_normalized)), 'UTF8')), 'hex') = ANY(%s)",
+            [user_id, list(email_sha256s)],
+        )
+        c_tok = int(cursor.rowcount or 0)
+        cursor.execute(
+            "DELETE FROM identity_passportratelimitevent "
+            "WHERE occurred_at <= clock_timestamp() - interval '10 minutes'"
+        )
+        cursor.execute(
+            "DELETE FROM identity_passportoutboxbinding WHERE user_id = %s",
+            [user_id],
+        )
+        c_bind = int(cursor.rowcount or 0)
+    return c_ctx + c_tok + c_bind

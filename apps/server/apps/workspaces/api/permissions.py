@@ -25,3 +25,9 @@ PATCH_CHANNEL_ACCESS = Operation(
 GET_WORKSPACE_ADMINISTRATION = Operation(
     method="GET", operation_id="getWorkspaceAdministration", scope="workspace:read"
 )
+GET_WORKSPACE_SECURITY_POSTURE = Operation(
+    method="GET", operation_id="getWorkspaceSecurityPosture", scope="workspace:read"
+)
+REMEDIATE_WORKSPACE_SECURITY_POSTURE = Operation(
+    method="POST", operation_id="remediateWorkspaceSecurityPosture", scope="workspace:act"
+)

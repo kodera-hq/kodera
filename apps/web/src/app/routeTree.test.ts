@@ -138,6 +138,11 @@ describe('the Espace Matrix SSO callback route', () => {
 })
 
 describe('the staff plane cutover (KAD-2)', () => {
+  it('registers /booking/$bookingSlug outside /$org on rootRoute', async () => {
+    const ids = await routeIds()
+    expect(ids).toContain('/booking/$bookingSlug')
+  })
+
   it('never registers /staff/login in mock mode or oidc mode', async () => {
     setEnv({ VITE_ENABLE_MSW: '1', VITE_AUTH_MODE: 'mock' })
     expect(await routeIds()).not.toContain('/staff/login')

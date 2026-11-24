@@ -27,6 +27,11 @@
       "path": "/orders/{order_id}/actions/cancel"
     },
     {
+      "operation_id": "cancelPublicBookingReservation",
+      "method": "POST",
+      "path": "/booking/{booking_slug}/reservations/{reservation_id}/actions/cancel"
+    },
+    {
       "operation_id": "changeMembershipRole",
       "method": "PATCH",
       "path": "/organisations/{organisation_id}/memberships/{membership_id}"
@@ -82,9 +87,24 @@
       "path": "/organisations/{organisation_id}/workspace/attachments/uploads"
     },
     {
+      "operation_id": "createBookingPage",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/workspace/calendar/booking-pages"
+    },
+    {
       "operation_id": "createBugReport",
       "method": "POST",
       "path": "/organisations/{organisation_id}/support/bug-reports"
+    },
+    {
+      "operation_id": "createCaldavSource",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/workspace/calendar/sources"
+    },
+    {
+      "operation_id": "createCalendarEvent",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/workspace/calendar/events"
     },
     {
       "operation_id": "createCategory",
@@ -137,6 +157,21 @@
       "path": "/organisations/{organisation_id}/tenants"
     },
     {
+      "operation_id": "createVipPassCheckout",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/workspace/monetization/vip-passes/checkout"
+    },
+    {
+      "operation_id": "createVipTierOffer",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/workspace/monetization/vip-tiers"
+    },
+    {
+      "operation_id": "createWorkspaceBoostCheckout",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/workspace/monetization/boosts/checkout"
+    },
+    {
       "operation_id": "createWorkspaceCollection",
       "method": "POST",
       "path": "/organisations/{organisation_id}/workspace/collections"
@@ -155,6 +190,21 @@
       "operation_id": "createWorkspaceRole",
       "method": "POST",
       "path": "/organisations/{organisation_id}/workspace/roles"
+    },
+    {
+      "operation_id": "deleteBookingPage",
+      "method": "DELETE",
+      "path": "/organisations/{organisation_id}/workspace/calendar/booking-pages/{booking_page_id}"
+    },
+    {
+      "operation_id": "deleteCaldavSource",
+      "method": "DELETE",
+      "path": "/organisations/{organisation_id}/workspace/calendar/sources/{source_id}"
+    },
+    {
+      "operation_id": "deleteCalendarEvent",
+      "method": "DELETE",
+      "path": "/organisations/{organisation_id}/workspace/calendar/events/{event_id}"
     },
     {
       "operation_id": "deleteCategory",
@@ -205,6 +255,16 @@
       "operation_id": "executeWorkspaceImport",
       "method": "POST",
       "path": "/organisations/{organisation_id}/workspace/imports/execute"
+    },
+    {
+      "operation_id": "exportCalendarIcs",
+      "method": "GET",
+      "path": "/organisations/{organisation_id}/workspace/calendar/events.ics"
+    },
+    {
+      "operation_id": "exportWorkspaceDac7Report",
+      "method": "GET",
+      "path": "/organisations/{organisation_id}/workspace/monetization/dac7-report"
     },
     {
       "operation_id": "generateDpa",
@@ -287,6 +347,11 @@
       "path": "/legal-documents/{code}/{version}/{locale}"
     },
     {
+      "operation_id": "getLiveCallCaptionSession",
+      "method": "GET",
+      "path": "/organisations/{organisation_id}/workspace/channels/{channel_id}/call-captions/session"
+    },
+    {
       "operation_id": "getMe",
       "method": "GET",
       "path": "/me"
@@ -330,6 +395,11 @@
       "operation_id": "getPaymentLink",
       "method": "GET",
       "path": "/invoices/{invoice_id}/payment-link"
+    },
+    {
+      "operation_id": "getPublicBookingPage",
+      "method": "GET",
+      "path": "/booking/{booking_slug}"
     },
     {
       "operation_id": "getPushPublicKey",
@@ -407,6 +477,11 @@
       "path": "/organisations/{organisation_id}/workspace/privacy/exports/{request_id}/download"
     },
     {
+      "operation_id": "getWorkspaceMonetization",
+      "method": "GET",
+      "path": "/organisations/{organisation_id}/workspace/monetization"
+    },
+    {
       "operation_id": "getWorkspaceProfile",
       "method": "GET",
       "path": "/organisations/{organisation_id}/workspace/profile"
@@ -420,6 +495,11 @@
       "operation_id": "getWorkspaceQuotaUsage",
       "method": "GET",
       "path": "/organisations/{organisation_id}/workspace/quotas/usage"
+    },
+    {
+      "operation_id": "getWorkspaceSecurityPosture",
+      "method": "GET",
+      "path": "/organisations/{organisation_id}/workspace/security-posture"
     },
     {
       "operation_id": "grantSingleChannelGuest",
@@ -445,6 +525,21 @@
       "operation_id": "listAbuseReports",
       "method": "GET",
       "path": "/organisations/{organisation_id}/workspace/reports"
+    },
+    {
+      "operation_id": "listBookingPages",
+      "method": "GET",
+      "path": "/organisations/{organisation_id}/workspace/calendar/booking-pages"
+    },
+    {
+      "operation_id": "listCaldavSources",
+      "method": "GET",
+      "path": "/organisations/{organisation_id}/workspace/calendar/sources"
+    },
+    {
+      "operation_id": "listCalendarEvents",
+      "method": "GET",
+      "path": "/organisations/{organisation_id}/workspace/calendar/events"
     },
     {
       "operation_id": "listCapacityTiers",
@@ -682,6 +777,11 @@
       "path": "/organisations/{organisation_id}/confidential/devices"
     },
     {
+      "operation_id": "remediateWorkspaceSecurityPosture",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/workspace/security-posture/actions/remediate"
+    },
+    {
       "operation_id": "removeMembership",
       "method": "DELETE",
       "path": "/organisations/{organisation_id}/memberships/{membership_id}"
@@ -715,6 +815,11 @@
       "operation_id": "resendInvitation",
       "method": "POST",
       "path": "/invitations/{invitation_id}/actions/resend"
+    },
+    {
+      "operation_id": "reservePublicBookingSlot",
+      "method": "POST",
+      "path": "/booking/{booking_slug}/reservations"
     },
     {
       "operation_id": "resolveAbuseReport",
@@ -782,9 +887,24 @@
       "path": "/organisations/{organisation_id}/workspace/members/{membership_id}/roles"
     },
     {
+      "operation_id": "startCreatorConnectOnboarding",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/workspace/monetization/connect/onboarding"
+    },
+    {
       "operation_id": "switchPassportWorkspace",
       "method": "POST",
       "path": "/auth/passport/switch-workspace"
+    },
+    {
+      "operation_id": "syncCaldavSource",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/workspace/calendar/sources/{source_id}/actions/sync"
+    },
+    {
+      "operation_id": "transcribeLiveCallChunk",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/workspace/channels/{channel_id}/call-captions/chunks"
     },
     {
       "operation_id": "transcribeVoiceNote",
@@ -797,6 +917,11 @@
       "path": "/organisations/{organisation_id}/workspace/partner-agreements/{agreement_id}/actions/transition"
     },
     {
+      "operation_id": "translateChannelMessage",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/workspace/channels/{channel_id}/actions/translate-message"
+    },
+    {
       "operation_id": "unarchiveChannel",
       "method": "POST",
       "path": "/organisations/{organisation_id}/workspace/channels/{channel_id}/actions/unarchive"
@@ -805,6 +930,16 @@
       "operation_id": "unfurlUrl",
       "method": "POST",
       "path": "/organisations/{organisation_id}/workspace/unfurl"
+    },
+    {
+      "operation_id": "updateCalendarEvent",
+      "method": "PATCH",
+      "path": "/organisations/{organisation_id}/workspace/calendar/events/{event_id}"
+    },
+    {
+      "operation_id": "updateLiveCallCaptionSession",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/workspace/channels/{channel_id}/call-captions/session"
     },
     {
       "operation_id": "updateWorkspaceCollection",

@@ -16,6 +16,14 @@ ROOT = Path(__file__).resolve().parents[1]
 TENANT_ROLES = ["org_owner", "org_admin", "org_billing", "org_member"]
 KEY_REF = "#/components/parameters/IdempotencyKey"
 REPLAYED_REF = {"$ref": "#/components/headers/IdempotencyReplayed"}
+EPHEMERAL_NO_2XX_REPLAY_OPERATIONS = frozenset(
+    {
+        "reservePublicBookingSlot",
+        "cancelPublicBookingReservation",
+        "translateChannelMessage",
+        "transcribeLiveCallChunk",
+    }
+)
 REPLAYABLE_SHARED = (
     "MalformedRequest",
     "NotFound",
@@ -154,9 +162,17 @@ def assert_contract(contract, authz):
     count = 0
     for _, op in keyed_posts(contract):
         count += 1
+        op_id = op.get("operationId")
+        if op_id in EPHEMERAL_NO_2XX_REPLAY_OPERATIONS:
+            assert "Return no Idempotency-Replayed header." in op.get("description", ""), (
+                "replay-header"
+            )
         for status, response in op["responses"].items():
             if "$ref" in response:
                 continue  # a shared response: REPLAYABLE_SHARED is checked below
+            if op_id in EPHEMERAL_NO_2XX_REPLAY_OPERATIONS and status.startswith("2"):
+                assert "Idempotency-Replayed" not in response.get("headers", {}), "replay-header"
+                continue
             replayable = status.startswith("2") or (
                 status.startswith("4") and status not in {"401", "408", "429"}
             )
@@ -277,6 +293,11 @@ def unmark_shared(c):
     c["components"]["responses"]["Conflict"]["headers"].pop("Idempotency-Replayed")
 
 
+def mark_ephemeral_2xx_replay(c):
+    op = next(op for _, op in keyed_posts(c) if op["operationId"] == "translateChannelMessage")
+    op["responses"]["200"]["headers"]["Idempotency-Replayed"] = REPLAYED_REF
+
+
 def drop_first_seen(c):
     c["components"]["schemas"]["Problem"]["properties"].pop("first_seen_at")
 
@@ -344,6 +365,7 @@ MUTANTS = {
     "unmark-inline": (unmark_replay, "replay-header"),
     "unmark-shared": (unmark_shared, "replay-header"),
     "unmark-quota": (unmark_quota_replay, "replay-header"),
+    "ephemeral-2xx-replay": (mark_ephemeral_2xx_replay, "replay-header"),
     "first-seen": (drop_first_seen, "first-seen"),
     "count": (recount, "key-count"),
     "pattern": (loosen_pattern, "key-pattern"),

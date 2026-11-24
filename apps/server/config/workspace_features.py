@@ -43,6 +43,10 @@ def ai_seal_key(environment: Mapping[str, str]) -> bytes | None:
     return key_from_environment(environment, "KODERA_AI_SEAL_KEY")
 
 
+def calendar_seal_key(environment: Mapping[str, str]) -> bytes | None:
+    return key_from_environment(environment, "KODERA_CALENDAR_SEAL_KEY")
+
+
 def media_gateway_socket(environment: Mapping[str, str]) -> str | None:
     value = environment.get("KODERA_MEDIA_GATEWAY_SOCKET", "")
     if not value:

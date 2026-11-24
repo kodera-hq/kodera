@@ -1,16 +1,21 @@
 """The payment-provider port: what Core asks of a provider, and what a provider tells Core.
 
 The provider is not chosen yet, so Core depends on this port only. An adapter creates a payment
-link for one invoice and turns a delivered webhook into a `ProviderEvent`, refusing one whose
-signature it cannot verify. Core never sends or stores a card number, an IBAN or a provider
-secret; it keeps the provider's references (docs/domain/BILLING_MODEL.md §8).
+link for one invoice (or Volet B VIP pass) and turns a delivered webhook into a `ProviderEvent`,
+refusing one whose signature it cannot verify. Core never sends or stores a card number, an IBAN
+or a provider secret; it keeps the provider's references (docs/domain/BILLING_MODEL.md §8).
 """
 
+import re
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Protocol
 from uuid import UUID
+
+CONNECT_ACCOUNT_ID = re.compile(r"^acct_[A-Za-z0-9_]+\Z")
+ALLOWED_PAYMENT_METHODS = frozenset({"card", "sepa_debit"})
+ALLOWED_REFERENCE_KINDS = frozenset({"invoice", "vip_pass"})
 
 EVENT_KINDS = (
     "payment.processing",
@@ -30,6 +35,58 @@ class LinkRequest:
     expires_at: datetime
     return_url: str | None
     locale: str
+    connect_destination_account: str | None = None
+    application_fee_amount_minor: int | None = None
+    metadata: Mapping[str, str] | None = None
+    payment_methods: tuple[str, ...] = ("card", "sepa_debit")
+    reference_kind: str = "invoice"
+    checkout_label: str | None = None
+
+    def __post_init__(self) -> None:
+        if isinstance(self.amount_minor, bool) or self.amount_minor <= 0:
+            raise ProviderRefusedError("link amount_minor must be a positive integer")
+        if (
+            not self.payment_methods
+            or any(m not in ALLOWED_PAYMENT_METHODS for m in self.payment_methods)
+        ):
+            raise ProviderRefusedError("payment_methods must be a non-empty subset of card/sepa_debit")
+        if self.reference_kind not in ALLOWED_REFERENCE_KINDS:
+            raise ProviderRefusedError(f"unsupported reference_kind {self.reference_kind!r}")
+        if self.connect_destination_account is None:
+            if self.application_fee_amount_minor is not None:
+                raise ProviderRefusedError(
+                    "application_fee_amount_minor requires connect_destination_account"
+                )
+            return
+        if not CONNECT_ACCOUNT_ID.fullmatch(self.connect_destination_account):
+            raise ProviderRefusedError("connect_destination_account must be a valid acct_ id")
+        fee = self.application_fee_amount_minor
+        if (
+            fee is None
+            or isinstance(fee, bool)
+            or not isinstance(fee, int)
+            or fee < 0
+            or fee >= self.amount_minor
+        ):
+            raise ProviderRefusedError(
+                "application_fee_amount_minor must satisfy 0 <= fee < amount_minor"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class ConnectAccountSnapshot:
+    account_id: str
+    charges_enabled: bool
+    payouts_enabled: bool
+    details_submitted: bool
+    restricted_reason: str | None = None
+    metadata: Mapping[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class ConnectOnboardingLink:
+    url: str
+    expires_at: datetime
 
 
 @dataclass(frozen=True, slots=True)

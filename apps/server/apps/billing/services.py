@@ -919,3 +919,20 @@ def order_result(placed: PlacedOrder) -> dict[str, Any]:
         "dpa": dpa_representation_by_id(dpa_id=placed.dpa_id),
         "billing_pending": True,
     }
+
+
+def disarm_rehearsal_outbound(*, now: datetime) -> dict[str, int]:
+    """Expire active or pending-withdrawal payment links so rehearsal runs never call providers."""
+    if not connection.in_atomic_block:
+        raise RuntimeError("disarm_rehearsal_outbound requires an enclosing atomic transaction")
+    from django.db.models import F
+    from django.db.models.functions import Least
+
+    disarmed = PaymentLink.objects.filter(
+        Q(state="active") | Q(state="cancelled", expires_at__gt=now)
+    ).update(
+        state="expired",
+        expires_at=Least(F("expires_at"), now),
+        updated_at=now,
+    )
+    return {"payment_links_disarmed": int(disarmed)}

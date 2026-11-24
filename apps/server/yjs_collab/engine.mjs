@@ -7,10 +7,39 @@ import { nfc } from './title-key.mjs'
 
 export const MAX_MARKDOWN = 262144
 export const MAX_STATE = 2 * 1024 * 1024
+export const MAX_WHITEBOARD_STATE = 1024 * 1024
 export const MAX_BLOCKS = 5000
+export const MAX_WHITEBOARD_ELEMENTS = 2000
+export const WHITEBOARD_COORD_BOUND = 100000
+export const MAX_WHITEBOARD_TEXT = 512
+export const MAX_WHITEBOARD_POINTS = 1024
+export const MAX_WHITEBOARD_TOTAL_POINTS = 50000
+export const ALLOWED_WHITEBOARD_KINDS = new Set(['pen', 'rect', 'ellipse', 'arrow', 'sticky', 'text'])
+export const ALLOWED_WHITEBOARD_COLORS = new Set(['ink', 'muted', 'accent', 'success', 'warning', 'danger'])
 export class Refused extends Error {
   constructor(reason = 'invalid document state') { super(reason); this.name = 'Refused' }
 }
+
+const ALLOWED_SHARED_KEYS = new Set(['prosemirror', 'content', 'whiteboard', 'whiteboard_elements'])
+const FORBIDDEN_OBJECT_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
+const ALLOWED_WHITEBOARD_ELEMENT_KEYS = new Set([
+  'id',
+  'kind',
+  'x',
+  'y',
+  'width',
+  'height',
+  'x2',
+  'y2',
+  'points',
+  'color',
+  'fill',
+  'strokeWidth',
+  'text',
+  'authorId',
+])
+const WHITEBOARD_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/
+const CONTROL_CHAR_PATTERN = /[\u0000-\u0008\u000b-\u001f\u007f]/
 
 const ALLOWED_CALLOUT_TONES = new Set(['info', 'warning', 'success', 'danger'])
 const CODE_NODE_NAMES = new Set(['code_block', 'codeBlock', 'diagramBlock'])
@@ -247,9 +276,249 @@ function toTiptapJson(json) {
   return next
 }
 
+function validCoord(value) {
+  return typeof value === 'number' && Number.isFinite(value) && value >= -WHITEBOARD_COORD_BOUND && value <= WHITEBOARD_COORD_BOUND
+}
+
+function assertPureYArray(arr) {
+  if (arr._map && arr._map.size > 0) {
+    throw new Refused('invalid whiteboard array map channel')
+  }
+}
+
+function assertPureYMap(map) {
+  if (map._start !== null && map._start !== undefined) {
+    throw new Refused('invalid whiteboard map sequence channel')
+  }
+}
+
+function readPlainMapOrObject(item) {
+  if (item instanceof Y.Map) {
+    assertPureYMap(item)
+    if (item.size > 16) throw new Refused('invalid whiteboard element')
+    const out = Object.create(null)
+    for (const [key, value] of item.entries()) {
+      if (typeof key !== 'string' || FORBIDDEN_OBJECT_KEYS.has(key) || !ALLOWED_WHITEBOARD_ELEMENT_KEYS.has(key)) {
+        throw new Refused('invalid whiteboard element')
+      }
+      out[key] = value
+    }
+    return out
+  }
+  if (!item || typeof item !== 'object' || Array.isArray(item)) {
+    throw new Refused('invalid whiteboard element')
+  }
+  const proto = Object.getPrototypeOf(item)
+  if (proto !== Object.prototype && proto !== null) {
+    throw new Refused('invalid whiteboard element')
+  }
+  const keys = Object.getOwnPropertyNames(item)
+  if (keys.length > 16 || Object.getOwnPropertySymbols(item).length > 0) {
+    throw new Refused('invalid whiteboard element')
+  }
+  const out = Object.create(null)
+  for (const key of keys) {
+    if (FORBIDDEN_OBJECT_KEYS.has(key) || !ALLOWED_WHITEBOARD_ELEMENT_KEYS.has(key)) {
+      throw new Refused('invalid whiteboard element')
+    }
+    out[key] = item[key]
+  }
+  return out
+}
+
+function validateWhiteboardPoints(rawPoints) {
+  if (rawPoints instanceof Y.Array) {
+    assertPureYArray(rawPoints)
+  }
+  const list = rawPoints instanceof Y.Array ? rawPoints.toArray() : rawPoints
+  if (!Array.isArray(list) || list.length < 1 || list.length > MAX_WHITEBOARD_POINTS) {
+    throw new Refused('invalid whiteboard stroke points')
+  }
+  for (const pt of list) {
+    if (Array.isArray(pt)) {
+      if (pt.length !== 2 || !validCoord(pt[0]) || !validCoord(pt[1])) {
+        throw new Refused('whiteboard coordinate out of bounds')
+      }
+    } else if (pt && typeof pt === 'object') {
+      const keys = Object.getOwnPropertyNames(pt)
+      if (
+        keys.length !== 2 ||
+        !keys.includes('x') ||
+        !keys.includes('y') ||
+        Object.getOwnPropertySymbols(pt).length > 0 ||
+        !validCoord(pt.x) ||
+        !validCoord(pt.y)
+      ) {
+        throw new Refused('whiteboard coordinate out of bounds')
+      }
+    } else {
+      throw new Refused('invalid whiteboard stroke points')
+    }
+  }
+  return list.length
+}
+
+function validateWhiteboardElement(rawItem) {
+  const item = readPlainMapOrObject(rawItem)
+  if (typeof item.id !== 'string' || !WHITEBOARD_ID_PATTERN.test(item.id)) {
+    throw new Refused('invalid whiteboard element id')
+  }
+  if (typeof item.kind !== 'string' || !ALLOWED_WHITEBOARD_KINDS.has(item.kind)) {
+    throw new Refused('invalid whiteboard element kind')
+  }
+  if (!validCoord(item.x) || !validCoord(item.y)) {
+    throw new Refused('whiteboard coordinate out of bounds')
+  }
+  if (typeof item.color !== 'string' || !ALLOWED_WHITEBOARD_COLORS.has(item.color)) {
+    throw new Refused('invalid whiteboard color token')
+  }
+  if (item.fill !== undefined && item.fill !== 'none' && (typeof item.fill !== 'string' || !ALLOWED_WHITEBOARD_COLORS.has(item.fill))) {
+    throw new Refused('invalid whiteboard color token')
+  }
+  if (item.strokeWidth !== undefined) {
+    if (typeof item.strokeWidth !== 'number' || !Number.isFinite(item.strokeWidth) || item.strokeWidth < 0.5 || item.strokeWidth > 64) {
+      throw new Refused('invalid whiteboard stroke width')
+    }
+  }
+  if (item.authorId !== undefined) {
+    if (typeof item.authorId !== 'string' || item.authorId.length > 128 || !item.authorId.isWellFormed() || CONTROL_CHAR_PATTERN.test(item.authorId)) {
+      throw new Refused('invalid whiteboard author')
+    }
+  }
+  if (item.text !== undefined) {
+    if (
+      typeof item.text !== 'string' ||
+      !item.text.isWellFormed() ||
+      item.text.includes('\0') ||
+      CONTROL_CHAR_PATTERN.test(item.text) ||
+      [...item.text].length > MAX_WHITEBOARD_TEXT
+    ) {
+      throw new Refused('whiteboard text exceeds limit')
+    }
+    if (item.kind === 'pen' && item.text.length > 0) {
+      throw new Refused('invalid whiteboard element')
+    }
+  }
+  let pointCount = 0
+  if (item.kind === 'pen') {
+    pointCount = validateWhiteboardPoints(item.points)
+  } else if (item.points !== undefined) {
+    throw new Refused('invalid whiteboard element')
+  }
+  if (item.kind === 'rect' || item.kind === 'ellipse' || item.kind === 'sticky') {
+    if (!validCoord(item.width) || !validCoord(item.height) || !validCoord(item.x + item.width) || !validCoord(item.y + item.height)) {
+      throw new Refused('whiteboard coordinate out of bounds')
+    }
+  } else if (item.width !== undefined || item.height !== undefined) {
+    if (item.kind === 'text') {
+      if (
+        (item.width !== undefined && (!validCoord(item.width) || !validCoord(item.x + item.width))) ||
+        (item.height !== undefined && (!validCoord(item.height) || !validCoord(item.y + item.height)))
+      ) {
+        throw new Refused('whiteboard coordinate out of bounds')
+      }
+    } else {
+      throw new Refused('invalid whiteboard element')
+    }
+  }
+  if (item.kind === 'arrow') {
+    if (!validCoord(item.x2) || !validCoord(item.y2)) {
+      throw new Refused('whiteboard coordinate out of bounds')
+    }
+  } else if (item.x2 !== undefined || item.y2 !== undefined) {
+    throw new Refused('invalid whiteboard element')
+  }
+  return { id: item.id, pointCount }
+}
+
+export function validateWhiteboard(doc) {
+  const hasMap = doc.share.has('whiteboard')
+  const hasArray = doc.share.has('whiteboard_elements')
+  if (!hasMap && !hasArray) return 0
+  let total = 0
+  let totalPoints = 0
+  const seenIds = new Set()
+  const recordElement = raw => {
+    if (++total > MAX_WHITEBOARD_ELEMENTS) {
+      throw new Refused('whiteboard element limit exceeded')
+    }
+    const { id, pointCount } = validateWhiteboardElement(raw)
+    totalPoints += pointCount
+    if (totalPoints > MAX_WHITEBOARD_TOTAL_POINTS) {
+      throw new Refused('whiteboard total points limit exceeded')
+    }
+    if (seenIds.has(id)) {
+      throw new Refused('duplicate whiteboard element id')
+    }
+    seenIds.add(id)
+  }
+  if (hasArray) {
+    const arr = doc.getArray('whiteboard_elements')
+    assertPureYArray(arr)
+    if (arr.length > MAX_WHITEBOARD_ELEMENTS) {
+      throw new Refused('whiteboard element limit exceeded')
+    }
+    for (const entry of arr.toArray()) {
+      recordElement(entry)
+    }
+  }
+  if (hasMap) {
+    const map = doc.getMap('whiteboard')
+    assertPureYMap(map)
+    if (map.size > MAX_WHITEBOARD_ELEMENTS + 4) {
+      throw new Refused('whiteboard element limit exceeded')
+    }
+    for (const [key, value] of map.entries()) {
+      if (typeof key !== 'string' || FORBIDDEN_OBJECT_KEYS.has(key)) {
+        throw new Refused('invalid whiteboard metadata')
+      }
+      if (key === 'title') {
+        if (typeof value !== 'string' || !value.isWellFormed() || CONTROL_CHAR_PATTERN.test(value) || [...value].length > 128) {
+          throw new Refused('invalid whiteboard metadata')
+        }
+      } else if (key === 'grid') {
+        if (typeof value !== 'boolean') {
+          throw new Refused('invalid whiteboard metadata')
+        }
+      } else if (key === 'version') {
+        if (value !== 1) {
+          throw new Refused('invalid whiteboard metadata')
+        }
+      } else if (key === 'elements') {
+        if (value instanceof Y.Array) {
+          assertPureYArray(value)
+        }
+        const list = value instanceof Y.Array ? value.toArray() : value
+        if (!Array.isArray(list) || list.length > MAX_WHITEBOARD_ELEMENTS) {
+          throw new Refused('whiteboard element limit exceeded')
+        }
+        for (const entry of list) {
+          recordElement(entry)
+        }
+      } else if (WHITEBOARD_ID_PATTERN.test(key)) {
+        if (++total > MAX_WHITEBOARD_ELEMENTS) {
+          throw new Refused('whiteboard element limit exceeded')
+        }
+        const { id, pointCount } = validateWhiteboardElement(value)
+        totalPoints += pointCount
+        if (totalPoints > MAX_WHITEBOARD_TOTAL_POINTS) {
+          throw new Refused('whiteboard total points limit exceeded')
+        }
+        if (id !== key || seenIds.has(id)) {
+          throw new Refused('invalid whiteboard element id')
+        }
+        seenIds.add(id)
+      } else {
+        throw new Refused('invalid whiteboard metadata')
+      }
+    }
+  }
+  return total
+}
+
 function selectFragmentName(doc, forReplace = false) {
   for (const key of doc.share.keys()) {
-    if (key !== 'prosemirror' && key !== 'content') throw new Refused('unknown shared document type')
+    if (!ALLOWED_SHARED_KEYS.has(key)) throw new Refused('unknown shared document type')
   }
   const hasProsemirror = doc.share.has('prosemirror')
   const hasContent = doc.share.has('content')
@@ -265,6 +534,9 @@ function selectFragmentName(doc, forReplace = false) {
   if (forReplace) return 'content'
   if (contentLength > 0) return 'content'
   if (prosemirrorLength > 0) return 'prosemirror'
+  if (!hasProsemirror && !hasContent && (doc.share.has('whiteboard') || doc.share.has('whiteboard_elements'))) {
+    return null
+  }
   return hasContent && !hasProsemirror ? 'content' : 'prosemirror'
 }
 
@@ -291,13 +563,26 @@ export function apply(doc, update) {
     const decoded = Y.decodeUpdate(update)
     if (decoded.structs.length > 100000 || decoded.structs.reduce((total, item) => total + item.length, 0) > 1000000) throw new Refused('update structure exceeds limit')
     Y.applyUpdate(doc, update)
+    if (doc.share.has('whiteboard') || doc.share.has('whiteboard_elements')) {
+      if (update.byteLength > MAX_WHITEBOARD_STATE || Y.encodeStateAsUpdate(doc).byteLength > MAX_WHITEBOARD_STATE) {
+        throw new Refused('whiteboard binary state exceeds limit')
+      }
+    }
   } catch (error) { throw error instanceof Refused ? error : new Refused() }
 }
 
 export function inspect(doc) {
   if (doc.store.pendingStructs !== null || doc.store.pendingDs !== null) throw new Refused('incomplete causal state requires resynchronization')
   const field = selectFragmentName(doc, false)
+  const hasWhiteboard = doc.share.has('whiteboard') || doc.share.has('whiteboard_elements')
+  const maxStateBytes = hasWhiteboard ? MAX_WHITEBOARD_STATE : MAX_STATE
   try {
+    const whiteboardCount = validateWhiteboard(doc)
+    if (field === null || (whiteboardCount > 0 && doc.getXmlFragment(field).length === 0)) {
+      const state = Y.encodeStateAsUpdate(doc)
+      if (state.byteLength > maxStateBytes) throw new Refused('binary state exceeds limit')
+      return { markdown: '', state, links: [] }
+    }
     const fragment = doc.getXmlFragment(field)
     // Walk native Y nodes before recursive conversion, bounding nesting and attributes.
     const pending = fragment.toArray().map(node => [node, 1])
@@ -338,7 +623,7 @@ export function inspect(doc) {
     const markdown = collabMarkdownSerializer.serialize(native)
     if (!markdown.isWellFormed() || markdown.includes('\0') || [...markdown].length > MAX_MARKDOWN) throw new Refused('markdown exceeds limit')
     const state = Y.encodeStateAsUpdate(doc)
-    if (state.byteLength > MAX_STATE) throw new Refused('binary state exceeds limit')
+    if (state.byteLength > maxStateBytes) throw new Refused('binary state exceeds limit')
     const links = new Set()
     native.descendants((node, _position, parent) => {
       if (CODE_NODE_NAMES.has(node.type.name)) return false

@@ -1,6 +1,6 @@
 # Confidential media worker transforms
 
-Status: Implemented client capability; interoperable packetizer qualification and server epoch discovery remain deferred.
+Status: Implemented client capability (`KSM1` and RFC 9605-aligned `SFrame` v1 with OpenMLS epoch binding).
 
 ## Contract
 
@@ -11,12 +11,17 @@ provider remains empty: no secret string, byte array or derived key enters its m
 The capability refuses creation when neither script transforms nor bidirectional encoded streams
 are available.
 
-Encoded audio and video payloads are fully encrypted with HKDF-SHA-256 and AES-256-GCM. The
-SFrame-aligned `KSM1` authenticated header records epoch/key index, sender, track kind, monotonic
-frame counter, ratchet index and random nonce. AAD and derivation bind the room and these fields.
-This is a versioned application framing format, not an assertion of RFC wire compatibility.
+Two versioned wire profiles are supported inside the worker:
+- `ksm1` (default legacy envelope): full-payload AES-256-GCM encryption with the `KSM1` metadata header.
+- `sframe-v1` (RFC 9605-aligned media framing): two-stage `HKDF-SHA-256` (`kodera-sframe-media-v1`)
+  binding `room_id`, `epoch` (`u64` BE), `sender_device_id`, `track_kind`, and `ratchet_step` (`u16` BE);
+  canonical minimal RFC 9605 header (`config_byte || key_id || counter`); deterministic per-sender
+  `base_salt XOR counter` AES-256-GCM nonces; and a codec-packetizer-safe cleartext prefix (`0` bytes for
+  Opus audio; configurable `<= 64` bytes for VP8/H.264/AV1 payload descriptors) authenticated in AAD
+  alongside every header byte.
+
 Track attribution is checked against the decoder's participant identity. Per-sender/track-kind replay
-state uses an authenticated 1024-frame window so independent camera/screen receiver scheduling
+state uses an authenticated 1024-frame sliding window so independent camera/screen receiver scheduling
 can reorder counters; duplicates and counters older than the window are refused. Replay updates
 are serialized, bounded and committed only after successful authentication.
 
@@ -25,28 +30,18 @@ The worker supports LiveKit's `init`, `enable`, transferred encode/decode stream
 wrong sender, unauthenticated frames and cryptographic failures close the worker session. A
 TransformStream encrypts/decrypts before enqueue and rechecks active authority after each await.
 Media session retirement terminates the worker and causes subscribed call controllers to end
-capture and disconnect. Main-thread key injection and SDK key-export ratchets are refused. Codec updates preserve the exact local sender binding;
-receiver transceiver reuse explicitly rebinds the retained pipeline to the new participant/track.
-Detached receiver pipelines discard frames until re-admitted. Each binding revision is checked
-after asynchronous crypto, so an old in-flight frame cannot be applied after reassignment.
-Retirement aborts every pipeline and replaced worker-owned frame storage is erased.
+capture and disconnect. Main-thread key injection and SDK key-export ratchets are refused.
 
-The worker-only `ratchetEpochKey` step derives a one-way successor secret and erases the prior
-secret, counters and replay state. It does not retain old receive keys. Both peers must take the
-same monotonic epoch step; fresh epoch bytes without the same ratchet history cannot decrypt
-ratcheted frames. Production epoch replacement retires the previous call capability.
+Live epoch rotation (`rotateEpochKey` / `rotate-epoch-key` over the worker-owned `epochPort`)
+immediately zeroizes and retires prior send keys, retains at most one immediately preceding receive
+epoch for a bounded 2-second (`2000 ms`) grace window for in-flight SFU packets, and enforces strict
+immediate purge (`0 ms` grace) when `memberRemoved: true`.
 
 ## Evidence
 
-`media-crypto.worker.test.ts` covers audio/video round trips, cross-epoch ratchet isolation,
-wrong-room/participant/track refusal, tag tampering, replay races, mutation/retirement, unsafe
-buffers, direct key ports, TransformStream processing, downgrade/key-injection refusal,
-transform feature detection and document-context import refusal.
-
-## Limits
-
-Full-payload encryption needs browser and codec packetizer qualification before a deployment
-can admit a protected media session. Local browser qualification is outside this lane's resource
-allowance. Existing Core endpoints provide no MLS room-session discovery and this capability
-claims no verified human cross-signing. Ordinary room behavior remains unchanged; protected
-rooms without an explicitly active compatible capability remain unavailable before token/capture.
+`media-crypto.worker.test.ts` covers audio/video round trips, `packages/kodera-rs/vectors/sframe-media-v1.json`
+byte-for-byte golden vector parity between Rust and WebCrypto, VP8/H.264/AV1 unencrypted prefix AAD tamper
+refusal, live `rotateEpochKey` 2-second grace window and immediate `memberRemoved: true` purge, cross-epoch
+ratchet isolation, wrong-room/participant/track refusal, tag tampering, replay races, mutation/retirement,
+unsafe buffers, direct key ports, TransformStream processing, downgrade/key-injection refusal, transform
+feature detection and document-context import refusal.

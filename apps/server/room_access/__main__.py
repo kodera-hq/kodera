@@ -12,6 +12,31 @@ from .server import GrantLimiter, make_token_server, make_webhook_server
 from .service import Service
 
 
+def build_service(
+    config: Config,
+    *,
+    matrix: Matrix | None = None,
+    livekit: LiveKit | None = None,
+) -> Service:
+    """Construct the production `room_access` `Service` with authoritative confidential E2EE verification."""
+    livekit_client = livekit or LiveKit(
+        config.livekit_url, config.livekit_key, config.livekit_secret
+    )
+    matrix_client = matrix or Matrix(config.synapse_url, config.matrix_token)
+    return Service(
+        matrix_client,
+        livekit_client,
+        config.livekit_ws_url,
+        config.agent_user,
+        config.token_ttl_s,
+        ai_users=config.ai_users,
+        e2ee_room_ready=matrix_client.confidential_room_ready_checker(config.agent_user),
+        authority=CoreAuthority(config.core_authority_origin, config.core_authority_token)
+        if config.core_authority_origin
+        else None,
+    )
+
+
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     try:
@@ -21,17 +46,7 @@ def main() -> int:
         return 2
     livekit = LiveKit(config.livekit_url, config.livekit_key, config.livekit_secret)
     matrix = Matrix(config.synapse_url, config.matrix_token)
-    service = Service(
-        matrix,
-        livekit,
-        config.livekit_ws_url,
-        config.agent_user,
-        config.token_ttl_s,
-        ai_users=config.ai_users,
-        authority=CoreAuthority(config.core_authority_origin, config.core_authority_token)
-        if config.core_authority_origin
-        else None,
-    )
+    service = build_service(config, matrix=matrix, livekit=livekit)
     for server in (
         make_token_server(
             config.api_bind,

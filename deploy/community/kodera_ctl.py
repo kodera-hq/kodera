@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import errno
 import hashlib
 import hmac
 import importlib.util
@@ -25,13 +26,15 @@ import ssl
 import stat
 import subprocess
 import sys
+import tarfile
 import tempfile
 import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -61,6 +64,41 @@ SECRET_KEY_NAME_RE = re.compile(
 PINNED_IMAGE_VALUE_RE = re.compile(
     r"^(?:sha256:[0-9a-f]{64}|[A-Za-z0-9][A-Za-z0-9._:/@-]{1,255})$"
 )
+REHEARSAL_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
+PG_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,62}$")
+REHEARSAL_RECEIPTS_DIR_NAME = "rehearsal-receipts"
+REHEARSAL_RUNTIME_SERVICES: tuple[str, ...] = (
+    "valkey",
+    "proximity-broker",
+    "media-storage-worker",
+    "yjs-collab",
+    "synapse",
+    "server",
+)
+REHEARSAL_KILL_SWITCH_ENV: tuple[tuple[str, str], ...] = (
+    ("KODERA_REHEARSAL_NO_EGRESS", "1"),
+    ("KODERA_BILLING_ENABLED", "false"),
+    ("KODERA_AI_GATEWAY_ENABLED", "false"),
+    ("KODERA_E2EE_RELAY_ENABLED", "false"),
+    ("KODERA_STRIPE_SECRET_KEY", ""),
+    ("KODERA_STRIPE_WEBHOOK_SECRET", ""),
+    ("KODERA_MAIL_SMTP_URL", ""),
+    ("KODERA_MAIL_SMTP_PASSWORD", ""),
+    ("KODERA_SUPPORT_MAILBOX", ""),
+    ("KODERA_SYNAPSE_URL", ""),
+    ("KODERA_SYNAPSE_ADMIN_TOKEN", ""),
+    ("KODERA_AI_MISTRAL_API_KEY", ""),
+    ("KODERA_GITHUB_TRIAGE_REPO", ""),
+    ("KODERA_GITHUB_APP_ID", ""),
+    ("KODERA_GITHUB_INSTALLATION_ID", ""),
+    ("KODERA_FEDERATION_MODE", "closed"),
+    ("KODERA_MATRIX_FEDERATION_ALLOWLIST", ""),
+)
+_DARWIN_ROOT_ALIASES: dict[str, tuple[str, ...]] = {
+    "var": ("private", "var"),
+    "tmp": ("private", "tmp"),
+    "etc": ("private", "etc"),
+}
 
 TERMINATE_BACKENDS_SQL = (
     "SELECT pg_terminate_backend(pid) "
@@ -127,6 +165,10 @@ class CtlPostflightError(CtlError):
 
 class CtlRollbackError(CtlError):
     """Raised when rollback verification or database/service restore fails."""
+
+
+class CtlRehearsalError(CtlError):
+    """Raised when an isolated backup/restore rehearsal fails closed."""
 
 
 @dataclass(frozen=True)
@@ -1131,11 +1173,13 @@ def capture_running_images(
     expected = expected_recovery_services(
         ctx.topology, governance_enabled=ctx.governance_enabled
     )
-    expected_set = set(expected)
+    include_migrate = "migrate" in services_spec
+    inspect_targets = (*expected, "migrate") if include_migrate else expected
+    inspect_set = set(inspect_targets)
 
     present_services: set[str] = set()
-    recorded: dict[str, dict[str, str]] = {svc: {} for svc in expected}
-    for svc_name in expected:
+    recorded: dict[str, dict[str, str]] = {svc: {} for svc in inspect_targets}
+    for svc_name in inspect_targets:
         spec = services_spec.get(svc_name)
         if spec and spec.image:
             recorded[svc_name]["configured_image"] = spec.image
@@ -1150,7 +1194,7 @@ def capture_running_images(
             svc = str(entry.get("Service") or entry.get("service") or "").strip()
             cid = str(entry.get("ID") or entry.get("Id") or "").strip()
             img_label = str(entry.get("Image") or "").strip()
-            if svc not in expected_set:
+            if svc not in inspect_set:
                 continue
             present_services.add(svc)
             info = recorded[svc]
@@ -1178,9 +1222,11 @@ def capture_running_images(
                     except ValueError:
                         pass
 
-    # 2. For any expected service (e.g. one-shot init or static image) not resolved from `ps -a`,
+    # 2. For any target service (including one-shot `migrate` or init) not resolved from `ps -a`,
     # inspect via `docker compose images` and `docker image inspect` to obtain its local `sha256:` ID.
-    missing = [svc for svc in expected if not IMAGE_ID_RE.fullmatch(recorded[svc].get("image_id", ""))]
+    missing = [
+        svc for svc in inspect_targets if not IMAGE_ID_RE.fullmatch(recorded[svc].get("image_id", ""))
+    ]
     if missing:
         imgs_res = _invoke_runner(ctx, runner, [*base_argv, "images", "--format", "json"], timeout=30.0)
         compose_img_candidates: dict[str, list[str]] = {}
@@ -1192,7 +1238,7 @@ def capture_running_images(
                 repo = str(item.get("Repository") or "").strip()
                 tag = str(item.get("Tag") or "").strip()
                 raw_id = str(item.get("ID") or "").strip()
-                if svc_key in expected_set:
+                if svc_key in inspect_set:
                     refs = compose_img_candidates.setdefault(svc_key, [])
                     if IMAGE_ID_RE.fullmatch(raw_id) or re.fullmatch(r"[0-9a-f]{12,64}", raw_id):
                         refs.append(raw_id)
@@ -1234,6 +1280,8 @@ def capture_running_images(
             # A cached target image does not prove that a runtime service was deployed.
             # Removed one-shot initializer containers may still use their verified local image.
             recorded[svc] = {"state": "new_service"}
+    if include_migrate and not IMAGE_ID_RE.fullmatch(recorded["migrate"].get("image_id", "")):
+        recorded.pop("migrate", None)
     validate_recovery_images(ctx, recorded, runner, error_cls=error_cls)
     return recorded
 
@@ -1854,9 +1902,11 @@ def _reset_and_restore_pg_dump(
     db_user: str,
     db_name: str,
     dump_path: Path,
+    compose_argv: Sequence[str] | None = None,
+    error_cls: type[CtlError] = CtlRollbackError,
 ) -> None:
     """Terminate backends, reset `public` schema, and run `pg_restore` preserving snapshot ACLs."""
-    base_argv = build_compose_argv(ctx)
+    base_argv = list(compose_argv) if compose_argv is not None else build_compose_argv(ctx)
     _run_checked(
         ctx,
         runner,
@@ -1876,7 +1926,7 @@ def _reset_and_restore_pg_dump(
             TERMINATE_BACKENDS_SQL,
         ],
         phase=f"terminate-backends-{service}",
-        error_cls=CtlRollbackError,
+        error_cls=error_cls,
         timeout=60.0,
     )
     _run_checked(
@@ -1898,7 +1948,7 @@ def _reset_and_restore_pg_dump(
             RESET_PUBLIC_SCHEMA_SQL,
         ],
         phase=f"reset-public-schema-{service}",
-        error_cls=CtlRollbackError,
+        error_cls=error_cls,
         timeout=60.0,
     )
 
@@ -1906,13 +1956,13 @@ def _reset_and_restore_pg_dump(
     try:
         fd = os.open(dump_path, flags)
     except OSError as exc:
-        raise CtlRollbackError(
+        raise error_cls(
             f"cannot open dump file {dump_path.name}: {exc.strerror or 'os error'}"
         ) from None
     try:
         fst = os.fstat(fd)
         if not stat.S_ISREG(fst.st_mode):
-            raise CtlRollbackError(f"dump path is not a regular file: {dump_path}")
+            raise error_cls(f"dump path is not a regular file: {dump_path}")
         argv = [
             *base_argv,
             "exec",
@@ -1931,7 +1981,7 @@ def _reset_and_restore_pg_dump(
         res = _invoke_runner(ctx, runner, argv, stdin_fd=fd, timeout=300.0)
     except CtlCommandError as cmd_err:
         clean = redact_secrets(str(cmd_err), ctx.secrets)
-        raise CtlRollbackError(f"pg_restore failed on '{service}': {clean}") from None
+        raise error_cls(f"pg_restore failed on '{service}': {clean}") from None
     finally:
         with contextlib.suppress(OSError):
             os.close(fd)
@@ -1939,7 +1989,7 @@ def _reset_and_restore_pg_dump(
     if res.returncode != 0:
         detail = redact_secrets(res.stderr.strip(), ctx.secrets)
         first_line = detail.splitlines()[0] if detail else f"exit {res.returncode}"
-        raise CtlRollbackError(f"pg_restore failed on '{service}': {first_line}")
+        raise error_cls(f"pg_restore failed on '{service}': {first_line}")
 
 
 def _prepare_rollback_image_override(
@@ -2591,6 +2641,975 @@ def execute_status(
     }
 
 
+def _parse_utc_iso_timestamp(
+    value: object,
+    *,
+    label: str,
+    error_cls: type[CtlError] = CtlRehearsalError,
+) -> datetime:
+    if not isinstance(value, str) or not value.strip():
+        raise error_cls(f"{label} must be a non-empty ISO-8601 timestamp string")
+    raw = value.strip()
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        raise error_cls(f"{label} is not a valid ISO-8601 timestamp") from None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise error_cls(f"{label} must be timezone-aware")
+    return parsed.astimezone(timezone.utc)
+
+
+def _open_regular_file_nofollow_fd(
+    path: Path,
+    *,
+    label: str,
+    error_cls: type[CtlError] = CtlRehearsalError,
+) -> int:
+    """Walk path components from `/` via retained directory FDs (`O_DIRECTORY | O_NOFOLLOW`)."""
+    raw_str = os.fspath(path)
+    if not raw_str or any(part == ".." for part in Path(raw_str).parts):
+        raise error_cls(f"{label} path refuses parent-directory traversal: {path}")
+    abs_path = Path(raw_str) if os.path.isabs(raw_str) else Path(os.getcwd()) / raw_str
+    parts = [part for part in str(abs_path).split(os.sep) if part and part != "."]
+    if not parts:
+        raise error_cls(f"{label} must be a regular file: {path}")
+
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    dir_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | nofollow
+    try:
+        dir_fd = os.open(os.sep, dir_flags)
+    except OSError as exc:
+        raise error_cls(
+            f"cannot open root directory for {label}: {exc.strerror or 'os error'}"
+        ) from None
+
+    try:
+        if sys.platform == "darwin" and parts[0] in _DARWIN_ROOT_ALIASES:
+            alias_target = _DARWIN_ROOT_ALIASES[parts[0]]
+            try:
+                link_val = os.readlink(parts[0], dir_fd=dir_fd).rstrip("/")
+            except OSError:
+                link_val = ""
+            if link_val == "/".join(alias_target):
+                parts = [*alias_target, *parts[1:]]
+
+        for comp in parts[:-1]:
+            try:
+                next_fd = os.open(comp, dir_flags, dir_fd=dir_fd)
+            except OSError as exc:
+                if exc.errno in (errno.ELOOP, getattr(errno, "EMLINK", -1)):
+                    raise error_cls(f"{label} path refuses symbolic links: {path}") from None
+                with contextlib.suppress(OSError):
+                    if stat.S_ISLNK(os.stat(comp, dir_fd=dir_fd, follow_symlinks=False).st_mode):
+                        raise error_cls(f"{label} path refuses symbolic links: {path}") from None
+                raise error_cls(
+                    f"{label} directory missing or unreadable ({comp}): {exc.strerror or 'os error'}"
+                ) from None
+            os.close(dir_fd)
+            dir_fd = next_fd
+
+        leaf = parts[-1]
+        try:
+            file_fd = os.open(leaf, os.O_RDONLY | nofollow, dir_fd=dir_fd)
+        except OSError as exc:
+            if exc.errno in (errno.ELOOP, getattr(errno, "EMLINK", -1)):
+                raise error_cls(f"{label} path refuses symbolic links: {path}") from None
+            with contextlib.suppress(OSError):
+                if stat.S_ISLNK(os.stat(leaf, dir_fd=dir_fd, follow_symlinks=False).st_mode):
+                    raise error_cls(f"{label} path refuses symbolic links: {path}") from None
+            raise error_cls(
+                f"{label} file missing or unreadable ({leaf}): {exc.strerror or 'os error'}"
+            ) from None
+        return file_fd
+    finally:
+        with contextlib.suppress(OSError):
+            os.close(dir_fd)
+
+
+def _stage_verified_0600_snapshot(
+    source_path: Path,
+    dest_dir: Path,
+    dest_filename: str,
+    *,
+    label: str,
+    expected_sha256: str | None = None,
+    expected_size: int | None = None,
+    max_bytes: int | None = None,
+    return_bytes: bool = False,
+) -> tuple[Path, str, int, bytes | None]:
+    """Open `source_path` once via retained `dir_fd` walk, stream-copy to `0600` staging while hashing."""
+    staged_path = verify_child_no_symlink(dest_dir, dest_filename, error_cls=CtlRehearsalError)
+    src_fd = _open_regular_file_nofollow_fd(source_path, label=label, error_cls=CtlRehearsalError)
+    dst_fd: int | None = None
+    try:
+        fst = os.fstat(src_fd)
+        if not stat.S_ISREG(fst.st_mode):
+            raise CtlRehearsalError(f"{label} is not a regular file: {source_path}")
+        mode = stat.S_IMODE(fst.st_mode)
+        if (mode & 0o077) != 0:
+            raise CtlRehearsalError(
+                f"{label} has insecure mode {oct(mode)} (expected 0600)"
+            )
+        if max_bytes is not None and fst.st_size > max_bytes:
+            raise CtlRehearsalError(f"{label} exceeds {max_bytes} byte safety bound")
+
+        open_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+        dst_fd = os.open(staged_path, open_flags, 0o600)
+        os.fchmod(dst_fd, 0o600)
+
+        digest = hashlib.sha256()
+        total = 0
+        chunks: list[bytes] = []
+        while True:
+            chunk = os.read(src_fd, 65536)
+            if not chunk:
+                break
+            total += len(chunk)
+            if max_bytes is not None and total > max_bytes:
+                raise CtlRehearsalError(f"{label} exceeds {max_bytes} byte safety bound")
+            digest.update(chunk)
+            view = memoryview(chunk)
+            written = 0
+            while written < len(view):
+                written += os.write(dst_fd, view[written:])
+            if return_bytes:
+                chunks.append(chunk)
+
+        os.fsync(dst_fd)
+        os.close(dst_fd)
+        dst_fd = None
+        _fsync_directory(dest_dir)
+
+        actual_sha = digest.hexdigest()
+        if expected_size is not None and total != expected_size:
+            with contextlib.suppress(OSError):
+                os.unlink(staged_path)
+            raise CtlRehearsalError(
+                f"tampered or corrupted {label}: size mismatch ({total} != {expected_size})"
+            )
+        if expected_sha256 is not None and not hmac.compare_digest(actual_sha, expected_sha256):
+            with contextlib.suppress(OSError):
+                os.unlink(staged_path)
+            raise CtlRehearsalError(f"tampered or corrupted {label}: SHA-256 mismatch")
+
+        return staged_path, actual_sha, total, (b"".join(chunks) if return_bytes else None)
+    except CtlRehearsalError:
+        if dst_fd is not None:
+            with contextlib.suppress(OSError):
+                os.close(dst_fd)
+            with contextlib.suppress(OSError):
+                os.unlink(staged_path)
+        raise
+    except OSError as exc:
+        if dst_fd is not None:
+            with contextlib.suppress(OSError):
+                os.close(dst_fd)
+            with contextlib.suppress(OSError):
+                os.unlink(staged_path)
+        raise CtlRehearsalError(
+            f"filesystem error staging {label}: {exc.strerror or 'os error'}"
+        ) from None
+    finally:
+        with contextlib.suppress(OSError):
+            os.close(src_fd)
+
+
+def resolve_rehearsal_migrator_image(
+    ctx: StackContext,
+    raw_images: object,
+    runner: CommandRunner,
+    *,
+    stack_project_prefix: str,
+) -> str:
+    """Resolve and verify the immutable `sha256:` operator (`migrate`) image, never falling back to `server`."""
+    if isinstance(raw_images, Mapping) and "migrate" in raw_images:
+        mig_meta = raw_images.get("migrate")
+        if not isinstance(mig_meta, Mapping):
+            raise CtlRehearsalError("backup manifest 'migrate' image metadata is malformed")
+        mig_id = str(mig_meta.get("image_id") or "").strip()
+        if not IMAGE_ID_RE.fullmatch(mig_id):
+            raise CtlRehearsalError(
+                "service 'migrate' lacks an immutable sha256 image_id in backup manifest"
+            )
+        insp = _invoke_runner(
+            ctx,
+            runner,
+            ["docker", "image", "inspect", "--format", "{{.Id}}", mig_id],
+            timeout=20.0,
+        )
+        if insp.returncode != 0 or insp.stdout.strip() != mig_id:
+            raise CtlRehearsalError(
+                f"immutable operator image missing locally for service 'migrate': {mig_id}"
+            )
+        return mig_id
+
+    gate = deploy_gate()
+    compose_text = read_regular_utf8_nofollow(
+        ctx.stack_dir / "docker-compose.yml", error_cls=CtlRehearsalError
+    )
+    services_spec = gate.parse_compose_services(compose_text)
+    mig_spec = services_spec.get("migrate")
+    candidates: list[str] = []
+    if mig_spec and mig_spec.image:
+        candidates.append(mig_spec.image)
+
+    stack_ctx = replace(ctx, project_name=stack_project_prefix)
+    imgs_res = _invoke_runner(
+        stack_ctx,
+        runner,
+        [*build_compose_argv(stack_ctx), "images", "--format", "json"],
+        timeout=30.0,
+    )
+    if imgs_res.returncode == 0 and imgs_res.stdout.strip():
+        for item in _parse_json_lines_or_array(imgs_res.stdout):
+            svc_key = str(item.get("Service") or item.get("ContainerName") or "").strip()
+            if svc_key == "migrate":
+                raw_id = str(item.get("ID") or "").strip()
+                repo = str(item.get("Repository") or "").strip()
+                tag = str(item.get("Tag") or "").strip()
+                if IMAGE_ID_RE.fullmatch(raw_id) or re.fullmatch(r"[0-9a-f]{12,64}", raw_id):
+                    candidates.append(raw_id)
+                if repo and tag and repo != "<none>" and tag != "<none>":
+                    candidates.append(f"{repo}:{tag}")
+    candidates.append(f"{stack_project_prefix}-migrate:latest")
+
+    for ref in candidates:
+        if not ref:
+            continue
+        insp = _invoke_runner(
+            ctx,
+            runner,
+            ["docker", "image", "inspect", "--format", "{{.Id}}", ref],
+            timeout=15.0,
+        )
+        resolved = insp.stdout.strip()
+        if insp.returncode == 0 and IMAGE_ID_RE.fullmatch(resolved):
+            return resolved
+
+    raise CtlRehearsalError(
+        "operator 'migrate' image is unavailable locally; refusing to run rehearse_restore_guards inside customer 'server' image"
+    )
+
+
+def _ensure_0700_dir_no_symlink(directory: Path, *, label: str) -> Path:
+    """Ensure `directory` exists as a symlink-free real directory with strict mode 0700."""
+    abs_dir = Path(os.path.abspath(os.fspath(directory)))
+    verify_path_ancestors_no_symlink(abs_dir, must_exist=False, error_cls=CtlRehearsalError)
+    try:
+        st = os.lstat(abs_dir)
+    except FileNotFoundError:
+        try:
+            os.mkdir(abs_dir, 0o700)
+            os.chmod(abs_dir, 0o700)
+            st = os.lstat(abs_dir)
+        except OSError as exc:
+            raise CtlRehearsalError(
+                f"cannot create {label} directory ({abs_dir}): {exc.strerror or 'os error'}"
+            ) from None
+    except OSError as exc:
+        raise CtlRehearsalError(
+            f"cannot inspect {label} directory ({abs_dir}): {exc.strerror or 'os error'}"
+        ) from None
+
+    if stat.S_ISLNK(st.st_mode) or not stat.S_ISDIR(st.st_mode):
+        raise CtlRehearsalError(f"{label} must be a real non-symlink directory: {abs_dir}")
+    mode = stat.S_IMODE(st.st_mode)
+    if (mode & 0o077) != 0:
+        raise CtlRehearsalError(
+            f"{label} directory {abs_dir} has insecure mode {oct(mode)} (expected 0700)"
+        )
+    return abs_dir
+
+
+def _bootstrap_rehearsal_db_roles(
+    ctx: StackContext,
+    runner: CommandRunner,
+    *,
+    compose_argv: Sequence[str],
+    db_user: str,
+    db_name: str,
+    api_password: str,
+    collab_password: str,
+) -> None:
+    """Create restricted `kodera_api` and `kodera_collab` roles with ephemeral passwords before `pg_restore`."""
+    if not PG_IDENTIFIER_RE.fullmatch(db_name) or not PG_IDENTIFIER_RE.fullmatch(db_user):
+        raise CtlRehearsalError("invalid PostgreSQL database or user identifier for rehearsal")
+    if not re.fullmatch(r"[0-9a-f]{32,128}", api_password) or not re.fullmatch(
+        r"[0-9a-f]{32,128}", collab_password
+    ):
+        raise CtlRehearsalError("rehearsal role passwords must be lowercase hex tokens")
+
+    role_sql = (
+        "DO $$\n"
+        "BEGIN\n"
+        "  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'kodera_api') THEN\n"
+        "    CREATE ROLE kodera_api LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 16;\n"
+        "  END IF;\n"
+        "  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'kodera_collab') THEN\n"
+        "    CREATE ROLE kodera_collab LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 5;\n"
+        "  END IF;\n"
+        "END $$;\n"
+        f"ALTER ROLE kodera_api WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 16 PASSWORD '{api_password}';\n"
+        f"ALTER ROLE kodera_collab WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 5 PASSWORD '{collab_password}';\n"
+        f'GRANT CONNECT ON DATABASE "{db_name}" TO kodera_api;\n'
+        f'GRANT CONNECT ON DATABASE "{db_name}" TO kodera_collab;\n'
+    ).encode("utf-8")
+
+    with tempfile.TemporaryFile() as sql_tmp:
+        sql_tmp.write(role_sql)
+        sql_tmp.flush()
+        sql_tmp.seek(0)
+        argv = [
+            *compose_argv,
+            "exec",
+            "-T",
+            "db",
+            "psql",
+            "-v",
+            "ON_ERROR_STOP=1",
+            "-U",
+            db_user,
+            "-d",
+            db_name,
+        ]
+        try:
+            res = _invoke_runner(ctx, runner, argv, stdin_fd=sql_tmp.fileno(), timeout=60.0)
+        except CtlCommandError as cmd_err:
+            clean = redact_secrets(str(cmd_err), ctx.secrets)
+            raise CtlRehearsalError(f"rehearsal-bootstrap-roles failed: {clean}") from None
+
+    if res.returncode != 0:
+        detail = redact_secrets((res.stderr or res.stdout).strip(), ctx.secrets)
+        first_line = detail.splitlines()[0] if detail else f"exit {res.returncode}"
+        raise CtlRehearsalError(f"rehearsal-bootstrap-roles failed: {first_line}")
+
+
+def _stream_rehearsal_guards_volume(
+    ctx: StackContext,
+    runner: CommandRunner,
+    *,
+    compose_argv: Sequence[str],
+    ledger_bytes: bytes | None,
+    s3_bytes: bytes | None,
+) -> None:
+    """Stream staged guard JSON files into ephemeral container-owned volume (`10001:10001`, mode `0400`)."""
+    with tempfile.TemporaryFile() as tar_tmp:
+        with tarfile.open(fileobj=tar_tmp, mode="w") as tf:
+            for name, payload in (
+                ("erasure-ledger.json", ledger_bytes),
+                ("s3-manifest.json", s3_bytes),
+            ):
+                if payload is None:
+                    continue
+                info = tarfile.TarInfo(name=name)
+                info.size = len(payload)
+                info.mode = 0o400
+                info.uid = 10001
+                info.gid = 10001
+                info.uname = "kodera"
+                info.gname = "kodera"
+                info.mtime = 0
+                tf.addfile(info, io.BytesIO(payload))
+        tar_tmp.flush()
+        tar_tmp.seek(0)
+
+        argv = [
+            *compose_argv,
+            "run",
+            "--rm",
+            "--no-deps",
+            "-T",
+            "rehearsal-guards-init",
+        ]
+        try:
+            res = _invoke_runner(ctx, runner, argv, stdin_fd=tar_tmp.fileno(), timeout=60.0)
+        except CtlCommandError as cmd_err:
+            clean = redact_secrets(str(cmd_err), ctx.secrets)
+            raise CtlRehearsalError(f"rehearsal-stage-guards-volume failed: {clean}") from None
+
+    if res.returncode != 0:
+        detail = redact_secrets((res.stderr or res.stdout).strip(), ctx.secrets)
+        first_line = detail.splitlines()[0] if detail else f"exit {res.returncode}"
+        raise CtlRehearsalError(f"rehearsal-stage-guards-volume failed: {first_line}")
+
+
+def _prepare_rehearsal_override(
+    target_dir: Path,
+    pinned_refs: Mapping[str, str],
+    *,
+    migrator_sha: str,
+    pg_db: str,
+    rehearsal_api_pw: str,
+    rehearsal_collab_pw: str,
+    has_guard_files: bool,
+    kc_ephemeral_pw: str | None = None,
+) -> Path:
+    """Write 0600 `rehearsal.override.yml` enforcing internal networks, kill-switches, and ephemeral roles."""
+    if not pinned_refs:
+        raise CtlRehearsalError("cannot generate rehearsal override from empty image inventory")
+    if not IMAGE_ID_RE.fullmatch(migrator_sha):
+        raise CtlRehearsalError("invalid operator 'migrate' sha256 image reference")
+
+    api_db_url = f"postgresql://kodera_api:{rehearsal_api_pw}@db:5432/{pg_db}"
+    collab_db_url = f"postgresql://kodera_collab:{rehearsal_collab_pw}@db:5432/{pg_db}"
+
+    lines = ["services:"]
+    for svc, sha_ref in sorted(pinned_refs.items()):
+        lines.append(f"  {svc}:")
+        lines.append(f"    image: {sha_ref}")
+        lines.append("    pull_policy: never")
+        if svc in ("caddy", "livekit"):
+            lines.append("    ports: !reset []")
+        if svc in ("server", "caddy", "api-admission"):
+            lines.append("    networks: !reset")
+            lines.append("      default: {}")
+        if svc == "server":
+            lines.append("    environment:")
+            lines.append(f'      DATABASE_URL: "{api_db_url}"')
+            for env_k, env_v in REHEARSAL_KILL_SWITCH_ENV:
+                lines.append(f'      {env_k}: "{env_v}"')
+        elif svc == "yjs-collab":
+            lines.append("    environment:")
+            lines.append(f'      DATABASE_URL: "{collab_db_url}"')
+
+    lines.append("  migrate:")
+    lines.append(f"    image: {migrator_sha}")
+    lines.append("    pull_policy: never")
+    lines.append('    entrypoint: ["/bin/sh", "-c", "exit 0"]')
+    lines.append("    command: []")
+    lines.append("    environment:")
+    lines.append(f'      KODERA_API_DATABASE_URL: "{api_db_url}"')
+    lines.append(f'      KODERA_COLLAB_DATABASE_URL: "{collab_db_url}"')
+    for env_k, env_v in REHEARSAL_KILL_SWITCH_ENV:
+        lines.append(f'      {env_k}: "{env_v}"')
+    lines.append("    volumes:")
+    lines.append("      - rehearsal_guards:/run/kodera-rehearsal:ro")
+
+    if has_guard_files:
+        guard_init_py = (
+            "import os, sys, tarfile; "
+            "os.chmod('/run/kodera-rehearsal', 0o700); "
+            "os.chown('/run/kodera-rehearsal', 10001, 10001); "
+            "tf = tarfile.open(fileobj=sys.stdin.buffer, mode='r|'); "
+            "allowed = {'erasure-ledger.json', 's3-manifest.json'}; "
+            "[("
+            "open('/run/kodera-rehearsal/' + os.path.basename(m.name), 'wb').write(tf.extractfile(m).read()), "
+            "os.chmod('/run/kodera-rehearsal/' + os.path.basename(m.name), 0o400), "
+            "os.chown('/run/kodera-rehearsal/' + os.path.basename(m.name), 10001, 10001)"
+            ") for m in tf if m.isfile() and os.path.basename(m.name) in allowed]; "
+            "os.chmod('/run/kodera-rehearsal', 0o500); "
+            "os.chown('/run/kodera-rehearsal', 10001, 10001)"
+        )
+        lines.extend(
+            [
+                "  rehearsal-guards-init:",
+                f"    image: {migrator_sha}",
+                "    pull_policy: never",
+                '    user: "0:0"',
+                "    read_only: true",
+                '    cap_drop: ["ALL"]',
+                '    cap_add: ["CHOWN", "FOWNER", "DAC_OVERRIDE"]',
+                '    security_opt: ["no-new-privileges:true"]',
+                '    restart: "no"',
+                f"    command: {json.dumps(['python', '-c', guard_init_py])}",
+                "    volumes:",
+                "      - rehearsal_guards:/run/kodera-rehearsal",
+                "    networks:",
+                "      default: {}",
+            ]
+        )
+
+    if kc_ephemeral_pw is not None:
+        db_sha = pinned_refs.get("db") or pinned_refs.get("synapse-db")
+        if not db_sha:
+            raise CtlRehearsalError(
+                "cannot rehearse Keycloak DB snapshot without pinned Postgres image"
+            )
+        lines.append("  keycloak-db:")
+        lines.append(f"    image: {db_sha}")
+        lines.append("    pull_policy: never")
+        lines.append('    restart: "no"')
+        lines.append("    environment:")
+        lines.append("      POSTGRES_USER: keycloak")
+        lines.append("      POSTGRES_DB: keycloak")
+        lines.append(f"      POSTGRES_PASSWORD: {kc_ephemeral_pw}")
+        lines.append("    healthcheck:")
+        lines.append('      test: ["CMD-SHELL", "pg_isready -U keycloak -d keycloak"]')
+        lines.append("      interval: 5s")
+        lines.append("      timeout: 5s")
+        lines.append("      retries: 10")
+        lines.append("    networks:")
+        lines.append("      default: {}")
+
+    lines.extend(
+        [
+            "volumes:",
+            "  rehearsal_guards: {}",
+            "networks:",
+            "  default:",
+            "    driver: bridge",
+            "    internal: true",
+            "  edge:",
+            "    driver: bridge",
+            "    internal: true",
+            "  api_ingress:",
+            "    driver: bridge",
+            "    internal: true",
+            "    ipam: !reset {}",
+        ]
+    )
+    override_bytes = ("\n".join(lines) + "\n").encode("utf-8")
+    try:
+        return _write_atomic_0600_bytes(target_dir, "rehearsal.override.yml", override_bytes)
+    except CtlBackupError as exc:
+        raise CtlRehearsalError(str(exc)) from None
+
+
+def execute_rehearse_restore(
+    *,
+    env_file: Path,
+    stack_dir: Path = HERE,
+    backup_selector: str = "latest",
+    rehearsal_id: str | None = None,
+    erasure_ledger: Path | None = None,
+    s3_manifest: Path | None = None,
+    keycloak_dump: Path | None = None,
+    keycloak_realm_export: Path | None = None,
+    reference_timestamp: str | None = None,
+    receipt_out: Path | None = None,
+    runner: CommandRunner | None = None,
+    monotonic_clock: Callable[[], float] | None = None,
+    invoke_deploy_cli: bool = True,
+) -> dict[str, object]:
+    """Restore dumps in an isolated internal-network Compose project, run guards, measure RPO/RTO, and tear down."""
+    active_runner = default_command_runner if runner is None else runner
+    active_monotonic = time.monotonic if monotonic_clock is None else monotonic_clock
+
+    clean_id = (rehearsal_id or secrets.token_hex(4)).strip().lower()
+    if not REHEARSAL_ID_RE.fullmatch(clean_id):
+        raise CtlRehearsalError(f"invalid rehearsal identifier '{clean_id}'")
+    rehearsal_project = f"kodera-rehearsal-{clean_id}"
+
+    ctx = preflight_stack(
+        env_file=env_file,
+        stack_dir=stack_dir,
+        project_name=rehearsal_project,
+        skip_preflight_http=True,
+        invoke_deploy_cli=invoke_deploy_cli,
+    )
+    try:
+        record = resolve_and_verify_backup(ctx.stack_dir, backup_selector)
+    except CtlRollbackError as exc:
+        raise CtlRehearsalError(str(exc)) from None
+
+    backup_created_dt = _parse_utc_iso_timestamp(
+        record.manifest.get("created_at"),
+        label="backup manifest created_at",
+    )
+    ref_dt = (
+        _parse_utc_iso_timestamp(reference_timestamp, label="reference_timestamp")
+        if reference_timestamp is not None
+        else datetime.now(timezone.utc)
+    )
+    if ref_dt < backup_created_dt:
+        raise CtlRehearsalError(
+            "reference_timestamp precedes backup created_at (negative RPO refused)"
+        )
+    rpo_delta = ref_dt - backup_created_dt
+    rpo_seconds: int | float = (
+        int(rpo_delta.total_seconds())
+        if rpo_delta.microseconds == 0
+        else round(rpo_delta.total_seconds(), 3)
+    )
+
+    backup_root = ensure_backup_root(ctx.stack_dir)
+    if receipt_out is not None:
+        abs_receipt = Path(os.path.abspath(os.fspath(receipt_out)))
+        receipt_parent = _ensure_0700_dir_no_symlink(abs_receipt.parent, label="receipt output")
+        receipt_filename = abs_receipt.name
+        if not receipt_filename or receipt_filename in (".", ".."):
+            raise CtlRehearsalError(f"invalid receipt filename: {receipt_out}")
+    else:
+        receipt_parent = _ensure_0700_dir_no_symlink(
+            backup_root / REHEARSAL_RECEIPTS_DIR_NAME,
+            label="rehearsal receipts",
+        )
+        receipt_filename = f"rehearsal-{record.backup_id}-{clean_id}.json"
+
+    staging_dir = verify_child_no_symlink(
+        backup_root,
+        f".rehearsal-{clean_id}-{os.getpid()}-{secrets.token_hex(3)}",
+        error_cls=CtlRehearsalError,
+    )
+    os.mkdir(staging_dir, 0o700)
+    os.chmod(staging_dir, 0o700)
+
+    primary_error: CtlError | None = None
+    guard_report: dict[str, object] = {}
+    rto_seconds: float = 0.0
+    restored_dbs = ["kodera_server", "synapse"]
+    keycloak_meta: dict[str, object] | None = None
+    rehearsal_argv: list[str] = []
+
+    try:
+        dumps_meta = record.manifest.get("dumps")
+        if not isinstance(dumps_meta, Mapping):
+            raise CtlRehearsalError("backup manifest missing 'dumps' inventory")
+        core_meta = dumps_meta.get("kodera_server")
+        syn_meta = dumps_meta.get("synapse")
+        if not isinstance(core_meta, Mapping) or not isinstance(syn_meta, Mapping):
+            raise CtlRehearsalError("backup manifest dump metadata malformed")
+
+        # Single-descriptor copy+SHA-256 staging for every dump and input file (`P2-9`).
+        staged_core_dump, _, _, _ = _stage_verified_0600_snapshot(
+            record.backup_dir / "kodera_server.dump",
+            staging_dir,
+            "kodera_server.dump",
+            label="kodera_server.dump",
+            expected_sha256=str(core_meta.get("sha256", "")),
+            expected_size=int(core_meta.get("size_bytes", 0)),
+        )
+        staged_synapse_dump, _, _, _ = _stage_verified_0600_snapshot(
+            record.backup_dir / "synapse.dump",
+            staging_dir,
+            "synapse.dump",
+            label="synapse.dump",
+            expected_sha256=str(syn_meta.get("sha256", "")),
+            expected_size=int(syn_meta.get("size_bytes", 0)),
+        )
+
+        ledger_bytes: bytes | None = None
+        if erasure_ledger is not None:
+            _, _, _, ledger_bytes = _stage_verified_0600_snapshot(
+                erasure_ledger,
+                staging_dir,
+                "erasure-ledger.json",
+                label="erasure ledger",
+                max_bytes=16 * 1024 * 1024,
+                return_bytes=True,
+            )
+            if ledger_bytes is None:
+                raise CtlRehearsalError("erasure ledger staging produced empty buffer")
+            try:
+                parsed_ledger = json.loads(ledger_bytes.decode("utf-8"))
+            except (UnicodeDecodeError, ValueError):
+                raise CtlRehearsalError("erasure ledger is not valid UTF-8 JSON") from None
+            if not isinstance(parsed_ledger, dict):
+                raise CtlRehearsalError("erasure ledger must contain a JSON object")
+
+        s3_bytes: bytes | None = None
+        if s3_manifest is not None:
+            _, _, _, s3_bytes = _stage_verified_0600_snapshot(
+                s3_manifest,
+                staging_dir,
+                "s3-manifest.json",
+                label="S3 manifest",
+                max_bytes=16 * 1024 * 1024,
+                return_bytes=True,
+            )
+            if s3_bytes is None:
+                raise CtlRehearsalError("S3 manifest staging produced empty buffer")
+            try:
+                parsed_s3 = json.loads(s3_bytes.decode("utf-8"))
+            except (UnicodeDecodeError, ValueError):
+                raise CtlRehearsalError("S3 manifest is not valid UTF-8 JSON") from None
+            if not isinstance(parsed_s3, dict):
+                raise CtlRehearsalError("S3 manifest must contain a JSON object")
+
+        staged_kc_dump: Path | None = None
+        kc_ephemeral_pw: str | None = None
+        if keycloak_dump is not None:
+            staged_kc_dump, kc_dump_sha, kc_dump_size, _ = _stage_verified_0600_snapshot(
+                keycloak_dump,
+                staging_dir,
+                "keycloak.dump",
+                label="Keycloak DB dump",
+                max_bytes=256 * 1024 * 1024,
+            )
+            if kc_dump_size == 0:
+                raise CtlRehearsalError("Keycloak DB dump archive is empty")
+            kc_ephemeral_pw = secrets.token_hex(24)
+            keycloak_meta = {
+                "kind": "postgres_dump",
+                "sha256": kc_dump_sha,
+                "size_bytes": kc_dump_size,
+            }
+
+        if keycloak_realm_export is not None:
+            _, kc_realm_sha, kc_realm_size, kc_realm_bytes = _stage_verified_0600_snapshot(
+                keycloak_realm_export,
+                staging_dir,
+                "keycloak-realm.json",
+                label="Keycloak realm snapshot",
+                max_bytes=16 * 1024 * 1024,
+                return_bytes=True,
+            )
+            if kc_realm_bytes is None:
+                raise CtlRehearsalError("Keycloak realm snapshot staging failed")
+            try:
+                realm_doc = json.loads(kc_realm_bytes.decode("utf-8"))
+            except (UnicodeDecodeError, ValueError):
+                raise CtlRehearsalError("Keycloak realm snapshot is not valid UTF-8 JSON") from None
+            if (
+                not isinstance(realm_doc, dict)
+                or not isinstance(realm_doc.get("realm"), str)
+                or not realm_doc["realm"].strip()
+            ):
+                raise CtlRehearsalError(
+                    "Keycloak realm snapshot missing required 'realm' identifier"
+                )
+            keycloak_meta = {
+                **(keycloak_meta or {}),
+                "realm": realm_doc["realm"].strip(),
+                "realm_export_sha256": kc_realm_sha,
+                "realm_export_size_bytes": kc_realm_size,
+            }
+
+        raw_images = record.manifest.get("images")
+        pinned_refs = validate_recovery_images(
+            ctx, raw_images, active_runner, error_cls=CtlRehearsalError
+        )
+        migrator_sha = resolve_rehearsal_migrator_image(
+            ctx,
+            raw_images,
+            active_runner,
+            stack_project_prefix=ctx.stack_dir.name,
+        )
+
+        pg_user = str(record.manifest.get("postgres_user") or ctx.postgres_user)
+        pg_db = str(record.manifest.get("postgres_db") or ctx.postgres_db)
+        if not PG_IDENTIFIER_RE.fullmatch(pg_user) or not PG_IDENTIFIER_RE.fullmatch(pg_db):
+            raise CtlRehearsalError("invalid PostgreSQL user or database identifier in manifest")
+
+        rehearsal_api_pw = secrets.token_hex(24)
+        rehearsal_collab_pw = secrets.token_hex(24)
+        extra_ephemeral_secrets = {rehearsal_api_pw, rehearsal_collab_pw}
+        if kc_ephemeral_pw is not None:
+            extra_ephemeral_secrets.add(kc_ephemeral_pw)
+        ctx = replace(ctx, secrets=frozenset({*ctx.secrets, *extra_ephemeral_secrets}))
+
+        has_guard_files = ledger_bytes is not None or s3_bytes is not None
+        override_file = _prepare_rehearsal_override(
+            staging_dir,
+            pinned_refs,
+            migrator_sha=migrator_sha,
+            pg_db=pg_db,
+            rehearsal_api_pw=rehearsal_api_pw,
+            rehearsal_collab_pw=rehearsal_collab_pw,
+            has_guard_files=has_guard_files,
+            kc_ephemeral_pw=kc_ephemeral_pw,
+        )
+        rehearsal_argv = build_compose_argv(ctx, extra_compose_files=(override_file,))
+
+        rto_start = active_monotonic()
+        db_services = ["db", "synapse-db"]
+        if staged_kc_dump is not None:
+            db_services.append("keycloak-db")
+            restored_dbs.append("keycloak")
+
+        _run_checked(
+            ctx,
+            active_runner,
+            [*rehearsal_argv, "up", "-d", "--no-build", "--no-deps", "--wait", *db_services],
+            phase="rehearsal-start-databases",
+            error_cls=CtlRehearsalError,
+            timeout=120.0,
+        )
+
+        # Create restricted `kodera_api` and `kodera_collab` roles BEFORE `pg_restore` (`P1-2`).
+        _bootstrap_rehearsal_db_roles(
+            ctx,
+            active_runner,
+            compose_argv=rehearsal_argv,
+            db_user=pg_user,
+            db_name=pg_db,
+            api_password=rehearsal_api_pw,
+            collab_password=rehearsal_collab_pw,
+        )
+
+        _reset_and_restore_pg_dump(
+            ctx,
+            active_runner,
+            service="db",
+            db_user=pg_user,
+            db_name=pg_db,
+            dump_path=staged_core_dump,
+            compose_argv=rehearsal_argv,
+            error_cls=CtlRehearsalError,
+        )
+        _reset_and_restore_pg_dump(
+            ctx,
+            active_runner,
+            service="synapse-db",
+            db_user="synapse",
+            db_name="synapse",
+            dump_path=staged_synapse_dump,
+            compose_argv=rehearsal_argv,
+            error_cls=CtlRehearsalError,
+        )
+        if staged_kc_dump is not None:
+            _reset_and_restore_pg_dump(
+                ctx,
+                active_runner,
+                service="keycloak-db",
+                db_user="keycloak",
+                db_name="keycloak",
+                dump_path=staged_kc_dump,
+                compose_argv=rehearsal_argv,
+                error_cls=CtlRehearsalError,
+            )
+
+        if has_guard_files:
+            _stream_rehearsal_guards_volume(
+                ctx,
+                active_runner,
+                compose_argv=rehearsal_argv,
+                ledger_bytes=ledger_bytes,
+                s3_bytes=s3_bytes,
+            )
+
+        guard_cmd = [
+            *rehearsal_argv,
+            "run",
+            "--rm",
+            "--no-deps",
+            "-T",
+            "--entrypoint",
+            "python",
+            "migrate",
+            "manage.py",
+            "rehearse_restore_guards",
+            "--settings",
+            "config.settings.deploy_operator",
+            "--disarm-outbound",
+            "--json",
+        ]
+        if ledger_bytes is not None:
+            guard_cmd.extend(["--erasure-ledger", "/run/kodera-rehearsal/erasure-ledger.json"])
+        if s3_bytes is not None:
+            guard_cmd.extend(["--s3-manifest", "/run/kodera-rehearsal/s3-manifest.json"])
+
+        guard_res = _run_checked(
+            ctx,
+            active_runner,
+            guard_cmd,
+            phase="rehearsal-restore-guards",
+            error_cls=CtlRehearsalError,
+            timeout=180.0,
+        )
+        try:
+            parsed_guard_out = json.loads(guard_res.stdout.strip())
+        except ValueError:
+            raise CtlRehearsalError(
+                "rehearse_restore_guards did not emit a valid JSON receipt"
+            ) from None
+        if (
+            not isinstance(parsed_guard_out, dict)
+            or parsed_guard_out.get("status") != "ok"
+            or parsed_guard_out.get("outbound_disarmed") is not True
+        ):
+            raise CtlRehearsalError(
+                "rehearse_restore_guards failed to confirm outbound disarm and guard invariants"
+            )
+        guard_report = parsed_guard_out
+
+        for init_svc in ("proximity-socket-init", "media-socket-init"):
+            if init_svc in pinned_refs:
+                _run_checked(
+                    ctx,
+                    active_runner,
+                    [*rehearsal_argv, "up", "--no-build", "--no-deps", init_svc],
+                    phase=f"rehearsal-init-{init_svc}",
+                    error_cls=CtlRehearsalError,
+                    timeout=120.0,
+                )
+        for svc in REHEARSAL_RUNTIME_SERVICES:
+            if svc in pinned_refs:
+                _run_checked(
+                    ctx,
+                    active_runner,
+                    [*rehearsal_argv, "up", "-d", "--no-build", "--no-deps", "--wait", svc],
+                    phase=f"rehearsal-start-{svc}",
+                    error_cls=CtlRehearsalError,
+                    timeout=240.0,
+                )
+
+        _verify_internal_backend_readiness(
+            ctx,
+            rehearsal_argv,
+            active_runner,
+            error_cls=CtlRehearsalError,
+        )
+        rto_end = active_monotonic()
+        rto_seconds = round(max(0.0, rto_end - rto_start), 3)
+    except CtlError as err:
+        primary_error = err
+    finally:
+        teardown_error: str | None = None
+        if rehearsal_argv:
+            try:
+                down_res = _invoke_runner(
+                    ctx,
+                    active_runner,
+                    [*rehearsal_argv, "down", "-v", "--remove-orphans"],
+                    timeout=120.0,
+                )
+                if down_res.returncode != 0:
+                    raw_td = (down_res.stderr or down_res.stdout).strip()
+                    first_td = raw_td.splitlines()[0] if raw_td else f"exit {down_res.returncode}"
+                    teardown_error = redact_secrets(first_td, ctx.secrets)
+            except CtlError as td_exc:
+                teardown_error = redact_secrets(str(td_exc), ctx.secrets)
+        if staging_dir.exists() and not staging_dir.is_symlink():
+            shutil.rmtree(staging_dir, ignore_errors=True)
+
+        if primary_error is not None:
+            safe_primary = redact_secrets(str(primary_error), ctx.secrets)
+            if teardown_error is not None:
+                raise CtlRehearsalError(
+                    f"{safe_primary} (CRITICAL: rehearsal teardown also failed: {teardown_error})"
+                ) from None
+            if isinstance(primary_error, CtlRehearsalError):
+                raise primary_error
+            raise CtlRehearsalError(safe_primary) from None
+        if teardown_error is not None:
+            raise CtlRehearsalError(
+                f"rehearsal stack teardown failed: {teardown_error}"
+            )
+
+    receipt_doc: dict[str, object] = {
+        "schema_version": 1,
+        "status": "rehearsed",
+        "rehearsal_project": rehearsal_project,
+        "backup_id": record.backup_id,
+        "backup_created_at": backup_created_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "reference_timestamp": ref_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "rpo_seconds": rpo_seconds,
+        "rto_seconds": rto_seconds,
+        "egress_isolated": True,
+        "public_ports_bound": 0,
+        "teardown_completed": True,
+        "restored_databases": restored_dbs,
+        "keycloak_snapshot": keycloak_meta,
+        "restore_guards": guard_report,
+    }
+    receipt_bytes = (json.dumps(receipt_doc, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    try:
+        written_receipt_path = _write_atomic_0600_bytes(
+            receipt_parent, receipt_filename, receipt_bytes
+        )
+    except CtlBackupError as exc:
+        raise CtlRehearsalError(f"cannot write rehearsal receipt: {exc}") from None
+
+    return {
+        **receipt_doc,
+        "receipt_path": str(written_receipt_path),
+        "receipt_sha256": hashlib.sha256(receipt_bytes).hexdigest(),
+    }
+
+
 def _make_valid_test_env_text(
     *,
     domain: str = "chat.example.org",
@@ -2738,6 +3757,12 @@ def selftest() -> int:
                 assert data.startswith(b"PGDMP-SELFTEST-")
                 internal_ready["ok"] = True
                 return CommandResult(0, "", "")
+            if "rehearse_restore_guards" in cmd:
+                return CommandResult(
+                    0,
+                    '{"status":"ok","outbound_disarmed":true,"disarm_summary":{"installations_revoked":1},"erasure_replay":null,"s3_reconciliation":null}\n',
+                    "",
+                )
             if "exec" in cmd and "server" in cmd and "python" in cmd:
                 return CommandResult(0 if internal_ready["ok"] else 1, "", "internal server unhealthy")
             if len(cmd) >= 3 and cmd[-3:] == ["ps", "--format", "json"]:
@@ -2786,6 +3811,17 @@ def selftest() -> int:
                 backup_id = str(up_res["backup_id"])
                 snap_dir = stack / BACKUP_DIR_NAME / backup_id
                 assert canary_val not in (snap_dir / "manifest.json").read_text(encoding="utf-8")
+
+                rehearsal_res = execute_rehearse_restore(
+                    env_file=env_file,
+                    stack_dir=stack,
+                    backup_selector=backup_id,
+                    rehearsal_id="selftest",
+                    runner=fake_runner,
+                    invoke_deploy_cli=False,
+                )
+                assert rehearsal_res["status"] == "rehearsed"
+                assert rehearsal_res["teardown_completed"] is True
 
                 # Failed internal readiness BEFORE `caddy` starts triggers lossless auto-rollback!
                 recorded_cmds.clear()
@@ -2929,6 +3965,73 @@ def build_parser() -> argparse.ArgumentParser:
         help="Validate preflight, inspect running containers, check HTTP isolation + WebRTC UDP, and list backups",
     )
     add_common_stack_args(st_parser)
+
+    rehearse_parser = subparsers.add_parser(
+        "rehearse-restore",
+        help="Run an isolated, egress-closed restore rehearsal measuring RPO/RTO and disarming outbound queues",
+    )
+    rehearse_parser.add_argument(
+        "--env-file",
+        type=Path,
+        default=HERE / ".env",
+        help="Path to operator .env configuration (default: deploy/community/.env)",
+    )
+    rehearse_parser.add_argument(
+        "--stack-dir",
+        type=Path,
+        default=HERE,
+        help="Path to deploy/community stack directory",
+    )
+    rehearse_parser.add_argument(
+        "--backup",
+        default="latest",
+        help="Backup identifier under .kodera-backups or 'latest' (default: latest)",
+    )
+    rehearse_parser.add_argument(
+        "--rehearsal-id",
+        default=None,
+        help="Optional lowercase alphanumeric suffix for kodera-rehearsal-<id>",
+    )
+    rehearse_parser.add_argument(
+        "--erasure-ledger",
+        type=Path,
+        default=None,
+        help="Optional 0600 post-backup GDPR Art. 17 erasure ledger JSON",
+    )
+    rehearse_parser.add_argument(
+        "--s3-manifest",
+        type=Path,
+        default=None,
+        help="Optional 0600 S3 attachment inventory manifest JSON",
+    )
+    rehearse_parser.add_argument(
+        "--keycloak-dump",
+        type=Path,
+        default=None,
+        help="Optional 0600 Keycloak PostgreSQL custom-format dump archive",
+    )
+    rehearse_parser.add_argument(
+        "--keycloak-realm-export",
+        type=Path,
+        default=None,
+        help="Optional 0600 Keycloak realm JSON export snapshot",
+    )
+    rehearse_parser.add_argument(
+        "--reference-timestamp",
+        default=None,
+        help="Optional UTC ISO-8601 reference timestamp for deterministic RPO calculation",
+    )
+    rehearse_parser.add_argument(
+        "--receipt-out",
+        type=Path,
+        default=None,
+        help="Optional output file path for the 0600 JSON rehearsal receipt",
+    )
+    rehearse_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit structured JSON receipt to standard output",
+    )
 
     probe_parser = subparsers.add_parser(
         "probe-webrtc",
@@ -3074,6 +4177,20 @@ def main(argv: Sequence[str] | None = None) -> int:
                 skip_preflight_http=args.skip_preflight_http,
                 skip_webrtc_probe=args.skip_webrtc_probe,
                 webrtc_port_override=args.webrtc_port,
+            )
+            exit_code = 0
+        elif args.subcommand == "rehearse-restore":
+            report = execute_rehearse_restore(
+                env_file=args.env_file,
+                stack_dir=args.stack_dir,
+                backup_selector=args.backup,
+                rehearsal_id=args.rehearsal_id,
+                erasure_ledger=args.erasure_ledger,
+                s3_manifest=args.s3_manifest,
+                keycloak_dump=args.keycloak_dump,
+                keycloak_realm_export=args.keycloak_realm_export,
+                reference_timestamp=args.reference_timestamp,
+                receipt_out=args.receipt_out,
             )
             exit_code = 0
         else:

@@ -1179,6 +1179,40 @@ os._exit(0)
         'public_fixture_pgid': value['pgid'], 'stopped_family_identity_sha256': record['stopped_family_identity_sha256']})
 
 
+def workspace_browser_cli(repo):
+    try:
+        if Path(repo).is_symlink():
+            raise Refused('Exact workspace browser CLI absent')
+        repo_real = Path(repo).resolve(strict=True)
+    except OSError as exc:
+        raise Refused('Exact workspace browser CLI absent') from exc
+    for rel in ('apps/web/node_modules/playwright/cli.js', 'node_modules/playwright/cli.js'):
+        current = repo_real
+        missing = False
+        for part in rel.split('/'):
+            current = current / part
+            try:
+                mode = current.lstat().st_mode
+            except FileNotFoundError:
+                missing = True
+                break
+            except OSError as exc:
+                raise Refused('Exact workspace browser CLI absent') from exc
+            if stat.S_ISLNK(mode):
+                raise Refused('Exact workspace browser CLI absent')
+        if missing:
+            continue
+        try:
+            resolved = current.resolve(strict=True)
+            mode = current.lstat().st_mode
+        except OSError as exc:
+            raise Refused('Exact workspace browser CLI absent') from exc
+        if stat.S_ISREG(mode) and resolved == repo_real / rel:
+            return resolved
+        raise Refused('Exact workspace browser CLI absent')
+    raise Refused('Exact workspace browser CLI absent')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', required=True)
@@ -1211,8 +1245,7 @@ def main():
             proof[label] = guard.command(command, label, 10, 4096).read_text().strip()
         need(proof['rust-version'].startswith('rustc 1.100.0 (') and proof['node-version'].startswith('v22.'), 'Pinned Rust and Node major')
         guard.command(['npm', 'ci', '--ignore-scripts'], 'npm-ci', 120)
-        cli = repo / 'apps/web/node_modules/playwright/cli.js'
-        need(cli.is_file() and not cli.is_symlink(), 'Exact workspace browser CLI absent')
+        cli = workspace_browser_cli(repo)
         guard.command(['node', str(cli), 'install', 'chromium'], 'browser-install', 90)
         binary, proof['publisher_members'] = acquire_tool(guard)
         native = native_inputs(guard, 'native-inputs-before', proof['source_head'])

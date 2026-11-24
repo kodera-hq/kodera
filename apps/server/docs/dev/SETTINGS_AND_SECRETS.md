@@ -37,7 +37,9 @@ Each environment module imports `base` and overrides; none of them declares a se
 | The audit pepper, the Enterprise audit-export signing seed (`KODERA_EE_AUDIT_SIGNING_SEED`), and the application signing key | Application secrets, not infrastructure |
 | Outbox message seal key (`KODERA_OUTBOX_SEAL_KEY`) for sealing transactional mail recipients and one-time link secrets | Application secret; unsealed only by the mail sender |
 | Optional AI BYOM seal key (`KODERA_AI_SEAL_KEY`) for HKDF-sealing per-workspace AI provider configurations, and optional EU-sovereign Mistral API key (`KODERA_AI_MISTRAL_API_KEY`) when managed AI is enabled | Application secrets; unset when AI gateway or BYOM is unused |
+| Optional Calendar CalDAV seal key (`KODERA_CALENDAR_SEAL_KEY`) for HKDF-sealing per-workspace external CalDAV source credentials | Application secret; unset when external CalDAV sync is unused |
 | The optional Matrix worker's homeserver base URL and `server_name` (`KODERA_SYNAPSE_URL`, `KODERA_SYNAPSE_SERVER_NAME`), and its homeserver admin access token (`KODERA_SYNAPSE_ADMIN_TOKEN`) for queued import replay and inbound coexistence deliveries | The token is an application secret scoped to the internal homeserver; the URL and server name are internal configuration. Unset, `dispatch_extension_coexistence` refuses to run |
+| Optional LiveKit `RoomService` base URL (`KODERA_LIVEKIT_ROOM_SERVICE_URL`) and HS256 API key/secret (`KODERA_LIVEKIT_API_KEY`, `KODERA_LIVEKIT_API_SECRET`) for authoritative live-call caption roster verification | Application secrets scoped to LiveKit `RoomService` read-only room/participant queries; unset, live call captions fail closed (`503`) |
 | The Key Manager key **identifier** | An identifier, not a key |
 
 ## 3. What the API process must never hold

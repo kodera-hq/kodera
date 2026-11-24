@@ -216,6 +216,7 @@ services:
       KODERA_MEDIA_ROOM_VERIFIER_URL: http://room-access:8096/internal/room-member
       KODERA_IOS_APP_IDS: ${KODERA_IOS_APP_IDS:-}
       KODERA_ANDROID_ASSETLINKS_SHA256: ${KODERA_ANDROID_ASSETLINKS_SHA256:-}
+      DJANGO_SETTINGS_MODULE: config.settings.deploy
     volumes:
       - proximity_socket:/run/proximity:ro
       # Linux permits connecting to the owner-writable socket inode through a read-only mount.
@@ -327,6 +328,7 @@ services:
       LIVEKIT_URL: http://livekit:7880
       LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:?Set LIVEKIT_API_KEY in operator configuration}
       LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:?Set LIVEKIT_API_SECRET in operator configuration}
+      DJANGO_SETTINGS_MODULE: config.settings.deploy
     volumes:
       - agent_state:/state
     depends_on:

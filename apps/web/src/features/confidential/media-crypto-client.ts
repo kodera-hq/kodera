@@ -1,3 +1,5 @@
+export type ConfidentialMediaProtocol = 'ksm1' | 'sframe-v1'
+
 export interface ConfidentialMediaSession {
   readonly roomId: string
   readonly epoch: number
@@ -7,11 +9,18 @@ export interface ConfidentialMediaSession {
   attach(room: { setE2EEEnabled(enabled: boolean): Promise<void> }): Promise<void>
   close(): void
 }
+
 export interface ConfidentialMediaContext {
   readonly roomId: string
   readonly epoch: number
   readonly participantIdentity: string
 }
+
+export interface ConfidentialMediaOptions {
+  readonly protocol?: ConfidentialMediaProtocol
+  readonly unencryptedPrefixLength?: number
+}
+
 export function supportsConfidentialMediaTransforms(): boolean {
   if (typeof Worker === 'undefined' || typeof TransformStream === 'undefined') return false
   if (typeof Reflect.get(globalThis, 'RTCRtpScriptTransform') === 'function') return true
@@ -24,10 +33,12 @@ export function supportsConfidentialMediaTransforms(): boolean {
       'function'
   )
 }
+
 /** The only secret channel is transferred to the worker, never read here. */
 export async function createConfidentialMediaSession(
   context: ConfidentialMediaContext,
-  epochPort: MessagePort
+  epochPort: MessagePort,
+  options?: ConfidentialMediaOptions
 ): Promise<ConfidentialMediaSession> {
   const descriptors = Object.getOwnPropertyDescriptors(context)
   const values = ['roomId', 'epoch', 'participantIdentity'].map((key) => {
@@ -51,6 +62,27 @@ export async function createConfidentialMediaSession(
     epoch > 0xffffffff
   )
     throw new Error('Invalid media context.')
+  if (options !== undefined) {
+    if (
+      typeof options !== 'object' ||
+      options === null ||
+      Object.getPrototypeOf(options) !== Object.prototype
+    )
+      throw new Error('Invalid media options.')
+    if (
+      options.protocol !== undefined &&
+      options.protocol !== 'ksm1' &&
+      options.protocol !== 'sframe-v1'
+    )
+      throw new Error('Invalid media options.')
+    if (
+      options.unencryptedPrefixLength !== undefined &&
+      (!Number.isInteger(options.unencryptedPrefixLength) ||
+        options.unencryptedPrefixLength < 0 ||
+        options.unencryptedPrefixLength > 64)
+    )
+      throw new Error('Invalid media options.')
+  }
   context = Object.freeze({ roomId, epoch, participantIdentity })
   if (!supportsConfidentialMediaTransforms())
     throw new Error('confidential-media-transforms-unavailable')
@@ -62,7 +94,8 @@ export async function createConfidentialMediaSession(
     listeners = new Set<() => void>()
   let active = true,
     ready = false,
-    enabled = false
+    enabled = false,
+    currentEpoch = context.epoch
   let resolveReady!: () => void, rejectReady!: (error: Error) => void
   let resolveEnabled: (() => void) | undefined, rejectEnabled: ((error: Error) => void) | undefined
   const started = new Promise<void>((resolve, reject) => {
@@ -83,7 +116,7 @@ export async function createConfidentialMediaSession(
   }
   const startupTimer = setTimeout(close, 10000)
   channel.port1.onmessage = (event: MessageEvent<unknown>) => {
-    const reply = event.data as { kind?: unknown }
+    const reply = event.data as { kind?: unknown; epoch?: unknown }
     if (reply?.kind === 'ready' && !ready && active) {
       ready = true
       clearTimeout(startupTimer)
@@ -91,16 +124,35 @@ export async function createConfidentialMediaSession(
     } else if (reply?.kind === 'enabled' && ready && active) {
       enabled = true
       resolveEnabled?.()
+    } else if (
+      reply?.kind === 'epoch-rotated' &&
+      ready &&
+      active &&
+      typeof reply.epoch === 'number' &&
+      Number.isSafeInteger(reply.epoch) &&
+      reply.epoch > currentEpoch
+    ) {
+      currentEpoch = reply.epoch
     } else close()
   }
   channel.port1.onmessageerror = close
   worker.addEventListener('error', close)
   worker.addEventListener('messageerror', close)
   channel.port1.start()
-  worker.postMessage({ kind: 'bootstrap', control: channel.port2, epochPort, context }, [
-    channel.port2,
-    epochPort,
-  ])
+  const bootstrapMessage =
+    options === undefined
+      ? { kind: 'bootstrap', control: channel.port2, epochPort, context }
+      : {
+          kind: 'bootstrap',
+          control: channel.port2,
+          epochPort,
+          context,
+          ...(options.protocol !== undefined ? { protocol: options.protocol } : {}),
+          ...(options.unencryptedPrefixLength !== undefined
+            ? { unencryptedPrefixLength: options.unencryptedPrefixLength }
+            : {}),
+        }
+  worker.postMessage(bootstrapMessage, [channel.port2, epochPort])
   try {
     await started
   } catch (error) {
@@ -109,7 +161,9 @@ export async function createConfidentialMediaSession(
   }
   return Object.freeze({
     roomId: context.roomId,
-    epoch: context.epoch,
+    get epoch() {
+      return currentEpoch
+    },
     worker,
     isActive: () => active && ready,
     subscribeRevocation(listener: () => void) {

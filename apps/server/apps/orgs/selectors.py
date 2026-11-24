@@ -421,3 +421,69 @@ def has_privacy_cutoff(*, organisation_id: UUID, user_id: UUID | None = None) ->
 def organisation_is_default_community(*, organisation_id: UUID) -> bool:
     """Only the operator-bound default Community organisation owns the local server."""
     return Organisation.objects.filter(id=organisation_id, is_default_community=True).exists()
+
+
+def organisation_security_contacts(*, organisation_id: UUID) -> tuple[str | None, str | None]:
+    """Return `(security_contact_email, privacy_contact_email)` for `organisation_id`."""
+    row = (
+        Organisation.objects.filter(id=organisation_id, deleted_at__isnull=True)
+        .values_list("security_contact_email", "privacy_contact_email")
+        .first()
+    )
+    if row is None:
+        return (None, None)
+    return (row[0], row[1])
+
+
+def ensure_security_and_privacy_contacts(
+    *, organisation_id: UUID, fallback_email: str | None = None
+) -> bool:
+    """Populate missing security/privacy contacts from the active owner's deliverable address."""
+    from django.utils import timezone
+
+    from apps.identity.selectors import person_contacts
+
+    from .notice_contacts import deliverable
+
+    row = (
+        Organisation.objects.select_for_update(no_key=True)
+        .filter(id=organisation_id, deleted_at__isnull=True)
+        .values_list("security_contact_email", "privacy_contact_email")
+        .first()
+    )
+    if row is None:
+        return False
+    sec_email, priv_email = row
+    if sec_email and priv_email:
+        return False
+
+    candidate: str | None = None
+    owner_user_ids = tuple(
+        _organisation_memberships(organisation_id=organisation_id)
+        .filter(
+            role=Membership.Role.OWNER,
+            user__enabled=True,
+            user__deleted_at__isnull=True,
+        )
+        .order_by("id")
+        .values_list("user_id", flat=True)[:20]
+    )
+    if owner_user_ids:
+        contacts = {p.id: p.email for p in person_contacts(user_ids=owner_user_ids)}
+        for uid in owner_user_ids:
+            addr = contacts.get(uid)
+            if isinstance(addr, str) and deliverable(addr):
+                candidate = addr
+                break
+    if candidate is None and isinstance(fallback_email, str) and deliverable(fallback_email):
+        candidate = fallback_email
+    if candidate is None:
+        return False
+
+    updates: dict[str, object] = {"updated_at": timezone.now()}
+    if not sec_email:
+        updates["security_contact_email"] = candidate
+    if not priv_email:
+        updates["privacy_contact_email"] = candidate
+    Organisation.objects.filter(id=organisation_id).update(**updates)
+    return True

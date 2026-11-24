@@ -136,6 +136,9 @@ ANONYMOUS_OPERATIONS = frozenset(
         "verifyPassportMagicLink",
         "receiveStripeWebhook",
         "receiveCoexistenceEvent",
+        "getPublicBookingPage",
+        "reservePublicBookingSlot",
+        "cancelPublicBookingReservation",
     }
 )
 

@@ -28,6 +28,7 @@ EVENT_KINDS = (
 CURRENCIES = ("EUR",)
 BILLING_PERIODS = ("monthly", "yearly")
 VAT_REGIMES = ("fr_standard", "eu_reverse_charge", "exempt", "outside_eu")
+DOCUMENT_VAT_REGIMES = (*VAT_REGIMES, "eu_oss")
 CAPACITY_TIER_CODES = ("S", "M", "L", "XL")
 CODE = r"^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$"
 MAX_QUANTITY = 10_000
@@ -668,7 +669,8 @@ class Invoice(StoredModel, AccountingRetention):
                 name="billing_invoice_currency_valid", condition=_in("currency", CURRENCIES)
             ),
             models.CheckConstraint(
-                name="billing_invoice_vat_regime_valid", condition=_in("vat_regime", VAT_REGIMES)
+                name="billing_invoice_vat_regime_valid",
+                condition=_in("vat_regime", DOCUMENT_VAT_REGIMES),
             ),
             models.CheckConstraint(
                 name="billing_invoice_numbered_valid",
@@ -750,9 +752,9 @@ class InvoiceLine(AccountingRetention):
 
 
 # Why an invoice is credited: its order cancelled by the customer, lapsed unpaid past its due
-# date (BILLING_MODEL.md §4.1), or settled as complimentary by a staff operator (§4.2). Three
-# bases, so three codes.
-CREDIT_NOTE_REASONS = ("customer_cancellation", "unpaid_lapse", "complimentary")
+# date (BILLING_MODEL.md §4.1), settled as complimentary by a staff operator (§4.2), or refunded
+# partially or in full after payment (`refund`).
+CREDIT_NOTE_REASONS = ("customer_cancellation", "unpaid_lapse", "complimentary", "refund")
 CREDIT_NOTE_NUMBER = r"^AV-[A-Z]{2,8}(-[A-Z]{2,8})?-[0-9]{4}-[0-9]{5}$"
 
 
@@ -796,8 +798,13 @@ class CreditNote(StoredModel, AccountingRetention):
 
     class Meta:
         constraints = [
-            # A full credit, once: the sum of an invoice's credit notes never exceeds its total.
-            models.UniqueConstraint(fields=["invoice"], name="billing_creditnote_one_per_invoice"),
+            # Unpaid cancellations credit an invoice in full once; paid refunds allow partial notes
+            # bounded by the deferred `billing_creditnote_complete` sum trigger.
+            models.UniqueConstraint(
+                fields=["invoice"],
+                condition=~Q(reason="refund"),
+                name="billing_creditnote_one_per_invoice",
+            ),
             models.CheckConstraint(
                 name="billing_creditnote_number_valid",
                 condition=Q(number__regex=CREDIT_NOTE_NUMBER),
@@ -810,7 +817,7 @@ class CreditNote(StoredModel, AccountingRetention):
             ),
             models.CheckConstraint(
                 name="billing_creditnote_vat_regime_valid",
-                condition=_in("vat_regime", VAT_REGIMES),
+                condition=_in("vat_regime", DOCUMENT_VAT_REGIMES),
             ),
             models.CheckConstraint(
                 name="billing_creditnote_amounts_valid",
@@ -1046,3 +1053,549 @@ class StripeWebhookDelivery(models.Model):
 
     def __str__(self) -> str:
         return f"stripe webhook {self.stripe_event_id} {self.event_type} {self.outcome}"
+
+
+CUSTOMER_KINDS = ("b2c", "b2b")
+BOOST_GRANT_STATES = ("pending_payment", "active", "expired", "refunded", "disputed", "cancelled")
+HOSTING_CREDIT_STATES = ("active", "depleted", "expired", "revoked")
+CONNECT_ONBOARDING_STATES = (
+    "intent_recorded",
+    "account_created",
+    "onboarding_link_issued",
+    "restricted",
+    "active",
+    "outcome_unknown",
+    "disabled",
+)
+VIP_BILLING_PERIODS = ("monthly", "yearly", "one_time")
+VIP_ENTITLEMENT_STATES = (
+    "pending_payment",
+    "active",
+    "expired",
+    "refunded",
+    "disputed",
+    "cancelled",
+)
+SPLIT_LEDGER_ENTRY_KINDS = ("sale", "refund", "chargeback", "negative_balance_recovery")
+
+
+class WorkspaceBoostGrant(StoredModel):
+    """Volet A community workspace boost billed directly by Samouraï Coop (`Factur-X 380`/`381`)."""
+
+    organisation = models.ForeignKey(
+        "orgs.Organisation", on_delete=models.RESTRICT, related_name="+"
+    )
+    workspace = models.ForeignKey(
+        "workspaces.Workspace", on_delete=models.RESTRICT, related_name="+"
+    )
+    purchaser_user_id = models.UUIDField(null=True, blank=True)
+    invoice = models.ForeignKey(
+        Invoice, on_delete=models.RESTRICT, null=True, blank=True, related_name="boost_grants"
+    )
+    pack_code = models.TextField()
+    customer_kind = models.TextField(default="b2c")
+    customer_country = models.TextField()
+    currency = models.TextField(default="EUR")
+    vat_regime = models.TextField()
+    vat_rate_bp = models.IntegerField()
+    net_amount_minor = models.BigIntegerField()
+    vat_amount_minor = models.BigIntegerField()
+    gross_amount_minor = models.BigIntegerField()
+    refunded_gross_minor = models.BigIntegerField(default=0)
+    credit_amount_minor = models.BigIntegerField()
+    seats_delta = models.IntegerField(default=0)
+    storage_bytes_delta = models.BigIntegerField(default=0)
+    state = models.TextField(default="pending_payment")
+    withdrawal_waiver_accepted = models.BooleanField(default=False)
+    withdrawal_waiver_at = models.DateTimeField(null=True, blank=True)
+    withdrawal_waiver_evidence = models.TextField(null=True, blank=True)  # noqa: DJ001 - B2C waiver
+    activated_at = models.DateTimeField(null=True, blank=True)
+    expires_at = models.DateTimeField(null=True, blank=True)
+    refunded_at = models.DateTimeField(null=True, blank=True)
+    stripe_checkout_session_id = models.TextField(null=True, blank=True, unique=True)  # noqa: DJ001 - assigned by provider
+    stripe_checkout_url = models.TextField(null=True, blank=True)  # noqa: DJ001 - cached checkout URL
+    stripe_payment_intent_id = models.TextField(null=True, blank=True, unique=True)  # noqa: DJ001 - assigned on settlement
+    idempotency_key = models.TextField()
+    request_sha256 = models.TextField()
+    pii_scrubbed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organisation", "idempotency_key"],
+                name="billing_boost_idempotency_unique",
+            ),
+            models.CheckConstraint(
+                name="billing_boost_request_sha256_valid",
+                condition=Q(request_sha256__regex=r"^[0-9a-f]{64}$"),
+            ),
+            models.CheckConstraint(
+                name="billing_boost_customer_kind_valid",
+                condition=_in("customer_kind", CUSTOMER_KINDS),
+            ),
+            models.CheckConstraint(
+                name="billing_boost_country_valid",
+                condition=Q(customer_country__regex=r"^[A-Z]{2}$"),
+            ),
+            models.CheckConstraint(
+                name="billing_boost_currency_valid",
+                condition=_in("currency", CURRENCIES),
+            ),
+            models.CheckConstraint(
+                name="billing_boost_vat_regime_valid",
+                condition=_in("vat_regime", DOCUMENT_VAT_REGIMES),
+            ),
+            models.CheckConstraint(
+                name="billing_boost_state_valid",
+                condition=_in("state", BOOST_GRANT_STATES),
+            ),
+            models.CheckConstraint(
+                name="billing_boost_amounts_valid",
+                condition=Q(net_amount_minor__gt=0)
+                & Q(vat_rate_bp__range=(0, 10_000))
+                & Q(vat_amount_minor__gte=0)
+                & Q(gross_amount_minor=F("net_amount_minor") + F("vat_amount_minor"))
+                & Q(refunded_gross_minor__gte=0)
+                & Q(refunded_gross_minor__lte=F("gross_amount_minor"))
+                & Q(credit_amount_minor__gte=0)
+                & Q(seats_delta__gte=0)
+                & Q(storage_bytes_delta__gte=0),
+            ),
+            models.CheckConstraint(
+                name="billing_boost_b2c_waiver_valid",
+                condition=(
+                    ~Q(withdrawal_waiver_accepted=True)
+                    | (
+                        Q(withdrawal_waiver_at__isnull=False)
+                        & Q(withdrawal_waiver_evidence__isnull=False)
+                        & ~Q(withdrawal_waiver_evidence="")
+                    )
+                )
+                & (
+                    ~Q(customer_kind="b2c")
+                    | (Q(state__in=("pending_payment", "cancelled")) & Q(activated_at__isnull=True))
+                    | (
+                        Q(withdrawal_waiver_accepted=True)
+                        & Q(withdrawal_waiver_at__isnull=False)
+                        & Q(withdrawal_waiver_evidence__isnull=False)
+                    )
+                ),
+            ),
+            models.CheckConstraint(
+                name="billing_boost_window_valid",
+                condition=Q(activated_at__isnull=True)
+                | Q(expires_at__isnull=True)
+                | Q(expires_at__gt=F("activated_at")),
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["workspace", "state", "-created_at"],
+                name="billing_boost_ws_state_idx",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"boost grant {self.id} {self.pack_code} {self.state}"
+
+
+class WorkspaceHostingCredit(StoredModel):
+    """Dedicated Samouraï Coop hosting credit balance allocated by a paid `WorkspaceBoostGrant`."""
+
+    organisation = models.ForeignKey(
+        "orgs.Organisation", on_delete=models.RESTRICT, related_name="+"
+    )
+    workspace = models.ForeignKey(
+        "workspaces.Workspace", on_delete=models.RESTRICT, related_name="+"
+    )
+    boost_grant = models.OneToOneField(
+        WorkspaceBoostGrant, on_delete=models.RESTRICT, related_name="hosting_credit"
+    )
+    currency = models.TextField(default="EUR")
+    granted_minor = models.BigIntegerField()
+    consumed_minor = models.BigIntegerField(default=0)
+    refunded_minor = models.BigIntegerField(default=0)
+    remaining_minor = models.BigIntegerField()
+    state = models.TextField(default="active")
+    expires_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                name="billing_hostingcredit_currency_valid",
+                condition=_in("currency", CURRENCIES),
+            ),
+            models.CheckConstraint(
+                name="billing_hostingcredit_state_valid",
+                condition=_in("state", HOSTING_CREDIT_STATES),
+            ),
+            models.CheckConstraint(
+                name="billing_hostingcredit_ledger_valid",
+                condition=Q(granted_minor__gte=0)
+                & Q(consumed_minor__gte=0)
+                & Q(refunded_minor__gte=0)
+                & Q(remaining_minor__gte=0)
+                & Q(remaining_minor=F("granted_minor") - F("consumed_minor") - F("refunded_minor")),
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["workspace", "state"],
+                name="billing_hostingcredit_ws_idx",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"hosting credit {self.id} remaining={self.remaining_minor} {self.state}"
+
+
+class CreatorConnectAccount(StoredModel):
+    """Volet B Stripe Connect account with durable onboarding state and sealed DAC7 tax identity."""
+
+    organisation = models.ForeignKey(
+        "orgs.Organisation", on_delete=models.RESTRICT, related_name="+"
+    )
+    workspace = models.OneToOneField(
+        "workspaces.Workspace", on_delete=models.RESTRICT, related_name="+"
+    )
+    owner_user_id = models.UUIDField(null=True, blank=True)
+    stripe_platform_account_id = models.TextField(default="acct_1QhZ8fRwfVmWKPLR")
+    stripe_connect_account_id = models.TextField(null=True, blank=True, unique=True)  # noqa: DJ001 - persisted before resumable link
+    onboarding_state = models.TextField(default="intent_recorded")
+    operation_idempotency_key = models.TextField()
+    last_operation_error = models.TextField(null=True, blank=True)  # noqa: DJ001 - reconciled fault
+    charges_enabled = models.BooleanField(default=False)
+    payouts_enabled = models.BooleanField(default=False)
+    details_submitted = models.BooleanField(default=False)
+    platform_fee_bps = models.IntegerField(default=1000)
+    negative_balance_minor = models.BigIntegerField(default=0)
+    reserved_recovery_minor = models.BigIntegerField(default=0)
+    seller_legal_name = models.TextField()
+    tax_residence_country = models.TextField()
+    sealed_tax_tin = models.BinaryField(null=True, blank=True)
+    onboarding_completed_at = models.DateTimeField(null=True, blank=True)
+    pii_scrubbed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                name="billing_connect_state_valid",
+                condition=_in("onboarding_state", CONNECT_ONBOARDING_STATES),
+            ),
+            models.CheckConstraint(
+                name="billing_connect_account_id_required",
+                condition=Q(onboarding_state__in=("intent_recorded", "outcome_unknown"))
+                | (
+                    Q(stripe_connect_account_id__isnull=False)
+                    & Q(stripe_connect_account_id__regex=r"^acct_[A-Za-z0-9_]+$")
+                ),
+            ),
+            models.CheckConstraint(
+                name="billing_connect_active_capabilities",
+                condition=~Q(onboarding_state="active")
+                | Q(charges_enabled=True, details_submitted=True),
+            ),
+            models.CheckConstraint(
+                name="billing_connect_fee_bps_valid",
+                condition=Q(platform_fee_bps__range=(0, 9999)),
+            ),
+            models.CheckConstraint(
+                name="billing_connect_neg_balance_valid",
+                condition=Q(negative_balance_minor__gte=0)
+                & Q(reserved_recovery_minor__gte=0)
+                & Q(reserved_recovery_minor__lte=F("negative_balance_minor")),
+            ),
+            models.CheckConstraint(
+                name="billing_connect_platform_acct_valid",
+                condition=Q(stripe_platform_account_id__regex=r"^acct_[A-Za-z0-9_]+$"),
+            ),
+            models.CheckConstraint(
+                name="billing_connect_country_valid",
+                condition=Q(tax_residence_country__regex=r"^[A-Z]{2}$"),
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["organisation", "onboarding_state"],
+                name="billing_connect_org_state_idx",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return (
+            f"connect account {self.stripe_connect_account_id or self.id} {self.onboarding_state}"
+        )
+
+
+class VipTierOffer(StoredModel):
+    """Paid VIP tier granting a workspace IAM role and restricted Matrix/LiveKit channels."""
+
+    organisation = models.ForeignKey(
+        "orgs.Organisation", on_delete=models.RESTRICT, related_name="+"
+    )
+    workspace = models.ForeignKey(
+        "workspaces.Workspace", on_delete=models.RESTRICT, related_name="+"
+    )
+    connect_account = models.ForeignKey(
+        CreatorConnectAccount, on_delete=models.RESTRICT, related_name="tiers"
+    )
+    code = models.TextField()
+    name = models.TextField()
+    description = models.TextField(null=True, blank=True)  # noqa: DJ001 - optional tier summary
+    billing_period = models.TextField(default="monthly")
+    currency = models.TextField(default="EUR")
+    price_excl_vat_minor = models.BigIntegerField()
+    granted_workspace_role_id = models.UUIDField()
+    granted_channel_ids = models.JSONField(default=list)
+    active = models.BooleanField(default=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["workspace", "code"],
+                name="billing_viptier_workspace_code_unique",
+            ),
+            models.CheckConstraint(
+                name="billing_viptier_code_valid",
+                condition=Q(code__regex=CODE),
+            ),
+            models.CheckConstraint(
+                name="billing_viptier_period_valid",
+                condition=_in("billing_period", VIP_BILLING_PERIODS),
+            ),
+            models.CheckConstraint(
+                name="billing_viptier_currency_valid",
+                condition=_in("currency", CURRENCIES),
+            ),
+            models.CheckConstraint(
+                name="billing_viptier_price_valid",
+                condition=Q(price_excl_vat_minor__gt=0),
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["workspace", "active"],
+                name="billing_viptier_ws_active_idx",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"vip tier {self.code} ({self.workspace_id})"
+
+
+class VipMembershipEntitlement(StoredModel):
+    """Member VIP pass settled via Stripe Connect with B2C waiver and overlapping grant tracking."""
+
+    organisation = models.ForeignKey(
+        "orgs.Organisation", on_delete=models.RESTRICT, related_name="+"
+    )
+    workspace = models.ForeignKey(
+        "workspaces.Workspace", on_delete=models.RESTRICT, related_name="+"
+    )
+    tier = models.ForeignKey(VipTierOffer, on_delete=models.RESTRICT, related_name="entitlements")
+    membership_id = models.UUIDField()
+    buyer_user_id = models.UUIDField(null=True, blank=True)
+    customer_kind = models.TextField(default="b2c")
+    buyer_country = models.TextField()
+    currency = models.TextField(default="EUR")
+    vat_regime = models.TextField()
+    vat_rate_bp = models.IntegerField()
+    gross_excl_vat_minor = models.BigIntegerField()
+    vat_amount_minor = models.BigIntegerField()
+    total_incl_vat_minor = models.BigIntegerField()
+    application_fee_amount_minor = models.BigIntegerField()
+    reserved_recovery_minor = models.BigIntegerField(default=0)
+    refunded_incl_vat_minor = models.BigIntegerField(default=0)
+    state = models.TextField(default="pending_payment")
+    withdrawal_waiver_accepted = models.BooleanField(default=False)
+    withdrawal_waiver_at = models.DateTimeField(null=True, blank=True)
+    withdrawal_waiver_evidence = models.TextField(null=True, blank=True)  # noqa: DJ001 - B2C waiver
+    activated_at = models.DateTimeField(null=True, blank=True)
+    expires_at = models.DateTimeField(null=True, blank=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    revocation_reason = models.TextField(null=True, blank=True)  # noqa: DJ001 - refund/dispute/expiry
+    stripe_checkout_session_id = models.TextField(null=True, blank=True, unique=True)  # noqa: DJ001 - assigned by provider
+    stripe_checkout_url = models.TextField(null=True, blank=True)  # noqa: DJ001 - cached checkout URL
+    stripe_payment_intent_id = models.TextField(null=True, blank=True, unique=True)  # noqa: DJ001 - assigned on settlement
+    idempotency_key = models.TextField()
+    request_sha256 = models.TextField()
+    pii_scrubbed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["workspace", "idempotency_key"],
+                name="billing_vipentitlement_idempotency_unique",
+            ),
+            models.CheckConstraint(
+                name="billing_vipentitlement_request_sha256_valid",
+                condition=Q(request_sha256__regex=r"^[0-9a-f]{64}$"),
+            ),
+            models.CheckConstraint(
+                name="billing_vipentitlement_kind_valid",
+                condition=_in("customer_kind", CUSTOMER_KINDS),
+            ),
+            models.CheckConstraint(
+                name="billing_vipentitlement_country_valid",
+                condition=Q(buyer_country__regex=r"^[A-Z]{2}$"),
+            ),
+            models.CheckConstraint(
+                name="billing_vipentitlement_currency_valid",
+                condition=_in("currency", CURRENCIES),
+            ),
+            models.CheckConstraint(
+                name="billing_vipentitlement_vat_regime_valid",
+                condition=_in("vat_regime", DOCUMENT_VAT_REGIMES),
+            ),
+            models.CheckConstraint(
+                name="billing_vipentitlement_state_valid",
+                condition=_in("state", VIP_ENTITLEMENT_STATES),
+            ),
+            models.CheckConstraint(
+                name="billing_vipentitlement_amounts_valid",
+                condition=Q(gross_excl_vat_minor__gt=0)
+                & Q(vat_rate_bp__range=(0, 10_000))
+                & Q(vat_amount_minor__gte=0)
+                & Q(total_incl_vat_minor=F("gross_excl_vat_minor") + F("vat_amount_minor"))
+                & Q(application_fee_amount_minor__gte=0)
+                & Q(application_fee_amount_minor__lt=F("total_incl_vat_minor"))
+                & Q(reserved_recovery_minor__gte=0)
+                & Q(refunded_incl_vat_minor__gte=0)
+                & Q(refunded_incl_vat_minor__lte=F("total_incl_vat_minor")),
+            ),
+            models.CheckConstraint(
+                name="billing_vipentitlement_b2c_waiver_valid",
+                condition=(
+                    ~Q(withdrawal_waiver_accepted=True)
+                    | (
+                        Q(withdrawal_waiver_at__isnull=False)
+                        & Q(withdrawal_waiver_evidence__isnull=False)
+                        & ~Q(withdrawal_waiver_evidence="")
+                    )
+                )
+                & (
+                    ~Q(customer_kind="b2c")
+                    | (Q(state__in=("pending_payment", "cancelled")) & Q(activated_at__isnull=True))
+                    | (
+                        Q(withdrawal_waiver_accepted=True)
+                        & Q(withdrawal_waiver_at__isnull=False)
+                        & Q(withdrawal_waiver_evidence__isnull=False)
+                    )
+                ),
+            ),
+            models.CheckConstraint(
+                name="billing_vipentitlement_window_valid",
+                condition=Q(activated_at__isnull=True)
+                | Q(expires_at__isnull=True)
+                | Q(expires_at__gt=F("activated_at")),
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["workspace", "membership_id", "state"],
+                name="billing_vipentitlement_mem_idx",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"vip entitlement {self.id} member={self.membership_id} {self.state}"
+
+
+class CreatorSplitLedgerEntry(StoredModel):
+    """Append-only marketplace split settlement & DAC7 consideration ledger (`0` float arithmetic)."""
+
+    organisation = models.ForeignKey(
+        "orgs.Organisation", on_delete=models.RESTRICT, related_name="+"
+    )
+    workspace = models.ForeignKey(
+        "workspaces.Workspace", on_delete=models.RESTRICT, related_name="+"
+    )
+    connect_account = models.ForeignKey(
+        CreatorConnectAccount, on_delete=models.RESTRICT, related_name="ledger_entries"
+    )
+    entitlement = models.ForeignKey(
+        VipMembershipEntitlement, on_delete=models.RESTRICT, related_name="ledger_entries"
+    )
+    entry_kind = models.TextField()
+    stripe_event_id = models.TextField()
+    stripe_object_ref = models.TextField()
+    currency = models.TextField(default="EUR")
+    gross_excl_vat_minor = models.BigIntegerField()
+    vat_amount_minor = models.BigIntegerField()
+    total_incl_vat_minor = models.BigIntegerField()
+    application_fee_amount_minor = models.BigIntegerField()
+    dispute_fee_minor = models.BigIntegerField(default=0)
+    creator_net_minor = models.BigIntegerField()
+    negative_balance_delta_minor = models.BigIntegerField(default=0)
+    occurred_at = models.DateTimeField()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["stripe_event_id", "entry_kind"],
+                name="billing_splitledger_event_kind_unique",
+            ),
+            models.CheckConstraint(
+                name="billing_splitledger_kind_valid",
+                condition=_in("entry_kind", SPLIT_LEDGER_ENTRY_KINDS),
+            ),
+            models.CheckConstraint(
+                name="billing_splitledger_currency_valid",
+                condition=_in("currency", CURRENCIES),
+            ),
+            models.CheckConstraint(
+                name="billing_splitledger_dispute_fee_valid",
+                condition=Q(dispute_fee_minor__gte=0),
+            ),
+            models.CheckConstraint(
+                name="billing_splitledger_totals_valid",
+                condition=Q(total_incl_vat_minor=F("gross_excl_vat_minor") + F("vat_amount_minor"))
+                & Q(
+                    creator_net_minor=F("gross_excl_vat_minor")
+                    - F("application_fee_amount_minor")
+                    - F("dispute_fee_minor")
+                ),
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["connect_account", "occurred_at"],
+                name="billing_splitledger_acct_idx",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"split ledger {self.entry_kind} {self.stripe_event_id} net={self.creator_net_minor}"
+
+
+class Dac7SellerStatutorySnapshot(StoredModel):
+    """Detached GDPR Art. 17(3)(b) / CGI art. 1649 ter A statutory tax snapshot for reportable
+    creators whose operational account or organisation was erased within the 10-year tax window."""
+
+    connect_account_id = models.UUIDField(unique=True)
+    organisation_reference = models.UUIDField()
+    workspace_reference = models.UUIDField()
+    stripe_connect_account_id = models.TextField(null=True, blank=True)  # noqa: DJ001 - archived acct_
+    seller_legal_name = models.TextField()
+    tax_residence_country = models.TextField()
+    sealed_tax_tin = models.BinaryField(null=True, blank=True)
+    retained_at = models.DateTimeField()
+    purge_after = models.DateTimeField()
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                name="billing_dac7statutory_country_valid",
+                condition=Q(tax_residence_country__regex=r"^[A-Z]{2}$"),
+            ),
+            models.CheckConstraint(
+                name="billing_dac7statutory_window_valid",
+                condition=Q(purge_after__gt=F("retained_at")),
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["purge_after", "id"], name="billing_dac7statutory_due_idx"),
+        ]
+
+    def __str__(self) -> str:
+        return f"dac7 statutory snapshot {self.connect_account_id}"

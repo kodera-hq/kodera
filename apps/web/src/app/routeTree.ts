@@ -18,6 +18,7 @@ import { createRouter } from '@tanstack/react-router'
 import type { RouterHistory } from '@tanstack/react-router'
 import { callbackRoute } from './callback-route'
 import { espaceCallbackRoute } from './espace-callback-route'
+import { publicBookingRoute } from '../features/calendar/route'
 import { invitationRoute, joinRoute } from '../features/invitation/route'
 import { loginRoute } from '../features/login/routes'
 import { entryCataloguesReady, withNamespaces } from '../i18n'
@@ -241,6 +242,8 @@ async function entryRoutes() {
     invitationRoute,
     // A workspace invite link, `/join#code` (docs/specs/messaging-media-and-notifications.md).
     joinRoute,
+    // Public zero-PII sovereign booking page, `/booking/$bookingSlug`.
+    publicBookingRoute,
   ] as const
 }
 

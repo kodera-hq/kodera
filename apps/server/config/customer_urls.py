@@ -9,6 +9,14 @@ from apps.billing.api import tenants as tenancy, views as billing
 from apps.billing.api.downloads import credit_note_download, invoice_download
 from apps.billing.api.help_context import help_context
 from apps.billing.api.membership_count import membership_count
+from apps.billing.api.monetization import (
+    boost_checkout,
+    connect_onboarding,
+    dac7_report_export,
+    vip_pass_checkout,
+    vip_tiers,
+    workspace_monetization,
+)
 from apps.billing.api.slug_availability import slug_availability
 from apps.billing.api.vat_status import billing_vat
 from apps.billing.api.webhooks import stripe_webhook
@@ -88,6 +96,7 @@ urlpatterns = [
     # Every confidential operation independently refuses while its feature gate is disabled.
     path("", include("apps.e2ee.api.urls")),
     path("", include("apps.ai_gateway.api.urls")),
+    path("", include("apps.calendar.api.urls")),
     path("", include("apps.docs.api.urls")),
     path("", include("apps.extensions.api.urls")),
     path("api/v1/me", me),
@@ -212,6 +221,30 @@ urlpatterns = [
     path("api/v1/invoices/<uuid:invoice_id>/download", invoice_download),
     path("api/v1/credit-notes/<uuid:credit_note_id>/download", credit_note_download),
     path("api/v1/organisations/<uuid:organisation_id>/dunning", billing.dunning),
+    path(
+        "api/v1/organisations/<uuid:organisation_id>/workspace/monetization",
+        workspace_monetization,
+    ),
+    path(
+        "api/v1/organisations/<uuid:organisation_id>/workspace/monetization/boosts/checkout",
+        boost_checkout,
+    ),
+    path(
+        "api/v1/organisations/<uuid:organisation_id>/workspace/monetization/connect/onboarding",
+        connect_onboarding,
+    ),
+    path(
+        "api/v1/organisations/<uuid:organisation_id>/workspace/monetization/vip-tiers",
+        vip_tiers,
+    ),
+    path(
+        "api/v1/organisations/<uuid:organisation_id>/workspace/monetization/vip-passes/checkout",
+        vip_pass_checkout,
+    ),
+    path(
+        "api/v1/organisations/<uuid:organisation_id>/workspace/monetization/dac7-report",
+        dac7_report_export,
+    ),
     path("api/v1/legal-documents", legal.legal_documents),
     path(
         "api/v1/legal-documents/<str:code>/<str:version>/<str:locale>",

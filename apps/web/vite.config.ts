@@ -288,9 +288,18 @@ function deferredVendorGroups() {
       name: (id: string): string | null => {
         const name = packageOf(id)
         if (name === undefined) return null
-        if (Object.hasOwn(DEFERRED_VENDORS, name)) {
-          return DEFERRED_VENDORS[name as keyof typeof DEFERRED_VENDORS]
-        }
+        return Object.hasOwn(DEFERRED_VENDORS, name)
+          ? DEFERRED_VENDORS[name as keyof typeof DEFERRED_VENDORS]
+          : null
+      },
+      priority: 15,
+      entriesAware: true,
+      includeDependenciesRecursively: false,
+    },
+    {
+      name: (id: string): string | null => {
+        const name = packageOf(id)
+        if (name === undefined || Object.hasOwn(DEFERRED_VENDORS, name)) return null
         return dependencies.has(name) ? 'vendor-workspace' : null
       },
       entriesAware: true,

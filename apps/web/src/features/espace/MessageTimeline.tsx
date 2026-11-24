@@ -23,6 +23,7 @@ import { demoMessages } from '../../app/demoMessages'
 import { calendarDay, formatDayDivider, previousCalendarDay } from '../../i18n/format'
 import { Button } from '../../ui/Button/Button'
 import { TimelineDivider } from '../../ui/TimelineDivider/TimelineDivider'
+import { permitsPlaintext } from '../confidential/room-boundary'
 import type { ChannelDoc } from '../docs/ChannelDocsEditor'
 import { PollCard } from '../polls/PollCard'
 import { pollStore } from '../polls/pollStore'
@@ -228,6 +229,19 @@ function MessageTimelineView({
   // Read again at every draw, not memoised on the array: a store may hand back the same array
   // changed in place, and the log must draw what it holds now.
   const byEventId = firstByEventId(timeline)
+  const roomBoundary =
+    roomId === null
+      ? undefined
+      : store.getRoomBoundary !== undefined
+        ? store.getRoomBoundary(roomId)
+        : simulation
+          ? 'ordinary'
+          : undefined
+  const allowAiTranslate =
+    direct === undefined &&
+    channelId !== '' &&
+    roomBoundary !== undefined &&
+    permitsPlaintext(roomBoundary)
   const pins = pinSetOf(roomId !== null ? (store.getPinned?.(roomId) ?? NO_PINS) : NO_PINS)
   const canPin = roomId !== null && !archived && store.canPin?.(roomId) === true
   const pin = useCallback(
@@ -443,6 +457,8 @@ function MessageTimelineView({
                   onPin={canPin ? pin : undefined}
                   mentionMembers={mentionMembers}
                   resolveMember={resolveMember}
+                  channelId={channelId}
+                  allowAiTranslate={allowAiTranslate}
                   onRetry={actions.onRetry}
                   onReaction={actions.onReaction}
                   onReply={actions.onReply}

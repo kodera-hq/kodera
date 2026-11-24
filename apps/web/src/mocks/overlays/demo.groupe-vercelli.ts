@@ -36,6 +36,10 @@ import {
   WORKSPACE_MIGRATOR_DEMO_ROUTES,
   workspaceMigratorDemoHandlers,
 } from '../demo/workspaceMigrator'
+import {
+  WORKSPACE_CALENDAR_DEMO_ROUTES,
+  workspaceCalendarDemoHandlers,
+} from '../demo/workspaceCalendar'
 // The walkable demo (docs/dev/DEMO.md): one scenario overlay that answers
 // EVERY route the built areas call, from the one seed in `src/mocks/demo/seed.ts`.
 //
@@ -175,12 +179,19 @@ export const DEMO_ROUTES: readonly string[] = [
   'POST /invitations/accept',
   'GET /organisations/:organisation_id/workspace',
   'POST /organisations/:organisation_id/workspace/actions/initialise',
+  'GET /organisations/:organisation_id/workspace/monetization',
+  'POST /organisations/:organisation_id/workspace/monetization/boosts/checkout',
+  'POST /organisations/:organisation_id/workspace/monetization/connect/onboarding',
+  'POST /organisations/:organisation_id/workspace/monetization/vip-tiers',
+  'POST /organisations/:organisation_id/workspace/monetization/vip-passes/checkout',
+  'GET /organisations/:organisation_id/workspace/monetization/dac7-report',
   ...WAVE4_COLLECTIONS_DEMO_ROUTES,
   ...MESSAGING_DEMO_ROUTES,
   ...GOVERNANCE_DEMO_ROUTES,
   ...WORKSPACE_DOCS_DEMO_ROUTES,
   ...WAVE4_BILLING_PRIVACY_DEMO_ROUTES,
   ...WORKSPACE_MIGRATOR_DEMO_ROUTES,
+  ...WORKSPACE_CALENDAR_DEMO_ROUTES,
 ]
 
 /** The invoice whose id the console asked for, or the current month's — the
@@ -882,7 +893,57 @@ export const handlers: HttpHandler[] = [
   ...wave4CollectionsDemoHandlers(BASE, headers),
   ...messagingDemoHandlers(BASE, headers),
   ...governanceDemoHandlers(BASE, headers),
+  http.get(`${BASE}/organisations/:organisation_id/workspace/monetization`, ({ params }) => {
+    const workspace = findLocalWorkspace(params.organisation_id)
+      ? localWorkspace(findLocalWorkspace(params.organisation_id)!)
+      : isCommunity(params.organisation_id)
+        ? community.communityWorkspace()
+        : readyWorkspace()
+    const overview: components['schemas']['WorkspaceMonetizationOverview'] = {
+      workspace_id: workspace.id!,
+      boost_packs: [],
+      hosting_credits: [],
+      vip_tiers: [],
+      connect_account: null,
+      dac7_summary: null,
+    }
+    return HttpResponse.json(overview, { headers: headers() })
+  }),
+  ...['boosts/checkout', 'connect/onboarding', 'vip-tiers', 'vip-passes/checkout'].map((path) =>
+    http.post(`${BASE}/organisations/:organisation_id/workspace/monetization/${path}`, () =>
+      problem('https://kodera.io/problems/forbidden')
+    )
+  ),
+  http.get(
+    `${BASE}/organisations/:organisation_id/workspace/monetization/dac7-report`,
+    ({ request }) => {
+      const query = new URL(request.url).searchParams
+      const year = query.has('year') ? Number(query.get('year')) : now().getUTCFullYear()
+      const format = query.get('format') ?? 'json'
+      if (
+        !Number.isInteger(year) ||
+        year < 2023 ||
+        year > 9999 ||
+        !['json', 'xml'].includes(format)
+      ) {
+        return problem('https://kodera.io/problems/malformed-request')
+      }
+      if (format === 'xml') {
+        return new HttpResponse(
+          `<?xml version="1.0" encoding="UTF-8"?><DPI_OECD xmlns="urn:oecd:ties:dpi:v1" version="1.0"><MessageSpec><MessageType>DPI</MessageType><MessageTypeIndic>DPI1</MessageTypeIndic><ReportingPeriod>${year}-12-31</ReportingPeriod></MessageSpec><DPIBody/></DPI_OECD>`,
+          { headers: { ...headers(), 'Content-Type': 'application/xml' } }
+        )
+      }
+      const report: components['schemas']['Dac7ExportDocument'] = {
+        directive: '2021/514/EU',
+        reporting_year: year,
+        sellers: [],
+      }
+      return HttpResponse.json(report, { headers: headers() })
+    }
+  ),
   ...workspaceDocumentsDemoHandlers(BASE, headers),
   ...wave4BillingPrivacyDemoHandlers(BASE, headers),
   ...workspaceMigratorDemoHandlers(BASE, headers),
+  ...workspaceCalendarDemoHandlers(BASE, headers),
 ]

@@ -15,7 +15,8 @@ Governed by [`../LICENSE`](../LICENSE) (`LicenseRef-Kodera-EE`), and loaded only
 - **Commercial price schedules ([`pricing.py`](./pricing.py)):** the prices Samouraï Coop actually charges, in exact integer minor units (`EUR` cents) with a `4400 bps` (`44.0%`) minimum gross-margin floor.
 - **Managed-hosting automation for many tenants ([`warm_pool.py`](./warm_pool.py)):** deterministic Autopilot warm-pool sizing, capacity watermarks, replenishment planning, unhealthy-slot eviction, and idempotent checkout claim. The open-source tree keeps the allocation record and the claim endpoint; what fills and runs the pool belongs here.
 - **Custom enterprise billing ([`purchase_orders.py`](./purchase_orders.py)):** Purchase Order (`PO`) lifecycle (`draft` -> `issued` -> `countersigned` -> `invoiced` -> `paid` / `expired`), contracted seat and storage commitment enforcement, and operator-only invoice and payment settlement verified against persisted Core ledger rows (`billing_invoice`, `billing_payment`).
-- **Edition-gated HTTP runtime ([`api.py`](./api.py), [`urls.py`](./urls.py)):** commercial plan, quote, warm-pool, and purchase-order routes gated behind `KODERA_EDITION=enterprise` (returning `404` in Community mode).
+- **Per-tenant FinOps resource attribution ([`finops.py`](./finops.py)):** exact integer minor-unit (`EUR` cents) proportional floor allocation across compute, S3 storage/egress, TURN/LiveKit relay, and shared-platform pools reconciled against provider invoice totals (`allocated_total_minor + unallocated_remainder_minor == provider_invoice_total_minor`) with per-tenant `4400 bps` gross-margin floor flagging.
+- **Edition-gated HTTP runtime ([`api.py`](./api.py), [`urls.py`](./urls.py)):** commercial plan, quote, warm-pool, purchase-order, and FinOps reconciliation routes gated behind `KODERA_EDITION=enterprise` (returning `404` in Community mode).
 
 ## List prices
 

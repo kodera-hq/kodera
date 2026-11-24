@@ -61,6 +61,7 @@ const SERVER_ADMITTED_ENV_KEYS: &[&str] = &[
     "DATABASE_URL",
     "DJANGO_ALLOWED_HOSTS",
     "DJANGO_SECRET_KEY",
+    "DJANGO_SETTINGS_MODULE",
     "KODERA_ANDROID_ASSETLINKS_SHA256",
     "KODERA_AUTH_TRUST",
     "KODERA_BILLING_ENABLED",
@@ -113,6 +114,7 @@ const SYNAPSE_DB_ADMITTED_ENV_KEYS: &[&str] = &[
 ];
 
 const TENANT_AGENT_ADMITTED_ENV_KEYS: &[&str] = &[
+    "DJANGO_SETTINGS_MODULE",
     "KODERA_AGENT_STATE_DIR",
     "KODERA_AGENT_TOKEN",
     "KODERA_APPS",
@@ -223,6 +225,10 @@ pub(super) fn is_admitted_service_env_var(
     }
     match key {
         "PYTHONPATH" => service_name == "synapse" && val_opt == Some("/tmp/kodera-policy"),
+        "DJANGO_SETTINGS_MODULE" => {
+            matches!(service_name, "server" | "tenant-agent")
+                && val_opt == Some("config.settings.deploy")
+        }
         "KODERA_BILLING_ENABLED" => {
             matches!(service_name, "migrate" | "server") && val_opt == Some("false")
         }

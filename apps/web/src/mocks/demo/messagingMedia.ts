@@ -19,6 +19,10 @@ export const MESSAGING_DEMO_ROUTES: readonly string[] = [
   'PUT /organisations/:organisation_id/workspace/ai/policy',
   'PUT /organisations/:organisation_id/workspace/channels/:channel_id/ai',
   'PUT /organisations/:organisation_id/workspace/ai/consent',
+  'POST /organisations/:organisation_id/workspace/channels/:channel_id/actions/translate-message',
+  'GET /organisations/:organisation_id/workspace/channels/:channel_id/call-captions/session',
+  'POST /organisations/:organisation_id/workspace/channels/:channel_id/call-captions/session',
+  'POST /organisations/:organisation_id/workspace/channels/:channel_id/call-captions/chunks',
   'POST /organisations/:organisation_id/workspace/unfurl',
   'GET /notifications',
   'POST /notifications/read',
@@ -80,6 +84,22 @@ export function messagingDemoHandlers(
     http.put(`${base}/organisations/:organisation_id/workspace/ai/policy`, refused),
     http.put(`${base}/organisations/:organisation_id/workspace/channels/:channel_id/ai`, refused),
     http.put(`${base}/organisations/:organisation_id/workspace/ai/consent`, refused),
+    http.post(
+      `${base}/organisations/:organisation_id/workspace/channels/:channel_id/actions/translate-message`,
+      refused
+    ),
+    http.get(
+      `${base}/organisations/:organisation_id/workspace/channels/:channel_id/call-captions/session`,
+      () => HttpResponse.json({ session: null }, { headers: headers() })
+    ),
+    http.post(
+      `${base}/organisations/:organisation_id/workspace/channels/:channel_id/call-captions/session`,
+      refused
+    ),
+    http.post(
+      `${base}/organisations/:organisation_id/workspace/channels/:channel_id/call-captions/chunks`,
+      refused
+    ),
     http.post(`${base}/organisations/:organisation_id/workspace/unfurl`, missing),
     http.get(`${base}/notifications`, empty),
     http.post(`${base}/notifications/read`, done),

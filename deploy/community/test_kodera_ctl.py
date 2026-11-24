@@ -14,6 +14,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import tarfile
 import tempfile
 import threading
 import unittest
@@ -171,6 +172,15 @@ class _RecordingRunner:
         on_caddy_start: Callable[[_RecordingRunner], None] | None = None,
         on_restore: Callable[[str], None] | None = None,
         on_migrate: Callable[[], None] | None = None,
+        fail_rehearsal_readiness: bool = False,
+        fail_restore_guards: bool = False,
+        fail_rehearsal_teardown: bool = False,
+        guard_stdout: str = (
+            '{"status":"ok","outbound_disarmed":true,'
+            '"disarm_summary":{"installations_revoked":2,"outbox_deliveries_cancelled":3},'
+            '"erasure_replay":{"organisations_replayed":1,"users_replayed":1,"zero_residual_pii_verified":true},'
+            '"s3_reconciliation":{"reconciled":true,"completed_attachments_checked":4}}'
+        ),
     ) -> None:
         self.topology = topology
         self.governance = governance
@@ -178,6 +188,7 @@ class _RecordingRunner:
         self.dbs: dict[str, _SimulatedDatabase] = {
             "db": _SimulatedDatabase(lc_collate="en_US.utf8", lc_ctype="en_US.utf8"),
             "synapse-db": _SimulatedDatabase(lc_collate="C", lc_ctype="C"),
+            "keycloak-db": _SimulatedDatabase(lc_collate="en_US.utf8", lc_ctype="en_US.utf8"),
         }
         self.caddy_open = True
         self.writers_stopped = False
@@ -186,6 +197,15 @@ class _RecordingRunner:
         self.fail_on_subcommand = fail_on_subcommand
         self.fail_stderr = fail_stderr
         self.fail_internal_server_ready = fail_internal_server_ready
+        self.fail_rehearsal_readiness = fail_rehearsal_readiness
+        self.fail_restore_guards = fail_restore_guards
+        self.fail_rehearsal_teardown = fail_rehearsal_teardown
+        self.guard_stdout = guard_stdout
+        self.captured_rehearsal_override: str | None = None
+        self.bootstrapped_role_sql: list[str] = []
+        self.roles_created_before_db_restore: bool = False
+        self.streamed_guard_tar_members: dict[str, tuple[int, int, int, bytes]] = {}
+        self.pg_restore_payloads: dict[str, bytes] = {}
         self.fail_post_open_stop_caddy = fail_post_open_stop_caddy
         self.fail_stop_caddy_stderr = fail_stop_caddy_stderr
         self.caddy_reopened_count = 0
@@ -232,8 +252,46 @@ class _RecordingRunner:
                 self.on_caddy_start(self)
             return ctl.CommandResult(0, "", "")
 
+        for idx, token in enumerate(cmd[:-1]):
+            if token == "-f" and cmd[idx + 1].endswith("rehearsal.override.yml"):
+                ov_path = Path(cmd[idx + 1])
+                if ov_path.is_file():
+                    self.captured_rehearsal_override = ov_path.read_text(encoding="utf-8")
+
+        if cmd[:2] == ["docker", "compose"] and "down" in cmd:
+            if self.fail_rehearsal_teardown:
+                return ctl.CommandResult(1, "", "docker network busy during teardown")
+            return ctl.CommandResult(0, "", "")
+
+        if "rehearsal-guards-init" in cmd and stdin_fd is not None:
+            raw_tar = b""
+            while True:
+                buf = os.read(stdin_fd, 65536)
+                if not buf:
+                    break
+                raw_tar += buf
+            with tarfile.open(fileobj=io.BytesIO(raw_tar), mode="r:*") as tf:
+                for member in tf.getmembers():
+                    if member.isfile():
+                        extracted = tf.extractfile(member)
+                        data = extracted.read() if extracted is not None else b""
+                        self.streamed_guard_tar_members[member.name] = (
+                            member.uid,
+                            member.gid,
+                            stat.S_IMODE(member.mode),
+                            data,
+                        )
+            return ctl.CommandResult(0, "", "")
+
+        if "rehearse_restore_guards" in cmd:
+            if self.fail_restore_guards:
+                return ctl.CommandResult(
+                    1, "", "CommandError: restore rehearsal guard refused (missing_s3_objects)"
+                )
+            return ctl.CommandResult(0, self.guard_stdout + "\n", "")
+
         if "exec" in cmd and "server" in cmd and "python" in cmd:
-            if self.fail_internal_server_ready:
+            if self.fail_internal_server_ready or self.fail_rehearsal_readiness:
                 return ctl.CommandResult(1, "", "internal /health/ready returned 503")
             return ctl.CommandResult(0, "", "")
 
@@ -247,7 +305,10 @@ class _RecordingRunner:
             if ctl.IMAGE_ID_RE.fullmatch(ref):
                 return ctl.CommandResult(0, ref + "\n", "")
             # Derive deterministic sha256 from service name when inspecting local tags/configured images.
-            for svc in ctl.expected_recovery_services(self.topology, governance_enabled=self.governance):
+            for svc in (
+                *ctl.expected_recovery_services(self.topology, governance_enabled=self.governance),
+                "migrate",
+            ):
                 if svc in ref:
                     sha = _service_sha256(svc)
                     if sha in self.missing_local_images:
@@ -264,8 +325,21 @@ class _RecordingRunner:
 
         if "psql" in cmd:
             svc = cmd[cmd.index("-T") + 1]
-            sql_text = cmd[cmd.index("-c") + 1]
+            if "-c" in cmd:
+                sql_text = cmd[cmd.index("-c") + 1]
+            elif stdin_fd is not None:
+                raw_sql = b""
+                while True:
+                    buf = os.read(stdin_fd, 65536)
+                    if not buf:
+                        break
+                    raw_sql += buf
+                sql_text = raw_sql.decode("utf-8")
+            else:
+                sql_text = ""
             db_state = self.dbs[svc]
+            if "CREATE ROLE kodera_api" in sql_text and "CREATE ROLE kodera_collab" in sql_text:
+                self.bootstrapped_role_sql.append(sql_text)
             if "pg_terminate_backend" in sql_text:
                 db_state.terminate_backends()
             if "DROP SCHEMA IF EXISTS public CASCADE" in sql_text:
@@ -290,9 +364,13 @@ class _RecordingRunner:
                 if not buf:
                     break
                 chunks.append(buf)
+            raw_archive = b"".join(chunks)
+            self.pg_restore_payloads[svc] = raw_archive
+            if svc == "db" and self.bootstrapped_role_sql:
+                self.roles_created_before_db_restore = True
             restore_acls = "--no-acl" not in cmd
             try:
-                self.dbs[svc].apply_pg_restore_clean(b"".join(chunks), restore_acls=restore_acls)
+                self.dbs[svc].apply_pg_restore_clean(raw_archive, restore_acls=restore_acls)
             except RuntimeError as exc:
                 return ctl.CommandResult(1, "", str(exc))
             self.fail_internal_server_ready = False
@@ -1203,12 +1281,346 @@ class DocsCliExamplesParityTests(unittest.TestCase):
                         ],
                         "rolled_back",
                     ),
+                    (
+                        [
+                            "rehearse-restore",
+                            "--env-file",
+                            str(env_file),
+                            "--stack-dir",
+                            str(stack),
+                            "--backup",
+                            "latest",
+                            "--json",
+                        ],
+                        "rehearsed",
+                    ),
                 ):
                     out = io.StringIO()
                     with mock.patch("sys.stdout", out):
                         rc = ctl.main(sub_argv)
                     self.assertEqual(rc, 0, out.getvalue())
                     self.assertEqual(json.loads(out.getvalue())["status"], expected_status)
+
+
+class RehearseRestoreTests(unittest.TestCase):
+    def _setup_stack_with_backup(self, tmp: str) -> tuple[Path, Path, str, _RecordingRunner]:
+        stack = Path(tmp).resolve() / "stack"
+        _populate_stack_dir(stack)
+        env_file = stack / ".env"
+        env_file.write_text(ctl._make_valid_test_env_text(), encoding="utf-8")
+        env_file.chmod(0o600)
+        runner = _RecordingRunner()
+        ctx = ctl.preflight_stack(
+            env_file=env_file,
+            stack_dir=stack,
+            skip_preflight_http=True,
+            invoke_deploy_cli=False,
+        )
+        runner.caddy_open = False
+        runner.writers_stopped = True
+        rec = ctl.create_backup(ctx, runner=runner, backup_id_override="snap-rehearsal-01")
+        manifest_path = rec.backup_dir / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["created_at"] = "2026-11-23T10:00:00Z"
+        os.chmod(manifest_path, 0o600)
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        os.chmod(manifest_path, 0o600)
+        runner.calls.clear()
+        return stack, env_file, rec.backup_id, runner
+
+    def test_rehearse_restore_isolates_network_strips_ports_runs_guards_and_measures_rpo_rto(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory(prefix="kodera-ctl-rehearsal-") as tmp:
+            stack, env_file, backup_id, runner = self._setup_stack_with_backup(tmp)
+            inputs_dir = Path(tmp).resolve() / "inputs"
+            inputs_dir.mkdir(mode=0o700)
+
+            ledger_file = inputs_dir / "erasure-ledger.json"
+            ledger_file.write_text(
+                '{"backup_created_at":"2026-11-23T10:00:00Z","organisation_references":[],"user_references":[]}',
+                encoding="utf-8",
+            )
+            ledger_file.chmod(0o600)
+
+            s3_file = inputs_dir / "s3-manifest.json"
+            s3_file.write_text('{"objects":[]}', encoding="utf-8")
+            s3_file.chmod(0o600)
+
+            kc_dump = inputs_dir / "keycloak.dump"
+            kc_dump.write_bytes(runner.dbs["keycloak-db"].dump_archive())
+            kc_dump.chmod(0o600)
+
+            kc_realm = inputs_dir / "keycloak-realm.json"
+            kc_realm.write_text('{"realm":"acme-corp","enabled":true}', encoding="utf-8")
+            kc_realm.chmod(0o600)
+
+            receipt_dir = Path(tmp).resolve() / "receipts"
+            receipt_dir.mkdir(mode=0o700)
+            receipt_path = receipt_dir / "drill-receipt.json"
+
+            ticks = iter([100.0, 142.375])
+            report = ctl.execute_rehearse_restore(
+                env_file=env_file,
+                stack_dir=stack,
+                backup_selector=backup_id,
+                rehearsal_id="drill42",
+                erasure_ledger=ledger_file,
+                s3_manifest=s3_file,
+                keycloak_dump=kc_dump,
+                keycloak_realm_export=kc_realm,
+                reference_timestamp="2026-11-23T10:15:00Z",
+                receipt_out=receipt_path,
+                runner=runner,
+                monotonic_clock=lambda: next(ticks),
+                invoke_deploy_cli=False,
+            )
+
+            self.assertEqual(report["status"], "rehearsed")
+            self.assertEqual(report["rehearsal_project"], "kodera-rehearsal-drill42")
+            self.assertEqual(report["rpo_seconds"], 900)
+            self.assertEqual(report["rto_seconds"], 42.375)
+            self.assertTrue(report["egress_isolated"])
+            self.assertEqual(report["public_ports_bound"], 0)
+            self.assertTrue(report["teardown_completed"])
+            self.assertEqual(report["restored_databases"], ["kodera_server", "synapse", "keycloak"])
+            self.assertEqual(report["keycloak_snapshot"]["realm"], "acme-corp")  # type: ignore[index]
+
+            # Receipt file exists with mode 0600 and matches report.
+            self.assertTrue(receipt_path.is_file())
+            self.assertEqual(stat.S_IMODE(os.lstat(receipt_path).st_mode), 0o600)
+            disk_receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+            self.assertEqual(disk_receipt["rpo_seconds"], 900)
+            self.assertEqual(disk_receipt["rto_seconds"], 42.375)
+
+            # Verify override YAML enforced internal: true networks, zero host ports,
+            # distinct `migrate` operator image (`P1-1`), ephemeral DB roles (`P1-2`),
+            # container-owned named volume without host bind mount (`P1-3`), and kill-switches (`P2-6`).
+            ov = runner.captured_rehearsal_override or ""
+            self.assertIn("internal: true", ov)
+            self.assertIn("ports: !reset []", ov)
+            self.assertIn("keycloak-db:", ov)
+            self.assertIn(f"  migrate:\n    image: {_service_sha256('migrate')}", ov)
+            self.assertNotEqual(_service_sha256("migrate"), _service_sha256("server"))
+            self.assertIn("rehearsal_guards:/run/kodera-rehearsal:ro", ov)
+            self.assertNotIn(str(inputs_dir), ov)
+            self.assertIn('KODERA_REHEARSAL_NO_EGRESS: "1"', ov)
+            self.assertIn('KODERA_STRIPE_SECRET_KEY: ""', ov)
+            self.assertIn('KODERA_MAIL_SMTP_URL: ""', ov)
+            self.assertIn('KODERA_GITHUB_TRIAGE_REPO: ""', ov)
+            self.assertIn("postgresql://kodera_api:", ov)
+            self.assertIn("postgresql://kodera_collab:", ov)
+
+            # Restricted roles `kodera_api` and `kodera_collab` were provisioned BEFORE `pg_restore` (`P1-2`).
+            self.assertTrue(runner.roles_created_before_db_restore)
+            self.assertEqual(len(runner.bootstrapped_role_sql), 1)
+            self.assertIn("NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT", runner.bootstrapped_role_sql[0])
+
+            # Guard files were streamed via tar owned `10001:10001` mode `0400` (`P1-3`).
+            self.assertEqual(
+                set(runner.streamed_guard_tar_members),
+                {"erasure-ledger.json", "s3-manifest.json"},
+            )
+            for _, (uid, gid, mode, payload) in runner.streamed_guard_tar_members.items():
+                self.assertEqual((uid, gid, mode), (10001, 10001, 0o400))
+                self.assertTrue(payload)
+
+            # Single-descriptor staged bytes fed to `pg_restore` match backup dump (`P2-9`).
+            self.assertEqual(
+                hashlib.sha256(runner.pg_restore_payloads["keycloak-db"]).hexdigest(),
+                report["keycloak_snapshot"]["sha256"],  # type: ignore[index]
+            )
+
+            # Every docker compose command used `-p kodera-rehearsal-drill42`, caddy never started,
+            # rehearse_restore_guards ran BEFORE server/synapse started, and down -v ran last!
+            compose_calls = [c for c in runner.calls if c[:2] == ["docker", "compose"]]
+            self.assertTrue(compose_calls)
+            for c in compose_calls:
+                self.assertIn("-p", c)
+                self.assertEqual(c[c.index("-p") + 1], "kodera-rehearsal-drill42")
+                self.assertFalse("up" in c and "caddy" in c)
+
+            guard_idx = next(
+                i for i, c in enumerate(compose_calls) if "rehearse_restore_guards" in c
+            )
+            server_up_idx = next(
+                i for i, c in enumerate(compose_calls) if "up" in c and c[-1] == "server"
+            )
+            self.assertLess(guard_idx, server_up_idx)
+            self.assertIn("--disarm-outbound", compose_calls[guard_idx])
+            self.assertIn("--erasure-ledger", compose_calls[guard_idx])
+            self.assertIn("--s3-manifest", compose_calls[guard_idx])
+            self.assertEqual(compose_calls[-1][-3:], ["down", "-v", "--remove-orphans"])
+
+    def test_rehearsal_unconditionally_tears_down_on_guard_or_readiness_failure(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="kodera-ctl-rehearsal-fail-") as tmp:
+            stack, env_file, backup_id, runner = self._setup_stack_with_backup(tmp)
+
+            # 1. Guard failure (e.g. S3 manifest mismatch or residual PII) -> tears down in finally!
+            runner.fail_restore_guards = True
+            with self.assertRaises(ctl.CtlRehearsalError) as ctx_guard:
+                ctl.execute_rehearse_restore(
+                    env_file=env_file,
+                    stack_dir=stack,
+                    backup_selector=backup_id,
+                    rehearsal_id="guardfail",
+                    runner=runner,
+                    invoke_deploy_cli=False,
+                )
+            self.assertIn("rehearsal-restore-guards failed", str(ctx_guard.exception))
+            self.assertEqual(runner.calls[-1][-3:], ["down", "-v", "--remove-orphans"])
+
+            # 2. Internal readiness failure -> tears down in finally!
+            runner.calls.clear()
+            runner.fail_restore_guards = False
+            runner.fail_rehearsal_readiness = True
+            with self.assertRaises(ctl.CtlRehearsalError) as ctx_ready:
+                ctl.execute_rehearse_restore(
+                    env_file=env_file,
+                    stack_dir=stack,
+                    backup_selector=backup_id,
+                    rehearsal_id="readyfail",
+                    runner=runner,
+                    invoke_deploy_cli=False,
+                )
+            self.assertIn("internal-server-readiness failed", str(ctx_ready.exception))
+            self.assertEqual(runner.calls[-1][-3:], ["down", "-v", "--remove-orphans"])
+
+            # 3. Teardown failure itself fails closed!
+            runner.calls.clear()
+            runner.fail_rehearsal_readiness = False
+            runner.fail_rehearsal_teardown = True
+            with self.assertRaises(ctl.CtlRehearsalError) as ctx_td:
+                ctl.execute_rehearse_restore(
+                    env_file=env_file,
+                    stack_dir=stack,
+                    backup_selector=backup_id,
+                    rehearsal_id="tdfail",
+                    runner=runner,
+                    invoke_deploy_cli=False,
+                )
+            self.assertIn("teardown failed", str(ctx_td.exception))
+
+    def test_rehearsal_refuses_symlinks_insecure_permissions_and_negative_rpo_before_containers(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory(prefix="kodera-ctl-rehearsal-refuse-") as tmp:
+            stack, env_file, backup_id, runner = self._setup_stack_with_backup(tmp)
+            work = Path(tmp).resolve() / "work"
+            work.mkdir(mode=0o700)
+
+            # 1. Negative RPO refused before starting any container.
+            with self.assertRaises(ctl.CtlRehearsalError):
+                ctl.execute_rehearse_restore(
+                    env_file=env_file,
+                    stack_dir=stack,
+                    backup_selector=backup_id,
+                    reference_timestamp="2026-11-23T09:59:59Z",
+                    runner=runner,
+                    invoke_deploy_cli=False,
+                )
+            self.assertEqual([c for c in runner.calls if "up" in c], [])
+
+            # 2. World-readable (0644) erasure ledger refused before starting any container.
+            bad_mode_ledger = work / "world.json"
+            bad_mode_ledger.write_text(
+                '{"backup_created_at":"2026-11-23T10:00:00Z"}', encoding="utf-8"
+            )
+            bad_mode_ledger.chmod(0o644)
+            with self.assertRaises(ctl.CtlRehearsalError) as ctx_perm:
+                ctl.execute_rehearse_restore(
+                    env_file=env_file,
+                    stack_dir=stack,
+                    backup_selector=backup_id,
+                    erasure_ledger=bad_mode_ledger,
+                    runner=runner,
+                    invoke_deploy_cli=False,
+                )
+            self.assertIn("0600", str(ctx_perm.exception))
+            self.assertEqual([c for c in runner.calls if "up" in c], [])
+
+            # 3. Symlinked S3 manifest refused before starting any container.
+            real_s3 = work / "real-s3.json"
+            real_s3.write_text('{"objects":[]}', encoding="utf-8")
+            real_s3.chmod(0o600)
+            link_s3 = work / "link-s3.json"
+            link_s3.symlink_to(real_s3)
+            with self.assertRaises(ctl.CtlRehearsalError):
+                ctl.execute_rehearse_restore(
+                    env_file=env_file,
+                    stack_dir=stack,
+                    backup_selector=backup_id,
+                    s3_manifest=link_s3,
+                    runner=runner,
+                    invoke_deploy_cli=False,
+                )
+            self.assertEqual([c for c in runner.calls if "up" in c], [])
+
+            # 4. Invalid rehearsal_id refused.
+            with self.assertRaises(ctl.CtlRehearsalError):
+                ctl.execute_rehearse_restore(
+                    env_file=env_file,
+                    stack_dir=stack,
+                    backup_selector=backup_id,
+                    rehearsal_id="../escape",
+                    runner=runner,
+                    invoke_deploy_cli=False,
+                )
+
+            # 5. Ancestor directory symlink refused via retained `dir_fd` walk (`P2-8`).
+            real_sub = work / "real-sub"
+            real_sub.mkdir(mode=0o700)
+            nested_s3 = real_sub / "s3.json"
+            nested_s3.write_text('{"objects":[]}', encoding="utf-8")
+            nested_s3.chmod(0o600)
+            linked_sub = work / "linked-sub"
+            linked_sub.symlink_to(real_sub)
+            with self.assertRaises(ctl.CtlRehearsalError):
+                ctl.execute_rehearse_restore(
+                    env_file=env_file,
+                    stack_dir=stack,
+                    backup_selector=backup_id,
+                    s3_manifest=linked_sub / "s3.json",
+                    runner=runner,
+                    invoke_deploy_cli=False,
+                )
+            self.assertEqual([c for c in runner.calls if "up" in c], [])
+
+            # 6. Missing operator `migrate` image refuses cleanly instead of using `server` (`P1-1`).
+            runner_no_mig = _RecordingRunner(missing_local_images={_service_sha256("migrate")})
+            with self.assertRaisesRegex(ctl.CtlRehearsalError, "migrate"):
+                ctl.execute_rehearse_restore(
+                    env_file=env_file,
+                    stack_dir=stack,
+                    backup_selector=backup_id,
+                    runner=runner_no_mig,
+                    invoke_deploy_cli=False,
+                )
+            self.assertEqual([c for c in runner_no_mig.calls if "up" in c], [])
+
+            # 7. Legacy manifest omitting `migrate` resolves stack's local `migrate` image (`P1-1`).
+            manifest_path = stack / ctl.BACKUP_DIR_NAME / backup_id / "manifest.json"
+            os.chmod(manifest_path, 0o600)
+            legacy_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            legacy_manifest["images"].pop("migrate", None)
+            manifest_path.write_text(
+                json.dumps(legacy_manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            )
+            os.chmod(manifest_path, 0o600)
+            legacy_runner = _RecordingRunner()
+            legacy_res = ctl.execute_rehearse_restore(
+                env_file=env_file,
+                stack_dir=stack,
+                backup_selector=backup_id,
+                rehearsal_id="legacymig",
+                runner=legacy_runner,
+                invoke_deploy_cli=False,
+            )
+            self.assertEqual(legacy_res["status"], "rehearsed")
+            self.assertIn(
+                f"  migrate:\n    image: {_service_sha256('migrate')}",
+                legacy_runner.captured_rehearsal_override or "",
+            )
 
 
 if __name__ == "__main__":

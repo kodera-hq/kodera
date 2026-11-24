@@ -17,7 +17,8 @@ import type { MemberProfileRole } from '../profile/UserProfilePopover'
 import type { RoomOccupant } from '../../ui/RoomRow/RoomRow'
 import type { Workspace, WorkspaceChannel } from '../workspace/workspace'
 import type { AudioSettingsCall } from './AudioSettings'
-import type { CallSnapshot, CallStatus } from './audio/call'
+import type { CallCaptionPacket, CallSnapshot, CallStatus } from './audio/call'
+export type { CallCaptionPacket }
 import type {
   ArrivalView,
   ChannelRoom,
@@ -90,7 +91,7 @@ export function isProximityChannel(
  * it, or the workspace's files. One channel is chosen throughout; the canvas says what is drawn
  * of it, and choosing a channel always brings it back to the conversation.
  */
-export type CanvasMode = 'chat' | 'docs' | 'files' | 'calls' | 'integrations'
+export type CanvasMode = 'chat' | 'docs' | 'files' | 'calls' | 'integrations' | 'calendar'
 
 export interface EspaceStoreLike {
   acceptInvite?: (roomId: string) => Promise<void>
@@ -216,6 +217,8 @@ export interface AudioCallLike {
   setCameraEnabled?: (on: boolean) => Promise<void>
   setScreenShareEnabled?: (on: boolean) => Promise<void>
   attachVideo?: (key: string, element: HTMLVideoElement) => () => void
+  publishCallCaptionPacket?: (packet: CallCaptionPacket) => Promise<boolean>
+  subscribeCallCaptionPackets?: (listener: (packet: CallCaptionPacket) => void) => () => void
 }
 
 /** The audio room the dock names: the channel the member chose, as the sidebar labels it. */

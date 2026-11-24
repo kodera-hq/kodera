@@ -598,6 +598,7 @@ fn compose_image_digest_ports_entrypoint_and_sensitive_root_policies_enforce_str
                 "server": {
                     "image": "ghcr.io/kodera/server:0.1.0@sha256:f1b43b8d9a5b7a5e8f17c91e6b3f0f8f0f9d4a6e3e9f6d7c8b9a0f1e2d3c4b5a",
                     "environment": {
+                        "DJANGO_SETTINGS_MODULE": "config.settings.deploy",
                         "KODERA_EDITION": "community",
                         "KODERA_BILLING_ENABLED": "false",
                         "KODERA_MEDIA_ROOM_VERIFIER_URL": "http://room-access:8096/internal/room-member"
@@ -648,6 +649,8 @@ fn compose_image_digest_ports_entrypoint_and_sensitive_root_policies_enforce_str
             "services:\n  synapse:\n    image: matrixdotorg/synapse:v1.165.0@sha256:673b4223c81a7634fd07d832b939a58f97081cfdaae7cdd2d1664cdcf7611b62\n    environment:\n      PYTHONWARNINGS: \"ignore::antigravity.Example\"\n      BROWSER: '/bin/sh -c \"printf R5_ENV_BYPASS >&2\" %s'\n",
             "services:\n  valkey:\n    image: valkey/valkey:8.1-alpine@sha256:1b426a5a4d7d4fcad15e9d40f0bd8bc2e5c1f09061f5cc8b2a5f6653d5bd5949\n    environment:\n      POSTGRES_USER: kodera\n",
             "services:\n  server:\n    image: ghcr.io/kodera/server:0.1.0@sha256:f1b43b8d9a5b7a5e8f17c91e6b3f0f8f0f9d4a6e3e9f6d7c8b9a0f1e2d3c4b5a\n    environment:\n      KODERA_BILLING_ENABLED: \"true\"\n",
+            "services:\n  server:\n    image: ghcr.io/kodera/server:0.1.0@sha256:f1b43b8d9a5b7a5e8f17c91e6b3f0f8f0f9d4a6e3e9f6d7c8b9a0f1e2d3c4b5a\n    environment:\n      DJANGO_SETTINGS_MODULE: config.settings.dev\n",
+            "services:\n  tenant-agent:\n    image: ghcr.io/kodera/server:0.1.0@sha256:f1b43b8d9a5b7a5e8f17c91e6b3f0f8f0f9d4a6e3e9f6d7c8b9a0f1e2d3c4b5a\n    environment:\n      DJANGO_SETTINGS_MODULE: attacker.evil\n",
             "services:\n  web:\n    image: ghcr.io/kodera/web:0.1.0@sha256:f1b43b8d9a5b7a5e8f17c91e6b3f0f8f0f9d4a6e3e9f6d7c8b9a0f1e2d3c4b5a\n    environment:\n      NODE_OPTIONS: \"--require /tmp/evil.js\"\n",
             "services:\n  web:\n    image: ghcr.io/kodera/web:0.1.0@sha256:f1b43b8d9a5b7a5e8f17c91e6b3f0f8f0f9d4a6e3e9f6d7c8b9a0f1e2d3c4b5a\n    environment:\n      KODERA_ATTACHMENT_BASE: \"http://insecure.example.org/bucket/\"\n",
             "services:\n  web:\n    image: ghcr.io/kodera/web:0.1.0@sha256:f1b43b8d9a5b7a5e8f17c91e6b3f0f8f0f9d4a6e3e9f6d7c8b9a0f1e2d3c4b5a\n    environment:\n      KODERA_ATTACHMENT_BASE: \"https://media.example.org//\"\n",

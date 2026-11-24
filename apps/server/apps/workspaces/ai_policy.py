@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
@@ -138,6 +139,30 @@ def get_member_ai_consent_snapshot(
         identity_id=identity_id,
     ).first()
     return _consent_snapshot(row) if row is not None else None
+
+
+def get_active_member_ai_consents_for_memberships(
+    *,
+    organisation_id: UUID,
+    workspace_id: UUID,
+    membership_ids: Sequence[UUID],
+    for_update: bool = False,
+) -> dict[UUID, MemberAiConsentSnapshot]:
+    """Return active non-revoked MemberAiConsent snapshots keyed by membership_id."""
+    if not membership_ids:
+        return {}
+    queryset = (
+        MemberAiConsent.objects.select_for_update() if for_update else MemberAiConsent.objects
+    )
+    rows = queryset.filter(
+        organisation_id=organisation_id,
+        workspace_id=workspace_id,
+        membership_id__in=list(membership_ids),
+        enabled=True,
+        revoked_at__isnull=True,
+        consented_at__isnull=False,
+    ).order_by("id")
+    return {row.membership_id: _consent_snapshot(row) for row in rows}
 
 
 def upsert_workspace_ai_policy(

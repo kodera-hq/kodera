@@ -30,6 +30,7 @@ export const studioMessages = {
     docs: 'Docs',
     calls: 'Calls',
     files: 'Files',
+    calendar: 'Calendar',
     integrations: 'Integrations',
     unavailable: 'Not available yet',
     notificationGap:
@@ -102,6 +103,7 @@ export const studioMessages = {
     docs: 'Docs',
     calls: 'Appels',
     files: 'Fichiers',
+    calendar: 'Agenda',
     integrations: 'Intégrations',
     unavailable: 'Pas encore disponible',
     notificationGap:

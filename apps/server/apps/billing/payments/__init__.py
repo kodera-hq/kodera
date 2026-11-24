@@ -9,14 +9,14 @@ from functools import cache
 
 from django.conf import settings
 
-from .fake import FakeProvider
+from .fake import FakePaymentsAdapter
 from .port import PaymentProvider, ProviderNotConfiguredError
 from .stripe import StripeProvider
 
 
 @cache
-def _fake(secret: bytes) -> FakeProvider:
-    return FakeProvider(secret=secret)
+def _fake(secret: bytes) -> FakePaymentsAdapter:
+    return FakePaymentsAdapter(secret=secret)
 
 
 @cache
@@ -24,7 +24,7 @@ def _stripe(secret_key: str, webhook_secret: str) -> StripeProvider:
     return StripeProvider(secret_key=secret_key, webhook_secret=webhook_secret)
 
 
-def configured_provider() -> PaymentProvider:
+def configured_provider() -> FakePaymentsAdapter | StripeProvider:
     name: str | None = getattr(settings, "KODERA_PAYMENT_PROVIDER", None)
     if name == "fake":
         return _fake(settings.KODERA_FAKE_PROVIDER_SECRET)

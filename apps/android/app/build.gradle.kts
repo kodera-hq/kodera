@@ -72,6 +72,7 @@ dependencies {
     // AppAuth 0.11.1 alone would resolve 1.3.0 of each.
     implementation("androidx.appcompat:appcompat:1.8.0")
     implementation("androidx.browser:browser:1.10.0")
+    // Compose BOM 2026.09.00 is the highest release targeting compileSdk 37.0 (2026.11.01+ requires 37.1).
     implementation(platform("androidx.compose:compose-bom:2026.09.00"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.foundation:foundation")

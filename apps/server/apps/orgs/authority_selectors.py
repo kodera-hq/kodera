@@ -144,3 +144,17 @@ def organisation_issuer_realm(*, organisation_id: UUID) -> tuple[str, str]:
     """Return `(issuer, realm)` for `organisation_id`."""
     row = Organisation.objects.values_list("issuer", "realm").get(id=organisation_id)
     return str(row[0]), str(row[1])
+
+
+def bump_organisation_authority_revision(*, organisation_id: UUID) -> int:
+    """Advance `orgs_organisation.authority_revision` monotonically via its BEFORE UPDATE trigger."""
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "UPDATE orgs_organisation SET authority_revision = authority_revision "
+            "WHERE id = %s RETURNING authority_revision",
+            [organisation_id],
+        )
+        row = cursor.fetchone()
+    if row is None or type(row[0]) is not int:
+        raise MemberAuthorityUnavailableError()
+    return row[0]

@@ -460,3 +460,13 @@ to infer the Commit marker. The UUID is canonical lowercase and non-nil, and the
 a positive safe JSON integer. The no-Welcome example has head equal to Commit sequence; the
 Welcome example has a later head. Current service and HTTP checks establish this relationship;
 individual schema domains cannot compare two fields.
+
+## Sovereign smart calendar, public booking, and ephemeral AI translation surfaces (0.58.0)
+
+Status: Active
+
+Workspace calendar operations (`listCalendarEvents`, `createCalendarEvent`, `updateCalendarEvent`, `deleteCalendarEvent`, `exportCalendarIcs`) serve all current organisation roles, redacting `busy_only` events for non-organizers and omitting `private` events of other members. CalDAV source administration and sync (`listCaldavSources`, `createCaldavSource`, `deleteCaldavSource`, `syncCaldavSource`) are restricted to `org_owner` and `org_admin`, sealing credentials with HKDF-AEAD and enforcing SSRF-pinned HTTPS without redirects.
+
+Public sovereign booking endpoints (`getPublicBookingPage`, `reservePublicBookingSlot`, `cancelPublicBookingReservation`) carry `security: []`. `reservePublicBookingSlot` and `cancelPublicBookingReservation` validate the required `Idempotency-Key` header format and execute ephemerally without storing guest `.ics` personal data or the single-disclosure `cancellationToken` in `idempotency_record`, returning no `Idempotency-Replayed` header. Repeat slot reservation or repeat cancellation returns `409`.
+
+Ephemeral sovereign AI translation and live call subtitle operations (`translateChannelMessage`, `transcribeLiveCallChunk`) likewise require `Idempotency-Key`, persist zero message or transcript bytes in PostgreSQL, record a content-free `409 ephemeral_output_not_replayed` receipt in `idempotency_record`, and return no `Idempotency-Replayed` header on `200`.

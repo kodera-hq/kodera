@@ -420,6 +420,43 @@ describe('the conformance check', () => {
   })
 })
 
+describe('the monetization demo responses', () => {
+  const handlers = (overlayModule('demo.groupe-vercelli').handlers as HttpHandler[]).filter(
+    (handler) => handler.info.header.includes('/workspace/monetization')
+  )
+
+  it('supplies a request id on all six routes and matches each problem body', async () => {
+    expect(handlers).toHaveLength(6)
+    for (const handler of handlers) {
+      const declared = handlerRoute(handler)!
+      const route = contract.route(declared.method, declared.path)!
+      const response = (await runHandler(handler, route.method, contract.url(route, declared.path)))!
+      expect(response.headers.get('X-Request-Id')).toMatch(/^[0-9a-f-]{36}$/)
+      if (route.method === 'post') {
+        expect(response.status).toBe(403)
+        expect(await response.json()).toMatchObject({
+          type: 'https://kodera.io/problems/forbidden',
+          request_id: response.headers.get('X-Request-Id'),
+        })
+      }
+    }
+  })
+
+  it('exports the requested reporting year as JSON or XML', async () => {
+    const handler = handlers.find((entry) => entry.info.header.endsWith('/dac7-report'))!
+    const url = 'https://core.test/api/v1/organisations/demo/workspace/monetization/dac7-report'
+    const json = (await runHandler(handler, 'get', `${url}?format=json&year=2025`))!
+    expect(await json.json()).toEqual({ directive: '2021/514/EU', reporting_year: 2025, sellers: [] })
+    const xml = (await runHandler(handler, 'get', `${url}?format=xml&year=2025`))!
+    expect(xml.status).toBe(200)
+    expect(xml.headers.get('Content-Type')).toBe('application/xml')
+    expect(xml.headers.get('X-Request-Id')).toBeTruthy()
+    const document = new DOMParser().parseFromString(await xml.text(), 'application/xml')
+    expect(document.querySelector('parsererror')).toBeNull()
+    expect(document.getElementsByTagName('ReportingPeriod')[0]?.textContent).toBe('2025-12-31')
+  })
+})
+
 describe('the canonical instant-claim demo refusal', () => {
   const path = '*/api/v1/workspaces/instant-claim'
   const judge = (handler: HttpHandler) =>

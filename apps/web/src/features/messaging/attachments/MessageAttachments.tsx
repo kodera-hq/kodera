@@ -2,7 +2,7 @@ import { formatBytes } from '../../../ui/formatBytes'
 // Files stay metadata-only until opened. Raster images use bounded, credential-free reads and
 // local blob previews; every other format opens outside the console in a fresh tab.
 
-import { useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { Dialog } from '../../../ui/Dialog/Dialog'
 import { cleanText } from '../../../ui/safeText'
 import { filesMessages } from '../../espace/filesMessages'
@@ -11,7 +11,10 @@ import { useTranslation } from 'react-i18next'
 import { coreApi } from '../../../api/client'
 import { useMessagingOrganisation } from '../organisationContext'
 import { isVoiceNoteType, type AttachmentRef } from './attachmentRefs'
-import { VoiceNotePlayer } from './VoiceNotePlayer'
+
+const LazyVoiceNotePlayer = lazy(() =>
+  import('./VoiceNotePlayer').then((module) => ({ default: module.VoiceNotePlayer }))
+)
 
 const CHIP =
   'flex min-h-10 max-w-full items-center gap-2 rounded-md border border-c-border bg-c-sunken px-3 py-2 text-left text-sm text-c-ink hover:bg-c-muted focus-visible:ring focus-visible:outline-hidden disabled:cursor-not-allowed disabled:text-c-on-disabled'
@@ -108,9 +111,13 @@ export function MessageAttachments({ refs }: { refs: readonly AttachmentRef[] })
   const fileRefs = refs.filter((ref) => !isVoiceNoteType(ref.contentType))
   return (
     <div className="mt-2 flex flex-col gap-2">
-      {voiceNotes.map((ref) => (
-        <VoiceNotePlayer key={ref.id} attachment={ref} organisationId={organisationId} />
-      ))}
+      {voiceNotes.length > 0 ? (
+        <Suspense fallback={null}>
+          {voiceNotes.map((ref) => (
+            <LazyVoiceNotePlayer key={ref.id} attachment={ref} organisationId={organisationId} />
+          ))}
+        </Suspense>
+      ) : null}
       {fileRefs.length > 0 ? (
         <ul
           aria-label={t('console.workspace.attachments.label-list')}

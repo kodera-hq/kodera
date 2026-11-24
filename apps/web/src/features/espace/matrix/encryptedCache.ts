@@ -12,6 +12,7 @@
 import {
   ESPACE_TIMELINE_DATABASE,
   ESPACE_VAULT_DATABASE as SESSION_VAULT_DATABASE,
+  ESPACE_VAULT_REALM_ID,
   espaceVaultWipeChannelName,
   registerEspaceVaultCleanup,
   registerLocalSessionCleanup,
@@ -2257,7 +2258,8 @@ if (typeof indexedDB !== 'undefined') {
 if (typeof BroadcastChannel === 'function') {
   try {
     const channel = new BroadcastChannel(espaceVaultWipeChannelName())
-    channel.onmessage = () => {
+    channel.onmessage = (event: MessageEvent<{ type?: string; senderRealmId?: string }>) => {
+      if (event.data?.senderRealmId === ESPACE_VAULT_REALM_ID) return
       revokeOpenVaultsSynchronously()
     }
     // Never prevent Node/Vitest worker exit when BroadcastChannel exists in test runtimes.

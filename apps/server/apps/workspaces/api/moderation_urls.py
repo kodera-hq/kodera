@@ -2,10 +2,12 @@
 
 from django.urls import path
 
-from . import iam, moderation as views
+from . import iam, moderation as views, security_posture
 
 ROOT = "api/v1/organisations/<uuid:organisation_id>/workspace/"
 urlpatterns = [
+    path(ROOT + "security-posture", security_posture.posture),
+    path(ROOT + "security-posture/actions/remediate", security_posture.remediate),
     path(ROOT + "roles", iam.roles),
     path(ROOT + "roles/<uuid:role_id>", iam.role),
     path(ROOT + "members/<uuid:membership_id>/roles", iam.member_roles),

@@ -1225,3 +1225,180 @@ def test_ai_users_and_confidential_or_encrypted_rooms_are_refused_and_evicted(wo
         TOKENS.pop("tok-ai-explicit", None)
         TOKENS.pop("tok-ai-prefix", None)
         TOKENS.pop("tok-ai-suffix", None)
+
+
+def test_confidential_audio_admits_human_members_only_with_explicit_sframe_v1_and_refuses_ai(world):
+    from apps.e2ee.selectors import SFRAME_V1_MEDIA_POLICY, confidential_audio_room_policy
+    from room_access.__main__ import build_service
+    from room_access.rooms import identity
+    from room_access.service import CONFIDENTIAL, CREATE, ENCRYPTION, SFRAME_V1_MEDIA
+
+    assert SFRAME_V1_MEDIA == SFRAME_V1_MEDIA_POLICY == "sframe-v1"
+    matrix, livekit, _ = world
+    ai_bot = "@kodera-ai-transcriber:acme.kodera.io"
+    TOKENS["tok-ai-bot"] = (ai_bot, "AIBOT1")
+    conf_sframe = "!conf-sframe:acme.kodera.io"
+    prod_config = Config.from_env(
+        {
+            "ROOM_ACCESS_SYNAPSE_URL": "http://synapse:8008",
+            "ROOM_ACCESS_MATRIX_TOKEN": "room-access-token",
+            "ROOM_ACCESS_AGENT_USER": AGENT,
+            "LIVEKIT_URL": "http://livekit:7880",
+            "LIVEKIT_WS_URL": "wss://media.acme.kodera.io",
+            "LIVEKIT_API_KEY": KEY,
+            "LIVEKIT_API_SECRET": SECRET,
+            "ROOM_ACCESS_ALLOWED_ORIGINS": CONSOLE,
+        }
+    )
+    try:
+        # 1. Ordinary non-confidential room exposes e2ee_required=False.
+        plain_grant = Service(matrix, livekit, "wss://media.acme.kodera.io", AGENT).grant(
+            "tok-alice", AUDIO
+        )
+        assert plain_grant.e2ee_required is False
+
+        # 2. Confidential audio room WITH explicit e2ee_media == "sframe-v1" AND initialized
+        #    confidential room record (epoch >= 1, rekey_required=False) grants human member
+        #    ONLY when BOTH Matrix room state AND e2ee_room_ready confirm readiness.
+        e2ee_room_uuid = "01950000-0000-7000-8000-000000000999"
+        matrix.rooms[conf_sframe] = {
+            "state": {
+                POLICY: confidential_audio_room_policy(
+                    e2ee_room_id=e2ee_room_uuid,
+                    rekey_required=False,
+                    listen_only=False,
+                    may_publish=[ALICE],
+                ),
+                CONFIDENTIAL: {
+                    "room_id": e2ee_room_uuid,
+                    "epoch": 3,
+                    "rekey_required": False,
+                },
+                ENCRYPTION: {"algorithm": "io.kodera.mls.v1"},
+                CREATE: {CONFIDENTIAL: "io.kodera.mls.v1"},
+            },
+            "joined": {ALICE, BOB, ai_bot, ROOM_ACCESS},
+        }
+        # 2a. Service with `e2ee_room_ready=None` MUST fail closed (`403`) in all cases!
+        unwired_svc = Service(matrix, livekit, "wss://media.acme.kodera.io", AGENT, token_ttl_s=600)
+        with pytest.raises(RefusedError) as unwired_refused:
+            unwired_svc.grant("tok-alice", conf_sframe)
+        assert unwired_refused.value.status == 403
+
+        # Production `build_service` in `room_access/__main__.py` wires the authoritative checker:
+        svc = build_service(prod_config, matrix=matrix, livekit=livekit)
+        sframe_grant = svc.grant("tok-alice", conf_sframe)
+        assert sframe_grant.e2ee_required is True
+        assert sframe_grant.listen_only is False
+        assert claims(sframe_grant.token)["sub"] == f"{ALICE}|DEV1"
+
+        # 2b. Missing `io.kodera.room.confidential` state event (even WITH `e2ee_room_id` UUID in
+        #     policy!), uninitialized `epoch == 0`, `rekey_required=True`, missing `rekey_required`,
+        #     UUID mismatch, or non-agent sender MUST fail closed with `403`!
+        policy_uuid_only = "!conf-policy-uuid-only:acme.kodera.io"
+        matrix.rooms[policy_uuid_only] = {
+            "state": {
+                POLICY: confidential_audio_room_policy(
+                    e2ee_room_id=e2ee_room_uuid,
+                    rekey_required=False,
+                    listen_only=False,
+                    may_publish=[ALICE],
+                ),
+                ENCRYPTION: {"algorithm": "io.kodera.mls.v1"},
+                CREATE: {CONFIDENTIAL: "io.kodera.mls.v1"},
+            },
+            "joined": {ALICE, ROOM_ACCESS},
+        }
+        with pytest.raises(RefusedError) as policy_only_refused:
+            svc.grant("tok-alice", policy_uuid_only)
+        assert policy_only_refused.value.status == 403
+
+        for bad_conf_state in (
+            {"room_id": e2ee_room_uuid, "epoch": 0, "rekey_required": False},
+            {"room_id": e2ee_room_uuid, "epoch": 3, "rekey_required": True},
+            {"room_id": e2ee_room_uuid, "epoch": 3},
+            {
+                "room_id": "01950000-0000-7000-8000-000000000111",
+                "epoch": 3,
+                "rekey_required": False,
+            },
+        ):
+            matrix.rooms[conf_sframe]["state"][CONFIDENTIAL] = bad_conf_state
+            with pytest.raises(RefusedError) as state_refused:
+                svc.grant("tok-alice", conf_sframe)
+            assert state_refused.value.status == 403
+
+        # Restore healthy e2ee state, then test forged non-agent sender on CONFIDENTIAL:
+        matrix.rooms[conf_sframe]["state"][CONFIDENTIAL] = {
+            "room_id": e2ee_room_uuid,
+            "epoch": 4,
+            "rekey_required": False,
+        }
+        matrix.senders[(conf_sframe, CONFIDENTIAL)] = ALICE
+        with pytest.raises(RefusedError) as forged_sender_refused:
+            svc.grant("tok-alice", conf_sframe)
+        assert forged_sender_refused.value.status == 403
+        matrix.senders.pop((conf_sframe, CONFIDENTIAL), None)
+
+        # External DB/selector e2ee_room_ready returning False also refuses with 403:
+        strict_svc = Service(
+            matrix,
+            livekit,
+            "wss://media.acme.kodera.io",
+            AGENT,
+            e2ee_room_ready=lambda _room, _policy: False,
+        )
+        with pytest.raises(RefusedError) as hook_refused:
+            strict_svc.grant("tok-alice", conf_sframe)
+        assert hook_refused.value.status == 403
+
+        # HTTP /token listener also surfaces e2ee_required=True on sframe-v1 rooms and False otherwise.
+        server = make_token_server("127.0.0.1", 0, svc, frozenset({CONSOLE}))
+        base = serve(server)
+        try:
+            st_conf, _, body_conf = post(
+                f"{base}/token",
+                json.dumps({"room_id": conf_sframe}).encode(),
+                {"Authorization": "Bearer tok-alice", "Origin": CONSOLE},
+            )
+            assert st_conf == 200 and body_conf["e2ee_required"] is True
+            st_plain, _, body_plain = post(
+                f"{base}/token",
+                json.dumps({"room_id": AUDIO}).encode(),
+                {"Authorization": "Bearer tok-alice", "Origin": CONSOLE},
+            )
+            assert st_plain == 200 and body_plain["e2ee_required"] is False
+        finally:
+            server.shutdown()
+            server.server_close()
+
+        # 3. AI/bot actor is ALWAYS refused 403 on confidential sframe-v1 room AND evicted on refresh!
+        with pytest.raises(RefusedError) as ai_refused:
+            svc.grant("tok-ai-bot", conf_sframe)
+        assert ai_refused.value.status == 403
+
+        lk_conf = livekit_room(conf_sframe)
+        livekit.join(conf_sframe, identity(ALICE, "DEV1"))
+        livekit.join(conf_sframe, identity(ai_bot, "AIBOT1"))
+        svc.refresh(lk_conf, conf_sframe)
+        assert identity(ai_bot, "AIBOT1") in livekit.removed
+        assert identity(ALICE, "DEV1") not in livekit.removed
+
+        # 4. Confidential room with unsupported e2ee_media, missing e2ee_media, or ai_enabled=True
+        #    is refused with 403 and evicts everyone on refresh!
+        for bad_patch in (
+            {"e2ee_media": None},
+            {"e2ee_media": "megolm-v1"},
+            {"e2ee_media": False},
+            {"e2ee_media": "sframe-v1", "ai_enabled": True},
+        ):
+            matrix.policy(conf_sframe, **bad_patch)
+            with pytest.raises(RefusedError) as bad_refused:
+                svc.grant("tok-alice", conf_sframe)
+            assert bad_refused.value.status == 403
+
+        livekit.removed.clear()
+        svc.refresh(lk_conf, conf_sframe)
+        assert identity(ALICE, "DEV1") in livekit.removed
+    finally:
+        TOKENS.pop("tok-ai-bot", None)

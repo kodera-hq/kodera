@@ -50,6 +50,14 @@ import { ORGANISATION_PENDING_MIN_MS, ORGANISATION_PENDING_MS } from './pendingT
 type Me = components['schemas']['Me']
 type Membership = Me['organisations'][number]
 
+export function concealsProtectedSurface(state: {
+  authorityMismatch?: boolean
+  sameGeneration: boolean
+  hasUsableToken: boolean
+}): boolean {
+  return !(state.sameGeneration && state.hasUsableToken)
+}
+
 function holdExpiredRoute(signal: AbortSignal): Promise<never> {
   return new Promise((_, reject) => {
     const abort = () =>
@@ -295,6 +303,11 @@ function OrgLayoutContent() {
   const authorityMismatch =
     auth.generation !== meGeneration || auth.credentialGeneration !== meCredentialGeneration
   const hasUsableToken = auth.status === 'ready' && lifetime.hasUsableCredential()
+  const concealed = concealsProtectedSurface({
+    authorityMismatch,
+    sameGeneration: auth.generation === meGeneration,
+    hasUsableToken,
+  })
   const mfaEnrolled = useMfaGuard(me, auth.user?.identity, org)
   const onMfaScreen = pathname === mfaEnrolPath(org)
   useLayoutEffect(() => {
@@ -408,14 +421,14 @@ function OrgLayoutContent() {
     // `min-h-screen` added a screen of empty scroll under the shell's bars.
     return (
       <>
-        {authorityMismatch ? <SessionExpiryDialog /> : null}
+        {concealed ? <SessionExpiryDialog /> : null}
         <div
-          className={authorityMismatch ? undefined : 'contents'}
+          className={concealed ? undefined : 'contents'}
           data-ph-no-capture
-          hidden={authorityMismatch}
-          aria-hidden={authorityMismatch || undefined}
+          hidden={concealed}
+          aria-hidden={concealed || undefined}
         >
-          {authorityMismatch ? null : <SessionExpiryDialog />}
+          {concealed ? null : <SessionExpiryDialog />}
           <main className="flex min-h-screen min-w-0 flex-col overflow-x-auto p-6 narrow:p-4">
             {onMfaScreen ? <Outlet /> : null}
           </main>
@@ -426,7 +439,7 @@ function OrgLayoutContent() {
             redirecting={!onMfaScreen}
           />
         </div>
-        {authorityMismatch && hasUsableToken ? <SessionLoading /> : null}
+        {concealed && hasUsableToken ? <SessionLoading /> : null}
       </>
     )
   }
@@ -444,18 +457,19 @@ function OrgLayoutContent() {
   // tenant's mark is the one place that already resolves the tenant.
   const organisationMark = demoOrganisationMark(membership.organisation.slug)
 
-  // Keep drafts mounted, but conceal protected content until `/me` validates the current token.
+  // Keep drafts mounted; revalidate same-session renewals in place and conceal when session
+  // generation changes or usable credentials end.
   return (
     <>
-      {authorityMismatch ? <SessionExpiryDialog /> : null}
+      {concealed ? <SessionExpiryDialog /> : null}
       <div
-        className={authorityMismatch ? undefined : 'contents'}
+        className={concealed ? undefined : 'contents'}
         data-ph-no-capture
-        hidden={authorityMismatch}
-        aria-hidden={authorityMismatch || undefined}
+        hidden={concealed}
+        aria-hidden={concealed || undefined}
       >
         <Shell
-          sessionExpiry={authorityMismatch ? undefined : <SessionExpiryDialog />}
+          sessionExpiry={concealed ? undefined : <SessionExpiryDialog />}
           org={org}
           organisationId={membership.organisation.id}
           personId={me.id}
@@ -490,7 +504,7 @@ function OrgLayoutContent() {
           announcedByScreen={isOrderStepChange}
         />
       </div>
-      {authorityMismatch && hasUsableToken ? <SessionLoading /> : null}
+      {concealed && hasUsableToken ? <SessionLoading /> : null}
     </>
   )
 }

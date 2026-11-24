@@ -150,7 +150,11 @@ export function EspaceChannelHeader({
 
   return (
     <header
-      hidden={effectiveCanvasMode === 'files' || effectiveCanvasMode === 'integrations'}
+      hidden={
+        effectiveCanvasMode === 'files' ||
+        effectiveCanvasMode === 'integrations' ||
+        effectiveCanvasMode === 'calendar'
+      }
       className="flex items-center gap-3 border-b border-c-border-soft pb-4 narrow:flex-wrap narrow:gap-2 narrow:pb-2"
     >
       <div className="flex min-w-0 flex-1 flex-col gap-1 narrow:basis-full">

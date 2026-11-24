@@ -30,6 +30,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Literal, cast
 
 from . import is_enterprise_edition
+from .finops import FinOpsValidationError, reconcile_finops_payload
 from .pricing import (
     FR_STANDARD_VAT_BPS,
     MarginFloorViolationError,
@@ -66,7 +67,9 @@ from .warm_pool import (
 )
 
 MAX_BODY_BYTES = 32 * 1024
+MAX_FINOPS_BODY_BYTES = 256 * 1024
 MAX_BEARER_HEADER_BYTES = 8 * 1024
+FINOPS_RECONCILE_PATH = "/api/v1/ee/billing/finops/reconcile"
 _PO_PREFIX = "/api/v1/ee/billing/purchase-orders/"
 _PO_ID_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-")
 
@@ -129,6 +132,17 @@ _VALIDATION_MESSAGES: dict[str, str] = {
     "unverified_core_invoice": "Invoice reference does not match a persisted Core invoice for this purchase order.",
     "unverified_core_payment": "Payment reference does not match a settled Core payment for the bound invoice.",
     "negative_usage_metrics": "Seat and storage usage metrics must be non-negative.",
+    "finops_validation_error": "FinOps attribution payload failed validation.",
+    "negative_finops_metric": "Metered FinOps resource usage metrics must be non-negative integers.",
+    "invoice_below_pool_sum": "Provider invoice total cannot be less than the sum of infrastructure pools.",
+    "invoice_reconciliation_mismatch": "Allocated tenant total plus unallocated remainder must equal provider invoice total.",
+    "pool_subtotal_exceeded": "Attributed tenant pool shares exceeded the declared pool subtotal.",
+    "duplicate_organisation_id": "Duplicate organisation_id in FinOps attribution batch.",
+    "unsupported_currency": "FinOps attribution requires EUR minor-unit currency.",
+    "invalid_billing_period": "Billing period must be 1 to 64 printable non-whitespace ASCII characters.",
+    "invalid_provider_invoice_ref": "Provider invoice reference must be 1 to 128 printable non-whitespace ASCII characters.",
+    "invalid_tenants_payload": "FinOps tenants field must be a bounded JSON array of tenant usage objects.",
+    "invalid_pool_weight": "FinOps pool weighting factors must be positive integers.",
 }
 
 _CONFLICT_MESSAGES: dict[str, str] = {
@@ -381,10 +395,27 @@ def _serialize_po(po: PurchaseOrder) -> dict[str, Any]:
     return raw
 
 
-def _parse_json_object(raw: bytes) -> dict[str, Any]:
-    if len(raw) > MAX_BODY_BYTES:
+def _reject_duplicate_json_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for key, val in pairs:
+        if key in out:
+            raise ValueError("duplicate JSON key")
+        out[key] = val
+    return out
+
+
+def _reject_json_constant(_token: str) -> Any:
+    raise ValueError("non-standard JSON numeric constant refused")
+
+
+def _parse_json_object(raw: bytes, *, max_bytes: int = MAX_BODY_BYTES) -> dict[str, Any]:
+    if len(raw) > max_bytes:
         raise ValueError("body exceeds limit")
-    parsed = json.loads(raw.decode("utf-8") if raw else "{}")
+    parsed = json.loads(
+        raw.decode("utf-8") if raw else "{}",
+        object_pairs_hook=_reject_duplicate_json_keys,
+        parse_constant=_reject_json_constant,
+    )
     if not isinstance(parsed, dict):
         raise ValueError("JSON object expected")
     return parsed
@@ -474,11 +505,17 @@ class EnterpriseBillingRouter:
         self.purchase_orders = purchase_orders or PurchaseOrderBook(backend=backend)
         wp_store = getattr(self.warm_pool, "_store", None)
         po_store = getattr(self.purchase_orders, "_store", None)
-        wp_mem = wp_store if isinstance(wp_store, MemoryWarmPoolStore) else getattr(wp_store, "_mem", None)
-        po_mem = po_store if isinstance(po_store, MemoryPurchaseOrderStore) else getattr(po_store, "_mem", None)
-        if isinstance(wp_mem, MemoryWarmPoolStore) and isinstance(
-            po_mem, MemoryPurchaseOrderStore
-        ):
+        wp_mem = (
+            wp_store
+            if isinstance(wp_store, MemoryWarmPoolStore)
+            else getattr(wp_store, "_mem", None)
+        )
+        po_mem = (
+            po_store
+            if isinstance(po_store, MemoryPurchaseOrderStore)
+            else getattr(po_store, "_mem", None)
+        )
+        if isinstance(wp_mem, MemoryWarmPoolStore) and isinstance(po_mem, MemoryPurchaseOrderStore):
             wp_mem.bind_purchase_order_store(po_mem)
         self._authenticator: Authenticator = (
             authenticator if authenticator is not None else authenticate_bearer_header
@@ -558,6 +595,20 @@ class EnterpriseBillingRouter:
                     custom_net_excl_vat_minor=data.get("custom_net_excl_vat_minor"),
                 )
                 return _json_response(200, asdict(quote))
+
+            if path == FINOPS_RECONCILE_PATH:
+                if verb != "POST":
+                    return _problem_response(405, "method-not-allowed", "Method not allowed")
+                _require_staff_capability(principal, _STAFF_READ_ROLES)
+                if principal.lane != "internal":
+                    verify_caller_authority(
+                        _to_caller_authority(
+                            principal, frozenset(), allowed_staff_roles=_STAFF_READ_ROLES
+                        )
+                    )
+                data = _parse_json_object(body, max_bytes=MAX_FINOPS_BODY_BYTES)
+                report = reconcile_finops_payload(data)
+                return _json_response(200, report.to_dict())
 
             if path == "/api/v1/ee/billing/warm-pool":
                 if verb != "GET":
@@ -814,6 +865,7 @@ class EnterpriseBillingRouter:
         ):
             return _problem_response(403, "forbidden", "Access refused")
         except (
+            FinOpsValidationError,
             MarginFloorViolationError,
             PricingValidationError,
             PurchaseOrderValidationError,
