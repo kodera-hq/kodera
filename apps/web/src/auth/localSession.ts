@@ -12,23 +12,17 @@ export const ESPACE_VAULT_WIPE_CHANNEL = 'kodera.espace-vault.wipe.v1'
 export const ESPACE_TIMELINE_DATABASE = 'kodera-espace-timelines'
 
 /**
- * Returns `ESPACE_VAULT_WIPE_CHANNEL` in browser runtimes and scopes it per Vitest worker/file in
- * Node test threads, where `node:worker_threads` shares `BroadcastChannel` across parallel test
- * workers running independent JSDOM sessions.
+ * Returns `ESPACE_VAULT_WIPE_CHANNEL` in browser builds and isolates each JSDOM module realm in
+ * Vitest (`import.meta.env.MODE === 'test'`), where `node:worker_threads` shares `BroadcastChannel`
+ * across parallel test workers and `window.process` is absent on JSDOM `globalThis`.
  */
+const ESPACE_VAULT_WIPE_REALM_CHANNEL =
+  import.meta.env.MODE === 'test'
+    ? `${ESPACE_VAULT_WIPE_CHANNEL}:${globalThis.crypto.randomUUID()}`
+    : ESPACE_VAULT_WIPE_CHANNEL
+
 export function espaceVaultWipeChannelName(): string {
-  const runtime = globalThis as {
-    __vitest_worker__?: { filepath?: string; ctx?: { workerId?: number } }
-    process?: { env?: Record<string, string | undefined> }
-  }
-  const workerScope =
-    runtime.__vitest_worker__?.filepath ??
-    (runtime.__vitest_worker__?.ctx?.workerId !== undefined
-      ? String(runtime.__vitest_worker__.ctx.workerId)
-      : undefined) ??
-    runtime.process?.env?.['VITEST_WORKER_ID'] ??
-    runtime.process?.env?.['VITEST_POOL_ID']
-  return workerScope ? `${ESPACE_VAULT_WIPE_CHANNEL}:${workerScope}` : ESPACE_VAULT_WIPE_CHANNEL
+  return ESPACE_VAULT_WIPE_REALM_CHANNEL
 }
 
 /**
