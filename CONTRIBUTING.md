@@ -21,15 +21,23 @@ You never need to boot every service at once to work on a single layer:
 
 For role-based onboarding paths, see [`ONBOARDING.md`](./ONBOARDING.md).
 
-## 2. Pull Request Workflow & Standards
+## 2. Zero-Secret Pull Request CI Guarantee
+
+Every pull-request and merge-group check in `kodera` runs **100% credential-free**:
+
+- **Zero personal secrets or `.env` files:** Contributors never create, source, or hold cloud credentials (`SCW_*`, `AWS_*`), vault tokens (`KOJOVAULT_*`), SOPS age keys, signing keystores, or live `.env` files to develop, test, or merge a pull request. Only `.env.example` placeholder templates exist in version control.
+- **Enforced by CI guard:** `scripts/ci/check-zero-secret-pr-ci.py` statically verifies that `.github/workflows/ci.yml`, every workflow triggered on `pull_request` or `merge_group`, every `workflow_call` workflow invoked by `ci.yml`, and every `.github/actions/**` composite action never use `pull_request_target`, never set `secrets: inherit`, and never reference `${{ secrets.* }}` other than `secrets.GITHUB_TOKEN`.
+- **Manual-only `ghcr.io` image workflow:** `.github/workflows/publish-images.yml` triggers exclusively on manual `workflow_dispatch` (gated to `refs/heads/main`) so merging pull requests to `main` never triggers automatic `ghcr.io` container pushes.
+
+## 3. Pull Request Workflow & Standards
 
 1. Read [`AGENTS.md`](./AGENTS.md) for codebase invariants (design tokens, secret isolation, English-only code/docs).
 2. Create a topic branch from `main`: `feat/<topic>`, `fix/<topic>`, `docs/<topic>`, or `chore/<topic>`.
 3. Add or update unit/acceptance tests covering your change. Every preflight or CI script must include a mutation self-test proving it fails on broken input.
-4. Run `python3 .github/scripts/check-vendor-attribution.py .` and `python3 .github/scripts/check-required-clauses.py .` before pushing.
+4. Run `python3 .github/scripts/check-vendor-attribution.py .`, `python3 .github/scripts/check-required-clauses.py .`, and `(cd apps/server && uv run python ../../scripts/ci/check-zero-secret-pr-ci.py --selftest && uv run python ../../scripts/ci/check-zero-secret-pr-ci.py)` before pushing.
 5. Open a Pull Request filling out the specification, acceptance criteria, local verification output, and licensing confirmation.
 
-## 3. Licensing & Contributor Grant
+## 4. Licensing & Contributor Grant
 
 - Contributions to `Apache-2.0` directories (`apps/web`, `apps/desktop`, `apps/ios`, `apps/android`, `packages/kodera-rs`, `packages/design-tokens`, `packages/api-contract`, `packages/extension-sdk`, `extensions/*`, `deploy/community/*`) are governed by Section 5 of the Apache License, Version 2.0 ("inbound = outbound").
 - Contributions to `AGPL-3.0-or-later` server components (`apps/server`, `packages/synapse-policy`) are licensed under `AGPL-3.0-or-later` and include a non-exclusive, perpetual, royalty-free grant to Samouraï Coop to distribute the contribution across Kodera's open-source and commercial editions as documented in [`GOVERNANCE.md`](./GOVERNANCE.md).

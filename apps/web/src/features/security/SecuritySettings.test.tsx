@@ -326,8 +326,64 @@ describe('local security settings', () => {
       { kind: 'recovery-key', recoveryKey: 'saved-recovery-key' },
       1
     )
-    // After restoring epoch 1, session advances to max(1 + 1, 5) = 5 for future server publication!
+    // After restoring epoch 1 against discarded server nextBackupEpoch=5, session advances to 5!
     expect(mocks.advanceEpoch).toHaveBeenCalledWith(5)
     expect(await screen.findByText(/Archive restored locally/)).toBeInTheDocument()
+  })
+  it('publishes at backupEpoch=1 when restoring an epoch-1 .kvkb file against a never-published (404 nextBackupEpoch=null) server', async () => {
+    mocks.available = false
+    mocks.getRemote.mockResolvedValueOnce({ status: 'absent', nextBackupEpoch: null })
+    const headerJson = JSON.stringify([
+      'kodera-zk-key-backup',
+      1,
+      'org-test',
+      'account-test',
+      1,
+      'recovery-key',
+      0,
+      btoa(String.fromCharCode(...new Uint8Array(16).fill(1))),
+      btoa(String.fromCharCode(...new Uint8Array(12).fill(2))),
+    ])
+    const headerBytes = new TextEncoder().encode(headerJson)
+    const kvkbEpoch1 = new Uint8Array(9 + headerBytes.length + 32)
+    kvkbEpoch1.set([0x4b, 0x56, 0x4b, 0x42, 0x31], 0)
+    new DataView(kvkbEpoch1.buffer).setUint32(5, headerBytes.length)
+    kvkbEpoch1.set(headerBytes, 9)
+    kvkbEpoch1.fill(0xaa, 9 + headerBytes.length)
+
+    const signer = vi.fn(
+      async ({ backupEpoch, capsule }: { backupEpoch: number; capsule: string }) => ({
+        deviceId: '01950000-0000-7000-8000-000000000001',
+        backupEpoch,
+        capsule,
+        signature: 'B'.repeat(88),
+      })
+    )
+    render(<SecuritySettings {...props} deviceSigner={signer} />)
+    const user = await start()
+
+    const file = new File([kvkbEpoch1], 'epoch1.kvkb')
+    Object.defineProperty(file, 'arrayBuffer', {
+      value: async () => kvkbEpoch1.slice().buffer,
+    })
+    await user.upload(screen.getByLabelText('Choose encrypted .kvkb archive'), file)
+    await user.type(
+      screen.getByLabelText('Archive recovery key, including checksum'),
+      'saved-recovery-key'
+    )
+    await user.click(screen.getByRole('button', { name: 'Restore archive locally' }))
+    expect(await screen.findByText(/Archive restored locally/)).toBeInTheDocument()
+    // Never-published server expects backupEpoch=1, NOT 2!
+    expect(mocks.advanceEpoch).not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole('button', { name: 'Create encrypted archive' }))
+    await user.click(screen.getByRole('checkbox', { name: 'I saved the recovery key separately' }))
+    await user.click(screen.getByRole('button', { name: 'Publish sealed backup to server' }))
+    expect(signer).toHaveBeenCalledWith(expect.objectContaining({ backupEpoch: 1 }))
+    expect(mocks.publishRemote).toHaveBeenCalledTimes(1)
+    expect(
+      await screen.findByText(/Opaque KVKB1 archive published to server at epoch 1/)
+    ).toBeInTheDocument()
+    expect(mocks.advanceEpoch).toHaveBeenCalledWith(2)
   })
 })

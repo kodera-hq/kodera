@@ -86,6 +86,11 @@ BEGIN
 
     IF new_eff_conf AND NEW.markdown <> ''
     THEN RAISE EXCEPTION 'confidential document markdown must remain empty' USING ERRCODE='23514'; END IF;
+    IF NOT new_eff_conf AND NEW.encryption_epoch IS NOT NULL
+    THEN RAISE EXCEPTION 'plaintext document cannot set encryption_epoch' USING ERRCODE='23514'; END IF;
+    IF TG_OP='UPDATE' AND OLD.encryption_epoch IS NOT NULL
+       AND (NEW.encryption_epoch IS NULL OR NEW.encryption_epoch < OLD.encryption_epoch)
+    THEN RAISE EXCEPTION 'confidential document encryption_epoch must be monotonic' USING ERRCODE='23514'; END IF;
   ELSIF TG_TABLE_NAME='docs_documentgrant' THEN
     SELECT w.organisation_id INTO expected FROM docs_document d JOIN workspaces_workspace w ON w.id=d.workspace_id WHERE d.id=NEW.document_id;
     SELECT organisation_id INTO actual FROM orgs_membership WHERE id=NEW.membership_id;

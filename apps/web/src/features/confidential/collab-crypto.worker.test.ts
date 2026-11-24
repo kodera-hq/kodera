@@ -241,6 +241,23 @@ describe('worker confidential collaboration envelopes', () => {
     client.close()
     keys.port1.close()
   })
+  it('tracks independent sequence watermarks per (sender, kind) so live awareness never drops delayed durable updates', async () => {
+    const sender = peer({ senderClientId: 11 })
+    const receiver = peer({ senderClientId: 22 })
+    // Sender seals a durable Yjs update (kind=0, seq=1) and two awareness frames (kind=1, seq=1..2).
+    const delayedDurable = await sender.seal(body())
+    const awareness1 = await sender.seal(new Uint8Array([1, 2, 0]))
+    const awareness2 = await sender.seal(new Uint8Array([1, 2, 1]))
+    // Live awareness frames arrive BEFORE the delayed durable update!
+    expect(await receiver.open(awareness1)).toEqual(new Uint8Array([1, 2, 0]))
+    expect(await receiver.open(awareness2)).toEqual(new Uint8Array([1, 2, 1]))
+    // Durable kind=0 seq=1 still opens cleanly without sequence collision!
+    expect(await receiver.open(delayedDurable)).toEqual(body())
+    // Replaying the same durable kind=0 seq=1 is still rejected.
+    await expect(receiver.open(delayedDurable)).rejects.toThrow()
+    sender.close()
+    receiver.close()
+  })
   it('refuses importing the worker into a document context', async () => {
     vi.resetModules()
     vi.stubGlobal('window', {})

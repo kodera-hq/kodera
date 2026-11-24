@@ -305,7 +305,7 @@ def publish_key_backup(
     if next_epoch > MAX_EPOCH or backup_epoch != next_epoch:
         raise RefusalError(
             409,
-            "epoch-conflict",
+            "conflict",
             next_backup_epoch=next_epoch if next_epoch <= MAX_EPOCH else None,
         )
     digest = hashlib.sha256(capsule_bytes).hexdigest()
@@ -331,7 +331,7 @@ def publish_key_backup(
             conflict_next = (current.backup_epoch + 1) if current is not None else 2
             raise RefusalError(
                 409,
-                "epoch-conflict",
+                "conflict",
                 next_backup_epoch=conflict_next if conflict_next <= MAX_EPOCH else None,
             ) from None
     else:

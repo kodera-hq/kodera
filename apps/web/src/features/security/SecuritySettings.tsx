@@ -49,6 +49,7 @@ interface Session {
   active: boolean
   backupEpoch: number
   nextServerEpoch: number
+  serverKnown: boolean
 }
 export default function SecuritySettings(props: SecuritySettingsProps) {
   const { t, i18n } = useTranslation(),
@@ -211,6 +212,7 @@ export default function SecuritySettings(props: SecuritySettingsProps) {
         stamp,
         backupEpoch: activeEpoch,
         nextServerEpoch,
+        serverKnown: remoteLookup !== null,
       }
       current.current = session
       setIdentity(publicIdentity)
@@ -348,10 +350,9 @@ export default function SecuritySettings(props: SecuritySettingsProps) {
       await session.backup.restore(imported, options)
     }
     if (live(session)) {
-      const nextEpoch = Math.max(
-        (archiveEpoch ?? session.backupEpoch) + 1,
-        session.nextServerEpoch
-      )
+      const nextEpoch = session.serverKnown
+        ? session.nextServerEpoch
+        : Math.max((archiveEpoch ?? session.backupEpoch) + 1, session.nextServerEpoch)
       if (nextEpoch > session.backupEpoch) {
         await session.backup.advanceEpoch?.(nextEpoch)
         session.backupEpoch = nextEpoch

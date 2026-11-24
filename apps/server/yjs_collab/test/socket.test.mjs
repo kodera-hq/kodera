@@ -9,7 +9,7 @@ import { WebSocket } from 'ws'
 import { createCollabServer } from '../socket-server.mjs'
 import { load, replace, apply, inspect } from '../engine.mjs'
 import { TicketRefused } from '../tickets.mjs'
-import { updateFrame, snapshotFrame } from '../protocol.mjs'
+import { updateFrame, snapshotFrame, parseKde1Header } from '../protocol.mjs'
 
 const pause = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds))
 async function until(predicate) {
@@ -36,18 +36,47 @@ class MemoryStore {
   async deliver(claims, consumer, known = null) {
     this.guard(claims)
     if (this.confidential) {
+      const knownHead = known !== null && typeof known === 'object' ? known.head : known
+      const knownSnapEpoch = known !== null && typeof known === 'object' ? known.snapshotEpoch ?? null : null
+      const knownSnapBase = known !== null && typeof known === 'object' ? known.snapshotBase ?? null : null
+      const knownBootstrapped = known !== null && typeof known === 'object' ? Boolean(known.epochBootstrapped) : false
       const head = this.base + this.envelopes.length
-      if (known !== null && head <= known) return
-      const includeSnap = known === null || known < this.base
+      const snapHeader = this.confidentialSnapshot ? parseKde1Header(new Uint8Array(this.confidentialSnapshot)) : null
+      const updHeaders = this.envelopes.map(part => parseKde1Header(new Uint8Array(part)))
+      const hasMatchingSnap = snapHeader !== null && snapHeader.epoch === claims.epoch
+      const allMatch = updHeaders.every(h => h.epoch === claims.epoch)
+      const snapUnseen =
+        !knownBootstrapped &&
+        hasMatchingSnap &&
+        (knownSnapEpoch !== claims.epoch || knownSnapBase !== this.base)
+      if (knownHead !== null && head <= knownHead && !snapUnseen) return
+      const includeSnap =
+        hasMatchingSnap && (knownHead === null || knownHead < this.base || snapUnseen)
       const out = []
       const journalSeqs = []
-      if (includeSnap && this.confidentialSnapshot !== null) out.push(this.confidentialSnapshot)
-      const start = includeSnap ? 0 : Math.max(0, known - this.base)
+      if (includeSnap) out.push(this.confidentialSnapshot)
+      const start = knownHead === null || knownHead < this.base ? 0 : Math.max(0, knownHead - this.base)
       for (let i = start; i < this.envelopes.length; i += 1) {
-        out.push(this.envelopes[i])
-        journalSeqs.push(this.base + i + 1)
+        if (updHeaders[i].epoch === claims.epoch) {
+          out.push(this.envelopes[i])
+          journalSeqs.push(this.base + i + 1)
+        }
       }
-      consumer({confidential: true, envelopes: out, journalSeqs, head, base: this.base, revision: this.revision})
+      const epochBootstrapped =
+        (knownBootstrapped || ((this.confidentialSnapshot === null && this.base === 0) || includeSnap)) &&
+        allMatch
+      consumer({
+        confidential: true,
+        envelopes: out,
+        journalSeqs,
+        snapshotDelivered: includeSnap,
+        snapshotEpoch: hasMatchingSnap ? claims.epoch : null,
+        snapshotBase: hasMatchingSnap ? this.base : null,
+        epochBootstrapped,
+        head,
+        base: this.base,
+        revision: this.revision,
+      })
       return
     }
     if (known !== this.revision) consumer({state: Y.encodeStateAsUpdate(this.doc), revision: this.revision})
@@ -406,29 +435,31 @@ test('confidential rooms replay opaque KDE1 frames without Y.Doc/Awareness and c
     assert.equal(room.awareness, null)
 
     const env1 = makeKde1Frame({ epoch: 5, sender: '101', sequence: 1, kind: 0 })
-    const envStep1 = makeKde1Frame({ epoch: 5, sender: '101', sequence: 2, kind: 2 })
-    const envAwareness = makeKde1Frame({ epoch: 5, sender: '101', sequence: 3, kind: 1 })
+    const envStep1 = makeKde1Frame({ epoch: 5, sender: '101', sequence: 1, kind: 2 })
+    const envAwareness = makeKde1Frame({ epoch: 5, sender: '101', sequence: 1, kind: 1 })
     editorA.ws.send(env1)
     editorA.ws.send(envStep1)
     editorA.ws.send(envAwareness)
-    await until(() => editorB.inbox.length === 3)
+    await until(() => editorB.inbox.length === 3 && editorA.inbox.length === 1)
+    assert.deepEqual(editorA.inbox[0], env1) // kind===0 echoed in commit order to author!
     assert.deepEqual(editorB.inbox[0], env1)
     assert.deepEqual(editorB.inbox[1], envStep1)
     assert.deepEqual(editorB.inbox[2], envAwareness)
     // kind===2 SyncStep1 and kind===1 awareness are relayed ephemerally and NEVER persisted!
     assert.equal(value.store.envelopes.length, 1)
 
-    // Triggering notify() / poll refresh after broadcast NEVER double-delivers env1 to editorB!
+    // Triggering notify() / poll refresh after broadcast NEVER double-delivers env1 to editorA or editorB!
     await value.service.notify(value.store.document)
     await pause(30)
+    assert.equal(editorA.inbox.length, 1)
     assert.equal(editorB.inbox.length, 3)
 
     // Editor compaction via kind===3 checkpoint compacts journal and replays snapshot to late joiners.
-    const env2 = makeKde1Frame({ epoch: 5, sender: '101', sequence: 4, kind: 0 })
+    const env2 = makeKde1Frame({ epoch: 5, sender: '101', sequence: 2, kind: 0 })
     const cp = makeKde1Frame({ epoch: 5, sender: 'checkpoint', sequence: 1, kind: 3 })
     editorA.ws.send(env2)
-    await until(() => editorB.inbox.length === 4)
-    editorA.ws.send(cp) // compacts sequence 1 (leaving env2 in journal)
+    await until(() => editorB.inbox.length === 4 && editorA.inbox.length === 2)
+    editorA.ws.send(cp) // compacts downlinkHeads[0] === 1 (leaving env2 in journal)
     await until(() => value.store.base === 1)
     assert.equal(value.store.envelopes.length, 1)
 
@@ -439,12 +470,12 @@ test('confidential rooms replay opaque KDE1 frames without Y.Doc/Awareness and c
     assert.deepEqual(viewer.inbox[0], cp)
     assert.deepEqual(viewer.inbox[1], env2)
     viewer.ws.send(makeKde1Frame({ epoch: 5, sender: '303', sequence: 1, kind: 1 }))
-    viewer.ws.send(makeKde1Frame({ epoch: 5, sender: '303', sequence: 2, kind: 2 }))
-    await until(() => editorA.inbox.length === 2)
+    viewer.ws.send(makeKde1Frame({ epoch: 5, sender: '303', sequence: 1, kind: 2 }))
+    await until(() => editorA.inbox.length === 4)
     assert.equal(value.store.envelopes.length, 1)
 
     const viewerClosed = once(viewer.ws, 'close')
-    viewer.ws.send(makeKde1Frame({ epoch: 5, sender: '303', sequence: 3, kind: 0 }))
+    viewer.ws.send(makeKde1Frame({ epoch: 5, sender: '303', sequence: 1, kind: 0 }))
     assert.equal((await viewerClosed)[0], 4403)
     assert.equal(value.store.audit.includes(viewer.claims.membership), true)
 
@@ -463,6 +494,54 @@ test('confidential rooms replay opaque KDE1 frames without Y.Doc/Awareness and c
     spoofer.ws.send(makeKde1Frame({ epoch: 5, sender: '101', sequence: 1, kind: 1 }))
     assert.equal((await spooferClosed)[0], 4403)
     assert.equal(value.store.audit.includes(spoofer.claims.membership), true)
+  } finally {
+    for (const ws of sockets) ws.terminate()
+    await value.close()
+  }
+})
+
+test('connected new-epoch viewer receives newly compacted epoch checkpoint even when head does not advance', async () => {
+  const value = await fixture()
+  value.store.confidential = true
+  value.store.epoch = 5
+  // Seed two epoch-5 updates in store before epoch rotates to 6.
+  value.store.envelopes.push(
+    Buffer.from(makeKde1Frame({ epoch: 5, sender: '101', sequence: 1, kind: 0 })),
+    Buffer.from(makeKde1Frame({ epoch: 5, sender: '101', sequence: 2, kind: 0 }))
+  )
+  value.store.epoch = 6
+  const sockets = []
+  try {
+    const openAtEpoch6 = async role => {
+      const claims = value.store.claims(role, { confidential: true, epoch: 6 })
+      const ws = new WebSocket(value.url, { origin: 'https://community.example.org' })
+      ws.on('error', () => {})
+      const inbox = []
+      ws.on('message', bytes => inbox.push(new Uint8Array(bytes)))
+      await once(ws, 'open')
+      ws.send(JSON.stringify({ type: 'auth', token: token(claims, value.key) }))
+      sockets.push(ws)
+      return { ws, claims, inbox }
+    }
+
+    const viewer = await openAtEpoch6('viewer')
+    const editor = await openAtEpoch6('editor')
+    await until(() => value.service.rooms.get(value.store.document)?.connections.size === 2)
+    await pause(25)
+    assert.equal(viewer.inbox.length, 0) // prior epoch-5 rows withheld!
+
+    // Editor compacts at upToHead = 2 (same head = 2!) into epoch 6 via JSON compact frame.
+    const cpEpoch6 = makeKde1Frame({ epoch: 6, sender: 'checkpoint', sequence: 1, kind: 3 })
+    editor.ws.send(
+      JSON.stringify({
+        type: 'compact',
+        upToHead: 2,
+        snapshot: Buffer.from(cpEpoch6).toString('base64'),
+      })
+    )
+    await until(() => viewer.inbox.length === 1)
+    assert.deepEqual(viewer.inbox[0], cpEpoch6)
+    assert.equal(editor.inbox.length, 0) // compactor does not echo its own checkpoint to itself
   } finally {
     for (const ws of sockets) ws.terminate()
     await value.close()

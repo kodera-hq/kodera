@@ -156,7 +156,7 @@ def test_publish_restore_without_local_device_discard_and_monotonic_rotation(rel
     skipped, _ = publish(relay, http, index=0, backup_epoch=2)
     assert skipped.status_code == 409
     assert skipped["X-Kodera-Next-Backup-Epoch"] == "1"
-    assert skipped.json()["type"] == "https://kodera.io/problems/epoch-conflict"
+    assert skipped.json()["type"] == "https://kodera.io/problems/conflict"
 
     from core.api.edge import EXPOSED_HEADERS
 
@@ -234,7 +234,7 @@ def test_publish_restore_without_local_device_discard_and_monotonic_rotation(rel
     with mock_patch.object(KeyBackupArchive.objects, "create", side_effect=simulate_race_create):
         raced, _ = publish(relay, http, index=2, backup_epoch=1)
     assert raced.status_code == 409
-    assert raced.json()["type"] == "https://kodera.io/problems/epoch-conflict"
+    assert raced.json()["type"] == "https://kodera.io/problems/conflict"
     assert raced["X-Kodera-Next-Backup-Epoch"] == "2"
 
 

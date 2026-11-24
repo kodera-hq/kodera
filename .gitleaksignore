@@ -129,3 +129,13 @@ e586ecd99077ac941711a2c1815e401731167a3f:packages/api-contract/core-api.openapi.
 8732831f7b8019082442522a3fd8f8493bd5e2c2:apps/web/src/api/schema.d.ts:generic-api-key:11031
 8732831f7b8019082442522a3fd8f8493bd5e2c2:apps/web/src/mocks/generated/examples.ts:generic-api-key:5808
 8732831f7b8019082442522a3fd8f8493bd5e2c2:packages/kodera-rs/vectors/proximity-epoch-lease-v1.json:generic-api-key:10
+
+# Reviewed synthetic H4.1 extension webhook placeholders and OpenAPI examples; no runtime credentials.
+3dcd331fc11e07588a71aee1b454f75dbd5540b0:apps/web/src/features/extensions/ExtensionMarketplacePanel.test.tsx:generic-api-key:167
+3dcd331fc11e07588a71aee1b454f75dbd5540b0:apps/web/src/features/extensions/ExtensionMarketplacePanel.tsx:generic-api-key:48
+3dcd331fc11e07588a71aee1b454f75dbd5540b0:packages/create-kodera-extension/runtime/cli.mjs:generic-api-key:518
+3dcd331fc11e07588a71aee1b454f75dbd5540b0:packages/create-kodera-extension/src/cli.ts:generic-api-key:518
+9d90ee9c670e447666af0235883051f21ac4c320:apps/server/contracts/core-api.openapi.yaml:generic-api-key:27702
+9d90ee9c670e447666af0235883051f21ac4c320:apps/web/contracts/core-api.openapi.yaml:generic-api-key:27702
+9d90ee9c670e447666af0235883051f21ac4c320:apps/web/src/api/schema.d.ts:generic-api-key:15552
+9d90ee9c670e447666af0235883051f21ac4c320:packages/api-contract/core-api.openapi.yaml:generic-api-key:27702

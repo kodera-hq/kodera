@@ -190,12 +190,30 @@ test('confidential tickets and KDE1 protocol parser enforce strict magic, canoni
   let beforeEpochCompact = null
   await compactStore.deliver(epoch4Claims, payload => { beforeEpochCompact = payload })
   assert.equal(beforeEpochCompact.envelopes.length, 0)
+  assert.equal(beforeEpochCompact.epochBootstrapped, false)
 
   const cpEpoch4 = buildKde1({ epoch: 4, sender: 'checkpoint', sequence: 1, kind: 3 })
   await compactStore.compact(epoch4Claims, 300, cpEpoch4)
   assert.equal(baseSeq, 300)
   assert.equal(journalMap.size, 0)
   assert.equal(docEpoch, 4)
+
+  // Connected epoch-4 viewer whose deliveredHead is ALREADY 300 still receives the newly compacted epoch-4 checkpoint!
+  let connectedViewerRefresh = null
+  await compactStore.deliver(
+    epoch4Claims,
+    payload => { connectedViewerRefresh = payload },
+    {
+      head: beforeEpochCompact.head,
+      snapshotEpoch: beforeEpochCompact.snapshotEpoch,
+      snapshotBase: beforeEpochCompact.snapshotBase,
+      epochBootstrapped: beforeEpochCompact.epochBootstrapped,
+    }
+  )
+  assert.equal(connectedViewerRefresh.envelopes.length, 1)
+  assert.equal(connectedViewerRefresh.snapshotDelivered, true)
+  assert.equal(connectedViewerRefresh.epochBootstrapped, true)
+  assert.deepEqual(new Uint8Array(connectedViewerRefresh.envelopes[0]), cpEpoch4)
 
   let afterEpochCompact = null
   await compactStore.deliver(epoch4Claims, payload => { afterEpochCompact = payload })

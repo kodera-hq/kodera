@@ -79,7 +79,7 @@ export class WorkerFrameCryptor {
   #secret: Uint8Array<ArrayBuffer>
   #active = true
   #queue = Promise.resolve()
-  #sequence = 0
+  #sequences = new Map<string, number>()
   #ratchet = 0
   #epoch: number
   #received = new Map<string, { highest: number; seen: Set<number> }>()
@@ -106,6 +106,7 @@ export class WorkerFrameCryptor {
   close(): void {
     this.#active = false
     this.#secret.fill(0)
+    this.#sequences.clear()
     this.#received.clear()
   }
   #current(epoch: number, ratchet: number): void {
@@ -171,8 +172,12 @@ export class WorkerFrameCryptor {
     return this.#run(async () => {
       try {
         this.#current(epoch, ratchet)
-        need(this.#sequence < Number.MAX_SAFE_INTEGER)
-        const meta = { epoch, sender: this.sender, sequence: ++this.#sequence, kind, ratchet }
+        const seqKey = JSON.stringify([this.sender, kind])
+        const prevSeq = this.#sequences.get(seqKey) ?? 0
+        need(prevSeq < Number.MAX_SAFE_INTEGER)
+        const nextSeq = prevSeq + 1
+        this.#sequences.set(seqKey, nextSeq)
+        const meta = { epoch, sender: this.sender, sequence: nextSeq, kind, ratchet }
         const metadata = encoder.encode(JSON.stringify(meta)),
           iv = crypto.getRandomValues(new Uint8Array(12))
         const key = await this.#key(epoch, ratchet, this.sender, kind)
@@ -302,9 +307,7 @@ export class WorkerFrameCryptor {
               (expectedSender === undefined || meta.sender === expectedSender)
           )
         }
-        const senderKey = JSON.stringify(
-          this.domain === 'kodera-confidential-collab' ? [meta.sender] : [meta.sender, meta.kind]
-        )
+        const senderKey = JSON.stringify([meta.sender, meta.kind])
         const received = this.#received.get(senderKey),
           reorderable = this.domain === 'kodera-confidential-media'
         if (!isCollabCheckpoint) {
@@ -376,7 +379,7 @@ export class WorkerFrameCryptor {
         next = undefined
         this.#epoch = nextEpoch
         this.#ratchet++
-        this.#sequence = 0
+        this.#sequences.clear()
         this.#received.clear()
       } finally {
         old.fill(0)

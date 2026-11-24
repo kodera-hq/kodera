@@ -1,12 +1,6 @@
 name: Publish images
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "apps/server/**"
-      - "ee/**"
-      - ".github/workflows/publish-images.yml"
   workflow_dispatch:
 
 permissions:

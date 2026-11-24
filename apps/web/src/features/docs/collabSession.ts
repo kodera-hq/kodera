@@ -375,7 +375,7 @@ export class CollabSessionController {
   private outgoing = Promise.resolve()
   private incoming = Promise.resolve()
   private ws: WebSocketLike | null = null
-  private readonly highestOpenedSeqBySender = new Map<string, number>()
+  private readonly highestOpenedSeqBySenderAndKind = new Map<string, number>()
   private readonly socketSeenDurableKeys = new Set<string>()
   private socketJournalCount = 0
   private uncompactedUpdates = 0
@@ -739,20 +739,30 @@ export class CollabSessionController {
   }
 
   compactConfidentialCheckpoint(): void {
-    if (this.destroyed || !this.confidential || this.role !== 'editor') return
+    if (
+      this.destroyed ||
+      !this.confidential ||
+      this.role !== 'editor' ||
+      this.socketJournalCount <= 0
+    ) {
+      return
+    }
     const socket = this.ws
     const cipher = this.confidential.cipher
     if (!socket || !this.currentSocket(socket) || cipher === null) return
+    const targetSequence = this.socketJournalCount
     this.uncompactedUpdates = 0
     this.outgoing = this.outgoing.then(async () => {
       let checkpointPlain: Uint8Array | undefined
       try {
-        if (!this.currentSocket(socket) || this.role !== 'editor') return
-        const sequence = Math.max(1, this.socketJournalCount)
+        if (!this.currentSocket(socket) || this.role !== 'editor' || targetSequence <= 0) return
         checkpointPlain = encodeSyncFrame((encoder) => {
           syncProtocol.writeSyncStep2(encoder, this.ydoc)
         })
-        const sealed = await cipher.seal(checkpointPlain, { checkpoint: true, sequence })
+        const sealed = await cipher.seal(checkpointPlain, {
+          checkpoint: true,
+          sequence: targetSequence,
+        })
         if (!this.currentSocket(socket)) return
         if (sealed[0] !== 75 || sealed[1] !== 68 || sealed[2] !== 69 || sealed[3] !== 49) {
           throw new Error('invalid protected checkpoint envelope')
@@ -774,10 +784,6 @@ export class CollabSessionController {
     const cipher = this.confidential.cipher
     // Queue ownership preserves sender sequence order across asynchronous worker calls.
     const owned = frame.slice()
-    const isDurableWrite =
-      owned.length >= 2 &&
-      owned[0] === MSG_SYNC &&
-      (owned[1] === syncProtocol.messageYjsSyncStep2 || owned[1] === syncProtocol.messageYjsUpdate)
     this.outgoing = this.outgoing.then(async () => {
       try {
         if (!this.currentSocket(socket) || cipher === null) {
@@ -793,28 +799,6 @@ export class CollabSessionController {
           throw new Error('invalid protected envelope')
         }
         socket.send(sealed)
-        if (isDurableWrite) {
-          this.socketJournalCount += 1
-          this.uncompactedUpdates += 1
-          if (this.role === 'editor' && this.uncompactedUpdates >= CONFIDENTIAL_COMPACT_THRESHOLD) {
-            this.uncompactedUpdates = 0
-            const sequence = Math.max(1, this.socketJournalCount)
-            const checkpointPlain = encodeSyncFrame((encoder) => {
-              syncProtocol.writeSyncStep2(encoder, this.ydoc)
-            })
-            try {
-              const checkpointSealed = await cipher.seal(checkpointPlain, {
-                checkpoint: true,
-                sequence,
-              })
-              if (this.currentSocket(socket)) {
-                socket.send(checkpointSealed)
-              }
-            } finally {
-              checkpointPlain.fill(0)
-            }
-          }
-        }
       } catch {
         if (this.ws === socket) this.quarantine()
       } finally {
@@ -844,7 +828,10 @@ export class CollabSessionController {
         }
         const header = inspectKde1Header(owned)
         if (header !== null && header.epoch === policyEpoch) {
-          if (header.kind === 0) {
+          if (header.kind === 3) {
+            this.socketJournalCount += 1
+            this.uncompactedUpdates = 0
+          } else if (header.kind === 0) {
             const durableKey = `${header.sender}:${header.sequence}`
             if (!this.socketSeenDurableKeys.has(durableKey)) {
               this.socketSeenDurableKeys.add(durableKey)
@@ -854,11 +841,21 @@ export class CollabSessionController {
           }
           if (header.kind !== 3) {
             const selfSender = String(this.ydoc.clientID)
-            const highest = this.highestOpenedSeqBySender.get(header.sender)
+            const senderKindKey = `${header.sender}:${header.kind}`
+            const highest = this.highestOpenedSeqBySenderAndKind.get(senderKindKey)
             if (
               header.sender === selfSender ||
               (highest !== undefined && header.sequence <= highest)
             ) {
+              if (header.kind === 0) {
+                this.transitionStatus('synced')
+                if (
+                  this.role === 'editor' &&
+                  this.uncompactedUpdates >= CONFIDENTIAL_COMPACT_THRESHOLD
+                ) {
+                  this.compactConfidentialCheckpoint()
+                }
+              }
               return
             }
           }
@@ -872,12 +869,16 @@ export class CollabSessionController {
           throw new Error('invalid protected frame')
         }
         if (header !== null && header.kind !== 3) {
-          const prev = this.highestOpenedSeqBySender.get(header.sender) ?? 0
+          const senderKindKey = `${header.sender}:${header.kind}`
+          const prev = this.highestOpenedSeqBySenderAndKind.get(senderKindKey) ?? 0
           if (header.sequence > prev) {
-            this.highestOpenedSeqBySender.set(header.sender, header.sequence)
+            this.highestOpenedSeqBySenderAndKind.set(senderKindKey, header.sequence)
           }
         }
         this.handleBinaryFrame(plaintext, socket)
+        if (header !== null && (header.kind === 0 || header.kind === 3)) {
+          this.transitionStatus('synced')
+        }
         if (this.role === 'editor' && this.uncompactedUpdates >= CONFIDENTIAL_COMPACT_THRESHOLD) {
           this.compactConfidentialCheckpoint()
         }

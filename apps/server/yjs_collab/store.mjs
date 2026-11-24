@@ -102,24 +102,64 @@ export class Store {
     return this.transaction(claims, async client => {
       const state = await this.binary(client, claims.document)
       if (claims.confidential) {
+        const knownHead =
+          knownMarker !== null && typeof knownMarker === 'object'
+            ? knownMarker.head
+            : knownMarker
+        const knownSnapshotEpoch =
+          knownMarker !== null && typeof knownMarker === 'object'
+            ? knownMarker.snapshotEpoch ?? null
+            : null
+        const knownSnapshotBase =
+          knownMarker !== null && typeof knownMarker === 'object'
+            ? knownMarker.snapshotBase ?? null
+            : null
+        const knownBootstrapped =
+          knownMarker !== null && typeof knownMarker === 'object'
+            ? Boolean(knownMarker.epochBootstrapped)
+            : false
         const snapHeader = state.snapshot.length > 0 ? storedKde1Header(state.snapshot, 3) : null
         const updHeaders = state.updates.map(part => storedKde1Header(part, 0))
-        if (knownMarker !== null && state.head <= knownMarker) return
+        const hasMatchingSnapshot = snapHeader !== null && snapHeader.epoch === claims.epoch
+        const allUpdatesMatchEpoch = updHeaders.every(h => h.epoch === claims.epoch)
+        const snapshotUnseen =
+          !knownBootstrapped &&
+          hasMatchingSnapshot &&
+          (knownSnapshotEpoch !== claims.epoch || knownSnapshotBase !== state.base)
+        if (knownHead !== null && state.head <= knownHead && !snapshotUnseen) return
         const envelopes = []
         const journalSeqs = []
-        const includeSnapshot = knownMarker === null || knownMarker < state.base
-        if (includeSnapshot && snapHeader !== null && snapHeader.epoch === claims.epoch) {
+        const includeSnapshot =
+          hasMatchingSnapshot &&
+          (knownHead === null || knownHead < state.base || snapshotUnseen)
+        if (includeSnapshot) {
           envelopes.push(Buffer.from(state.snapshot))
         }
-        const startOffset = includeSnapshot ? 0 : Math.max(0, knownMarker - state.base)
+        const startOffset =
+          knownHead === null || knownHead < state.base ? 0 : Math.max(0, knownHead - state.base)
         for (let idx = startOffset; idx < state.updates.length; idx += 1) {
           if (updHeaders[idx].epoch === claims.epoch) {
             envelopes.push(Buffer.from(state.updates[idx]))
             journalSeqs.push(state.base + idx + 1)
           }
         }
+        const epochBootstrapped =
+          (knownBootstrapped ||
+            ((state.snapshot.length === 0 && state.base === 0) || includeSnapshot)) &&
+          allUpdatesMatchEpoch
         alive(claims)
-        consumer({confidential: true, envelopes, journalSeqs, head: state.head, base: state.base, revision: state.revision})
+        consumer({
+          confidential: true,
+          envelopes,
+          journalSeqs,
+          snapshotDelivered: includeSnapshot,
+          snapshotEpoch: hasMatchingSnapshot ? claims.epoch : null,
+          snapshotBase: hasMatchingSnapshot ? state.base : null,
+          epochBootstrapped,
+          head: state.head,
+          base: state.base,
+          revision: state.revision,
+        })
         return
       }
       if (knownMarker !== null && state.revision === knownMarker) return

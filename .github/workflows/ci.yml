@@ -47,6 +47,8 @@ jobs:
           uv pip install --python "$RUNNER_TEMP/ci-tools/bin/python" --require-hashes --no-deps -r scripts/ci/ci-requirements.txt
           "$RUNNER_TEMP/ci-tools/bin/python" scripts/ci/check-ci-aggregate.py --selftest
           "$RUNNER_TEMP/ci-tools/bin/python" scripts/ci/check-ci-aggregate.py
+          "$RUNNER_TEMP/ci-tools/bin/python" scripts/ci/check-zero-secret-pr-ci.py --selftest
+          "$RUNNER_TEMP/ci-tools/bin/python" scripts/ci/check-zero-secret-pr-ci.py
           python3 scripts/ci/ci-plan.py --selftest
       - name: Native packaging and workflow refusal proofs
         run: |

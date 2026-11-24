@@ -114,20 +114,13 @@ def check_workflow_text(text: str, root: Path = ROOT) -> list[str]:
     if "pull_request_target" in text:
         errors.append("forbidden trigger 'pull_request_target' present")
 
-    if not re.search(r"(?m)^  push:\s*$", text) or "branches: [main]" not in text:
-        errors.append("workflow must trigger on push to branches: [main]")
-
-    if (
-        '"apps/server/**"' not in text
-        or '"ee/**"' not in text
-        or '".github/workflows/publish-images.yml"' not in text
-    ):
+    if re.search(r"(?m)^  (?:push|pull_request|merge_group|schedule):", text):
         errors.append(
-            "push trigger must watch 'apps/server/**', 'ee/**', and '.github/workflows/publish-images.yml'"
+            "workflow must trigger exclusively on workflow_dispatch (no automatic push trigger)"
         )
 
-    if not re.search(r"(?m)^  workflow_dispatch:\s*$", text):
-        errors.append("workflow must support workflow_dispatch")
+    if not re.search(r"(?m)^on:\n  workflow_dispatch:\s*$", text):
+        errors.append("workflow must support workflow_dispatch only")
 
     if not re.search(r"(?m)^permissions:\n  contents: read\s*$", text):
         errors.append("top-level permissions must be exactly 'contents: read'")
@@ -297,9 +290,13 @@ def run_selftest(baseline: str) -> int:
             "workflow must record digest summary to $GITHUB_STEP_SUMMARY",
         ),
         (
-            "missing ee/** watch path on push trigger",
-            lambda s: s.replace('      - "ee/**"\n', "", 1),
-            "push trigger must watch 'apps/server/**', 'ee/**', and '.github/workflows/publish-images.yml'",
+            "automatic push trigger on main reintroduced",
+            lambda s: s.replace(
+                "on:\n  workflow_dispatch:",
+                "on:\n  push:\n    branches: [main]\n  workflow_dispatch:",
+                1,
+            ),
+            "workflow must trigger exclusively on workflow_dispatch (no automatic push trigger)",
         ),
         (
             "missing ee_src=ee build-context on kodera-core",

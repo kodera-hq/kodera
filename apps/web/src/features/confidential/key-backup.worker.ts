@@ -339,18 +339,20 @@ export function createBackupVaultBridge(port: MessagePort, scope: BackupContext)
         typeof input === 'object' &&
         Object.prototype.hasOwnProperty.call(input, 'backupEpoch')
       const v = fields(input, hasEpoch ? ['capsule', 'options', 'backupEpoch'] : ['capsule', 'options'])
+      let restoreScope: BackupContext
       if (hasEpoch) {
         integer(v.backupEpoch)
-        need(v.backupEpoch >= currentEpoch)
-        currentEpoch = v.backupEpoch
+        need(v.backupEpoch > 0)
+        restoreScope = Object.freeze({ ...base, backupEpoch: v.backupEpoch })
       } else {
         const header = parseKvkb1EnvelopeHeader(v.capsule as Uint8Array)
         need(header.backupEpoch >= currentEpoch)
         currentEpoch = header.backupEpoch
+        restoreScope = currentScope()
       }
       let bytes: Uint8Array<ArrayBuffer> | undefined
       try {
-        bytes = await openBackup(currentScope(), v.capsule as Uint8Array, v.options)
+        bytes = await openBackup(restoreScope, v.capsule as Uint8Array, v.options)
         need(active)
         const result = await exchange('write', bytes)
         need(active && result === null)

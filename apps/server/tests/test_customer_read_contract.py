@@ -1201,7 +1201,7 @@ N4_VERSION = "0.60.0"
 # Rebound at 0.58.0: community boosts, VIP Connect, live AI translation/captions, smart calendar/booking, and cybersecurity posture; N4 assurance guards unchanged.
 # Rebound at 0.59.0: sandboxed extension widgets, extension marketplace settlement, sanitized WebP custom emojis, Send Later, reminders, and Kodera Labs; N4 assurance guards unchanged.
 # Rebound at 0.60.0: opaque KVKB1 key-backup archive and confidential document collaboration session metadata; N4 assurance guards unchanged.
-N4_OLD_CONTRACT = "eb727a5a1718ad3ab5ad311600114efcba510226e890188a27a61f99275f5098"
+N4_OLD_CONTRACT = "5e9528bc8614f3cb7dda5ecd423431da902d4f7516d7cbb0a63d0d29a43fad3f"
 # Rebound at 0.20.0 (2026-10-22): CONVENTIONS.md §6 gains the order-in-progress and invoice-issued rows and a changelog line.
 # Rebound at 0.24.0 (2026-10-22): CONVENTIONS.md §6's invoice-issued row narrowed, and a changelog line.
 # Rebound at 0.28.0: CONVENTIONS.md §6 gains the identity-unknown row and a changelog line.

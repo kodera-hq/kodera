@@ -23,6 +23,7 @@ from unittest.mock import patch
 SHARED = (
     r"\.github/workflows/ci\.yml$|scripts/ci/ci-plan\.py$"
     r"|scripts/ci/check-ci-aggregate\.py$|scripts/ci/check-licenses\.py$"
+    r"|scripts/ci/check-zero-secret-pr-ci\.py$"
 )
 
 AREAS: dict[str, str] = {

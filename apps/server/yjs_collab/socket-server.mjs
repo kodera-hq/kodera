@@ -97,19 +97,56 @@ export function createCollabServer({key, store, origins, pollMilliseconds = 1000
     socket.deliveryChain = run.then(() => undefined, () => undefined)
     return run
   }
+  function pushDownlinkHead(socket, seq) {
+    const prev =
+      socket.downlinkHeads.length > 0
+        ? socket.downlinkHeads[socket.downlinkHeads.length - 1]
+        : 0
+    socket.downlinkHeads.push(Math.max(prev, seq))
+  }
+  function confidentialMarker(socket) {
+    return {
+      head: socket.deliveredHead,
+      snapshotEpoch: socket.deliveredSnapshotEpoch,
+      snapshotBase: socket.deliveredSnapshotSeq,
+      epochBootstrapped: socket.epochBootstrapped,
+    }
+  }
+  function applyConfidentialDelivery(socket, payload) {
+    const envelopes = payload.envelopes ?? []
+    const head = payload.head ?? 0
+    const base = payload.base ?? 0
+    for (const envelope of envelopes) send(socket, envelope)
+    const hasSnap = Boolean(payload.snapshotDelivered)
+    if (hasSnap) {
+      pushDownlinkHead(socket, base)
+      socket.deliveredSnapshotEpoch = payload.snapshotEpoch ?? socket.claims?.epoch ?? null
+      socket.deliveredSnapshotSeq = payload.snapshotBase ?? base
+    }
+    if (payload.epochBootstrapped !== undefined) {
+      socket.epochBootstrapped = Boolean(payload.epochBootstrapped)
+    }
+    if (Array.isArray(payload.journalSeqs)) {
+      for (const seq of payload.journalSeqs) pushDownlinkHead(socket, seq)
+    } else {
+      const nonSnapCount = envelopes.length - (hasSnap ? 1 : 0)
+      const startSeq = Math.max(1, head - nonSnapCount + 1)
+      for (let i = 0; i < nonSnapCount; i += 1) pushDownlinkHead(socket, startSeq + i)
+    }
+    socket.deliveredHead = head
+    socket.revision = payload.revision
+  }
   async function refresh(socket) {
     if (!socket.claims || socket.readyState !== WebSocket.OPEN) return
     try {
       if (socket.claims.confidential) {
         await enqueueDelivery(socket, async () => {
           if (!socket.claims || socket.deliveredHead === null) return
-          await store.deliver(socket.claims, ({envelopes = [], journalSeqs, head = 0, revision}) => {
-            for (const envelope of envelopes) send(socket, envelope)
-            if (Array.isArray(journalSeqs)) socket.journalSeqs.push(...journalSeqs)
-            else for (let s = socket.deliveredHead + 1; s <= head; s += 1) socket.journalSeqs.push(s)
-            socket.deliveredHead = head
-            socket.revision = revision
-          }, socket.deliveredHead)
+          await store.deliver(
+            socket.claims,
+            payload => applyConfidentialDelivery(socket, payload),
+            confidentialMarker(socket)
+          )
         })
         return
       }
@@ -138,8 +175,9 @@ export function createCollabServer({key, store, origins, pollMilliseconds = 1000
   wss.on('connection', socket => {
     connections.add(socket);unauthenticated += 1
     socket.claims = null;socket.presenceId = null;socket.revision = null;socket.deliveredHead = null
-    socket.admittedHead = 0;socket.journalSeqs = [];socket.deliveryChain = Promise.resolve()
-    socket.confidentialSender = null;socket.confidentialSequence = 0;socket.anonymous = true
+    socket.deliveredSnapshotEpoch = null;socket.deliveredSnapshotSeq = null;socket.epochBootstrapped = false
+    socket.downlinkHeads = [];socket.deliveryChain = Promise.resolve()
+    socket.confidentialSender = null;socket.confidentialSequences = new Map();socket.anonymous = true
     let chain = Promise.resolve(), queued = 0, window = performance.now(), frames = 0, bytes = 0
     const firstFrame = setTimeout(() => close(socket, 4401), 5000)
     socket.on('error', () => close(socket, 1013))
@@ -176,14 +214,7 @@ export function createCollabServer({key, store, origins, pollMilliseconds = 1000
             room.connections.add(socket)
             socket.expiry = setTimeout(() => close(socket, 4401), Math.max(1, claims.expires * 1000 - Date.now()))
             if (claims.confidential) {
-              const head = payload.head ?? 0
-              socket.admittedHead = head
-              socket.deliveredHead = head
-              if (Array.isArray(payload.journalSeqs)) socket.journalSeqs.push(...payload.journalSeqs)
-              else for (let s = 1; s <= (payload.envelopes?.length ?? 0); s += 1) socket.journalSeqs.push(s)
-              for (const envelope of payload.envelopes ?? []) {
-                send(socket, envelope)
-              }
+              applyConfidentialDelivery(socket, payload)
               return
             }
             send(socket, snapshotFrame(payload.state))
@@ -219,7 +250,15 @@ export function createCollabServer({key, store, origins, pollMilliseconds = 1000
               const snapshotBytes = new Uint8Array(Buffer.from(cmd.snapshot, 'base64'))
               const parsed = confidentialFrame(snapshotBytes, socket.claims.role, socket.claims.epoch)
               if (parsed.kind !== 3) throw new ConfidentialRefused('compact control requires kind=3 snapshot')
-              await store.compact(socket.claims, cmd.upToHead, parsed.envelope)
+              await enqueueDelivery(socket, async () => {
+                const compacted = await store.compact(socket.claims, cmd.upToHead, parsed.envelope)
+                if (compacted?.compacted) {
+                  socket.deliveredSnapshotEpoch = socket.claims.epoch
+                  socket.deliveredSnapshotSeq = compacted.base
+                  socket.epochBootstrapped = true
+                }
+              })
+              await refreshRoom(socket.claims.document)
               return
             } catch (error) {
               if (error instanceof ViewerWrite || error instanceof ConfidentialRefused) {
@@ -246,10 +285,11 @@ export function createCollabServer({key, store, origins, pollMilliseconds = 1000
               } else if (message.sender !== socket.confidentialSender) {
                 throw new ConfidentialRefused('confidential sender mismatch on socket')
               }
-              if (message.sequence <= socket.confidentialSequence) {
+              const prevKindSeq = socket.confidentialSequences.get(message.kind) ?? 0
+              if (message.sequence <= prevKindSeq) {
                 throw new ConfidentialRefused('confidential sequence must strictly increase')
               }
-              socket.confidentialSequence = message.sequence
+              socket.confidentialSequences.set(message.kind, message.sequence)
             }
           } catch (error) {
             if (error instanceof ViewerWrite || error instanceof ConfidentialRefused) {
@@ -262,18 +302,22 @@ export function createCollabServer({key, store, origins, pollMilliseconds = 1000
           const room = rooms.get(socket.claims.document)
           if (!room) throw new TicketRefused(4403)
           if (message.kind === 3) {
-            let upToHead
-            if (socket.journalSeqs.length === 0 && message.sequence === 1) {
-              upToHead = socket.admittedHead ?? 0
-            } else if (message.sequence >= 1 && message.sequence <= socket.journalSeqs.length) {
-              upToHead = socket.journalSeqs[message.sequence - 1]
-            } else {
+            if (message.sequence < 1 || message.sequence > socket.downlinkHeads.length) {
               await store.viewerRefusal(socket.claims)
               close(socket, 4403)
               return
             }
+            const upToHead = socket.downlinkHeads[message.sequence - 1]
             try {
-              await store.compact(socket.claims, upToHead, message.envelope)
+              await enqueueDelivery(socket, async () => {
+                const compacted = await store.compact(socket.claims, upToHead, message.envelope)
+                if (compacted?.compacted) {
+                  socket.deliveredSnapshotEpoch = socket.claims.epoch
+                  socket.deliveredSnapshotSeq = compacted.base
+                  socket.epochBootstrapped = true
+                }
+              })
+              await refreshRoom(socket.claims.document)
             } catch (error) {
               if (error instanceof ViewerWrite || error instanceof ConfidentialRefused) {
                 await store.viewerRefusal(socket.claims)
@@ -286,45 +330,28 @@ export function createCollabServer({key, store, origins, pollMilliseconds = 1000
           }
           if (message.kind === 0) {
             const result = await store.update(socket.claims, message.envelope)
-            await enqueueDelivery(socket, async () => {
-              if (socket.deliveredHead !== null && socket.deliveredHead < result.head - 1) {
-                await store.deliver(socket.claims, ({envelopes = [], journalSeqs}) => {
-                  for (let i = 0; i < envelopes.length; i += 1) {
-                    const seq = Array.isArray(journalSeqs) ? journalSeqs[i] : undefined
-                    if (seq !== result.head) {
-                      send(socket, envelopes[i])
-                      if (seq !== undefined) socket.journalSeqs.push(seq)
-                    }
-                  }
-                }, socket.deliveredHead)
-              }
-              socket.deliveredHead = Math.max(socket.deliveredHead ?? 0, result.head)
-              socket.revision = result.revision
-              if (socket.journalSeqs[socket.journalSeqs.length - 1] !== result.head) {
-                socket.journalSeqs.push(result.head)
-              }
-            })
-            for (const target of [...room.connections]) {
-              if (target === socket || target.readyState !== WebSocket.OPEN) continue
-              await enqueueDelivery(target, async () => {
+            const targets = [socket, ...[...room.connections].filter(peer => peer !== socket)]
+            for (const target of targets) {
+              if (target.readyState !== WebSocket.OPEN) continue
+              const task = enqueueDelivery(target, async () => {
                 if (!target.claims || target.deliveredHead === null || target.deliveredHead >= result.head) return
                 if (target.deliveredHead === result.head - 1) {
                   await store.emit(target.claims, () => {
                     send(target, result.envelope)
+                    pushDownlinkHead(target, result.head)
                     target.deliveredHead = result.head
                     target.revision = result.revision
-                    target.journalSeqs.push(result.head)
                   })
                   return
                 }
-                await store.deliver(target.claims, ({envelopes = [], journalSeqs, head = 0, revision}) => {
-                  for (const envelope of envelopes) send(target, envelope)
-                  if (Array.isArray(journalSeqs)) target.journalSeqs.push(...journalSeqs)
-                  else for (let s = target.deliveredHead + 1; s <= head; s += 1) target.journalSeqs.push(s)
-                  target.deliveredHead = head
-                  target.revision = revision
-                }, target.deliveredHead)
-              }).catch(error => failure(target, error))
+                await store.deliver(
+                  target.claims,
+                  payload => applyConfidentialDelivery(target, payload),
+                  confidentialMarker(target)
+                )
+              })
+              if (target === socket) await task
+              else await task.catch(error => failure(target, error))
             }
           } else {
             await store.emit(socket.claims, () => true)

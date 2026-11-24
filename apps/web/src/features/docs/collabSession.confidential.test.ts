@@ -399,6 +399,15 @@ describe('real encrypted Yjs peer transport', () => {
     sockets[0]!.readyState = 3
     sockets[0]!.onclose?.({ code: 4401 } as CloseEvent)
     await vi.waitFor(() => expect(sockets).toHaveLength(2))
+    sockets[1]!.relay = (frame) => {
+      if (
+        new TextDecoder()
+          .decode(frame.subarray(6, 6 + ((frame[4]! << 8) | frame[5]!)))
+          .includes('"kind":0')
+      ) {
+        sockets[1]!.receive(frame)
+      }
+    }
     sockets[1]!.open()
     sockets[1]!.receive(aliceOwnSealed)
     sockets[1]!.receive(bobSealed1)
@@ -407,7 +416,7 @@ describe('real encrypted Yjs peer transport', () => {
     await vi.waitFor(() => expect(alice.ydoc.getText('body').toString()).toContain('Bob-2'))
     expect(alice.getSnapshot().status).toBe('synced')
 
-    // Emit 64 local updates on sockets[1] -> editor automatically emits a kind===3 checkpoint!
+    // Emit 64 local updates on sockets[1] (echoed on downlink in commit order) -> editor automatically emits a kind===3 checkpoint!
     for (let i = 0; i < 64; i += 1) {
       alice.ydoc.getText('body').insert(alice.ydoc.getText('body').length, 'x')
     }
@@ -439,6 +448,139 @@ describe('real encrypted Yjs peer transport', () => {
       )
     )
     bobCipher.close()
+  })
+  it('applies delayed kind=0 peer edit arriving after higher-sequence kind=1 awareness and preserves concurrent peer B64 during downlink-FIFO compaction', async () => {
+    // 1. Per-(sender, kind) dedup: awareness frames (kind=1, seq=1..3) arriving BEFORE delayed kind=0 seq=1 edit never drop the edit!
+    const peerCipher = realCipher(606)
+    const receiver = create(realCipher(707))
+    await receiver.session.connect()
+    receiver.socket.open()
+    await settle()
+
+    // Empty-doc manual compaction before any downlink journal frame is refused!
+    receiver.session.compactConfidentialCheckpoint()
+    await settle()
+    expect(
+      receiver.socket.frames.some(
+        (f) =>
+          f instanceof Uint8Array &&
+          new TextDecoder()
+            .decode(f.subarray(6, 6 + ((f[4]! << 8) | f[5]!)))
+            .includes('"kind":3')
+      )
+    ).toBe(false)
+
+    const delayedDurable = await peerCipher.seal(updateFrame('delayed-durable-edit'))
+    const awEncoder = encoding.createEncoder()
+    encoding.writeVarUint(awEncoder, 1)
+    encoding.writeVarUint8Array(awEncoder, new Uint8Array([1, 0]))
+    const awPayload = encoding.toUint8Array(awEncoder)
+    const aw1 = await peerCipher.seal(awPayload)
+    const aw2 = await peerCipher.seal(awPayload)
+    receiver.socket.receive(aw1)
+    receiver.socket.receive(aw2)
+    await settle()
+    receiver.socket.receive(delayedDurable)
+    await vi.waitFor(() =>
+      expect(receiver.session.ydoc.getText('body').toString()).toBe('delayed-durable-edit')
+    )
+    peerCipher.close()
+
+    // 2. Concurrent 2-editor compaction: Bob's B64 commits at head=64 AHEAD of Alice's 64th edit A64 at head=65!
+    const alice = create(realCipher(801))
+    const bob = create(realCipher(802))
+    let snapshot: Uint8Array | null = null
+    let base = 0
+    const journal: { seq: number; env: Uint8Array }[] = []
+    const downlinkHeads = new Map<Socket, number[]>()
+    downlinkHeads.set(alice.socket, [])
+    downlinkHeads.set(bob.socket, [])
+
+    const commitKind0 = (env: Uint8Array) => {
+      const seq = (journal.length > 0 ? journal[journal.length - 1]!.seq : base) + 1
+      journal.push({ seq, env })
+      for (const target of [alice.socket, bob.socket]) {
+        downlinkHeads.get(target)!.push(seq)
+        target.receive(env)
+      }
+    }
+    const applyKind3 = (from: Socket, env: Uint8Array) => {
+      const hdr = JSON.parse(
+        new TextDecoder().decode(env.subarray(6, 6 + ((env[4]! << 8) | env[5]!)))
+      ) as { sequence: number }
+      const heads = downlinkHeads.get(from)!
+      expect(hdr.sequence).toBeGreaterThanOrEqual(1)
+      expect(hdr.sequence).toBeLessThanOrEqual(heads.length)
+      const upToHead = heads[hdr.sequence - 1]!
+      snapshot = env
+      base = upToHead
+      while (journal.length > 0 && journal[0]!.seq <= upToHead) {
+        journal.shift()
+      }
+    }
+
+    let holdAlice64: Uint8Array | null = null
+    let aliceKind0Sent = 0
+    alice.socket.relay = (frame) => {
+      const hdrText = new TextDecoder().decode(
+        frame.subarray(6, 6 + ((frame[4]! << 8) | frame[5]!))
+      )
+      if (hdrText.includes('"kind":0')) {
+        aliceKind0Sent += 1
+        if (aliceKind0Sent === 64) {
+          holdAlice64 = frame // Hold A64 until Bob's B64 commits at head=64!
+          return
+        }
+        commitKind0(frame)
+      } else if (hdrText.includes('"kind":3')) {
+        applyKind3(alice.socket, frame)
+      }
+    }
+    bob.socket.relay = (frame) => {
+      const hdrText = new TextDecoder().decode(
+        frame.subarray(6, 6 + ((frame[4]! << 8) | frame[5]!))
+      )
+      if (hdrText.includes('"kind":0')) {
+        commitKind0(frame)
+      } else if (hdrText.includes('"kind":3')) {
+        applyKind3(bob.socket, frame)
+      }
+    }
+
+    await Promise.all([alice.session.connect(), bob.session.connect()])
+    alice.socket.open()
+    bob.socket.open()
+    await settle()
+
+    // Alice sends 63 edits (committed as heads 1..63).
+    for (let i = 1; i <= 63; i += 1) {
+      alice.session.ydoc.getText('body').insert(alice.session.ydoc.getText('body').length, `A${i} `)
+    }
+    await vi.waitFor(() => expect(bob.session.ydoc.getText('body').toString()).toContain('A63 '))
+
+    // Concurrently: Alice types A64 (held in flight!) while Bob's B64 commits FIRST at head=64, then A64 commits at head=65!
+    alice.session.ydoc.getText('body').insert(alice.session.ydoc.getText('body').length, 'A64 ')
+    await vi.waitFor(() => expect(holdAlice64).not.toBeNull())
+    bob.session.ydoc.getText('body').insert(bob.session.ydoc.getText('body').length, 'B64 ')
+    await settle()
+    commitKind0(holdAlice64!)
+
+    await vi.waitFor(() => expect(snapshot).not.toBeNull())
+    expect(base).toBeGreaterThanOrEqual(64)
+
+    // Fresh late-joining viewer replaying [snapshot, ...remaining journal] sees BOTH B64 and A64 — zero data loss!
+    const lateViewer = create(realCipher(803))
+    await lateViewer.session.connect()
+    lateViewer.socket.open()
+    lateViewer.socket.receive(snapshot!)
+    for (const entry of journal) {
+      lateViewer.socket.receive(entry.env)
+    }
+    await vi.waitFor(() => {
+      const text = lateViewer.session.ydoc.getText('body').toString()
+      expect(text).toContain('B64 ')
+      expect(text).toContain('A64 ')
+    })
   })
   it('quarantines server ticket grants whose confidential flag or epoch disagrees with client policy and omits kind===0 sync on confidential viewers', async () => {
     const mismatchSocket = new Socket()
