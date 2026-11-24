@@ -50,17 +50,12 @@ import { ORGANISATION_PENDING_MIN_MS, ORGANISATION_PENDING_MS } from './pendingT
 type Me = components['schemas']['Me']
 type Membership = Me['organisations'][number]
 
-export function concealsProtectedSurface({
-  authorityMismatch,
-  sameGeneration,
-  hasUsableToken,
-}: {
-  authorityMismatch: boolean
+export function concealsProtectedSurface(state: {
+  authorityMismatch?: boolean
   sameGeneration: boolean
   hasUsableToken: boolean
 }): boolean {
-  if (!authorityMismatch) return false
-  return !(sameGeneration && hasUsableToken)
+  return !(state.sameGeneration && state.hasUsableToken)
 }
 
 function holdExpiredRoute(signal: AbortSignal): Promise<never> {

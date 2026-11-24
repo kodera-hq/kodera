@@ -107,6 +107,20 @@ describe('concealsProtectedSurface', () => {
     ).toBe(false)
     expect(
       concealsProtectedSurface({
+        authorityMismatch: false,
+        sameGeneration: true,
+        hasUsableToken: false,
+      })
+    ).toBe(true)
+    expect(
+      concealsProtectedSurface({
+        authorityMismatch: false,
+        sameGeneration: false,
+        hasUsableToken: true,
+      })
+    ).toBe(true)
+    expect(
+      concealsProtectedSurface({
         authorityMismatch: true,
         sameGeneration: true,
         hasUsableToken: true,

@@ -34,8 +34,8 @@ credential remains present (same-identity silent renewal), the layout keeps the
 mounted shell visible in place without rendering `SessionLoading`, holds MFA
 redirects and telemetry scope binding until `/me` settles, and requests one
 router invalidation for that exact live/captured pair. When `generation`
-changes or no usable credential remains, the layout conceals protected content
-synchronously (rendering `SessionLoading` only while a replacement session has
+changes or no usable credential remains (including before an authority-counter
+mismatch is observed), the layout conceals protected content synchronously (rendering `SessionLoading` only while a replacement session has
 a usable credential awaiting `/me`). A later authority change may request
 another invalidation; repeated renders of the same mismatch may not.
 
