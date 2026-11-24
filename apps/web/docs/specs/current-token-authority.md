@@ -29,10 +29,15 @@ read is keyed by `['me', generation, credentialGeneration]`.
 
 Organisation loader data carries the `/me` payload and both captured counters.
 The layout compares them with live auth context before rendering protected
-content. A mismatch renders `SessionLoading` synchronously and requests one
-router invalidation for that exact live/captured pair. A later authority change
-may request another invalidation; repeated renders of the same mismatch may
-not.
+content. When a mismatch occurs within the same `generation` while a usable
+credential remains present (same-identity silent renewal), the layout keeps the
+mounted shell visible in place without rendering `SessionLoading`, holds MFA
+redirects and telemetry scope binding until `/me` settles, and requests one
+router invalidation for that exact live/captured pair. When `generation`
+changes or no usable credential remains, the layout conceals protected content
+synchronously (rendering `SessionLoading` only while a replacement session has
+a usable credential awaiting `/me`). A later authority change may request
+another invalidation; repeated renders of the same mismatch may not.
 
 The index route applies the same captured-authority check before redirecting.
 A redirect destination is never selected from a stale `/me` result.
@@ -54,11 +59,12 @@ configuration grants nothing.
 
 The `oidc.current-user-fence` MSW overlay exposes a deterministic sequence of
 held `/me` answers for browser acceptance. The journey rotates credentials
-while older reads are pending and proves that only the response issued for the
-latest credential can reopen the shell. Focused unit and router acceptance
-alongside it proves that unrelated cached state survives same-identity renewal
-and that losing the token closes the guard before another `/me` answer is
-accepted.
+while older reads are pending and proves that same-session renewal keeps the
+shell visible while retiring stale `/me` responses before they can redirect or
+regain authority. Focused unit and router acceptance alongside it proves that
+unrelated cached state survives same-identity renewal and that losing the token
+or changing session `generation` conceals the guard synchronously before
+another `/me` answer is accepted.
 
 ## Acceptance written before implementation
 

@@ -39,7 +39,7 @@ test('shell/session: only the latest credential can reopen protected content', a
   await page.evaluate(() => window.dispatchEvent(new Event('focus')))
   await completeSilentRenewal(page)
   await expect.poll(() => page.evaluate(() => window.__currentUserFenceReads)).toBe(2)
-  await expect(page.getByRole('navigation')).toHaveCount(0)
+  await expect(page.getByRole('navigation', { name: 'Navigation principale' })).toBeVisible()
 
   await page.evaluate(() => window.dispatchEvent(new Event('focus')))
   await completeSilentRenewal(page)

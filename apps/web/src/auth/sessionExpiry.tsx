@@ -16,8 +16,8 @@ import { authAdapter } from './oidc'
 import { rememberReturnTo } from './return-to'
 import { beforeSignIn, onBeforeSignIn } from './beforeSignIn'
 
-/** Renew one minute before expiry, without immediately renewing short-lived credentials. */
-export const RENEWAL_LEAD_MS = 60_000
+/** Renew 30 seconds before the OIDC SDK's 120-second expiring warning, without immediately renewing short-lived credentials. */
+export const RENEWAL_LEAD_MS = 150_000
 /** Minimum wait for deadline scheduling and retries after a failed attempt. */
 export const RENEWAL_RETRY_MS = 15_000
 /** Coalesce focus and visibility events, including during initial mount. */
@@ -168,12 +168,19 @@ export function SessionExpiryProvider({ children }: { children: ReactNode }) {
     let timer: number | undefined
     let focusTimer: number | undefined
     let active = true
+    let retrying = false
     const schedule = () => {
       window.clearTimeout(timer)
       if (!active) return
       const expiresAt = authAdapter.getExpiresAt()
       if (expiresAt === undefined) return
-      const delay = Math.max(RENEWAL_RETRY_MS, expiresAt - Date.now() - RENEWAL_LEAD_MS)
+      const remainingMs = expiresAt - Date.now()
+      const delay =
+        remainingMs > RENEWAL_LEAD_MS
+          ? remainingMs - RENEWAL_LEAD_MS
+          : retrying
+            ? RENEWAL_RETRY_MS
+            : Math.max(RENEWAL_RETRY_MS, Math.floor(remainingMs / 2))
       timer = window.setTimeout(
         () => {
           // Very long lifetimes are waited for in bounded steps, never renewed early.
@@ -185,6 +192,10 @@ export function SessionExpiryProvider({ children }: { children: ReactNode }) {
     }
     const check = () => {
       if (!active || document.visibilityState !== 'visible') return
+      const expiresAt = authAdapter.getExpiresAt()
+      if (expiresAt !== undefined && expiresAt - Date.now() <= RENEWAL_LEAD_MS) {
+        retrying = true
+      }
       void requestRenewal().finally(schedule)
     }
     const onFocus = (event: Event) => {
