@@ -114,13 +114,18 @@ def check_workflow_text(text: str, root: Path = ROOT) -> list[str]:
     if "pull_request_target" in text:
         errors.append("forbidden trigger 'pull_request_target' present")
 
-    if re.search(r"(?m)^  (?:push|pull_request|merge_group|schedule):", text):
-        errors.append(
-            "workflow must trigger exclusively on workflow_dispatch (no automatic push trigger)"
-        )
-
-    if not re.search(r"(?m)^on:\n  workflow_dispatch:\s*$", text):
+    on_block = re.search(r"(?ms)^on:\n(.*?)(?=^\S|\Z)", text)
+    if on_block is None:
         errors.append("workflow must support workflow_dispatch only")
+    else:
+        trigger_keys = {
+            m.group(1)
+            for m in re.finditer(r"(?m)^  ([A-Za-z0-9_-]+):", on_block.group(1))
+        }
+        if trigger_keys != {"workflow_dispatch"}:
+            errors.append(
+                "workflow must trigger exclusively on workflow_dispatch (no automatic push trigger)"
+            )
 
     if not re.search(r"(?m)^permissions:\n  contents: read\s*$", text):
         errors.append("top-level permissions must be exactly 'contents: read'")
@@ -294,6 +299,15 @@ def run_selftest(baseline: str) -> int:
             lambda s: s.replace(
                 "on:\n  workflow_dispatch:",
                 "on:\n  push:\n    branches: [main]\n  workflow_dispatch:",
+                1,
+            ),
+            "workflow must trigger exclusively on workflow_dispatch (no automatic push trigger)",
+        ),
+        (
+            "workflow_run trigger added alongside workflow_dispatch",
+            lambda s: s.replace(
+                "on:\n  workflow_dispatch:",
+                "on:\n  workflow_dispatch:\n  workflow_run:\n    workflows: [CI]\n    types: [completed]",
                 1,
             ),
             "workflow must trigger exclusively on workflow_dispatch (no automatic push trigger)",
