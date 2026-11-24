@@ -216,7 +216,7 @@ private fun CommunityCategoryBlock(
             color = palette.ink3,
         )
 
-        for (channel in category.channels) {
+        for (channel in category.channels.sortedBy { if (io.kodera.android.client.isArrivalsChannelName(it.name)) 0 else 1 }) {
             CommunityChannelRow(
                 channel = channel,
                 organisationId = organisationId,

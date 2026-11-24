@@ -1,3 +1,5 @@
+import { useWorkspaceLogo } from '../features/workspace/useWorkspaceLogo'
+import { useCachedWorkspace } from '../features/workspace/workspaceCache'
 import { Link } from '@tanstack/react-router'
 import { isDemoActive } from './interactiveDemo'
 import { useTranslation } from 'react-i18next'
@@ -64,6 +66,9 @@ export function ModuleRail({
   role,
 }: ModuleRailProps) {
   const { t } = useTranslation()
+  const workspaceProfile = useCachedWorkspace(organisationId)
+  const displayLabel = workspaceProfile?.display_name || organisationName
+  const logoSrc = useWorkspaceLogo(workspaceProfile?.logo_url)
   const { apps: tenantApps, noTenantYet } = useTenantApplications(organisationId)
   // « Messages » is the tenant's `messaging` app (Espace), and this application's own workspace
   // surface: it is drawn once, as that surface, for an organisation that has it. An organisation
@@ -120,23 +125,27 @@ export function ModuleRail({
     >
       {surface === 'workspace' ? (
         <WorkspaceMenu
-          name={organisationName}
+          name={displayLabel}
           slug={org}
           trigger={
             <button
               type="button"
               aria-label={t('console.workspace.sidebar.action-switch-organisation', {
-                name: organisationName,
+                name: displayLabel,
               })}
               className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg hover:bg-c-inverse-2 focus-visible:ring focus-visible:ring-c-on-inverse focus-visible:outline-hidden"
             >
-              <img src="/kodera-mark-white.svg" alt="" className="h-5 w-auto" />
+              <img
+                src={logoSrc || '/kodera-mark-white.svg'}
+                alt=""
+                className={logoSrc ? 'h-10 w-10 rounded-lg object-cover' : 'h-5 w-auto'}
+              />
             </button>
           }
         />
       ) : (
         <Tooltip
-          content={t('console.shell.rail.a11y-home', { organisation: organisationName })}
+          content={t('console.shell.rail.a11y-home', { organisation: displayLabel })}
           side="right"
           sideOffset={RAIL_TIP_OFFSET}
           names
@@ -144,7 +153,7 @@ export function ModuleRail({
           <Link
             to="/$org/home"
             params={{ org }}
-            aria-label={t('console.shell.rail.a11y-home', { organisation: organisationName })}
+            aria-label={t('console.shell.rail.a11y-home', { organisation: displayLabel })}
             className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg focus-visible:ring focus-visible:ring-c-on-inverse focus-visible:outline-hidden"
           >
             <img src="/kodera-mark-white.svg" alt="" className="h-5 w-auto" />

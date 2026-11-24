@@ -116,11 +116,11 @@ def test_revoked_membership_and_disabled_identity_never_revived(community):
 def test_member_visibility_and_engine_acl(community):
     verified, _ = signup()
     result = read_workspace(verified=verified, organisation_id=community.organisation.id)
+    assert [channel.name for channel in result.uncategorised_channels] == ["arrivals"]
     names = {channel.name for category in result.categories for channel in category.channels}
     assert names == {
         "announcements",
         "general",
-        "arrivals",
         "developers-community",
         "support",
         "extensions",

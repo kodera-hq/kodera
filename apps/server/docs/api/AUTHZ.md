@@ -112,7 +112,7 @@ Read as: what each role may do to each resource. `own` means "rows belonging to 
 | `FederationProvider` | full own | full own | — | read own | full all | read all | — | — |
 | `FederationTest` | create, read own | create, read own | — | read own | full all | read all | — | — |
 | `Proximity` | read own, act own | read own, act own | read own, act own | read own, act own | — | — | — | — |
-| `Workspace`, `Category`, `Channel` | read own, create own, update own, delete own, act own (initialise, archive) | read own, create own, update own, delete own, act own (initialise, archive) | read own | read own | — | — | — | — |
+| `Workspace`, `Category`, `Channel` | read own, create own, update own, delete own, act own (initialise, archive) | read own, create own, update own, delete own, act own (initialise, archive) | read own | read own, create own | — | — | — | — |
 | `WorkspaceModeration` | read, act own | read, act own | read, act own (moderator grant) | read, act own (moderator grant) | — | — | — | — |
 | `WorkspaceRole` | full own | full own | full own (manage_roles grant for mutations) | full own (manage_roles grant for mutations) | — | — | — | — |
 | `WorkspaceProfile` | read, update own | read, update own | read own | read own | — | — | — | — |
@@ -132,7 +132,7 @@ Read as: what each role may do to each resource. `own` means "rows belonging to 
 | `PresenceLease` | update, delete self | update, delete self | update, delete self | update, delete self | — | — | — | — |
 | `ConfidentialDevice` | create, act self | create, act self | create, act self | create, act self | — | — | — | — |
 | `ConfidentialKeyPackage` | create, act own | create, act own | create own | create own | — | — | — | — |
-| `ConfidentialRoom` | create, act own | create, act own | act own | act own | — | — | — | — |
+| `ConfidentialRoom` | create, read, act own | create, read, act own | read, act own | read, act own | — | — | — | — |
 | `ConfidentialEnvelope` | create, read own | create, read own | create, read own | create, read own | — | — | — | — |
 | `WorkspaceImport` | create, read, act own | create, read, act own | — | — | — | — | — | — |
 | `CoexistenceBridge` | full own | full own | — | — | — | — | — | — |
@@ -158,7 +158,7 @@ Rules that override the table:
 - **The payment provider's webhook is not a principal of this table.** The route that receives the provider's events is public: it carries no session, no token and no role, and is authorised by the provider's signature over the body alone, verified by the provider's adapter (`apps/billing/payments`) before anything is recorded; it is rate-limited. It reaches only the reconciliation of `../domain/BILLING_MODEL.md` §7, never a resource of this table on behalf of a caller. Owner decision, recorded with contract 0.20.0; the route itself and its contract operation come with automatic collection.
 - **Coexistence bridge inbound events (`receiveCoexistenceEvent`) are signed external deliveries, not a principal of this table.** Inbound deliveries on `/coexistence/bridges/{bridge_id}/events` carry no OIDC bearer token and are verified in constant time against the bridge's sealed signing secret within a 300-second freshness window before parsing, re-asserting active `org_owner` or `org_admin` creator authority, non-revoked bridge state, and non-confidential target channel state at delivery time.
 - **Workspace content surfaces (contract 0.43.0).** A moderator is a stored workspace grant on an active organisation membership, not an organisation billing role and never a token claim. Owner/admin memberships hold the moderation grant automatically. Other tenant roles reach moderation, report queues and report resolution only with that grant. A moderator cannot kick, ban or mute an owner/admin. Every moderation mutation is audited. Ordinary members can create reports. Reusable invite links are administered by owners/admins; other tenant roles may only preview and redeem them. Redemption verifies the bound identity and email, serializes the usage counter, and checks expiry and revocation. Documents, backlinks, search and attachments enforce current workspace visibility on each request; only editors can mutate documents or send collaboration state. Document deletion and tickets follow the same policy. Push subscriptions and notification read markers are scoped to the current subject/device. Push wakeups contain no payload. The Notification create verb denotes marking selected existing entries read, never client creation of notifications. These contract declarations remain Proposed until their separate runtime lanes pass acceptance.
-- **The workspace row is structure, never content, and its `read` is filtered by channel policy.** `read own` on `Workspace`, `Category` and `Channel` is `getWorkspace`: the categories and channels the caller's current membership may view under their resolved resource policy, filtered server-side by §6 rule 8; no role reads a message, a file or an occupancy through this row. `act own` is `initialiseWorkspace`, which creates the starter template once and nothing else ([`../specs/PILOT_WORKSPACE_ONBOARDING.md`](../specs/PILOT_WORKSPACE_ONBOARDING.md)), and `archiveChannel` and `unarchiveChannel`. Administering structure is `org_owner`'s and `org_admin`'s alone ([`../specs/ESPACE_STRUCTURE.md`](../specs/ESPACE_STRUCTURE.md)): `create own` is `createCategory` and `createChannel`; `update own` is `patchCategory`, `patchChannel` and `patchChannelAccess`; `delete own` is `deleteCategory`, of an empty category only, and no operation deletes a channel; and their `read own` also covers `getWorkspaceAdministration` and `getChannelAccess`, the administrative disclosure of §6 rule 8. Every one of those writes needs an `active` organisation (§2 step 8). Staff hold no cell: a customer's channel names are the customer's, and support works from what the customer shows it.
+- **The workspace row is structure, never content, and its `read` is filtered by channel policy.** `read own` on `Workspace`, `Category` and `Channel` is `getWorkspace`: the categories and channels the caller's current membership may view under their resolved resource policy, filtered server-side by §6 rule 8; no role reads a message, a file or an occupancy through this row. `act own` is `initialiseWorkspace`, which creates the starter template once and nothing else ([`../specs/PILOT_WORKSPACE_ONBOARDING.md`](../specs/PILOT_WORKSPACE_ONBOARDING.md)), and `archiveChannel` and `unarchiveChannel`. Administering structure belongs to `org_owner` and `org_admin`, except opt-in member creation of uncategorised non-confidential channels ([`../specs/ESPACE_STRUCTURE.md`](../specs/ESPACE_STRUCTURE.md)): `create own` is `createCategory` and `createChannel`; `update own` is `patchCategory`, `patchChannel` and `patchChannelAccess`; `delete own` is `deleteCategory`, of an empty category only, and no operation deletes a channel; and their `read own` also covers `getWorkspaceAdministration` and `getChannelAccess`, the administrative disclosure of §6 rule 8. Every one of those writes needs an `active` organisation (§2 step 8). Staff hold no cell: a customer's channel names are the customer's, and support works from what the customer shows it.
 - **`create own` on `Tenant` is `createTenant`, and only on a deployment that does not bill.** It is the owner's one step to a workspace there ([`../specs/QUICK_WORKSPACE.md`](../specs/QUICK_WORKSPACE.md) §4): the tenant, the acceptance of the CGV and the DPA for it, and the starter workspace. It accepts the customer's agreements, so it is `org_owner`'s alone, as `placeOrder` is; staff hold no part of it although `staff_operator`'s cell is `full all`. On a deployment that bills a tenant is ordered (`order`), and `createTenant` answers `409 billing-enabled`.
 
 ### Two extensions, because they answer two questions
@@ -384,3 +384,62 @@ hold, and cannot change their own assignments or administrator memberships. Chan
 are administrative role metadata. Profile updates and ban-list searches require owner/admin;
 audit-table reads additionally admit assigned `view_audit_log` holders. Invite pause prevents
 workspace link creation, preview and redemption. Existing moderation `unban` lifts a listed ban.
+
+
+## Partner and guest channel authority
+
+Status: Implemented (operator configuration required)
+
+`single_channel_guest` reaches only `getSingleGuestChannel` in Core. It is a separate
+identity-bound grant, never an organisation membership role or directory/search grant.
+The guest middleware denies other Core operations, including after expiry or revocation.
+The grant pins one channel and Matrix room with an expiry of at most thirty days.
+Its Matrix localpart must equal the identity subject in lowercase. Its homeserver
+must belong to the issuing organisation's tenant (or operator-bound default Community),
+or to that identity's side of an active bilateral agreement for this exact room.
+Guest classification is scoped before the MXID lookup: another tenant's grant cannot
+reclassify users in an unrelated organisation's rooms.
+
+Only the current owner/admin of an agreement side can read governance or propose/edit
+agreements. The proposing side approves the initial revision; only the partner side
+can activate it. Either side can immediately suspend or revoke. Suspension blocks
+new events and calls; revocation is terminal. Existing media sessions are evicted by
+room-access reconciliation and durable eviction markers record the cutoff. Matrix
+history already replicated to the partner homeserver cannot be remotely erased.
+
+The credential-bound Agent operation `getChannelAuthority` resolves live channel
+authority without a positive cache. Synapse's join, invite, create and event hooks
+and room-access token admission/reconciliation enforce its answer. The Matrix edge
+request-scope subrequest is installed by Community Caddy in both single and split
+topologies and inherited by generated partner overlays. It forwards the bearer token
+and overwrites the original URI/method headers before Synapse checks guest scope.
+Guests cannot read user search, arbitrary profiles, room directories, aliases or media;
+only the explicit room request allowlist is admitted. Federation transport has a
+separate route and retains Synapse event authorization. Direct Synapse client-port
+access must remain private. See [the deployment contract](../../../../docs/specs/H2_3_BRIDGES_GUESTS_MLS.md).
+Core refuses governance activation without `KODERA_GOVERNANCE_AUTHORITY_CONFIGURED=true`;
+Synapse and room-access refuse governed startup without the HTTPS authority origin
+and organisation agent credential. Community defaults governance and attestation to
+false. The attestation records operator qualification; it does not probe the network.
+
+`discoverConfidentialRoom` checks active participating device and channel authority,
+and returns current server-accepted MLS epoch evidence plus public verification
+bundles. `publishDeviceVerificationBundle` requires a current registered device proof,
+a consecutive publication revision and master/self-signing signatures bound to the
+organisation, membership and device. This publishes key possession evidence; human
+identity verification remains a client action. No server operation receives MLS
+group secrets or private signing/backup keys.
+
+## Workspace identity and preferences
+
+Status: Implemented in contract 0.57.0.
+
+Workspace profile PATCH preserves owner/admin authority and If-Match, validates raster MIME,
+magic bytes and decoded size (2 MiB), and refuses remote logo URLs. Logos live on the existing
+workspace row and are readable only through the tenant-scoped profile/bootstrap, with no new
+table grants. Display names are trimmed to 2–80 characters. Landing channels must be active
+text channels in the same workspace. A missing preference uses arrivals when visible. Member
+channel creation is opt-in, excludes protected rooms and category selection, and is rechecked
+under the workspace lock and before idempotent replays. Link previews respect workspace policy
+before network I/O and when returning a prepared response. Member invitation preferences never
+grant administrator roles or bypass existing invitation authority.

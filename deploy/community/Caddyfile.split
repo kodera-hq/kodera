@@ -106,6 +106,12 @@ matrix.{$KODERA_DOMAIN} {
 	# and legacy unauthenticated /_matrix/media/*/download/* and /thumbnail/* routes fall through to 404.
 	@matrix path /_matrix/client/* /_matrix/media/v3/upload /_matrix/media/v3/upload/* /_matrix/media/v1/create /_matrix/media/v3/config /_synapse/client/*
 	handle @matrix {
+		forward_auth synapse:8008 {
+			uri /_synapse/client/kodera/v1/request_scope
+			header_up X-Original-URI {uri}
+			header_up X-Original-Method {method}
+			import client_address
+		}
 		reverse_proxy synapse:8008 {
 			import client_address
 			header_down Access-Control-Allow-Origin "https://{$KODERA_DOMAIN}"

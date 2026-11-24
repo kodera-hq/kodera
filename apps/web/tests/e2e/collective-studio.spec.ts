@@ -13,7 +13,7 @@ for (const width of [1440, 390]) {
     await page.goto('/login?demo=1&org=community')
     if (en) await page.getByRole('button', { name: 'EN', exact: true }).click()
     await page.getByRole('button', { name: en ? 'Continue' : 'Continuer', exact: true }).click()
-    await expect(page.getByRole('heading', { name: 'announcements', exact: true })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'arrivals', exact: true })).toBeVisible()
     const navigation = async () => {
       if (width === 390)
         await page.getByRole('button', { name: en ? 'Channels' : 'Salons', exact: true }).click()
@@ -50,11 +50,11 @@ for (const width of [1440, 390]) {
     await page.keyboard.press('Escape')
     await expect(notifications).toBeFocused()
     await notifications.click()
-    await notificationPanel.getByRole('button', { name: /#support/ }).click()
+    await notificationPanel.getByRole('button', { name: /^#support\b/ }).click()
     await expect(page.getByRole('heading', { name: 'support', exact: true })).toBeVisible()
     await navigation()
     await notifications.click()
-    await notificationPanel.getByRole('button', { name: /#announcements/ }).click()
+    await notificationPanel.getByRole('button', { name: /^#announcements\b/ }).click()
     await expect(page.getByRole('heading', { name: 'announcements', exact: true })).toBeVisible()
     await navigation()
     await page.getByRole('button', { name: en ? 'Calls' : 'Appels', exact: true }).click()
@@ -88,20 +88,21 @@ for (const width of [1440, 390]) {
     })
     await navigation()
     await page.getByTestId('workspace-docs-editor-toggle').click()
-    await page
+    const channelDocuments = page
       .locator('summary')
       .filter({ hasText: en ? 'Channel documents' : 'Documents du salon' })
-      .click()
+    // The demo guide is in arrivals; announcements opens with an expanded empty list.
+    await expect(channelDocuments.locator('..')).toHaveAttribute('open', '')
     await page
       .getByRole('button', { name: en ? 'New document' : 'Nouveau document', exact: true })
       .click()
+    // Creating the first document collapses the list to make room for its editor.
+    await expect(channelDocuments.locator('..')).not.toHaveAttribute('open', '')
+    await channelDocuments.click()
     await page
       .getByLabel(en ? 'Document title' : 'Titre du document', { exact: true })
       .fill(en ? 'Review notes' : 'Notes de revue')
-    await page
-      .locator('summary')
-      .filter({ hasText: en ? 'Channel documents' : 'Documents du salon' })
-      .click()
+    await channelDocuments.click()
     const source = page.getByRole('textbox', {
       name: en ? 'Markdown source' : 'Source Markdown',
       exact: true,
@@ -302,7 +303,7 @@ for (const width of [1440, 390]) {
           .analyze()
       ).violations
     ).toEqual([])
-    await notificationPanel.getByRole('button', { name: /#announcements/ }).click()
+    await notificationPanel.getByRole('button', { name: /^#announcements\b/ }).click()
     await navigation()
     await page.getByRole('button', { name: en ? 'Files' : 'Fichiers', exact: true }).click()
     await expect(files).toBeVisible()
@@ -318,7 +319,9 @@ for (const width of [1440, 390]) {
       .click()
     await dock.getByRole('button', { name: en ? 'Leave' : 'Quitter', exact: true }).click()
     await expect(dock).toHaveCount(0)
+    const documentChannelUrl = page.url()
     await page.reload()
+    await expect(page).toHaveURL(documentChannelUrl)
     await expect(page.getByRole('heading', { name: 'announcements', exact: true })).toBeVisible()
     await navigation()
     await page.getByRole('button', { name: en ? 'Files' : 'Fichiers', exact: true }).click()

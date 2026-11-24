@@ -79,6 +79,13 @@ export interface ProfileTrait {
 }
 
 export interface WorkspaceProfile {
+  display_name?: string
+  logo_url?: string
+  default_ui_mode?: 'pro' | 'messages'
+  default_channel_id?: string | null
+  allow_member_channel_creation?: boolean
+  allow_member_invites?: boolean
+  allow_link_previews?: boolean
   description: string
   banner_preset: string
   icon_mxc: string
@@ -221,6 +228,13 @@ export function parseRole(value: unknown): WorkspaceRole {
 export function parseProfile(value: unknown): WorkspaceProfile {
   if (!isObject(value)) malformed('workspace profile')
   return {
+    display_name: str(value['display_name']),
+    logo_url: str(value['logo_url']),
+    default_ui_mode: value['default_ui_mode'] === 'messages' ? 'messages' : 'pro',
+    default_channel_id: nullableStr(value['default_channel_id']),
+    allow_member_channel_creation: value['allow_member_channel_creation'] === true,
+    allow_member_invites: value['allow_member_invites'] !== false,
+    allow_link_previews: value['allow_link_previews'] !== false,
     description: str(value['description']),
     banner_preset: str(value['banner_preset']),
     icon_mxc: str(value['icon_mxc']),

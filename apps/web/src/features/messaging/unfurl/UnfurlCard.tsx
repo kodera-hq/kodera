@@ -1,3 +1,4 @@
+import { useCachedWorkspace } from '../../workspace/workspaceCache'
 // A link's preview under its message: text only, checked (`safeUnfurl.ts`), and a plain link that
 // opens in a new tab without telling the site where it came from.
 
@@ -9,7 +10,8 @@ import { firstLink, unfurlCache, type UnfurlCache } from './unfurlCache'
 export function UnfurlCard({ body, cache = unfurlCache }: { body: string; cache?: UnfurlCache }) {
   const { t } = useTranslation()
   const organisationId = useMessagingOrganisation()
-  const url = firstLink(body)
+  const enabled = useCachedWorkspace(organisationId ?? '')?.allow_link_previews !== false
+  const url = enabled ? firstLink(body) : null
   useEffect(() => {
     if (organisationId !== null && url !== null) cache.request(organisationId, url)
   }, [cache, organisationId, url])

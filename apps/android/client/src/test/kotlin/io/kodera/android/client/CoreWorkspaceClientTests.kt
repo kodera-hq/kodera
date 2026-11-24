@@ -13,6 +13,15 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CoreWorkspaceClientTests {
+    @Test fun arrivalsPrecedesCategoriesAndAcceptsProfileAdditions() {
+        val value = tree().apply { firstChannel().addProperty("name", "#arrivées"); addProperty("default_ui_mode", "messages") }
+        val result = decode(value)
+        assertEquals(channelId, result.uncategorisedChannels.first().id)
+        assertFalse(result.categories.flatMap { it.channels }.any { it.id == channelId })
+        listOf("arrivals", "arrivees", "#arrivées", "#ARRIVALS").forEach { assertTrue(isArrivalsChannelName(it)) }
+        assertFalse(isArrivalsChannelName("general"))
+    }
+
     private val organisation = "6f1d2e3c-8a4b-4c5d-9e6f-0a1b2c3d4e5f"
     private val otherOrganisation = "11111111-2222-4333-8444-555555555555"
     private val workspaceId = "0192f3a4-5b6c-7d8e-9f01-23456789abcd"

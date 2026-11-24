@@ -25,6 +25,7 @@ from apps.orgs.actor_selectors import (
 from services.identity.access_tokens import VerifiedAccessToken
 from services.workspace_policy.projection import evaluate
 
+from .channel_order import arrivals_order, is_arrivals
 from .models import (
     Category,
     Channel,
@@ -83,6 +84,14 @@ class WorkspaceView:
     workspace_id: UUID | None
     categories: tuple[CategoryView, ...]
     uncategorised_channels: tuple[ChannelView, ...]
+    display_name: str = ""
+    logo_url: str = ""
+    default_ui_mode: str = "pro"
+    default_channel_id: UUID | None = None
+    allow_member_channel_creation: bool = False
+    allow_member_invites: bool = True
+    allow_link_previews: bool = True
+    arrivals_channel_id: UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,6 +149,18 @@ def read_workspace(*, verified: VerifiedAccessToken, organisation_id: UUID) -> W
         if member_restrictions(workspace[0], caller.membership_id)[0]:
             raise WorkspaceNotFoundError()
         categories, uncategorised = _visible_structure(caller, *workspace)
+        identity = Workspace.objects.get(id=workspace[0])
+        visible_channels = [
+            *uncategorised,
+            *(channel for category in categories for channel in category.channels),
+        ]
+        visible_ids = {channel.id for channel in visible_channels}
+        active_text_channels = [
+            channel
+            for channel in visible_channels
+            if channel.kind == "text" and channel.lifecycle == "active"
+        ]
+        active_text_ids = {channel.id for channel in active_text_channels}
         return WorkspaceView(
             organisation_id=organisation_id,
             setup=setup,
@@ -147,12 +168,40 @@ def read_workspace(*, verified: VerifiedAccessToken, organisation_id: UUID) -> W
             workspace_id=workspace[0],
             categories=categories,
             uncategorised_channels=uncategorised,
+            arrivals_channel_id=identity.arrivals_channel_id
+            if identity.arrivals_channel_id in visible_ids
+            else None,
+            display_name=identity.display_name,
+            logo_url=identity.logo_url,
+            default_ui_mode=identity.default_ui_mode,
+            default_channel_id=(
+                identity.default_channel_id
+                if identity.default_channel_id in active_text_ids
+                else (
+                    identity.arrivals_channel_id
+                    if identity.arrivals_channel_id in active_text_ids
+                    else next(
+                        (
+                            channel.id
+                            for channel in active_text_channels
+                            if is_arrivals(channel.name, channel.template_key)
+                        ),
+                        None,
+                    )
+                )
+            ),
+            allow_member_channel_creation=identity.allow_member_channel_creation,
+            allow_member_invites=identity.allow_member_invites,
+            allow_link_previews=identity.allow_link_previews,
         )
 
 
 def _visible_structure(
     caller: TenantCaller, workspace_id: UUID, owner: UUID, default_policy_id: UUID | None
 ) -> tuple[tuple[CategoryView, ...], tuple[ChannelView, ...]]:
+    arrivals_id = Workspace.objects.values_list("arrivals_channel_id", flat=True).get(
+        id=workspace_id
+    )
     categories = list(
         Category.objects.filter(workspace_id=workspace_id)
         .order_by("position", "id")
@@ -160,7 +209,7 @@ def _visible_structure(
     )
     channels = list(
         Channel.objects.filter(workspace_id=workspace_id)
-        .order_by("position", "id")
+        .order_by(arrivals_order(), "position", "name", "id")
         .values_list(
             "id",
             "category_id",
@@ -249,6 +298,16 @@ def _visible_structure(
                 ChannelView(pk, kind, name, key, topic, lifecycle, room, confidential)
             )
 
+    # Lift arrivals into the first display list without changing stored category authority.
+    arrivals = [
+        channel
+        for own in visible.values()
+        for channel in own
+        if channel.id == arrivals_id or is_arrivals(channel.name, channel.template_key)
+    ]
+    for cat_id, own in list(visible.items()):
+        visible[cat_id] = [channel for channel in own if channel not in arrivals]
+    visible[None] = [*arrivals, *visible.get(None, [])]
     shown = []
     for pk, name, key, category_default in categories:
         own = visible.get(pk, [])

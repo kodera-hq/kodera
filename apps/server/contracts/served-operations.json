@@ -192,6 +192,11 @@
       "path": "/organisations/{organisation_id}/workspace/roles/{role_id}"
     },
     {
+      "operation_id": "discoverConfidentialRoom",
+      "method": "GET",
+      "path": "/organisations/{organisation_id}/confidential/rooms/{room_id}/discovery"
+    },
+    {
       "operation_id": "discoverRealm",
       "method": "POST",
       "path": "/auth/discover"
@@ -235,6 +240,11 @@
       "operation_id": "getChannelAccess",
       "method": "GET",
       "path": "/organisations/{organisation_id}/workspace/channels/{channel_id}/access"
+    },
+    {
+      "operation_id": "getChannelGovernance",
+      "method": "GET",
+      "path": "/organisations/{organisation_id}/workspace/channel-governance"
     },
     {
       "operation_id": "getCreditNote",
@@ -327,6 +337,11 @@
       "path": "/push/public-key"
     },
     {
+      "operation_id": "getSingleGuestChannel",
+      "method": "GET",
+      "path": "/organisations/{organisation_id}/workspace/guest-channel"
+    },
+    {
       "operation_id": "getSubscription",
       "method": "GET",
       "path": "/subscriptions/{subscription_id}"
@@ -405,6 +420,11 @@
       "operation_id": "getWorkspaceQuotaUsage",
       "method": "GET",
       "path": "/organisations/{organisation_id}/workspace/quotas/usage"
+    },
+    {
+      "operation_id": "grantSingleChannelGuest",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/workspace/guest-grants"
     },
     {
       "operation_id": "initialiseWorkspace",
@@ -592,9 +612,19 @@
       "path": "/workspace-invites/preview"
     },
     {
+      "operation_id": "proposePartnerChannelAgreement",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/workspace/partner-agreements"
+    },
+    {
       "operation_id": "publishConfidentialKeyPackage",
       "method": "POST",
       "path": "/organisations/{organisation_id}/confidential/key-packages"
+    },
+    {
+      "operation_id": "publishDeviceVerificationBundle",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/confidential/verification-bundles"
     },
     {
       "operation_id": "putChannelAiPolicy",
@@ -717,6 +747,11 @@
       "path": "/invitations/{invitation_id}"
     },
     {
+      "operation_id": "revokeSingleChannelGuest",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/workspace/guest-grants/{grant_id}/actions/revoke"
+    },
+    {
       "operation_id": "revokeWorkspaceInviteLink",
       "method": "DELETE",
       "path": "/organisations/{organisation_id}/workspace/invite-links/{invite_link_id}"
@@ -755,6 +790,11 @@
       "operation_id": "transcribeVoiceNote",
       "method": "POST",
       "path": "/organisations/{organisation_id}/workspace/attachments/{attachment_id}/actions/transcribe"
+    },
+    {
+      "operation_id": "transitionPartnerChannelAgreement",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/workspace/partner-agreements/{agreement_id}/actions/transition"
     },
     {
       "operation_id": "unarchiveChannel",

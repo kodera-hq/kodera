@@ -158,6 +158,8 @@ def parse(payload: dict[str, Any]) -> ChannelSet | None:
             isinstance(channel.get(k), bool) for k in ("archived", "read_only", "listen_only")
         ):
             return None
+        if "allow_member_invites" in channel and type(channel["allow_member_invites"]) is not bool:
+            return None
         if "confidential" in channel:
             try:
                 confidential_algo = _confidential_algorithm(channel.get("confidential"))
@@ -167,6 +169,23 @@ def parse(payload: dict[str, Any]) -> ChannelSet | None:
                 return None
         if not all(_subjects(channel.get(k)) for k in ("members", "denied", "exempt")):
             return None
+        grants = channel.get("guest_grants", [])
+        if (
+            not isinstance(grants, list)
+            or len(grants) > 200
+            or any(
+                not isinstance(grant, dict)
+                or set(grant) != {"user_id", "room_id"}
+                or not isinstance(grant["user_id"], str)
+                or re.fullmatch(r"@[^\s:]{1,255}:[a-z0-9.-]{1,253}", grant["user_id"]) is None
+                or not isinstance(grant["room_id"], str)
+                or re.fullmatch(r"![^\s:]{1,128}:[a-z0-9.-]{1,253}", grant["room_id"]) is None
+                for grant in grants
+            )
+            or len({grant["user_id"] for grant in grants}) != len(grants)
+        ):
+            return None
+        members += len(grants)
         has_speak_exempt = "speak_exempt" in channel
         if has_speak_exempt and (
             channel.get("kind") != "audio" or not _subjects(channel.get("speak_exempt"))
@@ -322,6 +341,7 @@ class _Wanted:
     federation_blocked: bool = False
     banned: frozenset[str] = frozenset()
     confidential: str | None = None
+    guest_users: frozenset[str] = frozenset()
 
     @property
     def closing(self) -> tuple[tuple[str, dict[str, Any]], ...]:
@@ -535,6 +555,13 @@ class Channels:
         users = frozenset(
             u for s in room_members(channel, all_members) if (u := synapse.user_id(s)) is not None
         )
+        mapped_room = self._state.channel_rooms().get(channel["channel_id"])
+        guest_users = frozenset(
+            grant["user_id"]
+            for grant in channel.get("guest_grants", [])
+            if grant["room_id"] == mapped_room
+        )
+        users = users | guest_users
         banned_users: frozenset[str] = frozenset()
         if moderation is not None:
             banned_users = frozenset(
@@ -557,10 +584,15 @@ class Channels:
         partners = requested if (federation.eligible(channel) and confidential is None) else ()
         blocked = bool(requested and not partners)
         public = native_public(channel, synapse) and not requested and confidential is None
+        member_invites = (
+            channel.get("allow_member_invites", bool(partners))
+            and confidential is None
+            and not channel["archived"]
+        )
         governance = policy(channel, exempt, users, speak_exempt=speak_exempt)
         governance.update(
             local_only=not bool(partners),
-            allow_member_invites=bool(partners),
+            allow_member_invites=bool(partners) or member_invites,
             allow_federated_invites=bool(partners),
             federation_servers=list(partners),
         )
@@ -580,7 +612,8 @@ class Channels:
         if public:
             governance["local_only"] = True
         levels = power_levels(channel, synapse, exempt)
-        if partners:
+        # Keep the bounded partner policy shape while the power level fences new invitations.
+        if member_invites:
             levels["invite"] = 0
         state = (
             (POLICY, governance),
@@ -590,9 +623,13 @@ class Channels:
             (JOIN_RULES, {"join_rule": "public" if public else "invite"}),
             ("m.room.server_acl", federation.acl(synapse.server_name, partners)),
         )
-        digest_input = state if confidential is None else (state, confidential)
+        digest_input: object = state if confidential is None else (state, confidential)
+        if guest_users:
+            digest_input = (digest_input, sorted(guest_users))
         digest = hashlib.sha256(json.dumps(digest_input, sort_keys=True).encode()).hexdigest()
-        return _Wanted(users, state, digest, public, partners, blocked, banned_users, confidential)
+        return _Wanted(
+            users, state, digest, public, partners, blocked, banned_users, confidential, guest_users
+        )
 
     # -- phase 1: take access away -----------------------------------------------------------
 
@@ -830,7 +867,12 @@ class Channels:
                 owed.rooms.discard(room_id)
         if not wanted.public:
             for user in sorted(wanted.users - present):
-                self._join(room_id, user, result.waiting)
+                if user in wanted.guest_users:
+                    # Invite the exact existing Matrix identity; never create a realm member
+                    # or impersonate a guest by joining through the admin account.
+                    synapse.invite(room_id, user)
+                else:
+                    self._join(room_id, user, result.waiting)
         access = synapse.room_access_user
         # Joined at once, as members are: invited only, room-access would refuse every token for
         # a new audio room until its next pass accepted the invite. Invited when its account does

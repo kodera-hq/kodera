@@ -92,11 +92,35 @@ def schema_snapshot():
     return definitions(), migrations, triggers, privileges
 
 
-def restore_leaves():
+def restore_all_leaf_migrations():
     executor = MigrationExecutor(connection)
     executor.migrate(executor.loader.graph.leaf_nodes())
     current = MigrationExecutor(connection)
     assert current.migration_plan(current.loader.graph.leaf_nodes()) == []
+
+
+def restore_leaves():
+    # Target the e2ee 0002 privacy integration directly without the downstream
+    # MLS directory leaves; restore_all_leaf_migrations runs on teardown.
+    executor = MigrationExecutor(connection)
+    targets = [node for node in executor.loader.graph.leaf_nodes() if node[0] != "confidential"]
+    targets.extend([TARGET, ("confidential", None)])
+    executor.migrate(targets)
+    current = MigrationExecutor(connection)
+    assert current.migration_plan(targets) == []
+    assert TARGET in current.loader.applied_migrations
+
+
+@pytest.fixture(autouse=True)
+def e2ee_migration_profile(monkeypatch):
+    import apps.confidential.services as confidential_services
+
+    monkeypatch.setattr(confidential_services, "accept_epoch", lambda **_: None)
+    restore_leaves()
+    try:
+        yield
+    finally:
+        restore_all_leaf_migrations()
 
 
 def refused_without_schema_change():

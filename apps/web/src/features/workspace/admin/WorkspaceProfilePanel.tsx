@@ -1,15 +1,18 @@
+import { useWorkspaceLogo } from '../useWorkspaceLogo'
 // Administration › Profil de l'espace: how the workspace presents itself — description, banner,
 // up to five traits — with a preview card that follows every keystroke. Saved in one PATCH under
 // the profile's tag, so a change another administrator saved meanwhile is never overwritten.
 
 import { useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useState, useRef, useMemo } from 'react'
 import { color } from '@kodera/design-tokens/tokens.json'
 import { Button } from '../../../ui/Button/Button'
 import { cx } from '../../../ui/cx'
 import { TextField } from '../../../ui/TextField/TextField'
 import { initialsOf } from '../../../ui/Avatar/Avatar'
 import { updateWorkspaceProfile, type ProfileTrait, type WorkspaceProfile } from '../iamApi'
+import { useWorkspaceQuery, workspaceQueryKey, type WorkspaceRead } from '../queries'
+import { everyChannel } from '../workspace'
 import { PlusIcon, TrashIcon } from './AdminIcons'
 import { iamKeys, useWorkspaceProfile } from './useIam'
 import { Loading, Notice, problemText, useDraft, Unsupported, useAdminCopy } from './shared'
@@ -63,13 +66,16 @@ export function ServerPreviewCard({
   banner,
   traits,
   memberCount,
+  logoUrl,
 }: {
   name: string
   description: string
   banner: string
   traits: readonly ProfileTrait[]
+  logoUrl?: string | undefined
   memberCount?: number | undefined
 }) {
+  const logoSrc = useWorkspaceLogo(logoUrl)
   const copy = useAdminCopy()
   return (
     <figure
@@ -86,7 +92,11 @@ export function ServerPreviewCard({
           aria-hidden="true"
           className="logo-tile-black flex h-12 w-12 items-center justify-center rounded-lg border-2 border-c-elevated text-sm font-bold"
         >
-          {initialsOf(name)}
+          {logoSrc ? (
+            <img src={logoSrc} alt="" className="h-full w-full rounded-lg object-cover" />
+          ) : (
+            initialsOf(name)
+          )}
         </span>
         <p className="truncate text-base font-semibold">{name}</p>
         <p className="line-clamp-3 text-sm break-words text-c-ink-2">
@@ -124,7 +134,16 @@ export function WorkspaceProfilePanel({
   const copy = useAdminCopy()
   const client = useQueryClient()
   const query = useWorkspaceProfile(organisationId)
-  const [draft, setDraft] = useDraft<WorkspaceProfile>(query.data?.value)
+  const workspace = useWorkspaceQuery(organisationId)
+  const logoInput = useRef<HTMLInputElement>(null)
+  const profile = useMemo(
+    () =>
+      query.data
+        ? { ...query.data.value, display_name: query.data.value.display_name ?? '' }
+        : undefined,
+    [query.data]
+  )
+  const [draft, setDraft] = useDraft<WorkspaceProfile>(profile)
   const [newTrait, setNewTrait] = useState({ icon: '', label: '' })
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState<{ text: string; tone: 'neutral' | 'bad' }>({
@@ -141,7 +160,9 @@ export function WorkspaceProfilePanel({
   if (draft === undefined || query.data === undefined) return <Loading />
 
   const etag = query.data.etag
-  const dirty = JSON.stringify(draft) !== JSON.stringify(query.data.value)
+  const dirty = JSON.stringify(draft) !== JSON.stringify(profile)
+  const trimmedDisplayName = (draft.display_name ?? '').trim()
+  const displayNameValid = trimmedDisplayName === '' || trimmedDisplayName.length >= 2
   const addTrait = (trait: ProfileTrait) => {
     const icon = trait.icon.trim()
     const label = trait.label.trim()
@@ -159,6 +180,13 @@ export function WorkspaceProfilePanel({
     void updateWorkspaceProfile(
       organisationId,
       {
+        display_name: trimmedDisplayName,
+        logo_url: draft.logo_url ?? '',
+        default_ui_mode: draft.default_ui_mode ?? 'pro',
+        default_channel_id: draft.default_channel_id ?? null,
+        allow_member_channel_creation: draft.allow_member_channel_creation ?? false,
+        allow_member_invites: draft.allow_member_invites ?? true,
+        allow_link_previews: draft.allow_link_previews ?? true,
         description: draft.description,
         banner_preset: draft.banner_preset,
         traits: draft.traits,
@@ -168,6 +196,15 @@ export function WorkspaceProfilePanel({
       .then(
         (saved) => {
           client.setQueryData(iamKeys.profile(organisationId), saved)
+          client.setQueryData<WorkspaceRead>(workspaceQueryKey(organisationId), (previous) =>
+            previous
+              ? {
+                  ...previous,
+                  workspace: { ...previous.workspace, ...saved.value },
+                }
+              : previous
+          )
+          void client.invalidateQueries({ queryKey: workspaceQueryKey(organisationId) })
           setNotice({ text: copy.saved, tone: 'neutral' })
         },
         (error: unknown) => {
@@ -183,10 +220,106 @@ export function WorkspaceProfilePanel({
       <div className="flex flex-col gap-5">
         <TextField
           label={copy.profileName}
-          value={organisationName}
-          readOnly
+          value={draft.display_name ?? ''}
+          placeholder={organisationName}
+          disabled={!canEdit}
+          maxLength={80}
+          onChange={(event) => setDraft({ ...draft, display_name: event.target.value })}
           help={copy.profileNameHint}
         />
+        <div className="flex flex-col gap-2">
+          <label className="text-sm font-medium" htmlFor="workspace-logo-upload">
+            {copy.profileLogo}
+          </label>
+          <input
+            id="workspace-logo-upload"
+            ref={logoInput}
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            disabled={!canEdit || busy}
+            className="min-h-[44px] text-sm text-c-ink file:mr-3 file:rounded-md file:border file:border-c-border file:bg-c-surface file:px-3 file:py-2 file:text-c-ink"
+            onChange={(event) => {
+              const file = event.target.files?.[0]
+              event.target.value = ''
+              if (!file) return
+              if (
+                !['image/png', 'image/jpeg', 'image/webp'].includes(file.type) ||
+                file.size > 2 * 1024 * 1024 ||
+                file.size === 0
+              ) {
+                setNotice({ text: copy.profileLogoError, tone: 'bad' })
+                return
+              }
+              const reader = new FileReader()
+              reader.onload = () => {
+                if (typeof reader.result === 'string')
+                  setDraft((current) => ({ ...current, logo_url: reader.result as string }))
+              }
+              reader.onerror = () => setNotice({ text: copy.profileLogoError, tone: 'bad' })
+              reader.readAsDataURL(file)
+            }}
+          />
+          <p className="text-xs text-c-ink-3">{copy.profileLogoHint}</p>
+          {draft.logo_url && canEdit ? (
+            <Button variant="secondary" onClick={() => setDraft({ ...draft, logo_url: '' })}>
+              {copy.profileLogoRemove}
+            </Button>
+          ) : null}
+        </div>
+        <label className="flex flex-col gap-2 text-sm font-medium">
+          {copy.profileDefaultMode}
+          <select
+            disabled={!canEdit}
+            value={draft.default_ui_mode ?? 'pro'}
+            onChange={(event) =>
+              setDraft({ ...draft, default_ui_mode: event.target.value as 'pro' | 'messages' })
+            }
+            className="min-h-[44px] rounded-md border border-c-border bg-c-surface px-3 text-c-ink focus-visible:ring"
+          >
+            <option value="pro">{copy.profilePro}</option>
+            <option value="messages">{copy.profileMessages}</option>
+          </select>
+        </label>
+        <label className="flex flex-col gap-2 text-sm font-medium">
+          {copy.profileLanding}
+          <select
+            disabled={!canEdit}
+            value={draft.default_channel_id ?? ''}
+            onChange={(event) =>
+              setDraft({ ...draft, default_channel_id: event.target.value || null })
+            }
+            className="min-h-[44px] rounded-md border border-c-border bg-c-surface px-3 text-c-ink focus-visible:ring"
+          >
+            <option value="">{copy.profileLandingArrivals}</option>
+            {(workspace.data ? everyChannel(workspace.data.workspace) : [])
+              .filter((channel) => channel.kind === 'text' && channel.lifecycle === 'active')
+              .map((channel) => (
+                <option key={channel.id} value={channel.id}>
+                  #{channel.name}
+                </option>
+              ))}
+          </select>
+        </label>
+        <fieldset className="flex flex-col gap-2">
+          <legend className="mb-2 text-sm font-medium">{copy.profilePermissions}</legend>
+          {(
+            [
+              ['allow_member_channel_creation', copy.profileChannelCreation, false],
+              ['allow_member_invites', copy.profileInvites, true],
+              ['allow_link_previews', copy.profileLinkPreviews, true],
+            ] as const
+          ).map(([key, label, fallback]) => (
+            <label key={key} className="flex min-h-[44px] items-center gap-3 text-sm">
+              <input
+                type="checkbox"
+                disabled={!canEdit}
+                checked={draft[key] ?? fallback}
+                onChange={(event) => setDraft({ ...draft, [key]: event.target.checked })}
+              />
+              {label}
+            </label>
+          ))}
+        </fieldset>
         <TextField
           label={copy.profileDescription}
           value={draft.description}
@@ -289,11 +422,16 @@ export function WorkspaceProfilePanel({
         </fieldset>
         {canEdit ? (
           <div className="flex items-center gap-3">
-            <Button variant="primary" disabled={!dirty} loading={busy} onClick={save}>
+            <Button
+              variant="primary"
+              disabled={!dirty || !displayNameValid}
+              loading={busy}
+              onClick={save}
+            >
               {copy.save}
             </Button>
             {dirty ? (
-              <Button variant="tertiary" onClick={() => setDraft(query.data.value)}>
+              <Button variant="tertiary" onClick={() => setDraft(profile!)}>
                 {copy.discard}
               </Button>
             ) : null}
@@ -306,7 +444,8 @@ export function WorkspaceProfilePanel({
       <div className="flex flex-col gap-2">
         <p className="text-xs font-semibold text-c-ink-3">{copy.profilePreview}</p>
         <ServerPreviewCard
-          name={organisationName}
+          name={trimmedDisplayName || organisationName}
+          logoUrl={draft.logo_url}
           description={draft.description}
           banner={draft.banner_preset}
           traits={draft.traits}

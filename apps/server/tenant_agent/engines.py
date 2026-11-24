@@ -80,7 +80,14 @@ with transaction.atomic():
         closing = newly
     on_deactivation(closing)
 ids = {str(user.pk) for user in closing}
-SessionStore = import_module(settings.SESSION_ENGINE).SessionStore
+session_stores = {
+    "django.contrib.sessions.backends.cache": lambda: import_module("django.contrib.sessions.backends.cache"),
+    "django.contrib.sessions.backends.db": lambda: import_module("django.contrib.sessions.backends.db"),
+    "django.contrib.sessions.backends.cached_db": lambda: import_module("django.contrib.sessions.backends.cached_db"),
+}
+if settings.SESSION_ENGINE not in session_stores:
+    raise RuntimeError("unreviewed session engine")
+SessionStore = session_stores[settings.SESSION_ENGINE]().SessionStore
 """
 
 # Docs keeps sessions in the cache only (django-redis): one scan for the newly deactivated users.

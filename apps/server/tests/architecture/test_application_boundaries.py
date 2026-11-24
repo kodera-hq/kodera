@@ -16,7 +16,11 @@ packages cannot pass. A module under worker/ imports no application's models or 
 worker/ row; it touches services, not models), and that check fails on a worker/ of `__init__.py`
 alone too. The view-scope rule is test_view_scopes.py.
 
-Not seen, by any of these checks: an import built at run time (importlib, __import__, getattr with a
+The standalone room_access/ and tenant_agent/ scan below also rejects imports of
+applications and database layers. Embedded external-engine scripts permit only literal
+session backend imports from the explicit allowlist.
+
+Not seen by the application-layer checks: an import built at run time (importlib, __import__, getattr with a
 string); a bound name assigned to another name (`other = second`, then `other.models`); the names
 a star import binds; and a model another application re-exports from a module that is not its
 models, which reads here as an import of that module.
@@ -499,4 +503,124 @@ def test_queue_boundary_check_detects_module_and_function_local_imports(tmp_path
     )
     assert forbidden_queue_imports(tmp_path) == [], (
         "the queue boundary check refused allowed imports"
+    )
+
+
+AGENT_DYNAMIC_IMPORTS = frozenset(
+    {
+        "django.contrib.sessions.backends.cache",
+        "django.contrib.sessions.backends.db",
+        "django.contrib.sessions.backends.cached_db",
+    }
+)
+
+
+def agent_boundary_imports(root: Path) -> list[str]:
+    """Standalone processes use HTTP; embedded engine scripts have literal session imports only."""
+    found: set[str] = set()
+    for directory in ("room_access", "tenant_agent"):
+        paths = sorted((root / directory).rglob("*.py"))
+        if all(path.name == "__init__.py" for path in paths):
+            found.add(f"no module under {directory}/ other than __init__.py")
+        for path in paths:
+            relative = path.relative_to(root)
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            trees = [(tree, False)]
+            # Engines execute fixed source strings inside the external engine container.
+            # Scan these as well, including its only permitted dynamic imports.
+            for node in ast.walk(tree):
+                if (
+                    isinstance(node, ast.Constant)
+                    and isinstance(node.value, str)
+                    and "\n" in node.value
+                ):
+                    try:
+                        trees.append(
+                            (
+                                ast.parse(node.value),
+                                relative.as_posix() == "tenant_agent/engines.py",
+                            )
+                        )
+                    except SyntaxError:
+                        pass
+            for parsed, engine_script in trees:
+                bound: dict[str, set[str]] = {}
+                for node in ast.walk(parsed):
+                    if isinstance(node, ast.Import | ast.ImportFrom):
+                        for name, target in _bound(
+                            node, relative.with_suffix("").parts[:-1]
+                        ).items():
+                            bound.setdefault(name, set()).add(target)
+                        for name in _imported(node, relative.with_suffix("").parts[:-1]):
+                            if name.split(".")[0] in {"apps", "worker"} or (
+                                not engine_script
+                                and (name.startswith("django.db") or name.startswith("core.db"))
+                            ):
+                                found.add(f"{relative}:{node.lineno} imports {name}")
+                for node in ast.walk(parsed):
+                    if isinstance(node, ast.Attribute):
+                        for name in _read(node, bound):
+                            if name.startswith("apps."):
+                                found.add(f"{relative}:{node.lineno} reads {name}")
+                    if not isinstance(node, ast.Call):
+                        continue
+                    names = (
+                        _read(node.func, bound)
+                        if isinstance(node.func, ast.Attribute)
+                        else list(bound.get(node.func.id, {node.func.id}))
+                        if isinstance(node.func, ast.Name)
+                        else []
+                    )
+                    if any(
+                        name in {"importlib.import_module", "__import__", "builtins.__import__"}
+                        for name in names
+                    ):
+                        argument = node.args[0] if node.args else None
+                        if not (
+                            engine_script
+                            and "importlib.import_module" in names
+                            and isinstance(argument, ast.Constant)
+                            and argument.value in AGENT_DYNAMIC_IMPORTS
+                        ):
+                            found.add(f"{relative}:{node.lineno} unbounded dynamic import")
+    return sorted(found)
+
+
+def test_agents_keep_the_http_and_service_boundary() -> None:
+    assert agent_boundary_imports(ROOT) == []
+
+
+def test_agent_scan_refuses_static_alias_relative_and_dynamic_bypasses(tmp_path: Path) -> None:
+    for directory in ("room_access", "tenant_agent"):
+        target = tmp_path / directory
+        target.mkdir()
+        (target / "service.py").write_text(
+            "from apps.orgs.models import Organisation\n"
+            "from apps import identity as other\n"
+            "value = other.models.Identity\n"
+            "import importlib as loader\n"
+            "loader.import_module(name)\n"
+            "from importlib import import_module as load\n"
+            "load('apps.orgs.models')\n"
+            "import django.db\n"
+            "__import__('apps.identity.models')\n",
+            encoding="utf-8",
+        )
+    failures = agent_boundary_imports(tmp_path)
+    for directory in ("room_access", "tenant_agent"):
+        assert any(
+            f"{directory}/service.py:1 imports apps.orgs.models" in item for item in failures
+        )
+        assert any(
+            f"{directory}/service.py:3 reads apps.identity.models" in item for item in failures
+        )
+        for line in (5, 7, 9):
+            assert f"{directory}/service.py:{line} unbounded dynamic import" in failures
+    (tmp_path / "tenant_agent/engines.py").write_text(
+        'SCRIPT = """from importlib import import_module\n'
+        'import_module(settings.SESSION_ENGINE)\n"""\n',
+        encoding="utf-8",
+    )
+    assert any(
+        "engines.py:2 unbounded dynamic import" in item for item in agent_boundary_imports(tmp_path)
     )

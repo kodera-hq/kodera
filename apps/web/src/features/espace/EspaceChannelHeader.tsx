@@ -53,6 +53,8 @@ export interface EspaceChannelHeaderProps {
   membersPanelId: string
   headingRef: RefObject<HTMLHeadingElement | null>
   inviteTrigger: RefObject<HTMLButtonElement | null>
+  inviteReturnFocus?: RefObject<HTMLElement | null> | undefined
+  canInvite?: boolean | undefined
   membersTrigger: RefObject<HTMLButtonElement | null>
   audioRooms: readonly ChannelSearchEntry[]
   simpleMode?: boolean | undefined
@@ -86,6 +88,8 @@ export function EspaceChannelHeader({
   membersPanelId,
   headingRef,
   inviteTrigger,
+  inviteReturnFocus,
+  canInvite = true,
   membersTrigger,
   audioRooms,
   simpleMode = false,
@@ -177,7 +181,7 @@ export function EspaceChannelHeader({
                     mxc={activeDirect?.avatarMxc}
                     name={activeChannelName}
                     identity={activeDirect?.userIds[0] ?? directRoomId}
-                    size="xs"
+                    size={simpleMode ? 'lg' : 'xs'}
                   />
                 </span>
                 <span aria-hidden="true" className="font-medium text-c-ink-3">
@@ -189,7 +193,14 @@ export function EspaceChannelHeader({
                 <AntennaIcon />
               </span>
             ) : (
-              <span aria-hidden="true" className="font-mono font-medium text-c-ink-3">
+              <span
+                aria-hidden="true"
+                className={
+                  simpleMode
+                    ? 'flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-c-muted font-mono text-c-ink-2'
+                    : 'font-mono font-medium text-c-ink-3'
+                }
+              >
                 #
               </span>
             )}
@@ -244,7 +255,7 @@ export function EspaceChannelHeader({
           </div>
         ) : null}
       </div>
-      {!simpleMode &&
+      {canInvite &&
       directRoomId === null &&
       activeRoom !== undefined &&
       activeChannel != null &&
@@ -253,6 +264,8 @@ export function EspaceChannelHeader({
         <ChannelInviteDialog
           key={`${org}:${activeRoom.roomId}`}
           triggerRef={inviteTrigger}
+          hideTrigger={simpleMode}
+          returnFocusTo={simpleMode ? inviteReturnFocus : undefined}
           org={org}
           channel={activeChannel}
           room={activeRoom}
@@ -265,9 +278,7 @@ export function EspaceChannelHeader({
           {searchPermitted ? (
             <MessageSearch store={activeStore} roomId={activeRoomId} onShow={onShowMessage} />
           ) : null}
-          {simpleMode ? null : (
-            <PinnedMessages store={activeStore} roomId={activeRoomId} onShow={onShowMessage} />
-          )}
+          {<PinnedMessages store={activeStore} roomId={activeRoomId} onShow={onShowMessage} />}
         </>
       )}
       {activeRoomId === null || focusedDocs ? null : (

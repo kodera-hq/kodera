@@ -53,7 +53,30 @@ SHARED = frozenset(
 )
 
 
+UX_OBJECTS = frozenset(
+    {
+        *(
+            ("column", "workspaces_workspace", name)
+            for name in (
+                "display_name",
+                "logo_url",
+                "default_ui_mode",
+                "default_channel_id",
+                "allow_member_channel_creation",
+                "allow_member_invites",
+                "allow_link_previews",
+            )
+        ),
+        ("function", "workspace_ux_guard", ""),
+        ("trigger", "workspaces_workspace", "workspace_ux_guard"),
+    }
+)
+
+
 def without_iam(objects):
+    if ("column", "workspaces_workspace", "display_name") in objects:
+        assert UX_OBJECTS <= objects.keys(), "workspace identity and UX inventory is incomplete"
+        objects = {key: value for key, value in objects.items() if key not in UX_OBJECTS}
     # Historical lifecycle targets intentionally predate IAM. A partial current schema fails.
     present = any(key[1] in TABLES or key in SHARED for key in objects)
     if not present:
@@ -86,3 +109,33 @@ def without_confidential(objects):
         "confidential channel designation inventory is incomplete"
     )
     return {key: value for key, value in objects.items() if key not in CONFIDENTIAL_OBJECTS}
+
+
+GOVERNANCE_TABLES = frozenset(
+    {
+        "workspaces_partnerchannelagreement",
+        "workspaces_partnerchannelagreementrevision",
+        "workspaces_singlechannelguestgrant",
+        "workspaces_sessioneviction",
+    }
+)
+GOVERNANCE_OBJECTS = frozenset(
+    {
+        *(("relation", table, table) for table in GOVERNANCE_TABLES),
+        *(("trigger", table, "governance_scope") for table in GOVERNANCE_TABLES),
+        ("function", "channel_governance_guard", ""),
+    }
+)
+
+
+def without_governance(objects):
+    if not any(key[1] in GOVERNANCE_TABLES for key in objects):
+        return objects
+    assert GOVERNANCE_OBJECTS <= objects.keys(), (
+        "partner channel and guest governance inventory is incomplete"
+    )
+    return {
+        key: value
+        for key, value in objects.items()
+        if key[1] not in GOVERNANCE_TABLES and key not in GOVERNANCE_OBJECTS
+    }

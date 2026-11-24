@@ -2,13 +2,17 @@ import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
 import type { ChannelMenuTarget } from './ChannelContextMenu'
 import { useStableHandler } from './useStoreSlice'
 
-export type WorkspaceUiMode = 'pro' | 'simple'
+export type WorkspaceUiMode = 'pro' | 'messages'
 
 export const DEFAULT_UI_MODE: WorkspaceUiMode = 'pro'
 export const UI_MODE_STORAGE_KEY = 'console:workspace-ui-mode'
 
+export function normalizeUiMode(value: unknown): WorkspaceUiMode | null {
+  return value === 'simple' ? 'messages' : value === 'messages' || value === 'pro' ? value : null
+}
+
 export function isWorkspaceUiMode(value: unknown): value is WorkspaceUiMode {
-  return value === 'pro' || value === 'simple'
+  return value === 'pro' || value === 'messages'
 }
 
 let unsavedMode: WorkspaceUiMode | null = null
@@ -19,6 +23,7 @@ function emitModeChange(): void {
 }
 
 if (typeof window !== 'undefined') {
+  window.addEventListener('popstate', emitModeChange)
   window.addEventListener('storage', (event) => {
     if (event.key !== UI_MODE_STORAGE_KEY && event.key !== null) return
     unsavedMode = null
@@ -27,7 +32,7 @@ if (typeof window !== 'undefined') {
         if (event.newValue === null) {
           window.localStorage.removeItem(UI_MODE_STORAGE_KEY)
         } else if (
-          isWorkspaceUiMode(event.newValue) &&
+          normalizeUiMode(event.newValue) !== null &&
           window.localStorage.getItem(UI_MODE_STORAGE_KEY) !== event.newValue
         ) {
           window.localStorage.setItem(UI_MODE_STORAGE_KEY, event.newValue)
@@ -43,15 +48,23 @@ if (typeof window !== 'undefined') {
 export function getUiModeSnapshot(): WorkspaceUiMode {
   if (unsavedMode !== null) return unsavedMode
   try {
-    const stored = window.localStorage.getItem(UI_MODE_STORAGE_KEY)
-    return isWorkspaceUiMode(stored) ? stored : DEFAULT_UI_MODE
+    return getUiModePreferenceSnapshot() ?? DEFAULT_UI_MODE
   } catch {
     return DEFAULT_UI_MODE
   }
 }
 
-function getServerSnapshot(): WorkspaceUiMode {
-  return DEFAULT_UI_MODE
+function getUiModePreferenceSnapshot(): WorkspaceUiMode | null {
+  if (unsavedMode !== null) return unsavedMode
+  try {
+    const url = new URL(window.location.href)
+    return (
+      normalizeUiMode(url.searchParams.get('ui_mode')) ??
+      normalizeUiMode(window.localStorage.getItem(UI_MODE_STORAGE_KEY))
+    )
+  } catch {
+    return null
+  }
 }
 
 export function subscribeUiMode(listener: () => void): () => void {
@@ -61,21 +74,29 @@ export function subscribeUiMode(listener: () => void): () => void {
   }
 }
 
-export function setUiMode(next: WorkspaceUiMode): void {
-  const resolved: WorkspaceUiMode = isWorkspaceUiMode(next) ? next : DEFAULT_UI_MODE
-  const previous = getUiModeSnapshot()
+export function setUiMode(next: WorkspaceUiMode | 'simple'): void {
+  const resolved: WorkspaceUiMode = normalizeUiMode(next) ?? DEFAULT_UI_MODE
   let stored = true
   try {
     window.localStorage.setItem(UI_MODE_STORAGE_KEY, resolved)
   } catch {
     stored = false
   }
+  try {
+    const url = new URL(window.location.href)
+    if (url.searchParams.has('ui_mode')) {
+      url.searchParams.set('ui_mode', resolved)
+      window.history.replaceState(window.history.state, '', url)
+    }
+  } catch {
+    /* Restricted browser contexts can keep the in-memory preference. */
+  }
   unsavedMode = stored ? null : resolved
-  if (previous !== resolved) emitModeChange()
+  emitModeChange()
 }
 
 export function toggleUiMode(): WorkspaceUiMode {
-  const next: WorkspaceUiMode = getUiModeSnapshot() === 'simple' ? 'pro' : 'simple'
+  const next: WorkspaceUiMode = getUiModeSnapshot() === 'messages' ? 'pro' : 'messages'
   setUiMode(next)
   return next
 }
@@ -87,8 +108,12 @@ export const uiModePreference = {
   toggle: toggleUiMode,
 } as const
 
-export function useWorkspaceUiMode(): WorkspaceUiMode {
-  return useSyncExternalStore(subscribeUiMode, getUiModeSnapshot, getServerSnapshot)
+export function useWorkspaceUiMode(
+  defaultMode: WorkspaceUiMode = DEFAULT_UI_MODE
+): WorkspaceUiMode {
+  return (
+    useSyncExternalStore(subscribeUiMode, getUiModePreferenceSnapshot, () => null) ?? defaultMode
+  )
 }
 
 export function favoriteChannelsStorageKey(
@@ -189,8 +214,15 @@ export function useFavoriteChannels(org: string, workspaceId: string, viewerId: 
 const UI_MODE_MESSAGES = {
   fr: {
     modeToggleGroup: 'Mode d’affichage de l’espace',
-    modePro: 'Pro',
-    modeSimple: 'Simple',
+    modePro: 'Mode Espace Pro',
+    modeSimple: 'Mode Messages',
+    title: 'Messages',
+    search: 'Filtrer les conversations',
+    all: 'Tous',
+    unread: 'Non lus',
+    directs: 'Directs',
+    channels: 'Salons',
+    back: 'Retour aux conversations',
     conversationsLabel: 'Conversations récentes',
     newMessage: 'Nouveau message',
     emptyFeed: 'Aucune conversation active. Démarrez un message direct ou épinglez un salon.',
@@ -206,8 +238,15 @@ const UI_MODE_MESSAGES = {
   },
   en: {
     modeToggleGroup: 'Workspace view mode',
-    modePro: 'Pro',
-    modeSimple: 'Simple',
+    modePro: 'Workspace Pro mode',
+    modeSimple: 'Messages mode',
+    title: 'Messages',
+    search: 'Filter conversations',
+    all: 'All',
+    unread: 'Unread',
+    directs: 'Directs',
+    channels: 'Channels',
+    back: 'Back to conversations',
     conversationsLabel: 'Recent conversations',
     newMessage: 'New message',
     emptyFeed: 'No active conversations yet. Start a direct message or pin a channel.',

@@ -232,6 +232,7 @@ it('gives owners a categorized administration rail and a switch back to personal
     'Rôles & Tags',
     'Invitations',
     'Sécurité & modération',
+    'Partenaires et invités',
     'Logs d’audit',
     'Quotas & ressources',
     'Hébergement',

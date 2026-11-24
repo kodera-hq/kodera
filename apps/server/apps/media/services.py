@@ -25,6 +25,7 @@ from apps.orgs.selectors import attachment_sweep_organisation_ids, previous_swee
 from apps.workspaces.channel_access import may_perform, resolve
 from apps.workspaces.selectors import (
     active_channel_id,
+    link_previews_allowed,
     undeleted_channel_id,
     workspace_id_for,
 )
@@ -804,6 +805,8 @@ def prepare_preview(
         raise RuntimeError("URL preview fetch requires no enclosing transaction")
     with transaction.atomic():
         principal = read_caller(verified, organisation_id)
+        if not link_previews_allowed(organisation_id):
+            raise RefusalError(403)
         if not isinstance(url, str) or len(url) > 8192:
             raise RefusalError(422)
         try:
@@ -852,6 +855,8 @@ def record_preview(
     *, verified: VerifiedAccessToken, organisation_id: UUID, result: dict[str, str], request_id: str
 ) -> dict[str, str]:
     principal = caller(verified, organisation_id)
+    if not link_previews_allowed(organisation_id):
+        raise RefusalError(403)
     # The URL, its query and extracted content never enter the append-only audit record.
     audit(principal, "workspace.url.previewed", principal.membership_id, request_id)
     return result

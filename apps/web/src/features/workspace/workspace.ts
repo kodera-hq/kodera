@@ -49,11 +49,68 @@ const workspaceSchema = z.object({
   uncategorised_channels: z.array(channel),
 })
 
+/** Arrivals keeps its identity across translated labels and administrator ordering. */
+export function isArrivalsChannel(channel: {
+  name: string
+  template_key?: string | null
+  id?: string
+  slug?: string
+  is_arrivals?: boolean
+}): boolean {
+  return (
+    channel.is_arrivals === true ||
+    [channel.name, channel.template_key, channel.slug].some(
+      (value) =>
+        value !== undefined &&
+        value !== null &&
+        ['arrivals', 'arrivees'].includes(
+          value
+            .trim()
+            .replace(/^#/, '')
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .toLowerCase()
+        )
+    )
+  )
+}
+
+export function compareChannels(
+  a: WorkspaceChannel,
+  b: WorkspaceChannel,
+  arrivalsId?: string | null
+): number {
+  return (
+    Number(b.id === arrivalsId || isArrivalsChannel(b)) -
+    Number(a.id === arrivalsId || isArrivalsChannel(a))
+  )
+}
+
+export function arrivalsFirst(workspace: Workspace): Workspace {
+  const priority = (channel: WorkspaceChannel) =>
+    channel.id === workspace.arrivals_channel_id || isArrivalsChannel(channel)
+  const arrivals = [
+    ...workspace.uncategorised_channels,
+    ...workspace.categories.flatMap((category) => category.channels),
+  ].filter(priority)
+  return {
+    ...workspace,
+    uncategorised_channels: [
+      ...arrivals,
+      ...workspace.uncategorised_channels.filter((channel) => !priority(channel)),
+    ],
+    categories: workspace.categories.map((category) => ({
+      ...category,
+      channels: category.channels.filter((channel) => !priority(channel)),
+    })),
+  }
+}
+
 /** The answer, or a thrown error the query reports as a failed read. */
 export function requireWorkspace(data: unknown): Workspace {
   const parsed = workspaceSchema.safeParse(data)
   if (!parsed.success) throw new Error('The workspace answer is not one the console can draw.')
-  return data as Workspace
+  return arrivalsFirst(data as Workspace)
 }
 
 /** One screen per answer (§4.3). */
@@ -87,7 +144,7 @@ export function everyChannel(workspace: Workspace): WorkspaceChannel[] {
   return [
     ...workspace.categories.flatMap((category) => category.channels),
     ...workspace.uncategorised_channels,
-  ]
+  ].sort((a, b) => compareChannels(a, b, workspace.arrivals_channel_id))
 }
 
 /** The workspace as drawn while its tenant is prepared: no room can be used before the homeserver
@@ -273,7 +330,7 @@ export function channelsInOrder(workspace: Workspace): WorkspaceChannel[] {
   return [
     ...workspace.categories.flatMap((category) => listedChannels(category.channels)),
     ...listedChannels(workspace.uncategorised_channels),
-  ]
+  ].sort((a, b) => compareChannels(a, b, workspace.arrivals_channel_id))
 }
 
 /** The current channel: the one the address names, else the first. `null` when the address
@@ -283,7 +340,8 @@ export function currentChannel(
   channelId: string | undefined
 ): WorkspaceChannel | null | undefined {
   const channels = channelsInOrder(workspace)
-  if (channelId === undefined) return channels[0]
+  if (channelId === undefined)
+    return channels.find((channel) => channel.id === workspace.default_channel_id) ?? channels[0]
   return channels.find((entry) => entry.id === channelId) ?? null
 }
 

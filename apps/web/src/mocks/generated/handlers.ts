@@ -316,4 +316,12 @@ export const handlers: HttpHandler[] = [
   http.post(BASE + "/organisations/:organisation_id/workspace/coexistence/bridges", ({ request }) => answerIdempotent(EXAMPLES["createCoexistenceBridge"], request)),
   http.delete(BASE + "/organisations/:organisation_id/workspace/coexistence/bridges/:bridge_id", () => answer(EXAMPLES["revokeCoexistenceBridge"])),
   http.post(BASE + "/coexistence/bridges/:bridge_id/events", () => answer(EXAMPLES["receiveCoexistenceEvent"])),
+  http.get(BASE + "/organisations/:organisation_id/workspace/channel-governance", () => answer(EXAMPLES["getChannelGovernance"])),
+  http.post(BASE + "/organisations/:organisation_id/workspace/partner-agreements", ({ request }) => answerIdempotent(EXAMPLES["proposePartnerChannelAgreement"], request)),
+  http.post(BASE + "/organisations/:organisation_id/workspace/partner-agreements/:agreement_id/actions/transition", ({ request }) => answerIdempotent(EXAMPLES["transitionPartnerChannelAgreement"], request)),
+  http.post(BASE + "/organisations/:organisation_id/workspace/guest-grants", ({ request }) => answerIdempotent(EXAMPLES["grantSingleChannelGuest"], request)),
+  http.post(BASE + "/organisations/:organisation_id/workspace/guest-grants/:grant_id/actions/revoke", ({ request }) => answerIdempotent(EXAMPLES["revokeSingleChannelGuest"], request)),
+  http.get(BASE + "/organisations/:organisation_id/workspace/guest-channel", () => answer(EXAMPLES["getSingleGuestChannel"])),
+  http.get(BASE + "/organisations/:organisation_id/confidential/rooms/:room_id/discovery", () => answer(EXAMPLES["discoverConfidentialRoom"])),
+  http.post(BASE + "/organisations/:organisation_id/confidential/verification-bundles", ({ request }) => answerIdempotent(EXAMPLES["publishDeviceVerificationBundle"], request)),
 ]

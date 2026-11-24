@@ -19,6 +19,7 @@ export const ADMIN_SECTIONS = [
   'invites',
   'extensions',
   'moderation',
+  'governance',
   'audit',
   'community',
   'quotas',
@@ -51,7 +52,7 @@ export const ADMIN_GROUPS: readonly {
 }[] = [
   { key: 'workspace', items: ['overview', 'community', 'channels', 'extensions'] },
   { key: 'people', items: ['members', 'roles', 'invites'] },
-  { key: 'safety', items: ['moderation', 'audit'] },
+  { key: 'safety', items: ['moderation', 'governance', 'audit'] },
   { key: 'platform', items: ['quotas', 'hosting'] },
 ]
 

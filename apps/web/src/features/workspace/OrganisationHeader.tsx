@@ -1,3 +1,4 @@
+import { useWorkspaceLogo } from './useWorkspaceLogo'
 import { useTranslation } from 'react-i18next'
 import { communityHostname } from '../../app/communityHost'
 import { useOrganisationSwitch } from '../../app/organisationSwitch'
@@ -10,13 +11,15 @@ const FRAME = 'flex w-full min-w-0 items-center gap-3 rounded-md px-2 py-2 text-
 export interface OrganisationHeaderProps {
   name: string
   slug: string
+  logoUrl?: string | undefined
 }
 
 function identityHostname(slug: string) {
   return slug === 'community' ? (communityHostname() ?? 'community.kodera.io') : undefined
 }
 
-function Identity({ name, slug }: OrganisationHeaderProps) {
+function Identity({ name, slug, logoUrl }: OrganisationHeaderProps) {
+  const logoSrc = useWorkspaceLogo(logoUrl)
   const hostname = identityHostname(slug)
   return (
     <>
@@ -25,9 +28,12 @@ function Identity({ name, slug }: OrganisationHeaderProps) {
         aria-hidden="true"
         className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-c-accent-soft text-sm font-bold text-c-accent-ink"
       >
-        {initialsOf(name)}
-      </span>
-      {' '}
+        {logoSrc ? (
+          <img src={logoSrc} alt="" className="h-full w-full rounded-md object-cover" />
+        ) : (
+          initialsOf(name)
+        )}
+      </span>{' '}
       <span className="flex min-w-0 flex-1 flex-col">
         <span className="truncate text-sm font-bold text-c-ink">{name}</span>
         {hostname !== undefined ? (
@@ -41,7 +47,7 @@ function Identity({ name, slug }: OrganisationHeaderProps) {
   )
 }
 
-export function OrganisationHeader({ name, slug }: OrganisationHeaderProps) {
+export function OrganisationHeader({ name, slug, logoUrl }: OrganisationHeaderProps) {
   const { t } = useTranslation()
   const organisationSwitch = useOrganisationSwitch()
   const visibleIdentity = [initialsOf(name), name, identityHostname(slug)]
@@ -51,7 +57,7 @@ export function OrganisationHeader({ name, slug }: OrganisationHeaderProps) {
   if (organisationSwitch === undefined) {
     return (
       <div className={FRAME}>
-        <Identity name={name} slug={slug} />
+        <Identity name={name} slug={slug} logoUrl={logoUrl} />
       </div>
     )
   }
@@ -72,7 +78,7 @@ export function OrganisationHeader({ name, slug }: OrganisationHeaderProps) {
             'focus-visible:ring focus-visible:outline-hidden'
           )}
         >
-          <Identity name={name} slug={slug} />
+          <Identity name={name} slug={slug} logoUrl={logoUrl} />
           <svg
             aria-hidden="true"
             viewBox="0 0 24 24"

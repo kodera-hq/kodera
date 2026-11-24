@@ -1,15 +1,13 @@
+import { WorkspaceUiModeToggle } from './WorkspaceUiModeToggle'
 import { lazy, memo, Suspense, useEffect, useId, useState, useSyncExternalStore } from 'react'
 import type { MouseEvent, ReactNode, RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
 import { formatElapsed, type Locale } from '../../i18n/format'
 import { Button } from '../../ui/Button/Button'
-import { cssProperty } from '../../ui/cssom'
 import { cx } from '../../ui/cx'
 import { ActionIcon } from '../../ui/icons/ActionIcons'
 import { KoderaIcon } from '../../ui/icons/KoderaIcons'
 import { TOUCH_TARGET, TOUCH_TARGET_HEIGHT } from '../../ui/touchTarget'
-import { UniversalSearch } from '../command-palette/UniversalSearch'
-import { paletteCopy } from '../command-palette/messages'
 import {
   isRoomSearchPermitted,
   type ConfidentialChannelFlags,
@@ -22,12 +20,15 @@ import { OrganisationHeader } from '../workspace/OrganisationHeader'
 import {
   categoryLabel,
   channelLabel,
+  isArrivalsChannel,
+  arrivalsFirst,
   type Workspace,
   type WorkspaceChannel,
 } from '../workspace/workspace'
 import { AntennaIcon } from './AntennaIcon'
 import { ChannelContextMenu, type ChannelMenuTarget } from './ChannelContextMenu'
 import {
+  nameOf,
   isProximityChannel,
   roomForChannel,
   roomRowId,
@@ -44,50 +45,6 @@ import { uiModeCopy, type WorkspaceUiMode } from './uiModePreference'
 const LazyDirectMessageDialog = lazy(() =>
   import('./DirectMessageDialog').then((module) => ({ default: module.DirectMessageDialog }))
 )
-
-export function WorkspaceUiModeToggle({
-  mode,
-  onSelect,
-}: {
-  readonly mode: WorkspaceUiMode
-  readonly onSelect: (next: WorkspaceUiMode) => void
-}) {
-  const { i18n } = useTranslation()
-  const copy = uiModeCopy(i18n.resolvedLanguage)
-  return (
-    <div
-      role="group"
-      aria-label={copy.modeToggleGroup}
-      data-testid="workspace-ui-mode-toggle"
-      className="grid grid-cols-2 gap-1 rounded-md border border-c-border-soft bg-c-sunken p-1"
-    >
-      {(['pro', 'simple'] as const).map((option) => {
-        const active = mode === option
-        return (
-          <button
-            key={option}
-            type="button"
-            data-testid={`workspace-ui-mode-${option}`}
-            aria-pressed={active}
-            onClick={() => {
-              if (!active) onSelect(option)
-            }}
-            className={cx(
-              'inline-flex min-h-[28px] min-w-12 items-center justify-center rounded-sm px-2 py-1 text-xs font-semibold transition-colors duration-fast motion-reduce:transition-none',
-              TOUCH_TARGET_HEIGHT,
-              'focus-visible:ring focus-visible:outline-hidden',
-              active
-                ? 'bg-c-accent-soft text-c-accent-ink ring-1 ring-c-accent-ink ring-inset'
-                : 'text-c-ink-3 hover:bg-c-muted hover:text-c-ink-2'
-            )}
-          >
-            {option === 'pro' ? copy.modePro : copy.modeSimple}
-          </button>
-        )
-      })}
-    </div>
-  )
-}
 
 export interface SimpleFeedItem {
   readonly key: string
@@ -109,6 +66,8 @@ export interface SimpleFeedItem {
 
 export function compareSimpleFeedItems(a: SimpleFeedItem, b: SimpleFeedItem): number {
   return (
+    Number(Boolean(b.channel && isArrivalsChannel(b.channel))) -
+      Number(Boolean(a.channel && isArrivalsChannel(a.channel))) ||
     Number(b.isFavorite) - Number(a.isFavorite) ||
     Number(b.mentions > 0) - Number(a.mentions > 0) ||
     Number(b.unread > 0) - Number(a.unread > 0) ||
@@ -190,6 +149,7 @@ export interface SimpleMessagingSidebarProps {
   readonly onChannelToggleMute?: ((target: ChannelMenuTarget) => void) | undefined
   readonly isChannelMuted?: ((channelId: string) => boolean) | undefined
   readonly onChannelInvite?: ((target: ChannelMenuTarget) => void) | undefined
+  readonly canInviteChannel?: ((channelId: string) => boolean) | undefined
   readonly onChannelCopyLink?: ((target: ChannelMenuTarget) => void) | undefined
   readonly onChannelPermissions?: ((target: ChannelMenuTarget) => void) | undefined
   readonly canManageChannel?: ((channelId: string) => boolean) | undefined
@@ -199,30 +159,23 @@ export interface SimpleMessagingSidebarProps {
 
 function SimpleMessagingSidebarView({
   store,
-  workspace,
+  workspace: incomingWorkspace,
   org,
   organisationName,
   narrow,
   simulation,
   headingId,
-  width,
   uiMode,
   onChangeUiMode,
   activeChannelId,
   activeDirectRoomId,
   favoriteChannels,
   proximityChannelIds,
-  documents,
   searchEntries,
-  dynamicEntries,
-  mentionCandidates,
-  insertRef,
   organisationActionSlot,
   sidebarActionSlot,
   sidebarFooterSlot,
   className,
-  onChooseFromSearch,
-  onOpenDocument,
   onSelectTextChannel,
   onSelectDirect,
   onStartQuickCall,
@@ -233,17 +186,20 @@ function SimpleMessagingSidebarView({
   onChannelToggleMute,
   isChannelMuted,
   onChannelInvite,
+  canInviteChannel,
   onChannelCopyLink,
   onChannelPermissions,
   canManageChannel,
   onOpenNotification,
   nowMs,
 }: SimpleMessagingSidebarProps) {
+  const workspace = arrivalsFirst(incomingWorkspace)
   const { t, i18n } = useTranslation()
   const locale: Locale = i18n.resolvedLanguage?.startsWith('en') ? 'en' : 'fr'
   const copy = uiModeCopy(i18n.resolvedLanguage)
-  const cmdCopy = paletteCopy(i18n.resolvedLanguage)
   const feedListLabelId = useId()
+  const [filter, setFilter] = useState<'all' | 'unread' | 'directs' | 'channels'>('all')
+  const [search, setSearch] = useState('')
   const [composingDm, setComposingDm] = useState(false)
   const [menuTarget, setMenuTarget] = useState<ChannelMenuTarget | null>(null)
   const [clockMs, setClockMs] = useState(() => Date.now())
@@ -292,7 +248,9 @@ function SimpleMessagingSidebarView({
       const mentions = room?.mentions ?? 0
       const mentionMsg =
         permitted && mentions > 0 ? messages.findLast((msg) => msg.mentionsMe) : undefined
-      const rawPreview = permitted ? (mentionMsg?.body ?? latest?.body ?? '') : ''
+      const previewMessage = mentionMsg ?? latest
+      const rawPreview =
+        permitted && previewMessage ? `${nameOf(previewMessage)}: ${previewMessage.body}` : ''
       items.push({
         key: `direct:${dm.roomId}`,
         kind: 'direct',
@@ -324,7 +282,10 @@ function SimpleMessagingSidebarView({
 
   for (const { channel, categoryName } of channelEntries) {
     const label = channelLabel(channel, t)
-    const isFavorite = favoriteChannels.has(channel.id)
+    const isFavorite =
+      channel.id === workspace.arrivals_channel_id ||
+      isArrivalsChannel(channel) ||
+      favoriteChannels.has(channel.id)
     const room = roomForChannel(channel, snapshot.channels, snapshot.rooms)
     const unread = room?.unread ?? 0
     const mentions = room?.mentions ?? 0
@@ -335,7 +296,7 @@ function SimpleMessagingSidebarView({
     if (ts > maxObservedTs) maxObservedTs = ts
 
     const hasActivity = isFavorite || unread > 0 || mentions > 0 || ts > 0 || occupantCount > 0
-    if (!hasActivity) continue
+    if (!hasActivity && channel.lifecycle !== 'active') continue
 
     const flags = channel as WorkspaceChannel & ConfidentialChannelFlags
     const permitted =
@@ -355,7 +316,8 @@ function SimpleMessagingSidebarView({
           : copy.activeCallMany.replace('{count}', String(occupantCount))
     } else {
       const mentionMsg = mentions > 0 ? messages.findLast((msg) => msg.mentionsMe) : undefined
-      const rawBody = mentionMsg?.body ?? latest?.body ?? ''
+      const previewMessage = mentionMsg ?? latest
+      const rawBody = previewMessage ? `${nameOf(previewMessage)}: ${previewMessage.body}` : ''
       excerpt = rawBody ? excerptOf(rawBody, 76) : copy.noMessagesYet
     }
 
@@ -370,7 +332,10 @@ function SimpleMessagingSidebarView({
       selected: activeDirectRoomId === null && channel.id === activeChannelId,
       quarantined: !permitted,
       excerpt,
-      channel,
+      channel:
+        channel.id === workspace.arrivals_channel_id
+          ? { ...channel, template_key: 'arrivals' }
+          : channel,
       categoryName,
       room,
       ...(channel.kind === 'audio' ? { rowDomId: roomRowId(headingId, channel.id) } : {}),
@@ -384,9 +349,8 @@ function SimpleMessagingSidebarView({
     <nav
       aria-labelledby={headingId}
       data-testid="simple-messaging-sidebar"
-      ref={cssProperty('width', narrow ? undefined : `${width}px`)}
       className={cx(
-        'material-panel order-first flex w-shell-sidebar-width shrink-0 flex-col justify-between overflow-hidden border-r border-c-border-soft p-3 narrow:max-h-[calc(100vh*3/4)] narrow:w-full narrow:border-r-0',
+        'messages-master material-panel order-first flex shrink-0 flex-col justify-between overflow-hidden border-r border-c-border-soft p-3',
         className
       )}
     >
@@ -394,11 +358,13 @@ function SimpleMessagingSidebarView({
         <div className="flex flex-col gap-2">
           {narrow && simulation ? null : (
             <div className="flex items-center gap-1">
-              {narrow ? null : (
-                <div className="min-w-0 flex-1">
-                  <OrganisationHeader name={organisationName} slug={org} />
-                </div>
-              )}
+              <div className="min-w-0 flex-1">
+                <OrganisationHeader
+                  name={workspace.display_name || organisationName}
+                  slug={org}
+                  logoUrl={workspace.logo_url}
+                />
+              </div>
               {simulation ? null : (
                 <NotificationCenter
                   store={store}
@@ -410,50 +376,16 @@ function SimpleMessagingSidebarView({
             </div>
           )}
           {organisationActionSlot ?? null}
-          <h2 id={headingId} className="sr-only">
-            {t('console.workspace.sidebar.title')}
-          </h2>
-          <WorkspaceUiModeToggle
-            mode={uiMode}
-            onSelect={(next) => onChangeUiMode(next, { fromToggle: true })}
-          />
+          <div className="flex items-center justify-between gap-2">
+            <h2 id={headingId} className="text-lg font-semibold">
+              {copy.title}
+            </h2>
+            <WorkspaceUiModeToggle
+              mode={uiMode}
+              onSelect={(next) => onChangeUiMode(next, { fromToggle: true })}
+            />
+          </div>
           <div className="flex items-center gap-2">
-            <div className="min-w-0 flex-1">
-              <UniversalSearch
-                entries={searchEntries}
-                {...(dynamicEntries === undefined ? {} : { dynamicEntries })}
-                onChoose={onChooseFromSearch}
-                shortcut={!narrow}
-                actions={[
-                  {
-                    id: 'ui-mode',
-                    label: cmdCopy.switchToPro,
-                    open: () => onChangeUiMode('pro'),
-                  },
-                ]}
-                members={mentionCandidates.map((member) => ({
-                  id: member.userId,
-                  label: `@${member.label}`,
-                  open: () => {
-                    insertRef.current?.(`@${member.label} `)
-                  },
-                }))}
-                directMessages={
-                  simulation || onSelectDirect === undefined || store.getDirects === undefined
-                    ? []
-                    : store.getDirects().map((dm) => ({
-                        id: dm.roomId,
-                        label: dm.name,
-                        open: () => onSelectDirect(dm.roomId),
-                      }))
-                }
-                documents={(onOpenDocument ? documents : []).map((doc) => ({
-                  id: doc.id,
-                  label: doc.title,
-                  open: () => onOpenDocument?.(doc),
-                }))}
-              />
-            </div>
             {simulation || onSelectDirect === undefined ? null : (
               <Button
                 variant="secondary"
@@ -481,6 +413,29 @@ function SimpleMessagingSidebarView({
           {sidebarActionSlot ?? null}
         </div>
 
+        <label className="flex flex-col gap-2">
+          <span className="sr-only">{copy.search}</span>
+          <input
+            type="search"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder={copy.search}
+            className="min-h-10 rounded-full border border-c-border-soft bg-c-sunken px-3 text-sm text-c-ink focus-visible:ring focus-visible:outline-hidden"
+          />
+        </label>
+        <div role="group" aria-label={copy.conversationsLabel} className="flex gap-1">
+          {(['all', 'unread', 'directs', 'channels'] as const).map((key) => (
+            <button
+              key={key}
+              type="button"
+              aria-pressed={filter === key}
+              onClick={() => setFilter(key)}
+              className="min-h-8 rounded-full px-3 text-xs text-c-ink-2 hover:bg-c-muted aria-pressed:bg-c-accent-soft aria-pressed:text-c-accent-ink narrow:min-h-[44px]"
+            >
+              {copy[key]}
+            </button>
+          ))}
+        </div>
         <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
           {simulation || onSelectDirect === undefined ? null : (
             <PendingInvitations store={store} onSelect={onSelectDirect} />
@@ -492,176 +447,199 @@ function SimpleMessagingSidebarView({
             <p className="px-2 py-4 text-center text-xs text-c-ink-3">{copy.emptyFeed}</p>
           ) : (
             <ul aria-labelledby={feedListLabelId} className="flex flex-col gap-1">
-              {items.map((item) => {
-                const relativeTs = formatRelativeActivity(
-                  item.lastActivityTs,
-                  referenceNow,
-                  locale,
-                  copy.justNow
+              {items
+                .filter(
+                  (item) =>
+                    (filter === 'all' ||
+                      (filter === 'unread' && item.unread > 0) ||
+                      (filter === 'directs' && item.kind === 'direct') ||
+                      (filter === 'channels' && item.kind !== 'direct')) &&
+                    `${item.label} ${item.quarantined ? '' : item.excerpt}`
+                      .toLocaleLowerCase(locale)
+                      .includes(search.trim().toLocaleLowerCase(locale))
                 )
-                const badgeCount = item.mentions > 0 ? item.mentions : item.unread
-                return (
-                  <li
-                    key={item.key}
-                    data-testid={`simple-feed-row-${item.key}`}
-                    onContextMenu={
-                      item.channel !== undefined && (ownsMenu || onChannelContextMenu !== undefined)
-                        ? (event) => {
-                            event.preventDefault()
-                            openMenu(
-                              menuTargetOf(event, item.channel!.id, item.label, item.channel!.kind)
-                            )
+                .map((item) => {
+                  const relativeTs = formatRelativeActivity(
+                    item.lastActivityTs,
+                    referenceNow,
+                    locale,
+                    copy.justNow
+                  )
+                  const badgeCount = item.mentions > 0 ? item.mentions : item.unread
+                  return (
+                    <li
+                      key={item.key}
+                      data-testid={`simple-feed-row-${item.key}`}
+                      onContextMenu={
+                        item.channel !== undefined &&
+                        (ownsMenu || onChannelContextMenu !== undefined)
+                          ? (event) => {
+                              event.preventDefault()
+                              openMenu(
+                                menuTargetOf(
+                                  event,
+                                  item.channel!.id,
+                                  item.label,
+                                  item.channel!.kind
+                                )
+                              )
+                            }
+                          : undefined
+                      }
+                      className={cx(
+                        'group flex items-center gap-1 rounded-md px-1 py-[2px] transition-colors duration-fast motion-reduce:transition-none',
+                        item.selected
+                          ? 'bg-c-accent-soft text-c-accent-ink'
+                          : 'text-c-ink hover:bg-c-muted'
+                      )}
+                    >
+                      <button
+                        type="button"
+                        data-primary-row-button=""
+                        id={item.rowDomId}
+                        aria-current={item.selected ? 'page' : undefined}
+                        onClick={() => {
+                          if (item.kind === 'direct' && item.direct !== undefined) {
+                            onSelectDirect?.(item.direct.roomId)
+                          } else if (item.kind === 'audio' && item.channel !== undefined) {
+                            onStartQuickCall({
+                              kind: 'audio',
+                              channel: item.channel,
+                              room: item.room,
+                              categoryName: item.categoryName,
+                            })
+                          } else if (item.channel !== undefined) {
+                            onSelectTextChannel(item.channel.id)
                           }
-                        : undefined
-                    }
-                    className={cx(
-                      'group flex items-center gap-1 rounded-md px-1 py-[2px] transition-colors duration-fast motion-reduce:transition-none',
-                      item.selected
-                        ? 'bg-c-accent-soft text-c-accent-ink'
-                        : 'text-c-ink hover:bg-c-muted'
-                    )}
-                  >
-                    <button
-                      type="button"
-                      data-primary-row-button=""
-                      id={item.rowDomId}
-                      aria-current={item.selected ? 'page' : undefined}
-                      onClick={() => {
-                        if (item.kind === 'direct' && item.direct !== undefined) {
-                          onSelectDirect?.(item.direct.roomId)
-                        } else if (item.kind === 'audio' && item.channel !== undefined) {
+                        }}
+                        className={cx(
+                          'flex min-h-[64px] min-w-0 flex-1 items-center gap-3 rounded-sm px-2 py-2 text-left focus-visible:ring focus-visible:outline-hidden',
+                          TOUCH_TARGET_HEIGHT
+                        )}
+                      >
+                        {item.kind === 'direct' && item.direct !== undefined ? (
+                          <span aria-hidden="true" className="inline-flex shrink-0">
+                            <MemberAvatar
+                              name={item.label}
+                              identity={item.direct.userIds[0] ?? item.direct.roomId}
+                              mxc={item.direct.avatarMxc}
+                              size="lg"
+                              className="h-[44px] w-[44px]"
+                              onlineLabel={
+                                item.direct.userIds.some((id) => store.isOnline?.(id))
+                                  ? t('console.workspace.presence.online')
+                                  : undefined
+                              }
+                            />
+                          </span>
+                        ) : item.kind === 'audio' ? (
+                          <span
+                            aria-hidden="true"
+                            className="flex h-[44px] w-[44px] shrink-0 items-center justify-center rounded-full bg-c-muted text-c-ink-2"
+                          >
+                            <KoderaIcon name="calls" className="h-4 w-4 shrink-0" />
+                          </span>
+                        ) : item.channel !== undefined &&
+                          isProximityChannel(item.channel, proximityChannelIds) ? (
+                          <span
+                            aria-hidden="true"
+                            className="flex h-[44px] w-[44px] shrink-0 items-center justify-center rounded-full bg-c-muted text-c-ink-2"
+                          >
+                            <AntennaIcon />
+                          </span>
+                        ) : (
+                          <span
+                            aria-hidden="true"
+                            className="flex h-[44px] w-[44px] shrink-0 items-center justify-center rounded-full bg-c-muted font-mono text-sm font-medium text-c-ink-2"
+                          >
+                            #
+                          </span>
+                        )}
+
+                        <span className="flex min-w-0 flex-1 flex-col gap-1">
+                          <span className="flex min-w-0 items-center justify-between gap-2">
+                            <span className="flex min-w-0 items-center gap-1">
+                              <span className="truncate text-sm font-semibold">{item.label}</span>
+                              {item.isFavorite ? (
+                                <>
+                                  <span
+                                    aria-hidden="true"
+                                    title={copy.pinnedBadge}
+                                    className="inline-flex shrink-0 text-c-accent-ink"
+                                  >
+                                    <KoderaIcon name="pin" className="h-4 w-4 shrink-0" />
+                                  </span>
+                                  <span className="sr-only">{copy.pinnedBadge}</span>
+                                </>
+                              ) : null}
+                            </span>
+                            {relativeTs ? (
+                              <span className="shrink-0 text-xs text-c-ink-3 tabular-nums">
+                                {relativeTs}
+                              </span>
+                            ) : null}
+                          </span>
+
+                          <span className="flex min-w-0 items-center justify-between gap-2">
+                            <span
+                              data-testid={
+                                item.quarantined ? 'simple-feed-quarantined-excerpt' : undefined
+                              }
+                              className={cx(
+                                'flex min-w-0 flex-1 items-center gap-1 truncate text-xs',
+                                item.selected ? 'text-c-accent-ink' : 'text-c-ink-3'
+                              )}
+                            >
+                              {item.quarantined ? (
+                                <KoderaIcon name="shield" className="h-4 w-4 shrink-0" />
+                              ) : null}
+                              <span className="truncate">{item.excerpt}</span>
+                            </span>
+                            {badgeCount > 0 ? (
+                              <span className="min-w-5 shrink-0 rounded-full bg-c-action px-2 text-center text-xs font-bold text-c-on-inverse tabular-nums">
+                                <span className="sr-only">
+                                  {item.mentions > 0
+                                    ? t('console.workspace.channel.count-mentions', {
+                                        count: item.mentions,
+                                      })
+                                    : t('console.workspace.directs.label-unread', {
+                                        count: String(item.unread),
+                                      })}
+                                </span>
+                                <span aria-hidden="true">{badgeCount}</span>
+                              </span>
+                            ) : null}
+                          </span>
+                        </span>
+                      </button>
+
+                      <button
+                        type="button"
+                        data-testid={`simple-feed-call-${item.key}`}
+                        aria-label={copy.callAction.replace('{name}', item.label)}
+                        title={copy.callAction.replace('{name}', item.label)}
+                        onClick={(event) => {
+                          event.stopPropagation()
                           onStartQuickCall({
-                            kind: 'audio',
+                            kind: item.kind,
                             channel: item.channel,
+                            direct: item.direct,
                             room: item.room,
                             categoryName: item.categoryName,
                           })
-                        } else if (item.channel !== undefined) {
-                          onSelectTextChannel(item.channel.id)
-                        }
-                      }}
-                      className={cx(
-                        'flex min-h-12 min-w-0 flex-1 items-center gap-3 rounded-sm px-2 py-2 text-left focus-visible:ring focus-visible:outline-hidden',
-                        TOUCH_TARGET_HEIGHT
-                      )}
-                    >
-                      {item.kind === 'direct' && item.direct !== undefined ? (
-                        <span aria-hidden="true" className="inline-flex shrink-0">
-                          <MemberAvatar
-                            name={item.label}
-                            identity={item.direct.userIds[0] ?? item.direct.roomId}
-                            mxc={item.direct.avatarMxc}
-                            size="md"
-                          />
-                        </span>
-                      ) : item.kind === 'audio' ? (
-                        <span
-                          aria-hidden="true"
-                          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-c-muted text-c-ink-2"
-                        >
-                          <KoderaIcon name="calls" className="h-4 w-4 shrink-0" />
-                        </span>
-                      ) : item.channel !== undefined &&
-                        isProximityChannel(item.channel, proximityChannelIds) ? (
-                        <span
-                          aria-hidden="true"
-                          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-c-muted text-c-ink-2"
-                        >
-                          <AntennaIcon />
-                        </span>
-                      ) : (
-                        <span
-                          aria-hidden="true"
-                          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-c-muted font-mono text-sm font-medium text-c-ink-2"
-                        >
-                          #
-                        </span>
-                      )}
-
-                      <span className="flex min-w-0 flex-1 flex-col gap-1">
-                        <span className="flex min-w-0 items-center justify-between gap-2">
-                          <span className="flex min-w-0 items-center gap-1">
-                            <span className="truncate text-sm font-semibold">{item.label}</span>
-                            {item.isFavorite ? (
-                              <>
-                                <span
-                                  aria-hidden="true"
-                                  title={copy.pinnedBadge}
-                                  className="inline-flex shrink-0 text-c-accent-ink"
-                                >
-                                  <ActionIcon name="sparkle" className="h-4 w-4 shrink-0" />
-                                </span>
-                                <span className="sr-only">{copy.pinnedBadge}</span>
-                              </>
-                            ) : null}
-                          </span>
-                          {relativeTs ? (
-                            <span className="shrink-0 text-xs text-c-ink-3 tabular-nums">
-                              {relativeTs}
-                            </span>
-                          ) : null}
-                        </span>
-
-                        <span className="flex min-w-0 items-center justify-between gap-2">
-                          <span
-                            data-testid={
-                              item.quarantined ? 'simple-feed-quarantined-excerpt' : undefined
-                            }
-                            className={cx(
-                              'flex min-w-0 flex-1 items-center gap-1 truncate text-xs',
-                              item.selected ? 'text-c-accent-ink' : 'text-c-ink-3'
-                            )}
-                          >
-                            {item.quarantined ? (
-                              <KoderaIcon name="shield" className="h-4 w-4 shrink-0" />
-                            ) : null}
-                            <span className="truncate">{item.excerpt}</span>
-                          </span>
-                          {badgeCount > 0 ? (
-                            <span className="min-w-5 shrink-0 rounded-full bg-c-action px-2 text-center text-xs font-bold text-c-on-inverse tabular-nums">
-                              <span className="sr-only">
-                                {item.mentions > 0
-                                  ? t('console.workspace.channel.count-mentions', {
-                                      count: item.mentions,
-                                    })
-                                  : t('console.workspace.directs.label-unread', {
-                                      count: String(item.unread),
-                                    })}
-                              </span>
-                              <span aria-hidden="true">{badgeCount}</span>
-                            </span>
-                          ) : null}
-                        </span>
-                      </span>
-                    </button>
-
-                    <button
-                      type="button"
-                      data-testid={`simple-feed-call-${item.key}`}
-                      aria-label={copy.callAction.replace('{name}', item.label)}
-                      title={copy.callAction.replace('{name}', item.label)}
-                      onClick={(event) => {
-                        event.stopPropagation()
-                        onStartQuickCall({
-                          kind: item.kind,
-                          channel: item.channel,
-                          direct: item.direct,
-                          room: item.room,
-                          categoryName: item.categoryName,
-                        })
-                      }}
-                      className={cx(
-                        'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-sm transition-colors duration-fast motion-reduce:transition-none',
-                        TOUCH_TARGET,
-                        'hover:bg-c-muted-2 hover:text-c-ink focus-visible:ring focus-visible:outline-hidden',
-                        item.selected ? 'text-c-accent-ink' : 'text-c-ink-3'
-                      )}
-                    >
-                      <KoderaIcon name="calls" className="h-4 w-4 shrink-0" />
-                    </button>
-                  </li>
-                )
-              })}
+                        }}
+                        className={cx(
+                          'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-sm transition-colors duration-fast motion-reduce:transition-none',
+                          TOUCH_TARGET,
+                          'hover:bg-c-muted-2 hover:text-c-ink focus-visible:ring focus-visible:outline-hidden',
+                          item.selected ? 'text-c-accent-ink' : 'text-c-ink-3'
+                        )}
+                      >
+                        <KoderaIcon name="calls" className="h-4 w-4 shrink-0" />
+                      </button>
+                    </li>
+                  )
+                })}
             </ul>
           )}
         </div>
@@ -677,6 +655,7 @@ function SimpleMessagingSidebarView({
         onToggleMute={onChannelToggleMute}
         isMuted={isChannelMuted}
         onInvite={onChannelInvite}
+        canInvite={canInviteChannel}
         onCopyLink={onChannelCopyLink}
         onPermissions={onChannelPermissions}
         canManage={canManageChannel}

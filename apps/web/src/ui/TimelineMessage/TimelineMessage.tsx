@@ -84,6 +84,7 @@ export type TimelineDelivery =
 export interface TimelineMessageProps {
   document?: { title: string; subtitle: string; openLabel: string; onOpen: () => void } | undefined
   author: string
+  own?: boolean | undefined
   /** Optional accessible profile disclosure around the avatar and author name. */
   profileTrigger?: ((trigger: ReactElement) => ReactNode) | undefined
   avatarIdentity?: string
@@ -125,6 +126,7 @@ const ROOT =
 export function TimelineMessage({
   document,
   author,
+  own = false,
   profileTrigger,
   avatarIdentity,
   avatarOnlineLabel,
@@ -178,6 +180,8 @@ export function TimelineMessage({
   const namedAvatar = <Avatar {...avatarProps} />
   return (
     <article
+      data-own={own}
+      data-compact={compact}
       data-ph-no-capture
       aria-labelledby={labelledBy}
       data-mention={isMention ? '' : undefined}
@@ -195,7 +199,7 @@ export function TimelineMessage({
           className="absolute top-0 bottom-0 left-0 w-1 rounded-sm bg-c-accent-ink"
         />
       ) : null}
-      <div className="w-10 shrink-0">
+      <div data-message-avatar="" className="w-10 shrink-0">
         {compact ? (
           <time
             id={timeId}

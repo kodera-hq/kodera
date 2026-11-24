@@ -12,7 +12,7 @@
 import {
   ESPACE_TIMELINE_DATABASE,
   ESPACE_VAULT_DATABASE as SESSION_VAULT_DATABASE,
-  ESPACE_VAULT_WIPE_CHANNEL,
+  espaceVaultWipeChannelName,
   registerEspaceVaultCleanup,
   registerLocalSessionCleanup,
 } from '@/auth/localSession'
@@ -2256,7 +2256,7 @@ if (typeof indexedDB !== 'undefined') {
 
 if (typeof BroadcastChannel === 'function') {
   try {
-    const channel = new BroadcastChannel(ESPACE_VAULT_WIPE_CHANNEL)
+    const channel = new BroadcastChannel(espaceVaultWipeChannelName())
     channel.onmessage = () => {
       revokeOpenVaultsSynchronously()
     }

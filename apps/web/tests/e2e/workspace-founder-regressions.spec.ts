@@ -9,7 +9,7 @@ test('founder surfaces: profile, audio controls, connector target and settings E
   page,
 }, info) => {
   await page.goto('/community/workspace')
-  await expect(page.getByRole('heading', { name: 'announcements', exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'arrivals', exact: true })).toBeVisible()
   const trigger = page.getByRole('button', { name: 'Réglages', exact: true })
   await trigger.click()
   const settings = page.getByRole('dialog', { name: 'Paramètres personnels', exact: true })
@@ -94,7 +94,7 @@ test('founder canvases: Docs and Files mount, channel selection restores chat, r
   page,
 }, info) => {
   await page.goto('/community/workspace')
-  await expect(page.getByRole('heading', { name: 'announcements', exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'arrivals', exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Docs', exact: true }).click()
   await expect(page.getByTestId('espace-inline-docs-canvas')).toBeVisible()
   await expect(

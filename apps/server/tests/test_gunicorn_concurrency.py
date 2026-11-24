@@ -297,9 +297,9 @@ unfurl.unfurl = fetch
 
             # Deterministically saturate all 4 BodyGuard slots across both workers so the 6-way
             # upload burst MUST exercise `503` + `Retry-After: 1` + idempotent retry on every run.
-            open_slow_body_sockets(12)
+            open_slow_body_sockets(16)
             with ThreadPoolExecutor(4) as sat_pool:
-                for _ in range(40):
+                for attempt in range(40):
                     probe = list(
                         sat_pool.map(
                             lambda _: request("POST", "/api/v1/saturate-probe", {"probe": 2})[0],
@@ -308,6 +308,8 @@ unfurl.unfurl = fetch
                     )
                     if probe == [503] * 4:
                         break
+                    if attempt % 4 == 3 and len(partial) < 32:
+                        open_slow_body_sockets(2)
                     time.sleep(0.025)
                 else:
                     pytest.fail("Burst setup did not saturate all 4 BodyGuard slots: " + str(probe))

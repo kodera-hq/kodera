@@ -4,7 +4,7 @@ for (const entry of ['/', '/community/workspace']) {
   test(`a fresh ${entry} opens community without a demo flag`, async ({ page }) => {
     await page.goto(entry)
     await expect(page).toHaveURL(/\/community\/workspace$/)
-    await expect(page.getByRole('heading', { name: 'announcements', exact: true })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'arrivals', exact: true })).toBeVisible()
     await expect(page.getByText('Organisation introuvable', { exact: true })).toHaveCount(0)
   })
 }
@@ -20,7 +20,7 @@ test('explicit demo opt-out survives a later community navigation', async ({ pag
 
 test('unknown organisation stays unresolved', async ({ page }) => {
   await page.goto('/community/workspace')
-  await expect(page.getByRole('heading', { name: 'announcements', exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'arrivals', exact: true })).toBeVisible()
   await page.goto('/unknown-org/home')
   await page.getByRole('button', { name: 'Continuer', exact: true }).click()
   await expect(
@@ -56,7 +56,7 @@ test('creates a workspace, sends a message and returns to community', async ({ p
     .click()
   await page.getByRole('menuitemradio', { name: /Kodera Community/ }).click()
   await expect(page).toHaveURL(/\/community\/workspace/)
-  await expect(page.getByRole('heading', { name: 'announcements', exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'arrivals', exact: true })).toBeVisible()
   await page
     .getByRole('button', { name: /changer d’organisation/ })
     .last()
@@ -146,7 +146,7 @@ test('mobile onboarding keeps the current conversation behind an accessible moda
 }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await page.goto('/community/workspace')
-  await expect(page.getByRole('heading', { name: 'announcements', exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'arrivals', exact: true })).toBeVisible()
   await page
     .getByRole('button', { name: /changer d’organisation/ })
     .last()
@@ -154,10 +154,10 @@ test('mobile onboarding keeps the current conversation behind an accessible moda
   await page.getByRole('menuitem', { name: /Créer.*nouvel espace/ }).click()
   await expect(page.getByRole('dialog')).toBeInViewport()
   await expect(
-    page.getByRole('textbox', { name: 'Message dans #announcements', exact: true })
+    page.getByRole('textbox', { name: 'Message dans #arrivals', exact: true })
   ).toHaveCount(0)
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
   await page.keyboard.press('Escape')
   await expect(page.getByRole('dialog')).toHaveCount(0)
-  await expect(page.getByRole('heading', { name: 'announcements', exact: true })).toBeInViewport()
+  await expect(page.getByRole('heading', { name: 'arrivals', exact: true })).toBeInViewport()
 })

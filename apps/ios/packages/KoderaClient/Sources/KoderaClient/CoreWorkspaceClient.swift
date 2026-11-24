@@ -18,6 +18,16 @@ public struct WorkspaceSetup: Equatable, Sendable {
 }
 
 /// Server-filtered metadata only. A ready room does not establish current Matrix access.
+/// Display precedence survives translated names and administrator reordering.
+public func isArrivalsChannelName(_ name: String, templateKey: String? = nil) -> Bool {
+    [name, templateKey ?? ""].contains { value in
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "#"))
+            .folding(options: [.diacriticInsensitive, .caseInsensitive], locale: Locale(identifier: "en_US_POSIX"))
+        return ["arrivals", "arrivees"].contains(normalized)
+    }
+}
+
 public struct WorkspaceChannel: Equatable, Sendable {
     public let id: String
     public let kind: WorkspaceChannelKind
@@ -114,7 +124,7 @@ public actor CoreWorkspaceClient {
     }
 
     static func decode(_ data: Data, organisationId: String) throws -> WorkspaceSnapshot {
-        let root = try object(StrictJSON.parse(data, byteLimit: coreResponseByteLimit), fields: ["organisation_id", "state", "setup", "can_initialise", "id", "categories", "uncategorised_channels"])
+        let root = try object(StrictJSON.parse(data, byteLimit: coreResponseByteLimit), fields: ["organisation_id", "state", "setup", "can_initialise", "id", "categories", "uncategorised_channels"], optional: ["arrivals_channel_id", "display_name", "logo_url", "default_ui_mode", "default_channel_id", "allow_member_channel_creation", "allow_member_invites", "allow_link_previews"])
         let returnedOrganisation = try uuid(root["organisation_id"])
         guard TrustPolicy.canonicalNonNilUUID(organisationId), returnedOrganisation == organisationId,
               let state = WorkspaceState(rawValue: try text(root["state"])),
@@ -126,8 +136,16 @@ public actor CoreWorkspaceClient {
         let setup = try setup(root["setup"])
         let id = try optionalText(root["id"])
         if let id, !TrustPolicy.canonicalNonNilUUID(id) { throw WorkspaceFailure.protocolViolation }
-        let categories = try categoryValues.map(category)
-        let uncategorised = try uncategorisedValues.map(channel)
+        let storedCategories = try categoryValues.map(category)
+        let storedUncategorised = try uncategorisedValues.map(channel)
+        let arrivalsId = root["arrivals_channel_id"]?.string
+        let priority: (WorkspaceChannel) -> Bool = { $0.id == arrivalsId || isArrivalsChannelName($0.name, templateKey: $0.templateKey) }
+        let arrivals = (storedUncategorised + storedCategories.flatMap(\.channels)).filter(priority)
+        let categories = storedCategories.map { category in
+            WorkspaceCategory(id: category.id, name: category.name, templateKey: category.templateKey,
+                channels: category.channels.filter { !priority($0) })
+        }
+        let uncategorised = arrivals + storedUncategorised.filter { !priority($0) }
         switch state {
         case .notInitialised:
             guard id == nil, categories.isEmpty, uncategorised.isEmpty else { throw WorkspaceFailure.protocolViolation }
@@ -186,8 +204,8 @@ public actor CoreWorkspaceClient {
             templateKey: templateKey(fields["template_key"]), topic: topic, lifecycle: lifecycle, roomState: roomState, isConfidential: confidential)
     }
 
-    private static func object(_ value: StrictJSONValue?, fields: Set<String>) throws -> [String: StrictJSONValue] {
-        guard let object = value?.object, Set(object.keys) == fields else { throw WorkspaceFailure.protocolViolation }
+    private static func object(_ value: StrictJSONValue?, fields: Set<String>, optional: Set<String> = []) throws -> [String: StrictJSONValue] {
+        guard let object = value?.object, fields.isSubset(of: Set(object.keys)), Set(object.keys).isSubset(of: fields.union(optional)) else { throw WorkspaceFailure.protocolViolation }
         return object
     }
 

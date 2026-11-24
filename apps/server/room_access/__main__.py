@@ -6,7 +6,7 @@ import sys
 import threading
 import time
 
-from .clients import LiveKit, Matrix
+from .clients import CoreAuthority, LiveKit, Matrix
 from .config import Config, ConfigError
 from .server import GrantLimiter, make_token_server, make_webhook_server
 from .service import Service
@@ -28,6 +28,9 @@ def main() -> int:
         config.agent_user,
         config.token_ttl_s,
         ai_users=config.ai_users,
+        authority=CoreAuthority(config.core_authority_origin, config.core_authority_token)
+        if config.core_authority_origin
+        else None,
     )
     for server in (
         make_token_server(

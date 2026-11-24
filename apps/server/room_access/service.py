@@ -182,6 +182,7 @@ class Service:
     _rooms: dict[str, str] = field(default_factory=dict)  # LiveKit room → Matrix room
     _published: dict[str, Any] = field(default_factory=dict)  # LiveKit room → occupancy written
     _locks: dict[str, threading.Lock] = field(default_factory=dict)
+    authority: Any = None
     # LiveKit room → (identity → the publish right that participant holds, as last set or seen).
     _rights: dict[str, dict[str, bool]] = field(default_factory=dict)
     _guard: threading.Lock = field(default_factory=threading.Lock)
@@ -189,10 +190,41 @@ class Service:
     def _policy(self, room_id: str) -> dict[str, Any] | None:
         """The room's policy content, or None unless the agent sent it."""
         event = self.matrix.state_event(room_id, POLICY)
-        if not isinstance(event, dict) or event.get("sender") != self.agent:
+        if not isinstance(event, dict):
             return None
+        if event.get("sender") != self.agent:
+            if (
+                self.authority is None
+                or not hasattr(self.authority, "partner_room")
+                or not self.authority.partner_room(self.agent, room_id)
+            ):
+                return None
+            creation = self.matrix.state_event(room_id, CREATE)
+            if not isinstance(creation, dict) or creation.get("sender") != event.get("sender"):
+                return None
+            created = creation.get("content")
+            if (
+                not isinstance(created, dict)
+                or created.get("m.federate") is not True
+                or created.get("io.kodera.room.federation") != "partner"
+            ):
+                return None
         content = event.get("content")
         return content if isinstance(content, dict) else None
+
+    def _audience(self, policy: dict[str, Any], user: str, room: str) -> bool:
+        if _audience_allows(policy, user, self.agent):
+            return True
+        if (
+            self.authority is None
+            or not hasattr(self.authority, "is_guest")
+            or not self.authority.is_guest(user, room)
+        ):
+            return False
+        members = policy.get("members", [])
+        if not isinstance(members, list):
+            return False
+        return _audience_allows({**policy, "members": [*members, user]}, user, self.agent)
 
     # -- the token ---------------------------------------------------------------------------
 
@@ -218,12 +250,14 @@ class Service:
             admit(user_id)
         if _is_ai_user(user_id, self.ai_users, agent_user=self.agent):
             raise RefusedError(403)
+        if self.authority is not None and not self.authority.allows(user_id, room_id):
+            raise RefusedError(403)
         policy = self._policy(room_id)
         # One answer for "no such room", "not an audio room", "archived" and "not a member".
         if (
             not _active_audio_policy(policy)
             or _room_is_confidential_or_encrypted(self.matrix, room_id, policy)
-            or not _audience_allows(policy, user_id, self.agent)
+            or not self._audience(policy, user_id, room_id)
             or self.matrix.membership(room_id, user_id) != "join"
         ):
             raise RefusedError(403)
@@ -258,6 +292,17 @@ class Service:
             return
         with lock:
             participants = self.livekit.participants(name)
+            if self.authority is not None:
+                retained = []
+                for participant in participants:
+                    who = str(participant.get("identity", ""))
+                    if self.authority.allows(user_of(who), room_id):
+                        retained.append(participant)
+                    else:
+                        self.livekit.remove(name, who)
+                        with self._guard:
+                            self.stats.removed += 1
+                participants = retained
             policy = self._policy(room_id) or {}
             confidential = (
                 _room_is_confidential_or_encrypted(self.matrix, room_id, policy)
@@ -276,9 +321,10 @@ class Service:
                 user = user_of(who)
                 if (
                     not active_audio
+                    or (self.authority is not None and not self.authority.allows(user, room_id))
                     or (_is_ai_user(user, self.ai_users, agent_user=self.agent) and not ai_allowed)
                     or user not in joined
-                    or not _audience_allows(policy, user, self.agent)
+                    or not self._audience(policy, user, room_id)
                 ):
                     self.livekit.remove(name, who)
                     removed += 1

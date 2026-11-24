@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Kodera Agent API
-  version: 0.8.0
+  version: 0.10.0
   summary: The contract every tenant VM implements, spoken by the agent and served by kodera-server.
   description: |
     Contract 2 of the architecture strategy (Appendix A). The agent runs on every tenant VM and is
@@ -341,6 +341,66 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '429': { $ref: '#/components/responses/RateLimited' }
         '500': { $ref: '#/components/responses/InternalError' }
+
+  /agent/v1/channel-authority:
+    get:
+      operationId: getChannelAuthority
+      summary: Resolve live channel authority
+      description: The engine credential fixes the organisation. Every request observes current partner
+        and guest state; consumers must not cache positive decisions. Failure denies admission. No group
+        key or customer directory is returned.
+      security:
+      - agentMtls: []
+      - agentBearer: []
+      x-kodera-authz:
+        roles:
+        - agent
+      parameters:
+      - name: room_id
+        in: query
+        required: true
+        schema:
+          type: string
+          maxLength: 512
+      - name: user_id
+        in: query
+        required: true
+        schema:
+          type: string
+          maxLength: 512
+      - name: action
+        in: query
+        required: true
+        schema:
+          type: string
+          maxLength: 512
+      responses:
+        '200':
+          description: Current credential-bound authority.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                - allowed
+                - role
+                - revision
+                properties:
+                  allowed:
+                    type: boolean
+                  role:
+                    type: string
+                  revision:
+                    type: integer
+                    minimum: 0
+                    maximum: 9007199254740991
+        '400':
+          description: Request refused.
+        '401':
+          description: Request refused.
+        '405':
+          description: Request refused.
 
 components:
   securitySchemes:
@@ -890,6 +950,9 @@ components:
         exempt:
           $ref: '#/components/schemas/MemberSubjects'
           description: The room's members exempt from `read_only` companion or text chat restrictions (`ESPACE_STRUCTURE.md` §6).
+        allow_member_invites:
+          type: boolean
+          description: Workspace policy for joined members inviting permitted local users. Omission preserves earlier behavior; confidential rooms always refuse. Federated invitations additionally require the existing partner-room policy.
         speak_exempt:
           $ref: '#/components/schemas/MemberSubjects'
           description: 'Audio rooms only: when present on a `listen_only` audio channel, the room''s members exempt from voice publishing restrictions (`io.kodera.room.policy.may_publish`), decoupled from companion chat `exempt`.'
@@ -904,6 +967,17 @@ components:
             properties:
               notice_id: { type: string, format: uuid }
               body: { type: string, minLength: 1, maxLength: 500 }
+        guest_grants:
+          type: array
+          maxItems: 200
+          description: 'Explicit single-channel guest invitations. Exact Matrix users and already-bound room IDs, separate from realm membership. A mismatched room binding is never invited. Live Core authority still gates every guest request and event.'
+          items:
+            type: object
+            additionalProperties: false
+            required: [user_id, room_id]
+            properties:
+              user_id: { type: string, maxLength: 512, pattern: '^@[^\s:]+:[a-z0-9.-]+$' }
+              room_id: { type: string, maxLength: 512, pattern: '^![^\s:]+:[a-z0-9.-]+$' }
         confidential:
           type: string
           enum: [io.kodera.mls.v1, m.megolm.v1.aes-sha2]

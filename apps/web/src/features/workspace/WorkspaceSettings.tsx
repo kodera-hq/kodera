@@ -61,6 +61,8 @@ import { WorkspaceMembersPanel } from './admin/WorkspaceMembersPanel'
 import { WorkspaceProfilePanel } from './admin/WorkspaceProfilePanel'
 import { WorkspaceRolesPanel, type RoleAuthority } from './admin/WorkspaceRolesPanel'
 
+const LazyChannelGovernancePanel = lazy(() => import('./admin/ChannelGovernancePanel'))
+
 const LazySoundsScreen = lazy(() =>
   import('../sounds/SoundsScreen').then((module) => ({ default: module.SoundsScreen }))
 )
@@ -675,11 +677,21 @@ export default function WorkspaceSettings({
           restricted
         )
       case 'extensions':
-        return <ExtensionsCatalogPanel channels={runtime?.channels} organisationId={organisationId} />
+        return (
+          <ExtensionsCatalogPanel channels={runtime?.channels} organisationId={organisationId} />
+        )
       case 'moderation':
         return canManage ? <ModerationPanel organisationId={organisationId} /> : restricted
       case 'audit':
         return <AuditLogPanel organisationId={organisationId} />
+      case 'governance':
+        return canManage ? (
+          <Suspense fallback={null}>
+            <LazyChannelGovernancePanel organisationId={organisationId} />
+          </Suspense>
+        ) : (
+          restricted
+        )
       case 'community':
         return <CommunityPanel organisationId={organisationId} canEdit={canManage} />
       case 'quotas':

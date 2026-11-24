@@ -3,17 +3,21 @@
 import hashlib
 import json
 import re
+from functools import partial
 from pathlib import Path
 
 import pytest
 import yaml
+
+_load_yaml = partial(yaml.load, Loader=getattr(yaml, "CSafeLoader", yaml.SafeLoader))
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture(scope="module")
 def contract():
-    return yaml.safe_load((ROOT / "contracts/core-api.openapi.yaml").read_text())
+    return _load_yaml((ROOT / "contracts/core-api.openapi.yaml").read_text())
 
 
 @pytest.mark.parametrize(
@@ -285,7 +289,7 @@ WORKSPACE_ROLE_SLUG_LOCATIONS = tuple(
 
 def load_contracts():
     return {
-        name: yaml.safe_load((ROOT / f"contracts/{name}.openapi.yaml").read_text())
+        name: _load_yaml((ROOT / f"contracts/{name}.openapi.yaml").read_text())
         for name in ("core-api", "agent-api")
     }
 
@@ -1062,7 +1066,8 @@ N4_PATH = "/organisations/{organisation_id}/bootstrap"
 # Rebound at 0.52.0: audio companion chat read_only access and WorkspaceTemplate v2 personas/customization; assurance guards unchanged.
 # Rebound at 0.53.0: push subscription platform, bounded foreground presence leases, and zero-PII createBugReport; assurance guards unchanged.
 # Rebound at 0.55.0: authoritative workspace channel confidentiality; N4 assurance guards unchanged.
-N4_VERSION = "0.55.0"
+# Rebound at 0.57.0: optional workspace identity and preferences; protected bootstrap and discovery semantics unchanged.
+N4_VERSION = "0.57.0"
 # Rebound at 0.19.0 (2026-10-21, on top of 0.18.1): the notice-contacts delta and the Plan example's EU hosting.
 # Rebound at 0.22.0: the ten structure operations, their schemas and Problem.reason's first value;
 # then room_state on WorkspaceChannel, the starter's lounge (template version 2) and AppCode messaging;
@@ -1118,7 +1123,8 @@ N4_VERSION = "0.55.0"
 # Rebound at 0.52.0: audio companion chat read_only access and WorkspaceTemplate v2 personas/customization; no N4 bytes changed.
 # Rebound at 0.53.0: push subscription platform, bounded foreground presence leases, and zero-PII createBugReport; no N4 bytes changed.
 # Rebound at 0.55.0: authoritative workspace channel confidentiality; N4 assurance guards unchanged.
-N4_OLD_CONTRACT = "ddfab1bef3c64ac088e1656537e98d169a1d7eed5294f314e3fa7a55e1e0e679"
+# Rebound at 0.57.0: optional workspace identity and preferences; protected bootstrap and discovery semantics unchanged.
+N4_OLD_CONTRACT = "e66387f271c0413b9900de5725bb3c645134662f6c23d52feb7c3691b0cad89d"
 # Rebound at 0.20.0 (2026-10-22): CONVENTIONS.md §6 gains the order-in-progress and invoice-issued rows and a changelog line.
 # Rebound at 0.24.0 (2026-10-22): CONVENTIONS.md §6's invoice-issued row narrowed, and a changelog line.
 # Rebound at 0.28.0: CONVENTIONS.md §6 gains the identity-unknown row and a changelog line.
@@ -1322,7 +1328,7 @@ def _n4_original_text(text):
 def _n4_expected_components():
     from textwrap import dedent
 
-    return yaml.safe_load(dedent(N4_COMPONENTS))
+    return _load_yaml(dedent(N4_COMPONENTS))
 
 
 def _n4_structure(document):
@@ -1347,10 +1353,10 @@ def _n4_structure(document):
 
 
 def _n4_parity(document, text):
-    original = yaml.safe_load(_n4_original_text(text))
+    original = _load_yaml(_n4_original_text(text))
     expected = _n4_copy(original)
     expected["info"]["version"] = N4_VERSION
-    actual_info = yaml.safe_load(text)["info"]["description"]
+    actual_info = _load_yaml(text)["info"]["description"]
     expected_info = original["info"]["description"]
     expected_info = _n4_replace_once(
         expected_info,

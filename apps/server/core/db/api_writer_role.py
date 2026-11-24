@@ -27,6 +27,13 @@ ROLE = re.compile(r"[a-z_][a-z0-9_]{0,62}\Z")
 # Read by the intake path itself, or by an `INSERT ... RETURNING` of a column with a database
 # default, or by the deferred constraint triggers of orgs.0002 that run at commit.
 SELECT = (
+    "workspaces_partnerchannelagreement",
+    "workspaces_partnerchannelagreementrevision",
+    "workspaces_singlechannelguestgrant",
+    "workspaces_sessioneviction",
+    "confidential_mlsroomepoch",
+    "confidential_deviceverificationbundle",
+
     "workspaces_workspacerole",
     "workspaces_workspacememberrole",
     "workspaces_workspacechannelroleoverride",
@@ -174,6 +181,13 @@ SELECT = (
 # The rows one intake writes: the organisation, its reservation and intake record, the job, its
 # steps and audit rows, and the stored answer.
 INSERT = (
+    "workspaces_partnerchannelagreement",
+    "workspaces_partnerchannelagreementrevision",
+    "workspaces_singlechannelguestgrant",
+    "workspaces_sessioneviction",
+    "confidential_mlsroomepoch",
+    "confidential_deviceverificationbundle",
+
     "workspaces_workspacerole",
     "workspaces_workspacememberrole",
     "workspaces_workspacechannelroleoverride",
@@ -383,6 +397,13 @@ UPDATE_COLUMNS = (
     ("workspaces_memberaiconsent", "revoked_at"),
     ("workspaces_memberaiconsent", "updated_at"),
     ("workspaces_channel", "ai_enabled"),
+    ("workspaces_workspace", "display_name"),
+    ("workspaces_workspace", "logo_url"),
+    ("workspaces_workspace", "default_ui_mode"),
+    ("workspaces_workspace", "default_channel_id"),
+    ("workspaces_workspace", "allow_member_channel_creation"),
+    ("workspaces_workspace", "allow_member_invites"),
+    ("workspaces_workspace", "allow_link_previews"),
     ("workspaces_workspace", "description"),
     ("workspaces_workspace", "banner_preset"),
     ("workspaces_workspace", "icon_mxc"),
@@ -395,6 +416,14 @@ UPDATE_COLUMNS = (
     ("workspaces_workspace", "updated_at"),
     ("workspaces_workspaceinvitelink", "auto_role_ids"),
     # Revocation and single-use payload discard; public key bindings never change.
+    ("workspaces_partnerchannelagreement", "state"),
+    ("workspaces_partnerchannelagreement", "revision"),
+    ("workspaces_partnerchannelagreement", "updated_at"),
+    ("workspaces_singlechannelguestgrant", "revoked_at"),
+    ("workspaces_singlechannelguestgrant", "updated_at"),
+    ("confidential_deviceverificationbundle", "revision"),
+    ("confidential_deviceverificationbundle", "public_bundle"),
+    ("confidential_deviceverificationbundle", "updated_at"),
     ("e2ee_device", "revoked_at"),
     ("e2ee_device", "updated_at"),
     ("e2ee_room", "epoch"),

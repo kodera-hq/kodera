@@ -68,7 +68,9 @@ def _problem(
     return response
 
 
-def _body(request: HttpRequest, fields: set[str], required: set[str]) -> dict[str, Any]:
+def _body(
+    request: HttpRequest, fields: set[str], required: set[str], *, limit: int = 32768
+) -> dict[str, Any]:
     def unique(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
         result = {}
         for key, value in pairs:
@@ -79,7 +81,7 @@ def _body(request: HttpRequest, fields: set[str], required: set[str]) -> dict[st
 
     if (
         request.content_type not in {"application/json", "application/merge-patch+json"}
-        or len(request.body) > 32768
+        or len(request.body) > limit
     ):
         raise service.RefusalError(400)
     try:

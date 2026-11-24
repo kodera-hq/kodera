@@ -89,6 +89,13 @@ def workspace_id_for(*, organisation_id: UUID) -> UUID | None:
     )
 
 
+def link_previews_allowed(organisation_id: UUID) -> bool:
+    """Whether URL previews are permitted for the organisation's workspace."""
+    return not Workspace.objects.filter(
+        organisation_id=organisation_id, allow_link_previews=False
+    ).exists()
+
+
 def lock_workspace(*, workspace_id: UUID) -> None:
     Workspace.objects.select_for_update().get(id=workspace_id)
 

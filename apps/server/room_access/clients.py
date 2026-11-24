@@ -341,3 +341,63 @@ class LiveKit:
             return False
         digest = base64.b64encode(hashlib.sha256(body).digest()).decode()
         return hmac.compare_digest(str(claims.get("sha256", "")), digest)
+
+
+class CoreAuthority:
+    """Uncached, credential-bound Core decisions; errors remove authority."""
+
+    def __init__(self, origin: str, token: str) -> None:
+        self.origin, self.token = origin.rstrip("/"), token
+
+    def allows(self, user: str, room: str) -> bool:
+        query = urllib.parse.urlencode({"user_id": user, "room_id": room, "action": "call"})
+        try:
+            _, result = _request(
+                self.origin + "/agent/v1/channel-authority?" + query,
+                "GET",
+                {"Authorization": "Bearer " + self.token},
+                None,
+                3.0,
+                (200,),
+            )
+            return isinstance(result, dict) and result.get("allowed") is True
+        except UpstreamError:
+            return False
+
+    def is_guest(self, user: str, room: str) -> bool:
+        query = urllib.parse.urlencode({"user_id": user, "room_id": room, "action": "call"})
+        try:
+            _, result = _request(
+                self.origin + "/agent/v1/channel-authority?" + query,
+                "GET",
+                {"Authorization": "Bearer " + self.token},
+                None,
+                3.0,
+                (200,),
+            )
+            return (
+                isinstance(result, dict)
+                and result.get("allowed") is True
+                and result.get("role") == "single_channel_guest"
+            )
+        except UpstreamError:
+            return False
+
+    def partner_room(self, user: str, room: str) -> bool:
+        query = urllib.parse.urlencode({"user_id": user, "room_id": room, "action": "call"})
+        try:
+            _, result = _request(
+                self.origin + "/agent/v1/channel-authority?" + query,
+                "GET",
+                {"Authorization": "Bearer " + self.token},
+                None,
+                3.0,
+                (200,),
+            )
+            return (
+                isinstance(result, dict)
+                and result.get("allowed") is True
+                and result.get("role") in {"local", "partner"}
+            )
+        except UpstreamError:
+            return False

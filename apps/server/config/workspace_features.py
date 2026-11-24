@@ -14,6 +14,17 @@ from config.environment import (
 from core.sealing import key_from_environment
 
 
+def channel_governance_enabled(environment: Mapping[str, str]) -> bool:
+    value = environment.get("KODERA_CHANNEL_GOVERNANCE_ENABLED", "false")
+    if value not in {"true", "false"}:
+        raise ImproperlyConfigured("KODERA_CHANNEL_GOVERNANCE_ENABLED must be true or false")
+    if value == "true" and environment.get("KODERA_GOVERNANCE_AUTHORITY_CONFIGURED") != "true":
+        raise ImproperlyConfigured(
+            "Channel governance requires KODERA_GOVERNANCE_AUTHORITY_CONFIGURED=true"
+        )
+    return value == "true"
+
+
 def confidential_relay_enabled(environment: Mapping[str, str]) -> bool:
     value = environment.get("KODERA_E2EE_RELAY_ENABLED", "false")
     if value not in {"true", "false"}:

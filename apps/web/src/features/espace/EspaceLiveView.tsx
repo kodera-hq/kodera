@@ -1,5 +1,10 @@
+import { SimpleMessagingSidebar } from './SimpleMessagingSidebar'
+import { KoderaIcon } from '../../ui/icons/KoderaIcons'
+import { uiModeCopy } from './uiModePreference'
 import {
   memo,
+  lazy,
+  Suspense,
   useCallback,
   useEffect,
   useEffectEvent,
@@ -49,11 +54,9 @@ import { isArrivalsChannel } from './ArrivalCard'
 import { arrivalInserts } from './ArrivalInsert'
 import type { ChannelMenuTarget } from './ChannelContextMenu'
 import { ChannelSidebar } from './ChannelSidebar'
-import { SimpleMessagingSidebar } from './SimpleMessagingSidebar'
 import {
   favoriteChannelsStorageKey,
   setUiMode,
-  toggleUiMode,
   useFavoriteChannels,
   useWorkspaceUiMode,
   type WorkspaceUiMode,
@@ -124,6 +127,10 @@ function directChannelOf(roomId: string, name: string): WorkspaceChannel {
     room_state: 'ready',
   } as WorkspaceChannel
 }
+
+const LazyMessagesPinnedBanner = lazy(() =>
+  import('./MessagesPinnedBanner').then((module) => ({ default: module.MessagesPinnedBanner }))
+)
 
 export interface EspaceLiveViewProps {
   /** Optional presentation metadata; never an access grant. */
@@ -301,6 +308,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
   const sidebarHeadingId = useId()
   const narrow = useNarrowViewport()
   const headingRef = useRef<HTMLHeadingElement>(null)
+  const [messagesDetailOpen, setMessagesDetailOpen] = useState(false)
   const [channelsOpen, setChannelsOpen] = useState(false)
   const channelChooserReturnFocus = useRef<HTMLElement | null>(null)
   function changeChannelChooser(open: boolean) {
@@ -376,7 +384,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
   const navigationUnsettled =
     navigationPending || (requestedChannelId !== null && requestedChannelId !== addressedChannel)
 
-  const uiMode = useWorkspaceUiMode()
+  const uiMode = useWorkspaceUiMode(workspace.default_ui_mode)
   const [direct, setDirect] = useState<{ roomId: string; over: string | null | undefined } | null>(
     null
   )
@@ -393,13 +401,13 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
   const [observedUiMode, setObservedUiMode] = useState(uiMode)
   if (observedUiMode !== uiMode) {
     setObservedUiMode(uiMode)
-    if (uiMode === 'simple' && localCallsOpen) setLocalCallsOpen(false)
+    if (uiMode === 'messages' && localCallsOpen) setLocalCallsOpen(false)
   }
   const rawCanvasMode: CanvasMode =
     onChangeCanvasMode === undefined && localCallsOpen ? 'calls' : activeCanvasMode
-  const effectiveCanvasMode: CanvasMode = uiMode === 'simple' ? 'chat' : rawCanvasMode
+  const effectiveCanvasMode: CanvasMode = uiMode === 'messages' ? 'chat' : rawCanvasMode
   useEffect(() => {
-    if (uiMode !== 'simple' || activeCanvasMode === 'chat') return
+    if (uiMode !== 'messages' || activeCanvasMode === 'chat') return
     onChangeCanvasMode?.('chat')
   }, [uiMode, activeCanvasMode, onChangeCanvasMode])
   const directRoomId =
@@ -450,6 +458,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
             token: Symbol(),
           }
         : null
+      setMessagesDetailOpen(true)
       closeChannelChooser()
       setViewingCallStage(false)
       setFullStage(false)
@@ -753,6 +762,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
             token: jumpToken,
           }
         : null
+      setMessagesDetailOpen(true)
       closeChannelChooser()
       setDirect(null)
       setViewingCallStage(false)
@@ -818,6 +828,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
       room: RoomSummary | undefined,
       categoryName: string | undefined
     ) => {
+      setMessagesDetailOpen(true)
       closeChannelChooser()
       setLocalCallsOpen(false)
       onChangeCanvasMode?.('chat')
@@ -883,7 +894,21 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
     setAttachmentRoom(staged ? activeRoomId : null)
   )
   const inviteTrigger = useRef<HTMLButtonElement>(null)
+  const inviteReturnFocus = useRef<HTMLElement | null>(null)
+  const canInviteChannel = useCallback(
+    (id: string) => {
+      if (workspace.allow_member_invites !== false) return true
+      const resolved = snapshot.channels.get(id)
+      if (resolved?.state !== 'resolved') return false
+      const role = profileRoleIn(activeStore, resolved.roomId, viewerId)
+      return role === 'admin' || role === 'maintainer'
+    },
+    [workspace.allow_member_invites, snapshot.channels, activeStore, viewerId]
+  )
   const canInvite =
+    (workspace.allow_member_invites !== false ||
+      (activeRoomId !== null &&
+        ['admin', 'maintainer'].includes(profileRoleIn(activeStore, activeRoomId, viewerId)))) &&
     directRoomId === null &&
     activeRoom !== undefined &&
     activeChannel != null &&
@@ -967,20 +992,37 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
     (next: WorkspaceUiMode, options?: { fromToggle?: boolean }) => {
       pendingModeFocus.current = { mode: next, force: options?.fromToggle === true }
       setUiMode(next)
-      if (next === 'simple') {
+      if (next === 'messages') {
         setLocalCallsOpen(false)
         onChangeCanvasMode?.('chat')
       }
     }
   )
   const handleToggleUiMode = useStableHandler(() => {
-    const next = toggleUiMode()
+    const next = uiMode === 'messages' ? 'pro' : 'messages'
+    setUiMode(next)
     pendingModeFocus.current = { mode: next, force: false }
-    if (next === 'simple') {
+    if (next === 'messages') {
       setLocalCallsOpen(false)
       onChangeCanvasMode?.('chat')
     }
   })
+
+  useEffect(() => {
+    const shortcut = (event: globalThis.KeyboardEvent) => {
+      if (
+        (event.metaKey || event.ctrlKey) &&
+        event.shiftKey &&
+        event.key.toLowerCase() === 'm' &&
+        !event.isComposing
+      ) {
+        event.preventDefault()
+        handleToggleUiMode()
+      }
+    }
+    window.addEventListener('keydown', shortcut)
+    return () => window.removeEventListener('keydown', shortcut)
+  }, [handleToggleUiMode])
 
   const openFromSearch = useStableHandler((entry: ChannelSearchEntry): HTMLElement | null => {
     if (entry.kind === 'text') {
@@ -994,7 +1036,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
   })
   const changeCanvas = useStableHandler((mode: CanvasMode) => {
     pendingMessageJump.current = null
-    if (mode !== 'chat' && uiMode === 'simple') setUiMode('pro')
+    if (mode !== 'chat' && uiMode === 'messages') setUiMode('pro')
     if (mode !== 'chat') {
       setDirect(null)
       setViewingCallStage(false)
@@ -1005,7 +1047,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
   })
   const openDocument = useStableHandler((doc: ChannelDoc) => {
     pendingMessageJump.current = null
-    if (uiMode === 'simple') setUiMode('pro')
+    if (uiMode === 'messages') setUiMode('pro')
     setDirect(null)
     setViewingCallStage(false)
     setFullStage(false)
@@ -1019,7 +1061,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
   const openCollectionFromOmnibox = useStableHandler((id: string): HTMLElement | null => {
     pendingMessageJump.current = null
     if (onOpenCollection !== undefined) {
-      if (uiMode === 'simple') setUiMode('pro')
+      if (uiMode === 'messages') setUiMode('pro')
       setDirect(null)
       setViewingCallStage(false)
       setFullStage(false)
@@ -1059,9 +1101,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
   })
 
   const activeChannelFlags = activeChannel as
-    | (WorkspaceChannel & ConfidentialChannelFlags)
-    | null
-    | undefined
+    (WorkspaceChannel & ConfidentialChannelFlags) | null | undefined
   const activeDocsIsConfidential =
     activeChannelFlags?.isConfidential === true ||
     activeChannelFlags?.is_confidential === true ||
@@ -1373,6 +1413,8 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
     )
   })
   const inviteFromChannelMenu = useStableHandler((target: ChannelMenuTarget) => {
+    if (!canInviteChannel(target.channelId)) return
+    inviteReturnFocus.current = target.trigger ?? null
     if (target.kind === 'audio') {
       window.dispatchEvent(
         new CustomEvent(WORKSPACE_COMMAND_EVENT, {
@@ -1511,7 +1553,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
       : 'col-start-1 row-span-3 row-start-1'
 
   const sidebar =
-    uiMode === 'simple' ? (
+    uiMode === 'messages' ? (
       <SimpleMessagingSidebar
         store={activeStore}
         workspace={workspace}
@@ -1548,6 +1590,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
         onChannelToggleMute={toggleChannelMute}
         isChannelMuted={isChannelMuted}
         onChannelInvite={inviteFromChannelMenu}
+        canInviteChannel={canInviteChannel}
         onChannelCopyLink={copyChannelLink}
         onChannelPermissions={openChannelPermissions}
         canManageChannel={canManageChannel}
@@ -1600,6 +1643,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
         onChannelToggleMute={toggleChannelMute}
         isChannelMuted={isChannelMuted}
         onChannelInvite={inviteFromChannelMenu}
+        canInviteChannel={canInviteChannel}
         onChannelCopyLink={copyChannelLink}
         onChannelPermissions={openChannelPermissions}
         canManageChannel={canManageChannel}
@@ -1625,7 +1669,12 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
           onDismiss={dismissPassport}
         />
       ) : null}
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-testid="studio-workspace">
+      <div
+        className="flex min-h-0 min-w-0 flex-1 flex-col"
+        data-testid="studio-workspace"
+        data-ui-mode={uiMode}
+        data-messages-detail={messagesDetailOpen}
+      >
         <WorkspacePaletteRegistration
           store={activeStore}
           entries={searchEntries}
@@ -1648,12 +1697,16 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
           simulation={simulation}
           snapshot={snapshot}
         />
-        <div className="grid min-h-0 flex-1 grid-cols-[auto_auto_minmax(0,1fr)_auto_auto_auto] grid-rows-[auto_minmax(0,1fr)_auto] narrow:flex narrow:flex-col">
-          {narrow ? (
+        <div className="messages-layout grid min-h-0 flex-1 grid-cols-[auto_auto_minmax(0,1fr)_auto_auto_auto] grid-rows-[auto_minmax(0,1fr)_auto] narrow:flex narrow:flex-col">
+          {narrow && uiMode !== 'messages' ? (
             <div className="order-first flex shrink-0 flex-col gap-2 border-b border-c-border-soft pb-2">
               <div className="flex min-w-0 items-center gap-2">
                 <div className="min-w-0 flex-1">
-                  <OrganisationHeader name={organisationName} slug={org} />
+                  <OrganisationHeader
+                    name={workspace.display_name || organisationName}
+                    slug={org}
+                    logoUrl={workspace.logo_url}
+                  />
                 </div>
                 <Drawer
                   open={channelsOpen}
@@ -1674,7 +1727,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
             </div>
           ) : null}
           {inRouter ? <LeaveCallGuard live={guardCall} /> : null}
-          {narrow ? null : (
+          {narrow || uiMode === 'messages' ? null : (
             <EspaceSidebarResizer
               testId="espace-sidebar-primary-resizer"
               ariaLabel={t('console.workspace.layout.resize-channels')}
@@ -1693,7 +1746,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
             ref={channelColumn}
             onKeyDown={columnKeyDown}
             className={cx(
-              'workspace-canvas flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-y-auto bg-c-surface px-6 py-5 narrow:gap-2 narrow:bg-transparent narrow:p-0',
+              'messages-detail workspace-canvas flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-y-auto bg-c-surface px-6 py-5 narrow:gap-2 narrow:bg-transparent narrow:p-0',
               narrow
                 ? ''
                 : inLiveCall && callPlacement === 'stage' && fullStage
@@ -1708,6 +1761,23 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
                 <span key={announcement.count}>{announcement.text}</span>
               )}
             </p>
+            {uiMode === 'messages' ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setMessagesDetailOpen(false)
+                  requestAnimationFrame(() =>
+                    document
+                      .querySelector<HTMLElement>('[data-testid="simple-messaging-sidebar"] button')
+                      ?.focus()
+                  )
+                }}
+                className="messages-back min-h-[44px] items-center gap-2 rounded-md px-3 text-sm text-c-ink-2 focus-visible:ring"
+              >
+                <KoderaIcon name="left" />
+                {uiModeCopy(i18n.resolvedLanguage).back}
+              </button>
+            ) : null}
             <EspaceChannelHeader
               org={org}
               activeStore={activeStore}
@@ -1731,9 +1801,11 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
               membersPanelId={membersPanelId}
               headingRef={headingRef}
               inviteTrigger={inviteTrigger}
+              inviteReturnFocus={inviteReturnFocus}
+              canInvite={canInvite}
               membersTrigger={membersTrigger}
               audioRooms={audioRooms}
-              simpleMode={uiMode === 'simple'}
+              simpleMode={uiMode === 'messages'}
               onStartQuickCall={startHeaderQuickCall}
               onShowMessage={showMessage}
               onToggleMembers={() => setMembersOpen((open) => !open)}
@@ -1747,6 +1819,17 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
               }}
             />
 
+            {uiMode === 'messages' ? (
+              <Suspense fallback={null}>
+                <LazyMessagesPinnedBanner
+                  store={activeStore}
+                  roomId={activeRoomId}
+                  topic={activeChannel?.topic}
+                  flags={activeChannel ?? undefined}
+                  onShow={showMessage}
+                />
+              </Suspense>
+            ) : null}
             <EspaceCanvasPanes
               signedOut={signedOut}
               onReconnect={onReconnect}
@@ -1914,7 +1997,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
             />
           ) : null}
 
-          {narrow ? null : sidebar}
+          {narrow && uiMode !== 'messages' ? null : sidebar}
 
           <VoiceCallDock
             call={activeCall}

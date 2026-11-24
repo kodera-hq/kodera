@@ -262,7 +262,7 @@ export function WorkspacePaletteRegistration({
   onChoose: ChannelSearchProps['onChoose']
   onSelectDirect: (roomId: string) => void
   onChangeCanvasMode?: ((mode: CanvasMode) => void) | undefined
-  uiMode?: 'pro' | 'simple' | undefined
+  uiMode?: 'pro' | 'messages' | undefined
   onToggleUiMode?: (() => void) | undefined
   dynamicEntries?: ((query: string) => readonly ChannelSearchEntry[]) | undefined
   simulation: boolean
@@ -329,12 +329,12 @@ export function WorkspacePaletteRegistration({
           ? [
               {
                 id: 'ui-mode',
-                label: uiMode === 'simple' ? copy.switchToPro : copy.switchToSimple,
+                label: uiMode === 'messages' ? copy.switchToPro : copy.switchToSimple,
                 open: onToggleUiMode,
               },
             ]
           : []),
-        ...(onChangeCanvasMode && uiMode !== 'simple'
+        ...(onChangeCanvasMode && uiMode !== 'messages'
           ? [
               { id: 'docs', label: copy.docs, open: () => onChangeCanvasMode('docs') },
               { id: 'files', label: copy.files, open: () => onChangeCanvasMode('files') },

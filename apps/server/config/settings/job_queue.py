@@ -70,6 +70,7 @@ INSTALLED_APPS = [
     "apps.docs",
     "apps.extensions",
     "apps.e2ee",
+    "apps.confidential",
 ]
 
 # Plaintext SMTP only to a loopback address or `localhost` here; no deployed name is exempt.

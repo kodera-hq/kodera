@@ -391,6 +391,14 @@ def expected_view(w, *, can_initialise=False):
         }
 
     return {
+        "display_name": "",
+        "logo_url": "",
+        "default_ui_mode": "pro",
+        "default_channel_id": None,
+        "allow_member_channel_creation": False,
+        "allow_member_invites": True,
+        "allow_link_previews": True,
+        "arrivals_channel_id": None,
         "organisation_id": str(w.alpha.id),
         "state": "initialised",
         "setup": {"state": "ready", "reason": None},

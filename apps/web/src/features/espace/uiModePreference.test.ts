@@ -14,6 +14,27 @@ import {
 } from './uiModePreference'
 
 describe('uiModePreference', () => {
+  it('honors workspace defaults until a member explicitly chooses Pro', () => {
+    const { result } = renderHook(() => useWorkspaceUiMode('messages'))
+    expect(result.current).toBe('messages')
+    act(() => setUiMode('pro'))
+    expect(result.current).toBe('pro')
+  })
+
+  it('accepts a legacy URL mode and canonicalizes the next selection', () => {
+    window.history.replaceState(null, '', '?ui_mode=simple')
+    expect(getUiModeSnapshot()).toBe('messages')
+    act(() => setUiMode('messages'))
+    expect(new URL(window.location.href).searchParams.get('ui_mode')).toBe('messages')
+    window.history.replaceState(null, '', '/')
+  })
+
+  it('normalizes legacy preferences without losing the selected mode', () => {
+    window.localStorage.setItem(UI_MODE_STORAGE_KEY, 'simple')
+    expect(getUiModeSnapshot()).toBe('messages')
+    setUiMode('simple')
+    expect(window.localStorage.getItem(UI_MODE_STORAGE_KEY)).toBe('messages')
+  })
   beforeEach(() => {
     window.localStorage.clear()
     act(() => {
@@ -47,10 +68,10 @@ describe('uiModePreference', () => {
     expect(result.current).toBe('pro')
 
     act(() => {
-      uiModePreference.setMode('simple')
+      uiModePreference.setMode('messages')
     })
-    expect(result.current).toBe('simple')
-    expect(window.localStorage.getItem(UI_MODE_STORAGE_KEY)).toBe('simple')
+    expect(result.current).toBe('messages')
+    expect(window.localStorage.getItem(UI_MODE_STORAGE_KEY)).toBe('messages')
     expect(listener).toHaveBeenCalledTimes(1)
 
     act(() => {
@@ -64,11 +85,11 @@ describe('uiModePreference', () => {
       window.dispatchEvent(
         new StorageEvent('storage', {
           key: UI_MODE_STORAGE_KEY,
-          newValue: 'simple',
+          newValue: 'messages',
         })
       )
     })
-    expect(result.current).toBe('simple')
+    expect(result.current).toBe('messages')
 
     act(() => {
       window.dispatchEvent(
@@ -89,9 +110,9 @@ describe('uiModePreference', () => {
     })
     const { result } = renderHook(() => useWorkspaceUiMode())
     act(() => {
-      setUiMode('simple')
+      setUiMode('messages')
     })
-    expect(result.current).toBe('simple')
+    expect(result.current).toBe('messages')
   })
 
   it('persists favorite channels per org, workspace, and viewer with cross-tab sync', () => {

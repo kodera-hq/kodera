@@ -262,11 +262,20 @@ export function MenuButton({
  * A local edit of a value read from Core. The edit is kept only while the value it started from is
  * the one on screen: once Core's value changes (a save, a refetch), the draft starts over from it.
  */
-export function useDraft<T>(source: T | undefined): [T | undefined, (next: T) => void] {
+export function useDraft<T>(
+  source: T | undefined
+): [T | undefined, (next: T | ((current: T) => T)) => void] {
   const [edit, setEdit] = useState<{ source: T; value: T } | null>(null)
   const draft = source === undefined ? undefined : edit?.source === source ? edit.value : source
-  const set = (next: T) => {
-    if (source !== undefined) setEdit({ source, value: next })
+  const set = (next: T | ((current: T) => T)) => {
+    if (source !== undefined)
+      setEdit((previous) => ({
+        source,
+        value:
+          typeof next === 'function'
+            ? (next as (current: T) => T)(previous?.source === source ? previous.value : source)
+            : next,
+      }))
   }
   return [draft, set]
 }

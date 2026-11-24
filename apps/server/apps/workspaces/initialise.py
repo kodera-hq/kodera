@@ -29,6 +29,7 @@ from apps.orgs.actor_selectors import (
 from services.identity.access_tokens import VerifiedAccessToken
 
 from . import channel_sets
+from .channel_order import is_arrivals
 from .models import Category, Channel, ResourcePolicy, Workspace
 from .setup import read_setup
 from .structure import (
@@ -269,7 +270,9 @@ def _create_categories(workspace: Workspace) -> dict[str, Category]:
 
 def _create_channels(workspace: Workspace, categories: dict[str, Category]) -> None:
     positions: dict[str, int] = {}
-    for category, key, name, kind in CHANNELS:
+    for category, key, name, kind in sorted(
+        CHANNELS, key=lambda row: not is_arrivals(row[2], row[1])
+    ):
         position = positions.get(category, 0)
         positions[category] = position + 1
         Channel.objects.create(

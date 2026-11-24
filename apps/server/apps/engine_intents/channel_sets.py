@@ -31,7 +31,7 @@ _SUBJECT = re.compile(r"[\x21-\x7e]{1,255}")
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 # The workspace's reasons name the change, such as `channel.access_changed` (§13.2).
 _REASON = re.compile(r"[a-z][a-z0-9_.]{0,63}")
-_OPTIONAL_FIELDS = {"confidential", "speak_exempt"}
+_OPTIONAL_FIELDS = {"confidential", "speak_exempt", "guest_grants", "allow_member_invites"}
 _CONFIDENTIAL_ALGORITHMS = frozenset({"io.kodera.mls.v1", "m.megolm.v1.aes-sha2"})
 _FIELDS = {
     "channel_id",
@@ -171,6 +171,29 @@ def normalise(
                 {"notice_id": str(n["notice_id"]).lower(), "body": n["body"]} for n in notices
             ],
         }
+        if "allow_member_invites" in entry:
+            normalised_entry["allow_member_invites"] = _bool(entry, "allow_member_invites")
+        if "guest_grants" in entry:
+            grants = entry["guest_grants"]
+            if (
+                not isinstance(grants, list)
+                or len(grants) > 200
+                or any(
+                    not isinstance(grant, dict)
+                    or set(grant) != {"user_id", "room_id"}
+                    or not isinstance(grant["user_id"], str)
+                    or re.fullmatch(r"@[^\s:]{1,255}:[a-z0-9.-]{1,253}", grant["user_id"]) is None
+                    or not isinstance(grant["room_id"], str)
+                    or re.fullmatch(r"![^\s:]{1,128}:[a-z0-9.-]{1,253}", grant["room_id"]) is None
+                    for grant in grants
+                )
+                or len({grant["user_id"] for grant in grants}) != len(grants)
+            ):
+                raise ChannelSetError(
+                    "guest grants are bounded distinct exact Matrix users and rooms"
+                )
+            normalised_entry["guest_grants"] = sorted(grants, key=lambda grant: grant["user_id"])
+            members_total += len(grants)
         if has_speak_exempt:
             normalised_entry["speak_exempt"] = speak_exempt
         if confidential_algo is not None:

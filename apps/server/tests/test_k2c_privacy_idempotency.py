@@ -971,15 +971,7 @@ def test_bug_0027_upgrade_backfill_sends_valid_queued_invitation_and_withdraws_r
 
     try:
         executor = MigrationExecutor(connection)
-        pre_targets = [
-            ("orgs", "0033_proximity_erasure_inventory")
-            if app == "orgs"
-            else ("idempotency", "0001_initial")
-            if app == "idempotency"
-            else (app, name)
-            for app, name in executor.loader.graph.leaf_nodes()
-        ]
-        executor.migrate(pre_targets)
+        executor.migrate([("orgs", "0033_proximity_erasure_inventory")])
 
         with connection.cursor() as cursor:
             cursor.execute("SELECT to_regclass('public.orgs_invitationoutboxbinding') IS NULL")

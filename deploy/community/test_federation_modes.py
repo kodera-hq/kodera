@@ -25,11 +25,20 @@ class FederationModes(unittest.TestCase):
             ],
         }
 
+    def test_default_off_can_reuse_the_polling_agent_without_authority(self):
+        config = renderer.configure(self.document(), {"KODERA_AGENT_TOKEN": "synthetic"})
+        policy = next(item["config"] for item in config["modules"] if item["module"] == renderer.MODULE)
+        self.assertFalse(policy["channel_governance_enabled"])
+        self.assertNotIn("core_authority_origin", policy)
+        self.assertNotIn("core_authority_token", policy)
+
     def test_default_closed_partner_and_explicit_open(self):
         for env, expected in (
             ({}, []),
             (
-                {"KODERA_MATRIX_FEDERATION_ALLOWLIST": "peer.example.org"},
+                {"KODERA_MATRIX_FEDERATION_ALLOWLIST": "peer.example.org",
+                 "KODERA_CORE_AUTHORITY_ORIGIN": "https://core.example.org",
+                 "KODERA_AGENT_TOKEN": "synthetic"},
                 ["peer.example.org"],
             ),
             ({"KODERA_FEDERATION_MODE": "open"}, None),

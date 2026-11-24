@@ -1,0 +1,91 @@
+const en = {
+  title: 'Partners & channel guests',
+  held: 'Sharing is not enabled for this workspace. Ask your hosting administrator to enable it.',
+  introduction:
+    'Share an explicit channel with a partner, or give a guest access to one channel only.',
+  history:
+    'Matrix history already replicated to the partner homeserver cannot be remotely erased. Suspension blocks new activity; it does not recall previous copies.',
+  accepted: 'I understand that previously replicated history cannot be erased remotely.',
+  propose: 'Propose a partner channel',
+  partner: 'Partner organisation reference',
+  channel: 'Channel',
+  partnerChannel: 'Partner channel reference',
+  localServer: 'Your homeserver',
+  partnerServer: 'Partner homeserver',
+  matrixRoom: 'Shared room reference',
+  agreements: 'Partner agreements',
+  activate: 'Accept agreement',
+  suspend: 'Suspend',
+  revoke: 'Revoke',
+  repropose: 'Request reactivation',
+  guests: 'Single-channel guests',
+  grant: 'Grant channel access',
+  identity: 'Guest identity reference',
+  matrixUser: 'Guest Matrix address',
+  expires: 'Access expires',
+  calls: 'Allow calls in this audio channel',
+  guestHint:
+    'Guests cannot browse the organisation, search people, create direct messages, invite others or open other channels and documents. Access lasts at most 30 days.',
+  loading: 'Loading channel governance…',
+  failure: 'The change could not be saved. Refresh the current agreements and try again.',
+  loadFailure: 'Channel governance could not be loaded.',
+  saved: 'Channel governance updated.',
+  empty: 'No agreements or guest grants yet.',
+  refresh: 'Refresh',
+  choose: 'Choose a channel',
+  inactive: 'Revoked or expired',
+  states: {
+    proposed: 'Awaiting partner approval',
+    active: 'Active',
+    suspended: 'Suspended',
+    revoked: 'Revoked',
+  },
+}
+
+const fr: typeof en = {
+  title: 'Partenaires et invités de salon',
+  held: 'Le partage n’est pas activé pour cet espace. Demandez à votre administrateur d’hébergement de l’activer.',
+  introduction:
+    'Partagez un salon précis avec un partenaire ou donnez à un invité accès à un seul salon.',
+  history:
+    'L’historique Matrix déjà répliqué sur le serveur du partenaire ne peut pas être effacé à distance. La suspension bloque les nouvelles activités, sans rappeler les copies précédentes.',
+  accepted: 'Je comprends que l’historique déjà répliqué ne peut pas être effacé à distance.',
+  propose: 'Proposer un salon partenaire',
+  partner: 'Référence de l’organisation partenaire',
+  channel: 'Salon',
+  partnerChannel: 'Référence du salon partenaire',
+  localServer: 'Votre serveur Matrix',
+  partnerServer: 'Serveur Matrix du partenaire',
+  matrixRoom: 'Référence du salon partagé',
+  agreements: 'Accords partenaires',
+  activate: 'Accepter l’accord',
+  suspend: 'Suspendre',
+  revoke: 'Révoquer',
+  repropose: 'Demander la réactivation',
+  guests: 'Invités d’un seul salon',
+  grant: 'Accorder l’accès au salon',
+  identity: 'Référence de l’identité invitée',
+  matrixUser: 'Adresse Matrix de l’invité',
+  expires: 'Fin de l’accès',
+  calls: 'Autoriser les appels dans ce salon audio',
+  guestHint:
+    'Les invités ne peuvent pas parcourir l’organisation, rechercher des personnes, créer des messages privés, inviter ou ouvrir d’autres salons et documents. L’accès dure au maximum 30 jours.',
+  loading: 'Chargement des accès aux salons…',
+  failure: 'La modification n’a pas pu être enregistrée. Actualisez les accords puis réessayez.',
+  loadFailure: 'Impossible de charger les accès aux salons.',
+  saved: 'Accès aux salons mis à jour.',
+  empty: 'Aucun accord ni accès invité pour le moment.',
+  refresh: 'Actualiser',
+  choose: 'Choisir un salon',
+  inactive: 'Révoqué ou expiré',
+  states: {
+    proposed: 'En attente de l’accord du partenaire',
+    active: 'Actif',
+    suspended: 'Suspendu',
+    revoked: 'Révoqué',
+  },
+}
+
+export function channelGovernanceCopy(language: string | undefined) {
+  return language?.startsWith('fr') ? fr : en
+}

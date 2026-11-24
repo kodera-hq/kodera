@@ -23,6 +23,54 @@ beforeEach(() => {
 })
 
 describe('Profil de l’espace', () => {
+  it('edits identity, previews and removes a bounded raster logo, and saves preferences atomically', async () => {
+    const user = userEvent.setup()
+    const create = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:workspace-logo')
+    const revoke = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+    renderPanel(<WorkspaceProfilePanel organisationId={ORG} organisationName="Acme" canEdit />)
+    const name = await screen.findByRole('textbox', { name: 'Nom de l’espace' })
+    await user.clear(name)
+    await user.type(name, 'Workshop')
+    const preview = screen.getByRole('figure', { name: 'Aperçu de la carte de l’espace' })
+    expect(within(preview).getByText('Workshop')).toBeVisible()
+    const upload = screen.getByLabelText('Logo de l’espace')
+    await user.upload(upload, new File(['raster bytes'], 'logo.png', { type: 'image/png' }))
+    await waitFor(() =>
+      expect(preview.querySelector('img')).toHaveAttribute('src', 'blob:workspace-logo')
+    )
+    await user.selectOptions(screen.getByLabelText('Mode d’affichage par défaut'), 'messages')
+    await user.click(screen.getByLabelText('Aperçus de liens'))
+    await user.click(screen.getByRole('button', { name: 'Enregistrer' }))
+    await waitFor(() =>
+      expect(api.updateWorkspaceProfile).toHaveBeenCalledWith(
+        ORG,
+        expect.objectContaining({
+          display_name: 'Workshop',
+          logo_url: expect.stringMatching(/^data:image\/png;base64,/),
+          default_ui_mode: 'messages',
+          allow_link_previews: false,
+        }),
+        '"p1"'
+      )
+    )
+    await user.click(screen.getByRole('button', { name: 'Supprimer le logo' }))
+    expect(preview.querySelector('img')).toBeNull()
+    create.mockRestore()
+    revoke.mockRestore()
+  })
+
+  it('refuses oversized logos before reading or saving them', async () => {
+    const user = userEvent.setup()
+    renderPanel(<WorkspaceProfilePanel organisationId={ORG} organisationName="Acme" canEdit />)
+    await screen.findByRole('textbox', { name: 'Nom de l’espace' })
+    await user.upload(
+      screen.getByLabelText('Logo de l’espace'),
+      new File([new Uint8Array(2 * 1024 * 1024 + 1)], 'large.png', { type: 'image/png' })
+    )
+    expect(await screen.findByText(/Choisissez une image/)).toBeVisible()
+    expect(api.updateWorkspaceProfile).not.toHaveBeenCalled()
+  })
+
   it('updates the preview card live while the description, banner and traits change', async () => {
     const user = userEvent.setup()
     renderPanel(<WorkspaceProfilePanel organisationId={ORG} organisationName="Acme" canEdit />)
@@ -59,6 +107,7 @@ describe('Profil de l’espace', () => {
     await waitFor(() => expect(api.updateWorkspaceProfile).toHaveBeenCalledTimes(1))
     const [, patch, etag] = api.updateWorkspaceProfile.mock.calls[0]!
     expect(etag).toBe('"p1"')
+    expect(patch.display_name).toBe('')
     expect(patch.traits.map((trait: { label: string }) => trait.label)).toEqual([
       'R&D',
       'Design',
@@ -66,6 +115,28 @@ describe('Profil de l’espace', () => {
       'Communauté',
     ])
     expect(await screen.findByText('Modifications enregistrées.')).toBeVisible()
+  })
+
+  it('allows clearing a custom display name back to follow the organisation name', async () => {
+    const user = userEvent.setup()
+    api.getWorkspaceProfile.mockResolvedValue({
+      value: { ...PROFILE, display_name: 'Studio' },
+      etag: '"etag-custom"',
+    })
+    renderPanel(<WorkspaceProfilePanel organisationId={ORG} organisationName="Acme" canEdit />)
+    const name = await screen.findByRole('textbox', { name: 'Nom de l’espace' })
+    expect(name).toHaveValue('Studio')
+    await user.clear(name)
+    const preview = screen.getByRole('figure', { name: 'Aperçu de la carte de l’espace' })
+    expect(within(preview).getByText('Acme')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Enregistrer' }))
+    await waitFor(() =>
+      expect(api.updateWorkspaceProfile).toHaveBeenCalledWith(
+        ORG,
+        expect.objectContaining({ display_name: '' }),
+        '"etag-custom"'
+      )
+    )
   })
 
   it('explains a concurrent edit in words and never shows a status code', async () => {

@@ -118,6 +118,13 @@ def assert_contract(contract, authz):
     for name in CLOSED_SCHEMAS:
         assert schemas[name]["additionalProperties"] is False, "closed-schema"
         for prop in schemas[name]["properties"]:
+            if name == "Workspace" and prop in {
+                "allow_member_channel_creation",
+                "allow_member_invites",
+            }:
+                assert schemas[name]["properties"][prop] == {"type": "boolean"}, "structure-only"
+                assert prop not in schemas[name].get("required", []), "structure-only"
+                continue
             assert not any(word in prop for word in CONTENT_WORDS), "structure-only"
     assert schemas["WorkspaceState"]["enum"] == ["not_initialised", "initialised"], "enums"
     assert schemas["WorkspaceSetupState"]["enum"] == ["pending", "running", "ready", "failed"], (
@@ -194,7 +201,7 @@ def assert_contract(contract, authz):
         cells[1:3]
         == ["read own, create own, update own, delete own, act own (initialise, archive)"] * 2
     ), "authz-row"
-    assert cells[3:5] == ["read own"] * 2, "authz-row"
+    assert cells[3:5] == ["read own", "read own, create own"], "authz-row"
     assert cells[5:] == ["—"] * 4, "authz-row"
 
 
@@ -356,8 +363,8 @@ def test_each_mutant_is_refused_by_its_check(contract, authz, name):
     "old,new",
     [
         (
-            "| read own | read own | — | — | — | — |",
-            "| read own | read own | read all | — | — | — |",
+            "| read own | read own, create own | — | — | — | — |",
+            "| read own | read own, create own | read all | — | — | — |",
         ),
         ("| `Workspace`, `Category`, `Channel` |", "| `Workspaces` |"),
     ],

@@ -13,6 +13,13 @@ enum class WorkspaceChannelLifecycle { ACTIVE, ARCHIVED }
 data class WorkspaceSetup(val state: WorkspaceSetupState, val reason: WorkspaceSetupReason?)
 
 /** Server-filtered metadata only. A ready room does not establish current Matrix access. */
+/** Display precedence is independent of translated names and stored positions. */
+fun isArrivalsChannelName(name: String, templateKey: String? = null): Boolean =
+    listOf(name, templateKey.orEmpty()).any { value ->
+        java.text.Normalizer.normalize(value.trim().removePrefix("#"), java.text.Normalizer.Form.NFD)
+            .replace(Regex("\\p{M}"), "").lowercase(java.util.Locale.ROOT) in setOf("arrivals", "arrivees")
+    }
+
 data class WorkspaceChannel(val id: String, val kind: ChannelKind, val name: String,
     val templateKey: String?, val topic: String, val lifecycle: WorkspaceChannelLifecycle,
     val roomState: ChannelRoomState, val isConfidential: Boolean? = null)
@@ -78,7 +85,7 @@ class CoreWorkspaceClient(private val requester: CoreRequester) {
 
         fun decode(data: ByteArray, organisationId: String): WorkspaceSnapshot {
             val root = StrictJson.parse(data, CoreRequester.BODY_LIMIT).objectValue()
-            fields(root, "organisation_id", "state", "setup", "can_initialise", "id", "categories", "uncategorised_channels")
+            fields(root.filterKeys { it !in setOf("arrivals_channel_id", "display_name", "logo_url", "default_ui_mode", "default_channel_id", "allow_member_channel_creation", "allow_member_invites", "allow_link_previews") }, "organisation_id", "state", "setup", "can_initialise", "id", "categories", "uncategorised_channels")
             val returnedOrganisation = uuid(root.getValue("organisation_id"))
             if (!TrustPolicy.canonicalNonNilUUID(organisationId) || returnedOrganisation != organisationId) refused()
             val state = when (root.getValue("state").stringValue()) {
@@ -89,8 +96,13 @@ class CoreWorkspaceClient(private val requester: CoreRequester) {
             val setup = setup(root.getValue("setup"))
             val canInitialise = (root.getValue("can_initialise") as? JsonValue.BooleanValue)?.value ?: refused()
             val id = root.getValue("id").let { if (it == JsonValue.NullValue) null else uuid(it) }
-            val categories = root.getValue("categories").arrayValue().map(::category)
-            val uncategorised = root.getValue("uncategorised_channels").arrayValue().map(::channel)
+            val storedCategories = root.getValue("categories").arrayValue().map(::category)
+            val storedUncategorised = root.getValue("uncategorised_channels").arrayValue().map(::channel)
+            val arrivalsId = (root["arrivals_channel_id"] as? JsonValue.StringValue)?.value
+            val priority: (WorkspaceChannel) -> Boolean = { it.id == arrivalsId || isArrivalsChannelName(it.name, it.templateKey) }
+            val arrivals = (storedUncategorised + storedCategories.flatMap { it.channels }).filter(priority)
+            val categories = storedCategories.map { category -> category.copy(channels = immutableCopy(category.channels.filterNot(priority))) }
+            val uncategorised = arrivals + storedUncategorised.filterNot(priority)
             if (state == WorkspaceState.NOT_INITIALISED) {
                 if (id != null || categories.isNotEmpty() || uncategorised.isNotEmpty()) refused()
             } else if (id == null || canInitialise) refused()

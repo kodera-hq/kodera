@@ -31,6 +31,7 @@ APPS = [
     "apps.media",
     "apps.notifications",
     "apps.e2ee",
+    "apps.confidential",
     "core.idempotency",
 ]
 COMMANDS = [

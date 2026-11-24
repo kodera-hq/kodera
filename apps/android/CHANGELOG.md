@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Arrivals now precedes every channel across translated labels and category positions; workspace profile additions remain compatible.
+
 - Preserve calls across overlapping UI and companion sync failures, and recover older call answers through bounded timeline backfill.
 
 - Restore Matrix room security knowledge with a full sync after a temporary native call polling failure.

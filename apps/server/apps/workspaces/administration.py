@@ -42,6 +42,7 @@ from apps.orgs.actor_selectors import (
 )
 from services.identity.access_tokens import VerifiedAccessToken
 
+from .channel_order import arrivals_order
 from .models import Category, Channel, Workspace
 from .structure import (
     INITIALISING_ROLES,
@@ -299,7 +300,21 @@ def require_administrator(caller: TenantCaller) -> None:
         raise AdministrationForbiddenError(caller)
 
 
-def authorise(*, verified: VerifiedAccessToken, organisation_id: UUID) -> TenantCaller:
+def require_channel_creator(caller: TenantCaller) -> None:
+    if (
+        caller.role == "org_member"
+        and caller.organisation_state == "active"
+        and Workspace.objects.filter(
+            organisation_id=caller.organisation_id, allow_member_channel_creation=True
+        ).exists()
+    ):
+        return
+    require_administrator(caller)
+
+
+def authorise(
+    *, verified: VerifiedAccessToken, organisation_id: UUID, channel_creation: bool = False
+) -> TenantCaller:
     """An owner or admin of `organisation_id`, read against current state in a snapshot of its
     own, before any write or the replay store."""
     if connection.in_atomic_block or not connection.get_autocommit():
@@ -308,7 +323,7 @@ def authorise(*, verified: VerifiedAccessToken, organisation_id: UUID) -> Tenant
         with connection.cursor() as cursor:
             cursor.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         caller = read_caller(verified, organisation_id)
-    require_administrator(caller)
+    require_channel_creator(caller) if channel_creation else require_administrator(caller)
     return caller
 
 
@@ -501,7 +516,7 @@ def read_administration(*, verified: VerifiedAccessToken, organisation_id: UUID)
         for row in (
             Channel.objects.filter(workspace_id=workspace_id)
             .exclude(lifecycle=DELETED)
-            .order_by("position", "id")
+            .order_by(arrivals_order(), "position", "name", "id")
             .values_list(*_CHANNEL_FIELDS)
         ):
             channel = ChannelRow(*row)
@@ -532,7 +547,12 @@ def _revise(organisation_id: UUID) -> tuple[UUID, UUID | None] | None:
 
 
 def begin(
-    *, verified: VerifiedAccessToken, organisation_id: UUID, request_id: str, creating: bool = False
+    *,
+    verified: VerifiedAccessToken,
+    organisation_id: UUID,
+    request_id: str,
+    creating: bool = False,
+    channel_creation: bool = False,
 ) -> Write:
     """Take the workspace, then read the caller again under its lock, in the caller's
     transaction. A lock wait past the timeout raises `WorkspaceBusyError`. Before the workspace
@@ -549,7 +569,7 @@ def begin(
             raise WorkspaceBusyError() from error
         raise
     caller = read_caller(verified, organisation_id)
-    require_administrator(caller)
+    require_channel_creator(caller) if channel_creation else require_administrator(caller)
     if caller.organisation_state != "active":
         raise AdministrationForbiddenError(caller)
     if revised is None:
@@ -731,6 +751,11 @@ def create_channel(*, write: Write, body: dict[str, Any]) -> ChannelRow:
         required=("category_id", "kind", "name"),
         optional=("topic", "position", "confidential"),
     )
+    if write.caller.role not in ADMINISTERING_ROLES:
+        require_channel_creator(write.caller)
+        # Member creation cannot select an inaccessible category or designate protected rooms.
+        if body.get("category_id") is not None or body.get("confidential", False):
+            raise AdministrationForbiddenError(write.caller)
     category_id = fields.uuid("category_id", nullable=True)
     kind = fields.choice("kind", tuple(Channel.Kind.values))
     name = fields.name()
@@ -851,6 +876,10 @@ def set_lifecycle(*, write: Write, channel_id: UUID, lifecycle: str) -> ChannelR
         return row
     if row.lifecycle not in (Channel.Lifecycle.ACTIVE, Channel.Lifecycle.ARCHIVED):
         raise StructureStateError((Channel.Lifecycle.ACTIVE, Channel.Lifecycle.ARCHIVED))
+    if lifecycle == Channel.Lifecycle.ARCHIVED:
+        Workspace.objects.filter(id=write.workspace_id, default_channel_id=row.id).update(
+            default_channel_id=None, updated_at=timezone.now()
+        )
     Channel.objects.filter(id=row.id).update(
         lifecycle=lifecycle, version=F("version") + 1, updated_at=timezone.now()
     )

@@ -139,6 +139,18 @@ MAX_RECOVERY_ENVELOPES = MAX_ENVELOPES + MAX_PARTICIPANTS + 1
 MAX_PAGE_BYTES = MAX_PAGE_UTF8_BYTES
 ADMINS = frozenset({"org_owner", "org_admin"})
 REQUEST_FIELDS = {
+    "publish-verification-bundle": (
+        {
+            "deviceId",
+            "revision",
+            "masterKey",
+            "selfSigningKey",
+            "crossSigningSignature",
+            "deviceSignature",
+            "signature",
+        },
+        set(),
+    ),
     "register-device": ({"signingKey", "signature"}, set()),
     "publish-key-package": ({"deviceId", "keyPackage", "signature"}, set()),
     "create-room": ({"deviceId", "channelId", "algorithm", "signature"}, set()),
@@ -662,6 +674,10 @@ def create_room(
     Participant.objects.create(
         organisation_id=organisation_id, room=row, device=device, joined_epoch=0
     )
+    if row.algorithm == "io.kodera.mls.v1":
+        from apps.confidential.services import accept_epoch
+
+        accept_epoch(room_id=row.id, epoch=0, sequence=0, commit=b"", device_ids=[str(device.id)])
     _audit(principal, "room_created", row.id, request_id)
     return {
         "roomId": str(row.id),
@@ -877,6 +893,16 @@ def commit_epoch(
     room.rekey_required = False
     _discard_room_packages(room)
     room.save(update_fields=["epoch", "head_sequence", "rekey_required", "updated_at"])
+    if room.algorithm == "io.kodera.mls.v1":
+        from apps.confidential.services import accept_epoch
+
+        accept_epoch(
+            room_id=room.id,
+            epoch=room.epoch,
+            sequence=row.sequence,
+            commit=commit,
+            device_ids=sorted(str(value) for value in ids),
+        )
     _audit(principal, "epoch_committed", row.id, request_id)
     return {
         "epoch": room.epoch,
@@ -986,3 +1012,52 @@ def read_envelopes(
         "devices": devices,
         "envelopes": envelopes,
     }
+
+
+@transaction.atomic
+def directory_context(
+    *, verified: VerifiedAccessToken, organisation_id: UUID, room_id: UUID, device_id: str
+) -> dict[str, Any]:
+    """Resolve a known channel or room UUID under current participating-device authority."""
+    room_id = (
+        Room.objects.filter(organisation_id=organisation_id)
+        .filter(Q(id=room_id) | Q(channel_id=room_id))
+        .values_list("id", flat=True)
+        .first()
+    ) or room_id
+    workspace, principal = _context(verified, organisation_id, room_id=room_id)
+    device = _device(device_id, principal, workspace)
+    room, _, active = _room(room_id, principal, workspace, device)
+    return {
+        "roomId": str(room.id),
+        "channelId": str(room.channel_id),
+        "epoch": room.epoch,
+        "algorithm": room.algorithm,
+        "rekeyRequired": room.rekey_required,
+        "deviceIds": sorted(str(identifier) for identifier in active),
+        "signingKeys": {
+            str(key): base64.b64encode(bytes(row.signing_key)).decode()
+            for key, row in active.items()
+        },
+    }
+
+
+@transaction.atomic
+def verification_context(
+    *, verified: VerifiedAccessToken, organisation_id: UUID, body: dict[str, Any]
+) -> dict[str, Any]:
+    """A bundle must be proven by the currently registered device, not a supplied public key."""
+    workspace, principal = _context(verified, organisation_id, body=body)
+    device = _device(body.get("deviceId"), principal, workspace)
+    _proof(bytes(device.signing_key), "publish-verification-bundle", principal, None, body)
+    return {
+        "deviceId": str(device.id),
+        "membershipId": str(principal.membership_id),
+        "identityId": str(principal.identity_id),
+        "signingKey": base64.b64encode(bytes(device.signing_key)).decode(),
+    }
+
+
+@transaction.atomic
+def admit_directory(*, verified: VerifiedAccessToken, organisation_id: UUID) -> None:
+    _context(verified, organisation_id)

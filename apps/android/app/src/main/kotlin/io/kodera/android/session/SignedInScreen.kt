@@ -325,6 +325,25 @@ private fun WorkspaceSection(
                     if (snapshot.categories.all { it.channels.isEmpty() } && snapshot.uncategorisedChannels.isEmpty()) {
                         Text(stringResource(R.string.workspace_empty), style = NativeTypography.body)
                     }
+                    if (snapshot.uncategorisedChannels.isNotEmpty()) {
+                        Text(stringResource(R.string.workspace_uncategorised), style = NativeTypography.emphasis,
+                            modifier = Modifier.semantics { heading() })
+                        for (channel in snapshot.uncategorisedChannels) {
+                            val isPrivateInternal =
+                                CommunityWorkspaceBlueprint.matchChannel(channel.name)?.visibility == CommunityChannelVisibility.PRIVATE_INTERNAL
+                            ChannelMetadata(
+                                channel = channel,
+                                organisationId = snapshot.organisationId,
+                                canInvite = inviteCoordinator != null && !isPrivateInternal,
+                                onOpenChannel = onOpenChannel,
+                                onOpenInvite = { scope ->
+                                    workspaceSheetContext = inviteCoordinator?.let {
+                                        try { it.openSheet(scope) } catch (_: ChannelInviteFailure) { null }
+                                    }
+                                },
+                            )
+                        }
+                    }
                     for (category in snapshot.categories) {
                         val matchedCategory = CommunityWorkspaceBlueprint.matchCategory(
                             id = category.id,
@@ -370,25 +389,6 @@ private fun WorkspaceSection(
                         val categoryPrivateInternal = matchedCategory?.defaultVisibility == CommunityChannelVisibility.PRIVATE_INTERNAL
                         for (channel in category.channels) {
                             val isPrivateInternal = categoryPrivateInternal ||
-                                CommunityWorkspaceBlueprint.matchChannel(channel.name)?.visibility == CommunityChannelVisibility.PRIVATE_INTERNAL
-                            ChannelMetadata(
-                                channel = channel,
-                                organisationId = snapshot.organisationId,
-                                canInvite = inviteCoordinator != null && !isPrivateInternal,
-                                onOpenChannel = onOpenChannel,
-                                onOpenInvite = { scope ->
-                                    workspaceSheetContext = inviteCoordinator?.let {
-                                        try { it.openSheet(scope) } catch (_: ChannelInviteFailure) { null }
-                                    }
-                                },
-                            )
-                        }
-                    }
-                    if (snapshot.uncategorisedChannels.isNotEmpty()) {
-                        Text(stringResource(R.string.workspace_uncategorised), style = NativeTypography.emphasis,
-                            modifier = Modifier.semantics { heading() })
-                        for (channel in snapshot.uncategorisedChannels) {
-                            val isPrivateInternal =
                                 CommunityWorkspaceBlueprint.matchChannel(channel.name)?.visibility == CommunityChannelVisibility.PRIVATE_INTERNAL
                             ChannelMetadata(
                                 channel = channel,

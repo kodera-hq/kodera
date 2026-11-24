@@ -996,11 +996,17 @@ def without_warm_pool(objects):
     """0008 owns only the warm-pool table; retain every unrelated schema object."""
     from workspace_documents.schema_inventory import without_documents
     from workspace_quotas.schema_inventory import without_quotas
-    from workspace_safety.iam_schema_inventory import without_confidential, without_iam
+    from workspace_safety.iam_schema_inventory import (
+        without_confidential,
+        without_governance,
+        without_iam,
+    )
     from workspace_safety.schema_inventory import without_moderation
 
     objects = without_moderation(
-        without_documents(without_quotas(without_iam(without_confidential(objects))))
+        without_documents(
+            without_quotas(without_iam(without_confidential(without_governance(objects))))
+        )
     )
     assert ("relation", WARM_POOL_TABLE, WARM_POOL_TABLE) in objects
     assert ("constraint", WARM_POOL_TABLE, "warm_pool_offer_valid") in objects
@@ -1019,7 +1025,13 @@ def without_warm_pool(objects):
     return {
         key: value
         for key, value in objects.items()
-        if key[1] not in {WARM_POOL_TABLE, TEMPLATE_APP_TABLE, AI_POLICY_TABLE, AI_CONSENT_TABLE}
+        if key[1]
+        not in {
+            WARM_POOL_TABLE,
+            TEMPLATE_APP_TABLE,
+            AI_POLICY_TABLE,
+            AI_CONSENT_TABLE,
+        }
         and key not in template_app_shared
     }
 

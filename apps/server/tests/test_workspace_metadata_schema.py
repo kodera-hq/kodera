@@ -218,6 +218,9 @@ def test_registered_schema_matches_migrations(schema):
             "0016_upload_tombstone_quota",
             "0017_workspacetemplateapplication",
             "0018_ai_policy_and_consent",
+            "0019_partner_channels_and_guests",
+            "0020_governance_guards",
+            "0021_workspace_logo_and_ux_preferences",
         }
 
 

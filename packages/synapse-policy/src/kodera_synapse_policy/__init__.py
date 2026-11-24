@@ -85,6 +85,9 @@ AI_LOCALPART_PREFIXES = (
 AI_LOCALPART_SUFFIXES = ("-bot", "_bot", "-agent", "_agent")
 
 
+from .authority import Authority, EventView, guest_request, public_request, valid_origin
+
+
 class KoderaPolicy:
     def __init__(self, config: dict[str, Any], api: ModuleApi) -> None:
         self._agent = config["agent_user_id"]
@@ -99,6 +102,7 @@ class KoderaPolicy:
             for entry in config.get("ai_user_ids", ())
             if isinstance(entry, str) and entry.strip()
         )
+        self._authority = Authority(api, config["core_authority_origin"], config["core_authority_token"]) if config.get("core_authority_origin") else None
         self._api = api
         self._server = self._agent.partition(":")[2]
         self._federation_servers = frozenset(config.get("federation_domain_allowlist", ()))
@@ -119,6 +123,9 @@ class KoderaPolicy:
             resource = _make_dm_member_resource(self)
             if resource is not None:
                 api.register_web_resource("/_synapse/client/kodera/v1/dm_member", resource)
+            scope = _make_scope_resource(self)
+            if scope is not None:
+                api.register_web_resource("/_synapse/client/kodera/v1/request_scope", scope)
 
     @staticmethod
     def parse_config(config: dict[str, Any]) -> dict[str, Any]:
@@ -163,11 +170,25 @@ class KoderaPolicy:
             if mode == "partner" and not servers:
                 raise ConfigError("partner federation_mode requires a nonempty global allowlist")
             parsed["federation_mode"] = mode
+        governance = config.get("channel_governance_enabled", False)
+        if type(governance) is not bool:
+            raise ConfigError("channel_governance_enabled must be a boolean")
+        mode = parsed.get("federation_mode", "partner" if servers else "closed")
+        origin, token = config.get("core_authority_origin"), config.get("core_authority_token")
+        if (governance or mode == "partner") and not origin:
+            raise ConfigError("Channel governance and partner federation require Core authority")
+        parsed["channel_governance_enabled"] = governance
+        if origin is not None or token is not None:
+            if not valid_origin(origin) or not isinstance(token, str) or not token or any(c.isspace() for c in token):
+                raise ConfigError("Core authority requires an HTTPS origin and a nonempty credential")
+            parsed.update(core_authority_origin=origin, core_authority_token=token)
         return parsed
 
     async def user_may_create_room(
         self, user_id: str, room_config: dict[str, Any] | None = None
     ) -> Any:
+        if not await self._live_allows(user_id, "", "create"):
+            return Codes.FORBIDDEN
         # Initial state never reaches the spam callback. Only a trusted explicit
         # confidential-room request may include the matching initial encryption.
         if room_config is not None and _asks_for_encryption(room_config) and not (user_id == self._agent and valid_initial_encryption(room_config)):
@@ -327,6 +348,8 @@ class KoderaPolicy:
             request_content["creation_content"] = creation
 
     async def user_may_invite(self, inviter: str, invitee: str, room_id: str) -> Any:
+        if not await self._live_allows(inviter, room_id, "invite") or not await self._live_allows(invitee, room_id, "join"):
+            return Codes.FORBIDDEN
         # The agent's audio-room reconciliation may invite the service before it exists.
         # Bind this exception to current, agent-authored audio policy; never to a DM/text room.
         if self._room_access is not None and inviter == self._agent and invitee == self._room_access and self._api.is_mine(invitee):
@@ -424,9 +447,12 @@ class KoderaPolicy:
         return NOT_SPAM
 
     async def user_may_join_room(self, user: str, room: str, is_invited: bool) -> Any:
+        if not await self._live_allows(user, room, "join"):
+            return Codes.FORBIDDEN
         if user == self._agent:
             return NOT_SPAM
         state = await self._api.get_room_state(room)
+        state, guests = await self._guest_state(state, room, [user])
         create = state.get(("m.room.create", ""))
         creator = getattr(create, "sender", None)
         if not state or not isinstance(creator, str) or not self._api.is_mine(creator):
@@ -437,7 +463,7 @@ class KoderaPolicy:
         content = getattr(policy_event, "content", None)
         if not self._api.is_mine(user) and not self._partner_federation_allowed(state, user):
             return Codes.FORBIDDEN
-        if self._api.is_mine(user) and user != self._room_access and not await self._active_dm_users(user):
+        if self._api.is_mine(user) and user != self._room_access and user not in guests and not await self._active_dm_users(user):
             return Codes.FORBIDDEN
         if not _has_governance(content):
             return NOT_SPAM
@@ -512,17 +538,25 @@ class KoderaPolicy:
         )
 
     async def check_event_allowed(self, event: Any, state_events: Any) -> tuple[bool, dict | None]:
+        if not await self._live_event(event):
+            return False, None
         # Synapse asks this of every event it creates, with no admin exemption: a room's initial
         # state, encryption a server setting forces on at creation, the state an upgrade copies,
         # and every timeline event, ciphertext included.
+        event, state_events = await self._trusted_partner_view(state_events, getattr(event, "room_id", ""), event)
+        state_events, _ = await self._guest_state(state_events, getattr(event, "room_id", ""), [event.sender, getattr(event, "state_key", "")])
         return event_allowed(event, state_events, self._agent) and self._governance_allows(event, state_events), None
 
     async def check_event_for_spam(self, event: Any) -> Any:
+        if not await self._live_event(event):
+            return Codes.FORBIDDEN
         # Synapse runs this, not check_event_allowed, on events from other servers.
         if hasattr(event, "room_id") and event.room_id is not None:
             if not isinstance(event.room_id, str) or not event.room_id.startswith("!"):
                 return Codes.FORBIDDEN
             state = await self._api.get_room_state(event.room_id)
+            event, state = await self._trusted_partner_view(state, event.room_id, event)
+            state, _ = await self._guest_state(state, event.room_id, [event.sender, getattr(event, "state_key", "")])
             if not event_allowed(event, state, self._agent) or not self._governance_allows(event, state):
                 return Codes.FORBIDDEN
         elif event.type in ENCRYPTION:
@@ -544,6 +578,101 @@ class KoderaPolicy:
         ):
             return Codes.FORBIDDEN
         return NOT_SPAM
+
+    async def _trusted_partner_view(self, state, room, event=None):
+        create = state.get(('m.room.create', ''))
+        creator = getattr(create, 'sender', None)
+        if self._authority is None or creator == self._agent or not _is_valid_user_id(creator):
+            return event, state
+        host = creator.partition(':')[2]
+        decision = await self._authority.decide(self._agent, room, 'event')
+        policy = state.get(('io.kodera.room.policy', ''))
+        boundary = state.get(('m.room.server_acl', ''))
+        content = getattr(policy, 'content', None)
+        if not (decision['allowed'] is True and decision['role'] in {'local', 'partner'}
+                and creation_mode(getattr(create, 'content', None)) == 'partner'
+                and getattr(policy, 'sender', None) == creator
+                and getattr(boundary, 'sender', None) == creator
+                and isinstance(content, Mapping)
+                and server_list(content.get('federation_servers')) == (self._server,)
+                and self._servers_allowed((host,))
+                and acl_matches(getattr(boundary, 'content', None), acl(self._server, (host,)))):
+            return event, state
+        # Core pins this exact shared room. From the receiving organisation's view,
+        # its own server is local and the immutable creator's server is the partner.
+        # The creator's local-member projection cannot enumerate the receiving realm.
+        content = {key: value for key, value in content.items() if key != 'local_members'}
+        content['federation_servers'] = [host]
+        mirrored = dict(state)
+        for kind in ('m.room.create', 'm.room.server_acl'):
+            mirrored[(kind, '')] = EventView(state[(kind, '')], sender=self._agent)
+        mirrored[('io.kodera.room.policy', '')] = EventView(policy, sender=self._agent, content=content)
+        if event is not None and event.sender == creator:
+            event = EventView(event, sender=self._agent)
+        return event, mirrored
+
+    async def _guest_state(self, state, room, users):
+        _, state = await self._trusted_partner_view(state, room)
+        from types import SimpleNamespace
+        if self._authority is None:
+            return state, set()
+        policy = state.get(('io.kodera.room.policy', ''))
+        if policy is None or not self._governance_valid(policy):
+            return state, set()
+        guests = set()
+        for user in users:
+            if not _is_valid_user_id(user) or user in self._trusted_services:
+                continue
+            decision = await self._authority.decide(user, room, 'join')
+            if decision['allowed'] is True and decision['role'] == 'single_channel_guest':
+                guests.add(user)
+        if not guests:
+            return state, guests
+        content = dict(policy.content)
+        for key in ('members', 'local_members'):
+            if key in content:
+                content[key] = sorted(set(content[key]) | guests)
+        return {**state, ('io.kodera.room.policy', ''): SimpleNamespace(sender=policy.sender, content=content)}, guests
+
+    async def _live_allows(self, user, room, action):
+        if user in self._trusted_services:
+            return True
+        if self._authority is None:
+            return True
+        return (await self._authority.decide(user, room, action))['allowed'] is True
+
+    async def _live_event(self, event):
+        room = getattr(event, 'room_id', '') or ''
+        if self._authority is not None and event.sender not in self._trusted_services:
+            decision = await self._authority.decide(event.sender, room, 'event')
+            if decision['allowed'] is not True:
+                return False
+            if decision['role'] == 'single_channel_guest' and event.is_state():
+                if not (event.type == 'm.room.member' and getattr(event, 'state_key', '') == event.sender and event.content.get('membership') in {'join', 'leave'}):
+                    return False
+        if event.type == 'm.room.member' and event.content.get('membership') == 'invite':
+            if not await self._live_allows(event.sender, room, 'invite'):
+                return False
+        if event.type == 'm.room.member' and event.content.get('membership') in {'join', 'invite', 'knock'}:
+            return await self._live_allows(getattr(event, 'state_key', ''), room, 'join')
+        return True
+
+    async def request_allowed(self, user, path, method):
+        if self._authority is None:
+            return False
+        decision = await self._authority.decide(user, '', 'directory')
+        if decision['role'] == 'none':
+            return False
+        if decision['role'] != 'single_channel_guest':
+            return decision['allowed'] is True
+        request = guest_request(path, method)
+        if request is None:
+            return False
+        room, action = request
+        if action == 'session':
+            return await self._live_allows(user, '', 'session')
+        scoped = await self._authority.decide(user, room, action)
+        return scoped['allowed'] is True and scoped['role'] == 'single_channel_guest'
 
     def _governance_valid(self, policy_event: Any) -> bool:
         content = getattr(policy_event, "content", {})
@@ -776,6 +905,28 @@ def _has_governance(content: Any) -> bool:
             "local_members",
         )
     )
+
+
+def _make_scope_resource(policy):
+    try:
+        from synapse.http.server import DirectServeJsonResource
+    except ImportError:
+        return None
+
+    class ScopeResource(DirectServeJsonResource):
+        isLeaf = True
+
+        async def _async_render_GET(self, request):
+            path = request.getHeader('X-Original-URI')
+            method = request.getHeader('X-Original-Method')
+            if policy._authority is None or public_request(path, method) or method == 'OPTIONS':
+                return 200, {'allowed': True}
+            requester = await policy._api.get_user_by_req(request)
+            if not await policy.request_allowed(requester.user.to_string(), path, method):
+                raise SynapseError(403, 'Channel scope refused', errcode=Codes.FORBIDDEN)
+            return 200, {'allowed': True}
+
+    return ScopeResource()
 
 
 def _make_dm_member_resource(policy: KoderaPolicy) -> Any | None:

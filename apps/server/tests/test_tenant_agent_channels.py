@@ -2033,3 +2033,27 @@ def test_confidential_channel_binds_immutable_marker_and_initial_encryption(tmp_
     downgrade = channel_set(2, channel(TEXT))
     assert handlers.handle(CHANNEL_KIND, downgrade).status == "failed"
     assert parse(channel_set(3, channel(AUDIO, kind="audio", confidential=True))) is None
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+@pytest.mark.parametrize("partnered", [True, False])
+def test_workspace_invitation_preference_reaches_policy_and_power_levels(
+    tmp_path, enabled, partnered
+):
+    homeserver = FakeHomeserver()
+    state = State(tmp_path)
+    desired = parse(
+        channel_set(1, channel(audience="all", members=[], allow_member_invites=enabled))
+    )
+    assert desired is not None
+    partners = ((TEXT, ("partner.example.org",)),) if partnered else ()
+    assert (
+        Channels(homeserver, CallLiveKit({}), state, partner_channels=partners)
+        .apply(desired)
+        .failed
+        == []
+    )
+    room = homeserver.room_of(TEXT)
+    assert room["state"][(POLICY, "")]["allow_member_invites"] is (enabled or partnered)
+    assert room["state"][(POWER_LEVELS, "")]["invite"] == (0 if enabled else 100)
+    assert room["state"][(POLICY, "")]["allow_federated_invites"] is partnered

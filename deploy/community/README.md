@@ -571,10 +571,10 @@ socket. Linux checks the socket inode's write permission when connecting; a
 read-only mount permits this connection while preventing filesystem changes,
 matching the proximity socket boundary.
 
-`media-socket-init` removes the stale socket and establishes mode `0700` and
-ownership `10001:10001` on both runtime directories before the worker starts. Its
+`media-socket-init` establishes mode `0700` and ownership `10001:10001` on both
+runtime directories before the worker starts while preserving any live worker socket. Its
 root filesystem is read-only and its only capabilities are `CHOWN`, `FOWNER` and
-`DAC_OVERRIDE`; the last permits cleanup inside the existing owner-only directory.
+`DAC_OVERRIDE`; the last permits ownership checks inside the existing owner-only directory.
 The worker has no added capabilities, published ports or environment credentials.
 The API waits for the worker's Unix socket connection healthcheck in both topologies.
 An empty credential directory allows worker startup; the API's readiness probe
@@ -598,9 +598,13 @@ ending in `/` (for example `https://media.example.org/bucket/`, never the Core A
 or identity-provider origin); `web` forwards it as `--attachment-base` so
 `connect-src` admits only that path prefix.
 
-After an abrupt worker termination, its `unless-stopped` restart policy does not
-rerun the initializer. The worker refuses a surviving socket file. Stop the API
-and worker before deliberately clearing that stale path and restarting:
+`storage_worker.py` coordinates exclusive socket ownership through `media.sock.lock`
+(non-blocking `flock`, mode `0600`, `O_NOFOLLOW`, UID-verified). If a live worker holds
+`media.sock.lock`, a competing worker refuses to clobber the active socket; after an
+abrupt worker termination (`SIGKILL` or power loss) its `unless-stopped` restart policy
+acquires `media.sock.lock`, unlinks the unlocked stale `media.sock`, and rebinds cleanly
+without rerunning `media-socket-init`. For a deliberate manual reset of the runtime
+directories and worker:
 
 ```sh
 docker compose stop server media-storage-worker
@@ -610,11 +614,11 @@ docker compose up -d media-storage-worker server
 
 Use the same Compose files for these commands as for the running topology,
 including `-f docker-compose.yml -f docker-compose.split.yml` for split deployments.
-Never run the initializer against a live worker. The local check
+The local check
 `PYTHONDONTWRITEBYTECODE=1 TMPDIR=/tmp python3 deploy/community/test_media_worker_startup.py`
-exercises stale socket cleanup, empty-directory startup, the actual health probe
-and signing refusal without contacting a storage provider. It does not start the
-full Compose stack.
+exercises live-socket preservation, unlocked stale-socket recovery via `media.sock.lock`,
+empty-directory startup, the actual health probe and signing refusal without contacting
+a storage provider. It does not start the full Compose stack.
 
 ## Shared ephemeral proximity state
 

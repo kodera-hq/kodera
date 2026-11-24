@@ -58,8 +58,12 @@ def restore_proximity_test_migrations() -> None:
     # These tests target the proximity guards themselves. The newer confidential
     # guard is tested separately, and otherwise refuses the downgrade before them.
     executor = MigrationExecutor(connection)
-    targets = [node for node in executor.loader.graph.leaf_nodes() if node[0] != "e2ee"]
-    targets.append(E2EE_0001)
+    targets = [
+        node
+        for node in executor.loader.graph.leaf_nodes()
+        if node[0] not in {"e2ee", "confidential"}
+    ]
+    targets.extend([E2EE_0001, ("confidential", None)])
     executor.migrate(targets)
     after = MigrationExecutor(connection)
     assert after.migration_plan(targets) == []

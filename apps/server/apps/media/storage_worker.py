@@ -508,6 +508,12 @@ class _UnixServer(socketserver.UnixStreamServer):
         self._lock_fd: int | None = None
         self._bound_path: Path | None = None
         self._socket_inode: int | None = None
+        self._stop_requested: bool = False
+
+    def service_actions(self) -> None:
+        super().service_actions()
+        if self._stop_requested:
+            raise SystemExit(0)
 
     def _process_request_thread(self, request: Any, client_address: Any) -> None:
         try:
@@ -666,18 +672,25 @@ def bind(path: Path, source: DirectorySource) -> _UnixServer:
 
 def serve(path: Path, source: DirectorySource) -> None:
     previous_handlers: list[tuple[signal.Signals, Any]] = []
+    server: _UnixServer | None = None
+    stop_requested = False
     if threading.current_thread() is threading.main_thread():
 
         def _stop(_sig: int, _frame: Any) -> None:
-            raise SystemExit(0)
+            nonlocal stop_requested
+            stop_requested = True
+            if server is not None:
+                server._stop_requested = True
 
         for sig in (signal.SIGTERM, signal.SIGINT):
             previous_handlers.append((sig, signal.getsignal(sig)))
             signal.signal(sig, _stop)
-    server: _UnixServer | None = None
     try:
         server = bind(path, source)
-        server.serve_forever(poll_interval=0.2)
+        server._stop_requested = stop_requested
+        if stop_requested:
+            raise SystemExit(0)
+        server.serve_forever(poll_interval=0.05)
     finally:
         for prev_sig, prev in previous_handlers:
             signal.signal(prev_sig, prev)

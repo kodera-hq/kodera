@@ -5,6 +5,7 @@
 // refusal, never a fiction.
 
 import { http, HttpResponse, type HttpHandler } from 'msw/http'
+import type { components } from '@/api/schema'
 import { problem } from '../problem'
 
 export const GOVERNANCE_DEMO_ROUTES: readonly string[] = [
@@ -19,9 +20,21 @@ export const GOVERNANCE_DEMO_ROUTES: readonly string[] = [
   'PUT /organisations/:organisation_id/workspace/channels/:channel_id/overrides',
   'GET /organisations/:organisation_id/workspace/bans',
   'GET /organisations/:organisation_id/workspace/audit-logs',
+  'GET /organisations/:organisation_id/workspace/channel-governance',
+  'POST /organisations/:organisation_id/workspace/partner-agreements',
+  'POST /organisations/:organisation_id/workspace/partner-agreements/:agreement_id/actions/transition',
+  'POST /organisations/:organisation_id/workspace/guest-grants',
+  'POST /organisations/:organisation_id/workspace/guest-grants/:grant_id/actions/revoke',
 ]
 
 const BLANK_PROFILE = {
+  display_name: '',
+  logo_url: '',
+  default_ui_mode: 'pro',
+  default_channel_id: null,
+  allow_member_channel_creation: false,
+  allow_member_invites: true,
+  allow_link_previews: true,
   description: '',
   banner_preset: '',
   icon_mxc: '',
@@ -58,5 +71,19 @@ export function governanceDemoHandlers(
     http.put(`${workspace}/channels/:channel_id/overrides`, refused),
     http.get(`${workspace}/bans`, page),
     http.get(`${workspace}/audit-logs`, page),
+    http.get(`${workspace}/channel-governance`, () =>
+      HttpResponse.json(
+        {
+          enforcementReady: false,
+          agreements: [],
+          guests: [],
+        } satisfies components['schemas']['ChannelGovernance'],
+        { headers: headers() }
+      )
+    ),
+    http.post(`${workspace}/partner-agreements`, refused),
+    http.post(`${workspace}/partner-agreements/:agreement_id/actions/transition`, refused),
+    http.post(`${workspace}/guest-grants`, refused),
+    http.post(`${workspace}/guest-grants/:grant_id/actions/revoke`, refused),
   ]
 }

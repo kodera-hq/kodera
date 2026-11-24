@@ -42,6 +42,7 @@ from config.environment import (
 from config.workspace_features import (
     ai_gateway_enabled,
     ai_seal_key,
+    channel_governance_enabled,
     confidential_relay_enabled,
     media_gateway_socket,
     media_room_verifier_url,
@@ -76,6 +77,7 @@ INSTALLED_APPS = [
     "apps.notifications",
     "apps.docs",
     "apps.e2ee",
+    "apps.confidential",
 ]
 KODERA_LOOPBACK_ISSUERS = False
 KODERA_AUTH_TRUST = auth_trust(os.environ)
@@ -200,3 +202,10 @@ KODERA_SYNAPSE_URL = synapse_url(os.environ)
 KODERA_SYNAPSE_ADMIN_TOKEN = synapse_admin_token(os.environ)
 KODERA_SYNAPSE_SERVER_NAME = synapse_server_name(os.environ)
 KODERA_MATRIX_REPLAY_TRANSPORT_FACTORY = matrix_replay_transport_factory(os.environ)
+
+# Operator attests live authority and edge request-scope configuration before sharing.
+
+KODERA_CHANNEL_GOVERNANCE_ENABLED = channel_governance_enabled(os.environ)
+KODERA_GOVERNANCE_AUTHORITY_CONFIGURED = (
+    os.environ.get("KODERA_GOVERNANCE_AUTHORITY_CONFIGURED") == "true"
+)

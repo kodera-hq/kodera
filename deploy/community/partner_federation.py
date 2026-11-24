@@ -17,7 +17,8 @@ MATRIX = (
     "@matrix path /_matrix/client/* /_matrix/media/v3/upload /_matrix/media/v3/upload/*"
     " /_matrix/media/v1/create /_matrix/media/v3/config /_synapse/client/*"
 )
-PARTNER_MATRIX = MATRIX + " /_matrix/federation/* /_matrix/key/*"
+PARTNER_MATRIX = "@federation path /_matrix/federation/* /_matrix/key/*"
+FEDERATION_HANDLE = "\n\thandle @federation {\n\t\treverse_proxy synapse:8008 {\n\t\t\timport client_address\n\t\t}\n\t}\n\n\t"
 
 
 def render(
@@ -38,7 +39,7 @@ def render(
     caddy = source.read_text()
     if caddy.count(MATRIX) != 1:
         raise ValueError("canonical Matrix route changed; review the generator")
-    caddy = caddy.replace(MATRIX, PARTNER_MATRIX)
+    caddy = caddy.replace(MATRIX, PARTNER_MATRIX + FEDERATION_HANDLE + MATRIX)
     caddy = caddy.replace(
         '# Client API only. Federation and key routes stay closed (README.md, "Federation").',
         "# Explicit experimental partner overlay: exact federation and key endpoints only.",
@@ -76,6 +77,8 @@ def render(
         "--env-file .env --env-file OUTPUT/partner.env to docker compose, together with the\n"
         "base profile, the split profile if selected, and OUTPUT/docker-compose.partner.yml.\n"
         "Use the same public configuration for the Synapse renderer and tenant-agent.\n"
+        "Configure the internal HTTPS Core authority origin and organisation agent credential first.\n"
+        "The inherited client request-scope gate remains mandatory.\n"
         "The overlay adds only exact Matrix federation/key routes. Admin routes stay closed.\n"
         "Only eligible Core audience:all non-read-only text channels may be selected.\n"
         "Existing incompatible rooms require explicit replacement; no history is copied.\n"

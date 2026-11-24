@@ -6,10 +6,13 @@ The caller's access is checked by apps/billing/access.py before any of these run
 """
 
 from typing import Any
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from django.conf import settings
 from django.db.models import QuerySet
+
+from apps.orgs.selectors import organisation_is_default_community
 
 from .models import RESERVED_TENANT_SLUGS, TENANT_STATUSES, Tenant, is_reserved_tenant_slug
 
@@ -103,3 +106,16 @@ def organisation_tenant_urls(*, organisation_ids: tuple[UUID, ...]) -> dict[UUID
         if row.organisation_id not in result:
             result[row.organisation_id] = default_urls(row)
     return result
+
+
+def organisation_matrix_homeservers(*, organisation_id: UUID) -> frozenset[str]:
+    """Operator URL templates and owned live tenants bind the messaging server name."""
+    local = getattr(settings, "KODERA_SYNAPSE_SERVER_NAME", None)
+    if local and organisation_is_default_community(organisation_id=organisation_id):
+        return frozenset({local})
+    return frozenset(
+        host
+        for row in tenants_not_deleted(organisation_id)
+        if (url := default_urls(row).get("messaging"))
+        if (host := urlsplit(url).hostname)
+    )

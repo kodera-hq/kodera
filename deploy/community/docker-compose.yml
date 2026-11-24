@@ -153,7 +153,7 @@ services:
     cap_drop: ["ALL"]
     cap_add: ["CHOWN", "FOWNER", "DAC_OVERRIDE"]
     security_opt: ["no-new-privileges:true"]
-    command: ["python", "-c", "import os; from pathlib import Path; Path('/run/kodera-media/media.sock').unlink(missing_ok=True); [(os.chmod(p, 0o700), os.chown(p, 10001, 10001)) for p in ('/run/kodera-media', '/run/kodera-media-secrets')]"]
+    command: ["python", "-c", "import os; from pathlib import Path; [(Path(p).mkdir(parents=True, exist_ok=True), os.chmod(p, 0o700), os.chown(p, 10001, 10001)) for p in ('/run/kodera-media', '/run/kodera-media-secrets')]"]
     restart: "no"
     volumes:
       - media_socket:/run/kodera-media
@@ -191,6 +191,9 @@ services:
     environment:
       KODERA_EDITION: community
       KODERA_BILLING_ENABLED: "false"
+      KODERA_SYNAPSE_SERVER_NAME: ${KODERA_DOMAIN:-chat.example.org}
+      KODERA_CHANNEL_GOVERNANCE_ENABLED: ${KODERA_CHANNEL_GOVERNANCE_ENABLED:-false}
+      KODERA_GOVERNANCE_AUTHORITY_CONFIGURED: ${KODERA_GOVERNANCE_AUTHORITY_CONFIGURED:-false}
       KODERA_COLLAB_TICKET_KEY: ${KODERA_COLLAB_TICKET_KEY:?Set the application collaboration key}
       KODERA_COLLAB_ENGINE_URL: http://yjs-collab:8098/internal/transform
       KODERA_COLLAB_PUBLIC_URL: wss://${KODERA_DOMAIN:-chat.example.org}/documents/collab
@@ -380,6 +383,9 @@ services:
     command: ["python", "-m", "room_access"]
     restart: unless-stopped
     environment:
+      ROOM_ACCESS_CHANNEL_GOVERNANCE_ENABLED: ${KODERA_CHANNEL_GOVERNANCE_ENABLED:-false}
+      ROOM_ACCESS_CORE_AUTHORITY_ORIGIN: ${KODERA_CORE_AUTHORITY_ORIGIN:-}
+      ROOM_ACCESS_CORE_AUTHORITY_TOKEN: ${KODERA_AGENT_TOKEN:-}
       ROOM_ACCESS_SYNAPSE_URL: http://synapse:8008
       ROOM_ACCESS_MATRIX_TOKEN: ${ROOM_ACCESS_MATRIX_TOKEN:?Set ROOM_ACCESS_MATRIX_TOKEN in .env}
       LIVEKIT_URL: http://livekit:7880
@@ -435,6 +441,9 @@ services:
         python /opt/community/configure_synapse.py /data/homeserver.yaml
         exec /start.py
     environment:
+      KODERA_CHANNEL_GOVERNANCE_ENABLED: ${KODERA_CHANNEL_GOVERNANCE_ENABLED:-false}
+      KODERA_CORE_AUTHORITY_ORIGIN: ${KODERA_CORE_AUTHORITY_ORIGIN:-}
+      KODERA_AGENT_TOKEN: ${KODERA_AGENT_TOKEN:-}
       SYNAPSE_SERVER_NAME: ${KODERA_DOMAIN:-chat.example.org}
       SYNAPSE_REPORT_STATS: "no"
       PYTHONPATH: /tmp/kodera-policy
