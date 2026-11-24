@@ -984,8 +984,10 @@ def update_reminder(
     if not data:
         raise RefusalError(422)
 
+    has_remind_at = "remind_at" in data or "remindAt" in data
+    needs_room_check = has_remind_at or data.get("state") in ("snoozed", "pending")
     resolved_synapse: str | None = None
-    if not connection.in_atomic_block:
+    if needs_room_check and not connection.in_atomic_block:
         peek = notification_services.peek_reminder_target(
             reminder_id=reminder_id, organisation_id=organisation_id
         )
@@ -1024,7 +1026,6 @@ def update_reminder(
         if "note" in data:
             next_note = _validate_note(data["note"])
 
-        has_remind_at = "remind_at" in data or "remindAt" in data
         if has_remind_at:
             _assert_plaintext_target(
                 workspace=workspace,
