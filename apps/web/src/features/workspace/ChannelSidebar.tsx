@@ -18,7 +18,13 @@ import { UniversalSearch } from '../command-palette/UniversalSearch'
 import type { ChannelSearchEntry } from './ChannelSearch'
 import { OrganisationHeader } from './OrganisationHeader'
 import { useWorkspaceLogo } from './useWorkspaceLogo'
-import { arrivalsFirst, categoryLabel, channelLabel, channelUsable } from './workspace'
+import {
+  arrivalsFirst,
+  categoryLabel,
+  channelLabel,
+  channelUsable,
+  isArrivalsChannel,
+} from './workspace'
 import type { Workspace, WorkspaceCategory, WorkspaceChannel } from './workspace'
 
 const ROW =
@@ -201,13 +207,18 @@ export function ChannelSidebar({
   const workspace = arrivalsFirst(incomingWorkspace)
   const displayLabel = workspace.display_name || organisationName
   const logoSrc = useWorkspaceLogo(workspace.logo_url)
-  const uncategorised = workspace.uncategorised_channels
+  const isPriority = (channel: WorkspaceChannel) =>
+    channel.id === workspace.arrivals_channel_id || isArrivalsChannel(channel)
+  const pinnedArrivals = workspace.uncategorised_channels.filter(isPriority)
+  const trailingUncategorised = workspace.uncategorised_channels.filter(
+    (channel) => !isPriority(channel)
+  )
   const navigate = onNavigate === undefined ? {} : { onNavigate }
   // Only what a row would open: a text channel whose room exists.
   const openable = (channels: readonly WorkspaceChannel[]) =>
     channels.filter((channel) => channel.kind === 'text' && channelUsable(channel))
   const searchEntries: ChannelSearchEntry[] = [
-    ...openable(uncategorised).map((channel) => ({
+    ...openable(pinnedArrivals).map((channel) => ({
       id: channel.id,
       label: channelLabel(channel, t),
       kind: 'text' as const,
@@ -220,6 +231,11 @@ export function ChannelSidebar({
         category: categoryLabel(category, t),
       }))
     ),
+    ...openable(trailingUncategorised).map((channel) => ({
+      id: channel.id,
+      label: channelLabel(channel, t),
+      kind: 'text' as const,
+    })),
   ]
 
   function openFromSearch(entry: ChannelSearchEntry): HTMLElement | null {
@@ -260,10 +276,10 @@ export function ChannelSidebar({
       )}
       {actionSlot}
       <ul className="flex flex-col gap-3">
-        {uncategorised.length === 0 ? null : (
+        {pinnedArrivals.length === 0 ? null : (
           <li>
             <ul className="flex flex-col gap-1">
-              {uncategorised.map((channel) => (
+              {pinnedArrivals.map((channel) => (
                 <ChannelRow
                   key={channel.id}
                   org={org}
@@ -284,6 +300,21 @@ export function ChannelSidebar({
             {...navigate}
           />
         ))}
+        {trailingUncategorised.length === 0 ? null : (
+          <li>
+            <ul className="flex flex-col gap-1">
+              {trailingUncategorised.map((channel) => (
+                <ChannelRow
+                  key={channel.id}
+                  org={org}
+                  channel={channel}
+                  current={channel.id === currentId}
+                  {...navigate}
+                />
+              ))}
+            </ul>
+          </li>
+        )}
       </ul>
     </nav>
   )

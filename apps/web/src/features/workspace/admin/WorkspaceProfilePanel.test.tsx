@@ -121,7 +121,7 @@ describe('Profil de l’espace', () => {
     const user = userEvent.setup()
     api.getWorkspaceProfile.mockResolvedValue({
       value: { ...PROFILE, display_name: 'Studio' },
-      etag: '"p-custom"',
+      etag: '"etag-custom"',
     })
     renderPanel(<WorkspaceProfilePanel organisationId={ORG} organisationName="Acme" canEdit />)
     const name = await screen.findByRole('textbox', { name: 'Nom de l’espace' })
@@ -134,7 +134,7 @@ describe('Profil de l’espace', () => {
       expect(api.updateWorkspaceProfile).toHaveBeenCalledWith(
         ORG,
         expect.objectContaining({ display_name: '' }),
-        '"p-custom"'
+        '"etag-custom"'
       )
     )
   })

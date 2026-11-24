@@ -595,7 +595,7 @@ pub(super) fn validate_service_command_argv(
             argv == [
                 "python",
                 "-c",
-                "import os; from pathlib import Path; Path('/run/kodera-media/media.sock').unlink(missing_ok=True); [(os.chmod(p, 0o700), os.chown(p, 10001, 10001)) for p in ('/run/kodera-media', '/run/kodera-media-secrets')]",
+                "import os; from pathlib import Path; [(Path(p).mkdir(parents=True, exist_ok=True), os.chmod(p, 0o700), os.chown(p, 10001, 10001)) for p in ('/run/kodera-media', '/run/kodera-media-secrets')]",
             ]
         }
         "media-storage-worker" => {

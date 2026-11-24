@@ -12,6 +12,26 @@ export const ESPACE_VAULT_WIPE_CHANNEL = 'kodera.espace-vault.wipe.v1'
 export const ESPACE_TIMELINE_DATABASE = 'kodera-espace-timelines'
 
 /**
+ * Returns `ESPACE_VAULT_WIPE_CHANNEL` in browser runtimes and scopes it per Vitest worker/file in
+ * Node test threads, where `node:worker_threads` shares `BroadcastChannel` across parallel test
+ * workers running independent JSDOM sessions.
+ */
+export function espaceVaultWipeChannelName(): string {
+  const runtime = globalThis as {
+    __vitest_worker__?: { filepath?: string; ctx?: { workerId?: number } }
+    process?: { env?: Record<string, string | undefined> }
+  }
+  const workerScope =
+    runtime.__vitest_worker__?.filepath ??
+    (runtime.__vitest_worker__?.ctx?.workerId !== undefined
+      ? String(runtime.__vitest_worker__.ctx.workerId)
+      : undefined) ??
+    runtime.process?.env?.['VITEST_WORKER_ID'] ??
+    runtime.process?.env?.['VITEST_POOL_ID']
+  return workerScope ? `${ESPACE_VAULT_WIPE_CHANNEL}:${workerScope}` : ESPACE_VAULT_WIPE_CHANNEL
+}
+
+/**
  * Collaborative document Yjs offline buffer prefix and registry key
  * (`features/docs/collabSession.ts`). Named here without importing Yjs or `y-indexeddb` so the
  * entry bundle never pulls collaborative editor code on initial page load.
@@ -83,7 +103,7 @@ export function purgeEspaceVaultDatabases(): void {
   }
   try {
     if (typeof BroadcastChannel === 'function') {
-      const channel = new BroadcastChannel(ESPACE_VAULT_WIPE_CHANNEL)
+      const channel = new BroadcastChannel(espaceVaultWipeChannelName())
       channel.postMessage({ type: 'wipe' })
       channel.close()
     }
