@@ -88,20 +88,21 @@ for (const width of [1440, 390]) {
     })
     await navigation()
     await page.getByTestId('workspace-docs-editor-toggle').click()
-    await page
+    const channelDocuments = page
       .locator('summary')
       .filter({ hasText: en ? 'Channel documents' : 'Documents du salon' })
-      .click()
+    // The demo guide is in arrivals; announcements opens with an expanded empty list.
+    await expect(channelDocuments.locator('..')).toHaveAttribute('open', '')
     await page
       .getByRole('button', { name: en ? 'New document' : 'Nouveau document', exact: true })
       .click()
+    // Creating the first document collapses the list to make room for its editor.
+    await expect(channelDocuments.locator('..')).not.toHaveAttribute('open', '')
+    await channelDocuments.click()
     await page
       .getByLabel(en ? 'Document title' : 'Titre du document', { exact: true })
       .fill(en ? 'Review notes' : 'Notes de revue')
-    await page
-      .locator('summary')
-      .filter({ hasText: en ? 'Channel documents' : 'Documents du salon' })
-      .click()
+    await channelDocuments.click()
     const source = page.getByRole('textbox', {
       name: en ? 'Markdown source' : 'Source Markdown',
       exact: true,
@@ -318,8 +319,10 @@ for (const width of [1440, 390]) {
       .click()
     await dock.getByRole('button', { name: en ? 'Leave' : 'Quitter', exact: true }).click()
     await expect(dock).toHaveCount(0)
+    const documentChannelUrl = page.url()
     await page.reload()
-    await expect(page.getByRole('heading', { name: 'arrivals', exact: true })).toBeVisible()
+    await expect(page).toHaveURL(documentChannelUrl)
+    await expect(page.getByRole('heading', { name: 'announcements', exact: true })).toBeVisible()
     await navigation()
     await page.getByRole('button', { name: en ? 'Files' : 'Fichiers', exact: true }).click()
     await expect(files).toBeVisible()
