@@ -705,6 +705,32 @@ class DescendantControls(unittest.TestCase):
             self.assertEqual(written[0][1]['unreaped_identities'],[[101,11]])
 
 
+class WorkspaceBrowserCliControls(unittest.TestCase):
+    def test_workspace_browser_cli_accepts_workspace_or_hoisted_and_refuses_missing_or_symlink(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name).resolve()
+            with self.assertRaisesRegex(M.Refused, 'Exact workspace browser CLI absent'):
+                M.workspace_browser_cli(root)
+            hoisted = root / 'node_modules/playwright/cli.js'
+            hoisted.parent.mkdir(parents=True)
+            hoisted.write_text('// cli\n')
+            self.assertEqual(M.workspace_browser_cli(root), hoisted)
+            nested = root / 'apps/web/node_modules/playwright/cli.js'
+            nested.parent.mkdir(parents=True)
+            nested.symlink_to(hoisted)
+            with self.assertRaisesRegex(M.Refused, 'Exact workspace browser CLI absent'):
+                M.workspace_browser_cli(root)
+            nested.unlink()
+            nested.write_text('// nested cli\n')
+            self.assertEqual(M.workspace_browser_cli(root), nested)
+            nested.unlink()
+            hoisted.unlink()
+            target = root / 'real-cli.js'
+            target.write_text('// real\n')
+            hoisted.symlink_to(target)
+            with self.assertRaisesRegex(M.Refused, 'Exact workspace browser CLI absent'):
+                M.workspace_browser_cli(root)
+
 
 if __name__ == '__main__':
     unittest.main()
