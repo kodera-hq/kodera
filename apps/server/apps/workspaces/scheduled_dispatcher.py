@@ -30,7 +30,11 @@ from apps.orgs.workspace_members import for_workspace
 from .channel_access import permits_channel_post
 from .models import Channel, ScheduledMessage
 from .moderation import member_restrictions
-from .selectors import is_designated_confidential_channel
+from .selectors import (
+    is_designated_confidential_channel,
+    partner_channel_matrix_room_id,
+    verify_channel_room_binding,
+)
 
 LEASE_TTL_SECONDS = 60
 
@@ -226,28 +230,38 @@ def _evaluate_delivery_authority(
     if muted:
         return "refused_policy", "member_muted", author_user_id
 
-    if row.channel_id is not None:
-        if is_designated_confidential_channel(
-            workspace_id=row.workspace_id, channel_id=row.channel_id
-        ) or has_confidential_room(channel_id=row.channel_id, organisation_id=row.organisation_id):
-            return "refused_policy", "confidential_channel_refused", author_user_id
+    if row.channel_id is None:
+        return "refused_policy", "channel_binding_required", author_user_id
 
-        if not Channel.objects.filter(
-            id=row.channel_id,
-            workspace_id=row.workspace_id,
-            kind="text",
-            lifecycle="active",
-        ).exists():
-            return "refused_policy", "channel_unavailable", author_user_id
+    if is_designated_confidential_channel(
+        workspace_id=row.workspace_id, channel_id=row.channel_id
+    ) or has_confidential_room(channel_id=row.channel_id, organisation_id=row.organisation_id):
+        return "refused_policy", "confidential_channel_refused", author_user_id
 
-        if not permits_channel_post(
-            channel_id=row.channel_id,
-            membership_id=row.author_id,
-            organisation_id=row.organisation_id,
-            member_org_role=str(member_row[1]),
-            authority_revision=int(org_row[1]),
-        ):
-            return "refused_policy", "channel_post_denied", author_user_id
+    if not Channel.objects.filter(
+        id=row.channel_id,
+        workspace_id=row.workspace_id,
+        kind="text",
+        lifecycle="active",
+    ).exists():
+        return "refused_policy", "channel_unavailable", author_user_id
+
+    room_ok, _ = verify_channel_room_binding(
+        workspace_id=row.workspace_id,
+        channel_id=row.channel_id,
+        room_id=row.room_id,
+    )
+    if not room_ok:
+        return "refused_policy", "channel_room_mismatch", author_user_id
+
+    if not permits_channel_post(
+        channel_id=row.channel_id,
+        membership_id=row.author_id,
+        organisation_id=row.organisation_id,
+        member_org_role=str(member_row[1]),
+        authority_revision=int(org_row[1]),
+    ):
+        return "refused_policy", "channel_post_denied", author_user_id
 
     return "ok", "", author_user_id
 
@@ -371,8 +385,27 @@ def dispatch_scheduled_messages(
         if job is None or connection.in_atomic_block:
             raise RuntimeError("claimed scheduled job invariant violated")
 
-        target_room_id = job.room_id
-        if not target_room_id and job.channel_id is not None:
+        if job.channel_id is None:
+            with transaction.atomic():
+                ScheduledMessage.objects.filter(
+                    pk=job.id,
+                    state=ScheduledMessage.State.IN_FLIGHT,
+                    lease_id=job.lease_id,
+                ).update(
+                    state=ScheduledMessage.State.REFUSED_POLICY,
+                    lease_id=None,
+                    lease_expires_at=None,
+                    failure_reason="channel_binding_required",
+                    updated_at=timezone.now(),
+                )
+            counts["refused_policy"] += 1
+            continue
+
+        # Always resolve the authoritative Matrix room ID for `job.channel_id` (partner agreement
+        # or Synapse room directory `#kodera-ch-<channel_id>:<domain>`); never trust `job.room_id`
+        # as an independent destination.
+        target_room_id = partner_channel_matrix_room_id(channel_id=job.channel_id) or ""
+        if not target_room_id:
             resolve_fn = getattr(matrix_client, "resolve_channel_room", None)
             if callable(resolve_fn):
                 try:
@@ -396,6 +429,22 @@ def dispatch_scheduled_messages(
                     resolved = None
                 if isinstance(resolved, str) and resolved:
                     target_room_id = resolved
+
+        if target_room_id and job.room_id and job.room_id != target_room_id:
+            with transaction.atomic():
+                ScheduledMessage.objects.filter(
+                    pk=job.id,
+                    state=ScheduledMessage.State.IN_FLIGHT,
+                    lease_id=job.lease_id,
+                ).update(
+                    state=ScheduledMessage.State.REFUSED_POLICY,
+                    lease_id=None,
+                    lease_expires_at=None,
+                    failure_reason="channel_room_mismatch",
+                    updated_at=timezone.now(),
+                )
+            counts["refused_policy"] += 1
+            continue
 
         if not target_room_id:
             with transaction.atomic():

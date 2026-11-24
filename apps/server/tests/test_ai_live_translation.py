@@ -650,9 +650,7 @@ def test_h3_2_views_declare_valid_contract_scopes_and_api_writer_privileges() ->
             "POST", f"{org_prefix}/call-captions/chunks", "workspace_ai:act"
         ),
     }
-    found, unreadable = served_routes(
-        {"ai_gateway_h3_2": ai_urls.ALL_AI_GATEWAY_URLPATTERNS}
-    )
+    found, unreadable = served_routes({"ai_gateway_h3_2": ai_urls.ALL_AI_GATEWAY_URLPATTERNS})
     assert unreadable == []
     assert (
         test_view_scopes.scope_failures(found, ref._replace(operations=augmented_ops), {}, {}) == []
@@ -1700,9 +1698,7 @@ def test_authoritative_livekit_room_service_roster_verification_blocks_omission_
         assert not harness.in_atomic()
         livekit_state["calls"].append((url, body, timeout))
         if livekit_state["fail"]:
-            raise AiGatewayRefusalError(
-                503, "ai_livekit_roster_unavailable", "service-unavailable"
-            )
+            raise AiGatewayRefusalError(503, "ai_livekit_roster_unavailable", "service-unavailable")
         bearer_jwt = headers["Authorization"].removeprefix("Bearer ")
         claims = jwt.decode(bearer_jwt, lk_hmac, algorithms=["HS256"], issuer=lk_id)
         assert claims["exp"] - claims["nbf"] <= 65

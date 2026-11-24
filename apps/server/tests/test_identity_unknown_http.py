@@ -612,8 +612,18 @@ CASES = (
             ("putMemberAiConsent", "consent", "put", ORG),
             ("transcribeVoiceNote", "transcribe", "post", {**ORG, "attachment_id": ROW}),
             ("translateChannelMessage", "translate_message", "post", {**ORG, "channel_id": ROW}),
-            ("getLiveCallCaptionSession", "call_captions_session", "get", {**ORG, "channel_id": ROW}),
-            ("updateLiveCallCaptionSession", "call_captions_session", "post", {**ORG, "channel_id": ROW}),
+            (
+                "getLiveCallCaptionSession",
+                "call_captions_session",
+                "get",
+                {**ORG, "channel_id": ROW},
+            ),
+            (
+                "updateLiveCallCaptionSession",
+                "call_captions_session",
+                "post",
+                {**ORG, "channel_id": ROW},
+            ),
             ("transcribeLiveCallChunk", "call_captions_chunks", "post", {**ORG, "channel_id": ROW}),
         )
     ),
@@ -645,7 +655,11 @@ CASES = (
         )
         for operation, view, target in (
             ("createWorkspaceBoostCheckout", "boost_checkout", "start_boost_checkout_for_caller"),
-            ("startCreatorConnectOnboarding", "connect_onboarding", "start_connect_onboarding_for_caller"),
+            (
+                "startCreatorConnectOnboarding",
+                "connect_onboarding",
+                "start_connect_onboarding_for_caller",
+            ),
             ("createVipTierOffer", "vip_tiers", "create_vip_tier_for_caller"),
             ("createVipPassCheckout", "vip_pass_checkout", "start_vip_pass_checkout_for_caller"),
         )

@@ -188,7 +188,9 @@ def verify_b2c_withdrawal_waiver(
     if withdrawal_waiver_at > now + WAIVER_MAX_FUTURE_SKEW:
         raise WithdrawalWaiverRequiredError("withdrawal_waiver_at must precede checkout")
     if withdrawal_waiver_at < now - WAIVER_MAX_PAST_AGE:
-        raise WithdrawalWaiverRequiredError("withdrawal_waiver_at is stale and must be re-confirmed")
+        raise WithdrawalWaiverRequiredError(
+            "withdrawal_waiver_at is stale and must be re-confirmed"
+        )
     statement = _normalise_waiver_statement(withdrawal_waiver_statement or "")
     if statement not in CANONICAL_WAIVER_STATEMENTS:
         raise WithdrawalWaiverRequiredError(

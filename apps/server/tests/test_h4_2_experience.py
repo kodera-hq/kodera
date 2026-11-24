@@ -718,7 +718,7 @@ def test_mid_flight_gdpr_erasure_refusal_restore_rehearsal_disarm_and_core_purge
         organisation=org,
         workspace=workspace,
         channel=open_ch,
-        room_id="!room-erase:acme.kodera.io",
+        room_id=f"!room-{open_ch.id}:acme.kodera.io",
         author=member,
         body="Erased mid-flight",
         deliver_at=due_past,
@@ -728,7 +728,7 @@ def test_mid_flight_gdpr_erasure_refusal_restore_rehearsal_disarm_and_core_purge
         organisation=org,
         membership=member,
         channel=open_ch,
-        room_id="!room-erase:acme.kodera.io",
+        room_id=f"!room-{open_ch.id}:acme.kodera.io",
         target_event_id="$evt-erase",
         note="Erased reminder",
         remind_at=due_past,
@@ -785,3 +785,201 @@ def test_mid_flight_gdpr_erasure_refusal_restore_rehearsal_disarm_and_core_purge
         == 0
     )
     assert notification_services.count_residual_rows_for_organisation(organisation_id=org.id) == 0
+
+
+@override_settings(ROOT_URLCONF="config.customer_urls")
+def test_p1_1_and_p2_1_room_channel_binding_idempotency_and_etag_concurrency(
+    world: Any,
+    http: Any,
+) -> None:
+    org, workspace, members, _ = world
+    client, credentials = http
+    owner_cred = credentials[0]
+    member_cred = credentials[3]
+    author = members[3]
+
+    open_ch = _create_channel(workspace, name="Primary Plaintext", is_confidential=False)
+    other_ch = _create_channel(workspace, name="Other Plaintext", is_confidential=False)
+    future_iso = (timezone.now() + timedelta(hours=3)).isoformat()
+
+    # --- P1-1: Unbound room-only requests & mismatched (channelId, roomId) are refused ---
+    for path, extra in (
+        (
+            f"/api/v1/organisations/{org.id}/workspace/scheduled-messages",
+            {"body": "Unbound room attempt", "deliverAt": future_iso},
+        ),
+        (
+            f"/api/v1/organisations/{org.id}/workspace/reminders",
+            {"targetEventId": "$evt-1", "note": "Unbound reminder", "remindAt": future_iso},
+        ),
+    ):
+        unbound_resp = client.post(
+            path,
+            data=json.dumps({"roomId": "!unverified-secret:acme.kodera.io", **extra}),
+            content_type="application/json",
+            **_auth_headers(member_cred, key=str(uuid4())),
+        )
+        assert unbound_resp.status_code == 422
+        assert unbound_resp.json()["code"] == "channel_binding_required"
+
+        mismatch_resp = client.post(
+            path,
+            data=json.dumps(
+                {
+                    "channelId": str(open_ch.id),
+                    "roomId": f"!room-{other_ch.id}:acme.kodera.io",
+                    **extra,
+                }
+            ),
+            content_type="application/json",
+            **_auth_headers(member_cred, key=str(uuid4())),
+        )
+        assert mismatch_resp.status_code == 422
+        assert mismatch_resp.json()["code"] == "channel_room_mismatch"
+
+    # Dispatcher also refuses tampered DB rows whose room_id disagrees with channel binding!
+    due_past = timezone.now() - timedelta(seconds=15)
+    tampered_sched = ScheduledMessage.objects.create(
+        organisation=org,
+        workspace=workspace,
+        channel=open_ch,
+        room_id=f"!room-{other_ch.id}:acme.kodera.io",
+        author=author,
+        body="Tampered room target",
+        deliver_at=due_past,
+        matrix_txn_id=f"kodera-sched-{uuid4().hex}",
+    )
+    tampered_transport = FakeMatrixReplayTransport()
+    tampered_summary = scheduled_dispatcher.dispatch_scheduled_messages(
+        matrix_client=tampered_transport, organisation_id=org.id, max_jobs=10
+    )
+    assert tampered_summary["refused_policy"] == 1
+    assert len(tampered_transport.sent) == 0
+    tampered_sched.refresh_from_db()
+    assert tampered_sched.state == "refused_policy"
+    assert tampered_sched.failure_reason == "channel_room_mismatch"
+
+    tampered_rem = PersonalReminder.objects.create(
+        organisation=org,
+        membership=author,
+        channel=open_ch,
+        room_id=f"!room-{other_ch.id}:acme.kodera.io",
+        target_event_id="$evt-tampered",
+        note="Tampered reminder",
+        remind_at=due_past,
+    )
+    rem_summary = reminder_dispatcher.dispatch_reminders(organisation_id=org.id, max_jobs=10)
+    assert rem_summary["obsoleted"] == 1
+    tampered_rem.refresh_from_db()
+    assert tampered_rem.state == "obsolete"
+
+    # --- P2-1: Idempotency-Key replay/conflict on POST & ETag / If-Match 428/412 on PATCH ---
+    clean_webp_b64 = base64.b64encode(
+        _build_riff_webp([(b"VP8L", _vp8l_lossless_payload(32, 32))])
+    ).decode("ascii")
+
+    # Missing Idempotency-Key -> 400
+    no_key = client.post(
+        f"/api/v1/organisations/{org.id}/workspace/emojis",
+        data=json.dumps({"shortcode": "idem_test", "webpBase64": clean_webp_b64}),
+        content_type="application/json",
+        **_auth_headers(owner_cred),
+    )
+    assert no_key.status_code == 400
+
+    sched_key = f"sched-idem-{uuid4().hex}"
+    sched_payload = {
+        "channelId": str(open_ch.id),
+        "body": "Idempotent Send Later",
+        "deliverAt": future_iso,
+    }
+    s1 = client.post(
+        f"/api/v1/organisations/{org.id}/workspace/scheduled-messages",
+        data=json.dumps(sched_payload),
+        content_type="application/json",
+        **_auth_headers(member_cred, key=sched_key),
+    )
+    assert s1.status_code == 201
+    assert "Idempotency-Replayed" not in s1
+    s1_etag = s1["ETag"]
+    assert s1_etag.startswith('"') and s1_etag.endswith('"')
+    s1_id = s1.json()["id"]
+
+    # Exact replay returns stored 201 + Idempotency-Replayed: true + same id
+    s2 = client.post(
+        f"/api/v1/organisations/{org.id}/workspace/scheduled-messages",
+        data=json.dumps(sched_payload),
+        content_type="application/json",
+        **_auth_headers(member_cred, key=sched_key),
+    )
+    assert s2.status_code == 201
+    assert s2["Idempotency-Replayed"] == "true"
+    assert s2.json()["id"] == s1_id
+
+    # Same Idempotency-Key with mutated body -> 409 conflict
+    s_conflict = client.post(
+        f"/api/v1/organisations/{org.id}/workspace/scheduled-messages",
+        data=json.dumps({**sched_payload, "body": "Mutated payload"}),
+        content_type="application/json",
+        **_auth_headers(member_cred, key=sched_key),
+    )
+    assert s_conflict.status_code == 409
+
+    # Stale If-Match on scheduled-message PATCH -> 412 precondition-failed with current_etag
+    stale_patch = client.patch(
+        f"/api/v1/organisations/{org.id}/workspace/scheduled-messages/{s1_id}",
+        data=json.dumps({"body": "Stale attempt"}),
+        content_type="application/json",
+        HTTP_IF_MATCH='"0000000000000000000000000000000000000000000000000000000000000000"',
+        **_auth_headers(member_cred),
+    )
+    assert stale_patch.status_code == 412
+    assert stale_patch.json()["current_etag"] == s1_etag
+    assert stale_patch["ETag"] == s1_etag
+
+    # Matching If-Match -> 200 with rotated ETag
+    fresh_patch = client.patch(
+        f"/api/v1/organisations/{org.id}/workspace/scheduled-messages/{s1_id}",
+        data=json.dumps({"body": "Updated with valid ETag"}),
+        content_type="application/json",
+        HTTP_IF_MATCH=s1_etag,
+        **_auth_headers(member_cred),
+    )
+    assert fresh_patch.status_code == 200
+    assert fresh_patch["ETag"] != s1_etag
+
+    # Preferences GET returns ETag; missing If-Match -> 428; stale -> 412; valid -> 200
+    pref_get = client.get(
+        f"/api/v1/organisations/{org.id}/workspace/preferences/me",
+        **_auth_headers(member_cred),
+    )
+    assert pref_get.status_code == 200
+    pref_etag = pref_get["ETag"]
+    assert (
+        client.patch(
+            f"/api/v1/organisations/{org.id}/workspace/preferences/me",
+            data=json.dumps({"waitingRoomAmbience": True}),
+            content_type="application/json",
+            **_auth_headers(member_cred),
+        ).status_code
+        == 428
+    )
+    assert (
+        client.patch(
+            f"/api/v1/organisations/{org.id}/workspace/preferences/me",
+            data=json.dumps({"waitingRoomAmbience": True}),
+            content_type="application/json",
+            HTTP_IF_MATCH='"stale-etag"',
+            **_auth_headers(member_cred),
+        ).status_code
+        == 412
+    )
+    pref_ok = client.patch(
+        f"/api/v1/organisations/{org.id}/workspace/preferences/me",
+        data=json.dumps({"waitingRoomAmbience": True}),
+        content_type="application/json",
+        HTTP_IF_MATCH=pref_etag,
+        **_auth_headers(member_cred),
+    )
+    assert pref_ok.status_code == 200
+    assert pref_ok["ETag"] != pref_etag

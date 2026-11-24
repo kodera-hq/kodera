@@ -15243,7 +15243,7 @@ export interface components {
          * @example free
          * @enum {string}
          */
-        ExtensionMarketplacePricingMode: "free" | "one_time" | "recurring";
+        ExtensionMarketplacePricingMode: "free" | "one_time";
         /**
          * ExtensionMarketplaceEntitlementState
          * @example active

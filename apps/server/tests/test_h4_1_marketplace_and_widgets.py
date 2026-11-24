@@ -262,7 +262,7 @@ def test_marketplace_free_and_billing_disabled_gate_over_kodera_api_writer_role(
                         "title": "Paid Release Bot",
                         "summary": "Paid release automation",
                         "manifest": _sample_manifest("paid-release-bot"),
-                        "pricingMode": "recurring",
+                        "pricingMode": "one_time",
                         "priceExclVatMinor": 1500,
                     }
                 ),
@@ -869,3 +869,412 @@ def test_widget_action_dispatch_ssrf_confidential_e2ee_refusal_and_erasure(
     assert not WidgetActionReceipt.objects.filter(organisation=org).exists()
     assert not Installation.objects.filter(workspace=workspace).exists()
     assert WorkspaceCutoff.objects.filter(organisation_id=org.id).exists()
+
+
+def _signed_stripe_webhook_post(
+    client: Client,
+    *,
+    webhook_secret: str,
+    event_id: str,
+    event_type: str,
+    data_object: dict[str, Any],
+    created: int | None = None,
+) -> Any:
+    ts = int(time.time()) if created is None else created
+    envelope = {
+        "id": event_id,
+        "object": "event",
+        "api_version": "2024-06-20",
+        "created": ts,
+        "livemode": False,
+        "type": event_type,
+        "data": {"object": data_object},
+    }
+    raw_body = json.dumps(envelope, separators=(",", ":")).encode("utf-8")
+    sig = hmac.new(
+        webhook_secret.encode("utf-8"),
+        f"{ts}.".encode("ascii") + raw_body,
+        "sha256",
+    ).hexdigest()
+    return client.post(
+        "/api/v1/billing/webhooks/stripe",
+        data=raw_body,
+        content_type="application/json",
+        HTTP_STRIPE_SIGNATURE=f"t={ts},v1={sig}",
+    )
+
+
+def test_p1_2_p1_4_and_p2_2_signed_stripe_webhook_settlement_refund_revocation_and_retry(
+    world, http_signer, settings, monkeypatch
+) -> None:
+    from apps.billing.payments.port import ProviderUnavailableError
+
+    org, workspace, members, tokens = world
+    now_dt = timezone.now()
+    now = int(now_dt.timestamp())
+    webhook_secret = "whsec_test_marketplace_webhook_secret_012345"
+    configure(settings, [trust_entry(http_signer, org.issuer, expires_at=now + 600)])
+    settings.KODERA_BILLING_ENABLED = True
+    settings.KODERA_CONTACT_SEAL_KEY = b"m" * 32
+    settings.KODERA_PAYMENT_RETURN_ORIGINS = frozenset({"https://console.kodera.test"})
+    settings.KODERA_STRIPE_WEBHOOK_SECRET = webhook_secret
+
+    CreatorConnectAccount.objects.create(
+        organisation=org,
+        workspace=workspace,
+        owner_user_id=members[0].user_id,
+        stripe_connect_account_id="acct_1SellerWebhook01",
+        onboarding_state="active",
+        operation_idempotency_key="onboard-seller-wh-1",
+        charges_enabled=True,
+        payouts_enabled=True,
+        details_submitted=True,
+        platform_fee_bps=1200,
+        seller_legal_name="Studio Webhook SAS",
+        tax_residence_country="FR",
+        onboarding_completed_at=now_dt,
+    )
+
+    fake_provider = FakeProvider(secret=b"fake-stripe-secret-32-bytes-long!")
+    fail_next = True
+    orig_create_link = fake_provider.create_link
+
+    def flaky_create_link(req: Any) -> Any:
+        nonlocal fail_next
+        if fail_next:
+            fail_next = False
+            raise ProviderUnavailableError("stripe-503-transient")
+        return orig_create_link(req)
+
+    monkeypatch.setattr(fake_provider, "create_link", flaky_create_link)
+    monkeypatch.setattr("apps.billing.payments.configured_provider", lambda: fake_provider)
+
+    admin_bearer = token(
+        http_signer,
+        org.issuer,
+        subject=tokens[0].subject,
+        email_verified=True,
+        iat=now,
+        nbf=now,
+        exp=now + 300,
+    )
+    member_bearer = token(
+        http_signer,
+        org.issuer,
+        subject=tokens[2].subject,
+        email_verified=True,
+        iat=now,
+        nbf=now,
+        exp=now + 300,
+    )
+    plain_ch = _create_channel(workspace, name="ops-room", is_confidential=False)
+
+    role = f"ext_wh_writer_{uuid.uuid4().hex[:10]}"
+    with connection.cursor() as cursor:
+        cursor.execute(
+            f'CREATE ROLE "{role}" NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS'
+        )
+        for stmt in grant_statements(role):
+            cursor.execute(stmt)
+        assert_writer_grants(cursor, role)
+
+    client = Client()
+    try:
+        with acting_as(role):
+            # --- P1-4: "recurring" pricingMode is refused with 422 ---
+            bad_recurring = client.post(
+                f"/api/v1/organisations/{org.id}/workspace/extensions/marketplace",
+                data=json.dumps(
+                    {
+                        "slug": "recurring-bot",
+                        "title": "Recurring Bot",
+                        "summary": "Unsupported recurring mode",
+                        "manifest": _sample_manifest("recurring-bot"),
+                        "pricingMode": "recurring",
+                        "priceExclVatMinor": 1900,
+                    }
+                ),
+                content_type="application/json",
+                HTTP_IDEMPOTENCY_KEY=f"pub-rec-{uuid.uuid4().hex}",
+                HTTP_AUTHORIZATION=f"Bearer {admin_bearer}",
+            )
+            assert bad_recurring.status_code == 422
+            assert bad_recurring.json()["detail"] == "marketplace_pricing_mode_invalid"
+
+            # Publish valid one_time listing
+            pub = client.post(
+                f"/api/v1/organisations/{org.id}/workspace/extensions/marketplace",
+                data=json.dumps(
+                    {
+                        "slug": "pager-one-time",
+                        "title": "Pager One-Time",
+                        "summary": "One-time paid connector",
+                        "manifest": _sample_manifest("pager-one-time", "deploy-status"),
+                        "pricingMode": "one_time",
+                        "priceExclVatMinor": 2500,
+                    }
+                ),
+                content_type="application/json",
+                HTTP_IDEMPOTENCY_KEY=f"pub-ot-{uuid.uuid4().hex}",
+                HTTP_AUTHORIZATION=f"Bearer {admin_bearer}",
+            )
+            assert pub.status_code == 201, pub.content
+            listing_id = pub.json()["id"]
+
+            # --- P2-2: Transient ProviderUnavailableError (503) does not poison Idempotency-Key ---
+            chk_key = f"chk-retry-{uuid.uuid4().hex}"
+            chk_body = {
+                "customerKind": "b2c",
+                "buyerCountry": "FR",
+                "returnUrl": "https://console.kodera.test/extensions/marketplace",
+                "locale": "fr",
+                "withdrawalWaiverAccepted": True,
+                "withdrawalWaiverAt": timezone.now().isoformat(),
+                "withdrawalWaiverStatement": CANONICAL_FR_WAIVER,
+            }
+            transient_503 = client.post(
+                f"/api/v1/organisations/{org.id}/workspace/extensions/marketplace/{listing_id}/checkout",
+                data=json.dumps(chk_body),
+                content_type="application/json",
+                HTTP_IDEMPOTENCY_KEY=chk_key,
+                HTTP_AUTHORIZATION=f"Bearer {admin_bearer}",
+            )
+            assert transient_503.status_code == 503
+            assert transient_503.json()["detail"] == "marketplace_payment_provider_unavailable"
+
+            # Retry with the EXACT SAME Idempotency-Key recovers cleanly once provider is healthy!
+            chk_recovered = client.post(
+                f"/api/v1/organisations/{org.id}/workspace/extensions/marketplace/{listing_id}/checkout",
+                data=json.dumps(chk_body),
+                content_type="application/json",
+                HTTP_IDEMPOTENCY_KEY=chk_key,
+                HTTP_AUTHORIZATION=f"Bearer {admin_bearer}",
+            )
+            assert chk_recovered.status_code == 201, chk_recovered.content
+            chk_data = chk_recovered.json()
+            session_id = chk_data["checkoutSessionId"]
+            entitlement_id = chk_data["entitlementId"]
+            total_minor = chk_data["totalInclVatMinor"]
+
+            # --- P1-2: Signed Stripe webhooks settle only when paid, and revoke on refund ---
+            # 1) Async `processing` checkout.session.completed MUST NOT activate entitlement!
+            wh_processing = _signed_stripe_webhook_post(
+                client,
+                webhook_secret=webhook_secret,
+                event_id=f"evt_proc_{uuid.uuid4().hex[:12]}",
+                event_type="checkout.session.completed",
+                data_object={
+                    "id": session_id,
+                    "payment_status": "processing",
+                    "payment_intent": "pi_mkt_test_001",
+                    "amount_total": total_minor,
+                    "currency": "eur",
+                },
+            )
+            assert wh_processing.status_code == 200
+            assert wh_processing.json()["status"] == "ignored"
+            assert MarketplaceEntitlement.objects.get(id=entitlement_id).state == "pending"
+
+            # 2) Paid `checkout.session.completed` settles entitlement -> allows installation!
+            wh_paid = _signed_stripe_webhook_post(
+                client,
+                webhook_secret=webhook_secret,
+                event_id=f"evt_paid_{uuid.uuid4().hex[:12]}",
+                event_type="checkout.session.completed",
+                data_object={
+                    "id": session_id,
+                    "payment_status": "paid",
+                    "payment_intent": "pi_mkt_test_001",
+                    "amount_total": total_minor,
+                    "currency": "eur",
+                },
+            )
+            assert wh_paid.status_code == 200
+            assert wh_paid.json()["status"] == "applied"
+            settled_ent = MarketplaceEntitlement.objects.get(id=entitlement_id)
+            assert settled_ent.state == "active"
+            assert settled_ent.payment_intent_id == "pi_mkt_test_001"
+
+            inst = client.post(
+                f"/api/v1/organisations/{org.id}/workspace/extensions/marketplace/{listing_id}/install",
+                data=json.dumps({"signingSecret": "whsec_" + "r" * 38}),
+                content_type="application/json",
+                HTTP_IDEMPOTENCY_KEY=f"inst-wh-{uuid.uuid4().hex}",
+                HTTP_AUTHORIZATION=f"Bearer {admin_bearer}",
+            )
+            assert inst.status_code == 201, inst.content
+            installation_id = inst.json()["installationId"]
+
+            # 3) Signed `charge.refunded` revokes BOTH entitlement AND bound Installation!
+            wh_refund = _signed_stripe_webhook_post(
+                client,
+                webhook_secret=webhook_secret,
+                event_id=f"evt_ref_{uuid.uuid4().hex[:12]}",
+                event_type="charge.refunded",
+                data_object={
+                    "id": "ch_mkt_test_001",
+                    "payment_intent": "pi_mkt_test_001",
+                    "amount_refunded": total_minor,
+                    "currency": "eur",
+                },
+            )
+            assert wh_refund.status_code == 200, wh_refund.content
+            assert wh_refund.json()["status"] == "applied"
+            refunded_ent = MarketplaceEntitlement.objects.get(id=entitlement_id)
+            assert refunded_ent.state == "refunded"
+            assert refunded_ent.revoked_at is not None
+            assert bytes(refunded_ent.sealed_signing_secret) == b""
+            revoked_inst = Installation.objects.get(id=installation_id)
+            assert revoked_inst.revoked_at is not None
+
+            # Subsequent widget action against the refunded installation fails closed!
+            post_refund_act = client.post(
+                f"/api/v1/organisations/{org.id}/workspace/channels/{plain_ch.id}/widgets/deploy-status/actions",
+                data=json.dumps({"installationId": installation_id, "actionId": "approve"}),
+                content_type="application/json",
+                HTTP_IDEMPOTENCY_KEY=f"act-after-refund-{uuid.uuid4().hex}",
+                HTTP_AUTHORIZATION=f"Bearer {member_bearer}",
+            )
+            assert post_refund_act.status_code == 404
+    finally:
+        with connection.cursor() as cursor:
+            cursor.execute("RESET ROLE")
+            cursor.execute(f'DROP OWNED BY "{role}"')
+            cursor.execute(f'DROP ROLE "{role}"')
+
+
+def test_p1_3_widget_action_fences_mid_flight_erasure_and_revocation_races(
+    world, http_signer, settings, monkeypatch
+) -> None:
+    org, workspace, members, tokens = world
+    now = int(time.time())
+    configure(settings, [trust_entry(http_signer, org.issuer, expires_at=now + 600)])
+    settings.KODERA_BILLING_ENABLED = False
+    settings.KODERA_CONTACT_SEAL_KEY = b"w" * 32
+
+    plain_ch = _create_channel(workspace, name="race-channel", is_confidential=False)
+    admin_bearer = token(
+        http_signer,
+        org.issuer,
+        subject=tokens[0].subject,
+        email_verified=True,
+        iat=now,
+        nbf=now,
+        exp=now + 300,
+    )
+    member_bearer = token(
+        http_signer,
+        org.issuer,
+        subject=tokens[2].subject,
+        email_verified=True,
+        iat=now,
+        nbf=now,
+        exp=now + 300,
+    )
+    client = Client()
+
+    pub = client.post(
+        f"/api/v1/organisations/{org.id}/workspace/extensions/marketplace",
+        data=json.dumps(
+            {
+                "slug": "race-bot",
+                "title": "Race Bot",
+                "summary": "Tests mid-flight erasure fence",
+                "manifest": _sample_manifest("race-bot", "deploy-status"),
+            }
+        ),
+        content_type="application/json",
+        HTTP_IDEMPOTENCY_KEY=f"pub-race-{uuid.uuid4().hex}",
+        HTTP_AUTHORIZATION=f"Bearer {admin_bearer}",
+    )
+    assert pub.status_code == 201
+    listing_id = pub.json()["id"]
+
+    inst = client.post(
+        f"/api/v1/organisations/{org.id}/workspace/extensions/marketplace/{listing_id}/install",
+        data=json.dumps({"signingSecret": "whsec_" + "x" * 38}),
+        content_type="application/json",
+        HTTP_IDEMPOTENCY_KEY=f"inst-race-{uuid.uuid4().hex}",
+        HTTP_AUTHORIZATION=f"Bearer {admin_bearer}",
+    )
+    assert inst.status_code == 201
+    installation_id = inst.json()["installationId"]
+
+    monkeypatch.setattr(
+        outbound,
+        "_resolve_stub",
+        lambda host, port, deadline, nameservers: [
+            (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("93.184.216.34", 443))
+        ],
+    )
+
+    returned_card = _sample_card("deploy-status")
+
+    class OkResp:
+        status = 200
+
+        def getheader(self, name: str, default: str | None = None) -> str | None:
+            return "application/json" if name.lower() == "content-type" else default
+
+        def read(self, _n: int = 0) -> bytes:
+            return json.dumps({"card": returned_card}).encode("utf-8")
+
+    # Race 1: Mid-flight GDPR erasure cutoff admitted during network I/O -> Stage 3 discards card (409)
+    from test_core_erasure import begin
+    from test_extension_retention_worker import now as db_now
+
+    # Pre-seed a second receipt row BEFORE cutoff so we can also test the DB BEFORE UPDATE trigger directly
+    pre_cutoff_row = WidgetActionReceipt.objects.create(
+        organisation=org,
+        workspace=workspace,
+        channel=plain_ch,
+        installation_id=installation_id,
+        actor_membership=members[2],
+        widget_id="deploy-status",
+        action_id="abort",
+        idempotency_key=f"trig-check-{uuid.uuid4().hex}",
+        request_sha256="f" * 64,
+        state="in_flight",
+    )
+
+    class CutoffMidFlightConn:
+        transmitted = True
+
+        def __init__(self, *_a: Any, **_kw: Any) -> None:
+            pass
+
+        def request(self, *_a: Any, **_kw: Any) -> None:
+            begin(org, not_before=db_now())
+
+        def getresponse(self) -> OkResp:
+            return OkResp()
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(outbound, "PinnedConnection", CutoffMidFlightConn)
+    race_key = f"race-cutoff-{uuid.uuid4().hex}"
+    aborted_resp = client.post(
+        f"/api/v1/organisations/{org.id}/workspace/channels/{plain_ch.id}/widgets/deploy-status/actions",
+        data=json.dumps({"installationId": installation_id, "actionId": "approve"}),
+        content_type="application/json",
+        HTTP_IDEMPOTENCY_KEY=race_key,
+        HTTP_AUTHORIZATION=f"Bearer {member_bearer}",
+    )
+    assert aborted_resp.status_code == 409
+    assert aborted_resp.json()["detail"] == "widget_action_aborted"
+
+    receipt = WidgetActionReceipt.objects.get(
+        installation_id=installation_id, idempotency_key=race_key
+    )
+    assert receipt.state == "failed"
+    assert receipt.response_card is None
+
+    # DB BEFORE UPDATE trigger also directly blocks restoring non-null response_card under cutoff
+    with pytest.raises(
+        IntegrityError,
+        match="durable erasure cutoff refuses write|Extension widget action receipt immutable",
+    ):
+        WidgetActionReceipt.objects.filter(id=pre_cutoff_row.id).update(
+            response_card=returned_card,
+        )

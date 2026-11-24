@@ -4,12 +4,18 @@ import { HttpResponse, http } from 'msw'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import '../../i18n'
 import { setTokenProvider } from '../../api/client'
+import {
+  clearLocalSessionStorage,
+  notifyOrganisationCleanup,
+  purgeEspaceVaultDatabases,
+} from '../../auth/localSession'
 import { server } from '../../mocks/server'
 import { AudioDock } from '../../ui/AudioDock/AudioDock'
 import { AttachmentQueue } from '../messaging/attachments/attachmentQueue'
 import type { AttachmentRef } from '../messaging/attachments/attachmentRefs'
 import {
   clearInlineAttachmentPreviews,
+  MAX_INLINE_CACHE_ENTRIES,
   MessageAttachments,
 } from '../messaging/attachments/MessageAttachments'
 import * as imagePreviewMod from '../messaging/attachments/imagePreview'
@@ -688,5 +694,118 @@ describe('H4.2 Experience & S6 Attachment Previews', () => {
       'src',
       expect.stringMatching(/^blob:/)
     )
+  })
+
+  it('protects mounted <img> blob: URLs from LRU eviction until unmount and purges on logout / vault wipe', async () => {
+    const emojiId = '0192f3a4-5b6c-7d8e-9f01-23456789ab91'
+    const emojiItem = {
+      id: emojiId,
+      shortcode: 'safe_blob',
+      sha256: 'e'.repeat(64),
+      width: 64,
+      height: 64,
+      animated: false,
+      creatorMembershipId: '0192f3a4-5b6c-7d8e-9f01-23456789ab10',
+      createdAt: '2026-01-01T00:00:00Z',
+      blobPath: `/api/v1/organisations/${ORG_ID}/workspace/emojis/${emojiId}/blob`,
+    }
+
+    server.use(
+      http.get('*/organisations/:organisation_id/workspace/attachments/:attachment_id', () =>
+        HttpResponse.json({
+          downloadUrl: 'https://s3.fr-par.scw.cloud/kodera-media/presigned-object',
+        })
+      ),
+      http.get('*/organisations/:organisation_id/workspace/emojis/:emoji_id/blob', () =>
+        new HttpResponse(new Uint8Array([0x52, 0x49, 0x46, 0x46]), {
+          status: 200,
+          headers: { 'Content-Type': 'image/webp' },
+        })
+      )
+    )
+    vi.spyOn(imagePreviewMod, 'loadImagePreview').mockResolvedValue(
+      new Blob([PNG_HEADER], { type: 'image/png' })
+    )
+
+    setWorkspaceCustomEmojisSnapshot(ORG_ID, [emojiItem])
+    const pinnedRef: AttachmentRef = {
+      id: '0192f3a4-5b6c-7d8e-9f01-000000000000',
+      filename: 'pinned-on-screen.png',
+      contentType: 'image/png',
+      sizeBytes: 2048,
+    }
+
+    // Mount pinned attachment `<img>` and keep it mounted while churning > MAX_INLINE_CACHE_ENTRIES items
+    const pinnedView = render(
+      <MessagingOrganisation value={ORG_ID}>
+        <div>
+          <MessageAttachments refs={[pinnedRef]} plaintextPermitted />
+          <MessageText body="Hello :safe_blob: !" />
+        </div>
+      </MessagingOrganisation>
+    )
+    const pinnedImg = await screen.findByAltText('pinned-on-screen.png')
+    const pinnedUrl = pinnedImg.getAttribute('src') ?? ''
+    expect(pinnedUrl).toMatch(/^blob:/)
+
+    const emojiImg = await screen.findByAltText(':safe_blob:')
+    const emojiUrl = emojiImg.getAttribute('src') ?? ''
+    expect(emojiUrl).toMatch(/^blob:/)
+
+    // Churn MAX_INLINE_CACHE_ENTRIES + 2 transient unmounted previews -> pinnedUrl MUST NOT be revoked while mounted!
+    for (let i = 1; i <= MAX_INLINE_CACHE_ENTRIES + 2; i += 1) {
+      const transientRef: AttachmentRef = {
+        id: `0192f3a4-5b6c-7d8e-9f01-${String(i).padStart(12, '0')}`,
+        filename: `transient-${i}.png`,
+        contentType: 'image/png',
+        sizeBytes: 1024,
+      }
+      const sub = render(
+        <MessagingOrganisation value={ORG_ID}>
+          <MessageAttachments refs={[transientRef]} plaintextPermitted />
+        </MessagingOrganisation>
+      )
+      await screen.findByAltText(`transient-${i}.png`)
+      sub.unmount()
+    }
+    expect(revokedUrls).not.toContain(pinnedUrl)
+    expect(revokedUrls.length).toBeGreaterThanOrEqual(2)
+
+    // Explicit vault wipe / logout revokes BOTH custom emoji and inline attachment blob: URLs!
+    act(() => {
+      purgeEspaceVaultDatabases()
+    })
+    expect(revokedUrls).toContain(pinnedUrl)
+    expect(revokedUrls).toContain(emojiUrl)
+
+    // Re-populate and verify clearLocalSessionStorage() and notifyOrganisationCleanup() also revoke cleanly
+    pinnedView.unmount()
+    setWorkspaceCustomEmojisSnapshot(ORG_ID, [emojiItem])
+    const secondView = render(
+      <MessagingOrganisation value={ORG_ID}>
+        <MessageText body="Again :safe_blob: !" />
+      </MessagingOrganisation>
+    )
+    const secondEmojiImg = await screen.findByAltText(':safe_blob:')
+    const secondEmojiUrl = secondEmojiImg.getAttribute('src') ?? ''
+    act(() => {
+      clearLocalSessionStorage({ skipBrowserPushCleanup: true })
+    })
+    expect(revokedUrls).toContain(secondEmojiUrl)
+    secondView.unmount()
+
+    setWorkspaceCustomEmojisSnapshot(ORG_ID, [emojiItem])
+    const thirdView = render(
+      <MessagingOrganisation value={ORG_ID}>
+        <MessageText body="Org switch :safe_blob: !" />
+      </MessagingOrganisation>
+    )
+    const thirdEmojiImg = await screen.findByAltText(':safe_blob:')
+    const thirdEmojiUrl = thirdEmojiImg.getAttribute('src') ?? ''
+    act(() => {
+      notifyOrganisationCleanup(ORG_ID)
+    })
+    expect(revokedUrls).toContain(thirdEmojiUrl)
+    thirdView.unmount()
   })
 })

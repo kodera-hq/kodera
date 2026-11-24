@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
+import re
 from typing import Any
 from uuid import UUID
 
@@ -13,7 +13,9 @@ from django.http import HttpRequest, HttpResponse
 
 from apps.workspaces import experience as service
 from apps.workspaces.moderation import RefusalError
+from apps.workspaces.quota_http import respond_once
 from core.api import lanes, problems
+from core.api.idempotency import StoredResponse
 from core.api.scopes import declares
 from services.identity.access_tokens import TokenVerificationError
 from services.identity.trusted_issuers import verify_configured_token
@@ -58,11 +60,7 @@ PREFERENCES_PATCH_FIELDS = {
 }
 
 
-def _etag_for(body: Any) -> str:
-    digest = hashlib.sha256(
-        json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
-    return f'"{digest}"'
+IF_MATCH_TOKEN_RE = re.compile(r'^(?:\*|"(?:W/)?[!-~]+")\Z')
 
 
 def _json_response(body: Any, status: int = 200, *, with_etag: bool = False) -> HttpResponse:
@@ -72,18 +70,8 @@ def _json_response(body: Any, status: int = 200, *, with_etag: bool = False) -> 
         content_type="application/json",
     )
     if with_etag:
-        response["ETag"] = _etag_for(body)
+        response["ETag"] = service.etag_for(body)
     return response
-
-
-def _require_idempotency_key(request: HttpRequest) -> str:
-    raw = request.headers.get("Idempotency-Key")
-    if raw is None:
-        raise RefusalError(400, "idempotency-key-missing")
-    trimmed = raw.strip()
-    if not (1 <= len(trimmed) <= 128) or any(ord(ch) < 33 or ord(ch) > 126 for ch in trimmed):
-        raise RefusalError(400, "malformed-request")
-    return trimmed
 
 
 def _require_if_match(request: HttpRequest) -> str:
@@ -91,12 +79,19 @@ def _require_if_match(request: HttpRequest) -> str:
     if raw is None:
         raise RefusalError(428, "precondition-required")
     trimmed = raw.strip()
-    if not trimmed:
+    if not trimmed or IF_MATCH_TOKEN_RE.fullmatch(trimmed) is None:
         raise RefusalError(400, "malformed-request")
+    if trimmed.startswith('W/"'):
+        return '"' + trimmed[3:]
     return trimmed
 
 
-def _problem(status: int, request_id: str, kind: str | None = None) -> HttpResponse:
+def _problem(
+    status: int,
+    request_id: str,
+    kind: str | None = None,
+    current_etag: str | None = None,
+) -> HttpResponse:
     default_kinds = {
         400: "malformed-request",
         401: "unauthenticated",
@@ -116,6 +111,8 @@ def _problem(status: int, request_id: str, kind: str | None = None) -> HttpRespo
         "code": resolved_kind,
         "request_id": request_id,
     }
+    if current_etag is not None:
+        payload["current_etag"] = current_etag
     response = HttpResponse(
         json.dumps(payload, separators=(",", ":")),
         status=status,
@@ -123,6 +120,8 @@ def _problem(status: int, request_id: str, kind: str | None = None) -> HttpRespo
     )
     if status == 401:
         response["WWW-Authenticate"] = "Bearer"
+    if current_etag is not None:
+        response["ETag"] = current_etag
     return response
 
 
@@ -159,9 +158,10 @@ def _serve(
 ) -> HttpResponse:
     request_id = responses.request_id(request)
     method = request.method or ""
-    if method not in handlers or method not in {"GET", "POST", "PATCH", "DELETE"}:
+    allowed_methods = [m for m in handlers if m != "AUTHORIZE"]
+    if method not in allowed_methods or method not in {"GET", "POST", "PATCH", "DELETE"}:
         response = _problem(405, request_id)
-        response["Allow"] = ", ".join(handlers)
+        response["Allow"] = ", ".join(allowed_methods)
         return responses.finish(response, request_id)
     try:
         verified, lane = verify_configured_token(
@@ -170,7 +170,41 @@ def _serve(
         verified, lane = lanes.admit(verified, lane)
         if lane == "staff":
             return responses.finish(_problem(403, request_id), request_id)
-        response = handlers[method](verified, request_id)
+
+        def execute() -> HttpResponse:
+            try:
+                return handlers[method](verified, request_id)
+            except RefusalError as error:
+                if error.kind == "identity-unknown":
+                    op_id = (operation_ids or {}).get(method, "workspaceExperience")
+                    return problems.identity_unknown(request_id, op_id)
+                return _problem(error.status, request_id, error.kind, error.current_etag)
+
+        if method == "POST":
+            authorize_cb = handlers.get("AUTHORIZE")
+            if authorize_cb is not None:
+                authorize_cb(verified)
+
+            def effect() -> StoredResponse:
+                inner = execute()
+                return StoredResponse(
+                    status=inner.status_code,
+                    body=inner.content,
+                    content_type=inner.get("Content-Type", "application/json"),
+                    etag=inner.get("ETag"),
+                )
+
+            response = respond_once(
+                request,
+                issuer=verified.issuer,
+                subject=verified.subject,
+                request_id=request_id,
+                handler=effect,
+                authority=(None if authorize_cb is None else lambda _: authorize_cb(verified)),
+            )
+        else:
+            response = execute()
+
         response["X-Request-Id"] = request_id
         if "Cache-Control" not in response:
             response["Cache-Control"] = "no-store"
@@ -183,7 +217,9 @@ def _serve(
         if error.kind == "identity-unknown":
             op_id = (operation_ids or {}).get(method, "workspaceExperience")
             return responses.finish(problems.identity_unknown(request_id, op_id), request_id)
-        return responses.finish(_problem(error.status, request_id, error.kind), request_id)
+        return responses.finish(
+            _problem(error.status, request_id, error.kind, error.current_etag), request_id
+        )
 
 
 @declares(
@@ -197,7 +233,6 @@ def emojis(request: HttpRequest, organisation_id: UUID) -> HttpResponse:
         )
 
     def post(verified: Any, request_id: str) -> HttpResponse:
-        _require_idempotency_key(request)
         data = _parse_body(request, EMOJI_CREATE_FIELDS, limit=524288)
         body = service.create_emoji(
             verified=verified,
@@ -209,7 +244,13 @@ def emojis(request: HttpRequest, organisation_id: UUID) -> HttpResponse:
 
     return _serve(
         request,
-        {"GET": get, "POST": post},
+        {
+            "GET": get,
+            "POST": post,
+            "AUTHORIZE": lambda verified: service.authorize_experience(
+                verified=verified, organisation_id=organisation_id, admin=True
+            ),
+        },
         operation_ids={
             "GET": permissions.LIST_WORKSPACE_CUSTOM_EMOJIS.operation_id,
             "POST": permissions.CREATE_WORKSPACE_CUSTOM_EMOJI.operation_id,
@@ -281,7 +322,6 @@ def scheduled_messages(request: HttpRequest, organisation_id: UUID) -> HttpRespo
         )
 
     def post(verified: Any, request_id: str) -> HttpResponse:
-        _require_idempotency_key(request)
         data = _parse_body(request, SCHEDULED_CREATE_FIELDS, limit=32768)
         body = service.create_scheduled_message(
             verified=verified,
@@ -293,7 +333,13 @@ def scheduled_messages(request: HttpRequest, organisation_id: UUID) -> HttpRespo
 
     return _serve(
         request,
-        {"GET": get, "POST": post},
+        {
+            "GET": get,
+            "POST": post,
+            "AUTHORIZE": lambda verified: service.authorize_experience(
+                verified=verified, organisation_id=organisation_id, admin=False
+            ),
+        },
         operation_ids={
             "GET": permissions.LIST_SCHEDULED_MESSAGES.operation_id,
             "POST": permissions.CREATE_SCHEDULED_MESSAGE.operation_id,
@@ -309,7 +355,7 @@ def scheduled_message_detail(
     request: HttpRequest, organisation_id: UUID, scheduled_message_id: UUID
 ) -> HttpResponse:
     def patch(verified: Any, request_id: str) -> HttpResponse:
-        _require_if_match(request)
+        if_match = _require_if_match(request)
         data = _parse_body(request, SCHEDULED_PATCH_FIELDS, limit=32768)
         body = service.update_scheduled_message(
             verified=verified,
@@ -317,6 +363,7 @@ def scheduled_message_detail(
             scheduled_message_id=scheduled_message_id,
             data=data,
             request_id=request_id,
+            if_match=if_match,
         )
         return _json_response(body, status=200, with_etag=True)
 
@@ -355,7 +402,6 @@ def reminders(request: HttpRequest, organisation_id: UUID) -> HttpResponse:
         )
 
     def post(verified: Any, request_id: str) -> HttpResponse:
-        _require_idempotency_key(request)
         data = _parse_body(request, REMINDER_CREATE_FIELDS, limit=16384)
         body = service.create_reminder(
             verified=verified,
@@ -367,7 +413,13 @@ def reminders(request: HttpRequest, organisation_id: UUID) -> HttpResponse:
 
     return _serve(
         request,
-        {"GET": get, "POST": post},
+        {
+            "GET": get,
+            "POST": post,
+            "AUTHORIZE": lambda verified: service.authorize_experience(
+                verified=verified, organisation_id=organisation_id, admin=False
+            ),
+        },
         operation_ids={
             "GET": permissions.LIST_PERSONAL_REMINDERS.operation_id,
             "POST": permissions.CREATE_PERSONAL_REMINDER.operation_id,
@@ -381,7 +433,7 @@ def reminders(request: HttpRequest, organisation_id: UUID) -> HttpResponse:
 )
 def reminder_detail(request: HttpRequest, organisation_id: UUID, reminder_id: UUID) -> HttpResponse:
     def patch(verified: Any, request_id: str) -> HttpResponse:
-        _require_if_match(request)
+        if_match = _require_if_match(request)
         data = _parse_body(request, REMINDER_PATCH_FIELDS, limit=16384)
         body = service.update_reminder(
             verified=verified,
@@ -389,6 +441,7 @@ def reminder_detail(request: HttpRequest, organisation_id: UUID, reminder_id: UU
             reminder_id=reminder_id,
             data=data,
             request_id=request_id,
+            if_match=if_match,
         )
         return _json_response(body, status=200, with_etag=True)
 
@@ -423,13 +476,14 @@ def my_preferences(request: HttpRequest, organisation_id: UUID) -> HttpResponse:
         )
 
     def patch(verified: Any, request_id: str) -> HttpResponse:
-        _require_if_match(request)
+        if_match = _require_if_match(request)
         data = _parse_body(request, PREFERENCES_PATCH_FIELDS, limit=8192)
         body = service.update_my_preferences(
             verified=verified,
             organisation_id=organisation_id,
             data=data,
             request_id=request_id,
+            if_match=if_match,
         )
         return _json_response(body, status=200, with_etag=True)
 

@@ -229,9 +229,7 @@ def compute_recoverable_negative_balance_minor(
     strictly `< total_incl_vat_minor` and never exceeds `quote.creator_net_minor`."""
     if unreserved_negative_balance_minor <= 0:
         return 0
-    max_stripe_extra = max(
-        0, quote.total_incl_vat_minor - 1 - quote.stripe_application_fee_minor
-    )
+    max_stripe_extra = max(0, quote.total_incl_vat_minor - 1 - quote.stripe_application_fee_minor)
     return min(
         unreserved_negative_balance_minor,
         max(0, quote.creator_net_minor),
@@ -460,7 +458,9 @@ def step_connect_onboarding(
         record.payouts_enabled = created.payouts_enabled
         record.details_submitted = created.details_submitted
         record.onboarding_state = derive_connect_onboarding_state(created)
-        record.last_operation_error = created.restricted_reason if record.onboarding_state == "restricted" else None
+        record.last_operation_error = (
+            created.restricted_reason if record.onboarding_state == "restricted" else None
+        )
         # Mandatory durable checkpoint BEFORE issuing resumable onboarding link!
         record.checkpoint()
 
@@ -832,9 +832,7 @@ def create_vip_pass_checkout(
     outside `transaction.atomic()`."""
     del vat_number_validated  # Derived strictly from stored BillingProfile!
     if connection.in_atomic_block:
-        raise RuntimeError(
-            "create_vip_pass_checkout must execute outside transaction.atomic()"
-        )
+        raise RuntimeError("create_vip_pass_checkout must execute outside transaction.atomic()")
     if not isinstance(idempotency_key, str) or IDEMPOTENCY_KEY.fullmatch(idempotency_key) is None:
         raise VipConnectValidationError("invalid idempotency_key")
     check_return_url(return_url)
@@ -977,9 +975,7 @@ def create_vip_pass_checkout(
     stripe_fee_with_recovery = (
         quote.stripe_application_fee_minor + entitlement.reserved_recovery_minor
     )
-    checkout_label = (
-        f"Pass VIP — {tier_name}" if locale == "fr" else f"VIP Pass — {tier_name}"
-    )
+    checkout_label = f"Pass VIP — {tier_name}" if locale == "fr" else f"VIP Pass — {tier_name}"
 
     try:
         issued_link = provider.create_link(

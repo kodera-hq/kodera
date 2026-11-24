@@ -63,7 +63,7 @@ const PAID_LISTING: MarketplaceListingRecord = {
   slug: 'incident-pager',
   title: 'Incident Pager Pro',
   summary: 'Paid incident escalation workflows settled on the web.',
-  pricingMode: 'recurring',
+  pricingMode: 'one_time',
   priceExclVatMinor: 1900,
   manifest: {
     ...FREE_LISTING.manifest,
@@ -86,7 +86,7 @@ function makeTransport(
       async (): Promise<MarketplaceCheckoutResponse> => ({
         entitlementId: '01950000-0000-7000-8000-000000000099',
         listingId: PAID_LISTING.id,
-        pricingMode: 'recurring',
+        pricingMode: 'one_time',
         state: 'pending',
         checkoutRequired: true,
         checkoutSessionId: 'cs_test_123',

@@ -1431,7 +1431,9 @@ def test_pg_http_endpoints_writer_role_volet_a_deferred_refunds_and_dispute_revo
     owner_user = owner_memberships[0].user
     owner_ident = identity(models, org, owner_user, subject="owner-va-" + uuid_mod.uuid4().hex[:8])
     member_user = models.User.objects.create(email="alice@example.test", enabled=True)
-    member_ident = identity(models, org, member_user, subject="member-va-" + uuid_mod.uuid4().hex[:8])
+    member_ident = identity(
+        models, org, member_user, subject="member-va-" + uuid_mod.uuid4().hex[:8]
+    )
     models.Membership.objects.create(
         organisation=org,
         user=member_user,
@@ -1480,9 +1482,15 @@ def test_pg_http_endpoints_writer_role_volet_a_deferred_refunds_and_dispute_revo
     try:
         with acting_as(role):
             # 1. Direct table privilege boundaries enforced by PostgreSQL (`42501`)
-            assert refused("UPDATE billing_invoice SET number = 'KODERA-2026-99999'") == INSUFFICIENT_PRIVILEGE
+            assert (
+                refused("UPDATE billing_invoice SET number = 'KODERA-2026-99999'")
+                == INSUFFICIENT_PRIVILEGE
+            )
             assert refused("DELETE FROM billing_creatorsplitledgerentry") == INSUFFICIENT_PRIVILEGE
-            assert refused("SELECT * FROM billing_dac7sellerstatutorysnapshot") == INSUFFICIENT_PRIVILEGE
+            assert (
+                refused("SELECT * FROM billing_dac7sellerstatutorysnapshot")
+                == INSUFFICIENT_PRIVILEGE
+            )
             assert (
                 refused("UPDATE billing_workspaceboostgrant SET withdrawal_waiver_accepted = false")
                 == INSUFFICIENT_PRIVILEGE
@@ -1612,7 +1620,10 @@ def test_pg_http_endpoints_writer_role_volet_a_deferred_refunds_and_dispute_revo
                     "id": "pi_h31_boost_01",
                     "amount_received": 3640,
                     "currency": "eur",
-                    "metadata": {"volet": "a_boost", "boost_grant_id": created_json["boost_grant_id"]},
+                    "metadata": {
+                        "volet": "a_boost",
+                        "boost_grant_id": created_json["boost_grant_id"],
+                    },
                 },
                 created_ts=ts_now + 3,
             )
@@ -1626,7 +1637,10 @@ def test_pg_http_endpoints_writer_role_volet_a_deferred_refunds_and_dispute_revo
             assert pi_res.json()["status"] == "ignored"
 
         # Verify DB state after out-of-order replay:
-        assert StripeWebhookDelivery.objects.get(stripe_event_id="evt_h31_early_ref_01").outcome == "applied"
+        assert (
+            StripeWebhookDelivery.objects.get(stripe_event_id="evt_h31_early_ref_01").outcome
+            == "applied"
+        )
         inv = Invoice.objects.get(id=created_json["invoice_id"])
         assert inv.state == "paid"
         assert inv.amount_paid_minor == 1820
@@ -1735,7 +1749,9 @@ def test_pg_http_endpoints_writer_role_volet_a_deferred_refunds_and_dispute_revo
             )
 
         assert WorkspaceBoostGrant.objects.get(id=b2b_json["boost_grant_id"]).state == "disputed"
-        assert Payment.objects.get(provider="stripe", provider_ref="pi_h31_b2b_02").state == "reversed"
+        assert (
+            Payment.objects.get(provider="stripe", provider_ref="pi_h31_b2b_02").state == "reversed"
+        )
         assert WorkspaceQuota.objects.get(workspace=ws).seats == 60
     finally:
         with connection.cursor() as cursor:
@@ -1803,9 +1819,7 @@ def test_pg_volet_b_connect_negative_balance_channel_gate_and_dac7_erasure_reten
         models, org, owner_membership.user, subject="owner-vb-" + uuid_mod.uuid4().hex[:8]
     )
     buyer_user = models.User.objects.create(email="buyer@example.test", enabled=True)
-    buyer_ident = identity(
-        models, org, buyer_user, subject="buyer-vb-" + uuid_mod.uuid4().hex[:8]
-    )
+    buyer_ident = identity(models, org, buyer_user, subject="buyer-vb-" + uuid_mod.uuid4().hex[:8])
     buyer_membership = models.Membership.objects.create(
         organisation=org,
         user=buyer_user,
@@ -2076,9 +2090,12 @@ def test_pg_volet_b_connect_negative_balance_channel_gate_and_dac7_erasure_reten
             assert WorkspaceMemberRole.objects.filter(
                 workspace=ws, membership_id=buyer_membership.id, role=vip_role
             ).exists()
-            assert VipMembershipEntitlement.objects.get(
-                id=pass_ok_res.json()["vip_entitlement_id"]
-            ).state == "active"
+            assert (
+                VipMembershipEntitlement.objects.get(
+                    id=pass_ok_res.json()["vip_entitlement_id"]
+                ).state
+                == "active"
+            )
 
             # 5. Overview & DAC7 JSON + XML export via HTTP under `kodera_api` role!
             overview_res = client.get(

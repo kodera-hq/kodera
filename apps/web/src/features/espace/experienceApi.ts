@@ -1,9 +1,9 @@
 // Typed Core API wrapper and reactive stores for Custom Emojis, Send Later, Reminders, and Kodera Labs.
-// Uses coreApi() exclusively (zero global fetch) without mutating shared schema.d.ts.
+// Calls `coreApi().VERB(path, ...)` directly against the generated 0.59.0 contract types.
 
 import { useEffect, useSyncExternalStore } from 'react'
-import type createClient from 'openapi-fetch'
 import { ApiProblem, coreApi } from '../../api/client'
+import { registerEspaceVaultCleanup, registerLocalSessionCleanup } from '../../auth/localSession'
 
 export type LabsFlagKey =
   | 'send_later'
@@ -74,106 +74,8 @@ export interface MemberWorkspacePreferences {
   readonly updatedAt: string | null
 }
 
-interface ExperiencePaths {
-  '/organisations/{organisation_id}/workspace/emojis': {
-    get: {
-      parameters: { path: { organisation_id: string } }
-      responses: { 200: { content: { 'application/json': unknown } } }
-    }
-    post: {
-      parameters: { path: { organisation_id: string } }
-      requestBody: { content: { 'application/json': Record<string, unknown> } }
-      responses: { 201: { content: { 'application/json': unknown } } }
-    }
-  }
-  '/organisations/{organisation_id}/workspace/emojis/{emoji_id}': {
-    delete: {
-      parameters: { path: { organisation_id: string; emoji_id: string } }
-      responses: { 204: { content?: never } }
-    }
-  }
-  '/organisations/{organisation_id}/workspace/emojis/{emoji_id}/blob': {
-    get: {
-      parameters: { path: { organisation_id: string; emoji_id: string } }
-      responses: { 200: { content: { 'image/webp': ArrayBuffer } } }
-    }
-  }
-  '/organisations/{organisation_id}/workspace/scheduled-messages': {
-    get: {
-      parameters: {
-        path: { organisation_id: string }
-        query?: { channel_id?: string; include_terminal?: string }
-      }
-      responses: { 200: { content: { 'application/json': unknown } } }
-    }
-    post: {
-      parameters: { path: { organisation_id: string } }
-      requestBody: { content: { 'application/json': Record<string, unknown> } }
-      responses: { 201: { content: { 'application/json': unknown } } }
-    }
-  }
-  '/organisations/{organisation_id}/workspace/scheduled-messages/{scheduled_message_id}': {
-    patch: {
-      parameters: {
-        path: { organisation_id: string; scheduled_message_id: string }
-        header: { 'If-Match': string }
-      }
-      requestBody: { content: { 'application/json': Record<string, unknown> } }
-      responses: { 200: { content: { 'application/json': unknown } } }
-    }
-    delete: {
-      parameters: { path: { organisation_id: string; scheduled_message_id: string } }
-      responses: { 204: { content?: never } }
-    }
-  }
-  '/organisations/{organisation_id}/workspace/reminders': {
-    get: {
-      parameters: {
-        path: { organisation_id: string }
-        query?: { include_completed?: string }
-      }
-      responses: { 200: { content: { 'application/json': unknown } } }
-    }
-    post: {
-      parameters: { path: { organisation_id: string } }
-      requestBody: { content: { 'application/json': Record<string, unknown> } }
-      responses: { 201: { content: { 'application/json': unknown } } }
-    }
-  }
-  '/organisations/{organisation_id}/workspace/reminders/{reminder_id}': {
-    patch: {
-      parameters: {
-        path: { organisation_id: string; reminder_id: string }
-        header: { 'If-Match': string }
-      }
-      requestBody: { content: { 'application/json': Record<string, unknown> } }
-      responses: { 200: { content: { 'application/json': unknown } } }
-    }
-    delete: {
-      parameters: { path: { organisation_id: string; reminder_id: string } }
-      responses: { 204: { content?: never } }
-    }
-  }
-  '/organisations/{organisation_id}/workspace/preferences/me': {
-    get: {
-      parameters: { path: { organisation_id: string } }
-      responses: { 200: { content: { 'application/json': unknown } } }
-    }
-    patch: {
-      parameters: {
-        path: { organisation_id: string }
-        header: { 'If-Match': string }
-      }
-      requestBody: { content: { 'application/json': Record<string, unknown> } }
-      responses: { 200: { content: { 'application/json': unknown } } }
-    }
-  }
-}
-
-type ExperienceClient = ReturnType<typeof createClient<ExperiencePaths>>
-
-function client(): ExperienceClient {
-  return coreApi() as unknown as ExperienceClient
+function nextIdempotencyKey(): string {
+  return globalThis.crypto.randomUUID()
 }
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
@@ -313,7 +215,7 @@ export async function listWorkspaceCustomEmojis(
   organisationId: string
 ): Promise<WorkspaceCustomEmojiItem[]> {
   try {
-    const { data } = await client().GET('/organisations/{organisation_id}/workspace/emojis', {
+    const { data } = await coreApi().GET('/organisations/{organisation_id}/workspace/emojis', {
       params: { path: { organisation_id: organisationId } },
     })
     if (!isObject(data) || !Array.isArray(data['items'])) return []
@@ -330,8 +232,11 @@ export async function createWorkspaceCustomEmoji(
   organisationId: string,
   payload: { shortcode: string; webpBase64: string }
 ): Promise<WorkspaceCustomEmojiItem> {
-  const { data } = await client().POST('/organisations/{organisation_id}/workspace/emojis', {
-    params: { path: { organisation_id: organisationId } },
+  const { data } = await coreApi().POST('/organisations/{organisation_id}/workspace/emojis', {
+    params: {
+      path: { organisation_id: organisationId },
+      header: { 'Idempotency-Key': nextIdempotencyKey() },
+    },
     body: { shortcode: payload.shortcode, webpBase64: payload.webpBase64 },
   })
   const parsed = parseCustomEmoji(data)
@@ -343,7 +248,7 @@ export async function deleteWorkspaceCustomEmoji(
   organisationId: string,
   emojiId: string
 ): Promise<void> {
-  await client().DELETE('/organisations/{organisation_id}/workspace/emojis/{emoji_id}', {
+  await coreApi().DELETE('/organisations/{organisation_id}/workspace/emojis/{emoji_id}', {
     params: { path: { organisation_id: organisationId, emoji_id: emojiId } },
   })
 }
@@ -353,7 +258,7 @@ export async function fetchWorkspaceCustomEmojiBlob(
   emojiId: string,
   signal?: AbortSignal
 ): Promise<Blob> {
-  const { data } = await client().GET(
+  const { data } = await coreApi().GET(
     '/organisations/{organisation_id}/workspace/emojis/{emoji_id}/blob',
     {
       params: { path: { organisation_id: organisationId, emoji_id: emojiId } },
@@ -375,7 +280,7 @@ export async function listScheduledMessages(
   channelId?: string
 ): Promise<ScheduledMessageItem[]> {
   try {
-    const { data } = await client().GET(
+    const { data } = await coreApi().GET(
       '/organisations/{organisation_id}/workspace/scheduled-messages',
       {
         params: {
@@ -394,6 +299,10 @@ export async function listScheduledMessages(
   }
 }
 
+const scheduledEtagById = new Map<string, string>()
+const reminderEtagById = new Map<string, string>()
+const prefsEtagByOrg = new Map<string, string>()
+
 export async function createScheduledMessage(
   organisationId: string,
   payload: {
@@ -405,13 +314,19 @@ export async function createScheduledMessage(
     deliverAt: string
   }
 ): Promise<ScheduledMessageItem> {
-  const { data } = await client().POST(
+  const { data, response } = await coreApi().POST(
     '/organisations/{organisation_id}/workspace/scheduled-messages',
     {
-      params: { path: { organisation_id: organisationId } },
+      params: {
+        path: { organisation_id: organisationId },
+        header: { 'Idempotency-Key': nextIdempotencyKey() },
+      },
       body: {
-        ...(payload.channelId ? { channelId: payload.channelId } : {}),
-        ...(payload.roomId ? { roomId: payload.roomId } : {}),
+        ...(payload.channelId
+          ? { channelId: payload.channelId }
+          : payload.roomId
+            ? { roomId: payload.roomId }
+            : {}),
         body: payload.body,
         ...(payload.mentions && payload.mentions.length > 0
           ? { mentions: [...payload.mentions] }
@@ -423,6 +338,8 @@ export async function createScheduledMessage(
   )
   const parsed = parseScheduledMessage(data)
   if (parsed === null) throw new Error('Malformed scheduled message response')
+  const etag = response.headers.get('ETag')
+  if (etag) scheduledEtagById.set(parsed.id, etag)
   notifyScheduledChanged(organisationId)
   return parsed
 }
@@ -432,12 +349,13 @@ export async function updateScheduledMessage(
   scheduledMessageId: string,
   patch: { body?: string; deliverAt?: string; mentions?: readonly string[] }
 ): Promise<ScheduledMessageItem> {
-  const { data } = await client().PATCH(
+  const ifMatch = scheduledEtagById.get(scheduledMessageId) ?? '*'
+  const { data, response } = await coreApi().PATCH(
     '/organisations/{organisation_id}/workspace/scheduled-messages/{scheduled_message_id}',
     {
       params: {
         path: { organisation_id: organisationId, scheduled_message_id: scheduledMessageId },
-        header: { 'If-Match': '*' },
+        header: { 'If-Match': ifMatch },
       },
       body: {
         ...(patch.body !== undefined ? { body: patch.body } : {}),
@@ -448,6 +366,8 @@ export async function updateScheduledMessage(
   )
   const parsed = parseScheduledMessage(data)
   if (parsed === null) throw new Error('Malformed scheduled message response')
+  const etag = response.headers.get('ETag')
+  if (etag) scheduledEtagById.set(parsed.id, etag)
   notifyScheduledChanged(organisationId)
   return parsed
 }
@@ -456,7 +376,7 @@ export async function cancelScheduledMessage(
   organisationId: string,
   scheduledMessageId: string
 ): Promise<void> {
-  await client().DELETE(
+  await coreApi().DELETE(
     '/organisations/{organisation_id}/workspace/scheduled-messages/{scheduled_message_id}',
     {
       params: {
@@ -464,6 +384,7 @@ export async function cancelScheduledMessage(
       },
     }
   )
+  scheduledEtagById.delete(scheduledMessageId)
   notifyScheduledChanged(organisationId)
 }
 
@@ -474,7 +395,7 @@ export async function listPersonalReminders(
   includeCompleted = false
 ): Promise<PersonalReminderItem[]> {
   try {
-    const { data } = await client().GET('/organisations/{organisation_id}/workspace/reminders', {
+    const { data } = await coreApi().GET('/organisations/{organisation_id}/workspace/reminders', {
       params: {
         path: { organisation_id: organisationId },
         ...(includeCompleted ? { query: { include_completed: 'true' } } : {}),
@@ -500,18 +421,29 @@ export async function createPersonalReminder(
     remindAt: string
   }
 ): Promise<PersonalReminderItem> {
-  const { data } = await client().POST('/organisations/{organisation_id}/workspace/reminders', {
-    params: { path: { organisation_id: organisationId } },
-    body: {
-      ...(payload.channelId ? { channelId: payload.channelId } : {}),
-      ...(payload.roomId ? { roomId: payload.roomId } : {}),
-      targetEventId: payload.targetEventId,
-      ...(payload.note !== undefined ? { note: payload.note } : {}),
-      remindAt: payload.remindAt,
-    },
-  })
+  const { data, response } = await coreApi().POST(
+    '/organisations/{organisation_id}/workspace/reminders',
+    {
+      params: {
+        path: { organisation_id: organisationId },
+        header: { 'Idempotency-Key': nextIdempotencyKey() },
+      },
+      body: {
+        ...(payload.channelId
+          ? { channelId: payload.channelId }
+          : payload.roomId
+            ? { roomId: payload.roomId }
+            : {}),
+        targetEventId: payload.targetEventId,
+        ...(payload.note !== undefined ? { note: payload.note } : {}),
+        remindAt: payload.remindAt,
+      },
+    }
+  )
   const parsed = parseReminder(data)
   if (parsed === null) throw new Error('Malformed personal reminder response')
+  const etag = response.headers.get('ETag')
+  if (etag) reminderEtagById.set(parsed.id, etag)
   notifyRemindersChanged(organisationId)
   return parsed
 }
@@ -521,12 +453,13 @@ export async function updatePersonalReminder(
   reminderId: string,
   patch: { note?: string; remindAt?: string; state?: 'completed' | 'cancelled' | 'snoozed' }
 ): Promise<PersonalReminderItem> {
-  const { data } = await client().PATCH(
+  const ifMatch = reminderEtagById.get(reminderId) ?? '*'
+  const { data, response } = await coreApi().PATCH(
     '/organisations/{organisation_id}/workspace/reminders/{reminder_id}',
     {
       params: {
         path: { organisation_id: organisationId, reminder_id: reminderId },
-        header: { 'If-Match': '*' },
+        header: { 'If-Match': ifMatch },
       },
       body: {
         ...(patch.note !== undefined ? { note: patch.note } : {}),
@@ -537,6 +470,8 @@ export async function updatePersonalReminder(
   )
   const parsed = parseReminder(data)
   if (parsed === null) throw new Error('Malformed personal reminder response')
+  const etag = response.headers.get('ETag')
+  if (etag) reminderEtagById.set(parsed.id, etag)
   notifyRemindersChanged(organisationId)
   return parsed
 }
@@ -545,9 +480,10 @@ export async function deletePersonalReminder(
   organisationId: string,
   reminderId: string
 ): Promise<void> {
-  await client().DELETE('/organisations/{organisation_id}/workspace/reminders/{reminder_id}', {
+  await coreApi().DELETE('/organisations/{organisation_id}/workspace/reminders/{reminder_id}', {
     params: { path: { organisation_id: organisationId, reminder_id: reminderId } },
   })
+  reminderEtagById.delete(reminderId)
   notifyRemindersChanged(organisationId)
 }
 
@@ -616,11 +552,13 @@ export async function loadMyWorkspacePreferences(
 
   const task = (async () => {
     try {
-      const { data } = await client().GET(
+      const { data, response } = await coreApi().GET(
         '/organisations/{organisation_id}/workspace/preferences/me',
         { params: { path: { organisation_id: organisationId } } }
       )
       const parsed = parsePreferences(data)
+      const etag = response.headers.get('ETag')
+      if (etag) prefsEtagByOrg.set(organisationId, etag)
       prefsByOrg.set(organisationId, parsed)
       prefsLoadedOrgs.add(organisationId)
       emitPrefs()
@@ -648,12 +586,13 @@ export async function updateMyWorkspacePreferences(
     waitingRoomAmbience?: boolean
   }
 ): Promise<MemberWorkspacePreferences> {
-  const { data } = await client().PATCH(
+  const ifMatch = prefsEtagByOrg.get(organisationId) ?? '*'
+  const { data, response } = await coreApi().PATCH(
     '/organisations/{organisation_id}/workspace/preferences/me',
     {
       params: {
         path: { organisation_id: organisationId },
-        header: { 'If-Match': '*' },
+        header: { 'If-Match': ifMatch },
       },
       body: {
         ...(patch.labsFlags !== undefined ? { labsFlags: patch.labsFlags } : {}),
@@ -664,6 +603,8 @@ export async function updateMyWorkspacePreferences(
     }
   )
   const parsed = parsePreferences(data)
+  const etag = response.headers.get('ETag')
+  if (etag) prefsEtagByOrg.set(organisationId, etag)
   prefsByOrg.set(organisationId, parsed)
   prefsLoadedOrgs.add(organisationId)
   emitPrefs()
@@ -675,6 +616,7 @@ export function setCachedWorkspacePreferencesForTest(
   prefs: MemberWorkspacePreferences
 ): void {
   prefsByOrg.set(organisationId, prefs)
+  prefsEtagByOrg.delete(organisationId)
   prefsLoadedOrgs.add(organisationId)
   emitPrefs()
 }
@@ -683,10 +625,16 @@ export function clearExperienceStores(): void {
   prefsByOrg.clear()
   prefsLoadedOrgs.clear()
   prefsInFlight.clear()
+  prefsEtagByOrg.clear()
+  scheduledEtagById.clear()
+  reminderEtagById.clear()
   scheduledRevisionByOrg.clear()
   remindersRevisionByOrg.clear()
   emitPrefs()
 }
+
+registerLocalSessionCleanup(clearExperienceStores)
+registerEspaceVaultCleanup(clearExperienceStores)
 
 const subscribePrefs = (listener: () => void) => {
   prefsListeners.add(listener)

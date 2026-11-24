@@ -24,6 +24,7 @@ from apps.workspaces.selectors import (
     is_designated_confidential_channel,
     may_view_channel_for_reminder,
     undeleted_text_channel_exists,
+    verify_channel_room_binding,
     workspace_id_for,
 )
 
@@ -80,25 +81,35 @@ def _evaluate_reminder_authority(
     if denied:
         return "obsolete", "member_banned_or_kicked", user_id
 
-    if row.channel_id is not None:
-        if is_designated_confidential_channel(
-            workspace_id=workspace_id, channel_id=row.channel_id
-        ) or has_confidential_room(channel_id=row.channel_id, organisation_id=row.organisation_id):
-            return "obsolete", "confidential_channel_refused", user_id
+    if row.channel_id is None:
+        return "obsolete", "channel_binding_required", user_id
 
-        if not undeleted_text_channel_exists(workspace_id=workspace_id, channel_id=row.channel_id):
-            return "obsolete", "channel_deleted", user_id
+    if is_designated_confidential_channel(
+        workspace_id=workspace_id, channel_id=row.channel_id
+    ) or has_confidential_room(channel_id=row.channel_id, organisation_id=row.organisation_id):
+        return "obsolete", "confidential_channel_refused", user_id
 
-        view_verdict = may_view_channel_for_reminder(
-            channel_id=row.channel_id,
-            organisation_id=row.organisation_id,
-            membership_id=row.membership_id,
-            authority_revision=org_row[1],
-        )
-        if view_verdict is None:
-            return "obsolete", "channel_policy_unavailable", user_id
-        if not view_verdict:
-            return "obsolete", "channel_view_denied", user_id
+    if not undeleted_text_channel_exists(workspace_id=workspace_id, channel_id=row.channel_id):
+        return "obsolete", "channel_deleted", user_id
+
+    room_ok, _ = verify_channel_room_binding(
+        workspace_id=workspace_id,
+        channel_id=row.channel_id,
+        room_id=row.room_id,
+    )
+    if not room_ok:
+        return "obsolete", "channel_room_mismatch", user_id
+
+    view_verdict = may_view_channel_for_reminder(
+        channel_id=row.channel_id,
+        organisation_id=row.organisation_id,
+        membership_id=row.membership_id,
+        authority_revision=org_row[1],
+    )
+    if view_verdict is None:
+        return "obsolete", "channel_policy_unavailable", user_id
+    if not view_verdict:
+        return "obsolete", "channel_view_denied", user_id
 
     return "ok", "", user_id
 

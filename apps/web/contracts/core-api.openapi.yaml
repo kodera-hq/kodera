@@ -27104,7 +27104,6 @@ components:
       enum:
       - free
       - one_time
-      - recurring
       examples:
       - free
     ExtensionMarketplaceEntitlementState:

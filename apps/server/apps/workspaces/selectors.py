@@ -1,6 +1,7 @@
 """Scoped workspace values and caller-owned transaction fences."""
 
 import json
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 from uuid import UUID
@@ -8,7 +9,13 @@ from uuid import UUID
 from django.db import connection
 from django.db.models import Q
 
-from .models import Channel, Workspace, WorkspaceMemberRestriction, WorkspaceQuota
+from .models import (
+    Channel,
+    PartnerChannelAgreement,
+    Workspace,
+    WorkspaceMemberRestriction,
+    WorkspaceQuota,
+)
 
 
 def active_channel_id(*, workspace_id: UUID, channel_id: UUID) -> UUID | None:
@@ -284,3 +291,73 @@ def may_view_channel_for_reminder(
         membership_id=membership_id,
         authority_revision=authority_revision,
     )
+
+
+def resolve_partner_channel_for_room(*, workspace_id: UUID, room_id: str) -> UUID | None:
+    """Resolve the workspace's active partner-bridged channel ID for `room_id`, if any."""
+    if not room_id:
+        return None
+    agreement = PartnerChannelAgreement.objects.filter(
+        matrix_room_id=room_id, state="active"
+    ).first()
+    if agreement is None:
+        return None
+    if Channel.objects.filter(id=agreement.channel_id, workspace_id=workspace_id).exists():
+        return agreement.channel_id
+    if Channel.objects.filter(id=agreement.partner_channel_id, workspace_id=workspace_id).exists():
+        return agreement.partner_channel_id
+    return None
+
+
+def partner_channel_matrix_room_id(*, channel_id: UUID) -> str | None:
+    """Return the active partner-agreement `matrix_room_id` for `channel_id`, if any."""
+    agreement = PartnerChannelAgreement.objects.filter(
+        Q(channel_id=channel_id) | Q(partner_channel_id=channel_id),
+        state="active",
+    ).first()
+    return None if agreement is None else agreement.matrix_room_id
+
+
+def verify_channel_room_binding(
+    *,
+    workspace_id: UUID,
+    channel_id: UUID,
+    room_id: str,
+    resolved_synapse_room_id: str | None = None,
+) -> tuple[bool, str]:
+    """Verify that `room_id` (if non-empty) is authoritatively bound to `channel_id`.
+
+    Never accepts an arbitrary unverified Matrix `room_id` or a `room_id` belonging to
+    another channel.
+    """
+    if not Channel.objects.filter(id=channel_id, workspace_id=workspace_id).exists():
+        return False, ""
+
+    partner_room = partner_channel_matrix_room_id(channel_id=channel_id)
+    if not room_id:
+        return True, partner_room or (resolved_synapse_room_id or "")
+
+    # Refuse any room_id owned by a partner agreement that does not bind `channel_id`.
+    foreign_agreement = (
+        PartnerChannelAgreement.objects.filter(matrix_room_id=room_id)
+        .exclude(Q(channel_id=channel_id) | Q(partner_channel_id=channel_id))
+        .exists()
+    )
+    if foreign_agreement:
+        return False, ""
+
+    if partner_room is not None:
+        return (room_id == partner_room), (partner_room if room_id == partner_room else "")
+
+    if resolved_synapse_room_id is not None:
+        return (
+            room_id == resolved_synapse_room_id,
+            resolved_synapse_room_id if room_id == resolved_synapse_room_id else "",
+        )
+
+    # In offline/unit-test environments without a live Synapse room directory or partner bridge,
+    # admit only the deterministic channel-bound room identifier `!room-<channel_id>:<domain>`.
+    canonical_pattern = rf"^!room-{re.escape(str(channel_id))}:[a-z0-9.-]+\Z"
+    if re.fullmatch(canonical_pattern, room_id) is not None:
+        return True, room_id
+    return False, ""

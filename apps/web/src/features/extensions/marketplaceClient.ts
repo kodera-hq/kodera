@@ -1,7 +1,7 @@
-import { coreApi as marketplaceCoreClient } from '@/api/client'
+import { coreApi } from '@/api/client'
 import type { WidgetCard } from './widgetSchema'
 
-export type MarketplacePricingMode = 'free' | 'one_time' | 'recurring'
+export type MarketplacePricingMode = 'free' | 'one_time'
 export type MarketplaceEntitlementState = 'pending' | 'active' | 'revoked' | 'refunded'
 
 export interface MarketplaceManifestCommand {
@@ -144,14 +144,8 @@ export interface ExtensionMarketplaceTransport {
   ): Promise<WidgetActionResponse>
 }
 
-type RawClientRequest = (
-  method: 'get' | 'post',
-  path: string,
-  init: Record<string, unknown>
-) => Promise<{ data?: unknown; response: Response }>
-
-function requestFn(): RawClientRequest {
-  return marketplaceCoreClient().request as unknown as RawClientRequest
+function nextIdempotencyKey(): string {
+  return globalThis.crypto.randomUUID()
 }
 
 export function formatEuroMinor(minor: number, locale: 'fr' | 'en' = 'fr'): string {
@@ -169,15 +163,14 @@ export const MARKETPLACE_WAIVER_STATEMENTS = {
 
 export const defaultExtensionMarketplaceTransport: ExtensionMarketplaceTransport = {
   async listListings(organisationId) {
-    const { data } = await requestFn()(
-      'get',
+    const { data } = await coreApi().GET(
       '/organisations/{organisation_id}/workspace/extensions/marketplace',
       {
         params: { path: { organisation_id: organisationId } },
       }
     )
     return (
-      (data as MarketplaceListResponse | undefined) ?? {
+      (data as unknown as MarketplaceListResponse | undefined) ?? {
         billingEnabled: false,
         listings: [],
       }
@@ -185,47 +178,49 @@ export const defaultExtensionMarketplaceTransport: ExtensionMarketplaceTransport
   },
 
   async publishListing(organisationId, input) {
-    const { data } = await requestFn()(
-      'post',
+    const { data } = await coreApi().POST(
       '/organisations/{organisation_id}/workspace/extensions/marketplace',
       {
-        params: { path: { organisation_id: organisationId } },
-        headers: { 'Content-Type': 'application/json' },
-        body: input,
+        params: {
+          path: { organisation_id: organisationId },
+          header: { 'Idempotency-Key': nextIdempotencyKey() },
+        },
+        body: input as unknown as never,
       }
     )
-    return data as MarketplaceListingRecord
+    return data as unknown as MarketplaceListingRecord
   },
 
   async checkoutListing(organisationId, listingId, input) {
-    const { data } = await requestFn()(
-      'post',
+    const { data } = await coreApi().POST(
       '/organisations/{organisation_id}/workspace/extensions/marketplace/{listing_id}/checkout',
       {
-        params: { path: { organisation_id: organisationId, listing_id: listingId } },
-        headers: { 'Content-Type': 'application/json' },
-        body: input,
+        params: {
+          path: { organisation_id: organisationId, listing_id: listingId },
+          header: { 'Idempotency-Key': nextIdempotencyKey() },
+        },
+        body: input as unknown as never,
       }
     )
-    return data as MarketplaceCheckoutResponse
+    return data as unknown as MarketplaceCheckoutResponse
   },
 
   async installListing(organisationId, listingId, input) {
-    const { data } = await requestFn()(
-      'post',
+    const { data } = await coreApi().POST(
       '/organisations/{organisation_id}/workspace/extensions/marketplace/{listing_id}/install',
       {
-        params: { path: { organisation_id: organisationId, listing_id: listingId } },
-        headers: { 'Content-Type': 'application/json' },
-        body: input,
+        params: {
+          path: { organisation_id: organisationId, listing_id: listingId },
+          header: { 'Idempotency-Key': nextIdempotencyKey() },
+        },
+        body: input as unknown as never,
       }
     )
-    return data as MarketplaceInstallResponse
+    return data as unknown as MarketplaceInstallResponse
   },
 
   async invokeWidgetAction(organisationId, channelId, widgetId, input) {
-    const { data } = await requestFn()(
-      'post',
+    const { data } = await coreApi().POST(
       '/organisations/{organisation_id}/workspace/channels/{channel_id}/widgets/{widget_id}/actions',
       {
         params: {
@@ -234,11 +229,11 @@ export const defaultExtensionMarketplaceTransport: ExtensionMarketplaceTransport
             channel_id: channelId,
             widget_id: widgetId,
           },
+          header: { 'Idempotency-Key': nextIdempotencyKey() },
         },
-        headers: { 'Content-Type': 'application/json' },
-        body: input,
+        body: input as unknown as never,
       }
     )
-    return data as WidgetActionResponse
+    return data as unknown as WidgetActionResponse
   },
 }

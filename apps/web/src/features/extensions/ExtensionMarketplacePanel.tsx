@@ -40,7 +40,6 @@ const MARKETPLACE_COPY = {
       'Les actions de widget sont refusées dans les salons confidentiels ou chiffrés de bout en bout.',
     freeBadge: 'Gratuit',
     oneTimeSuffix: 'HT • achat unique',
-    recurringSuffix: 'HT / mois',
     installedBadge: 'Installée',
     entitledBadge: 'Droits actifs',
     pendingBadge: 'Paiement en attente',
@@ -75,7 +74,6 @@ const MARKETPLACE_COPY = {
       'Widget actions are refused in confidential or end-to-end encrypted channels.',
     freeBadge: 'Free',
     oneTimeSuffix: 'excl. VAT • one-time',
-    recurringSuffix: 'excl. VAT / month',
     installedBadge: 'Installed',
     entitledBadge: 'Active entitlement',
     pendingBadge: 'Payment pending',
@@ -431,9 +429,7 @@ export function ExtensionMarketplacePanel({
             const canInstall = isFree || listing.entitlementState === 'active'
             const priceText = isFree
               ? copy.freeBadge
-              : `${formatEuroMinor(listing.priceExclVatMinor, locale)} ${
-                  listing.pricingMode === 'recurring' ? copy.recurringSuffix : copy.oneTimeSuffix
-                }`
+              : `${formatEuroMinor(listing.priceExclVatMinor, locale)} ${copy.oneTimeSuffix}`
 
             return (
               <li key={listing.id} data-testid={`marketplace-listing-${listing.slug}`}>

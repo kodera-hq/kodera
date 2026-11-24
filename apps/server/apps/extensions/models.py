@@ -432,7 +432,7 @@ class ExtensionMarketplaceListing(StoredModel):
             ),
             models.CheckConstraint(
                 name="extension_marketplace_pricing_mode",
-                condition=Q(pricing_mode__in=("free", "one_time", "recurring")),
+                condition=Q(pricing_mode__in=("free", "one_time")),
             ),
             models.CheckConstraint(
                 name="extension_marketplace_currency",
@@ -447,7 +447,7 @@ class ExtensionMarketplaceListing(StoredModel):
                         seller_connect_account_id__isnull=True,
                     )
                     | Q(
-                        pricing_mode__in=("one_time", "recurring"),
+                        pricing_mode="one_time",
                         price_excl_vat_minor__gt=0,
                         seller_connect_account_id__regex=r"^acct_[A-Za-z0-9_]+$",
                     )
@@ -467,6 +467,7 @@ class MarketplaceEntitlement(StoredModel):
     state = models.TextField(default="pending")
     checkout_ref = models.TextField(null=True)  # noqa: DJ001 - absent on free grants
     checkout_url = models.TextField(null=True)  # noqa: DJ001 - absent on free grants
+    payment_intent_id = models.TextField(null=True)  # noqa: DJ001 - populated on Stripe settlement
     gross_excl_vat_minor = models.BigIntegerField(default=0)
     vat_amount_minor = models.BigIntegerField(default=0)
     total_incl_vat_minor = models.BigIntegerField(default=0)

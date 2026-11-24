@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 import secrets
 from datetime import UTC, datetime, timedelta
@@ -41,7 +43,12 @@ from .models import (
     WorkspaceCustomEmoji,
 )
 from .moderation import ADMINS, RefusalError, member_restrictions
-from .selectors import is_designated_confidential_channel, lock_workspace
+from .selectors import (
+    is_designated_confidential_channel,
+    lock_workspace,
+    resolve_partner_channel_for_room,
+    verify_channel_room_binding,
+)
 from .structure import WorkspaceUnavailableError
 
 MAX_CUSTOM_EMOJIS_PER_WORKSPACE = 200
@@ -67,6 +74,31 @@ def _iso(value: datetime | None) -> str | None:
     if value is None:
         return None
     return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+def etag_for(body: Any) -> str:
+    digest = hashlib.sha256(
+        json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return f'"{digest}"'
+
+
+def _verify_if_match(if_match: str | None, current_wire: dict[str, Any]) -> None:
+    if if_match is None:
+        raise RefusalError(428, "precondition-required")
+    current_tag = etag_for(current_wire)
+    if if_match != "*" and if_match != current_tag:
+        raise RefusalError(412, "precondition-failed", current_etag=current_tag)
+
+
+@transaction.atomic
+def authorize_experience(
+    *,
+    verified: VerifiedAccessToken,
+    organisation_id: UUID,
+    admin: bool = False,
+) -> None:
+    _caller_context(verified, organisation_id, admin=admin, lock=False, require_active_org=True)
 
 
 def _parse_uuid(value: Any) -> UUID:
@@ -186,11 +218,12 @@ def _assert_plaintext_target(
     room_id: str,
     require_post: bool,
     confidential_hint: bool = False,
-) -> Channel | None:
+    resolved_synapse_room_id: str | None = None,
+) -> tuple[Channel, str]:
     if confidential_hint:
         raise RefusalError(403, "confidential_channel_refused")
     if channel_id is None and not room_id:
-        raise RefusalError(422)
+        raise RefusalError(422, "channel_binding_required")
     if room_id and not ROOM_ID_RE.fullmatch(room_id):
         raise RefusalError(422)
 
@@ -201,11 +234,16 @@ def _assert_plaintext_target(
         if muted:
             raise RefusalError(403, "member_muted")
 
-    if channel_id is None:
-        return None
+    resolved_channel_id = channel_id
+    if resolved_channel_id is None:
+        resolved_channel_id = resolve_partner_channel_for_room(
+            workspace_id=workspace.id, room_id=room_id
+        )
+        if resolved_channel_id is None:
+            raise RefusalError(422, "channel_binding_required")
 
     channel = (
-        Channel.objects.filter(id=channel_id, workspace_id=workspace.id)
+        Channel.objects.filter(id=resolved_channel_id, workspace_id=workspace.id)
         .exclude(lifecycle__in=("deletion_pending", "deleted"))
         .first()
     )
@@ -235,6 +273,15 @@ def _assert_plaintext_target(
     if channel.kind != "text":
         raise RefusalError(422, "invalid_channel_kind")
 
+    binding_ok, bound_room_id = verify_channel_room_binding(
+        workspace_id=workspace.id,
+        channel_id=channel.id,
+        room_id=room_id,
+        resolved_synapse_room_id=resolved_synapse_room_id,
+    )
+    if not binding_ok:
+        raise RefusalError(422, "channel_room_mismatch")
+
     if require_post:
         if channel.lifecycle != "active":
             raise RefusalError(409, "channel_archived")
@@ -247,7 +294,7 @@ def _assert_plaintext_target(
         ):
             raise RefusalError(403)
 
-    return channel
+    return channel, bound_room_id
 
 
 # --------------------------------------------------------------------------- Custom Emojis ---
@@ -531,7 +578,7 @@ def create_scheduled_message(
 
     now = timezone.now()
     _validate_deliver_at(deliver_at, now=now)
-    _assert_plaintext_target(
+    channel, bound_room_id = _assert_plaintext_target(
         workspace=workspace,
         caller=caller,
         channel_id=channel_id,
@@ -555,8 +602,8 @@ def create_scheduled_message(
             row = ScheduledMessage.objects.create(
                 organisation_id=organisation_id,
                 workspace_id=workspace.id,
-                channel_id=channel_id,
-                room_id=room_id,
+                channel_id=channel.id,
+                room_id=bound_room_id,
                 author_id=caller.membership_id,
                 body=body,
                 mentions_json=mentions,
@@ -575,7 +622,7 @@ def create_scheduled_message(
         row.id,
         request_id,
         metadata={
-            "channel_id": str(channel_id) if channel_id else None,
+            "channel_id": str(channel.id),
             "deliver_at": _iso(deliver_at),
         },
     )
@@ -590,6 +637,7 @@ def update_scheduled_message(
     scheduled_message_id: UUID,
     data: dict[str, Any],
     request_id: str,
+    if_match: str | None = "*",
 ) -> dict[str, Any]:
     if not data:
         raise RefusalError(422)
@@ -613,6 +661,7 @@ def update_scheduled_message(
     )
     if row is None:
         raise RefusalError(404)
+    _verify_if_match(if_match, _scheduled_wire(row))
     if row.state != ScheduledMessage.State.PENDING:
         raise RefusalError(409, "scheduled_message_not_editable")
 
@@ -790,7 +839,7 @@ def create_reminder(
 
     now = timezone.now()
     _validate_remind_at(remind_at, now=now)
-    _assert_plaintext_target(
+    channel, bound_room_id = _assert_plaintext_target(
         workspace=workspace,
         caller=caller,
         channel_id=channel_id,
@@ -811,8 +860,8 @@ def create_reminder(
             row = notification_services.create_member_reminder(
                 organisation_id=organisation_id,
                 membership_id=caller.membership_id,
-                channel_id=channel_id,
-                room_id=room_id,
+                channel_id=channel.id,
+                room_id=bound_room_id,
                 target_event_id=target_event_id,
                 note=note,
                 remind_at=remind_at,
@@ -827,7 +876,7 @@ def create_reminder(
         row.id,
         request_id,
         metadata={
-            "channel_id": str(channel_id) if channel_id else None,
+            "channel_id": str(channel.id),
             "remind_at": _iso(remind_at),
         },
     )
@@ -842,6 +891,7 @@ def update_reminder(
     reminder_id: UUID,
     data: dict[str, Any],
     request_id: str,
+    if_match: str | None = "*",
 ) -> dict[str, Any]:
     if not data:
         raise RefusalError(422)
@@ -860,6 +910,7 @@ def update_reminder(
     )
     if row is None:
         raise RefusalError(404)
+    _verify_if_match(if_match, _reminder_wire(row))
     if row.state in ("in_flight", "cancelled", "obsolete"):
         raise RefusalError(409, "reminder_not_editable")
 
@@ -1007,6 +1058,7 @@ def update_my_preferences(
     organisation_id: UUID,
     data: dict[str, Any],
     request_id: str,
+    if_match: str | None = "*",
 ) -> dict[str, Any]:
     if not data:
         raise RefusalError(422)
@@ -1054,6 +1106,7 @@ def update_my_preferences(
         )
         .first()
     )
+    _verify_if_match(if_match, _preferences_wire(row))
 
     current_labs = (
         dict(row.labs_flags) if row is not None and isinstance(row.labs_flags, dict) else {}

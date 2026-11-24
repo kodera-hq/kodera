@@ -6,6 +6,7 @@ import hashlib
 import ipaddress
 import json
 import re
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -23,6 +24,7 @@ from apps.billing.switch import billing_enabled
 from apps.media import outbound
 from apps.orgs.selectors import membership_user_id
 from core import sealing
+from core.db.ids import new_uuid7
 
 from . import services, widgets
 from .models import ExtensionMarketplaceListing, Installation, MarketplaceEntitlement
@@ -48,7 +50,7 @@ ALLOWED_MANIFEST_SCOPES = frozenset(
         "widgets:write",
     }
 )
-ALLOWED_PRICING_MODES = frozenset({"free", "one_time", "recurring"})
+ALLOWED_PRICING_MODES = frozenset({"free", "one_time"})
 MAX_MANIFEST_BYTES = 32 * 1024
 MAX_PRICE_EXCL_VAT_MINOR = 10_000_000
 MIN_PAID_PRICE_EXCL_VAT_MINOR = 100
@@ -400,6 +402,20 @@ def _serialize_checkout(
     }
 
 
+def _try_acquire_checkout_key_lock(*, workspace_id: UUID, idempotency_key: str) -> tuple[bool, int]:
+    digest = hashlib.sha256(f"mkt-checkout:{workspace_id}:{idempotency_key}".encode()).digest()
+    lock_key = int.from_bytes(digest[:8], "big", signed=True)
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT pg_try_advisory_lock(%s)", [lock_key])
+        acquired = bool(cursor.fetchone()[0])
+    return acquired, lock_key
+
+
+def _release_checkout_key_lock(lock_key: int) -> None:
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT pg_advisory_unlock(%s)", [lock_key])
+
+
 def checkout_marketplace_listing(
     *,
     verified: Any,
@@ -434,175 +450,210 @@ def checkout_marketplace_listing(
         )
     ).hexdigest()
 
-    with transaction.atomic():
-        workspace_id, principal = services.member(verified, organisation_id)
-        listing = ExtensionMarketplaceListing.objects.filter(
-            id=listing_id,
-            workspace_id=workspace_id,
-            published_at__isnull=False,
-            revoked_at__isnull=True,
-        ).first()
-        if listing is None:
-            raise ExtensionRefusedError("marketplace_listing_absent", 404)
-
-        prior_idem = (
-            MarketplaceEntitlement.objects.select_for_update()
-            .filter(workspace_id=workspace_id, idempotency_key=idempotency_key)
-            .first()
-        )
-        if prior_idem is not None:
-            if prior_idem.request_sha256 != request_digest or prior_idem.listing_id != listing.id:
-                raise ExtensionRefusedError("idempotency_key_reused", 409)
-            return _serialize_checkout(prior_idem, pricing_mode=listing.pricing_mode, replayed=True)
-
-        already_active = MarketplaceEntitlement.objects.filter(
-            workspace_id=workspace_id,
-            listing=listing,
-            state="active",
-            revoked_at__isnull=True,
-        ).first()
-        if already_active is not None:
-            raise ExtensionRefusedError("marketplace_already_entitled", 409)
-
-        if listing.pricing_mode == "free":
-            entitlement = MarketplaceEntitlement.objects.create(
-                organisation_id=organisation_id,
+    lock_key: int | None = None
+    try:
+        with transaction.atomic():
+            workspace_id, principal = services.member(verified, organisation_id)
+            listing = ExtensionMarketplaceListing.objects.filter(
+                id=listing_id,
                 workspace_id=workspace_id,
-                buyer_membership_id=principal.membership_id,
+                published_at__isnull=False,
+                revoked_at__isnull=True,
+            ).first()
+            if listing is None:
+                raise ExtensionRefusedError("marketplace_listing_absent", 404)
+
+            acquired, candidate_lock = _try_acquire_checkout_key_lock(
+                workspace_id=workspace_id, idempotency_key=idempotency_key
+            )
+            if not acquired:
+                raise ExtensionRefusedError("idempotency_key_in_flight", 409)
+            lock_key = candidate_lock
+
+            prior_idem = (
+                MarketplaceEntitlement.objects.select_for_update()
+                .filter(workspace_id=workspace_id, idempotency_key=idempotency_key)
+                .first()
+            )
+            if prior_idem is not None:
+                if (
+                    prior_idem.request_sha256 != request_digest
+                    or prior_idem.listing_id != listing.id
+                ):
+                    raise ExtensionRefusedError("idempotency_key_reused", 409)
+                if prior_idem.state == "active" or (
+                    prior_idem.state == "pending"
+                    and prior_idem.checkout_ref is not None
+                    and prior_idem.checkout_url is not None
+                ):
+                    return _serialize_checkout(
+                        prior_idem, pricing_mode=listing.pricing_mode, replayed=True
+                    )
+                if prior_idem.state in ("revoked", "refunded"):
+                    raise ExtensionRefusedError("idempotency_key_reused", 409)
+                # `state == 'pending'` with `checkout_ref is None` is a recoverable retry after a
+                # transient provider outage (`503`): reuse the pending row cleanly below.
+
+            already_active = MarketplaceEntitlement.objects.filter(
+                workspace_id=workspace_id,
                 listing=listing,
                 state="active",
-                idempotency_key=idempotency_key,
-                request_sha256=request_digest,
+                revoked_at__isnull=True,
+            ).first()
+            if already_active is not None:
+                raise ExtensionRefusedError("marketplace_already_entitled", 409)
+
+            if listing.pricing_mode == "free":
+                if prior_idem is not None:
+                    prior_idem.state = "active"
+                    prior_idem.save(update_fields=["state", "updated_at"])
+                    entitlement = prior_idem
+                else:
+                    entitlement = MarketplaceEntitlement.objects.create(
+                        organisation_id=organisation_id,
+                        workspace_id=workspace_id,
+                        buyer_membership_id=principal.membership_id,
+                        listing=listing,
+                        state="active",
+                        idempotency_key=idempotency_key,
+                        request_sha256=request_digest,
+                    )
+                services.audit(
+                    "marketplace_checkout_started",
+                    principal,
+                    organisation_id,
+                    listing.id,
+                    {
+                        "listing_id": str(listing.id),
+                        "pricing_mode": listing.pricing_mode,
+                        "state": "active",
+                    },
+                )
+                return _serialize_checkout(
+                    entitlement, pricing_mode=listing.pricing_mode, replayed=False
+                )
+
+            if listing.pricing_mode != "one_time":
+                raise ExtensionRefusedError("marketplace_pricing_mode_invalid", 422)
+
+            if not billing_enabled():
+                raise ExtensionRefusedError("billing-disabled", 409)
+            if not isinstance(return_url, str) or not return_url.strip():
+                raise ExtensionRefusedError("marketplace_return_url_required", 422)
+
+            seller = monetization_services.resolve_workspace_seller_connect_account(
+                organisation_id=organisation_id,
+                workspace_id=workspace_id,
+            )
+            if (
+                seller is None
+                or not seller.stripe_connect_account_id
+                or seller.onboarding_state != "active"
+                or not seller.charges_enabled
+                or not seller.payouts_enabled
+                or listing.seller_connect_account_id != seller.stripe_connect_account_id
+            ):
+                raise ExtensionRefusedError("marketplace_connect_account_not_ready", 409)
+
+            buyer_user_id = membership_user_id(membership_id=principal.membership_id)
+            if prior_idem is not None:
+                entitlement = prior_idem
+            else:
+                entitlement = MarketplaceEntitlement.objects.create(
+                    organisation_id=organisation_id,
+                    workspace_id=workspace_id,
+                    buyer_membership_id=principal.membership_id,
+                    listing=listing,
+                    state="pending",
+                    idempotency_key=idempotency_key,
+                    request_sha256=request_digest,
+                )
+            entitlement_id = entitlement.id
+            listing_slug = listing.slug
+            listing_title = listing.title
+            listing_pricing_mode = listing.pricing_mode
+            listing_price_minor = listing.price_excl_vat_minor
+            seller_account_id = seller.stripe_connect_account_id
+            platform_fee_bps = seller.platform_fee_bps
+
+        try:
+            issued = monetization_services.issue_marketplace_connect_checkout_link(
+                organisation_id=organisation_id,
+                workspace_id=workspace_id,
+                entitlement_id=entitlement_id,
+                listing_slug=listing_slug,
+                listing_title=listing_title,
+                pricing_mode=listing_pricing_mode,
+                price_excl_vat_minor=listing_price_minor,
+                seller_connect_account_id=seller_account_id,
+                platform_fee_bps=platform_fee_bps,
+                buyer_user_id=buyer_user_id,
+                customer_kind=customer_kind,
+                buyer_country=buyer_country,
+                return_url=return_url,
+                locale=locale,
+                withdrawal_waiver_accepted=withdrawal_waiver_accepted,
+                withdrawal_waiver_at=withdrawal_waiver_at,
+                withdrawal_waiver_statement=withdrawal_waiver_statement,
+                provider=provider,
+            )
+        except (
+            vip_connect.VipConnectValidationError,
+            boosts.BoostValidationError,
+            boosts.WithdrawalWaiverRequiredError,
+            ReturnUrlRequiredError,
+            ReturnUrlRefusedError,
+            ProviderRefusedError,
+            ValueError,
+        ) as exc:
+            with transaction.atomic():
+                MarketplaceEntitlement.objects.filter(id=entitlement_id, state="pending").update(
+                    state="revoked",
+                    revoked_at=timezone.now(),
+                    updated_at=timezone.now(),
+                )
+            raise ExtensionRefusedError("marketplace_checkout_invalid", 422) from exc
+        except ProviderUnavailableError as exc:
+            # Leave `state == 'pending'` with `checkout_ref=None` so retrying with the same
+            # `Idempotency-Key` (CONVENTIONS §8 `5xx` retry) or a fresh key recovers cleanly!
+            raise ExtensionRefusedError("marketplace_payment_provider_unavailable", 503) from exc
+
+        with transaction.atomic():
+            entitlement = MarketplaceEntitlement.objects.select_for_update().get(id=entitlement_id)
+            entitlement.checkout_ref = str(issued["checkout_session_id"])
+            entitlement.checkout_url = str(issued["checkout_url"])
+            entitlement.gross_excl_vat_minor = int(issued["gross_excl_vat_minor"])
+            entitlement.vat_amount_minor = int(issued["vat_amount_minor"])
+            entitlement.total_incl_vat_minor = int(issued["total_incl_vat_minor"])
+            entitlement.application_fee_amount_minor = int(issued["application_fee_amount_minor"])
+            entitlement.save(
+                update_fields=[
+                    "checkout_ref",
+                    "checkout_url",
+                    "gross_excl_vat_minor",
+                    "vat_amount_minor",
+                    "total_incl_vat_minor",
+                    "application_fee_amount_minor",
+                    "updated_at",
+                ]
             )
             services.audit(
                 "marketplace_checkout_started",
                 principal,
                 organisation_id,
-                listing.id,
+                listing_id,
                 {
-                    "listing_id": str(listing.id),
-                    "pricing_mode": listing.pricing_mode,
-                    "state": "active",
+                    "listing_id": str(listing_id),
+                    "pricing_mode": listing_pricing_mode,
+                    "state": "pending",
                 },
             )
             return _serialize_checkout(
-                entitlement, pricing_mode=listing.pricing_mode, replayed=False
+                entitlement, pricing_mode=listing_pricing_mode, replayed=False
             )
-
-        if not billing_enabled():
-            raise ExtensionRefusedError("billing-disabled", 409)
-        if not isinstance(return_url, str) or not return_url.strip():
-            raise ExtensionRefusedError("marketplace_return_url_required", 422)
-
-        seller = monetization_services.resolve_workspace_seller_connect_account(
-            organisation_id=organisation_id,
-            workspace_id=workspace_id,
-        )
-        if (
-            seller is None
-            or not seller.stripe_connect_account_id
-            or seller.onboarding_state != "active"
-            or not seller.charges_enabled
-            or not seller.payouts_enabled
-            or listing.seller_connect_account_id != seller.stripe_connect_account_id
-        ):
-            raise ExtensionRefusedError("marketplace_connect_account_not_ready", 409)
-
-        buyer_user_id = membership_user_id(membership_id=principal.membership_id)
-        entitlement = MarketplaceEntitlement.objects.create(
-            organisation_id=organisation_id,
-            workspace_id=workspace_id,
-            buyer_membership_id=principal.membership_id,
-            listing=listing,
-            state="pending",
-            idempotency_key=idempotency_key,
-            request_sha256=request_digest,
-        )
-        entitlement_id = entitlement.id
-        listing_slug = listing.slug
-        listing_title = listing.title
-        listing_pricing_mode = listing.pricing_mode
-        listing_price_minor = listing.price_excl_vat_minor
-        seller_account_id = seller.stripe_connect_account_id
-        platform_fee_bps = seller.platform_fee_bps
-
-    try:
-        issued = monetization_services.issue_marketplace_connect_checkout_link(
-            organisation_id=organisation_id,
-            workspace_id=workspace_id,
-            entitlement_id=entitlement_id,
-            listing_slug=listing_slug,
-            listing_title=listing_title,
-            pricing_mode=listing_pricing_mode,
-            price_excl_vat_minor=listing_price_minor,
-            seller_connect_account_id=seller_account_id,
-            platform_fee_bps=platform_fee_bps,
-            buyer_user_id=buyer_user_id,
-            customer_kind=customer_kind,
-            buyer_country=buyer_country,
-            return_url=return_url,
-            locale=locale,
-            withdrawal_waiver_accepted=withdrawal_waiver_accepted,
-            withdrawal_waiver_at=withdrawal_waiver_at,
-            withdrawal_waiver_statement=withdrawal_waiver_statement,
-            provider=provider,
-        )
-    except (
-        vip_connect.VipConnectValidationError,
-        boosts.BoostValidationError,
-        boosts.WithdrawalWaiverRequiredError,
-        ReturnUrlRequiredError,
-        ReturnUrlRefusedError,
-        ProviderRefusedError,
-        ValueError,
-    ) as exc:
-        with transaction.atomic():
-            MarketplaceEntitlement.objects.filter(id=entitlement_id, state="pending").update(
-                state="revoked",
-                revoked_at=timezone.now(),
-                updated_at=timezone.now(),
-            )
-        raise ExtensionRefusedError("marketplace_checkout_invalid", 422) from exc
-    except ProviderUnavailableError as exc:
-        with transaction.atomic():
-            MarketplaceEntitlement.objects.filter(id=entitlement_id, state="pending").update(
-                state="revoked",
-                revoked_at=timezone.now(),
-                updated_at=timezone.now(),
-            )
-        raise ExtensionRefusedError("marketplace_payment_provider_unavailable", 503) from exc
-
-    with transaction.atomic():
-        entitlement = MarketplaceEntitlement.objects.select_for_update().get(id=entitlement_id)
-        entitlement.checkout_ref = str(issued["checkout_session_id"])
-        entitlement.checkout_url = str(issued["checkout_url"])
-        entitlement.gross_excl_vat_minor = int(issued["gross_excl_vat_minor"])
-        entitlement.vat_amount_minor = int(issued["vat_amount_minor"])
-        entitlement.total_incl_vat_minor = int(issued["total_incl_vat_minor"])
-        entitlement.application_fee_amount_minor = int(issued["application_fee_amount_minor"])
-        entitlement.save(
-            update_fields=[
-                "checkout_ref",
-                "checkout_url",
-                "gross_excl_vat_minor",
-                "vat_amount_minor",
-                "total_incl_vat_minor",
-                "application_fee_amount_minor",
-                "updated_at",
-            ]
-        )
-        services.audit(
-            "marketplace_checkout_started",
-            principal,
-            organisation_id,
-            listing_id,
-            {
-                "listing_id": str(listing_id),
-                "pricing_mode": listing_pricing_mode,
-                "state": "pending",
-            },
-        )
-        return _serialize_checkout(entitlement, pricing_mode=listing_pricing_mode, replayed=False)
+    finally:
+        if lock_key is not None:
+            _release_checkout_key_lock(lock_key)
 
 
 @transaction.atomic
@@ -612,6 +663,7 @@ def settle_marketplace_checkout(
     workspace_id: UUID,
     entitlement_id: UUID,
     checkout_ref: str,
+    payment_intent_id: str | None = None,
 ) -> MarketplaceEntitlement:
     """Activate a pending paid marketplace entitlement once provider settlement is verified."""
     entitlement = (
@@ -627,13 +679,212 @@ def settle_marketplace_checkout(
     if entitlement is None or entitlement.checkout_ref != checkout_ref:
         raise ExtensionRefusedError("marketplace_entitlement_absent", 404)
     if entitlement.state == "active":
+        if payment_intent_id and entitlement.payment_intent_id is None:
+            entitlement.payment_intent_id = payment_intent_id
+            entitlement.save(update_fields=["payment_intent_id", "updated_at"])
         return entitlement
     if entitlement.state != "pending":
         raise ExtensionRefusedError("marketplace_entitlement_state_invalid", 409)
     entitlement.state = "active"
     entitlement.checkout_url = None
-    entitlement.save(update_fields=["state", "checkout_url", "updated_at"])
+    update_fields = ["state", "checkout_url", "updated_at"]
+    if payment_intent_id and entitlement.payment_intent_id is None:
+        entitlement.payment_intent_id = payment_intent_id
+        update_fields.append("payment_intent_id")
+    entitlement.save(update_fields=update_fields)
     return entitlement
+
+
+@transaction.atomic
+def try_settle_stripe_checkout_session(
+    *,
+    session_id: str,
+    event_type: str,
+    payment_status: Any,
+    payment_intent_id: str | None,
+    amount_minor: int | None,
+    currency: str | None,
+) -> tuple[str, UUID | None, UUID | None] | None:
+    """Settle a pending `MarketplaceEntitlement` from a verified Stripe Checkout webhook."""
+    entitlement = (
+        MarketplaceEntitlement.objects.select_for_update().filter(checkout_ref=session_id).first()
+    )
+    if entitlement is None:
+        return None
+    org_id = entitlement.organisation_id
+    if event_type == "checkout.session.completed":
+        if payment_status in ("unpaid", "processing"):
+            return "ignored", org_id, entitlement.id
+        if payment_status != "paid":
+            return "mismatch", org_id, entitlement.id
+    if (
+        payment_intent_id is None
+        or not payment_intent_id.strip()
+        or amount_minor is None
+        or currency is None
+        or (amount_minor, currency.upper()) != (entitlement.total_incl_vat_minor, "EUR")
+    ):
+        return "mismatch", org_id, entitlement.id
+    pi_id = payment_intent_id.strip()
+    if entitlement.payment_intent_id is not None and entitlement.payment_intent_id != pi_id:
+        return "mismatch", org_id, entitlement.id
+    if entitlement.state == "active":
+        if entitlement.payment_intent_id is None:
+            entitlement.payment_intent_id = pi_id
+            entitlement.save(update_fields=["payment_intent_id", "updated_at"])
+        return "ignored", org_id, entitlement.id
+    if entitlement.state != "pending" or entitlement.revoked_at is not None:
+        return "ignored", org_id, entitlement.id
+    if (
+        MarketplaceEntitlement.objects.filter(
+            workspace_id=entitlement.workspace_id,
+            listing_id=entitlement.listing_id,
+            state="active",
+            revoked_at__isnull=True,
+        )
+        .exclude(id=entitlement.id)
+        .exists()
+    ):
+        return "mismatch", org_id, entitlement.id
+    entitlement.state = "active"
+    entitlement.payment_intent_id = pi_id
+    entitlement.checkout_url = None
+    entitlement.save(update_fields=["state", "payment_intent_id", "checkout_url", "updated_at"])
+    return "applied", org_id, entitlement.id
+
+
+@transaction.atomic
+def try_settle_stripe_payment_intent(
+    *,
+    payment_intent_id: str,
+    amount_minor: int,
+    currency: str,
+    meta_entitlement_id: UUID | None,
+    meta_workspace_id: UUID | None,
+    has_meta_entitlement: bool = False,
+    has_meta_workspace: bool = False,
+) -> tuple[str, UUID | None, UUID | None, str | None] | None:
+    """Settle a pending `MarketplaceEntitlement` from a verified `payment_intent.succeeded` event."""
+    entitlement = (
+        MarketplaceEntitlement.objects.select_for_update()
+        .filter(payment_intent_id=payment_intent_id)
+        .first()
+    )
+    if entitlement is None and meta_entitlement_id is not None:
+        entitlement = (
+            MarketplaceEntitlement.objects.select_for_update()
+            .filter(id=meta_entitlement_id)
+            .first()
+        )
+    if entitlement is None:
+        return None
+    org_id = entitlement.organisation_id
+    if has_meta_entitlement and meta_entitlement_id != entitlement.id:
+        return "mismatch", org_id, entitlement.id, entitlement.checkout_ref
+    if has_meta_workspace and meta_workspace_id != entitlement.workspace_id:
+        return "mismatch", org_id, entitlement.id, entitlement.checkout_ref
+    if (amount_minor, currency.upper()) != (entitlement.total_incl_vat_minor, "EUR"):
+        return "mismatch", org_id, entitlement.id, entitlement.checkout_ref
+    if (
+        entitlement.payment_intent_id is not None
+        and entitlement.payment_intent_id != payment_intent_id
+    ):
+        return "mismatch", org_id, entitlement.id, entitlement.checkout_ref
+    if entitlement.state != "pending" or entitlement.revoked_at is not None:
+        return "ignored", org_id, entitlement.id, entitlement.checkout_ref
+    if (
+        MarketplaceEntitlement.objects.filter(
+            workspace_id=entitlement.workspace_id,
+            listing_id=entitlement.listing_id,
+            state="active",
+            revoked_at__isnull=True,
+        )
+        .exclude(id=entitlement.id)
+        .exists()
+    ):
+        return "mismatch", org_id, entitlement.id, entitlement.checkout_ref
+    entitlement.state = "active"
+    entitlement.payment_intent_id = payment_intent_id
+    entitlement.checkout_url = None
+    entitlement.save(update_fields=["state", "payment_intent_id", "checkout_url", "updated_at"])
+    return "applied", org_id, entitlement.id, entitlement.checkout_ref
+
+
+@transaction.atomic
+def try_cancel_stripe_checkout_session(
+    *, session_id: str, occurred_at: datetime | None = None
+) -> tuple[str, UUID | None] | None:
+    """Revoke an unpaid pending `MarketplaceEntitlement` on session expiry or async failure."""
+    entitlement = (
+        MarketplaceEntitlement.objects.select_for_update().filter(checkout_ref=session_id).first()
+    )
+    if entitlement is None:
+        return None
+    if entitlement.state != "pending" or entitlement.revoked_at is not None:
+        return "ignored", entitlement.organisation_id
+    ts = occurred_at or timezone.now()
+    entitlement.state = "revoked"
+    entitlement.revoked_at = ts
+    entitlement.checkout_url = None
+    entitlement.sealed_signing_secret = b""
+    entitlement.save(
+        update_fields=["state", "revoked_at", "checkout_url", "sealed_signing_secret", "updated_at"]
+    )
+    return "applied", entitlement.organisation_id
+
+
+@transaction.atomic
+def try_revoke_stripe_marketplace_entitlement(
+    *,
+    payment_intent_id: str,
+    amount_minor: int,
+    currency: str,
+    occurred_at: datetime,
+    terminal_state: str = "refunded",
+) -> tuple[str, UUID | None, UUID | None] | None:
+    """Revoke an active/pending `MarketplaceEntitlement` and its bound `Installation` on refund or dispute."""
+    if terminal_state not in ("refunded", "revoked"):
+        raise ValueError("invalid terminal_state")
+    entitlement = (
+        MarketplaceEntitlement.objects.select_for_update()
+        .filter(payment_intent_id=payment_intent_id)
+        .first()
+    )
+    if entitlement is None:
+        return None
+    org_id = entitlement.organisation_id
+    if (
+        currency.upper() != "EUR"
+        or amount_minor <= 0
+        or amount_minor > entitlement.total_incl_vat_minor
+    ):
+        return "mismatch", org_id, entitlement.id
+    if entitlement.state in ("refunded", "revoked") and entitlement.revoked_at is not None:
+        return "ignored", org_id, entitlement.id
+
+    if entitlement.installation_id is not None:
+        inst = (
+            Installation.objects.select_for_update().filter(id=entitlement.installation_id).first()
+        )
+        if inst is not None and inst.revoked_at is None:
+            inst.revoked_at = occurred_at
+            inst.version = new_uuid7()
+            inst.save(update_fields=["revoked_at", "version", "updated_at"])
+
+    entitlement.state = terminal_state
+    entitlement.revoked_at = entitlement.revoked_at or occurred_at
+    entitlement.sealed_signing_secret = b""
+    entitlement.checkout_url = None
+    entitlement.save(
+        update_fields=[
+            "state",
+            "revoked_at",
+            "sealed_signing_secret",
+            "checkout_url",
+            "updated_at",
+        ]
+    )
+    return "applied", org_id, entitlement.id
 
 
 @transaction.atomic

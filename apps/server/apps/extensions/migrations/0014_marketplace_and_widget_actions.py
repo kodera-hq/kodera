@@ -24,7 +24,7 @@ $$;
 REVOKE ALL ON FUNCTION extension_erasure_allowed(uuid) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION extension_scope_guard() RETURNS trigger LANGUAGE plpgsql SET search_path=pg_catalog,public AS $$
-DECLARE org uuid; workspace uuid; old_json jsonb;
+DECLARE org uuid; workspace uuid; old_json jsonb; actor_person uuid; has_cutoff boolean;
 BEGIN
  IF TG_OP='DELETE' THEN
   old_json:=to_jsonb(OLD);
@@ -195,11 +195,18 @@ BEGIN
     RAISE EXCEPTION 'resource authority binding immutable' USING ERRCODE='23514'; END IF;
    IF OLD.installation_id IS NOT NULL AND NEW.installation_id IS DISTINCT FROM OLD.installation_id THEN
     RAISE EXCEPTION 'Extension marketplace installation binding immutable' USING ERRCODE='23514'; END IF;
+   IF OLD.payment_intent_id IS NOT NULL AND NEW.payment_intent_id IS DISTINCT FROM OLD.payment_intent_id THEN
+    RAISE EXCEPTION 'Extension marketplace payment intent binding immutable' USING ERRCODE='23514'; END IF;
   END IF;
  ELSIF TG_TABLE_NAME='extensions_widgetactionreceipt' THEN
   SELECT organisation_id INTO org FROM public.workspaces_workspace WHERE id=NEW.workspace_id;
-  IF TG_OP='INSERT' AND (EXISTS(SELECT 1 FROM public.extensions_workspacecutoff WHERE organisation_id=org)
-   OR (to_regclass('public.orgs_privacyerasure') IS NOT NULL AND EXISTS(SELECT 1 FROM public.orgs_privacyerasure WHERE organisation_reference=org))) THEN
+  SELECT user_id INTO actor_person FROM public.orgs_membership WHERE id=NEW.actor_membership_id;
+  has_cutoff:=(
+   EXISTS(SELECT 1 FROM public.extensions_workspacecutoff WHERE organisation_id=org)
+   OR (to_regclass('public.orgs_privacyerasure') IS NOT NULL AND EXISTS(SELECT 1 FROM public.orgs_privacyerasure WHERE organisation_reference=org))
+   OR (actor_person IS NOT NULL AND to_regclass('public.orgs_accounterasure') IS NOT NULL AND EXISTS(SELECT 1 FROM public.orgs_accounterasure WHERE user_reference=actor_person))
+  );
+  IF TG_OP='INSERT' AND has_cutoff THEN
    RAISE EXCEPTION 'durable erasure cutoff refuses write' USING ERRCODE='23514'; END IF;
   IF org IS NULL OR NEW.organisation_id<>org
    OR NOT EXISTS(SELECT 1 FROM public.orgs_membership WHERE id=NEW.actor_membership_id AND organisation_id=org)
@@ -208,13 +215,26 @@ BEGIN
    OR NEW.expires_at>NEW.created_at+interval '7 days'
    OR (NEW.response_card IS NOT NULL AND octet_length(NEW.response_card::text)>16384) THEN
    RAISE EXCEPTION 'Extension widget action receipt binding invalid' USING ERRCODE='23514'; END IF;
-  IF TG_OP='UPDATE' AND (NEW.organisation_id<>OLD.organisation_id OR NEW.workspace_id<>OLD.workspace_id
-   OR NEW.channel_id<>OLD.channel_id OR NEW.installation_id<>OLD.installation_id
-   OR NEW.actor_membership_id<>OLD.actor_membership_id OR NEW.widget_id<>OLD.widget_id
-   OR NEW.action_id<>OLD.action_id OR NEW.idempotency_key<>OLD.idempotency_key
-   OR NEW.request_sha256<>OLD.request_sha256 OR NEW.created_at<>OLD.created_at
-   OR NEW.expires_at>OLD.expires_at) THEN
-   RAISE EXCEPTION 'resource authority binding immutable' USING ERRCODE='23514'; END IF;
+  IF TG_OP='UPDATE' THEN
+   IF NEW.organisation_id<>OLD.organisation_id OR NEW.workspace_id<>OLD.workspace_id
+    OR NEW.channel_id<>OLD.channel_id OR NEW.installation_id<>OLD.installation_id
+    OR NEW.actor_membership_id<>OLD.actor_membership_id OR NEW.widget_id<>OLD.widget_id
+    OR NEW.action_id<>OLD.action_id OR NEW.idempotency_key<>OLD.idempotency_key
+    OR NEW.request_sha256<>OLD.request_sha256 OR NEW.created_at<>OLD.created_at
+    OR NEW.expires_at>OLD.expires_at THEN
+    RAISE EXCEPTION 'resource authority binding immutable' USING ERRCODE='23514'; END IF;
+   IF OLD.state<>'in_flight' AND (
+    (to_jsonb(OLD)-ARRAY['expires_at','response_card','updated_at']) IS DISTINCT FROM
+    (to_jsonb(NEW)-ARRAY['expires_at','response_card','updated_at'])
+    OR (NEW.response_card IS NOT NULL AND NEW.response_card IS DISTINCT FROM OLD.response_card)
+   ) THEN
+    RAISE EXCEPTION 'Extension widget action receipt immutable' USING ERRCODE='23514'; END IF;
+   IF has_cutoff AND (
+    (NEW.state='delivered' AND OLD.state<>'delivered')
+    OR (NEW.response_card IS NOT NULL AND NEW.response_card IS DISTINCT FROM OLD.response_card)
+   ) THEN
+    RAISE EXCEPTION 'durable erasure cutoff refuses write' USING ERRCODE='23514'; END IF;
+  END IF;
  ELSIF TG_TABLE_NAME='extensions_digestconsent' THEN
   IF NOT EXISTS(SELECT 1 FROM public.orgs_membership m JOIN public.identity_identity i
     ON i.user_id=m.user_id AND i.organisation_id=m.organisation_id WHERE m.id=NEW.membership_id AND i.id=NEW.identity_id) THEN
@@ -329,7 +349,8 @@ BEGIN
    AND (state NOT IN ('revoked','refunded') OR revoked_at IS NULL OR octet_length(sealed_signing_secret)<>0 OR checkout_url IS NOT NULL);
  UPDATE public.extensions_widgetactionreceipt
  SET expires_at=LEAST(expires_at,journal.purge_not_before),
-     state=CASE WHEN state='delivered' THEN 'delivered' ELSE 'failed' END,
+     state=CASE WHEN state='in_flight' THEN 'failed' ELSE state END,
+     response_card=CASE WHEN state='in_flight' THEN NULL ELSE response_card END,
      updated_at=clock_timestamp()
  WHERE workspace_id=target_workspace
    AND (expires_at>journal.purge_not_before OR state='in_flight');
@@ -487,6 +508,33 @@ BEGIN
   'external_receipts_complete',receipts_complete,'counts',step_counts);
 END $$;
 REVOKE ALL ON FUNCTION extension_erasure_step(uuid,uuid,timestamptz,text,integer) FROM PUBLIC;
+
+CREATE OR REPLACE FUNCTION public.account_extension_widget_erasure_hook() RETURNS trigger LANGUAGE plpgsql
+SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $$
+DECLARE
+ person uuid:=NEW.user_reference;
+ widget_scrubbed bigint:=0;
+BEGIN
+ IF OLD.core_purged_at IS NULL AND NEW.core_purged_at IS NOT NULL THEN
+  IF NOT public.privacy_account_context(person) THEN
+   RAISE EXCEPTION 'account widget erasure requires worker authority' USING ERRCODE='23514';
+  END IF;
+  UPDATE public.extensions_widgetactionreceipt
+  SET response_card=NULL,
+      state=CASE WHEN state='in_flight' THEN 'failed' ELSE state END,
+      updated_at=clock_timestamp()
+  WHERE actor_membership_id IN (SELECT id FROM public.orgs_membership WHERE user_id=person)
+    AND (response_card IS NOT NULL OR state='in_flight');
+  GET DIAGNOSTICS widget_scrubbed=ROW_COUNT;
+  NEW.counts:=COALESCE(NEW.counts,'{}'::jsonb)||jsonb_build_object('widget_action_receipts_scrubbed',widget_scrubbed);
+ END IF;
+ RETURN NEW;
+END $$;
+REVOKE ALL ON FUNCTION public.account_extension_widget_erasure_hook() FROM PUBLIC;
+
+CREATE TRIGGER aa_06_account_extension_widget_erasure
+ BEFORE UPDATE ON public.orgs_accounterasure
+ FOR EACH ROW EXECUTE FUNCTION public.account_extension_widget_erasure_hook();
 """
 
 REVERSE_SQL = r"""
@@ -502,6 +550,8 @@ BEGIN
  THEN RAISE EXCEPTION 'cannot downgrade marketplace or widget action migration with persisted records' USING ERRCODE='23514'; END IF;
 END $$;
 
+DROP TRIGGER IF EXISTS aa_06_account_extension_widget_erasure ON public.orgs_accounterasure;
+DROP FUNCTION IF EXISTS public.account_extension_widget_erasure_hook();
 DROP TRIGGER IF EXISTS extension_scope_guard ON extensions_widgetactionreceipt;
 DROP TRIGGER IF EXISTS extension_scope_guard ON extensions_marketplaceentitlement;
 DROP TRIGGER IF EXISTS extension_scope_guard ON extensions_extensionmarketplacelisting;
@@ -951,6 +1001,7 @@ class Migration(migrations.Migration):
                 ("state", models.TextField(default="pending")),
                 ("checkout_ref", models.TextField(null=True)),
                 ("checkout_url", models.TextField(null=True)),
+                ("payment_intent_id", models.TextField(null=True)),
                 ("gross_excl_vat_minor", models.BigIntegerField(default=0)),
                 ("vat_amount_minor", models.BigIntegerField(default=0)),
                 ("total_incl_vat_minor", models.BigIntegerField(default=0)),
@@ -1069,7 +1120,7 @@ class Migration(migrations.Migration):
         migrations.AddConstraint(
             model_name="extensionmarketplacelisting",
             constraint=models.CheckConstraint(
-                condition=models.Q(("pricing_mode__in", ("free", "one_time", "recurring"))),
+                condition=models.Q(("pricing_mode__in", ("free", "one_time"))),
                 name="extension_marketplace_pricing_mode",
             ),
         ),
@@ -1091,7 +1142,7 @@ class Migration(migrations.Migration):
                     ),
                     models.Q(
                         ("price_excl_vat_minor__gt", 0),
-                        ("pricing_mode__in", ("one_time", "recurring")),
+                        ("pricing_mode", "one_time"),
                         ("seller_connect_account_id__regex", "^acct_[A-Za-z0-9_]+$"),
                     ),
                     _connector="OR",

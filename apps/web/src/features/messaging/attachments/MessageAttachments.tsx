@@ -3,9 +3,14 @@ import { formatBytes } from '../../../ui/formatBytes'
 // rooms which resolve via bounded credential-free reads into CSP-safe local `blob:` URLs
 // (`img-src 'self' blob:`) and open the Lightbox when clicked.
 
-import { lazy, Suspense, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { useTranslation } from 'react-i18next'
 import { coreApi } from '../../../api/client'
+import {
+  registerEspaceVaultCleanup,
+  registerLocalSessionCleanup,
+  registerOrganisationSwitchCleanup,
+} from '../../../auth/localSession'
 import { Dialog } from '../../../ui/Dialog/Dialog'
 import { cleanText } from '../../../ui/safeText'
 import { filesMessages } from '../../espace/filesMessages'
@@ -22,10 +27,31 @@ const CHIP =
 
 const SAFE_RASTER_MIME = /^image\/(png|jpeg|gif|webp)$/
 export const MAX_INLINE_IMAGE_BYTES = 10 * 1024 * 1024
-const MAX_INLINE_CACHE_ENTRIES = 48
+export const MAX_INLINE_CACHE_ENTRIES = 48
 
-// Bounded LRU cache of CSP-safe `blob:` URLs (`${organisationId}:${attachmentId}` -> `blob:...`).
+// Bounded LRU cache of CSP-safe `blob:` URLs (`${organisationId}:${attachmentId}` -> `blob:...`)
+// with mounted `<img>` ref-counting so active previews are never revoked while on screen.
 const inlineBlobCache = new Map<string, string>()
+const blobUrlRefCounts = new Map<string, number>()
+const deferredRevokeUrls = new Set<string>()
+const inlineCacheListeners = new Set<() => void>()
+let inlineCacheEpoch = 0
+
+function emitInlineCacheChange(): void {
+  inlineCacheEpoch += 1
+  for (const listener of inlineCacheListeners) listener()
+}
+
+function subscribeInlineCache(listener: () => void): () => void {
+  inlineCacheListeners.add(listener)
+  return () => {
+    inlineCacheListeners.delete(listener)
+  }
+}
+
+function getInlineCacheEpoch(): number {
+  return inlineCacheEpoch
+}
 
 function safeCreateBlobUrl(blob: Blob): string | null {
   if (typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') return null
@@ -45,36 +71,103 @@ function safeRevokeBlobUrl(url: string | null | undefined): void {
   }
 }
 
+function acquireBlobUrlConsumer(url: string): void {
+  blobUrlRefCounts.set(url, (blobUrlRefCounts.get(url) ?? 0) + 1)
+}
+
+function releaseBlobUrlConsumer(url: string): void {
+  const next = (blobUrlRefCounts.get(url) ?? 0) - 1
+  if (next <= 0) {
+    blobUrlRefCounts.delete(url)
+    if (deferredRevokeUrls.delete(url)) {
+      safeRevokeBlobUrl(url)
+    }
+  } else {
+    blobUrlRefCounts.set(url, next)
+  }
+}
+
+function retireOrDeferBlobUrl(url: string | undefined): void {
+  if (!url) return
+  if ((blobUrlRefCounts.get(url) ?? 0) > 0) {
+    deferredRevokeUrls.add(url)
+    return
+  }
+  safeRevokeBlobUrl(url)
+}
+
+function touchInlineBlobCache(key: string): string | null {
+  const existing = inlineBlobCache.get(key)
+  if (existing === undefined) return null
+  inlineBlobCache.delete(key)
+  inlineBlobCache.set(key, existing)
+  return existing
+}
+
+function evictOneInlineEntry(): boolean {
+  for (const [candidateKey, candidateUrl] of inlineBlobCache.entries()) {
+    if ((blobUrlRefCounts.get(candidateUrl) ?? 0) === 0) {
+      inlineBlobCache.delete(candidateKey)
+      safeRevokeBlobUrl(candidateUrl)
+      return true
+    }
+  }
+  const oldestKey = inlineBlobCache.keys().next().value
+  if (oldestKey === undefined) return false
+  const oldestUrl = inlineBlobCache.get(oldestKey)
+  inlineBlobCache.delete(oldestKey)
+  retireOrDeferBlobUrl(oldestUrl)
+  return true
+}
+
 function cacheInlineBlobUrl(key: string, url: string): void {
   if (inlineBlobCache.has(key)) {
     const prev = inlineBlobCache.get(key)
     inlineBlobCache.delete(key)
-    if (prev && prev !== url) safeRevokeBlobUrl(prev)
+    if (prev && prev !== url) retireOrDeferBlobUrl(prev)
   }
   while (inlineBlobCache.size >= MAX_INLINE_CACHE_ENTRIES) {
-    const oldestKey = inlineBlobCache.keys().next().value
-    if (oldestKey === undefined) break
-    const oldestUrl = inlineBlobCache.get(oldestKey)
-    inlineBlobCache.delete(oldestKey)
-    safeRevokeBlobUrl(oldestUrl)
+    if (!evictOneInlineEntry()) break
   }
   inlineBlobCache.set(key, url)
+  emitInlineCacheChange()
 }
 
 export function clearInlineAttachmentPreviews(organisationId?: string): void {
   if (organisationId === undefined) {
     for (const url of inlineBlobCache.values()) safeRevokeBlobUrl(url)
+    for (const url of deferredRevokeUrls.values()) safeRevokeBlobUrl(url)
     inlineBlobCache.clear()
+    deferredRevokeUrls.clear()
+    blobUrlRefCounts.clear()
+    emitInlineCacheChange()
     return
   }
   const prefix = `${organisationId}:`
+  let changed = false
   for (const [key, url] of inlineBlobCache.entries()) {
     if (key.startsWith(prefix)) {
       safeRevokeBlobUrl(url)
+      deferredRevokeUrls.delete(url)
+      blobUrlRefCounts.delete(url)
       inlineBlobCache.delete(key)
+      changed = true
     }
   }
+  if (changed) emitInlineCacheChange()
 }
+
+export const clearAttachmentPreviews = clearInlineAttachmentPreviews
+
+registerLocalSessionCleanup(() => {
+  clearInlineAttachmentPreviews()
+})
+registerEspaceVaultCleanup(() => {
+  clearInlineAttachmentPreviews()
+})
+registerOrganisationSwitchCleanup((organisationId) => {
+  clearInlineAttachmentPreviews(organisationId)
+})
 
 /** A download address Core issued: https only, no credentials in it. */
 export function safeDownloadUrl(value: unknown): string | null {
@@ -116,22 +209,35 @@ function InlineRasterAttachment({
     attachment.sizeBytes > 0 &&
     attachment.sizeBytes <= MAX_INLINE_IMAGE_BYTES
 
+  const cacheEpoch = useSyncExternalStore(subscribeInlineCache, getInlineCacheEpoch)
   const [fetchedEntry, setFetchedEntry] = useState<{
     readonly key: string
     readonly url: string
+    readonly epoch: number
   } | null>(null)
 
   const cachedUrl = eligible && cacheKey ? (inlineBlobCache.get(cacheKey) ?? null) : null
   const inlineUrl =
     eligible && cacheKey
-      ? (cachedUrl ?? (fetchedEntry?.key === cacheKey ? fetchedEntry.url : null))
+      ? (cachedUrl ??
+          (fetchedEntry?.key === cacheKey && fetchedEntry.epoch === cacheEpoch
+            ? fetchedEntry.url
+            : null))
       : null
+
+  useEffect(() => {
+    if (!inlineUrl || !eligible) return
+    acquireBlobUrlConsumer(inlineUrl)
+    return () => {
+      releaseBlobUrlConsumer(inlineUrl)
+    }
+  }, [inlineUrl, eligible])
 
   useEffect(() => {
     if (!eligible || organisationId === null || !cacheKey) {
       return
     }
-    if (inlineBlobCache.has(cacheKey)) {
+    if (touchInlineBlobCache(cacheKey) !== null) {
       return
     }
 
@@ -153,7 +259,7 @@ function InlineRasterAttachment({
         const url = safeCreateBlobUrl(blob)
         if (url === null) return
         cacheInlineBlobUrl(cacheKey, url)
-        setFetchedEntry({ key: cacheKey, url })
+        setFetchedEntry({ key: cacheKey, url, epoch: getInlineCacheEpoch() })
       } catch {
         // Graceful fallback to the accessible file chip if fetch fails.
       }
@@ -239,13 +345,21 @@ export function MessageAttachments({
     }
   }, [organisationId])
 
+  useEffect(() => {
+    if (!preview || preview.ephemeral) return
+    acquireBlobUrlConsumer(preview.url)
+    return () => {
+      releaseBlobUrlConsumer(preview.url)
+    }
+  }, [preview])
+
   async function open(ref: AttachmentRef) {
     if (organisationId === null) return
     setProblem(false)
     if (SAFE_RASTER_MIME.test(ref.contentType)) {
       closePreview()
-      const cached = inlineBlobCache.get(`${organisationId}:${ref.id}`)
-      if (cached !== undefined) {
+      const cached = touchInlineBlobCache(`${organisationId}:${ref.id}`)
+      if (cached !== null) {
         setPreview({
           url: cached,
           name: cleanText(ref.filename, 120),

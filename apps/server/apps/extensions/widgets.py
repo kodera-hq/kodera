@@ -17,13 +17,23 @@ from django.utils import timezone
 
 from apps.e2ee.selectors import channel_has_e2ee_room
 from apps.media import outbound
-from apps.orgs.selectors import organisation_authority_revision
+from apps.orgs.selectors import (
+    lock_erasure_cutoff_fences,
+    membership_delivery_state,
+    organisation_authority_revision,
+    privacy_cutoff_reason,
+)
 from apps.workspaces import selectors as workspaces
 from apps.workspaces.channel_access import permits_channel_post
 from core import sealing
 
 from . import services
-from .models import Installation, MarketplaceEntitlement, WidgetActionReceipt
+from .models import (
+    Installation,
+    MarketplaceEntitlement,
+    WidgetActionReceipt,
+    WorkspaceCutoff,
+)
 from .wire import ExtensionRefusedError, canonical, event_payload, signed_delivery
 
 WIDGET_SCHEMA_VERSION = "kodera.widget.v1"
@@ -590,9 +600,79 @@ def dispatch_widget_action(
         final_state = "failed"
         refusal_error = ExtensionRefusedError("widget_endpoint_unavailable", 502)
 
-    # Stage 3: Persist outcome and audit evidence.
+    # Stage 3: Persist outcome and audit evidence ONLY after re-verifying in-flight lease,
+    # GDPR org/account erasure cutoffs, active installation, non-confidential channel, and caller membership.
     with transaction.atomic():
-        receipt = WidgetActionReceipt.objects.select_for_update().get(id=receipt_id)
+        locked_receipt = (
+            WidgetActionReceipt.objects.select_for_update().filter(id=receipt_id).first()
+        )
+        if locked_receipt is None or locked_receipt.state != "in_flight":
+            raise ExtensionRefusedError("widget_action_aborted", 409)
+        receipt = locked_receipt
+
+        member_row = membership_delivery_state(
+            membership_id=principal.membership_id, organisation_id=organisation_id
+        )
+        actor_user_id: UUID | None = member_row[0] if member_row is not None else None
+        if actor_user_id is not None:
+            lock_erasure_cutoff_fences(organisation_id=organisation_id, user_id=actor_user_id)
+
+        cutoff_active = (
+            WorkspaceCutoff.objects.filter(organisation_id=organisation_id).exists()
+            or privacy_cutoff_reason(organisation_id=organisation_id, user_id=actor_user_id)
+            is not None
+        )
+        aborted_reason: str | None = "erasure_cutoff" if cutoff_active else None
+
+        if aborted_reason is None:
+            try:
+                post_ws_id, post_principal = services.member(verified, organisation_id)
+            except ExtensionRefusedError:
+                aborted_reason = "caller_revoked"
+            else:
+                if (
+                    post_ws_id != workspace_id
+                    or post_principal.membership_id != principal.membership_id
+                ):
+                    aborted_reason = "caller_revoked"
+
+        if aborted_reason is None:
+            post_snap = workspaces.channel_snapshot(
+                workspace_id=workspace_id, channel_id=channel_id, for_update=False
+            )
+            if (
+                post_snap is None
+                or post_snap.kind != "text"
+                or post_snap.lifecycle != "active"
+                or post_snap.is_confidential
+                or channel_has_e2ee_room(channel_id=channel_id, organisation_id=organisation_id)
+            ):
+                aborted_reason = "channel_revoked_or_confidential"
+            elif not permits_channel_post(
+                channel_id=channel_id,
+                membership_id=principal.membership_id,
+                organisation_id=organisation_id,
+                member_org_role=principal.role,
+                authority_revision=organisation_authority_revision(organisation_id=organisation_id),
+            ):
+                aborted_reason = "channel_access_revoked"
+
+        if aborted_reason is None:
+            post_inst = Installation.objects.filter(
+                id=installation_id,
+                workspace_id=workspace_id,
+                revoked_at__isnull=True,
+            ).first()
+            if post_inst is None or "widget.action" not in post_inst.events:
+                aborted_reason = "installation_revoked"
+
+        if aborted_reason is not None:
+            receipt.state = "failed"
+            receipt.response_status = None
+            receipt.response_card = None
+            receipt.save(update_fields=["state", "response_status", "response_card", "updated_at"])
+            raise ExtensionRefusedError("widget_action_aborted", 409)
+
         receipt.state = final_state
         receipt.response_status = response_status
         receipt.response_card = response_card

@@ -455,7 +455,7 @@ def issue_marketplace_connect_checkout_link(
         raise RuntimeError(
             "issue_marketplace_connect_checkout_link must execute outside transaction.atomic()"
         )
-    if pricing_mode not in {"one_time", "recurring"}:
+    if pricing_mode != "one_time":
         raise vip_connect.VipConnectValidationError(f"unsupported pricing_mode {pricing_mode!r}")
     if not CONNECT_ACCOUNT_ID.fullmatch(seller_connect_account_id):
         raise vip_connect.VipConnectValidationError("invalid seller_connect_account_id")
@@ -489,10 +489,9 @@ def issue_marketplace_connect_checkout_link(
         now=now,
     )
 
-    billing_period = "monthly" if pricing_mode == "recurring" else "one_time"
     quote = vip_connect.quote_vip_pass(
         tier_code=listing_slug,
-        billing_period=billing_period,
+        billing_period="one_time",
         price_excl_vat_minor=price_excl_vat_minor,
         platform_fee_bps=platform_fee_bps,
         buyer_country=eff_country,
