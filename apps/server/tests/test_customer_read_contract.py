@@ -159,11 +159,13 @@ ORGANISATION_SLUG_PATTERN = r"^[a-z0-9][a-z0-9-]{3,18}[a-z0-9](?![\s\S])"
 TENANT_SLUG_PATTERN = r"^[a-z0-9][a-z0-9-]{1,30}[a-z0-9](?![\s\S])"
 WORKSPACE_ROLE_SLUG_PATTERN = r"^[a-z][a-z0-9_-]{0,63}$"
 BOOKING_PAGE_SLUG_PATTERN = r"^[a-z0-9][a-z0-9-]{1,78}[a-z0-9](?![\s\S])"
+EXTENSION_MARKETPLACE_SLUG_PATTERN = r"^[a-z0-9][a-z0-9-]{0,61}[a-z0-9](?![\s\S])"
 SLUG_RULES = {
     "organisation": ORGANISATION_SLUG_PATTERN,
     "tenant": TENANT_SLUG_PATTERN,
     "workspace_role": WORKSPACE_ROLE_SLUG_PATTERN,
     "booking_page": BOOKING_PAGE_SLUG_PATTERN,
+    "extension_marketplace": EXTENSION_MARKETPLACE_SLUG_PATTERN,
 }
 SLUG_CASES = {
     "organisation": [
@@ -215,6 +217,18 @@ SLUG_CASES = {
         ("Abc", False),
         ("abc\n", False),
     ],
+    "extension_marketplace": [
+        ("ab", True),
+        ("a" * 63, True),
+        ("a-b", True),
+        ("a", False),
+        ("a" * 64, False),
+        ("-ab", False),
+        ("ab-", False),
+        ("a_b", False),
+        ("Ab", False),
+        ("ab\n", False),
+    ],
 }
 
 # A field carries a slug when its pattern has the slug shape, whatever its
@@ -247,6 +261,10 @@ TENANT_WORD = re.compile(r"tenant|slug[-_]?availability", re.IGNORECASE)
 ORGANISATION_WORD = re.compile(rf"organi[sz]ation|realm|{ORG_WORD}", re.IGNORECASE)
 WORKSPACE_ROLE_WORD = re.compile(r"workspace_role", re.IGNORECASE)
 BOOKING_PAGE_WORD = re.compile(r"booking_page|public_booking|booking_slug", re.IGNORECASE)
+EXTENSION_MARKETPLACE_WORD = re.compile(
+    r"extension_marketplace|extension_widget|extension_manifest_widget|widget_id",
+    re.IGNORECASE,
+)
 # Values under these keywords are data or prose, never a field. A property may
 # carry one of these names, so the rule never applies inside `properties`.
 NOT_A_SCHEMA = {"example", "examples", "default", "enum", "const", "description", "summary"}
@@ -309,6 +327,31 @@ BOOKING_PAGE_SLUG_LOCATIONS = tuple(
         "PublicBookingReservation",
     )
 )
+EXTENSION_MARKETPLACE_SLUG_LOCATIONS = (
+    *(
+        ("core-api", ("components", "schemas", name, "properties", "slug"))
+        for name in (
+            "ExtensionMarketplaceManifest",
+            "ExtensionMarketplaceListing",
+            "ExtensionMarketplacePublishRequest",
+            "ExtensionMarketplaceInstallResult",
+        )
+    ),
+    (
+        "core-api",
+        (
+            "paths",
+            "/organisations/{organisation_id}/workspace/channels/{channel_id}/widgets/{widget_id}/actions",
+            "post",
+            "parameters",
+            2,
+            "schema",
+        ),
+    ),
+    ("core-api", ("components", "schemas", "ExtensionWidgetCard", "properties", "widgetId")),
+    ("core-api", ("components", "schemas", "ExtensionManifestWidget", "properties", "id")),
+    ("core-api", ("components", "schemas", "ChannelWidgetActionResult", "properties", "widgetId")),
+)
 
 
 def load_contracts():
@@ -357,6 +400,7 @@ def classify_slug(context):
                 ("organisation", ORGANISATION_WORD),
                 ("workspace_role", WORKSPACE_ROLE_WORD),
                 ("booking_page", BOOKING_PAGE_WORD),
+                ("extension_marketplace", EXTENSION_MARKETPLACE_WORD),
             )
             if word.search(words(token))
         }
@@ -604,6 +648,7 @@ def test_every_slug_field_in_both_contracts_carries_the_rule_its_context_names()
             *ORGANISATION_SLUG_LOCATIONS,
             *WORKSPACE_ROLE_SLUG_LOCATIONS,
             *BOOKING_PAGE_SLUG_LOCATIONS,
+            *EXTENSION_MARKETPLACE_SLUG_LOCATIONS,
         )
     }
     assert expected <= found, "the walk no longer finds: " + "; ".join(sorted(expected - found))
@@ -1094,7 +1139,8 @@ N4_PATH = "/organisations/{organisation_id}/bootstrap"
 # Rebound at 0.55.0: authoritative workspace channel confidentiality; N4 assurance guards unchanged.
 # Rebound at 0.57.0: optional workspace identity and preferences; protected bootstrap and discovery semantics unchanged.
 # Rebound at 0.58.0: community boosts, VIP Connect, live AI translation/captions, smart calendar/booking, and cybersecurity posture; N4 assurance guards unchanged.
-N4_VERSION = "0.58.0"
+# Rebound at 0.59.0: sandboxed extension widgets, extension marketplace settlement, sanitized WebP custom emojis, Send Later, reminders, and Kodera Labs; N4 assurance guards unchanged.
+N4_VERSION = "0.59.0"
 # Rebound at 0.19.0 (2026-10-21, on top of 0.18.1): the notice-contacts delta and the Plan example's EU hosting.
 # Rebound at 0.22.0: the ten structure operations, their schemas and Problem.reason's first value;
 # then room_state on WorkspaceChannel, the starter's lounge (template version 2) and AppCode messaging;
@@ -1152,7 +1198,8 @@ N4_VERSION = "0.58.0"
 # Rebound at 0.55.0: authoritative workspace channel confidentiality; N4 assurance guards unchanged.
 # Rebound at 0.57.0: optional workspace identity and preferences; protected bootstrap and discovery semantics unchanged.
 # Rebound at 0.58.0: community boosts, VIP Connect, live AI translation/captions, smart calendar/booking, and cybersecurity posture; N4 assurance guards unchanged.
-N4_OLD_CONTRACT = "922c063113c5c6c2c81db744f4157fb93bd0aa6ef479ce1791f9999f51ea3e38"
+# Rebound at 0.59.0: sandboxed extension widgets, extension marketplace settlement, sanitized WebP custom emojis, Send Later, reminders, and Kodera Labs; N4 assurance guards unchanged.
+N4_OLD_CONTRACT = "12d49ba8caee2634609a727ce8bcfa4498b0f614b331ffa4da8268432ff284c1"
 # Rebound at 0.20.0 (2026-10-22): CONVENTIONS.md §6 gains the order-in-progress and invoice-issued rows and a changelog line.
 # Rebound at 0.24.0 (2026-10-22): CONVENTIONS.md §6's invoice-issued row narrowed, and a changelog line.
 # Rebound at 0.28.0: CONVENTIONS.md §6 gains the identity-unknown row and a changelog line.

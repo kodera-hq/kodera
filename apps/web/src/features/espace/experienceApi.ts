@@ -114,7 +114,10 @@ interface ExperiencePaths {
   }
   '/organisations/{organisation_id}/workspace/scheduled-messages/{scheduled_message_id}': {
     patch: {
-      parameters: { path: { organisation_id: string; scheduled_message_id: string } }
+      parameters: {
+        path: { organisation_id: string; scheduled_message_id: string }
+        header: { 'If-Match': string }
+      }
       requestBody: { content: { 'application/json': Record<string, unknown> } }
       responses: { 200: { content: { 'application/json': unknown } } }
     }
@@ -139,7 +142,10 @@ interface ExperiencePaths {
   }
   '/organisations/{organisation_id}/workspace/reminders/{reminder_id}': {
     patch: {
-      parameters: { path: { organisation_id: string; reminder_id: string } }
+      parameters: {
+        path: { organisation_id: string; reminder_id: string }
+        header: { 'If-Match': string }
+      }
       requestBody: { content: { 'application/json': Record<string, unknown> } }
       responses: { 200: { content: { 'application/json': unknown } } }
     }
@@ -154,7 +160,10 @@ interface ExperiencePaths {
       responses: { 200: { content: { 'application/json': unknown } } }
     }
     patch: {
-      parameters: { path: { organisation_id: string } }
+      parameters: {
+        path: { organisation_id: string }
+        header: { 'If-Match': string }
+      }
       requestBody: { content: { 'application/json': Record<string, unknown> } }
       responses: { 200: { content: { 'application/json': unknown } } }
     }
@@ -428,6 +437,7 @@ export async function updateScheduledMessage(
     {
       params: {
         path: { organisation_id: organisationId, scheduled_message_id: scheduledMessageId },
+        header: { 'If-Match': '*' },
       },
       body: {
         ...(patch.body !== undefined ? { body: patch.body } : {}),
@@ -514,7 +524,10 @@ export async function updatePersonalReminder(
   const { data } = await client().PATCH(
     '/organisations/{organisation_id}/workspace/reminders/{reminder_id}',
     {
-      params: { path: { organisation_id: organisationId, reminder_id: reminderId } },
+      params: {
+        path: { organisation_id: organisationId, reminder_id: reminderId },
+        header: { 'If-Match': '*' },
+      },
       body: {
         ...(patch.note !== undefined ? { note: patch.note } : {}),
         ...(patch.remindAt !== undefined ? { remindAt: patch.remindAt } : {}),
@@ -638,7 +651,10 @@ export async function updateMyWorkspacePreferences(
   const { data } = await client().PATCH(
     '/organisations/{organisation_id}/workspace/preferences/me',
     {
-      params: { path: { organisation_id: organisationId } },
+      params: {
+        path: { organisation_id: organisationId },
+        header: { 'If-Match': '*' },
+      },
       body: {
         ...(patch.labsFlags !== undefined ? { labsFlags: patch.labsFlags } : {}),
         ...(patch.waitingRoomAmbience !== undefined

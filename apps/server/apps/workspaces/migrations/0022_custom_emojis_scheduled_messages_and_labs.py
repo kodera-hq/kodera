@@ -2,11 +2,8 @@
 
 import django.db.models.deletion
 from django.db import migrations, models
-from django.db.models.functions import Length
 
 import core.db.ids
-
-models.BinaryField.register_lookup(Length)
 
 TIMEOUTS = "SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';"
 

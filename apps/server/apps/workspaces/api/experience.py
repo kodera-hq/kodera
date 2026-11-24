@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import Any
 from uuid import UUID
@@ -57,12 +58,42 @@ PREFERENCES_PATCH_FIELDS = {
 }
 
 
-def _json_response(body: Any, status: int = 200) -> HttpResponse:
-    return HttpResponse(
+def _etag_for(body: Any) -> str:
+    digest = hashlib.sha256(
+        json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return f'"{digest}"'
+
+
+def _json_response(body: Any, status: int = 200, *, with_etag: bool = False) -> HttpResponse:
+    response = HttpResponse(
         json.dumps(body, separators=(",", ":")),
         status=status,
         content_type="application/json",
     )
+    if with_etag:
+        response["ETag"] = _etag_for(body)
+    return response
+
+
+def _require_idempotency_key(request: HttpRequest) -> str:
+    raw = request.headers.get("Idempotency-Key")
+    if raw is None:
+        raise RefusalError(400, "idempotency-key-missing")
+    trimmed = raw.strip()
+    if not (1 <= len(trimmed) <= 128) or any(ord(ch) < 33 or ord(ch) > 126 for ch in trimmed):
+        raise RefusalError(400, "malformed-request")
+    return trimmed
+
+
+def _require_if_match(request: HttpRequest) -> str:
+    raw = request.headers.get("If-Match")
+    if raw is None:
+        raise RefusalError(428, "precondition-required")
+    trimmed = raw.strip()
+    if not trimmed:
+        raise RefusalError(400, "malformed-request")
+    return trimmed
 
 
 def _problem(status: int, request_id: str, kind: str | None = None) -> HttpResponse:
@@ -73,7 +104,9 @@ def _problem(status: int, request_id: str, kind: str | None = None) -> HttpRespo
         404: "not-found",
         405: "method-not-allowed",
         409: "conflict",
+        412: "precondition-failed",
         422: "validation-error",
+        428: "precondition-required",
     }
     resolved_kind = kind or default_kinds.get(status, "malformed-request")
     payload: dict[str, Any] = {
@@ -164,6 +197,7 @@ def emojis(request: HttpRequest, organisation_id: UUID) -> HttpResponse:
         )
 
     def post(verified: Any, request_id: str) -> HttpResponse:
+        _require_idempotency_key(request)
         data = _parse_body(request, EMOJI_CREATE_FIELDS, limit=524288)
         body = service.create_emoji(
             verified=verified,
@@ -247,6 +281,7 @@ def scheduled_messages(request: HttpRequest, organisation_id: UUID) -> HttpRespo
         )
 
     def post(verified: Any, request_id: str) -> HttpResponse:
+        _require_idempotency_key(request)
         data = _parse_body(request, SCHEDULED_CREATE_FIELDS, limit=32768)
         body = service.create_scheduled_message(
             verified=verified,
@@ -254,7 +289,7 @@ def scheduled_messages(request: HttpRequest, organisation_id: UUID) -> HttpRespo
             data=data,
             request_id=request_id,
         )
-        return _json_response(body, status=201)
+        return _json_response(body, status=201, with_etag=True)
 
     return _serve(
         request,
@@ -274,6 +309,7 @@ def scheduled_message_detail(
     request: HttpRequest, organisation_id: UUID, scheduled_message_id: UUID
 ) -> HttpResponse:
     def patch(verified: Any, request_id: str) -> HttpResponse:
+        _require_if_match(request)
         data = _parse_body(request, SCHEDULED_PATCH_FIELDS, limit=32768)
         body = service.update_scheduled_message(
             verified=verified,
@@ -282,7 +318,7 @@ def scheduled_message_detail(
             data=data,
             request_id=request_id,
         )
-        return _json_response(body, status=200)
+        return _json_response(body, status=200, with_etag=True)
 
     def delete(verified: Any, request_id: str) -> HttpResponse:
         service.cancel_scheduled_message(
@@ -319,6 +355,7 @@ def reminders(request: HttpRequest, organisation_id: UUID) -> HttpResponse:
         )
 
     def post(verified: Any, request_id: str) -> HttpResponse:
+        _require_idempotency_key(request)
         data = _parse_body(request, REMINDER_CREATE_FIELDS, limit=16384)
         body = service.create_reminder(
             verified=verified,
@@ -326,7 +363,7 @@ def reminders(request: HttpRequest, organisation_id: UUID) -> HttpResponse:
             data=data,
             request_id=request_id,
         )
-        return _json_response(body, status=201)
+        return _json_response(body, status=201, with_etag=True)
 
     return _serve(
         request,
@@ -344,6 +381,7 @@ def reminders(request: HttpRequest, organisation_id: UUID) -> HttpResponse:
 )
 def reminder_detail(request: HttpRequest, organisation_id: UUID, reminder_id: UUID) -> HttpResponse:
     def patch(verified: Any, request_id: str) -> HttpResponse:
+        _require_if_match(request)
         data = _parse_body(request, REMINDER_PATCH_FIELDS, limit=16384)
         body = service.update_reminder(
             verified=verified,
@@ -352,7 +390,7 @@ def reminder_detail(request: HttpRequest, organisation_id: UUID, reminder_id: UU
             data=data,
             request_id=request_id,
         )
-        return _json_response(body, status=200)
+        return _json_response(body, status=200, with_etag=True)
 
     def delete(verified: Any, request_id: str) -> HttpResponse:
         service.delete_reminder(
@@ -380,10 +418,12 @@ def reminder_detail(request: HttpRequest, organisation_id: UUID, reminder_id: UU
 def my_preferences(request: HttpRequest, organisation_id: UUID) -> HttpResponse:
     def get(verified: Any, _: str) -> HttpResponse:
         return _json_response(
-            service.get_my_preferences(verified=verified, organisation_id=organisation_id)
+            service.get_my_preferences(verified=verified, organisation_id=organisation_id),
+            with_etag=True,
         )
 
     def patch(verified: Any, request_id: str) -> HttpResponse:
+        _require_if_match(request)
         data = _parse_body(request, PREFERENCES_PATCH_FIELDS, limit=8192)
         body = service.update_my_preferences(
             verified=verified,
@@ -391,7 +431,7 @@ def my_preferences(request: HttpRequest, organisation_id: UUID) -> HttpResponse:
             data=data,
             request_id=request_id,
         )
-        return _json_response(body, status=200)
+        return _json_response(body, status=200, with_etag=True)
 
     return _serve(
         request,

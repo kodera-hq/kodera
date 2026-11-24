@@ -143,6 +143,8 @@ Read as: what each role may do to each resource. `own` means "rows belonging to 
 | `BookingPage` | full own | full own | full own | full own | — | — | — | — |
 | `ExtensionMarketplace` | create, read, act own | create, read, act own | read, act own | read, act own | — | — | — | — |
 | `ExtensionWidget` | act own | act own | act own | act own | — | — | — | — |
+| `WorkspaceEmoji` | create, read, delete own | create, read, delete own | read, create, delete own (manage_emojis grant for mutations) | read, create, delete own (manage_emojis grant for mutations) | — | — | — | — |
+| `WorkspaceExperience` | full self | full self | full self | full self | — | — | — | — |
 
 ### Confidential relay
 

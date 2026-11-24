@@ -378,10 +378,21 @@ def test_http_endpoints_confidential_403_webp_headers_and_api_writer_acl(
             sched_id = sched_ok.json()["id"]
             assert sched_ok.json()["matrixTxnId"].startswith("kodera-sched-")
 
+            assert (
+                client.patch(
+                    f"/api/v1/organisations/{org.id}/workspace/scheduled-messages/{sched_id}",
+                    data=json.dumps({"body": "Missing If-Match"}),
+                    content_type="application/json",
+                    **_auth_headers(member_cred),
+                ).status_code
+                == 428
+            )
+
             sched_patch = client.patch(
                 f"/api/v1/organisations/{org.id}/workspace/scheduled-messages/{sched_id}",
                 data=json.dumps({"body": "Bonjour mis à jour !"}),
                 content_type="application/json",
+                HTTP_IF_MATCH="*",
                 **_auth_headers(member_cred),
             )
             assert sched_patch.status_code == 200
@@ -414,6 +425,7 @@ def test_http_endpoints_confidential_403_webp_headers_and_api_writer_acl(
                 f"/api/v1/organisations/{org.id}/workspace/reminders/{rem_id}",
                 data=json.dumps({"state": "completed"}),
                 content_type="application/json",
+                HTTP_IF_MATCH="*",
                 **_auth_headers(member_cred),
             )
             assert rem_patch.status_code == 200
@@ -428,6 +440,7 @@ def test_http_endpoints_confidential_403_webp_headers_and_api_writer_acl(
                     }
                 ),
                 content_type="application/json",
+                HTTP_IF_MATCH="*",
                 **_auth_headers(member_cred),
             )
             assert pref_patch.status_code == 200
