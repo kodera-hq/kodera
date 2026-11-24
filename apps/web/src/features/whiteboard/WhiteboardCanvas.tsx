@@ -858,7 +858,7 @@ export function WhiteboardCanvas({
             type="button"
             onClick={handlePlaceStickyFromBar}
             className={cx(
-              'inline-flex min-h-8 items-center justify-center rounded-md border border-c-action bg-c-action px-3 py-1 text-xs font-semibold text-c-on-inverse hover:bg-c-action-hover focus-visible:ring focus-visible:outline-hidden',
+              'inline-flex min-h-8 items-center justify-center rounded-md border border-transparent bg-c-action px-3 py-1 text-xs font-semibold text-c-on-inverse hover:bg-c-action-hover focus-visible:ring focus-visible:outline-hidden',
               TOUCH_TARGET
             )}
           >

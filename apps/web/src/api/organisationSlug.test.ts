@@ -108,6 +108,7 @@ const LOCATIONS: readonly [string, Segments][] = [
 // locations to the same rule and to `minLength: 1` / `maxLength: 64` beside the pattern,
 // so the two pins cannot drift apart unnoticed.
 const WORKSPACE_ROLE_SLUG_PATTERN = /^[a-z][a-z0-9_-]{0,63}$/
+const BOOKING_SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{1,78}[a-z0-9](?![\s\S])/
 
 const WORKSPACE_ROLE_LOCATIONS: readonly [string, Segments][] = [
   ['WorkspaceRole.slug', ['components', 'schemas', 'WorkspaceRole', 'properties', 'slug']],
@@ -118,6 +119,38 @@ const WORKSPACE_ROLE_LOCATIONS: readonly [string, Segments][] = [
   [
     'WorkspaceRolePatch.slug',
     ['components', 'schemas', 'WorkspaceRolePatch', 'properties', 'slug'],
+  ],
+]
+
+const BOOKING_SLUG_LOCATIONS: readonly [string, Segments][] = [
+  [
+    'GET /booking/{booking_slug}',
+    ['paths', '/booking/{booking_slug}', 'get', 'parameters', 0, 'schema'],
+  ],
+  [
+    'POST /booking/{booking_slug}/reservations',
+    ['paths', '/booking/{booking_slug}/reservations', 'post', 'parameters', 0, 'schema'],
+  ],
+  [
+    'POST /booking/{booking_slug}/reservations/{reservation_id}/actions/cancel',
+    [
+      'paths',
+      '/booking/{booking_slug}/reservations/{reservation_id}/actions/cancel',
+      'post',
+      'parameters',
+      0,
+      'schema',
+    ],
+  ],
+  ['BookingPage.slug', ['components', 'schemas', 'BookingPage', 'properties', 'slug']],
+  [
+    'BookingPageCreateRequest.slug',
+    ['components', 'schemas', 'BookingPageCreateRequest', 'properties', 'slug'],
+  ],
+  ['PublicBookingPage.slug', ['components', 'schemas', 'PublicBookingPage', 'properties', 'slug']],
+  [
+    'PublicBookingReservation.slug',
+    ['components', 'schemas', 'PublicBookingReservation', 'properties', 'slug'],
   ],
 ]
 
@@ -142,13 +175,14 @@ describe('ORGANISATION_SLUG_PATTERN', () => {
     expect(carrying).toEqual(LOCATIONS.map(([, segments]) => segments.join('/')).sort())
   })
 
-  it('leaves the pinned contract no slug-shaped rule other than the organisation, tenant, and workspace-role ones', () => {
-    // A fourth rule is a contract change the console has not taken yet, not something to
+  it('leaves the pinned contract no slug-shaped rule other than the organisation, tenant, workspace-role, and booking-page ones', () => {
+    // A fifth rule is a contract change the console has not taken yet, not something to
     // discover in production.
     const known = new Set([
       ORGANISATION_SLUG_PATTERN.source,
       TENANT_SLUG_PATTERN.source,
       WORKSPACE_ROLE_SLUG_PATTERN.source,
+      BOOKING_SLUG_PATTERN.source,
     ])
     // Contract 0.29.0 reserves `synth-` on organisation creation only, which the console never
     // sends (staff intake does). Discovery still answers synthetic realms, so the console's own
@@ -186,6 +220,30 @@ describe('the workspace-role slug rule', () => {
       .sort()
     expect(carrying).toEqual(
       WORKSPACE_ROLE_LOCATIONS.map(([, segments]) => [...segments, 'pattern'].join('/')).sort()
+    )
+  })
+})
+
+describe('the booking-page slug rule', () => {
+  it.each(BOOKING_SLUG_LOCATIONS)(
+    'is the rule the pinned contract carries on %s, bounded 3 to 80',
+    (_name, segments) => {
+      const schema = valueAt(segments)
+      expect(schema).toMatchObject({
+        pattern: BOOKING_SLUG_PATTERN.source,
+        minLength: 3,
+        maxLength: 80,
+      })
+    }
+  )
+
+  it('is carried by the pinned contract at exactly the locations listed', () => {
+    const carrying = slugShapedPatterns()
+      .filter(([, pattern]) => pattern === BOOKING_SLUG_PATTERN.source)
+      .map(([path]) => path.join('/'))
+      .sort()
+    expect(carrying).toEqual(
+      BOOKING_SLUG_LOCATIONS.map(([, segments]) => [...segments, 'pattern'].join('/')).sort()
     )
   })
 })

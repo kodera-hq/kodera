@@ -224,7 +224,7 @@ export function BookingPublicPage({
                     downloadIcs(`kodera-invite-${reservation.slug}.ics`, reservation.ics)
                   }
                   className={cx(
-                    'inline-flex min-h-8 items-center justify-center rounded-md border border-c-action bg-c-action px-3 py-1 text-xs font-semibold text-c-on-inverse hover:bg-c-action-hover focus-visible:ring focus-visible:outline-hidden',
+                    'inline-flex min-h-8 items-center justify-center rounded-md border border-transparent bg-c-action px-3 py-1 text-xs font-semibold text-c-on-inverse hover:bg-c-action-hover focus-visible:ring focus-visible:outline-hidden',
                     TOUCH_TARGET
                   )}
                 >
@@ -384,7 +384,7 @@ export function BookingPublicPage({
                   type="submit"
                   disabled={submitting || selectedSlot === null}
                   className={cx(
-                    'inline-flex min-h-10 items-center justify-center rounded-md border border-c-action bg-c-action px-4 py-2 text-sm font-semibold text-c-on-inverse hover:bg-c-action-hover focus-visible:ring focus-visible:outline-hidden disabled:opacity-50',
+                    'inline-flex min-h-10 items-center justify-center rounded-md border border-transparent bg-c-action px-4 py-2 text-sm font-semibold text-c-on-inverse hover:bg-c-action-hover focus-visible:ring focus-visible:outline-hidden disabled:opacity-50',
                     TOUCH_TARGET
                   )}
                 >

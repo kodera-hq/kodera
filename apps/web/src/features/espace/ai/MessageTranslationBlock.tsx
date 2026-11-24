@@ -131,7 +131,7 @@ export function MessageTranslationBlock({
     <div
       data-testid="message-translation-block"
       aria-live="polite"
-      className="mt-2 flex max-w-[600px] flex-col gap-2 rounded-md border border-c-border-soft border-l-2 border-l-c-action bg-c-sunken px-3 py-2 text-xs text-c-ink-2"
+      className="mt-2 flex max-w-[600px] flex-col gap-2 rounded-md border border-c-border-soft border-l-2 border-l-c-accent-ink bg-c-sunken px-3 py-2 text-xs text-c-ink-2"
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <button
@@ -179,7 +179,7 @@ export function MessageTranslationBlock({
             <button
               type="button"
               onClick={() => setReloadCount((prev) => prev + 1)}
-              className="rounded-sm px-2 py-1 font-medium underline hover:no-underline focus-visible:ring focus-visible:outline-hidden"
+              className="rounded-sm px-2 py-1 font-medium hover:underline focus-visible:ring focus-visible:outline-hidden"
             >
               {copy.retry}
             </button>

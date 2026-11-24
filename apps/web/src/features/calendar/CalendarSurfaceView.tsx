@@ -477,7 +477,7 @@ export function CalendarSurfaceView({
             onClick={() => setActiveDrawer((prev) => (prev === 'event' ? null : 'event'))}
             aria-expanded={activeDrawer === 'event'}
             className={cx(
-              'inline-flex min-h-8 items-center justify-center rounded-md border border-c-action bg-c-action px-3 py-1 text-xs font-semibold text-c-on-inverse hover:bg-c-action-hover focus-visible:ring focus-visible:outline-hidden',
+              'inline-flex min-h-8 items-center justify-center rounded-md border border-transparent bg-c-action px-3 py-1 text-xs font-semibold text-c-on-inverse hover:bg-c-action-hover focus-visible:ring focus-visible:outline-hidden',
               TOUCH_TARGET
             )}
           >
@@ -674,7 +674,7 @@ export function CalendarSurfaceView({
               <button
                 type="submit"
                 className={cx(
-                  'inline-flex min-h-8 items-center justify-center rounded-md border border-c-action bg-c-action px-4 py-1 text-xs font-semibold text-c-on-inverse hover:bg-c-action-hover focus-visible:ring focus-visible:outline-hidden',
+                  'inline-flex min-h-8 items-center justify-center rounded-md border border-transparent bg-c-action px-4 py-1 text-xs font-semibold text-c-on-inverse hover:bg-c-action-hover focus-visible:ring focus-visible:outline-hidden',
                   TOUCH_TARGET
                 )}
               >
@@ -731,7 +731,7 @@ export function CalendarSurfaceView({
                       type="button"
                       onClick={() => void handleSyncSource(src.id)}
                       className={cx(
-                        'inline-flex min-h-8 items-center justify-center rounded-md border border-c-action bg-c-action px-3 py-1 text-xs font-semibold text-c-on-inverse hover:bg-c-action-hover focus-visible:ring focus-visible:outline-hidden',
+                        'inline-flex min-h-8 items-center justify-center rounded-md border border-transparent bg-c-action px-3 py-1 text-xs font-semibold text-c-on-inverse hover:bg-c-action-hover focus-visible:ring focus-visible:outline-hidden',
                         TOUCH_TARGET
                       )}
                     >
@@ -844,7 +844,7 @@ export function CalendarSurfaceView({
               <button
                 type="submit"
                 className={cx(
-                  'inline-flex min-h-8 items-center justify-center rounded-md border border-c-action bg-c-action px-4 py-1 text-xs font-semibold text-c-on-inverse hover:bg-c-action-hover focus-visible:ring focus-visible:outline-hidden',
+                  'inline-flex min-h-8 items-center justify-center rounded-md border border-transparent bg-c-action px-4 py-1 text-xs font-semibold text-c-on-inverse hover:bg-c-action-hover focus-visible:ring focus-visible:outline-hidden',
                   TOUCH_TARGET
                 )}
               >
@@ -1075,7 +1075,7 @@ export function CalendarSurfaceView({
               <button
                 type="submit"
                 className={cx(
-                  'inline-flex min-h-8 items-center justify-center rounded-md border border-c-action bg-c-action px-4 py-1 text-xs font-semibold text-c-on-inverse hover:bg-c-action-hover focus-visible:ring focus-visible:outline-hidden',
+                  'inline-flex min-h-8 items-center justify-center rounded-md border border-transparent bg-c-action px-4 py-1 text-xs font-semibold text-c-on-inverse hover:bg-c-action-hover focus-visible:ring focus-visible:outline-hidden',
                   TOUCH_TARGET
                 )}
               >
@@ -1170,7 +1170,7 @@ export function CalendarSurfaceView({
                               href={safeVisio}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="font-semibold text-c-accent-ink underline"
+                              className="font-semibold text-c-accent-ink hover:underline"
                             >
                               {copy.badges.visioLink}
                             </a>
@@ -1180,7 +1180,7 @@ export function CalendarSurfaceView({
                               href={safeAgenda}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="font-medium text-c-ink underline"
+                              className="font-medium text-c-ink hover:underline"
                             >
                               {copy.badges.agendaDoc}
                             </a>
