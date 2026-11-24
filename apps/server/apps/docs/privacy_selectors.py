@@ -104,7 +104,7 @@ def document_export_parts(
                 "markdownProjection": document.markdown,
                 "snapshotSequence": snapshot.sequence,
                 "headSequence": snapshot.head_sequence,
-                "format": "yjs-v1",
+                "format": "kde1-v1" if document.is_confidential else "yjs-v1",
             },
         )
         prefix = f"native/{document.id}"

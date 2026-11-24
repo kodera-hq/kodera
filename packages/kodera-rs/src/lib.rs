@@ -28,6 +28,14 @@ use getrandom_legacy as _;
 mod native_scope;
 pub use native_scope::{NativeCryptoError, NativeRoomScope, MAX_NATIVE_MESSAGE_BYTES};
 
+pub mod key_backup;
+pub use key_backup::{
+    parse_kvkb1_capsule, validate_relay_kvkb1_capsule, KeyBackupError, KeyBackupKdfKind,
+    ParsedKeyBackupHeader, KVKB1_DOMAIN, KVKB1_MAGIC, KVKB1_VERSION, MAX_KVKB1_EPOCH,
+    MAX_KVKB1_HEADER_BYTES, MAX_KVKB1_PASSPHRASE_ITERATIONS, MAX_RELAY_KEY_BACKUP_CAPSULE_BYTES,
+    MIN_KVKB1_CAPSULE_BYTES, MIN_KVKB1_CIPHERTEXT_BYTES, MIN_KVKB1_PASSPHRASE_ITERATIONS,
+};
+
 #[cfg(not(target_arch = "wasm32"))]
 pub mod mobile_calls;
 #[cfg(not(target_arch = "wasm32"))]

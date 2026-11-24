@@ -352,4 +352,88 @@ describe('real encrypted Yjs peer transport', () => {
       sender.close()
     }
   )
+  it('quarantines server ticket grants whose confidential flag or epoch disagrees with client policy and omits kind===0 sync on confidential viewers', async () => {
+    const mismatchSocket = new Socket()
+    const ydoc = new Y.Doc()
+    ydoc.clientID = 303
+    const mismatchSession = new CollabSessionController({
+      ydoc,
+      ...context,
+      user: { id: 'member-a', name: 'Member A' },
+      confidential: { required: true, epoch: 7, cipher: fakeCipher() },
+      fetchSession: async () => ({
+        wsUrl: 'wss://relay.invalid/page',
+        token: 'ticket',
+        expiresAt: '',
+        role: 'editor',
+        confidential: true,
+        epoch: 8,
+      }),
+      webSocketFactory: () => mismatchSocket,
+    })
+    sessions.push(mismatchSession)
+    await mismatchSession.connect()
+    expect(mismatchSession.getSnapshot().status).toBe('forbidden')
+    expect(mismatchSocket.frames).toHaveLength(0)
+
+    // Plaintext session receiving confidential: true grant from server immediately quarantines.
+    const downgradeSocket = new Socket()
+    const downgradeSession = new CollabSessionController({
+      ydoc: new Y.Doc(),
+      scopeKey: 'workspace-a',
+      documentId: 'page-plain',
+      user: { id: 'member-a', name: 'Member A' },
+      fetchSession: async () => ({
+        wsUrl: 'wss://relay.invalid/page',
+        token: 'ticket',
+        expiresAt: '',
+        role: 'editor',
+        confidential: true,
+        epoch: 7,
+      }),
+      webSocketFactory: () => downgradeSocket,
+    })
+    sessions.push(downgradeSession)
+    await downgradeSession.connect()
+    expect(downgradeSession.getSnapshot().status).toBe('forbidden')
+    expect(downgradeSocket.frames).toHaveLength(0)
+
+    // Confidential viewer sends only auth + kind===1 awareness (never kind===0 sync).
+    const sealCalls: number[] = []
+    const viewerCipher = realCipher(404)
+    const viewerSocket = new Socket()
+    const viewerDoc = new Y.Doc()
+    viewerDoc.clientID = 404
+    const viewerSession = new CollabSessionController({
+      ydoc: viewerDoc,
+      ...context,
+      user: { id: 'member-v', name: 'Viewer' },
+      confidential: {
+        required: true,
+        epoch: 7,
+        cipher: {
+          ...viewerCipher,
+          seal: async (plain) => {
+            sealCalls.push(plain[0]!)
+            return viewerCipher.seal(plain)
+          },
+        },
+      },
+      fetchSession: async () => ({
+        wsUrl: 'wss://relay.invalid/page',
+        token: 'viewer-ticket',
+        expiresAt: '',
+        role: 'viewer',
+        confidential: true,
+        epoch: 7,
+      }),
+      webSocketFactory: () => viewerSocket,
+    })
+    sessions.push(viewerSession)
+    await viewerSession.connect()
+    viewerSocket.open()
+    await settle()
+    expect(viewerSession.getSnapshot().status).toBe('synced')
+    expect(sealCalls).toEqual([1])
+  })
 })

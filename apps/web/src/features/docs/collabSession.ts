@@ -55,6 +55,8 @@ export interface CollabTicketGrant {
   readonly token: string
   readonly expiresAt: string
   readonly role: DocumentAccessRole
+  readonly confidential?: boolean | undefined
+  readonly epoch?: number | null | undefined
 }
 
 export interface WebSocketLike {
@@ -781,6 +783,25 @@ export class CollabSessionController {
       this.quarantine()
       return
     }
+    if (grant.confidential !== undefined) {
+      if (grant.confidential !== Boolean(this.confidential?.required)) {
+        this.quarantine()
+        return
+      }
+      if (
+        grant.confidential &&
+        (typeof grant.epoch !== 'number' ||
+          !Number.isSafeInteger(grant.epoch) ||
+          grant.epoch !== this.confidential?.epoch)
+      ) {
+        this.quarantine()
+        return
+      }
+      if (!grant.confidential && grant.epoch !== undefined && grant.epoch !== null) {
+        this.quarantine()
+        return
+      }
+    }
 
     this.role = grant.role
     this.publishLocalAwareness(null)
@@ -813,15 +834,21 @@ export class CollabSessionController {
       try {
         // First frame carries the short-lived session ticket — never in URL query or logs.
         socket.send(JSON.stringify({ type: 'auth', token: grant.token }))
-        // Initiate Yjs SyncStep1 handshake.
-        this.sendFrame(
-          encodeSyncFrame((encoder) => {
-            syncProtocol.writeSyncStep1(encoder, this.ydoc)
-          }),
-          socket
-        )
+        // Initiate Yjs SyncStep1 handshake; confidential viewers receive opaque KDE1 replays
+        // directly from the relay and never emit kind===0 sync frames.
+        if (!this.confidential || this.role === 'editor') {
+          this.sendFrame(
+            encodeSyncFrame((encoder) => {
+              syncProtocol.writeSyncStep1(encoder, this.ydoc)
+            }),
+            socket
+          )
+        }
         this.sendFrame(encodeAwarenessFrame(this.awareness, [this.ydoc.clientID]), socket)
-        // `synced` waits for the server's state (sync step 2): an open socket has delivered nothing.
+        if (this.confidential) {
+          this.transitionStatus('synced')
+        }
+        // For plaintext sessions, `synced` waits for the server's state (sync step 2).
       } catch {
         socket.close()
       }

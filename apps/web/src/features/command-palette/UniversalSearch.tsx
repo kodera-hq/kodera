@@ -20,8 +20,12 @@ import { WORKSPACE_COMMAND_EVENT } from '../workspace/WorkspaceMenu'
 import { withdrawn } from '../workspace/ChannelSearch'
 import { isAdminSection } from '../workspace/admin/sections'
 import { fuzzyEntries } from './search'
+import { MIN_OMNIBOX_QUERY_LENGTH } from './omniboxIndex'
 import { paletteCopy } from './messages'
 import { communitySupportPath } from './support'
+
+/** UniversalSearch evaluates dynamic message & collection entries strictly locally (zero network egress). */
+export const UNIVERSAL_SEARCH_ZERO_NETWORK_EGRESS = true
 
 export interface PaletteTarget {
   id: string
@@ -134,7 +138,12 @@ function SearchContents({
         recentLabel={copy.recent}
         legend={copy.legend}
         entries={[...entries.map((entry) => ({ ...entry, category: copy.channels })), ...commands]}
-        {...(dynamicEntries === undefined ? {} : { dynamicEntries })}
+        {...(dynamicEntries === undefined
+          ? {}
+          : {
+              dynamicEntries: (query: string) =>
+                query.trim().length < MIN_OMNIBOX_QUERY_LENGTH ? [] : dynamicEntries(query),
+            })}
         shortcut={shortcut}
         title={copy.title}
         emptyLabel={copy.empty}

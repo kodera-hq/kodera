@@ -2,12 +2,14 @@ import { useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '../../ui/Button/Button'
 import { Dialog } from '../../ui/Dialog/Dialog'
+import { defaultE2eeForConversationSurface } from '../espace/encryptionTiers'
 import type { WorkspaceCategory } from './workspace'
 import { channelCreationMessages } from './channelCreationMessages'
 
 export interface ChannelCreateOptions {
   topic: string
   access: 'members' | 'invite'
+  confidential?: boolean | undefined
 }
 
 export function channelSlug(value: string): string {
@@ -43,6 +45,9 @@ export function ChannelCreateDialog({
   const [kind, setKind] = useState<'text' | 'audio'>('text')
   const [topic, setTopic] = useState('')
   const [access, setAccess] = useState<'members' | 'invite'>('members')
+  const [confidential, setConfidential] = useState(() =>
+    defaultE2eeForConversationSurface('team_channel')
+  )
   const [invalid, setInvalid] = useState(false)
   const submit = () => {
     const trimmed = channelSlug(name)
@@ -57,7 +62,11 @@ export function ChannelCreateDialog({
       setInvalid(true)
       return
     }
-    onCreate(trimmed, kind, { topic: topic.trim(), access })
+    onCreate(trimmed, kind, {
+      topic: topic.trim(),
+      access,
+      ...(kind === 'text' && confidential ? { confidential: true } : {}),
+    })
   }
   return (
     <Dialog
@@ -132,6 +141,20 @@ export function ChannelCreateDialog({
           </select>
         </label>
         {access === 'invite' ? <p className="text-xs text-c-ink-3">{copy.invitePreview}</p> : null}
+        {kind === 'text' ? (
+          <div className="flex flex-col gap-1 rounded-md border border-c-border-soft p-3">
+            <label className="flex items-center gap-2 text-sm font-medium text-c-ink">
+              <input
+                type="checkbox"
+                checked={confidential}
+                onChange={(event) => setConfidential(event.target.checked)}
+                className="h-4 w-4 rounded-sm border-c-border-input"
+              />
+              <span>{copy.confidential}</span>
+            </label>
+            <p className="text-xs text-c-ink-3">{copy.confidentialHint}</p>
+          </div>
+        ) : null}
         {invalid ? (
           <p id={errorId} role="alert" className="text-sm text-c-bad-ink">
             {copy.invalid}

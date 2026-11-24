@@ -22,6 +22,12 @@ it('validates duplicate names, creates voice rooms and dismisses with Escape', a
   await user.click(screen.getByRole('button', { name: 'Créer le salon' }))
   expect(screen.getByRole('alert')).toBeInTheDocument()
   expect(create).not.toHaveBeenCalled()
+  // Confidential toggle defaults OFF (Tier 2 opt-in) on text channels, and opts in when checked.
+  const confToggle = screen.getByRole('checkbox', {
+    name: /Salon confidentiel chiffré de bout en bout/,
+  })
+  expect(confToggle).not.toBeChecked()
+
   await user.clear(name)
   await user.type(name, 'Équipe Office')
   await user.type(
@@ -37,4 +43,31 @@ it('validates duplicate names, creates voice rooms and dismisses with Escape', a
   })
   await user.keyboard('{Escape}')
   expect(close).toHaveBeenCalled()
+})
+
+it('opts a text channel into Tier 2 zero-knowledge confidential mode only when explicitly checked', async () => {
+  const create = vi.fn()
+  const user = userEvent.setup()
+  render(
+    <ChannelCreateDialog
+      open
+      category={{ id: 'direction', name: 'Direction', template_key: null, channels: [] }}
+      existingNames={['general']}
+      onCreate={create}
+      onClose={() => undefined}
+    />
+  )
+  await user.type(screen.getByRole('textbox', { name: 'Nom du salon' }), 'Conseil exécutif')
+  const confToggle = screen.getByRole('checkbox', {
+    name: /Salon confidentiel chiffré de bout en bout/,
+  })
+  expect(confToggle).not.toBeChecked()
+  await user.click(confToggle)
+  expect(confToggle).toBeChecked()
+  await user.click(screen.getByRole('button', { name: 'Créer le salon' }))
+  expect(create).toHaveBeenCalledWith('conseil-executif', 'text', {
+    topic: '',
+    access: 'members',
+    confidential: true,
+  })
 })

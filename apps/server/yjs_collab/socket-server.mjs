@@ -4,7 +4,16 @@ import { WebSocket, WebSocketServer } from 'ws'
 import { Awareness, applyAwarenessUpdate, encodeAwarenessUpdate, removeAwarenessStates } from 'y-protocols/awareness'
 import { createTransformServer } from './transform-http.mjs'
 import { verify, bind, TicketRefused } from './tickets.mjs'
-import { frame, snapshotFrame, storedVectorFrame, storedDiff, updateFrame, ViewerWrite } from './protocol.mjs'
+import {
+  confidentialFrame,
+  ConfidentialRefused,
+  frame,
+  snapshotFrame,
+  storedVectorFrame,
+  storedDiff,
+  updateFrame,
+  ViewerWrite,
+} from './protocol.mjs'
 import { Refused } from './engine.mjs'
 import { LockBusy } from './store.mjs'
 import { receive, awarenessFrame } from './presence.mjs'
@@ -30,18 +39,43 @@ export function createCollabServer({key, store, origins, pollMilliseconds = 1000
   }
   function failure(socket, error) {
     if (error instanceof TicketRefused) close(socket, error.code)
+    else if (error instanceof ConfidentialRefused) close(socket, 4403)
     else if (error instanceof Refused) close(socket, 1008)
     else if (error instanceof LockBusy) close(socket, 1013, 'lock-busy')
     else close(socket, 1013)
   }
-  function roomFor(document) {
+  function roomFor(document, confidential = false) {
     let room = rooms.get(document)
-    if (room) return room
+    if (room) {
+      if (room.confidential !== Boolean(confidential)) throw new TicketRefused(4403)
+      return room
+    }
     if (rooms.size >= 32) throw new Error('room capacity reached')
+    if (confidential) {
+      room = {
+        confidential: true,
+        doc: null,
+        awareness: null,
+        connections: new Set(),
+        owners: new Map(),
+        senders: new Map(),
+        refreshing: false,
+      }
+      rooms.set(document, room)
+      return room
+    }
     const doc = new Y.Doc(), awareness = new Awareness(doc)
     awareness._checkInterval?.unref?.()
     awareness.setLocalState(null)
-    room = {doc, awareness, connections: new Set(), owners: new Map(), refreshing: false}
+    room = {
+      confidential: false,
+      doc,
+      awareness,
+      connections: new Set(),
+      owners: new Map(),
+      senders: new Map(),
+      refreshing: false,
+    }
     rooms.set(document, room)
     awareness.on('update', ({added, updated, removed}) => {
       const changed = [...added, ...updated, ...removed]
@@ -58,6 +92,14 @@ export function createCollabServer({key, store, origins, pollMilliseconds = 1000
   async function refresh(socket) {
     if (!socket.claims || socket.readyState !== WebSocket.OPEN) return
     try {
+      if (socket.claims.confidential) {
+        await store.deliver(socket.claims, ({envelopes = [], head = 0, revision}) => {
+          for (const envelope of envelopes) send(socket, envelope)
+          socket.headSequence = head
+          socket.revision = revision
+        }, socket.headSequence)
+        return
+      }
       await store.deliver(socket.claims, ({state, revision}) => {
         send(socket, updateFrame(state));socket.revision = revision
       }, socket.revision)
@@ -82,7 +124,8 @@ export function createCollabServer({key, store, origins, pollMilliseconds = 1000
   })
   wss.on('connection', socket => {
     connections.add(socket);unauthenticated += 1
-    socket.claims = null;socket.presenceId = null;socket.revision = null;socket.anonymous = true
+    socket.claims = null;socket.presenceId = null;socket.revision = null;socket.headSequence = null
+    socket.confidentialSender = null;socket.confidentialSequence = 0;socket.anonymous = true
     let chain = Promise.resolve(), queued = 0, window = performance.now(), frames = 0, bytes = 0
     const firstFrame = setTimeout(() => close(socket, 4401), 5000)
     socket.on('error', () => close(socket, 1013))
@@ -110,18 +153,89 @@ export function createCollabServer({key, store, origins, pollMilliseconds = 1000
           } else {
             throw new TicketRefused()
           }
-          await store.admit(claims, ({state, revision}) => {
+          await store.admit(claims, payload => {
             if (socket.readyState !== WebSocket.OPEN) return
-            const room = roomFor(claims.document)
+            const room = roomFor(claims.document, claims.confidential)
             if (room.connections.size >= 32 || [...connections].filter(peer => peer.claims?.identity === claims.identity).length >= 4) throw new Error('connection capacity reached')
-            socket.claims = claims;socket.revision = revision
+            socket.claims = claims;socket.revision = payload.revision
             socket.anonymous = false;unauthenticated -= 1;clearTimeout(firstFrame)
             room.connections.add(socket)
             socket.expiry = setTimeout(() => close(socket, 4401), Math.max(1, claims.expires * 1000 - Date.now()))
-            send(socket, snapshotFrame(state))
-            if (claims.role === 'editor') send(socket, storedVectorFrame(state))
+            if (claims.confidential) {
+              socket.headSequence = payload.head ?? 0
+              for (const envelope of payload.envelopes ?? []) {
+                send(socket, envelope)
+              }
+              return
+            }
+            send(socket, snapshotFrame(payload.state))
+            if (claims.role === 'editor') send(socket, storedVectorFrame(payload.state))
             if (room.awareness.getStates().size) send(socket, awarenessFrame(encodeAwarenessUpdate(room.awareness, [...room.awareness.getStates().keys()])))
           })
+          return
+        }
+        if (socket.claims.confidential) {
+          if (!binary) {
+            await store.viewerRefusal(socket.claims)
+            close(socket, 4403)
+            return
+          }
+          let message
+          try {
+            message = confidentialFrame(new Uint8Array(data), socket.claims.role, socket.claims.epoch)
+            const room = rooms.get(socket.claims.document)
+            if (!room || !room.confidential) throw new TicketRefused(4403)
+            if (socket.confidentialSender === null) {
+              const existingOwner = room.senders.get(message.sender)
+              if (existingOwner && existingOwner !== socket) {
+                throw new ConfidentialRefused('duplicate confidential sender on active room')
+              }
+              socket.confidentialSender = message.sender
+              room.senders.set(message.sender, socket)
+            } else if (message.sender !== socket.confidentialSender) {
+              throw new ConfidentialRefused('confidential sender mismatch on socket')
+            }
+            if (message.sequence <= socket.confidentialSequence) {
+              throw new ConfidentialRefused('confidential sequence must strictly increase')
+            }
+            socket.confidentialSequence = message.sequence
+          } catch (error) {
+            if (error instanceof ViewerWrite || error instanceof ConfidentialRefused) {
+              await store.viewerRefusal(socket.claims)
+              close(socket, 4403)
+              return
+            }
+            throw error
+          }
+          const room = rooms.get(socket.claims.document)
+          if (!room) throw new TicketRefused(4403)
+          if (message.kind === 0) {
+            const result = await store.update(socket.claims, message.envelope)
+            socket.headSequence = result.head
+            socket.revision = result.revision
+            for (const target of [...room.connections]) {
+              if (target === socket || target.readyState !== WebSocket.OPEN) continue
+              try {
+                await store.emit(target.claims, () => {
+                  send(target, result.envelope)
+                  target.headSequence = result.head
+                  target.revision = result.revision
+                })
+              } catch (error) {
+                failure(target, error)
+              }
+            }
+          } else {
+            await store.emit(socket.claims, () => true)
+            for (const target of [...room.connections]) {
+              if (target === socket || target.readyState !== WebSocket.OPEN) continue
+              try {
+                await store.emit(target.claims, () => send(target, message.envelope))
+              } catch (error) {
+                failure(target, error)
+              }
+            }
+          }
           return
         }
         if (!binary) throw new Refused('binary protocol frame required')
@@ -160,8 +274,18 @@ export function createCollabServer({key, store, origins, pollMilliseconds = 1000
       const room = rooms.get(socket.claims.document)
       if (!room) return
       room.connections.delete(socket)
-      if (socket.presenceId !== null) { room.owners.delete(socket.presenceId);removeAwarenessStates(room.awareness, [socket.presenceId], socket) }
-      if (!room.connections.size) { rooms.delete(socket.claims.document);room.awareness.destroy();room.doc.destroy() }
+      if (socket.confidentialSender !== null && room.senders.get(socket.confidentialSender) === socket) {
+        room.senders.delete(socket.confidentialSender)
+      }
+      if (!room.confidential && socket.presenceId !== null) {
+        room.owners.delete(socket.presenceId)
+        removeAwarenessStates(room.awareness, [socket.presenceId], socket)
+      }
+      if (!room.connections.size) {
+        rooms.delete(socket.claims.document)
+        room.awareness?.destroy?.()
+        room.doc?.destroy?.()
+      }
     })
   })
   const poll = setInterval(() => {
@@ -176,7 +300,7 @@ export function createCollabServer({key, store, origins, pollMilliseconds = 1000
     async shutdown() {
       clearInterval(poll)
       for (const socket of connections) socket.terminate()
-      for (const room of rooms.values()) { room.awareness?.destroy?.();room.doc.destroy() }
+      for (const room of rooms.values()) { room.awareness?.destroy?.();room.doc?.destroy?.() }
       rooms.clear()
       await new Promise(resolve => wss.close(resolve))
       server.closeAllConnections()

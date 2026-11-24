@@ -78,6 +78,15 @@ def is_designated_confidential_channel(*, workspace_id: UUID, channel_id: UUID) 
     ).exists()
 
 
+def confidential_channel_ids_in_workspace(*, workspace_id: UUID) -> set[UUID]:
+    """Return IDs of all channels in `workspace_id` marked `is_confidential=True`."""
+    return set(
+        Channel.objects.filter(workspace_id=workspace_id, is_confidential=True).values_list(
+            "id", flat=True
+        )
+    )
+
+
 def undeleted_channel_id(*, workspace_id: UUID, channel_id: UUID) -> UUID | None:
     """A non-deleted channel in the exact workspace, without exporting its model."""
     return (

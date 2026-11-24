@@ -5545,7 +5545,9 @@ export const EXAMPLES = {
       "wsUrl": "wss://api.example.org/documents/collab",
       "token": "example-ticket-placeholder",
       "expiresAt": "2026-01-01T12:00:00Z",
-      "role": "viewer"
+      "role": "viewer",
+      "confidential": false,
+      "epoch": null
     },
     isList: false,
     idempotent: true,
@@ -7052,6 +7054,60 @@ export const EXAMPLES = {
     },
     isList: false,
     idempotent: true,
+    requiresIfMatch: false,
+  },
+  "getConfidentialKeyBackup": {
+    operationId: "getConfidentialKeyBackup",
+    method: "get",
+    path: "/organisations/{organisation_id}/confidential/key-backup",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "backupEpoch": 1,
+      "kdfKind": "recovery-key",
+      "iterations": 0,
+      "capsuleSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "sourceDeviceId": "01950000-0000-7000-8000-0000000000a2",
+      "publishedAt": "2026-06-08T10:00:00Z",
+      "capsule": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "publishConfidentialKeyBackup": {
+    operationId: "publishConfidentialKeyBackup",
+    method: "post",
+    path: "/organisations/{organisation_id}/confidential/key-backup",
+    status: 201,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "backupEpoch": 1,
+      "kdfKind": "recovery-key",
+      "iterations": 0,
+      "capsuleSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "sourceDeviceId": "01950000-0000-7000-8000-0000000000a2",
+      "publishedAt": "2026-06-08T10:00:00Z"
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "discardConfidentialKeyBackup": {
+    operationId: "discardConfidentialKeyBackup",
+    method: "delete",
+    path: "/organisations/{organisation_id}/confidential/key-backup",
+    status: 204,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: null,
+    isList: false,
+    idempotent: false,
     requiresIfMatch: false,
   },
   "listCalendarEvents": {

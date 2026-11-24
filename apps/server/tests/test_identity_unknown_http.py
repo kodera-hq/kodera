@@ -164,6 +164,9 @@ CASES = (
         for operation, view, method, kwargs in (
             ("discoverConfidentialRoom", "discovery", "get", {**ORG, "room_id": ROW}),
             ("publishDeviceVerificationBundle", "bundles", "post", ORG),
+            ("getConfidentialKeyBackup", "key_backup", "get", ORG),
+            ("publishConfidentialKeyBackup", "key_backup", "post", ORG),
+            ("discardConfidentialKeyBackup", "key_backup", "delete", ORG),
         )
     ),
     Case(

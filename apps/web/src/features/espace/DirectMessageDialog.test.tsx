@@ -118,10 +118,16 @@ describe('DirectMessageDialog and canvas mode switching', () => {
     expect(bdi.tagName.toLowerCase()).toBe('bdi')
     expect(bdi).toHaveAttribute('dir', 'ltr')
 
+    const e2eeCheckbox = screen.getByRole('checkbox', {
+      name: 'Conversation chiffrée de bout en bout',
+    })
+    expect(e2eeCheckbox).toBeChecked()
+
     await user.click(screen.getByRole('button', { name: /Marina Loiseau/ }))
     const openBtn = screen.getByRole('button', { name: 'Ouvrir la conversation' })
     await user.click(openBtn)
     expect(openDirect).toHaveBeenCalledTimes(1)
+    expect(openDirect).toHaveBeenCalledWith([PEER], { encrypted: true })
     expect(openBtn).toBeDisabled()
 
     // Cancel while openDirect is still in flight

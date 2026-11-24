@@ -18,6 +18,7 @@ DELETE = ("docs_documentlink", "docs_documentupdate")
 FUNCTIONS = (
     "docs_collab_snapshot_admit(uuid,bigint)",
     "docs_collab_fence(uuid,uuid,uuid,uuid,text,text,text)",
+    "docs_collab_fence(uuid,uuid,uuid,uuid,text,text,text,boolean,bigint)",
     "docs_collab_audit(uuid,text,uuid,uuid,uuid,text)",
     "docs_redeem_collaboration_ticket(uuid,bigint)",
 )

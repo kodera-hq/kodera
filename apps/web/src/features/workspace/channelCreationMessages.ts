@@ -11,6 +11,9 @@ export const channelCreationMessages = {
     invite: 'Sur invitation / Partenaire Matrix',
     invitePreview:
       'Dans cet aperçu local, ce choix prépare le salon ; aucune invitation Matrix n’est envoyée.',
+    confidential: 'Salon confidentiel chiffré de bout en bout (🔒)',
+    confidentialHint:
+      'Optionnel : désactive l’IA serveur, les messages programmés et l’indexation serveur au profit du chiffrement zéro-connaissance.',
     create: 'Créer le salon',
     cancel: 'Annuler',
     invalid: 'Choisissez un nom unique de 1 à 80 caractères visibles.',
@@ -28,6 +31,9 @@ export const channelCreationMessages = {
     invite: 'Invitation only / Matrix partner',
     invitePreview:
       'In this local preview, this choice prepares the channel; no Matrix invitation is sent.',
+    confidential: 'End-to-end encrypted confidential channel (🔒)',
+    confidentialHint:
+      'Opt-in: disables server AI, scheduled messages, and server indexing in favor of zero-knowledge encryption.',
     create: 'Create channel',
     cancel: 'Cancel',
     invalid: 'Choose a unique name with 1 to 80 visible characters.',

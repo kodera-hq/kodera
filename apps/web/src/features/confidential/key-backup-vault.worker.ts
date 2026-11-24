@@ -140,7 +140,8 @@ export function hostBackupVault(port: MessagePort, input: unknown) {
   let store: ConfidentialStateStore | undefined,
     active = true,
     busy = false,
-    lastId = 0
+    lastId = 0,
+    currentEpoch = c.backupEpoch
   const alive = () => {
     need(active)
   }
@@ -184,11 +185,13 @@ export function hostBackupVault(port: MessagePort, input: unknown) {
             request.id > lastId
         )
         const scope = fields(request.context, ['organisationId', 'accountId', 'backupEpoch'])
+        integer(scope.backupEpoch)
         need(
           scope.organisationId === c.organisationId &&
             scope.accountId === c.accountId &&
-            scope.backupEpoch === c.backupEpoch
+            scope.backupEpoch >= currentEpoch
         )
+        currentEpoch = scope.backupEpoch
         lastId = request.id
         busy = true
         if (request.kind === 'read') {

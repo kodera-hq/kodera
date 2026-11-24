@@ -16,18 +16,21 @@ The hosted Community tenant is live: active tenant promotion, release evidence a
 
 ## Wave 10 client capabilities
 
-Status: In progress; OpenAPI 0.59.0, client primitives, SFrame v1 confidential media framing, and operator-gated server discovery/publication implemented.
+Status: In progress; OpenAPI 0.60.0, client primitives, SFrame v1 confidential media framing, KDE1 encrypted collaboration relay admission, operator-gated server KVKB1 key-backup publication, and client-local encrypted full-text search implemented.
 
-Merged work in #169, #177, #180, #182 and #183 implements refusal of plaintext fallback and
+Merged work in #169, #177, #180, #182, #183 and H4.3a implements refusal of plaintext fallback and
 room quarantine, worker-isolated attachment encryption, confidential Pages updates/snapshots,
-LiveKit media transforms, local worker SAS device comparison, and user-held `KVKB1` encrypted
-local key archives. These are cryptographic capabilities, not a claim that ordinary rooms,
-uploads, documents or calls are encrypted end to end in production. Standard channels and
-ordinary Yjs documents remain server-readable. The existing ordinary collaboration relay does
-not admit confidential `KDE1` envelopes. The operator-gated server directory now publishes
-current participating-device room discovery, consecutive accepted MLS epoch evidence and
-proof-bound public cross-signing/device-verification bundles (`apps/server/apps/confidential`).
-Key-package claims reject stale epochs. Server backup publication, native group/key integration
+LiveKit media transforms, local worker SAS device comparison, user-held `KVKB1` encrypted
+key archives with operator-gated server `KVKB1` publication and monotonic epoch rotation,
+epoch-bound `KDE1` encrypted collaboration relay admission in `apps/server/yjs_collab`,
+client-local encrypted full-text search (`kodera.espace-vault.v1` v2 `search_index`), and the
+three-tier E2EE conversation defaults (`1:1`/group DMs and private calls default to E2EE,
+workspace channels opt-in confidential `🔒`, standard channels `#arrivals`/`#general` server-readable).
+Standard channels and ordinary Yjs documents remain server-readable by design. The operator-gated
+server directory publishes current participating-device room discovery, consecutive accepted MLS
+epoch evidence, proof-bound public cross-signing/device-verification bundles, and opaque `KVKB1`
+key backups (`apps/server/apps/confidential`).
+Key-package claims reject stale epochs. Native group/key integration
 and interoperable browser/codec qualification remain open. The
 [partner/guest channel slice](H2_3_BRIDGES_GUESTS_MLS.md) adds revisioned bilateral
 agreements, single-channel guest grants and live Matrix/media revocation checks; its required
@@ -55,4 +58,4 @@ The executable acceptance lives beside the implementation: Synapse policy tests 
 
 ## Remaining scope
 
-Status: Client transport/group integration, physical radio qualification, remaining operator activation and universal encryption roadmap. Live native Matrix messaging, real native media adapters, compiled mobile Rust client bindings, native push runtime acceptance, durable browser/native group integration, operator activation of server discovery/epoch and cross-signing publication, server backup publication, interoperable LiveKit media qualification, persistent desktop OS keychain wiring, background iOS PushKit provisioning, two-device physical `mDNS + QUIC` / `BLE GATT` radio qualification, OS-notarised desktop installers, App Store / Google Play publication, backup/restore rehearsal, live payment activation and managed-fleet provisioning remain open; universal zero-knowledge end-to-end encryption by default across all rooms, documents, attachments and calls is planned in Track 7 of [`ROADMAP.md`](../../ROADMAP.md). The repository issues and GitHub Project remain the authoritative backlog.
+Status: Client transport/group integration, physical radio qualification, remaining operator activation and universal encryption roadmap. Live native Matrix messaging, real native media adapters, compiled mobile Rust client bindings, native push runtime acceptance, durable browser/native group integration, operator activation of server discovery/epoch, cross-signing and key-backup publication, interoperable LiveKit media qualification, persistent desktop OS keychain wiring, background iOS PushKit provisioning, two-device physical `mDNS + QUIC` / `BLE GATT` radio qualification, OS-notarised desktop installers, App Store / Google Play publication, backup/restore rehearsal, live payment activation and managed-fleet provisioning remain open; universal zero-knowledge end-to-end encryption by default across all rooms, documents, attachments and calls is planned in Track 7 of [`ROADMAP.md`](../../ROADMAP.md). The repository issues and GitHub Project remain the authoritative backlog.

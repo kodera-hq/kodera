@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Kodera Core API
-  version: 0.59.0
+  version: 0.60.0
   summary: Control plane of kodera.io, consumed by kodera-web and by staff operators.
   description: |
     The Core API is the only backend of `kodera-web` (console ADR-0003) and the system of
@@ -12330,6 +12330,260 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/DeviceVerificationPublication'
+  /organisations/{organisation_id}/confidential/key-backup:
+    get:
+      operationId: getConfidentialKeyBackup
+      summary: getConfidentialKeyBackup
+      description: 'Retrieve the authenticated human caller own active opaque KVKB1 key-backup archive for fresh-device
+        restore. Requires current accepted membership and enabled relay; requires no pre-existing local confidential
+        device. Staff and AI or service actors receive 403. Plaintext and recovery secrets never cross the wire.'
+      tags:
+      - Confidential transport
+      security:
+      - keycloakTenant: []
+      x-kodera-scope: confidential_backup:read
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      responses:
+        '200':
+          description: Active opaque KVKB1 key-backup archive for the caller membership.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfidentialKeyBackup'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '405':
+          description: Authentication, authority, validation, conflict, capacity or temporary contention
+            refusal.
+          headers:
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          description: Authentication, authority, validation, conflict, capacity or temporary contention
+            refusal.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+            Retry-After:
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+    post:
+      operationId: publishConfidentialKeyBackup
+      summary: publishConfidentialKeyBackup
+      description: 'Publish or monotonically rotate the caller sealed KVKB1 zero-knowledge key-backup capsule.
+        Requires an active owned confidential device signing publish-key-backup with null room coordinate.
+        Initial publication requires backupEpoch 1 and each rotation requires OLD + 1 (409 on stale or skipped
+        epochs). The server validates outer KVKB1 header framing and binding only and never sees recovery keys,
+        passphrases or plaintext key material.'
+      tags:
+      - Confidential transport
+      security:
+      - keycloakTenant: []
+      x-kodera-scope: confidential_backup:create
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '201':
+          description: Opaque KVKB1 key-backup capsule stored at the accepted monotonic epoch.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfidentialKeyBackupPublished'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '405':
+          description: Authentication, authority, validation, conflict, capacity or temporary contention
+            refusal.
+          headers:
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          description: Authentication, authority, validation, conflict, capacity or temporary contention
+            refusal.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+            Retry-After:
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfidentialKeyBackupPublish'
+    delete:
+      operationId: discardConfidentialKeyBackup
+      summary: discardConfidentialKeyBackup
+      description: 'Discard the caller active KVKB1 key-backup capsule by zeroing stored ciphertext bytes while
+        retaining the monotonic backupEpoch counter so revoked epochs can never be replayed.'
+      tags:
+      - Confidential transport
+      security:
+      - keycloakTenant: []
+      x-kodera-scope: confidential_backup:delete
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      responses:
+        '204':
+          description: Active KVKB1 key-backup capsule discarded; monotonic epoch retained.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+            X-Kodera-Next-Backup-Epoch:
+              schema:
+                type: integer
+                minimum: 1
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '405':
+          description: Authentication, authority, validation, conflict, capacity or temporary contention
+            refusal.
+          headers:
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          description: Authentication, authority, validation, conflict, capacity or temporary contention
+            refusal.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+            Retry-After:
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
 
   /organisations/{organisation_id}/workspace/calendar/events:
     get:
@@ -16765,11 +17019,21 @@ components:
           enum:
           - editor
           - viewer
+        confidential:
+          type: boolean
+        epoch:
+          type:
+          - integer
+          - 'null'
+          minimum: 0
+          maximum: 9007199254740991
       examples:
       - wsUrl: wss://api.example.org/documents/collab
         token: example-ticket-placeholder
         expiresAt: '2026-01-01T12:00:00Z'
         role: viewer
+        confidential: false
+        epoch: null
       description: Ticket lifetime at most 300 seconds, bound to one document, organisation and subject. Validate
         current membership and document policy before minting and room join. Viewer connections receive sync,
         updates and awareness, but client state updates are dropped and audited. Invalid/expired tickets close
@@ -28363,3 +28627,129 @@ components:
           type: boolean
       examples:
       - waitingRoomAmbience: true
+    ConfidentialKeyBackupPublish:
+      type: object
+      title: ConfidentialKeyBackupPublish
+      additionalProperties: false
+      required:
+      - deviceId
+      - backupEpoch
+      - capsule
+      - signature
+      properties:
+        deviceId:
+          type: string
+          format: uuid
+          pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+        backupEpoch:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        capsule:
+          type: string
+          minLength: 56
+          maxLength: 349528
+        signature:
+          type: string
+          minLength: 88
+          maxLength: 88
+      description: Opaque KVKB1 key-backup publication request signed by an active owned confidential device.
+        Examples use public zero-byte wire placeholders, not valid protocol ciphertext or private keys.
+      examples:
+      - deviceId: 01950000-0000-7000-8000-0000000000a2
+        backupEpoch: 1
+        capsule: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        signature: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==
+    ConfidentialKeyBackupPublished:
+      type: object
+      title: ConfidentialKeyBackupPublished
+      additionalProperties: false
+      required:
+      - backupEpoch
+      - kdfKind
+      - iterations
+      - capsuleSha256
+      - sourceDeviceId
+      - publishedAt
+      properties:
+        backupEpoch:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        kdfKind:
+          type: string
+          enum:
+          - recovery-key
+          - passphrase
+        iterations:
+          type: integer
+          minimum: 0
+          maximum: 2000000
+        capsuleSha256:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        sourceDeviceId:
+          type: string
+          format: uuid
+          pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+        publishedAt:
+          type: string
+          format: date-time
+      description: Metadata receipt for an accepted monotonic KVKB1 key-backup publication.
+      examples:
+      - backupEpoch: 1
+        kdfKind: recovery-key
+        iterations: 0
+        capsuleSha256: '0000000000000000000000000000000000000000000000000000000000000000'
+        sourceDeviceId: 01950000-0000-7000-8000-0000000000a2
+        publishedAt: '2026-06-08T10:00:00Z'
+    ConfidentialKeyBackup:
+      type: object
+      title: ConfidentialKeyBackup
+      additionalProperties: false
+      required:
+      - backupEpoch
+      - kdfKind
+      - iterations
+      - capsuleSha256
+      - sourceDeviceId
+      - publishedAt
+      - capsule
+      properties:
+        backupEpoch:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        kdfKind:
+          type: string
+          enum:
+          - recovery-key
+          - passphrase
+        iterations:
+          type: integer
+          minimum: 0
+          maximum: 2000000
+        capsuleSha256:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        sourceDeviceId:
+          type: string
+          format: uuid
+          pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+        publishedAt:
+          type: string
+          format: date-time
+        capsule:
+          type: string
+          minLength: 56
+          maxLength: 349528
+      description: Active opaque KVKB1 key-backup archive for fresh-device zero-knowledge restore.
+        Examples use public zero-byte wire placeholders, not valid protocol ciphertext or private keys.
+      examples:
+      - backupEpoch: 1
+        kdfKind: recovery-key
+        iterations: 0
+        capsuleSha256: '0000000000000000000000000000000000000000000000000000000000000000'
+        sourceDeviceId: 01950000-0000-7000-8000-0000000000a2
+        publishedAt: '2026-06-08T10:00:00Z'
+        capsule: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA

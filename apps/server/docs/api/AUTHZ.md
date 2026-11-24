@@ -134,6 +134,7 @@ Read as: what each role may do to each resource. `own` means "rows belonging to 
 | `ConfidentialKeyPackage` | create, act own | create, act own | create own | create own | — | — | — | — |
 | `ConfidentialRoom` | create, read, act own | create, read, act own | read, act own | read, act own | — | — | — | — |
 | `ConfidentialEnvelope` | create, read own | create, read own | create, read own | create, read own | — | — | — | — |
+| `ConfidentialBackup` | create, read, delete self | create, read, delete self | create, read, delete self | create, read, delete self | — | — | — | — |
 | `WorkspaceImport` | create, read, act own | create, read, act own | — | — | — | — | — | — |
 | `CoexistenceBridge` | full own | full own | — | — | — | — | — | — |
 | `WorkspaceAi` | read, update, act own | read, update, act own | read, update, act own | read, update, act own | — | — | — | — |

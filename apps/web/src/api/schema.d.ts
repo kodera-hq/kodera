@@ -4805,6 +4805,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/organisations/{organisation_id}/confidential/key-backup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * getConfidentialKeyBackup
+         * @description Retrieve the authenticated human caller own active opaque KVKB1 key-backup archive for fresh-device restore. Requires current accepted membership and enabled relay; requires no pre-existing local confidential device. Staff and AI or service actors receive 403. Plaintext and recovery secrets never cross the wire.
+         */
+        get: operations["getConfidentialKeyBackup"];
+        put?: never;
+        /**
+         * publishConfidentialKeyBackup
+         * @description Publish or monotonically rotate the caller sealed KVKB1 zero-knowledge key-backup capsule. Requires an active owned confidential device signing publish-key-backup with null room coordinate. Initial publication requires backupEpoch 1 and each rotation requires OLD + 1 (409 on stale or skipped epochs). The server validates outer KVKB1 header framing and binding only and never sees recovery keys, passphrases or plaintext key material.
+         */
+        post: operations["publishConfidentialKeyBackup"];
+        /**
+         * discardConfidentialKeyBackup
+         * @description Discard the caller active KVKB1 key-backup capsule by zeroing stored ciphertext bytes while retaining the monotonic backupEpoch counter so revoked epochs can never be replayed.
+         */
+        delete: operations["discardConfidentialKeyBackup"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/organisations/{organisation_id}/workspace/calendar/events": {
         parameters: {
             query?: never;
@@ -6480,7 +6508,9 @@ export interface components {
          *       "wsUrl": "wss://api.example.org/documents/collab",
          *       "token": "example-ticket-placeholder",
          *       "expiresAt": "2026-01-01T12:00:00Z",
-         *       "role": "viewer"
+         *       "role": "viewer",
+         *       "confidential": false,
+         *       "epoch": null
          *     }
          */
         DocumentCollabSession: {
@@ -6491,6 +6521,8 @@ export interface components {
             expiresAt: string;
             /** @enum {string} */
             role: "editor" | "viewer";
+            confidential?: boolean;
+            epoch?: number | null;
         };
         InstantClaimTenantRequest: {
             organizationName: string;
@@ -15924,6 +15956,71 @@ export interface components {
             labs_flags?: components["schemas"]["KoderaLabsFlagsPatch"];
             waitingRoomAmbience?: boolean;
             waiting_room_ambience?: boolean;
+        };
+        /**
+         * ConfidentialKeyBackupPublish
+         * @description Opaque KVKB1 key-backup publication request signed by an active owned confidential device. Examples use public zero-byte wire placeholders, not valid protocol ciphertext or private keys.
+         * @example {
+         *       "deviceId": "01950000-0000-7000-8000-0000000000a2",
+         *       "backupEpoch": 1,
+         *       "capsule": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+         *       "signature": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+         *     }
+         */
+        ConfidentialKeyBackupPublish: {
+            /** Format: uuid */
+            deviceId: string;
+            backupEpoch: number;
+            capsule: string;
+            signature: string;
+        };
+        /**
+         * ConfidentialKeyBackupPublished
+         * @description Metadata receipt for an accepted monotonic KVKB1 key-backup publication.
+         * @example {
+         *       "backupEpoch": 1,
+         *       "kdfKind": "recovery-key",
+         *       "iterations": 0,
+         *       "capsuleSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+         *       "sourceDeviceId": "01950000-0000-7000-8000-0000000000a2",
+         *       "publishedAt": "2026-06-08T10:00:00Z"
+         *     }
+         */
+        ConfidentialKeyBackupPublished: {
+            backupEpoch: number;
+            /** @enum {string} */
+            kdfKind: "recovery-key" | "passphrase";
+            iterations: number;
+            capsuleSha256: string;
+            /** Format: uuid */
+            sourceDeviceId: string;
+            /** Format: date-time */
+            publishedAt: string;
+        };
+        /**
+         * ConfidentialKeyBackup
+         * @description Active opaque KVKB1 key-backup archive for fresh-device zero-knowledge restore. Examples use public zero-byte wire placeholders, not valid protocol ciphertext or private keys.
+         * @example {
+         *       "backupEpoch": 1,
+         *       "kdfKind": "recovery-key",
+         *       "iterations": 0,
+         *       "capsuleSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+         *       "sourceDeviceId": "01950000-0000-7000-8000-0000000000a2",
+         *       "publishedAt": "2026-06-08T10:00:00Z",
+         *       "capsule": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+         *     }
+         */
+        ConfidentialKeyBackup: {
+            backupEpoch: number;
+            /** @enum {string} */
+            kdfKind: "recovery-key" | "passphrase";
+            iterations: number;
+            capsuleSha256: string;
+            /** Format: uuid */
+            sourceDeviceId: string;
+            /** Format: date-time */
+            publishedAt: string;
+            capsule: string;
         };
     };
     responses: {
@@ -28414,6 +28511,233 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["PublishedDeviceVerification"];
                 };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description Authentication, authority, validation, conflict, capacity or temporary contention refusal. */
+            405: {
+                headers: {
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            /** @description Authentication, authority, validation, conflict, capacity or temporary contention refusal. */
+            503: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    getConfidentialKeyBackup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Active opaque KVKB1 key-backup archive for the caller membership. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfidentialKeyBackup"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description Authentication, authority, validation, conflict, capacity or temporary contention refusal. */
+            405: {
+                headers: {
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            /** @description Authentication, authority, validation, conflict, capacity or temporary contention refusal. */
+            503: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    publishConfidentialKeyBackup: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfidentialKeyBackupPublish"];
+            };
+        };
+        responses: {
+            /** @description Opaque KVKB1 key-backup capsule stored at the accepted monotonic epoch. */
+            201: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfidentialKeyBackupPublished"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description Authentication, authority, validation, conflict, capacity or temporary contention refusal. */
+            405: {
+                headers: {
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            /** @description Authentication, authority, validation, conflict, capacity or temporary contention refusal. */
+            503: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    discardConfidentialKeyBackup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Active KVKB1 key-backup capsule discarded; monotonic epoch retained. */
+            204: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    "X-Kodera-Next-Backup-Epoch"?: number;
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             400: components["responses"]["MalformedRequest"];
             401: components["responses"]["Unauthenticated"];

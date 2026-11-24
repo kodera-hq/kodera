@@ -155,6 +155,15 @@ mod tests {
         let target = admitted(11);
         let channel = admitted(12);
         let roster = [admitted(11), admitted(10)]; // preserve explicitly supplied array order
+        let backup_header = format!(
+            "[\"kodera-zk-key-backup\",1,\"{}\",\"01950000-0000-7000-8000-0000000000b1\",1,\"recovery-key\",0,\"AAECAwQFBgcICQoLDA0ODw==\",\"EBESExQVFhcYGRob\"]",
+            own.scope().organisation().as_str()
+        );
+        let mut backup_capsule = Vec::new();
+        backup_capsule.extend_from_slice(b"KVKB1");
+        backup_capsule.extend_from_slice(&(backup_header.len() as u32).to_be_bytes());
+        backup_capsule.extend_from_slice(backup_header.as_bytes());
+        backup_capsule.extend_from_slice(&[0xaa; 32]);
         let statements = [
             (
                 RelayStatement::PublishKeyPackage {
@@ -162,6 +171,15 @@ mod tests {
                 },
                 "publish-key-package",
                 vec!["deviceId", "keyPackage"],
+                false,
+            ),
+            (
+                RelayStatement::PublishKeyBackup {
+                    backup_epoch: 1,
+                    capsule: &backup_capsule,
+                },
+                "publish-key-backup",
+                vec!["backupEpoch", "capsule", "deviceId"],
                 false,
             ),
             (
@@ -505,6 +523,10 @@ pub enum RelayStatement<'a> {
     PublishKeyPackage {
         package: PendingMlsPackageId,
     },
+    PublishKeyBackup {
+        backup_epoch: u64,
+        capsule: &'a [u8],
+    },
     CreateRoom {
         channel: &'a RelayId,
         algorithm: RelayAlgorithm,
@@ -604,6 +626,28 @@ impl OpenMlsDevice {
                         json!(STANDARD.encode(self.pending_wire(package)?)),
                     );
                     "publish-key-package"
+                }
+                RelayStatement::PublishKeyBackup {
+                    backup_epoch,
+                    capsule,
+                } => {
+                    if !(1..=MAX_JSON_INTEGER).contains(&backup_epoch) {
+                        return Err(NativeCryptoError::InvalidInput);
+                    }
+                    let parsed = crate::key_backup::parse_kvkb1_capsule(
+                        capsule,
+                        crate::key_backup::MAX_RELAY_KEY_BACKUP_CAPSULE_BYTES,
+                    )
+                    .map_err(|_| NativeCryptoError::InvalidInput)?;
+                    if parsed.organisation_id != self.scope().organisation().as_str() {
+                        return Err(NativeCryptoError::ScopeMismatch);
+                    }
+                    if parsed.backup_epoch != backup_epoch {
+                        return Err(NativeCryptoError::InvalidInput);
+                    }
+                    body.insert("backupEpoch", epoch(backup_epoch)?);
+                    body.insert("capsule", json!(STANDARD.encode(capsule)));
+                    "publish-key-backup"
                 }
                 RelayStatement::CreateRoom { channel, algorithm } => {
                     body.insert("channelId", json!(channel.as_str()));

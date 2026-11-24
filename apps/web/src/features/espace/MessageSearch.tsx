@@ -8,7 +8,8 @@ import { Button } from '../../ui/Button/Button'
 import { Popover } from '../../ui/Popover/Popover'
 import { TextField } from '../../ui/TextField/TextField'
 import type { EspaceStoreLike } from './liveViewModel'
-import { MAX_RESULTS, queryTerms, searchMessages } from './searchMatching'
+import { searchRoomTimelineLocally } from './localEncryptedSearch'
+import { MAX_RESULTS, queryTerms } from './searchMatching'
 import { MessageJumpButton } from './PinnedMessages'
 
 function SearchIcon() {
@@ -46,7 +47,7 @@ export function MessageSearch({
   const deferred = useDeferredValue(query)
   useSyncExternalStore(store.subscribe, store.getSnapshot)
   const searching = open && queryTerms(deferred).length > 0
-  const result = searching ? searchMessages(store.getTimeline(roomId), deferred) : null
+  const result = searching ? searchRoomTimelineLocally(store, roomId, deferred) : null
 
   function choose(eventId: string) {
     setShown(true)

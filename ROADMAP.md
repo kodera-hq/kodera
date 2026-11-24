@@ -10,9 +10,9 @@ Kodera is a public open-core monorepo: nothing listed here is held back from the
 
 - [x] Unified `@kodera/*` monorepo (`apps/`, `packages/`, `extensions/`, `deploy/community/`, `ee/`)
 - [x] `@kodera/design-tokens` ("Cobalt × Kodera — givre") with automated contrast & grammar CI gates
-- [x] `kodera-server` OpenAPI 3.1 contract-first control plane (`0.59.0`), ADR-0003 secret isolation & `room_access` sidecar
+- [x] `kodera-server` OpenAPI 3.1 contract-first control plane (`0.60.0`), ADR-0003 secret isolation & `room_access` sidecar
 - [x] Matrix-backed channels and LiveKit audio rooms in the web client, governed by `kodera-synapse-policy`
-- [x] `kodera-rs` zero-unsafe Rust core (`UuidV7`, `Ed25519` traits, OpenMLS/Megolm primitives, `SFrame` v1 media framing, durable device/session state, universal ES256 passkey binding, `#proximity` frame v1/v2 codecs)
+- [x] `kodera-rs` zero-unsafe Rust core (`UuidV7`, `Ed25519` traits, OpenMLS/Megolm primitives, `SFrame` v1 media framing, `KVKB1` key-backup envelope validation, durable device/session state, universal ES256 passkey binding, `#proximity` frame v1/v2 codecs)
 - [x] `@kodera/extension-sdk` (`0.2.0`) HMAC-signed webhooks, declarative `kodera.widget.v1` sandboxed cards, `create-kodera-extension` scaffolder CLI, and 23 reference implementations (the `/hello` starter plus 22 domain connectors) with a generated catalogue
 - [x] Hardened `deploy/community` profile (Synapse on PostgreSQL, federation closed by default, rate limits, no public agent API), checked on every change
 - [x] End-to-end fresh-volume cold-start verification of `deploy/community` in CI, with measured runtime and memory footprint
@@ -62,8 +62,8 @@ Kodera is a public open-core monorepo: nothing listed here is held back from the
 - [x] Refusal of plaintext fallback and room-store quarantine for unavailable confidential or unclassified sessions (#180)
 - [x] Worker-isolated attachment/Pages/LiveKit media cryptographic capabilities (#169, #177, #182), local SAS device comparison and `KVKB1` encrypted local key archives (#183)
 - [x] H2.3 operator-gated Wave 10 server confidential room/session discovery, consecutive MLS epoch provisioning and proof-bound cross-signing publication
-- [ ] Server backup publication and client group integration
-- [ ] Durable browser/native group integration, native key management and interoperable LiveKit media qualification
+- [x] H4.3a operator-gated server opaque `KVKB1` key-backup publication, monotonic epoch rotation and soft-zeroed discard (`0.60.0`)
+- [ ] Durable browser/native MLS group integration, native key management and interoperable LiveKit media qualification
 
 ## Track 5 — `#proximity` (`Status: Broker & foreground radio layers shipped; physical two-device qualification open`)
 
@@ -81,15 +81,16 @@ The generic invoice ledger and the payment engine already in `apps/server` stay 
 
 ## Track 7 — Universal Zero-Knowledge & End-to-End Encryption by Default (`Status: In progress`)
 
-- [ ] Universal client-side end-to-end encryption (MLS / Megolm) across **all** channels, direct messages and threads by default, retiring clear-text homeserver room storage so the operator holds zero readable message content
+- [x] Three-tier conversation encryption model (`H4.3a`, `v0.2.0` pre-release track): `1:1` direct messages, private group direct messages and private calls default to end-to-end encryption at creation (Tier 1); workspace channels offer opt-in confidential zero-knowledge mode (`🔒`) refusing server AI, scheduled messages, reminders and plaintext server indexing (Tier 2); standard workspace channels (`#arrivals`, `#general`) remain standard by default for newcomer history and connector compatibility without a misleading padlock (Tier 3)
+- [ ] Full retirement of clear-text homeserver room storage across universal MLS/Megolm group coordinators
 - [x] Worker-isolated client AEAD capabilities for confidential Yjs document updates/snapshots and attachments; protected sessions refuse plaintext fallback
 - [x] Worker-isolated LiveKit `SFrame` v1 E2EE media framing (`kodera-rs` + browser WebWorker transforms), fail-closed `room_access` confidential call admission, SAS device comparison and user-held encrypted `KVKB1` local key archives
 - [x] H2.3 operator-gated server confidential room/session discovery and trusted epoch provisioning
-- [ ] Encrypted collaboration relay admission
+- [x] Encrypted collaboration relay admission (`KDE1` opaque envelope framing, epoch-bound `docs_collab_fence` verification and fail-closed WebSocket `4403` refusal on unsealed frames)
 - [x] Operator-gated proof-bound server cross-signing publication
-- [ ] Server backup publication and key management/rotation across browser and native clients
+- [x] Operator-gated server opaque `KVKB1` key-backup publication, monotonic epoch rotation and browser recovery integration (native client key-backup wiring remains in progress)
 - [ ] Mandatory `kodera-rs` cryptographic store binding across `apps/ios` and `apps/android`, and end-to-end media encryption (`SFrame` / MLS epoch keys) on all LiveKit voice, video and screen-sharing sessions
-- [ ] Metadata minimisation and client-local encrypted full-text search so search indexes never exist in plaintext on the server
+- [x] Metadata minimisation and client-local encrypted full-text search (`kodera.espace-vault.v1` v2 `search_index` shards, non-extractable `HMAC-SHA-256` blind term tags, synchronous `#180` quarantine eviction and zero query network egress) so confidential search indexes never exist in plaintext on the server
 
 ## Wave Summary (`Status: Waves 4–9 implemented or finishing; Wave 10 in progress`)
 
@@ -99,4 +100,4 @@ The [collaboration status](./docs/specs/collaboration-status.md) records the Wav
 - **Wave 5 (`Foundations implemented; mobile transports and distribution open`):** `kodera-rs` OpenMLS/Megolm/Passkey/proximity codecs, reproducible native SBOM gates, Tauri v2 desktop shell/bridge and iOS/Android companion implementations.
 - **Wave 6 & 7 (`Implemented`):** extension runtime v2, 23 reference implementations, `Slack`/`Discord`/`Notion` importers, bounded partner-room and opt-in open federation controls, developer docs + `llms.txt`, and multi-surface security hardening.
 - **Wave 8 & 9 (`Implemented in tree; hosted Community promoted; signing & group-integration gates open`):** `deploy/community` fresh-volume cold-start footprint gate, Zero-Trust `/staff/v1/*` surface and `.well-known` discovery, Desktop self-host stack deployment, `Kodera Passport` cross-workspace magic-link PKCE sign-in, Enterprise `ee/` (`SAML 2.0`, `SCIM 2.0`, `Ed25519` audit exports, `ee/billing/`), `kodera-rs` `wasm32` browser device-proof bindings, modern `openmls_*` crypto-provider generation, default-off `0.47.0` confidential envelope relay, atomic browser confidential local-state vault, RAM-only `#proximity` check-in broker + 15-minute HKDF epoch leases + foreground native BLE/mDNS layers, and multi-OS release workflow; durable group integration, physical two-device radio qualification, and signing gates remain open.
-- **Wave 10, Wave E, Horizon 3 & Horizon 4 (`Implemented in tree; universal E2EE and native media qualification in progress`):** refusal of plaintext fallback and room quarantine, worker-isolated attachment/Pages/LiveKit `SFrame` v1 media cryptographic capabilities, fail-closed `room_access` confidential media admission, worker SAS device comparison, `KVKB1` encrypted local key archives, H2.3 partner bridges and single-channel guest grants, H2.6 Messages mode and workspace administration, Wave E isolated backup/restore rehearsal (`kodera_ctl.py rehearse-restore` + `rehearse_restore_guards`) and Enterprise FinOps attribution, H3.1 community boosts/VIP Connect/DAC7, H3.2 ephemeral AI translation & consent-gated call captions, H3.3 sovereign CalDAV smart calendar/zero-PII booking/Yjs whiteboard, H3.4 cybersecurity posture advisor, H4.1 sandboxed extension widgets/scaffolder CLI/web marketplace, and H4.2 sanitized WebP custom emojis, *Send Later*, personal reminders, waiting-room ambience & *Kodera Labs* (`OpenAPI 0.59.0`, `v0.2.0` pre-release track) are implemented. Server backup publication, native integration and universal encryption by default remain Planned.
+- **Wave 10, Wave E, Horizon 3 & Horizon 4 (`Implemented in tree; universal E2EE and native media qualification in progress`):** refusal of plaintext fallback and room quarantine, worker-isolated attachment/Pages/LiveKit `SFrame` v1 media cryptographic capabilities, fail-closed `room_access` confidential media admission, worker SAS device comparison, `KVKB1` encrypted local key archives, H2.3 partner bridges and single-channel guest grants, H2.6 Messages mode and workspace administration, Wave E isolated backup/restore rehearsal (`kodera_ctl.py rehearse-restore` + `rehearse_restore_guards`) and Enterprise FinOps attribution, H3.1 community boosts/VIP Connect/DAC7, H3.2 ephemeral AI translation & consent-gated call captions, H3.3 sovereign CalDAV smart calendar/zero-PII booking/Yjs whiteboard, H3.4 cybersecurity posture advisor, H4.1 sandboxed extension widgets/scaffolder CLI/web marketplace, H4.2 sanitized WebP custom emojis, *Send Later*, personal reminders, waiting-room ambience & *Kodera Labs*, and H4.3a server opaque `KVKB1` key-backup publication, `KDE1` encrypted Yjs collaboration relay admission, client-local encrypted full-text search & 3-tier E2EE defaults (`OpenAPI 0.60.0`, `v0.2.0` pre-release track) are implemented. Native MLS group/key integration and universal homeserver encryption remain Planned.

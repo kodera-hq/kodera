@@ -22,6 +22,8 @@ class Document(RetainedModel):
     title_key = models.TextField()
     markdown = models.TextField(default="")
     revision = models.BigIntegerField(default=1)
+    is_confidential = models.BooleanField(default=False)
+    encryption_epoch = models.BigIntegerField(null=True, blank=True)
 
     class Meta(RetainedModel.Meta):
         abstract = False
@@ -37,6 +39,15 @@ class Document(RetainedModel):
             ),
             models.CheckConstraint(
                 condition=models.Q(markdown__length__lte=262144), name="docs_markdown_bound"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(is_confidential=False) | models.Q(markdown=""),
+                name="docs_confidential_markdown_empty",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(encryption_epoch__isnull=True)
+                | models.Q(encryption_epoch__gte=0),
+                name="docs_encryption_epoch_nonnegative",
             ),
             models.CheckConstraint(condition=models.Q(revision__gte=1), name="docs_revision_valid"),
             models.CheckConstraint(

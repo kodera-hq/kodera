@@ -25,14 +25,23 @@ class MemoryStore {
     this.document = randomUUID();this.organisation = randomUUID();this.doc = load()
     replace(this.doc, '# Example\n\nInitial text\n')
     this.roles = new Map();this.revision = 1;this.audit = [];this.guards = 0;this.redeemed = new Set()
+    this.confidential = false;this.epoch = null;this.envelopes = []
   }
   guard(claims) {
     this.guards += 1
     if (claims.expires <= Math.floor(Date.now() / 1000)) throw new TicketRefused()
     if (claims.document !== this.document || claims.organisation !== this.organisation || this.roles.get(claims.membership) !== claims.role) throw new TicketRefused(4403)
+    if (Boolean(claims.confidential) !== this.confidential || (claims.confidential ? claims.epoch : null) !== this.epoch) throw new TicketRefused(4403)
   }
   async deliver(claims, consumer, known = null) {
     this.guard(claims)
+    if (this.confidential) {
+      const start = known === null ? 0 : known
+      if (known === null || start < this.envelopes.length) {
+        consumer({confidential: true, envelopes: this.envelopes.slice(start), head: this.envelopes.length, revision: this.revision})
+      }
+      return
+    }
     if (known !== this.revision) consumer({state: Y.encodeStateAsUpdate(this.doc), revision: this.revision})
   }
   async admit(claims, consumer) {
@@ -45,14 +54,20 @@ class MemoryStore {
   async update(claims, update) {
     this.guard(claims)
     if (claims.role !== 'editor') throw new TicketRefused(4403)
+    if (this.confidential) {
+      const envelope = Buffer.from(update)
+      this.envelopes.push(envelope)
+      this.revision += 1
+      return {confidential: true, envelope, head: this.envelopes.length, revision: this.revision}
+    }
     apply(this.doc, update);inspect(this.doc);this.revision += 1
     return {update, revision: this.revision}
   }
   async viewerRefusal(claims) { this.guard(claims);this.audit.push(claims.membership) }
-  claims(role) {
+  claims(role, extra = {}) {
     const now = Math.floor(Date.now() / 1000), membership = randomUUID()
     this.roles.set(membership, role)
-    return {v: 1, organisation: this.organisation, document: this.document, membership, identity: randomUUID(), issuer: 'https://identity.example.org/realms/community', subject: randomUUID(), role, issued: now, expires: now + 60, nonce: randomUUID()}
+    return {v: 1, organisation: this.organisation, document: this.document, membership, identity: randomUUID(), issuer: 'https://identity.example.org/realms/community', subject: randomUUID(), role, issued: now, expires: now + 60, nonce: randomUUID(), ...extra}
   }
 }
 async function fixture(pollMilliseconds = 100000) {
@@ -329,6 +344,86 @@ test('automatic Pong backlog retains the library default bound on an admitted so
     if (serverSocket && originalPong) serverSocket.pong = originalPong
     for (const complete of completions) complete()
     peer?.doc.destroy()
+    await value.close()
+  }
+})
+
+function makeKde1Frame({ epoch = 5, sender = '101', sequence = 1, kind = 0, ratchet = 0 }) {
+  const meta = Buffer.from(JSON.stringify({ epoch, sender, sequence, kind, ratchet }), 'utf8')
+  const frame = Buffer.alloc(6 + meta.length + 32)
+  frame.set([0x4b, 0x44, 0x45, 0x31], 0)
+  frame.writeUInt16BE(meta.length, 4)
+  meta.copy(frame, 6)
+  frame.fill(0x5c, 6 + meta.length)
+  return new Uint8Array(frame)
+}
+
+test('confidential rooms replay opaque KDE1 frames without Y.Doc/Awareness and close 4403 + audit on unsealed or viewer writes', async () => {
+  const value = await fixture()
+  value.store.confidential = true
+  value.store.epoch = 5
+  const sockets = []
+  try {
+    const openConfidential = async role => {
+      const claims = value.store.claims(role, { confidential: true, epoch: 5 })
+      const ws = new WebSocket(value.url, { origin: 'https://community.example.org' })
+      ws.on('error', () => {})
+      const inbox = []
+      ws.on('message', bytes => inbox.push(new Uint8Array(bytes)))
+      await once(ws, 'open')
+      ws.send(JSON.stringify({ type: 'auth', token: token(claims, value.key) }))
+      sockets.push(ws)
+      return { ws, claims, inbox }
+    }
+
+    const editorA = await openConfidential('editor')
+    const editorB = await openConfidential('editor')
+    await until(() => value.service.rooms.get(value.store.document)?.connections.size === 2)
+
+    const room = value.service.rooms.get(value.store.document)
+    assert.equal(room.confidential, true)
+    assert.equal(room.doc, null)
+    assert.equal(room.awareness, null)
+
+    const env1 = makeKde1Frame({ epoch: 5, sender: '101', sequence: 1, kind: 0 })
+    const envAwareness = makeKde1Frame({ epoch: 5, sender: '101', sequence: 2, kind: 1 })
+    editorA.ws.send(env1)
+    editorA.ws.send(envAwareness)
+    await until(() => editorB.inbox.length === 2)
+    assert.deepEqual(editorB.inbox[0], env1)
+    assert.deepEqual(editorB.inbox[1], envAwareness)
+    assert.equal(value.store.envelopes.length, 1)
+
+    // Late viewer receives stored opaque KDE1 update envelope on admission, can send kind===1 awareness,
+    // and closes 4403 + audits collab_refused if attempting kind===0 write.
+    const viewer = await openConfidential('viewer')
+    await until(() => viewer.inbox.length === 1)
+    assert.deepEqual(viewer.inbox[0], env1)
+    viewer.ws.send(makeKde1Frame({ epoch: 5, sender: '303', sequence: 1, kind: 1 }))
+    await until(() => editorA.inbox.length === 1)
+
+    const viewerClosed = once(viewer.ws, 'close')
+    viewer.ws.send(makeKde1Frame({ epoch: 5, sender: '303', sequence: 2, kind: 0 }))
+    assert.equal((await viewerClosed)[0], 4403)
+    assert.equal(value.store.audit.includes(viewer.claims.membership), true)
+
+    // Unsealed Yjs frame on confidential socket closes 4403 and audits collab_refused.
+    const rogue = await openConfidential('editor')
+    await until(() => rogue.inbox.length === 1)
+    const rogueClosed = once(rogue.ws, 'close')
+    rogue.ws.send(new Uint8Array([0, 0, 1, 0]))
+    assert.equal((await rogueClosed)[0], 4403)
+    assert.equal(value.store.audit.includes(rogue.claims.membership), true)
+
+    // Duplicate sender spoofing or non-monotonic sequence closes 4403 and audits collab_refused.
+    const spoofer = await openConfidential('editor')
+    await until(() => spoofer.inbox.length === 1)
+    const spooferClosed = once(spoofer.ws, 'close')
+    spoofer.ws.send(makeKde1Frame({ epoch: 5, sender: '101', sequence: 1, kind: 1 }))
+    assert.equal((await spooferClosed)[0], 4403)
+    assert.equal(value.store.audit.includes(spoofer.claims.membership), true)
+  } finally {
+    for (const ws of sockets) ws.terminate()
     await value.close()
   }
 })

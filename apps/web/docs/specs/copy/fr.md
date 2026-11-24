@@ -2303,6 +2303,12 @@ Source: `src/features/espace/EspaceLiveView.tsx`, the call dock and the audio ro
 | `console.security.settings.import` | Choisir une archive .kvkb chiffrée |
 | `console.security.settings.restore-key` | Clé de récupération de l’archive, groupe de contrôle inclus |
 | `console.security.settings.restore` | Restaurer l’archive localement |
+| `console.security.settings.server-backup-active` | Sauvegarde serveur opaque enregistrée (époque {epoch}, {mode}). Seul votre secret de récupération peut l’ouvrir. |
+| `console.security.settings.server-backup-discard` | Supprimer la sauvegarde serveur |
+| `console.security.settings.server-backup-discarded` | Sauvegarde serveur supprimée. Les prochaines publications passeront à l’époque {epoch}. |
+| `console.security.settings.server-backup-publish` | Publier la sauvegarde chiffrée sur le serveur |
+| `console.security.settings.server-backup-published` | Archive KVKB1 opaque publiée sur le serveur à l’époque {epoch}. |
+| `console.security.settings.server-backup-restore` | Restaurer depuis la sauvegarde serveur |
 | `console.security.settings.loading` | Chargement des réglages de sécurité… |
 
 | `console.workspace.directs.action-accept` | Accepter et rejoindre |

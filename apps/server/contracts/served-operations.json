@@ -277,6 +277,11 @@
       "path": "/organisations/{organisation_id}/workspace/roles/{role_id}"
     },
     {
+      "operation_id": "discardConfidentialKeyBackup",
+      "method": "DELETE",
+      "path": "/organisations/{organisation_id}/confidential/key-backup"
+    },
+    {
       "operation_id": "discoverConfidentialRoom",
       "method": "GET",
       "path": "/organisations/{organisation_id}/confidential/rooms/{room_id}/discovery"
@@ -340,6 +345,11 @@
       "operation_id": "getChannelGovernance",
       "method": "GET",
       "path": "/organisations/{organisation_id}/workspace/channel-governance"
+    },
+    {
+      "operation_id": "getConfidentialKeyBackup",
+      "method": "GET",
+      "path": "/organisations/{organisation_id}/confidential/key-backup"
     },
     {
       "operation_id": "getCreditNote",
@@ -785,6 +795,11 @@
       "operation_id": "proposePartnerChannelAgreement",
       "method": "POST",
       "path": "/organisations/{organisation_id}/workspace/partner-agreements"
+    },
+    {
+      "operation_id": "publishConfidentialKeyBackup",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/confidential/key-backup"
     },
     {
       "operation_id": "publishConfidentialKeyPackage",

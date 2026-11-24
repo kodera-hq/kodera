@@ -64,6 +64,10 @@ urlpatterns = [
         "api/v1/organisations/<uuid:organisation_id>/confidential/verification-bundles",
         confidential.bundles,
     ),
+    path(
+        "api/v1/organisations/<uuid:organisation_id>/confidential/key-backup",
+        confidential.key_backup,
+    ),
     path("agent/v1/channel-authority", channel_authority),
     path(
         "api/v1/organisations/<uuid:organisation_id>/workspace/channel-governance", bridges.overview

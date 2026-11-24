@@ -2289,6 +2289,12 @@ Source: `src/features/espace/EspaceLiveView.tsx`, the call dock and the audio ro
 | `console.security.settings.import` | Choose encrypted .kvkb archive |
 | `console.security.settings.restore-key` | Archive recovery key, including checksum |
 | `console.security.settings.restore` | Restore archive locally |
+| `console.security.settings.server-backup-active` | Opaque server backup stored (epoch {epoch}, {mode}). Only your recovery secret can open it. |
+| `console.security.settings.server-backup-discard` | Discard server backup |
+| `console.security.settings.server-backup-discarded` | Server key backup discarded. Future publications will advance to epoch {epoch}. |
+| `console.security.settings.server-backup-publish` | Publish sealed backup to server |
+| `console.security.settings.server-backup-published` | Opaque KVKB1 archive published to server at epoch {epoch}. |
+| `console.security.settings.server-backup-restore` | Restore from server backup |
 | `console.security.settings.loading` | Loading security settings… |
 
 | `console.workspace.directs.action-accept` | Accept and join |

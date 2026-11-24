@@ -3,6 +3,7 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import { work } from './worker.mjs'
 import { Refused } from './engine.mjs'
 import { TicketRefused } from './tickets.mjs'
+import { isKde1Magic, ConfidentialRefused } from './protocol.mjs'
 import { titleKey } from './title-key.mjs'
 
 export class Unavailable extends Error { constructor(cause = undefined) { super('collaboration storage unavailable', {cause}) } }
@@ -34,8 +35,10 @@ export class Store {
       await client.query('BEGIN')
       await client.query("SET LOCAL lock_timeout='3s'")
       await client.query("SET LOCAL statement_timeout='5s'")
-      const domain = await client.query('SELECT docs_collab_fence($1,$2,$3,$4,$5,$6,$7) AS id',
-        [claims.document, claims.organisation, claims.membership, claims.identity, claims.issuer, claims.subject, claims.role])
+      const confidential = Boolean(claims.confidential)
+      const epoch = confidential ? claims.epoch : null
+      const domain = await client.query('SELECT docs_collab_fence($1,$2,$3,$4,$5,$6,$7,$8,$9) AS id',
+        [claims.document, claims.organisation, claims.membership, claims.identity, claims.issuer, claims.subject, claims.role, confidential, epoch])
       if (!domain.rows[0]?.id) throw new TicketRefused(4403)
       alive(claims)
       const result = await operation(client, domain.rows[0].id)
@@ -62,6 +65,12 @@ export class Store {
   async load(claims) {
     return this.transaction(claims, async client => {
       const state = await this.binary(client, claims.document)
+      if (claims.confidential) {
+        for (const envelope of state.updates) {
+          if (!isKde1Magic(envelope)) throw new Unavailable()
+        }
+        return {confidential: true, envelopes: state.updates.map(part => Buffer.from(part)), head: state.head, revision: state.revision}
+      }
       const value = await work({operation: 'inspect', snapshot: state.snapshot.toString('base64'), updates: state.updates.map(part => part.toString('base64')), nonce: randomUUID()})
       return {state: Buffer.from(value.snapshot, 'base64'), revision: state.revision}
     })
@@ -75,10 +84,21 @@ export class Store {
     })
     return this.deliver(claims, consumer)
   }
-  async deliver(claims, consumer, knownRevision = null) {
+  async deliver(claims, consumer, knownMarker = null) {
     return this.transaction(claims, async client => {
       const state = await this.binary(client, claims.document)
-      if (knownRevision !== null && state.revision === knownRevision) return
+      if (claims.confidential) {
+        for (const envelope of state.updates) {
+          if (!isKde1Magic(envelope)) throw new Unavailable()
+        }
+        if (knownMarker !== null && state.head <= knownMarker) return
+        const startOffset = knownMarker === null ? 0 : Math.max(0, knownMarker - state.base)
+        const envelopes = state.updates.slice(startOffset).map(part => Buffer.from(part))
+        alive(claims)
+        consumer({confidential: true, envelopes, head: state.head, revision: state.revision})
+        return
+      }
+      if (knownMarker !== null && state.revision === knownMarker) return
       const value = await work({operation: 'inspect', snapshot: state.snapshot.toString('base64'), updates: state.updates.map(part => part.toString('base64')), nonce: randomUUID()})
       alive(claims)
       // The synchronous socket enqueue happens while membership, identity and
@@ -97,6 +117,24 @@ export class Store {
   }
   async update(claims, incoming) {
     if (claims.role !== 'editor') throw new TicketRefused(4403)
+    if (claims.confidential) {
+      if (!isKde1Magic(incoming)) throw new ConfidentialRefused('unsealed confidential update refused')
+      return this.transaction(claims, async client => {
+        const state = await this.binary(client, claims.document)
+        if (state.updates.length >= 256 || state.head >= Number.MAX_SAFE_INTEGER - 1) throw new QuotaRefused()
+        const envelope = Buffer.from(incoming)
+        const totalBytes = state.snapshot.length + state.updates.reduce((sum, bytes) => sum + bytes.length, 0) + envelope.length
+        await client.query('SELECT docs_collab_snapshot_admit($1,$2)', [claims.document, totalBytes])
+        const sequence = state.head + 1
+        alive(claims)
+        await client.query(`INSERT INTO docs_documentupdate(id,created_at,updated_at,document_id,sequence,actor_id,state)
+          VALUES($1,clock_timestamp(),clock_timestamp(),$2,$3,$4,$5)`, [uuid7(), claims.document, sequence, claims.identity, envelope])
+        await client.query('UPDATE docs_document SET revision=revision+1,updated_at=clock_timestamp() WHERE id=$1', [claims.document])
+        await this.audit(client, claims, 'workspace.document.collab_updated')
+        await client.query("SELECT pg_notify('kodera_docs',$1)", [claims.document])
+        return {confidential: true, envelope, head: sequence, revision: state.revision + 1}
+      })
+    }
     return this.transaction(claims, async (client, workspace) => {
       const state = await this.binary(client, claims.document)
       const result = await work({operation: 'apply', snapshot: state.snapshot.toString('base64'), updates: state.updates.map(part => part.toString('base64')), update: Buffer.from(incoming).toString('base64'), nonce: randomUUID()})
@@ -118,11 +156,11 @@ export class Store {
       // One statement on locale-free title keys, shared with the REST path's resolution.
       const keys = [...new Set(result.links.map(titleKey))].sort()
       if (keys.length) {
-        await client.query(`INSERT INTO docs_documentlink(id,created_at,updated_at,source_id,target_id,target_title)
+        await client.query(`INSERT INTO docs_documentlink(id,created_at,updated_at,document_id,target_id,target_title)
           SELECT l.id,clock_timestamp(),clock_timestamp(),$2,
             (SELECT d.id FROM docs_document d WHERE d.workspace_id=$3 AND d.deleted_at IS NULL AND d.title_key=l.key),l.key
           FROM unnest($1::uuid[],$4::text[]) AS l(id,key)
-          ON CONFLICT(source_id,target_title) DO NOTHING`, [keys.map(() => uuid7()), claims.document, workspace, keys])
+          ON CONFLICT(source_id,target_title) DO NOTHING`.replace('document_id,target_id', 'source_id,target_id'), [keys.map(() => uuid7()), claims.document, workspace, keys])
       }
       await this.audit(client, claims, 'workspace.document.collab_updated')
       await client.query("SELECT pg_notify('kodera_docs',$1)", [claims.document])
