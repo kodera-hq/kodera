@@ -325,7 +325,14 @@ describe('the conformance check', () => {
               example.headers['Content-Type'] === 'text/plain' &&
               typeof example.body === 'string'
             ? HttpResponse.text(example.body, { status: example.status })
-            : HttpResponse.json(example.body, { status: example.status })
+            : 'Content-Type' in example.headers &&
+                example.headers['Content-Type'] === 'image/webp' &&
+                typeof example.body === 'string'
+              ? HttpResponse.arrayBuffer(
+                  Uint8Array.from(atob(example.body), (c) => c.charCodeAt(0)).buffer,
+                  { status: example.status, headers: { 'Content-Type': 'image/webp' } }
+                )
+              : HttpResponse.json(example.body, { status: example.status })
       )
     )
     const judgement = await judge(handlers)

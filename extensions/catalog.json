@@ -333,20 +333,29 @@
       "name": "Hello Webhook Starter",
       "version": "0.1.0",
       "label": "Reference implementation",
-      "description": "Reference Kodera slash-command and signed webhook starter extension (<15 min onboarding).",
+      "description": "Reference Kodera slash-command, signed webhook, and sandboxed widget starter extension (<15 min onboarding).",
       "manifest": "extensions/hello-webhook/kodera-extension.json",
       "readme": "extensions/hello-webhook/README.md",
       "scopes": [
         "messages:write",
-        "webhooks:incoming"
+        "webhooks:incoming",
+        "widgets:write"
       ],
       "events": [
-        "command.invoked"
+        "command.invoked",
+        "widget.action"
       ],
       "commands": [
         {
           "name": "/hello",
           "description": "Reply with a greeting in the current Kodera channel"
+        }
+      ],
+      "widgets": [
+        {
+          "id": "hello-greeting-card",
+          "title": "Channel Greeting Card",
+          "description": "Sandboxed declarative greeting and acknowledgement widget card"
         }
       ],
       "webhookUrl": "https://extensions.example.org/hooks/hello-webhook"

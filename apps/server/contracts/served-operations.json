@@ -32,6 +32,11 @@
       "path": "/booking/{booking_slug}/reservations/{reservation_id}/actions/cancel"
     },
     {
+      "operation_id": "cancelScheduledMessage",
+      "method": "DELETE",
+      "path": "/organisations/{organisation_id}/workspace/scheduled-messages/{scheduled_message_id}"
+    },
+    {
       "operation_id": "changeMembershipRole",
       "method": "PATCH",
       "path": "/organisations/{organisation_id}/memberships/{membership_id}"
@@ -50,6 +55,11 @@
       "operation_id": "checkSlugAvailability",
       "method": "GET",
       "path": "/slug-availability"
+    },
+    {
+      "operation_id": "checkoutMarketplaceExtension",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/workspace/extensions/marketplace/{listing_id}/checkout"
     },
     {
       "operation_id": "claimConfidentialKeyPackage",
@@ -147,6 +157,16 @@
       "path": "/invoices/{invoice_id}/payment-link"
     },
     {
+      "operation_id": "createPersonalReminder",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/workspace/reminders"
+    },
+    {
+      "operation_id": "createScheduledMessage",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/workspace/scheduled-messages"
+    },
+    {
       "operation_id": "createSupportTicket",
       "method": "POST",
       "path": "/support/tickets"
@@ -175,6 +195,11 @@
       "operation_id": "createWorkspaceCollection",
       "method": "POST",
       "path": "/organisations/{organisation_id}/workspace/collections"
+    },
+    {
+      "operation_id": "createWorkspaceCustomEmoji",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/workspace/emojis"
     },
     {
       "operation_id": "createWorkspaceDocument",
@@ -217,6 +242,11 @@
       "path": "/notifications/presence/{device_id}"
     },
     {
+      "operation_id": "deletePersonalReminder",
+      "method": "DELETE",
+      "path": "/organisations/{organisation_id}/workspace/reminders/{reminder_id}"
+    },
+    {
       "operation_id": "deletePushSubscription",
       "method": "DELETE",
       "path": "/push/subscriptions/{device_id}"
@@ -230,6 +260,11 @@
       "operation_id": "deleteWorkspaceCollectionRow",
       "method": "DELETE",
       "path": "/organisations/{organisation_id}/workspace/collections/{collection_id}/rows/{document_id}"
+    },
+    {
+      "operation_id": "deleteWorkspaceCustomEmoji",
+      "method": "DELETE",
+      "path": "/organisations/{organisation_id}/workspace/emojis/{emoji_id}"
     },
     {
       "operation_id": "deleteWorkspaceDocument",
@@ -362,6 +397,11 @@
       "path": "/organisations/{organisation_id}/memberships/{membership_id}"
     },
     {
+      "operation_id": "getMyWorkspacePreferences",
+      "method": "GET",
+      "path": "/organisations/{organisation_id}/workspace/preferences/me"
+    },
+    {
       "operation_id": "getNearbyProximity",
       "method": "GET",
       "path": "/proximity/nearby"
@@ -457,6 +497,11 @@
       "path": "/organisations/{organisation_id}/workspace/collections/{collection_id}/rows/{document_id}"
     },
     {
+      "operation_id": "getWorkspaceCustomEmojiBlob",
+      "method": "GET",
+      "path": "/organisations/{organisation_id}/workspace/emojis/{emoji_id}/blob"
+    },
+    {
       "operation_id": "getWorkspaceDeletion",
       "method": "GET",
       "path": "/organisations/{organisation_id}/workspace/privacy/deletions/{request_id}"
@@ -512,6 +557,11 @@
       "path": "/organisations/{organisation_id}/workspace/actions/initialise"
     },
     {
+      "operation_id": "installMarketplaceExtension",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/workspace/extensions/marketplace/{listing_id}/install"
+    },
+    {
       "operation_id": "instantClaimWorkspace",
       "method": "POST",
       "path": "/workspaces/instant-claim"
@@ -520,6 +570,11 @@
       "operation_id": "inviteToOrganisation",
       "method": "POST",
       "path": "/organisations/{organisation_id}/invitations"
+    },
+    {
+      "operation_id": "invokeChannelWidgetAction",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/workspace/channels/{channel_id}/widgets/{widget_id}/actions"
     },
     {
       "operation_id": "listAbuseReports",
@@ -582,6 +637,11 @@
       "path": "/legal-documents"
     },
     {
+      "operation_id": "listMarketplaceExtensions",
+      "method": "GET",
+      "path": "/organisations/{organisation_id}/workspace/extensions/marketplace"
+    },
+    {
       "operation_id": "listMemberships",
       "method": "GET",
       "path": "/organisations/{organisation_id}/memberships"
@@ -607,6 +667,11 @@
       "path": "/auth/passport/workspaces"
     },
     {
+      "operation_id": "listPersonalReminders",
+      "method": "GET",
+      "path": "/organisations/{organisation_id}/workspace/reminders"
+    },
+    {
       "operation_id": "listPlans",
       "method": "GET",
       "path": "/catalog/plans"
@@ -615,6 +680,11 @@
       "operation_id": "listPrices",
       "method": "GET",
       "path": "/catalog/prices"
+    },
+    {
+      "operation_id": "listScheduledMessages",
+      "method": "GET",
+      "path": "/organisations/{organisation_id}/workspace/scheduled-messages"
     },
     {
       "operation_id": "listSubscriptions",
@@ -640,6 +710,11 @@
       "operation_id": "listWorkspaceCollections",
       "method": "GET",
       "path": "/organisations/{organisation_id}/workspace/collections"
+    },
+    {
+      "operation_id": "listWorkspaceCustomEmojis",
+      "method": "GET",
+      "path": "/organisations/{organisation_id}/workspace/emojis"
     },
     {
       "operation_id": "listWorkspaceDocuments",
@@ -720,6 +795,11 @@
       "operation_id": "publishDeviceVerificationBundle",
       "method": "POST",
       "path": "/organisations/{organisation_id}/confidential/verification-bundles"
+    },
+    {
+      "operation_id": "publishMarketplaceExtension",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/workspace/extensions/marketplace"
     },
     {
       "operation_id": "putChannelAiPolicy",
@@ -940,6 +1020,21 @@
       "operation_id": "updateLiveCallCaptionSession",
       "method": "POST",
       "path": "/organisations/{organisation_id}/workspace/channels/{channel_id}/call-captions/session"
+    },
+    {
+      "operation_id": "updateMyWorkspacePreferences",
+      "method": "PATCH",
+      "path": "/organisations/{organisation_id}/workspace/preferences/me"
+    },
+    {
+      "operation_id": "updatePersonalReminder",
+      "method": "PATCH",
+      "path": "/organisations/{organisation_id}/workspace/reminders/{reminder_id}"
+    },
+    {
+      "operation_id": "updateScheduledMessage",
+      "method": "PATCH",
+      "path": "/organisations/{organisation_id}/workspace/scheduled-messages/{scheduled_message_id}"
     },
     {
       "operation_id": "updateWorkspaceCollection",

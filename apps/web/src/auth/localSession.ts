@@ -40,6 +40,7 @@ export const PUSH_COPY_CACHE = 'kodera-push-copy-v1'
 const cleanupListeners = new Set<() => void>()
 const espaceVaultCleanupListeners = new Set<() => void>()
 const docsCollabCleanupListeners = new Set<() => void>()
+const organisationCleanupListeners = new Set<(organisationId: string) => void>()
 
 /**
  * Registers an in-memory teardown hook (for example closing an open `y-indexeddb` handle) before
@@ -60,6 +61,30 @@ export function registerEspaceVaultCleanup(listener: () => void): () => void {
   espaceVaultCleanupListeners.add(listener)
   return () => {
     espaceVaultCleanupListeners.delete(listener)
+  }
+}
+
+/**
+ * Registers a per-organisation teardown hook invoked when leaving an organisation route so scoped
+ * `blob:` URLs are deterministically revoked without pulling Espace chunks into the entry bundle.
+ */
+export function registerOrganisationSwitchCleanup(
+  listener: (organisationId: string) => void
+): () => void {
+  organisationCleanupListeners.add(listener)
+  return () => {
+    organisationCleanupListeners.delete(listener)
+  }
+}
+
+export function notifyOrganisationCleanup(organisationId: string): void {
+  if (!organisationId) return
+  for (const listener of [...organisationCleanupListeners]) {
+    try {
+      listener(organisationId)
+    } catch {
+      // Never block route transitions on a cleanup listener error.
+    }
   }
 }
 

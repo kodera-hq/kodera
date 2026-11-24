@@ -44,6 +44,7 @@ from apps.notifications import services as notification_services
 from apps.outbox import services as outbox_services
 from apps.outbox.realm_enqueue import ACCESS_OFF, enqueue_realm_access
 from apps.support import services as support_services
+from apps.workspaces import services as workspace_services
 from config.upload_limits import UPLOAD_STREAM_DRAIN_SECONDS
 from core.db.ee_erasure import derive_server_ee_audit_erasure_key_hex
 from services.identity.access_tokens import AUDIENCE, VerifiedAccessToken
@@ -369,6 +370,8 @@ class OutboundDisarmSummary:
     bug_reports_disarmed: int = 0
     support_tickets_disarmed: int = 0
     payment_links_disarmed: int = 0
+    scheduled_messages_disarmed: int = 0
+    personal_reminders_disarmed: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -1570,9 +1573,11 @@ class DjangoRestoreRehearsalBackend:
         """Drain frozen snapshot `in_flight` push/outbox leases before replaying Art. 17 erasures."""
         now = database_now()
         push_drained = notification_services.drain_snapshot_in_flight_leases(now=now)
+        sched_drained = workspace_services.drain_snapshot_in_flight_leases(now=now)
         outbox_counts = outbox_services.drain_snapshot_in_flight_leases(now=now)
         return {
             "push_in_flight_drained": push_drained,
+            "scheduled_messages_in_flight_drained": sched_drained,
             **outbox_counts,
         }
 
@@ -1657,6 +1662,13 @@ class DjangoRestoreRehearsalBackend:
             > 0
         ):
             unresolved.append("extensions")
+        if (
+            workspace_services.count_residual_experience_rows_for_organisation(
+                organisation_id=organisation_id
+            )
+            > 0
+        ):
+            unresolved.append("workspace_experience")
         if media_services.count_attachments_for_organisation(organisation_id=organisation_id) > 0:
             unresolved.append("media_attachments")
         if e2ee_services.count_residual_e2ee_for_organisation(organisation_id=organisation_id) > 0:
@@ -1735,6 +1747,8 @@ class DjangoRestoreRehearsalBackend:
             unresolved.append("sealed_outbox_mail")
         if notification_services.count_residual_rows_for_user(user_id=user_id) > 0:
             unresolved.append("notifications")
+        if workspace_services.count_residual_experience_rows_for_user(user_id=user_id) > 0:
+            unresolved.append("workspace_experience")
         if (
             media_services.count_residual_user_attachment_pii(
                 user_id=user_id,
@@ -1861,6 +1875,7 @@ class DjangoRestoreRehearsalBackend:
                 )
                 try:
                     notification_services.purge_rows_for_user(user_id=uid)
+                    workspace_services.purge_experience_rows_for_user(user_id=uid)
                     # Scrub EE SCIM/SAML/audit tables BEFORE overwriting `identity_identity.email`
                     # so `lower(i.email)` joins still resolve!
                     self._scrub_ee_tables_for_user_in_account_context(cursor, uid, email_shas)
@@ -2260,6 +2275,11 @@ class DjangoRestoreRehearsalBackend:
             excluded_organisation_ids=cutoff_orgs,
         )
         billing_counts = billing_services.disarm_rehearsal_outbound(now=now)
+        ws_counts = workspace_services.disarm_rehearsal_outbound(
+            now=now,
+            excluded_organisation_ids=cutoff_orgs,
+            excluded_user_ids=cutoff_users,
+        )
         return OutboundDisarmSummary(
             installations_revoked=ext_counts["installations_revoked"],
             deliveries_obsoleted=ext_counts["deliveries_obsoleted"],
@@ -2275,6 +2295,8 @@ class DjangoRestoreRehearsalBackend:
             bug_reports_disarmed=support_counts["bug_reports_disarmed"],
             support_tickets_disarmed=support_counts["support_tickets_disarmed"],
             payment_links_disarmed=billing_counts["payment_links_disarmed"],
+            scheduled_messages_disarmed=ws_counts.get("scheduled_messages_disarmed", 0),
+            personal_reminders_disarmed=notif_counts.get("personal_reminders_disarmed", 0),
         )
 
     def collect_s3_reconciliation_state(

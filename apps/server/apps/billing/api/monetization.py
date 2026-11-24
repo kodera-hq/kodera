@@ -44,7 +44,9 @@ from . import permissions as op, views
 MAX_JSON_BODY = 16_384
 
 
-def _json_problem(status: int, kind: str, title: str, request_id: str, detail: str = "") -> HttpResponse:
+def _json_problem(
+    status: int, kind: str, title: str, request_id: str, detail: str = ""
+) -> HttpResponse:
     body: dict[str, object] = {
         "type": views.PROBLEM_BASE + kind,
         "title": title,
@@ -225,9 +227,7 @@ def workspace_monetization(request: HttpRequest, organisation_id: UUID) -> HttpR
     )
 
 
-def _read_overview(
-    request: HttpRequest, organisation_id: UUID, request_id: str
-) -> dict[str, Any]:
+def _read_overview(request: HttpRequest, organisation_id: UUID, request_id: str) -> dict[str, Any]:
     verified = _authenticate_tenant_request(
         request,
         organisation_id=organisation_id,
@@ -361,7 +361,9 @@ def dac7_report_export(request: HttpRequest, organisation_id: UUID) -> HttpRespo
     except TokenVerificationError:
         response = views._problem(401, request_id)
     except BillingCallerUnknownError:
-        response = problems.identity_unknown(request_id, op.EXPORT_WORKSPACE_DAC7_REPORT.operation_id)
+        response = problems.identity_unknown(
+            request_id, op.EXPORT_WORKSPACE_DAC7_REPORT.operation_id
+        )
     except BillingNotFoundError:
         response = views._problem(404, request_id)
     except BillingForbiddenError as refused:

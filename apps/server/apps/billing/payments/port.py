@@ -15,7 +15,7 @@ from uuid import UUID
 
 CONNECT_ACCOUNT_ID = re.compile(r"^acct_[A-Za-z0-9_]+\Z")
 ALLOWED_PAYMENT_METHODS = frozenset({"card", "sepa_debit"})
-ALLOWED_REFERENCE_KINDS = frozenset({"invoice", "vip_pass"})
+ALLOWED_REFERENCE_KINDS = frozenset({"invoice", "vip_pass", "extension_marketplace"})
 
 EVENT_KINDS = (
     "payment.processing",
@@ -41,15 +41,17 @@ class LinkRequest:
     payment_methods: tuple[str, ...] = ("card", "sepa_debit")
     reference_kind: str = "invoice"
     checkout_label: str | None = None
+    idempotency_key: str | None = None
 
     def __post_init__(self) -> None:
         if isinstance(self.amount_minor, bool) or self.amount_minor <= 0:
             raise ProviderRefusedError("link amount_minor must be a positive integer")
-        if (
-            not self.payment_methods
-            or any(m not in ALLOWED_PAYMENT_METHODS for m in self.payment_methods)
+        if not self.payment_methods or any(
+            m not in ALLOWED_PAYMENT_METHODS for m in self.payment_methods
         ):
-            raise ProviderRefusedError("payment_methods must be a non-empty subset of card/sepa_debit")
+            raise ProviderRefusedError(
+                "payment_methods must be a non-empty subset of card/sepa_debit"
+            )
         if self.reference_kind not in ALLOWED_REFERENCE_KINDS:
             raise ProviderRefusedError(f"unsupported reference_kind {self.reference_kind!r}")
         if self.connect_destination_account is None:

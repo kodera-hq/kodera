@@ -418,6 +418,48 @@ def has_privacy_cutoff(*, organisation_id: UUID, user_id: UUID | None = None) ->
         return bool(cursor.fetchone()[0])
 
 
+def privacy_cutoff_reason(*, organisation_id: UUID, user_id: UUID | None = None) -> str | None:
+    """Return the exact durable GDPR cutoff reason (`organisation_erasure_cutoff` or `account_erasure_cutoff`), or None."""
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT EXISTS(SELECT 1 FROM orgs_privacyerasure WHERE organisation_reference=%s), "
+            "EXISTS(SELECT 1 FROM orgs_accounterasure WHERE user_reference=%s)",
+            [organisation_id, user_id],
+        )
+        org_erased, account_erased = cursor.fetchone()
+    if org_erased:
+        return "organisation_erasure_cutoff"
+    if user_id is not None and account_erased:
+        return "account_erasure_cutoff"
+    return None
+
+
+def membership_delivery_state(
+    *, membership_id: UUID, organisation_id: UUID
+) -> tuple[UUID, str, str, datetime | None, datetime | None] | None:
+    """Read `(user_id, role, state, accepted_at, deleted_at)` for delivery-time revalidation."""
+    row = (
+        Membership.objects.filter(id=membership_id, organisation_id=organisation_id)
+        .values_list("user_id", "role", "state", "accepted_at", "deleted_at")
+        .first()
+    )
+    if row is None:
+        return None
+    return (row[0], row[1], row[2], row[3], row[4])
+
+
+def organisation_delivery_state(*, organisation_id: UUID) -> tuple[str, int] | None:
+    """Read `(state, authority_revision)` for delivery-time revalidation."""
+    row = (
+        Organisation.objects.filter(id=organisation_id, deleted_at__isnull=True)
+        .values_list("state", "authority_revision")
+        .first()
+    )
+    if row is None:
+        return None
+    return (row[0], int(row[1]))
+
+
 def organisation_is_default_community(*, organisation_id: UUID) -> bool:
     """Only the operator-bound default Community organisation owns the local server."""
     return Organisation.objects.filter(id=organisation_id, is_default_community=True).exists()

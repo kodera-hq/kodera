@@ -291,7 +291,9 @@ def test_http_endpoints_enforce_authentication_staff_lane_admin_role_and_validat
     assert posture_views.posture(staff_req, ORG_ID).status_code == 403
 
     # 4. Non-admin member (org_member / org_billing) -> 403 Forbidden on both GET and POST
-    monkeypatch.setattr("apps.workspaces.security_posture.transaction.atomic", lambda: nullcontext())
+    monkeypatch.setattr(
+        "apps.workspaces.security_posture.transaction.atomic", lambda: nullcontext()
+    )
     monkeypatch.setattr(
         "apps.workspaces.api.moderation.verify_configured_token",
         lambda raw, *, trusted: (token, "customer"),
@@ -326,7 +328,9 @@ def test_http_endpoints_enforce_authentication_staff_lane_admin_role_and_validat
         "authorize_posture_admin",
         lambda verified, organisation_id: (ws_stub, caller_stub),
     )
-    monkeypatch.setattr("apps.workspaces.security_posture.transaction.atomic", lambda: nullcontext())
+    monkeypatch.setattr(
+        "apps.workspaces.security_posture.transaction.atomic", lambda: nullcontext()
+    )
     monkeypatch.setattr(
         security_posture,
         "_collect_facts",
@@ -469,7 +473,9 @@ def test_remediate_fix_all_safe_lifts_zero_score_to_100_and_records_audit_event(
         identity_id=ACTOR_ID, membership_id=MEMBER_ID, user_id=USER_ID, role="org_owner"
     )
 
-    monkeypatch.setattr("apps.workspaces.security_posture.transaction.atomic", lambda: nullcontext())
+    monkeypatch.setattr(
+        "apps.workspaces.security_posture.transaction.atomic", lambda: nullcontext()
+    )
     monkeypatch.setattr(
         security_posture,
         "authorize_posture_admin",

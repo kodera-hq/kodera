@@ -278,7 +278,7 @@ test('createExtensionClient enforces payload bounds, SSRF externalUrl checks, an
   const firstHeaders = /** @type {Record<string, string>} */ (calls[0].init?.headers);
   assert.equal(firstHeaders.authorization, 'Bearer kdr_tok_1234567890abcdef');
   assert.equal(firstHeaders['idempotency-key'], 'rel:v1.2.0');
-  assert.equal(firstHeaders['user-agent'], 'kodera-extension-sdk/0.1.0');
+  assert.equal(firstHeaders['user-agent'], 'kodera-extension-sdk/0.2.0');
   assert.ok(calls[0].init?.signal instanceof AbortSignal);
 
   // Oversized text rejected

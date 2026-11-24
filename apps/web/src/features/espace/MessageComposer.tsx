@@ -3,7 +3,16 @@
 // (`draftChannel.ts`), so a keystroke draws the field it was typed in and nothing else: not the
 // message log, not the sidebar, not the view that holds them.
 
-import { memo, useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import {
+  lazy,
+  memo,
+  Suspense,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react'
 import type { FormEvent, KeyboardEvent, RefObject } from 'react'
 import type { TFunction } from 'i18next'
 import { Trans, useTranslation } from 'react-i18next'
@@ -41,6 +50,18 @@ import { hasMentionBoundaryAfter, mentionedIn, mentionsRoom, mentionTargetsIn } 
 import type { MentionCandidate } from './mentions'
 import { newestEditable } from './shortcuts'
 import { useStoreSlice } from './useStoreSlice'
+
+const LazyScheduledMessagesBanner = lazy(() =>
+  import('./SendLaterPopover').then((module) => ({
+    default: module.ScheduledMessagesBanner,
+  }))
+)
+
+const LazySendLaterPopover = lazy(() =>
+  import('./SendLaterPopover').then((module) => ({
+    default: module.SendLaterPopover,
+  }))
+)
 
 const NO_TYPING: readonly MemberView[] = []
 const NO_FILES: readonly QueuedFile[] = []
@@ -289,9 +310,11 @@ function MessageComposerView({
   const { t, i18n } = useTranslation()
   const locale = i18n.resolvedLanguage === 'en' ? 'en' : 'fr'
   const demoCopy = demoMessages[locale]
+  const organisationId = useMessagingOrganisation()
   const [pollError, setPollError] = useState<string | null>(null)
   const roomBoundary = store.getRoomBoundary?.(roomId)
   const plaintextPermitted = roomBoundary === undefined || permitsPlaintext(roomBoundary)
+  const resolvedScope = resolveAttachmentScope(roomId, store.getSnapshot().channels)
   const composerBox = useRef<HTMLDivElement>(null)
   const text = useDraftSlice(draft, textOf)
   const replyTo = useDraftSlice(draft, replyOf)
@@ -486,6 +509,16 @@ function MessageComposerView({
             {demoCopy.composer}
           </p>
         ) : null}
+        {editingEventId === null && organisationId !== null && plaintextPermitted ? (
+          <Suspense fallback={null}>
+            <LazyScheduledMessagesBanner
+              organisationId={organisationId}
+              channelId={resolvedScope.channelId}
+              roomId={roomId}
+              plaintextPermitted={plaintextPermitted}
+            />
+          </Suspense>
+        ) : null}
         <div
           ref={composerBox}
           className={cx(
@@ -579,6 +612,25 @@ function MessageComposerView({
                   className="ml-auto"
                 />
               </>
+            }
+            afterTrailing={
+              editingEventId === null && organisationId !== null && plaintextPermitted ? (
+                <Suspense fallback={null}>
+                  <LazySendLaterPopover
+                    organisationId={organisationId}
+                    channelId={resolvedScope.channelId}
+                    roomId={roomId}
+                    plaintextPermitted={plaintextPermitted}
+                    disabled={navigationUnsettled || attachmentStaged}
+                    draftText={transformOutsideCode(composerText.trim(), replaceShortcodes)}
+                    anchorRef={composerBox}
+                    onScheduled={() => {
+                      store.setTyping?.(roomId, false)
+                      draft.update({ replyTo: null, text: '' })
+                    }}
+                  />
+                </Suspense>
+              ) : null
             }
             {...(narrow
               ? {}

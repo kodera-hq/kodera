@@ -352,6 +352,7 @@ export function operations(
       const content = asObject(response['content'])
       const json = content ? asObject(content['application/json']) : undefined
       const plain = content ? asObject(content['text/plain']) : undefined
+      const webp = content ? asObject(content['image/webp']) : undefined
       const schema = json ? asObject(json['schema']) : undefined
       if (json && !schema) {
         throw new ContractError(`${operationId}: application/json response carries no schema`)
@@ -359,6 +360,7 @@ export function operations(
 
       const headers: Record<string, string> = {}
       if (plain && !json) headers['Content-Type'] = 'text/plain'
+      if (webp && !json) headers['Content-Type'] = 'image/webp'
       for (const [name, valueRaw] of Object.entries(asObject(response['headers']) ?? {})) {
         const header = asObject(valueRaw)
         const resolved = header?.['$ref'] ? deref(spec, header['$ref'] as string) : header
@@ -394,7 +396,9 @@ export function operations(
         ? exampleOf(spec, schema, operationId, undefined, choices)
         : plain
           ? plainExampleOf(spec, plain, operationId, choices)
-          : null
+          : webp
+            ? plainExampleOf(spec, webp, operationId, choices)
+            : null
 
       out.push({
         operationId,

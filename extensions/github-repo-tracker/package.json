@@ -6,7 +6,7 @@
   "license": "Apache-2.0",
   "description": "Reference implementation: tracking GitHub repository issues, pull requests, workflow runs, releases, and security advisories in Espace channels.",
   "dependencies": {
-    "@kodera/extension-sdk": "0.1.0"
+    "@kodera/extension-sdk": "0.2.0"
   },
   "scripts": {
     "test": "node --test test/index.test.mjs"

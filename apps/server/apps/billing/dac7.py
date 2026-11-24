@@ -369,9 +369,7 @@ def render_dac7_xml(report: Dac7AnnualReport) -> bytes:
     ET.SubElement(operator, tag("IN"), {"INType": "SIREN"}).text = _sanitize_xml10_text(
         report.platform_operator_siren
     )
-    ET.SubElement(operator, tag("Name")).text = _sanitize_xml10_text(
-        report.platform_operator_name
-    )
+    ET.SubElement(operator, tag("Name")).text = _sanitize_xml10_text(report.platform_operator_name)
 
     for seller in report.sellers:
         if seller.reportable:
@@ -524,7 +522,9 @@ def build_dac7_annual_report_from_db(
     for row in ledger_rows:
         if row.entry_kind == "sale":
             sale_time_by_ent[row.entitlement_id] = row.occurred_at
-        elif row.entitlement.activated_at is not None and row.entitlement_id not in sale_time_by_ent:
+        elif (
+            row.entitlement.activated_at is not None and row.entitlement_id not in sale_time_by_ent
+        ):
             sale_time_by_ent[row.entitlement_id] = row.entitlement.activated_at
 
     entries = [

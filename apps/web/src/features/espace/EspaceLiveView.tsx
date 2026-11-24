@@ -40,10 +40,15 @@ import { permitsPlaintext, type RoomBoundary } from '../confidential/room-bounda
 import type { ChannelDoc } from '../docs/ChannelDocsEditor'
 import { MessagingOrganisation } from '../messaging/organisationContext'
 import type { Notification } from '../notifications/notificationFeed'
-import { KoderaPassportModal } from '../profile/KoderaPassportModal'
 import { isPlaceholderName } from '../profile/passport'
 import { PassportContext } from '../profile/passportContext'
 import type { MemberProfile } from '../profile/UserProfilePopover'
+
+const LazyKoderaPassportModal = lazy(() =>
+  import('../profile/KoderaPassportModal').then((module) => ({
+    default: module.KoderaPassportModal,
+  }))
+)
 import { soundEngine } from '../sounds/SoundEngine'
 import { withdrawn, type ChannelSearchEntry } from '../workspace/ChannelSearch'
 import { OrganisationHeader } from '../workspace/OrganisationHeader'
@@ -1654,20 +1659,22 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
   return (
     <PassportContext.Provider value={passportServices}>
       {passportOffered ? (
-        <KoderaPassportModal
-          open
-          userId={viewerId}
-          initialName={
-            isPlaceholderName(ownMatrixProfile?.displayName, viewerId)
-              ? ''
-              : cleanText(ownMatrixProfile?.displayName, 80)
-          }
-          initialPassport={ownPassport}
-          avatarSrc={ownAvatarSrc}
-          roleLabel={profileCopy[profileRoleIn(activeStore, activeRoomId, viewerId)]}
-          onSave={savePassport}
-          onDismiss={dismissPassport}
-        />
+        <Suspense fallback={null}>
+          <LazyKoderaPassportModal
+            open
+            userId={viewerId}
+            initialName={
+              isPlaceholderName(ownMatrixProfile?.displayName, viewerId)
+                ? ''
+                : cleanText(ownMatrixProfile?.displayName, 80)
+            }
+            initialPassport={ownPassport}
+            avatarSrc={ownAvatarSrc}
+            roleLabel={profileCopy[profileRoleIn(activeStore, activeRoomId, viewerId)]}
+            onSave={savePassport}
+            onDismiss={dismissPassport}
+          />
+        </Suspense>
       ) : null}
       <div
         className="flex min-h-0 min-w-0 flex-1 flex-col"

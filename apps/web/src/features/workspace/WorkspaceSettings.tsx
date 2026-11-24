@@ -26,6 +26,7 @@ import { ExtensionsCatalogPanel } from '../extensions/ExtensionsCatalogPanel'
 import { useLocalProfile, type LocalProfile } from '../profile/localProfile'
 import { AvatarRefused, AVATAR_TYPES, squareAvatarPng } from '../profile/avatarImage'
 import { HostingOfferPanel } from './HostingOfferPanel'
+import { KoderaLabsPanel } from './KoderaLabsPanel'
 import { ModerationPanel } from './moderation/ModerationPanel'
 import { WorkspacePrivacyPanel } from './WorkspacePrivacyPanel'
 import { WorkspaceQuotasPanel } from './WorkspaceQuotasPanel'
@@ -44,6 +45,7 @@ import { BackIcon } from './admin/AdminIcons'
 import { AuditLogPanel } from './admin/AuditLogPanel'
 import { ChannelOverridesPanel } from './admin/ChannelOverridesPanel'
 import { CommunityPanel } from './admin/CommunityPanel'
+import { CustomEmojiPanel } from './admin/CustomEmojiPanel'
 import { InvitesPanel } from './admin/InvitesPanel'
 import { NotificationsSection, SecuritySection, ShortcutsSection } from './admin/PersonalPanels'
 import {
@@ -652,13 +654,18 @@ export default function WorkspaceSettings({
         )
       case 'shortcuts':
         return <ShortcutsSection />
+      case 'labs':
+        return <KoderaLabsPanel organisationId={organisationId} />
       case 'overview':
         return (
-          <WorkspaceProfilePanel
-            organisationId={organisationId}
-            organisationName={organisationName}
-            canEdit={canManage}
-          />
+          <>
+            <WorkspaceProfilePanel
+              organisationId={organisationId}
+              organisationName={organisationName}
+              canEdit={canManage}
+            />
+            <CustomEmojiPanel organisationId={organisationId} canEdit={canManage} />
+          </>
         )
       case 'members':
         return (

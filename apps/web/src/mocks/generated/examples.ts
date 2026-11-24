@@ -7673,6 +7673,416 @@ export const EXAMPLES = {
     idempotent: true,
     requiresIfMatch: false,
   },
+  "listMarketplaceExtensions": {
+    operationId: "listMarketplaceExtensions",
+    method: "get",
+    path: "/organisations/{organisation_id}/workspace/extensions/marketplace",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "billingEnabled": true,
+      "listings": []
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "publishMarketplaceExtension": {
+    operationId: "publishMarketplaceExtension",
+    method: "post",
+    path: "/organisations/{organisation_id}/workspace/extensions/marketplace",
+    status: 201,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "id": "00000000-0000-7000-8000-000000000301",
+      "workspaceId": "00000000-0000-7000-8000-000000000001",
+      "slug": "release-assistant",
+      "title": "Release Assistant",
+      "summary": "Interactive deployment status and release approvals.",
+      "pricingMode": "free",
+      "priceExclVatMinor": 0,
+      "currency": "EUR",
+      "manifest": {
+        "schemaVersion": "kodera.extension.v1",
+        "slug": "release-assistant",
+        "name": "Release Assistant",
+        "version": "0.1.0",
+        "description": "Interactive deployment status and release approvals.",
+        "scopes": [
+          "commands:register",
+          "widgets:write"
+        ],
+        "events": [
+          "command.invoked",
+          "widget.action"
+        ],
+        "commands": [],
+        "widgets": [],
+        "endpoint": "https://extensions.example.eu/kodera/webhook"
+      },
+      "publishedAt": "2026-06-08T10:00:00Z",
+      "entitlementState": "active",
+      "entitlementId": "00000000-0000-7000-8000-000000000302",
+      "installed": true,
+      "installationId": "00000000-0000-7000-8000-000000000303"
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "checkoutMarketplaceExtension": {
+    operationId: "checkoutMarketplaceExtension",
+    method: "post",
+    path: "/organisations/{organisation_id}/workspace/extensions/marketplace/{listing_id}/checkout",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "entitlementId": "00000000-0000-7000-8000-000000000302",
+      "listingId": "00000000-0000-7000-8000-000000000301",
+      "pricingMode": "free",
+      "state": "active",
+      "checkoutRequired": false,
+      "checkoutSessionId": null,
+      "checkoutUrl": null,
+      "grossExclVatMinor": 0,
+      "vatAmountMinor": 0,
+      "totalInclVatMinor": 0,
+      "applicationFeeAmountMinor": 0,
+      "currency": "EUR",
+      "replayed": false
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "installMarketplaceExtension": {
+    operationId: "installMarketplaceExtension",
+    method: "post",
+    path: "/organisations/{organisation_id}/workspace/extensions/marketplace/{listing_id}/install",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "installationId": "00000000-0000-7000-8000-000000000303",
+      "entitlementId": "00000000-0000-7000-8000-000000000302",
+      "listingId": "00000000-0000-7000-8000-000000000301",
+      "slug": "release-assistant",
+      "endpoint": "https://extensions.example.eu/kodera/webhook",
+      "events": [
+        "command.invoked",
+        "widget.action"
+      ],
+      "keyGeneration": "1",
+      "replayed": false
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "invokeChannelWidgetAction": {
+    operationId: "invokeChannelWidgetAction",
+    method: "post",
+    path: "/organisations/{organisation_id}/workspace/channels/{channel_id}/widgets/{widget_id}/actions",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "receiptId": "00000000-0000-7000-8000-000000000304",
+      "installationId": "00000000-0000-7000-8000-000000000303",
+      "channelId": "00000000-0000-7000-8000-000000000002",
+      "widgetId": "release-gate",
+      "actionId": "deploy_approve",
+      "state": "delivered",
+      "responseStatus": 200,
+      "card": null,
+      "replayed": false
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "listWorkspaceCustomEmojis": {
+    operationId: "listWorkspaceCustomEmojis",
+    method: "get",
+    path: "/organisations/{organisation_id}/workspace/emojis",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "items": []
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "createWorkspaceCustomEmoji": {
+    operationId: "createWorkspaceCustomEmoji",
+    method: "post",
+    path: "/organisations/{organisation_id}/workspace/emojis",
+    status: 201,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "id": "00000000-0000-7000-8000-000000000401",
+      "shortcode": "ship_it",
+      "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "width": 64,
+      "height": 64,
+      "animated": false,
+      "creatorMembershipId": "00000000-0000-7000-8000-000000000010",
+      "createdAt": "2026-06-08T10:00:00Z",
+      "blobPath": "/api/v1/organisations/00000000-0000-7000-8000-000000000001/workspace/emojis/00000000-0000-7000-8000-000000000401/blob"
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "deleteWorkspaceCustomEmoji": {
+    operationId: "deleteWorkspaceCustomEmoji",
+    method: "delete",
+    path: "/organisations/{organisation_id}/workspace/emojis/{emoji_id}",
+    status: 204,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: null,
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "getWorkspaceCustomEmojiBlob": {
+    operationId: "getWorkspaceCustomEmojiBlob",
+    method: "get",
+    path: "/organisations/{organisation_id}/workspace/emojis/{emoji_id}/blob",
+    status: 200,
+    headers: {
+      "Content-Type": "image/webp",
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562",
+      "ETag": "\"000000000000000000000000000000000000000000000000000000000000e7a9\""
+    },
+    body: "UklGRiQAAABXRUJQVlA4IBgAAAAwAQCdASoBAAEAAwA0JaQAA3AA/vuUAAA=",
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "listScheduledMessages": {
+    operationId: "listScheduledMessages",
+    method: "get",
+    path: "/organisations/{organisation_id}/workspace/scheduled-messages",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "items": []
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "createScheduledMessage": {
+    operationId: "createScheduledMessage",
+    method: "post",
+    path: "/organisations/{organisation_id}/workspace/scheduled-messages",
+    status: 201,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562",
+      "ETag": "\"000000000000000000000000000000000000000000000000000000000000e7a9\""
+    },
+    body: {
+      "id": "00000000-0000-7000-8000-000000000410",
+      "channelId": "00000000-0000-7000-8000-000000000002",
+      "roomId": "!general:acme.kodera.io",
+      "body": "Bonjour a toute l equipe !",
+      "mentions": [],
+      "threadRootEventId": null,
+      "deliverAt": "2026-06-09T09:00:00Z",
+      "matrixTxnId": "kodera-sched-0123456789abcdef0123456789abcdef",
+      "matrixEventId": null,
+      "state": "pending",
+      "failureReason": null,
+      "createdAt": "2026-06-08T10:00:00Z",
+      "updatedAt": "2026-06-08T10:00:00Z"
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "updateScheduledMessage": {
+    operationId: "updateScheduledMessage",
+    method: "patch",
+    path: "/organisations/{organisation_id}/workspace/scheduled-messages/{scheduled_message_id}",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562",
+      "ETag": "\"000000000000000000000000000000000000000000000000000000000000e7a9\""
+    },
+    body: {
+      "id": "00000000-0000-7000-8000-000000000410",
+      "channelId": "00000000-0000-7000-8000-000000000002",
+      "roomId": "!general:acme.kodera.io",
+      "body": "Bonjour a toute l equipe !",
+      "mentions": [],
+      "threadRootEventId": null,
+      "deliverAt": "2026-06-09T09:00:00Z",
+      "matrixTxnId": "kodera-sched-0123456789abcdef0123456789abcdef",
+      "matrixEventId": null,
+      "state": "pending",
+      "failureReason": null,
+      "createdAt": "2026-06-08T10:00:00Z",
+      "updatedAt": "2026-06-08T10:00:00Z"
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: true,
+  },
+  "cancelScheduledMessage": {
+    operationId: "cancelScheduledMessage",
+    method: "delete",
+    path: "/organisations/{organisation_id}/workspace/scheduled-messages/{scheduled_message_id}",
+    status: 204,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: null,
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "listPersonalReminders": {
+    operationId: "listPersonalReminders",
+    method: "get",
+    path: "/organisations/{organisation_id}/workspace/reminders",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "items": []
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "createPersonalReminder": {
+    operationId: "createPersonalReminder",
+    method: "post",
+    path: "/organisations/{organisation_id}/workspace/reminders",
+    status: 201,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562",
+      "ETag": "\"000000000000000000000000000000000000000000000000000000000000e7a9\""
+    },
+    body: {
+      "id": "00000000-0000-7000-8000-000000000420",
+      "channelId": "00000000-0000-7000-8000-000000000002",
+      "roomId": "!general:acme.kodera.io",
+      "targetEventId": "$event_demo_001",
+      "note": "Relire le compte-rendu",
+      "remindAt": "2026-06-09T09:00:00Z",
+      "state": "pending",
+      "notificationId": null,
+      "createdAt": "2026-06-08T10:00:00Z",
+      "updatedAt": "2026-06-08T10:00:00Z"
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "updatePersonalReminder": {
+    operationId: "updatePersonalReminder",
+    method: "patch",
+    path: "/organisations/{organisation_id}/workspace/reminders/{reminder_id}",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562",
+      "ETag": "\"000000000000000000000000000000000000000000000000000000000000e7a9\""
+    },
+    body: {
+      "id": "00000000-0000-7000-8000-000000000420",
+      "channelId": "00000000-0000-7000-8000-000000000002",
+      "roomId": "!general:acme.kodera.io",
+      "targetEventId": "$event_demo_001",
+      "note": "Relire le compte-rendu",
+      "remindAt": "2026-06-09T09:00:00Z",
+      "state": "pending",
+      "notificationId": null,
+      "createdAt": "2026-06-08T10:00:00Z",
+      "updatedAt": "2026-06-08T10:00:00Z"
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: true,
+  },
+  "deletePersonalReminder": {
+    operationId: "deletePersonalReminder",
+    method: "delete",
+    path: "/organisations/{organisation_id}/workspace/reminders/{reminder_id}",
+    status: 204,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: null,
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "getMyWorkspacePreferences": {
+    operationId: "getMyWorkspacePreferences",
+    method: "get",
+    path: "/organisations/{organisation_id}/workspace/preferences/me",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562",
+      "ETag": "\"000000000000000000000000000000000000000000000000000000000000e7a9\""
+    },
+    body: {
+      "labsFlags": {
+        "send_later": true,
+        "custom_emojis": true,
+        "personal_reminders": true,
+        "waiting_room_ambience": true
+      },
+      "waitingRoomAmbience": false,
+      "updatedAt": null
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "updateMyWorkspacePreferences": {
+    operationId: "updateMyWorkspacePreferences",
+    method: "patch",
+    path: "/organisations/{organisation_id}/workspace/preferences/me",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562",
+      "ETag": "\"000000000000000000000000000000000000000000000000000000000000e7a9\""
+    },
+    body: {
+      "labsFlags": {
+        "send_later": true,
+        "custom_emojis": true,
+        "personal_reminders": true,
+        "waiting_room_ambience": true
+      },
+      "waitingRoomAmbience": false,
+      "updatedAt": null
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: true,
+  },
 } satisfies Record<string, OperationExample>
 
 export type OperationId = keyof typeof EXAMPLES

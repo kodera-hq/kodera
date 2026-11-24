@@ -38,12 +38,21 @@ class FakeProvider:
             raise ValueError("the fake provider's secret is at least 16 bytes")
         self._secret = secret
         self.links: list[LinkRequest] = []
+        self._links_by_idempotency: dict[str, ProviderLink] = {}
         self.cancelled: list[str] = []
 
     def create_link(self, request: LinkRequest) -> ProviderLink:
+        if (
+            request.idempotency_key is not None
+            and request.idempotency_key in self._links_by_idempotency
+        ):
+            return self._links_by_idempotency[request.idempotency_key]
         self.links.append(request)
         reference = f"fake_link_{uuid4().hex}"
-        return ProviderLink(provider_ref=reference, url=f"https://pay.fake.invalid/{reference}")
+        issued = ProviderLink(provider_ref=reference, url=f"https://pay.fake.invalid/{reference}")
+        if request.idempotency_key is not None:
+            self._links_by_idempotency[request.idempotency_key] = issued
+        return issued
 
     def cancel_link(self, provider_ref: str) -> None:
         self.cancelled.append(provider_ref)

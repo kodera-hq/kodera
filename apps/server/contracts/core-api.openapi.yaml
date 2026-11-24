@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Kodera Core API
-  version: 0.58.0
+  version: 0.59.0
   summary: Control plane of kodera.io, consumed by kodera-web and by staff operators.
   description: |
     The Core API is the only backend of `kodera-web` (console ADR-0003) and the system of
@@ -12942,6 +12942,998 @@ paths:
           $ref: '#/components/responses/Conflict'
         '422':
           $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/WorkspaceBusy'
+
+  /organisations/{organisation_id}/workspace/extensions/marketplace:
+    get:
+      operationId: listMarketplaceExtensions
+      summary: List published workspace extension marketplace listings and caller entitlements
+      description: 'Lists active marketplace extension listings in the caller''s workspace along with billing status and current workspace entitlement/installation state.'
+      tags:
+      - Workspace
+      x-kodera-scope: extension_marketplace:read
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      responses:
+        '200':
+          description: Published marketplace extension listings for the workspace.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExtensionMarketplaceCatalog'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/WorkspaceBusy'
+    post:
+      operationId: publishMarketplaceExtension
+      summary: Publish an extension listing with validated manifest and optional Connect pricing
+      description: 'Publishes a free or Stripe Connect paid extension listing in the workspace after validating the extension manifest, scopes, events, and optional kodera.widget.v1 templates.'
+      tags:
+      - Workspace
+      x-kodera-scope: extension_marketplace:create
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExtensionMarketplacePublishRequest'
+      responses:
+        '201':
+          description: Marketplace extension listing published.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExtensionMarketplaceListing'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/WorkspaceBusy'
+
+  /organisations/{organisation_id}/workspace/extensions/marketplace/{listing_id}/checkout:
+    post:
+      operationId: checkoutMarketplaceExtension
+      summary: Grant a free marketplace entitlement or initiate web-only Stripe Connect checkout
+      description: 'Activates a free extension entitlement immediately or initiates a web-only Stripe Connect checkout session (85/15 split, B2C L221-28 withdrawal waiver) outside any database transaction.'
+      tags:
+      - Workspace
+      x-kodera-scope: extension_marketplace:act
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - name: listing_id
+        in: path
+        required: true
+        description: Identifier of the published marketplace extension listing.
+        schema:
+          type: string
+          format: uuid
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExtensionMarketplaceCheckoutRequest'
+      responses:
+        '201':
+          description: Marketplace entitlement granted or checkout session created.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExtensionMarketplaceCheckoutResult'
+        '200':
+          description: Idempotently replayed marketplace entitlement or checkout session.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExtensionMarketplaceCheckoutResult'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          $ref: '#/components/responses/UpstreamUnavailable'
+        '503':
+          $ref: '#/components/responses/WorkspaceBusy'
+
+  /organisations/{organisation_id}/workspace/extensions/marketplace/{listing_id}/install:
+    post:
+      operationId: installMarketplaceExtension
+      summary: Install an entitled marketplace extension into the workspace
+      description: 'Binds an active marketplace entitlement to a scoped workspace extension installation with an AEAD-sealed HMAC signing secret.'
+      tags:
+      - Workspace
+      x-kodera-scope: extension_marketplace:act
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - name: listing_id
+        in: path
+        required: true
+        description: Identifier of the published marketplace extension listing.
+        schema:
+          type: string
+          format: uuid
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExtensionMarketplaceInstallRequest'
+      responses:
+        '201':
+          description: Marketplace extension installed in the workspace.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExtensionMarketplaceInstallResult'
+        '200':
+          description: Idempotently replayed marketplace installation binding.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExtensionMarketplaceInstallResult'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/WorkspaceBusy'
+
+  /organisations/{organisation_id}/workspace/channels/{channel_id}/widgets/{widget_id}/actions:
+    post:
+      operationId: invokeChannelWidgetAction
+      summary: Dispatch a signed sandboxed widget action on a non-confidential channel
+      description: 'Verifies channel post authority and non-confidentiality, dispatches a pinned-IP SSRF-guarded HMAC-signed widget.action event outside DB locks, and validates any returned kodera.widget.v1 card.'
+      tags:
+      - Workspace
+      x-kodera-scope: extension_widget:act
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - name: channel_id
+        in: path
+        required: true
+        description: Identifier of the non-confidential text channel.
+        schema:
+          type: string
+          format: uuid
+      - name: widget_id
+        in: path
+        required: true
+        description: Declarative widget identifier within the extension manifest.
+        schema:
+          type: string
+          minLength: 2
+          maxLength: 63
+          pattern: '^[a-z0-9][a-z0-9-]{0,61}[a-z0-9](?![\s\S])'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChannelWidgetActionRequest'
+      responses:
+        '200':
+          description: Widget action receipt and optional updated declarative widget card.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChannelWidgetActionResult'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          $ref: '#/components/responses/UpstreamUnavailable'
+        '503':
+          $ref: '#/components/responses/WorkspaceBusy'
+
+  /organisations/{organisation_id}/workspace/emojis:
+    get:
+      operationId: listWorkspaceCustomEmojis
+      summary: List active sanitized custom WebP emojis in the workspace
+      description: 'Returns active workspace custom emojis ordered by shortcode.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_emoji:read
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      responses:
+        '200':
+          description: Active custom emojis in the workspace.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceCustomEmojiList'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/WorkspaceBusy'
+    post:
+      operationId: createWorkspaceCustomEmoji
+      summary: Upload and sanitize a workspace custom WebP emoji
+      description: 'Parses RIFF/WEBP bytes, strips EXIF/XMP/ICCP metadata chunks and VP8X metadata flags, enforces 1..128px dimensions and <= 256 KiB size, refuses reserved kodera_* shortcodes, and stores clean WebP bytes.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_emoji:create
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkspaceCustomEmojiCreateRequest'
+      responses:
+        '201':
+          description: Sanitized workspace custom emoji created.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceCustomEmoji'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/WorkspaceBusy'
+
+  /organisations/{organisation_id}/workspace/emojis/{emoji_id}:
+    delete:
+      operationId: deleteWorkspaceCustomEmoji
+      summary: Soft-revoke a workspace custom emoji
+      description: 'Revokes a workspace custom emoji when called by an organisation owner, administrator, or member holding manage_emojis.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_emoji:delete
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - name: emoji_id
+        in: path
+        required: true
+        description: Identifier of the workspace custom emoji.
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '204':
+          description: Custom emoji revoked.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/WorkspaceBusy'
+
+  /organisations/{organisation_id}/workspace/emojis/{emoji_id}/blob:
+    get:
+      operationId: getWorkspaceCustomEmojiBlob
+      summary: Read sanitized custom emoji WebP bytes
+      description: 'Streams sanitized image/webp bytes with X-Content-Type-Options: nosniff and Content-Security-Policy: default-src ''none''.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_emoji:read
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - name: emoji_id
+        in: path
+        required: true
+        description: Identifier of the workspace custom emoji.
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Sanitized custom emoji WebP binary payload.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            image/webp:
+              schema:
+                type: string
+                format: binary
+              example: UklGRiQAAABXRUJQVlA4IBgAAAAwAQCdASoBAAEAAwA0JaQAA3AA/vuUAAA=
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/WorkspaceBusy'
+
+  /organisations/{organisation_id}/workspace/scheduled-messages:
+    get:
+      operationId: listScheduledMessages
+      summary: List the caller's scheduled Send Later messages
+      description: 'Lists pending and in-flight scheduled messages authored by the authenticated member (or all states when include_terminal=true).'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_experience:read
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - name: channel_id
+        in: query
+        required: false
+        description: Optional channel filter.
+        schema:
+          type: string
+          format: uuid
+      - name: include_terminal
+        in: query
+        required: false
+        description: Include delivered, cancelled, refused, and obsolete entries when set to true.
+        schema:
+          type: string
+          enum:
+          - 'true'
+          - 'false'
+      responses:
+        '200':
+          description: Scheduled messages authored by the caller.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScheduledMessageList'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/WorkspaceBusy'
+    post:
+      operationId: createScheduledMessage
+      summary: Schedule a message for later delivery on a non-confidential room
+      description: 'Enqueues a Send Later message for future delivery after verifying channel post permission and refusing designated confidential or E2EE-backed channels.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_experience:create
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScheduledMessageCreateRequest'
+      responses:
+        '201':
+          description: Scheduled message queued.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScheduledMessage'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/WorkspaceBusy'
+
+  /organisations/{organisation_id}/workspace/scheduled-messages/{scheduled_message_id}:
+    patch:
+      operationId: updateScheduledMessage
+      summary: Edit or reschedule a pending Send Later message
+      description: 'Updates body, mentions, or delivery timestamp on a pending scheduled message authored by the caller when If-Match is supplied.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_experience:update
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - name: scheduled_message_id
+        in: path
+        required: true
+        description: Identifier of the scheduled message.
+        schema:
+          type: string
+          format: uuid
+      - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScheduledMessagePatchRequest'
+      responses:
+        '200':
+          description: Scheduled message updated.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScheduledMessage'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/WorkspaceBusy'
+    delete:
+      operationId: cancelScheduledMessage
+      summary: Cancel a pending scheduled message
+      description: 'Transitions a pending scheduled message authored by the caller to cancelled.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_experience:delete
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - name: scheduled_message_id
+        in: path
+        required: true
+        description: Identifier of the scheduled message.
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '204':
+          description: Scheduled message cancelled.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/WorkspaceBusy'
+
+  /organisations/{organisation_id}/workspace/reminders:
+    get:
+      operationId: listPersonalReminders
+      summary: List personal message reminders for the caller
+      description: 'Lists active and fired personal reminders belonging to the authenticated member (plus completed entries when include_completed=true).'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_experience:read
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - name: include_completed
+        in: query
+        required: false
+        description: Include completed reminders when set to true.
+        schema:
+          type: string
+          enum:
+          - 'true'
+          - 'false'
+      responses:
+        '200':
+          description: Personal reminders belonging to the caller.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PersonalReminderList'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/WorkspaceBusy'
+    post:
+      operationId: createPersonalReminder
+      summary: Create a personal reminder on a non-confidential message
+      description: 'Creates a personal message reminder after verifying channel visibility and refusing designated confidential or E2EE-backed channels.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_experience:create
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PersonalReminderCreateRequest'
+      responses:
+        '201':
+          description: Personal reminder created.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PersonalReminder'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/WorkspaceBusy'
+
+  /organisations/{organisation_id}/workspace/reminders/{reminder_id}:
+    patch:
+      operationId: updatePersonalReminder
+      summary: Snooze, complete, or update a personal reminder
+      description: 'Updates note, remindAt, or state on a personal reminder belonging to the caller when If-Match is supplied.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_experience:update
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - name: reminder_id
+        in: path
+        required: true
+        description: Identifier of the personal reminder.
+        schema:
+          type: string
+          format: uuid
+      - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PersonalReminderPatchRequest'
+      responses:
+        '200':
+          description: Personal reminder updated.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PersonalReminder'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/WorkspaceBusy'
+    delete:
+      operationId: deletePersonalReminder
+      summary: Cancel a personal reminder
+      description: 'Cancels a personal reminder belonging to the caller.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_experience:delete
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - name: reminder_id
+        in: path
+        required: true
+        description: Identifier of the personal reminder.
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '204':
+          description: Personal reminder cancelled.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/WorkspaceBusy'
+
+  /organisations/{organisation_id}/workspace/preferences/me:
+    get:
+      operationId: getMyWorkspacePreferences
+      summary: Read the caller's Kodera Labs flags and waiting-room ambience preference
+      description: 'Returns per-member Kodera Labs toggles and waiting-room ambient audio preference for the workspace.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_experience:read
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      responses:
+        '200':
+          description: Caller workspace preferences.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MemberWorkspacePreferences'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/WorkspaceBusy'
+    patch:
+      operationId: updateMyWorkspacePreferences
+      summary: Update the caller's Kodera Labs flags and waiting-room ambience preference
+      description: 'Updates per-member Kodera Labs flags and waiting-room ambient audio preference when If-Match is supplied.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_experience:update
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MemberWorkspacePreferencesPatchRequest'
+      responses:
+        '200':
+          description: Updated caller workspace preferences.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MemberWorkspacePreferences'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
         '429':
           $ref: '#/components/responses/RateLimited'
         '503':
@@ -26106,3 +27098,1268 @@ components:
         provider: mistral
         model: voxtral-mini-latest
         ephemeral: true
+    ExtensionMarketplacePricingMode:
+      type: string
+      title: ExtensionMarketplacePricingMode
+      enum:
+      - free
+      - one_time
+      examples:
+      - free
+    ExtensionMarketplaceEntitlementState:
+      type: string
+      title: ExtensionMarketplaceEntitlementState
+      enum:
+      - pending
+      - active
+      - revoked
+      - refunded
+      examples:
+      - active
+    ExtensionWidgetCardKeyValueItem:
+      type: object
+      title: ExtensionWidgetCardKeyValueItem
+      additionalProperties: false
+      required:
+      - label
+      - value
+      properties:
+        label:
+          type: string
+          minLength: 1
+          maxLength: 80
+        value:
+          type: string
+          minLength: 1
+          maxLength: 240
+      examples:
+      - label: Build
+        value: '#482'
+    ExtensionWidgetActionItem:
+      type: object
+      title: ExtensionWidgetActionItem
+      additionalProperties: false
+      required:
+      - actionId
+      - label
+      properties:
+        actionId:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: '^[a-z0-9][a-z0-9_-]{0,63}(?![\s\S])'
+        label:
+          type: string
+          minLength: 1
+          maxLength: 64
+        variant:
+          type: string
+          enum:
+          - primary
+          - secondary
+          - tertiary
+          - destructive
+        confirmText:
+          type: string
+          minLength: 1
+          maxLength: 240
+      examples:
+      - actionId: deploy_approve
+        label: Approve
+        variant: primary
+    ExtensionWidgetBlock:
+      type: object
+      title: ExtensionWidgetBlock
+      additionalProperties: false
+      required:
+      - type
+      properties:
+        type:
+          type: string
+          enum:
+          - header
+          - text
+          - kv_list
+          - status_pill
+          - progress_bar
+          - button_row
+          - link_button
+        title:
+          type: string
+          minLength: 1
+          maxLength: 160
+        subtitle:
+          type: string
+          minLength: 1
+          maxLength: 240
+        body:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        tone:
+          type: string
+          enum:
+          - default
+          - muted
+          - mono
+          - warning
+          - danger
+          - success
+        items:
+          type: array
+          minItems: 1
+          maxItems: 12
+          items:
+            $ref: '#/components/schemas/ExtensionWidgetCardKeyValueItem'
+        label:
+          type: string
+          minLength: 1
+          maxLength: 120
+        state:
+          type: string
+          enum:
+          - success
+          - info
+          - warning
+          - danger
+          - neutral
+          - planned
+        value:
+          type: number
+          minimum: 0
+          maximum: 100
+        actions:
+          type: array
+          minItems: 1
+          maxItems: 5
+          items:
+            $ref: '#/components/schemas/ExtensionWidgetActionItem'
+        href:
+          type: string
+          format: uri
+          maxLength: 2048
+        variant:
+          type: string
+          enum:
+          - secondary
+          - tertiary
+      examples:
+      - type: header
+        title: Deployment status
+        subtitle: Production release pipeline
+    ExtensionWidgetCard:
+      type: object
+      title: ExtensionWidgetCard
+      additionalProperties: false
+      required:
+      - schemaVersion
+      - widgetId
+      - blocks
+      properties:
+        schemaVersion:
+          type: string
+          const: kodera.widget.v1
+        widgetId:
+          type: string
+          minLength: 2
+          maxLength: 63
+          pattern: '^[a-z0-9][a-z0-9-]{0,61}[a-z0-9](?![\s\S])'
+        blocks:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/ExtensionWidgetBlock'
+      examples:
+      - schemaVersion: kodera.widget.v1
+        widgetId: release-gate
+        blocks:
+        - type: header
+          title: Deployment status
+          subtitle: Production release pipeline
+    ExtensionManifestCommand:
+      type: object
+      title: ExtensionManifestCommand
+      additionalProperties: false
+      required:
+      - name
+      - description
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 32
+        description:
+          type: string
+          minLength: 1
+          maxLength: 140
+      examples:
+      - name: /deploy
+        description: Inspect current deployment status
+    ExtensionManifestWidget:
+      type: object
+      title: ExtensionManifestWidget
+      additionalProperties: false
+      required:
+      - id
+      - title
+      properties:
+        id:
+          type: string
+          minLength: 2
+          maxLength: 63
+          pattern: '^[a-z0-9][a-z0-9-]{0,61}[a-z0-9](?![\s\S])'
+        title:
+          type: string
+          minLength: 1
+          maxLength: 80
+        description:
+          type: string
+          minLength: 1
+          maxLength: 200
+        defaultCard:
+          $ref: '#/components/schemas/ExtensionWidgetCard'
+      examples:
+      - id: release-gate
+        title: Release gate
+        description: Interactive release approval card
+    ExtensionMarketplaceManifest:
+      type: object
+      title: ExtensionMarketplaceManifest
+      additionalProperties: false
+      required:
+      - schemaVersion
+      - slug
+      - name
+      - version
+      - description
+      - scopes
+      - events
+      - endpoint
+      properties:
+        schemaVersion:
+          type: string
+          const: kodera.extension.v1
+        slug:
+          type: string
+          minLength: 2
+          maxLength: 63
+          pattern: '^[a-z0-9][a-z0-9-]{0,61}[a-z0-9](?![\s\S])'
+        name:
+          type: string
+          minLength: 1
+          maxLength: 80
+        version:
+          type: string
+          minLength: 5
+          maxLength: 32
+        description:
+          type: string
+          minLength: 1
+          maxLength: 280
+        scopes:
+          type: array
+          minItems: 1
+          maxItems: 16
+          items:
+            type: string
+            minLength: 1
+            maxLength: 64
+        events:
+          type: array
+          minItems: 1
+          maxItems: 16
+          items:
+            type: string
+            minLength: 1
+            maxLength: 64
+        commands:
+          type: array
+          maxItems: 16
+          items:
+            $ref: '#/components/schemas/ExtensionManifestCommand'
+        widgets:
+          type: array
+          maxItems: 8
+          items:
+            $ref: '#/components/schemas/ExtensionManifestWidget'
+        endpoint:
+          type: string
+          format: uri
+          maxLength: 2048
+      examples:
+      - schemaVersion: kodera.extension.v1
+        slug: release-assistant
+        name: Release Assistant
+        version: 0.1.0
+        description: Interactive deployment status and release approvals.
+        scopes:
+        - commands:register
+        - widgets:write
+        events:
+        - command.invoked
+        - widget.action
+        commands: []
+        widgets: []
+        endpoint: https://extensions.example.eu/kodera/webhook
+    ExtensionMarketplaceListing:
+      type: object
+      title: ExtensionMarketplaceListing
+      additionalProperties: false
+      required:
+      - id
+      - workspaceId
+      - slug
+      - title
+      - summary
+      - pricingMode
+      - priceExclVatMinor
+      - currency
+      - manifest
+      - publishedAt
+      - entitlementState
+      - entitlementId
+      - installed
+      - installationId
+      properties:
+        id:
+          type: string
+          format: uuid
+        workspaceId:
+          type: string
+          format: uuid
+        slug:
+          type: string
+          minLength: 2
+          maxLength: 63
+          pattern: '^[a-z0-9][a-z0-9-]{0,61}[a-z0-9](?![\s\S])'
+        title:
+          type: string
+          minLength: 1
+          maxLength: 80
+        summary:
+          type: string
+          minLength: 1
+          maxLength: 280
+        pricingMode:
+          $ref: '#/components/schemas/ExtensionMarketplacePricingMode'
+        priceExclVatMinor:
+          type: integer
+          minimum: 0
+          maximum: 5000000
+        currency:
+          type: string
+          const: EUR
+        manifest:
+          $ref: '#/components/schemas/ExtensionMarketplaceManifest'
+        publishedAt:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        entitlementState:
+          oneOf:
+          - $ref: '#/components/schemas/ExtensionMarketplaceEntitlementState'
+          - type: 'null'
+        entitlementId:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        installed:
+          type: boolean
+        installationId:
+          type:
+          - string
+          - 'null'
+          format: uuid
+      examples:
+      - id: 00000000-0000-7000-8000-000000000301
+        workspaceId: 00000000-0000-7000-8000-000000000001
+        slug: release-assistant
+        title: Release Assistant
+        summary: Interactive deployment status and release approvals.
+        pricingMode: free
+        priceExclVatMinor: 0
+        currency: EUR
+        manifest:
+          schemaVersion: kodera.extension.v1
+          slug: release-assistant
+          name: Release Assistant
+          version: 0.1.0
+          description: Interactive deployment status and release approvals.
+          scopes:
+          - commands:register
+          - widgets:write
+          events:
+          - command.invoked
+          - widget.action
+          commands: []
+          widgets: []
+          endpoint: https://extensions.example.eu/kodera/webhook
+        publishedAt: '2026-06-08T10:00:00Z'
+        entitlementState: active
+        entitlementId: 00000000-0000-7000-8000-000000000302
+        installed: true
+        installationId: 00000000-0000-7000-8000-000000000303
+    ExtensionMarketplaceCatalog:
+      type: object
+      title: ExtensionMarketplaceCatalog
+      additionalProperties: false
+      required:
+      - billingEnabled
+      - listings
+      properties:
+        billingEnabled:
+          type: boolean
+        listings:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/ExtensionMarketplaceListing'
+      examples:
+      - billingEnabled: true
+        listings: []
+    ExtensionMarketplacePublishRequest:
+      type: object
+      title: ExtensionMarketplacePublishRequest
+      additionalProperties: false
+      required:
+      - slug
+      - title
+      - summary
+      - manifest
+      properties:
+        slug:
+          type: string
+          minLength: 2
+          maxLength: 63
+          pattern: '^[a-z0-9][a-z0-9-]{0,61}[a-z0-9](?![\s\S])'
+        title:
+          type: string
+          minLength: 1
+          maxLength: 80
+        summary:
+          type: string
+          minLength: 1
+          maxLength: 280
+        manifest:
+          $ref: '#/components/schemas/ExtensionMarketplaceManifest'
+        pricingMode:
+          $ref: '#/components/schemas/ExtensionMarketplacePricingMode'
+        priceExclVatMinor:
+          type: integer
+          minimum: 0
+          maximum: 5000000
+      examples:
+      - slug: release-assistant
+        title: Release Assistant
+        summary: Interactive deployment status and release approvals.
+        pricingMode: free
+        priceExclVatMinor: 0
+        manifest:
+          schemaVersion: kodera.extension.v1
+          slug: release-assistant
+          name: Release Assistant
+          version: 0.1.0
+          description: Interactive deployment status and release approvals.
+          scopes:
+          - commands:register
+          - widgets:write
+          events:
+          - command.invoked
+          - widget.action
+          commands: []
+          widgets: []
+          endpoint: https://extensions.example.eu/kodera/webhook
+    ExtensionMarketplaceCheckoutRequest:
+      type: object
+      title: ExtensionMarketplaceCheckoutRequest
+      additionalProperties: false
+      properties:
+        customerKind:
+          type: string
+          enum:
+          - b2c
+          - b2b
+        buyerCountry:
+          type: string
+          minLength: 2
+          maxLength: 2
+          pattern: '^[A-Z]{2}(?![\s\S])'
+        returnUrl:
+          type: string
+          format: uri
+          maxLength: 2048
+        locale:
+          type: string
+          enum:
+          - fr
+          - en
+        withdrawalWaiverAccepted:
+          type: boolean
+        withdrawalWaiverAt:
+          type: string
+          format: date-time
+        withdrawalWaiverStatement:
+          type: string
+          minLength: 1
+          maxLength: 500
+      examples:
+      - customerKind: b2b
+        buyerCountry: FR
+        locale: fr
+    ExtensionMarketplaceCheckoutResult:
+      type: object
+      title: ExtensionMarketplaceCheckoutResult
+      additionalProperties: false
+      required:
+      - entitlementId
+      - listingId
+      - pricingMode
+      - state
+      - checkoutRequired
+      - checkoutSessionId
+      - checkoutUrl
+      - grossExclVatMinor
+      - vatAmountMinor
+      - totalInclVatMinor
+      - applicationFeeAmountMinor
+      - currency
+      - replayed
+      properties:
+        entitlementId:
+          type: string
+          format: uuid
+        listingId:
+          type: string
+          format: uuid
+        pricingMode:
+          $ref: '#/components/schemas/ExtensionMarketplacePricingMode'
+        state:
+          $ref: '#/components/schemas/ExtensionMarketplaceEntitlementState'
+        checkoutRequired:
+          type: boolean
+        checkoutSessionId:
+          type:
+          - string
+          - 'null'
+          maxLength: 255
+        checkoutUrl:
+          type:
+          - string
+          - 'null'
+          format: uri
+          maxLength: 2048
+        grossExclVatMinor:
+          type: integer
+          minimum: 0
+        vatAmountMinor:
+          type: integer
+          minimum: 0
+        totalInclVatMinor:
+          type: integer
+          minimum: 0
+        applicationFeeAmountMinor:
+          type: integer
+          minimum: 0
+        currency:
+          type: string
+          const: EUR
+        replayed:
+          type: boolean
+      examples:
+      - entitlementId: 00000000-0000-7000-8000-000000000302
+        listingId: 00000000-0000-7000-8000-000000000301
+        pricingMode: free
+        state: active
+        checkoutRequired: false
+        checkoutSessionId: null
+        checkoutUrl: null
+        grossExclVatMinor: 0
+        vatAmountMinor: 0
+        totalInclVatMinor: 0
+        applicationFeeAmountMinor: 0
+        currency: EUR
+        replayed: false
+    ExtensionMarketplaceInstallRequest:
+      type: object
+      title: ExtensionMarketplaceInstallRequest
+      additionalProperties: false
+      required:
+      - signingSecret
+      properties:
+        signingSecret:
+          type: string
+          minLength: 32
+          maxLength: 256
+        endpoint:
+          type: string
+          format: uri
+          maxLength: 2048
+      examples:
+      - signingSecret: whsec_0123456789abcdef0123456789abcdef
+    ExtensionMarketplaceInstallResult:
+      type: object
+      title: ExtensionMarketplaceInstallResult
+      additionalProperties: false
+      required:
+      - installationId
+      - entitlementId
+      - listingId
+      - slug
+      - endpoint
+      - events
+      - keyGeneration
+      - replayed
+      properties:
+        installationId:
+          type: string
+          format: uuid
+        entitlementId:
+          type: string
+          format: uuid
+        listingId:
+          type: string
+          format: uuid
+        slug:
+          type: string
+          minLength: 2
+          maxLength: 63
+          pattern: '^[a-z0-9][a-z0-9-]{0,61}[a-z0-9](?![\s\S])'
+        endpoint:
+          type: string
+          format: uri
+          maxLength: 2048
+        events:
+          type: array
+          minItems: 1
+          maxItems: 16
+          items:
+            type: string
+            minLength: 1
+            maxLength: 64
+        keyGeneration:
+          type: string
+          minLength: 1
+          maxLength: 32
+        replayed:
+          type: boolean
+      examples:
+      - installationId: 00000000-0000-7000-8000-000000000303
+        entitlementId: 00000000-0000-7000-8000-000000000302
+        listingId: 00000000-0000-7000-8000-000000000301
+        slug: release-assistant
+        endpoint: https://extensions.example.eu/kodera/webhook
+        events:
+        - command.invoked
+        - widget.action
+        keyGeneration: '1'
+        replayed: false
+    ChannelWidgetActionRequest:
+      type: object
+      title: ChannelWidgetActionRequest
+      additionalProperties: false
+      required:
+      - installationId
+      - actionId
+      properties:
+        installationId:
+          type: string
+          format: uuid
+        actionId:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: '^[a-z0-9][a-z0-9_-]{0,63}(?![\s\S])'
+        payload:
+          type: object
+          maxProperties: 32
+          additionalProperties:
+            type:
+            - string
+            - number
+            - boolean
+            - 'null'
+      examples:
+      - installationId: 00000000-0000-7000-8000-000000000303
+        actionId: deploy_approve
+        payload:
+          environment: staging
+    ChannelWidgetActionResult:
+      type: object
+      title: ChannelWidgetActionResult
+      additionalProperties: false
+      required:
+      - receiptId
+      - installationId
+      - channelId
+      - widgetId
+      - actionId
+      - state
+      - responseStatus
+      - card
+      - replayed
+      properties:
+        receiptId:
+          type: string
+          format: uuid
+        installationId:
+          type: string
+          format: uuid
+        channelId:
+          type: string
+          format: uuid
+        widgetId:
+          type: string
+          minLength: 2
+          maxLength: 63
+          pattern: '^[a-z0-9][a-z0-9-]{0,61}[a-z0-9](?![\s\S])'
+        actionId:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: '^[a-z0-9][a-z0-9_-]{0,63}(?![\s\S])'
+        state:
+          type: string
+          enum:
+          - in_flight
+          - delivered
+          - refused
+          - failed
+        responseStatus:
+          type:
+          - integer
+          - 'null'
+          minimum: 100
+          maximum: 599
+        card:
+          oneOf:
+          - $ref: '#/components/schemas/ExtensionWidgetCard'
+          - type: 'null'
+        replayed:
+          type: boolean
+      examples:
+      - receiptId: 00000000-0000-7000-8000-000000000304
+        installationId: 00000000-0000-7000-8000-000000000303
+        channelId: 00000000-0000-7000-8000-000000000002
+        widgetId: release-gate
+        actionId: deploy_approve
+        state: delivered
+        responseStatus: 200
+        card: null
+        replayed: false
+    WorkspaceCustomEmoji:
+      type: object
+      title: WorkspaceCustomEmoji
+      additionalProperties: false
+      required:
+      - id
+      - shortcode
+      - sha256
+      - width
+      - height
+      - animated
+      - creatorMembershipId
+      - createdAt
+      - blobPath
+      properties:
+        id:
+          type: string
+          format: uuid
+        shortcode:
+          type: string
+          minLength: 2
+          maxLength: 32
+          pattern: '^[a-z0-9_]{2,32}(?![\s\S])'
+        sha256:
+          type: string
+          minLength: 64
+          maxLength: 64
+          pattern: '^[0-9a-f]{64}(?![\s\S])'
+        width:
+          type: integer
+          minimum: 1
+          maximum: 128
+        height:
+          type: integer
+          minimum: 1
+          maximum: 128
+        animated:
+          type: boolean
+        creatorMembershipId:
+          type: string
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+        blobPath:
+          type: string
+          minLength: 1
+          maxLength: 256
+      examples:
+      - id: 00000000-0000-7000-8000-000000000401
+        shortcode: ship_it
+        sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+        width: 64
+        height: 64
+        animated: false
+        creatorMembershipId: 00000000-0000-7000-8000-000000000010
+        createdAt: '2026-06-08T10:00:00Z'
+        blobPath: /api/v1/organisations/00000000-0000-7000-8000-000000000001/workspace/emojis/00000000-0000-7000-8000-000000000401/blob
+    WorkspaceCustomEmojiList:
+      type: object
+      title: WorkspaceCustomEmojiList
+      additionalProperties: false
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          maxItems: 200
+          items:
+            $ref: '#/components/schemas/WorkspaceCustomEmoji'
+      examples:
+      - items: []
+    WorkspaceCustomEmojiCreateRequest:
+      type: object
+      title: WorkspaceCustomEmojiCreateRequest
+      additionalProperties: false
+      required:
+      - shortcode
+      properties:
+        shortcode:
+          type: string
+          minLength: 2
+          maxLength: 32
+          pattern: '^[a-z0-9_]{2,32}(?![\s\S])'
+        webpBase64:
+          type: string
+          minLength: 16
+          maxLength: 349528
+        webp_base64:
+          type: string
+          minLength: 16
+          maxLength: 349528
+      examples:
+      - shortcode: ship_it
+        webpBase64: UklGRiQAAABXRUJQVlA4IBgAAAAwAQCdASoCAAIAAUAmJaQAA3AA/vuUAAA=
+    ScheduledMessageState:
+      type: string
+      title: ScheduledMessageState
+      enum:
+      - pending
+      - in_flight
+      - delivered
+      - cancelled
+      - refused_policy
+      - obsolete
+      examples:
+      - pending
+    ScheduledMessage:
+      type: object
+      title: ScheduledMessage
+      additionalProperties: false
+      required:
+      - id
+      - channelId
+      - roomId
+      - body
+      - mentions
+      - threadRootEventId
+      - deliverAt
+      - matrixTxnId
+      - matrixEventId
+      - state
+      - failureReason
+      - createdAt
+      - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        channelId:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        roomId:
+          type: string
+          maxLength: 255
+        body:
+          type: string
+          minLength: 1
+          maxLength: 4000
+        mentions:
+          type: array
+          maxItems: 50
+          items:
+            type: string
+            minLength: 1
+            maxLength: 255
+        threadRootEventId:
+          type:
+          - string
+          - 'null'
+          maxLength: 255
+        deliverAt:
+          type: string
+          format: date-time
+        matrixTxnId:
+          type: string
+          pattern: '^kodera-sched-[0-9a-f]{32}(?![\s\S])'
+        matrixEventId:
+          type:
+          - string
+          - 'null'
+          maxLength: 255
+        state:
+          $ref: '#/components/schemas/ScheduledMessageState'
+        failureReason:
+          type:
+          - string
+          - 'null'
+          maxLength: 128
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      examples:
+      - id: 00000000-0000-7000-8000-000000000410
+        channelId: 00000000-0000-7000-8000-000000000002
+        roomId: '!general:acme.kodera.io'
+        body: Bonjour a toute l equipe !
+        mentions: []
+        threadRootEventId: null
+        deliverAt: '2026-06-09T09:00:00Z'
+        matrixTxnId: kodera-sched-0123456789abcdef0123456789abcdef
+        matrixEventId: null
+        state: pending
+        failureReason: null
+        createdAt: '2026-06-08T10:00:00Z'
+        updatedAt: '2026-06-08T10:00:00Z'
+    ScheduledMessageList:
+      type: object
+      title: ScheduledMessageList
+      additionalProperties: false
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          maxItems: 200
+          items:
+            $ref: '#/components/schemas/ScheduledMessage'
+      examples:
+      - items: []
+    ScheduledMessageCreateRequest:
+      type: object
+      title: ScheduledMessageCreateRequest
+      additionalProperties: false
+      required:
+      - body
+      properties:
+        channelId:
+          type: string
+          format: uuid
+        channel_id:
+          type: string
+          format: uuid
+        roomId:
+          type: string
+          maxLength: 255
+        room_id:
+          type: string
+          maxLength: 255
+        body:
+          type: string
+          minLength: 1
+          maxLength: 4000
+        mentions:
+          type: array
+          maxItems: 50
+          items:
+            type: string
+            minLength: 1
+            maxLength: 255
+        threadRootEventId:
+          type: string
+          maxLength: 255
+        thread_root_event_id:
+          type: string
+          maxLength: 255
+        deliverAt:
+          type: string
+          format: date-time
+        deliver_at:
+          type: string
+          format: date-time
+        confidential:
+          type: boolean
+        encrypted:
+          type: boolean
+      examples:
+      - channelId: 00000000-0000-7000-8000-000000000002
+        roomId: '!general:acme.kodera.io'
+        body: Bonjour a toute l equipe !
+        deliverAt: '2026-06-09T09:00:00Z'
+    ScheduledMessagePatchRequest:
+      type: object
+      title: ScheduledMessagePatchRequest
+      additionalProperties: false
+      properties:
+        body:
+          type: string
+          minLength: 1
+          maxLength: 4000
+        mentions:
+          type: array
+          maxItems: 50
+          items:
+            type: string
+            minLength: 1
+            maxLength: 255
+        deliverAt:
+          type: string
+          format: date-time
+        deliver_at:
+          type: string
+          format: date-time
+      examples:
+      - body: Bonjour mis a jour !
+    PersonalReminderState:
+      type: string
+      title: PersonalReminderState
+      enum:
+      - pending
+      - in_flight
+      - fired
+      - snoozed
+      - completed
+      - cancelled
+      - obsolete
+      examples:
+      - pending
+    PersonalReminder:
+      type: object
+      title: PersonalReminder
+      additionalProperties: false
+      required:
+      - id
+      - channelId
+      - roomId
+      - targetEventId
+      - note
+      - remindAt
+      - state
+      - notificationId
+      - createdAt
+      - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        channelId:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        roomId:
+          type: string
+          maxLength: 255
+        targetEventId:
+          type: string
+          minLength: 2
+          maxLength: 255
+        note:
+          type: string
+          maxLength: 500
+        remindAt:
+          type: string
+          format: date-time
+        state:
+          $ref: '#/components/schemas/PersonalReminderState'
+        notificationId:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      examples:
+      - id: 00000000-0000-7000-8000-000000000420
+        channelId: 00000000-0000-7000-8000-000000000002
+        roomId: '!general:acme.kodera.io'
+        targetEventId: $event_demo_001
+        note: Relire le compte-rendu
+        remindAt: '2026-06-09T09:00:00Z'
+        state: pending
+        notificationId: null
+        createdAt: '2026-06-08T10:00:00Z'
+        updatedAt: '2026-06-08T10:00:00Z'
+    PersonalReminderList:
+      type: object
+      title: PersonalReminderList
+      additionalProperties: false
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          maxItems: 200
+          items:
+            $ref: '#/components/schemas/PersonalReminder'
+      examples:
+      - items: []
+    PersonalReminderCreateRequest:
+      type: object
+      title: PersonalReminderCreateRequest
+      additionalProperties: false
+      properties:
+        channelId:
+          type: string
+          format: uuid
+        channel_id:
+          type: string
+          format: uuid
+        roomId:
+          type: string
+          maxLength: 255
+        room_id:
+          type: string
+          maxLength: 255
+        targetEventId:
+          type: string
+          minLength: 2
+          maxLength: 255
+        target_event_id:
+          type: string
+          minLength: 2
+          maxLength: 255
+        note:
+          type: string
+          maxLength: 500
+        remindAt:
+          type: string
+          format: date-time
+        remind_at:
+          type: string
+          format: date-time
+        confidential:
+          type: boolean
+        encrypted:
+          type: boolean
+      examples:
+      - channelId: 00000000-0000-7000-8000-000000000002
+        roomId: '!general:acme.kodera.io'
+        targetEventId: $event_demo_001
+        note: Relire le compte-rendu
+        remindAt: '2026-06-09T09:00:00Z'
+    PersonalReminderPatchRequest:
+      type: object
+      title: PersonalReminderPatchRequest
+      additionalProperties: false
+      properties:
+        note:
+          type: string
+          maxLength: 500
+        remindAt:
+          type: string
+          format: date-time
+        remind_at:
+          type: string
+          format: date-time
+        state:
+          type: string
+          enum:
+          - pending
+          - snoozed
+          - completed
+          - cancelled
+      examples:
+      - state: completed
+    KoderaLabsFlags:
+      type: object
+      title: KoderaLabsFlags
+      additionalProperties: false
+      required:
+      - send_later
+      - custom_emojis
+      - personal_reminders
+      - waiting_room_ambience
+      properties:
+        send_later:
+          type: boolean
+        custom_emojis:
+          type: boolean
+        personal_reminders:
+          type: boolean
+        waiting_room_ambience:
+          type: boolean
+      examples:
+      - send_later: true
+        custom_emojis: true
+        personal_reminders: true
+        waiting_room_ambience: true
+    KoderaLabsFlagsPatch:
+      type: object
+      title: KoderaLabsFlagsPatch
+      additionalProperties: false
+      properties:
+        send_later:
+          type: boolean
+        custom_emojis:
+          type: boolean
+        personal_reminders:
+          type: boolean
+        waiting_room_ambience:
+          type: boolean
+      examples:
+      - send_later: true
+    MemberWorkspacePreferences:
+      type: object
+      title: MemberWorkspacePreferences
+      additionalProperties: false
+      required:
+      - labsFlags
+      - waitingRoomAmbience
+      - updatedAt
+      properties:
+        labsFlags:
+          $ref: '#/components/schemas/KoderaLabsFlags'
+        waitingRoomAmbience:
+          type: boolean
+        updatedAt:
+          type:
+          - string
+          - 'null'
+          format: date-time
+      examples:
+      - labsFlags:
+          send_later: true
+          custom_emojis: true
+          personal_reminders: true
+          waiting_room_ambience: true
+        waitingRoomAmbience: false
+        updatedAt: null
+    MemberWorkspacePreferencesPatchRequest:
+      type: object
+      title: MemberWorkspacePreferencesPatchRequest
+      additionalProperties: false
+      properties:
+        labsFlags:
+          $ref: '#/components/schemas/KoderaLabsFlagsPatch'
+        labs_flags:
+          $ref: '#/components/schemas/KoderaLabsFlagsPatch'
+        waitingRoomAmbience:
+          type: boolean
+        waiting_room_ambience:
+          type: boolean
+      examples:
+      - waitingRoomAmbience: true

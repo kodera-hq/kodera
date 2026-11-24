@@ -420,9 +420,7 @@ class _LiveKitNoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-_LIVEKIT_OPENER = urllib.request.build_opener(
-    urllib.request.ProxyHandler({}), _LiveKitNoRedirect()
-)
+_LIVEKIT_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}), _LiveKitNoRedirect())
 
 
 def _validate_livekit_service_url(raw_url: str, *, allow_internal: bool) -> str:
@@ -624,9 +622,7 @@ def _canonical_channel_matrix_domain(organisation_id: UUID) -> str:
     return f"{tenant_slug.strip().lower()}.{clean_suffix}"
 
 
-def _resolve_channel_livekit_room_name(
-    *, organisation_id: UUID, channel_id: UUID
-) -> str:
+def _resolve_channel_livekit_room_name(*, organisation_id: UUID, channel_id: UUID) -> str:
     """Resolve the channel's canonical LiveKit room name strictly via Synapse's room directory.
 
     Matches `tenant_agent/synapse.py:110` (`#kodera-ch-{channel_id}:{matrix_domain}`) and
@@ -701,9 +697,7 @@ def _extract_livekit_identities_and_roster(
             try:
                 UUID(user_part)
             except ValueError:
-                extra_external_tokens.add(
-                    f"{UNRESOLVED_ROSTER_PREFIX}lk-ext:{user_part[:64]}"
-                )
+                extra_external_tokens.add(f"{UNRESOLVED_ROSTER_PREFIX}lk-ext:{user_part[:64]}")
             else:
                 raw_membership_ids.append(user_part)
 
@@ -781,9 +775,7 @@ def resolve_authoritative_livekit_roster(
             return hook_result
         if isinstance(hook_result, dict):
             hook_sid = (
-                hook_result.get("sid")
-                or hook_result.get("roomSid")
-                or hook_result.get("room_sid")
+                hook_result.get("sid") or hook_result.get("roomSid") or hook_result.get("room_sid")
             )
             if hook_sid is not None and (
                 not isinstance(hook_sid, str) or hook_sid.strip() != required_call_instance_id
@@ -1211,7 +1203,9 @@ def prepare_live_call_caption_session(
 ) -> PreparedLiveCallSession:
     """Resolve authoritative LiveKit roster outside any DB transaction for `POST /call-captions/session`."""
     if connection.in_atomic_block:
-        raise RuntimeError("Live call caption session preparation requires no enclosing transaction")
+        raise RuntimeError(
+            "Live call caption session preparation requires no enclosing transaction"
+        )
 
     if body.get("roomId") is not None:
         raise AiGatewayRefusalError(403, "ai_confidential_or_unclassified_room_forbidden")
@@ -1257,18 +1251,16 @@ def prepare_live_call_caption_session(
             for_update=False,
         )
         _require_livekit_roster_configured()
-        session_row = (
-            LiveCallCaptionSession.objects.filter(
-                organisation_id=principal.organisation_id,
-                workspace_id=workspace_id,
-                channel_id=channel.id,
-                **(
-                    {"id": requested_session_id}
-                    if requested_session_id is not None
-                    else {"state__in": list(NON_TERMINAL_CALL_SESSION_STATES)}
-                ),
-            ).first()
-        )
+        session_row = LiveCallCaptionSession.objects.filter(
+            organisation_id=principal.organisation_id,
+            workspace_id=workspace_id,
+            channel_id=channel.id,
+            **(
+                {"id": requested_session_id}
+                if requested_session_id is not None
+                else {"state__in": list(NON_TERMINAL_CALL_SESSION_STATES)}
+            ),
+        ).first()
         if (
             session_row is None
             or session_row.state not in NON_TERMINAL_CALL_SESSION_STATES

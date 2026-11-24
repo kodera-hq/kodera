@@ -10,6 +10,8 @@ import { WebhookSignatureTester } from './WebhookSignatureTester'
 import { workspaceMigratorCopy } from './workspaceMigratorMessages'
 import type { WorkspaceMigratorTransport } from './workspaceMigrator'
 import type { MigratorChannelOption } from './WorkspaceMigratorPanel'
+import { ExtensionMarketplacePanel } from './ExtensionMarketplacePanel'
+import type { ExtensionMarketplaceTransport } from './marketplaceClient'
 import {
   EXTENSION_CATEGORY_FILTERS,
   EXTENSION_SCHEMA_VERSION,
@@ -26,6 +28,8 @@ const LazyWorkspaceMigratorPanel = lazy(async () => {
   return { default: mod.WorkspaceMigratorPanel }
 })
 
+export type ExtensionsPanelTab = 'catalog' | 'marketplace'
+
 export interface ExtensionsCatalogPanelProps {
   readonly organisationId?: string | undefined
   readonly channels?: readonly MigratorChannelOption[] | undefined
@@ -34,7 +38,9 @@ export interface ExtensionsCatalogPanelProps {
   readonly defaultCategory?: ExtensionCategoryFilter | undefined
   readonly defaultWebhookUrl?: string | undefined
   readonly defaultMigratorOpen?: boolean | undefined
+  readonly defaultTab?: ExtensionsPanelTab | undefined
   readonly migratorTransport?: WorkspaceMigratorTransport | undefined
+  readonly marketplaceTransport?: ExtensionMarketplaceTransport | undefined
   readonly onSelectExtension?: ((extension: OfficialExtensionDescriptor) => void) | undefined
   readonly onWebhookValidated?:
     ((extensionId: OfficialExtensionId, normalizedUrl: string) => void) | undefined
@@ -74,6 +80,9 @@ const PANEL_COPY = {
     },
     rejectedUrl: 'URL refusée',
     allowedEndpoint: 'Point de terminaison HTTPS autorisé :',
+    tabsLabel: "Sections d'extensions",
+    tabCatalog: 'Catalogue de référence',
+    tabMarketplace: 'Marketplace Web',
   },
   en: {
     targetChannel: 'Destination channel',
@@ -108,6 +117,9 @@ const PANEL_COPY = {
     },
     rejectedUrl: 'URL rejected',
     allowedEndpoint: 'Allowed HTTPS endpoint:',
+    tabsLabel: 'Extension sections',
+    tabCatalog: 'Reference catalogue',
+    tabMarketplace: 'Web marketplace',
   },
 } as const
 
@@ -121,7 +133,9 @@ export function ExtensionsCatalogPanel({
   defaultCategory = 'all',
   defaultWebhookUrl = '',
   defaultMigratorOpen = false,
+  defaultTab = 'catalog',
   migratorTransport,
+  marketplaceTransport,
   onSelectExtension,
   onWebhookValidated,
 }: ExtensionsCatalogPanelProps) {
@@ -135,6 +149,7 @@ export function ExtensionsCatalogPanel({
   const channelInputId = useId()
   const [channelId, setChannelId] = useState('')
   const [migratorOpen, setMigratorOpen] = useState<boolean>(defaultMigratorOpen)
+  const [activeTab, setActiveTab] = useState<ExtensionsPanelTab>(defaultTab)
 
   const [selectedCategory, setSelectedCategory] = useState<ExtensionCategoryFilter>(defaultCategory)
   const [selectedId, setSelectedId] = useState<OfficialExtensionId | null>(
@@ -211,7 +226,50 @@ export function ExtensionsCatalogPanel({
             </StatusPill>
           </div>
 
-          <div className="flex flex-col gap-1">
+          <div
+            role="tablist"
+            aria-label={copy.tabsLabel}
+            className="flex flex-wrap items-center gap-2 border-b border-c-border-soft pb-3"
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === 'catalog'}
+              data-testid="extensions-tab-catalog"
+              onClick={() => setActiveTab('catalog')}
+              className={
+                activeTab === 'catalog'
+                  ? 'rounded-md border border-c-accent-ink bg-c-accent-soft px-3 py-1 text-xs font-semibold text-c-accent-ink focus-visible:ring focus-visible:outline-hidden'
+                  : 'rounded-md border border-c-border-soft bg-c-surface px-3 py-1 text-xs font-medium text-c-ink-2 hover:bg-c-muted focus-visible:ring focus-visible:outline-hidden'
+              }
+            >
+              {copy.tabCatalog}
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === 'marketplace'}
+              data-testid="extensions-tab-marketplace"
+              onClick={() => setActiveTab('marketplace')}
+              className={
+                activeTab === 'marketplace'
+                  ? 'rounded-md border border-c-accent-ink bg-c-accent-soft px-3 py-1 text-xs font-semibold text-c-accent-ink focus-visible:ring focus-visible:outline-hidden'
+                  : 'rounded-md border border-c-border-soft bg-c-surface px-3 py-1 text-xs font-medium text-c-ink-2 hover:bg-c-muted focus-visible:ring focus-visible:outline-hidden'
+              }
+            >
+              {copy.tabMarketplace}
+            </button>
+          </div>
+
+          {activeTab === 'marketplace' ? (
+            <ExtensionMarketplacePanel
+              organisationId={organisationId}
+              channels={channels}
+              transport={marketplaceTransport}
+            />
+          ) : (
+            <>
+              <div className="flex flex-col gap-1">
             <label htmlFor={searchInputId} className="text-xs font-medium text-c-ink-2">
               {copy.searchLabel}
             </label>
@@ -478,6 +536,8 @@ export function ExtensionsCatalogPanel({
                 </div>
               </details>
             </div>
+          )}
+            </>
           )}
 
           <div className="flex flex-col gap-3 border-t border-c-border-soft pt-3">

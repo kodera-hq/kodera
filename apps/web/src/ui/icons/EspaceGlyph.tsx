@@ -29,6 +29,7 @@ export type EspaceGlyphName =
   | 'redock'
   | 'mirror'
   | 'grip'
+  | 'ambience'
 
 const PATHS: Record<EspaceGlyphName, ReactNode> = {
   // Two sliders: the call's audio settings.
@@ -143,6 +144,14 @@ const PATHS: Record<EspaceGlyphName, ReactNode> = {
       <circle cx="10" cy="8" r="0.75" fill="currentColor" />
       <circle cx="6" cy="12" r="0.75" fill="currentColor" />
       <circle cx="10" cy="12" r="0.75" fill="currentColor" />
+    </>
+  ),
+  // Soft ambient sound wave note for waiting-room ambience toggle.
+  ambience: (
+    <>
+      <path d="M6 11.5V4l6-1.5v7.5" />
+      <circle cx="4.5" cy="11.5" r="1.5" />
+      <circle cx="10.5" cy="10" r="1.5" />
     </>
   ),
 }

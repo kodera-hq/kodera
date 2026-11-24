@@ -109,6 +109,7 @@ const LOCATIONS: readonly [string, Segments][] = [
 // so the two pins cannot drift apart unnoticed.
 const WORKSPACE_ROLE_SLUG_PATTERN = /^[a-z][a-z0-9_-]{0,63}$/
 const BOOKING_SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{1,78}[a-z0-9](?![\s\S])/
+const EXTENSION_MARKETPLACE_SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{0,61}[a-z0-9](?![\s\S])/
 
 const WORKSPACE_ROLE_LOCATIONS: readonly [string, Segments][] = [
   ['WorkspaceRole.slug', ['components', 'schemas', 'WorkspaceRole', 'properties', 'slug']],
@@ -154,6 +155,48 @@ const BOOKING_SLUG_LOCATIONS: readonly [string, Segments][] = [
   ],
 ]
 
+const EXTENSION_MARKETPLACE_SLUG_LOCATIONS: readonly [string, Segments][] = [
+  [
+    'POST /organisations/{organisation_id}/workspace/channels/{channel_id}/widgets/{widget_id}/actions',
+    [
+      'paths',
+      '/organisations/{organisation_id}/workspace/channels/{channel_id}/widgets/{widget_id}/actions',
+      'post',
+      'parameters',
+      2,
+      'schema',
+    ],
+  ],
+  [
+    'ExtensionMarketplaceManifest.slug',
+    ['components', 'schemas', 'ExtensionMarketplaceManifest', 'properties', 'slug'],
+  ],
+  [
+    'ExtensionMarketplaceListing.slug',
+    ['components', 'schemas', 'ExtensionMarketplaceListing', 'properties', 'slug'],
+  ],
+  [
+    'ExtensionMarketplacePublishRequest.slug',
+    ['components', 'schemas', 'ExtensionMarketplacePublishRequest', 'properties', 'slug'],
+  ],
+  [
+    'ExtensionMarketplaceInstallResult.slug',
+    ['components', 'schemas', 'ExtensionMarketplaceInstallResult', 'properties', 'slug'],
+  ],
+  [
+    'ExtensionWidgetCard.widgetId',
+    ['components', 'schemas', 'ExtensionWidgetCard', 'properties', 'widgetId'],
+  ],
+  [
+    'ExtensionManifestWidget.id',
+    ['components', 'schemas', 'ExtensionManifestWidget', 'properties', 'id'],
+  ],
+  [
+    'ChannelWidgetActionResult.widgetId',
+    ['components', 'schemas', 'ChannelWidgetActionResult', 'properties', 'widgetId'],
+  ],
+]
+
 describe('ORGANISATION_SLUG_PATTERN', () => {
   it.each(LOCATIONS)('is the pattern the pinned contract carries on %s', (_name, segments) => {
     const declared = valueAt(segments)
@@ -175,14 +218,15 @@ describe('ORGANISATION_SLUG_PATTERN', () => {
     expect(carrying).toEqual(LOCATIONS.map(([, segments]) => segments.join('/')).sort())
   })
 
-  it('leaves the pinned contract no slug-shaped rule other than the organisation, tenant, workspace-role, and booking-page ones', () => {
-    // A fifth rule is a contract change the console has not taken yet, not something to
+  it('leaves the pinned contract no slug-shaped rule other than the organisation, tenant, workspace-role, booking-page, and extension-marketplace ones', () => {
+    // A sixth rule is a contract change the console has not taken yet, not something to
     // discover in production.
     const known = new Set([
       ORGANISATION_SLUG_PATTERN.source,
       TENANT_SLUG_PATTERN.source,
       WORKSPACE_ROLE_SLUG_PATTERN.source,
       BOOKING_SLUG_PATTERN.source,
+      EXTENSION_MARKETPLACE_SLUG_PATTERN.source,
     ])
     // Contract 0.29.0 reserves `synth-` on organisation creation only, which the console never
     // sends (staff intake does). Discovery still answers synthetic realms, so the console's own
@@ -244,6 +288,32 @@ describe('the booking-page slug rule', () => {
       .sort()
     expect(carrying).toEqual(
       BOOKING_SLUG_LOCATIONS.map(([, segments]) => [...segments, 'pattern'].join('/')).sort()
+    )
+  })
+})
+
+describe('the extension-marketplace slug rule', () => {
+  it.each(EXTENSION_MARKETPLACE_SLUG_LOCATIONS)(
+    'is the rule the pinned contract carries on %s, bounded 2 to 63',
+    (_name, segments) => {
+      const schema = valueAt(segments)
+      expect(schema).toMatchObject({
+        pattern: EXTENSION_MARKETPLACE_SLUG_PATTERN.source,
+        minLength: 2,
+        maxLength: 63,
+      })
+    }
+  )
+
+  it('is carried by the pinned contract at exactly the locations listed', () => {
+    const carrying = slugShapedPatterns()
+      .filter(([, pattern]) => pattern === EXTENSION_MARKETPLACE_SLUG_PATTERN.source)
+      .map(([path]) => path.join('/'))
+      .sort()
+    expect(carrying).toEqual(
+      EXTENSION_MARKETPLACE_SLUG_LOCATIONS.map(([, segments]) =>
+        [...segments, 'pattern'].join('/')
+      ).sort()
     )
   })
 })

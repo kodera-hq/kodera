@@ -2,6 +2,7 @@ import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { isIP } from 'node:net';
 
 export const MANIFEST_SCHEMA_VERSION = 'kodera.extension.v1';
+export const WIDGET_SCHEMA_VERSION = 'kodera.widget.v1';
 export const SIGNATURE_HEADER = 'x-kodera-signature-256';
 export const TIMESTAMP_HEADER = 'x-kodera-timestamp';
 export const EVENT_HEADER = 'x-kodera-event';
@@ -10,6 +11,10 @@ export const DEFAULT_MAX_SKEW_SECONDS = 300;
 export const DEFAULT_TOLERANCE_SECONDS = DEFAULT_MAX_SKEW_SECONDS;
 export const MAX_WEBHOOK_REPLAY_ENTRIES = 4096;
 export const MAX_WEBHOOK_BODY_BYTES = 1_048_576;
+export const MAX_WIDGET_CARD_BYTES = 16_384;
+export const MAX_WIDGET_AST_DEPTH = 4;
+export const MAX_WIDGET_BLOCKS = 20;
+export const MAX_WIDGET_BUTTON_ACTIONS = 5;
 
 export const ALLOWED_EXTENSION_SCOPES = Object.freeze([
   'messages:write',
@@ -19,6 +24,7 @@ export const ALLOWED_EXTENSION_SCOPES = Object.freeze([
   'incidents:write',
   'threads:write',
   'commands:register',
+  'widgets:write',
 ]);
 
 export const EXTENSION_SCOPES = ALLOWED_EXTENSION_SCOPES;
@@ -32,6 +38,33 @@ export const EXTENSION_EVENTS = Object.freeze([
   'incident.opened',
   'incident.acknowledged',
   'incident.resolved',
+  'widget.action',
+]);
+
+export const WIDGET_BLOCK_TYPES = Object.freeze([
+  'header',
+  'text',
+  'kv_list',
+  'status_pill',
+  'progress_bar',
+  'button_row',
+  'link_button',
+]);
+
+export const WIDGET_STATUS_STATES = Object.freeze([
+  'success',
+  'info',
+  'warning',
+  'danger',
+  'neutral',
+  'planned',
+]);
+
+export const WIDGET_BUTTON_VARIANTS = Object.freeze([
+  'primary',
+  'secondary',
+  'tertiary',
+  'destructive',
 ]);
 
 export const INCIDENT_SEVERITIES = Object.freeze([
@@ -394,6 +427,7 @@ export function validateManifest(manifest, options = {}) {
   if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) {
     throw new ExtensionSdkError('INVALID_MANIFEST', 'Extension manifest must be a non-null JSON object.');
   }
+  assertNoPrototypePollutionKeys(manifest);
 
   const schemaVersion = manifest.schemaVersion ?? MANIFEST_SCHEMA_VERSION;
   if (schemaVersion !== MANIFEST_SCHEMA_VERSION) {
@@ -497,6 +531,69 @@ export function validateManifest(manifest, options = {}) {
     return Object.freeze({ name: cleanName, description: desc });
   });
 
+  if (manifest.widgets !== undefined && !Array.isArray(manifest.widgets)) {
+    throw new ExtensionSdkError('INVALID_MANIFEST_WIDGETS', 'Manifest "widgets" must be an array when provided.');
+  }
+  const rawWidgets = Array.isArray(manifest.widgets) ? manifest.widgets : [];
+  if (rawWidgets.length > 32) {
+    throw new ExtensionSdkError('INVALID_MANIFEST_WIDGETS', 'Manifest "widgets" may declare at most 32 widgets.');
+  }
+  const seenWidgetIds = new Set();
+  const normalizedWidgets = rawWidgets.map((widget) => {
+    if (!widget || typeof widget !== 'object' || Array.isArray(widget)) {
+      throw new ExtensionSdkError('INVALID_MANIFEST_WIDGETS', 'Each manifest widget entry must be an object.');
+    }
+    assertNoPrototypePollutionKeys(widget);
+    const record = /** @type {Record<string, unknown>} */ (widget);
+    for (const key of Object.keys(record)) {
+      if (key !== 'id' && key !== 'title' && key !== 'description') {
+        throw new ExtensionSdkError('INVALID_MANIFEST_WIDGETS', `Unknown manifest widget field "${key}".`);
+      }
+    }
+    const widgetId = typeof record.id === 'string' ? record.id : '';
+    if (!/^[a-z0-9][a-z0-9-]{0,61}[a-z0-9]$/.test(widgetId) || widgetId.includes('--')) {
+      throw new ExtensionSdkError(
+        'INVALID_MANIFEST_WIDGETS',
+        `Invalid widget id "${widgetId}" in manifest.`
+      );
+    }
+    if (seenWidgetIds.has(widgetId)) {
+      throw new ExtensionSdkError('INVALID_MANIFEST_WIDGETS', `Duplicate widget id "${widgetId}" in manifest.`);
+    }
+    seenWidgetIds.add(widgetId);
+    const title = typeof record.title === 'string' ? record.title.trim() : '';
+    if (!title || title.length > 80) {
+      throw new ExtensionSdkError(
+        'INVALID_MANIFEST_WIDGETS',
+        `Widget "${widgetId}" requires a non-empty title (<= 80 chars).`
+      );
+    }
+    const desc =
+      record.description === undefined
+        ? undefined
+        : typeof record.description === 'string'
+          ? record.description.trim()
+          : '';
+    if (desc !== undefined && (!desc || desc.length > 200)) {
+      throw new ExtensionSdkError(
+        'INVALID_MANIFEST_WIDGETS',
+        `Widget "${widgetId}" description must be 1..200 chars when provided.`
+      );
+    }
+    return Object.freeze({
+      id: widgetId,
+      title,
+      ...(desc !== undefined ? { description: desc } : {}),
+    });
+  });
+
+  if (normalizedWidgets.length > 0 && !seenScopes.has('widgets:write')) {
+    throw new ExtensionSdkError(
+      'INVALID_MANIFEST_WIDGETS',
+      'Manifest declaring "widgets" must include the "widgets:write" scope.'
+    );
+  }
+
   const result = {
     schemaVersion: MANIFEST_SCHEMA_VERSION,
     id: manifest.id,
@@ -507,9 +604,466 @@ export function validateManifest(manifest, options = {}) {
     events: Object.freeze(normalizedEvents),
     ...(validatedWebhookUrl ? { webhookUrl: validatedWebhookUrl } : {}),
     commands: Object.freeze(normalizedCommands),
+    widgets: Object.freeze(normalizedWidgets),
   };
 
   return Object.freeze(result);
+}
+
+/**
+ * Rejects own properties that attempt prototype pollution (`__proto__`, `constructor`, `prototype`).
+ *
+ * @param {object} target
+ */
+function assertNoPrototypePollutionKeys(target) {
+  if (Object.getOwnPropertySymbols(target).length > 0) {
+    throw new ExtensionSdkError('WIDGET_PROTOTYPE_POLLUTION', 'Symbol keys are forbidden.');
+  }
+  for (const key of Object.getOwnPropertyNames(target)) {
+    if (FORBIDDEN_PROTOTYPE_KEYS.has(key)) {
+      throw new ExtensionSdkError(
+        'WIDGET_PROTOTYPE_POLLUTION',
+        `Forbidden prototype property "${key}" rejected.`
+      );
+    }
+  }
+}
+
+/**
+ * Recursively enforces prototype-pollution safety, plain JSON container types,
+ * and `MAX_WIDGET_AST_DEPTH` (4) before structural widget card validation.
+ *
+ * @param {unknown} value
+ * @param {number} depth
+ */
+function assertSafeWidgetAstTree(value, depth = 0) {
+  if (value === null || typeof value !== 'object') {
+    if (
+      value === undefined ||
+      typeof value === 'string' ||
+      typeof value === 'boolean' ||
+      (typeof value === 'number' && Number.isFinite(value))
+    ) {
+      return;
+    }
+    throw new ExtensionSdkError('INVALID_WIDGET_CARD', 'Widget card contains a non-JSON scalar value.');
+  }
+
+  if (depth > MAX_WIDGET_AST_DEPTH) {
+    throw new ExtensionSdkError(
+      'WIDGET_DEPTH_EXCEEDED',
+      `Widget card AST exceeds maximum depth of ${MAX_WIDGET_AST_DEPTH}.`
+    );
+  }
+
+  if (Array.isArray(value)) {
+    assertNoPrototypePollutionKeys(value);
+    for (let i = 0; i < value.length; i += 1) {
+      if (!Object.prototype.hasOwnProperty.call(value, i)) {
+        throw new ExtensionSdkError('INVALID_WIDGET_CARD', 'Sparse arrays are forbidden in widget cards.');
+      }
+      assertSafeWidgetAstTree(value[i], depth + 1);
+    }
+    return;
+  }
+
+  const proto = Object.getPrototypeOf(value);
+  if (proto !== Object.prototype && proto !== null) {
+    throw new ExtensionSdkError(
+      'WIDGET_PROTOTYPE_POLLUTION',
+      'Widget card objects must use plain JSON object prototypes.'
+    );
+  }
+  assertNoPrototypePollutionKeys(value);
+
+  for (const key of Object.getOwnPropertyNames(value)) {
+    const desc = Object.getOwnPropertyDescriptor(value, key);
+    if (!desc || !desc.enumerable || !('value' in desc)) {
+      throw new ExtensionSdkError('WIDGET_PROTOTYPE_POLLUTION', `Non-data property "${key}" is forbidden.`);
+    }
+    assertSafeWidgetAstTree(desc.value, depth + 1);
+  }
+}
+
+/**
+ * @param {Record<string, unknown>} obj
+ * @param {readonly string[]} allowedKeys
+ * @param {string} context
+ */
+function assertClosedKeys(obj, allowedKeys, context) {
+  const allowed = new Set(allowedKeys);
+  for (const key of Object.getOwnPropertyNames(obj)) {
+    if (!allowed.has(key)) {
+      throw new ExtensionSdkError('WIDGET_UNKNOWN_FIELD', `Unknown field "${key}" in ${context}.`);
+    }
+  }
+}
+
+/**
+ * @param {unknown} raw
+ * @param {number} maxLength
+ * @param {string} fieldName
+ * @returns {string}
+ */
+function assertWidgetText(raw, maxLength, fieldName) {
+  if (typeof raw !== 'string') {
+    throw new ExtensionSdkError('INVALID_WIDGET_CARD', `${fieldName} must be a string.`);
+  }
+  if (/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(raw)) {
+    throw new ExtensionSdkError('INVALID_WIDGET_CARD', `${fieldName} must not contain control characters.`);
+  }
+  const trimmed = raw.trim();
+  if (trimmed.length === 0 || trimmed.length > maxLength) {
+    throw new ExtensionSdkError(
+      'INVALID_WIDGET_CARD',
+      `${fieldName} must be 1..${maxLength} characters.`
+    );
+  }
+  return trimmed;
+}
+
+/**
+ * Validates and deeply freezes a sandboxed `kodera.widget.v1` declarative widget card.
+ *
+ * @param {unknown} card
+ */
+export function validateWidgetCard(card) {
+  if (!card || typeof card !== 'object' || Array.isArray(card)) {
+    throw new ExtensionSdkError('INVALID_WIDGET_CARD', 'Widget card must be a plain JSON object.');
+  }
+
+  assertSafeWidgetAstTree(card, 0);
+
+  let rawJson;
+  try {
+    rawJson = JSON.stringify(card);
+  } catch {
+    throw new ExtensionSdkError('INVALID_WIDGET_CARD', 'Widget card is not JSON-serializable.');
+  }
+  if (typeof rawJson !== 'string' || Buffer.byteLength(rawJson, 'utf8') > MAX_WIDGET_CARD_BYTES) {
+    throw new ExtensionSdkError(
+      'WIDGET_TOO_LARGE',
+      `Widget card exceeds maximum serialized size of ${MAX_WIDGET_CARD_BYTES} bytes.`
+    );
+  }
+
+  const root = /** @type {Record<string, unknown>} */ (card);
+  assertClosedKeys(root, ['schemaVersion', 'widgetId', 'title', 'blocks'], 'widget card');
+
+  if (root.schemaVersion !== WIDGET_SCHEMA_VERSION) {
+    throw new ExtensionSdkError(
+      'INVALID_WIDGET_SCHEMA',
+      `Unsupported widget schemaVersion "${String(root.schemaVersion)}"; expected "${WIDGET_SCHEMA_VERSION}".`
+    );
+  }
+
+  if (
+    typeof root.widgetId !== 'string' ||
+    !/^[a-z0-9][a-z0-9-]{0,61}[a-z0-9]$/.test(root.widgetId) ||
+    root.widgetId.includes('--')
+  ) {
+    throw new ExtensionSdkError(
+      'INVALID_WIDGET_ID',
+      'widgetId must be a lowercase kebab-case slug (2-63 chars).'
+    );
+  }
+
+  const cardTitle =
+    root.title !== undefined ? assertWidgetText(root.title, 120, 'card.title') : undefined;
+
+  if (!Array.isArray(root.blocks) || root.blocks.length === 0 || root.blocks.length > MAX_WIDGET_BLOCKS) {
+    throw new ExtensionSdkError(
+      'INVALID_WIDGET_BLOCKS',
+      `Widget card "blocks" must be a non-empty array of at most ${MAX_WIDGET_BLOCKS} blocks.`
+    );
+  }
+
+  const normalizedBlocks = root.blocks.map((rawBlock, index) => {
+    if (!rawBlock || typeof rawBlock !== 'object' || Array.isArray(rawBlock)) {
+      throw new ExtensionSdkError('INVALID_WIDGET_BLOCK', `Block at index ${index} must be an object.`);
+    }
+    const block = /** @type {Record<string, unknown>} */ (rawBlock);
+    const blockType = block.type;
+    switch (blockType) {
+      case 'header': {
+        assertClosedKeys(block, ['type', 'title', 'subtitle'], `blocks[${index}] (header)`);
+        const title = assertWidgetText(block.title, 160, `blocks[${index}].title`);
+        const subtitle =
+          block.subtitle !== undefined
+            ? assertWidgetText(block.subtitle, 240, `blocks[${index}].subtitle`)
+            : undefined;
+        return Object.freeze({
+          type: /** @type {const} */ ('header'),
+          title,
+          ...(subtitle !== undefined ? { subtitle } : {}),
+        });
+      }
+      case 'text': {
+        assertClosedKeys(block, ['type', 'body', 'tone'], `blocks[${index}] (text)`);
+        const body = assertWidgetText(block.body, 2000, `blocks[${index}].body`);
+        const tone = block.tone ?? 'default';
+        if (tone !== 'default' && tone !== 'muted' && tone !== 'mono') {
+          throw new ExtensionSdkError(
+            'INVALID_WIDGET_BLOCK',
+            `Invalid text tone "${String(tone)}" at blocks[${index}].`
+          );
+        }
+        return Object.freeze({
+          type: /** @type {const} */ ('text'),
+          body,
+          tone,
+        });
+      }
+      case 'kv_list': {
+        assertClosedKeys(block, ['type', 'items'], `blocks[${index}] (kv_list)`);
+        if (!Array.isArray(block.items) || block.items.length === 0 || block.items.length > 12) {
+          throw new ExtensionSdkError(
+            'INVALID_WIDGET_BLOCK',
+            `kv_list at blocks[${index}] must contain 1..12 items.`
+          );
+        }
+        const items = block.items.map((rawItem, itemIdx) => {
+          if (!rawItem || typeof rawItem !== 'object' || Array.isArray(rawItem)) {
+            throw new ExtensionSdkError(
+              'INVALID_WIDGET_BLOCK',
+              `kv_list item at blocks[${index}].items[${itemIdx}] must be an object.`
+            );
+          }
+          const item = /** @type {Record<string, unknown>} */ (rawItem);
+          assertClosedKeys(
+            item,
+            ['label', 'value', 'mono'],
+            `blocks[${index}].items[${itemIdx}]`
+          );
+          const label = assertWidgetText(
+            item.label,
+            80,
+            `blocks[${index}].items[${itemIdx}].label`
+          );
+          const value = assertWidgetText(
+            item.value,
+            240,
+            `blocks[${index}].items[${itemIdx}].value`
+          );
+          if (item.mono !== undefined && typeof item.mono !== 'boolean') {
+            throw new ExtensionSdkError(
+              'INVALID_WIDGET_BLOCK',
+              `blocks[${index}].items[${itemIdx}].mono must be a boolean.`
+            );
+          }
+          return Object.freeze({
+            label,
+            value,
+            ...(item.mono !== undefined ? { mono: item.mono } : {}),
+          });
+        });
+        return Object.freeze({
+          type: /** @type {const} */ ('kv_list'),
+          items: Object.freeze(items),
+        });
+      }
+      case 'status_pill': {
+        assertClosedKeys(block, ['type', 'label', 'state'], `blocks[${index}] (status_pill)`);
+        const label = assertWidgetText(block.label, 80, `blocks[${index}].label`);
+        if (typeof block.state !== 'string' || !WIDGET_STATUS_STATES.includes(block.state)) {
+          throw new ExtensionSdkError(
+            'INVALID_WIDGET_BLOCK',
+            `Invalid status_pill state "${String(block.state)}" at blocks[${index}].`
+          );
+        }
+        return Object.freeze({
+          type: /** @type {const} */ ('status_pill'),
+          label,
+          state: block.state,
+        });
+      }
+      case 'progress_bar': {
+        assertClosedKeys(
+          block,
+          ['type', 'label', 'value', 'valueText', 'tone'],
+          `blocks[${index}] (progress_bar)`
+        );
+        const label = assertWidgetText(block.label, 120, `blocks[${index}].label`);
+        if (
+          typeof block.value !== 'number' ||
+          !Number.isFinite(block.value) ||
+          block.value < 0 ||
+          block.value <= -0 && Object.is(block.value, -0) && false ||
+          block.value > 100
+        ) {
+          throw new ExtensionSdkError(
+            'INVALID_WIDGET_PROGRESS',
+            `progress_bar value at blocks[${index}] must be a number in 0..100.`
+          );
+        }
+        const normalizedValue = block.value === 0 ? 0 : block.value;
+        const valueText =
+          block.valueText !== undefined
+            ? assertWidgetText(block.valueText, 40, `blocks[${index}].valueText`)
+            : undefined;
+        const tone = block.tone ?? 'default';
+        if (tone !== 'default' && tone !== 'warning' && tone !== 'danger' && tone !== 'success') {
+          throw new ExtensionSdkError(
+            'INVALID_WIDGET_BLOCK',
+            `Invalid progress_bar tone "${String(tone)}" at blocks[${index}].`
+          );
+        }
+        return Object.freeze({
+          type: /** @type {const} */ ('progress_bar'),
+          label,
+          value: normalizedValue,
+          ...(valueText !== undefined ? { valueText } : {}),
+          tone,
+        });
+      }
+      case 'button_row': {
+        assertClosedKeys(block, ['type', 'actions'], `blocks[${index}] (button_row)`);
+        if (
+          !Array.isArray(block.actions) ||
+          block.actions.length === 0 ||
+          block.actions.length > MAX_WIDGET_BUTTON_ACTIONS
+        ) {
+          throw new ExtensionSdkError(
+            'WIDGET_TOO_MANY_ACTIONS',
+            `button_row at blocks[${index}] must contain 1..${MAX_WIDGET_BUTTON_ACTIONS} actions.`
+          );
+        }
+        const seenActionIds = new Set();
+        const actions = block.actions.map((rawAction, actionIdx) => {
+          if (!rawAction || typeof rawAction !== 'object' || Array.isArray(rawAction)) {
+            throw new ExtensionSdkError(
+              'INVALID_WIDGET_BLOCK',
+              `Action at blocks[${index}].actions[${actionIdx}] must be an object.`
+            );
+          }
+          const action = /** @type {Record<string, unknown>} */ (rawAction);
+          assertClosedKeys(
+            action,
+            ['actionId', 'label', 'variant', 'value'],
+            `blocks[${index}].actions[${actionIdx}]`
+          );
+          if (
+            typeof action.actionId !== 'string' ||
+            !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(action.actionId)
+          ) {
+            throw new ExtensionSdkError(
+              'INVALID_WIDGET_ACTION',
+              `Invalid actionId "${String(action.actionId)}" at blocks[${index}].actions[${actionIdx}].`
+            );
+          }
+          if (seenActionIds.has(action.actionId)) {
+            throw new ExtensionSdkError(
+              'INVALID_WIDGET_ACTION',
+              `Duplicate actionId "${action.actionId}" in button_row.`
+            );
+          }
+          seenActionIds.add(action.actionId);
+          const label = assertWidgetText(
+            action.label,
+            64,
+            `blocks[${index}].actions[${actionIdx}].label`
+          );
+          const variant = action.variant ?? 'secondary';
+          if (typeof variant !== 'string' || !WIDGET_BUTTON_VARIANTS.includes(variant)) {
+            throw new ExtensionSdkError(
+              'INVALID_WIDGET_ACTION',
+              `Invalid button variant "${String(variant)}".`
+            );
+          }
+          let value;
+          if (action.value !== undefined) {
+            if (
+              typeof action.value !== 'string' ||
+              action.value.length > 256 ||
+              /[\x00-\x1f\x7f]/.test(action.value)
+            ) {
+              throw new ExtensionSdkError(
+                'INVALID_WIDGET_ACTION',
+                'Action value must be a printable string of at most 256 characters.'
+              );
+            }
+            value = action.value;
+          }
+          return Object.freeze({
+            actionId: action.actionId,
+            label,
+            variant,
+            ...(value !== undefined ? { value } : {}),
+          });
+        });
+        return Object.freeze({
+          type: /** @type {const} */ ('button_row'),
+          actions: Object.freeze(actions),
+        });
+      }
+      case 'link_button': {
+        assertClosedKeys(
+          block,
+          ['type', 'label', 'href', 'variant'],
+          `blocks[${index}] (link_button)`
+        );
+        const label = assertWidgetText(block.label, 80, `blocks[${index}].label`);
+        if (typeof block.href !== 'string') {
+          throw new ExtensionSdkError(
+            'INVALID_URL',
+            `link_button href at blocks[${index}] must be a string.`
+          );
+        }
+        const safeHref = validateEndpointUrl(block.href, { allowLocalhostHttp: false });
+        const variant = block.variant ?? 'secondary';
+        if (variant !== 'secondary' && variant !== 'tertiary') {
+          throw new ExtensionSdkError(
+            'INVALID_WIDGET_BLOCK',
+            `Invalid link_button variant "${String(variant)}"; allowed: secondary, tertiary.`
+          );
+        }
+        return Object.freeze({
+          type: /** @type {const} */ ('link_button'),
+          label,
+          href: safeHref,
+          variant,
+        });
+      }
+      default:
+        throw new ExtensionSdkError(
+          'INVALID_WIDGET_BLOCK',
+          `Unsupported widget block type "${String(blockType)}"; allowed: ${WIDGET_BLOCK_TYPES.join(', ')}.`
+        );
+    }
+  });
+
+  const normalizedCard = {
+    schemaVersion: WIDGET_SCHEMA_VERSION,
+    widgetId: root.widgetId,
+    ...(cardTitle !== undefined ? { title: cardTitle } : {}),
+    blocks: Object.freeze(normalizedBlocks),
+  };
+
+  if (Buffer.byteLength(JSON.stringify(normalizedCard), 'utf8') > MAX_WIDGET_CARD_BYTES) {
+    throw new ExtensionSdkError(
+      'WIDGET_TOO_LARGE',
+      `Widget card exceeds maximum serialized size of ${MAX_WIDGET_CARD_BYTES} bytes.`
+    );
+  }
+
+  return Object.freeze(normalizedCard);
+}
+
+/**
+ * Declares and validates a `kodera.widget.v1` declarative widget card, defaulting
+ * `schemaVersion` to `'kodera.widget.v1'` when omitted.
+ *
+ * @param {Record<string, unknown>} definition
+ */
+export function defineWidgetCard(definition) {
+  if (!definition || typeof definition !== 'object' || Array.isArray(definition)) {
+    throw new ExtensionSdkError('INVALID_WIDGET_CARD', 'Widget card definition must be a plain object.');
+  }
+  assertSafeWidgetAstTree(definition, 0);
+  return validateWidgetCard({
+    schemaVersion: definition.schemaVersion ?? WIDGET_SCHEMA_VERSION,
+    ...definition,
+  });
 }
 
 /**
@@ -1116,7 +1670,7 @@ export function createExtensionClient(config) {
         'content-type': 'application/json',
         authorization: `Bearer ${config.token}`,
         'idempotency-key': resolvedKey,
-        'user-agent': 'kodera-extension-sdk/0.1.0',
+        'user-agent': 'kodera-extension-sdk/0.2.0',
       },
       body: JSON.stringify(body),
       redirect: 'error',
@@ -1240,6 +1794,33 @@ export function createExtensionClient(config) {
           summary,
           ...(safeExternalUrl ? { externalUrl: safeExternalUrl } : {}),
           status,
+        },
+        idempotencyKey
+      );
+    },
+
+    /**
+     * Posts a validated `kodera.widget.v1` sandboxed widget card to a Kodera channel.
+     *
+     * @param {{
+     *   channelId: string,
+     *   card: Record<string, unknown>,
+     *   text?: string,
+     *   idempotencyKey?: string,
+     * }} params
+     */
+    async postWidgetCard({ channelId, card, text, idempotencyKey }) {
+      assertSafeIdentifier(channelId, 'channelId');
+      const validatedCard = validateWidgetCard(card);
+      if (text !== undefined) {
+        assertBoundedText(text, 'text');
+      }
+      return sendJsonPost(
+        `/api/v1/extensions/channels/${encodeURIComponent(channelId)}/widgets`,
+        {
+          channelId,
+          card: validatedCard,
+          ...(text !== undefined ? { text } : {}),
         },
         idempotencyKey
       );

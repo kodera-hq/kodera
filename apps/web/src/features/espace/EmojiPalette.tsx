@@ -1,34 +1,31 @@
-// The composer's emoji palette (workspace audit item 4): « Insérer un émoji » opens a grid of 32
-// emoji, then Kodera's own eight (`koderaShortcodes.ts`), and choosing one writes it at the field's
-// caret: a Unicode emoji as itself, a Kodera one as its code. No search: the « :nom: » shortcodes
-// (`emoji.ts`) reach every other emoji, and each button's tooltip is its code.
-//
-// Keyboard: one tab stop for the grid. The arrow keys move within it, `Home` and `End` go to its
-// first and last, `Enter` or `Space` chooses. Choosing puts the focus back in the field;
-// `Escape` or `Tab` closes the palette and returns the focus to the button.
-//
-// Eight to a row, six at phone width, where each cell keeps the 44 px touch floor.
+// The composer's emoji palette: « Insérer un émoji » opens a grid of Unicode emoji, Kodera's
+// original SVG glyphs (`koderaShortcodes.ts`), and sanitized workspace custom WebP emojis.
 
 import { useNarrowViewport } from '../../app/useNarrowViewport'
 
-import { Fragment, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent, RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
 import { cx } from '../../ui/cx'
 import { EmojiIcon } from '../../ui/icons/Composer'
 import { Popover } from '../../ui/Popover/Popover'
 import { TOUCH_TARGET } from '../../ui/touchTarget'
+import { useMessagingOrganisation } from '../messaging/organisationContext'
+import { refreshWorkspaceCustomEmojis, useCustomEmojis } from './customEmojiStore'
 import { PALETTE_EMOJI } from './emoji'
-import { KoderaEmoji } from './KoderaEmoji'
-import { KODERA_EMOJI, shortcodeOf } from './koderaShortcodes'
+import { experienceCopy } from './experienceMessages'
+import { CustomWorkspaceEmoji, KoderaEmoji } from './KoderaEmoji'
+import { KODERA_EMOJI, shortcodeOf, type KoderaEmojiName } from './koderaShortcodes'
 
-/** Every cell of the grid: the Unicode emoji, then Kodera's own, written as their code. */
-const CELLS: readonly {
-  key: string
-  text: string
-  title: string
-  kodera?: (typeof KODERA_EMOJI)[number]
-}[] = [
+interface PaletteCell {
+  readonly key: string
+  readonly text: string
+  readonly title: string
+  readonly kodera?: KoderaEmojiName
+  readonly customShortcode?: string
+}
+
+const BASE_CELLS: readonly PaletteCell[] = [
   ...PALETTE_EMOJI.map(({ emoji, names }) => ({
     key: emoji,
     text: emoji,
@@ -42,14 +39,14 @@ const CELLS: readonly {
   })),
 ]
 
-function moves(columns: number): Record<string, (at: number) => number> {
+function moves(columns: number, total: number): Record<string, (at: number) => number> {
   return {
     ArrowRight: (at) => at + 1,
     ArrowLeft: (at) => at - 1,
     ArrowDown: (at) => at + columns,
     ArrowUp: (at) => at - columns,
     Home: () => 0,
-    End: () => CELLS.length - 1,
+    End: () => Math.max(0, total - 1),
   }
 }
 
@@ -64,24 +61,44 @@ export function EmojiPalette({
   /** Writes the emoji into the field and puts the focus back there. */
   onPick: (emoji: string) => void
 }) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const copy = experienceCopy(i18n.resolvedLanguage)
+  const organisationId = useMessagingOrganisation()
+  const { items: customItems, enabled: customEnabled } = useCustomEmojis(organisationId)
   const [open, setOpen] = useState(false)
   const [active, setActive] = useState(0)
   const cells = useRef<(HTMLButtonElement | null)[]>([])
   const narrow = useNarrowViewport()
 
+  useEffect(() => {
+    if (open && organisationId && customEnabled) {
+      void refreshWorkspaceCustomEmojis(organisationId)
+    }
+  }, [open, organisationId, customEnabled])
+
+  const allCells = useMemo<readonly PaletteCell[]>(() => {
+    if (!customEnabled || customItems.length === 0) return BASE_CELLS
+    return [
+      ...BASE_CELLS,
+      ...customItems.map((item) => ({
+        key: `custom:${item.id}`,
+        text: shortcodeOf(item.shortcode),
+        title: shortcodeOf(item.shortcode),
+        customShortcode: item.shortcode,
+      })),
+    ]
+  }, [customEnabled, customItems])
+
   function keyDown(event: KeyboardEvent<HTMLDivElement>) {
     if (event.key === 'Tab') {
-      // The popover sits at the end of the page, so `Tab` would leave it for nowhere near the
-      // composer: it closes instead, and the focus goes back to the button, as with `Escape`.
       event.preventDefault()
       setOpen(false)
       return
     }
-    const move = moves(narrow ? 6 : 8)[event.key]
+    const move = moves(narrow ? 6 : 8, allCells.length)[event.key]
     if (move === undefined) return
     event.preventDefault()
-    const next = Math.min(Math.max(move(active), 0), CELLS.length - 1)
+    const next = Math.min(Math.max(move(active), 0), allCells.length - 1)
     setActive(next)
     cells.current[next]?.focus()
   }
@@ -98,7 +115,6 @@ export function EmojiPalette({
       {...(anchorRef === undefined ? {} : { anchorRef })}
       label={t('console.workspace.composer.label-emoji-palette')}
       trigger={
-        // p02's `.icon-btn`, drawn as « Mentionner » beside it is.
         <button
           type="button"
           aria-label={t('console.workspace.composer.action-emoji')}
@@ -120,11 +136,16 @@ export function EmojiPalette({
       {/* The grid's own arrow keys; each cell is a button and stays one. */}
       {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions */}
       <div className={cx('grid gap-1', narrow ? 'grid-cols-6' : 'grid-cols-8')} onKeyDown={keyDown}>
-        {CELLS.map(({ key, text, title, kodera }, index) => (
+        {allCells.map(({ key, text, title, kodera, customShortcode }, index) => (
           <Fragment key={key}>
             {index === PALETTE_EMOJI.length ? (
               <p className="col-span-full pt-2 text-xs font-semibold text-c-ink-3">
                 {t('console.workspace.composer.label-kodera-emoji')}
+              </p>
+            ) : null}
+            {index === BASE_CELLS.length ? (
+              <p className="col-span-full pt-2 text-xs font-semibold text-c-ink-3">
+                {copy.customEmojis.paletteHeading}
               </p>
             ) : null}
             <button
@@ -137,8 +158,6 @@ export function EmojiPalette({
               aria-label={t('console.workspace.composer.action-insert-emoji', { emoji: text })}
               onFocus={() => setActive(index)}
               onClick={() => {
-                // `onPick` focuses the field, outside the popover, so Radix leaves the focus there
-                // as the popover closes instead of returning it to the button.
                 onPick(text)
                 setOpen(false)
               }}
@@ -148,7 +167,16 @@ export function EmojiPalette({
                 TOUCH_TARGET
               )}
             >
-              {kodera === undefined ? text : <KoderaEmoji name={kodera} />}
+              {kodera !== undefined ? (
+                <KoderaEmoji name={kodera} />
+              ) : customShortcode !== undefined ? (
+                <CustomWorkspaceEmoji
+                  organisationId={organisationId}
+                  shortcode={customShortcode}
+                />
+              ) : (
+                text
+              )}
             </button>
           </Fragment>
         ))}

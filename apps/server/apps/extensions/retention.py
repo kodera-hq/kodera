@@ -18,9 +18,12 @@ from .models import (
     Delivery,
     DeliveryAttempt,
     DigestConsent,
+    ExtensionMarketplaceListing,
     ImportBatch,
     ImportedObject,
     Installation,
+    MarketplaceEntitlement,
+    WidgetActionReceipt,
 )
 from .wire import ExtensionRefusedError
 
@@ -76,6 +79,18 @@ def purge_due(*, limit: int = 100, organisation_id: UUID | None = None) -> int:
         for replay_row in replay_rows[:remaining]:
             replay_row.delete()
             count += 1
+    remaining = limit - count
+    if remaining > 0:
+        widget_rows = (
+            WidgetActionReceipt.objects.select_for_update(skip_locked=True)
+            .filter(expires_at__lte=now)
+            .order_by("expires_at", "id")
+        )
+        if organisation_id is not None:
+            widget_rows = widget_rows.filter(organisation_id=organisation_id)
+        for widget_row in widget_rows[:remaining]:
+            widget_row.delete()
+            count += 1
     return count
 
 
@@ -94,6 +109,13 @@ def local_payloads_absent(*, organisation_id: UUID) -> bool:
         and not ImportedObject.objects.filter(
             workspace__organisation_id=organisation_id,
             replay_payload__isnull=False,
+        ).exists()
+        and not MarketplaceEntitlement.objects.filter(organisation_id=organisation_id)
+        .exclude(sealed_signing_secret=b"")
+        .exists()
+        and not WidgetActionReceipt.objects.filter(
+            organisation_id=organisation_id,
+            response_card__isnull=False,
         ).exists()
     )
 
@@ -120,6 +142,9 @@ def metadata_absent(*, organisation_id: UUID) -> bool:
             CoexistenceReplayGuard.objects.filter(
                 bridge__workspace__organisation_id=organisation_id
             ).exists(),
+            ExtensionMarketplaceListing.objects.filter(organisation_id=organisation_id).exists(),
+            MarketplaceEntitlement.objects.filter(organisation_id=organisation_id).exists(),
+            WidgetActionReceipt.objects.filter(organisation_id=organisation_id).exists(),
             ImportBatch.objects.filter(workspace__organisation_id=organisation_id).exists(),
             ImportedObject.objects.filter(workspace__organisation_id=organisation_id).exists(),
             DigestConsent.objects.filter(membership__organisation_id=organisation_id).exists(),

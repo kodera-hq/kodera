@@ -221,6 +221,7 @@ def test_registered_schema_matches_migrations(schema):
             "0019_partner_channels_and_guests",
             "0020_governance_guards",
             "0021_workspace_logo_and_ux_preferences",
+            "0022_custom_emojis_scheduled_messages_and_labs",
         }
 
 

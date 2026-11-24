@@ -23,6 +23,7 @@ import { ToastProvider } from '../ui/Toast/Toast'
 import { trackOrganisationSwitched } from './analytics'
 import type { components } from '../api/schema'
 import { useAuth, useAuthLifetime } from '../auth/AuthProvider'
+import { notifyOrganisationCleanup } from '../auth/localSession'
 import { EspaceDraftProvider } from '../features/espace/EspaceDraftProvider'
 import { cachedTenantSlug } from '../features/workspace/queries'
 import type { AuthIdentity } from '../auth/AuthAdapter'
@@ -260,6 +261,12 @@ function ToastProviderWithCopy({ children }: { children: ReactNode }) {
 function OrgLayout() {
   const { me, membership, meGeneration, meCredentialGeneration } = orgRoute.useLoaderData()
   const client = useQueryClient()
+  const activeOrganisationId = membership.organisation.id
+  useEffect(() => {
+    return () => {
+      notifyOrganisationCleanup(activeOrganisationId)
+    }
+  }, [activeOrganisationId])
   const tenantSlugFor = useCallback(
     (organisationId: string) => cachedTenantSlug(client, organisationId),
     [client]

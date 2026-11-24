@@ -242,6 +242,7 @@ function MessageTimelineView({
     channelId !== '' &&
     roomBoundary !== undefined &&
     permitsPlaintext(roomBoundary)
+  const plaintextPermitted = roomBoundary === undefined || permitsPlaintext(roomBoundary)
   const pins = pinSetOf(roomId !== null ? (store.getPinned?.(roomId) ?? NO_PINS) : NO_PINS)
   const canPin = roomId !== null && !archived && store.canPin?.(roomId) === true
   const pin = useCallback(
@@ -457,7 +458,9 @@ function MessageTimelineView({
                   onPin={canPin ? pin : undefined}
                   mentionMembers={mentionMembers}
                   resolveMember={resolveMember}
+                  roomId={roomId ?? undefined}
                   channelId={channelId}
+                  plaintextPermitted={plaintextPermitted}
                   allowAiTranslate={allowAiTranslate}
                   onRetry={actions.onRetry}
                   onReaction={actions.onReaction}

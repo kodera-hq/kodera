@@ -232,7 +232,7 @@ export class Contract {
       ]
     }
     let body: unknown
-    if (mediaType === 'text/plain') {
+    if (mediaType === 'text/plain' || mediaType === 'image/webp') {
       body = text
     } else {
       try {

@@ -30,7 +30,7 @@ AREAS: dict[str, str] = {
     r"|scripts/ci/smoke-community-ingress\.py$|scripts/ci/check-community-deploy\.py$|scripts/ci/check-publish-images-workflow\.py$"
     r"|\.github/workflows/(ci-server|publish-images)\.yml$|\.nvmrc$",
     "web": r"\.nvmrc$|package\.json$|package-lock\.json$|apps/web/|apps/server/|packages/design-tokens/"
-    r"|packages/api-contract/|packages/create-kodera/|packages/extension-sdk/|packages/kodera-rs/vectors/"
+    r"|packages/api-contract/|packages/create-kodera/|packages/create-kodera-extension/|packages/extension-sdk/|packages/kodera-rs/vectors/"
     r"|extensions/|\.github/workflows/ci-web\.yml$",
     "rust": r"Cargo\.toml$|Cargo\.lock$|rust-toolchain(\.toml)?$|packages/kodera-rs/|apps/desktop/"
     r"|security/|scripts/ci/qualify-glib-iterator\.py$"
@@ -157,6 +157,8 @@ def selftest() -> None:
         ("ingress smoke reaches server", ["scripts/ci/smoke-community-ingress.py"],
          {"server": True, "web": False, "rust": False, "mobile": False}),
         ("scaffolder reaches web", ["packages/create-kodera/index.mjs"],
+         {"server": False, "web": True, "rust": False, "mobile": False}),
+        ("extension scaffolder reaches web", ["packages/create-kodera-extension/src/cli.ts"],
          {"server": False, "web": True, "rust": False, "mobile": False}),
         ("canonical contract reaches server and web", ["packages/api-contract/core-api.openapi.yaml"],
          {"server": True, "web": True, "rust": False, "mobile": False}),

@@ -51,7 +51,5 @@ class GuestScopeMiddleware:
                     and request.path.endswith("/workspace/guest-channel")
                 ):
                     request_id = responses.request_id(request)
-                    return responses.finish(
-                        responses.problem("forbidden", request_id), request_id
-                    )
+                    return responses.finish(responses.problem("forbidden", request_id), request_id)
         return self.get_response(request)

@@ -155,7 +155,10 @@ NOT_ON_CORE = frozenset({"agent"})
 # granting both invitation operations the four organisation roles.
 INVITATION_ROLES_SENTENCE = "Both operations also name the four organisation roles, deliberately"
 OVERRIDES: dict[str, tuple[frozenset[str], tuple[str, ...]]] = {
-    "getSingleGuestChannel": (frozenset({"single_channel_guest"}), ("`single_channel_guest` reaches only `getSingleGuestChannel` in Core",)),
+    "getSingleGuestChannel": (
+        frozenset({"single_channel_guest"}),
+        ("`single_channel_guest` reaches only `getSingleGuestChannel` in Core",),
+    ),
     "acceptInvitation": (
         frozenset({"invited", "org_owner", "org_admin", "org_billing", "org_member"}),
         (INVITATION_ROLES_SENTENCE,),

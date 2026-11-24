@@ -415,16 +415,19 @@ def _validate_deferrable_metadata(
         and _extract_uuid(meta, "core_subscription_id", "subscription_id") is None
     ):
         return "subscription_mismatch"
-    if (
-        _has_nonempty_key(meta, "boost_grant_id")
-        and _extract_uuid(meta, "boost_grant_id") is None
-    ):
+    if _has_nonempty_key(meta, "boost_grant_id") and _extract_uuid(meta, "boost_grant_id") is None:
         return "boost_grant_mismatch"
     if (
         _has_nonempty_key(meta, "vip_entitlement_id")
         and _extract_uuid(meta, "vip_entitlement_id") is None
     ):
         return "vip_entitlement_mismatch"
+    if (
+        _has_nonempty_key(meta, "kodera_marketplace_entitlement_id", "marketplace_entitlement_id")
+        and _extract_uuid(meta, "kodera_marketplace_entitlement_id", "marketplace_entitlement_id")
+        is None
+    ):
+        return "marketplace_entitlement_mismatch"
     return None
 
 
@@ -433,13 +436,15 @@ def _encode_deferred_refund_context(
     charge_id: str | None,
     meta: Mapping[str, Any],
     data_obj: Mapping[str, Any],
+    event_kind: str = "refund",
 ) -> str:
-    ctx: dict[str, str] = {"charge_id": charge_id or ""}
+    ctx: dict[str, str] = {"charge_id": charge_id or "", "event_kind": event_kind}
     org_id = _extract_uuid(meta, "core_organisation_id", "organisation_id")
     inv_id = _extract_uuid(meta, "core_invoice_id", "invoice_id")
     sub_id = _extract_uuid(meta, "core_subscription_id", "subscription_id")
     boost_id = _extract_uuid(meta, "boost_grant_id")
     vip_id = _extract_uuid(meta, "vip_entitlement_id")
+    mkt_id = _extract_uuid(meta, "kodera_marketplace_entitlement_id", "marketplace_entitlement_id")
     client_ref = _extract_uuid(data_obj, "client_reference_id")
     if org_id is not None:
         ctx["core_organisation_id"] = str(org_id)
@@ -451,6 +456,8 @@ def _encode_deferred_refund_context(
         ctx["boost_grant_id"] = str(boost_id)
     if vip_id is not None:
         ctx["vip_entitlement_id"] = str(vip_id)
+    if mkt_id is not None:
+        ctx["marketplace_entitlement_id"] = str(mkt_id)
     if client_ref is not None:
         ctx["client_reference_id"] = str(client_ref)
     return json.dumps(ctx, separators=(",", ":"), sort_keys=True)
@@ -471,12 +478,16 @@ def _decode_deferred_refund_context(
     charge_id = raw_charge if isinstance(raw_charge, str) and raw_charge else None
     meta: dict[str, str] = {}
     data_obj: dict[str, str] = {}
+    raw_kind = parsed.get("event_kind")
+    if isinstance(raw_kind, str) and raw_kind in ("refund", "dispute"):
+        meta["_event_kind"] = raw_kind
     for key in (
         "core_organisation_id",
         "core_invoice_id",
         "core_subscription_id",
         "boost_grant_id",
         "vip_entitlement_id",
+        "marketplace_entitlement_id",
     ):
         val = parsed.get(key)
         if isinstance(val, str) and val:
@@ -717,14 +728,14 @@ def _drain_deferred_stripe_refunds(*, invoice: Invoice, payment: Payment) -> Non
 
 
 def _drain_deferred_h31_refunds(*, pi_id: str) -> None:
-    """Replay bounded deferred `charge.refunded` rows once an H3.1 Boost or VIP Pass settles."""
+    """Replay bounded deferred `charge.refunded` and `charge.dispute.created` rows on settlement."""
     deferred_rows = list(
         ProviderEventRecord.objects.select_for_update()
         .filter(provider="stripe", payment_ref=pi_id, outcome="deferred")
         .order_by("occurred_at", "id")
     )
     for row in deferred_rows:
-        charge_id, _meta, _data_obj = _decode_deferred_refund_context(row.link_ref)
+        charge_id, meta, _data_obj = _decode_deferred_refund_context(row.link_ref)
         claimed = (
             ProviderEventRecord.objects.filter(id=row.id, outcome="deferred").update(
                 outcome="applied"
@@ -733,15 +744,27 @@ def _drain_deferred_h31_refunds(*, pi_id: str) -> None:
         )
         if not claimed:
             continue
-        res = _try_handle_h31_charge_refunded(
-            event_id=row.event_id,
-            occurred_at=row.occurred_at,
-            pi_id=pi_id,
-            charge_id=charge_id,
-            amount_refunded=int(row.amount_minor),
-            currency=row.currency,
-            already_recorded_event=True,
-        )
+        if meta.get("_event_kind") == "dispute":
+            res = _try_handle_h31_charge_disputed(
+                event_id=row.event_id,
+                occurred_at=row.occurred_at,
+                pi_id=pi_id,
+                dispute_id=charge_id or row.event_id,
+                raw_amount=int(row.amount_minor),
+                currency=row.currency,
+                meta=meta,
+            )
+        else:
+            res = _try_handle_h31_charge_refunded(
+                event_id=row.event_id,
+                occurred_at=row.occurred_at,
+                pi_id=pi_id,
+                charge_id=charge_id,
+                amount_refunded=int(row.amount_minor),
+                currency=row.currency,
+                already_recorded_event=True,
+                meta=meta,
+            )
         if res is None:
             ref_outcome = "unmatched"
             org_id: UUID | None = None
@@ -1241,6 +1264,7 @@ def _handle_charge_refunded(
         charge_id=charge_id,
         amount_refunded=amount_refunded,
         currency=currency,
+        meta=meta,
     )
     if h31_refund is not None:
         return h31_refund
@@ -1418,6 +1442,8 @@ def _try_handle_h31_checkout_cancelled(
     *,
     session_id: str,
 ) -> tuple[str, UUID | None] | None:
+    from django.apps import apps as django_apps
+
     from .. import boosts, vip_connect
 
     boost = WorkspaceBoostGrant.objects.filter(stripe_checkout_session_id=session_id).first()
@@ -1430,6 +1456,15 @@ def _try_handle_h31_checkout_cancelled(
         cancelled = vip_connect.cancel_pending_vip_entitlement(entitlement_id=vip.id)
         return ("applied" if cancelled else "ignored"), vip.organisation_id
 
+    if django_apps.is_installed("apps.extensions"):
+        from apps.extensions import marketplace as extension_marketplace
+
+        mkt_cancelled = extension_marketplace.try_cancel_stripe_checkout_session(
+            session_id=session_id
+        )
+        if mkt_cancelled is not None:
+            return mkt_cancelled
+
     return None
 
 
@@ -1441,6 +1476,8 @@ def _try_handle_h31_checkout_completed(
     session_id: str,
     data_obj: Mapping[str, Any],
 ) -> tuple[str, UUID | None] | None:
+    from django.apps import apps as django_apps
+
     from .. import boosts, vip_connect
 
     boost = WorkspaceBoostGrant.objects.filter(stripe_checkout_session_id=session_id).first()
@@ -1449,13 +1486,46 @@ def _try_handle_h31_checkout_completed(
         if boost is not None
         else VipMembershipEntitlement.objects.filter(stripe_checkout_session_id=session_id).first()
     )
-    if boost is None and vip is None:
+    meta = _metadata_of(data_obj)
+    has_meta_mkt = _has_nonempty_key(
+        meta, "kodera_marketplace_entitlement_id", "marketplace_entitlement_id"
+    )
+    meta_mkt_id = _extract_uuid(
+        meta, "kodera_marketplace_entitlement_id", "marketplace_entitlement_id"
+    )
+    if (
+        meta_mkt_id is None
+        and meta.get("kodera_checkout_kind") == "extension_marketplace"
+        and _has_nonempty_key(data_obj, "client_reference_id")
+    ):
+        has_meta_mkt = True
+        meta_mkt_id = _extract_uuid(data_obj, "client_reference_id")
+
+    mkt_entitlement = None
+    if boost is None and vip is None and django_apps.is_installed("apps.extensions"):
+        from apps.extensions.models import MarketplaceEntitlement
+
+        mkt_entitlement = MarketplaceEntitlement.objects.filter(checkout_ref=session_id).first()
+        if mkt_entitlement is None and meta_mkt_id is not None:
+            candidate = MarketplaceEntitlement.objects.filter(id=meta_mkt_id).first()
+            if candidate is not None and candidate.checkout_ref in (None, session_id):
+                mkt_entitlement = candidate
+
+    if boost is None and vip is None and mkt_entitlement is None:
         return None
 
-    org_id = boost.organisation_id if boost is not None else vip.organisation_id  # type: ignore[union-attr]
+    org_id = (
+        boost.organisation_id
+        if boost is not None
+        else vip.organisation_id
+        if vip is not None
+        else mkt_entitlement.organisation_id  # type: ignore[union-attr]
+    )
     payment_status = data_obj.get("payment_status")
     if event_type == "checkout.session.completed":
-        if payment_status == "unpaid":
+        if payment_status == "unpaid" or (
+            mkt_entitlement is not None and payment_status == "processing"
+        ):
             return "ignored", org_id
         if payment_status != "paid":
             return "mismatch", org_id
@@ -1495,26 +1565,68 @@ def _try_handle_h31_checkout_completed(
         _drain_deferred_h31_refunds(pi_id=pi_id)
         return "applied", org_id
 
-    if vip is None:
-        return None
-    if (raw_amount, currency) != (vip.total_incl_vat_minor, vip.currency):
-        return "mismatch", org_id
-    vip_connect.activate_vip_entitlement(
-        entitlement_id=vip.id,
-        stripe_event_id=event_id,
-        payment_intent_id=pi_id,
-        settled_at=occurred_at,
-    )
-    _record_applied_succeeded_event(
-        event_id=event_id,
-        payment_ref=pi_id,
-        link_ref=session_id,
-        amount_minor=raw_amount,
-        currency=currency,
-        occurred_at=occurred_at,
-    )
-    _drain_deferred_h31_refunds(pi_id=pi_id)
-    return "applied", org_id
+    if vip is not None:
+        if (raw_amount, currency) != (vip.total_incl_vat_minor, vip.currency):
+            return "mismatch", org_id
+        vip_connect.activate_vip_entitlement(
+            entitlement_id=vip.id,
+            stripe_event_id=event_id,
+            payment_intent_id=pi_id,
+            settled_at=occurred_at,
+        )
+        _record_applied_succeeded_event(
+            event_id=event_id,
+            payment_ref=pi_id,
+            link_ref=session_id,
+            amount_minor=raw_amount,
+            currency=currency,
+            occurred_at=occurred_at,
+        )
+        _drain_deferred_h31_refunds(pi_id=pi_id)
+        return "applied", org_id
+
+    if mkt_entitlement is not None:
+        from apps.extensions import marketplace as extension_marketplace
+
+        mkt_res = extension_marketplace.try_settle_stripe_checkout_session(
+            session_id=session_id,
+            event_type=event_type,
+            payment_status=payment_status,
+            payment_intent_id=pi_id,
+            amount_minor=raw_amount,
+            currency=currency,
+            meta_entitlement_id=meta_mkt_id,
+            has_meta_entitlement=has_meta_mkt,
+        )
+        if mkt_res is None:
+            return None
+        mkt_outcome, mkt_org, settled_id = mkt_res
+        if mkt_outcome == "applied" and settled_id is not None:
+            events.record(
+                "payment.received",
+                actor=SYSTEM,
+                organisation_id=mkt_org,
+                target=("marketplace_entitlement", settled_id),
+                metadata={
+                    "provider": "stripe",
+                    "event_id": event_id,
+                    "payment_intent": pi_id,
+                    "amount_minor": raw_amount,
+                    "currency": currency,
+                },
+            )
+            _record_applied_succeeded_event(
+                event_id=event_id,
+                payment_ref=pi_id,
+                link_ref=session_id,
+                amount_minor=raw_amount,
+                currency=currency,
+                occurred_at=occurred_at,
+            )
+            _drain_deferred_h31_refunds(pi_id=pi_id)
+        return mkt_outcome, mkt_org
+
+    return None
 
 
 def _try_handle_h31_payment_intent_succeeded(
@@ -1526,6 +1638,8 @@ def _try_handle_h31_payment_intent_succeeded(
     currency: str,
     meta: Mapping[str, Any],
 ) -> tuple[str, UUID | None] | None:
+    from django.apps import apps as django_apps
+
     from .. import boosts, vip_connect
 
     meta_boost_id = _extract_uuid(meta, "boost_grant_id")
@@ -1620,6 +1734,67 @@ def _try_handle_h31_payment_intent_succeeded(
         _drain_deferred_h31_refunds(pi_id=pi_id)
         return "applied", vip.organisation_id
 
+    if django_apps.is_installed("apps.extensions"):
+        from apps.extensions import marketplace as extension_marketplace
+
+        has_meta_mkt = _has_nonempty_key(
+            meta, "kodera_marketplace_entitlement_id", "marketplace_entitlement_id"
+        )
+        meta_mkt_id = _extract_uuid(
+            meta, "kodera_marketplace_entitlement_id", "marketplace_entitlement_id"
+        )
+        has_meta_ws = _has_nonempty_key(meta, "workspace_id")
+        meta_ws_id = _extract_uuid(meta, "workspace_id")
+        mkt_pi_res = extension_marketplace.try_settle_stripe_payment_intent(
+            payment_intent_id=pi_id,
+            amount_minor=raw_amount,
+            currency=currency,
+            meta_entitlement_id=meta_mkt_id,
+            meta_workspace_id=meta_ws_id,
+            has_meta_entitlement=has_meta_mkt,
+            has_meta_workspace=has_meta_ws,
+        )
+        if mkt_pi_res is not None:
+            mkt_outcome, mkt_org, mkt_id, mkt_session_ref = mkt_pi_res
+            if mkt_outcome == "applied" and mkt_id is not None:
+                events.record(
+                    "payment.received",
+                    actor=SYSTEM,
+                    organisation_id=mkt_org,
+                    target=("marketplace_entitlement", mkt_id),
+                    metadata={
+                        "provider": "stripe",
+                        "event_id": event_id,
+                        "payment_intent": pi_id,
+                        "amount_minor": raw_amount,
+                        "currency": currency,
+                    },
+                )
+                _record_applied_succeeded_event(
+                    event_id=event_id,
+                    payment_ref=pi_id,
+                    link_ref=mkt_session_ref,
+                    amount_minor=raw_amount,
+                    currency=currency,
+                    occurred_at=occurred_at,
+                )
+                _drain_deferred_h31_refunds(pi_id=pi_id)
+            elif mkt_outcome == "ignored" and mkt_id is not None:
+                events.record(
+                    "payment.reconciled",
+                    actor=SYSTEM,
+                    organisation_id=mkt_org,
+                    target=("marketplace_entitlement", mkt_id),
+                    metadata={
+                        "provider": "stripe",
+                        "event_id": event_id,
+                        "payment_intent": pi_id,
+                        "amount_minor": raw_amount,
+                        "currency": currency,
+                    },
+                )
+            return mkt_outcome, mkt_org
+
     return None
 
 
@@ -1632,7 +1807,10 @@ def _try_handle_h31_charge_refunded(
     amount_refunded: int,
     currency: str,
     already_recorded_event: bool = False,
+    meta: Mapping[str, Any] | None = None,
 ) -> tuple[str, UUID | None] | None:
+    from django.apps import apps as django_apps
+
     from .. import boosts, vip_connect
 
     boost = WorkspaceBoostGrant.objects.filter(stripe_payment_intent_id=pi_id).first()
@@ -1706,6 +1884,135 @@ def _try_handle_h31_charge_refunded(
             return "mismatch", vip.organisation_id
         return ("applied" if entry is not None else "ignored"), vip.organisation_id
 
+    if django_apps.is_installed("apps.extensions"):
+        from apps.extensions import marketplace as extension_marketplace
+
+        has_meta_mkt = _has_nonempty_key(
+            meta, "kodera_marketplace_entitlement_id", "marketplace_entitlement_id"
+        )
+        meta_mkt_id = _extract_uuid(
+            meta, "kodera_marketplace_entitlement_id", "marketplace_entitlement_id"
+        )
+        mkt_ref = extension_marketplace.try_revoke_stripe_marketplace_entitlement(
+            payment_intent_id=pi_id,
+            amount_minor=amount_refunded,
+            currency=currency,
+            occurred_at=occurred_at,
+            terminal_state="refunded",
+            meta_entitlement_id=meta_mkt_id,
+            has_meta_entitlement=has_meta_mkt,
+        )
+        if mkt_ref is not None:
+            mkt_outcome, mkt_org, mkt_id = mkt_ref
+            if mkt_outcome != "mismatch" and not already_recorded_event:
+                _record_applied_refund_event(
+                    event_id=event_id,
+                    payment_ref=pi_id,
+                    amount_refunded=amount_refunded,
+                    currency=currency,
+                    occurred_at=occurred_at,
+                )
+            if mkt_outcome == "applied" and mkt_id is not None:
+                events.record(
+                    "payment.refunded",
+                    actor=SYSTEM,
+                    organisation_id=mkt_org,
+                    target=("marketplace_entitlement", mkt_id),
+                    metadata={
+                        "provider": "stripe",
+                        "event_id": event_id,
+                        "charge_id": charge_id or "",
+                        "payment_intent": pi_id,
+                        "amount_refunded_minor": amount_refunded,
+                        "currency": currency,
+                    },
+                )
+            return mkt_outcome, mkt_org
+
+    return None
+
+
+def _try_handle_h31_charge_disputed(
+    *,
+    event_id: str,
+    occurred_at: datetime,
+    pi_id: str,
+    dispute_id: str,
+    raw_amount: int,
+    currency: str,
+    meta: Mapping[str, Any] | None = None,
+    raw_fee: Any = None,
+) -> tuple[str, UUID | None] | None:
+    from django.apps import apps as django_apps
+
+    from .. import boosts, vip_connect
+
+    vip = VipMembershipEntitlement.objects.filter(stripe_payment_intent_id=pi_id).first()
+    if vip is not None:
+        if currency != vip.currency or raw_amount > vip.total_incl_vat_minor:
+            return "mismatch", vip.organisation_id
+        dispute_fee = (
+            int(raw_fee)
+            if isinstance(raw_fee, int) and not isinstance(raw_fee, bool) and raw_fee >= 0
+            else vip_connect.DEFAULT_STRIPE_DISPUTE_FEE_MINOR
+        )
+        vip_connect.record_vip_dispute_created(
+            entitlement_id=vip.id,
+            stripe_event_id=event_id,
+            dispute_id=dispute_id,
+            dispute_fee_minor=dispute_fee,
+            occurred_at=occurred_at,
+        )
+        return "applied", vip.organisation_id
+
+    boost = WorkspaceBoostGrant.objects.filter(stripe_payment_intent_id=pi_id).first()
+    if boost is not None:
+        if currency != boost.currency or raw_amount > boost.gross_amount_minor:
+            return "mismatch", boost.organisation_id
+        boosts.dispute_boost_grant(
+            grant_id=boost.id,
+            dispute_id=dispute_id,
+            occurred_at=occurred_at,
+        )
+        return "applied", boost.organisation_id
+
+    if django_apps.is_installed("apps.extensions"):
+        from apps.extensions import marketplace as extension_marketplace
+
+        has_meta_mkt = _has_nonempty_key(
+            meta, "kodera_marketplace_entitlement_id", "marketplace_entitlement_id"
+        )
+        meta_mkt_id = _extract_uuid(
+            meta, "kodera_marketplace_entitlement_id", "marketplace_entitlement_id"
+        )
+        mkt_disp = extension_marketplace.try_revoke_stripe_marketplace_entitlement(
+            payment_intent_id=pi_id,
+            amount_minor=raw_amount,
+            currency=currency,
+            occurred_at=occurred_at,
+            terminal_state="revoked",
+            meta_entitlement_id=meta_mkt_id,
+            has_meta_entitlement=has_meta_mkt,
+        )
+        if mkt_disp is not None:
+            mkt_outcome, mkt_org, mkt_id = mkt_disp
+            if mkt_outcome == "applied" and mkt_id is not None:
+                events.record(
+                    "payment.refunded",
+                    actor=SYSTEM,
+                    organisation_id=mkt_org,
+                    target=("marketplace_entitlement", mkt_id),
+                    metadata={
+                        "provider": "stripe",
+                        "event_id": event_id,
+                        "dispute_id": dispute_id,
+                        "payment_intent": pi_id,
+                        "amount_minor": raw_amount,
+                        "currency": currency,
+                    },
+                )
+            return mkt_outcome, mkt_org
+
     return None
 
 
@@ -1715,8 +2022,6 @@ def _handle_charge_dispute_created(
     occurred_at: datetime,
     data_obj: Mapping[str, Any],
 ) -> tuple[str, UUID | None]:
-    from .. import boosts, vip_connect
-
     raw_dispute_id = data_obj.get("id")
     raw_pi = data_obj.get("payment_intent")
     raw_amount = data_obj.get("amount")
@@ -1744,41 +2049,69 @@ def _handle_charge_dispute_created(
         return "ignored", None
 
     currency = raw_currency.strip().upper()
+    meta = _metadata_of(data_obj)
     _lock_stripe_payment_ref(pi_id)
 
-    vip = VipMembershipEntitlement.objects.filter(stripe_payment_intent_id=pi_id).first()
-    if vip is not None:
-        if currency != vip.currency or raw_amount > vip.total_incl_vat_minor:
-            return "mismatch", vip.organisation_id
-        raw_fee = data_obj.get("dispute_fee_minor", vip_connect.DEFAULT_STRIPE_DISPUTE_FEE_MINOR)
-        dispute_fee = (
-            int(raw_fee)
-            if isinstance(raw_fee, int) and not isinstance(raw_fee, bool) and raw_fee >= 0
-            else vip_connect.DEFAULT_STRIPE_DISPUTE_FEE_MINOR
-        )
-        vip_connect.record_vip_dispute_created(
-            entitlement_id=vip.id,
-            stripe_event_id=event_id,
-            dispute_id=dispute_id,
-            dispute_fee_minor=dispute_fee,
-            occurred_at=occurred_at,
-        )
-        return "applied", vip.organisation_id
-
-    boost = WorkspaceBoostGrant.objects.filter(stripe_payment_intent_id=pi_id).first()
-    if boost is not None:
-        if currency != boost.currency or raw_amount > boost.gross_amount_minor:
-            return "mismatch", boost.organisation_id
-        boosts.dispute_boost_grant(
-            grant_id=boost.id,
-            dispute_id=dispute_id,
-            occurred_at=occurred_at,
-        )
-        return "applied", boost.organisation_id
+    h31_disp = _try_handle_h31_charge_disputed(
+        event_id=event_id,
+        occurred_at=occurred_at,
+        pi_id=pi_id,
+        dispute_id=dispute_id,
+        raw_amount=raw_amount,
+        currency=currency,
+        meta=meta,
+        raw_fee=data_obj.get("dispute_fee_minor"),
+    )
+    if h31_disp is not None:
+        return h31_disp
 
     existing_payment = Payment.objects.filter(provider="stripe", provider_ref=pi_id).first()
     if existing_payment is None:
-        return "unmatched", None
+        meta_mismatch = _validate_deferrable_metadata(meta, data_obj)
+        if meta_mismatch is not None:
+            events.record(
+                "payment.reconciliation_mismatch",
+                actor=SYSTEM,
+                organisation_id=None,
+                target=("payment", f"stripe:{pi_id}"),
+                metadata={
+                    "provider": "stripe",
+                    "event_id": event_id,
+                    "dispute_id": dispute_id,
+                    "payment_intent": pi_id,
+                    "reason": meta_mismatch,
+                },
+            )
+            return "mismatch", None
+
+        total_deferred = ProviderEventRecord.objects.filter(
+            provider="stripe", outcome="deferred"
+        ).count()
+        per_payment_deferred = ProviderEventRecord.objects.filter(
+            provider="stripe", payment_ref=pi_id, outcome="deferred"
+        ).count()
+        if (
+            total_deferred >= MAX_DEFERRED_STRIPE_REFUNDS
+            or per_payment_deferred >= MAX_DEFERRED_PER_PAYMENT
+        ):
+            return "mismatch", None
+
+        encoded_ctx = _encode_deferred_refund_context(
+            charge_id=dispute_id,
+            meta=meta,
+            data_obj=data_obj,
+            event_kind="dispute",
+        )
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO billing_providerevent"
+                " (id, provider, event_id, kind, payment_ref, link_ref, customer_ref,"
+                " amount_minor, currency, occurred_at, outcome)"
+                " VALUES (%s, 'stripe', %s, 'payment.reversed', %s, %s, NULL, %s, %s, %s, 'deferred')"
+                " ON CONFLICT (provider, event_id) DO NOTHING",
+                [new_uuid7(), event_id, pi_id, encoded_ctx, raw_amount, currency, occurred_at],
+            )
+        return "deferred", None
 
     invoice = Invoice.objects.select_for_update().get(id=existing_payment.invoice_id)
     reconciled = reconcile(

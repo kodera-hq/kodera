@@ -186,9 +186,19 @@ class StripeProvider:
                 ("client_reference_id", ref_id),
             ]
         )
+        effective_metadata: dict[str, str] = {}
         if request.reference_kind == "invoice":
-            params.append(("metadata[core_invoice_id]", ref_id))
-            params.append(("payment_intent_data[metadata][core_invoice_id]", ref_id))
+            effective_metadata["core_invoice_id"] = ref_id
+        elif request.reference_kind == "extension_marketplace":
+            effective_metadata["kodera_checkout_kind"] = "extension_marketplace"
+            effective_metadata["kodera_marketplace_entitlement_id"] = ref_id
+        if request.metadata:
+            for key, value in request.metadata.items():
+                effective_metadata[str(key)] = str(value)
+        if request.reference_kind == "extension_marketplace":
+            effective_metadata["kodera_checkout_kind"] = "extension_marketplace"
+            effective_metadata["kodera_marketplace_entitlement_id"] = ref_id
+
         params.extend(
             [
                 ("locale", request.locale),
@@ -210,17 +220,17 @@ class StripeProvider:
                     str(request.application_fee_amount_minor),
                 )
             )
-        if request.metadata:
-            for key, value in sorted(request.metadata.items()):
-                lowered = key.lower()
-                if "tax" in lowered or "invoice_creation" in lowered:
-                    raise ProviderRefusedError("forbidden Stripe Checkout parameter")
-                params.append((f"metadata[{key}]", str(value)))
-                params.append((f"payment_intent_data[metadata][{key}]", str(value)))
+        for key, value in sorted(effective_metadata.items()):
+            lowered = key.lower()
+            if "tax" in lowered or "invoice_creation" in lowered:
+                raise ProviderRefusedError("forbidden Stripe Checkout parameter")
+            params.append((f"metadata[{key}]", value))
+            params.append((f"payment_intent_data[metadata][{key}]", value))
         session = self._call(
             "POST",
             "/checkout/sessions",
             params,
+            idempotency_key=request.idempotency_key,
         )
         try:
             return ProviderLink(

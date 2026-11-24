@@ -6,7 +6,7 @@
   "license": "Apache-2.0",
   "description": "Reference implementation: bridging uptime monitors into incident cards and threaded lifecycle updates with flapping alert deduplication.",
   "dependencies": {
-    "@kodera/extension-sdk": "0.1.0"
+    "@kodera/extension-sdk": "0.2.0"
   },
   "scripts": {
     "test": "node --test test/uptime-incident-bridge.test.mjs"

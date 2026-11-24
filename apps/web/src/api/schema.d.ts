@@ -5145,6 +5145,274 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/organisations/{organisation_id}/workspace/extensions/marketplace": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List published workspace extension marketplace listings and caller entitlements
+         * @description Lists active marketplace extension listings in the caller's workspace along with billing status and current workspace entitlement/installation state.
+         */
+        get: operations["listMarketplaceExtensions"];
+        put?: never;
+        /**
+         * Publish an extension listing with validated manifest and optional Connect pricing
+         * @description Publishes a free or Stripe Connect paid extension listing in the workspace after validating the extension manifest, scopes, events, and optional kodera.widget.v1 templates.
+         */
+        post: operations["publishMarketplaceExtension"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/extensions/marketplace/{listing_id}/checkout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Grant a free marketplace entitlement or initiate web-only Stripe Connect checkout
+         * @description Activates a free extension entitlement immediately or initiates a web-only Stripe Connect checkout session (85/15 split, B2C L221-28 withdrawal waiver) outside any database transaction.
+         */
+        post: operations["checkoutMarketplaceExtension"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/extensions/marketplace/{listing_id}/install": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Install an entitled marketplace extension into the workspace
+         * @description Binds an active marketplace entitlement to a scoped workspace extension installation with an AEAD-sealed HMAC signing secret.
+         */
+        post: operations["installMarketplaceExtension"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/channels/{channel_id}/widgets/{widget_id}/actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dispatch a signed sandboxed widget action on a non-confidential channel
+         * @description Verifies channel post authority and non-confidentiality, dispatches a pinned-IP SSRF-guarded HMAC-signed widget.action event outside DB locks, and validates any returned kodera.widget.v1 card.
+         */
+        post: operations["invokeChannelWidgetAction"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/emojis": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List active sanitized custom WebP emojis in the workspace
+         * @description Returns active workspace custom emojis ordered by shortcode.
+         */
+        get: operations["listWorkspaceCustomEmojis"];
+        put?: never;
+        /**
+         * Upload and sanitize a workspace custom WebP emoji
+         * @description Parses RIFF/WEBP bytes, strips EXIF/XMP/ICCP metadata chunks and VP8X metadata flags, enforces 1..128px dimensions and <= 256 KiB size, refuses reserved kodera_* shortcodes, and stores clean WebP bytes.
+         */
+        post: operations["createWorkspaceCustomEmoji"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/emojis/{emoji_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Soft-revoke a workspace custom emoji
+         * @description Revokes a workspace custom emoji when called by an organisation owner, administrator, or member holding manage_emojis.
+         */
+        delete: operations["deleteWorkspaceCustomEmoji"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/emojis/{emoji_id}/blob": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read sanitized custom emoji WebP bytes
+         * @description Streams sanitized image/webp bytes with X-Content-Type-Options: nosniff and Content-Security-Policy: default-src 'none'.
+         */
+        get: operations["getWorkspaceCustomEmojiBlob"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/scheduled-messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the caller's scheduled Send Later messages
+         * @description Lists pending and in-flight scheduled messages authored by the authenticated member (or all states when include_terminal=true).
+         */
+        get: operations["listScheduledMessages"];
+        put?: never;
+        /**
+         * Schedule a message for later delivery on a non-confidential room
+         * @description Enqueues a Send Later message for future delivery after verifying channel post permission and refusing designated confidential or E2EE-backed channels.
+         */
+        post: operations["createScheduledMessage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/scheduled-messages/{scheduled_message_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Cancel a pending scheduled message
+         * @description Transitions a pending scheduled message authored by the caller to cancelled.
+         */
+        delete: operations["cancelScheduledMessage"];
+        options?: never;
+        head?: never;
+        /**
+         * Edit or reschedule a pending Send Later message
+         * @description Updates body, mentions, or delivery timestamp on a pending scheduled message authored by the caller when If-Match is supplied.
+         */
+        patch: operations["updateScheduledMessage"];
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/reminders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List personal message reminders for the caller
+         * @description Lists active and fired personal reminders belonging to the authenticated member (plus completed entries when include_completed=true).
+         */
+        get: operations["listPersonalReminders"];
+        put?: never;
+        /**
+         * Create a personal reminder on a non-confidential message
+         * @description Creates a personal message reminder after verifying channel visibility and refusing designated confidential or E2EE-backed channels.
+         */
+        post: operations["createPersonalReminder"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/reminders/{reminder_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Cancel a personal reminder
+         * @description Cancels a personal reminder belonging to the caller.
+         */
+        delete: operations["deletePersonalReminder"];
+        options?: never;
+        head?: never;
+        /**
+         * Snooze, complete, or update a personal reminder
+         * @description Updates note, remindAt, or state on a personal reminder belonging to the caller when If-Match is supplied.
+         */
+        patch: operations["updatePersonalReminder"];
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/preferences/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read the caller's Kodera Labs flags and waiting-room ambience preference
+         * @description Returns per-member Kodera Labs toggles and waiting-room ambient audio preference for the workspace.
+         */
+        get: operations["getMyWorkspacePreferences"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Update the caller's Kodera Labs flags and waiting-room ambience preference
+         * @description Updates per-member Kodera Labs flags and waiting-room ambient audio preference when If-Match is supplied.
+         */
+        patch: operations["updateMyWorkspacePreferences"];
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -14969,6 +15237,693 @@ export interface components {
             provider: string;
             model: string;
             ephemeral: boolean;
+        };
+        /**
+         * ExtensionMarketplacePricingMode
+         * @example free
+         * @enum {string}
+         */
+        ExtensionMarketplacePricingMode: "free" | "one_time";
+        /**
+         * ExtensionMarketplaceEntitlementState
+         * @example active
+         * @enum {string}
+         */
+        ExtensionMarketplaceEntitlementState: "pending" | "active" | "revoked" | "refunded";
+        /**
+         * ExtensionWidgetCardKeyValueItem
+         * @example {
+         *       "label": "Build",
+         *       "value": "#482"
+         *     }
+         */
+        ExtensionWidgetCardKeyValueItem: {
+            label: string;
+            value: string;
+        };
+        /**
+         * ExtensionWidgetActionItem
+         * @example {
+         *       "actionId": "deploy_approve",
+         *       "label": "Approve",
+         *       "variant": "primary"
+         *     }
+         */
+        ExtensionWidgetActionItem: {
+            actionId: string;
+            label: string;
+            /** @enum {string} */
+            variant?: "primary" | "secondary" | "tertiary" | "destructive";
+            confirmText?: string;
+        };
+        /**
+         * ExtensionWidgetBlock
+         * @example {
+         *       "type": "header",
+         *       "title": "Deployment status",
+         *       "subtitle": "Production release pipeline"
+         *     }
+         */
+        ExtensionWidgetBlock: {
+            /** @enum {string} */
+            type: "header" | "text" | "kv_list" | "status_pill" | "progress_bar" | "button_row" | "link_button";
+            title?: string;
+            subtitle?: string;
+            body?: string;
+            /** @enum {string} */
+            tone?: "default" | "muted" | "mono" | "warning" | "danger" | "success";
+            items?: components["schemas"]["ExtensionWidgetCardKeyValueItem"][];
+            label?: string;
+            /** @enum {string} */
+            state?: "success" | "info" | "warning" | "danger" | "neutral" | "planned";
+            value?: number;
+            actions?: components["schemas"]["ExtensionWidgetActionItem"][];
+            /** Format: uri */
+            href?: string;
+            /** @enum {string} */
+            variant?: "secondary" | "tertiary";
+        };
+        /**
+         * ExtensionWidgetCard
+         * @example {
+         *       "schemaVersion": "kodera.widget.v1",
+         *       "widgetId": "release-gate",
+         *       "blocks": [
+         *         {
+         *           "type": "header",
+         *           "title": "Deployment status",
+         *           "subtitle": "Production release pipeline"
+         *         }
+         *       ]
+         *     }
+         */
+        ExtensionWidgetCard: {
+            /** @constant */
+            schemaVersion: "kodera.widget.v1";
+            widgetId: string;
+            blocks: components["schemas"]["ExtensionWidgetBlock"][];
+        };
+        /**
+         * ExtensionManifestCommand
+         * @example {
+         *       "name": "/deploy",
+         *       "description": "Inspect current deployment status"
+         *     }
+         */
+        ExtensionManifestCommand: {
+            name: string;
+            description: string;
+        };
+        /**
+         * ExtensionManifestWidget
+         * @example {
+         *       "id": "release-gate",
+         *       "title": "Release gate",
+         *       "description": "Interactive release approval card"
+         *     }
+         */
+        ExtensionManifestWidget: {
+            id: string;
+            title: string;
+            description?: string;
+            defaultCard?: components["schemas"]["ExtensionWidgetCard"];
+        };
+        /**
+         * ExtensionMarketplaceManifest
+         * @example {
+         *       "schemaVersion": "kodera.extension.v1",
+         *       "slug": "release-assistant",
+         *       "name": "Release Assistant",
+         *       "version": "0.1.0",
+         *       "description": "Interactive deployment status and release approvals.",
+         *       "scopes": [
+         *         "commands:register",
+         *         "widgets:write"
+         *       ],
+         *       "events": [
+         *         "command.invoked",
+         *         "widget.action"
+         *       ],
+         *       "commands": [],
+         *       "widgets": [],
+         *       "endpoint": "https://extensions.example.eu/kodera/webhook"
+         *     }
+         */
+        ExtensionMarketplaceManifest: {
+            /** @constant */
+            schemaVersion: "kodera.extension.v1";
+            slug: string;
+            name: string;
+            version: string;
+            description: string;
+            scopes: string[];
+            events: string[];
+            commands?: components["schemas"]["ExtensionManifestCommand"][];
+            widgets?: components["schemas"]["ExtensionManifestWidget"][];
+            /** Format: uri */
+            endpoint: string;
+        };
+        /**
+         * ExtensionMarketplaceListing
+         * @example {
+         *       "id": "00000000-0000-7000-8000-000000000301",
+         *       "workspaceId": "00000000-0000-7000-8000-000000000001",
+         *       "slug": "release-assistant",
+         *       "title": "Release Assistant",
+         *       "summary": "Interactive deployment status and release approvals.",
+         *       "pricingMode": "free",
+         *       "priceExclVatMinor": 0,
+         *       "currency": "EUR",
+         *       "manifest": {
+         *         "schemaVersion": "kodera.extension.v1",
+         *         "slug": "release-assistant",
+         *         "name": "Release Assistant",
+         *         "version": "0.1.0",
+         *         "description": "Interactive deployment status and release approvals.",
+         *         "scopes": [
+         *           "commands:register",
+         *           "widgets:write"
+         *         ],
+         *         "events": [
+         *           "command.invoked",
+         *           "widget.action"
+         *         ],
+         *         "commands": [],
+         *         "widgets": [],
+         *         "endpoint": "https://extensions.example.eu/kodera/webhook"
+         *       },
+         *       "publishedAt": "2026-06-08T10:00:00Z",
+         *       "entitlementState": "active",
+         *       "entitlementId": "00000000-0000-7000-8000-000000000302",
+         *       "installed": true,
+         *       "installationId": "00000000-0000-7000-8000-000000000303"
+         *     }
+         */
+        ExtensionMarketplaceListing: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            workspaceId: string;
+            slug: string;
+            title: string;
+            summary: string;
+            pricingMode: components["schemas"]["ExtensionMarketplacePricingMode"];
+            priceExclVatMinor: number;
+            /** @constant */
+            currency: "EUR";
+            manifest: components["schemas"]["ExtensionMarketplaceManifest"];
+            /** Format: date-time */
+            publishedAt: string | null;
+            entitlementState: components["schemas"]["ExtensionMarketplaceEntitlementState"] | null;
+            /** Format: uuid */
+            entitlementId: string | null;
+            installed: boolean;
+            /** Format: uuid */
+            installationId: string | null;
+        };
+        /**
+         * ExtensionMarketplaceCatalog
+         * @example {
+         *       "billingEnabled": true,
+         *       "listings": []
+         *     }
+         */
+        ExtensionMarketplaceCatalog: {
+            billingEnabled: boolean;
+            listings: components["schemas"]["ExtensionMarketplaceListing"][];
+        };
+        /**
+         * ExtensionMarketplacePublishRequest
+         * @example {
+         *       "slug": "release-assistant",
+         *       "title": "Release Assistant",
+         *       "summary": "Interactive deployment status and release approvals.",
+         *       "pricingMode": "free",
+         *       "priceExclVatMinor": 0,
+         *       "manifest": {
+         *         "schemaVersion": "kodera.extension.v1",
+         *         "slug": "release-assistant",
+         *         "name": "Release Assistant",
+         *         "version": "0.1.0",
+         *         "description": "Interactive deployment status and release approvals.",
+         *         "scopes": [
+         *           "commands:register",
+         *           "widgets:write"
+         *         ],
+         *         "events": [
+         *           "command.invoked",
+         *           "widget.action"
+         *         ],
+         *         "commands": [],
+         *         "widgets": [],
+         *         "endpoint": "https://extensions.example.eu/kodera/webhook"
+         *       }
+         *     }
+         */
+        ExtensionMarketplacePublishRequest: {
+            slug: string;
+            title: string;
+            summary: string;
+            manifest: components["schemas"]["ExtensionMarketplaceManifest"];
+            pricingMode?: components["schemas"]["ExtensionMarketplacePricingMode"];
+            priceExclVatMinor?: number;
+        };
+        /**
+         * ExtensionMarketplaceCheckoutRequest
+         * @example {
+         *       "customerKind": "b2b",
+         *       "buyerCountry": "FR",
+         *       "locale": "fr"
+         *     }
+         */
+        ExtensionMarketplaceCheckoutRequest: {
+            /** @enum {string} */
+            customerKind?: "b2c" | "b2b";
+            buyerCountry?: string;
+            /** Format: uri */
+            returnUrl?: string;
+            /** @enum {string} */
+            locale?: "fr" | "en";
+            withdrawalWaiverAccepted?: boolean;
+            /** Format: date-time */
+            withdrawalWaiverAt?: string;
+            withdrawalWaiverStatement?: string;
+        };
+        /**
+         * ExtensionMarketplaceCheckoutResult
+         * @example {
+         *       "entitlementId": "00000000-0000-7000-8000-000000000302",
+         *       "listingId": "00000000-0000-7000-8000-000000000301",
+         *       "pricingMode": "free",
+         *       "state": "active",
+         *       "checkoutRequired": false,
+         *       "checkoutSessionId": null,
+         *       "checkoutUrl": null,
+         *       "grossExclVatMinor": 0,
+         *       "vatAmountMinor": 0,
+         *       "totalInclVatMinor": 0,
+         *       "applicationFeeAmountMinor": 0,
+         *       "currency": "EUR",
+         *       "replayed": false
+         *     }
+         */
+        ExtensionMarketplaceCheckoutResult: {
+            /** Format: uuid */
+            entitlementId: string;
+            /** Format: uuid */
+            listingId: string;
+            pricingMode: components["schemas"]["ExtensionMarketplacePricingMode"];
+            state: components["schemas"]["ExtensionMarketplaceEntitlementState"];
+            checkoutRequired: boolean;
+            checkoutSessionId: string | null;
+            /** Format: uri */
+            checkoutUrl: string | null;
+            grossExclVatMinor: number;
+            vatAmountMinor: number;
+            totalInclVatMinor: number;
+            applicationFeeAmountMinor: number;
+            /** @constant */
+            currency: "EUR";
+            replayed: boolean;
+        };
+        /**
+         * ExtensionMarketplaceInstallRequest
+         * @example {
+         *       "signingSecret": "whsec_0123456789abcdef0123456789abcdef"
+         *     }
+         */
+        ExtensionMarketplaceInstallRequest: {
+            signingSecret: string;
+            /** Format: uri */
+            endpoint?: string;
+        };
+        /**
+         * ExtensionMarketplaceInstallResult
+         * @example {
+         *       "installationId": "00000000-0000-7000-8000-000000000303",
+         *       "entitlementId": "00000000-0000-7000-8000-000000000302",
+         *       "listingId": "00000000-0000-7000-8000-000000000301",
+         *       "slug": "release-assistant",
+         *       "endpoint": "https://extensions.example.eu/kodera/webhook",
+         *       "events": [
+         *         "command.invoked",
+         *         "widget.action"
+         *       ],
+         *       "keyGeneration": "1",
+         *       "replayed": false
+         *     }
+         */
+        ExtensionMarketplaceInstallResult: {
+            /** Format: uuid */
+            installationId: string;
+            /** Format: uuid */
+            entitlementId: string;
+            /** Format: uuid */
+            listingId: string;
+            slug: string;
+            /** Format: uri */
+            endpoint: string;
+            events: string[];
+            keyGeneration: string;
+            replayed: boolean;
+        };
+        /**
+         * ChannelWidgetActionRequest
+         * @example {
+         *       "installationId": "00000000-0000-7000-8000-000000000303",
+         *       "actionId": "deploy_approve",
+         *       "payload": {
+         *         "environment": "staging"
+         *       }
+         *     }
+         */
+        ChannelWidgetActionRequest: {
+            /** Format: uuid */
+            installationId: string;
+            actionId: string;
+            payload?: {
+                [key: string]: string | number | boolean | null;
+            };
+        };
+        /**
+         * ChannelWidgetActionResult
+         * @example {
+         *       "receiptId": "00000000-0000-7000-8000-000000000304",
+         *       "installationId": "00000000-0000-7000-8000-000000000303",
+         *       "channelId": "00000000-0000-7000-8000-000000000002",
+         *       "widgetId": "release-gate",
+         *       "actionId": "deploy_approve",
+         *       "state": "delivered",
+         *       "responseStatus": 200,
+         *       "card": null,
+         *       "replayed": false
+         *     }
+         */
+        ChannelWidgetActionResult: {
+            /** Format: uuid */
+            receiptId: string;
+            /** Format: uuid */
+            installationId: string;
+            /** Format: uuid */
+            channelId: string;
+            widgetId: string;
+            actionId: string;
+            /** @enum {string} */
+            state: "in_flight" | "delivered" | "refused" | "failed";
+            responseStatus: number | null;
+            card: components["schemas"]["ExtensionWidgetCard"] | null;
+            replayed: boolean;
+        };
+        /**
+         * WorkspaceCustomEmoji
+         * @example {
+         *       "id": "00000000-0000-7000-8000-000000000401",
+         *       "shortcode": "ship_it",
+         *       "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+         *       "width": 64,
+         *       "height": 64,
+         *       "animated": false,
+         *       "creatorMembershipId": "00000000-0000-7000-8000-000000000010",
+         *       "createdAt": "2026-06-08T10:00:00Z",
+         *       "blobPath": "/api/v1/organisations/00000000-0000-7000-8000-000000000001/workspace/emojis/00000000-0000-7000-8000-000000000401/blob"
+         *     }
+         */
+        WorkspaceCustomEmoji: {
+            /** Format: uuid */
+            id: string;
+            shortcode: string;
+            sha256: string;
+            width: number;
+            height: number;
+            animated: boolean;
+            /** Format: uuid */
+            creatorMembershipId: string;
+            /** Format: date-time */
+            createdAt: string;
+            blobPath: string;
+        };
+        /**
+         * WorkspaceCustomEmojiList
+         * @example {
+         *       "items": []
+         *     }
+         */
+        WorkspaceCustomEmojiList: {
+            items: components["schemas"]["WorkspaceCustomEmoji"][];
+        };
+        /**
+         * WorkspaceCustomEmojiCreateRequest
+         * @example {
+         *       "shortcode": "ship_it",
+         *       "webpBase64": "UklGRiQAAABXRUJQVlA4IBgAAAAwAQCdASoCAAIAAUAmJaQAA3AA/vuUAAA="
+         *     }
+         */
+        WorkspaceCustomEmojiCreateRequest: {
+            shortcode: string;
+            webpBase64?: string;
+            webp_base64?: string;
+        };
+        /**
+         * ScheduledMessageState
+         * @example pending
+         * @enum {string}
+         */
+        ScheduledMessageState: "pending" | "in_flight" | "delivered" | "cancelled" | "refused_policy" | "obsolete";
+        /**
+         * ScheduledMessage
+         * @example {
+         *       "id": "00000000-0000-7000-8000-000000000410",
+         *       "channelId": "00000000-0000-7000-8000-000000000002",
+         *       "roomId": "!general:acme.kodera.io",
+         *       "body": "Bonjour a toute l equipe !",
+         *       "mentions": [],
+         *       "threadRootEventId": null,
+         *       "deliverAt": "2026-06-09T09:00:00Z",
+         *       "matrixTxnId": "kodera-sched-0123456789abcdef0123456789abcdef",
+         *       "matrixEventId": null,
+         *       "state": "pending",
+         *       "failureReason": null,
+         *       "createdAt": "2026-06-08T10:00:00Z",
+         *       "updatedAt": "2026-06-08T10:00:00Z"
+         *     }
+         */
+        ScheduledMessage: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            channelId: string | null;
+            roomId: string;
+            body: string;
+            mentions: string[];
+            threadRootEventId: string | null;
+            /** Format: date-time */
+            deliverAt: string;
+            matrixTxnId: string;
+            matrixEventId: string | null;
+            state: components["schemas"]["ScheduledMessageState"];
+            failureReason: string | null;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        /**
+         * ScheduledMessageList
+         * @example {
+         *       "items": []
+         *     }
+         */
+        ScheduledMessageList: {
+            items: components["schemas"]["ScheduledMessage"][];
+        };
+        /**
+         * ScheduledMessageCreateRequest
+         * @example {
+         *       "channelId": "00000000-0000-7000-8000-000000000002",
+         *       "roomId": "!general:acme.kodera.io",
+         *       "body": "Bonjour a toute l equipe !",
+         *       "deliverAt": "2026-06-09T09:00:00Z"
+         *     }
+         */
+        ScheduledMessageCreateRequest: {
+            /** Format: uuid */
+            channelId?: string;
+            /** Format: uuid */
+            channel_id?: string;
+            roomId?: string;
+            room_id?: string;
+            body: string;
+            mentions?: string[];
+            threadRootEventId?: string;
+            thread_root_event_id?: string;
+            /** Format: date-time */
+            deliverAt?: string;
+            /** Format: date-time */
+            deliver_at?: string;
+            confidential?: boolean;
+            encrypted?: boolean;
+        };
+        /**
+         * ScheduledMessagePatchRequest
+         * @example {
+         *       "body": "Bonjour mis a jour !"
+         *     }
+         */
+        ScheduledMessagePatchRequest: {
+            body?: string;
+            mentions?: string[];
+            /** Format: date-time */
+            deliverAt?: string;
+            /** Format: date-time */
+            deliver_at?: string;
+        };
+        /**
+         * PersonalReminderState
+         * @example pending
+         * @enum {string}
+         */
+        PersonalReminderState: "pending" | "in_flight" | "fired" | "snoozed" | "completed" | "cancelled" | "obsolete";
+        /**
+         * PersonalReminder
+         * @example {
+         *       "id": "00000000-0000-7000-8000-000000000420",
+         *       "channelId": "00000000-0000-7000-8000-000000000002",
+         *       "roomId": "!general:acme.kodera.io",
+         *       "targetEventId": "$event_demo_001",
+         *       "note": "Relire le compte-rendu",
+         *       "remindAt": "2026-06-09T09:00:00Z",
+         *       "state": "pending",
+         *       "notificationId": null,
+         *       "createdAt": "2026-06-08T10:00:00Z",
+         *       "updatedAt": "2026-06-08T10:00:00Z"
+         *     }
+         */
+        PersonalReminder: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            channelId: string | null;
+            roomId: string;
+            targetEventId: string;
+            note: string;
+            /** Format: date-time */
+            remindAt: string;
+            state: components["schemas"]["PersonalReminderState"];
+            /** Format: uuid */
+            notificationId: string | null;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        /**
+         * PersonalReminderList
+         * @example {
+         *       "items": []
+         *     }
+         */
+        PersonalReminderList: {
+            items: components["schemas"]["PersonalReminder"][];
+        };
+        /**
+         * PersonalReminderCreateRequest
+         * @example {
+         *       "channelId": "00000000-0000-7000-8000-000000000002",
+         *       "roomId": "!general:acme.kodera.io",
+         *       "targetEventId": "$event_demo_001",
+         *       "note": "Relire le compte-rendu",
+         *       "remindAt": "2026-06-09T09:00:00Z"
+         *     }
+         */
+        PersonalReminderCreateRequest: {
+            /** Format: uuid */
+            channelId?: string;
+            /** Format: uuid */
+            channel_id?: string;
+            roomId?: string;
+            room_id?: string;
+            targetEventId?: string;
+            target_event_id?: string;
+            note?: string;
+            /** Format: date-time */
+            remindAt?: string;
+            /** Format: date-time */
+            remind_at?: string;
+            confidential?: boolean;
+            encrypted?: boolean;
+        };
+        /**
+         * PersonalReminderPatchRequest
+         * @example {
+         *       "state": "completed"
+         *     }
+         */
+        PersonalReminderPatchRequest: {
+            note?: string;
+            /** Format: date-time */
+            remindAt?: string;
+            /** Format: date-time */
+            remind_at?: string;
+            /** @enum {string} */
+            state?: "pending" | "snoozed" | "completed" | "cancelled";
+        };
+        /**
+         * KoderaLabsFlags
+         * @example {
+         *       "send_later": true,
+         *       "custom_emojis": true,
+         *       "personal_reminders": true,
+         *       "waiting_room_ambience": true
+         *     }
+         */
+        KoderaLabsFlags: {
+            send_later: boolean;
+            custom_emojis: boolean;
+            personal_reminders: boolean;
+            waiting_room_ambience: boolean;
+        };
+        /**
+         * KoderaLabsFlagsPatch
+         * @example {
+         *       "send_later": true
+         *     }
+         */
+        KoderaLabsFlagsPatch: {
+            send_later?: boolean;
+            custom_emojis?: boolean;
+            personal_reminders?: boolean;
+            waiting_room_ambience?: boolean;
+        };
+        /**
+         * MemberWorkspacePreferences
+         * @example {
+         *       "labsFlags": {
+         *         "send_later": true,
+         *         "custom_emojis": true,
+         *         "personal_reminders": true,
+         *         "waiting_room_ambience": true
+         *       },
+         *       "waitingRoomAmbience": false,
+         *       "updatedAt": null
+         *     }
+         */
+        MemberWorkspacePreferences: {
+            labsFlags: components["schemas"]["KoderaLabsFlags"];
+            waitingRoomAmbience: boolean;
+            /** Format: date-time */
+            updatedAt: string | null;
+        };
+        /**
+         * MemberWorkspacePreferencesPatchRequest
+         * @example {
+         *       "waitingRoomAmbience": true
+         *     }
+         */
+        MemberWorkspacePreferencesPatchRequest: {
+            labsFlags?: components["schemas"]["KoderaLabsFlagsPatch"];
+            labs_flags?: components["schemas"]["KoderaLabsFlagsPatch"];
+            waitingRoomAmbience?: boolean;
+            waiting_room_ambience?: boolean;
         };
     };
     responses: {
@@ -28504,6 +29459,974 @@ export interface operations {
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
             422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["WorkspaceBusy"];
+        };
+    };
+    listMarketplaceExtensions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Published marketplace extension listings for the workspace. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExtensionMarketplaceCatalog"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["WorkspaceBusy"];
+        };
+    };
+    publishMarketplaceExtension: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExtensionMarketplacePublishRequest"];
+            };
+        };
+        responses: {
+            /** @description Marketplace extension listing published. */
+            201: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExtensionMarketplaceListing"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["WorkspaceBusy"];
+        };
+    };
+    checkoutMarketplaceExtension: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                /** @description Identifier of the published marketplace extension listing. */
+                listing_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExtensionMarketplaceCheckoutRequest"];
+            };
+        };
+        responses: {
+            /** @description Idempotently replayed marketplace entitlement or checkout session. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExtensionMarketplaceCheckoutResult"];
+                };
+            };
+            /** @description Marketplace entitlement granted or checkout session created. */
+            201: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExtensionMarketplaceCheckoutResult"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            502: components["responses"]["UpstreamUnavailable"];
+            503: components["responses"]["WorkspaceBusy"];
+        };
+    };
+    installMarketplaceExtension: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                /** @description Identifier of the published marketplace extension listing. */
+                listing_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExtensionMarketplaceInstallRequest"];
+            };
+        };
+        responses: {
+            /** @description Idempotently replayed marketplace installation binding. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExtensionMarketplaceInstallResult"];
+                };
+            };
+            /** @description Marketplace extension installed in the workspace. */
+            201: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExtensionMarketplaceInstallResult"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["WorkspaceBusy"];
+        };
+    };
+    invokeChannelWidgetAction: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                /** @description Identifier of the non-confidential text channel. */
+                channel_id: string;
+                /** @description Declarative widget identifier within the extension manifest. */
+                widget_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChannelWidgetActionRequest"];
+            };
+        };
+        responses: {
+            /** @description Widget action receipt and optional updated declarative widget card. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChannelWidgetActionResult"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            502: components["responses"]["UpstreamUnavailable"];
+            503: components["responses"]["WorkspaceBusy"];
+        };
+    };
+    listWorkspaceCustomEmojis: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Active custom emojis in the workspace. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceCustomEmojiList"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["WorkspaceBusy"];
+        };
+    };
+    createWorkspaceCustomEmoji: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceCustomEmojiCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Sanitized workspace custom emoji created. */
+            201: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceCustomEmoji"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["WorkspaceBusy"];
+        };
+    };
+    deleteWorkspaceCustomEmoji: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                /** @description Identifier of the workspace custom emoji. */
+                emoji_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Custom emoji revoked. */
+            204: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["WorkspaceBusy"];
+        };
+    };
+    getWorkspaceCustomEmojiBlob: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                /** @description Identifier of the workspace custom emoji. */
+                emoji_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Sanitized custom emoji WebP binary payload. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    ETag: components["headers"]["ETag"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /** @example UklGRiQAAABXRUJQVlA4IBgAAAAwAQCdASoBAAEAAwA0JaQAA3AA/vuUAAA= */
+                    "image/webp": string;
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["WorkspaceBusy"];
+        };
+    };
+    listScheduledMessages: {
+        parameters: {
+            query?: {
+                /** @description Optional channel filter. */
+                channel_id?: string;
+                /** @description Include delivered, cancelled, refused, and obsolete entries when set to true. */
+                include_terminal?: "true" | "false";
+            };
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Scheduled messages authored by the caller. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledMessageList"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["WorkspaceBusy"];
+        };
+    };
+    createScheduledMessage: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduledMessageCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Scheduled message queued. */
+            201: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    ETag: components["headers"]["ETag"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledMessage"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["WorkspaceBusy"];
+        };
+    };
+    cancelScheduledMessage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                /** @description Identifier of the scheduled message. */
+                scheduled_message_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Scheduled message cancelled. */
+            204: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["WorkspaceBusy"];
+        };
+    };
+    updateScheduledMessage: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description The `ETag` of the representation this change was computed against. Required on every
+                 *     `PATCH` (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
+                 *     Stale: `412 precondition-failed`, carrying the current tag, and the client re-reads and
+                 *     re-applies rather than overwriting a change it never saw.
+                 *
+                 *     The example is the same value the `ETag` header returns, and is deliberately non-random
+                 *     for the reason given there.
+                 */
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                /** @description Identifier of the scheduled message. */
+                scheduled_message_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduledMessagePatchRequest"];
+            };
+        };
+        responses: {
+            /** @description Scheduled message updated. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    ETag: components["headers"]["ETag"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledMessage"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            422: components["responses"]["ValidationError"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["WorkspaceBusy"];
+        };
+    };
+    listPersonalReminders: {
+        parameters: {
+            query?: {
+                /** @description Include completed reminders when set to true. */
+                include_completed?: "true" | "false";
+            };
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Personal reminders belonging to the caller. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonalReminderList"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["WorkspaceBusy"];
+        };
+    };
+    createPersonalReminder: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PersonalReminderCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Personal reminder created. */
+            201: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    ETag: components["headers"]["ETag"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonalReminder"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["WorkspaceBusy"];
+        };
+    };
+    deletePersonalReminder: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                /** @description Identifier of the personal reminder. */
+                reminder_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Personal reminder cancelled. */
+            204: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["WorkspaceBusy"];
+        };
+    };
+    updatePersonalReminder: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description The `ETag` of the representation this change was computed against. Required on every
+                 *     `PATCH` (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
+                 *     Stale: `412 precondition-failed`, carrying the current tag, and the client re-reads and
+                 *     re-applies rather than overwriting a change it never saw.
+                 *
+                 *     The example is the same value the `ETag` header returns, and is deliberately non-random
+                 *     for the reason given there.
+                 */
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                /** @description Identifier of the personal reminder. */
+                reminder_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PersonalReminderPatchRequest"];
+            };
+        };
+        responses: {
+            /** @description Personal reminder updated. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    ETag: components["headers"]["ETag"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonalReminder"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            422: components["responses"]["ValidationError"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["WorkspaceBusy"];
+        };
+    };
+    getMyWorkspacePreferences: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Caller workspace preferences. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    ETag: components["headers"]["ETag"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemberWorkspacePreferences"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["WorkspaceBusy"];
+        };
+    };
+    updateMyWorkspacePreferences: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description The `ETag` of the representation this change was computed against. Required on every
+                 *     `PATCH` (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
+                 *     Stale: `412 precondition-failed`, carrying the current tag, and the client re-reads and
+                 *     re-applies rather than overwriting a change it never saw.
+                 *
+                 *     The example is the same value the `ETag` header returns, and is deliberately non-random
+                 *     for the reason given there.
+                 */
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MemberWorkspacePreferencesPatchRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated caller workspace preferences. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    ETag: components["headers"]["ETag"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemberWorkspacePreferences"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            412: components["responses"]["PreconditionFailed"];
+            422: components["responses"]["ValidationError"];
+            428: components["responses"]["PreconditionRequired"];
             429: components["responses"]["RateLimited"];
             503: components["responses"]["WorkspaceBusy"];
         };
