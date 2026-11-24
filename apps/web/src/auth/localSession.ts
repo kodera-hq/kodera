@@ -16,9 +16,11 @@ export const ESPACE_TIMELINE_DATABASE = 'kodera-espace-timelines'
  * Vitest (`import.meta.env.MODE === 'test'`), where `node:worker_threads` shares `BroadcastChannel`
  * across parallel test workers and `window.process` is absent on JSDOM `globalThis`.
  */
+export const ESPACE_VAULT_REALM_ID = globalThis.crypto.randomUUID()
+
 const ESPACE_VAULT_WIPE_REALM_CHANNEL =
   import.meta.env.MODE === 'test'
-    ? `${ESPACE_VAULT_WIPE_CHANNEL}:${globalThis.crypto.randomUUID()}`
+    ? `${ESPACE_VAULT_WIPE_CHANNEL}:${ESPACE_VAULT_REALM_ID}`
     : ESPACE_VAULT_WIPE_CHANNEL
 
 export function espaceVaultWipeChannelName(): string {
@@ -98,7 +100,7 @@ export function purgeEspaceVaultDatabases(): void {
   try {
     if (typeof BroadcastChannel === 'function') {
       const channel = new BroadcastChannel(espaceVaultWipeChannelName())
-      channel.postMessage({ type: 'wipe' })
+      channel.postMessage({ type: 'wipe', senderRealmId: ESPACE_VAULT_REALM_ID })
       channel.close()
     }
   } catch {
