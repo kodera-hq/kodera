@@ -26,7 +26,6 @@ import { nameOf, sameItems } from './liveViewModel'
 import type { MessageView } from './matrix/timeline'
 import { MessageText, type MentionMember } from './MessageText'
 import { isMatrixUserId } from './roomInvitations'
-import { MessageAttachments } from '../messaging/attachments/MessageAttachments'
 import { useMessagingOrganisation } from '../messaging/organisationContext'
 import { UnfurlCard } from '../messaging/unfurl/UnfurlCard'
 import { aiTranslationMessages } from './ai/aiTranslationMessages'
@@ -35,7 +34,18 @@ import { useExperiencePreferences } from './experienceApi'
 import { experienceCopy } from './experienceMessages'
 import { renderReactionGlyph } from './KoderaEmoji'
 import { ReactionPalette } from './ReactionPalette'
-import { ReminderCreateDialog } from './RemindersPanel'
+
+const LazyMessageAttachments = lazy(() =>
+  import('../messaging/attachments/MessageAttachments').then((module) => ({
+    default: module.MessageAttachments,
+  }))
+)
+
+const LazyReminderCreateDialog = lazy(() =>
+  import('./RemindersPanel').then((module) => ({
+    default: module.ReminderCreateDialog,
+  }))
+)
 
 const LazyMessageTranslationBlock = lazy(() =>
   import('./ai/MessageTranslationBlock').then((module) => ({
@@ -428,18 +438,22 @@ function MessageRowView({
         />
       )}
       {msg.attachments === undefined ? null : (
-        <MessageAttachments refs={msg.attachments} plaintextPermitted={plaintextPermitted} />
+        <Suspense fallback={null}>
+          <LazyMessageAttachments refs={msg.attachments} plaintextPermitted={plaintextPermitted} />
+        </Suspense>
       )}
       {msg.redacted ? null : <UnfurlCard body={msg.body} />}
       {reminderDialogOpen && canRemind && organisationId !== null ? (
-        <ReminderCreateDialog
-          open={reminderDialogOpen}
-          onOpenChange={setReminderDialogOpen}
-          organisationId={organisationId}
-          channelId={channelId}
-          roomId={roomId}
-          targetEventId={msg.eventId}
-        />
+        <Suspense fallback={null}>
+          <LazyReminderCreateDialog
+            open={reminderDialogOpen}
+            onOpenChange={setReminderDialogOpen}
+            organisationId={organisationId}
+            channelId={channelId}
+            roomId={roomId}
+            targetEventId={msg.eventId}
+          />
+        </Suspense>
       ) : null}
       {translationOpen && canTranslate && organisationId !== null && channelId !== undefined ? (
         <Suspense fallback={null}>

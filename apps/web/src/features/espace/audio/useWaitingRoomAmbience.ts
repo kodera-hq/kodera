@@ -3,7 +3,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { AudioDockMediaToggle } from '../../../ui/AudioDock/AudioDock'
-import { WaitingRoomAmbienceController } from '../../sounds/SoundboardPopover'
+import { WaitingRoomAmbienceController } from '../../sounds/waitingRoomAmbience'
 import { useExperiencePreferences } from '../experienceApi'
 import { experienceCopy } from '../experienceMessages'
 

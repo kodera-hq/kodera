@@ -482,7 +482,7 @@ class MarketplaceEntitlement(StoredModel):
         constraints = [
             models.UniqueConstraint(
                 fields=["workspace", "listing"],
-                condition=Q(state="active"),
+                condition=Q(state__in=("pending", "active")),
                 name="extension_marketplace_active_grant_once",
             ),
             models.UniqueConstraint(

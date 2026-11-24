@@ -3,7 +3,16 @@
 // (`draftChannel.ts`), so a keystroke draws the field it was typed in and nothing else: not the
 // message log, not the sidebar, not the view that holds them.
 
-import { memo, useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import {
+  lazy,
+  memo,
+  Suspense,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react'
 import type { FormEvent, KeyboardEvent, RefObject } from 'react'
 import type { TFunction } from 'i18next'
 import { Trans, useTranslation } from 'react-i18next'
@@ -27,7 +36,6 @@ import { useDraftSlice, type DraftChannel } from './draftChannel'
 import { replaceShortcodes } from './emoji'
 import { EmojiPalette } from './EmojiPalette'
 import type { ChannelDraft, RoomTarget } from './EspaceDraftProvider'
-import { ScheduledMessagesBanner, SendLaterPopover } from './SendLaterPopover'
 import {
   composing,
   nameOf,
@@ -42,6 +50,18 @@ import { hasMentionBoundaryAfter, mentionedIn, mentionsRoom, mentionTargetsIn } 
 import type { MentionCandidate } from './mentions'
 import { newestEditable } from './shortcuts'
 import { useStoreSlice } from './useStoreSlice'
+
+const LazyScheduledMessagesBanner = lazy(() =>
+  import('./SendLaterPopover').then((module) => ({
+    default: module.ScheduledMessagesBanner,
+  }))
+)
+
+const LazySendLaterPopover = lazy(() =>
+  import('./SendLaterPopover').then((module) => ({
+    default: module.SendLaterPopover,
+  }))
+)
 
 const NO_TYPING: readonly MemberView[] = []
 const NO_FILES: readonly QueuedFile[] = []
@@ -489,13 +509,15 @@ function MessageComposerView({
             {demoCopy.composer}
           </p>
         ) : null}
-        {editingEventId === null ? (
-          <ScheduledMessagesBanner
-            organisationId={organisationId}
-            channelId={resolvedScope.channelId}
-            roomId={roomId}
-            plaintextPermitted={plaintextPermitted}
-          />
+        {editingEventId === null && organisationId !== null && plaintextPermitted ? (
+          <Suspense fallback={null}>
+            <LazyScheduledMessagesBanner
+              organisationId={organisationId}
+              channelId={resolvedScope.channelId}
+              roomId={roomId}
+              plaintextPermitted={plaintextPermitted}
+            />
+          </Suspense>
         ) : null}
         <div
           ref={composerBox}
@@ -592,20 +614,22 @@ function MessageComposerView({
               </>
             }
             afterTrailing={
-              editingEventId === null ? (
-                <SendLaterPopover
-                  organisationId={organisationId}
-                  channelId={resolvedScope.channelId}
-                  roomId={roomId}
-                  plaintextPermitted={plaintextPermitted}
-                  disabled={navigationUnsettled || attachmentStaged}
-                  draftText={transformOutsideCode(composerText.trim(), replaceShortcodes)}
-                  anchorRef={composerBox}
-                  onScheduled={() => {
-                    store.setTyping?.(roomId, false)
-                    draft.update({ replyTo: null, text: '' })
-                  }}
-                />
+              editingEventId === null && organisationId !== null && plaintextPermitted ? (
+                <Suspense fallback={null}>
+                  <LazySendLaterPopover
+                    organisationId={organisationId}
+                    channelId={resolvedScope.channelId}
+                    roomId={roomId}
+                    plaintextPermitted={plaintextPermitted}
+                    disabled={navigationUnsettled || attachmentStaged}
+                    draftText={transformOutsideCode(composerText.trim(), replaceShortcodes)}
+                    anchorRef={composerBox}
+                    onScheduled={() => {
+                      store.setTyping?.(roomId, false)
+                      draft.update({ replyTo: null, text: '' })
+                    }}
+                  />
+                </Suspense>
               ) : null
             }
             {...(narrow

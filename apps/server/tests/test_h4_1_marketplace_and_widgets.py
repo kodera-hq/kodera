@@ -9,7 +9,9 @@ import hmac
 import json
 import socket
 import time
+import urllib.parse
 import uuid
+from collections.abc import Mapping
 from typing import Any
 
 import pytest
@@ -22,6 +24,7 @@ from workspace_safety.test_moderation import world as moderation_world  # noqa: 
 
 from apps.billing.models import CreatorConnectAccount
 from apps.billing.payments.fake import FakeProvider
+from apps.billing.payments.stripe import StripeProvider
 from apps.e2ee.models import Room
 from apps.extensions import marketplace, retention, services as extension_services, widgets
 from apps.extensions.models import (
@@ -1219,6 +1222,95 @@ def test_p1_3_widget_action_fences_mid_flight_erasure_and_revocation_races(
         def read(self, _n: int = 0) -> bytes:
             return json.dumps({"card": returned_card}).encode("utf-8")
 
+    # Race 0: Mid-flight Installation revocation (without GDPR erasure) locks Installation in Stage 3,
+    # commits `state = "failed"` outside transaction rollback, and DB trigger blocks `delivered`!
+    pub_rev = client.post(
+        f"/api/v1/organisations/{org.id}/workspace/extensions/marketplace",
+        data=json.dumps(
+            {
+                "slug": "revoke-race-bot",
+                "title": "Revoke Race Bot",
+                "summary": "Tests mid-flight installation revocation fence",
+                "manifest": _sample_manifest("revoke-race-bot", "deploy-status"),
+            }
+        ),
+        content_type="application/json",
+        HTTP_IDEMPOTENCY_KEY=f"pub-revrace-{uuid.uuid4().hex}",
+        HTTP_AUTHORIZATION=f"Bearer {admin_bearer}",
+    )
+    assert pub_rev.status_code == 201
+    rev_listing_id = pub_rev.json()["id"]
+
+    inst_rev = client.post(
+        f"/api/v1/organisations/{org.id}/workspace/extensions/marketplace/{rev_listing_id}/install",
+        data=json.dumps({"signingSecret": "whsec_" + "y" * 38}),
+        content_type="application/json",
+        HTTP_IDEMPOTENCY_KEY=f"inst-revrace-{uuid.uuid4().hex}",
+        HTTP_AUTHORIZATION=f"Bearer {admin_bearer}",
+    )
+    assert inst_rev.status_code == 201
+    rev_installation_id = inst_rev.json()["installationId"]
+
+    pre_revoke_row = WidgetActionReceipt.objects.create(
+        organisation=org,
+        workspace=workspace,
+        channel=plain_ch,
+        installation_id=rev_installation_id,
+        actor_membership=members[2],
+        widget_id="deploy-status",
+        action_id="approve",
+        idempotency_key=f"trig-rev-{uuid.uuid4().hex}",
+        request_sha256="e" * 64,
+        state="in_flight",
+    )
+
+    class RevokeInstallationMidFlightConn:
+        transmitted = True
+
+        def __init__(self, *_a: Any, **_kw: Any) -> None:
+            pass
+
+        def request(self, *_a: Any, **_kw: Any) -> None:
+            Installation.objects.filter(id=rev_installation_id, revoked_at__isnull=True).update(
+                revoked_at=timezone.now(),
+                version=uuid.uuid4(),
+            )
+
+        def getresponse(self) -> OkResp:
+            return OkResp()
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(outbound, "PinnedConnection", RevokeInstallationMidFlightConn)
+    rev_race_key = f"race-inst-revoke-{uuid.uuid4().hex}"
+    rev_aborted_resp = client.post(
+        f"/api/v1/organisations/{org.id}/workspace/channels/{plain_ch.id}/widgets/deploy-status/actions",
+        data=json.dumps({"installationId": rev_installation_id, "actionId": "approve"}),
+        content_type="application/json",
+        HTTP_IDEMPOTENCY_KEY=rev_race_key,
+        HTTP_AUTHORIZATION=f"Bearer {member_bearer}",
+    )
+    assert rev_aborted_resp.status_code == 409
+    assert rev_aborted_resp.json()["detail"] == "widget_action_aborted"
+
+    rev_receipt = WidgetActionReceipt.objects.get(
+        installation_id=rev_installation_id, idempotency_key=rev_race_key
+    )
+    rev_receipt.refresh_from_db()
+    assert rev_receipt.state == "failed"
+    assert rev_receipt.response_card is None
+
+    # DB BEFORE UPDATE trigger also blocks transitioning to `delivered` when installation is revoked!
+    with pytest.raises(
+        IntegrityError,
+        match="Extension widget action receipt binding invalid",
+    ):
+        WidgetActionReceipt.objects.filter(id=pre_revoke_row.id).update(
+            state="delivered",
+            response_status=200,
+        )
+
     # Race 1: Mid-flight GDPR erasure cutoff admitted during network I/O -> Stage 3 discards card (409)
     from test_core_erasure import begin
     from test_extension_retention_worker import now as db_now
@@ -1278,3 +1370,301 @@ def test_p1_3_widget_action_fences_mid_flight_erasure_and_revocation_races(
         WidgetActionReceipt.objects.filter(id=pre_cutoff_row.id).update(
             response_card=returned_card,
         )
+
+
+def test_r2_live_stripe_adapter_metadata_fresh_key_retry_and_early_dispute_reconciliation(
+    world, http_signer, settings, monkeypatch
+) -> None:
+    """R2 E2E: drives real `StripeProvider.create_link` HTTP form builder into `stripe_webhook.py`
+    without fake metadata, verifies fresh client `Idempotency-Key` recovery + deterministic provider
+    `Idempotency-Key`, `409 checkout_already_pending`, and early `charge.dispute.created` -> `revoked`."""
+    org, workspace, members, tokens = world
+    now = int(time.time())
+    now_dt = timezone.now()
+    webhook_secret = "whsec_r2_live_adapter_secret_32_bytes_ok"
+    configure(settings, [trust_entry(http_signer, org.issuer, expires_at=now + 600)])
+    settings.KODERA_BILLING_ENABLED = True
+    settings.KODERA_CONTACT_SEAL_KEY = b"r" * 32
+    settings.KODERA_PAYMENT_RETURN_ORIGINS = frozenset({"https://console.kodera.test"})
+    settings.KODERA_STRIPE_WEBHOOK_SECRET = webhook_secret
+
+    CreatorConnectAccount.objects.create(
+        organisation=org,
+        workspace=workspace,
+        owner_user_id=members[0].user_id,
+        stripe_connect_account_id="acct_1SellerR2Live01",
+        onboarding_state="active",
+        operation_idempotency_key="onboard-seller-r2-1",
+        charges_enabled=True,
+        payouts_enabled=True,
+        details_submitted=True,
+        platform_fee_bps=1200,
+        seller_legal_name="Studio R2 Live SAS",
+        tax_residence_country="FR",
+        onboarding_completed_at=now_dt,
+    )
+
+    captured_calls: list[dict[str, Any]] = []
+    next_statuses: list[tuple[int, dict[str, Any]]] = []
+
+    def capturing_stripe_transport(
+        method: str, url: str, headers: Mapping[str, str], body: bytes
+    ) -> tuple[int, bytes]:
+        parsed_form = dict(urllib.parse.parse_qsl(body.decode("utf-8"), keep_blank_values=True))
+        captured_calls.append(
+            {
+                "method": method,
+                "url": url,
+                "headers": dict(headers),
+                "form": parsed_form,
+            }
+        )
+        status, payload = next_statuses.pop(0)
+        return status, json.dumps(payload).encode("utf-8")
+
+    live_stripe = StripeProvider(
+        secret_key="rk_test_r2_marketplace_restricted_key",
+        webhook_secret=webhook_secret,
+        transport=capturing_stripe_transport,
+    )
+    monkeypatch.setattr("apps.billing.payments.configured_provider", lambda: live_stripe)
+
+    admin_bearer = token(
+        http_signer,
+        org.issuer,
+        subject=tokens[0].subject,
+        email_verified=True,
+        iat=now,
+        nbf=now,
+        exp=now + 300,
+    )
+
+    role = f"ext_r2_writer_{uuid.uuid4().hex[:10]}"
+    with connection.cursor() as cursor:
+        cursor.execute(
+            f'CREATE ROLE "{role}" NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS'
+        )
+        for stmt in grant_statements(role):
+            cursor.execute(stmt)
+        assert_writer_grants(cursor, role)
+
+    client = Client()
+    chk_body = {
+        "customerKind": "b2c",
+        "buyerCountry": "FR",
+        "returnUrl": "https://console.kodera.test/extensions/marketplace",
+        "locale": "fr",
+        "withdrawalWaiverAccepted": True,
+        "withdrawalWaiverAt": timezone.now().isoformat(),
+        "withdrawalWaiverStatement": CANONICAL_FR_WAIVER,
+    }
+
+    try:
+        with acting_as(role):
+            # --- Listing 1: Live StripeProvider metadata + fresh-key 503 retry + deterministic Stripe key ---
+            pub1 = client.post(
+                f"/api/v1/organisations/{org.id}/workspace/extensions/marketplace",
+                data=json.dumps(
+                    {
+                        "slug": "r2-live-stripe",
+                        "title": "R2 Live Stripe",
+                        "summary": "Drives real StripeProvider form builder",
+                        "manifest": _sample_manifest("r2-live-stripe", "deploy-status"),
+                        "pricingMode": "one_time",
+                        "priceExclVatMinor": 3000,
+                    }
+                ),
+                content_type="application/json",
+                HTTP_IDEMPOTENCY_KEY=f"pub-r2-1-{uuid.uuid4().hex}",
+                HTTP_AUTHORIZATION=f"Bearer {admin_bearer}",
+            )
+            assert pub1.status_code == 201, pub1.content
+            listing_1_id = pub1.json()["id"]
+
+            # 1) First attempt returns 503 from Stripe API
+            next_statuses.append((503, {"error": {"type": "api_error"}}))
+            fresh_key_1 = f"chk-r2-k1-{uuid.uuid4().hex}"
+            r_503 = client.post(
+                f"/api/v1/organisations/{org.id}/workspace/extensions/marketplace/{listing_1_id}/checkout",
+                data=json.dumps(chk_body),
+                content_type="application/json",
+                HTTP_IDEMPOTENCY_KEY=fresh_key_1,
+                HTTP_AUTHORIZATION=f"Bearer {admin_bearer}",
+            )
+            assert r_503.status_code == 503
+            assert len(captured_calls) == 1
+
+            # 2) Retry with a BRAND-NEW client Idempotency-Key (`fresh_key_2`) reuses the pending
+            # `checkout_ref is None` entitlement (NO 500 IntegrityError!) AND sends the EXACT SAME
+            # deterministic provider `Idempotency-Key` to Stripe!
+            next_statuses.append(
+                (
+                    200,
+                    {
+                        "id": "cs_test_r2_live_001",
+                        "url": "https://checkout.stripe.com/c/pay/cs_test_r2_live_001",
+                        "expires_at": now + 3600,
+                    },
+                )
+            )
+            fresh_key_2 = f"chk-r2-k2-{uuid.uuid4().hex}"
+            r_ok = client.post(
+                f"/api/v1/organisations/{org.id}/workspace/extensions/marketplace/{listing_1_id}/checkout",
+                data=json.dumps(chk_body),
+                content_type="application/json",
+                HTTP_IDEMPOTENCY_KEY=fresh_key_2,
+                HTTP_AUTHORIZATION=f"Bearer {admin_bearer}",
+            )
+            assert r_ok.status_code == 201, r_ok.content
+            entitlement_1_id = r_ok.json()["entitlementId"]
+            total_1_minor = r_ok.json()["totalInclVatMinor"]
+
+            assert len(captured_calls) == 2
+            expected_provider_idem = f"mkt-checkout-{entitlement_1_id}-0"
+            assert captured_calls[0]["headers"]["Idempotency-Key"] == expected_provider_idem
+            assert captured_calls[1]["headers"]["Idempotency-Key"] == expected_provider_idem
+
+            # Inspect real form parameters emitted by `StripeProvider.create_link`!
+            form1 = captured_calls[1]["form"]
+            assert form1["metadata[kodera_checkout_kind]"] == "extension_marketplace"
+            assert form1["metadata[kodera_marketplace_entitlement_id]"] == entitlement_1_id
+            assert (
+                form1["payment_intent_data[metadata][kodera_marketplace_entitlement_id]"]
+                == entitlement_1_id
+            )
+            assert form1["client_reference_id"] == entitlement_1_id
+            assert (
+                form1["payment_intent_data[transfer_data][destination]"] == "acct_1SellerR2Live01"
+            )
+
+            # 3) While `state == "pending"` and `checkout_ref is not None`, a 3rd fresh key returns 409!
+            fresh_key_3 = f"chk-r2-k3-{uuid.uuid4().hex}"
+            r_dup_pending = client.post(
+                f"/api/v1/organisations/{org.id}/workspace/extensions/marketplace/{listing_1_id}/checkout",
+                data=json.dumps(chk_body),
+                content_type="application/json",
+                HTTP_IDEMPOTENCY_KEY=fresh_key_3,
+                HTTP_AUTHORIZATION=f"Bearer {admin_bearer}",
+            )
+            assert r_dup_pending.status_code == 409
+            assert r_dup_pending.json()["detail"] == "checkout_already_pending"
+            assert len(captured_calls) == 2
+
+            # 4) Settle via `payment_intent.succeeded` constructed STRICTLY from the real captured
+            # `payment_intent_data[metadata][...]` (without `checkout.session.completed` first, proving
+            # live metadata stamping settles an entitlement whose `payment_intent_id` is still NULL)!
+            pi_metadata_from_stripe = {
+                k.removeprefix("payment_intent_data[metadata][").removesuffix("]"): v
+                for k, v in form1.items()
+                if k.startswith("payment_intent_data[metadata][") and k.endswith("]")
+            }
+            wh_pi_paid = _signed_stripe_webhook_post(
+                client,
+                webhook_secret=webhook_secret,
+                event_id=f"evt_r2_pi_{uuid.uuid4().hex[:12]}",
+                event_type="payment_intent.succeeded",
+                data_object={
+                    "id": "pi_r2_live_settled_001",
+                    "amount_received": total_1_minor,
+                    "currency": form1["line_items[0][price_data][currency]"],
+                    "metadata": pi_metadata_from_stripe,
+                },
+            )
+            assert wh_pi_paid.status_code == 200, wh_pi_paid.content
+            assert wh_pi_paid.json()["status"] == "applied"
+            ent_1 = MarketplaceEntitlement.objects.get(id=entitlement_1_id)
+            assert ent_1.state == "active"
+            assert ent_1.payment_intent_id == "pi_r2_live_settled_001"
+
+            # --- Listing 2: Out-of-order early `charge.dispute.created` -> `checkout.session.completed` -> `revoked` ---
+            pub2 = client.post(
+                f"/api/v1/organisations/{org.id}/workspace/extensions/marketplace",
+                data=json.dumps(
+                    {
+                        "slug": "r2-early-dispute",
+                        "title": "R2 Early Dispute",
+                        "summary": "Tests deferred early dispute reconciliation",
+                        "manifest": _sample_manifest("r2-early-dispute", "deploy-status"),
+                        "pricingMode": "one_time",
+                        "priceExclVatMinor": 4000,
+                    }
+                ),
+                content_type="application/json",
+                HTTP_IDEMPOTENCY_KEY=f"pub-r2-2-{uuid.uuid4().hex}",
+                HTTP_AUTHORIZATION=f"Bearer {admin_bearer}",
+            )
+            assert pub2.status_code == 201, pub2.content
+            listing_2_id = pub2.json()["id"]
+
+            next_statuses.append(
+                (
+                    200,
+                    {
+                        "id": "cs_test_r2_dispute_002",
+                        "url": "https://checkout.stripe.com/c/pay/cs_test_r2_dispute_002",
+                        "expires_at": now + 3600,
+                    },
+                )
+            )
+            chk2 = client.post(
+                f"/api/v1/organisations/{org.id}/workspace/extensions/marketplace/{listing_2_id}/checkout",
+                data=json.dumps(chk_body),
+                content_type="application/json",
+                HTTP_IDEMPOTENCY_KEY=f"chk-r2-disp-{uuid.uuid4().hex}",
+                HTTP_AUTHORIZATION=f"Bearer {admin_bearer}",
+            )
+            assert chk2.status_code == 201, chk2.content
+            entitlement_2_id = chk2.json()["entitlementId"]
+            total_2_minor = chk2.json()["totalInclVatMinor"]
+            form2 = captured_calls[-1]["form"]
+            session_metadata_from_stripe = {
+                k.removeprefix("metadata[").removesuffix("]"): v
+                for k, v in form2.items()
+                if k.startswith("metadata[") and k.endswith("]")
+            }
+
+            # Deliver `charge.dispute.created` BEFORE `checkout.session.completed` (when `payment_intent_id`
+            # on `MarketplaceEntitlement` is still NULL and dispute payload carries NO metadata)!
+            wh_early_dispute = _signed_stripe_webhook_post(
+                client,
+                webhook_secret=webhook_secret,
+                event_id=f"evt_r2_disp_{uuid.uuid4().hex[:12]}",
+                event_type="charge.dispute.created",
+                data_object={
+                    "id": "dp_r2_early_002",
+                    "payment_intent": "pi_r2_early_dispute_002",
+                    "amount": total_2_minor,
+                    "currency": "eur",
+                    "status": "needs_response",
+                },
+            )
+            assert wh_early_dispute.status_code == 200, wh_early_dispute.content
+            assert wh_early_dispute.json()["status"] == "deferred"
+            assert MarketplaceEntitlement.objects.get(id=entitlement_2_id).state == "pending"
+
+            # Now deliver `checkout.session.completed` (`paid`) for `pi_r2_early_dispute_002` ->
+            # deferred dispute MUST drain immediately so final state is `"revoked"`, NEVER `"active"`!
+            wh_late_settled = _signed_stripe_webhook_post(
+                client,
+                webhook_secret=webhook_secret,
+                event_id=f"evt_r2_late_cs_{uuid.uuid4().hex[:12]}",
+                event_type="checkout.session.completed",
+                data_object={
+                    "id": "cs_test_r2_dispute_002",
+                    "client_reference_id": form2["client_reference_id"],
+                    "payment_status": "paid",
+                    "payment_intent": "pi_r2_early_dispute_002",
+                    "amount_total": total_2_minor,
+                    "currency": form2["line_items[0][price_data][currency]"],
+                    "metadata": session_metadata_from_stripe,
+                },
+            )
+            assert wh_late_settled.status_code == 200, wh_late_settled.content
+            ent_2 = MarketplaceEntitlement.objects.get(id=entitlement_2_id)
+            assert ent_2.state == "revoked"
+            assert ent_2.revoked_at is not None
+    finally:
+        with connection.cursor() as cursor:
+            cursor.execute("RESET ROLE")
+            cursor.execute(f'DROP OWNED BY "{role}"')
+            cursor.execute(f'DROP ROLE "{role}"')

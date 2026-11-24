@@ -118,13 +118,20 @@ class FakeMatrixReplayTransport:
         self,
         *,
         on_send: Any = None,
+        room_overrides: dict[str, str] | None = None,
     ) -> None:
         self.sent: list[dict[str, Any]] = []
         self.redacted: list[dict[str, Any]] = []
         self.in_atomic_during_send: list[bool] = []
+        self.in_atomic_during_resolve: list[bool] = []
         self._on_send = on_send
+        self._room_overrides = dict(room_overrides or {})
 
     def resolve_channel_room(self, channel_id: Any) -> str:
+        self.in_atomic_during_resolve.append(connection.in_atomic_block)
+        override = self._room_overrides.get(str(channel_id))
+        if override is not None:
+            return override
         return f"!room-{channel_id}:acme.kodera.io"
 
     def send_message(self, *, room_id: str, txn_id: str, content: dict[str, Any]) -> str:
@@ -243,7 +250,10 @@ def test_webp_sanitizer_rejects_oversized_dimensions_polyglots_and_reserved_shor
 # --------------------------------- 2. HTTP Endpoints, Confidential 403 & Writer ACL ---
 
 
-@override_settings(ROOT_URLCONF="config.customer_urls")
+@override_settings(
+    ROOT_URLCONF="config.customer_urls",
+    KODERA_MATRIX_REPLAY_TRANSPORT_FACTORY=FakeMatrixReplayTransport,
+)
 def test_http_endpoints_confidential_403_webp_headers_and_api_writer_acl(
     world: Any,
     http: Any,
@@ -491,6 +501,7 @@ def test_http_endpoints_confidential_403_webp_headers_and_api_writer_acl(
 # ---------------- 3. Dispatchers, Mid-Flight Revocation, Erasure & Compensating Redact ---
 
 
+@override_settings(KODERA_MATRIX_REPLAY_TRANSPORT_FACTORY=FakeMatrixReplayTransport)
 def test_operator_dispatchers_enforce_profile_release_locks_and_compensating_redact(
     world: Any,
     monkeypatch: pytest.MonkeyPatch,
@@ -651,6 +662,7 @@ def test_operator_dispatchers_enforce_profile_release_locks_and_compensating_red
     WorkspaceMemberRestriction.objects.filter(workspace=workspace, membership=author).delete()
 
 
+@override_settings(KODERA_MATRIX_REPLAY_TRANSPORT_FACTORY=FakeMatrixReplayTransport)
 def test_mid_flight_gdpr_erasure_refusal_restore_rehearsal_disarm_and_core_purge(
     world: Any,
 ) -> None:
@@ -787,7 +799,10 @@ def test_mid_flight_gdpr_erasure_refusal_restore_rehearsal_disarm_and_core_purge
     assert notification_services.count_residual_rows_for_organisation(organisation_id=org.id) == 0
 
 
-@override_settings(ROOT_URLCONF="config.customer_urls")
+@override_settings(
+    ROOT_URLCONF="config.customer_urls",
+    KODERA_MATRIX_REPLAY_TRANSPORT_FACTORY=FakeMatrixReplayTransport,
+)
 def test_p1_1_and_p2_1_room_channel_binding_idempotency_and_etag_concurrency(
     world: Any,
     http: Any,
@@ -983,3 +998,161 @@ def test_p1_1_and_p2_1_room_channel_binding_idempotency_and_etag_concurrency(
     )
     assert pref_ok.status_code == 200
     assert pref_ok["ETag"] != pref_etag
+
+
+@override_settings(ROOT_URLCONF="config.customer_urls")
+def test_r2_opaque_synapse_room_resolution_outside_atomic_and_strict_strong_if_match(
+    world: Any,
+    http: Any,
+    settings: Any,
+) -> None:
+    org, workspace, members, _ = world
+    client, credentials = http
+    member_cred = credentials[3]
+    author = members[3]
+
+    open_ch = _create_channel(workspace, name="Opaque Synapse Room", is_confidential=False)
+    opaque_room_id = "!xK9pQ2opaqueSynapseRoom:acme.kodera.io"
+    opaque_transport = FakeMatrixReplayTransport(room_overrides={str(open_ch.id): opaque_room_id})
+    settings.KODERA_MATRIX_REPLAY_TRANSPORT_FACTORY = lambda: opaque_transport
+
+    future_iso = (timezone.now() + timedelta(hours=2)).isoformat()
+
+    # 1) Authoritative opaque Synapse room ID (`!opaque:domain`) is accepted on write paths AND
+    # resolved strictly outside `transaction.atomic()` (`in_atomic_during_resolve == [False, ...]`)!
+    sched_opaque = client.post(
+        f"/api/v1/organisations/{org.id}/workspace/scheduled-messages",
+        data=json.dumps(
+            {
+                "channelId": str(open_ch.id),
+                "roomId": opaque_room_id,
+                "body": "Opaque Synapse scheduled note",
+                "deliverAt": future_iso,
+            }
+        ),
+        content_type="application/json",
+        **_auth_headers(member_cred, key=str(uuid4())),
+    )
+    assert sched_opaque.status_code == 201, sched_opaque.content
+    assert sched_opaque.json()["roomId"] == opaque_room_id
+    sched_id = sched_opaque.json()["id"]
+    sched_etag = sched_opaque["ETag"]
+
+    rem_opaque = client.post(
+        f"/api/v1/organisations/{org.id}/workspace/reminders",
+        data=json.dumps(
+            {
+                "channelId": str(open_ch.id),
+                "roomId": opaque_room_id,
+                "targetEventId": "$evt-opaque-1",
+                "note": "Opaque Synapse reminder",
+                "remindAt": future_iso,
+            }
+        ),
+        content_type="application/json",
+        **_auth_headers(member_cred, key=str(uuid4())),
+    )
+    assert rem_opaque.status_code == 201, rem_opaque.content
+    assert rem_opaque.json()["roomId"] == opaque_room_id
+    rem_id = rem_opaque.json()["id"]
+    rem_etag = rem_opaque["ETag"]
+
+    assert opaque_transport.in_atomic_during_resolve
+    assert all(flag is False for flag in opaque_transport.in_atomic_during_resolve)
+
+    # 2) Forged `!room-<channel.id>:<evil-domain>` strings NO LONGER bypass room verification!
+    forged_room = f"!room-{open_ch.id}:evil.attacker.invalid"
+    forged_sched = client.post(
+        f"/api/v1/organisations/{org.id}/workspace/scheduled-messages",
+        data=json.dumps(
+            {
+                "channelId": str(open_ch.id),
+                "roomId": forged_room,
+                "body": "Forged room attempt",
+                "deliverAt": future_iso,
+            }
+        ),
+        content_type="application/json",
+        **_auth_headers(member_cred, key=str(uuid4())),
+    )
+    assert forged_sched.status_code == 422
+    assert forged_sched.json()["code"] == "channel_room_mismatch"
+
+    forged_rem = client.post(
+        f"/api/v1/organisations/{org.id}/workspace/reminders",
+        data=json.dumps(
+            {
+                "channelId": str(open_ch.id),
+                "roomId": forged_room,
+                "targetEventId": "$evt-forged-1",
+                "note": "Forged room reminder",
+                "remindAt": future_iso,
+            }
+        ),
+        content_type="application/json",
+        **_auth_headers(member_cred, key=str(uuid4())),
+    )
+    assert forged_rem.status_code == 422
+    assert forged_rem.json()["code"] == "channel_room_mismatch"
+
+    # 3) RFC 9110 §13.1.1 strong comparison on `If-Match`: weak validators (`W/"..."`) are rejected with 412!
+    weak_sched = client.patch(
+        f"/api/v1/organisations/{org.id}/workspace/scheduled-messages/{sched_id}",
+        data=json.dumps({"body": "Weak validator must fail"}),
+        content_type="application/json",
+        HTTP_IF_MATCH=f"W/{sched_etag}",
+        **_auth_headers(member_cred),
+    )
+    assert weak_sched.status_code == 412
+
+    weak_rem = client.patch(
+        f"/api/v1/organisations/{org.id}/workspace/reminders/{rem_id}",
+        data=json.dumps({"note": "Weak validator must fail"}),
+        content_type="application/json",
+        HTTP_IF_MATCH=f"W/{rem_etag}",
+        **_auth_headers(member_cred),
+    )
+    assert weak_rem.status_code == 412
+
+    pref_get = client.get(
+        f"/api/v1/organisations/{org.id}/workspace/preferences/me",
+        **_auth_headers(member_cred),
+    )
+    assert pref_get.status_code == 200
+    weak_pref = client.patch(
+        f"/api/v1/organisations/{org.id}/workspace/preferences/me",
+        data=json.dumps({"waitingRoomAmbience": True}),
+        content_type="application/json",
+        HTTP_IF_MATCH=f"W/{pref_get['ETag']}",
+        **_auth_headers(member_cred),
+    )
+    assert weak_pref.status_code == 412
+
+    # 4) Both dispatchers resolve opaque Synapse rooms outside DB transactions and reject forged `!room-<id>:*`!
+    due_past = timezone.now() - timedelta(seconds=10)
+    ScheduledMessage.objects.filter(id=sched_id).update(deliver_at=due_past)
+    PersonalReminder.objects.filter(id=rem_id).update(remind_at=due_past)
+    forged_row = PersonalReminder.objects.create(
+        organisation=org,
+        membership=author,
+        channel=open_ch,
+        room_id=forged_room,
+        target_event_id="$evt-forged-disp",
+        note="Tampered forged prefix",
+        remind_at=due_past,
+    )
+
+    opaque_transport.in_atomic_during_resolve.clear()
+    disp_sched = scheduled_dispatcher.dispatch_scheduled_messages(
+        matrix_client=opaque_transport, organisation_id=org.id, max_jobs=10
+    )
+    assert disp_sched["delivered"] == 1
+    assert opaque_transport.sent[-1]["room_id"] == opaque_room_id
+
+    disp_rem = reminder_dispatcher.dispatch_reminders(
+        organisation_id=org.id, max_jobs=10, matrix_client=opaque_transport
+    )
+    assert disp_rem == {"fired": 1, "obsoleted": 1}
+    forged_row.refresh_from_db()
+    assert forged_row.state == "obsolete"
+    assert all(flag is False for flag in opaque_transport.in_atomic_during_resolve)

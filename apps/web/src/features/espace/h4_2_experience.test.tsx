@@ -28,6 +28,10 @@ import { KoderaLabsPanel } from '../workspace/KoderaLabsPanel'
 import { useWaitingRoomAmbience } from './audio/useWaitingRoomAmbience'
 import {
   clearAllCustomEmojiBlobs,
+  ensureCustomEmojiBlobUrl,
+  getCustomEmojiBlobUrl,
+  getCustomEmojiByShortcode,
+  refreshWorkspaceCustomEmojis,
   setWorkspaceCustomEmojisSnapshot,
 } from './customEmojiStore'
 import { EmojiPalette } from './EmojiPalette'
@@ -807,5 +811,139 @@ describe('H4.2 Experience & S6 Attachment Previews', () => {
     })
     expect(revokedUrls).toContain(thirdEmojiUrl)
     thirdView.unmount()
+  })
+
+  it('discards late in-flight attachment and custom emoji resolutions after wipe/org cleanup without leaking or restoring blobs', async () => {
+    const emojiId = '0192f3a4-5b6c-7d8e-9f01-23456789ab95'
+    const emojiItem = {
+      id: emojiId,
+      shortcode: 'late_emoji',
+      sha256: 'c'.repeat(64),
+      width: 64,
+      height: 64,
+      animated: false,
+      creatorMembershipId: '0192f3a4-5b6c-7d8e-9f01-23456789ab10',
+      createdAt: '2026-01-01T00:00:00Z',
+      blobPath: `/api/v1/organisations/${ORG_ID}/workspace/emojis/${emojiId}/blob`,
+    }
+
+    let resolveEmojiList!: () => void
+    let resolveEmojiBlob!: () => void
+    let resolveAttachmentPreview!: (blob: Blob) => void
+
+    server.use(
+      http.get('*/organisations/:organisation_id/workspace/emojis', async () => {
+        await new Promise<void>((resolve) => {
+          resolveEmojiList = resolve
+        })
+        return HttpResponse.json({ items: [emojiItem] })
+      }),
+      http.get('*/organisations/:organisation_id/workspace/emojis/:emoji_id/blob', async () => {
+        await new Promise<void>((resolve) => {
+          resolveEmojiBlob = resolve
+        })
+        return new HttpResponse(new Uint8Array([0x52, 0x49, 0x46, 0x46]), {
+          status: 200,
+          headers: { 'Content-Type': 'image/webp' },
+        })
+      }),
+      http.get('*/organisations/:organisation_id/workspace/attachments/:attachment_id', () =>
+        HttpResponse.json({
+          downloadUrl: 'https://s3.fr-par.scw.cloud/kodera-media/presigned-object',
+        })
+      )
+    )
+    vi.spyOn(imagePreviewMod, 'loadImagePreview').mockImplementation(
+      () =>
+        new Promise<Blob>((resolve) => {
+          resolveAttachmentPreview = resolve
+        })
+    )
+
+    setWorkspaceCustomEmojisSnapshot(ORG_ID, [emojiItem])
+
+    const lateRef: AttachmentRef = {
+      id: '0192f3a4-5b6c-7d8e-9f01-000000000999',
+      filename: 'late-after-wipe.png',
+      contentType: 'image/png',
+      sizeBytes: 2048,
+    }
+    const mounted = render(
+      <MessagingOrganisation value={ORG_ID}>
+        <MessageAttachments refs={[lateRef]} plaintextPermitted />
+      </MessagingOrganisation>
+    )
+
+    // Start in-flight custom emoji list refresh + blob fetch AND wait for attachment preview fetch to block
+    const listPromise = refreshWorkspaceCustomEmojis(ORG_ID, true)
+    const blobPromise = ensureCustomEmojiBlobUrl(ORG_ID, emojiItem)
+    await waitFor(() => expect(resolveAttachmentPreview).toBeDefined())
+    await waitFor(() => expect(resolveEmojiList).toBeDefined())
+    await waitFor(() => expect(resolveEmojiBlob).toBeDefined())
+
+    // Trigger org cleanup + global vault wipe WHILE all three async requests are still in flight!
+    act(() => {
+      notifyOrganisationCleanup(ORG_ID)
+      purgeEspaceVaultDatabases()
+    })
+
+    // Resolve all deferred responses AFTER the wipe!
+    await act(async () => {
+      resolveAttachmentPreview(new Blob([PNG_HEADER], { type: 'image/png' }))
+      resolveEmojiList()
+      resolveEmojiBlob()
+      await Promise.allSettled([listPromise, blobPromise])
+    })
+
+    // Zero unrevoked blob: URLs may remain, and wiped org emoji state MUST NOT be repopulated!
+    for (const url of createdUrls) {
+      expect(revokedUrls).toContain(url)
+    }
+    expect(getCustomEmojiByShortcode(ORG_ID, 'late_emoji')).toBeUndefined()
+    expect(getCustomEmojiBlobUrl(ORG_ID, emojiItem)).toBeNull()
+    expect(screen.queryByTestId('timeline-inline-image-preview')).toBeNull()
+    mounted.unmount()
+  })
+
+  it('keeps all 49 simultaneously mounted inline previews visible (> MAX_INLINE_CACHE_ENTRIES) and trims back to cap on unmount', async () => {
+    server.use(
+      http.get('*/organisations/:organisation_id/workspace/attachments/:attachment_id', () =>
+        HttpResponse.json({
+          downloadUrl: 'https://s3.fr-par.scw.cloud/kodera-media/presigned-object',
+        })
+      )
+    )
+    vi.spyOn(imagePreviewMod, 'loadImagePreview').mockResolvedValue(
+      new Blob([PNG_HEADER], { type: 'image/png' })
+    )
+
+    const count = MAX_INLINE_CACHE_ENTRIES + 1 // 49 > 48
+    const refs49: readonly AttachmentRef[] = Array.from({ length: count }, (_, idx) => ({
+      id: `0192f3a4-5b6c-7d8e-9f01-${String(idx + 1).padStart(12, '0')}`,
+      filename: `simultaneous-${idx + 1}.png`,
+      contentType: 'image/png',
+      sizeBytes: 2048,
+    }))
+
+    const view = render(
+      <MessagingOrganisation value={ORG_ID}>
+        <MessageAttachments refs={refs49} plaintextPermitted />
+      </MessagingOrganisation>
+    )
+
+    await waitFor(() => {
+      expect(screen.getAllByTestId('timeline-inline-image-preview')).toHaveLength(count)
+    })
+    // Preview #1 MUST still be mounted and visible with a live unrevoked `blob:` URL!
+    const firstImg = screen.getByAltText('simultaneous-1.png')
+    const lastImg = screen.getByAltText(`simultaneous-${count}.png`)
+    expect(firstImg).toBeVisible()
+    expect(lastImg).toBeVisible()
+    expect(revokedUrls).toHaveLength(0)
+
+    // Unmounting releases consumer leases and trims the idle cache back to MAX_INLINE_CACHE_ENTRIES (48)!
+    view.unmount()
+    expect(revokedUrls).toHaveLength(count - MAX_INLINE_CACHE_ENTRIES)
+    expect(createdUrls.length - revokedUrls.length).toBe(MAX_INLINE_CACHE_ENTRIES)
   })
 })

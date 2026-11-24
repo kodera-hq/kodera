@@ -448,6 +448,7 @@ def issue_marketplace_connect_checkout_link(
     withdrawal_waiver_accepted: bool = False,
     withdrawal_waiver_at: str | None = None,
     withdrawal_waiver_statement: str | None = None,
+    provider_idempotency_key: str | None = None,
     provider: Any | None = None,
 ) -> dict[str, Any]:
     """Quote EU OSS / B2B VAT and issue a web-only Stripe Connect Checkout link outside `transaction.atomic()`."""
@@ -505,6 +506,7 @@ def issue_marketplace_connect_checkout_link(
         if locale == "fr"
         else f"Kodera Extension — {listing_title}"
     )
+    det_idem_key = provider_idempotency_key or f"mkt-checkout-{entitlement_id}-0"
     issued = active_provider.create_link(
         LinkRequest(
             invoice_id=entitlement_id,
@@ -519,8 +521,11 @@ def issue_marketplace_connect_checkout_link(
             payment_methods=("card",),
             reference_kind="extension_marketplace",
             checkout_label=checkout_label,
+            idempotency_key=det_idem_key,
             metadata={
                 "volet": "h4_extension_marketplace",
+                "kodera_checkout_kind": "extension_marketplace",
+                "kodera_marketplace_entitlement_id": str(entitlement_id),
                 "marketplace_entitlement_id": str(entitlement_id),
                 "workspace_id": str(workspace_id),
             },

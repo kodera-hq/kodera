@@ -2,18 +2,15 @@
 
 from __future__ import annotations
 
-import http.client
-import json
+import importlib
 import logging
-import urllib.error
-import urllib.parse
-import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Protocol
 from uuid import UUID, uuid4
 
+from django.conf import settings
 from django.db import connection, transaction
 from django.db.models import Q
 from django.utils import timezone
@@ -31,6 +28,9 @@ from .channel_access import permits_channel_post
 from .models import Channel, ScheduledMessage
 from .moderation import member_restrictions
 from .selectors import (
+    MatrixTransportError,
+    SynapseRoomDirectoryClient,
+    has_foreign_partner_room_binding,
     is_designated_confidential_channel,
     partner_channel_matrix_room_id,
     verify_channel_room_binding,
@@ -39,93 +39,12 @@ from .selectors import (
 LEASE_TTL_SECONDS = 60
 
 
-class MatrixTransportError(RuntimeError):
-    """Raised when the Matrix homeserver refuses or fails an outbound replay call."""
-
-    def __init__(self, code: str, *, retryable: bool = False) -> None:
-        super().__init__(code)
-        self.code = code
-        self.retryable = retryable
-
-
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    """Never follow HTTP redirects when carrying a homeserver bearer token."""
-
-    def redirect_request(self, *args: Any, **kwargs: Any) -> None:
-        return None
-
-
 class MatrixReplayTransport(Protocol):
     def send_message(self, *, room_id: str, txn_id: str, content: dict[str, Any]) -> str: ...
 
 
-class MatrixReplayClient:
+class MatrixReplayClient(SynapseRoomDirectoryClient):
     """Idempotent Synapse room/thread message sender and compensating redactor."""
-
-    def __init__(
-        self,
-        url: str,
-        token: str,
-        server_name: str = "",
-        *,
-        timeout: float = 10.0,
-    ) -> None:
-        self._url = url.rstrip("/")
-        self._token = token
-        self.server_name = server_name
-        self._timeout = timeout
-        self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
-
-    @staticmethod
-    def _q(value: str) -> str:
-        return urllib.parse.quote(value, safe="")
-
-    def _call(
-        self,
-        method: str,
-        path: str,
-        body: Any = None,
-        *,
-        ok: tuple[int, ...] = (200,),
-    ) -> tuple[int, Any]:
-        req = urllib.request.Request(  # noqa: S310 - operator-configured tenant homeserver
-            self._url + path,
-            data=None if body is None else json.dumps(body, separators=(",", ":")).encode(),
-            headers={
-                "Authorization": f"Bearer {self._token}",
-                "Content-Type": "application/json",
-            },
-            method=method,
-        )
-        try:
-            with self._opener.open(req, timeout=self._timeout) as response:
-                raw = response.read(65536)
-                status = response.status
-        except urllib.error.HTTPError as exc:
-            exc.close()
-            if exc.code in ok:
-                return exc.code, {}
-            retryable = exc.code in (429, 502, 503, 504)
-            raise MatrixTransportError(f"matrix_http_{exc.code}", retryable=retryable) from None
-        except (urllib.error.URLError, OSError, http.client.HTTPException):
-            raise MatrixTransportError("matrix_unavailable", retryable=True) from None
-        try:
-            return status, json.loads(raw) if raw else {}
-        except ValueError:
-            raise MatrixTransportError("matrix_invalid_json", retryable=False) from None
-
-    def resolve_channel_room(self, channel_id: UUID) -> str | None:
-        if not self.server_name:
-            return None
-        alias = f"#kodera-ch-{channel_id}:{self.server_name}"
-        status, answer = self._call(
-            "GET",
-            f"/_matrix/client/v3/directory/room/{self._q(alias)}",
-            ok=(200, 404),
-        )
-        if status == 200 and isinstance(answer, dict) and isinstance(answer.get("room_id"), str):
-            return answer["room_id"]
-        return None
 
     def send_message(self, *, room_id: str, txn_id: str, content: dict[str, Any]) -> str:
         _, answer = self._call(
@@ -155,6 +74,34 @@ class MatrixReplayClient:
         if isinstance(answer, dict) and isinstance(answer.get("event_id"), str):
             return answer["event_id"]
         return None
+
+
+def configured_matrix_client() -> Any | None:
+    """Instantiate the configured Synapse room-directory / replay client if available."""
+    transport_factory = getattr(settings, "KODERA_MATRIX_REPLAY_TRANSPORT_FACTORY", None)
+    if callable(transport_factory):
+        return transport_factory()
+    if isinstance(transport_factory, str) and transport_factory:
+        module_name, _, attribute = transport_factory.rpartition(".")
+        if module_name and attribute:
+            try:
+                factory = getattr(importlib.import_module(module_name), attribute)
+            except (ImportError, AttributeError):
+                return None
+            if callable(factory):
+                return factory()
+        return None
+    synapse_url = getattr(settings, "KODERA_SYNAPSE_URL", None)
+    synapse_token = getattr(settings, "KODERA_SYNAPSE_ADMIN_TOKEN", None)
+    synapse_server = str(getattr(settings, "KODERA_SYNAPSE_SERVER_NAME", "") or "")
+    if (
+        isinstance(synapse_url, str)
+        and synapse_url
+        and isinstance(synapse_token, str)
+        and synapse_token
+    ):
+        return MatrixReplayClient(synapse_url, synapse_token, synapse_server)
+    return None
 
 
 def try_compensating_redact(
@@ -194,7 +141,11 @@ class ClaimedScheduledJob:
 
 
 def _evaluate_delivery_authority(
-    *, row: ScheduledMessage, now: datetime
+    *,
+    row: ScheduledMessage,
+    now: datetime,
+    resolved_synapse_room_id: str | None = None,
+    check_synapse_binding: bool = False,
 ) -> tuple[str, str, UUID | None]:
     """Return `(verdict, reason, author_user_id)` where verdict is `ok|refused_policy|obsolete`."""
     member_row = membership_delivery_state(
@@ -246,13 +197,21 @@ def _evaluate_delivery_authority(
     ).exists():
         return "refused_policy", "channel_unavailable", author_user_id
 
-    room_ok, _ = verify_channel_room_binding(
-        workspace_id=row.workspace_id,
-        channel_id=row.channel_id,
-        room_id=row.room_id,
-    )
-    if not room_ok:
-        return "refused_policy", "channel_room_mismatch", author_user_id
+    if check_synapse_binding:
+        room_ok, _ = verify_channel_room_binding(
+            workspace_id=row.workspace_id,
+            channel_id=row.channel_id,
+            room_id=row.room_id,
+            resolved_synapse_room_id=resolved_synapse_room_id,
+        )
+        if not room_ok:
+            return "refused_policy", "channel_room_mismatch", author_user_id
+    elif row.room_id:
+        if has_foreign_partner_room_binding(channel_id=row.channel_id, room_id=row.room_id):
+            return "refused_policy", "channel_room_mismatch", author_user_id
+        partner_room = partner_channel_matrix_room_id(channel_id=row.channel_id)
+        if partner_room is not None and row.room_id != partner_room:
+            return "refused_policy", "channel_room_mismatch", author_user_id
 
     if not permits_channel_post(
         channel_id=row.channel_id,
@@ -525,7 +484,12 @@ def dispatch_scheduled_messages(
             elif row.state != ScheduledMessage.State.IN_FLIGHT or row.lease_id != job.lease_id:
                 redact_reason = f"state_{row.state}"
             else:
-                verdict, reason, author_uid = _evaluate_delivery_authority(row=row, now=now_post)
+                verdict, reason, author_uid = _evaluate_delivery_authority(
+                    row=row,
+                    now=now_post,
+                    resolved_synapse_room_id=target_room_id,
+                    check_synapse_binding=True,
+                )
                 if verdict == "obsolete":
                     ScheduledMessage.objects.filter(pk=job.id).update(
                         state=ScheduledMessage.State.OBSOLETE,

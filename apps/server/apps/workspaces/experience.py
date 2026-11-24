@@ -10,7 +10,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError, connection, transaction
 from django.utils import timezone
 
 from apps.audit.services import record_workspace_resource_event
@@ -44,8 +44,10 @@ from .models import (
 )
 from .moderation import ADMINS, RefusalError, member_restrictions
 from .selectors import (
+    MatrixTransportError,
     is_designated_confidential_channel,
     lock_workspace,
+    resolve_authoritative_channel_room,
     resolve_partner_channel_for_room,
     verify_channel_room_binding,
 )
@@ -83,12 +85,55 @@ def etag_for(body: Any) -> str:
     return f'"{digest}"'
 
 
-def _verify_if_match(if_match: str | None, current_wire: dict[str, Any]) -> None:
+def _verify_if_match(if_match: str | tuple[str, ...] | None, current_wire: dict[str, Any]) -> None:
+    """Enforce RFC 9110 §13.1.1 strong comparison (`W/"..."` weak validators NEVER match)."""
     if if_match is None:
         raise RefusalError(428, "precondition-required")
+    tokens = (if_match,) if isinstance(if_match, str) else if_match
+    if not tokens:
+        raise RefusalError(400, "malformed-request")
     current_tag = etag_for(current_wire)
-    if if_match != "*" and if_match != current_tag:
-        raise RefusalError(412, "precondition-failed", current_etag=current_tag)
+    for candidate_etag in tokens:
+        if candidate_etag == "*":
+            return
+        if candidate_etag.startswith("W/"):
+            continue
+        if candidate_etag == current_tag:
+            return
+    raise RefusalError(412, "precondition-failed", current_etag=current_tag)
+
+
+def prefetch_target_synapse_room(
+    *,
+    organisation_id: UUID,
+    data: dict[str, Any],
+) -> tuple[UUID | None, str | None]:
+    """Resolve the authoritative Synapse room ID outside `transaction.atomic()` before replay fences."""
+    if connection.in_atomic_block:
+        return None, None
+    raw_channel = data.get("channel_id") if "channel_id" in data else data.get("channelId")
+    raw_room = data.get("room_id") if "room_id" in data else data.get("roomId", "")
+    try:
+        channel_id = _parse_optional_uuid(raw_channel)
+    except RefusalError:
+        return None, None
+    room_id = raw_room.strip() if isinstance(raw_room, str) else ""
+    workspace = Workspace.objects.filter(organisation_id=organisation_id).first()
+    if workspace is None:
+        return None, None
+    if channel_id is None and room_id:
+        channel_id = resolve_partner_channel_for_room(workspace_id=workspace.id, room_id=room_id)
+    if channel_id is None:
+        return None, None
+    if not Channel.objects.filter(id=channel_id, workspace_id=workspace.id).exists():
+        return None, None
+    try:
+        resolved = resolve_authoritative_channel_room(channel_id=channel_id)
+    except MatrixTransportError as exc:
+        if exc.retryable:
+            raise RefusalError(503, "workspace-busy") from None
+        return channel_id, None
+    return channel_id, resolved
 
 
 @transaction.atomic
@@ -529,107 +574,119 @@ def list_scheduled_messages(
     return {"items": [_scheduled_wire(row) for row in rows]}
 
 
-@transaction.atomic
 def create_scheduled_message(
     *,
     verified: VerifiedAccessToken,
     organisation_id: UUID,
     data: dict[str, Any],
     request_id: str,
+    prefetched_room_binding: tuple[UUID | None, str | None] | None = None,
 ) -> dict[str, Any]:
-    raw_channel = data.get("channel_id") if "channel_id" in data else data.get("channelId")
-    raw_room = data.get("room_id") if "room_id" in data else data.get("roomId", "")
-    raw_deliver = data.get("deliver_at") if "deliver_at" in data else data.get("deliverAt")
-    raw_thread = (
-        data.get("thread_root_event_id")
-        if "thread_root_event_id" in data
-        else data.get("threadRootEventId", "")
-    )
-    confidential_hint = bool(data.get("confidential") or data.get("encrypted"))
+    if prefetched_room_binding is None and not connection.in_atomic_block:
+        prefetched_room_binding = prefetch_target_synapse_room(
+            organisation_id=organisation_id, data=data
+        )
+    prefetched_ch, prefetched_room = prefetched_room_binding or (None, None)
 
-    channel_id = _parse_optional_uuid(raw_channel)
-    if raw_room is None:
-        room_id = ""
-    elif isinstance(raw_room, str):
-        room_id = raw_room.strip()
-    else:
-        raise RefusalError(422)
+    with transaction.atomic():
+        raw_channel = data.get("channel_id") if "channel_id" in data else data.get("channelId")
+        raw_room = data.get("room_id") if "room_id" in data else data.get("roomId", "")
+        raw_deliver = data.get("deliver_at") if "deliver_at" in data else data.get("deliverAt")
+        raw_thread = (
+            data.get("thread_root_event_id")
+            if "thread_root_event_id" in data
+            else data.get("threadRootEventId", "")
+        )
+        confidential_hint = bool(data.get("confidential") or data.get("encrypted"))
 
-    if raw_thread is None:
-        thread_root_event_id = ""
-    elif isinstance(raw_thread, str):
-        thread_root_event_id = raw_thread.strip()
-    else:
-        raise RefusalError(422)
-    if thread_root_event_id and not EVENT_ID_RE.fullmatch(thread_root_event_id):
-        raise RefusalError(422)
+        channel_id = _parse_optional_uuid(raw_channel)
+        if raw_room is None:
+            room_id = ""
+        elif isinstance(raw_room, str):
+            room_id = raw_room.strip()
+        else:
+            raise RefusalError(422)
 
-    body = _validate_scheduled_body(data.get("body"))
-    mentions = _validate_mentions(data.get("mentions"))
-    deliver_at = _parse_aware_datetime(raw_deliver)
+        if raw_thread is None:
+            thread_root_event_id = ""
+        elif isinstance(raw_thread, str):
+            thread_root_event_id = raw_thread.strip()
+        else:
+            raise RefusalError(422)
+        if thread_root_event_id and not EVENT_ID_RE.fullmatch(thread_root_event_id):
+            raise RefusalError(422)
 
-    workspace, caller = _caller_context(
-        verified, organisation_id, admin=False, lock=False, require_active_org=True
-    )
-    _lock_caller_erasure_fences(organisation_id, caller.membership_id)
-    workspace, caller = _caller_context(
-        verified, organisation_id, admin=False, lock=False, require_active_org=True
-    )
+        body = _validate_scheduled_body(data.get("body"))
+        mentions = _validate_mentions(data.get("mentions"))
+        deliver_at = _parse_aware_datetime(raw_deliver)
 
-    now = timezone.now()
-    _validate_deliver_at(deliver_at, now=now)
-    channel, bound_room_id = _assert_plaintext_target(
-        workspace=workspace,
-        caller=caller,
-        channel_id=channel_id,
-        room_id=room_id,
-        require_post=True,
-        confidential_hint=confidential_hint,
-    )
+        workspace, caller = _caller_context(
+            verified, organisation_id, admin=False, lock=False, require_active_org=True
+        )
+        _lock_caller_erasure_fences(organisation_id, caller.membership_id)
+        workspace, caller = _caller_context(
+            verified, organisation_id, admin=False, lock=False, require_active_org=True
+        )
 
-    pending_count = ScheduledMessage.objects.filter(
-        organisation_id=organisation_id,
-        workspace_id=workspace.id,
-        author_id=caller.membership_id,
-        state__in=("pending", "in_flight"),
-    ).count()
-    if pending_count >= MAX_PENDING_SCHEDULED_PER_MEMBER:
-        raise RefusalError(409, "quota-exceeded")
+        now = timezone.now()
+        _validate_deliver_at(deliver_at, now=now)
+        resolved_synapse = (
+            prefetched_room
+            if (prefetched_ch is not None and (channel_id is None or channel_id == prefetched_ch))
+            else None
+        )
+        channel, bound_room_id = _assert_plaintext_target(
+            workspace=workspace,
+            caller=caller,
+            channel_id=channel_id,
+            room_id=room_id,
+            require_post=True,
+            confidential_hint=confidential_hint,
+            resolved_synapse_room_id=resolved_synapse,
+        )
 
-    txn_id = f"kodera-sched-{secrets.token_hex(16)}"
-    try:
-        with transaction.atomic():
-            row = ScheduledMessage.objects.create(
-                organisation_id=organisation_id,
-                workspace_id=workspace.id,
-                channel_id=channel.id,
-                room_id=bound_room_id,
-                author_id=caller.membership_id,
-                body=body,
-                mentions_json=mentions,
-                thread_root_event_id=thread_root_event_id,
-                deliver_at=deliver_at,
-                matrix_txn_id=txn_id,
-                state=ScheduledMessage.State.PENDING,
-            )
-    except IntegrityError:
-        raise RefusalError(409) from None
+        pending_count = ScheduledMessage.objects.filter(
+            organisation_id=organisation_id,
+            workspace_id=workspace.id,
+            author_id=caller.membership_id,
+            state__in=("pending", "in_flight"),
+        ).count()
+        if pending_count >= MAX_PENDING_SCHEDULED_PER_MEMBER:
+            raise RefusalError(409, "quota-exceeded")
 
-    _audit(
-        workspace,
-        caller.membership_id,
-        "workspace.scheduled_message.created",
-        row.id,
-        request_id,
-        metadata={
-            "channel_id": str(channel.id),
-            "deliver_at": _iso(deliver_at),
-        },
-    )
-    return _scheduled_wire(row)
+        txn_id = f"kodera-sched-{secrets.token_hex(16)}"
+        try:
+            with transaction.atomic():
+                row = ScheduledMessage.objects.create(
+                    organisation_id=organisation_id,
+                    workspace_id=workspace.id,
+                    channel_id=channel.id,
+                    room_id=bound_room_id,
+                    author_id=caller.membership_id,
+                    body=body,
+                    mentions_json=mentions,
+                    thread_root_event_id=thread_root_event_id,
+                    deliver_at=deliver_at,
+                    matrix_txn_id=txn_id,
+                    state=ScheduledMessage.State.PENDING,
+                )
+        except IntegrityError:
+            raise RefusalError(409) from None
+
+        _audit(
+            workspace,
+            caller.membership_id,
+            "workspace.scheduled_message.created",
+            row.id,
+            request_id,
+            metadata={
+                "channel_id": str(channel.id),
+                "deliver_at": _iso(deliver_at),
+            },
+        )
+        return _scheduled_wire(row)
 
 
-@transaction.atomic
 def update_scheduled_message(
     *,
     verified: VerifiedAccessToken,
@@ -637,70 +694,89 @@ def update_scheduled_message(
     scheduled_message_id: UUID,
     data: dict[str, Any],
     request_id: str,
-    if_match: str | None = "*",
+    if_match: str | tuple[str, ...] | None = "*",
 ) -> dict[str, Any]:
     if not data:
         raise RefusalError(422)
-    workspace, caller = _caller_context(
-        verified, organisation_id, admin=False, lock=False, require_active_org=True
-    )
-    _lock_caller_erasure_fences(organisation_id, caller.membership_id)
-    workspace, caller = _caller_context(
-        verified, organisation_id, admin=False, lock=False, require_active_org=True
-    )
 
-    row = (
-        ScheduledMessage.objects.select_for_update()
-        .filter(
-            id=scheduled_message_id,
-            organisation_id=organisation_id,
-            workspace_id=workspace.id,
-            author_id=caller.membership_id,
+    resolved_synapse: str | None = None
+    if not connection.in_atomic_block:
+        peek = (
+            ScheduledMessage.objects.filter(
+                id=scheduled_message_id, organisation_id=organisation_id
+            )
+            .values_list("channel_id", "room_id")
+            .first()
         )
-        .first()
-    )
-    if row is None:
-        raise RefusalError(404)
-    _verify_if_match(if_match, _scheduled_wire(row))
-    if row.state != ScheduledMessage.State.PENDING:
-        raise RefusalError(409, "scheduled_message_not_editable")
+        if peek is not None and peek[0] is not None and peek[1]:
+            try:
+                resolved_synapse = resolve_authoritative_channel_room(channel_id=peek[0])
+            except MatrixTransportError as exc:
+                if exc.retryable:
+                    raise RefusalError(503, "workspace-busy") from None
 
-    _assert_plaintext_target(
-        workspace=workspace,
-        caller=caller,
-        channel_id=row.channel_id,
-        room_id=row.room_id,
-        require_post=True,
-    )
+    with transaction.atomic():
+        workspace, caller = _caller_context(
+            verified, organisation_id, admin=False, lock=False, require_active_org=True
+        )
+        _lock_caller_erasure_fences(organisation_id, caller.membership_id)
+        workspace, caller = _caller_context(
+            verified, organisation_id, admin=False, lock=False, require_active_org=True
+        )
 
-    now = timezone.now()
-    update_fields = ["updated_at"]
-    if "body" in data:
-        row.body = _validate_scheduled_body(data["body"])
-        update_fields.append("body")
-    if "mentions" in data:
-        row.mentions_json = _validate_mentions(data["mentions"])
-        update_fields.append("mentions_json")
-    if "deliver_at" in data or "deliverAt" in data:
-        raw_deliver = data.get("deliver_at") if "deliver_at" in data else data.get("deliverAt")
-        deliver_at = _parse_aware_datetime(raw_deliver)
-        _validate_deliver_at(deliver_at, now=now)
-        row.deliver_at = deliver_at
-        update_fields.append("deliver_at")
+        row = (
+            ScheduledMessage.objects.select_for_update()
+            .filter(
+                id=scheduled_message_id,
+                organisation_id=organisation_id,
+                workspace_id=workspace.id,
+                author_id=caller.membership_id,
+            )
+            .first()
+        )
+        if row is None:
+            raise RefusalError(404)
+        _verify_if_match(if_match, _scheduled_wire(row))
+        if row.state != ScheduledMessage.State.PENDING:
+            raise RefusalError(409, "scheduled_message_not_editable")
 
-    if len(update_fields) == 1:
-        raise RefusalError(422)
+        _assert_plaintext_target(
+            workspace=workspace,
+            caller=caller,
+            channel_id=row.channel_id,
+            room_id=row.room_id,
+            require_post=True,
+            resolved_synapse_room_id=resolved_synapse,
+        )
 
-    row.save(update_fields=update_fields)
-    _audit(
-        workspace,
-        caller.membership_id,
-        "workspace.scheduled_message.updated",
-        row.id,
-        request_id,
-        metadata={"deliver_at": _iso(row.deliver_at)},
-    )
-    return _scheduled_wire(row)
+        now = timezone.now()
+        update_fields = ["updated_at"]
+        if "body" in data:
+            row.body = _validate_scheduled_body(data["body"])
+            update_fields.append("body")
+        if "mentions" in data:
+            row.mentions_json = _validate_mentions(data["mentions"])
+            update_fields.append("mentions_json")
+        if "deliver_at" in data or "deliverAt" in data:
+            raw_deliver = data.get("deliver_at") if "deliver_at" in data else data.get("deliverAt")
+            deliver_at = _parse_aware_datetime(raw_deliver)
+            _validate_deliver_at(deliver_at, now=now)
+            row.deliver_at = deliver_at
+            update_fields.append("deliver_at")
+
+        if len(update_fields) == 1:
+            raise RefusalError(422)
+
+        row.save(update_fields=update_fields)
+        _audit(
+            workspace,
+            caller.membership_id,
+            "workspace.scheduled_message.updated",
+            row.id,
+            request_id,
+            metadata={"deliver_at": _iso(row.deliver_at)},
+        )
+        return _scheduled_wire(row)
 
 
 @transaction.atomic
@@ -796,91 +872,104 @@ def list_reminders(
     return {"items": [_reminder_wire(row) for row in rows]}
 
 
-@transaction.atomic
 def create_reminder(
     *,
     verified: VerifiedAccessToken,
     organisation_id: UUID,
     data: dict[str, Any],
     request_id: str,
+    prefetched_room_binding: tuple[UUID | None, str | None] | None = None,
 ) -> dict[str, Any]:
-    raw_channel = data.get("channel_id") if "channel_id" in data else data.get("channelId")
-    raw_room = data.get("room_id") if "room_id" in data else data.get("roomId", "")
-    raw_event = (
-        data.get("target_event_id") if "target_event_id" in data else data.get("targetEventId")
-    )
-    raw_remind = data.get("remind_at") if "remind_at" in data else data.get("remindAt")
-    confidential_hint = bool(data.get("confidential") or data.get("encrypted"))
+    if prefetched_room_binding is None and not connection.in_atomic_block:
+        prefetched_room_binding = prefetch_target_synapse_room(
+            organisation_id=organisation_id, data=data
+        )
+    prefetched_ch, prefetched_room = prefetched_room_binding or (None, None)
 
-    channel_id = _parse_optional_uuid(raw_channel)
-    if raw_room is None:
-        room_id = ""
-    elif isinstance(raw_room, str):
-        room_id = raw_room.strip()
-    else:
-        raise RefusalError(422)
+    with transaction.atomic():
+        raw_channel = data.get("channel_id") if "channel_id" in data else data.get("channelId")
+        raw_room = data.get("room_id") if "room_id" in data else data.get("roomId", "")
+        raw_event = (
+            data.get("target_event_id") if "target_event_id" in data else data.get("targetEventId")
+        )
+        raw_remind = data.get("remind_at") if "remind_at" in data else data.get("remindAt")
+        confidential_hint = bool(data.get("confidential") or data.get("encrypted"))
 
-    if not isinstance(raw_event, str):
-        raise RefusalError(422)
-    target_event_id = raw_event.strip()
-    if not EVENT_ID_RE.fullmatch(target_event_id):
-        raise RefusalError(422)
+        channel_id = _parse_optional_uuid(raw_channel)
+        if raw_room is None:
+            room_id = ""
+        elif isinstance(raw_room, str):
+            room_id = raw_room.strip()
+        else:
+            raise RefusalError(422)
 
-    note = _validate_note(data.get("note"))
-    remind_at = _parse_aware_datetime(raw_remind)
+        if not isinstance(raw_event, str):
+            raise RefusalError(422)
+        target_event_id = raw_event.strip()
+        if not EVENT_ID_RE.fullmatch(target_event_id):
+            raise RefusalError(422)
 
-    workspace, caller = _caller_context(
-        verified, organisation_id, admin=False, lock=False, require_active_org=True
-    )
-    _lock_caller_erasure_fences(organisation_id, caller.membership_id)
-    workspace, caller = _caller_context(
-        verified, organisation_id, admin=False, lock=False, require_active_org=True
-    )
+        note = _validate_note(data.get("note"))
+        remind_at = _parse_aware_datetime(raw_remind)
 
-    now = timezone.now()
-    _validate_remind_at(remind_at, now=now)
-    channel, bound_room_id = _assert_plaintext_target(
-        workspace=workspace,
-        caller=caller,
-        channel_id=channel_id,
-        room_id=room_id,
-        require_post=False,
-        confidential_hint=confidential_hint,
-    )
+        workspace, caller = _caller_context(
+            verified, organisation_id, admin=False, lock=False, require_active_org=True
+        )
+        _lock_caller_erasure_fences(organisation_id, caller.membership_id)
+        workspace, caller = _caller_context(
+            verified, organisation_id, admin=False, lock=False, require_active_org=True
+        )
 
-    active_count = notification_services.count_active_member_reminders(
-        organisation_id=organisation_id,
-        membership_id=caller.membership_id,
-    )
-    if active_count >= MAX_ACTIVE_REMINDERS_PER_MEMBER:
-        raise RefusalError(409, "quota-exceeded")
+        now = timezone.now()
+        _validate_remind_at(remind_at, now=now)
+        resolved_synapse = (
+            prefetched_room
+            if (prefetched_ch is not None and (channel_id is None or channel_id == prefetched_ch))
+            else None
+        )
+        channel, bound_room_id = _assert_plaintext_target(
+            workspace=workspace,
+            caller=caller,
+            channel_id=channel_id,
+            room_id=room_id,
+            require_post=False,
+            confidential_hint=confidential_hint,
+            resolved_synapse_room_id=resolved_synapse,
+        )
 
-    try:
-        with transaction.atomic():
-            row = notification_services.create_member_reminder(
-                organisation_id=organisation_id,
-                membership_id=caller.membership_id,
-                channel_id=channel.id,
-                room_id=bound_room_id,
-                target_event_id=target_event_id,
-                note=note,
-                remind_at=remind_at,
-            )
-    except IntegrityError:
-        raise RefusalError(409) from None
+        active_count = notification_services.count_active_member_reminders(
+            organisation_id=organisation_id,
+            membership_id=caller.membership_id,
+        )
+        if active_count >= MAX_ACTIVE_REMINDERS_PER_MEMBER:
+            raise RefusalError(409, "quota-exceeded")
 
-    _audit(
-        workspace,
-        caller.membership_id,
-        "workspace.personal_reminder.created",
-        row.id,
-        request_id,
-        metadata={
-            "channel_id": str(channel.id),
-            "remind_at": _iso(remind_at),
-        },
-    )
-    return _reminder_wire(row)
+        try:
+            with transaction.atomic():
+                row = notification_services.create_member_reminder(
+                    organisation_id=organisation_id,
+                    membership_id=caller.membership_id,
+                    channel_id=channel.id,
+                    room_id=bound_room_id,
+                    target_event_id=target_event_id,
+                    note=note,
+                    remind_at=remind_at,
+                )
+        except IntegrityError:
+            raise RefusalError(409) from None
+
+        _audit(
+            workspace,
+            caller.membership_id,
+            "workspace.personal_reminder.created",
+            row.id,
+            request_id,
+            metadata={
+                "channel_id": str(channel.id),
+                "remind_at": _iso(remind_at),
+            },
+        )
+        return _reminder_wire(row)
 
 
 @transaction.atomic
@@ -891,7 +980,7 @@ def update_reminder(
     reminder_id: UUID,
     data: dict[str, Any],
     request_id: str,
-    if_match: str | None = "*",
+    if_match: str | tuple[str, ...] | None = "*",
 ) -> dict[str, Any]:
     if not data:
         raise RefusalError(422)
@@ -1058,7 +1147,7 @@ def update_my_preferences(
     organisation_id: UUID,
     data: dict[str, Any],
     request_id: str,
-    if_match: str | None = "*",
+    if_match: str | tuple[str, ...] | None = "*",
 ) -> dict[str, Any]:
     if not data:
         raise RefusalError(422)

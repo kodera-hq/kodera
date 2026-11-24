@@ -60,7 +60,7 @@ PREFERENCES_PATCH_FIELDS = {
 }
 
 
-IF_MATCH_TOKEN_RE = re.compile(r'^(?:\*|"(?:W/)?[!-~]+")\Z')
+ENTITY_TAG_RE = re.compile(r'^(?:W/)?"[\x21\x23-\x7e]+"(?:\Z)')
 
 
 def _json_response(body: Any, status: int = 200, *, with_etag: bool = False) -> HttpResponse:
@@ -74,16 +74,23 @@ def _json_response(body: Any, status: int = 200, *, with_etag: bool = False) -> 
     return response
 
 
-def _require_if_match(request: HttpRequest) -> str:
-    raw = request.headers.get("If-Match")
+def _parse_if_match_tokens(raw: str | None) -> tuple[str, ...]:
+    """Parse RFC 9110 §13.1.1 `If-Match` tokens without stripping `W/` weak prefixes."""
     if raw is None:
         raise RefusalError(428, "precondition-required")
     trimmed = raw.strip()
-    if not trimmed or IF_MATCH_TOKEN_RE.fullmatch(trimmed) is None:
+    if not trimmed:
         raise RefusalError(400, "malformed-request")
-    if trimmed.startswith('W/"'):
-        return '"' + trimmed[3:]
-    return trimmed
+    if trimmed == "*":
+        return ("*",)
+    parts = [part.strip() for part in trimmed.split(",")]
+    if not parts or any(ENTITY_TAG_RE.fullmatch(part) is None for part in parts):
+        raise RefusalError(400, "malformed-request")
+    return tuple(parts)
+
+
+def _require_if_match(request: HttpRequest) -> tuple[str, ...]:
+    return _parse_if_match_tokens(request.headers.get("If-Match"))
 
 
 def _problem(
@@ -158,7 +165,7 @@ def _serve(
 ) -> HttpResponse:
     request_id = responses.request_id(request)
     method = request.method or ""
-    allowed_methods = [m for m in handlers if m != "AUTHORIZE"]
+    allowed_methods = [m for m in handlers if m not in ("AUTHORIZE", "PREFETCH")]
     if method not in allowed_methods or method not in {"GET", "POST", "PATCH", "DELETE"}:
         response = _problem(405, request_id)
         response["Allow"] = ", ".join(allowed_methods)
@@ -184,6 +191,9 @@ def _serve(
             authorize_cb = handlers.get("AUTHORIZE")
             if authorize_cb is not None:
                 authorize_cb(verified)
+            prefetch_cb = handlers.get("PREFETCH")
+            if prefetch_cb is not None:
+                prefetch_cb()
 
             def effect() -> StoredResponse:
                 inner = execute()
@@ -303,6 +313,8 @@ def emoji_blob(request: HttpRequest, organisation_id: UUID, emoji_id: UUID) -> H
     permissions.CREATE_SCHEDULED_MESSAGE,
 )
 def scheduled_messages(request: HttpRequest, organisation_id: UUID) -> HttpResponse:
+    prefetched: list[tuple[UUID | None, str | None]] = []
+
     def get(verified: Any, _: str) -> HttpResponse:
         raw_ch = request.GET.get("channel_id") or request.GET.get("channelId")
         channel_id: UUID | None = None
@@ -321,6 +333,21 @@ def scheduled_messages(request: HttpRequest, organisation_id: UUID) -> HttpRespo
             )
         )
 
+    def prefetch() -> None:
+        if request.content_type in {"application/json", "application/merge-patch+json"} and (
+            len(request.body) <= 32768
+        ):
+            try:
+                parsed = json.loads(request.body)
+            except (ValueError, UnicodeError):
+                return
+            if isinstance(parsed, dict):
+                prefetched.append(
+                    service.prefetch_target_synapse_room(
+                        organisation_id=organisation_id, data=parsed
+                    )
+                )
+
     def post(verified: Any, request_id: str) -> HttpResponse:
         data = _parse_body(request, SCHEDULED_CREATE_FIELDS, limit=32768)
         body = service.create_scheduled_message(
@@ -328,6 +355,7 @@ def scheduled_messages(request: HttpRequest, organisation_id: UUID) -> HttpRespo
             organisation_id=organisation_id,
             data=data,
             request_id=request_id,
+            prefetched_room_binding=(prefetched[0] if prefetched else None),
         )
         return _json_response(body, status=201, with_etag=True)
 
@@ -339,6 +367,7 @@ def scheduled_messages(request: HttpRequest, organisation_id: UUID) -> HttpRespo
             "AUTHORIZE": lambda verified: service.authorize_experience(
                 verified=verified, organisation_id=organisation_id, admin=False
             ),
+            "PREFETCH": prefetch,
         },
         operation_ids={
             "GET": permissions.LIST_SCHEDULED_MESSAGES.operation_id,
@@ -391,6 +420,8 @@ def scheduled_message_detail(
     permissions.CREATE_PERSONAL_REMINDER,
 )
 def reminders(request: HttpRequest, organisation_id: UUID) -> HttpResponse:
+    prefetched: list[tuple[UUID | None, str | None]] = []
+
     def get(verified: Any, _: str) -> HttpResponse:
         include_completed = request.GET.get("include_completed") == "true"
         return _json_response(
@@ -401,6 +432,21 @@ def reminders(request: HttpRequest, organisation_id: UUID) -> HttpResponse:
             )
         )
 
+    def prefetch() -> None:
+        if request.content_type in {"application/json", "application/merge-patch+json"} and (
+            len(request.body) <= 16384
+        ):
+            try:
+                parsed = json.loads(request.body)
+            except (ValueError, UnicodeError):
+                return
+            if isinstance(parsed, dict):
+                prefetched.append(
+                    service.prefetch_target_synapse_room(
+                        organisation_id=organisation_id, data=parsed
+                    )
+                )
+
     def post(verified: Any, request_id: str) -> HttpResponse:
         data = _parse_body(request, REMINDER_CREATE_FIELDS, limit=16384)
         body = service.create_reminder(
@@ -408,6 +454,7 @@ def reminders(request: HttpRequest, organisation_id: UUID) -> HttpResponse:
             organisation_id=organisation_id,
             data=data,
             request_id=request_id,
+            prefetched_room_binding=(prefetched[0] if prefetched else None),
         )
         return _json_response(body, status=201, with_etag=True)
 
@@ -419,6 +466,7 @@ def reminders(request: HttpRequest, organisation_id: UUID) -> HttpResponse:
             "AUTHORIZE": lambda verified: service.authorize_experience(
                 verified=verified, organisation_id=organisation_id, admin=False
             ),
+            "PREFETCH": prefetch,
         },
         operation_ids={
             "GET": permissions.LIST_PERSONAL_REMINDERS.operation_id,

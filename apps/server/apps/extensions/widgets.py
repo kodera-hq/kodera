@@ -601,8 +601,15 @@ def dispatch_widget_action(
         refusal_error = ExtensionRefusedError("widget_endpoint_unavailable", 502)
 
     # Stage 3: Persist outcome and audit evidence ONLY after re-verifying in-flight lease,
-    # GDPR org/account erasure cutoffs, active installation, non-confidential channel, and caller membership.
+    # GDPR org/account erasure cutoffs, active installation (locked in canonical order
+    # `Installation` -> `WidgetActionReceipt`), non-confidential channel, and caller membership.
+    aborted_reason: str | None = None
     with transaction.atomic():
+        post_inst = (
+            Installation.objects.select_for_update()
+            .filter(id=installation_id, workspace_id=workspace_id)
+            .first()
+        )
         locked_receipt = (
             WidgetActionReceipt.objects.select_for_update().filter(id=receipt_id).first()
         )
@@ -622,7 +629,14 @@ def dispatch_widget_action(
             or privacy_cutoff_reason(organisation_id=organisation_id, user_id=actor_user_id)
             is not None
         )
-        aborted_reason: str | None = "erasure_cutoff" if cutoff_active else None
+        if cutoff_active:
+            aborted_reason = "erasure_cutoff"
+        elif (
+            post_inst is None
+            or post_inst.revoked_at is not None
+            or "widget.action" not in post_inst.events
+        ):
+            aborted_reason = "installation_revoked"
 
         if aborted_reason is None:
             try:
@@ -657,38 +671,31 @@ def dispatch_widget_action(
             ):
                 aborted_reason = "channel_access_revoked"
 
-        if aborted_reason is None:
-            post_inst = Installation.objects.filter(
-                id=installation_id,
-                workspace_id=workspace_id,
-                revoked_at__isnull=True,
-            ).first()
-            if post_inst is None or "widget.action" not in post_inst.events:
-                aborted_reason = "installation_revoked"
-
         if aborted_reason is not None:
             receipt.state = "failed"
             receipt.response_status = None
             receipt.response_card = None
             receipt.save(update_fields=["state", "response_status", "response_card", "updated_at"])
-            raise ExtensionRefusedError("widget_action_aborted", 409)
+        else:
+            receipt.state = final_state
+            receipt.response_status = response_status
+            receipt.response_card = response_card
+            receipt.save(update_fields=["state", "response_status", "response_card", "updated_at"])
+            services.audit(
+                "widget_action_dispatched",
+                principal,
+                organisation_id,
+                installation_id,
+                {
+                    "channel_id": str(channel_id),
+                    "widget_id": widget_id,
+                    "action_id": action_id,
+                    "state": final_state,
+                },
+            )
 
-        receipt.state = final_state
-        receipt.response_status = response_status
-        receipt.response_card = response_card
-        receipt.save(update_fields=["state", "response_status", "response_card", "updated_at"])
-        services.audit(
-            "widget_action_dispatched",
-            principal,
-            organisation_id,
-            installation_id,
-            {
-                "channel_id": str(channel_id),
-                "widget_id": widget_id,
-                "action_id": action_id,
-                "state": final_state,
-            },
-        )
+    if aborted_reason is not None:
+        raise ExtensionRefusedError("widget_action_aborted", 409)
 
     if refusal_error is not None:
         raise refusal_error

@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import Any
 from uuid import UUID, uuid4
 
 from django.db import connection, transaction
@@ -21,8 +22,13 @@ from apps.orgs.selectors import (
 from apps.orgs.workspace_members import for_workspace
 from apps.workspaces.moderation import member_restrictions
 from apps.workspaces.selectors import (
+    MatrixTransportError,
+    configured_matrix_directory_client as configured_matrix_client,
+    has_foreign_partner_room_binding,
     is_designated_confidential_channel,
     may_view_channel_for_reminder,
+    partner_channel_matrix_room_id,
+    resolve_authoritative_channel_room,
     undeleted_text_channel_exists,
     verify_channel_room_binding,
     workspace_id_for,
@@ -45,7 +51,11 @@ class ClaimedReminderJob:
 
 
 def _evaluate_reminder_authority(
-    *, row: PersonalReminder, now: datetime
+    *,
+    row: PersonalReminder,
+    now: datetime,
+    resolved_synapse_room_id: str | None = None,
+    check_synapse_binding: bool = False,
 ) -> tuple[str, str, UUID | None]:
     """Return `(verdict, reason, user_id)` where verdict is `ok|obsolete`."""
     member_row = membership_delivery_state(
@@ -92,13 +102,21 @@ def _evaluate_reminder_authority(
     if not undeleted_text_channel_exists(workspace_id=workspace_id, channel_id=row.channel_id):
         return "obsolete", "channel_deleted", user_id
 
-    room_ok, _ = verify_channel_room_binding(
-        workspace_id=workspace_id,
-        channel_id=row.channel_id,
-        room_id=row.room_id,
-    )
-    if not room_ok:
-        return "obsolete", "channel_room_mismatch", user_id
+    if check_synapse_binding:
+        room_ok, _ = verify_channel_room_binding(
+            workspace_id=workspace_id,
+            channel_id=row.channel_id,
+            room_id=row.room_id,
+            resolved_synapse_room_id=resolved_synapse_room_id,
+        )
+        if not room_ok:
+            return "obsolete", "channel_room_mismatch", user_id
+    elif row.room_id:
+        if has_foreign_partner_room_binding(channel_id=row.channel_id, room_id=row.room_id):
+            return "obsolete", "channel_room_mismatch", user_id
+        partner_room = partner_channel_matrix_room_id(channel_id=row.channel_id)
+        if partner_room is not None and row.room_id != partner_room:
+            return "obsolete", "channel_room_mismatch", user_id
 
     view_verdict = may_view_channel_for_reminder(
         channel_id=row.channel_id,
@@ -167,6 +185,7 @@ def dispatch_reminders(
     *,
     organisation_id: UUID | None = None,
     max_jobs: int = 25,
+    matrix_client: Any | None = None,
     mid_flight_hook: Callable[[ClaimedReminderJob], None] | None = None,
 ) -> dict[str, int]:
     """Drain up to `max_jobs` due personal reminders, emitting inbox notifications + push wakeups."""
@@ -175,6 +194,9 @@ def dispatch_reminders(
     if type(max_jobs) is not int or not 1 <= max_jobs <= 100:
         raise ValueError("max_jobs must be between 1 and 100")
 
+    active_matrix_client = (
+        matrix_client if matrix_client is not None else configured_matrix_client()
+    )
     counts = {"fired": 0, "obsoleted": 0}
     for _ in range(max_jobs):
         status, job = _claim_next_reminder(organisation_id=organisation_id)
@@ -185,6 +207,29 @@ def dispatch_reminders(
             continue
         if job is None or connection.in_atomic_block:
             raise RuntimeError("claimed reminder job invariant violated")
+
+        resolved_synapse_room_id: str | None = None
+        if job.channel_id is not None and job.room_id:
+            try:
+                resolved_synapse_room_id = resolve_authoritative_channel_room(
+                    channel_id=job.channel_id,
+                    matrix_client=active_matrix_client,
+                )
+            except MatrixTransportError as exc:
+                if exc.retryable:
+                    with transaction.atomic():
+                        PersonalReminder.objects.filter(
+                            pk=job.id,
+                            state=PersonalReminder.State.IN_FLIGHT,
+                            lease_id=job.lease_id,
+                        ).update(
+                            state=PersonalReminder.State.PENDING,
+                            lease_id=None,
+                            lease_expires_at=None,
+                            updated_at=timezone.now(),
+                        )
+                    continue
+                resolved_synapse_room_id = None
 
         if mid_flight_hook is not None:
             mid_flight_hook(job)
@@ -198,7 +243,12 @@ def dispatch_reminders(
             if row.state != PersonalReminder.State.IN_FLIGHT or row.lease_id != job.lease_id:
                 continue
 
-            verdict, _, user_id = _evaluate_reminder_authority(row=row, now=now_fire)
+            verdict, _, user_id = _evaluate_reminder_authority(
+                row=row,
+                now=now_fire,
+                resolved_synapse_room_id=resolved_synapse_room_id,
+                check_synapse_binding=True,
+            )
             if verdict != "ok":
                 PersonalReminder.objects.filter(pk=job.id).update(
                     state=PersonalReminder.State.OBSOLETE,

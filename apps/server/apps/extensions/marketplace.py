@@ -454,12 +454,16 @@ def checkout_marketplace_listing(
     try:
         with transaction.atomic():
             workspace_id, principal = services.member(verified, organisation_id)
-            listing = ExtensionMarketplaceListing.objects.filter(
-                id=listing_id,
-                workspace_id=workspace_id,
-                published_at__isnull=False,
-                revoked_at__isnull=True,
-            ).first()
+            listing = (
+                ExtensionMarketplaceListing.objects.select_for_update()
+                .filter(
+                    id=listing_id,
+                    workspace_id=workspace_id,
+                    published_at__isnull=False,
+                    revoked_at__isnull=True,
+                )
+                .first()
+            )
             if listing is None:
                 raise ExtensionRefusedError("marketplace_listing_absent", 404)
 
@@ -494,20 +498,49 @@ def checkout_marketplace_listing(
                 # `state == 'pending'` with `checkout_ref is None` is a recoverable retry after a
                 # transient provider outage (`503`): reuse the pending row cleanly below.
 
-            already_active = MarketplaceEntitlement.objects.filter(
-                workspace_id=workspace_id,
-                listing=listing,
-                state="active",
-                revoked_at__isnull=True,
-            ).first()
-            if already_active is not None:
-                raise ExtensionRefusedError("marketplace_already_entitled", 409)
+            if listing.pricing_mode not in ("free", "one_time"):
+                raise ExtensionRefusedError("marketplace_pricing_mode_invalid", 422)
+            if listing.pricing_mode == "one_time" and not billing_enabled():
+                raise ExtensionRefusedError("billing-disabled", 409)
+
+            existing_for_listing = (
+                MarketplaceEntitlement.objects.select_for_update()
+                .filter(
+                    workspace_id=workspace_id,
+                    listing=listing,
+                    state__in=("active", "pending"),
+                    revoked_at__isnull=True,
+                )
+                .order_by("-created_at")
+                .first()
+            )
+            if existing_for_listing is not None:
+                if existing_for_listing.state == "active":
+                    raise ExtensionRefusedError("marketplace_already_entitled", 409)
+                if (
+                    existing_for_listing.state == "pending"
+                    and existing_for_listing.checkout_ref is not None
+                    and (prior_idem is None or prior_idem.id != existing_for_listing.id)
+                ):
+                    raise ExtensionRefusedError("checkout_already_pending", 409)
 
             if listing.pricing_mode == "free":
-                if prior_idem is not None:
-                    prior_idem.state = "active"
-                    prior_idem.save(update_fields=["state", "updated_at"])
-                    entitlement = prior_idem
+                reusable_free = prior_idem or existing_for_listing
+                if reusable_free is not None:
+                    reusable_free.buyer_membership_id = principal.membership_id
+                    reusable_free.idempotency_key = idempotency_key
+                    reusable_free.request_sha256 = request_digest
+                    reusable_free.state = "active"
+                    reusable_free.save(
+                        update_fields=[
+                            "buyer_membership_id",
+                            "idempotency_key",
+                            "request_sha256",
+                            "state",
+                            "updated_at",
+                        ]
+                    )
+                    entitlement = reusable_free
                 else:
                     entitlement = MarketplaceEntitlement.objects.create(
                         organisation_id=organisation_id,
@@ -556,8 +589,25 @@ def checkout_marketplace_listing(
                 raise ExtensionRefusedError("marketplace_connect_account_not_ready", 409)
 
             buyer_user_id = membership_user_id(membership_id=principal.membership_id)
-            if prior_idem is not None:
-                entitlement = prior_idem
+            reusable_pending = prior_idem or existing_for_listing
+            if reusable_pending is not None:
+                if (
+                    reusable_pending.buyer_membership_id != principal.membership_id
+                    or reusable_pending.idempotency_key != idempotency_key
+                    or reusable_pending.request_sha256 != request_digest
+                ):
+                    reusable_pending.buyer_membership_id = principal.membership_id
+                    reusable_pending.idempotency_key = idempotency_key
+                    reusable_pending.request_sha256 = request_digest
+                    reusable_pending.save(
+                        update_fields=[
+                            "buyer_membership_id",
+                            "idempotency_key",
+                            "request_sha256",
+                            "updated_at",
+                        ]
+                    )
+                entitlement = reusable_pending
             else:
                 entitlement = MarketplaceEntitlement.objects.create(
                     organisation_id=organisation_id,
@@ -569,6 +619,12 @@ def checkout_marketplace_listing(
                     request_sha256=request_digest,
                 )
             entitlement_id = entitlement.id
+            attempt_epoch = (
+                MarketplaceEntitlement.objects.filter(workspace_id=workspace_id, listing=listing)
+                .exclude(id=entitlement_id)
+                .count()
+            )
+            provider_idem_key = f"mkt-checkout-{entitlement_id}-{attempt_epoch}"
             listing_slug = listing.slug
             listing_title = listing.title
             listing_pricing_mode = listing.pricing_mode
@@ -595,6 +651,7 @@ def checkout_marketplace_listing(
                 withdrawal_waiver_accepted=withdrawal_waiver_accepted,
                 withdrawal_waiver_at=withdrawal_waiver_at,
                 withdrawal_waiver_statement=withdrawal_waiver_statement,
+                provider_idempotency_key=provider_idem_key,
                 provider=provider,
             )
         except (
@@ -704,14 +761,26 @@ def try_settle_stripe_checkout_session(
     payment_intent_id: str | None,
     amount_minor: int | None,
     currency: str | None,
+    meta_entitlement_id: UUID | None = None,
+    has_meta_entitlement: bool = False,
 ) -> tuple[str, UUID | None, UUID | None] | None:
     """Settle a pending `MarketplaceEntitlement` from a verified Stripe Checkout webhook."""
     entitlement = (
         MarketplaceEntitlement.objects.select_for_update().filter(checkout_ref=session_id).first()
     )
+    if entitlement is None and meta_entitlement_id is not None:
+        candidate = (
+            MarketplaceEntitlement.objects.select_for_update()
+            .filter(id=meta_entitlement_id)
+            .first()
+        )
+        if candidate is not None and candidate.checkout_ref in (None, session_id):
+            entitlement = candidate
     if entitlement is None:
         return None
     org_id = entitlement.organisation_id
+    if has_meta_entitlement and meta_entitlement_id != entitlement.id:
+        return "mismatch", org_id, entitlement.id
     if event_type == "checkout.session.completed":
         if payment_status in ("unpaid", "processing"):
             return "ignored", org_id, entitlement.id
@@ -747,9 +816,13 @@ def try_settle_stripe_checkout_session(
     ):
         return "mismatch", org_id, entitlement.id
     entitlement.state = "active"
+    if entitlement.checkout_ref is None:
+        entitlement.checkout_ref = session_id
     entitlement.payment_intent_id = pi_id
     entitlement.checkout_url = None
-    entitlement.save(update_fields=["state", "payment_intent_id", "checkout_url", "updated_at"])
+    entitlement.save(
+        update_fields=["state", "checkout_ref", "payment_intent_id", "checkout_url", "updated_at"]
+    )
     return "applied", org_id, entitlement.id
 
 
@@ -841,6 +914,8 @@ def try_revoke_stripe_marketplace_entitlement(
     currency: str,
     occurred_at: datetime,
     terminal_state: str = "refunded",
+    meta_entitlement_id: UUID | None = None,
+    has_meta_entitlement: bool = False,
 ) -> tuple[str, UUID | None, UUID | None] | None:
     """Revoke an active/pending `MarketplaceEntitlement` and its bound `Installation` on refund or dispute."""
     if terminal_state not in ("refunded", "revoked"):
@@ -850,9 +925,19 @@ def try_revoke_stripe_marketplace_entitlement(
         .filter(payment_intent_id=payment_intent_id)
         .first()
     )
+    if entitlement is None and meta_entitlement_id is not None:
+        candidate = (
+            MarketplaceEntitlement.objects.select_for_update()
+            .filter(id=meta_entitlement_id)
+            .first()
+        )
+        if candidate is not None and candidate.payment_intent_id in (None, payment_intent_id):
+            entitlement = candidate
     if entitlement is None:
         return None
     org_id = entitlement.organisation_id
+    if has_meta_entitlement and meta_entitlement_id != entitlement.id:
+        return "mismatch", org_id, entitlement.id
     if (
         currency.upper() != "EUR"
         or amount_minor <= 0
@@ -872,12 +957,15 @@ def try_revoke_stripe_marketplace_entitlement(
             inst.save(update_fields=["revoked_at", "version", "updated_at"])
 
     entitlement.state = terminal_state
+    if entitlement.payment_intent_id is None:
+        entitlement.payment_intent_id = payment_intent_id
     entitlement.revoked_at = entitlement.revoked_at or occurred_at
     entitlement.sealed_signing_secret = b""
     entitlement.checkout_url = None
     entitlement.save(
         update_fields=[
             "state",
+            "payment_intent_id",
             "revoked_at",
             "sealed_signing_secret",
             "checkout_url",

@@ -3,7 +3,11 @@
 
 import { useEffect, useSyncExternalStore } from 'react'
 import { ApiProblem, coreApi } from '../../api/client'
-import { registerEspaceVaultCleanup, registerLocalSessionCleanup } from '../../auth/localSession'
+import {
+  registerEspaceVaultCleanup,
+  registerLocalSessionCleanup,
+  registerOrganisationSwitchCleanup,
+} from '../../auth/localSession'
 
 export type LabsFlagKey =
   | 'send_later'
@@ -212,11 +216,13 @@ export function isUnsupportedEndpointError(error: unknown): boolean {
 // --------------------------------------------------------------------------- Custom Emojis ---
 
 export async function listWorkspaceCustomEmojis(
-  organisationId: string
+  organisationId: string,
+  signal?: AbortSignal
 ): Promise<WorkspaceCustomEmojiItem[]> {
   try {
     const { data } = await coreApi().GET('/organisations/{organisation_id}/workspace/emojis', {
       params: { path: { organisation_id: organisationId } },
+      ...(signal === undefined ? {} : { signal }),
     })
     if (!isObject(data) || !Array.isArray(data['items'])) return []
     return data['items']
@@ -540,6 +546,13 @@ export function getRemindersRevision(organisationId: string | null): number {
   return remindersRevisionByOrg.get(organisationId) ?? 0
 }
 
+let globalPrefsGeneration = 0
+const orgPrefsGenerations = new Map<string, number>()
+
+function currentPrefsGeneration(organisationId: string): string {
+  return `${globalPrefsGeneration}:${orgPrefsGenerations.get(organisationId) ?? 0}`
+}
+
 export async function loadMyWorkspacePreferences(
   organisationId: string,
   force = false
@@ -550,12 +563,16 @@ export async function loadMyWorkspacePreferences(
   const existing = prefsInFlight.get(organisationId)
   if (existing !== undefined && !force) return existing
 
+  const startGen = currentPrefsGeneration(organisationId)
   const task = (async () => {
     try {
       const { data, response } = await coreApi().GET(
         '/organisations/{organisation_id}/workspace/preferences/me',
         { params: { path: { organisation_id: organisationId } } }
       )
+      if (currentPrefsGeneration(organisationId) !== startGen) {
+        return DEFAULT_PREFS
+      }
       const parsed = parsePreferences(data)
       const etag = response.headers.get('ETag')
       if (etag) prefsEtagByOrg.set(organisationId, etag)
@@ -564,6 +581,9 @@ export async function loadMyWorkspacePreferences(
       emitPrefs()
       return parsed
     } catch (error) {
+      if (currentPrefsGeneration(organisationId) !== startGen) {
+        return DEFAULT_PREFS
+      }
       if (isUnsupportedEndpointError(error)) {
         prefsByOrg.set(organisationId, DEFAULT_PREFS)
         prefsLoadedOrgs.add(organisationId)
@@ -571,7 +591,9 @@ export async function loadMyWorkspacePreferences(
       }
       return prefsByOrg.get(organisationId) ?? DEFAULT_PREFS
     } finally {
-      prefsInFlight.delete(organisationId)
+      if (currentPrefsGeneration(organisationId) === startGen) {
+        prefsInFlight.delete(organisationId)
+      }
     }
   })()
 
@@ -621,7 +643,20 @@ export function setCachedWorkspacePreferencesForTest(
   emitPrefs()
 }
 
+export function clearOrganisationExperienceStore(organisationId: string): void {
+  orgPrefsGenerations.set(organisationId, (orgPrefsGenerations.get(organisationId) ?? 0) + 1)
+  prefsByOrg.delete(organisationId)
+  prefsLoadedOrgs.delete(organisationId)
+  prefsInFlight.delete(organisationId)
+  prefsEtagByOrg.delete(organisationId)
+  scheduledRevisionByOrg.delete(organisationId)
+  remindersRevisionByOrg.delete(organisationId)
+  emitPrefs()
+}
+
 export function clearExperienceStores(): void {
+  globalPrefsGeneration += 1
+  orgPrefsGenerations.clear()
   prefsByOrg.clear()
   prefsLoadedOrgs.clear()
   prefsInFlight.clear()
@@ -635,6 +670,7 @@ export function clearExperienceStores(): void {
 
 registerLocalSessionCleanup(clearExperienceStores)
 registerEspaceVaultCleanup(clearExperienceStores)
+registerOrganisationSwitchCleanup(clearOrganisationExperienceStore)
 
 const subscribePrefs = (listener: () => void) => {
   prefsListeners.add(listener)

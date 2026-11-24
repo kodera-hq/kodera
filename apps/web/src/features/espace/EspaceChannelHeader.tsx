@@ -1,4 +1,4 @@
-import { Fragment, useEffect } from 'react'
+import { Fragment, lazy, Suspense, useEffect } from 'react'
 import type { RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '../../ui/Button/Button'
@@ -28,9 +28,14 @@ import { HEADER_FACES, type RoomSummary } from './matrix/store'
 import { MemberAvatar } from './MemberAvatar'
 import { MessageSearch } from './MessageSearch'
 import { PinnedMessages } from './PinnedMessages'
-import { RemindersPanel } from './RemindersPanel'
 import { uiModeCopy } from './uiModePreference'
 import { useMessagingOrganisation } from '../messaging/organisationContext'
+
+const LazyRemindersPanel = lazy(() =>
+  import('./RemindersPanel').then((module) => ({
+    default: module.RemindersPanel,
+  }))
+)
 
 export interface EspaceChannelHeaderProps {
   org: string
@@ -285,11 +290,15 @@ export function EspaceChannelHeader({
           {searchPermitted ? (
             <MessageSearch store={activeStore} roomId={activeRoomId} onShow={onShowMessage} />
           ) : null}
-          <RemindersPanel
-            organisationId={organisationId}
-            plaintextPermitted={searchPermitted}
-            onShowMessage={onShowMessage}
-          />
+          {organisationId !== null && searchPermitted ? (
+            <Suspense fallback={null}>
+              <LazyRemindersPanel
+                organisationId={organisationId}
+                plaintextPermitted={searchPermitted}
+                onShowMessage={onShowMessage}
+              />
+            </Suspense>
+          ) : null}
           {<PinnedMessages store={activeStore} roomId={activeRoomId} onShow={onShowMessage} />}
         </>
       )}

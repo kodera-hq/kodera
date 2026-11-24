@@ -190,8 +190,10 @@ BEGIN
    RAISE EXCEPTION 'Extension marketplace entitlement binding invalid' USING ERRCODE='23514'; END IF;
   IF TG_OP='UPDATE' THEN
    IF NEW.organisation_id<>OLD.organisation_id OR NEW.workspace_id<>OLD.workspace_id
-    OR NEW.buyer_membership_id<>OLD.buyer_membership_id OR NEW.listing_id<>OLD.listing_id
-    OR NEW.idempotency_key<>OLD.idempotency_key OR NEW.request_sha256<>OLD.request_sha256 THEN
+    OR NEW.listing_id<>OLD.listing_id THEN
+    RAISE EXCEPTION 'resource authority binding immutable' USING ERRCODE='23514'; END IF;
+   IF (OLD.state<>'pending' OR OLD.checkout_ref IS NOT NULL)
+    AND (NEW.buyer_membership_id<>OLD.buyer_membership_id OR NEW.idempotency_key<>OLD.idempotency_key OR NEW.request_sha256<>OLD.request_sha256) THEN
     RAISE EXCEPTION 'resource authority binding immutable' USING ERRCODE='23514'; END IF;
    IF OLD.installation_id IS NOT NULL AND NEW.installation_id IS DISTINCT FROM OLD.installation_id THEN
     RAISE EXCEPTION 'Extension marketplace installation binding immutable' USING ERRCODE='23514'; END IF;
@@ -212,6 +214,8 @@ BEGIN
    OR NOT EXISTS(SELECT 1 FROM public.orgs_membership WHERE id=NEW.actor_membership_id AND organisation_id=org)
    OR NOT EXISTS(SELECT 1 FROM public.workspaces_channel WHERE id=NEW.channel_id AND workspace_id=NEW.workspace_id AND NOT is_confidential)
    OR NOT EXISTS(SELECT 1 FROM public.extensions_installation WHERE id=NEW.installation_id AND workspace_id=NEW.workspace_id)
+   OR ((TG_OP='INSERT' AND NEW.state='delivered') OR (TG_OP='UPDATE' AND NEW.state='delivered' AND OLD.state<>'delivered'))
+      AND NOT EXISTS(SELECT 1 FROM public.extensions_installation WHERE id=NEW.installation_id AND workspace_id=NEW.workspace_id AND revoked_at IS NULL)
    OR NEW.expires_at>NEW.created_at+interval '7 days'
    OR (NEW.response_card IS NOT NULL AND octet_length(NEW.response_card::text)>16384) THEN
    RAISE EXCEPTION 'Extension widget action receipt binding invalid' USING ERRCODE='23514'; END IF;
@@ -1153,7 +1157,7 @@ class Migration(migrations.Migration):
         migrations.AddConstraint(
             model_name="marketplaceentitlement",
             constraint=models.UniqueConstraint(
-                condition=models.Q(("state", "active")),
+                condition=models.Q(("state__in", ("pending", "active"))),
                 fields=("workspace", "listing"),
                 name="extension_marketplace_active_grant_once",
             ),

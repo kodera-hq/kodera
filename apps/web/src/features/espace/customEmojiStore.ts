@@ -38,7 +38,29 @@ const blobUrls = new Map<string, string>() // key: `${orgId}:${emojiId}:${sha256
 const emojiBlobRefCounts = new Map<string, number>()
 const deferredEmojiRevokeUrls = new Set<string>()
 const inFlightBlobs = new Map<string, Promise<string | null>>()
+const orgEmojiGenerations = new Map<string, number>()
+const inFlightAbortsByOrg = new Map<string, Set<AbortController>>()
 const listeners = new Set<() => void>()
+let globalEmojiGeneration = 0
+
+function currentEmojiGeneration(organisationId: string): string {
+  return `${globalEmojiGeneration}:${orgEmojiGenerations.get(organisationId) ?? 0}`
+}
+
+function trackEmojiAbort(organisationId: string, controller: AbortController): () => void {
+  let bucket = inFlightAbortsByOrg.get(organisationId)
+  if (bucket === undefined) {
+    bucket = new Set()
+    inFlightAbortsByOrg.set(organisationId, bucket)
+  }
+  bucket.add(controller)
+  return () => {
+    const current = inFlightAbortsByOrg.get(organisationId)
+    if (!current) return
+    current.delete(controller)
+    if (current.size === 0) inFlightAbortsByOrg.delete(organisationId)
+  }
+}
 
 function emit(): void {
   for (const listener of listeners) listener()
@@ -62,6 +84,26 @@ function safeRevokeObjectURL(url: string): void {
   }
 }
 
+function evictOneIdleEmojiBlobEntry(): boolean {
+  for (const [candidateKey, candidateUrl] of blobUrls.entries()) {
+    if ((emojiBlobRefCounts.get(candidateUrl) ?? 0) === 0) {
+      blobUrls.delete(candidateKey)
+      safeRevokeObjectURL(candidateUrl)
+      return true
+    }
+  }
+  return false
+}
+
+function trimIdleEmojiBlobCache(): void {
+  let trimmed = false
+  while (blobUrls.size > MAX_BLOB_CACHE_ENTRIES) {
+    if (!evictOneIdleEmojiBlobEntry()) break
+    trimmed = true
+  }
+  if (trimmed) emit()
+}
+
 function acquireEmojiBlobConsumer(url: string): void {
   emojiBlobRefCounts.set(url, (emojiBlobRefCounts.get(url) ?? 0) + 1)
 }
@@ -73,6 +115,7 @@ function releaseEmojiBlobConsumer(url: string): void {
     if (deferredEmojiRevokeUrls.delete(url)) {
       safeRevokeObjectURL(url)
     }
+    trimIdleEmojiBlobCache()
   } else {
     emojiBlobRefCounts.set(url, next)
   }
@@ -85,22 +128,6 @@ function retireOrDeferEmojiBlobUrl(url: string | undefined): void {
     return
   }
   safeRevokeObjectURL(url)
-}
-
-function evictOneEmojiBlobEntry(): boolean {
-  for (const [candidateKey, candidateUrl] of blobUrls.entries()) {
-    if ((emojiBlobRefCounts.get(candidateUrl) ?? 0) === 0) {
-      blobUrls.delete(candidateKey)
-      safeRevokeObjectURL(candidateUrl)
-      return true
-    }
-  }
-  const oldestKey = blobUrls.keys().next().value
-  if (oldestKey === undefined) return false
-  const oldestUrl = blobUrls.get(oldestKey)
-  blobUrls.delete(oldestKey)
-  retireOrDeferEmojiBlobUrl(oldestUrl)
-  return true
 }
 
 function blobCacheKey(organisationId: string, item: WorkspaceCustomEmojiItem): string {
@@ -154,15 +181,27 @@ export async function refreshWorkspaceCustomEmojis(
   const inflight = inFlightListByOrg.get(organisationId)
   if (inflight !== undefined && !force) return inflight
 
+  const startGen = currentEmojiGeneration(organisationId)
+  const abort = new AbortController()
+  const untrack = trackEmojiAbort(organisationId, abort)
   const task = (async () => {
     try {
-      const items = await listWorkspaceCustomEmojis(organisationId)
+      const items = await listWorkspaceCustomEmojis(organisationId, abort.signal)
+      if (abort.signal.aborted || currentEmojiGeneration(organisationId) !== startGen) {
+        return EMPTY_ITEMS
+      }
       setWorkspaceCustomEmojisSnapshot(organisationId, items)
       return items
     } catch {
+      if (abort.signal.aborted || currentEmojiGeneration(organisationId) !== startGen) {
+        return EMPTY_ITEMS
+      }
       return stateByOrg.get(organisationId)?.items ?? EMPTY_ITEMS
     } finally {
-      inFlightListByOrg.delete(organisationId)
+      untrack()
+      if (currentEmojiGeneration(organisationId) === startGen) {
+        inFlightListByOrg.delete(organisationId)
+      }
     }
   })()
 
@@ -185,17 +224,27 @@ export async function ensureCustomEmojiBlobUrl(
   const existing = inFlightBlobs.get(key)
   if (existing !== undefined) return existing
 
+  const startGen = currentEmojiGeneration(organisationId)
+  const abort = new AbortController()
+  const untrack = trackEmojiAbort(organisationId, abort)
   const task = (async () => {
     try {
-      const blob = await fetchWorkspaceCustomEmojiBlob(organisationId, item.id)
+      const blob = await fetchWorkspaceCustomEmojiBlob(organisationId, item.id, abort.signal)
+      if (abort.signal.aborted || currentEmojiGeneration(organisationId) !== startGen) {
+        return null
+      }
       const currentOrg = stateByOrg.get(organisationId)
       if (currentOrg !== undefined && !currentOrg.byShortcode.has(item.shortcode)) {
         return null
       }
       const url = safeCreateObjectURL(blob)
       if (url === null) return null
+      if (abort.signal.aborted || currentEmojiGeneration(organisationId) !== startGen) {
+        safeRevokeObjectURL(url)
+        return null
+      }
       while (blobUrls.size >= MAX_BLOB_CACHE_ENTRIES) {
-        if (!evictOneEmojiBlobEntry()) break
+        if (!evictOneIdleEmojiBlobEntry()) break
       }
       blobUrls.set(key, url)
       emit()
@@ -203,7 +252,10 @@ export async function ensureCustomEmojiBlobUrl(
     } catch {
       return null
     } finally {
-      inFlightBlobs.delete(key)
+      untrack()
+      if (currentEmojiGeneration(organisationId) === startGen) {
+        inFlightBlobs.delete(key)
+      }
     }
   })()
 
@@ -228,6 +280,12 @@ export function getCustomEmojiBlobUrl(
 }
 
 export function clearOrganisationCustomEmojis(organisationId: string): void {
+  orgEmojiGenerations.set(organisationId, (orgEmojiGenerations.get(organisationId) ?? 0) + 1)
+  const aborts = inFlightAbortsByOrg.get(organisationId)
+  if (aborts) {
+    for (const controller of aborts) controller.abort()
+    inFlightAbortsByOrg.delete(organisationId)
+  }
   const prefix = `${organisationId}:`
   for (const [key, url] of blobUrls.entries()) {
     if (key.startsWith(prefix)) {
@@ -237,12 +295,23 @@ export function clearOrganisationCustomEmojis(organisationId: string): void {
       blobUrls.delete(key)
     }
   }
+  for (const key of inFlightBlobs.keys()) {
+    if (key.startsWith(prefix)) {
+      inFlightBlobs.delete(key)
+    }
+  }
   stateByOrg.delete(organisationId)
   inFlightListByOrg.delete(organisationId)
   emit()
 }
 
 export function clearAllCustomEmojiBlobs(): void {
+  globalEmojiGeneration += 1
+  orgEmojiGenerations.clear()
+  for (const aborts of inFlightAbortsByOrg.values()) {
+    for (const controller of aborts) controller.abort()
+  }
+  inFlightAbortsByOrg.clear()
   for (const url of blobUrls.values()) {
     safeRevokeObjectURL(url)
   }

@@ -30,15 +30,38 @@ export const MAX_INLINE_IMAGE_BYTES = 10 * 1024 * 1024
 export const MAX_INLINE_CACHE_ENTRIES = 48
 
 // Bounded LRU cache of CSP-safe `blob:` URLs (`${organisationId}:${attachmentId}` -> `blob:...`)
-// with mounted `<img>` ref-counting so active previews are never revoked while on screen.
+// with mounted `<img>` ref-counting and generation-fenced async wipe cancellation so active
+// previews are never evicted while mounted and wiped sessions never leak late `blob:` URLs.
 const inlineBlobCache = new Map<string, string>()
 const blobUrlRefCounts = new Map<string, number>()
 const deferredRevokeUrls = new Set<string>()
 const inlineCacheListeners = new Set<() => void>()
-let inlineCacheEpoch = 0
+const orgWipeGenerations = new Map<string, number>()
+const inFlightByOrg = new Map<string, Set<AbortController>>()
+let globalWipeGeneration = 0
+let inlineCacheSnapshotVersion = 0
+
+function currentOrgGeneration(organisationId: string): string {
+  return `${globalWipeGeneration}:${orgWipeGenerations.get(organisationId) ?? 0}`
+}
+
+function trackInFlightAbort(organisationId: string, controller: AbortController): () => void {
+  let bucket = inFlightByOrg.get(organisationId)
+  if (bucket === undefined) {
+    bucket = new Set()
+    inFlightByOrg.set(organisationId, bucket)
+  }
+  bucket.add(controller)
+  return () => {
+    const current = inFlightByOrg.get(organisationId)
+    if (!current) return
+    current.delete(controller)
+    if (current.size === 0) inFlightByOrg.delete(organisationId)
+  }
+}
 
 function emitInlineCacheChange(): void {
-  inlineCacheEpoch += 1
+  inlineCacheSnapshotVersion += 1
   for (const listener of inlineCacheListeners) listener()
 }
 
@@ -49,8 +72,8 @@ function subscribeInlineCache(listener: () => void): () => void {
   }
 }
 
-function getInlineCacheEpoch(): number {
-  return inlineCacheEpoch
+function getInlineCacheSnapshotVersion(): number {
+  return inlineCacheSnapshotVersion
 }
 
 function safeCreateBlobUrl(blob: Blob): string | null {
@@ -71,6 +94,26 @@ function safeRevokeBlobUrl(url: string | null | undefined): void {
   }
 }
 
+function evictOneIdleInlineEntry(): boolean {
+  for (const [candidateKey, candidateUrl] of inlineBlobCache.entries()) {
+    if ((blobUrlRefCounts.get(candidateUrl) ?? 0) === 0) {
+      inlineBlobCache.delete(candidateKey)
+      safeRevokeBlobUrl(candidateUrl)
+      return true
+    }
+  }
+  return false
+}
+
+function trimIdleInlineCache(): void {
+  let trimmed = false
+  while (inlineBlobCache.size > MAX_INLINE_CACHE_ENTRIES) {
+    if (!evictOneIdleInlineEntry()) break
+    trimmed = true
+  }
+  if (trimmed) emitInlineCacheChange()
+}
+
 function acquireBlobUrlConsumer(url: string): void {
   blobUrlRefCounts.set(url, (blobUrlRefCounts.get(url) ?? 0) + 1)
 }
@@ -82,6 +125,7 @@ function releaseBlobUrlConsumer(url: string): void {
     if (deferredRevokeUrls.delete(url)) {
       safeRevokeBlobUrl(url)
     }
+    trimIdleInlineCache()
   } else {
     blobUrlRefCounts.set(url, next)
   }
@@ -104,22 +148,6 @@ function touchInlineBlobCache(key: string): string | null {
   return existing
 }
 
-function evictOneInlineEntry(): boolean {
-  for (const [candidateKey, candidateUrl] of inlineBlobCache.entries()) {
-    if ((blobUrlRefCounts.get(candidateUrl) ?? 0) === 0) {
-      inlineBlobCache.delete(candidateKey)
-      safeRevokeBlobUrl(candidateUrl)
-      return true
-    }
-  }
-  const oldestKey = inlineBlobCache.keys().next().value
-  if (oldestKey === undefined) return false
-  const oldestUrl = inlineBlobCache.get(oldestKey)
-  inlineBlobCache.delete(oldestKey)
-  retireOrDeferBlobUrl(oldestUrl)
-  return true
-}
-
 function cacheInlineBlobUrl(key: string, url: string): void {
   if (inlineBlobCache.has(key)) {
     const prev = inlineBlobCache.get(key)
@@ -127,7 +155,7 @@ function cacheInlineBlobUrl(key: string, url: string): void {
     if (prev && prev !== url) retireOrDeferBlobUrl(prev)
   }
   while (inlineBlobCache.size >= MAX_INLINE_CACHE_ENTRIES) {
-    if (!evictOneInlineEntry()) break
+    if (!evictOneIdleInlineEntry()) break
   }
   inlineBlobCache.set(key, url)
   emitInlineCacheChange()
@@ -135,6 +163,12 @@ function cacheInlineBlobUrl(key: string, url: string): void {
 
 export function clearInlineAttachmentPreviews(organisationId?: string): void {
   if (organisationId === undefined) {
+    globalWipeGeneration += 1
+    orgWipeGenerations.clear()
+    for (const bucket of inFlightByOrg.values()) {
+      for (const controller of bucket) controller.abort()
+    }
+    inFlightByOrg.clear()
     for (const url of inlineBlobCache.values()) safeRevokeBlobUrl(url)
     for (const url of deferredRevokeUrls.values()) safeRevokeBlobUrl(url)
     inlineBlobCache.clear()
@@ -143,18 +177,22 @@ export function clearInlineAttachmentPreviews(organisationId?: string): void {
     emitInlineCacheChange()
     return
   }
+  orgWipeGenerations.set(organisationId, (orgWipeGenerations.get(organisationId) ?? 0) + 1)
+  const inflight = inFlightByOrg.get(organisationId)
+  if (inflight) {
+    for (const controller of inflight) controller.abort()
+    inFlightByOrg.delete(organisationId)
+  }
   const prefix = `${organisationId}:`
-  let changed = false
   for (const [key, url] of inlineBlobCache.entries()) {
     if (key.startsWith(prefix)) {
       safeRevokeBlobUrl(url)
       deferredRevokeUrls.delete(url)
       blobUrlRefCounts.delete(url)
       inlineBlobCache.delete(key)
-      changed = true
     }
   }
-  if (changed) emitInlineCacheChange()
+  emitInlineCacheChange()
 }
 
 export const clearAttachmentPreviews = clearInlineAttachmentPreviews
@@ -209,39 +247,47 @@ function InlineRasterAttachment({
     attachment.sizeBytes > 0 &&
     attachment.sizeBytes <= MAX_INLINE_IMAGE_BYTES
 
-  const cacheEpoch = useSyncExternalStore(subscribeInlineCache, getInlineCacheEpoch)
-  const [fetchedEntry, setFetchedEntry] = useState<{
-    readonly key: string
-    readonly url: string
-    readonly epoch: number
-  } | null>(null)
+  useSyncExternalStore(subscribeInlineCache, getInlineCacheSnapshotVersion)
+  const heldLeaseRef = useRef<string | null>(null)
 
-  const cachedUrl = eligible && cacheKey ? (inlineBlobCache.get(cacheKey) ?? null) : null
-  const inlineUrl =
-    eligible && cacheKey
-      ? (cachedUrl ??
-          (fetchedEntry?.key === cacheKey && fetchedEntry.epoch === cacheEpoch
-            ? fetchedEntry.url
-            : null))
-      : null
+  const setLeaseUrl = (nextUrl: string | null) => {
+    if (heldLeaseRef.current === nextUrl) return
+    if (heldLeaseRef.current !== null) {
+      releaseBlobUrlConsumer(heldLeaseRef.current)
+      heldLeaseRef.current = null
+    }
+    if (nextUrl !== null) {
+      acquireBlobUrlConsumer(nextUrl)
+      heldLeaseRef.current = nextUrl
+    }
+  }
+
+  const inlineUrl = eligible && cacheKey ? (inlineBlobCache.get(cacheKey) ?? null) : null
 
   useEffect(() => {
-    if (!inlineUrl || !eligible) return
-    acquireBlobUrlConsumer(inlineUrl)
+    setLeaseUrl(inlineUrl)
+  }, [inlineUrl])
+
+  useEffect(() => {
     return () => {
-      releaseBlobUrlConsumer(inlineUrl)
+      setLeaseUrl(null)
     }
-  }, [inlineUrl, eligible])
+  }, [])
 
   useEffect(() => {
     if (!eligible || organisationId === null || !cacheKey) {
+      setLeaseUrl(null)
       return
     }
-    if (touchInlineBlobCache(cacheKey) !== null) {
+    const existing = touchInlineBlobCache(cacheKey)
+    if (existing !== null) {
+      setLeaseUrl(existing)
       return
     }
 
+    const startGen = currentOrgGeneration(organisationId)
     const abort = new AbortController()
+    const untrack = trackInFlightAbort(organisationId, abort)
     let active = true
     void (async () => {
       try {
@@ -252,22 +298,36 @@ function InlineRasterAttachment({
             signal: abort.signal,
           }
         )
+        if (!active || abort.signal.aborted || currentOrgGeneration(organisationId) !== startGen) {
+          return
+        }
         const href = safeDownloadUrl(data?.downloadUrl)
         if (href === null) return
         const blob = await loadImagePreview(href, attachment, abort.signal)
-        if (!active || abort.signal.aborted) return
+        if (!active || abort.signal.aborted || currentOrgGeneration(organisationId) !== startGen) {
+          return
+        }
         const url = safeCreateBlobUrl(blob)
         if (url === null) return
+        if (!active || abort.signal.aborted || currentOrgGeneration(organisationId) !== startGen) {
+          safeRevokeBlobUrl(url)
+          return
+        }
+        // Acquire consumer lease synchronously before insertion so concurrent batch
+        // resolutions (> MAX_INLINE_CACHE_ENTRIES) never evict an active mounted consumer.
+        setLeaseUrl(url)
         cacheInlineBlobUrl(cacheKey, url)
-        setFetchedEntry({ key: cacheKey, url, epoch: getInlineCacheEpoch() })
       } catch {
         // Graceful fallback to the accessible file chip if fetch fails.
+      } finally {
+        untrack()
       }
     })()
 
     return () => {
       active = false
       abort.abort()
+      untrack()
     }
   }, [attachment, cacheKey, eligible, organisationId])
 
@@ -316,11 +376,13 @@ export function MessageAttachments({
 }) {
   const { t, i18n } = useTranslation()
   const organisationId = useMessagingOrganisation()
+  useSyncExternalStore(subscribeInlineCache, getInlineCacheSnapshotVersion)
   const [problem, setProblem] = useState(false)
   const [preview, setPreview] = useState<{
     url: string
     name: string
     organisationId: string
+    generation: string
     ephemeral: boolean
   } | null>(null)
   const [pending, setPending] = useState<string | null>(null)
@@ -336,6 +398,20 @@ export function MessageAttachments({
     setPreview(null)
   }
 
+  const activePreview =
+    preview !== null &&
+    preview.organisationId === organisationId &&
+    preview.generation === currentOrgGeneration(preview.organisationId)
+      ? preview
+      : null
+
+  useEffect(() => {
+    if (preview !== null && activePreview === null && objectUrl.current !== null) {
+      safeRevokeBlobUrl(objectUrl.current)
+      objectUrl.current = null
+    }
+  }, [activePreview, preview])
+
   useEffect(() => {
     live.current = true
     return () => {
@@ -346,29 +422,32 @@ export function MessageAttachments({
   }, [organisationId])
 
   useEffect(() => {
-    if (!preview || preview.ephemeral) return
-    acquireBlobUrlConsumer(preview.url)
+    if (!activePreview || activePreview.ephemeral) return
+    acquireBlobUrlConsumer(activePreview.url)
     return () => {
-      releaseBlobUrlConsumer(preview.url)
+      releaseBlobUrlConsumer(activePreview.url)
     }
-  }, [preview])
+  }, [activePreview])
 
   async function open(ref: AttachmentRef) {
     if (organisationId === null) return
     setProblem(false)
     if (SAFE_RASTER_MIME.test(ref.contentType)) {
       closePreview()
+      const startGen = currentOrgGeneration(organisationId)
       const cached = touchInlineBlobCache(`${organisationId}:${ref.id}`)
       if (cached !== null) {
         setPreview({
           url: cached,
           name: cleanText(ref.filename, 120),
           organisationId,
+          generation: startGen,
           ephemeral: false,
         })
         return
       }
       const abort = new AbortController()
+      const untrack = trackInFlightAbort(organisationId, abort)
       request.current = abort
       setPending(organisationId)
       try {
@@ -379,22 +458,51 @@ export function MessageAttachments({
             signal: abort.signal,
           }
         )
+        if (
+          abort.signal.aborted ||
+          !live.current ||
+          currentOrgGeneration(organisationId) !== startGen
+        ) {
+          return
+        }
         const href = safeDownloadUrl(data?.downloadUrl)
         if (href === null) throw new Error('attachment-unavailable')
         const blob = await loadImagePreview(href, ref, abort.signal)
-        if (abort.signal.aborted || !live.current) return
+        if (
+          abort.signal.aborted ||
+          !live.current ||
+          currentOrgGeneration(organisationId) !== startGen
+        ) {
+          return
+        }
         const url = safeCreateBlobUrl(blob)
         if (url === null) throw new Error('attachment-unavailable')
+        if (
+          abort.signal.aborted ||
+          !live.current ||
+          currentOrgGeneration(organisationId) !== startGen
+        ) {
+          safeRevokeBlobUrl(url)
+          return
+        }
         objectUrl.current = url
         setPreview({
           url,
           name: cleanText(ref.filename, 120),
           organisationId,
+          generation: startGen,
           ephemeral: true,
         })
       } catch {
-        if (!abort.signal.aborted && live.current) setProblem(true)
+        if (
+          !abort.signal.aborted &&
+          live.current &&
+          currentOrgGeneration(organisationId) === startGen
+        ) {
+          setProblem(true)
+        }
       } finally {
+        untrack()
         if (request.current === abort && live.current) setPending(null)
       }
       return
@@ -445,7 +553,13 @@ export function MessageAttachments({
                   onOpenLightbox={(url, name) => {
                     if (organisationId === null) return
                     closePreview()
-                    setPreview({ url, name, organisationId, ephemeral: false })
+                    setPreview({
+                      url,
+                      name,
+                      organisationId,
+                      generation: currentOrgGeneration(organisationId),
+                      ephemeral: false,
+                    })
                   }}
                   onOpenFallback={(target) => void open(target)}
                 />
@@ -475,18 +589,18 @@ export function MessageAttachments({
         </ul>
       ) : null}
       <Dialog
-        open={preview !== null && preview.organisationId === organisationId}
+        open={activePreview !== null}
         onOpenChange={(openState) => {
           if (!openState) closePreview()
         }}
-        title={preview?.name ?? copy.preview}
+        title={activePreview?.name ?? copy.preview}
         closeLabel={copy.close}
         size="lg"
       >
-        {preview === null ? null : (
+        {activePreview === null ? null : (
           <img
-            src={preview.url}
-            alt={preview.name}
+            src={activePreview.url}
+            alt={activePreview.name}
             className="max-h-screen w-full object-contain"
           />
         )}
