@@ -1020,6 +1020,7 @@ def without_warm_pool(objects):
         ("function", "workspace_ai_scope_guard", ""),
         ("function", "workspace_ai_account_cutoff_guard", ""),
         ("function", "workspace_ai_erasure_hook", ""),
+        ("function", "workspace_ai_call_captions_erasure_hook", ""),
         ("function", "account_ai_consent_erasure_hook", ""),
     }
     return {
