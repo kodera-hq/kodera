@@ -11,7 +11,7 @@ ROLE = re.compile(r"[a-z_][a-z0-9_]{0,62}\Z")
 SELECT = ("docs_document", "docs_documentlink", "docs_documentsnapshot", "docs_documentupdate")
 INSERT = ("docs_documentlink", "docs_documentupdate")
 UPDATE = {
-    "docs_document": ("markdown", "revision", "updated_at"),
+    "docs_document": ("markdown", "revision", "encryption_epoch", "updated_at"),
     "docs_documentsnapshot": ("sequence", "head_sequence", "state", "updated_at"),
 }
 DELETE = ("docs_documentlink", "docs_documentupdate")

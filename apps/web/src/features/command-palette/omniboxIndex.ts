@@ -47,7 +47,7 @@ export function resolveRoomSearchBoundary(
     unlockedAuthority.unlocked &&
     typeof unlockedAuthority.epoch === 'number' &&
     Number.isSafeInteger(unlockedAuthority.epoch) &&
-    unlockedAuthority.epoch >= 1
+    unlockedAuthority.epoch >= 0
   ) {
     return {
       boundaryTag: 'confidential-e2ee',

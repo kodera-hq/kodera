@@ -547,7 +547,6 @@ export class EspaceStore {
   readonly #confidentialRooms = new Set<string>()
   readonly #forbiddenRooms = new Set<string>()
   readonly #unlockedEncryptedRooms = new Map<string, { readonly epoch: number }>()
-  readonly #directEncryptionDefaults = new Map<string, boolean>()
   #workspaceChannelIds: ReadonlySet<string>
   #confidentialChannelIds: ReadonlySet<string>
   #archivedChannelIds: ReadonlySet<string>
@@ -1886,7 +1885,7 @@ export class EspaceStore {
     (this.#quarantined.has(roomId) && !this.#unlockedEncryptedRooms.has(roomId))
 
   setUnlockedEncryptedRoom = (roomId: string, epoch: number | null): void => {
-    if (epoch === null || !Number.isSafeInteger(epoch) || epoch < 1) {
+    if (epoch === null || !Number.isSafeInteger(epoch) || epoch < 0) {
       this.#unlockedEncryptedRooms.delete(roomId)
       this.#quarantined.add(roomId)
       emitVaultSearchRoomEviction(roomId)
@@ -3457,15 +3456,9 @@ export class EspaceStore {
   /**
    * The direct conversation with these people: the joined one already held, else a new private
    * room, invited and listed in `m.direct` under each of them. Resolves to its room id.
-   *
-   * Tier 1 (`Track 7`): 1:1 and private group DMs default to E2EE (`encrypted = true`).
    */
-  async openDirect(
-    userIds: readonly string[],
-    options?: { readonly encrypted?: boolean | undefined }
-  ): Promise<string> {
+  async openDirect(userIds: readonly string[]): Promise<string> {
     if (this.#stopped) throw new Error('Espace is stopped')
-    const encrypted = options?.encrypted ?? true
     const people = directPeople(userIds, this.#me)
     const map = directMap(this.#client.getAccountData(EventType.Direct)?.getContent())
     const held = existingDirect(
@@ -3473,12 +3466,7 @@ export class EspaceStore {
       people,
       (roomId) => this.#client.getRoom(roomId)?.getMyMembership() === 'join'
     )
-    if (held !== undefined) {
-      if (!this.#directEncryptionDefaults.has(held)) {
-        this.#directEncryptionDefaults.set(held, encrypted)
-      }
-      return held
-    }
+    if (held !== undefined) return held
     // `private_chat`, not `trusted_private_chat`: the latter gives every invitee the creator's
     // power level, so anyone in a group conversation could remove the others or change the room.
     // No `initial_state`: the Kodera room policy admits a member-created room only as a plain
@@ -3491,7 +3479,6 @@ export class EspaceStore {
       visibility: Visibility.Private,
     })
     if (!isMatrixRoomId(roomId)) throw new Error('Invalid Matrix room ID')
-    this.#directEncryptionDefaults.set(roomId, encrypted)
     // Someone invited later reads only what is sent from their invitation on. Nothing has been
     // sent yet, so nobody reads anything before it.
     await this.#client.sendStateEvent(
@@ -3503,9 +3490,6 @@ export class EspaceStore {
     await this.#recordDirect(roomId, people)
     return roomId
   }
-
-  isDirectDefaultEncrypted = (roomId: string): boolean =>
-    this.#directEncryptionDefaults.get(roomId) ?? true
 
   /** Names and IDs returned by the homeserver directory, never inferred from Core identities. */
   async searchMembers(term: string): Promise<readonly MemberView[]> {

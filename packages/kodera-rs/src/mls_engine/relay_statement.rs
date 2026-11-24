@@ -639,6 +639,7 @@ impl OpenMlsDevice {
                         crate::key_backup::MAX_RELAY_KEY_BACKUP_CAPSULE_BYTES,
                     )
                     .map_err(|_| NativeCryptoError::InvalidInput)?;
+                    RelayId::parse(&parsed.account_id)?;
                     if parsed.organisation_id != self.scope().organisation().as_str() {
                         return Err(NativeCryptoError::ScopeMismatch);
                     }

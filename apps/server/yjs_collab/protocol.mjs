@@ -32,7 +32,7 @@ export function isKde1Magic(bytes) {
     bytes[3] === 0x31
   )
 }
-export function confidentialFrame(bytes, role, expectedEpoch) {
+export function parseKde1Header(bytes) {
   if (!(bytes instanceof Uint8Array) || bytes.byteLength < 36 || bytes.byteLength > MAX_STATE + 2048) {
     throw new ConfidentialRefused('confidential frame out of bounds')
   }
@@ -58,12 +58,11 @@ export function confidentialFrame(bytes, role, expectedEpoch) {
     !Number.isSafeInteger(meta.epoch) ||
     meta.epoch < 0 ||
     meta.epoch > 0xffffffff ||
-    meta.epoch !== expectedEpoch ||
     !validConfidentialSender(meta.sender) ||
     typeof meta.sequence !== 'number' ||
     !Number.isSafeInteger(meta.sequence) ||
     meta.sequence < 1 ||
-    (meta.kind !== 0 && meta.kind !== 1) ||
+    (meta.kind !== 0 && meta.kind !== 1 && meta.kind !== 2 && meta.kind !== 3) ||
     typeof meta.ratchet !== 'number' ||
     !Number.isSafeInteger(meta.ratchet) ||
     meta.ratchet < 0 ||
@@ -81,7 +80,26 @@ export function confidentialFrame(bytes, role, expectedEpoch) {
   if (canonical !== encoded) {
     throw new ConfidentialRefused('non-canonical confidential metadata JSON')
   }
-  if (meta.kind === 0 && role !== 'editor') {
+  if (meta.kind === 3 && meta.sender !== 'checkpoint') {
+    throw new ConfidentialRefused('confidential checkpoint must carry checkpoint sender')
+  }
+  if (meta.kind !== 3 && meta.sender === 'checkpoint') {
+    throw new ConfidentialRefused('confidential live frame cannot carry checkpoint sender')
+  }
+  if (meta.kind === 1 && bytes.byteLength > 8192 + 2048) {
+    throw new ConfidentialRefused('confidential awareness frame exceeds limit')
+  }
+  if (meta.kind === 2 && bytes.byteLength > 65536 + 2048) {
+    throw new ConfidentialRefused('confidential state vector frame exceeds limit')
+  }
+  return meta
+}
+export function confidentialFrame(bytes, role, expectedEpoch) {
+  const meta = parseKde1Header(bytes)
+  if (meta.epoch !== expectedEpoch) {
+    throw new ConfidentialRefused('confidential metadata epoch mismatch')
+  }
+  if ((meta.kind === 0 || meta.kind === 3) && role !== 'editor') {
     throw new ViewerWrite()
   }
   return {

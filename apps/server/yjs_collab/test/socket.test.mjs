@@ -25,7 +25,7 @@ class MemoryStore {
     this.document = randomUUID();this.organisation = randomUUID();this.doc = load()
     replace(this.doc, '# Example\n\nInitial text\n')
     this.roles = new Map();this.revision = 1;this.audit = [];this.guards = 0;this.redeemed = new Set()
-    this.confidential = false;this.epoch = null;this.envelopes = []
+    this.confidential = false;this.epoch = null;this.envelopes = [];this.base = 0;this.confidentialSnapshot = null
   }
   guard(claims) {
     this.guards += 1
@@ -36,10 +36,18 @@ class MemoryStore {
   async deliver(claims, consumer, known = null) {
     this.guard(claims)
     if (this.confidential) {
-      const start = known === null ? 0 : known
-      if (known === null || start < this.envelopes.length) {
-        consumer({confidential: true, envelopes: this.envelopes.slice(start), head: this.envelopes.length, revision: this.revision})
+      const head = this.base + this.envelopes.length
+      if (known !== null && head <= known) return
+      const includeSnap = known === null || known < this.base
+      const out = []
+      const journalSeqs = []
+      if (includeSnap && this.confidentialSnapshot !== null) out.push(this.confidentialSnapshot)
+      const start = includeSnap ? 0 : Math.max(0, known - this.base)
+      for (let i = start; i < this.envelopes.length; i += 1) {
+        out.push(this.envelopes[i])
+        journalSeqs.push(this.base + i + 1)
       }
+      consumer({confidential: true, envelopes: out, journalSeqs, head, base: this.base, revision: this.revision})
       return
     }
     if (known !== this.revision) consumer({state: Y.encodeStateAsUpdate(this.doc), revision: this.revision})
@@ -51,6 +59,17 @@ class MemoryStore {
     return this.deliver(claims, consumer)
   }
   async emit(claims, consumer) { this.guard(claims);consumer() }
+  async compact(claims, upToHead, snapshotEnvelope) {
+    this.guard(claims)
+    if (!this.confidential || claims.role !== 'editor') throw new TicketRefused(4403)
+    const head = this.base + this.envelopes.length
+    if (upToHead < this.base || upToHead > head) throw new TicketRefused(4403)
+    this.envelopes = this.envelopes.slice(upToHead - this.base)
+    this.base = upToHead
+    this.confidentialSnapshot = Buffer.from(snapshotEnvelope)
+    this.revision += 1
+    return {compacted: true, base: this.base, head, revision: this.revision}
+  }
   async update(claims, update) {
     this.guard(claims)
     if (claims.role !== 'editor') throw new TicketRefused(4403)
@@ -58,7 +77,8 @@ class MemoryStore {
       const envelope = Buffer.from(update)
       this.envelopes.push(envelope)
       this.revision += 1
-      return {confidential: true, envelope, head: this.envelopes.length, revision: this.revision}
+      const head = this.base + this.envelopes.length
+      return {confidential: true, envelope, head, base: this.base, revision: this.revision}
     }
     apply(this.doc, update);inspect(this.doc);this.revision += 1
     return {update, revision: this.revision}
@@ -386,30 +406,51 @@ test('confidential rooms replay opaque KDE1 frames without Y.Doc/Awareness and c
     assert.equal(room.awareness, null)
 
     const env1 = makeKde1Frame({ epoch: 5, sender: '101', sequence: 1, kind: 0 })
-    const envAwareness = makeKde1Frame({ epoch: 5, sender: '101', sequence: 2, kind: 1 })
+    const envStep1 = makeKde1Frame({ epoch: 5, sender: '101', sequence: 2, kind: 2 })
+    const envAwareness = makeKde1Frame({ epoch: 5, sender: '101', sequence: 3, kind: 1 })
     editorA.ws.send(env1)
+    editorA.ws.send(envStep1)
     editorA.ws.send(envAwareness)
-    await until(() => editorB.inbox.length === 2)
+    await until(() => editorB.inbox.length === 3)
     assert.deepEqual(editorB.inbox[0], env1)
-    assert.deepEqual(editorB.inbox[1], envAwareness)
+    assert.deepEqual(editorB.inbox[1], envStep1)
+    assert.deepEqual(editorB.inbox[2], envAwareness)
+    // kind===2 SyncStep1 and kind===1 awareness are relayed ephemerally and NEVER persisted!
     assert.equal(value.store.envelopes.length, 1)
 
-    // Late viewer receives stored opaque KDE1 update envelope on admission, can send kind===1 awareness,
-    // and closes 4403 + audits collab_refused if attempting kind===0 write.
+    // Triggering notify() / poll refresh after broadcast NEVER double-delivers env1 to editorB!
+    await value.service.notify(value.store.document)
+    await pause(30)
+    assert.equal(editorB.inbox.length, 3)
+
+    // Editor compaction via kind===3 checkpoint compacts journal and replays snapshot to late joiners.
+    const env2 = makeKde1Frame({ epoch: 5, sender: '101', sequence: 4, kind: 0 })
+    const cp = makeKde1Frame({ epoch: 5, sender: 'checkpoint', sequence: 1, kind: 3 })
+    editorA.ws.send(env2)
+    await until(() => editorB.inbox.length === 4)
+    editorA.ws.send(cp) // compacts sequence 1 (leaving env2 in journal)
+    await until(() => value.store.base === 1)
+    assert.equal(value.store.envelopes.length, 1)
+
+    // Late viewer receives compacted kind===3 snapshot + remaining kind===0 update, can send kind===1 & kind===2,
+    // and closes 4403 + audits collab_refused if attempting kind===0 or kind===3 write.
     const viewer = await openConfidential('viewer')
-    await until(() => viewer.inbox.length === 1)
-    assert.deepEqual(viewer.inbox[0], env1)
+    await until(() => viewer.inbox.length === 2)
+    assert.deepEqual(viewer.inbox[0], cp)
+    assert.deepEqual(viewer.inbox[1], env2)
     viewer.ws.send(makeKde1Frame({ epoch: 5, sender: '303', sequence: 1, kind: 1 }))
-    await until(() => editorA.inbox.length === 1)
+    viewer.ws.send(makeKde1Frame({ epoch: 5, sender: '303', sequence: 2, kind: 2 }))
+    await until(() => editorA.inbox.length === 2)
+    assert.equal(value.store.envelopes.length, 1)
 
     const viewerClosed = once(viewer.ws, 'close')
-    viewer.ws.send(makeKde1Frame({ epoch: 5, sender: '303', sequence: 2, kind: 0 }))
+    viewer.ws.send(makeKde1Frame({ epoch: 5, sender: '303', sequence: 3, kind: 0 }))
     assert.equal((await viewerClosed)[0], 4403)
     assert.equal(value.store.audit.includes(viewer.claims.membership), true)
 
     // Unsealed Yjs frame on confidential socket closes 4403 and audits collab_refused.
     const rogue = await openConfidential('editor')
-    await until(() => rogue.inbox.length === 1)
+    await until(() => rogue.inbox.length === 2)
     const rogueClosed = once(rogue.ws, 'close')
     rogue.ws.send(new Uint8Array([0, 0, 1, 0]))
     assert.equal((await rogueClosed)[0], 4403)
@@ -417,7 +458,7 @@ test('confidential rooms replay opaque KDE1 frames without Y.Doc/Awareness and c
 
     // Duplicate sender spoofing or non-monotonic sequence closes 4403 and audits collab_refused.
     const spoofer = await openConfidential('editor')
-    await until(() => spoofer.inbox.length === 1)
+    await until(() => spoofer.inbox.length === 2)
     const spooferClosed = once(spoofer.ws, 'close')
     spoofer.ws.send(makeKde1Frame({ epoch: 5, sender: '101', sequence: 1, kind: 1 }))
     assert.equal((await spooferClosed)[0], 4403)

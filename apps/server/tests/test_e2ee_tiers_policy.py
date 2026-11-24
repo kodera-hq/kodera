@@ -8,6 +8,7 @@ from apps.workspaces.encryption_tiers import (
     ConversationEncryptionTier,
     classify_workspace_channel_tier,
     default_e2ee_for_surface,
+    should_display_confidential_padlock,
 )
 
 
@@ -33,3 +34,26 @@ def test_tier_2_and_tier_3_channel_defaults_and_classification() -> None:
 def test_unknown_surface_raises_value_error() -> None:
     with pytest.raises(ValueError, match="Unsupported conversation surface"):
         default_e2ee_for_surface("unknown_surface")  # type: ignore[arg-type]
+
+
+def test_padlock_requires_verified_e2ee_session() -> None:
+    assert (
+        should_display_confidential_padlock(is_confidential=True, is_verified_e2ee_session=False)
+        is False
+    )
+    assert (
+        should_display_confidential_padlock(is_direct=True, is_verified_e2ee_session=False) is False
+    )
+    assert (
+        should_display_confidential_padlock(
+            is_confidential=False, is_direct=False, is_verified_e2ee_session=True
+        )
+        is False
+    )
+    assert (
+        should_display_confidential_padlock(is_confidential=True, is_verified_e2ee_session=True)
+        is True
+    )
+    assert (
+        should_display_confidential_padlock(is_direct=True, is_verified_e2ee_session=True) is True
+    )

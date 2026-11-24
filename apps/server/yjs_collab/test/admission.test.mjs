@@ -45,9 +45,12 @@ test('confidential tickets and KDE1 protocol parser enforce strict magic, canoni
   assert.equal(parsed.sequence, 1)
 
   assert.throws(() => confidentialFrame(valid0, 'viewer', 3), ViewerWrite)
+  assert.throws(() => confidentialFrame(buildKde1({ epoch: 3, sender: 'checkpoint', sequence: 1, kind: 3 }), 'viewer', 3), ViewerWrite)
   assert.equal(confidentialFrame(buildKde1({ epoch: 3, sender: '101', sequence: 1, kind: 1 }), 'viewer', 3).kind, 1)
+  assert.equal(confidentialFrame(buildKde1({ epoch: 3, sender: '101', sequence: 2, kind: 2 }), 'viewer', 3).kind, 2)
+  assert.equal(confidentialFrame(buildKde1({ epoch: 3, sender: 'checkpoint', sequence: 1, kind: 3 }), 'editor', 3).kind, 3)
 
-  // Unsealed frames (varuint 0, 1, 3) and wrong epoch/truncated tag fail closed with ConfidentialRefused.
+  // Unsealed frames (varuint 0, 1, 3), wrong epoch/truncated tag, or invalid checkpoint sender fail closed with ConfidentialRefused.
   for (const bad of [
     new Uint8Array([0, 0, 1, 0]),
     new Uint8Array([1, 2, 1, 2]),
@@ -55,6 +58,9 @@ test('confidential tickets and KDE1 protocol parser enforce strict magic, canoni
     buildKde1({ epoch: 4, sender: '101', sequence: 1, kind: 0 }),
     buildKde1({ epoch: 3, sender: '101', sequence: 0, kind: 0 }),
     buildKde1({ epoch: 3, sender: '101', sequence: 1, kind: 0, payloadBytes: 28 }),
+    buildKde1({ epoch: 3, sender: '101', sequence: 1, kind: 3 }),
+    buildKde1({ epoch: 3, sender: 'checkpoint', sequence: 1, kind: 0 }),
+    buildKde1({ epoch: 3, sender: '101', sequence: 1, kind: 2, payloadBytes: 70000 }),
   ]) {
     assert.throws(() => confidentialFrame(bad, 'editor', 3), ConfidentialRefused)
   }
@@ -112,4 +118,87 @@ test('confidential tickets and KDE1 protocol parser enforce strict magic, canoni
   assert.equal(delivered.confidential, true)
   assert.equal(delivered.envelopes.length, 1)
   assert.deepEqual(new Uint8Array(delivered.envelopes[0]), valid0)
+
+  // Compaction (>256 frames) and epoch advancement in Store.compact + Store.deliver
+  let baseSeq = 0
+  let snapshotBuf = Buffer.alloc(0)
+  const journalMap = new Map([[1, Buffer.from(valid0)]])
+  let headSeq = 1
+  let docEpoch = 3
+  const compactClient = {
+    async query(sql, params) {
+      if (sql.includes('docs_collab_fence')) return { rows: [{ id: randomUUID() }] }
+      if (sql.includes('docs_redeem_collaboration_ticket')) return { rows: [{ accepted: true }] }
+      if (sql.includes('SELECT s.state,s.sequence,s.head_sequence')) {
+        return {
+          rowCount: 1,
+          rows: [{ state: snapshotBuf, sequence: baseSeq, head_sequence: headSeq, revision: 1 + headSeq }],
+        }
+      }
+      if (sql.includes('SELECT sequence,state FROM docs_documentupdate')) {
+        const rows = []
+        for (const [seq, buf] of [...journalMap.entries()].sort((a, b) => a[0] - b[0])) {
+          if (seq > params[1]) rows.push({ sequence: seq, state: buf })
+        }
+        return { rows }
+      }
+      if (sql.includes('INSERT INTO docs_documentupdate')) {
+        const seq = params[2]
+        journalMap.set(seq, Buffer.from(params[4]))
+        headSeq = seq
+        return { rows: [] }
+      }
+      if (sql.includes('UPDATE docs_documentsnapshot SET sequence=$2,state=$3')) {
+        baseSeq = params[1]
+        snapshotBuf = Buffer.from(params[2])
+        return { rows: [] }
+      }
+      if (sql.includes('DELETE FROM docs_documentupdate WHERE document_id=$1 AND sequence<=$2')) {
+        for (const seq of [...journalMap.keys()]) {
+          if (seq <= params[1]) journalMap.delete(seq)
+        }
+        return { rows: [] }
+      }
+      if (sql.includes('UPDATE docs_document SET encryption_epoch=$2')) {
+        docEpoch = params[1]
+        return { rows: [] }
+      }
+      return { rows: [] }
+    },
+    release() {},
+  }
+  const compactStore = new Store({ connect: async () => compactClient })
+  // Append 299 more updates (total 300 > 256) compacting every 64 frames!
+  for (let i = 2; i <= 300; i += 1) {
+    await compactStore.update(claims, buildKde1({ epoch: 3, sender: '101', sequence: i, kind: 0 }))
+    if (i % 64 === 0) {
+      const cp = buildKde1({ epoch: 3, sender: 'checkpoint', sequence: i, kind: 3 })
+      await compactStore.compact(claims, i, cp)
+    }
+  }
+  assert.equal(headSeq, 300)
+  assert.equal(baseSeq, 256)
+  assert.equal(journalMap.size, 44)
+  assert.equal(docEpoch, 3)
+
+  let caughtUp = null
+  await compactStore.deliver(claims, payload => { caughtUp = payload })
+  assert.equal(caughtUp.envelopes.length, 45) // 1 checkpoint (kind=3) + 44 updates (kind=0)
+
+  // Epoch advancement to epoch 4: deliver filters out epoch-3 rows until editor compacts at epoch 4.
+  const epoch4Claims = { ...claims, epoch: 4, nonce: randomUUID() }
+  let beforeEpochCompact = null
+  await compactStore.deliver(epoch4Claims, payload => { beforeEpochCompact = payload })
+  assert.equal(beforeEpochCompact.envelopes.length, 0)
+
+  const cpEpoch4 = buildKde1({ epoch: 4, sender: 'checkpoint', sequence: 1, kind: 3 })
+  await compactStore.compact(epoch4Claims, 300, cpEpoch4)
+  assert.equal(baseSeq, 300)
+  assert.equal(journalMap.size, 0)
+  assert.equal(docEpoch, 4)
+
+  let afterEpochCompact = null
+  await compactStore.deliver(epoch4Claims, payload => { afterEpochCompact = payload })
+  assert.equal(afterEpochCompact.envelopes.length, 1)
+  assert.deepEqual(new Uint8Array(afterEpochCompact.envelopes[0]), cpEpoch4)
 })

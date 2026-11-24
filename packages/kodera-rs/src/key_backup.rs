@@ -182,10 +182,10 @@ fn decode_standard_base64_exact<const N: usize>(encoded: &str) -> Result<[u8; N]
 fn is_valid_json_principal(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 256
-        && value.chars().all(|ch| {
-            let code = ch as u32;
-            code >= 32 && ch != '"' && ch != '\\' && !(0xd800..=0xdfff).contains(&code)
-        })
+        && value.trim() == value
+        && value
+            .bytes()
+            .all(|byte| (0x21..=0x7e).contains(&byte) && byte != b'"' && byte != b'\\')
 }
 
 fn is_canonical_uuid(value: &str) -> bool {

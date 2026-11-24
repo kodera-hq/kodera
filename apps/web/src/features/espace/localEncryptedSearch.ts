@@ -53,6 +53,7 @@ export interface VaultSearchShardDoc {
   readonly senderName: string
   readonly timestamp: number
   readonly snippet: string
+  readonly tokens?: readonly string[] | undefined
   readonly threadRootId?: string | undefined
 }
 
@@ -161,6 +162,15 @@ function isValidShardDoc(value: unknown): value is VaultSearchShardDoc {
     Number.isFinite(doc.timestamp) &&
     typeof doc.snippet === 'string' &&
     doc.snippet.length <= MAX_SNIPPET_CHARS + 16 &&
+    (doc.tokens === undefined ||
+      (Array.isArray(doc.tokens) &&
+        doc.tokens.length <= MAX_TOKENS_PER_MESSAGE &&
+        doc.tokens.every(
+          (tok) =>
+            typeof tok === 'string' &&
+            tok.length >= MIN_SEARCH_TOKEN_LENGTH &&
+            tok.length <= MAX_SEARCH_TOKEN_LENGTH
+        ))) &&
     (doc.threadRootId === undefined ||
       (typeof doc.threadRootId === 'string' && doc.threadRootId.length <= 255))
   )
@@ -442,6 +452,7 @@ export class LocalEncryptedSearchEngine {
         senderName: d.senderName,
         timestamp: d.timestamp,
         snippet: d.snippet,
+        tokens: [...d.tokens],
         ...(d.threadRootId === undefined ? {} : { threadRootId: d.threadRootId }),
       }))
       const shardPayload: VaultSearchShardPayload = {
@@ -553,7 +564,10 @@ export class LocalEncryptedSearchEngine {
     const orderedDocs: RamIndexedDoc[] = []
     const tokenPostings = new Map<string, Set<string>>()
     for (const d of loaded.payload.docs) {
-      const fallbackTokens = tokenizeSearchText(`${d.snippet} ${d.senderName}`, MAX_TOKENS_PER_MESSAGE)
+      const persistedTokens =
+        d.tokens !== undefined && d.tokens.length > 0
+          ? [...d.tokens]
+          : tokenizeSearchText(`${d.snippet} ${d.senderName}`, MAX_TOKENS_PER_MESSAGE)
       const ramDoc: RamIndexedDoc = {
         eventId: d.eventId,
         sender: d.sender,
@@ -561,11 +575,11 @@ export class LocalEncryptedSearchEngine {
         timestamp: d.timestamp,
         snippet: d.snippet,
         ...(d.threadRootId === undefined ? {} : { threadRootId: d.threadRootId }),
-        tokens: fallbackTokens,
+        tokens: persistedTokens,
       }
       docsByEventId.set(d.eventId, ramDoc)
       orderedDocs.push(ramDoc)
-      for (const t of fallbackTokens) {
+      for (const t of persistedTokens) {
         let bucket = tokenPostings.get(t)
         if (bucket === undefined) {
           bucket = new Set()
@@ -621,6 +635,7 @@ export class LocalEncryptedSearchEngine {
         senderName: d.senderName,
         timestamp: d.timestamp,
         snippet: d.snippet,
+        tokens: [...d.tokens],
         ...(d.threadRootId === undefined ? {} : { threadRootId: d.threadRootId }),
       })),
     }
@@ -648,6 +663,7 @@ export class LocalEncryptedSearchEngine {
     readonly vault?: EspaceVault | null | undefined
     readonly limit?: number | undefined
   }): Promise<readonly LocalEncryptedSearchHit[]> {
+    const searchStartAllSeq = this.#allSeq
     const queryTokens = tokenizeSearchText(input.query, 16)
     if (queryTokens.length === 0) return []
     const limit = input.limit ?? MAX_RESULTS
@@ -658,45 +674,99 @@ export class LocalEncryptedSearchEngine {
             .filter((s): s is RamRoomState => s !== undefined)
         : [...this.#rooms.values()]
 
+    const roomSeqSnapshot = new Map<string, number>()
+    for (const s of candidates) {
+      roomSeqSnapshot.set(s.roomId, this.#roomSeq.get(s.roomId) ?? 0)
+    }
+
     const hits: LocalEncryptedSearchHit[] = []
     const vault = input.vault ?? null
 
-    for (const state of candidates) {
-      const channel = input.channelsByRoomId?.get(state.roomId)
+    const isRoomStillCurrent = (
+      state: RamRoomState,
+      expectedRoomSeq: number,
+      channel: ConfidentialChannelFlags | undefined
+    ): boolean => {
+      if (this.#allSeq !== searchStartAllSeq) return false
+      if ((this.#roomSeq.get(state.roomId) ?? 0) !== expectedRoomSeq) return false
+      if (this.#rooms.get(state.roomId) !== state) return false
       const liveBoundary = resolveRoomSearchBoundary(input.store, state.roomId, channel)
-      if (
-        liveBoundary === null ||
-        liveBoundary.boundaryTag !== state.boundaryTag ||
-        liveBoundary.epoch !== state.epoch
-      ) {
-        this.evictRoom(state.roomId)
+      return (
+        liveBoundary !== null &&
+        liveBoundary.boundaryTag === state.boundaryTag &&
+        liveBoundary.epoch === state.epoch
+      )
+    }
+
+    for (const state of candidates) {
+      if (this.#allSeq !== searchStartAllSeq) return []
+      const expectedRoomSeq = roomSeqSnapshot.get(state.roomId) ?? 0
+      const channel = input.channelsByRoomId?.get(state.roomId)
+      if (!isRoomStillCurrent(state, expectedRoomSeq, channel)) {
+        if (resolveRoomSearchBoundary(input.store, state.roomId, channel) === null) {
+          this.evictRoom(state.roomId)
+        }
         continue
       }
 
       let matchedIds: Set<string> | null = null
+      let evictedMidAwait = false
       if (vault !== null && !vault.isClosed) {
         if (state.incarnation !== vault.incarnation && state.tokenPostings.size > 0) {
           await this.#rekeyRoomForVault(state, vault)
+          if (this.#allSeq !== searchStartAllSeq) return []
+          if (!isRoomStillCurrent(state, expectedRoomSeq, channel)) continue
         }
         if (state.incarnation === vault.incarnation && state.blindPostings.size > 0) {
           for (const token of queryTokens) {
+            if (!isRoomStillCurrent(state, expectedRoomSeq, channel)) {
+              evictedMidAwait = true
+              break
+            }
             const blindTag = await vault.computeBlindTermTag(state.roomId, token)
-            const posting = state.blindPostings.get(blindTag)
-            if (posting === undefined || posting.size === 0) {
+            if (this.#allSeq !== searchStartAllSeq) return []
+            if (!isRoomStillCurrent(state, expectedRoomSeq, channel)) {
+              evictedMidAwait = true
+              break
+            }
+            const termMatches = new Set<string>()
+            const exactPosting = state.blindPostings.get(blindTag)
+            if (exactPosting !== undefined) {
+              for (const id of exactPosting) termMatches.add(id)
+            }
+            // Consistent prefix matching across vault-backed and RAM-only searches:
+            for (const [indexedToken] of state.tokenPostings) {
+              if (indexedToken !== token && indexedToken.startsWith(token)) {
+                const prefixTag = await vault.computeBlindTermTag(state.roomId, indexedToken)
+                if (this.#allSeq !== searchStartAllSeq) return []
+                if (!isRoomStillCurrent(state, expectedRoomSeq, channel)) {
+                  evictedMidAwait = true
+                  break
+                }
+                const prefixPosting = state.blindPostings.get(prefixTag)
+                if (prefixPosting !== undefined) {
+                  for (const id of prefixPosting) termMatches.add(id)
+                }
+              }
+            }
+            if (evictedMidAwait) break
+            if (termMatches.size === 0) {
               matchedIds = new Set()
               break
             }
             if (matchedIds === null) {
-              matchedIds = new Set(posting)
+              matchedIds = termMatches
             } else {
               for (const id of [...matchedIds]) {
-                if (!posting.has(id)) matchedIds.delete(id)
+                if (!termMatches.has(id)) matchedIds.delete(id)
               }
             }
             if (matchedIds.size === 0) break
           }
         }
       }
+      if (this.#allSeq !== searchStartAllSeq) return []
+      if (evictedMidAwait || !isRoomStillCurrent(state, expectedRoomSeq, channel)) continue
 
       if (matchedIds === null) {
         for (const token of queryTokens) {
@@ -726,11 +796,7 @@ export class LocalEncryptedSearchEngine {
       }
 
       if (matchedIds === null || matchedIds.size === 0) continue
-      // Final synchronous re-check after any async HMAC computation.
-      if (resolveRoomSearchBoundary(input.store, state.roomId, channel) === null) {
-        this.evictRoom(state.roomId)
-        continue
-      }
+      if (!isRoomStillCurrent(state, expectedRoomSeq, channel)) continue
 
       for (const doc of state.orderedDocs) {
         if (!matchedIds.has(doc.eventId)) continue
@@ -748,8 +814,15 @@ export class LocalEncryptedSearchEngine {
       }
     }
 
-    hits.sort((a, b) => b.timestamp - a.timestamp || a.eventId.localeCompare(b.eventId))
-    return hits.slice(0, limit)
+    if (this.#allSeq !== searchStartAllSeq) return []
+    const verifiedHits = hits.filter((hit) => {
+      const state = this.#rooms.get(hit.roomId)
+      const expectedSeq = roomSeqSnapshot.get(hit.roomId)
+      if (state === undefined || expectedSeq === undefined) return false
+      return isRoomStillCurrent(state, expectedSeq, input.channelsByRoomId?.get(hit.roomId))
+    })
+    verifiedHits.sort((a, b) => b.timestamp - a.timestamp || a.eventId.localeCompare(b.eventId))
+    return verifiedHits.slice(0, limit)
   }
 }
 

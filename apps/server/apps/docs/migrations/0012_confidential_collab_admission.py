@@ -6,10 +6,48 @@ FORWARD = r"""
 SET LOCAL lock_timeout='5s';
 SET LOCAL statement_timeout='30s';
 
+DELETE FROM public.docs_documentlink l
+USING public.docs_document s
+LEFT JOIN public.workspaces_channel c ON c.id = s.channel_id
+WHERE l.source_id = s.id
+  AND (
+    s.is_confidential
+    OR coalesce(c.is_confidential, false)
+    OR (
+      s.channel_id IS NOT NULL
+      AND to_regclass('public.e2ee_room') IS NOT NULL
+      AND EXISTS (SELECT 1 FROM public.e2ee_room r WHERE r.channel_id = s.channel_id)
+    )
+  );
+
+UPDATE public.docs_document d
+SET is_confidential = true, markdown = '', updated_at = clock_timestamp()
+WHERE (d.markdown <> '' OR NOT d.is_confidential)
+  AND d.channel_id IS NOT NULL
+  AND (
+    EXISTS (SELECT 1 FROM public.workspaces_channel c WHERE c.id = d.channel_id AND c.is_confidential)
+    OR (
+      to_regclass('public.e2ee_room') IS NOT NULL
+      AND EXISTS (SELECT 1 FROM public.e2ee_room r WHERE r.channel_id = d.channel_id)
+    )
+  );
+
+DROP INDEX IF EXISTS public.docs_fulltext;
+CREATE INDEX docs_fulltext ON public.docs_document
+  USING gin(to_tsvector('simple', coalesce(title, '') || ' ' || coalesce(markdown, '')))
+  WHERE NOT is_confidential;
+
 CREATE OR REPLACE FUNCTION docs_scope_guard() RETURNS trigger LANGUAGE plpgsql
 SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp
 SET lock_timeout='3s' SET statement_timeout='5s' AS $$
-DECLARE expected uuid; actual uuid;
+DECLARE
+  expected uuid;
+  actual uuid;
+  parent_workspace uuid;
+  parent_channel uuid;
+  parent_is_conf boolean;
+  new_eff_conf boolean := false;
+  parent_eff_conf boolean := false;
 BEGIN
   IF TG_TABLE_NAME='docs_document' THEN
     SELECT organisation_id INTO expected FROM workspaces_workspace WHERE id=NEW.workspace_id;
@@ -17,14 +55,36 @@ BEGIN
     IF expected IS DISTINCT FROM actual THEN RAISE EXCEPTION 'document creator scope refused' USING ERRCODE='23514'; END IF;
     IF TG_OP='UPDATE' AND (OLD.workspace_id,OLD.creator_id) IS DISTINCT FROM (NEW.workspace_id,NEW.creator_id)
     THEN RAISE EXCEPTION 'document ownership is immutable' USING ERRCODE='23514'; END IF;
+    IF TG_OP='UPDATE' AND OLD.channel_id IS DISTINCT FROM NEW.channel_id
+    THEN RAISE EXCEPTION 'document channel binding is immutable' USING ERRCODE='23514'; END IF;
     IF TG_OP='UPDATE' AND OLD.is_confidential AND NOT NEW.is_confidential
     THEN RAISE EXCEPTION 'confidential document cannot be downgraded to plaintext' USING ERRCODE='23514'; END IF;
     IF NEW.channel_id IS NOT NULL AND NOT EXISTS
        (SELECT 1 FROM workspaces_channel WHERE id=NEW.channel_id AND workspace_id=NEW.workspace_id)
     THEN RAISE EXCEPTION 'document channel scope refused' USING ERRCODE='23514'; END IF;
-    IF (NEW.is_confidential OR (NEW.channel_id IS NOT NULL AND EXISTS
-       (SELECT 1 FROM workspaces_channel c WHERE c.id=NEW.channel_id AND c.is_confidential)))
-       AND NEW.markdown <> ''
+
+    new_eff_conf := coalesce(NEW.is_confidential, false)
+      OR (NEW.channel_id IS NOT NULL AND EXISTS (SELECT 1 FROM workspaces_channel c WHERE c.id=NEW.channel_id AND c.is_confidential))
+      OR (NEW.channel_id IS NOT NULL AND to_regclass('public.e2ee_room') IS NOT NULL
+          AND EXISTS (SELECT 1 FROM public.e2ee_room r WHERE r.channel_id=NEW.channel_id AND r.organisation_id=expected));
+
+    IF NEW.parent_id IS NOT NULL THEN
+      SELECT d.workspace_id, d.channel_id, d.is_confidential
+        INTO parent_workspace, parent_channel, parent_is_conf
+        FROM docs_document d WHERE d.id=NEW.parent_id;
+      IF NOT FOUND OR parent_workspace IS DISTINCT FROM NEW.workspace_id
+      THEN RAISE EXCEPTION 'document parent scope refused' USING ERRCODE='23514'; END IF;
+      IF parent_channel IS DISTINCT FROM NEW.channel_id
+      THEN RAISE EXCEPTION 'document parent channel mismatch refused' USING ERRCODE='23514'; END IF;
+      parent_eff_conf := coalesce(parent_is_conf, false)
+        OR (parent_channel IS NOT NULL AND EXISTS (SELECT 1 FROM workspaces_channel c WHERE c.id=parent_channel AND c.is_confidential))
+        OR (parent_channel IS NOT NULL AND to_regclass('public.e2ee_room') IS NOT NULL
+            AND EXISTS (SELECT 1 FROM public.e2ee_room r WHERE r.channel_id=parent_channel AND r.organisation_id=expected));
+      IF parent_eff_conf IS DISTINCT FROM new_eff_conf
+      THEN RAISE EXCEPTION 'document parent confidentiality mismatch refused' USING ERRCODE='23514'; END IF;
+    END IF;
+
+    IF new_eff_conf AND NEW.markdown <> ''
     THEN RAISE EXCEPTION 'confidential document markdown must remain empty' USING ERRCODE='23514'; END IF;
   ELSIF TG_TABLE_NAME='docs_documentgrant' THEN
     SELECT w.organisation_id INTO expected FROM docs_document d JOIN workspaces_workspace w ON w.id=d.workspace_id WHERE d.id=NEW.document_id;
@@ -34,7 +94,15 @@ BEGIN
     IF EXISTS (
       SELECT 1 FROM docs_document s
       LEFT JOIN workspaces_channel c ON c.id=s.channel_id
-      WHERE s.id=NEW.source_id AND (s.is_confidential OR coalesce(c.is_confidential, false))
+      WHERE s.id=NEW.source_id AND (
+        s.is_confidential
+        OR coalesce(c.is_confidential, false)
+        OR (
+          s.channel_id IS NOT NULL
+          AND to_regclass('public.e2ee_room') IS NOT NULL
+          AND EXISTS (SELECT 1 FROM public.e2ee_room r WHERE r.channel_id=s.channel_id)
+        )
+      )
     ) THEN RAISE EXCEPTION 'confidential document cannot emit plaintext links' USING ERRCODE='23514'; END IF;
     IF NEW.target_id IS NOT NULL AND NOT EXISTS
        (SELECT 1 FROM docs_document s JOIN docs_document t ON t.workspace_id=s.workspace_id WHERE s.id=NEW.source_id AND t.id=NEW.target_id)
@@ -73,7 +141,7 @@ DECLARE
 BEGIN
   IF p_confidential IS NULL THEN RETURN NULL; END IF;
   IF NOT p_confidential AND p_epoch IS NOT NULL THEN RETURN NULL; END IF;
-  IF p_confidential AND (p_epoch IS NULL OR p_epoch < 0) THEN RETURN NULL; END IF;
+  IF p_confidential AND (p_epoch IS NULL OR p_epoch < 0 OR p_epoch > 4294967295) THEN RETURN NULL; END IF;
 
   SELECT m.user_id INTO principal_user FROM public.orgs_membership m
     WHERE m.id=p_member AND m.organisation_id=p_organisation;
@@ -152,7 +220,7 @@ BEGIN
       IF doc_epoch IS NULL OR doc_epoch < 1 THEN RETURN NULL; END IF;
       expected_epoch := doc_epoch;
     END IF;
-    IF p_epoch IS DISTINCT FROM expected_epoch THEN
+    IF expected_epoch IS NULL OR expected_epoch < 0 OR expected_epoch > 4294967295 OR p_epoch IS DISTINCT FROM expected_epoch THEN
       RETURN NULL;
     END IF;
   END IF;
@@ -189,6 +257,10 @@ DO $$ BEGIN
   IF EXISTS(SELECT 1 FROM public.docs_document WHERE is_confidential OR encryption_epoch IS NOT NULL)
   THEN RAISE EXCEPTION 'confidential document rollback refuses retained confidential documents'; END IF;
 END $$;
+
+DROP INDEX IF EXISTS public.docs_fulltext;
+CREATE INDEX docs_fulltext ON public.docs_document
+  USING gin(to_tsvector('simple', coalesce(title, '') || ' ' || coalesce(markdown, '')));
 
 CREATE OR REPLACE FUNCTION docs_collab_fence(p_document uuid,p_organisation uuid,p_member uuid,
                                              p_identity uuid,p_issuer text,p_subject text,p_role text)
@@ -292,7 +364,7 @@ class Migration(migrations.Migration):
             constraint=models.CheckConstraint(
                 condition=models.Q(
                     ("encryption_epoch__isnull", True),
-                    ("encryption_epoch__gte", 0),
+                    models.Q(("encryption_epoch__gte", 0), ("encryption_epoch__lte", 4294967295)),
                     _connector="OR",
                 ),
                 name="docs_encryption_epoch_nonnegative",

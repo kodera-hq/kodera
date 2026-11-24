@@ -29,6 +29,45 @@ export function collabContext(input: unknown): CollabCryptoContext {
     senderClientId: value.senderClientId,
   })
 }
+export interface CollabSealOptions {
+  readonly checkpoint?: boolean | undefined
+  readonly sequence?: number | undefined
+}
+function classifyOutboundCollabFrame(frame: Uint8Array): 0 | 1 | 2 {
+  if (frame[0] === 0) {
+    need(frame.length >= 2)
+    if (frame[1] === 0) {
+      need(frame.length <= 65536)
+      return 2
+    }
+    need(frame[1] === 1 || frame[1] === 2)
+    return 0
+  }
+  if (frame[0] === 1) {
+    need(frame.length >= 2 && frame.length <= 8208)
+    return 1
+  }
+  if (frame[0] === 3) {
+    need(frame.length === 1)
+    return 1
+  }
+  throw new Error('Invalid collaboration frame.')
+}
+function verifyInboundCollabFrame(frame: Uint8Array, outerKind: number): boolean {
+  if (outerKind === 0) {
+    return frame.length >= 2 && frame[0] === 0 && (frame[1] === 1 || frame[1] === 2)
+  }
+  if (outerKind === 1) {
+    return (frame.length >= 2 && frame.length <= 8208 && frame[0] === 1) || (frame.length === 1 && frame[0] === 3)
+  }
+  if (outerKind === 2) {
+    return frame.length >= 2 && frame.length <= 65536 && frame[0] === 0 && frame[1] === 0
+  }
+  if (outerKind === 3) {
+    return frame.length >= 2 && frame[0] === 0 && frame[1] === 1
+  }
+  return false
+}
 export function createCollabCryptoSession(context: CollabCryptoContext, secret: Uint8Array) {
   const scope = collabContext(context)
   const cryptor = new WorkerFrameCryptor(
@@ -46,18 +85,31 @@ export function createCollabCryptoSession(context: CollabCryptoContext, secret: 
     documentId: scope.documentId,
     isActive: () => cryptor.isActive(),
     close: () => cryptor.close(),
-    seal: (frame: Uint8Array) => {
+    seal: (frame: Uint8Array, options?: CollabSealOptions) => {
       const copy = ownedBytes(frame)
       try {
-        need(copy[0] === 0 || copy[0] === 1)
-        return cryptor.seal(copy, copy[0])
+        if (options?.checkpoint === true) {
+          need(copy.length >= 2 && copy[0] === 0 && copy[1] === 1)
+          const seq = options.sequence ?? 1
+          need(typeof seq === 'number' && Number.isSafeInteger(seq) && seq >= 1)
+          return cryptor.sealCheckpoint(copy, seq)
+        }
+        const kind = classifyOutboundCollabFrame(copy)
+        return cryptor.seal(copy, kind)
       } finally {
         copy.fill(0)
       }
     },
     open: async (frame: Uint8Array) => {
-      const result = await cryptor.open(frame, (kind) => kind === 0 || kind === 1)
-      if (result[0] !== 0 && result[0] !== 1) {
+      let openedKind = -1
+      const result = await cryptor.open(frame, (kind) => {
+        if (kind === 0 || kind === 1 || kind === 2 || kind === 3) {
+          openedKind = kind
+          return true
+        }
+        return false
+      })
+      if (!verifyInboundCollabFrame(result, openedKind)) {
         result.fill(0)
         throw new Error('Invalid collaboration frame.')
       }
@@ -122,10 +174,26 @@ export function hostCollabCryptoSession(
       return
     }
     try {
-      const value = fields(event.data, ['kind', 'id', 'frame'])
-      need(session && !busy && (value.kind === 'seal' || value.kind === 'open'))
+      const isCheckpoint = data?.kind === 'seal-checkpoint'
+      const value = isCheckpoint
+        ? fields(event.data, ['kind', 'id', 'frame', 'sequence'])
+        : fields(event.data, ['kind', 'id', 'frame'])
+      need(
+        session &&
+          !busy &&
+          (value.kind === 'seal' || value.kind === 'open' || value.kind === 'seal-checkpoint')
+      )
       integer(value.id)
       need(value.id > 0)
+      let checkpointSequence = 1
+      if (isCheckpoint) {
+        need(
+          typeof value.sequence === 'number' &&
+            Number.isSafeInteger(value.sequence) &&
+            value.sequence >= 1
+        )
+        checkpointSequence = value.sequence
+      }
       const id = value.id,
         kind = value.kind,
         frame = ownedBytes(value.frame, 1, 1024 * 1024 + 2048),
@@ -136,7 +204,10 @@ export function hostCollabCryptoSession(
       void (async () => {
         let output: Uint8Array<ArrayBuffer> | undefined
         try {
-          output = await active[kind](frame)
+          output =
+            kind === 'seal-checkpoint'
+              ? await active.seal(frame, { checkpoint: true, sequence: checkpointSequence })
+              : await active[kind](frame)
           need(!closed && active.isActive())
           control.postMessage({ kind: 'result', id, frame: output }, [output.buffer])
           output = undefined

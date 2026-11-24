@@ -62,7 +62,7 @@ export async function assertDatabaseBoundary(pool) {
       AND (has_column_privilege(c.oid,a.attnum,'REFERENCES')
            OR (has_column_privilege(c.oid,a.attnum,'INSERT') AND c.relname NOT IN ('docs_documentlink','docs_documentupdate'))
            OR (has_column_privilege(c.oid,a.attnum,'UPDATE') AND NOT
-               ((c.relname='docs_document' AND a.attname IN ('markdown','revision','updated_at'))
+               ((c.relname='docs_document' AND a.attname IN ('markdown','revision','encryption_epoch','updated_at'))
                 OR (c.relname='docs_documentsnapshot' AND a.attname IN ('sequence','head_sequence','state','updated_at'))))))
     AND NOT EXISTS (
       SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace

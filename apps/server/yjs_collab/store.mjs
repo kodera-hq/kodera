@@ -3,7 +3,7 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import { work } from './worker.mjs'
 import { Refused } from './engine.mjs'
 import { TicketRefused } from './tickets.mjs'
-import { isKde1Magic, ConfidentialRefused } from './protocol.mjs'
+import { confidentialFrame, isKde1Magic, parseKde1Header, ConfidentialRefused } from './protocol.mjs'
 import { titleKey } from './title-key.mjs'
 
 export class Unavailable extends Error { constructor(cause = undefined) { super('collaboration storage unavailable', {cause}) } }
@@ -24,6 +24,14 @@ function number(value) {
 }
 function alive(claims) {
   if (claims.expires <= Math.floor(Date.now() / 1000)) throw new TicketRefused()
+}
+function storedKde1Header(buffer, expectedKind = null) {
+  if (!isKde1Magic(buffer)) throw new Unavailable()
+  let header
+  try { header = parseKde1Header(new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength)) }
+  catch { throw new Unavailable() }
+  if (expectedKind !== null && header.kind !== expectedKind) throw new Unavailable()
+  return header
 }
 export class Store {
   constructor(pool) { this.pool = pool }
@@ -66,10 +74,16 @@ export class Store {
     return this.transaction(claims, async client => {
       const state = await this.binary(client, claims.document)
       if (claims.confidential) {
-        for (const envelope of state.updates) {
-          if (!isKde1Magic(envelope)) throw new Unavailable()
+        const envelopes = []
+        if (state.snapshot.length > 0) {
+          const snapHeader = storedKde1Header(state.snapshot, 3)
+          if (snapHeader.epoch === claims.epoch) envelopes.push(Buffer.from(state.snapshot))
         }
-        return {confidential: true, envelopes: state.updates.map(part => Buffer.from(part)), head: state.head, revision: state.revision}
+        for (const envelope of state.updates) {
+          const updHeader = storedKde1Header(envelope, 0)
+          if (updHeader.epoch === claims.epoch) envelopes.push(Buffer.from(envelope))
+        }
+        return {confidential: true, envelopes, head: state.head, base: state.base, revision: state.revision}
       }
       const value = await work({operation: 'inspect', snapshot: state.snapshot.toString('base64'), updates: state.updates.map(part => part.toString('base64')), nonce: randomUUID()})
       return {state: Buffer.from(value.snapshot, 'base64'), revision: state.revision}
@@ -88,14 +102,24 @@ export class Store {
     return this.transaction(claims, async client => {
       const state = await this.binary(client, claims.document)
       if (claims.confidential) {
-        for (const envelope of state.updates) {
-          if (!isKde1Magic(envelope)) throw new Unavailable()
-        }
+        const snapHeader = state.snapshot.length > 0 ? storedKde1Header(state.snapshot, 3) : null
+        const updHeaders = state.updates.map(part => storedKde1Header(part, 0))
         if (knownMarker !== null && state.head <= knownMarker) return
-        const startOffset = knownMarker === null ? 0 : Math.max(0, knownMarker - state.base)
-        const envelopes = state.updates.slice(startOffset).map(part => Buffer.from(part))
+        const envelopes = []
+        const journalSeqs = []
+        const includeSnapshot = knownMarker === null || knownMarker < state.base
+        if (includeSnapshot && snapHeader !== null && snapHeader.epoch === claims.epoch) {
+          envelopes.push(Buffer.from(state.snapshot))
+        }
+        const startOffset = includeSnapshot ? 0 : Math.max(0, knownMarker - state.base)
+        for (let idx = startOffset; idx < state.updates.length; idx += 1) {
+          if (updHeaders[idx].epoch === claims.epoch) {
+            envelopes.push(Buffer.from(state.updates[idx]))
+            journalSeqs.push(state.base + idx + 1)
+          }
+        }
         alive(claims)
-        consumer({confidential: true, envelopes, head: state.head, revision: state.revision})
+        consumer({confidential: true, envelopes, journalSeqs, head: state.head, base: state.base, revision: state.revision})
         return
       }
       if (knownMarker !== null && state.revision === knownMarker) return
@@ -115,14 +139,58 @@ export class Store {
   async viewerRefusal(claims) {
     return this.transaction(claims, async client => this.audit(client, claims, 'workspace.document.collab_refused'))
   }
+  async compact(claims, upToHead, snapshotEnvelope) {
+    if (!claims.confidential || claims.role !== 'editor') throw new TicketRefused(4403)
+    if (!Number.isSafeInteger(upToHead) || upToHead < 0) {
+      throw new ConfidentialRefused('invalid confidential compaction cursor')
+    }
+    const parsed = confidentialFrame(
+      snapshotEnvelope instanceof Uint8Array ? snapshotEnvelope : new Uint8Array(snapshotEnvelope),
+      'editor',
+      claims.epoch
+    )
+    if (parsed.kind !== 3) throw new ConfidentialRefused('confidential compaction requires kind=3 checkpoint')
+    const snapshotBuf = Buffer.from(parsed.envelope)
+    return this.transaction(claims, async client => {
+      const state = await this.binary(client, claims.document)
+      if (upToHead > state.head) throw new ConfidentialRefused('confidential compaction exceeds journal head')
+      if (upToHead < state.base) {
+        const snapHeader = state.snapshot.length > 0 ? storedKde1Header(state.snapshot, 3) : null
+        if (snapHeader !== null && snapHeader.epoch === claims.epoch) {
+          return {compacted: false, base: state.base, head: state.head, revision: state.revision}
+        }
+        throw new ConfidentialRefused('confidential compaction below snapshot base')
+      }
+      const targetSeq = Math.max(state.base, upToHead)
+      const remainingBytes = state.updates
+        .slice(targetSeq - state.base)
+        .reduce((sum, bytes) => sum + bytes.length, 0)
+      await client.query('SELECT docs_collab_snapshot_admit($1,$2)', [claims.document, snapshotBuf.length + remainingBytes])
+      alive(claims)
+      await client.query('UPDATE docs_documentsnapshot SET sequence=$2,state=$3,updated_at=clock_timestamp() WHERE document_id=$1',
+        [claims.document, targetSeq, snapshotBuf])
+      await client.query('DELETE FROM docs_documentupdate WHERE document_id=$1 AND sequence<=$2',
+        [claims.document, targetSeq])
+      await client.query('UPDATE docs_document SET encryption_epoch=$2,revision=revision+1,updated_at=clock_timestamp() WHERE id=$1',
+        [claims.document, claims.epoch])
+      await this.audit(client, claims, 'workspace.document.collab_updated')
+      await client.query("SELECT pg_notify('kodera_docs',$1)", [claims.document])
+      return {compacted: true, base: targetSeq, head: state.head, revision: state.revision + 1}
+    })
+  }
   async update(claims, incoming) {
     if (claims.role !== 'editor') throw new TicketRefused(4403)
     if (claims.confidential) {
-      if (!isKde1Magic(incoming)) throw new ConfidentialRefused('unsealed confidential update refused')
+      const parsed = confidentialFrame(
+        incoming instanceof Uint8Array ? incoming : new Uint8Array(incoming),
+        'editor',
+        claims.epoch
+      )
+      if (parsed.kind !== 0) throw new ConfidentialRefused('confidential journal update requires kind=0')
       return this.transaction(claims, async client => {
         const state = await this.binary(client, claims.document)
         if (state.updates.length >= 256 || state.head >= Number.MAX_SAFE_INTEGER - 1) throw new QuotaRefused()
-        const envelope = Buffer.from(incoming)
+        const envelope = Buffer.from(parsed.envelope)
         const totalBytes = state.snapshot.length + state.updates.reduce((sum, bytes) => sum + bytes.length, 0) + envelope.length
         await client.query('SELECT docs_collab_snapshot_admit($1,$2)', [claims.document, totalBytes])
         const sequence = state.head + 1
@@ -132,7 +200,7 @@ export class Store {
         await client.query('UPDATE docs_document SET revision=revision+1,updated_at=clock_timestamp() WHERE id=$1', [claims.document])
         await this.audit(client, claims, 'workspace.document.collab_updated')
         await client.query("SELECT pg_notify('kodera_docs',$1)", [claims.document])
-        return {confidential: true, envelope, head: sequence, revision: state.revision + 1}
+        return {confidential: true, envelope, head: sequence, base: state.base, revision: state.revision + 1}
       })
     }
     return this.transaction(claims, async (client, workspace) => {

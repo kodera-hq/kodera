@@ -12,7 +12,6 @@ import { TextField } from '../../ui/TextField/TextField'
 import { cx } from '../../ui/cx'
 import { TOUCH_TARGET_HEIGHT } from '../../ui/touchTarget'
 import type { ChannelSearchEntry } from '../workspace/ChannelSearch'
-import { defaultE2eeForConversationSurface } from './encryptionTiers'
 import { safeDisplayName, type EspaceStoreLike } from './liveViewModel'
 import { isMatrixUserId } from './roomInvitations'
 import { useStoreSlice } from './useStoreSlice'
@@ -95,9 +94,6 @@ export function DirectMessageDialog({
 
   const [chosen, setChosen] = useState<readonly string[]>([])
   const [manual, setManual] = useState('')
-  const [encrypted, setEncrypted] = useState(() =>
-    defaultE2eeForConversationSurface('direct_message')
-  )
   const [problem, setProblem] = useState('')
   const [busy, setBusy] = useState(false)
   const cancelled = useRef(!open)
@@ -170,7 +166,7 @@ export function DirectMessageDialog({
     }
     setProblem('')
     setBusy(true)
-    store.openDirect(people, { encrypted }).then(
+    store.openDirect(people).then(
       (roomId) => {
         if (cancelled.current) return
         setBusy(false)
@@ -314,18 +310,6 @@ export function DirectMessageDialog({
             />
           </div>
         </details>
-        <div className="flex flex-col gap-1 rounded-md border border-c-border-soft p-3">
-          <label className="flex items-center gap-2 text-sm font-medium text-c-ink">
-            <input
-              type="checkbox"
-              checked={encrypted}
-              onChange={(event) => setEncrypted(event.target.checked)}
-              className="h-4 w-4 rounded-sm border-c-border-input"
-            />
-            <span>{copy.e2eeLabel}</span>
-          </label>
-          <p className="text-xs text-c-ink-3">{copy.e2eeHelp}</p>
-        </div>
         <p role="status" className="text-sm text-c-bad-ink empty:sr-only">
           {problem || (tooMany ? t('console.workspace.directs.problem-too-many') : '')}
         </p>

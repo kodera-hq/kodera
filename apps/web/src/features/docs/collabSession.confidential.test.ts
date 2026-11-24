@@ -319,7 +319,7 @@ describe('real encrypted Yjs peer transport', () => {
     }
     expect(open).not.toHaveBeenCalled()
   })
-  it.each(['tamper', 'wrong-document', 'wrong-scope', 'wrong-epoch', 'replay'] as const)(
+  it.each(['tamper', 'wrong-document', 'wrong-scope', 'wrong-epoch'] as const)(
     'rejects %s without applying an unauthenticated update',
     async (attack) => {
       const sender = realCipher(
@@ -338,20 +338,108 @@ describe('real encrypted Yjs peer transport', () => {
       const frame = await sender.seal(updateFrame('protected update'))
       if (attack === 'tamper') frame[frame.length - 1] = frame[frame.length - 1]! ^ 1
       target.socket.receive(frame)
-      if (attack === 'replay') {
-        await vi.waitFor(() =>
-          expect(target.session.ydoc.getText('body').toString()).toBe('protected update')
-        )
-        target.socket.receive(frame)
-      }
       await vi.waitFor(() => expect(target.session.getSnapshot().status).toBe('forbidden'))
-      expect(target.session.ydoc.getText('body').toString()).toBe(
-        attack === 'replay' ? 'protected update' : ''
-      )
+      expect(target.session.ydoc.getText('body').toString()).toBe('')
       expect(target.socket.readyState).toBe(3)
       sender.close()
     }
   )
+  it('survives 4401 ticket renewal reconnect and journal replay without self-quarantining, and auto-compacts >= 64 updates as kind=3 checkpoints', async () => {
+    const aliceCipher = realCipher(101)
+    const bobCipher = realCipher(202)
+    const sockets: Socket[] = []
+    let ticketNum = 0
+    const ydoc = new Y.Doc()
+    ydoc.clientID = 101
+    const alice = new CollabSessionController({
+      ydoc,
+      ...context,
+      user: { id: 'member-a', name: 'Member A' },
+      confidential: { required: true, epoch: 7, cipher: aliceCipher },
+      fetchSession: async () => ({
+        wsUrl: 'wss://relay.invalid/page',
+        token: `ticket-${++ticketNum}`,
+        expiresAt: '',
+        role: 'editor',
+        confidential: true,
+        epoch: 7,
+      }),
+      webSocketFactory: () => {
+        const s = new Socket()
+        sockets.push(s)
+        return s
+      },
+    })
+    sessions.push(alice)
+    await alice.connect()
+    expect(sockets).toHaveLength(1)
+    sockets[0]!.open()
+    await settle()
+
+    // Alice authors an edit and receives an edit from Bob.
+    alice.ydoc.getText('body').insert(0, 'Alice-1 ')
+    await settle()
+    const aliceOwnSealed = sockets[0]!.frames.find(
+      (f): f is Uint8Array =>
+        f instanceof Uint8Array &&
+        new TextDecoder().decode(f.subarray(6, 6 + ((f[4]! << 8) | f[5]!))).includes('"kind":0')
+    )!
+    expect(aliceOwnSealed).toBeInstanceOf(Uint8Array)
+
+    const bobSealed1 = await bobCipher.seal(updateFrame('Bob-1'))
+    sockets[0]!.receive(bobSealed1)
+    await vi.waitFor(() => expect(alice.ydoc.getText('body').toString()).toContain('Bob-1'))
+
+    // Duplicate delivery on the same socket is idempotently ignored without killing the worker.
+    sockets[0]!.receive(bobSealed1)
+    await settle()
+    expect(alice.getSnapshot().status).toBe('synced')
+
+    // Simulate 300s ticket expiry (4401) -> automatic reconnect on sockets[1] -> relay replays journal!
+    sockets[0]!.readyState = 3
+    sockets[0]!.onclose?.({ code: 4401 } as CloseEvent)
+    await vi.waitFor(() => expect(sockets).toHaveLength(2))
+    sockets[1]!.open()
+    sockets[1]!.receive(aliceOwnSealed)
+    sockets[1]!.receive(bobSealed1)
+    const bobSealed2 = await bobCipher.seal(updateFrame('Bob-2'))
+    sockets[1]!.receive(bobSealed2)
+    await vi.waitFor(() => expect(alice.ydoc.getText('body').toString()).toContain('Bob-2'))
+    expect(alice.getSnapshot().status).toBe('synced')
+
+    // Emit 64 local updates on sockets[1] -> editor automatically emits a kind===3 checkpoint!
+    for (let i = 0; i < 64; i += 1) {
+      alice.ydoc.getText('body').insert(alice.ydoc.getText('body').length, 'x')
+    }
+    await vi.waitFor(() => {
+      const hasKind3 = sockets[1]!.frames.some(
+        (f) =>
+          f instanceof Uint8Array &&
+          new TextDecoder()
+            .decode(f.subarray(6, 6 + ((f[4]! << 8) | f[5]!)))
+            .includes('"kind":3')
+      )
+      expect(hasKind3).toBe(true)
+    })
+    const checkpointFrame = sockets[1]!.frames.find(
+      (f): f is Uint8Array =>
+        f instanceof Uint8Array &&
+        new TextDecoder()
+          .decode(f.subarray(6, 6 + ((f[4]! << 8) | f[5]!)))
+          .includes('"kind":3')
+    )!
+    // Brand-new viewer at epoch 7 opens the compacted kind===3 checkpoint and hydrates full text!
+    const viewer = create(realCipher(505))
+    await viewer.session.connect()
+    viewer.socket.open()
+    viewer.socket.receive(checkpointFrame)
+    await vi.waitFor(() =>
+      expect(viewer.session.ydoc.getText('body').toString()).toBe(
+        alice.ydoc.getText('body').toString()
+      )
+    )
+    bobCipher.close()
+  })
   it('quarantines server ticket grants whose confidential flag or epoch disagrees with client policy and omits kind===0 sync on confidential viewers', async () => {
     const mismatchSocket = new Socket()
     const ydoc = new Y.Doc()

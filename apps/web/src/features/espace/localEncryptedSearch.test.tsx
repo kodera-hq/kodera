@@ -280,4 +280,76 @@ describe('localEncryptedSearch — zero-egress client FTS, blind HMAC tags & #18
     await waitFor(() => expect(within(dialog).queryAllByRole('listitem')).toHaveLength(0))
     expect(fetchSpy).not.toHaveBeenCalled()
   })
+
+  it('retains tokens beyond 240-char snippet across epoch-0 vault hydration + rekey, supports prefix matching, and drops mid-await evicted rooms', async () => {
+    const idb = createTestVaultIndexedDb()
+    const vault = await openEspaceVault(PRINCIPAL, { idb, delayMs: 0 })
+    openVaults.push(vault)
+
+    // Pre-quarantined confidential room that unlocks at initial epoch 0!
+    await vault.quarantineRoom(ROOM_E2EE_DM)
+    const unlockedEpochs = new Map<string, number>([[ROOM_E2EE_DM, 0]])
+    const store = {
+      getRoomBoundary: (roomId: string): RoomBoundary =>
+        roomId === ROOM_STANDARD ? 'ordinary' : 'confidential-unavailable',
+      isRoomQuarantined: () => false,
+      getUnlockedEncryptedRoomSearchAuthority: (roomId: string) => {
+        const ep = unlockedEpochs.get(roomId)
+        return ep === undefined ? null : ({ unlocked: true as const, epoch: ep } as const)
+      },
+    }
+
+    const longBody = `${'préambule '.repeat(30)}tailkeywordomega9921`
+    expect(longBody.length).toBeGreaterThan(280)
+
+    const writer = new LocalEncryptedSearchEngine()
+    const reader = new LocalEncryptedSearchEngine()
+    try {
+      expect(
+        await writer.indexRoom({
+          store,
+          roomId: ROOM_E2EE_DM,
+          messages: [makeMsg('$long1', longBody, 5_000)],
+          vault,
+        })
+      ).toBe(true)
+
+      // Hydrate into a fresh cold engine and rotate vault keys on an unrelated room!
+      expect(await reader.hydrateRoomFromVault({ store, roomId: ROOM_E2EE_DM, vault })).toBe(true)
+      await vault.forgetRoom('!unrelated-other:matrix.acme.kodera.test')
+
+      // Prefix match ('tailkeywordomega') finds the token beyond char 240 even after vault re-key!
+      const prefixHits = await reader.search({
+        store,
+        query: 'tailkeywordomega',
+        vault,
+      })
+      expect(prefixHits).toHaveLength(1)
+      expect(prefixHits[0]?.eventId).toBe('$long1')
+      expect(prefixHits[0]?.epoch).toBe(0)
+
+      // Mid-await clearAll / evictRoom drops in-flight search results!
+      const origCompute = vault.computeBlindTermTag.bind(vault)
+      let releaseTag!: () => void
+      vi.spyOn(vault, 'computeBlindTermTag').mockImplementationOnce(async (room, tok) => {
+        await new Promise<void>((resolve) => {
+          releaseTag = resolve
+        })
+        return origCompute(room, tok)
+      })
+
+      const inFlight = reader.search({
+        store,
+        query: 'tailkeywordomega9921',
+        vault,
+      })
+      await waitFor(() => expect(typeof releaseTag).toBe('function'))
+      reader.clearAll()
+      releaseTag()
+      expect(await inFlight).toEqual([])
+    } finally {
+      writer.dispose()
+      reader.dispose()
+    }
+  })
 })

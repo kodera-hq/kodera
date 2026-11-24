@@ -16,10 +16,12 @@ import type {
 } from '../confidential/cross-signing-client'
 import { createKeyBackupClient } from '../confidential/key-backup-client'
 import {
+  ConfidentialKeyBackupConflictError,
   discardConfidentialKeyBackup,
   encodeCapsuleBase64,
   getConfidentialKeyBackup,
   publishConfidentialKeyBackup,
+  tryParseKvkb1ArchiveEpoch,
   type ConfidentialKeyBackupPublishBody,
   type ConfidentialKeyBackupPublished,
   type ConfidentialKeyBackupRemote,
@@ -46,6 +48,7 @@ interface Session {
   stamp: object
   active: boolean
   backupEpoch: number
+  nextServerEpoch: number
 }
 export default function SecuritySettings(props: SecuritySettingsProps) {
   const { t, i18n } = useTranslation(),
@@ -173,21 +176,24 @@ export default function SecuritySettings(props: SecuritySettingsProps) {
         accountId: props.accountId,
         deviceId: crypto.randomUUID(),
       })
+      const nextServerEpoch =
+        remoteLookup?.status === 'active'
+          ? remoteLookup.backup.backupEpoch + 1
+          : (remoteLookup?.nextBackupEpoch ?? 1)
+      // Start worker epoch floor at 1 so a fresh device can restore any valid .kvkb file (e.g.
+      // archiveEpoch=1) even when prior server DELETE advanced X-Kodera-Next-Backup-Epoch > 1.
       const probeContext = {
         organisationId: props.organisationId,
         accountId: props.accountId,
-        backupEpoch:
-          remoteLookup?.status === 'active'
-            ? remoteLookup.backup.backupEpoch
-            : (remoteLookup?.nextBackupEpoch ?? 1),
+        backupEpoch: 1,
       }
       vault = createBackupVaultClient({ ...probeContext, membershipId: props.membershipId })
       backup = createKeyBackupClient(probeContext, vault.vaultPort)
       const publicIdentity = await cross.publicIdentity(),
         status = await vault.status()
-      let activeEpoch = probeContext.backupEpoch
-      if (remoteLookup?.status === 'active' && status.available) {
-        activeEpoch = remoteLookup.backup.backupEpoch + 1
+      let activeEpoch = 1
+      if (status.available && nextServerEpoch > 1) {
+        activeEpoch = nextServerEpoch
         await backup.advanceEpoch?.(activeEpoch)
       }
       if (
@@ -204,6 +210,7 @@ export default function SecuritySettings(props: SecuritySettingsProps) {
         active: true,
         stamp,
         backupEpoch: activeEpoch,
+        nextServerEpoch,
       }
       current.current = session
       setIdentity(publicIdentity)
@@ -292,11 +299,30 @@ export default function SecuritySettings(props: SecuritySettingsProps) {
       backupEpoch: pending.epoch,
       capsule: capsuleB64,
     })
-    const published = await publishConfidentialKeyBackup(props.organisationId, signed)
+    let published: ConfidentialKeyBackupPublished
+    try {
+      published = await publishConfidentialKeyBackup(props.organisationId, signed)
+    } catch (err) {
+      if (
+        err instanceof ConfidentialKeyBackupConflictError &&
+        err.nextBackupEpoch !== null &&
+        live(session)
+      ) {
+        session.nextServerEpoch = Math.max(session.nextServerEpoch, err.nextBackupEpoch)
+        if (err.nextBackupEpoch > session.backupEpoch) {
+          await session.backup.advanceEpoch?.(err.nextBackupEpoch)
+          session.backupEpoch = err.nextBackupEpoch
+        }
+        clearSealedCapsule()
+        setDiscardedNextEpoch(err.nextBackupEpoch)
+      }
+      throw err
+    }
     if (!live(session)) return
     const nextEpoch = published.backupEpoch + 1
     await session.backup.advanceEpoch?.(nextEpoch)
     session.backupEpoch = nextEpoch
+    session.nextServerEpoch = Math.max(session.nextServerEpoch, nextEpoch)
     const retainedBytes = pending.bytes.slice()
     clearSealedCapsule()
     setPublishedMeta(published)
@@ -315,8 +341,21 @@ export default function SecuritySettings(props: SecuritySettingsProps) {
         : { kind: 'recovery-key' as const, recoveryKey: restoreKey }
     setPassphrase('')
     setRestoreKey('')
-    await session.backup.restore(imported, options)
+    const archiveEpoch = tryParseKvkb1ArchiveEpoch(imported)
+    if (archiveEpoch !== null) {
+      await session.backup.restore(imported, options, archiveEpoch)
+    } else {
+      await session.backup.restore(imported, options)
+    }
     if (live(session)) {
+      const nextEpoch = Math.max(
+        (archiveEpoch ?? session.backupEpoch) + 1,
+        session.nextServerEpoch
+      )
+      if (nextEpoch > session.backupEpoch) {
+        await session.backup.advanceEpoch?.(nextEpoch)
+        session.backupEpoch = nextEpoch
+      }
       setAvailable(true)
       setImported(null)
       if (fileInput.current) fileInput.current.value = ''
@@ -331,11 +370,12 @@ export default function SecuritySettings(props: SecuritySettingsProps) {
         : { kind: 'recovery-key' as const, recoveryKey: restoreKey }
     setPassphrase('')
     setRestoreKey('')
-    await session.backup.restore(remoteBackup.capsuleBytes, options)
+    await session.backup.restore(remoteBackup.capsuleBytes, options, remoteBackup.backupEpoch)
     if (live(session)) {
-      const nextEpoch = remoteBackup.backupEpoch + 1
+      const nextEpoch = Math.max(remoteBackup.backupEpoch + 1, session.nextServerEpoch)
       await session.backup.advanceEpoch?.(nextEpoch)
       session.backupEpoch = nextEpoch
+      session.nextServerEpoch = Math.max(session.nextServerEpoch, nextEpoch)
       setAvailable(true)
       setImported(null)
       if (fileInput.current) fileInput.current.value = ''
@@ -348,6 +388,7 @@ export default function SecuritySettings(props: SecuritySettingsProps) {
     const result = await discardConfidentialKeyBackup(props.organisationId)
     if (!live(session)) return
     const nextEpoch = result.nextBackupEpoch ?? previousEpoch + 1
+    session.nextServerEpoch = Math.max(session.nextServerEpoch, nextEpoch)
     if (nextEpoch > session.backupEpoch) {
       await session.backup.advanceEpoch?.(nextEpoch)
       session.backupEpoch = nextEpoch

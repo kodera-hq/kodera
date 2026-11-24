@@ -149,6 +149,9 @@ def confidential_channel_ids_for_workspace(
     return e2ee_channels | confidential_channel_ids_in_workspace(workspace_id=workspace_id)
 
 
+MAX_COLLAB_EPOCH = 0xFFFFFFFF
+
+
 def resolve_confidential_collab_epoch(
     *,
     organisation_id: UUID,
@@ -157,10 +160,13 @@ def resolve_confidential_collab_epoch(
     channel_id: UUID | None,
     document_epoch: int | None,
 ) -> int | None:
-    """Resolve the authoritative encryption epoch for a confidential document collaboration session."""
+    """Resolve the authoritative u32 encryption epoch for a confidential document collaboration session."""
     if channel_id is not None:
         room = Room.objects.filter(organisation_id=organisation_id, channel_id=channel_id).first()
         if room is None or room.rekey_required:
+            return None
+        epoch_val = int(room.epoch)
+        if not 0 <= epoch_val <= MAX_COLLAB_EPOCH:
             return None
         participating = Participant.objects.filter(
             room=room,
@@ -174,8 +180,8 @@ def resolve_confidential_collab_epoch(
         ).exists()
         if not participating:
             return None
-        return int(room.epoch)
-    if document_epoch is None or document_epoch < 1:
+        return epoch_val
+    if document_epoch is None or not 1 <= int(document_epoch) <= MAX_COLLAB_EPOCH:
         return None
     return int(document_epoch)
 

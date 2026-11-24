@@ -93,6 +93,50 @@ def test_confidential_document_forbids_downgrade_plaintext_ai_links_and_server_s
         )
     assert patch_refused.value.status == 403
 
+    # Reparenting an ordinary document under a confidential parent (or vice versa) is refused (409),
+    # and the DB scope guard independently refuses raw SQL reparenting across confidentiality!
+    with pytest.raises(RefusalError) as reparent_plain_under_secret:
+        services.patch(
+            verified=tokens[0],
+            organisation_id=org.id,
+            document_id=ordinary_id,
+            changes={"parentId": secret_id},
+            if_match="*",
+            request_id=str(uuid4()),
+        )
+    assert reparent_plain_under_secret.value.status == 409
+
+    with pytest.raises(RefusalError) as reparent_secret_under_plain:
+        services.patch(
+            verified=tokens[0],
+            organisation_id=org.id,
+            document_id=secret_id,
+            changes={"parentId": ordinary_id},
+            if_match="*",
+            request_id=str(uuid4()),
+        )
+    assert reparent_secret_under_plain.value.status == 409
+
+    with pytest.raises(IntegrityError), transaction.atomic(), connection.cursor() as cursor:
+        cursor.execute(
+            "UPDATE docs_document SET parent_id = %s WHERE id = %s",
+            [secret_id, ordinary_id],
+        )
+
+    # Collaboration epochs > u32 max (0xffffffff) are refused across create and tickets.mint!
+    with pytest.raises(RefusalError) as epoch_overflow:
+        services.create(
+            verified=tokens[0],
+            organisation_id=org.id,
+            name="Overflow Epoch Doc",
+            parent_id=None,
+            template_key=None,
+            request_id=str(uuid4()),
+            is_confidential=True,
+            encryption_epoch=2**32,
+        )
+    assert epoch_overflow.value.status == 422
+
     # AI / service actor tokens are refused on confidential documents across read, patch, and collab.
     ai_token = replace(tokens[0], email="kodera-ai@acme.kodera.test")
     with pytest.raises(RefusalError) as ai_read:
@@ -210,11 +254,47 @@ def test_e2ee_room_bound_collab_ticket_and_sql_fence_enforce_epoch_and_active_pa
             )
             assert cursor.fetchone() == (None,)
 
-    # Revoking member 0's device immediately invalidates the SQL fence -> NULL!
+    # Revoking member 0's device immediately invalidates the SQL fence -> NULL,
+    # AND invalidates authorize_collab_session (used on POST /collab-session idempotent replay)!
     Device.objects.filter(pk=relay[5][0]).update(revoked_at=room.updated_at)
+    with pytest.raises(RefusalError) as replay_auth_refused:
+        services.authorize_collab_session(
+            verified=tokens[0],
+            organisation_id=org.id,
+            document_id=doc_id,
+        )
+    assert replay_auth_refused.value.status == 403
     with acting_as(collab_role), transaction.atomic(), connection.cursor() as cursor:
         cursor.execute(
             "SELECT docs_collab_fence(%s,%s,%s,%s,%s,%s,%s,%s,%s)",
             [*base_args, True, room.epoch],
         )
         assert cursor.fetchone() == (None,)
+
+    # Room-bound confidential documents are excluded from server search and export as kde1-v1!
+    search_res = services.search(
+        verified=tokens[0],
+        organisation_id=org.id,
+        query="Encrypted",
+        cursor=None,
+        limit=20,
+    )
+    assert all(item["id"] != str(doc_id) for item in search_res["data"])
+
+    from apps.docs.privacy_selectors import document_export_parts
+
+    with transaction.atomic():
+        parts = [
+            part
+            for part in document_export_parts(
+                scope="organisation",
+                user_id=str(members[0].user_id),
+                workspace_ids=(workspace.id,),
+                permitted=lambda candidate_id: candidate_id == doc_id,
+                max_journal_entries=256,
+            )
+            if isinstance(part.value, dict)
+        ]
+    assert len(parts) == 1
+    assert parts[0].value["format"] == "kde1-v1"
+    assert parts[0].value["markdownProjection"] == ""

@@ -122,11 +122,7 @@ export interface EspaceStoreLike {
   /** Removes the member's avatar. */
   clearProfileAvatar?: () => Promise<void>
   /** Opens, or starts, the direct conversation with these people; resolves to its room id. */
-  openDirect?: (
-    userIds: readonly string[],
-    options?: { readonly encrypted?: boolean | undefined }
-  ) => Promise<string>
-  isDirectDefaultEncrypted?: (roomId: string) => boolean
+  openDirect?: (userIds: readonly string[]) => Promise<string>
   send: (roomId: string, body: string, options?: SendOptions) => Promise<void>
   sendEvent?: (
     roomId: string,

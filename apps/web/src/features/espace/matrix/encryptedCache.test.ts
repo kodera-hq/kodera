@@ -823,12 +823,28 @@ describe('Espace encrypted cold-start & offline outbox vault (kodera.espace-vaul
         },
       })
 
-      // Confidential shards require epoch >= 1; ordinary shards require epoch === 0.
+      // Confidential shards permit epoch >= 0 (including newly created rooms at epoch 0); negative epochs fail.
+      await vault.putSearchIndexShard({
+        roomId: '!epoch0-conf:matrix.acme.kodera.test',
+        boundaryTag: 'confidential-e2ee',
+        epoch: 0,
+        payload: { v: 1, docs: [] },
+      })
+      expect(
+        (
+          await vault.readSearchIndexShard('!epoch0-conf:matrix.acme.kodera.test', {
+            boundaryTag: 'confidential-e2ee',
+            epoch: 0,
+          })
+        )?.epoch
+      ).toBe(0)
+      await vault.deleteSearchIndexShard('!epoch0-conf:matrix.acme.kodera.test')
+
       await expect(
         vault.putSearchIndexShard({
           roomId: ROOM_SECRET,
           boundaryTag: 'confidential-e2ee',
-          epoch: 0,
+          epoch: -1,
           payload: {},
         })
       ).rejects.toMatchObject({ code: 'invalid-input' })
@@ -877,14 +893,30 @@ describe('Espace encrypted cold-start & offline outbox vault (kodera.espace-vaul
       expect(vault.incarnation).not.toBe(priorIncarnation)
       expect(idb.peekStoreRows(ESPACE_VAULT_DATABASE, 'search_index').size).toBe(0)
       expect(await vault.computeBlindTermTag(ROOM_GENERAL, 'acquisition')).not.toBe(blindTag)
+      // Plaintext ('ordinary') shard writes stay permanently blocked by the durable quarantine marker,
+      // while re-unlocked 'confidential-e2ee' shards are permitted once unlocked again.
       await expect(
         vault.putSearchIndexShard({
           roomId: ROOM_SECRET,
-          boundaryTag: 'confidential-e2ee',
-          epoch: 3,
+          boundaryTag: 'ordinary',
+          epoch: 0,
           payload: { v: 1 },
         })
       ).rejects.toMatchObject({ code: 'quarantined' })
+      await vault.putSearchIndexShard({
+        roomId: ROOM_SECRET,
+        boundaryTag: 'confidential-e2ee',
+        epoch: 0,
+        payload: { v: 1, docs: [{ eventId: '$ev2', snippet: 'unlocked-at-epoch-0' }] },
+      })
+      expect(
+        (
+          await vault.readSearchIndexShard(ROOM_SECRET, {
+            boundaryTag: 'confidential-e2ee',
+            epoch: 0,
+          })
+        )?.epoch
+      ).toBe(0)
     } finally {
       unsubscribe()
     }

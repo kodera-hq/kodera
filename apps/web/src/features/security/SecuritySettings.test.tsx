@@ -273,10 +273,61 @@ describe('local security settings', () => {
       'saved-recovery-key'
     )
     await freshUser.click(screen.getByRole('button', { name: 'Restore from server backup' }))
-    expect(mocks.restore).toHaveBeenCalledWith(remoteBytes, {
-      kind: 'recovery-key',
-      recoveryKey: 'saved-recovery-key',
+    expect(mocks.restore).toHaveBeenCalledWith(
+      remoteBytes,
+      {
+        kind: 'recovery-key',
+        recoveryKey: 'saved-recovery-key',
+      },
+      2
+    )
+    expect(mocks.advanceEpoch).toHaveBeenCalledWith(3)
+    expect(await screen.findByText(/Archive restored locally/)).toBeInTheDocument()
+  })
+  it('decouples local .kvkb archive epoch from server nextBackupEpoch on fresh device restore and advances on 409 conflict', async () => {
+    mocks.available = false
+    // Server previously discarded epoch 4, so GET 404 returns X-Kodera-Next-Backup-Epoch: 5.
+    mocks.getRemote.mockResolvedValueOnce({ status: 'absent', nextBackupEpoch: 5 })
+    const headerJson = JSON.stringify([
+      'kodera-zk-key-backup',
+      1,
+      'org-test',
+      'account-test',
+      1,
+      'recovery-key',
+      0,
+      btoa(String.fromCharCode(...new Uint8Array(16).fill(1))),
+      btoa(String.fromCharCode(...new Uint8Array(12).fill(2))),
+    ])
+    const headerBytes = new TextEncoder().encode(headerJson)
+    const kvkbEpoch1 = new Uint8Array(9 + headerBytes.length + 32)
+    kvkbEpoch1.set([0x4b, 0x56, 0x4b, 0x42, 0x31], 0)
+    new DataView(kvkbEpoch1.buffer).setUint32(5, headerBytes.length)
+    kvkbEpoch1.set(headerBytes, 9)
+    kvkbEpoch1.fill(0xaa, 9 + headerBytes.length)
+
+    render(<SecuritySettings {...props} />)
+    const user = await start()
+    // Fresh device did NOT advance worker to 5 before restore, so epoch-1 .kvkb restores cleanly!
+    expect(mocks.advanceEpoch).not.toHaveBeenCalled()
+
+    const file = new File([kvkbEpoch1], 'epoch1.kvkb')
+    Object.defineProperty(file, 'arrayBuffer', {
+      value: async () => kvkbEpoch1.slice().buffer,
     })
+    await user.upload(screen.getByLabelText('Choose encrypted .kvkb archive'), file)
+    await user.type(
+      screen.getByLabelText('Archive recovery key, including checksum'),
+      'saved-recovery-key'
+    )
+    await user.click(screen.getByRole('button', { name: 'Restore archive locally' }))
+    expect(mocks.restore).toHaveBeenCalledWith(
+      kvkbEpoch1,
+      { kind: 'recovery-key', recoveryKey: 'saved-recovery-key' },
+      1
+    )
+    // After restoring epoch 1, session advances to max(1 + 1, 5) = 5 for future server publication!
+    expect(mocks.advanceEpoch).toHaveBeenCalledWith(5)
     expect(await screen.findByText(/Archive restored locally/)).toBeInTheDocument()
   })
 })

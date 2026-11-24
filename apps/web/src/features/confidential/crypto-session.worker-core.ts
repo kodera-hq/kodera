@@ -196,6 +196,49 @@ export class WorkerFrameCryptor {
       }
     })
   }
+  sealCheckpoint(input: Uint8Array, sequence = 1): Promise<Uint8Array<ArrayBuffer>> {
+    need(
+      this.domain === 'kodera-confidential-collab' &&
+        typeof sequence === 'number' &&
+        Number.isSafeInteger(sequence) &&
+        sequence >= 1
+    )
+    const plaintext = ownedBytes(input, 2)
+    const epoch = this.#epoch,
+      ratchet = this.#ratchet
+    return this.#run(async () => {
+      try {
+        this.#current(epoch, ratchet)
+        const meta: FrameMetadata = {
+          epoch,
+          sender: 'checkpoint',
+          sequence,
+          kind: 3,
+          ratchet,
+        }
+        const metadata = encoder.encode(JSON.stringify(meta)),
+          iv = crypto.getRandomValues(new Uint8Array(12))
+        const key = await this.#key(epoch, ratchet, 'checkpoint', 3)
+        const ciphertext = new Uint8Array(
+          await crypto.subtle.encrypt(
+            { name: 'AES-GCM', iv, additionalData: this.#authenticatedData(meta), tagLength: 128 },
+            key,
+            plaintext
+          )
+        )
+        this.#current(epoch, ratchet)
+        const output = new Uint8Array(6 + metadata.length + 12 + ciphertext.length)
+        output.set(encoder.encode(this.magic))
+        new DataView(output.buffer).setUint16(4, metadata.length)
+        output.set(metadata, 6)
+        output.set(iv, 6 + metadata.length)
+        output.set(ciphertext, 18 + metadata.length)
+        return output
+      } finally {
+        plaintext.fill(0)
+      }
+    })
+  }
   open(
     input: Uint8Array,
     allowed: (kind: unknown) => boolean,
@@ -239,25 +282,40 @@ export class WorkerFrameCryptor {
           kind: raw.kind as string | number,
           ratchet: raw.ratchet,
         }
-        need(
-          JSON.stringify(meta) === encoded &&
-            meta.sender !== this.sender &&
-            meta.epoch === epoch &&
-            meta.ratchet === ratchet &&
-            (expectedSender === undefined || meta.sender === expectedSender)
-        )
+        const isCollabCheckpoint =
+          this.domain === 'kodera-confidential-collab' && meta.kind === 3
+        if (isCollabCheckpoint) {
+          need(
+            JSON.stringify(meta) === encoded &&
+              meta.sender === 'checkpoint' &&
+              meta.epoch === epoch &&
+              meta.ratchet === ratchet &&
+              (expectedSender === undefined || meta.sender === expectedSender)
+          )
+        } else {
+          need(
+            JSON.stringify(meta) === encoded &&
+              (this.domain !== 'kodera-confidential-collab' || meta.sender !== 'checkpoint') &&
+              meta.sender !== this.sender &&
+              meta.epoch === epoch &&
+              meta.ratchet === ratchet &&
+              (expectedSender === undefined || meta.sender === expectedSender)
+          )
+        }
         const senderKey = JSON.stringify(
           this.domain === 'kodera-confidential-collab' ? [meta.sender] : [meta.sender, meta.kind]
         )
         const received = this.#received.get(senderKey),
           reorderable = this.domain === 'kodera-confidential-media'
-        need(
-          (received === undefined ||
-            (reorderable
-              ? meta.sequence > received.highest - 1024 && !received.seen.has(meta.sequence)
-              : meta.sequence > received.highest)) &&
-            (received !== undefined || this.#received.size < 4096)
-        )
+        if (!isCollabCheckpoint) {
+          need(
+            (received === undefined ||
+              (reorderable
+                ? meta.sequence > received.highest - 1024 && !received.seen.has(meta.sequence)
+                : meta.sequence > received.highest)) &&
+              (received !== undefined || this.#received.size < 4096)
+          )
+        }
         const key = await this.#key(epoch, ratchet, meta.sender, meta.kind)
         plaintext = new Uint8Array(
           await crypto.subtle.decrypt(
@@ -272,13 +330,15 @@ export class WorkerFrameCryptor {
           )
         )
         this.#current(epoch, ratchet)
-        const highest = Math.max(received?.highest ?? 0, meta.sequence),
-          seen = received?.seen ?? new Set<number>()
-        if (reorderable) {
-          seen.add(meta.sequence)
-          for (const sequence of seen) if (sequence <= highest - 1024) seen.delete(sequence)
+        if (!isCollabCheckpoint) {
+          const highest = Math.max(received?.highest ?? 0, meta.sequence),
+            seen = received?.seen ?? new Set<number>()
+          if (reorderable) {
+            seen.add(meta.sequence)
+            for (const sequence of seen) if (sequence <= highest - 1024) seen.delete(sequence)
+          }
+          this.#received.set(senderKey, { highest, seen })
         }
-        this.#received.set(senderKey, { highest, seen })
         const output = plaintext
         plaintext = undefined
         return output

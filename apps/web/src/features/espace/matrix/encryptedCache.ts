@@ -481,7 +481,7 @@ function validateSearchIndexRow(
     typeof row.epoch !== 'number' ||
     !Number.isInteger(row.epoch) ||
     row.epoch < 0 ||
-    (row.boundaryTag === 'confidential-e2ee' ? row.epoch < 1 : row.epoch !== 0) ||
+    (row.boundaryTag !== 'confidential-e2ee' && row.epoch !== 0) ||
     typeof row.savedAt !== 'number' ||
     !Number.isFinite(row.savedAt) ||
     !isArrayBuffer(row.iv) ||
@@ -1682,7 +1682,8 @@ export class EspaceVault {
     if (
       typeof input.epoch !== 'number' ||
       !Number.isInteger(input.epoch) ||
-      (input.boundaryTag === 'confidential-e2ee' ? input.epoch < 1 : input.epoch !== 0)
+      input.epoch < 0 ||
+      (input.boundaryTag !== 'confidential-e2ee' && input.epoch !== 0)
     ) {
       fail('invalid-input')
     }
@@ -1721,9 +1722,11 @@ export class EspaceVault {
           async (tx) => {
             const owner = await this.#liveOwner(tx)
             if (owner.incarnation !== activeOwner.incarnation) fail('storage')
-            const qId = recordId(owner.ownerKey, 'quarantine', validRoom)
-            if ((await idbRequest(tx.objectStore('quarantine').get(qId))) !== undefined) {
-              fail('quarantined')
+            if (input.boundaryTag !== 'confidential-e2ee') {
+              const qId = recordId(owner.ownerKey, 'quarantine', validRoom)
+              if ((await idbRequest(tx.objectStore('quarantine').get(qId))) !== undefined) {
+                fail('quarantined')
+              }
             }
             await idbRequest(
               tx.objectStore('search_index').put({
@@ -1781,8 +1784,11 @@ export class EspaceVault {
             idbRequest(tx.objectStore('quarantine').get(qId)),
             idbRequest(tx.objectStore('search_index').get(id)),
           ])
-          if (quarantined !== undefined) return { owner, row: null }
-          return { owner, row: validateSearchIndexRow(raw, id, owner, validRoom) }
+          const validated = validateSearchIndexRow(raw, id, owner, validRoom)
+          if (quarantined !== undefined && validated?.boundaryTag !== 'confidential-e2ee') {
+            return { owner, row: null }
+          }
+          return { owner, row: validated }
         },
         this.#alive,
         this.#transactions

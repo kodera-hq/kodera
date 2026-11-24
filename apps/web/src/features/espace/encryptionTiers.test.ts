@@ -22,7 +22,7 @@ describe('Founder-locked 3-tier E2EE conversation model (Track 7)', () => {
     )
   })
 
-  it('Tier 2: keeps workspace/team channels opt-in confidential (🔒)', () => {
+  it('Tier 2: keeps workspace/team channels opt-in confidential (🔒) and requires verified E2EE for padlock', () => {
     expect(defaultE2eeForConversationSurface('team_channel')).toBe(false)
     expect(
       classifyConversationEncryptionTier({ surface: 'team_channel', isConfidential: false })
@@ -30,7 +30,13 @@ describe('Founder-locked 3-tier E2EE conversation model (Track 7)', () => {
     expect(
       classifyConversationEncryptionTier({ surface: 'team_channel', isConfidential: true })
     ).toBe('tier-2-opt-in-confidential')
-    expect(shouldDisplayConfidentialPadlock({ isConfidential: true })).toBe(true)
+    expect(shouldDisplayConfidentialPadlock({ isConfidential: true })).toBe(false)
+    expect(
+      shouldDisplayConfidentialPadlock({ isConfidential: true, isVerifiedE2eeSession: false })
+    ).toBe(false)
+    expect(
+      shouldDisplayConfidentialPadlock({ isConfidential: true, isVerifiedE2eeSession: true })
+    ).toBe(true)
   })
 
   it('Tier 3: keeps standard/public channels (#arrivals, #general) standard with zero fake E2EE padlock', () => {

@@ -152,10 +152,15 @@ def test_publish_restore_without_local_device_discard_and_monotonic_rotation(rel
     missing = client.get(backup_url(org.id), HTTP_AUTHORIZATION="Bearer " + tokens[3])
     assert missing.status_code == 404
 
-    # Initial publication must start at epoch 1; skipping to epoch 2 is refused with 409.
+    # Initial publication must start at epoch 1; skipping to epoch 2 is refused with 409 + CORS exposed header.
     skipped, _ = publish(relay, http, index=0, backup_epoch=2)
     assert skipped.status_code == 409
     assert skipped["X-Kodera-Next-Backup-Epoch"] == "1"
+    assert skipped.json()["type"] == "https://kodera.io/problems/epoch-conflict"
+
+    from core.api.edge import EXPOSED_HEADERS
+
+    assert "X-Kodera-Next-Backup-Epoch" in EXPOSED_HEADERS
 
     idem_key = str(uuid4())
     created, raw_epoch_1 = publish(relay, http, index=0, backup_epoch=1, key=idem_key)
@@ -216,6 +221,21 @@ def test_publish_restore_without_local_device_discard_and_monotonic_rotation(rel
     assert rotated.json()["backupEpoch"] == 2
     assert rotated.json()["kdfKind"] == "passphrase"
     assert rotated.json()["iterations"] == 600_000
+
+    # Concurrent first-publish IntegrityError savepoint returns 409 epoch-conflict with next epoch (never 500).
+    from unittest.mock import patch as mock_patch
+
+    orig_create = KeyBackupArchive.objects.create
+
+    def simulate_race_create(**kwargs):
+        orig_create(**kwargs)
+        raise IntegrityError("simulated concurrent unique membership race")
+
+    with mock_patch.object(KeyBackupArchive.objects, "create", side_effect=simulate_race_create):
+        raced, _ = publish(relay, http, index=2, backup_epoch=1)
+    assert raced.status_code == 409
+    assert raced.json()["type"] == "https://kodera.io/problems/epoch-conflict"
+    assert raced["X-Kodera-Next-Backup-Epoch"] == "2"
 
 
 def test_staff_and_ai_service_actors_are_refused(relay, http_signer, frozen_clock, settings):

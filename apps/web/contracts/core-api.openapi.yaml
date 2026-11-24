@@ -12371,7 +12371,24 @@ paths:
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
-          $ref: '#/components/responses/NotFound'
+          description: No active key-backup archive exists for the caller membership, or the archive was discarded.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+            X-Kodera-Next-Backup-Epoch:
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
         '405':
           description: Authentication, authority, validation, conflict, capacity or temporary contention
             refusal.
@@ -12475,7 +12492,24 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
         '409':
-          $ref: '#/components/responses/Conflict'
+          description: Supplied backupEpoch disagrees with the next consecutive monotonic archive epoch.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+            X-Kodera-Next-Backup-Epoch:
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
         '422':
           $ref: '#/components/responses/ValidationError'
         '429':
@@ -17026,7 +17060,7 @@ components:
           - integer
           - 'null'
           minimum: 0
-          maximum: 9007199254740991
+          maximum: 4294967295
       examples:
       - wsUrl: wss://api.example.org/documents/collab
         token: example-ticket-placeholder

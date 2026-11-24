@@ -343,6 +343,10 @@ export function createBackupVaultBridge(port: MessagePort, scope: BackupContext)
         integer(v.backupEpoch)
         need(v.backupEpoch >= currentEpoch)
         currentEpoch = v.backupEpoch
+      } else {
+        const header = parseKvkb1EnvelopeHeader(v.capsule as Uint8Array)
+        need(header.backupEpoch >= currentEpoch)
+        currentEpoch = header.backupEpoch
       }
       let bytes: Uint8Array<ArrayBuffer> | undefined
       try {

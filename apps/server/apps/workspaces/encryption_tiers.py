@@ -45,3 +45,15 @@ def classify_workspace_channel_tier(*, is_confidential: bool) -> ConversationEnc
     if is_confidential:
         return ConversationEncryptionTier.TIER_2_OPT_IN_CONFIDENTIAL
     return ConversationEncryptionTier.TIER_3_STANDARD_CHANNEL
+
+
+def should_display_confidential_padlock(
+    *,
+    is_direct: bool = False,
+    is_confidential: bool = False,
+    is_verified_e2ee_session: bool = False,
+) -> bool:
+    """Return True only when a confidential or direct room has a verified E2EE session (#180)."""
+    if not is_verified_e2ee_session:
+        return False
+    return bool(is_confidential or is_direct)

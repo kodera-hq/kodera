@@ -302,6 +302,61 @@ function encodeAwarenessFrame(awareness: Awareness, clients: number[]): Uint8Arr
   return encoding.toUint8Array(encoder)
 }
 
+const kde1HeaderDecoder = new TextDecoder('utf-8', { fatal: true })
+const CONFIDENTIAL_COMPACT_THRESHOLD = 64
+
+interface Kde1OuterHeader {
+  readonly epoch: number
+  readonly sender: string
+  readonly sequence: number
+  readonly kind: 0 | 1 | 2 | 3
+  readonly ratchet: number
+}
+
+function inspectKde1Header(bytes: Uint8Array): Kde1OuterHeader | null {
+  if (bytes.byteLength < 35) return null
+  if (bytes[0] !== 75 || bytes[1] !== 68 || bytes[2] !== 69 || bytes[3] !== 49) return null
+  const size = ((bytes[4] ?? 0) << 8) | (bytes[5] ?? 0)
+  if (size < 1 || size > 1024 || bytes.byteLength < 6 + size + 29) return null
+  let parsed: unknown
+  let encoded: string
+  try {
+    encoded = kde1HeaderDecoder.decode(bytes.subarray(6, 6 + size))
+    parsed = JSON.parse(encoded)
+  } catch {
+    return null
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+  const raw = parsed as Record<string, unknown>
+  const epoch = raw['epoch']
+  const sender = raw['sender']
+  const sequence = raw['sequence']
+  const kind = raw['kind']
+  const ratchet = raw['ratchet']
+  if (
+    typeof epoch !== 'number' ||
+    !Number.isSafeInteger(epoch) ||
+    epoch < 0 ||
+    epoch > 0xffffffff ||
+    typeof sender !== 'string' ||
+    sender.length === 0 ||
+    sender.length > 256 ||
+    typeof sequence !== 'number' ||
+    !Number.isSafeInteger(sequence) ||
+    sequence < 1 ||
+    (kind !== 0 && kind !== 1 && kind !== 2 && kind !== 3) ||
+    typeof ratchet !== 'number' ||
+    !Number.isSafeInteger(ratchet) ||
+    ratchet < 0 ||
+    ratchet > 0xffffffff
+  ) {
+    return null
+  }
+  const canonical = JSON.stringify({ epoch, sender, sequence, kind, ratchet })
+  if (canonical !== encoded) return null
+  return { epoch, sender, sequence, kind, ratchet }
+}
+
 export class CollabSessionController {
   readonly ydoc: Y.Doc
   readonly awareness: Awareness
@@ -320,6 +375,10 @@ export class CollabSessionController {
   private outgoing = Promise.resolve()
   private incoming = Promise.resolve()
   private ws: WebSocketLike | null = null
+  private readonly highestOpenedSeqBySender = new Map<string, number>()
+  private readonly socketSeenDurableKeys = new Set<string>()
+  private socketJournalCount = 0
+  private uncompactedUpdates = 0
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private persistence: IndexeddbPersistence | null = null
   private unregisterLogoutCleanup: (() => void) | null = null
@@ -679,6 +738,34 @@ export class CollabSessionController {
     socket?.close(4403, 'protected collaboration refused')
   }
 
+  compactConfidentialCheckpoint(): void {
+    if (this.destroyed || !this.confidential || this.role !== 'editor') return
+    const socket = this.ws
+    const cipher = this.confidential.cipher
+    if (!socket || !this.currentSocket(socket) || cipher === null) return
+    this.uncompactedUpdates = 0
+    this.outgoing = this.outgoing.then(async () => {
+      let checkpointPlain: Uint8Array | undefined
+      try {
+        if (!this.currentSocket(socket) || this.role !== 'editor') return
+        const sequence = Math.max(1, this.socketJournalCount)
+        checkpointPlain = encodeSyncFrame((encoder) => {
+          syncProtocol.writeSyncStep2(encoder, this.ydoc)
+        })
+        const sealed = await cipher.seal(checkpointPlain, { checkpoint: true, sequence })
+        if (!this.currentSocket(socket)) return
+        if (sealed[0] !== 75 || sealed[1] !== 68 || sealed[2] !== 69 || sealed[3] !== 49) {
+          throw new Error('invalid protected checkpoint envelope')
+        }
+        socket.send(sealed)
+      } catch {
+        if (this.ws === socket) this.quarantine()
+      } finally {
+        checkpointPlain?.fill(0)
+      }
+    })
+  }
+
   private sendFrame(frame: Uint8Array, socket: WebSocketLike): void {
     if (!this.confidential) {
       socket.send(frame)
@@ -687,6 +774,10 @@ export class CollabSessionController {
     const cipher = this.confidential.cipher
     // Queue ownership preserves sender sequence order across asynchronous worker calls.
     const owned = frame.slice()
+    const isDurableWrite =
+      owned.length >= 2 &&
+      owned[0] === MSG_SYNC &&
+      (owned[1] === syncProtocol.messageYjsSyncStep2 || owned[1] === syncProtocol.messageYjsUpdate)
     this.outgoing = this.outgoing.then(async () => {
       try {
         if (!this.currentSocket(socket) || cipher === null) {
@@ -702,6 +793,28 @@ export class CollabSessionController {
           throw new Error('invalid protected envelope')
         }
         socket.send(sealed)
+        if (isDurableWrite) {
+          this.socketJournalCount += 1
+          this.uncompactedUpdates += 1
+          if (this.role === 'editor' && this.uncompactedUpdates >= CONFIDENTIAL_COMPACT_THRESHOLD) {
+            this.uncompactedUpdates = 0
+            const sequence = Math.max(1, this.socketJournalCount)
+            const checkpointPlain = encodeSyncFrame((encoder) => {
+              syncProtocol.writeSyncStep2(encoder, this.ydoc)
+            })
+            try {
+              const checkpointSealed = await cipher.seal(checkpointPlain, {
+                checkpoint: true,
+                sequence,
+              })
+              if (this.currentSocket(socket)) {
+                socket.send(checkpointSealed)
+              }
+            } finally {
+              checkpointPlain.fill(0)
+            }
+          }
+        }
       } catch {
         if (this.ws === socket) this.quarantine()
       } finally {
@@ -721,6 +834,7 @@ export class CollabSessionController {
     }
     const cipher = this.confidential.cipher
     const owned = bytes.slice()
+    const policyEpoch = this.confidential.epoch
     this.incoming = this.incoming.then(async () => {
       let plaintext: Uint8Array | undefined
       try {
@@ -728,15 +842,45 @@ export class CollabSessionController {
           if (this.ws === socket) this.quarantine()
           return
         }
+        const header = inspectKde1Header(owned)
+        if (header !== null && header.epoch === policyEpoch) {
+          if (header.kind === 0) {
+            const durableKey = `${header.sender}:${header.sequence}`
+            if (!this.socketSeenDurableKeys.has(durableKey)) {
+              this.socketSeenDurableKeys.add(durableKey)
+              this.socketJournalCount += 1
+              this.uncompactedUpdates += 1
+            }
+          }
+          if (header.kind !== 3) {
+            const selfSender = String(this.ydoc.clientID)
+            const highest = this.highestOpenedSeqBySender.get(header.sender)
+            if (
+              header.sender === selfSender ||
+              (highest !== undefined && header.sequence <= highest)
+            ) {
+              return
+            }
+          }
+        }
         plaintext = await cipher.open(owned)
         if (!this.currentSocket(socket)) {
           if (this.ws === socket) this.quarantine()
           return
         }
-        if (plaintext[0] !== MSG_SYNC && plaintext[0] !== MSG_AWARENESS) {
+        if (plaintext[0] !== MSG_SYNC && plaintext[0] !== MSG_AWARENESS && plaintext[0] !== 3) {
           throw new Error('invalid protected frame')
         }
+        if (header !== null && header.kind !== 3) {
+          const prev = this.highestOpenedSeqBySender.get(header.sender) ?? 0
+          if (header.sequence > prev) {
+            this.highestOpenedSeqBySender.set(header.sender, header.sequence)
+          }
+        }
         this.handleBinaryFrame(plaintext, socket)
+        if (this.role === 'editor' && this.uncompactedUpdates >= CONFIDENTIAL_COMPACT_THRESHOLD) {
+          this.compactConfidentialCheckpoint()
+        }
       } catch {
         if (this.ws === socket) this.quarantine()
       } finally {
@@ -822,6 +966,9 @@ export class CollabSessionController {
 
     socket.binaryType = 'arraybuffer'
     this.ws = socket
+    this.socketSeenDurableKeys.clear()
+    this.socketJournalCount = 0
+    this.uncompactedUpdates = 0
 
     socket.onopen = () => {
       if (this.destroyed || this.ws !== socket) return
@@ -897,11 +1044,25 @@ export class CollabSessionController {
         if (syncKind === syncProtocol.messageYjsSyncStep1) {
           // Only editors answer SyncStep1 with SyncStep2; viewers never transmit document updates.
           if (this.role === 'editor') {
-            const reply = encodeSyncFrame((encoder) => {
-              syncProtocol.readSyncStep1(decoder, encoder, this.ydoc)
-            })
-            if (reply.byteLength > 1 && socket.readyState === 1) {
-              this.sendFrame(reply, socket)
+            if (this.confidential) {
+              const peerVector = decoding.readVarUint8Array(decoder)
+              const diff = Y.encodeStateAsUpdate(this.ydoc, peerVector)
+              const isEmptyDiff =
+                diff.byteLength === 2 && diff[0] === 0 && diff[1] === 0
+              if (!isEmptyDiff && socket.readyState === 1) {
+                const reply = encodeSyncFrame((encoder) => {
+                  encoding.writeVarUint(encoder, syncProtocol.messageYjsSyncStep2)
+                  encoding.writeVarUint8Array(encoder, diff)
+                })
+                this.sendFrame(reply, socket)
+              }
+            } else {
+              const reply = encodeSyncFrame((encoder) => {
+                syncProtocol.readSyncStep1(decoder, encoder, this.ydoc)
+              })
+              if (reply.byteLength > 1 && socket.readyState === 1) {
+                this.sendFrame(reply, socket)
+              }
             }
           }
         } else if (syncKind === syncProtocol.messageYjsSyncStep2) {

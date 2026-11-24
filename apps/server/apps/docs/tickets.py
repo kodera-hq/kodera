@@ -26,6 +26,9 @@ def encode(value: bytes) -> str:
     return base64.urlsafe_b64encode(value).decode().rstrip("=")
 
 
+MAX_COLLAB_EPOCH = 0xFFFFFFFF
+
+
 def mint(
     *,
     principal: TenantCaller,
@@ -35,7 +38,7 @@ def mint(
     confidential: bool = False,
     epoch: int | None = None,
 ) -> tuple[str, str]:
-    if confidential and (type(epoch) is not int or epoch < 0):
+    if confidential and (type(epoch) is not int or not 0 <= epoch <= MAX_COLLAB_EPOCH):
         raise RefusalError(403)
     if not confidential and epoch is not None:
         raise RefusalError(503, "service-unavailable")

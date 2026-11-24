@@ -29,6 +29,69 @@ export type ConfidentialKeyBackupLookupResult =
   | { readonly status: 'active'; readonly backup: ConfidentialKeyBackupRemote }
   | { readonly status: 'absent'; readonly nextBackupEpoch: number }
 
+export class ConfidentialKeyBackupConflictError extends ApiProblem {
+  readonly nextBackupEpoch: number | null
+
+  constructor(problem: ApiProblem, nextBackupEpoch: number | null) {
+    super({
+      type: problem.type,
+      status: problem.status,
+      title: problem.title,
+      detail: problem.detail,
+      requestId: problem.requestId,
+      errors: problem.errors,
+      allowedStates: problem.allowedStates,
+      retryAfterS: problem.retryAfterS,
+      currentEtag: problem.currentEtag,
+      suggestions: problem.suggestions,
+    })
+    this.name = 'ConfidentialKeyBackupConflictError'
+    this.nextBackupEpoch = nextBackupEpoch
+  }
+}
+
+const kvkb1TextDecoder = new TextDecoder('utf-8', { fatal: true })
+
+export function tryParseKvkb1ArchiveEpoch(bytes: Uint8Array): number | null {
+  if (bytes.byteLength < KVKB1_MIN_CAPSULE_BYTES || bytes.byteLength > KVKB1_MAX_CAPSULE_BYTES) {
+    return null
+  }
+  if (
+    bytes[0] !== 0x4b ||
+    bytes[1] !== 0x56 ||
+    bytes[2] !== 0x4b ||
+    bytes[3] !== 0x42 ||
+    bytes[4] !== 0x31
+  ) {
+    return null
+  }
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  const headerLen = view.getUint32(5)
+  if (headerLen < 1 || headerLen > 2048 || bytes.byteLength < 9 + headerLen + 17) {
+    return null
+  }
+  try {
+    const rawText = kvkb1TextDecoder.decode(bytes.subarray(9, 9 + headerLen))
+    const parsed: unknown = JSON.parse(rawText)
+    if (
+      !Array.isArray(parsed) ||
+      parsed.length !== 9 ||
+      JSON.stringify(parsed) !== rawText ||
+      parsed[0] !== 'kodera-zk-key-backup' ||
+      parsed[1] !== 1
+    ) {
+      return null
+    }
+    const epoch: unknown = parsed[4]
+    if (typeof epoch !== 'number' || !Number.isSafeInteger(epoch) || epoch < 1) {
+      return null
+    }
+    return epoch
+  } catch {
+    return null
+  }
+}
+
 export function encodeCapsuleBase64(bytes: Uint8Array): string {
   if (bytes.byteLength < KVKB1_MIN_CAPSULE_BYTES || bytes.byteLength > KVKB1_MAX_CAPSULE_BYTES) {
     throw new Error('KVKB1 capsule byte length is out of bounds.')
@@ -143,20 +206,35 @@ export async function publishConfidentialKeyBackup(
   body: ConfidentialKeyBackupPublishBody,
   idempotencyKey: string = crypto.randomUUID()
 ): Promise<ConfidentialKeyBackupPublished> {
-  const { data, response } = await client().POST(
-    '/organisations/{organisation_id}/confidential/key-backup',
-    {
-      params: {
-        path: { organisation_id: organisationId },
-        header: { 'Idempotency-Key': idempotencyKey },
-      },
-      body,
-    }
-  )
-  if (!data || typeof data !== 'object') {
-    throw new ApiProblem({ type: null, status: response.status, title: response.statusText })
+  let hintedNextEpoch: number | null = null
+  const headerCapture: Middleware = {
+    onResponse({ response }) {
+      hintedNextEpoch = parseNextEpochHeader(response.headers.get('X-Kodera-Next-Backup-Epoch'))
+      return undefined
+    },
   }
-  return data as ConfidentialKeyBackupPublished
+  try {
+    const { data, response } = await client().POST(
+      '/organisations/{organisation_id}/confidential/key-backup',
+      {
+        params: {
+          path: { organisation_id: organisationId },
+          header: { 'Idempotency-Key': idempotencyKey },
+        },
+        body,
+        middleware: [headerCapture],
+      }
+    )
+    if (!data || typeof data !== 'object') {
+      throw new ApiProblem({ type: null, status: response.status, title: response.statusText })
+    }
+    return data as ConfidentialKeyBackupPublished
+  } catch (error) {
+    if (error instanceof ApiProblem && error.status === 409) {
+      throw new ConfidentialKeyBackupConflictError(error, hintedNextEpoch)
+    }
+    throw error
+  }
 }
 
 export async function discardConfidentialKeyBackup(

@@ -46,7 +46,7 @@ class Document(RetainedModel):
             ),
             models.CheckConstraint(
                 condition=models.Q(encryption_epoch__isnull=True)
-                | models.Q(encryption_epoch__gte=0),
+                | models.Q(encryption_epoch__gte=0, encryption_epoch__lte=4294967295),
                 name="docs_encryption_epoch_nonnegative",
             ),
             models.CheckConstraint(condition=models.Q(revision__gte=1), name="docs_revision_valid"),

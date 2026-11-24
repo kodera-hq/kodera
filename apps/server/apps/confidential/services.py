@@ -10,7 +10,7 @@ from uuid import UUID
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from django.conf import settings
-from django.db import connection, transaction
+from django.db import IntegrityError, connection, transaction
 from django.utils import timezone
 
 from apps.e2ee.services import (
@@ -305,21 +305,35 @@ def publish_key_backup(
     if next_epoch > MAX_EPOCH or backup_epoch != next_epoch:
         raise RefusalError(
             409,
+            "epoch-conflict",
             next_backup_epoch=next_epoch if next_epoch <= MAX_EPOCH else None,
         )
     digest = hashlib.sha256(capsule_bytes).hexdigest()
     if row is None:
-        row = KeyBackupArchive.objects.create(
-            organisation_id=organisation_id,
-            membership_id=UUID(context["membershipId"]),
-            source_device_id=UUID(context["deviceId"]),
-            backup_epoch=backup_epoch,
-            kdf_kind=kdf_kind,
-            iterations=iterations,
-            capsule_sha256=digest,
-            capsule=capsule_bytes,
-            discarded_at=None,
-        )
+        try:
+            with transaction.atomic():
+                row = KeyBackupArchive.objects.create(
+                    organisation_id=organisation_id,
+                    membership_id=UUID(context["membershipId"]),
+                    source_device_id=UUID(context["deviceId"]),
+                    backup_epoch=backup_epoch,
+                    kdf_kind=kdf_kind,
+                    iterations=iterations,
+                    capsule_sha256=digest,
+                    capsule=capsule_bytes,
+                    discarded_at=None,
+                )
+        except IntegrityError:
+            current = KeyBackupArchive.objects.filter(
+                organisation_id=organisation_id,
+                membership_id=context["membershipId"],
+            ).first()
+            conflict_next = (current.backup_epoch + 1) if current is not None else 2
+            raise RefusalError(
+                409,
+                "epoch-conflict",
+                next_backup_epoch=conflict_next if conflict_next <= MAX_EPOCH else None,
+            ) from None
     else:
         row.source_device_id = UUID(context["deviceId"])
         row.backup_epoch = backup_epoch
@@ -414,18 +428,41 @@ def discard_key_backup(
 
 
 def count_residual_confidential_for_organisation(*, organisation_id: UUID) -> int:
-    """Count remaining confidential key backups for an erased organisation."""
+    """Count remaining confidential key backups, verification bundles, and MLS epochs for an erased organisation."""
+    total = 0
     with connection.cursor() as cursor:
-        cursor.execute("SELECT to_regclass('public.confidential_keybackuparchive') IS NOT NULL")
-        if not cursor.fetchone()[0]:
-            return 0
-    return int(KeyBackupArchive.objects.filter(organisation_id=organisation_id).count())
+        cursor.execute(
+            """SELECT
+                 to_regclass('public.confidential_keybackuparchive') IS NOT NULL,
+                 to_regclass('public.confidential_deviceverificationbundle') IS NOT NULL,
+                 to_regclass('public.confidential_mlsroomepoch') IS NOT NULL"""
+        )
+        has_backups, has_bundles, has_epochs = cursor.fetchone()
+    if has_backups:
+        total += int(KeyBackupArchive.objects.filter(organisation_id=organisation_id).count())
+    if has_bundles:
+        total += int(
+            DeviceVerificationBundle.objects.filter(device__organisation_id=organisation_id).count()
+        )
+    if has_epochs:
+        total += int(MlsRoomEpoch.objects.filter(room__organisation_id=organisation_id).count())
+    return total
 
 
 def count_residual_confidential_for_user(*, user_id: UUID) -> int:
-    """Count remaining confidential key backups for an erased person."""
+    """Count remaining confidential key backups and verification bundles for an erased person."""
+    total = 0
     with connection.cursor() as cursor:
-        cursor.execute("SELECT to_regclass('public.confidential_keybackuparchive') IS NOT NULL")
-        if not cursor.fetchone()[0]:
-            return 0
-    return int(KeyBackupArchive.objects.filter(membership__user_id=user_id).count())
+        cursor.execute(
+            """SELECT
+                 to_regclass('public.confidential_keybackuparchive') IS NOT NULL,
+                 to_regclass('public.confidential_deviceverificationbundle') IS NOT NULL"""
+        )
+        has_backups, has_bundles = cursor.fetchone()
+    if has_backups:
+        total += int(KeyBackupArchive.objects.filter(membership__user_id=user_id).count())
+    if has_bundles:
+        total += int(
+            DeviceVerificationBundle.objects.filter(device__membership__user_id=user_id).count()
+        )
+    return total
