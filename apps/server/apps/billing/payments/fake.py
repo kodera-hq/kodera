@@ -124,6 +124,13 @@ class FakePaymentsAdapter(FakeProvider):
             acct = self.connect_accounts.get(request.connect_destination_account)
             if acct is not None and not acct.charges_enabled:
                 raise ProviderRefusedError("connected account cannot accept charges")
+        is_monetization_checkout = (
+            request.connect_destination_account is not None
+            or request.reference_kind != "invoice"
+            or bool(request.metadata and "volet" in request.metadata)
+        )
+        if not is_monetization_checkout:
+            return super().create_link(request)
         self.links.append(request)
         seq = self._next_seq()
         reference = f"cs_fake_{seq:06d}"

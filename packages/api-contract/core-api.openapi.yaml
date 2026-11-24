@@ -12894,7 +12894,7 @@ paths:
     post:
       operationId: transcribeLiveCallChunk
       summary: Transcribe and translate a bounded live call audio chunk under all-party consent
-      description: 'Verifies active 100% participant consent and matching session generation before and after provider execution, returning ephemeral source and translated subtitle text without database persistence. Return no Idempotency-Replayed header.'
+      description: 'Verifies active 100% participant consent and matching sessionEpoch before and after provider execution, returning ephemeral source and translated subtitle text without database persistence. Return no Idempotency-Replayed header.'
       tags:
       - Workspace
       x-kodera-scope: workspace_ai:act
@@ -25906,7 +25906,7 @@ components:
       - allConsented
       - callerConsentState
       - callerMemberAiConsent
-      - generation
+      - sessionEpoch
       properties:
         sessionId:
           type: string
@@ -25937,7 +25937,7 @@ components:
           $ref: '#/components/schemas/LiveCallParticipantConsentState'
         callerMemberAiConsent:
           type: boolean
-        generation:
+        sessionEpoch:
           type: integer
           minimum: 1
         expiresAt:
@@ -25955,7 +25955,7 @@ components:
         allConsented: true
         callerConsentState: consented
         callerMemberAiConsent: true
-        generation: 1
+        sessionEpoch: 1
         expiresAt: '2026-06-08T10:35:00Z'
     LiveCallCaptionSessionEnvelope:
       type: object
@@ -26021,13 +26021,13 @@ components:
       additionalProperties: false
       required:
       - sessionId
-      - generation
+      - sessionEpoch
       - audioBase64
       properties:
         sessionId:
           type: string
           format: uuid
-        generation:
+        sessionEpoch:
           type: integer
           minimum: 1
         audioBase64:

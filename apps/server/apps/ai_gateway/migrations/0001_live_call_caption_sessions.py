@@ -294,7 +294,7 @@ class Migration(migrations.Migration):
     initial = True
 
     dependencies = [
-        ("e2ee", "0002_scope_and_privacy"),
+        ("e2ee", "0001_initial"),
         ("identity", "0007_passport_magic_link"),
         ("orgs", "0035_ee_audit_ledger_erasure"),
         ("workspaces", "0018_ai_policy_and_consent"),

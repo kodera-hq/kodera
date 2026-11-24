@@ -1,9 +1,12 @@
 """Replace `billing_creditnote_one_per_invoice` with a partial unique index via `CONCURRENTLY` (docs/dev/MIGRATIONS.md §4)."""
 
+from typing import Any
+
 from django.db import migrations, models
 
 SET_SESSION_TIMEOUTS = "SET lock_timeout = '5s'; SET statement_timeout = '30s';"
 RESET_SESSION_TIMEOUTS = "RESET lock_timeout; RESET statement_timeout;"
+SET_LOCAL_TIMEOUTS = "SET LOCAL lock_timeout = '5s'; SET LOCAL statement_timeout = '30s';"
 
 CREATE_PARTIAL_CONCURRENTLY = (
     "CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS "
@@ -72,6 +75,61 @@ SWAP_TO_FULL_CONSTRAINT = (
     "COMMIT;"
 )
 
+DROP_PARTIAL_IN_TX = "DROP INDEX IF EXISTS billing_creditnote_one_non_refund_per_invoice_idx;"
+CREATE_PARTIAL_IN_TX = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS "
+    "billing_creditnote_one_non_refund_per_invoice_idx "
+    "ON billing_creditnote (invoice_id) WHERE NOT (reason = 'refund');"
+)
+SWAP_TO_PARTIAL_IN_TX = (
+    "ALTER TABLE billing_creditnote DROP CONSTRAINT IF EXISTS billing_creditnote_one_per_invoice;\n"
+    "ALTER INDEX billing_creditnote_one_non_refund_per_invoice_idx "
+    "RENAME TO billing_creditnote_one_per_invoice;"
+)
+DROP_FULL_IN_TX = "DROP INDEX IF EXISTS billing_creditnote_one_per_invoice_full_idx;"
+CREATE_FULL_IN_TX = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS "
+    "billing_creditnote_one_per_invoice_full_idx "
+    "ON billing_creditnote (invoice_id);"
+)
+SWAP_TO_FULL_IN_TX = (
+    "DROP INDEX IF EXISTS billing_creditnote_one_per_invoice;\n"
+    "ALTER TABLE billing_creditnote ADD CONSTRAINT billing_creditnote_one_per_invoice "
+    "UNIQUE USING INDEX billing_creditnote_one_per_invoice_full_idx;"
+)
+
+
+def _forwards(apps: Any, schema_editor: Any) -> None:
+    del apps
+    if schema_editor.connection.in_atomic_block:
+        schema_editor.execute(SET_LOCAL_TIMEOUTS)
+        schema_editor.execute(DROP_PARTIAL_IN_TX)
+        schema_editor.execute(CREATE_PARTIAL_IN_TX)
+        schema_editor.execute(SWAP_TO_PARTIAL_IN_TX)
+        return
+    schema_editor.execute(SET_SESSION_TIMEOUTS)
+    schema_editor.execute(DROP_PARTIAL_CONCURRENTLY)
+    schema_editor.execute(CREATE_PARTIAL_CONCURRENTLY)
+    schema_editor.execute(SWAP_TO_PARTIAL)
+    schema_editor.execute(RESET_SESSION_TIMEOUTS)
+
+
+def _backwards(apps: Any, schema_editor: Any) -> None:
+    del apps
+    if schema_editor.connection.in_atomic_block:
+        schema_editor.execute(SET_LOCAL_TIMEOUTS)
+        schema_editor.execute(DROP_PARTIAL_IN_TX)
+        schema_editor.execute(DROP_FULL_IN_TX)
+        schema_editor.execute(CREATE_FULL_IN_TX)
+        schema_editor.execute(SWAP_TO_FULL_IN_TX)
+        return
+    schema_editor.execute(SET_SESSION_TIMEOUTS)
+    schema_editor.execute(DROP_FULL_CONCURRENTLY)
+    schema_editor.execute(CREATE_FULL_CONCURRENTLY)
+    schema_editor.execute(SWAP_TO_FULL_CONSTRAINT)
+    schema_editor.execute(DROP_PARTIAL_CONCURRENTLY)
+    schema_editor.execute(RESET_SESSION_TIMEOUTS)
+
 
 class Migration(migrations.Migration):
     atomic = False
@@ -81,37 +139,9 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
+        migrations.RunPython(_forwards, _backwards),
         migrations.SeparateDatabaseAndState(
-            database_operations=[
-                migrations.RunSQL(
-                    sql=SET_SESSION_TIMEOUTS,
-                    reverse_sql=RESET_SESSION_TIMEOUTS,
-                ),
-                migrations.RunSQL(
-                    sql=DROP_PARTIAL_CONCURRENTLY,
-                    reverse_sql=DROP_PARTIAL_CONCURRENTLY,
-                ),
-                migrations.RunSQL(
-                    sql=CREATE_PARTIAL_CONCURRENTLY,
-                    reverse_sql=migrations.RunSQL.noop,
-                ),
-                migrations.RunSQL(
-                    sql=SWAP_TO_PARTIAL,
-                    reverse_sql=SWAP_TO_FULL_CONSTRAINT,
-                ),
-                migrations.RunSQL(
-                    sql=migrations.RunSQL.noop,
-                    reverse_sql=CREATE_FULL_CONCURRENTLY,
-                ),
-                migrations.RunSQL(
-                    sql=migrations.RunSQL.noop,
-                    reverse_sql=DROP_FULL_CONCURRENTLY,
-                ),
-                migrations.RunSQL(
-                    sql=RESET_SESSION_TIMEOUTS,
-                    reverse_sql=SET_SESSION_TIMEOUTS,
-                ),
-            ],
+            database_operations=[],
             state_operations=[
                 migrations.RemoveConstraint(
                     model_name="creditnote",

@@ -880,11 +880,25 @@ H31_GUARDS_REVERSE = r"""
 DO $$
 BEGIN
   IF EXISTS (
-    SELECT 1 FROM public.orgs_privacyerasure
-    WHERE status <> 'complete' AND inventory ? 'h31_billing_policy'
+    SELECT 1 FROM public.orgs_privacyerasure pe
+    WHERE pe.status <> 'complete'
+      AND pe.inventory ? 'h31_billing_policy'
+      AND (
+        EXISTS (SELECT 1 FROM public.billing_workspaceboostgrant g WHERE g.organisation_id = pe.organisation_reference)
+        OR EXISTS (SELECT 1 FROM public.billing_workspacehostingcredit hc WHERE hc.organisation_id = pe.organisation_reference)
+        OR EXISTS (SELECT 1 FROM public.billing_creatorconnectaccount ca WHERE ca.organisation_id = pe.organisation_reference)
+        OR EXISTS (SELECT 1 FROM public.billing_viptieroffer t WHERE t.organisation_id = pe.organisation_reference)
+        OR EXISTS (SELECT 1 FROM public.billing_vipmembershipentitlement v WHERE v.organisation_id = pe.organisation_reference)
+      )
   ) OR EXISTS (
-    SELECT 1 FROM public.orgs_accounterasure
-    WHERE status <> 'complete' AND inventory ? 'h31_billing_policy'
+    SELECT 1 FROM public.orgs_accounterasure ae
+    WHERE ae.status <> 'complete'
+      AND ae.inventory ? 'h31_billing_policy'
+      AND (
+        EXISTS (SELECT 1 FROM public.billing_workspaceboostgrant g WHERE g.purchaser_user_id = ae.user_reference)
+        OR EXISTS (SELECT 1 FROM public.billing_vipmembershipentitlement v WHERE v.buyer_user_id = ae.user_reference)
+        OR EXISTS (SELECT 1 FROM public.billing_creatorconnectaccount ca WHERE ca.owner_user_id = ae.user_reference)
+      )
   ) OR EXISTS (
     SELECT 1 FROM public.billing_workspaceboostgrant
     WHERE state IN ('active', 'expired', 'refunded', 'disputed')

@@ -3242,6 +3242,7 @@ def migration_create_model_names(
             "django.db.models.PositiveIntegerField",
             "django.db.models.Q",
             "django.db.models.RESTRICT",
+            "django.db.models.SET_NULL",
             "django.db.models.SlugField",
             "django.db.models.TextField",
             "django.db.models.UUIDField",
@@ -3249,6 +3250,7 @@ def migration_create_model_names(
             "django.db.models.Value",
             "django.db.models.deletion.CASCADE",
             "django.db.models.deletion.RESTRICT",
+            "django.db.models.deletion.SET_NULL",
             "django.db.models.expressions.CombinedExpression",
             "django.db.models.functions.Length",
             "django.db.models.functions.text.Concat",
@@ -3277,11 +3279,19 @@ def migration_create_model_names(
                 ("django.db.models.ForeignKey", "on_delete"),
                 ("django.db.models.OneToOneField", "on_delete"),
             },
+            "django.db.models.SET_NULL": {
+                ("django.db.models.ForeignKey", "on_delete"),
+                ("django.db.models.OneToOneField", "on_delete"),
+            },
             "django.db.models.deletion.CASCADE": {
                 ("django.db.models.ForeignKey", "on_delete"),
                 ("django.db.models.OneToOneField", "on_delete"),
             },
             "django.db.models.deletion.RESTRICT": {
+                ("django.db.models.ForeignKey", "on_delete"),
+                ("django.db.models.OneToOneField", "on_delete"),
+            },
+            "django.db.models.deletion.SET_NULL": {
                 ("django.db.models.ForeignKey", "on_delete"),
                 ("django.db.models.OneToOneField", "on_delete"),
             },
@@ -6361,7 +6371,17 @@ def non_persisted_projection_runtime_refusals(
         ]
         model_names = {model.__name__ for model in runtime_models}
         for model in runtime_models:
-            table_name = getattr(getattr(model, "_meta", None), "db_table", "")
+            meta = getattr(model, "_meta", None)
+            table_name = getattr(meta, "db_table", "")
+            # `VipMembershipEntitlement` (`billing_vipmembershipentitlement`) is Volet B's
+            # creator Stripe Connect buyer pass record, distinct from the computed SaaS
+            # `Entitlement` projection in MODEL.md.
+            if (
+                getattr(model, "__name__", None) == "VipMembershipEntitlement"
+                and getattr(meta, "app_label", None) == "billing"
+                and table_name == "billing_vipmembershipentitlement"
+            ):
+                continue
             normalized_table = re.sub(r"[^a-z0-9]", "", str(table_name).lower())
             model_names.update(
                 projection

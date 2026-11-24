@@ -1152,7 +1152,7 @@ N4_VERSION = "0.58.0"
 # Rebound at 0.55.0: authoritative workspace channel confidentiality; N4 assurance guards unchanged.
 # Rebound at 0.57.0: optional workspace identity and preferences; protected bootstrap and discovery semantics unchanged.
 # Rebound at 0.58.0: community boosts, VIP Connect, live AI translation/captions, smart calendar/booking, and cybersecurity posture; N4 assurance guards unchanged.
-N4_OLD_CONTRACT = "190dc6c2c640ec4770b92297f87033486738d27e8474c49b34e5d088536c603a"
+N4_OLD_CONTRACT = "922c063113c5c6c2c81db744f4157fb93bd0aa6ef479ce1791f9999f51ea3e38"
 # Rebound at 0.20.0 (2026-10-22): CONVENTIONS.md §6 gains the order-in-progress and invoice-issued rows and a changelog line.
 # Rebound at 0.24.0 (2026-10-22): CONVENTIONS.md §6's invoice-issued row narrowed, and a changelog line.
 # Rebound at 0.28.0: CONVENTIONS.md §6 gains the identity-unknown row and a changelog line.

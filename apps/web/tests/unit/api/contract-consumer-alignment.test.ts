@@ -27,11 +27,11 @@ const contactType = 'https://kodera.io/problems/owner-claim-contact-unverified'
 const serviceType = 'https://kodera.io/problems/service-unavailable'
 const expectedLock = {
   repository: 'kodera-hq/kodera',
-  ref: 'blob:e03521c78731b289512e9f99753113116508f82e',
-  blob: 'e03521c78731b289512e9f99753113116508f82e',
+  ref: 'blob:143cf14528a4c6c9098cba0e22b30095808ac5b6',
+  blob: '143cf14528a4c6c9098cba0e22b30095808ac5b6',
   path: 'packages/api-contract/core-api.openapi.yaml',
   version: '0.58.0',
-  sha256: 'b1d9bd67bd8cf4c3a516d0d172905478deab6187273541d5ac715179bf7a5332',
+  sha256: '6f7ba4047e99b3e6f1fcec65f2f874a5d61176ba53626d95f7420d8cbb20913f',
 }
 const blobOidPattern = /^[0-9a-f]{40}(?![\s\S])/
 const maxPinnedBlobBytes = 4 * 1024 * 1024
@@ -356,7 +356,7 @@ describe('the immutable contract consumer', () => {
         '291c7b02c9e213d040ed4b9ab77785d468571d2d2b61b7dd4786627ba160baf2',
       'src/mocks/generated/handlers.ts':
         'cb797f0d9e3be651ae3a57d5c38c83ed9d7d7521e26eeff08f86acf8c60fce17',
-      'src/api/schema.d.ts': '009994d2c03cf457b8d5ea527bd0f4c4d54d762faf1c92e3f6156e2e43b91616',
+      'src/api/schema.d.ts': '6c02746f23df3adcacd5f8470439963e5917ff640073fbc38cbafa018d7ea6b4',
     }
     for (const [path, expected] of Object.entries(hashes)) {
       expect(sha(readFileSync(join(root, path)))).toBe(expected)

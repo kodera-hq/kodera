@@ -79,6 +79,7 @@ def sync_subscription_quota(
     media_bytes: int | None = None,
     pages: int | None = None,
     update_storage: bool = False,
+    update_pages: bool = False,
 ) -> UUID | None:
     """Synchronize an organisation's WorkspaceQuota from reconciled subscription state."""
     from .models import Workspace, WorkspaceQuota
@@ -95,7 +96,7 @@ def sync_subscription_quota(
             policy_ref=policy_ref,
             seats=seats,
             media_bytes=media_bytes if update_storage else None,
-            pages=pages if update_storage else None,
+            pages=pages if update_pages else None,
         )
         return quota.id
     quota.policy_ref = policy_ref
@@ -103,8 +104,10 @@ def sync_subscription_quota(
     update_fields = ["policy_ref", "seats", "updated_at"]
     if update_storage:
         quota.media_bytes = media_bytes
+        update_fields.append("media_bytes")
+    if update_pages:
         quota.pages = pages
-        update_fields.extend(["media_bytes", "pages"])
+        update_fields.append("pages")
     quota.save(update_fields=update_fields)
     return quota.id
 

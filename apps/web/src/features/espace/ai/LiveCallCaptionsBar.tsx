@@ -264,7 +264,7 @@ export function LiveCallCaptionsBar({
 
   const sessionId = session?.sessionId
   const sessionState = session?.state
-  const sessionGeneration = session?.generation
+  const sessionGeneration = session?.sessionEpoch
   const sessionRosterCount = session?.rosterCount ?? 0
   const rosterGrewWhileActive =
     sessionState === 'active' && uniqueParticipants.length > sessionRosterCount
@@ -313,7 +313,7 @@ export function LiveCallCaptionsBar({
           }
           if (
             polled.state !== 'active' ||
-            (sessionGeneration !== undefined && polled.generation !== sessionGeneration)
+            (sessionGeneration !== undefined && polled.sessionEpoch !== sessionGeneration)
           ) {
             chunkAbortRef.current?.abort()
             chunkAbortRef.current = null
@@ -535,7 +535,7 @@ export function LiveCallCaptionsBar({
     session.callerConsentState === 'consented'
 
   const activeStreamSessionId = canStreamChunks && session !== null ? session.sessionId : null
-  const activeStreamGeneration = canStreamChunks && session !== null ? session.generation : null
+  const activeStreamGeneration = canStreamChunks && session !== null ? session.sessionEpoch : null
 
   const submitAudioChunk = useCallback(
     (payload: LiveCallAudioChunkPayload, sessionIdToSubmit: string, expectedGeneration: number) => {
@@ -551,7 +551,7 @@ export function LiveCallCaptionsBar({
         channelId,
         body: {
           sessionId: sessionIdToSubmit,
-          generation: expectedGeneration,
+          sessionEpoch: expectedGeneration,
           audioBase64: payload.audioBase64,
           contentType: payload.contentType ?? 'audio/ogg',
           ...(payload.filename === undefined ? {} : { filename: payload.filename }),
@@ -569,7 +569,7 @@ export function LiveCallCaptionsBar({
           if (
             current === null ||
             current.state !== 'active' ||
-            current.generation !== expectedGeneration
+            current.sessionEpoch !== expectedGeneration
           ) {
             return
           }
@@ -654,7 +654,7 @@ export function LiveCallCaptionsBar({
     ) {
       return
     }
-    const activeEpoch = session.generation
+    const activeEpoch = session.sessionEpoch
     return subscribeCaptionPackets((packet) => {
       if (
         packet.v !== 1 ||

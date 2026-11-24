@@ -907,6 +907,9 @@ def test_catalogue_publication_is_measured_against_the_contract_and_the_models()
         ("publishMonkeyPackage", [], True),
         ("publishmonkeyPackages", [], True),
         ("publishKeyXPackage", [], True),
+        ("createVipTierOffer", ["Workspace"], False),
+        ("createVipTierOffer", ["Catalog"], True),
+        ("createVipTierOfferPrice", ["Workspace"], True),
     ],
 )
 def test_catalogue_pack_classifier_distinguishes_key_packages_without_masking_catalogue_writes(

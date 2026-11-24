@@ -673,7 +673,6 @@ UPDATE_COLUMNS = (
     ("workspaces_workspacequota", "policy_ref"),
     ("workspaces_workspacequota", "seats"),
     ("workspaces_workspacequota", "media_bytes"),
-    ("workspaces_workspacequota", "pages"),
     ("workspaces_workspacequota", "updated_at"),
     # Moderation changes only mutable facts; invite codes and report evidence stay immutable.
     ("workspaces_workspacememberrestriction", "banned"),

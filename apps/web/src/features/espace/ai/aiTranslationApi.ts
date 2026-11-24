@@ -37,7 +37,7 @@ export interface LiveCallCaptionSessionView {
   readonly allConsented: boolean
   readonly callerConsentState: LiveCallParticipantConsentState
   readonly callerMemberAiConsent: boolean
-  readonly generation: number
+  readonly sessionEpoch: number
   readonly expiresAt?: string
 }
 
@@ -58,7 +58,7 @@ export interface LiveCallCaptionSessionUpdateBody {
 
 export interface LiveCallChunkTranscriptionBody {
   readonly sessionId: string
-  readonly generation: number
+  readonly sessionEpoch: number
   readonly audioBase64: string
   readonly contentType?: string
   readonly filename?: string

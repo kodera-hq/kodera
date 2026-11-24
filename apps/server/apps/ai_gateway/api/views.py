@@ -41,7 +41,7 @@ CALL_CAPTION_SESSION_FIELDS = {
 }
 CALL_CAPTION_CHUNK_FIELDS = {
     "sessionId",
-    "generation",
+    "sessionEpoch",
     "audioBase64",
     "contentType",
     "filename",
@@ -319,7 +319,7 @@ def call_captions_chunks(
         return http.body(
             request,
             CALL_CAPTION_CHUNK_FIELDS,
-            {"audioBase64", "sessionId", "generation"},
+            {"audioBase64", "sessionId", "sessionEpoch"},
             max_bytes=MAX_CALL_CHUNK_BODY_BYTES,
         )
 

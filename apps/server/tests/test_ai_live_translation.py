@@ -907,7 +907,7 @@ def test_live_call_captions_state_machine_all_party_consent_auto_pause_and_withd
                     channel_id=conf_ch,
                     body={
                         "sessionId": str(uuid4()),
-                        "generation": 1,
+                        "sessionEpoch": 1,
                         "audioBase64": chunk_b64,
                         "contentType": "audio/ogg",
                     },
@@ -1005,7 +1005,7 @@ def test_live_call_captions_state_machine_all_party_consent_auto_pause_and_withd
                 channel_id=harness.channel_id,
                 body={
                     "sessionId": started["sessionId"],
-                    "generation": started["generation"],
+                    "sessionEpoch": started["sessionEpoch"],
                     "audioBase64": chunk_b64,
                     "contentType": "audio/ogg",
                 },
@@ -1056,7 +1056,7 @@ def test_live_call_captions_state_machine_all_party_consent_auto_pause_and_withd
                 channel_id=harness.channel_id,
                 body={
                     "sessionId": activated["sessionId"],
-                    "generation": activated["generation"],
+                    "sessionEpoch": activated["sessionEpoch"],
                     "audioBase64": oversized_b64,
                     "contentType": "audio/ogg",
                 },
@@ -1073,7 +1073,7 @@ def test_live_call_captions_state_machine_all_party_consent_auto_pause_and_withd
             channel_id=harness.channel_id,
             body={
                 "sessionId": activated["sessionId"],
-                "generation": activated["generation"],
+                "sessionEpoch": activated["sessionEpoch"],
                 "audioBase64": chunk_b64,
                 "contentType": "audio/ogg",
                 "targetLanguage": "en",
@@ -1108,7 +1108,7 @@ def test_live_call_captions_state_machine_all_party_consent_auto_pause_and_withd
             channel_id=harness.channel_id,
             body={
                 "sessionId": activated["sessionId"],
-                "generation": activated["generation"],
+                "sessionEpoch": activated["sessionEpoch"],
                 "audioBase64": max_ogg_b64,
                 "contentType": "audio/ogg",
                 "targetLanguage": "en",
@@ -1162,7 +1162,7 @@ def test_live_call_captions_state_machine_all_party_consent_auto_pause_and_withd
                 channel_id=harness.channel_id,
                 body={
                     "sessionId": activated["sessionId"],
-                    "generation": activated["generation"],
+                    "sessionEpoch": activated["sessionEpoch"],
                     "audioBase64": chunk_b64,
                     "contentType": "audio/ogg",
                 },
@@ -1204,9 +1204,9 @@ def test_live_call_captions_state_machine_all_party_consent_auto_pause_and_withd
             request_id="req-carol-left",
         )["session"]
         assert resumed["state"] == "active"
-        assert resumed["generation"] == 2
+        assert resumed["sessionEpoch"] == 2
 
-        # Submitting a chunk with stale `generation=1` after pause/resume is fenced with 409!
+        # Submitting a chunk with stale `sessionEpoch=1` after pause/resume is fenced with 409!
         with pytest.raises(AiGatewayRefusalError) as gen_exc:
             call_captions.transcribe_live_call_chunk(
                 verified=harness.alice_token,
@@ -1214,7 +1214,7 @@ def test_live_call_captions_state_machine_all_party_consent_auto_pause_and_withd
                 channel_id=harness.channel_id,
                 body={
                     "sessionId": resumed["sessionId"],
-                    "generation": 1,
+                    "sessionEpoch": 1,
                     "audioBase64": chunk_b64,
                     "contentType": "audio/ogg",
                 },
@@ -1267,7 +1267,7 @@ def test_live_call_captions_state_machine_all_party_consent_auto_pause_and_withd
                 channel_id=harness.channel_id,
                 body={
                     "sessionId": withdrawn["sessionId"],
-                    "generation": withdrawn["generation"],
+                    "sessionEpoch": withdrawn["sessionEpoch"],
                     "audioBase64": chunk_b64,
                     "contentType": "audio/ogg",
                 },
@@ -1400,7 +1400,7 @@ def test_http_views_dispatch_and_reject_malformed_requests_without_db(
             data=json.dumps(
                 {
                     "sessionId": sess_json["sessionId"],
-                    "generation": sess_json["generation"],
+                    "sessionEpoch": sess_json["sessionEpoch"],
                     "audioBase64": base64.b64encode(WEBM_CHUNK).decode("ascii"),
                     "contentType": "audio/webm",
                 }
@@ -1664,7 +1664,7 @@ def test_authoritative_livekit_room_service_roster_verification_blocks_omission_
                 channel_id=harness.channel_id,
                 body={
                     "sessionId": str(uuid4()),
-                    "generation": 1,
+                    "sessionEpoch": 1,
                     "audioBase64": chunk_b64,
                     "contentType": "audio/ogg",
                 },
@@ -1827,7 +1827,7 @@ def test_authoritative_livekit_room_service_roster_verification_blocks_omission_
                 channel_id=harness.channel_id,
                 body={
                     "sessionId": started["sessionId"],
-                    "generation": started["generation"],
+                    "sessionEpoch": started["sessionEpoch"],
                     "audioBase64": chunk_b64,
                     "contentType": "audio/ogg",
                 },
@@ -1863,7 +1863,7 @@ def test_authoritative_livekit_room_service_roster_verification_blocks_omission_
             channel_id=harness.channel_id,
             body={
                 "sessionId": activated["sessionId"],
-                "generation": activated["generation"],
+                "sessionEpoch": activated["sessionEpoch"],
                 "audioBase64": chunk_b64,
                 "contentType": "audio/ogg",
                 "targetLanguage": "en",
@@ -1885,7 +1885,7 @@ def test_authoritative_livekit_room_service_roster_verification_blocks_omission_
                 channel_id=harness.channel_id,
                 body={
                     "sessionId": activated["sessionId"],
-                    "generation": activated["generation"],
+                    "sessionEpoch": activated["sessionEpoch"],
                     "audioBase64": chunk_b64,
                     "contentType": "audio/ogg",
                     "participantUserIds": [
@@ -1927,7 +1927,7 @@ def test_authoritative_livekit_room_service_roster_verification_blocks_omission_
                 channel_id=harness.channel_id,
                 body={
                     "sessionId": activated["sessionId"],
-                    "generation": activated["generation"],
+                    "sessionEpoch": activated["sessionEpoch"],
                     "audioBase64": chunk_b64,
                     "contentType": "audio/ogg",
                 },

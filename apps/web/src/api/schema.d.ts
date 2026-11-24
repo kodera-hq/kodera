@@ -5136,7 +5136,7 @@ export interface paths {
         put?: never;
         /**
          * Transcribe and translate a bounded live call audio chunk under all-party consent
-         * @description Verifies active 100% participant consent and matching session generation before and after provider execution, returning ephemeral source and translated subtitle text without database persistence. Return no Idempotency-Replayed header.
+         * @description Verifies active 100% participant consent and matching sessionEpoch before and after provider execution, returning ephemeral source and translated subtitle text without database persistence. Return no Idempotency-Replayed header.
          */
         post: operations["transcribeLiveCallChunk"];
         delete?: never;
@@ -14886,7 +14886,7 @@ export interface components {
          *       "allConsented": true,
          *       "callerConsentState": "consented",
          *       "callerMemberAiConsent": true,
-         *       "generation": 1,
+         *       "sessionEpoch": 1,
          *       "expiresAt": "2026-06-08T10:35:00Z"
          *     }
          */
@@ -14904,7 +14904,7 @@ export interface components {
             allConsented: boolean;
             callerConsentState: components["schemas"]["LiveCallParticipantConsentState"];
             callerMemberAiConsent: boolean;
-            generation: number;
+            sessionEpoch: number;
             /** Format: date-time */
             expiresAt?: string;
         };
@@ -14934,7 +14934,7 @@ export interface components {
         LiveCallChunkTranscriptionRequest: {
             /** Format: uuid */
             sessionId: string;
-            generation: number;
+            sessionEpoch: number;
             audioBase64: string;
             contentType?: string;
             filename?: string;

@@ -1004,7 +1004,7 @@ def _serialize_session(
         ),
         "callerConsentState": caller_row.state if caller_row is not None else "pending",
         "callerMemberAiConsent": caller_member_enabled,
-        "generation": int(session.generation),
+        "sessionEpoch": int(session.generation),
         "expiresAt": session.expires_at.isoformat(),
     }
 
@@ -1874,7 +1874,7 @@ def authorize_live_call_chunk(
     )
 
     requested_session_id = _parse_required_uuid(body.get("sessionId"), field_name="session_id")
-    requested_generation = _validate_required_generation(body.get("generation"))
+    requested_generation = _validate_required_generation(body.get("sessionEpoch"))
     audio_bytes, content_type, filename = _decode_and_validate_chunk_audio(body)
     raw_target = body.get("targetLanguage")
     explicit_target = validate_iso_target_language(raw_target) if raw_target is not None else None
@@ -2068,7 +2068,7 @@ def prepare_live_call_chunk(
         for_update=False,
     )
     requested_session_id = _parse_required_uuid(body.get("sessionId"), field_name="session_id")
-    requested_generation = _validate_required_generation(body.get("generation"))
+    requested_generation = _validate_required_generation(body.get("sessionEpoch"))
     _decode_and_validate_chunk_audio(body)
     raw_target = body.get("targetLanguage")
     if raw_target is not None:
@@ -2216,7 +2216,7 @@ def prepare_live_call_chunk(
         body={
             **dict(body),
             "sessionId": str(session.id),
-            "generation": expected_generation,
+            "sessionEpoch": expected_generation,
         },
         post_authoritative_roster=post_authoritative_roster,
         source_text=source_text,

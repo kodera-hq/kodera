@@ -118,7 +118,7 @@ describe('H3.2 consent-gated live call captions bar', () => {
         allConsented: false,
         callerConsentState: 'consented',
         callerMemberAiConsent: true,
-        generation: 1,
+        sessionEpoch: 1,
       })
 
     mockGrantMemberConsent.mockResolvedValueOnce(undefined)
@@ -164,7 +164,7 @@ describe('H3.2 consent-gated live call captions bar', () => {
       allConsented: true,
       callerConsentState: 'consented',
       callerMemberAiConsent: true,
-      generation: 1,
+      sessionEpoch: 1,
     })
 
     await user.selectOptions(screen.getByTestId('live-captions-language'), 'en')
@@ -229,7 +229,7 @@ describe('H3.2 consent-gated live call captions bar', () => {
         channelId: CHANNEL_ID,
         body: expect.objectContaining({
           sessionId: SESSION_ID,
-          generation: 1,
+          sessionEpoch: 1,
           targetLanguage: 'en',
         }),
       })
@@ -247,7 +247,7 @@ describe('H3.2 consent-gated live call captions bar', () => {
       allConsented: false,
       callerConsentState: 'consented',
       callerMemberAiConsent: true,
-      generation: 2,
+      sessionEpoch: 2,
     })
 
     rerender(
@@ -291,7 +291,7 @@ describe('H3.2 consent-gated live call captions bar', () => {
       allConsented: false,
       callerConsentState: 'withdrawn',
       callerMemberAiConsent: true,
-      generation: 3,
+      sessionEpoch: 3,
     })
 
     const withdrawBtn = screen.getByTestId('live-captions-withdraw-consent')
@@ -375,7 +375,7 @@ describe('H3.2 consent-gated live call captions bar', () => {
             allConsented: false,
             callerConsentState: 'consented',
             callerMemberAiConsent: true,
-            generation: 1,
+            sessionEpoch: 1,
           }
         }
         return {
@@ -390,7 +390,7 @@ describe('H3.2 consent-gated live call captions bar', () => {
           allConsented: true,
           callerConsentState: 'consented',
           callerMemberAiConsent: true,
-          generation: 1,
+          sessionEpoch: 1,
         }
       })
 
@@ -406,7 +406,7 @@ describe('H3.2 consent-gated live call captions bar', () => {
         allConsented: false,
         callerConsentState: 'consented',
         callerMemberAiConsent: true,
-        generation: 1,
+        sessionEpoch: 1,
       })
 
       let uploadedCount = 0
@@ -717,7 +717,7 @@ describe('H3.2 consent-gated live call captions bar', () => {
             allConsented: consentedUsers.size === 2,
             callerConsentState: 'consented',
             callerMemberAiConsent: true,
-            generation: 1,
+            sessionEpoch: 1,
           }
           serverSession = next
           return viewForCaller(caller)
@@ -736,7 +736,7 @@ describe('H3.2 consent-gated live call captions bar', () => {
             allConsented: consentedUsers.size === 2,
             callerConsentState: 'consented',
             callerMemberAiConsent: true,
-            generation: 1,
+            sessionEpoch: 1,
           }
           serverSession = next
           return viewForCaller(caller)
@@ -989,7 +989,7 @@ describe('H3.2 consent-gated live call captions bar', () => {
         allConsented: true,
         callerConsentState: 'consented',
         callerMemberAiConsent: true,
-        generation: 1,
+        sessionEpoch: 1,
       }
 
       const mockFetchSession = vi.mocked(aiApi.fetchLiveCallCaptionSession)
@@ -1129,7 +1129,7 @@ describe('H3.2 consent-gated live call captions bar', () => {
       allConsented: true,
       callerConsentState: 'consented',
       callerMemberAiConsent: true,
-      generation: 3,
+      sessionEpoch: 3,
     }
     vi.mocked(aiApi.fetchLiveCallCaptionSession).mockResolvedValue(activeSession)
     vi.mocked(aiApi.postLiveCallCaptionSession).mockResolvedValue(activeSession)
