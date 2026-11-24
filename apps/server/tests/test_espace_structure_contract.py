@@ -75,7 +75,10 @@ def assert_contract(contract, authz, taxonomy):
         op = contract["paths"].get(path, {}).get(method)
         assert op is not None and op["operationId"] == operation_id, "operations"
         assert op["x-kodera-scope"] == scope, "scopes"
-        assert op["x-kodera-authz"]["roles"] == ADMINISTERING, "roles"
+        expected_roles = (
+            ADMINISTERING + ["org_member"] if operation_id == "createChannel" else ADMINISTERING
+        )
+        assert op["x-kodera-authz"]["roles"] == expected_roles, "roles"
         responses = op["responses"]
         assert {"400", "401", "403", "404", "429", "500"} <= set(responses), "responses"
         if method == "post":
@@ -154,7 +157,7 @@ def assert_contract(contract, authz, taxonomy):
     assert row is not None, "authz-row"
     cells = [cell.strip() for cell in row.strip("|").split("|")]
     assert cells[1:3] == [AUTHZ_CELL] * 2, "authz-row"
-    assert cells[3:5] == ["read own"] * 2, "authz-row"
+    assert cells[3:5] == ["read own", "read own, create own"], "authz-row"
     assert cells[5:] == ["—"] * 4, "authz-row"
     assert "is not granted by this row yet" not in authz, "authz-note"
 

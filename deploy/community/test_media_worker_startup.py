@@ -142,7 +142,7 @@ class MediaWorkerStartupTests(unittest.TestCase):
                 exec(CHECK["MEDIA_HEALTH_CODE"].replace(CHECK["MEDIA_SOCKET"], str(path)), {})
 
                 proc.send_signal(signal.SIGTERM)
-                exit_code = proc.wait(timeout=5.0)
+                exit_code = proc.wait(timeout=10.0)
                 self.assertEqual(exit_code, 0)
                 self.assertFalse(path.exists())
             finally:

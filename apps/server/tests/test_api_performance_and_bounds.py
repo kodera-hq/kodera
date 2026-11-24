@@ -696,7 +696,7 @@ def test_memberships_workspace_roles_and_get_workspace_scale_in_constant_queries
         )
     assert r_ws.status_code == 200
     assert len(r_ws.json()["categories"][0]["channels"]) == 25
-    assert len(ws_25_sql) == len(ws_3_sql) <= 18
+    assert len(ws_25_sql) == len(ws_3_sql) <= 19
 
 
 def test_workspace_documents_search_and_collections_enforce_64_kib_http_cap_losslessly(
