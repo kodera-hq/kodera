@@ -973,6 +973,9 @@ WARM_POOL_TABLE = "workspaces_warmpoolallocation"
 TEMPLATE_APP_TABLE = "workspaces_workspacetemplateapplication"
 AI_POLICY_TABLE = "workspaces_workspaceaipolicy"
 AI_CONSENT_TABLE = "workspaces_memberaiconsent"
+CUSTOM_EMOJI_TABLE = "workspaces_workspacecustomemoji"
+SCHEDULED_MSG_TABLE = "workspaces_scheduledmessage"
+MEMBER_PREF_TABLE = "workspaces_memberworkspacepreference"
 NOTICE_TABLE = "workspaces_channelnotice"
 ESPACE_OBJECTS = {
     ("column", "workspaces_channel", "room_state"),
@@ -1022,6 +1025,12 @@ def without_warm_pool(objects):
         ("function", "workspace_ai_erasure_hook", ""),
         ("function", "workspace_ai_call_captions_erasure_hook", ""),
         ("function", "account_ai_consent_erasure_hook", ""),
+        ("trigger", "orgs_privacyerasure", "aa_06_workspace_experience_erasure"),
+        ("trigger", "orgs_accounterasure", "aa_06_account_experience_erasure"),
+        ("function", "workspace_experience_scope_guard", ""),
+        ("function", "workspace_experience_cutoff_guard", ""),
+        ("function", "workspace_experience_erasure_hook", ""),
+        ("function", "account_experience_erasure_hook", ""),
     }
     return {
         key: value
@@ -1032,6 +1041,9 @@ def without_warm_pool(objects):
             TEMPLATE_APP_TABLE,
             AI_POLICY_TABLE,
             AI_CONSENT_TABLE,
+            CUSTOM_EMOJI_TABLE,
+            SCHEDULED_MSG_TABLE,
+            MEMBER_PREF_TABLE,
         }
         and key not in template_app_shared
     }

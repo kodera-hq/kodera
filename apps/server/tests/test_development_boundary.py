@@ -387,6 +387,9 @@ def assert_image_boundary(ignore):
         "!apps/workspaces/moderation_policy.py",
         "!apps/workspaces/moderation_wire.py",
         "!apps/workspaces/security_posture.py",
+        "!apps/workspaces/custom_emojis.py",
+        "!apps/workspaces/experience.py",
+        "!apps/workspaces/api/experience.py",
         "!apps/workspaces/api/iam.py",
         "!apps/workspaces/api/moderation.py",
         "!apps/workspaces/api/moderation_urls.py",
@@ -696,6 +699,10 @@ OPERATOR_MODULES = (
     "apps/orgs/restore_rehearsal.py",
     "apps/orgs/management/commands/rehearse_restore_guards.py",
     "apps/billing/management/commands/reconcile_finops_attribution.py",
+    "apps/workspaces/scheduled_dispatcher.py",
+    "apps/workspaces/management/commands/dispatch_scheduled_messages.py",
+    "apps/notifications/reminder_dispatcher.py",
+    "apps/notifications/management/commands/dispatch_reminders.py",
 )
 
 

@@ -249,3 +249,38 @@ def workspace_pages_used(*, workspace_id: UUID) -> int:
     if isinstance(usage, dict) and type(usage.get("pages")) is int:
         return int(usage["pages"])
     return 0
+
+
+def undeleted_text_channel_exists(*, workspace_id: UUID, channel_id: UUID) -> bool:
+    """Whether an active or archived text channel exists in the workspace."""
+    return (
+        Channel.objects.filter(id=channel_id, workspace_id=workspace_id, kind="text")
+        .exclude(lifecycle__in=("deletion_pending", "deleted"))
+        .exists()
+    )
+
+
+def may_view_channel_for_reminder(
+    *,
+    channel_id: UUID,
+    organisation_id: UUID,
+    membership_id: UUID,
+    authority_revision: int,
+) -> bool | None:
+    """Evaluate `may_view` for a channel without leaking `Channel` across app boundaries.
+
+    Returns `None` if the channel or workspace policy cannot be resolved.
+    """
+    from .channel_access import may_view, resolve
+    from .structure import WorkspaceUnavailableError
+
+    try:
+        access = resolve(channel_id)
+    except (Channel.DoesNotExist, WorkspaceUnavailableError):
+        return None
+    return may_view(
+        access,
+        organisation_id=organisation_id,
+        membership_id=membership_id,
+        authority_revision=authority_revision,
+    )

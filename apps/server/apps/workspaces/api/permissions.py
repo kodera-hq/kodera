@@ -31,3 +31,45 @@ GET_WORKSPACE_SECURITY_POSTURE = Operation(
 REMEDIATE_WORKSPACE_SECURITY_POSTURE = Operation(
     method="POST", operation_id="remediateWorkspaceSecurityPosture", scope="workspace:act"
 )
+LIST_WORKSPACE_CUSTOM_EMOJIS = Operation(
+    method="GET", operation_id="listWorkspaceCustomEmojis", scope="workspace:read"
+)
+CREATE_WORKSPACE_CUSTOM_EMOJI = Operation(
+    method="POST", operation_id="createWorkspaceCustomEmoji", scope="workspace:create"
+)
+DELETE_WORKSPACE_CUSTOM_EMOJI = Operation(
+    method="DELETE", operation_id="deleteWorkspaceCustomEmoji", scope="workspace:delete"
+)
+GET_WORKSPACE_CUSTOM_EMOJI_BLOB = Operation(
+    method="GET", operation_id="getWorkspaceCustomEmojiBlob", scope="workspace:read"
+)
+LIST_SCHEDULED_MESSAGES = Operation(
+    method="GET", operation_id="listScheduledMessages", scope="workspace:read"
+)
+CREATE_SCHEDULED_MESSAGE = Operation(
+    method="POST", operation_id="createScheduledMessage", scope="workspace:create"
+)
+UPDATE_SCHEDULED_MESSAGE = Operation(
+    method="PATCH", operation_id="updateScheduledMessage", scope="workspace:update"
+)
+CANCEL_SCHEDULED_MESSAGE = Operation(
+    method="DELETE", operation_id="cancelScheduledMessage", scope="workspace:delete"
+)
+LIST_PERSONAL_REMINDERS = Operation(
+    method="GET", operation_id="listPersonalReminders", scope="workspace:read"
+)
+CREATE_PERSONAL_REMINDER = Operation(
+    method="POST", operation_id="createPersonalReminder", scope="workspace:create"
+)
+UPDATE_PERSONAL_REMINDER = Operation(
+    method="PATCH", operation_id="updatePersonalReminder", scope="workspace:update"
+)
+DELETE_PERSONAL_REMINDER = Operation(
+    method="DELETE", operation_id="deletePersonalReminder", scope="workspace:delete"
+)
+GET_MY_WORKSPACE_PREFERENCES = Operation(
+    method="GET", operation_id="getMyWorkspacePreferences", scope="workspace:read"
+)
+UPDATE_MY_WORKSPACE_PREFERENCES = Operation(
+    method="PATCH", operation_id="updateMyWorkspacePreferences", scope="workspace:update"
+)

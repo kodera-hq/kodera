@@ -27,6 +27,7 @@ import { useDraftSlice, type DraftChannel } from './draftChannel'
 import { replaceShortcodes } from './emoji'
 import { EmojiPalette } from './EmojiPalette'
 import type { ChannelDraft, RoomTarget } from './EspaceDraftProvider'
+import { ScheduledMessagesBanner, SendLaterPopover } from './SendLaterPopover'
 import {
   composing,
   nameOf,
@@ -289,9 +290,11 @@ function MessageComposerView({
   const { t, i18n } = useTranslation()
   const locale = i18n.resolvedLanguage === 'en' ? 'en' : 'fr'
   const demoCopy = demoMessages[locale]
+  const organisationId = useMessagingOrganisation()
   const [pollError, setPollError] = useState<string | null>(null)
   const roomBoundary = store.getRoomBoundary?.(roomId)
   const plaintextPermitted = roomBoundary === undefined || permitsPlaintext(roomBoundary)
+  const resolvedScope = resolveAttachmentScope(roomId, store.getSnapshot().channels)
   const composerBox = useRef<HTMLDivElement>(null)
   const text = useDraftSlice(draft, textOf)
   const replyTo = useDraftSlice(draft, replyOf)
@@ -486,6 +489,14 @@ function MessageComposerView({
             {demoCopy.composer}
           </p>
         ) : null}
+        {editingEventId === null ? (
+          <ScheduledMessagesBanner
+            organisationId={organisationId}
+            channelId={resolvedScope.channelId}
+            roomId={roomId}
+            plaintextPermitted={plaintextPermitted}
+          />
+        ) : null}
         <div
           ref={composerBox}
           className={cx(
@@ -579,6 +590,23 @@ function MessageComposerView({
                   className="ml-auto"
                 />
               </>
+            }
+            afterTrailing={
+              editingEventId === null ? (
+                <SendLaterPopover
+                  organisationId={organisationId}
+                  channelId={resolvedScope.channelId}
+                  roomId={roomId}
+                  plaintextPermitted={plaintextPermitted}
+                  disabled={navigationUnsettled || attachmentStaged}
+                  draftText={transformOutsideCode(composerText.trim(), replaceShortcodes)}
+                  anchorRef={composerBox}
+                  onScheduled={() => {
+                    store.setTyping?.(roomId, false)
+                    draft.update({ replyTo: null, text: '' })
+                  }}
+                />
+              ) : null
             }
             {...(narrow
               ? {}

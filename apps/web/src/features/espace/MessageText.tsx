@@ -6,6 +6,8 @@ import { InlineMarkdown, MarkdownText } from '../messaging/MarkdownText'
 import { Fragment, useId, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { cx } from '../../ui/cx'
+import { useMessagingOrganisation } from '../messaging/organisationContext'
+import { useCustomEmojis } from './customEmojiStore'
 import { withGlyphs } from './KoderaEmoji'
 import { LINK_TEXT } from '../../ui/linkText'
 import { hasMentionBoundaryAfter } from './mentions'
@@ -191,14 +193,18 @@ function MentionedRun({
   text,
   members,
   onMentionClick,
+  organisationId,
+  customShortcodes,
 }: {
   text: string
   members: readonly MentionMember[] | undefined
   onMentionClick: MentionClick | undefined
+  organisationId: string | null
+  customShortcodes: ReadonlySet<string>
 }) {
   const segments = mentionSegments(text, members)
   if (segments.length === 1 && !('userId' in segments[0]!) && !('room' in segments[0]!))
-    return <>{withGlyphs(text)}</>
+    return <>{withGlyphs(text, organisationId, customShortcodes)}</>
   return (
     <>
       {segments.map((segment, index) =>
@@ -212,12 +218,16 @@ function MentionedRun({
             onMentionClick={onMentionClick}
           />
         ) : (
-          <Fragment key={index}>{withGlyphs(segment.text)}</Fragment>
+          <Fragment key={index}>
+            {withGlyphs(segment.text, organisationId, customShortcodes)}
+          </Fragment>
         )
       )}
     </>
   )
 }
+
+const HAS_NON_KODERA_SHORTCODE = /:(?!kodera_)[a-z0-9_]{2,32}:/u
 
 export function MessageText({
   body,
@@ -231,6 +241,10 @@ export function MessageText({
   onMentionClick?: MentionClick | undefined
 }) {
   const { t } = useTranslation()
+  const organisationId = useMessagingOrganisation()
+  const { shortcodeSet } = useCustomEmojis(organisationId, {
+    autoFetch: HAS_NON_KODERA_SHORTCODE.test(body),
+  })
   const newTabId = useId()
   const hasExternalUrl = /https?:\/\/(?!matrix\.to\/#\/(?:@|%40))/iu.test(body)
   const nameOf = (userId: string) => members?.find((member) => member.userId === userId)?.name
@@ -263,7 +277,15 @@ export function MessageText({
   const renderPlainRun = (run: string) => {
     const segments = linkSegments(run)
     if (!segments.some((segment) => 'href' in segment))
-      return <MentionedRun text={run} members={members} onMentionClick={onMentionClick} />
+      return (
+        <MentionedRun
+          text={run}
+          members={members}
+          onMentionClick={onMentionClick}
+          organisationId={organisationId}
+          customShortcodes={shortcodeSet}
+        />
+      )
     return (
       <>
         {segments.map((segment, index) =>
@@ -275,6 +297,8 @@ export function MessageText({
               text={segment.text}
               members={members}
               onMentionClick={onMentionClick}
+              organisationId={organisationId}
+              customShortcodes={shortcodeSet}
             />
           )
         )}

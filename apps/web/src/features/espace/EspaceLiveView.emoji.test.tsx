@@ -344,8 +344,8 @@ describe('« Insérer un émoji »', () => {
     await user.click(screen.getByRole('button', { name: 'Insérer un émoji' }))
     const palette = screen.getByRole('dialog', { name: 'Émojis' })
     const cells = within(palette).getAllByRole('button')
-    // 32 Unicode emoji, then Kodera's own 8.
-    expect(cells).toHaveLength(40)
+    // 32 Unicode emoji, then Kodera's own 14.
+    expect(cells).toHaveLength(46)
     expect(cells.slice(0, 8).map((cell) => cell.textContent)).toEqual([
       '👍',
       '❤️',
@@ -396,9 +396,9 @@ describe('« Insérer un émoji »', () => {
     // The first cell holds: no wrap past either end.
     expect(cells[0]).toHaveFocus()
     await user.keyboard('{End}')
-    expect(cells[39]).toHaveFocus()
+    expect(cells[45]).toHaveFocus()
     await user.keyboard('{ArrowDown}{ArrowRight}')
-    expect(cells[39]).toHaveFocus()
+    expect(cells[45]).toHaveFocus()
     await user.keyboard('{Home}')
     expect(cells[0]).toHaveFocus()
     expect(cells.filter((cell) => cell.tabIndex === 0)).toEqual([cells[0]])

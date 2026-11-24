@@ -28,7 +28,9 @@ import { HEADER_FACES, type RoomSummary } from './matrix/store'
 import { MemberAvatar } from './MemberAvatar'
 import { MessageSearch } from './MessageSearch'
 import { PinnedMessages } from './PinnedMessages'
+import { RemindersPanel } from './RemindersPanel'
 import { uiModeCopy } from './uiModePreference'
+import { useMessagingOrganisation } from '../messaging/organisationContext'
 
 export interface EspaceChannelHeaderProps {
   org: string
@@ -100,6 +102,7 @@ export function EspaceChannelHeader({
   onChooseAudioRoom,
 }: EspaceChannelHeaderProps) {
   const { t, i18n } = useTranslation()
+  const organisationId = useMessagingOrganisation()
   const protectionCopy = confidentialMessages[i18n.resolvedLanguage === 'en' ? 'en' : 'fr']
   const modeCopy = uiModeCopy(i18n.resolvedLanguage)
 
@@ -282,6 +285,11 @@ export function EspaceChannelHeader({
           {searchPermitted ? (
             <MessageSearch store={activeStore} roomId={activeRoomId} onShow={onShowMessage} />
           ) : null}
+          <RemindersPanel
+            organisationId={organisationId}
+            plaintextPermitted={searchPermitted}
+            onShowMessage={onShowMessage}
+          />
           {<PinnedMessages store={activeStore} roomId={activeRoomId} onShow={onShowMessage} />}
         </>
       )}

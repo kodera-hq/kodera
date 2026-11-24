@@ -223,6 +223,8 @@ export interface AudioDockProps {
   visualizer?: ReactNode
   /** Compact procedural soundboard trigger/popover in `studio` layout. */
   soundboard?: ReactNode
+  /** Optional waiting-room ambient audio toggle (`aria-pressed`), auto-ducked on speech. */
+  ambience?: AudioDockMediaToggle | undefined
   /**
    * The call's audio settings: a control the caller draws (a popover's trigger), set in the
    * dock's top row beside the call's name, before `onOpenCall`'s button.
@@ -344,6 +346,7 @@ export function AudioDock({
   meterRef,
   visualizer,
   soundboard,
+  ambience,
   settings,
   participants,
   participantsLabel,
@@ -613,9 +616,16 @@ export function AudioDock({
       ) : null}
       <div
         className={
-          layout === 'sidebar' && companionChat !== undefined && hasLabel(companionChat.label)
-            ? 'grid grid-cols-4 gap-1'
-            : CONTROLS[layout]
+          layout === 'sidebar' &&
+          companionChat !== undefined &&
+          hasLabel(companionChat.label) &&
+          ambience !== undefined
+            ? 'grid grid-cols-5 gap-1'
+            : layout === 'sidebar' &&
+                ((companionChat !== undefined && hasLabel(companionChat.label)) ||
+                  ambience !== undefined)
+              ? 'grid grid-cols-4 gap-1'
+              : CONTROLS[layout]
         }
       >
         {media !== undefined ? (
@@ -701,6 +711,17 @@ export function AudioDock({
           onClick={onToggleDeafen}
         />
         {layout === 'studio' && soundboard !== undefined ? soundboard : null}
+        {ambience !== undefined && hasLabel(ambience.label) ? (
+          <Control
+            layout={layout}
+            label={ambience.label}
+            glyph="ambience"
+            tone={ambience.on ? 'pressed' : 'idle'}
+            pressed={ambience.on}
+            busy={ambience.busy}
+            onClick={ambience.onToggle}
+          />
+        ) : null}
         {companionChat !== undefined && hasLabel(companionChat.label) ? (
           <Tooltip content={companionChat.label} names>
             <button

@@ -59,6 +59,7 @@ import { CallDockRegion, FloatingCallPill } from './audio/FloatingCallPill'
 import { KoderaVoiceVisualizer } from './audio/KoderaVoiceVisualizer'
 import { bindPushToTalk } from './audio/pushToTalk'
 import { Rejoiner, REJOIN_ATTEMPTS, type RejoinSnapshot } from './audio/rejoin'
+import { useWaitingRoomAmbience } from './audio/useWaitingRoomAmbience'
 import type { StagePresentation } from './video/VideoStage'
 import { audioPreviewMessages } from './audio/previewMessages'
 import { AudioSettings, type AudioSettingsCall } from './AudioSettings'
@@ -661,6 +662,21 @@ function VoiceCallDockView({
 
   const memory = useEspaceDraftMemory()
   const organisationId = useMessagingOrganisation()
+  const remotePeersCount = useMemo(
+    () => people.filter((id) => id !== viewerId).length,
+    [people, viewerId]
+  )
+  const anySpeaking = dockStatus === 'connected' && callSnapshot.speakers.length > 0
+  const { toggleControl: ambienceToggle } = useWaitingRoomAmbience({
+    organisationId,
+    callLive,
+    roomId: currentCallRoomId,
+    remotePeersCount,
+    deafened: callSnapshot.deafened,
+    listenOnly: callSnapshot.listenOnly === true,
+    speaking: anySpeaking,
+    locale,
+  })
   const companionDraftScope = useMemo<CompanionDraftScope>(
     () => ({
       memory,
@@ -1252,6 +1268,7 @@ function VoiceCallDockView({
                     : studioMessages[locale].participants
                 }
                 {...(media === undefined ? {} : { media })}
+                {...(ambienceToggle === undefined ? {} : { ambience: ambienceToggle })}
                 companionChat={companionChat}
                 companionChatButtonRef={chatButtonRef}
                 cameraUnavailable={studioMessages[locale].cameraGap}

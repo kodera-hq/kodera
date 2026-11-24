@@ -155,6 +155,7 @@ it('opens the personal settings by default with only personal sections and no ad
     'Notifications',
     'Confidentialité & RGPD',
     'Raccourcis',
+    'Kodera Labs',
   ])
   await waitFor(() => expect(iam.roles).toBeDefined())
   expect(screen.queryByRole('button', { name: 'Administration de l’espace' })).toBeNull()

@@ -12,6 +12,7 @@ import {
 import { useTranslation } from 'react-i18next'
 import { Button } from '../../ui/Button/Button'
 import { cx } from '../../ui/cx'
+import { formatBytes } from '../../ui/formatBytes'
 import { ActionIcon, type ActionIconName } from '../../ui/icons/ActionIcons'
 import { CloseIcon } from '../../ui/icons/Close'
 import { Popover } from '../../ui/Popover/Popover'
@@ -93,27 +94,35 @@ function UploadTray({
       <p id={hintId} className="text-sm text-c-ink-2">
         {copy.uploadsHint}
       </p>
-      <ul>
+      <ul className="flex flex-col gap-1">
         {files.map((file) => (
           <li key={file.key} className="flex items-center gap-2 py-1 text-sm text-c-ink">
-            <span className="min-w-0 flex-1 break-all">
-              {file.filename} ({Math.max(1, Math.ceil(file.sizeBytes / 1024))} KB)
-            </span>
-            <span
-              className={
-                file.status === 'refused' || file.status === 'failed'
-                  ? 'text-c-bad-ink'
-                  : 'text-c-ink-2'
-              }
-            >
-              {file.status === 'uploading'
-                ? copy.uploading
-                : file.status === 'ready'
-                  ? copy.uploaded
-                  : file.status === 'failed'
-                    ? t('console.workspace.composer.upload-failed')
-                    : copy.refused[file.reason]}
-            </span>
+            {file.previewUrl !== undefined ? (
+              <img
+                src={file.previewUrl}
+                alt={file.filename}
+                data-testid="composer-staged-image-preview"
+                className="h-10 w-10 shrink-0 rounded-md border border-c-border object-cover"
+              />
+            ) : null}
+            <div className="flex min-w-0 flex-1 items-center gap-2">
+              <span className="max-w-[200px] truncate font-medium">{file.filename}</span>
+              <span
+                className={
+                  file.status === 'refused' || file.status === 'failed'
+                    ? 'text-xs text-c-bad-ink'
+                    : 'shrink-0 text-xs text-c-ink-2'
+                }
+              >
+                {file.status === 'uploading'
+                  ? copy.uploading
+                  : file.status === 'ready'
+                    ? formatBytes(file.sizeBytes, i18n.resolvedLanguage)
+                    : file.status === 'failed'
+                      ? t('console.workspace.composer.upload-failed')
+                      : copy.refused[file.reason]}
+              </span>
+            </div>
             {file.status === 'failed' ? (
               <IconTool
                 icon="retry"
@@ -280,6 +289,7 @@ export function RichComposerInput({
   uploads,
   leadingTools,
   trailing,
+  afterTrailing,
   ...props
 }: MentionInputProps & {
   onStagingChange: (staged: boolean) => void
@@ -291,6 +301,8 @@ export function RichComposerInput({
   leadingTools?: ReactNode
   /** The caller's own icons at the end of the bottom bar: mention, emoji, send. */
   trailing?: ReactNode
+  /** Optional split-action controls rendered immediately after the primary send cluster. */
+  afterTrailing?: ReactNode
 }) {
   const surface = useRef<HTMLDivElement>(null)
   const { t, i18n } = useTranslation()
@@ -585,6 +597,9 @@ export function RichComposerInput({
         {leadingTools}
         {trailing === undefined ? null : (
           <div className="ml-auto flex items-center gap-1">{trailing}</div>
+        )}
+        {afterTrailing === undefined || afterTrailing === null ? null : (
+          <div className="flex items-center">{afterTrailing}</div>
         )}
       </div>
       {choices.length ? (

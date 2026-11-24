@@ -43,6 +43,8 @@ COMMANDS = [
     "erase_core_workspace",
     "manage_statutory_retention",
     "dispatch_push",
+    "dispatch_reminders",
+    "dispatch_scheduled_messages",
     "dispatch_extensions",
     "dispatch_extension_coexistence",
     "purge_extension_payloads",

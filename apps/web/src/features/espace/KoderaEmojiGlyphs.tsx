@@ -87,6 +87,127 @@ export const GLYPHS: Record<KoderaEmojiName, () => ReactElement> = {
         strokeLinecap="round"
       />
     ),
+  kodera_rocket: () =>
+    frame([
+      <path
+        key="body"
+        d="M14.5 4.5c3-.8 5 .2 5 5-.8 3-3.5 5.8-6.5 7l-3.5-3.5c1.2-3 4-5.7 5-8.5z"
+        fill="currentColor"
+        opacity="0.25"
+      />,
+      <path
+        key="line"
+        d="M14.5 4.5c3-.8 5 .2 5 5-.8 3-3.5 5.8-6.5 7l-3.5-3.5c1.2-3 4-5.7 5-8.5zM9.5 13l-3 1 1 3 3-1M6 18.5c-1.2 1.2-2.5 1.5-2.5 1.5s.3-1.3 1.5-2.5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />,
+      <circle key="win" cx="15" cy="9" r="1.5" fill="currentColor" />,
+    ]),
+  kodera_fire: () =>
+    frame([
+      <path
+        key="outer"
+        d="M12 3c2.5 3.2 5.5 5.6 5.5 10a5.5 5.5 0 0 1-11 0c0-2.6 1.4-4.8 3-6.4.3 1.7 1.2 2.7 2.5 3-.4-2.2 0-4.4 0-6.6z"
+        fill="currentColor"
+        opacity="0.3"
+      />,
+      <path
+        key="inner"
+        d="M12 3c2.5 3.2 5.5 5.6 5.5 10a5.5 5.5 0 0 1-11 0c0-2.6 1.4-4.8 3-6.4.3 1.7 1.2 2.7 2.5 3-.4-2.2 0-4.4 0-6.6z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />,
+      <path
+        key="core"
+        d="M12 12.5c1.2 1 2 2 2 3.3a2 2 0 0 1-4 0c0-1.3.8-2.3 2-3.3z"
+        fill="currentColor"
+      />,
+    ]),
+  kodera_shield: () =>
+    frame([
+      <path
+        key="fill"
+        d="M12 3 5 6v5.5C5 16.2 8 19.8 12 21c4-1.2 7-4.8 7-9.5V6l-7-3z"
+        fill="currentColor"
+        opacity="0.2"
+      />,
+      <path
+        key="border"
+        d="M12 3 5 6v5.5C5 16.2 8 19.8 12 21c4-1.2 7-4.8 7-9.5V6l-7-3zm-2.5 9 1.8 1.8 3.5-3.6"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />,
+    ]),
+  kodera_party: () =>
+    frame([
+      <path
+        key="cone"
+        d="M4 20 9 7l8 8-13 5z"
+        fill="currentColor"
+        opacity="0.25"
+      />,
+      <path
+        key="lines"
+        d="M4 20 9 7l8 8-13 5zm9.5-14.5 1.5-1.5M18 8l2-.5M15 11l1.5 1M12 4v2"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />,
+    ]),
+  kodera_eyes: () =>
+    frame([
+      <ellipse
+        key="l"
+        cx="8"
+        cy="12"
+        rx="3.5"
+        ry="5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+      />,
+      <ellipse
+        key="r"
+        cx="16"
+        cy="12"
+        rx="3.5"
+        ry="5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+      />,
+      <circle key="pl" cx="7.2" cy="12" r="1.6" fill="currentColor" />,
+      <circle key="pr" cx="15.2" cy="12" r="1.6" fill="currentColor" />,
+    ]),
+  kodera_bolt: () =>
+    frame([
+      <path
+        key="fill"
+        d="M13 2 5 13h6l-1 9 9-11h-6l0-9z"
+        fill="currentColor"
+        opacity="0.25"
+      />,
+      <path
+        key="stroke"
+        d="M13 2 5 13h6l-1 9 9-11h-6l0-9z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />,
+    ]),
 }
 
 export default function KoderaEmojiGlyph({ name }: { name: KoderaEmojiName }) {

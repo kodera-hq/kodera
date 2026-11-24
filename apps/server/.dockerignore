@@ -320,6 +320,9 @@ config/settings/deploy_worker.py
 !apps/workspaces/moderation_policy.py
 !apps/workspaces/moderation_wire.py
 !apps/workspaces/security_posture.py
+!apps/workspaces/custom_emojis.py
+!apps/workspaces/experience.py
+!apps/workspaces/api/experience.py
 !apps/workspaces/api/iam.py
 !apps/workspaces/api/moderation.py
 !apps/workspaces/api/moderation_urls.py

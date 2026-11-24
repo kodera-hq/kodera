@@ -9,6 +9,7 @@ export const PERSONAL_SECTIONS = [
   'notifications',
   'privacy',
   'shortcuts',
+  'labs',
 ] as const
 
 export const ADMIN_SECTIONS = [
