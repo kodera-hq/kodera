@@ -32,7 +32,7 @@
   "console.security.settings.server-backup-discard": "Supprimer la sauvegarde serveur",
   "console.security.settings.server-backup-discarded": "Sauvegarde serveur supprimée. Les prochaines publications passeront à l’époque {{epoch}}.",
   "console.security.settings.server-backup-publish": "Publier la sauvegarde chiffrée sur le serveur",
-  "console.security.settings.server-backup-published": "Archive KVKB1 opaque publiée sur le serveur à l’époque {{epoch}}.",
+  "console.security.settings.server-backup-published": "Archive de sauvegarde chiffrée publiée sur le serveur à l’époque {{epoch}}.",
   "console.security.settings.server-backup-restore": "Restaurer depuis la sauvegarde serveur",
   "console.security.settings.start": "Ouvrir une session de sécurité locale",
   "console.security.settings.status": "État : vérification locale et archives chiffrées conservées par vos soins. Le stockage serveur des sauvegardes de clés et la signature croisée durable du compte ne sont pas disponibles.",

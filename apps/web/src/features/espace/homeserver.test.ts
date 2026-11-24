@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   channelRoomAlias,
   HomeserverUnresolved,
+  homeserverSlugFor,
   isMatrixDomain,
   isUnderMatrixDomain,
   isWithinServerName,
@@ -297,6 +298,37 @@ describe("an organisation's server name", () => {
     expect(serverNameOf(`sub-1:${SERVER}`)).toBeUndefined()
     expect(serverNameOf(`@:${SERVER}`)).toBeUndefined()
     expect(serverNameOf('@sub-1')).toBeUndefined()
+  })
+
+  it('routes shared-realm PME workspaces to the shared realm homeserver slug', () => {
+    expect(
+      homeserverSlugFor({
+        tenantSlug: 'atelier-martin',
+        sharedRealm: true,
+        organisationRealm: 'community',
+      })
+    ).toBe('community')
+    expect(
+      homeserverSlugFor({
+        tenantSlug: 'atelier-martin',
+        sharedRealm: false,
+        organisationRealm: 'atelier-martin',
+      })
+    ).toBe('atelier-martin')
+    expect(
+      homeserverSlugFor({
+        tenantSlug: undefined,
+        sharedRealm: true,
+        organisationRealm: 'community',
+      })
+    ).toBeUndefined()
+    expect(
+      homeserverSlugFor({
+        tenantSlug: 'atelier-martin',
+        sharedRealm: true,
+        organisationRealm: null,
+      })
+    ).toBeUndefined()
   })
 })
 

@@ -158,8 +158,8 @@ class BoostQuote:
 @dataclass(frozen=True, slots=True)
 class EffectiveWorkspaceQuota:
     policy_ref: str
-    seats: int
-    storage_bytes: int
+    seats: int | None
+    storage_bytes: int | None
     active_boost_count: int
 
 
@@ -456,8 +456,8 @@ class BoostGrantSummary:
 def compute_effective_workspace_quota(
     *,
     base_policy_ref: str,
-    base_seats: int,
-    base_storage_bytes: int,
+    base_seats: int | None,
+    base_storage_bytes: int | None,
     grants: Sequence[BoostGrantSummary],
     now: datetime,
 ) -> EffectiveWorkspaceQuota:
@@ -465,8 +465,16 @@ def compute_effective_workspace_quota(
     active_grants = [
         g for g in grants if g.state == "active" and (g.expires_at is None or g.expires_at > now)
     ]
-    total_seats = max(0, base_seats) + sum(g.seats_delta for g in active_grants)
-    total_storage = max(0, base_storage_bytes) + sum(g.storage_bytes_delta for g in active_grants)
+    total_seats = (
+        None
+        if base_seats is None
+        else max(0, base_seats) + sum(g.seats_delta for g in active_grants)
+    )
+    total_storage = (
+        None
+        if base_storage_bytes is None
+        else max(0, base_storage_bytes) + sum(g.storage_bytes_delta for g in active_grants)
+    )
     policy_ref = (
         f"{base_policy_ref}+boosts:{len(active_grants)}" if active_grants else base_policy_ref
     )
@@ -599,7 +607,34 @@ def _issue_boost_refund_credit_note_via_authority(
     return row[0] if isinstance(row[0], UUID) else UUID(str(row[0]))
 
 
-def _base_subscription_quota(organisation_id: UUID) -> tuple[str, int, int]:
+SOVEREIGN_TIER_SEATS: dict[str, int] = {
+    "S": 25,
+    "M": 100,
+    "L": 250,
+}
+
+
+def _base_subscription_quota(organisation_id: UUID) -> tuple[str, int | None, int | None]:
+    from apps.orgs.selectors import organisation_plan_tier_state
+    from apps.workspaces.selectors import workspace_id_for, workspace_quota_policy
+
+    org_state = organisation_plan_tier_state(organisation_id=organisation_id)
+    ws_id = workspace_id_for(organisation_id=organisation_id)
+    existing_policy = workspace_quota_policy(workspace_id=ws_id) if ws_id is not None else None
+    existing_base_ref = (
+        existing_policy[0].split("+boosts:", 1)[0] if existing_policy is not None else None
+    )
+
+    if org_state is not None and org_state[2]:
+        return (
+            existing_base_ref or "community-unlimited-v1",
+            existing_policy[1] if existing_policy is not None else None,
+            existing_policy[2] if existing_policy is not None else None,
+        )
+
+    preserve_unlimited_seats = bool(existing_policy is not None and existing_policy[1] is None)
+    preserve_unlimited_storage = bool(existing_policy is not None and existing_policy[2] is None)
+
     sub = (
         Subscription.objects.filter(
             organisation_id=organisation_id, state__in=("active", "past_due")
@@ -608,17 +643,45 @@ def _base_subscription_quota(organisation_id: UUID) -> tuple[str, int, int]:
         .first()
     )
     if sub is None:
-        return "community:free", 25, 5 * GIB
+        if org_state is not None and org_state[1] == "freemium_pme":
+            return (
+                existing_base_ref
+                if (preserve_unlimited_seats and existing_base_ref)
+                else "freemium:pme",
+                None if preserve_unlimited_seats else 5,
+                None if preserve_unlimited_storage else 5 * GIB,
+            )
+        return (
+            existing_base_ref
+            if ((preserve_unlimited_seats or preserve_unlimited_storage) and existing_base_ref)
+            else "community:free",
+            None if preserve_unlimited_seats else 25,
+            None if preserve_unlimited_storage else 5 * GIB,
+        )
     tier = CapacityTier.objects.filter(code=sub.capacity_tier_code).first()
-    seats = (tier.seats_included * sub.quantity) if tier is not None else sub.quantity
+    if sub.plan_code == "sovereign" or sub.pack_code == "sovereign":
+        sovereign_seats = SOVEREIGN_TIER_SEATS.get(sub.capacity_tier_code)
+        seats = (
+            sovereign_seats * sub.quantity
+            if sovereign_seats is not None
+            else ((tier.seats_included * sub.quantity) if tier is not None else sub.quantity)
+        )
+    else:
+        seats = (tier.seats_included * sub.quantity) if tier is not None else sub.quantity
     storage = (tier.storage_included_bytes * sub.quantity) if tier is not None else 10 * GIB
-    return f"subscription:{sub.plan_code}:{sub.state}", int(seats), int(storage)
+    return (
+        f"subscription:{sub.plan_code}:{sub.state}",
+        int(seats),
+        int(storage),
+    )
 
 
 def recompute_workspace_boost_quota(
     *, organisation_id: UUID, workspace_id: UUID, now: datetime | None = None
 ) -> EffectiveWorkspaceQuota:
     """Recompute and persist `WorkspaceQuota` atomically across all overlapping active boosts."""
+    from apps.orgs.selectors import is_default_community_organisation
+
     moment = now or timezone.now()
     base_ref, base_seats, base_storage = _base_subscription_quota(organisation_id)
     rows = list(
@@ -627,6 +690,18 @@ def recompute_workspace_boost_quota(
             workspace_id=workspace_id,
         )
     )
+    if is_default_community_organisation(organisation_id=organisation_id):
+        active_count = sum(
+            1
+            for r in rows
+            if r.state == "active" and (r.expires_at is None or r.expires_at > moment)
+        )
+        return EffectiveWorkspaceQuota(
+            policy_ref=base_ref,
+            seats=base_seats,
+            storage_bytes=base_storage,
+            active_boost_count=active_count,
+        )
     summaries = [
         BoostGrantSummary(
             state=r.state,
@@ -695,6 +770,12 @@ def create_boost_checkout(
     check_return_url(return_url)
     if locale not in {"fr", "en"}:
         raise BoostValidationError("unsupported locale")
+    from apps.orgs.selectors import is_default_community_organisation
+
+    if is_default_community_organisation(organisation_id=organisation_id):
+        raise BoostValidationError(
+            "Community workspace already includes unlimited seats and storage"
+        )
 
     now = timezone.now()
     issuer: Issuer | None = getattr(settings, "KODERA_BILLING_ISSUER", None)
@@ -843,6 +924,8 @@ def create_boost_checkout(
         return cached_result
 
     # Phase 2: Outbound Stripe Checkout session creation OUTSIDE transaction.atomic()
+    from apps.billing.payments.services import existing_stripe_customer_ref
+
     issued_link = provider.create_link(
         LinkRequest(
             invoice_id=invoice.id,
@@ -855,6 +938,11 @@ def create_boost_checkout(
             payment_methods=("card",),
             reference_kind="invoice",
             metadata={"volet": "a_boost", "boost_grant_id": str(grant.id)},
+            customer_ref=(
+                existing_stripe_customer_ref(organisation_id=organisation_id)
+                if provider.name == "stripe"
+                else None
+            ),
         )
     )
 

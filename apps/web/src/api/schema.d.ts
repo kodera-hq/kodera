@@ -549,6 +549,37 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/workspaces/self-serve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create a cardless freemium PME workspace (up to 5 members) on the shared realm
+         * @description Provisions an `active` `Organisation` (`shared_realm: true`, `plan_tier: freemium_pme`),
+         *     permanent `SlugReservation`, caller `Identity`, `org_owner` `Membership`, shared `Tenant`,
+         *     starter `Workspace` (`welcome`, `general`, `lounge`), and a `5`-seat `WorkspaceQuota`
+         *     (`freemium:pme:seats-5`) in a single atomic transaction with zero cloud or Keycloak admin
+         *     credentials (core ADR-0003). Available regardless of whether `KODERA_BILLING_ENABLED` is
+         *     enabled or disabled.
+         *
+         *     Requires a verified-email OIDC token from the configured shared realm (or a verified
+         *     Passport session bound to that shared realm) and an `Idempotency-Key` header. Enforces a
+         *     ceiling of `3` active owned `freemium_pme` organisations per person (`429 rate-limited`)
+         *     and returns `409 slug-taken` with deterministic `suggestions` when the requested slug is
+         *     already reserved.
+         */
+        post: operations["createSelfServeWorkspace"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/organisations/{organisation_id}/workspace/actions/initialise": {
         parameters: {
             query?: never;
@@ -6601,6 +6632,56 @@ export interface components {
             }[];
         };
         /**
+         * @example {
+         *       "name": "Atelier Lumière",
+         *       "slug": "atelier-lumiere",
+         *       "locale": "fr"
+         *     }
+         */
+        SelfServeOrganisationCreateRequest: {
+            /** @description Display name of the new PME organisation and starter workspace. */
+            name: string;
+            /** @description Optional canonical organisation slug; derived from `name` when omitted. */
+            slug?: string;
+            /**
+             * @default fr
+             * @enum {string}
+             */
+            locale: "fr" | "en";
+            template_id?: components["schemas"]["WorkspaceTemplateId"];
+        };
+        /**
+         * @example {
+         *       "organisation_id": "018f1234-5678-7000-8000-000000000090",
+         *       "organisation_slug": "atelier-lumiere",
+         *       "workspace_id": "018f1234-5678-7000-8000-000000000091",
+         *       "tenant_id": "018f1234-5678-7000-8000-000000000092",
+         *       "redirect_path": "/atelier-lumiere/workspace",
+         *       "quota": {
+         *         "policy_ref": "freemium:pme:seats-5",
+         *         "seats": 5,
+         *         "used": 1,
+         *         "remaining": 4
+         *       }
+         *     }
+         */
+        SelfServeWorkspaceCreated: {
+            /** Format: uuid */
+            organisation_id: string;
+            organisation_slug: string;
+            /** Format: uuid */
+            workspace_id: string;
+            /** Format: uuid */
+            tenant_id: string;
+            redirect_path: string;
+            quota: {
+                policy_ref: string;
+                seats: number;
+                used: number;
+                remaining: number;
+            };
+        };
+        /**
          * WorkspaceTemplateId
          * @description The machine identifier of an official workspace template. It is always ASCII and is never
          *     the label a person reads.
@@ -7077,6 +7158,13 @@ export interface components {
                 identity_id?: string;
                 /** Format: date-time */
                 joined_at?: string | null;
+                /** @description True when the organisation authenticates on the shared OIDC realm rather than a dedicated organisation realm. */
+                shared_realm?: boolean;
+                /**
+                 * @description Commercial tier of the organisation (`freemium_pme` caps invitations at 5 seats without card).
+                 * @enum {string}
+                 */
+                plan_tier?: "community" | "freemium_pme" | "cloud_collaborative" | "sovereign" | "enterprise";
             }[];
         };
         DiscoveryOrganisationSummary: {
@@ -17627,6 +17715,76 @@ export interface operations {
                     };
                 };
             };
+        };
+    };
+    createSelfServeWorkspace: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SelfServeOrganisationCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Cardless freemium PME organisation and starter workspace created. */
+            201: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SelfServeWorkspaceCreated"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["UpstreamUnavailable"];
         };
     };
     initialiseWorkspace: {

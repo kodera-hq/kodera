@@ -32,7 +32,6 @@ from typing import Any, Protocol
 from uuid import UUID
 
 from django.db import DatabaseError, connection, transaction
-from django.utils import timezone
 
 from apps.billing import services as billing_services
 from apps.e2ee import services as e2ee_services
@@ -1772,29 +1771,11 @@ class DjangoRestoreRehearsalBackend:
     def _ensure_account_protocol_emitted(self, erasure: AccountErasure) -> None:
         if erasure.protocol_emitted_at is not None:
             return
+        from .account_erasure_services import emit_account_erasure_engine_sets
+
         uid = erasure.user_reference
         with transaction.atomic():
-            memberships = list(
-                Membership.objects.filter(user_id=uid, deleted_at__isnull=True)
-                .select_related("organisation")
-                .order_by("organisation_id", "id")
-            )
-            removed_at = timezone.now()
-            for member in memberships:
-                if member.state != "removed":
-                    Membership.objects.filter(pk=member.id).update(
-                        state="removed", updated_at=removed_at
-                    )
-                    member.state = "removed"
-            for member in memberships:
-                if member.organisation.state != "closed":
-                    enqueue_realm_access(
-                        organisation_id=member.organisation_id,
-                        membership_id=member.id,
-                        user_id=uid,
-                        operation=ACCESS_OFF,
-                    )
-                    member_set_hooks.member_erased(member)
+            emit_account_erasure_engine_sets(user_id=uid, lock_organisations=True)
             with connection.cursor() as cursor:
                 cursor.execute("SELECT privacy_account_protocol_recorded(%s)", [erasure.id])
 

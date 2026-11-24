@@ -1,50 +1,72 @@
-# @kodera/web (`apps/web`)
+# `@kodera/web` (`apps/web`)
 
-The customer console of **Kodera**. Its agreed staging and production origins are `https://app.staging.kodera.io` and `https://app.kodera.io`, respectively, both at the root without a deployment prefix. These are deployment targets, not evidence of a deployed Console. This is where an organisation orders a pack, invites its people, manages roles, connects its domain, reads its invoices, sees its status, and asks for help. Built for a non-technical buyer; the design bar is Qonto or Revolut, not an admin panel.
+Status: Active (`Apache-2.0`, OpenAPI `0.61.0`)
 
-Customer web application (`@kodera/web`) in the Kodera monorepo. Architectural decisions live in [`docs/adr/`](docs/adr/).
+`@kodera/web` is the unified workspace web client and customer administration console in the `kodera-hq/kodera` monorepo (`https://community.kodera.io` for the public Community workspace and `https://app.kodera.io` for shared-realm SMB and dedicated Sovereign organisations). Client architectural decisions live in [`docs/adr/`](docs/adr), and cryptographic worker boundaries are documented in [`docs/security/THREAT_MODEL_AND_CRYPTOGRAPHY.md`](../../docs/security/THREAT_MODEL_AND_CRYPTOGRAPHY.md).
 
-## What this repo is
+## Client & Worker Isolation Architecture
 
-- A React + Vite + TypeScript single-page application, styled with the Kodera design tokens: the `@kodera/design-tokens` package from `kodera-design-tokens`, pinned to a release tag and consumed as a Tailwind preset, never a token file copied in (ADR-0004).
-- A client of the **Core API** in `kodera-core` for everything but Espace's chat and audio rooms. Chat talks to the workspace's own Synapse, with the member's own Matrix token (ADR-0011); audio rooms join through LiveKit (ADR-0012). The console never calls Keycloak's admin API, Scaleway, Stripe, Qonto, or any other service on a tenant VM directly (ADR-0003).
-- Authentication through Keycloak: tenant admins log in against **their own tenant realm**; Kodera staff use the `kodera-staff` realm (ADR-0002). One login for the CEO, shared by Visio and each application admitted later.
+```mermaid
+flowchart TB
+  subgraph MainThread["Browser Main Thread (React 19 + TanStack Router)"]
+    UI["Workspace Shell · Pro / Messages Mode<br/>@kodera/design-tokens (Tailwind 4 Preset)"]
+    SDK["Typed OpenAPI 0.61.0 Client · Matrix Sync · LiveKit Room"]
+    Sandbox["Extension Widget Host<br/>(Script-Isolated sandbox='' Containers)"]
+  end
 
-## Administration journeys
+  subgraph Workers["Dedicated WebWorkers & WASM (Zero Raw Keys on Main Thread)"]
+    MediaW["media-crypto.worker.ts<br/>SFrame v1 RTCRtpScriptTransform"]
+    CollabW["collab-crypto.worker.ts<br/>KDE1 Yjs Envelope Cipher"]
+    BackupW["key-backup.worker.ts<br/>KVKB1 Recovery & PBKDF2/HKDF"]
+    Wasm["@kodera/rs wasm32<br/>Device Proofs & Passkeys"]
+  end
 
-| Area | What the customer does |
-|---|---|
-| Order | Choose pack and tier, accept the DPA (generated per tenant), receive the invoice and a payment link |
-| Status | See provisioning progress and, once live, the URLs of every app |
-| People | Invite by email or CSV, assign admin or member, remove someone; on-site enrolment via one-time QR token |
-| Domain | Connect `visio.acme.fr` with a guided DNS check (TXT nonce, then CNAME or A) |
-| Invoices | List, download, pay |
-| Support | Open a ticket with tenant context prefilled; see the status banner |
-| Federation | Guided setup for Google or Microsoft: exact values and a one-page runbook, with a staff check-in |
-| Espace | Read and write in the workspace's text channels; join an audio room |
+  subgraph LocalStore["Encrypted Browser Persistence"]
+    IDB[("EspaceVault IndexedDB v2 (kodera.espace-vault.v1)<br/>Non-Extractable AES-GCM + Blind HMAC-SHA-256 FTS + #180 Quarantine")]
+  end
 
-This table describes administration journeys, not a release commitment. The complete-product scope and release gates are owned by the active internal implementation plan. Real billing, provisioning and account lifecycle operations remain backend dependencies.
+  subgraph Services["Backend & Real-Time Endpoints"]
+    Core["apps/server (/api/v1/*)"]
+    Syn["Matrix Synapse (/_matrix/*)"]
+    RA["room_access + LiveKit SFU"]
+    Yjs["yjs_collab (wss://.../documents/collab)"]
+  end
 
-## What this repo must never contain
+  UI --> SDK & Sandbox
+  UI <-->|"Transferred MessagePort"| MediaW & CollabW & BackupW
+  UI --> Wasm
+  SDK <--> IDB
+  BackupW <-->|"Worker MessagePort"| CollabW
+  SDK --> Core & Syn & RA & Yjs
+  MediaW --> RA
+```
 
-- Secrets of any kind. The console holds only the user's short-lived tokens.
-- Business logic that decides what a tenant may do; that lives in the Core API and is enforced there.
-- Direct integrations with third-party services. If a feature needs one, the Core API grows an endpoint.
-- Analytics or error reporting that captures customer personal data. Error reporting runs with PII scrubbing.
+## Shipped Product & Console Surfaces
 
-## Development
+- **Workspace Onboarding & Administration:** Cardless shared-realm SMB self-serve (`POST /api/v1/workspaces/self-serve` at `/workspaces/new`, `<= 5` seats, `5 GiB` storage, `< 5 s` creation-to-chat with automatic 6th-seat upgrade CTA), dedicated Sovereign ordering (`/workspaces/new?plan=sovereign` & `/$org/order`), `Kodera Passport` cross-workspace switcher & PKCE magic-link sign-in, people and invitations (with QR enrolment and domain verification UI previews; server routes `Planned`), SAML/SCIM enterprise settings, `0–100` cybersecurity posture advisor, Factur-X `380`/`381` invoices/credit notes, Community boosts & VIP passes, quota gauges, and GDPR Art. 17/20 exports and erasure.
+- **Channels, Direct Messages & Voice/Video Rooms:** Matrix-backed channels, threads, replies, reactions, sanitized RIFF/WebP custom emojis (`:shortcode:`), *Send Later* scheduled messages, personal reminders, private `1:1` and bounded group DMs, Pro vs Messages mode switcher, LiveKit voice/video/screen-sharing rooms, `KoderaVoiceVisualizer`, async voice notes, `/poll` + live-call `PollCard` overlays, procedural soundboard & waiting-room ambience, ephemeral 8-language channel translation, and multi-party consent-gated live call captions.
+- **Pages, Typed Collections, Whiteboard & Smart Calendar:** ProseMirror/Tiptap + Yjs collaborative Pages (`wss://<api-host>/documents/collab`), page trees, wikilinks/backlinks, typed Collections (`Table`, `Kanban`, `List`), collaborative Yjs `<canvas>` whiteboard, sovereign CalDAV calendar sync, and public zero-PII `.ics` booking pages.
+- **Confidential Room Boundaries & 3-Tier Encryption Model:** Follows `tier-1-default-e2ee` (`Planned` for default DM/private-call E2EE; ordinary DMs are server-readable private rooms today), `tier-2-opt-in-confidential` (`🔒` confidential channels/rooms, refused fail-closed via `RoomBoundaryTracker` `#180` quarantine while full end-to-end client UX is `Planned`), and `tier-3-standard-channel` (`#arrivals`, `#general`, server-readable by design). Ships `EspaceVault` IndexedDB v2 (`kodera.espace-vault.v1`) with client-local blind-indexed `HMAC-SHA-256` search (`search_index`), plus worker-isolated `SFrame v1`, `KDE1`, SAS comparison, and local `KVKB1` (`PBKDF2-HMAC-SHA-512 -> HKDF-SHA-256 -> AES-256-GCM`) primitives (client `deviceSigner` server backup publication and `KDE1` epoch-key wiring `Planned`).
+- **Extensions, Sandboxed Widgets & Importers:** Declarative `kodera.widget.v1` cards rendered in `sandbox=""` containers, web extension marketplace checkout/installation, outbound webhook management, and bounded `Slack`, `Discord`, and `Notion` workspace importers.
 
-- Node 22, Vite, TypeScript strict, Tailwind 4, Vitest + Testing Library, Playwright for end-to-end against a mocked Core API.
-- Supported browsers: Safari 16.4+, Chrome and Edge 111+, Firefox 128+ — Tailwind 4's floor ([`docs/specs/tailwind-4-migration.md`](docs/specs/tailwind-4-migration.md)).
-- Accessibility is a gate: WCAG AA contrast on the token pairs, keyboard navigation on every flow.
-- French is the default product language; English second. All copy lives in message catalogues, never inline.
-- CI: lint, format, typecheck, unit tests, e2e, visual baselines, Espace against a real Synapse and LiveKit, build, secret scan. Merges require current protected CI, exact-head adversarial review and separate independent CTO verification. There is no standing human reviewer pool; an outstanding requested human review still blocks.
-- The frozen stack and its commands are in [`docs/dev/BASELINE.md`](docs/dev/BASELINE.md); testing gates in [`TESTING.md`](docs/dev/TESTING.md), copy rules in [`I18N.md`](docs/dev/I18N.md), the generated Core API client in [`API_CLIENT.md`](docs/dev/API_CLIENT.md).
+## Non-Negotiable Frontend Rules
 
-## Conventions
+- **Zero Secrets & Zero Inline Tokens:** `@kodera/web` holds only short-lived session tokens, never calls cloud/billing/IdP admin APIs directly (`WEB-ADR-0003`), and consumes all colours, spacing, and typography strictly from [`@kodera/design-tokens`](../../packages/design-tokens) (`WEB-ADR-0004`, enforced by `tests/unit/ui/tokens.test.ts`).
+- **Contract-Locked API Client & Demo Parity:** API types and mock schemas are generated from [`packages/api-contract`](../../packages/api-contract/README.md) (`0.61.0`, locked in `contracts/contract.lock.json`). Every client call uses direct `coreApi().VERB('/literal/path', ...)` syntax (`capabilities.test.ts`) and has a corresponding handler in `src/mocks/overlays/demo.groupe-vercelli.ts` (`seed.test.ts`).
+- **Catalogue-Only i18n & Bundle Budget:** All user-facing copy lives in [`docs/specs/copy/fr.md`](docs/specs/copy/fr.md) and [`docs/specs/copy/en.md`](docs/specs/copy/en.md) (`npm run i18n:generate` / `npm run i18n:check`). Initial entry-chunk gzip size is gated below `160.00 kB` (`npm run build:check`).
 
-See [`AGENTS.md`](AGENTS.md). English for code and docs; French only for user-facing copy. Feature branch + pull request, never a direct commit to `main`. One-line commit messages on the why. No attribution trailers.
+## Local Development & Verification
 
-## Delivery status
+Stack baseline, browser floor (`Safari 16.4+`, `Chrome/Edge 111+`, `Firefox 128+`, [`docs/specs/tailwind-4-migration.md`](docs/specs/tailwind-4-migration.md)), testing, i18n, and client generation rules are detailed in [`docs/dev/BASELINE.md`](docs/dev/BASELINE.md), [`docs/dev/TESTING.md`](docs/dev/TESTING.md), [`docs/dev/I18N.md`](docs/dev/I18N.md), [`docs/dev/API_CLIENT.md`](docs/dev/API_CLIENT.md), and [`AGENTS.md`](AGENTS.md):
 
-Status: Implemented console journeys are tested against a mocked Core API. Home, Order, Status, Invoices and Appearance have specification gates; Aide is implemented. Domain shows the organisation's addresses, read-only, the first slice of its specification; People is implemented against the mocked Core API, and Federation remains a placeholder. Espace (workspace channels, chat, audio rooms) is implemented and runs in CI against a real Synapse and LiveKit; owner claim and invitation acceptance are implemented. The active internal implementation plan owns the remaining product and service work; a passing mock journey does not prove a live customer service.
+```bash
+cd apps/web
+npm run i18n:check
+npm run docs:check
+npm run lint
+npm run typecheck
+npx vitest run
+npm run build && npm run build:check
+```
+
+End-to-end Playwright suites cover both deterministic Core API contract overlays and live Community full-stack runs against real PostgreSQL, Synapse, and LiveKit containers in CI.

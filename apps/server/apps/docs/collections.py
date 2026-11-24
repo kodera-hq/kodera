@@ -13,6 +13,7 @@ from django.db.models.fields.json import KeyTextTransform, KeyTransform
 from django.utils import timezone
 
 from apps.audit.services import record_workspace_resource_event
+from apps.e2ee.services import confidential_channel_ids_for_workspace
 from apps.orgs.selectors import collection_person_is_current
 from core.api.pagination import clamp_page_rows
 from services.identity.access_tokens import VerifiedAccessToken
@@ -133,9 +134,11 @@ def row_wire(row):
 def read_row(*, verified, organisation_id, collection_id, document_id):
     workspace_id, principal = services.read_context(verified, organisation_id)
     collection = get(workspace_id, collection_id, principal)
-    services.resource(
+    doc, _ = services.resource(
         workspace_id=workspace_id, principal=principal, verified=verified, document_id=document_id
     )
+    if services.is_document_confidential(doc, principal.organisation_id):
+        raise RefusalError(403)
     row = CollectionRow.objects.filter(collection=collection, document_id=document_id).first()
     if row is None:
         raise RefusalError(404)
@@ -156,13 +159,15 @@ def put_row(
 ):
     workspace_id, principal = services.write_context(verified, organisation_id)
     collection = get(workspace_id, collection_id, principal, True)
-    services.resource(
+    doc, _ = services.resource(
         workspace_id=workspace_id,
         principal=principal,
         verified=verified,
         document_id=document_id,
         edit=True,
     )
+    if services.is_document_confidential(doc, principal.organisation_id):
+        raise RefusalError(403)
     schema.object_fields(body, {"values"})
     schema.values(collection.properties, body["values"])
     for typed in body["values"].values():
@@ -272,6 +277,12 @@ def query(
         .annotate(_permission=permission)
         .filter(_permission__isnull=False)
     )
+    excluded_channels = confidential_channel_ids_for_workspace(
+        workspace_id=workspace_id, organisation_id=organisation_id
+    )
+    rows = rows.filter(document__is_confidential=False)
+    if excluded_channels:
+        rows = rows.exclude(document__channel_id__in=excluded_channels)
     props = schema.definitions(collection.properties)
     for index, filt in enumerate(filters):
         key, op = filt["propertyId"], filt["operator"]

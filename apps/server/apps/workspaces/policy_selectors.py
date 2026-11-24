@@ -6,7 +6,12 @@ from uuid import UUID
 from django.db import connection, transaction
 from psycopg import sql
 
-from apps.identity.selectors import current_identity, is_storable_subject
+from apps.identity.selectors import (
+    IdentitySnapshot,
+    PersonSnapshot,
+    current_identities,
+    is_storable_subject,
+)
 from apps.orgs.authority_selectors import (
     MemberAuthorityFacts,
     MemberAuthorityNotFoundError,
@@ -124,17 +129,31 @@ def resolve_member_parent_policy(
                     sql.SQL(_COMPOSITION_ISOLATION)
                 )
             )
-        try:
-            authority = read_member_authority_in_snapshot(verified=verified)
-        except MemberAuthorityNotFoundError:
-            raise ParentPolicyNotFoundError() from None
-        except MemberAuthorityUnavailableError:
-            raise ParentPolicyUnavailableError() from None
+        candidates = current_identities(issuer=verified.issuer, subject=verified.subject)
+        if not candidates:
+            raise ParentPolicyNotFoundError()
+        authorities: dict[UUID, MemberAuthorityFacts] = {}
+        saw_unavailable = False
+        for _person, ident in candidates:
+            if ident.organisation_id is None:
+                continue
+            try:
+                facts = read_member_authority_in_snapshot(
+                    verified=verified, organisation_id=ident.organisation_id
+                )
+            except MemberAuthorityNotFoundError:
+                continue
+            except MemberAuthorityUnavailableError:
+                saw_unavailable = True
+                continue
+            authorities[facts.organisation_id] = facts
+        if not authorities:
+            if saw_unavailable:
+                raise ParentPolicyUnavailableError()
+            raise ParentPolicyNotFoundError()
         policy = read_parent_policy_in_snapshot(verified=verified, channel_id=channel_id)
-        if (
-            authority.organisation_id != policy.organisation_id
-            or authority.membership_id != policy.membership_id
-        ):
+        authority = authorities.get(policy.organisation_id)
+        if authority is None or authority.membership_id != policy.membership_id:
             raise ParentPolicyNotFoundError()
         return MemberParentPolicyFacts(authority=authority, policy=policy)
 
@@ -143,23 +162,26 @@ def _read_parent_policy_facts(
     *, verified: VerifiedAccessToken, channel_id: UUID
 ) -> ParentPolicyFacts:
     """The one policy materializer; only the two local wrappers above call it."""
-    identity = current_identity(issuer=verified.issuer, subject=verified.subject)
-    if identity is None:
+    candidates = current_identities(issuer=verified.issuer, subject=verified.subject)
+    if not candidates:
         raise ParentPolicyNotFoundError()
-    person, principal = identity
-    if not has_current_read_grant(
-        user_id=person.id,
-        organisation_id=principal.organisation_id,
-        issuer=principal.issuer,
-        realm=principal.realm,
-    ):
-        raise ParentPolicyNotFoundError()
-    # The org-read grant also supports suspended organisations. This first
-    # content-policy reader has a narrower, explicitly active-only boundary.
-    membership_id = active_membership_id(
-        user_id=person.id, organisation_id=principal.organisation_id
-    )
-    if membership_id is None:
+    admitted: dict[UUID, tuple[PersonSnapshot, IdentitySnapshot, UUID]] = {}
+    for person, principal in candidates:
+        if not has_current_read_grant(
+            user_id=person.id,
+            organisation_id=principal.organisation_id,
+            issuer=principal.issuer,
+            realm=principal.realm,
+        ):
+            continue
+        # The org-read grant also supports suspended organisations. This first
+        # content-policy reader has a narrower, explicitly active-only boundary.
+        membership_id = active_membership_id(
+            user_id=person.id, organisation_id=principal.organisation_id
+        )
+        if membership_id is not None:
+            admitted[principal.organisation_id] = (person, principal, membership_id)
+    if not admitted:
         raise ParentPolicyNotFoundError()
 
     # No workspace table is read until the real current-membership check.
@@ -167,12 +189,13 @@ def _read_parent_policy_facts(
         Channel.objects.select_related("workspace", "category")
         .filter(
             id=channel_id,
-            workspace__organisation_id=principal.organisation_id,
+            workspace__organisation_id__in=tuple(admitted.keys()),
         )
         .first()
     )
     if channel is None:
         raise ParentPolicyNotFoundError()
+    person, principal, membership_id = admitted[channel.workspace.organisation_id]
     if channel.kind not in Channel.Kind.values or channel.lifecycle not in Channel.Lifecycle.values:
         raise ParentPolicyUnavailableError()
     category = channel.category

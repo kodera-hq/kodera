@@ -139,25 +139,6 @@ function parseNextEpochHeader(raw: string | null): number | null {
   return Number.isSafeInteger(parsed) && parsed >= 1 ? parsed : null
 }
 
-type DynamicClient = {
-  GET(
-    path: string,
-    init: Record<string, unknown>
-  ): Promise<{ data?: unknown; response: Response }>
-  POST(
-    path: string,
-    init: Record<string, unknown>
-  ): Promise<{ data?: unknown; response: Response }>
-  DELETE(
-    path: string,
-    init: Record<string, unknown>
-  ): Promise<{ data?: unknown; response: Response }>
-}
-
-function client(): DynamicClient {
-  return coreApi() as unknown as DynamicClient
-}
-
 export async function getConfidentialKeyBackup(
   organisationId: string,
   signal?: AbortSignal
@@ -170,7 +151,7 @@ export async function getConfidentialKeyBackup(
     },
   }
   try {
-    const { data, response } = await client().GET(
+    const { data, response } = await coreApi().GET(
       '/organisations/{organisation_id}/confidential/key-backup',
       {
         params: { path: { organisation_id: organisationId } },
@@ -214,7 +195,7 @@ export async function publishConfidentialKeyBackup(
     },
   }
   try {
-    const { data, response } = await client().POST(
+    const { data, response } = await coreApi().POST(
       '/organisations/{organisation_id}/confidential/key-backup',
       {
         params: {
@@ -240,7 +221,7 @@ export async function publishConfidentialKeyBackup(
 export async function discardConfidentialKeyBackup(
   organisationId: string
 ): Promise<{ readonly nextBackupEpoch: number | null }> {
-  const { response } = await client().DELETE(
+  const { response } = await coreApi().DELETE(
     '/organisations/{organisation_id}/confidential/key-backup',
     {
       params: { path: { organisation_id: organisationId } },

@@ -6,6 +6,7 @@ import hashlib
 import ipaddress
 import json
 import re
+import secrets
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -434,7 +435,11 @@ def checkout_marketplace_listing(
     """Grant a free marketplace entitlement or issue a web-only Stripe Connect Checkout link outside `transaction.atomic()`."""
     if connection.in_atomic_block:
         raise RuntimeError("checkout_marketplace_listing must execute outside transaction.atomic()")
-    if not isinstance(idempotency_key, str) or not IDEMPOTENCY_KEY_RE.fullmatch(idempotency_key):
+    if (
+        not isinstance(idempotency_key, str)
+        or not IDEMPOTENCY_KEY_RE.fullmatch(idempotency_key)
+        or idempotency_key.startswith("auto-free-install:")
+    ):
         raise ExtensionRefusedError("idempotency_key_invalid", 400)
 
     request_digest = hashlib.sha256(
@@ -1025,7 +1030,14 @@ def install_marketplace_listing(
     )
     if entitlement is None:
         if listing.pricing_mode == "free":
-            auto_key = f"auto-free-install:{listing.id}"
+            base_auto_key = f"auto-free-install:{listing.id}"
+            auto_key = (
+                f"{base_auto_key}:{secrets.token_hex(6)}"
+                if MarketplaceEntitlement.objects.filter(
+                    workspace_id=workspace_id, idempotency_key=base_auto_key
+                ).exists()
+                else base_auto_key
+            )
             auto_hash = hashlib.sha256(auto_key.encode("ascii")).hexdigest()
             entitlement = MarketplaceEntitlement.objects.create(
                 organisation_id=organisation_id,
@@ -1108,3 +1120,15 @@ def install_marketplace_listing(
         "keyGeneration": str(installation.generation),
         "replayed": False,
     }
+
+
+def find_marketplace_entitlement_organisation(
+    *, session_id: str, meta_entitlement_id: UUID | None
+) -> UUID | None:
+    """Return `organisation_id` if a marketplace entitlement matches `session_id` or `meta_entitlement_id`."""
+    entitlement = MarketplaceEntitlement.objects.filter(checkout_ref=session_id).first()
+    if entitlement is None and meta_entitlement_id is not None:
+        candidate = MarketplaceEntitlement.objects.filter(id=meta_entitlement_id).first()
+        if candidate is not None and candidate.checkout_ref in (None, session_id):
+            entitlement = candidate
+    return None if entitlement is None else entitlement.organisation_id

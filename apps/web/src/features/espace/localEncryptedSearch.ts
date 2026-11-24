@@ -7,7 +7,7 @@
 // (128-bit hex blind tags) and seal the entire shard (`<= 512 KiB`) under `AES-256-GCM` (`owner.key`)
 // with full principal + incarnation + roomId + boundaryTag + epoch AAD.
 //
-// Zero search queries or index terms ever leave the browser over HTTP or Matrix. Quarantine (`#180`),
+// Zero search queries or index terms ever leave the browser over HTTP or Matrix. Quarantine (`issue 180`),
 // room leave/kick/403 (`forgetRoom`), vault revocation, and session logout synchronously evict
 // in-memory postings before any async storage work settles.
 
@@ -305,7 +305,7 @@ export class LocalEncryptedSearchEngine {
 
   /**
    * Synchronously indexes a permitted room's decrypted timeline in RAM (`zero` network calls).
-   * Refuses locked, quarantined (`#180`), unknown, or invalid rooms and immediately evicts stale RAM state.
+   * Refuses locked, quarantined (`issue 180`), unknown, or invalid rooms and immediately evicts stale RAM state.
    */
   indexRoomSync(input: {
     readonly store: RoomBoundaryReader
@@ -653,7 +653,7 @@ export class LocalEncryptedSearchEngine {
   /**
    * Queries indexed rooms using blind `HMAC-SHA-256` term tags when `vault` is supplied (re-keying
    * surviving rooms transparently if another room's purge rotated `vault.incarnation`), with live
-   * `#180` boundary re-verification and zero network egress.
+   * `issue 180` boundary re-verification and zero network egress.
    */
   async search(input: {
     readonly store: RoomBoundaryReader
@@ -842,7 +842,7 @@ export interface SearchableStoreLike extends RoomBoundaryReader {
 
 /**
  * Synchronous local search helper for channel header `MessageSearch`:
- * enforces `#180` quarantine + unlocked E2EE room authority when `getRoomBoundary` or
+ * enforces `issue 180` quarantine + unlocked E2EE room authority when `getRoomBoundary` or
  * `isRoomQuarantined` is present on `store`, keeps decrypted E2EE shards synced in
  * `workspaceLocalEncryptedSearch`, and issues zero network calls.
  */

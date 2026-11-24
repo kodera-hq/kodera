@@ -166,6 +166,7 @@ config/settings/deploy_worker.py
 !apps/workspaces/structure.py
 !apps/workspaces/initialise.py
 !apps/workspaces/instant_claim.py
+!apps/workspaces/self_serve.py
 !apps/workspaces/warm_pool.py
 !apps/workspaces/templates.py
 !apps/workspaces/administration.py
@@ -181,6 +182,7 @@ config/settings/deploy_worker.py
 !apps/workspaces/api/serializers.py
 !apps/workspaces/api/views.py
 !apps/workspaces/api/instant_claim.py
+!apps/workspaces/api/self_serve.py
 !apps/workspaces/api/administration.py
 !apps/workspaces/api/responses.py
 !apps/billing/__init__.py
@@ -214,6 +216,7 @@ config/settings/deploy_worker.py
 !apps/billing/downloads.py
 !apps/billing/documents.py
 !apps/billing/artifacts.py
+!apps/billing/sovereign_settlement.py
 !apps/billing/integrity.py
 !apps/billing/vies.py
 !apps/billing/api/tenants.py

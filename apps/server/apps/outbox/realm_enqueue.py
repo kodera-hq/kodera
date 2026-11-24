@@ -48,6 +48,18 @@ def require_caller_transaction() -> None:
         )
 
 
+def _organisation_uses_shared_realm(organisation_id: UUID) -> bool:
+    """Shared-realm and default-community orgs revoke membership locally without disabling the
+    shared Keycloak account across all other organisations."""
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT shared_realm, is_default_community FROM orgs_organisation WHERE id = %s",
+            [organisation_id],
+        )
+        row = cursor.fetchone()
+    return row is None or bool(row[0]) or bool(row[1])
+
+
 def enqueue_realm_access(
     *, organisation_id: UUID, membership_id: UUID, user_id: UUID, operation: str
 ) -> tuple[UUID, ...]:
@@ -56,6 +68,8 @@ def enqueue_realm_access(
     require_caller_transaction()
     if operation not in OPERATIONS:
         raise ValueError(f"{operation} is not a realm access operation")
+    if _organisation_uses_shared_realm(organisation_id):
+        return ()
     written = []
     # Turning access on concerns usable identities only: never a disabled or soft-deleted one.
     usable_only = operation == ACCESS_ON

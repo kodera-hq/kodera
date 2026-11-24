@@ -5,7 +5,7 @@ from uuid import UUID
 from django.db import connection
 
 from apps.audit.services import record_workspace_resource_event
-from apps.identity.selectors import current_identity
+from apps.identity.selectors import current_identities
 from apps.orgs.actor_selectors import TenantCaller
 from apps.workspaces.channel_sets import lock_workspace
 from apps.workspaces.moderation import RefusalError as WorkspaceRefusal, authorise_workspace
@@ -27,16 +27,38 @@ def caller(verified: VerifiedAccessToken, organisation_id: UUID | None = None) -
     return read_caller(verified, principal.organisation_id)
 
 
+def read_all_callers(verified: VerifiedAccessToken) -> list[TenantCaller]:
+    if not connection.in_atomic_block:
+        raise RuntimeError("workspace access is read in the operation transaction")
+    identities = current_identities(issuer=verified.issuer, subject=verified.subject)
+    if not identities:
+        raise RefusalError(403, "identity-unknown")
+    callers: list[TenantCaller] = []
+    first_failure: WorkspaceRefusal | None = None
+    for _, ident in identities:
+        if ident.organisation_id is None:
+            continue
+        try:
+            callers.append(
+                authorise_workspace(
+                    verified=verified, organisation_id=ident.organisation_id, lock=False
+                )
+            )
+        except WorkspaceRefusal as failure:
+            if first_failure is None:
+                first_failure = failure
+    if callers:
+        return callers
+    if first_failure is not None:
+        raise RefusalError(first_failure.status, first_failure.kind) from None
+    raise RefusalError(403, "identity-unknown")
+
+
 def read_caller(verified: VerifiedAccessToken, organisation_id: UUID | None = None) -> TenantCaller:
     if not connection.in_atomic_block:
         raise RuntimeError("workspace access is read in the operation transaction")
     if organisation_id is None:
-        resolved = current_identity(issuer=verified.issuer, subject=verified.subject)
-        if resolved is None:
-            raise RefusalError(403, "identity-unknown")
-        organisation_id = resolved[1].organisation_id
-    if organisation_id is None:
-        raise RefusalError(403, "identity-unknown")
+        return read_all_callers(verified)[0]
     try:
         return authorise_workspace(verified=verified, organisation_id=organisation_id, lock=False)
     except WorkspaceRefusal as failure:

@@ -18,7 +18,7 @@ from django.db.models import Q
 from django.utils import timezone
 
 from apps.audit.services import record_workspace_resource_event
-from apps.identity.selectors import current_identity
+from apps.identity.selectors import current_identity, current_identity_for_organisation
 from apps.orgs.actor_selectors import TenantCaller
 from apps.workspaces.channel_access import Access, may_view, resolve
 from apps.workspaces.channel_sets import lock_workspace
@@ -326,9 +326,13 @@ def _context(
             raise RefusalError(503, "service-unavailable")
     if is_ai_or_service_actor(verified):
         raise RefusalError(403, "forbidden")
-    identity = current_identity(issuer=verified.issuer, subject=verified.subject)
+    identity = current_identity_for_organisation(
+        organisation_id=organisation, issuer=verified.issuer, subject=verified.subject
+    )
     if identity is None:
-        raise RefusalError(403, "identity-unknown")
+        if current_identity(issuer=verified.issuer, subject=verified.subject) is None:
+            raise RefusalError(403, "identity-unknown")
+        raise RefusalError(404)
     if identity[0].email.strip().lower().startswith(NON_HUMAN_EMAIL_PREFIXES) or identity[
         1
     ].email.strip().lower().startswith(NON_HUMAN_EMAIL_PREFIXES):
@@ -1132,7 +1136,9 @@ def key_backup_publish_context(
 ) -> dict[str, str]:
     """Authenticate an active registered device signing a zero-knowledge key-backup archive."""
     workspace, principal = _context(verified, organisation_id, body=body)
-    identity = current_identity(issuer=verified.issuer, subject=verified.subject)
+    identity = current_identity_for_organisation(
+        organisation_id=organisation_id, issuer=verified.issuer, subject=verified.subject
+    )
     if identity is None:
         raise RefusalError(403, "identity-unknown")
     device = _device(body.get("deviceId"), principal, workspace)
@@ -1151,7 +1157,9 @@ def key_backup_member_context(
 ) -> dict[str, str]:
     """Authenticate a human organisation member for fresh-device key-backup retrieval or discard."""
     _, principal = _context(verified, organisation_id)
-    identity = current_identity(issuer=verified.issuer, subject=verified.subject)
+    identity = current_identity_for_organisation(
+        organisation_id=organisation_id, issuer=verified.issuer, subject=verified.subject
+    )
     if identity is None:
         raise RefusalError(403, "identity-unknown")
     return {

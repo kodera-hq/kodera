@@ -1363,16 +1363,20 @@ export function createWebhookHandler(options) {
       ? handlers[eventName]
       : undefined;
 
-    if (typeof specificHandler === 'function') {
-      const result = await specificHandler(payload, context);
-      return { ok: true, status: 200, event: eventName, deliveryId, result };
+    try {
+      if (typeof specificHandler === 'function') {
+        const result = await specificHandler(payload, context);
+        return { ok: true, status: 200, event: eventName, deliveryId, result };
+      }
+      if (typeof onEvent === 'function') {
+        const result = await onEvent(payload, context);
+        return { ok: true, status: 200, event: eventName, deliveryId, result };
+      }
+      return { ok: true, status: 202, event: eventName, deliveryId, result: { ignored: true } };
+    } catch (err) {
+      if (deliveryId !== undefined) seenDeliveries.delete(deliveryId);
+      throw err;
     }
-    if (typeof onEvent === 'function') {
-      const result = await onEvent(payload, context);
-      return { ok: true, status: 200, event: eventName, deliveryId, result };
-    }
-
-    return { ok: true, status: 202, event: eventName, deliveryId, result: { ignored: true } };
   };
 }
 

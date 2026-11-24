@@ -193,7 +193,11 @@ test('confidential tickets and KDE1 protocol parser enforce strict magic, canoni
   assert.equal(beforeEpochCompact.epochBootstrapped, false)
 
   const cpEpoch4 = buildKde1({ epoch: 4, sender: 'checkpoint', sequence: 1, kind: 3 })
-  await compactStore.compact(epoch4Claims, 300, cpEpoch4)
+  await assert.rejects(
+    () => compactStore.compact(epoch4Claims, 300, cpEpoch4),
+    /withheld prior-epoch/
+  )
+  await compactStore.compact(epoch4Claims, 300, cpEpoch4, { deliveredHead: caughtUp.deliveredHead })
   assert.equal(baseSeq, 300)
   assert.equal(journalMap.size, 0)
   assert.equal(docEpoch, 4)

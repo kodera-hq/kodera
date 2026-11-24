@@ -15,7 +15,7 @@ not block the change: there is nothing to deny.
 import logging
 from uuid import UUID
 
-from .models import Membership
+from .models import Membership, Organisation
 
 log = logging.getLogger(__name__)
 
@@ -26,6 +26,10 @@ MEMBER_ERASED = "member_erased"
 
 
 CHANNEL_SET_REASON = "membership.changed"
+
+
+def _is_shared_realm_org(organisation_id: UUID) -> bool:
+    return Organisation.objects.filter(id=organisation_id, shared_realm=True).exists()
 
 
 def clear_departed_workspace_roles(
@@ -74,6 +78,9 @@ def member_left(membership: Membership, *, reason: str) -> None:
             workspace_id,
             channel_sets.channel_set_input(workspace_id),
         )
+    if _is_shared_realm_org(membership.organisation_id):
+        channel_sets.emit_prepared(prepared, reason=CHANNEL_SET_REASON)
+        return
     emit_member_left(membership, reason=reason)
     channel_sets.emit_prepared(prepared, reason=CHANNEL_SET_REASON)
 
@@ -100,6 +107,9 @@ def member_erased(membership: Membership) -> None:
             channel_sets.channel_set_input(workspace_id),
         )
     mark_erased(organisation_id=membership.organisation_id, user_id=membership.user_id)
+    if _is_shared_realm_org(membership.organisation_id):
+        channel_sets.emit_prepared(prepared, reason=CHANNEL_SET_REASON)
+        return
     emit_member_left(membership, reason=MEMBER_ERASED)
     channel_sets.emit_prepared(prepared, reason=CHANNEL_SET_REASON)
 
@@ -112,6 +122,9 @@ def member_set_changed(*, organisation_id: UUID, reason: str) -> None:
 
     refresh_community_staff_grants(organisation_id)
     prepared = channel_sets.prepare(organisation_id)
+    if _is_shared_realm_org(organisation_id):
+        channel_sets.emit_prepared(prepared, reason=CHANNEL_SET_REASON)
+        return
     emit_member_set(organisation_id=organisation_id, reason=reason)
     channel_sets.emit_prepared(prepared, reason=CHANNEL_SET_REASON)
 

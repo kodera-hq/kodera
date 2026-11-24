@@ -20,9 +20,29 @@ public struct MemberProfile: Equatable, Sendable {
     public let displayName: String?
     public let organisations: [MemberOrganisation]
 
-    /// The membership whose realm is the one the session signed into.
-    public func organisation(realm: String) -> MemberOrganisation? {
-        organisations.first { $0.realm == realm }
+    /// The membership whose realm is the one the session signed into, resolving shared-realm multi-org memberships.
+    public func organisation(
+        realm: String,
+        preferredOrganisationId: String? = nil,
+        preferredSlug: String? = nil
+    ) -> MemberOrganisation? {
+        let matching = organisations.filter { $0.realm == realm }
+        if let preferredId = preferredOrganisationId, !preferredId.isEmpty {
+            let exact = matching.filter { $0.id == preferredId }
+            return exact.count == 1 ? exact[0] : nil
+        }
+        if let slug = preferredSlug, !slug.isEmpty {
+            let exact = matching.filter { $0.slug == slug }
+            return exact.count == 1 ? exact[0] : nil
+        }
+        if matching.count <= 1 {
+            return matching.first
+        }
+        guard realm == "community" else { return nil }
+        let active = matching.filter { $0.state == "active" }
+        let candidates = active.isEmpty ? matching : active
+        let nonCommunity = candidates.filter { $0.slug != "community" }
+        return nonCommunity.first ?? candidates.first
     }
 }
 

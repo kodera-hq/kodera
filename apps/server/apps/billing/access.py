@@ -148,8 +148,17 @@ def record_staff_denial(
 
 def own_organisation(verified: VerifiedAccessToken) -> UUID | None:
     """The organisation the caller's identity belongs to: the path names none."""
-    resolved = current_identity(issuer=verified.issuer, subject=verified.subject)
-    return None if resolved is None else resolved[1].organisation_id
+    from apps.identity.selectors import current_identities
+    from apps.orgs.selectors import current_membership
+
+    candidates = current_identities(issuer=verified.issuer, subject=verified.subject)
+    if not candidates:
+        return None
+    for person, ident in reversed(candidates):
+        member = current_membership(user_id=person.id, organisation_id=ident.organisation_id)
+        if member is not None and member[1] in {"org_owner", "org_admin"}:
+            return ident.organisation_id
+    return candidates[0][1].organisation_id
 
 
 def record_no_membership_denial(

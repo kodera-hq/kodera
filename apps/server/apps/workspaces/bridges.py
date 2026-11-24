@@ -12,7 +12,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
 from apps.audit.services import record_workspace_resource_event
-from apps.identity.selectors import current_identity, current_identity_by_id
+from apps.identity.selectors import current_identities, current_identity_by_id
 from apps.orgs.selectors import active_organisation, has_privacy_cutoff, person_has_membership
 from apps.tenancy.selectors import organisation_matrix_homeservers
 from services.identity.access_tokens import VerifiedAccessToken
@@ -271,7 +271,7 @@ def grant_guest(
     identity = current_identity_by_id(identity_id=_uuid(body.get("guestIdentityId")))
     if (
         identity is None
-        or person_has_membership(user_id=identity[0].id)
+        or person_has_membership(user_id=identity[0].id, organisation_id=organisation_id)
         or has_privacy_cutoff(organisation_id=organisation_id, user_id=identity[0].id)
     ):
         raise RefusalError(422)
@@ -451,11 +451,11 @@ def matrix_authority(
 
 @transaction.atomic
 def guest_channel(*, verified: VerifiedAccessToken, organisation_id: UUID) -> dict[str, Any]:
-    identity = current_identity(issuer=verified.issuer, subject=verified.subject)
-    if identity is None:
+    identities = current_identities(issuer=verified.issuer, subject=verified.subject)
+    if not identities:
         raise RefusalError(403, "identity-unknown")
     row = SingleChannelGuestGrant.objects.filter(
-        guest_identity_id=identity[1].id, organisation_id=organisation_id
+        guest_identity_id__in=[item[1].id for item in identities], organisation_id=organisation_id
     ).first()
     if (
         row is None

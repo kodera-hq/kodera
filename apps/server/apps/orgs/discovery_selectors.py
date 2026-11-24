@@ -39,10 +39,31 @@ def select_realms(kind: str, value: str) -> dict[str, Any]:
         raise DiscoveryUnavailableError("configuration") from None
     with discovery_transaction(Deadline(), read_only=True):
         organisation = Organisation.objects.filter(
-            slug=value, realm=value, deleted_at__isnull=True, state__in=("active", "suspended")
+            slug=value, deleted_at__isnull=True, state__in=("active", "suspended")
         ).first()
+        if organisation is not None and organisation.shared_realm:
+            shared_issuer = getattr(settings, "KODERA_DEFAULT_COMMUNITY_ISSUER", "")
+            if (
+                organisation.state == "active"
+                and organisation.issuer == shared_issuer
+                and _shared_realm_ready(organisation)
+            ):
+                result.update(
+                    realm=organisation.realm,
+                    issuer=organisation.issuer,
+                    openid_configuration_url=organisation.issuer
+                    + "/.well-known/openid-configuration",
+                    organisation={
+                        "id": str(organisation.id),
+                        "slug": value,
+                        "realm": organisation.realm,
+                        "name": organisation.name,
+                    },
+                )
+            return result
         if (
             organisation is not None
+            and organisation.realm == value
             and organisation.issuer == expected_issuer
             and (
                 counting_realm_ready(organisation_id=organisation.id)
@@ -61,6 +82,16 @@ def select_realms(kind: str, value: str) -> dict[str, Any]:
                 },
             )
     return result
+
+
+def _shared_realm_ready(organisation: Organisation) -> bool:
+    from services.identity.trusted_issuers import is_trusted_issuer
+
+    return (
+        organisation.shared_realm
+        and organisation.state == "active"
+        and is_trusted_issuer(organisation.issuer, trusted=settings.KODERA_AUTH_TRUST)
+    )
 
 
 def _community_ready(organisation: Organisation) -> bool:

@@ -63,7 +63,11 @@ INSTRUCTION_REF_PATTERN = re.compile(INSTRUCTION_REF.removesuffix("$") + r"\Z")
 # The unique constraints a slug already held meets: the organisation's issuer, which names the
 # realm, and the reservation of the name itself.
 SLUG_TAKEN_CONSTRAINTS = frozenset(
-    {"organisation_issuer_unique", "reservation_namespace_slug_unique"}
+    {
+        "organisation_dedicated_issuer_unique",
+        "organisation_issuer_unique",
+        "reservation_namespace_slug_unique",
+    }
 )
 SEAL_CONTEXT = b"kodera-organisation-intake:"
 # What a `403 mfa-required` names as `required_amr` (CONVENTIONS.md §6).
@@ -437,3 +441,58 @@ def record_intake(
     )
     job = job_summary(enqueued.job_id)
     return Recorded(_view(organisation, intake, "queued" if job is None else job.status))
+
+
+def held_organisation_or_reservation_slugs(candidates: list[str]) -> set[str]:
+    """Return any candidate slugs already held in `SlugReservation` or `Organisation`."""
+    held_res = set(
+        SlugReservation.objects.filter(slug__in=candidates).values_list("slug", flat=True)
+    )
+    held_orgs = set(Organisation.objects.filter(slug__in=candidates).values_list("slug", flat=True))
+    return held_res | held_orgs
+
+
+def is_organisation_or_reservation_slug_taken(slug: str) -> bool:
+    return (
+        SlugReservation.objects.filter(slug=slug).exists()
+        or Organisation.objects.filter(slug=slug).exists()
+    )
+
+
+def provision_self_serve_organisation_and_owner(
+    *,
+    user_id: UUID,
+    slug: str,
+    name: str,
+    realm: str,
+    issuer: str,
+    now: object,
+) -> UUID:
+    """Create `Organisation(shared_realm=True, plan_tier='freemium_pme')`, permanent `SlugReservation`,
+    and active `org_owner` `Membership` inside the caller's atomic transaction."""
+    from .models import Membership
+
+    organisation = Organisation.objects.create(
+        slug=slug,
+        realm=realm,
+        issuer=issuer,
+        name=name,
+        state=Organisation.State.ACTIVE,
+        shared_realm=True,
+        plan_tier=Organisation.PlanTier.FREEMIUM_PME,
+    )
+    SlugReservation.objects.create(
+        namespace="organisation",
+        slug=slug,
+        organisation=organisation,
+        state="permanent",
+        protected_at=now,  # type: ignore[misc]
+    )
+    Membership.objects.create(
+        user_id=user_id,
+        organisation=organisation,
+        role=Membership.Role.OWNER,
+        state=Membership.State.ACTIVE,
+        accepted_at=now,  # type: ignore[misc]
+    )
+    return organisation.id

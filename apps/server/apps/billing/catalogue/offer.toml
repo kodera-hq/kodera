@@ -45,7 +45,7 @@ name = "Capacité S"
 seats_included = 80
 concurrent_participants_included = 25
 storage_included_bytes = 50000000000
-vm_shape = "vm-s"
+vm_shape = "PRO2-S"
 
 [[capacity_tiers]]
 code = "M"
@@ -53,7 +53,7 @@ name = "Capacité M"
 seats_included = 165
 concurrent_participants_included = 50
 storage_included_bytes = 100000000000
-vm_shape = "vm-m"
+vm_shape = "PRO2-M"
 
 [[capacity_tiers]]
 code = "L"
@@ -61,7 +61,7 @@ name = "Capacité L"
 seats_included = 250
 concurrent_participants_included = 75
 storage_included_bytes = 250000000000
-vm_shape = "vm-l"
+vm_shape = "PRO2-L"
 
 [[capacity_tiers]]
 code = "XL"
@@ -69,7 +69,7 @@ name = "Capacité XL"
 seats_included = 665
 concurrent_participants_included = 200
 storage_included_bytes = 500000000000
-vm_shape = "vm-xl"
+vm_shape = "PRO2-L"
 
 [[plans]]
 code = "team"
@@ -398,4 +398,75 @@ pack = "workspace-v2"
 capacity_tier = "XL"
 billing_period = "yearly"
 amount_minor = 960000
+valid_from = 2026-11-13T00:00:00Z
+
+# Dedicated Sovereign pack (`PRO2-S` / `PRO2-M` / `PRO2-L` Scaleway fr-par instances).
+
+[[packs]]
+code = "sovereign"
+name = "Kodera Sovereign"
+description = "Dedicated instance hosted in France with isolated identity, messaging, calls and collaborative documents."
+apps = ["messaging", "visio", "docs"]
+profile_ref = "sovereign-pro2-s-v1"
+
+[[plans]]
+code = "sovereign"
+version = 2
+name = "Sovereign"
+description = "Dedicated instance hosted in France; messaging, calls and documents included."
+state = "published"
+published_at = 2026-11-13T00:00:00Z
+
+[[prices]]
+plan = "sovereign"
+plan_version = 2
+pack = "sovereign"
+capacity_tier = "S"
+billing_period = "monthly"
+amount_minor = 29000
+valid_from = 2026-11-13T00:00:00Z
+
+[[prices]]
+plan = "sovereign"
+plan_version = 2
+pack = "sovereign"
+capacity_tier = "S"
+billing_period = "yearly"
+amount_minor = 348000
+valid_from = 2026-11-13T00:00:00Z
+
+[[prices]]
+plan = "sovereign"
+plan_version = 2
+pack = "sovereign"
+capacity_tier = "M"
+billing_period = "monthly"
+amount_minor = 89000
+valid_from = 2026-11-13T00:00:00Z
+
+[[prices]]
+plan = "sovereign"
+plan_version = 2
+pack = "sovereign"
+capacity_tier = "M"
+billing_period = "yearly"
+amount_minor = 978000
+valid_from = 2026-11-13T00:00:00Z
+
+[[prices]]
+plan = "sovereign"
+plan_version = 2
+pack = "sovereign"
+capacity_tier = "L"
+billing_period = "monthly"
+amount_minor = 179000
+valid_from = 2026-11-13T00:00:00Z
+
+[[prices]]
+plan = "sovereign"
+plan_version = 2
+pack = "sovereign"
+capacity_tier = "L"
+billing_period = "yearly"
+amount_minor = 1878000
 valid_from = 2026-11-13T00:00:00Z

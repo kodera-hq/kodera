@@ -16,6 +16,8 @@ scanning:
      * `packages/design-tokens/`
      * `packages/api-contract/`
      * `packages/extension-sdk/`
+     * `packages/create-kodera/`
+     * `packages/create-kodera-extension/`
      * `extensions/`
      * `deploy/community/`
      * Root build/configuration files and documentation (`docs/`)
@@ -40,3 +42,9 @@ scanning:
 4. Trademarks
    - None of the software licenses above grant rights to use the **Kodera** name,
      wordmark, or monogram logo. See [`TRADEMARKS.md`](./TRADEMARKS.md).
+
+5. Third-Party Backports & Dependency Notices
+   - Audited security backports under `security/backports/` (`glib-0.18.5`,
+     `openmls_basic_credential-0.6.0`, `openmls_rust_crypto-0.6.0`) retain their
+     upstream `MIT` licenses in each crate directory. Complete third-party SPDX
+     inventories are generated in `sbom-cyclonedx.json`.

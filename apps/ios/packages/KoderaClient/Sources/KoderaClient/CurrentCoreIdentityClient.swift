@@ -364,34 +364,68 @@ public final class CurrentCoreIdentityClient {
                   case .some(.boolean(false)) = root["staff"],
                   let identities = root["identities"]?.array,
                   let memberships = root["organisations"]?.array, memberships.count <= 100 else { throw Failure.protocolViolation }
-            var ids: [String: CoreIdentity] = [:], issuers: Set<String> = []
+            var ids: [String: CoreIdentity] = [:]
+            var issuerFirstSubjectRealm: [String: (subject: String, realm: String)] = [:]
+            var issuerIdentityIds: [String: [String]] = [:]
             for entry in identities {
                 guard let item = entry.object, let id = item["id"]?.string, TrustPolicy.canonicalNonNilUUID(id), ids[id] == nil,
-                      let origin = item["issuer"]?.string, visible(origin, limit: 2048), issuers.insert(origin).inserted,
+                      let origin = item["issuer"]?.string, visible(origin, limit: 2048),
                       let realm = item["realm"]?.string, TrustPolicy.canonicalSlug(realm),
                       let subject = item["subject"]?.string, visible(subject, limit: 255) else { throw Failure.protocolViolation }
+                if let first = issuerFirstSubjectRealm[origin] {
+                    guard first.subject == subject, first.realm == realm else { throw Failure.protocolViolation }
+                } else {
+                    issuerFirstSubjectRealm[origin] = (subject, realm)
+                }
+                issuerIdentityIds[origin, default: []].append(id)
                 ids[id] = CoreIdentity(id: id, issuer: origin, realm: realm, subject: subject, organisationId: target)
             }
-            var organisations: Set<String> = [], matches = 0, selectedTarget: String?, active = false, link: String?
+            var organisations: Set<String> = [], dedicatedRealmCounts: [String: Int] = [:]
+            var linkedSharedIdentityIds: Set<String> = [], linkedDedicatedIdentityIds: Set<String> = []
+            var foundTargetInSessionRealm = false, active = false, link: String?
             for entry in memberships {
                 guard let membership = entry.object, let organisation = membership["organisation"]?.object,
                       let id = organisation["id"]?.string, TrustPolicy.canonicalNonNilUUID(id), organisations.insert(id).inserted,
                       let slug = organisation["slug"]?.string, TrustPolicy.canonicalSlug(slug),
                       let state = membership["state"]?.string, ["invited", "active", "suspended", "removed"].contains(state) else { throw Failure.protocolViolation }
+                var sharedRealm = false
+                if let value = membership["shared_realm"] {
+                    guard case let .boolean(flag) = value else { throw Failure.protocolViolation }
+                    sharedRealm = flag
+                }
                 var realm: String?
                 if let value = organisation["realm"], !value.isNull {
-                    guard let text = value.string, TrustPolicy.canonicalSlug(text), text == slug else { throw Failure.protocolViolation }
+                    guard let text = value.string, TrustPolicy.canonicalSlug(text), (sharedRealm || text == slug) else { throw Failure.protocolViolation }
                     realm = text
+                } else if sharedRealm {
+                    throw Failure.protocolViolation
                 }
                 var identity: String?
                 if let value = membership["identity_id"] {
                     guard let text = value.string, TrustPolicy.canonicalNonNilUUID(text) else { throw Failure.protocolViolation }
                     identity = text
+                    if sharedRealm {
+                        guard linkedSharedIdentityIds.insert(text).inserted else { throw Failure.protocolViolation }
+                    } else {
+                        linkedDedicatedIdentityIds.insert(text)
+                    }
                 }
-                if realm == issuer.realm { matches += 1; selectedTarget = id; active = state == "active"; link = identity }
+                if !sharedRealm, realm == issuer.realm {
+                    dedicatedRealmCounts[issuer.realm, default: 0] += 1
+                    guard dedicatedRealmCounts[issuer.realm]! <= 1 else { throw Failure.protocolViolation }
+                }
+                if id == target && realm == issuer.realm {
+                    foundTargetInSessionRealm = true; active = state == "active"; link = identity
+                }
             }
-            guard matches <= 1 else { throw Failure.protocolViolation }
-            guard matches == 1, selectedTarget == target, active, let link else { return .unavailable(.notEligible) }
+            for (_, group) in issuerIdentityIds where group.count > 1 {
+                let unsharedCount = group.filter { !linkedSharedIdentityIds.contains($0) }.count
+                guard unsharedCount <= 1,
+                      group.allSatisfy({ linkedSharedIdentityIds.contains($0) || linkedDedicatedIdentityIds.contains($0) }) else {
+                    throw Failure.protocolViolation
+                }
+            }
+            guard foundTargetInSessionRealm, active, let link else { return .unavailable(.notEligible) }
             guard let selected = ids[link], selected.issuer == issuer.issuer, selected.realm == issuer.realm else { throw Failure.protocolViolation }
             return .identity(selected)
         } catch { return .unavailable(.protocolViolation) }

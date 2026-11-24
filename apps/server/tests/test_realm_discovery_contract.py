@@ -100,7 +100,8 @@ DISCOVERY_SCHEMAS = (
 # Rebound at 0.58.0: community boosts, VIP Connect, live AI translation/captions, smart calendar/booking, and cybersecurity posture; discovery unchanged.
 # Rebound at 0.59.0: sandboxed extension widgets, extension marketplace settlement, sanitized WebP custom emojis, Send Later, reminders, and Kodera Labs; discovery unchanged.
 # Rebound at 0.60.0: opaque KVKB1 key-backup archive and confidential document collaboration session metadata; discovery unchanged.
-UNCHANGED_SHA = "d60abc8f91755f41554a68267ec344750146539a0195fc28ef23455999460c20"
+# Rebound at 0.61.0: cardless freemium PME self-serve workspace creation and shared_realm/plan_tier Me projection; discovery unchanged.
+UNCHANGED_SHA = "fe8bfce41be2464b6e640dcaae46e61d15b7b0b2b103550bb0b2106bc8efd62b"
 # Approved schema/key semantics; prose is removed before hashing.
 # Rebound at 0.26.0: discoverRealm declares 403 forbidden, a browser request refused from its
 # headers before any quota charge; the rest of the discovery wire is unchanged.

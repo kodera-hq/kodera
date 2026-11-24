@@ -20,14 +20,14 @@ import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Final
+from typing import Any, Final
 from uuid import UUID
 
 from apps.identity.selectors import current_identity, is_storable_subject
 from apps.orgs.authority_selectors import (
     MemberAuthorityNotFoundError,
     MemberAuthorityUnavailableError,
-    resolve_member_authority,
+    resolve_all_member_authorities,
 )
 from apps.orgs.models import Membership
 from django.conf import settings
@@ -216,13 +216,34 @@ def _extract_bearer_token(request: HttpRequest) -> str:
     return parts[1]
 
 
+def _peek_requested_tenant_slug(request: HttpRequest) -> str | None:
+    query_slug = request.GET.get("tenant_slug")
+    if isinstance(query_slug, str) and query_slug.strip():
+        return query_slug.strip()
+    if request.method in {"POST", "PUT", "PATCH"}:
+        try:
+            raw_body = request.body
+        except Exception:
+            return None
+        if raw_body and len(raw_body) <= 2_097_152:
+            try:
+                parsed = json.loads(raw_body.decode("utf-8"))
+            except (UnicodeDecodeError, ValueError):
+                return None
+            if isinstance(parsed, dict):
+                body_slug = parsed.get("tenant_slug")
+                if isinstance(body_slug, str) and body_slug.strip():
+                    return body_slug.strip()
+    return None
+
+
 def authenticate_tenant_request(
     request: HttpRequest,
     *,
     required_roles: frozenset[str] = ADMIN_ROLES,
     target_tenant_slug: str | None = None,
 ) -> AuthenticatedTenantPrincipal:
-    """Verify Kodera customer Bearer token via a single `resolve_member_authority` snapshot."""
+    """Verify Kodera customer Bearer token via a single repeatable-read authority snapshot."""
     compact_token = _extract_bearer_token(request)
     try:
         if compact_token.startswith(EE_SAML_SESSION_PREFIX):
@@ -244,7 +265,7 @@ def authenticate_tenant_request(
         raise EeAuthError("identity_unknown", status=403)
 
     try:
-        facts = resolve_member_authority(verified=verified)
+        all_authorities = resolve_all_member_authorities(verified=verified)
     except MemberAuthorityUnavailableError as exc:
         raise EeAuthError("authority_unavailable", status=503) from exc
     except MemberAuthorityNotFoundError as exc:
@@ -252,15 +273,35 @@ def authenticate_tenant_request(
             raise EeAuthError("identity_unknown", status=403) from exc
         raise EeAuthError("tenant_membership_required", status=403) from exc
 
-    if target_tenant_slug is not None and target_tenant_slug != facts.realm:
-        raise EeAuthError("cross_tenant_forbidden", status=403)
+    effective_target_slug = (
+        target_tenant_slug
+        if target_tenant_slug is not None
+        else _peek_requested_tenant_slug(request)
+    )
+    selected: tuple[Any, str, bool] | None = None
+    if effective_target_slug is not None:
+        for candidate in all_authorities:
+            if candidate[1] == effective_target_slug:
+                selected = candidate
+                break
+        if selected is None:
+            raise EeAuthError("cross_tenant_forbidden", status=403)
+    else:
+        for candidate in all_authorities:
+            if candidate[0].stored_role in required_roles:
+                selected = candidate
+                break
+        if selected is None:
+            selected = all_authorities[0]
+
+    facts, resolved_slug, _is_community = selected
 
     if facts.stored_role not in required_roles:
         raise EeAuthError("insufficient_role", status=403)
 
     return AuthenticatedTenantPrincipal(
         organisation_id=facts.organisation_id,
-        tenant_slug=facts.realm,
+        tenant_slug=resolved_slug,
         realm=facts.realm,
         user_id=facts.user_id,
         identity_id=facts.identity_id,

@@ -5,7 +5,7 @@ from datetime import datetime
 from uuid import UUID
 
 from django.db import connection
-from django.db.models import QuerySet
+from django.db.models import Q, QuerySet
 
 from apps.identity.selectors import lock_user_fence, person_identities
 
@@ -18,6 +18,8 @@ class OrganisationSnapshot:
     slug: str
     name: str
     realm: str
+    shared_realm: bool = False
+    plan_tier: str = "sovereign"
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -144,7 +146,12 @@ def person_memberships(*, user_id: UUID) -> tuple[MembershipSnapshot, ...]:
             MembershipSnapshot(
                 membership.id,
                 OrganisationSnapshot(
-                    organisation.id, organisation.slug, organisation.name, organisation.realm
+                    organisation.id,
+                    organisation.slug,
+                    organisation.name,
+                    organisation.realm,
+                    organisation.shared_realm,
+                    organisation.plan_tier,
                 ),
                 membership.role,
                 membership.state,
@@ -403,9 +410,12 @@ def organisation_authority_revision(*, organisation_id: UUID) -> int:
     return Organisation.objects.values_list("authority_revision", flat=True).get(id=organisation_id)
 
 
-def person_has_membership(*, user_id: UUID) -> bool:
-    """Guest admission cannot also carry ordinary workspace membership."""
-    return Membership.objects.filter(user_id=user_id).exclude(state="removed").exists()
+def person_has_membership(*, user_id: UUID, organisation_id: UUID | None = None) -> bool:
+    """Guest admission cannot also carry ordinary workspace membership in the target organisation."""
+    qs = Membership.objects.filter(user_id=user_id).exclude(state="removed")
+    if organisation_id is not None:
+        qs = qs.filter(organisation_id=organisation_id)
+    return qs.exists()
 
 
 def has_privacy_cutoff(*, organisation_id: UUID, user_id: UUID | None = None) -> bool:
@@ -529,3 +539,183 @@ def ensure_security_and_privacy_contacts(
         updates["privacy_contact_email"] = candidate
     Organisation.objects.filter(id=organisation_id).update(**updates)
     return True
+
+
+def is_shared_realm_organisation(*, organisation_id: UUID, issuer: str) -> bool:
+    """Whether `organisation_id` is an undeleted `shared_realm=True` organisation on `issuer`."""
+    return Organisation.objects.filter(
+        id=organisation_id,
+        shared_realm=True,
+        issuer=issuer,
+        deleted_at__isnull=True,
+    ).exists()
+
+
+def is_community_or_shared_realm_organisation(
+    *, organisation_id: UUID, issuer: str, community_slug: str
+) -> bool:
+    """Single-query check whether `organisation_id` is canonical community or `shared_realm=True`."""
+    cond = Q(shared_realm=True)
+    if community_slug:
+        cond |= Q(is_default_community=True, slug=community_slug, state="active")
+    return (
+        Organisation.objects.filter(
+            id=organisation_id,
+            issuer=issuer,
+            deleted_at__isnull=True,
+        )
+        .filter(cond)
+        .exists()
+    )
+
+
+def organisation_plan_tier_state(*, organisation_id: UUID) -> tuple[bool, str, bool] | None:
+    """Return `(shared_realm, plan_tier, is_default_community)` for `organisation_id`, or None."""
+    row = (
+        Organisation.objects.filter(id=organisation_id)
+        .values_list("shared_realm", "plan_tier", "is_default_community")
+        .first()
+    )
+    if row is None:
+        return None
+    return (bool(row[0]), str(row[1]), bool(row[2]))
+
+
+def set_organisation_plan_tier(*, organisation_id: UUID, plan_tier: str) -> None:
+    """Update `Organisation.plan_tier` inside the caller's settlement transaction."""
+    Organisation.objects.filter(id=organisation_id).update(plan_tier=plan_tier)
+
+
+def count_active_freemium_owned_organisations(*, user_id: UUID) -> int:
+    """Count active `freemium_pme` organisations currently owned by `user_id`."""
+    return Membership.objects.filter(
+        user_id=user_id,
+        role=Membership.Role.OWNER,
+        state=Membership.State.ACTIVE,
+        deleted_at__isnull=True,
+        organisation__plan_tier=Organisation.PlanTier.FREEMIUM_PME,
+        organisation__state=Organisation.State.ACTIVE,
+        organisation__deleted_at__isnull=True,
+    ).count()
+
+
+def shared_realm_host_organisation_id(*, organisation_id: UUID) -> UUID | None:
+    """If `organisation_id` is an undeleted `shared_realm=True` org, return its shared host
+    (`is_default_community=True`) organisation ID on the same realm, else `None`."""
+    realm = (
+        Organisation.objects.filter(
+            id=organisation_id,
+            shared_realm=True,
+            deleted_at__isnull=True,
+        )
+        .values_list("realm", flat=True)
+        .first()
+    )
+    if not realm:
+        return None
+    host_id: UUID | None = (
+        Organisation.objects.filter(
+            is_default_community=True,
+            realm=realm,
+            deleted_at__isnull=True,
+        )
+        .order_by("id")
+        .values_list("id", flat=True)
+        .first()
+    )
+    return host_id
+
+
+def shared_realm_organisation_ids_for_community(
+    *, community_organisation_id: UUID, limit: int = 500
+) -> tuple[UUID, ...]:
+    """If `community_organisation_id` is `is_default_community=True`, return active
+    `shared_realm=True` organisation IDs sharing its `realm` (bounded and deterministic)."""
+    realm = (
+        Organisation.objects.filter(
+            id=community_organisation_id,
+            is_default_community=True,
+            deleted_at__isnull=True,
+        )
+        .values_list("realm", flat=True)
+        .first()
+    )
+    if not realm:
+        return ()
+    return tuple(
+        Organisation.objects.filter(
+            shared_realm=True,
+            realm=realm,
+            state="active",
+            deleted_at__isnull=True,
+        )
+        .order_by("id")
+        .values_list("id", flat=True)[:limit]
+    )
+
+
+def all_shared_realm_organisation_ids_for_community(
+    *, community_organisation_id: UUID, limit: int = 10_000
+) -> tuple[UUID, ...]:
+    """If `community_organisation_id` is `is_default_community=True`, return all
+    `shared_realm=True` organisation IDs on its `realm` (active, suspended, or soft-deleted) so
+    known subjects of departed or suspended PME organisations remain tracked on the shared host."""
+    realm = (
+        Organisation.objects.filter(
+            id=community_organisation_id,
+            is_default_community=True,
+            deleted_at__isnull=True,
+        )
+        .values_list("realm", flat=True)
+        .first()
+    )
+    if not realm:
+        return ()
+    return tuple(
+        Organisation.objects.filter(
+            shared_realm=True,
+            realm=realm,
+        )
+        .order_by("id")
+        .values_list("id", flat=True)[:limit]
+    )
+
+
+def active_org_member_pairs(*, organisation_ids: tuple[UUID, ...]) -> set[tuple[UUID, UUID]]:
+    """Return `(organisation_id, user_id)` pairs holding active memberships in active,
+    undeleted organisations among `organisation_ids`."""
+    if not organisation_ids:
+        return set()
+    return {
+        (org_id, user_id)
+        for org_id, user_id in Membership.objects.filter(
+            organisation_id__in=organisation_ids,
+            state="active",
+            deleted_at__isnull=True,
+            user__deleted_at__isnull=True,
+            organisation__state="active",
+            organisation__deleted_at__isnull=True,
+        ).values_list("organisation_id", "user_id")
+    }
+
+
+def is_default_community_organisation(*, organisation_id: UUID) -> bool:
+    """Whether `organisation_id` is the undeleted canonical default community organisation."""
+    return Organisation.objects.filter(
+        id=organisation_id,
+        is_default_community=True,
+        deleted_at__isnull=True,
+    ).exists()
+
+
+def orgs_under_privacy_erasure_cutoff(*, organisation_ids: tuple[UUID, ...]) -> set[UUID]:
+    """Return any organisation IDs among `organisation_ids` frozen by `PrivacyErasure`."""
+    if not organisation_ids:
+        return set()
+    from .models import PrivacyErasure
+
+    return set(
+        PrivacyErasure.objects.filter(organisation_reference__in=organisation_ids).values_list(
+            "organisation_reference", flat=True
+        )
+    )

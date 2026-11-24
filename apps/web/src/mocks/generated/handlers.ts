@@ -136,6 +136,7 @@ export const handlers: HttpHandler[] = [
   http.get(BASE + "/organisations/:organisation_id/bootstrap", () => answer(EXAMPLES["getOrganisationBootstrap"])),
   http.get(BASE + "/organisations/:organisation_id/workspace", () => answer(EXAMPLES["getWorkspace"])),
   http.post(BASE + "/workspaces/instant-claim", ({ request }) => answerIdempotent(EXAMPLES["instantClaimWorkspace"], request)),
+  http.post(BASE + "/workspaces/self-serve", ({ request }) => answerIdempotent(EXAMPLES["createSelfServeWorkspace"], request)),
   http.post(BASE + "/organisations/:organisation_id/workspace/actions/initialise", ({ request }) => answerIdempotent(EXAMPLES["initialiseWorkspace"], request)),
   http.post(BASE + "/organisations/:organisation_id/workspace/categories", ({ request }) => answerIdempotent(EXAMPLES["createCategory"], request)),
   http.patch(BASE + "/organisations/:organisation_id/workspace/categories/:category_id", ({ request }) => answerRequiringIfMatch(EXAMPLES["patchCategory"], request)),

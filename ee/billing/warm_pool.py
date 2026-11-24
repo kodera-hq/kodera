@@ -100,6 +100,9 @@ class PoolWatermarks:
             )
 
 
+SOVEREIGN_POOL_WATERMARKS = PoolWatermarks(min_ready=1, target_ready=2, max_total=3)
+
+
 @dataclass(frozen=True, slots=True)
 class WarmPoolSlot:
     slot_id: str
@@ -187,6 +190,22 @@ class WarmPoolController:
     def watermarks(self) -> PoolWatermarks:
         return self._watermarks
 
+    def _watermarks_for(self, profile_ref: str) -> PoolWatermarks:
+        if profile_ref == "sovereign-pro2-s-v1" or profile_ref.startswith("sovereign-"):
+            max_total = min(self._watermarks.max_total, SOVEREIGN_POOL_WATERMARKS.max_total)
+            target_ready = min(
+                self._watermarks.target_ready, SOVEREIGN_POOL_WATERMARKS.target_ready, max_total
+            )
+            min_ready = min(
+                self._watermarks.min_ready, SOVEREIGN_POOL_WATERMARKS.min_ready, target_ready
+            )
+            return PoolWatermarks(
+                min_ready=min_ready,
+                target_ready=target_ready,
+                max_total=max_total,
+            )
+        return self._watermarks
+
     def _snapshot_from_counts(
         self,
         *,
@@ -194,14 +213,13 @@ class WarmPoolController:
         profile_ref: str,
         counts: dict[SlotState, int],
     ) -> PoolSizingSnapshot:
-        active_used = (
-            counts["provisioning"] + counts["ready"] + counts["claimed"] + counts["unhealthy"]
-        )
+        wm = self._watermarks_for(profile_ref)
+        active_used = counts["provisioning"] + counts["ready"] + counts["unhealthy"]
         warm_pipeline = counts["ready"] + counts["provisioning"]
-        headroom = max(0, self._watermarks.max_total - active_used)
-        desired = max(0, self._watermarks.target_ready - warm_pipeline)
+        headroom = max(0, wm.max_total - active_used)
+        desired = max(0, wm.target_ready - warm_pipeline)
         replenish_needed = min(desired, headroom)
-        below_low = counts["ready"] < self._watermarks.min_ready
+        below_low = counts["ready"] < wm.min_ready
         return PoolSizingSnapshot(
             region=region,
             profile_ref=profile_ref,
@@ -247,7 +265,7 @@ class WarmPoolController:
         return self._store.replenish(
             region=target_region,
             profile_ref=target_profile,
-            watermarks=self._watermarks,
+            watermarks=self._watermarks_for(target_profile),
             authority=authority,
         )
 
@@ -351,7 +369,7 @@ class WarmPoolController:
             checkout_id=chk_id,
             region=target_region,
             profile_ref=target_profile,
-            watermarks=self._watermarks,
+            watermarks=self._watermarks_for(target_profile),
             authority=authority,
         )
         snap = self._snapshot_from_counts(
@@ -374,3 +392,24 @@ class WarmPoolController:
     ) -> WarmPoolSlot:
         _check_identifier(slot_id, "slot_id")
         return self._store.get_slot(slot_id, authority=authority)
+
+    def list_slots(
+        self,
+        *,
+        state: SlotState | None = None,
+        region: str | None = None,
+        profile_ref: str | None = None,
+        authority: CallerAuthority | None = None,
+    ) -> tuple[WarmPoolSlot, ...]:
+        if state is not None and state not in VALID_SLOT_TRANSITIONS:
+            raise WarmPoolValidationError("invalid slot state filter", code="invalid_slot_state")
+        target_region = None if region is None else _check_identifier(region, "region")
+        target_profile = (
+            None if profile_ref is None else _check_identifier(profile_ref, "profile_ref")
+        )
+        return self._store.list_slots(
+            state=state,
+            region=target_region,
+            profile_ref=target_profile,
+            authority=authority,
+        )

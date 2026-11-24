@@ -12,10 +12,17 @@ from django.apps import apps
 from django.conf import settings
 from django.core import signing
 from django.db import IntegrityError, connection, transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from apps.media import outbound
-from apps.media.context import RefusalError as RefusalError, audit, caller, read_caller
+from apps.media.context import (
+    RefusalError as RefusalError,
+    audit,
+    caller,
+    read_all_callers,
+    read_caller,
+)
 from apps.orgs.actor_selectors import TenantCaller
 from apps.orgs.selectors import lock_erasure_cutoff_fences
 from apps.orgs.workspace_members import for_workspace
@@ -97,7 +104,7 @@ def put_subscription(
     if not isinstance(raw_platform, str) or raw_platform not in PUSH_PLATFORMS:
         raise RefusalError(422)
     with transaction.atomic():
-        initial = read_caller(verified)
+        initials = sorted(read_all_callers(verified), key=lambda c: str(c.organisation_id))
     public_key()
     key = seal_key()
     try:
@@ -107,15 +114,16 @@ def put_subscription(
     except ValueError:
         raise RefusalError(422) from None
     material = {"endpoint": endpoint, "p256dh": body["p256dh"], "auth": body["auth"]}
-    _store_subscription(
-        verified=verified,
-        device_id=device_id,
-        platform=raw_platform,
-        material=material,
-        key=key,
-        organisation_id=initial.organisation_id,
-        request_id=request_id,
-    )
+    for initial in initials:
+        _store_subscription(
+            verified=verified,
+            device_id=device_id,
+            platform=raw_platform,
+            material=material,
+            key=key,
+            organisation_id=initial.organisation_id,
+            request_id=request_id,
+        )
 
 
 @transaction.atomic
@@ -213,58 +221,61 @@ def put_presence(
         or not 1 <= ttl_seconds <= MAX_PRESENCE_TTL_SECONDS
     ):
         raise RefusalError(422)
-    initial = read_caller(verified)
-    member = for_workspace(
-        organisation_id=initial.organisation_id, membership_id=initial.membership_id, lock=False
-    )
-    if member is None:
-        raise RefusalError(403)
-    lock_erasure_cutoff_fences(organisation_id=initial.organisation_id, user_id=member.user_id)
-    if (
-        for_workspace(organisation_id=initial.organisation_id, membership_id=initial.membership_id)
-        is None
-    ):
-        raise RefusalError(403)
-    principal = caller(verified, initial.organisation_id)
-    if (
-        for_workspace(
-            organisation_id=principal.organisation_id,
-            membership_id=principal.membership_id,
-            lock=False,
-        )
-        is None
-    ):
-        raise RefusalError(403)
-    row = (
-        PresenceLease.objects.select_for_update()
-        .filter(
-            organisation_id=principal.organisation_id,
-            membership_id=principal.membership_id,
-            device_id=device_id,
-        )
-        .first()
-    )
+    initials = sorted(read_all_callers(verified), key=lambda c: str(c.organisation_id))
     now = timezone.now()
     expires_at = now + timedelta(seconds=ttl_seconds)
-    try:
-        with transaction.atomic():
-            if row is None:
-                row = PresenceLease(
-                    organisation_id=principal.organisation_id,
-                    membership_id=principal.membership_id,
-                    device_id=device_id,
-                    platform=platform,
-                    expires_at=expires_at,
-                )
-                row.save(force_insert=True)
-            else:
-                PresenceLease.objects.filter(pk=row.pk).update(
-                    platform=platform,
-                    expires_at=expires_at,
-                    updated_at=now,
-                )
-    except IntegrityError:
-        raise RefusalError(409) from None
+    for initial in initials:
+        member = for_workspace(
+            organisation_id=initial.organisation_id, membership_id=initial.membership_id, lock=False
+        )
+        if member is None:
+            raise RefusalError(403)
+        lock_erasure_cutoff_fences(organisation_id=initial.organisation_id, user_id=member.user_id)
+        if (
+            for_workspace(
+                organisation_id=initial.organisation_id, membership_id=initial.membership_id
+            )
+            is None
+        ):
+            raise RefusalError(403)
+        principal = caller(verified, initial.organisation_id)
+        if (
+            for_workspace(
+                organisation_id=principal.organisation_id,
+                membership_id=principal.membership_id,
+                lock=False,
+            )
+            is None
+        ):
+            raise RefusalError(403)
+        row = (
+            PresenceLease.objects.select_for_update()
+            .filter(
+                organisation_id=principal.organisation_id,
+                membership_id=principal.membership_id,
+                device_id=device_id,
+            )
+            .first()
+        )
+        try:
+            with transaction.atomic():
+                if row is None:
+                    row = PresenceLease(
+                        organisation_id=principal.organisation_id,
+                        membership_id=principal.membership_id,
+                        device_id=device_id,
+                        platform=platform,
+                        expires_at=expires_at,
+                    )
+                    row.save(force_insert=True)
+                else:
+                    PresenceLease.objects.filter(pk=row.pk).update(
+                        platform=platform,
+                        expires_at=expires_at,
+                        updated_at=now,
+                    )
+        except IntegrityError:
+            raise RefusalError(409) from None
     return {
         "deviceId": str(device_id),
         "platform": platform,
@@ -276,19 +287,20 @@ def put_presence(
 @transaction.atomic
 def delete_presence(*, verified: VerifiedAccessToken, device_id: UUID, request_id: str) -> None:
     del request_id
-    initial = read_caller(verified)
-    member = for_workspace(
-        organisation_id=initial.organisation_id, membership_id=initial.membership_id, lock=False
-    )
-    if member is None:
-        raise RefusalError(403)
-    lock_erasure_cutoff_fences(organisation_id=initial.organisation_id, user_id=member.user_id)
-    principal = caller(verified, initial.organisation_id)
-    PresenceLease.objects.select_for_update().filter(
-        organisation_id=principal.organisation_id,
-        membership_id=principal.membership_id,
-        device_id=device_id,
-    ).delete()
+    initials = sorted(read_all_callers(verified), key=lambda c: str(c.organisation_id))
+    for initial in initials:
+        member = for_workspace(
+            organisation_id=initial.organisation_id, membership_id=initial.membership_id, lock=False
+        )
+        if member is None:
+            raise RefusalError(403)
+        lock_erasure_cutoff_fences(organisation_id=initial.organisation_id, user_id=member.user_id)
+        principal = caller(verified, initial.organisation_id)
+        PresenceLease.objects.select_for_update().filter(
+            organisation_id=principal.organisation_id,
+            membership_id=principal.membership_id,
+            device_id=device_id,
+        ).delete()
 
 
 def has_active_foreground_presence(
@@ -305,21 +317,23 @@ def has_active_foreground_presence(
 
 @transaction.atomic
 def delete_subscription(*, verified: VerifiedAccessToken, device_id: UUID, request_id: str) -> None:
-    principal = caller(verified)
-    row = (
-        PushSubscription.objects.select_for_update()
-        .filter(
-            organisation_id=principal.organisation_id,
-            membership_id=principal.membership_id,
-            device_id=device_id,
+    initials = sorted(read_all_callers(verified), key=lambda c: str(c.organisation_id))
+    for initial in initials:
+        principal = caller(verified, initial.organisation_id)
+        row = (
+            PushSubscription.objects.select_for_update()
+            .filter(
+                organisation_id=principal.organisation_id,
+                membership_id=principal.membership_id,
+                device_id=device_id,
+            )
+            .first()
         )
-        .first()
-    )
-    if row is not None and row.revoked_at is None:
-        row.revoked_at = timezone.now()
-        row.version = uuid4()
-        row.save(update_fields=["revoked_at", "version", "updated_at"])
-        audit(principal, "workspace.push_subscription.revoked", row.id, request_id)
+        if row is not None and row.revoked_at is None:
+            row.revoked_at = timezone.now()
+            row.version = uuid4()
+            row.save(update_fields=["revoked_at", "version", "updated_at"])
+            audit(principal, "workspace.push_subscription.revoked", row.id, request_id)
 
 
 def wire(row: Notification) -> dict[str, Any]:
@@ -430,13 +444,15 @@ def visible(row: Notification, principal: TenantCaller, verified: VerifiedAccess
 
 @transaction.atomic
 def inbox(*, verified: VerifiedAccessToken, cursor: str | None, limit: int) -> dict[str, Any]:
-    principal = read_caller(verified)
+    principals = read_all_callers(verified)
+    primary = principals[0]
     if type(limit) is not int or not 1 <= limit <= 200:
         raise RefusalError(400)
-    salt = f"notification-inbox:v1:{principal.organisation_id}:{principal.membership_id}:{verified.issuer}:{verified.subject}"
-    rows = Notification.objects.filter(
-        organisation_id=principal.organisation_id, membership_id=principal.membership_id
-    )
+    salt = f"notification-inbox:v1:{primary.organisation_id}:{primary.membership_id}:{verified.issuer}:{verified.subject}"
+    scope_q = Q()
+    for p in principals:
+        scope_q |= Q(organisation_id=p.organisation_id, membership_id=p.membership_id)
+    rows = Notification.objects.filter(scope_q)
     if cursor is not None:
         if not cursor or len(cursor) > 512:
             raise RefusalError(400)
@@ -450,7 +466,14 @@ def inbox(*, verified: VerifiedAccessToken, cursor: str | None, limit: int) -> d
     scanned = list(rows.order_by("-id")[: limit + 1])
     more = len(scanned) > limit
     selected = scanned[:limit]
-    allowed = _visible_ids(selected, principal, verified)
+    by_org: dict[UUID, list[Notification]] = {}
+    for row in selected:
+        by_org.setdefault(row.organisation_id, []).append(row)
+    allowed: set[UUID] = set()
+    for p in principals:
+        org_rows = by_org.get(p.organisation_id)
+        if org_rows:
+            allowed |= _visible_ids(org_rows, p, verified)
     return {
         "data": [wire(row) for row in selected if row.id in allowed],
         "has_more": more,
@@ -460,7 +483,7 @@ def inbox(*, verified: VerifiedAccessToken, cursor: str | None, limit: int) -> d
 
 @transaction.atomic
 def mark_read(*, verified: VerifiedAccessToken, ids: list[UUID], request_id: str) -> None:
-    principal = caller(verified)
+    initials = sorted(read_all_callers(verified), key=lambda c: str(c.organisation_id))
     if (
         not isinstance(ids, list)
         or not 1 <= len(ids) <= 200
@@ -468,16 +491,28 @@ def mark_read(*, verified: VerifiedAccessToken, ids: list[UUID], request_id: str
         or len(set(ids)) != len(ids)
     ):
         raise RefusalError(422)
-    rows = Notification.objects.select_for_update().filter(
-        organisation_id=principal.organisation_id, membership_id=principal.membership_id, id__in=ids
-    )
+    principals = [caller(verified, init.organisation_id) for init in initials]
+    scope_q = Q()
+    for p in principals:
+        scope_q |= Q(organisation_id=p.organisation_id, membership_id=p.membership_id)
+    rows = Notification.objects.select_for_update().filter(scope_q, id__in=ids)
     selected = list(rows)
-    if len(selected) != len(ids) or len(_visible_ids(selected, principal, verified)) != len(
-        selected
-    ):
+    by_org: dict[UUID, list[Notification]] = {}
+    for row in selected:
+        by_org.setdefault(row.organisation_id, []).append(row)
+    allowed: set[UUID] = set()
+    touched_principals: list[TenantCaller] = []
+    for p in principals:
+        org_rows = by_org.get(p.organisation_id)
+        if org_rows:
+            allowed |= _visible_ids(org_rows, p, verified)
+            touched_principals.append(p)
+    if len(selected) != len(ids) or len(allowed) != len(selected):
         raise RefusalError(404)
-    rows.filter(read_at__isnull=True).update(read_at=timezone.now(), updated_at=timezone.now())
-    audit(principal, "workspace.notification.read", principal.membership_id, request_id)
+    now = timezone.now()
+    rows.filter(read_at__isnull=True).update(read_at=now, updated_at=now)
+    for p in touched_principals:
+        audit(p, "workspace.notification.read", p.membership_id, request_id)
 
 
 def record(

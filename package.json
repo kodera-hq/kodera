@@ -1,6 +1,6 @@
 {
   "name": "kodera-monorepo",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "private": true,
   "description": "Kodera \u2014 Open-core, sovereign, interoperable real-time workspace.",
   "packageManager": "npm@10.9.2",

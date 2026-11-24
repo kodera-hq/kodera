@@ -233,7 +233,10 @@ def _record(item: pytest.Item, scenario_id: str, label: str, detail: str) -> Non
 
 
 def pytest_report_teststatus(report: pytest.TestReport, config: pytest.Config) -> Any:
-    if dict(report.user_properties).get("first_slice_state") == "blocked" and report.skipped:
+    if (
+        dict(getattr(report, "user_properties", ())).get("first_slice_state") == "blocked"
+        and report.skipped
+    ):
         return "blocked", "B", "BLOCKED"
     return None
 

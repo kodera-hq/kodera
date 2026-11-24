@@ -1512,10 +1512,9 @@ def test_matrix_domain_suffix_env_and_staging_community_homeserver_derivation(
         KODERA_LIVEKIT_ROSTER_RESOLVER=harness.livekit_roster_resolver,
         KODERA_TENANT_APP_URLS={"visio": "https://{slug}.visio.staging.kodera.io"},
     ):
-        domains = call_captions._authoritative_matrix_domains(harness.org_id)
-        assert "acme.staging.kodera.io" in domains
-        assert "matrix.acme.staging.kodera.io" in domains
-        assert "acme-corp.staging.kodera.io" not in domains
+        domains = set(call_captions._authoritative_matrix_domains(harness.org_id))
+        assert {"acme.staging.kodera.io", "matrix.acme.staging.kodera.io"}.issubset(domains)
+        assert domains.isdisjoint({"acme-corp.staging.kodera.io"})
 
         staging_sess = call_captions.update_live_call_caption_session(
             verified=harness.alice_token,
@@ -1566,10 +1565,9 @@ def test_matrix_domain_suffix_env_and_staging_community_homeserver_derivation(
         KODERA_LIVEKIT_ROSTER_RESOLVER=harness.livekit_roster_resolver,
         KODERA_CONSOLE_ORIGINS="https://community.example.org, https://console.kodera.io",
     ):
-        comm_domains = call_captions._authoritative_matrix_domains(harness.org_id)
-        assert "community.example.org" in comm_domains
-        assert "matrix.community.example.org" in comm_domains
-        assert "other-org.example.org" not in comm_domains
+        comm_domains = set(call_captions._authoritative_matrix_domains(harness.org_id))
+        assert {"community.example.org", "matrix.community.example.org"}.issubset(comm_domains)
+        assert comm_domains.isdisjoint({"other-org.example.org"})
 
         comm_sess = call_captions.update_live_call_caption_session(
             verified=harness.alice_token,

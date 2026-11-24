@@ -913,6 +913,14 @@ def reconcile_template_document(
                 .order_by("id")
                 .first()
             )
+        if (
+            channel_id is not None
+            and (
+                is_confidential_channel(channel_id=channel_id, organisation_id=organisation_id)
+                or has_confidential_room(channel_id=channel_id, organisation_id=organisation_id)
+            )
+        ) or (row is not None and is_document_confidential(row, organisation_id)):
+            raise RefusalError(403)
         created = False
         if row is None:
             if transformed is None:

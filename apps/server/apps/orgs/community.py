@@ -81,6 +81,7 @@ def bootstrap_community_workspace(*, owner_user_id: UUID | None = None) -> Commu
             name="Kodera Community",
             state="active",
             is_default_community=True,
+            plan_tier="community",
         )
         SlugReservation.objects.create(
             organisation=organisation,
@@ -115,8 +116,9 @@ def bootstrap_community_workspace(*, owner_user_id: UUID | None = None) -> Commu
 # A first visit that loses a race to a concurrent one of the same person is retried, and then
 # finds what the winner committed. Bounded: three attempts, then the rows are read as they are.
 FIRST_VISIT_ATTEMPTS = 3
-# The unique constraints that make a first visit conflict-safe: one identity per (issuer, subject),
-# one current membership per (person, organisation). Losing either is a lost race, never an error.
+# The unique constraints that make a first visit conflict-safe: one identity per
+# (organisation, issuer, subject), one current membership per (person, organisation).
+# Losing either is a lost race, never an error.
 FIRST_VISIT_CONSTRAINTS = frozenset({"identity_issuer_subject_unique", "membership_current_unique"})
 COMMUNITY_SIGNUP = "community_signup"
 
@@ -142,7 +144,11 @@ def ensure_community_membership(*, verified: VerifiedAccessToken) -> Membership 
         return None
     principal = community_identity(verified)
     if principal is not None:
-        membership = _latest_membership(principal.user_id, community.id)
+        membership = (
+            _latest_membership(principal.user_id, community.id)
+            if verified.issuer != community.issuer or principal.organisation_id == community.id
+            else None
+        )
         if membership is not None:
             return membership
     return _first_visit(verified, community)
@@ -188,6 +194,13 @@ def _create_first_visit(
             # concurrent first visit committed since the look above. Only the last is found by
             # looking again; a disabled identity stays unfound and is never revived.
             principal = community_identity(verified)
+    elif verified.issuer == community.issuer and principal.organisation_id != community.id:
+        principal = materialize_community_identity(
+            verified=verified,
+            organisation_id=community.id,
+            issuer=community.issuer,
+            realm=community.realm,
+        ) or community_identity(verified, organisation_id=community.id)
     if principal is None:
         return None
     membership = _latest_membership(principal.user_id, community.id)
@@ -254,8 +267,10 @@ def community_member(
     community = canonical_community()
     if community is None:
         return None
-    principal = community_identity(verified)
-    if community is None or principal is None:
+    principal = community_identity(verified, organisation_id=community.id)
+    if principal is None and verified.issuer != community.issuer:
+        principal = community_identity(verified)
+    if principal is None:
         return None
     member = Membership.objects.filter(
         user_id=principal.user_id,

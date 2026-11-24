@@ -959,7 +959,6 @@ def test_bug_0027_upgrade_backfill_sends_valid_queued_invitation_and_withdraws_r
     pre-upgrade invitations still send while revoked ones are withdrawn."""
     from django.db.migrations.executor import MigrationExecutor
 
-    from apps.identity.models import User
     from apps.orgs.invitations import format_token
 
     settings.KODERA_OUTBOX_SEAL_KEY = hashlib.sha256(b"k2c-upgrade-seal-key").digest()
@@ -971,36 +970,44 @@ def test_bug_0027_upgrade_backfill_sends_valid_queued_invitation_and_withdraws_r
 
     try:
         executor = MigrationExecutor(connection)
-        executor.migrate([("orgs", "0033_proximity_erasure_inventory")])
+        target_state = [("orgs", "0033_proximity_erasure_inventory")]
+        executor.migrate(target_state)
+        hist_apps = MigrationExecutor(connection).loader.project_state(target_state).apps
+        hist_organisation = hist_apps.get_model("orgs", "Organisation")
+        hist_slug_reservation = hist_apps.get_model("orgs", "SlugReservation")
+        hist_membership = hist_apps.get_model("orgs", "Membership")
+        hist_invitation = hist_apps.get_model("orgs", "Invitation")
+        hist_user = hist_apps.get_model("identity", "User")
+        hist_identity = hist_apps.get_model("identity", "Identity")
 
         with connection.cursor() as cursor:
             cursor.execute("SELECT to_regclass('public.orgs_invitationoutboxbinding') IS NULL")
             assert cursor.fetchone()[0] is True
 
         with transaction.atomic():
-            upg_org = Organisation.objects.create(
+            upg_org = hist_organisation.objects.create(
                 slug="upgrade-inv-k2c",
                 realm="upgrade-inv-k2c",
                 issuer="https://identity.customer.test/realms/upgrade-inv-k2c",
                 name="Upgrade Org",
                 state="active",
             )
-            SlugReservation.objects.create(
+            hist_slug_reservation.objects.create(
                 organisation=upg_org,
                 namespace="organisation",
                 slug=upg_org.slug,
                 state="permanent",
                 protected_at=timezone.now(),
             )
-            inviter_user = User.objects.create(email="inviter-upgrade@example.org")
-            Membership.objects.create(
+            inviter_user = hist_user.objects.create(email="inviter-upgrade@example.org")
+            hist_membership.objects.create(
                 user=inviter_user,
                 organisation=upg_org,
                 role="org_owner",
                 state="active",
                 accepted_at=timezone.now(),
             )
-            inviter_ident = Identity.objects.create(
+            inviter_ident = hist_identity.objects.create(
                 user=inviter_user,
                 organisation=upg_org,
                 issuer=upg_org.issuer,
@@ -1009,7 +1016,7 @@ def test_bug_0027_upgrade_backfill_sends_valid_queued_invitation_and_withdraws_r
                 email=inviter_user.email,
             )
             now = database_now()
-            valid_inv = Invitation.objects.create(
+            valid_inv = hist_invitation.objects.create(
                 organisation=upg_org,
                 email="valid-preupgrade@example.org",
                 role="org_member",
@@ -1024,7 +1031,7 @@ def test_bug_0027_upgrade_backfill_sends_valid_queued_invitation_and_withdraws_r
                 invited_by_user=inviter_user,
                 invited_by_identity=inviter_ident,
             )
-            revoked_inv = Invitation.objects.create(
+            revoked_inv = hist_invitation.objects.create(
                 organisation=upg_org,
                 email="revoked-preupgrade@example.org",
                 role="org_member",

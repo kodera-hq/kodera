@@ -342,6 +342,7 @@ def perform(
 _RECONCILE = """
 SELECT m.organisation_id, m.id, i.id, i.subject
 FROM orgs_membership m
+JOIN orgs_organisation o ON o.id = m.organisation_id
 JOIN identity_identity i ON i.user_id = m.user_id AND i.organisation_id = m.organisation_id
 LEFT JOIN LATERAL (
     SELECT r.operation, d.status FROM outbox_realmaccess r
@@ -350,6 +351,7 @@ LEFT JOIN LATERAL (
     ORDER BY d.created_at DESC, d.id DESC LIMIT 1
 ) latest ON true
 WHERE m.state IN ('suspended', 'removed') AND m.deleted_at IS NULL
+  AND o.shared_realm = FALSE AND o.is_default_community = FALSE
   AND (latest.operation IS NULL OR latest.operation = 'access_on'
        OR (%s AND latest.status = 'failed'))
 ORDER BY m.organisation_id, m.id, i.id
@@ -461,7 +463,8 @@ _SUBJECT = """
 SELECT m.organisation_id, m.user_id, m.state, m.deleted_at IS NULL,
        i.organisation_id, i.user_id, i.subject, i.realm, i.issuer,
        i.enabled AND i.deleted_at IS NULL,
-       o.realm, o.issuer
+       o.realm, o.issuer,
+       o.shared_realm OR o.is_default_community
 FROM orgs_membership m, identity_identity i, orgs_organisation o
 WHERE m.id = %s AND i.id = %s AND o.id = %s
 FOR SHARE OF m
@@ -477,6 +480,7 @@ class Subject:
     membership_state: str
     membership_live: bool
     identity_usable: bool
+    shared_realm: bool = False
 
 
 def payload_problem(
@@ -503,7 +507,7 @@ def payload_problem(
         _usable,
         o_realm,
         o_issuer,
-    ) = found
+    ) = found[:12]
     if m_organisation != organisation_id:
         return "membership_organisation"
     if i_organisation != organisation_id or i_user != m_user:
@@ -525,6 +529,8 @@ def withdrawn(operation: str, subject: Subject) -> bool:
     """Whether executing the delivery would move the realm away from the membership's current
     state: an `access_off` of an active membership (a reconcile that raced a reactivation), or an
     `access_on` of one that is not active, or of an identity that is not usable."""
+    if subject.shared_realm:
+        return True
     active = subject.membership_state == "active" and subject.membership_live
     if operation == ACCESS_OFF:
         return active
@@ -605,6 +611,23 @@ def _claim_one(
             locked = organisation_id
             found = _rows(_SUBJECT, [membership_id, identity_id, organisation_id])
             row = found[0] if found else None
+            if row is not None and len(row) > 12 and row[12]:
+                _end(
+                    delivery_id,
+                    organisation_id,
+                    status="failed",
+                    action="outbox_delivery.failed",
+                    metadata=_metadata(
+                        seq=None, operation=operation, http_status=None, reason="withdrawn"
+                    ),
+                )
+                report.withdrawn += 1
+                logger.info(
+                    "realm access delivery %s withdrawn: shared realm %s never mutates global account",
+                    delivery_id,
+                    operation,
+                )
+                return _AGAIN
             problem = payload_problem(
                 organisation_id=organisation_id,
                 realm_user_id=realm_user_id,
@@ -627,14 +650,16 @@ def _claim_one(
                     "realm access delivery %s failed: payload_mismatch on %s", delivery_id, problem
                 )
                 return _AGAIN
+            is_shared_or_community = bool(row[12]) if len(row) > 12 else False
             subject = Subject(
                 realm=row[7],
                 realm_user_id=row[6],
                 membership_state=row[2],
                 membership_live=row[3],
                 identity_usable=row[9],
+                shared_realm=is_shared_or_community,
             )
-            if withdrawn(operation, subject):
+            if is_shared_or_community or withdrawn(operation, subject):
                 _end(
                     delivery_id,
                     organisation_id,
@@ -868,7 +893,9 @@ FROM (
   FROM outbox_outboxdelivery d
   JOIN outbox_realmaccess r ON r.delivery_id = d.id
   JOIN orgs_membership m ON m.id = r.membership_id
+  JOIN orgs_organisation o ON o.id = d.organisation_id
   WHERE r.operation = 'access_off' AND m.state IN ('suspended', 'removed') AND m.deleted_at IS NULL
+    AND o.shared_realm = FALSE AND o.is_default_community = FALSE
     AND NOT EXISTS (
       SELECT 1 FROM outbox_outboxdelivery e JOIN outbox_realmaccess q ON q.delivery_id = e.id
       WHERE q.identity_id = r.identity_id AND (e.created_at, e.id) > (d.created_at, d.id))
@@ -881,8 +908,10 @@ FROM (
   JOIN outbox_realmaccess r ON r.delivery_id = d.id
   JOIN orgs_membership m ON m.id = r.membership_id
   JOIN identity_identity i ON i.id = r.identity_id
+  JOIN orgs_organisation o ON o.id = d.organisation_id
   WHERE r.operation = 'access_on' AND m.state = 'active' AND m.deleted_at IS NULL
     AND i.enabled AND i.deleted_at IS NULL
+    AND o.shared_realm = FALSE AND o.is_default_community = FALSE
     AND NOT EXISTS (
       SELECT 1 FROM outbox_outboxdelivery e JOIN outbox_realmaccess q ON q.delivery_id = e.id
       WHERE q.identity_id = r.identity_id AND (e.created_at, e.id) > (d.created_at, d.id))
@@ -891,8 +920,11 @@ FROM (
              AND d.created_at < clock_timestamp() - %(after)s * interval '1 second'))
   UNION ALL
   SELECT d.created_at
-  FROM outbox_outboxdelivery d JOIN outbox_realmaccess r ON r.delivery_id = d.id
+  FROM outbox_outboxdelivery d
+  JOIN outbox_realmaccess r ON r.delivery_id = d.id
+  JOIN orgs_organisation o ON o.id = d.organisation_id
   WHERE d.status = 'needs_reconciliation'
+    AND o.shared_realm = FALSE AND o.is_default_community = FALSE
 ) stuck
 """
 
@@ -1128,6 +1160,8 @@ def unresolved(delivery_id: UUID, *, origins_issuer: str) -> Unresolved:
         )
         if problem is not None or row is None:
             raise UnresolvedRefusedError("payload_mismatch")
+        if len(row) > 12 and row[12]:
+            raise UnresolvedRefusedError("shared_realm")
         last = _rows(
             "SELECT id, outcome, coalesce(finished_at, started_at) FROM outbox_deliveryattempt "
             "WHERE delivery_id = %s ORDER BY seq DESC LIMIT 1",
@@ -1182,7 +1216,8 @@ _REALMS_TO_VERIFY = """
 SELECT o.id, o.realm, o.issuer
 FROM orgs_organisation o
 LEFT JOIN outbox_realmverification v ON v.organisation_id = o.id
-WHERE EXISTS (
+WHERE o.shared_realm = FALSE AND o.is_default_community = FALSE
+  AND EXISTS (
   SELECT 1 FROM orgs_membership m
   WHERE m.organisation_id = o.id AND m.state IN ('suspended', 'removed') AND m.deleted_at IS NULL)
 ORDER BY v.last_attempted_at NULLS FIRST, o.id
@@ -1242,7 +1277,9 @@ WHERE organisation_id = %s
 """
 _UNVERIFIED = """
 SELECT count(*) FROM outbox_realmverification v
-WHERE EXISTS (
+JOIN orgs_organisation o ON o.id = v.organisation_id
+WHERE o.shared_realm = FALSE AND o.is_default_community = FALSE
+  AND EXISTS (
   SELECT 1 FROM orgs_membership m
   WHERE m.organisation_id = v.organisation_id AND m.state IN ('suspended', 'removed')
     AND m.deleted_at IS NULL)

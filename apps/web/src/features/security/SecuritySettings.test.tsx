@@ -242,7 +242,7 @@ describe('local security settings', () => {
     await user.click(screen.getByRole('button', { name: 'Publish sealed backup to server' }))
     expect(signer).toHaveBeenCalledWith(expect.objectContaining({ backupEpoch: 1 }))
     expect(mocks.publishRemote).toHaveBeenCalledTimes(1)
-    expect(await screen.findByText(/Opaque KVKB1 archive published to server at epoch 1/)).toBeInTheDocument()
+    expect(await screen.findByText(/Encrypted key backup archive published to server at epoch 1/)).toBeInTheDocument()
     expect(mocks.advanceEpoch).toHaveBeenCalledWith(2)
 
     await user.click(screen.getByRole('button', { name: 'Discard server backup' }))
@@ -382,7 +382,7 @@ describe('local security settings', () => {
     expect(signer).toHaveBeenCalledWith(expect.objectContaining({ backupEpoch: 1 }))
     expect(mocks.publishRemote).toHaveBeenCalledTimes(1)
     expect(
-      await screen.findByText(/Opaque KVKB1 archive published to server at epoch 1/)
+      await screen.findByText(/Encrypted key backup archive published to server at epoch 1/)
     ).toBeInTheDocument()
     expect(mocks.advanceEpoch).toHaveBeenCalledWith(2)
   })

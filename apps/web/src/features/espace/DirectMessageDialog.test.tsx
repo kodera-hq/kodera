@@ -118,7 +118,7 @@ describe('DirectMessageDialog and canvas mode switching', () => {
     expect(bdi.tagName.toLowerCase()).toBe('bdi')
     expect(bdi).toHaveAttribute('dir', 'ltr')
 
-    // #180: Ordinary Matrix DM rooms do not render a false E2EE checkbox/claim prior to H4.3b.
+    // issue 180: Ordinary Matrix DM rooms do not render a false E2EE checkbox/claim prior to H4.3b.
     expect(screen.queryByRole('checkbox')).toBeNull()
     expect(screen.queryByText(/chiffrée de bout en bout|end-to-end encrypted/i)).toBeNull()
 

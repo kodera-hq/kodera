@@ -17,7 +17,11 @@ final class AppSessionModel: ObservableObject {
     @Published private(set) var phase: Phase = .restoring {
         // Leaving a session drops its Core clients, so nothing of it outlives it.
         didSet {
-            guard case let .signedIn(session) = phase, core?.session == session else { core = nil; return }
+            guard case let .signedIn(session) = phase, core?.session == session else {
+                core = nil
+                if phase == .signedOut { pendingOrganisationSelection = (nil, nil) }
+                return
+            }
         }
     }
     @Published private(set) var member: Member = .loading
@@ -62,6 +66,7 @@ final class AppSessionModel: ObservableObject {
     private(set) var nativeCalls: NativeVoIPRuntime?
     private var activeMatrixTransport: MatrixChannelConversationTransport?
     private var activeMatrixSession: PersistedMatrixSession?
+    private var pendingOrganisationSelection: (id: String?, slug: String?) = (nil, nil)
     /// The signed-in session's Core clients: one `CoreRequester`, bound to the configured Core origin and
     /// shared by every Core client of that session. Nil when signed out or when Core is not configured.
     private var core: CoreClients? {
@@ -258,8 +263,9 @@ final class AppSessionModel: ObservableObject {
         }
     }
 
-    func signIn(issuer: String) {
+    func signIn(issuer: String, organisationId: String? = nil, organisationSlug: String? = nil) {
         guard let service, phase == .signedOut, let context = channels.beginAuthentication() else { return }
+        pendingOrganisationSelection = (organisationId, organisationSlug)
         let hasUnwipedVault = vaultUnwiped || defaults.bool(forKey: Self.vaultUnwipedDefaultsKey)
         let hasTerminalNotWiped = channels.terminalStrength == .signedOutNotWiped || noticeKey == "session.not_wiped"
         if hasUnwipedVault || hasTerminalNotWiped {
@@ -332,6 +338,10 @@ final class AppSessionModel: ObservableObject {
     func reloadMember() { channels.retry() }
     func checkMemberAgain() { channels.checkAgain() }
     func retryChannels() { channels.retry() }
+    func selectOrganisation(id: String? = nil, slug: String? = nil) {
+        pendingOrganisationSelection = (id, slug)
+        channels.selectOrganisation(id: id, slug: slug)
+    }
     func setForeground(_ active: Bool) {
         isForegroundActive = active
         activeConversation?.setForeground(active)
@@ -669,13 +679,20 @@ final class AppSessionModel: ObservableObject {
 
     private func enter(_ session: Session) {
         let clients = coreClients(for: session)
+        let selection = pendingOrganisationSelection
         core = clients
         if let clients {
-            channels.enter(realm: session.realm, requester: clients.requester,
+            channels.enter(realm: session.realm,
+                requester: clients.requester,
+                preferredOrganisationId: selection.id,
+                preferredSlug: selection.slug,
                 fetchMember: { await clients.me.fetch() },
                 fetchWorkspace: fetchWorkspace ?? { await clients.workspace.fetch(organisationId: $0) })
         } else {
-            channels.enter(realm: session.realm, requester: nil)
+            channels.enter(realm: session.realm,
+                requester: nil,
+                preferredOrganisationId: selection.id,
+                preferredSlug: selection.slug)
         }
         phase = .signedIn(session)
         noticeKey = nil

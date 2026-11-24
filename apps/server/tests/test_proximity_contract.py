@@ -24,7 +24,7 @@ NAMES = {
 
 
 def assert_contract(document: dict[str, Any]) -> None:
-    assert document["info"]["version"] == "0.60.0"
+    assert document["info"]["version"] == "0.61.0"
     for name, (method, operation, schema) in NAMES.items():
         op = document["paths"][f"/proximity/{name}"][method]
         assert op["operationId"] == operation

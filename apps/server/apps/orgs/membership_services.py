@@ -9,7 +9,12 @@ from dataclasses import dataclass
 
 from django.db import connection, transaction
 
-from apps.identity.selectors import PersonSnapshot, current_identity, person_contacts
+from apps.identity.selectors import (
+    PersonSnapshot,
+    current_identity,
+    current_identity_for_organisation,
+    person_contacts,
+)
 from services.identity.access_tokens import VerifiedAccessToken
 
 from .membership_pagination import (
@@ -73,13 +78,15 @@ def read_directory(
     with transaction.atomic():
         with connection.cursor() as cursor:
             cursor.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
-        resolved = current_identity(issuer=verified.issuer, subject=subject)
-        if resolved is None:
+        if current_identity(issuer=verified.issuer, subject=subject) is None:
             raise UnknownDirectoryCustomerError()
-        person, identity = resolved
         target_id = parse_target(target)
-        if target_id != identity.organisation_id:
+        resolved = current_identity_for_organisation(
+            organisation_id=target_id, issuer=verified.issuer, subject=subject
+        )
+        if resolved is None:
             raise DirectoryNotFoundError()
+        person, identity = resolved
         if not has_current_read_grant(
             user_id=person.id,
             organisation_id=identity.organisation_id,

@@ -3,10 +3,13 @@ once, its stored result is replayed) and the latest member set applied."""
 
 import json
 import os
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+_UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 
 
 def _write(path: Path, value: Any) -> None:
@@ -89,8 +92,29 @@ class State:
 
     # -- the channel set (ADR-0018) ----------------------------------------------------------
 
-    def channel_set(self) -> dict[str, Any] | None:
-        path = self._dir / "channel_set.json"
+    def _scope_dir(self, scope_id: str | None) -> Path:
+        if scope_id is None:
+            return self._dir
+        if not isinstance(scope_id, str) or _UUID.fullmatch(scope_id) is None:
+            raise ValueError("scope_id must be a canonical lowercase UUID")
+        return self._dir / "orgs" / scope_id
+
+    def channel_scopes(self) -> list[str | None]:
+        """All channel scopes persisted on disk: host/default (`None`) plus sorted PME org UUIDs."""
+        scopes: list[str | None] = [None]
+        orgs_dir = self._dir / "orgs"
+        if orgs_dir.is_dir():
+            scopes.extend(
+                sorted(
+                    entry.name
+                    for entry in orgs_dir.iterdir()
+                    if entry.is_dir() and _UUID.fullmatch(entry.name) is not None
+                )
+            )
+        return scopes
+
+    def channel_set(self, *, scope_id: str | None = None) -> dict[str, Any] | None:
+        path = self._scope_dir(scope_id) / "channel_set.json"
         if not path.exists():
             return None
         value: dict[str, Any] = json.loads(path.read_text())
@@ -102,48 +126,55 @@ class State:
         channels: list[dict[str, Any]],
         all_members: list[str],
         moderation: dict[str, Any] | None = None,
+        *,
+        scope_id: str | None = None,
+        shared_realm: bool = False,
     ) -> dict[str, Any]:
         """Store this set unless a higher revision is stored; return the set now in force."""
-        current = self.channel_set()
+        current = self.channel_set(scope_id=scope_id)
         if current is not None and int(current["revision"]) > revision:
             return current
         if current is not None and "banned_subjects" in current and moderation is None:
             raise ValueError("moderation projection cannot be silently dropped")
-        value = {
+        value: dict[str, Any] = {
             "revision": revision,
             "all_members": all_members,
             "channels": channels,
             **(moderation or {}),
+            **({"organisation_id": scope_id} if scope_id is not None else {}),
+            **({"shared_realm": True} if shared_realm else {}),
         }
-        _write(self._dir / "channel_set.json", value)
+        _write(self._scope_dir(scope_id) / "channel_set.json", value)
         return value
 
-    def channel_rooms(self) -> dict[str, str]:
+    def channel_rooms(self, *, scope_id: str | None = None) -> dict[str, str]:
         """channel id → the Matrix room the agent made for it."""
-        path = self._dir / "channel_rooms.json"
+        path = self._scope_dir(scope_id) / "channel_rooms.json"
         rooms: dict[str, str] = json.loads(path.read_text()) if path.exists() else {}
         return rooms
 
-    def keep_channel_rooms(self, rooms: dict[str, str]) -> None:
-        _write(self._dir / "channel_rooms.json", rooms)
+    def keep_channel_rooms(self, rooms: dict[str, str], *, scope_id: str | None = None) -> None:
+        _write(self._scope_dir(scope_id) / "channel_rooms.json", rooms)
 
-    def channel_fingerprints(self) -> dict[str, dict[str, str]]:
+    def channel_fingerprints(self, *, scope_id: str | None = None) -> dict[str, dict[str, str]]:
         """channel id → {"room": room id, "state": digest} of the room state last applied whole."""
-        path = self._dir / "channel_fingerprints.json"
+        path = self._scope_dir(scope_id) / "channel_fingerprints.json"
         prints: dict[str, dict[str, str]] = json.loads(path.read_text()) if path.exists() else {}
         return prints
 
-    def keep_channel_fingerprints(self, prints: dict[str, dict[str, str]]) -> None:
-        _write(self._dir / "channel_fingerprints.json", prints)
+    def keep_channel_fingerprints(
+        self, prints: dict[str, dict[str, str]], *, scope_id: str | None = None
+    ) -> None:
+        _write(self._scope_dir(scope_id) / "channel_fingerprints.json", prints)
 
-    def calls_owed(self) -> set[str]:
+    def calls_owed(self, *, scope_id: str | None = None) -> set[str]:
         """Audio rooms whose call still holds someone the agent removed: checked again each pass
         until LiveKit has answered for them."""
-        path = self._dir / "calls_owed.json"
+        path = self._scope_dir(scope_id) / "calls_owed.json"
         return set(json.loads(path.read_text())) if path.exists() else set()
 
-    def keep_calls_owed(self, rooms: set[str]) -> None:
-        _write(self._dir / "calls_owed.json", sorted(rooms))
+    def keep_calls_owed(self, rooms: set[str], *, scope_id: str | None = None) -> None:
+        _write(self._scope_dir(scope_id) / "calls_owed.json", sorted(rooms))
 
     def posted_notices(self) -> set[str]:
         path = self._dir / "notices.json"

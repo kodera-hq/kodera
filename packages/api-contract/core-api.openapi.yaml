@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Kodera Core API
-  version: 0.60.0
+  version: 0.61.0
   summary: Control plane of kodera.io, consumed by kodera-web and by staff operators.
   description: |
     The Core API is the only backend of `kodera-web` (console ADR-0003) and the system of
@@ -1720,6 +1720,55 @@ paths:
                 required: [code]
                 properties:
                   code: { type: string, const: local-preview-only }
+
+  /workspaces/self-serve:
+    post:
+      operationId: createSelfServeWorkspace
+      summary: Create a cardless freemium PME workspace (up to 5 members) on the shared realm
+      description: |
+        Provisions an `active` `Organisation` (`shared_realm: true`, `plan_tier: freemium_pme`),
+        permanent `SlugReservation`, caller `Identity`, `org_owner` `Membership`, shared `Tenant`,
+        starter `Workspace` (`welcome`, `general`, `lounge`), and a `5`-seat `WorkspaceQuota`
+        (`freemium:pme:seats-5`) in a single atomic transaction with zero cloud or Keycloak admin
+        credentials (core ADR-0003). Available regardless of whether `KODERA_BILLING_ENABLED` is
+        enabled or disabled.
+
+        Requires a verified-email OIDC token from the configured shared realm (or a verified
+        Passport session bound to that shared realm) and an `Idempotency-Key` header. Enforces a
+        ceiling of `3` active owned `freemium_pme` organisations per person (`429 rate-limited`)
+        and returns `409 slug-taken` with deterministic `suggestions` when the requested slug is
+        already reserved.
+      tags: [Workspace]
+      security: [{ keycloakTenant: [] }]
+      x-kodera-scope: 'workspace:create'
+      x-kodera-authz:
+        roles: [org_owner, org_admin, org_member]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SelfServeOrganisationCreateRequest' }
+      responses:
+        '201':
+          description: Cardless freemium PME organisation and starter workspace created.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            Idempotency-Replayed: { $ref: '#/components/headers/IdempotencyReplayed' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SelfServeWorkspaceCreated' }
+        '400': { $ref: '#/components/responses/MalformedRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/UpstreamUnavailable' }
 
   /organisations/{organisation_id}/workspace/actions/initialise:
     parameters:
@@ -17190,6 +17239,68 @@ components:
           enabledConnectors: [frameio-review-bridge]
           offerMode: cloud-shared
 
+    SelfServeOrganisationCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+          description: Display name of the new PME organisation and starter workspace.
+        slug:
+          type: string
+          minLength: 5
+          maxLength: 20
+          pattern: '^[a-z0-9][a-z0-9-]{3,18}[a-z0-9](?![\s\S])'
+          description: Optional canonical organisation slug; derived from `name` when omitted.
+        locale:
+          type: string
+          enum: [fr, en]
+          default: fr
+        template_id:
+          $ref: '#/components/schemas/WorkspaceTemplateId'
+      examples:
+        - name: Atelier Lumière
+          slug: atelier-lumiere
+          locale: fr
+
+    SelfServeWorkspaceCreated:
+      type: object
+      additionalProperties: false
+      required: [organisation_id, organisation_slug, workspace_id, tenant_id, redirect_path, quota]
+      properties:
+        organisation_id: { type: string, format: uuid }
+        organisation_slug:
+          type: string
+          minLength: 5
+          maxLength: 20
+          pattern: '^[a-z0-9][a-z0-9-]{3,18}[a-z0-9](?![\s\S])'
+        workspace_id: { type: string, format: uuid }
+        tenant_id: { type: string, format: uuid }
+        redirect_path: { type: string, minLength: 1, maxLength: 256 }
+        quota:
+          type: object
+          additionalProperties: false
+          required: [policy_ref, seats, used, remaining]
+          properties:
+            policy_ref: { type: string, minLength: 1, maxLength: 128 }
+            seats: { type: integer, minimum: 1 }
+            used: { type: integer, minimum: 1 }
+            remaining: { type: integer, minimum: 0 }
+      examples:
+        - organisation_id: 018f1234-5678-7000-8000-000000000090
+          organisation_slug: atelier-lumiere
+          workspace_id: 018f1234-5678-7000-8000-000000000091
+          tenant_id: 018f1234-5678-7000-8000-000000000092
+          redirect_path: /atelier-lumiere/workspace
+          quota:
+            policy_ref: freemium:pme:seats-5
+            seats: 5
+            used: 1
+            remaining: 4
+
     WorkspaceTemplateId:
       type: string
       title: WorkspaceTemplateId
@@ -17720,6 +17831,11 @@ components:
               state: { $ref: '#/components/schemas/MembershipState' }
               identity_id: { type: string, format: uuid, description: 'Which identity signs the person into this organisation.' }
               joined_at: { type: [string, 'null'], format: date-time }
+              shared_realm: { type: boolean, description: 'True when the organisation authenticates on the shared OIDC realm rather than a dedicated organisation realm.' }
+              plan_tier:
+                type: string
+                enum: [community, freemium_pme, cloud_collaborative, sovereign, enterprise]
+                description: 'Commercial tier of the organisation (`freemium_pme` caps invitations at 5 seats without card).'
       examples:
         - id: 11111111-2222-4333-8444-555555555555
           email: julie@acme.fr

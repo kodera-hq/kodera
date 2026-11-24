@@ -2,7 +2,7 @@
 
 Canonical OpenAPI specifications shared across `apps/server`, `apps/web`, `apps/desktop`, `apps/ios`, and `apps/android`.
 
-Status: Active. `core-api.openapi.yaml` is at `0.60.0` and `agent-api.openapi.yaml` at `0.10.0`.
+Status: Active. `core-api.openapi.yaml` is at `0.61.0` and `agent-api.openapi.yaml` at `0.11.0`.
 
 - `core-api.openapi.yaml`: Kodera Control Plane & Workspace HTTP API.
 - `agent-api.openapi.yaml`: Kodera Tenant Agent internal reconciliation contract.
@@ -43,12 +43,12 @@ refusal is audited. Templates are `spec`, `adr`, `meeting_notes` and `runbook`.
 
 ## Collections, quotas, billing artifacts and privacy increment 0.44.0
 
-Status: Partially implemented. `apps/server` routes the collection
+Status: Implemented in source (`apps/server` routes the collection
 ([`apps/server/apps/docs/api/urls.py`](../../apps/server/apps/docs/api/urls.py)), quota,
-and credit-note operations of `0.44.0`, while the GDPR/privacy export and deletion
-storage and worker modules sit in `apps/server/apps/orgs/`
-([`PRIVATE_EXPORT_RUNTIME.md`](../../apps/server/apps/orgs/PRIVATE_EXPORT_RUNTIME.md))
-with their 10 HTTP endpoints still held unrouted; see
+credit-note, and GDPR/privacy export and deletion HTTP endpoints in
+[`apps/server/apps/orgs/api/privacy.py`](../../apps/server/apps/orgs/api/privacy.py));
+statutory retention worker execution and archive storage activation remain operator-gated per
+[`PRIVATE_EXPORT_RUNTIME.md`](../../apps/server/apps/orgs/PRIVATE_EXPORT_RUNTIME.md) and
 [`docs/specs/collaboration-status.md`](../../docs/specs/collaboration-status.md).
 
 The additive contract defines typed collection properties and values, saved table,
@@ -87,3 +87,12 @@ which also runs the 0.44.0 checks and named refusal mutations. Acceptance additi
 requires contract byte parity, the authorization matrix and cursor inventories,
 OpenAPI lint and compatibility classification, regenerated web consumers and the
 current contract pin. Preserve the source commit with a merge commit when integrating.
+
+## Collaboration, Sovereignty, Extensions & Self-Serve increments 0.45.0–0.61.0
+
+Status: Implemented in `apps/server` and `apps/web` (`core-api.openapi.yaml` `0.61.0`); operator feature flags (`KODERA_E2EE_RELAY_ENABLED`, `KODERA_AI_GATEWAY_ENABLED`, `KODERA_CHANNEL_GOVERNANCE_ENABLED`, `KODERA_BILLING_ENABLED`) gate optional subsystems at runtime.
+
+- **`0.45.0–0.51.0` (Waves 6–9):** Outbound extension runtime v2, `Slack`/`Discord`/`Notion` workspace importers, `.well-known` discovery, `Kodera Passport` PKCE cross-workspace magic-link sessions, voluntary `#proximity` epoch-lease check-ins, and `/organisations/{organisation_id}/confidential/*` HPKE KeyPackage & opaque envelope relays.
+- **`0.52.0–0.58.0` (Wave 10 & Governance / Sovereignty):** Bilateral `PartnerChannelAgreement` bridges and `single_channel_guest` grants, operator-gated confidential room/session directory, consecutive MLS epoch provisioning and proof-bound cross-signing bundles, workspace identity/mode administration, sovereign `ai_gateway` (written translation and multi-party consent-gated live call captions), Community boosts, VIP passes and DAC7 reporting, CalDAV calendar sync and zero-PII `.ics` booking, and the `0–100` cybersecurity posture advisor.
+- **`0.58.1–0.60.0` (Extensions, Experience & Key Backup):** Declarative `kodera.widget.v1` action relay and web extension marketplace, sanitized RIFF/WebP custom emojis, scheduled messages, personal reminders and per-member *Kodera Labs* preferences, and operator-gated server opaque `KVKB1` key-backup publication (`GET`/`PUT`/`DELETE /organisations/{organisation_id}/confidential/key-backup`).
+- **`0.61.0` (Self-Serve Onboarding):** Cardless shared-realm SMB workspace creation (`POST /api/v1/workspaces/self-serve`, `Idempotency-Key` required, `<= 5` seats, `< 5 s`) and `shared_realm` / `plan_tier` metadata on `MeMembership` (`GET /api/v1/me`).

@@ -13,7 +13,7 @@ You never need to boot every service at once to work on a single layer:
 | **Slash-command / Webhook Extension** (`extensions/*`, `packages/extension-sdk`) | Node.js `22.22.2+` LTS (`.nvmrc`) | `npm ci --ignore-scripts && npm run test:sdk` |
 | **Design Tokens** (`packages/design-tokens`) | Node.js `22.22.2+` LTS (`.nvmrc`) | `npm --workspace @kodera/design-tokens run test` |
 | **Web Client** (`apps/web`) | Node.js `22.22.2+` LTS (`.nvmrc`) | `npm ci --ignore-scripts && npm run typecheck && npm run test:web` |
-| **Rust Core & Desktop Shell** (`packages/kodera-rs`, `apps/desktop`) | Rust `>= 1.82`, Node `22.22.2+` LTS | `cargo fmt --all -- --check && cargo clippy --locked --workspace --all-targets -- -D warnings && cargo test --locked --workspace && npm --workspace @kodera/desktop run typecheck` |
+| **Rust Core & Desktop Shell** (`packages/kodera-rs`, `apps/desktop`) | Rust `>= 1.88` (`1.94+` for optional OpenMLS backports), Node `22.22.2+` LTS | `cargo fmt --all -- --check && cargo clippy --locked --workspace --all-targets -- -D warnings && cargo test --locked --workspace && npm --workspace @kodera/desktop run typecheck` |
 | **Server Static & Contract Gates** (`apps/server`, zero Docker) | Python `3.12`, `uv` | `(cd apps/server && uv sync --locked && env -i PATH="$PATH" HOME="$HOME" uv run ruff check . && env -i PATH="$PATH" HOME="$HOME" uv run mypy . && env -i PATH="$PATH" HOME="$HOME" uv run python scripts/ci/check-authz-matrix.py)` |
 | **Server Full DB Test Suite** (`apps/server`, Docker `test-db`) | Python `3.12`, `uv`, Docker | `(cd apps/server && uv sync --locked && make test-db && make test)` |
 
@@ -25,7 +25,7 @@ For role-based onboarding paths, see [`ONBOARDING.md`](./ONBOARDING.md).
 
 Every pull-request and merge-group check in `kodera` runs **100% credential-free**:
 
-- **Zero personal secrets or `.env` files:** Contributors never create, source, or hold cloud credentials (`SCW_*`, `AWS_*`), vault tokens (`KOJOVAULT_*`), SOPS age keys, signing keystores, or live `.env` files to develop, test, or merge a pull request. Only `.env.example` placeholder templates exist in version control.
+- **Zero personal secrets or `.env` files:** Contributors never create, source, or hold cloud credentials (`SCW_*`, `AWS_*`), vault tokens (`KODERAVAULT_*`), SOPS age keys, signing keystores, or live `.env` files to develop, test, or merge a pull request. Only `.env.example` placeholder templates exist in version control.
 - **Enforced by CI guard:** `scripts/ci/check-zero-secret-pr-ci.py` statically verifies that `.github/workflows/ci.yml`, every workflow triggered on `pull_request` or `merge_group`, every `workflow_call` workflow invoked by `ci.yml`, and every `.github/actions/**` composite action never use `pull_request_target`, never set `secrets: inherit`, and never reference `${{ secrets.* }}` other than `secrets.GITHUB_TOKEN`.
 - **Manual-only `ghcr.io` image workflow:** `.github/workflows/publish-images.yml` triggers exclusively on manual `workflow_dispatch` (gated to `refs/heads/main`) so merging pull requests to `main` never triggers automatic `ghcr.io` container pushes.
 

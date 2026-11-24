@@ -89,12 +89,22 @@ pub const MAX_PENDING_DEEP_LINKS: usize = 16;
 /// Maximum static asset file size served from `apps/web/dist` (`32 MiB`).
 const MAX_STATIC_ASSET_BYTES: u64 = 32 * 1024 * 1024;
 
-/// Production HTTPS origins permitted to load as top-level Kodera Web documents.
-pub const APPROVED_WEB_APP_ORIGINS: [&str; 3] = [
-    "https://app.kodera.io",
-    "https://staging.kodera.io",
-    "https://community.kodera.io",
-];
+/// Build-profile-aware approved top-level web origins.
+pub const fn approved_web_app_origins_for_build(debug_build: bool) -> &'static [&'static str] {
+    if debug_build {
+        &[
+            "https://app.kodera.io",
+            "https://staging.kodera.io",
+            "https://community.kodera.io",
+        ]
+    } else {
+        &["https://app.kodera.io", "https://community.kodera.io"]
+    }
+}
+
+/// Top-level HTTPS origins permitted to load as Kodera Web documents in this build profile.
+pub const APPROVED_WEB_APP_ORIGINS: &[&str] =
+    approved_web_app_origins_for_build(cfg!(debug_assertions));
 
 /// Path-scoped OIDC identity origin permitted during native authentication redirects.
 pub const APPROVED_AUTH_ORIGIN_PREFIX: &str = "https://auth.kodera.io/realms/";
@@ -417,7 +427,7 @@ const IPC_INIT_SCRIPT: &str = r#"(function () {
   const koderaDesktop = Object.freeze({
     identifier: 'io.kodera.desktop',
     productName: 'Kodera',
-    version: '0.1.1',
+    version: '0.2.0',
     invoke: invoke,
     onEvent: onEvent
   });
@@ -513,21 +523,46 @@ pub struct DesktopGuiOptions {
 }
 
 impl DesktopGuiOptions {
-    pub fn from_environment(initial_deep_link: Option<AdmittedDeepLink>) -> Self {
-        let allow_dev_origin = std::env::var("KODERA_DESKTOP_DEV")
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(cfg!(debug_assertions));
-        let override_url = std::env::var("KODERA_DESKTOP_URL")
-            .ok()
-            .map(|s| s.trim().to_owned())
-            .filter(|s| !s.is_empty());
-        let asset_root = discover_frontend_dist_dir();
+    pub fn from_values(
+        initial_deep_link: Option<AdmittedDeepLink>,
+        dev_env: Option<&str>,
+        url_env: Option<&str>,
+        asset_root: Option<PathBuf>,
+        debug_build: bool,
+    ) -> Self {
+        let allow_dev_origin = if debug_build {
+            dev_env
+                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                .unwrap_or(true)
+        } else {
+            false
+        };
+        let override_url = if debug_build {
+            url_env
+                .map(|s| s.trim().to_owned())
+                .filter(|s| !s.is_empty())
+        } else {
+            None
+        };
         Self {
             initial_deep_link,
             override_url,
             asset_root,
             allow_dev_origin,
         }
+    }
+
+    pub fn from_environment(initial_deep_link: Option<AdmittedDeepLink>) -> Self {
+        let dev_env = std::env::var("KODERA_DESKTOP_DEV").ok();
+        let url_env = std::env::var("KODERA_DESKTOP_URL").ok();
+        let asset_root = discover_frontend_dist_dir();
+        Self::from_values(
+            initial_deep_link,
+            dev_env.as_deref(),
+            url_env.as_deref(),
+            asset_root,
+            cfg!(debug_assertions),
+        )
     }
 }
 
@@ -552,18 +587,22 @@ fn discover_frontend_dist_dir() -> Option<PathBuf> {
         appdir.as_deref(),
         current_exe.as_deref(),
         debug_manifest_dist.as_deref(),
+        cfg!(debug_assertions),
     )
 }
 
-fn discover_frontend_dist_from_context(
+pub(crate) fn discover_frontend_dist_from_context(
     explicit_dist_dir: Option<&Path>,
     appdir: Option<&Path>,
     exe_path: Option<&Path>,
     debug_manifest_dist: Option<&Path>,
+    debug_build: bool,
 ) -> Option<PathBuf> {
-    if let Some(explicit) = explicit_dist_dir {
-        if explicit.join("index.html").is_file() {
-            return Some(explicit.to_path_buf());
+    if debug_build {
+        if let Some(explicit) = explicit_dist_dir {
+            if explicit.join("index.html").is_file() {
+                return Some(explicit.to_path_buf());
+            }
         }
     }
     if let Some(exe_dir) = exe_path.and_then(Path::parent) {

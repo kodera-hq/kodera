@@ -907,6 +907,31 @@ export const EXAMPLES = {
     idempotent: true,
     requiresIfMatch: false,
   },
+  "createSelfServeWorkspace": {
+    operationId: "createSelfServeWorkspace",
+    method: "post",
+    path: "/workspaces/self-serve",
+    status: 201,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "organisation_id": "018f1234-5678-7000-8000-000000000090",
+      "organisation_slug": "atelier-lumiere",
+      "workspace_id": "018f1234-5678-7000-8000-000000000091",
+      "tenant_id": "018f1234-5678-7000-8000-000000000092",
+      "redirect_path": "/atelier-lumiere/workspace",
+      "quota": {
+        "policy_ref": "freemium:pme:seats-5",
+        "seats": 5,
+        "used": 1,
+        "remaining": 4
+      }
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
   "initialiseWorkspace": {
     operationId: "initialiseWorkspace",
     method: "post",

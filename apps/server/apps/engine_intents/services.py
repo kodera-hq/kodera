@@ -26,15 +26,21 @@ from typing import Any
 from uuid import UUID
 
 from django.db import connection, transaction
-from django.db.models import Max, Q
+from django.db.models import Case, IntegerField, Max, OuterRef, Q, Subquery, Value, When
 from django.utils import timezone
 
 from apps.audit.services import record_engine_channel_set_event, record_engine_member_set_event
-from apps.identity.selectors import realm_subjects
-from apps.orgs.actor_selectors import organisation_authority_revision
+from apps.identity.selectors import realm_subjects, realm_subjects_by_organisation
+from apps.orgs.actor_selectors import organisation_authority_revisions
 from apps.orgs.membership_pagination import DirectoryQuery
 from apps.orgs.membership_selectors import directory_memberships
-from apps.orgs.selectors import organisation_slug
+from apps.orgs.selectors import (
+    active_org_member_pairs,
+    all_shared_realm_organisation_ids_for_community,
+    organisation_slug,
+    orgs_under_privacy_erasure_cutoff,
+    shared_realm_organisation_ids_for_community,
+)
 
 from . import channel_hooks
 from .channel_sets import results as channel_results
@@ -319,7 +325,9 @@ def emit_member_set(
     # advances the organisation's revision past the one this set records, and is then seen as
     # owed a rebuild (`member_set_refresh_due`); one this set already includes costs a rebuild
     # too many, never one too few.
-    authority_revision = organisation_authority_revision(organisation_id=organisation_id)
+    authority_revision, shared_authority_revision = organisation_authority_revisions(
+        organisation_id=organisation_id
+    )
     # Then the credentials, in id order: a pull locks its credential before its commands, so the
     # two never wait on each other's command rows.
     credential_ids = list(
@@ -333,6 +341,54 @@ def emit_member_set(
     ).first()
     was_inactive = set(previous.inactive_subjects) if previous else set()
     usable, by_user, malformed_by_user, erased_people = _realm_subjects(organisation_id)
+    all_shared_org_ids = all_shared_realm_organisation_ids_for_community(
+        community_organisation_id=organisation_id, limit=50_000
+    )
+    shared_active: set[str] = set()
+    if all_shared_org_ids:
+        cutoff_orgs = orgs_under_privacy_erasure_cutoff(organisation_ids=all_shared_org_ids)
+        unerased_on_shared_host: set[str] = set(
+            EngineKnownSubject.objects.filter(
+                organisation_id=organisation_id, erased_at__isnull=True
+            ).values_list("subject", flat=True)
+        )
+        known_by_org: set[tuple[UUID, UUID, str]] = set()
+        for shared_org_id, user_id, subject, erased_at in EngineKnownSubject.objects.filter(
+            organisation_id__in=all_shared_org_ids
+        ).values_list("organisation_id", "user_id", "subject", "erased_at"):
+            known_by_org.add((shared_org_id, user_id, subject))
+            by_user.setdefault(user_id, set()).add(subject)
+            if erased_at is not None:
+                erased_people.add(subject)
+            elif shared_org_id not in cutoff_orgs:
+                unerased_on_shared_host.add(subject)
+        shared_rows = realm_subjects_by_organisation(organisation_ids=all_shared_org_ids)
+        active_shared_org_ids = shared_realm_organisation_ids_for_community(
+            community_organisation_id=organisation_id, limit=50_000
+        )
+        active_pairs = active_org_member_pairs(organisation_ids=active_shared_org_ids)
+        new_known: list[EngineKnownSubject] = []
+        for shared_org_id, user_id, subject, is_usable in shared_rows:
+            if not _SUBJECT.fullmatch(subject):
+                malformed_by_user.setdefault(user_id, set()).add(subject)
+                continue
+            by_user.setdefault(user_id, set()).add(subject)
+            if (
+                shared_org_id not in cutoff_orgs
+                and (shared_org_id, user_id, subject) not in known_by_org
+            ):
+                known_by_org.add((shared_org_id, user_id, subject))
+                unerased_on_shared_host.add(subject)
+                new_known.append(
+                    EngineKnownSubject(
+                        organisation_id=shared_org_id, user_id=user_id, subject=subject
+                    )
+                )
+            if is_usable and (shared_org_id, user_id) in active_pairs:
+                shared_active.add(subject)
+        if new_known:
+            EngineKnownSubject.objects.bulk_create(new_known, ignore_conflicts=True)
+        erased_people -= unerased_on_shared_host
     leavers = set(left_user_ids)
     denied_now = set().union(*(malformed_by_user.get(user_id, set()) for user_id in leavers))
     if denied_now:
@@ -351,11 +407,15 @@ def emit_member_set(
             organisation_id,
             unnamed,
         )
-    # Only an active member's enabled identity is active. Every other subject ever read in this
-    # realm is inactive: a leaver's, a suspended or removed member's (removed before the hooks were
-    # wired included), and an active member's disabled one.
-    active = set().union(
-        *(usable.get(user_id, set()) for user_id in _members(organisation_id, "active"))
+    # Only an active member's enabled identity is active (across the canonical community and all
+    # active shared-realm PME organisations hosted on the same realm). Every other subject ever
+    # read in this realm is inactive: a leaver's, a suspended or removed member's (when active in
+    # no organisation on the shared host), and an active member's disabled one.
+    active = (
+        set().union(
+            *(usable.get(user_id, set()) for user_id in _members(organisation_id, "active"))
+        )
+        | shared_active
     )
     # Any other subject outside the shape, an active member's or a legacy one, is quarantined.
     left_out = set().union(*malformed_by_user.values())
@@ -407,6 +467,7 @@ def emit_member_set(
         unnamed_leavers=unnamed,
         malformed_subjects=len(left_out),
         authority_revision=authority_revision,
+        shared_authority_revision=shared_authority_revision,
     )
     record_engine_member_set_event(
         action="engine_member_set.issued",
@@ -450,11 +511,15 @@ def member_set_refresh_due(*, organisation_id: UUID, now: datetime | None = None
         None
         if head is None or head[0] == 0
         else EngineMemberSet.objects.filter(organisation_id=organisation_id, revision=head[0])
-        .values_list("authority_revision", flat=True)
+        .values_list("authority_revision", "shared_authority_revision")
         .first()
     )
-    current = organisation_authority_revision(organisation_id=organisation_id)
-    return current is not None and recorded != current
+    current, current_shared = organisation_authority_revisions(organisation_id=organisation_id)
+    if current is None:
+        return False
+    if recorded is None:
+        return True
+    return bool(recorded[0] != current or recorded[1] != current_shared)
 
 
 def record_member_set_refusal(refused: MemberSetRefusedError) -> None:
@@ -508,12 +573,22 @@ def _applied_by_all(member_set: EngineMemberSet) -> bool:
     return True
 
 
-def _supersede(credential_id: UUID, now: datetime, *, channel: bool = False) -> None:
+def _supersede(
+    credential_id: UUID,
+    now: datetime,
+    *,
+    channel: bool = False,
+    organisation_id: UUID | None = None,
+) -> None:
     """A credential's undelivered older commands of one kind are never delivered once a newer set
-    of that kind exists. The other kind's commands are untouched."""
-    EngineCommand.objects.filter(
+    of that kind exists. When `organisation_id` is provided for `channel=True`, only pending
+    channel commands of that organisation are superseded so shared-realm credentials isolate orgs."""
+    qs = EngineCommand.objects.filter(
         credential_id=credential_id, state="pending", channel_set__isnull=not channel
-    ).update(state="superseded", finished_at=now)
+    )
+    if channel and organisation_id is not None:
+        qs = qs.filter(channel_set__organisation_id=organisation_id)
+    qs.update(state="superseded", finished_at=now)
 
 
 def _issue(
@@ -550,6 +625,13 @@ def issue_credential(*, organisation_id: UUID, tenant_ref: UUID | None = None) -
         organisation_id=organisation_id, tenant_ref=tenant_ref, secret_hash=_digest(secret)
     )
     return credential.id, f"eac1_{credential.id}_{secret}"
+
+
+def has_active_agent_credential(*, organisation_id: UUID) -> bool:
+    """Whether `organisation_id` currently has an enrolled active engine agent credential."""
+    return EngineAgentCredential.objects.filter(
+        organisation_id=organisation_id, state="active"
+    ).exists()
 
 
 def revoke_credential(*, credential_id: UUID) -> None:
@@ -591,11 +673,20 @@ def _as_command(command: EngineCommand) -> dict[str, Any]:
     if command.channel_set_id is not None:
         kind = CHANNEL_KIND
         channel_set = _channel_set(command)
+        scoped_shared = channel_set.organisation_id != command.credential.organisation_id
         payload = {
             "revision": channel_set.revision,
             "all_members": channel_set.all_members,
             "channels": channel_set.channels,
             **channel_set.moderation,
+            **(
+                {
+                    "organisation_id": str(channel_set.organisation_id),
+                    "shared_realm": True,
+                }
+                if scoped_shared
+                else {}
+            ),
         }
     else:
         member_set = _member_set(command)
@@ -620,15 +711,18 @@ def _as_command(command: EngineCommand) -> dict[str, Any]:
     }
 
 
-def _ensure_latest(credential: EngineAgentCredential, now: datetime, kind: _Kind) -> None:
-    """A credential that never received the latest set of a kind, or whose last command for it
-    ended a day ago (applied, or failed beyond retry), gets it again."""
-    head = kind.head.objects.filter(organisation_id=credential.organisation_id).first()
-    if head is None or head.revision == 0:
+def _ensure_latest_for_org(
+    credential: EngineAgentCredential,
+    organisation_id: UUID,
+    revision: int,
+    now: datetime,
+    kind: _Kind,
+) -> None:
+    if revision == 0:
         return
     # The id only: a poll every 3 s never loads a set's lists; the payload is read on delivery.
     the_set = kind.sets.objects.only("id", "revision", "organisation_id").get(
-        organisation_id=credential.organisation_id, revision=head.revision
+        organisation_id=organisation_id, revision=revision
     )
     latest = (
         EngineCommand.objects.filter(credential_id=credential.id, **{kind.field: the_set})
@@ -646,8 +740,91 @@ def _ensure_latest(credential: EngineAgentCredential, now: datetime, kind: _Kind
         ).exists()
     )
     if latest is None or stale:
-        _supersede(credential.id, now, channel=kind is CHANNELS)
+        _supersede(
+            credential.id,
+            now,
+            channel=kind is CHANNELS,
+            organisation_id=organisation_id if kind is CHANNELS else None,
+        )
         _issue(the_set, credential.id, now, attempt=1 if latest is None else latest.attempt + 1)
+
+
+def _ensure_latest(credential: EngineAgentCredential, now: datetime, kind: _Kind) -> None:
+    """A credential that never received the latest set of a kind, or whose last command for it
+    ended a day ago (applied, or failed beyond retry), gets it again."""
+    head = kind.head.objects.filter(organisation_id=credential.organisation_id).first()
+    if head is not None and head.revision > 0:
+        _ensure_latest_for_org(credential, credential.organisation_id, head.revision, now, kind)
+    if kind is CHANNELS:
+        shared_org_ids = shared_realm_organisation_ids_for_community(
+            community_organisation_id=credential.organisation_id, limit=50_000
+        )
+        if shared_org_ids:
+            orgs_with_own_cred = set(
+                EngineAgentCredential.objects.filter(
+                    organisation_id__in=shared_org_ids, state="active"
+                ).values_list("organisation_id", flat=True)
+            )
+            eligible_org_ids = [
+                org_id
+                for org_id in shared_org_ids
+                if org_id != credential.organisation_id and org_id not in orgs_with_own_cred
+            ]
+            if eligible_org_ids:
+                latest_sets = list(
+                    EngineChannelSet.objects.filter(
+                        organisation_id__in=eligible_org_ids,
+                        revision=Subquery(
+                            EngineChannelSetHead.objects.filter(
+                                organisation_id=OuterRef("organisation_id"),
+                                revision__gt=0,
+                            ).values("revision")[:1]
+                        ),
+                    )
+                    .only("id", "revision", "organisation_id")
+                    .order_by("organisation_id")
+                )
+                if latest_sets:
+                    set_ids = [s.id for s in latest_sets]
+                    latest_by_set: dict[UUID, EngineCommand] = {
+                        cmd.channel_set_id: cmd
+                        for cmd in EngineCommand.objects.filter(
+                            credential_id=credential.id, channel_set_id__in=set_ids
+                        )
+                        .exclude(state="superseded")
+                        .order_by("channel_set_id", "-issued_at")
+                        .distinct("channel_set_id")
+                        if cmd.channel_set_id is not None
+                    }
+                    pending_set_ids = set(
+                        EngineCommand.objects.filter(
+                            credential_id=credential.id,
+                            state="pending",
+                            channel_set_id__in=set_ids,
+                        ).values_list("channel_set_id", flat=True)
+                    )
+                    for the_set in latest_sets:
+                        latest = latest_by_set.get(the_set.id)
+                        stale = (
+                            latest is not None
+                            and latest.state in ("succeeded", "failed")
+                            and latest.finished_at is not None
+                            and latest.finished_at <= now - REFRESH_AFTER
+                            and the_set.id not in pending_set_ids
+                        )
+                        if latest is None or stale:
+                            _supersede(
+                                credential.id,
+                                now,
+                                channel=True,
+                                organisation_id=the_set.organisation_id,
+                            )
+                            _issue(
+                                the_set,
+                                credential.id,
+                                now,
+                                attempt=1 if latest is None else latest.attempt + 1,
+                            )
 
 
 def pull(credential: EngineAgentCredential, *, kinds: tuple[str, ...] | None, limit: int) -> Pulled:
@@ -673,7 +850,7 @@ def pull(credential: EngineAgentCredential, *, kinds: tuple[str, ...] | None, li
         due = (
             # The command row only: the set it delivers is read, never locked.
             EngineCommand.objects.select_for_update(skip_locked=True, of=("self",))
-            .select_related("member_set", "channel_set")
+            .select_related("credential", "member_set", "channel_set")
             .filter(only, credential_id=credential.id)
             .filter(
                 Q(state="pending", not_before__lte=now)
@@ -682,7 +859,14 @@ def pull(credential: EngineAgentCredential, *, kinds: tuple[str, ...] | None, li
                     dispatched_at__lte=now - timedelta(seconds=VISIBILITY_TIMEOUT_S),
                 )
             )
-            .order_by("issued_at")[:limit]
+            .order_by(
+                Case(
+                    When(channel_set_id__isnull=True, then=Value(0)),
+                    default=Value(1),
+                    output_field=IntegerField(),
+                ),
+                "issued_at",
+            )[:limit]
         )
         commands = list(due)
         for command in commands:
@@ -696,7 +880,7 @@ def pull(credential: EngineAgentCredential, *, kinds: tuple[str, ...] | None, li
 def _own(credential: EngineAgentCredential, command_id: UUID) -> EngineCommand:
     command = (
         EngineCommand.objects.select_for_update(of=("self",))
-        .select_related("member_set", "channel_set")
+        .select_related("credential", "member_set", "channel_set")
         .filter(id=command_id, credential_id=credential.id)
         .first()
     )
@@ -820,11 +1004,12 @@ def report(
             metadata["error_code"] = error_code
         if status == "succeeded" or kind is CHANNELS:
             metadata.update(artefacts or {})
+        target_org_id = the_set.organisation_id
         if kind is CHANNELS:
             record_engine_channel_set_event(
                 action=f"engine_channel_set.{outcome}",
                 channel_set_id=the_set.id,
-                organisation_id=credential.organisation_id,
+                organisation_id=target_org_id,
                 agent_id=credential.id,
                 metadata=metadata,
             )
@@ -834,7 +1019,7 @@ def report(
                 failed_ids=(artefacts or {}).get("failed_channel_ids"),
             )
             channel_hooks.channel_set_reported(
-                organisation_id=credential.organisation_id,
+                organisation_id=target_org_id,
                 revision=the_set.revision,
                 ready=ready,
                 failed=failed,
@@ -844,14 +1029,14 @@ def report(
             record_engine_member_set_event(
                 action=f"engine_member_set.{outcome}",
                 member_set_id=command.member_set_id,
-                organisation_id=credential.organisation_id,
+                organisation_id=target_org_id,
                 agent_id=credential.id,
                 metadata=metadata,
             )
         if status == "failed" and error_code in RETRYABLE:
             # Locked, so that a retry is never issued for a set an emission is superseding; both
             # heads, in the emitters' order, before _issue touches the credential.
-            member_head, channel_head = lock_heads(credential.organisation_id)
+            member_head, channel_head = lock_heads(target_org_id)
             head: Any = channel_head if kind is CHANNELS else member_head
             if the_set.revision == head.revision:
                 _issue(
@@ -889,7 +1074,9 @@ def lagging(*, after: timedelta = LAG_ALERT_AFTER) -> list[Lag]:
                 organisation_id=credential.organisation_id, revision=head.revision
             )
             applied = EngineCommand.objects.filter(
-                credential_id=credential.id, state="succeeded"
+                credential_id=credential.id,
+                state="succeeded",
+                **{f"{kind.field}__organisation_id": credential.organisation_id},
             ).aggregate(revision=Max(f"{kind.field}__revision"))["revision"]
             behind_since = max(latest.created_at, credential.created_at)
             if (applied is None or applied < head.revision) and behind_since <= cutoff:

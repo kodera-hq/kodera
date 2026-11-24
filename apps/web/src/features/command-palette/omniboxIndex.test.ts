@@ -58,7 +58,7 @@ describe('omniboxIndex & fail-closed confidential quarantine', () => {
     expect(isRoomSearchPermitted(store, '!ord:kodera.io', { isConfidential: true })).toBe(false)
     expect(isRoomSearchPermitted(store, '!ord:kodera.io', { is_confidential: true })).toBe(false)
 
-    // Unlocked E2EE room authority (including initial epoch 0) permits local-only search until quarantined or locked (#180).
+    // Unlocked E2EE room authority (including initial epoch 0) permits local-only search until quarantined or locked (issue 180).
     let quarantined = false
     let unlockedEpoch: number | null = 0
     const unlockedStore = {

@@ -164,21 +164,34 @@ def list_packs(query: ListQuery) -> JSON:
     )
 
 
+SOVEREIGN_CAPACITY_SEATS: dict[str, int] = {
+    "S": 25,
+    "M": 100,
+    "L": 250,
+}
+
+
 def list_capacity_tiers(query: ListQuery) -> JSON:
     rows = CapacityTier.objects.all()
-    if "pack_code" in query.filters:
+    pack_code = query.filters.get("pack_code")
+    if pack_code is not None:
         rows = rows.filter(
-            id__in=_offered_prices()
-            .filter(pack__code=query.filters["pack_code"])
-            .values("capacity_tier_id")
+            id__in=_offered_prices().filter(pack__code=pack_code).values("capacity_tier_id")
         )
+
+    def _render_tier(row: CapacityTier) -> JSON:
+        rendered = shape.capacity_tier(row)
+        if pack_code == "sovereign" and row.code in SOVEREIGN_CAPACITY_SEATS:
+            rendered["seats_included"] = SOVEREIGN_CAPACITY_SEATS[row.code]
+        return rendered
+
     return _page(
         _by_id(rows, query),
         query=query,
         operation="listCapacityTiers",
         scope="",
         position=lambda row: (str(row.id),),
-        render=shape.capacity_tier,
+        render=_render_tier,
     )
 
 

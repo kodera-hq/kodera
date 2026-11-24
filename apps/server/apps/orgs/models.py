@@ -55,7 +55,18 @@ class Organisation(RetainedModel):
         SUSPENDED = "suspended"
         CLOSED = "closed"
 
+    class PlanTier(models.TextChoices):
+        COMMUNITY = "community"
+        FREEMIUM_PME = "freemium_pme"
+        CLOUD_COLLABORATIVE = "cloud_collaborative"
+        SOVEREIGN = "sovereign"
+        ENTERPRISE = "enterprise"
+
     is_default_community = models.BooleanField(default=False)
+    shared_realm = models.BooleanField(default=False, db_default=False)
+    plan_tier = models.TextField(
+        choices=PlanTier.choices, default=PlanTier.SOVEREIGN, db_default="sovereign"
+    )
     slug = models.TextField()
     realm = models.TextField()
     issuer = models.TextField()
@@ -81,7 +92,20 @@ class Organisation(RetainedModel):
                 condition=models.Q(slug__regex=r"^[a-z0-9]([a-z0-9-]{3,18}[a-z0-9])$"),
             ),
             models.CheckConstraint(
-                name="organisation_realm_valid", condition=models.Q(realm=models.F("slug"))
+                name="organisation_realm_valid",
+                condition=models.Q(realm=models.F("slug")) | models.Q(shared_realm=True),
+            ),
+            models.CheckConstraint(
+                name="organisation_plan_tier_valid",
+                condition=models.Q(
+                    plan_tier__in=[
+                        "community",
+                        "freemium_pme",
+                        "cloud_collaborative",
+                        "sovereign",
+                        "enterprise",
+                    ]
+                ),
             ),
             # `kodera-staff` is the staff realm (ADR-0006, docs/api/AUTHZ.md §2), never an
             # organisation's: identity.STAFF_REALM, written out because a models module imports
@@ -107,7 +131,11 @@ class Organisation(RetainedModel):
                 condition=models.Q(issuer__length__range=(1, 2048))
                 & models.Q(issuer__endswith=Concat(models.Value("/realms/"), models.F("realm"))),
             ),
-            models.UniqueConstraint(fields=["issuer"], name="organisation_issuer_unique"),
+            models.UniqueConstraint(
+                fields=["issuer"],
+                condition=models.Q(shared_realm=False, is_default_community=False),
+                name="organisation_dedicated_issuer_unique",
+            ),
             models.UniqueConstraint(
                 fields=["id", "issuer", "realm"], name="organisation_identity_binding_unique"
             ),

@@ -34,12 +34,17 @@ from apps.audit.services import (
 )
 from apps.identity.invited import (
     KnownSubject,
-    create_invited_identity,
+    ensure_invited_identity_for_organisation,
     identity_person,
     known_subject,
     person_display_name,
 )
-from apps.identity.selectors import current_identity, current_staff_identity, is_storable_subject
+from apps.identity.selectors import (
+    current_identity,
+    current_identity_for_organisation,
+    current_staff_identity,
+    is_storable_subject,
+)
 from apps.outbox.realm_enqueue import (
     ACCESS_ON,
     account_realm_user_ids,
@@ -400,12 +405,12 @@ def _suspended_or_removed_caller(
 ) -> TenantCaller | None:
     """Resolve a caller whose identity belongs to `organisation_id` even when their membership was
     suspended or removed, so revocation/suspension denies with `403` rather than `404`."""
-    resolved = current_identity(issuer=verified.issuer, subject=verified.subject)
+    resolved = current_identity_for_organisation(
+        organisation_id=organisation_id, issuer=verified.issuer, subject=verified.subject
+    )
     if resolved is None:
         return None
     person, ident = resolved
-    if ident.organisation_id != organisation_id:
-        return None
     org_row = (
         Organisation.objects.filter(
             id=organisation_id,
@@ -1003,7 +1008,9 @@ def _redeemable(*, verified: VerifiedAccessToken, lane: str, token: str, lock: b
         or not hmac.compare_digest(bytes(invitation.token_digest), digest(secret))
     ):
         raise InvitationNotFoundError()
-    known = known_subject(issuer=verified.issuer, subject=verified.subject)
+    known = known_subject(
+        issuer=verified.issuer, subject=verified.subject, organisation_id=organisation_id
+    )
     if (
         known is not None
         and Membership.objects.filter(
@@ -1021,10 +1028,16 @@ def _redeemable(*, verified: VerifiedAccessToken, lane: str, token: str, lock: b
     if invitation.state != "pending":
         raise InvitationNotFoundError()
     # The account the realm worker found or created for this address is the only one that may
-    # accept; and the realm must have verified the address the invitation was sent to.
-    if (
+    # accept; in a shared-realm PME organisation, a verified OIDC email matching the invited
+    # address also admits the shared-realm account directly without an async realm worker.
+    shared_email_match = (
+        organisation.shared_realm
+        and isinstance(verified.email, str)
+        and verified.email.strip().lower() == invitation.email.strip().lower()
+    )
+    if not verified.email_verified or (
         verified.subject not in account_realm_user_ids(invitation_id=invitation.id)
-        or not verified.email_verified
+        and not shared_email_match
     ):
         raise InvitationNotFoundError()
     if organisation.state != "active":
@@ -1041,21 +1054,19 @@ def accept(*, verified: VerifiedAccessToken, lane: str, request: Accept, request
     invitation, organisation, known, now = held.invitation, held.organisation, held.known, held.now
     organisation_id = organisation.id
     name = request.display_name if request.has_display_name else invitation.display_name
-    if known is None:
-        person = create_invited_identity(
-            organisation_id=organisation_id,
-            issuer=organisation.issuer,
-            realm=organisation.realm,
-            subject=verified.subject,
-            contact=invitation.email,
-            display_name=name,
-        )
-    elif known.usable:
-        # A person Core already holds: their identity stays. An `invited` row is taken over
-        # rather than a second one written; a removed one is refused below.
-        person = known
-    else:
+    if known is not None and not known.usable:
         raise InvitationNotFoundError()
+    bound = ensure_invited_identity_for_organisation(
+        organisation_id=organisation_id,
+        issuer=organisation.issuer,
+        realm=organisation.realm,
+        subject=verified.subject,
+        contact=invitation.email,
+        display_name=name,
+    )
+    if bound is None:
+        raise InvitationNotFoundError()
+    person = bound
     with connection.cursor() as cursor:
         cursor.execute("SET LOCAL lock_timeout = '2s'")
     revived = (
@@ -1187,7 +1198,9 @@ def verify_accept_replay_authority(
         raise InvitationNotFoundError()
     if organisation.state != "active":
         raise InvitationStateError()
-    known = known_subject(issuer=verified.issuer, subject=verified.subject)
+    known = known_subject(
+        issuer=verified.issuer, subject=verified.subject, organisation_id=organisation.id
+    )
     if known is None or not known.usable:
         raise InvitationNotFoundError()
     mem = Membership.objects.filter(
@@ -1253,7 +1266,17 @@ def verify_accept_replay_event(
     elif isinstance(event, MetadataAuthority):
         if lane != "customer" or not is_storable_subject(verified.subject):
             raise InvitationNotFoundError()
-        known = known_subject(issuer=verified.issuer, subject=verified.subject)
+        parsed = parse_token(request.token)
+        target_org_id: UUID | None = None
+        if parsed is not None:
+            inv_row = Invitation.objects.filter(id=parsed[0]).only("organisation_id").first()
+            if inv_row is not None:
+                target_org_id = inv_row.organisation_id
+        known = known_subject(
+            issuer=verified.issuer,
+            subject=verified.subject,
+            organisation_id=target_org_id,
+        )
         if known is not None and not known.usable:
             raise InvitationNotFoundError()
 

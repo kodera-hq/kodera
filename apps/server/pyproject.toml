@@ -2,7 +2,7 @@
 
 [project]
 name = "kodera-server"
-version = "0.0.0"
+version = "0.2.0"
 description = "Control plane of kodera.io: system of record and provisioning worker."
 requires-python = ">=3.12,<3.13"
 license = { text = "AGPL-3.0-or-later" }

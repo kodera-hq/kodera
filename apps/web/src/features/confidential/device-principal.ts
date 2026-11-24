@@ -76,8 +76,7 @@ export function parseDevicePrincipal(
     if (typeof me.staff !== 'boolean') fail()
     if (me.staff) fail('ineligible')
 
-    const identityIds = new Set<string>()
-    let identityId: string | undefined
+    const identitiesById = new Map<string, { issuer: string; subject: string }>()
     for (const value of rows(me.identities)) {
       const identity = object(value)
       const candidateId = id(identity.id)
@@ -85,17 +84,12 @@ export function parseDevicePrincipal(
       const candidateSubject = subject(identity.subject)
       text(identity.realm, 64)
       text(identity.email, 320)
-      if (identityIds.has(candidateId)) fail('ineligible')
-      identityIds.add(candidateId)
-      if (candidateIssuer === issuer && candidateSubject === sdkSubject) {
-        if (identityId !== undefined) fail('ineligible')
-        identityId = candidateId
-      }
+      if (identitiesById.has(candidateId)) fail('ineligible')
+      identitiesById.set(candidateId, { issuer: candidateIssuer, subject: candidateSubject })
     }
-    if (identityId === undefined) fail('ineligible')
 
     const membershipIds = new Set<string>()
-    let selected: { organisationId: string; membershipId: string } | undefined
+    let selected: { organisationId: string; membershipId: string; identityId: string } | undefined
     for (const value of rows(me.organisations)) {
       const membership = object(value)
       const organisation = object(membership.organisation)
@@ -106,17 +100,31 @@ export function parseDevicePrincipal(
       if (organisation.realm !== undefined && organisation.realm !== null) text(organisation.realm, 64)
       if (typeof membership.role !== 'string' || !ROLES.includes(membership.role) ||
           typeof membership.state !== 'string' || !STATES.includes(membership.state)) fail()
-      if (membership.identity_id !== undefined) id(membership.identity_id)
+      const candidateIdentityId =
+        membership.identity_id !== undefined ? id(membership.identity_id) : undefined
       if (membershipIds.has(membershipId)) fail('ineligible')
       membershipIds.add(membershipId)
       if (candidateSlug === organisationSlug) {
-        if (selected !== undefined || membership.state !== 'active' || membership.identity_id !== identityId)
+        if (
+          selected !== undefined ||
+          membership.state !== 'active' ||
+          candidateIdentityId === undefined
+        ) {
           fail('ineligible')
-        selected = { organisationId, membershipId }
+        }
+        const linkedIdentity = identitiesById.get(candidateIdentityId)
+        if (
+          linkedIdentity === undefined ||
+          linkedIdentity.issuer !== issuer ||
+          linkedIdentity.subject !== sdkSubject
+        ) {
+          fail('ineligible')
+        }
+        selected = { organisationId, membershipId, identityId: candidateIdentityId }
       }
     }
     if (selected === undefined) fail('ineligible')
-    const principal = Object.freeze({ ownerId, identityId, ...selected, issuer, subject: sdkSubject, organisationSlug })
+    const principal = Object.freeze({ ownerId, ...selected, issuer, subject: sdkSubject, organisationSlug })
     if (expected !== undefined && (
       principal.ownerId !== expected.ownerId || principal.identityId !== expected.identityId ||
       principal.organisationId !== expected.organisationId || principal.membershipId !== expected.membershipId ||

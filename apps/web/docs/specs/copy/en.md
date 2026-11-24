@@ -458,6 +458,15 @@ a number.
 | `console.home.create.error-not-ready` | Your organisation is not ready to create a workspace yet. Try again in a few minutes. |
 | `console.home.create.error-failed` | The workspace could not be created. Try again: only one workspace will be created. |
 | `console.home.create.error-not-shown` | Your workspace is created, but this page could not update. Reload the page. |
+| `console.home.create.self-serve-subtitle` | Start free without a bank card for up to 5 members, with channels, calls and documents ready in seconds. |
+| `console.home.create.sovereign-subtitle` | Name the organisation for your dedicated sovereign instance on isolated infrastructure, then choose your capacity. |
+| `console.home.create.label-plan` | Hosting plan |
+| `console.home.create.plan-freemium` | Free cardless workspace (up to 5 members) |
+| `console.home.create.plan-sovereign` | Dedicated sovereign instance |
+| `console.home.create.hint-org-slug-rule` | 5 to 20 characters: lowercase letters without accents, digits and hyphens, with no hyphen at either end. |
+| `console.home.create.action-create-free` | Create my free workspace |
+| `console.home.create.action-continue-sovereign` | Continue to dedicated setup |
+| `console.home.create.error-rate-limit` | You have reached the limit of 3 active free workspaces. Upgrade an existing workspace to continue. |
 | `console.home.overview.error-discovery-unavailable` | We could not check whether your organisation already has an instance. Retry before placing an order. |
 | `console.home.overview.error-summary-unavailable` | These figures could not be refreshed. The values shown are from {time}. |
 | `console.home.overview.error-invoice-unavailable` | The amount of your next invoice could not be read. Open Billing for the detail. |
@@ -648,6 +657,8 @@ a number.
 | `console.people.invite.error-already-invited` | Already invited. You can send the invitation again from the Invitations tab. |
 | `console.people.invite.error-mailbox-unreachable` | This mailbox does not exist. Check the address, or create on-site access. |
 | `console.people.invite.error-seat-limit` | This invitation could not be created. Email us at {email}. |
+| `console.people.invite.error-freemium-seat-limit` | Your free workspace has reached its 5-member limit. Upgrade your plan to invite your whole team. |
+| `console.people.invite.action-upgrade-plan` | Upgrade plan |
 | `console.people.invite.error-send-failed` | No invitation was sent. Your addresses are kept: try again. |
 | `console.people.invite.error-send-unconfirmed` | The send result could not be confirmed. To retry the same send, use its original addresses and role. The current fields may have been edited. |
 | `console.people.invite.error-send-refused` | This invitation request was refused. Check the information or contact support. |
@@ -2293,7 +2304,7 @@ Source: `src/features/espace/EspaceLiveView.tsx`, the call dock and the audio ro
 | `console.security.settings.server-backup-discard` | Discard server backup |
 | `console.security.settings.server-backup-discarded` | Server key backup discarded. Future publications will advance to epoch {epoch}. |
 | `console.security.settings.server-backup-publish` | Publish sealed backup to server |
-| `console.security.settings.server-backup-published` | Opaque KVKB1 archive published to server at epoch {epoch}. |
+| `console.security.settings.server-backup-published` | Encrypted key backup archive published to server at epoch {epoch}. |
 | `console.security.settings.server-backup-restore` | Restore from server backup |
 | `console.security.settings.loading` | Loading security settings… |
 

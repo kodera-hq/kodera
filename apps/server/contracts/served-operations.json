@@ -167,6 +167,11 @@
       "path": "/organisations/{organisation_id}/workspace/scheduled-messages"
     },
     {
+      "operation_id": "createSelfServeWorkspace",
+      "method": "POST",
+      "path": "/workspaces/self-serve"
+    },
+    {
       "operation_id": "createSupportTicket",
       "method": "POST",
       "path": "/support/tickets"

@@ -12,6 +12,7 @@ from typing import Literal
 
 PlanCode = Literal["community", "team", "sovereign"]
 BillingCycle = Literal["monthly", "annual"]
+SovereignInfraTierCode = Literal["PRO2-S", "PRO2-M", "PRO2-L"]
 
 CURRENCY_EUR = "EUR"
 BPS_DENOMINATOR = 10_000
@@ -26,9 +27,12 @@ SOVEREIGN_BASE_MONTHLY_CENTS = 29_000  # 290.00 EUR / month dedicated base
 SOVEREIGN_BASE_ANNUAL_CENTS = SOVEREIGN_BASE_MONTHLY_CENTS * 12  # 3,480.00 EUR / year
 SOVEREIGN_INCLUDED_SEATS = 25
 
-# Deterministic COGS baseline estimates in euro cents per month for margin guardrails.
+# Deterministic Scaleway fr-par COGS floor schedules in euro cents per month.
 TEAM_COGS_PER_SEAT_MONTHLY_CENTS = 120
-SOVEREIGN_BASE_COGS_MONTHLY_CENTS = 14_500
+SOVEREIGN_PRO2_S_COGS_MONTHLY_CENTS = 6_900  # PRO2-S (4 vCPU, 16 GB RAM, 1..25 seats)
+SOVEREIGN_PRO2_M_COGS_MONTHLY_CENTS = 10_900  # PRO2-M (8 vCPU, 32 GB RAM, 26..100 seats)
+SOVEREIGN_PRO2_L_COGS_MONTHLY_CENTS = 14_500  # PRO2-L (16 vCPU, 64 GB RAM, 101+ seats)
+SOVEREIGN_BASE_COGS_MONTHLY_CENTS = SOVEREIGN_PRO2_S_COGS_MONTHLY_CENTS
 SOVEREIGN_EXTRA_SEAT_COGS_MONTHLY_CENTS = 90
 
 MAX_SEATS = 100_000
@@ -96,6 +100,46 @@ SOVEREIGN_SEAT_TIERS: tuple[SeatTierBracket, ...] = (
 
 
 @dataclass(frozen=True, slots=True)
+class SovereignInfraTier:
+    """Deterministic Scaleway `fr-par` dedicated VM sizing bracket and monthly COGS floor."""
+
+    code: SovereignInfraTierCode
+    vcpus: int
+    ram_gb: int
+    min_seats: int
+    max_seats: int | None
+    base_cogs_monthly_cents: int
+
+
+SOVEREIGN_INFRA_TIERS: tuple[SovereignInfraTier, ...] = (
+    SovereignInfraTier(
+        code="PRO2-S",
+        vcpus=4,
+        ram_gb=16,
+        min_seats=1,
+        max_seats=25,
+        base_cogs_monthly_cents=SOVEREIGN_PRO2_S_COGS_MONTHLY_CENTS,
+    ),
+    SovereignInfraTier(
+        code="PRO2-M",
+        vcpus=8,
+        ram_gb=32,
+        min_seats=26,
+        max_seats=100,
+        base_cogs_monthly_cents=SOVEREIGN_PRO2_M_COGS_MONTHLY_CENTS,
+    ),
+    SovereignInfraTier(
+        code="PRO2-L",
+        vcpus=16,
+        ram_gb=64,
+        min_seats=101,
+        max_seats=None,
+        base_cogs_monthly_cents=SOVEREIGN_PRO2_L_COGS_MONTHLY_CENTS,
+    ),
+)
+
+
+@dataclass(frozen=True, slots=True)
 class CommercialQuote:
     plan_code: PlanCode
     billing_cycle: BillingCycle
@@ -109,6 +153,10 @@ class CommercialQuote:
     total_incl_vat_minor: int
     estimated_cogs_minor: int
     gross_margin_bps: int
+    vm_shape: str | None = None
+
+
+PlanQuote = CommercialQuote
 
 
 def require_strict_int(value: object, field_name: str) -> int:
@@ -174,6 +222,17 @@ def _sovereign_seat_overage_minor(seats: int, billing_cycle: BillingCycle) -> in
     return total
 
 
+def select_sovereign_infra_tier(seats: int) -> SovereignInfraTier:
+    """Select the Scaleway `fr-par` dedicated instance tier (`PRO2-S`, `PRO2-M`, `PRO2-L`) for `seats`."""
+    require_strict_int(seats, "seats")
+    if seats < 1 or seats > MAX_SEATS:
+        raise PricingValidationError(f"seats must be in 1..{MAX_SEATS}", code="invalid_seats")
+    for tier in SOVEREIGN_INFRA_TIERS:
+        if tier.max_seats is None or seats <= tier.max_seats:
+            return tier
+    return SOVEREIGN_INFRA_TIERS[-1]
+
+
 def estimate_plan_cogs_minor(
     plan_code: PlanCode,
     *,
@@ -190,9 +249,10 @@ def estimate_plan_cogs_minor(
     if plan_code == "team":
         return seats * TEAM_COGS_PER_SEAT_MONTHLY_CENTS * months
     if plan_code == "sovereign":
+        infra_tier = select_sovereign_infra_tier(seats)
         extra_seats = max(0, seats - SOVEREIGN_INCLUDED_SEATS)
         monthly_cogs = (
-            SOVEREIGN_BASE_COGS_MONTHLY_CENTS
+            infra_tier.base_cogs_monthly_cents
             + extra_seats * SOVEREIGN_EXTRA_SEAT_COGS_MONTHLY_CENTS
         )
         return monthly_cogs * months
@@ -316,6 +376,7 @@ def quote_plan(
         margin_bps = enforce_margin_floor(net_minor, cogs_minor, floor_bps=MIN_GROSS_MARGIN_BPS)
 
     vat_minor = compute_vat_minor(net_minor, vat_rate_bps)
+    vm_shape = select_sovereign_infra_tier(seats).code if plan_code == "sovereign" else None
     return CommercialQuote(
         plan_code=plan_code,
         billing_cycle=billing_cycle,
@@ -329,6 +390,7 @@ def quote_plan(
         total_incl_vat_minor=net_minor + vat_minor,
         estimated_cogs_minor=cogs_minor,
         gross_margin_bps=margin_bps,
+        vm_shape=vm_shape,
     )
 
 
@@ -369,6 +431,17 @@ def commercial_schedule_summary() -> dict[str, object]:
                         "annual_seat_monthly_minor": tier.annual_seat_monthly_cents,
                     }
                     for tier in SOVEREIGN_SEAT_TIERS
+                ],
+                "infra_tiers": [
+                    {
+                        "code": tier.code,
+                        "vcpus": tier.vcpus,
+                        "ram_gb": tier.ram_gb,
+                        "min_seats": tier.min_seats,
+                        "max_seats": tier.max_seats,
+                        "base_cogs_monthly_minor": tier.base_cogs_monthly_cents,
+                    }
+                    for tier in SOVEREIGN_INFRA_TIERS
                 ],
             },
         ],

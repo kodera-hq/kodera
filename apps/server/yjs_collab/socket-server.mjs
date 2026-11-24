@@ -106,7 +106,8 @@ export function createCollabServer({key, store, origins, pollMilliseconds = 1000
   }
   function confidentialMarker(socket) {
     return {
-      head: socket.deliveredHead,
+      head: socket.storeHead,
+      deliveredHead: socket.deliveredHead,
       snapshotEpoch: socket.deliveredSnapshotEpoch,
       snapshotBase: socket.deliveredSnapshotSeq,
       epochBootstrapped: socket.epochBootstrapped,
@@ -133,7 +134,8 @@ export function createCollabServer({key, store, origins, pollMilliseconds = 1000
       const startSeq = Math.max(1, head - nonSnapCount + 1)
       for (let i = 0; i < nonSnapCount; i += 1) pushDownlinkHead(socket, startSeq + i)
     }
-    socket.deliveredHead = head
+    socket.storeHead = head
+    socket.deliveredHead = payload.deliveredHead !== undefined ? payload.deliveredHead : head
     socket.revision = payload.revision
   }
   async function refresh(socket) {
@@ -141,7 +143,7 @@ export function createCollabServer({key, store, origins, pollMilliseconds = 1000
     try {
       if (socket.claims.confidential) {
         await enqueueDelivery(socket, async () => {
-          if (!socket.claims || socket.deliveredHead === null) return
+          if (!socket.claims || socket.storeHead === null) return
           await store.deliver(
             socket.claims,
             payload => applyConfidentialDelivery(socket, payload),
@@ -174,7 +176,7 @@ export function createCollabServer({key, store, origins, pollMilliseconds = 1000
   })
   wss.on('connection', socket => {
     connections.add(socket);unauthenticated += 1
-    socket.claims = null;socket.presenceId = null;socket.revision = null;socket.deliveredHead = null
+    socket.claims = null;socket.presenceId = null;socket.revision = null;socket.storeHead = null;socket.deliveredHead = null
     socket.deliveredSnapshotEpoch = null;socket.deliveredSnapshotSeq = null;socket.epochBootstrapped = false
     socket.downlinkHeads = [];socket.deliveryChain = Promise.resolve()
     socket.confidentialSender = null;socket.confidentialSequences = new Map();socket.anonymous = true
@@ -251,10 +253,13 @@ export function createCollabServer({key, store, origins, pollMilliseconds = 1000
               const parsed = confidentialFrame(snapshotBytes, socket.claims.role, socket.claims.epoch)
               if (parsed.kind !== 3) throw new ConfidentialRefused('compact control requires kind=3 snapshot')
               await enqueueDelivery(socket, async () => {
-                const compacted = await store.compact(socket.claims, cmd.upToHead, parsed.envelope)
+                const compacted = await store.compact(socket.claims, cmd.upToHead, parsed.envelope, {
+                  deliveredHead: socket.deliveredHead,
+                })
                 if (compacted?.compacted) {
                   socket.deliveredSnapshotEpoch = socket.claims.epoch
                   socket.deliveredSnapshotSeq = compacted.base
+                  socket.deliveredHead = Math.max(socket.deliveredHead ?? 0, compacted.base)
                   socket.epochBootstrapped = true
                 }
               })
@@ -309,11 +314,17 @@ export function createCollabServer({key, store, origins, pollMilliseconds = 1000
             }
             const upToHead = socket.downlinkHeads[message.sequence - 1]
             try {
+              if (socket.deliveredHead === null || upToHead > socket.deliveredHead) {
+                throw new ConfidentialRefused('compaction cursor ahead of socket delivered head')
+              }
               await enqueueDelivery(socket, async () => {
-                const compacted = await store.compact(socket.claims, upToHead, message.envelope)
+                const compacted = await store.compact(socket.claims, upToHead, message.envelope, {
+                  deliveredHead: socket.deliveredHead,
+                })
                 if (compacted?.compacted) {
                   socket.deliveredSnapshotEpoch = socket.claims.epoch
                   socket.deliveredSnapshotSeq = compacted.base
+                  socket.deliveredHead = Math.max(socket.deliveredHead ?? 0, compacted.base)
                   socket.epochBootstrapped = true
                 }
               })
@@ -334,12 +345,15 @@ export function createCollabServer({key, store, origins, pollMilliseconds = 1000
             for (const target of targets) {
               if (target.readyState !== WebSocket.OPEN) continue
               const task = enqueueDelivery(target, async () => {
-                if (!target.claims || target.deliveredHead === null || target.deliveredHead >= result.head) return
-                if (target.deliveredHead === result.head - 1) {
+                if (!target.claims || target.storeHead === null || target.storeHead >= result.head) return
+                if (target.storeHead === result.head - 1) {
                   await store.emit(target.claims, () => {
                     send(target, result.envelope)
                     pushDownlinkHead(target, result.head)
-                    target.deliveredHead = result.head
+                    if (target.deliveredHead === target.storeHead) {
+                      target.deliveredHead = result.head
+                    }
+                    target.storeHead = result.head
                     target.revision = result.revision
                   })
                   return

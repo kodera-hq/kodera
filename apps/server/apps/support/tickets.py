@@ -21,7 +21,11 @@ from django.db import connection, transaction
 from django.utils import timezone
 
 from apps.audit.services import record_authz_denied, record_support_ticket_opened
-from apps.identity.selectors import current_identity, current_staff_identity
+from apps.identity.selectors import (
+    current_identities,
+    current_identity_for_organisation,
+    current_staff_identity,
+)
 from apps.orgs.actor_selectors import (
     TenantCaller,
     TenantCallerNotFoundError,
@@ -172,11 +176,52 @@ def is_address(value: str) -> bool:
 # ----------------------------------------------------------------------------- authority ----
 
 
-def _caller(verified: VerifiedAccessToken) -> tuple[TenantCaller, str | None]:
+def _caller(
+    verified: VerifiedAccessToken, *, target_organisation_id: UUID | None = None
+) -> tuple[TenantCaller, str | None]:
     """The caller's current membership in its own organisation, in the caller's transaction."""
-    resolved = current_identity(issuer=verified.issuer, subject=verified.subject)
-    if resolved is None:
+    if target_organisation_id is not None:
+        in_target = current_identity_for_organisation(
+            organisation_id=target_organisation_id,
+            issuer=verified.issuer,
+            subject=verified.subject,
+        )
+        if in_target is not None:
+            person, identity = in_target
+            try:
+                caller = read_tenant_caller(
+                    verified=verified, organisation_id=target_organisation_id
+                )
+            except TenantCallerUnknownError:
+                raise TicketCallerUnknownError() from None
+            except TenantCallerNotFoundError:
+                raise TicketForbiddenError(
+                    identity_id=identity.id,
+                    organisation_id=target_organisation_id,
+                    target_urn=NEW_TICKET,
+                ) from None
+            if caller.role not in TENANT_ROLES:
+                raise TicketForbiddenError(
+                    identity_id=caller.identity_id,
+                    organisation_id=caller.organisation_id,
+                    target_urn=NEW_TICKET,
+                )
+            return caller, person.email
+
+    candidates = current_identities(issuer=verified.issuer, subject=verified.subject)
+    if not candidates:
         raise TicketCallerUnknownError()
+    resolved = next(
+        (
+            item
+            for item in reversed(candidates)
+            if item[1].organisation_id is not None and item[1].realm != "community"
+        ),
+        None,
+    ) or next(
+        (item for item in reversed(candidates) if item[1].organisation_id is not None),
+        candidates[0],
+    )
     person, identity = resolved
     if identity.organisation_id is None:
         raise TicketCallerUnknownError()
@@ -199,7 +244,28 @@ def _caller(verified: VerifiedAccessToken) -> tuple[TenantCaller, str | None]:
     return caller, person.email
 
 
-def authorise(*, verified: VerifiedAccessToken) -> Caller:
+def peek_target_organisation_id(raw_body: bytes) -> UUID | None:
+    """Best-effort pre-parse of `organisation_id` UUID from JSON body without mutating state."""
+    if not raw_body or len(raw_body) > 65536:
+        return None
+    try:
+        parsed = json.loads(raw_body.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    raw_org = parsed.get("organisation_id")
+    if not isinstance(raw_org, str):
+        return None
+    try:
+        return UUID(raw_org)
+    except ValueError:
+        return None
+
+
+def authorise(
+    *, verified: VerifiedAccessToken, target_organisation_id: UUID | None = None
+) -> Caller:
     """The caller, read in a read-only snapshot of its own before anything is parsed or written:
     any current member of its own organisation, active or suspended."""
     if connection.in_atomic_block or not connection.get_autocommit():
@@ -207,7 +273,7 @@ def authorise(*, verified: VerifiedAccessToken) -> Caller:
     with transaction.atomic():
         with connection.cursor() as cursor:
             cursor.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
-        caller, email = _caller(verified)
+        caller, email = _caller(verified, target_organisation_id=target_organisation_id)
     return Caller(caller.identity_id, caller.organisation_id, email)
 
 
@@ -395,7 +461,7 @@ def open_ticket(
     removed since the snapshot opens nothing."""
     if not connection.in_atomic_block:
         raise RuntimeError("a ticket is opened in the replay store's transaction")
-    caller, email = _caller(verified)
+    caller, email = _caller(verified, target_organisation_id=request.organisation_id)
     check_organisation(Caller(caller.identity_id, caller.organisation_id, email), request)
     # Every ticket of the organisation is counted under this lock, the identity's included. It is
     # a transaction lock of its own rather than the organisation's row lock, so creating a ticket

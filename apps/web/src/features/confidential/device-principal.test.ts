@@ -30,6 +30,53 @@ describe('bounded device principal projection', () => {
     expect(parse(me)).toEqual(expected)
   })
 
+  it('selects the target organisation identity when multiple shared-realm identities share issuer and subject', () => {
+    const me = healthy()
+    const communityIdentityId = '01970010-0000-7000-8000-000000000001'
+    const secondPmeIdentityId = '01970010-0000-7000-8000-000000000002'
+    me.identities.unshift({
+      ...me.identities[0]!,
+      id: communityIdentityId,
+      realm: 'community',
+    })
+    me.identities.push({
+      ...me.identities[1]!,
+      id: secondPmeIdentityId,
+      realm: 'community',
+    })
+    const baseMembership = me.organisations[0]!
+    me.organisations.unshift({
+      ...baseMembership,
+      membership_id: '01970011-0000-7000-8000-000000000001',
+      identity_id: communityIdentityId,
+      organisation: {
+        ...baseMembership.organisation,
+        id: '01970012-0000-7000-8000-000000000001',
+        slug: 'community',
+        realm: 'community',
+      },
+    })
+    me.organisations.push({
+      ...baseMembership,
+      membership_id: '01970011-0000-7000-8000-000000000002',
+      identity_id: secondPmeIdentityId,
+      organisation: {
+        ...baseMembership.organisation,
+        id: '01970012-0000-7000-8000-000000000002',
+        slug: 'atelier-martin',
+        realm: 'community',
+      },
+    })
+    expect(parse(me)).toEqual(expected)
+    const pmePrincipal = parseDevicePrincipal(JSON.stringify(me), {
+      ...selection,
+      organisationSlug: 'atelier-martin',
+    })
+    expect(pmePrincipal.identityId).toBe(secondPmeIdentityId)
+    expect(pmePrincipal.organisationId).toBe('01970012-0000-7000-8000-000000000002')
+    expect(pmePrincipal.membershipId).toBe('01970011-0000-7000-8000-000000000002')
+  })
+
   it('refuses changed bindings on a later observation without choosing a new scope', () => {
     const principal = parse()
     for (const change of [

@@ -109,7 +109,7 @@ def _place_and_credit_order(
     placed = billing_services.place_order(
         verified=owner_verified,
         organisation_id=organisation.id,
-        idempotency_key=f"kojoperf-order-key-{index:05d}",
+        idempotency_key=f"koderaperf-order-key-{index:05d}",
         request=OrderRequest(
             pack_code="visio",
             capacity_tier_code="S",
@@ -184,14 +184,14 @@ def _place_and_credit_order(
             credit_note=False,
             renderer=renderer,
             validator=validator,
-            validator_ref="synthetic-kojoperf-storage-fixture",
+            validator_ref="synthetic-koderaperf-storage-fixture",
         )
         publish(
             document_id=note.id,
             credit_note=True,
             renderer=renderer,
             validator=validator,
-            validator_ref="synthetic-kojoperf-storage-fixture",
+            validator_ref="synthetic-koderaperf-storage-fixture",
         )
     return placed.order, invoice, note
 
@@ -724,25 +724,25 @@ def test_workspace_documents_search_and_collections_enforce_64_kib_http_cap_loss
     # 1. Seed 20 documents with ~5.5 KB accented markdown each (~110 KB raw, >150 KB JSON-escaped).
     seeded_doc_ids: list[str] = []
     for idx in range(20):
-        body_md = f"# KojoperfSearchToken Document {idx:03d}\n\n" + (
+        body_md = f"# KoderaPerfSearchToken Document {idx:03d}\n\n" + (
             "Équipe architecture note — " * 220
         )
         doc = Document.objects.create(
             workspace=workspace,
             creator=members[3],
-            title=f"KojoperfSearchToken Spec {idx:03d}",
+            title=f"KoderaPerfSearchToken Spec {idx:03d}",
             markdown=body_md,
         )
         DocumentSnapshot.objects.create(document=doc, state=b"s")
         seeded_doc_ids.append(str(doc.id))
 
-    # Also seed 60 additional 1 KB documents matching KojoperfSearchToken so searchWorkspace exceeds 64 KiB if unclamped.
+    # Also seed 60 additional 1 KB documents matching KoderaPerfSearchToken so searchWorkspace exceeds 64 KiB if unclamped.
     for idx in range(20, 80):
-        excerpt_md = f"KojoperfSearchToken summary {idx:03d} " + ("référence " * 110)
+        excerpt_md = f"KoderaPerfSearchToken summary {idx:03d} " + ("référence " * 110)
         doc = Document.objects.create(
             workspace=workspace,
             creator=members[3],
-            title=f"KojoperfSearchToken Entry {idx:03d}",
+            title=f"KoderaPerfSearchToken Entry {idx:03d}",
             markdown=excerpt_md,
         )
         DocumentSnapshot.objects.create(document=doc, state=b"s")
@@ -776,7 +776,7 @@ def test_workspace_documents_search_and_collections_enforce_64_kib_http_cap_loss
     cursor = None
     search_pages = 0
     while True:
-        qs = "q=KojoperfSearchToken&limit=200" + (f"&cursor={cursor}" if cursor else "")
+        qs = "q=KoderaPerfSearchToken&limit=200" + (f"&cursor={cursor}" if cursor else "")
         resp = client.get(f"{base}/search?{qs}", **headers)
         assert resp.status_code == 200, resp.content
         assert len(resp.content) < HTTP_BYTE_CEILING, (

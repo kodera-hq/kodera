@@ -288,7 +288,9 @@ class PurchaseOrderBook:
                     discount_bps=discount_bps,
                 )
             except PricingValidationError as exc:
-                msg = exc.args[0] if exc.args and isinstance(exc.args[0], str) else "invalid_pricing"
+                msg = (
+                    exc.args[0] if exc.args and isinstance(exc.args[0], str) else "invalid_pricing"
+                )
                 raise PurchaseOrderValidationError(msg, code=exc.code) from exc
         else:
             require_strict_int(subtotal_excl_vat_minor, "subtotal_excl_vat_minor")
@@ -327,9 +329,7 @@ class PurchaseOrderBook:
                     code="understated_cogs",
                 )
 
-        margin_bps = enforce_margin_floor(
-            resolved_subtotal, cogs, floor_bps=MIN_GROSS_MARGIN_BPS
-        )
+        margin_bps = enforce_margin_floor(resolved_subtotal, cogs, floor_bps=MIN_GROSS_MARGIN_BPS)
         vat_minor = compute_vat_minor(resolved_subtotal, vat_rate_bps)
 
         def _build(po_id: str, po_number: str) -> PurchaseOrder:

@@ -36,6 +36,7 @@ from ee.billing.pricing import (
     TEAM_ANNUAL_SEAT_YEARLY_CENTS,
     TEAM_MONTHLY_SEAT_CENTS,
     MarginFloorViolationError,
+    PlanQuote,
     PricingValidationError,
     commercial_schedule_summary,
     compute_gross_margin_bps,
@@ -44,6 +45,7 @@ from ee.billing.pricing import (
     list_price_excl_vat_minor,
     quote_plan,
     require_strict_int,
+    select_sovereign_infra_tier,
 )
 from ee.billing.purchase_orders import (
     CommitmentExceededError,
@@ -55,6 +57,7 @@ from ee.billing.purchase_orders import (
     validate_invoice_reference,
 )
 from ee.billing.warm_pool import (
+    SOVEREIGN_POOL_WATERMARKS,
     PoolWatermarks,
     WarmPoolController,
     WarmPoolExhaustedError,
@@ -174,14 +177,33 @@ class TestCommercialPricing:
 
     def test_sovereign_base_and_tiered_seat_overages(self) -> None:
         base_quote = quote_plan("sovereign", seats=25, billing_cycle="monthly")
+        assert isinstance(base_quote, PlanQuote)
         assert base_quote.list_excl_vat_minor == 29_000
-        assert base_quote.gross_margin_bps == 5_000
+        assert base_quote.estimated_cogs_minor == 6_900
+        assert base_quote.gross_margin_bps == 7_620
+        assert base_quote.vm_shape == "PRO2-S"
+        assert select_sovereign_infra_tier(1).code == "PRO2-S"
+        assert select_sovereign_infra_tier(25).code == "PRO2-S"
+
+        tier_m_edge = quote_plan("sovereign", seats=26, billing_cycle="monthly")
+        assert tier_m_edge.vm_shape == "PRO2-M"
+        assert tier_m_edge.estimated_cogs_minor == 10_990
+        assert tier_m_edge.gross_margin_bps >= MIN_GROSS_MARGIN_BPS
+        assert select_sovereign_infra_tier(100).code == "PRO2-M"
 
         tier1 = quote_plan("sovereign", seats=30, billing_cycle="monthly")
         assert tier1.list_excl_vat_minor == 33_000
+        assert tier1.vm_shape == "PRO2-M"
+        assert tier1.gross_margin_bps >= MIN_GROSS_MARGIN_BPS
+
+        tier_l = quote_plan("sovereign", seats=101, billing_cycle="monthly")
+        assert tier_l.vm_shape == "PRO2-L"
+        assert select_sovereign_infra_tier(101).code == "PRO2-L"
+        assert tier_l.gross_margin_bps >= MIN_GROSS_MARGIN_BPS
 
         tier2 = list_price_excl_vat_minor("sovereign", seats=120, billing_cycle="monthly")
         assert tier2 == 101_000
+        assert SOVEREIGN_POOL_WATERMARKS == PoolWatermarks(min_ready=1, target_ready=2, max_total=3)
 
     def test_strict_integer_guard_rejects_floats_bools_and_decimals(self) -> None:
         for bad in (5.0, True, False, Decimal("5"), "5"):
@@ -295,7 +317,7 @@ class TestWarmPoolController:
         evicted = pool.evict_unhealthy()
         assert [s.slot_id for s in evicted] == [created[0].slot_id]
         replenished = pool.replenish()
-        assert len(replenished) == 2
+        assert len(replenished) == 3
 
         with pytest.raises(WarmPoolTransitionError):
             pool.mark_ready(claim1.slot.slot_id)
@@ -612,6 +634,20 @@ class TestEnterpriseBillingHttpRouter:
         )
         assert quote_resp.status_code == 200
         assert quote_resp.json()["net_excl_vat_minor"] == 72_000
+        assert quote_resp.json()["vm_shape"] is None
+
+        sov_quote_resp = router.dispatch(
+            "POST",
+            "/api/v1/ee/billing/quotes",
+            body=json.dumps(
+                {"plan_code": "sovereign", "seats": 25, "billing_cycle": "monthly"}
+            ).encode(),
+            headers=staff_hdr,
+            environ=env,
+        )
+        assert sov_quote_resp.status_code == 200
+        assert sov_quote_resp.json()["vm_shape"] == "PRO2-S"
+        assert sov_quote_resp.json()["gross_margin_bps"] == 7_620
 
         bad_margin_resp = router.dispatch(
             "POST",
@@ -672,7 +708,10 @@ class TestEnterpriseBillingHttpRouter:
 
         for step_hdr, payload in (
             (staff_hdr, {"action": "issue"}),
-            ({"Authorization": "Bearer test-owner-acme"}, {"action": "countersign", "signatory": "VP Finance"}),
+            (
+                {"Authorization": "Bearer test-owner-acme"},
+                {"action": "countersign", "signatory": "VP Finance"},
+            ),
         ):
             step = router.dispatch(
                 "POST",
@@ -683,9 +722,7 @@ class TestEnterpriseBillingHttpRouter:
             )
             assert step.status_code == 200
 
-        claim_body = json.dumps(
-            {"organisation_id": "org_acme", "checkout_id": po_id}
-        ).encode()
+        claim_body = json.dumps({"organisation_id": "org_acme", "checkout_id": po_id}).encode()
         # Unpaid `countersigned` PO MUST NOT unlock warm-pool claim (`403`, `BUG-0057`)
         assert (
             router.dispatch(
@@ -1345,7 +1382,9 @@ class TestEnterpriseBillingPostgresAuthAndDurability:
                 router.dispatch(
                     "POST",
                     f"/api/v1/ee/billing/purchase-orders/{po_id}/transitions",
-                    body=json.dumps({"action": "countersign", "signatory": "Non-Owner Try"}).encode(),
+                    body=json.dumps(
+                        {"action": "countersign", "signatory": "Non-Owner Try"}
+                    ).encode(),
                     headers=hdr(non_owner_tok),
                     environ=env,
                 ).status_code
@@ -3551,9 +3590,7 @@ class TestEnterpriseBillingPostgresAuthAndDurability:
             state="active",
             accepted_at=now,
         )
-        bravo_owner_hdr = {
-            "Authorization": f"Bearer {w.mint_jwt(w.org_bravo.issuer, bravo_sub)}"
-        }
+        bravo_owner_hdr = {"Authorization": f"Bearer {w.mint_jwt(w.org_bravo.issuer, bravo_sub)}"}
 
         # --- BUG-0058 & E02-003: Quote override ceiling + server-authoritative catalog COGS/subtotal ---
         for bad_quote_override in (
@@ -3621,7 +3658,7 @@ class TestEnterpriseBillingPostgresAuthAndDurability:
 
         # Staff PO with understated `estimated_cogs_minor` or below-44%-margin `subtotal_excl_vat_minor` -> 422!
         for bad_po_fields in (
-            {"subtotal_excl_vat_minor": 200_000},
+            {"subtotal_excl_vat_minor": 120_000},
             {"subtotal_excl_vat_minor": 348_000, "estimated_cogs_minor": 100},
         ):
             r_bad_po = router.dispatch(
@@ -4007,9 +4044,7 @@ class TestEnterpriseBillingPostgresAuthAndDurability:
             router.dispatch(
                 "POST",
                 "/api/v1/ee/billing/warm-pool/release",
-                body=json.dumps(
-                    {"slot_id": claimed_slot_alpha, "reason": "customer_try"}
-                ).encode(),
+                body=json.dumps({"slot_id": claimed_slot_alpha, "reason": "customer_try"}).encode(),
                 headers=alpha_owner_hdr,
                 environ=env,
             ).status_code
@@ -4100,3 +4135,202 @@ class TestEnterpriseBillingPostgresAuthAndDurability:
             assert r_missing_mut.status_code == 404
             assert r_foreign_mut.json() == r_missing_mut.json()
             conn2.rollback()
+
+
+@pytest.mark.django_db
+def test_auto_backend_warm_pool_claims_and_sovereign_three_slot_cap() -> None:
+    """Verify `_AutoWarmPoolStore.list_slots` (`backend='auto'`) and Sovereign `max_total=3` cap."""
+    from django.db import connection
+
+    from ee.billing.api import BillingPrincipal, EnterpriseBillingRouter
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "DELETE FROM ee_billing_warm_pool_slots WHERE profile_ref = %s",
+            ["sovereign-pro2-s-v1"],
+        )
+
+    staff_principal = BillingPrincipal(
+        lane="staff",
+        staff_roles=frozenset({"staff_operator"}),
+        identity_id="staff:sre-1",
+        live_authority=False,
+    )
+    router = EnterpriseBillingRouter(
+        backend="auto",
+        authenticator=lambda _hdrs: staff_principal,
+    )
+    env = {"KODERA_EDITION": "enterprise"}
+
+    # Replenish Sovereign profile through default EE router (`max_total=16` on standard profiles,
+    # clamped to `SOVEREIGN_POOL_WATERMARKS`: `target_ready=2, max_total=3`).
+    r_rep1 = router.dispatch(
+        "POST",
+        "/api/v1/ee/billing/warm-pool/replenish",
+        body=json.dumps({"region": "fr-par", "profile_ref": "sovereign-pro2-s-v1"}).encode(),
+        environ=env,
+    )
+    assert r_rep1.status_code == 200
+    created_1 = r_rep1.json()["created_slots"]
+    assert len(created_1) == 2
+
+    # Mark first 2 ready, claim 1 via internal store, replenish again -> at most 3 non-evicted slots total!
+    for slot in created_1:
+        assert (
+            router.dispatch(
+                "POST",
+                f"/api/v1/ee/billing/warm-pool/slots/{slot['slot_id']}/ready",
+                environ=env,
+            ).status_code
+            == 200
+        )
+
+    r_claims_ready = router.dispatch(
+        "GET",
+        "/api/v1/ee/billing/warm-pool/claims?state=ready&profile_ref=sovereign-pro2-s-v1",
+        environ=env,
+    )
+    assert r_claims_ready.status_code == 200
+    assert r_claims_ready.json()["count"] == 2
+
+    # Mark one unhealthy (occupying 1 of 3 active slots) and replenish: only 1 slot can be added (`2 + 1 == 3`).
+    router.warm_pool.mark_unhealthy(created_1[0]["slot_id"], reason="health-probe-failed")
+    r_rep2 = router.dispatch(
+        "POST",
+        "/api/v1/ee/billing/warm-pool/replenish",
+        body=json.dumps({"region": "fr-par", "profile_ref": "sovereign-pro2-s-v1"}).encode(),
+        environ=env,
+    )
+    assert r_rep2.status_code == 200
+    assert r_rep2.json()["count"] == 1
+
+    # Another replenish at ceiling `3` creates `0` slots.
+    r_rep3 = router.dispatch(
+        "POST",
+        "/api/v1/ee/billing/warm-pool/replenish",
+        body=json.dumps({"region": "fr-par", "profile_ref": "sovereign-pro2-s-v1"}).encode(),
+        environ=env,
+    )
+    assert r_rep3.status_code == 200
+    assert r_rep3.json()["count"] == 0
+
+    r_snap = router.dispatch(
+        "GET",
+        "/api/v1/ee/billing/warm-pool?profile_ref=sovereign-pro2-s-v1",
+        environ=env,
+    )
+    assert r_snap.status_code == 200
+    snap = r_snap.json()
+    assert (
+        snap["provisioning_count"]
+        + snap["ready_count"]
+        + snap["claimed_count"]
+        + snap["unhealthy_count"]
+        == 3
+    )
+
+
+@pytest.mark.django_db(transaction=True)
+def test_django_http_warm_pool_summary_forwards_profile_and_region_query_params(
+    ee_billing_pg_world,
+    monkeypatch,
+) -> None:
+    """Prove `GET /api/v1/ee/billing/warm-pool?profile_ref=sovereign-pro2-s-v1&region=fr-par`
+    forwards query filters through `ee/billing/urls.py` instead of returning the default pool."""
+    from django.db import connection
+    from django.test import Client
+
+    w = ee_billing_pg_world
+    monkeypatch.setenv("KODERA_EDITION", "enterprise")
+    client = Client()
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "DELETE FROM ee_billing_warm_pool_slots WHERE profile_ref IN (%s, %s)",
+            ["sovereign-pro2-s-v1", "default-other-v1"],
+        )
+
+    r_other = client.post(
+        "/api/v1/ee/billing/warm-pool/replenish",
+        data=json.dumps({"region": "fr-par", "profile_ref": "default-other-v1"}).encode("utf-8"),
+        content_type="application/json",
+        HTTP_AUTHORIZATION=f"Bearer {w.staff_token}",
+    )
+    assert r_other.status_code == 200
+
+    r_sov = client.post(
+        "/api/v1/ee/billing/warm-pool/replenish",
+        data=json.dumps({"region": "fr-par", "profile_ref": "sovereign-pro2-s-v1"}).encode("utf-8"),
+        content_type="application/json",
+        HTTP_AUTHORIZATION=f"Bearer {w.staff_token}",
+    )
+    assert r_sov.status_code == 200
+    created_sov = r_sov.json()["created_slots"]
+    assert 1 <= len(created_sov) <= 3
+
+    r_ready = client.post(
+        f"/api/v1/ee/billing/warm-pool/slots/{created_sov[0]['slot_id']}/ready",
+        data=b"{}",
+        content_type="application/json",
+        HTTP_AUTHORIZATION=f"Bearer {w.staff_token}",
+    )
+    assert r_ready.status_code == 200
+
+    r_summary = client.get(
+        "/api/v1/ee/billing/warm-pool?profile_ref=sovereign-pro2-s-v1&region=fr-par",
+        HTTP_AUTHORIZATION=f"Bearer {w.staff_token}",
+    )
+    assert r_summary.status_code == 200, r_summary.content
+    summary = r_summary.json()
+    assert summary["profile_ref"] == "sovereign-pro2-s-v1"
+    assert summary["region"] == "fr-par"
+    assert summary["ready_count"] == 1
+    assert summary["provisioning_count"] + summary["ready_count"] <= 3
+
+
+@pytest.mark.django_db
+def test_postgres_backend_warm_pool_replenishes_after_claimed_slots_exceed_max_total() -> None:
+    """Verify `PostgresWarmPoolStore` (`backend='postgres'`) counts only `provisioning`, `ready`,
+    and `unhealthy` slots against `max_total`, so `claimed` customer slots never freeze pool
+    replenishment once `claimed_count >= max_total`."""
+    from django.db import connection
+
+    profile_ref = "r8-pg-claimed-v1"
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "DELETE FROM ee_billing_warm_pool_slots WHERE profile_ref = %s",
+            [profile_ref],
+        )
+
+    pool = WarmPoolController(
+        PoolWatermarks(min_ready=1, target_ready=2, max_total=3),
+        default_region="fr-par",
+        default_profile_ref=profile_ref,
+        backend="postgres",
+    )
+
+    for batch_idx in (0, 1):
+        allocated = pool.replenish()
+        assert len(allocated) == 2
+        for offset, slot in enumerate(allocated):
+            pool.mark_ready(slot.slot_id)
+            claim = pool.claim_slot(
+                idempotency_key=f"idem-00000000000004{batch_idx}{offset}",
+                organisation_id=f"org_pg_claim_{batch_idx}_{offset}",
+                checkout_id=f"cs_pg_claim_{batch_idx}_{offset}",
+            )
+            assert claim.replayed is False
+
+    # 4 slots are now `claimed` (`> max_total == 3`), and 0 slots are `provisioning` or `ready`.
+    snap_before = pool.sizing_snapshot()
+    assert snap_before.claimed_count == 4
+    assert snap_before.ready_count == 0
+    assert snap_before.provisioning_count == 0
+    assert snap_before.replenish_needed == 2
+
+    replenished = pool.replenish()
+    assert len(replenished) == 2
+    snap_after = pool.sizing_snapshot()
+    assert snap_after.claimed_count == 4
+    assert snap_after.provisioning_count == 2
+    assert snap_after.replenish_needed == 0

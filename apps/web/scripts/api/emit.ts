@@ -11,9 +11,21 @@ const HEADER = '// GENERATED FILE — DO NOT EDIT. Regenerate with: npm run api:
 /** Base path the mocks answer on. `*` so a handler matches whatever origin the app is built for. */
 const MOCK_BASE = '*/api/v1'
 
-const json = (value: unknown, indent = 2): string => JSON.stringify(value, null, indent)
+const escapeJsLineTerminators = (serialized: string): string =>
+  serialized.replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029')
 
-const quote = (value: string): string => JSON.stringify(value)
+const json = (value: unknown, indent = 2): string =>
+  escapeJsLineTerminators(JSON.stringify(value, null, indent))
+
+const quote = (value: string): string => escapeJsLineTerminators(JSON.stringify(value))
+
+const MSW_METHOD = {
+  get: 'http.get',
+  post: 'http.post',
+  put: 'http.put',
+  patch: 'http.patch',
+  delete: 'http.delete',
+} as const
 
 /** `/domains/{domain_id}` is what the contract writes; `/domains/:domain_id` is what msw matches. */
 export const toMswPath = (path: string): string => path.replace(/\{([^{}]+)\}/g, ':$1')
@@ -265,30 +277,27 @@ export function emitHandlers(ops: Operation[], problemTypes: readonly string[]):
   for (const op of ops) {
     // `quote`, not a hand-written template literal: the path is a value from the
     // contract, and only a real string literal keeps it out of the program text.
+    const mswCall = MSW_METHOD[op.method]
     const url = `BASE + ${quote(toMswPath(op.path))}`
     const example = `EXAMPLES[${quote(op.operationId)}]`
     if (op.operationId === 'getMe') {
       lines.push(
-        `  http.${op.method}(${url}, ({ request }) => answer({ ...${example}, body: bindCurrentUserToMockRequest(${example}.body as components['schemas']['Me'], request) })),`
+        `  ${mswCall}(${url}, ({ request }) => answer({ ...${example}, body: bindCurrentUserToMockRequest(${example}.body as components['schemas']['Me'], request) })),`
       )
     } else if (op.operationId === 'listMemberships') {
       lines.push(
-        `  http.${op.method}(${url}, ({ request }) => membershipDirectoryResponse((${example}.body as { data: components['schemas']['Membership'][] }).data, request, (EXAMPLES.getMe.body as components['schemas']['Me']).organisations[0]!.role, (EXAMPLES.getMe.body as components['schemas']['Me']).organisations[0]!.membership_id, { 'X-Request-Id': requestId() })),`
+        `  ${mswCall}(${url}, ({ request }) => membershipDirectoryResponse((${example}.body as { data: components['schemas']['Membership'][] }).data, request, (EXAMPLES.getMe.body as components['schemas']['Me']).organisations[0]!.role, (EXAMPLES.getMe.body as components['schemas']['Me']).organisations[0]!.membership_id, { 'X-Request-Id': requestId() })),`
       )
     } else if (op.idempotent) {
-      lines.push(
-        `  http.${op.method}(${url}, ({ request }) => answerIdempotent(${example}, request)),`
-      )
+      lines.push(`  ${mswCall}(${url}, ({ request }) => answerIdempotent(${example}, request)),`)
     } else if (op.conditionalWrite) {
-      lines.push(
-        `  http.${op.method}(${url}, ({ request }) => answerConditional(${example}, request)),`
-      )
+      lines.push(`  ${mswCall}(${url}, ({ request }) => answerConditional(${example}, request)),`)
     } else if (op.requiresIfMatch && needsIfMatch && missingIfMatch) {
       lines.push(
-        `  http.${op.method}(${url}, ({ request }) => answerRequiringIfMatch(${example}, request)),`
+        `  ${mswCall}(${url}, ({ request }) => answerRequiringIfMatch(${example}, request)),`
       )
     } else {
-      lines.push(`  http.${op.method}(${url}, () => answer(${example})),`)
+      lines.push(`  ${mswCall}(${url}, () => answer(${example})),`)
     }
   }
   lines.push(']')

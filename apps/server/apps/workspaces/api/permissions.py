@@ -6,6 +6,9 @@ GET_WORKSPACE = Operation(method="GET", operation_id="getWorkspace", scope="work
 INITIALISE_WORKSPACE = Operation(
     method="POST", operation_id="initialiseWorkspace", scope="workspace:act"
 )
+CREATE_SELF_SERVE_WORKSPACE = Operation(
+    method="POST", operation_id="createSelfServeWorkspace", scope="workspace:create"
+)
 # The structure administration (docs/specs/ESPACE_STRUCTURE.md §3).
 CREATE_CATEGORY = Operation(method="POST", operation_id="createCategory", scope="workspace:create")
 PATCH_CATEGORY = Operation(method="PATCH", operation_id="patchCategory", scope="workspace:update")

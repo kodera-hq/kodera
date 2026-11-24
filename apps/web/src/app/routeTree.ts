@@ -21,6 +21,7 @@ import { espaceCallbackRoute } from './espace-callback-route'
 import { publicBookingRoute } from '../features/calendar/route'
 import { invitationRoute, joinRoute } from '../features/invitation/route'
 import { loginRoute } from '../features/login/routes'
+import type { selfServeWorkspaceRoute } from '../features/workspace-create/selfServeRoute'
 import { entryCataloguesReady, withNamespaces } from '../i18n'
 import { ORGANISATION_NAMESPACES } from '../i18n/namespaces'
 import { indexRoute } from './index-route'
@@ -229,6 +230,16 @@ async function firstOwnerRoutes(): Promise<readonly ClaimRoute[]> {
   return []
 }
 
+type SelfServeWorkspaceRoute = typeof selfServeWorkspaceRoute
+
+async function selfServeWorkspaceRoutes(): Promise<readonly SelfServeWorkspaceRoute[]> {
+  const { selfServeWorkspaceRoute } = await withNamespaces(
+    ['home'],
+    () => import('../features/workspace-create/selfServeRoute')
+  )
+  return [selfServeWorkspaceRoute]
+}
+
 /** The routes every visitor gets, in the order the tree lists them. Async because the gated
  * claim route above is. */
 async function entryRoutes() {
@@ -315,6 +326,7 @@ export async function buildRouteTree() {
   ])
   return rootRoute.addChildren([
     ...(await entryRoutes()),
+    ...(await selfServeWorkspaceRoutes()),
     ...(await mockIdpRoutes()),
     ...(await messagingDemoRoutes()),
     orgRouteWithChildren,
@@ -331,7 +343,11 @@ type WholeRouteTree = Awaited<ReturnType<typeof buildRouteTree>>
  * page's language have arrived, so its first screen has its text. */
 export async function createAppRouter(options: { history?: RouterHistory } = {}) {
   await entryCataloguesReady
-  const tree = createLazyRouteTree(await entryRoutes(), ROUTE_UNITS, simulationRoutes())
+  const topLevelLazyRoutes: readonly LazyRoutes[] = [
+    { paths: ['/workspaces/new'], fetch: selfServeWorkspaceRoutes },
+    ...simulationRoutes(),
+  ]
+  const tree = createLazyRouteTree(await entryRoutes(), ROUTE_UNITS, topLevelLazyRoutes)
   const router = createRouter({
     // Typed as the tree it grows into: a link to an area is checked against
     // that area's route whether or not the area has been fetched yet.

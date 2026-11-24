@@ -517,4 +517,65 @@ final class OrganisationChannelsLoaderTests: XCTestCase {
         }
     }
 
+    func testSharedRealmSelectsActiveNonCommunityMembershipOrBoundOrganisation() async throws {
+        let commOrg = MemberOrganisation(
+            id: "0192f3a4-5b6c-7d8e-9f01-000000000001",
+            slug: "community",
+            name: "Kodera Community",
+            realm: "community",
+            role: "org_member",
+            state: "active"
+        )
+        let pmeOrg = MemberOrganisation(
+            id: organisation,
+            slug: "atelier-bleu",
+            name: "Atelier Bleu",
+            realm: "community",
+            role: "org_owner",
+            state: "active"
+        )
+        let secondOrg = MemberOrganisation(
+            id: "0192f3a4-5b6c-7d8e-9f01-000000000002",
+            slug: "studio-bravo",
+            name: "Studio Bravo",
+            realm: "community",
+            role: "org_owner",
+            state: "active"
+        )
+        let sharedProfile = MeOutcome.member(
+            MemberProfile(
+                id: "11111111-2222-4333-8444-555555555555",
+                email: "owner@atelier.test",
+                displayName: "Atelier Owner",
+                organisations: [commOrg, pmeOrg, secondOrg]
+            )
+        )
+        let commSnapshot = snapshot("Community Room", id: commOrg.id)
+        let pmeSnapshot = snapshot("Atelier Room", id: pmeOrg.id)
+        let secondSnapshot = snapshot("Bravo Room", id: secondOrg.id)
+
+        let m = me([.init(value: sharedProfile), .init(value: sharedProfile), .init(value: sharedProfile)])
+        let w = channels([.init(value: .loaded(secondSnapshot)), .init(value: .loaded(pmeSnapshot)), .init(value: .loaded(commSnapshot))])
+        let loader = ChannelEvents().loader()
+        loader.setForeground(true)
+        loader.enter(
+            realm: "community",
+            requester: try requester(),
+            preferredOrganisationId: secondOrg.id,
+            preferredSlug: secondOrg.slug,
+            fetchMember: { await m.fetch() },
+            fetchWorkspace: { _ in await w.fetch() }
+        )
+        try await until { self.label(loader) == "Bravo Room" }
+        XCTAssertEqual(loader.loadedOrganisation?.id, secondOrg.id)
+
+        loader.selectOrganisation(slug: pmeOrg.slug)
+        try await until { self.label(loader) == "Atelier Room" }
+        XCTAssertEqual(loader.loadedOrganisation?.id, pmeOrg.id)
+
+        loader.selectOrganisation(id: commOrg.id)
+        try await until { self.label(loader) == "Community Room" }
+        XCTAssertEqual(loader.loadedOrganisation?.id, commOrg.id)
+    }
+
 }

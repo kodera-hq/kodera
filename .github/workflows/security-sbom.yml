@@ -81,8 +81,8 @@ jobs:
           uv pip install --python "$RUNNER_TEMP/ci-tools/bin/python" --require-hashes --no-deps -r scripts/ci/ci-requirements.txt
           "$RUNNER_TEMP/ci-tools/bin/python" scripts/ci/check-zero-secret-pr-ci.py --selftest
           "$RUNNER_TEMP/ci-tools/bin/python" scripts/ci/check-zero-secret-pr-ci.py
-          python3 scripts/ci/check-workflow-pins.py --selftest
-          python3 scripts/ci/check-workflow-pins.py
+          "$RUNNER_TEMP/ci-tools/bin/python" scripts/ci/check-workflow-pins.py --selftest
+          "$RUNNER_TEMP/ci-tools/bin/python" scripts/ci/check-workflow-pins.py
           python3 scripts/ci/check-licenses.py --selftest
           python3 scripts/ci/check-licenses.py
           python3 scripts/ci/check-cargo-advisories.py --selftest

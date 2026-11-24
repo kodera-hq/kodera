@@ -982,3 +982,29 @@ def record_passport_login_succeeded(
         retention_class="standard",
         metadata={"amr": list(amr), "realm": realm},
     )
+
+
+SYSTEM_TENANT_ACTIONS = frozenset({"tenant.provision_requested", "tenant.ready"})
+
+
+def record_system_tenant_event(
+    *,
+    action: str,
+    tenant_id: UUID,
+    organisation_id: UUID,
+    metadata: Mapping[str, object],
+) -> None:
+    """Record a system-initiated tenant lifecycle AuditEvent in the caller's transaction."""
+    if action not in SYSTEM_TENANT_ACTIONS:
+        raise ValueError(f"{action} is not a system tenant lifecycle action")
+    AuditEvent.objects.create(
+        action=action,
+        actor_type="system",
+        actor_id=None,
+        actor_label="system",
+        organisation_id=organisation_id,
+        target_urn=f"urn:kodera:tenant:{tenant_id}",
+        request_id=None,
+        retention_class="standard",
+        metadata=dict(metadata),
+    )

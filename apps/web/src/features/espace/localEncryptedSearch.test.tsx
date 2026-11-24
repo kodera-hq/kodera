@@ -89,7 +89,7 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-describe('localEncryptedSearch — zero-egress client FTS, blind HMAC tags & #180 quarantine', () => {
+describe('localEncryptedSearch — zero-egress client FTS, blind HMAC tags & issue 180 quarantine', () => {
   it('folds NFD accents, drops 1-char tokens, and caps per-message terms at 64', () => {
     expect(tokenizeSearchText('À côté de l’Élysée : été 2026 !')).toEqual([
       'cote',
@@ -193,7 +193,7 @@ describe('localEncryptedSearch — zero-egress client FTS, blind HMAC tags & #18
         coldEngine.dispose()
       }
 
-      // Quarantine (#180) on ROOM_E2EE_DM synchronously evicts RAM BEFORE IDB settles,
+      // Quarantine (issue 180) on ROOM_E2EE_DM synchronously evicts RAM BEFORE IDB settles,
       // rotates vault AES + HMAC keys, and preserves surviving ROOM_STANDARD via re-key!
       quarantinedRooms.add(ROOM_E2EE_DM)
       unlockedEpochs.delete(ROOM_E2EE_DM)
@@ -217,7 +217,7 @@ describe('localEncryptedSearch — zero-egress client FTS, blind HMAC tags & #18
     }
   })
 
-  it('caps per-room indexed messages at 500 and enforces #180 quarantine in MessageSearch UI with zero network egress', async () => {
+  it('caps per-room indexed messages at 500 and enforces issue 180 quarantine in MessageSearch UI with zero network egress', async () => {
     const fetchSpy = vi
       .spyOn(globalThis, 'fetch')
       .mockRejectedValue(new Error('unexpected network egress'))
@@ -266,7 +266,7 @@ describe('localEncryptedSearch — zero-egress client FTS, blind HMAC tags & #18
     const dialog = screen.getByRole('dialog')
     await waitFor(() => expect(within(dialog).getAllByRole('listitem')).toHaveLength(1))
 
-    // Lock / quarantine the room (#180): local search immediately returns empty and evicts RAM!
+    // Lock / quarantine the room (issue 180): local search immediately returns empty and evicts RAM!
     unlocked = false
     quarantined = true
     expect(searchRoomTimelineLocally(store, ROOM_E2EE_DM, 'jalon')).toEqual({

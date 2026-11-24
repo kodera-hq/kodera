@@ -36,7 +36,6 @@ from core.db.ids import new_uuid7
 from .. import events
 from ..actors import Actor
 from ..models import (
-    CapacityTier,
     DunningCase,
     Invoice,
     Payment,
@@ -257,14 +256,9 @@ def _metadata_of(data_obj: Mapping[str, Any]) -> Mapping[str, Any]:
 
 def _resolve_seat_quota(subscription: Subscription) -> int:
     """Derive seat quota strictly from Core's persisted subscription tier and quantity."""
-    tier_seats = (
-        CapacityTier.objects.filter(code=subscription.capacity_tier_code)
-        .values_list("seats_included", flat=True)
-        .first()
-    )
-    if tier_seats is not None and tier_seats >= 1:
-        return int(tier_seats) * int(subscription.quantity)
-    return int(subscription.quantity)
+    from apps.billing.sovereign_settlement import resolve_subscription_seat_quota
+
+    return resolve_subscription_seat_quota(subscription)
 
 
 def _validate_bound_metadata(
@@ -273,6 +267,7 @@ def _validate_bound_metadata(
     *,
     invoice: Invoice,
     customer_ref: str | None,
+    payment: Payment | None = None,
 ) -> str | None:
     """Verify optional provider metadata / customer attributes against Core's persisted invoice."""
     if _has_nonempty_key(meta, "core_organisation_id", "organisation_id"):
@@ -295,15 +290,19 @@ def _validate_bound_metadata(
         if claimed_sub is None or claimed_sub != invoice.subscription_id:
             return "subscription_mismatch"
 
-    if customer_ref is not None:
-        conflict = (
-            Payment.objects.filter(organisation_id=invoice.organisation_id)
-            .exclude(provider_customer_ref__isnull=True)
-            .exclude(provider_customer_ref="")
-            .exclude(provider_customer_ref=customer_ref)
+    if customer_ref is not None and customer_ref != "":
+        if (
+            payment is not None
+            and payment.provider_customer_ref
+            and payment.provider_customer_ref != customer_ref
+        ):
+            return "customer_mismatch"
+        cross_org_conflict = (
+            Payment.objects.filter(provider="stripe", provider_customer_ref=customer_ref)
+            .exclude(organisation_id=invoice.organisation_id)
             .exists()
         )
-        if conflict:
+        if cross_org_conflict:
             return "customer_mismatch"
 
     return None
@@ -353,12 +352,10 @@ def _sync_settled_subscription(
         subscription.state = "active"
         subscription.save(update_fields=["state", "updated_at"])
     if subscription.state == "active":
+        from apps.billing.sovereign_settlement import sync_organisation_plan_tier_for_subscription
+
         _clear_dunning_if_needed(subscription, event_id)
-        sync_subscription_quota(
-            organisation_id=subscription.organisation_id,
-            policy_ref=f"subscription:{subscription.plan_code}:active",
-            seats=_resolve_seat_quota(subscription),
-        )
+        sync_organisation_plan_tier_for_subscription(subscription)
 
 
 def _sync_reversed_subscription(*, invoice: Invoice) -> None:
@@ -383,11 +380,24 @@ def _sync_reversed_subscription(*, invoice: Invoice) -> None:
     if subscription.state == "past_due" and not subscription_has_blocking_unpaid_invoice(
         subscription, settled_invoice=invoice
     ):
-        sync_subscription_quota(
-            organisation_id=subscription.organisation_id,
-            policy_ref=f"subscription:{subscription.plan_code}:past_due",
-            seats=_resolve_seat_quota(subscription),
-        )
+        from apps.billing.boosts import recompute_workspace_boost_quota
+        from apps.billing.sovereign_settlement import resolve_subscription_storage_quota_bytes
+        from apps.workspaces.selectors import workspace_id_for
+
+        ws_id = workspace_id_for(organisation_id=subscription.organisation_id)
+        if ws_id is not None:
+            recompute_workspace_boost_quota(
+                organisation_id=subscription.organisation_id,
+                workspace_id=ws_id,
+            )
+        else:
+            sync_subscription_quota(
+                organisation_id=subscription.organisation_id,
+                policy_ref=f"subscription:{subscription.plan_code}:past_due",
+                seats=_resolve_seat_quota(subscription),
+                media_bytes=resolve_subscription_storage_quota_bytes(subscription),
+                update_storage=True,
+            )
 
 
 def _validate_deferrable_metadata(
@@ -866,12 +876,18 @@ def _handle_checkout_completed(
     invoice = Invoice.objects.select_for_update().get(id=link.invoice_id)
     organisation_id = invoice.organisation_id
 
+    existing_payment = (
+        Payment.objects.select_for_update()
+        .filter(provider="stripe", provider_ref=port_event.payment_ref)
+        .first()
+    )
     meta = _metadata_of(data_obj)
     mismatch_reason = _validate_bound_metadata(
         meta,
         data_obj,
         invoice=invoice,
         customer_ref=port_event.customer_ref,
+        payment=existing_payment,
     )
     if mismatch_reason is not None:
         events.record(
@@ -1123,6 +1139,7 @@ def _handle_payment_intent_succeeded(
         data_obj,
         invoice=invoice,
         customer_ref=customer_ref,
+        payment=payment,
     )
     if mismatch_reason is not None:
         events.record(
@@ -1501,17 +1518,16 @@ def _try_handle_h31_checkout_completed(
         has_meta_mkt = True
         meta_mkt_id = _extract_uuid(data_obj, "client_reference_id")
 
-    mkt_entitlement = None
+    mkt_org_id: UUID | None = None
     if boost is None and vip is None and django_apps.is_installed("apps.extensions"):
-        from apps.extensions.models import MarketplaceEntitlement
+        from apps.extensions import marketplace as extension_marketplace
 
-        mkt_entitlement = MarketplaceEntitlement.objects.filter(checkout_ref=session_id).first()
-        if mkt_entitlement is None and meta_mkt_id is not None:
-            candidate = MarketplaceEntitlement.objects.filter(id=meta_mkt_id).first()
-            if candidate is not None and candidate.checkout_ref in (None, session_id):
-                mkt_entitlement = candidate
+        mkt_org_id = extension_marketplace.find_marketplace_entitlement_organisation(
+            session_id=session_id,
+            meta_entitlement_id=meta_mkt_id,
+        )
 
-    if boost is None and vip is None and mkt_entitlement is None:
+    if boost is None and vip is None and mkt_org_id is None:
         return None
 
     org_id = (
@@ -1519,12 +1535,14 @@ def _try_handle_h31_checkout_completed(
         if boost is not None
         else vip.organisation_id
         if vip is not None
-        else mkt_entitlement.organisation_id  # type: ignore[union-attr]
+        else mkt_org_id
     )
+    if org_id is None:
+        return None
     payment_status = data_obj.get("payment_status")
     if event_type == "checkout.session.completed":
         if payment_status == "unpaid" or (
-            mkt_entitlement is not None and payment_status == "processing"
+            mkt_org_id is not None and payment_status == "processing"
         ):
             return "ignored", org_id
         if payment_status != "paid":
@@ -1585,7 +1603,7 @@ def _try_handle_h31_checkout_completed(
         _drain_deferred_h31_refunds(pi_id=pi_id)
         return "applied", org_id
 
-    if mkt_entitlement is not None:
+    if mkt_org_id is not None:
         from apps.extensions import marketplace as extension_marketplace
 
         mkt_res = extension_marketplace.try_settle_stripe_checkout_session(

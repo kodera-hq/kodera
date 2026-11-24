@@ -154,6 +154,7 @@ function PeopleArea({
           key={recoveryOwner === undefined ? 'unverified' : JSON.stringify(recoveryOwner)}
           {...(recoveryOwner === undefined ? {} : { recoveryOwner })}
           organisationId={organisationId}
+          organisationSlug={org}
           callerRole={callerRole}
           onClose={() => void onNavigate({ to: '' })}
           onSent={() => void onNavigate({ to: 'invitations' })}

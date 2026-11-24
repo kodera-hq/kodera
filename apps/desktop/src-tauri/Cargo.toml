@@ -1,11 +1,11 @@
 [package]
 name = "kodera-desktop"
-version = "0.1.1"
+version = "0.2.0"
 edition.workspace = true
 rust-version = "1.85"
 license.workspace = true
 publish = false
-description = "Kodera Tauri v2 native desktop shell, system tray, deep-link router, keychain bridge, and local self-host inspector"
+description = "Kodera tao/wry native desktop shell, system tray, deep-link router, keychain bridge, and local self-host inspector"
 
 [lib]
 name = "kodera_desktop"

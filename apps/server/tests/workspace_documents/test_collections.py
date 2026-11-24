@@ -658,3 +658,55 @@ def test_seat_predicates_stay_closed_with_legacy_invalid_acceptance(world, opera
                     expires_at=now + timedelta(hours=1),
                 )
         transaction.set_rollback(True)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_confidential_documents_refuse_collection_rows_and_allow_legacy_row_cleanup(world):
+    from dataclasses import replace
+
+    from apps.docs.models import CollectionRow
+
+    org, _, _, tokens = world
+    collection = make_collection(world)
+    public_doc = make_doc(world, "Public Note")
+    secret_doc = make_doc(world, "Secret Note")
+    set_row(world, collection, public_doc, 1, "Public")
+    legacy_row = set_row(world, collection, secret_doc, 2, "Legacy Secret")
+    legacy_etag = services.tag(legacy_row)
+
+    Document.objects.filter(pk=secret_doc.id).update(is_confidential=True)
+
+    with pytest.raises(RefusalError) as denied_put:
+        set_row(world, collection, secret_doc, 3, "Plaintext Metadata Attempt")
+    assert denied_put.value.status == 403
+
+    with pytest.raises(RefusalError) as denied_read:
+        collections.read_row(
+            verified=tokens[3],
+            organisation_id=org.id,
+            collection_id=UUID(collection["id"]),
+            document_id=secret_doc.id,
+        )
+    assert denied_read.value.status == 403
+
+    for actor_token in (tokens[3], replace(tokens[3], authorized_party="bot-indexer")):
+        page = collections.query(
+            verified=actor_token,
+            organisation_id=org.id,
+            collection_id=UUID(collection["id"]),
+            body={},
+            cursor=None,
+            limit=50,
+        )
+        assert [row["documentId"] for row in page["data"]] == [str(public_doc.id)]
+
+    # Cleanup of any pre-confidentiality row remains permitted and removes the plaintext row.
+    collections.delete_row(
+        verified=tokens[3],
+        organisation_id=org.id,
+        collection_id=UUID(collection["id"]),
+        document_id=secret_doc.id,
+        if_match=legacy_etag,
+        request_id=str(uuid4()),
+    )
+    assert not CollectionRow.objects.filter(document=secret_doc).exists()

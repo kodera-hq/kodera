@@ -25,6 +25,8 @@ from core.idempotency.store import (
     FinalAuthorityCallback as FinalAuthorityCallback,
     InFlight,
     KeyReused,
+    MetadataAuthority as MetadataAuthority,
+    ReplayAuthority as ReplayAuthority,
     Replayed,
     Scope,
     StoredResponse as StoredResponse,
@@ -81,6 +83,28 @@ def holds_answer(request: HttpRequest, *, issuer: str, subject: str, key: str) -
         return False
     found = store.lookup(scope)
     return found is not None and not getattr(found, "expired", False)
+
+
+def stored_answer(
+    request: HttpRequest, *, issuer: str, subject: str, key: str
+) -> StoredResponse | None:
+    """Return the unexpired stored answer under `(request, issuer, subject, key)`, or None."""
+    if is_missing(key) or is_malformed(key):
+        return None
+    scope = scope_for(request, issuer=issuer, subject=subject, key=key)
+    if scope is None:
+        return None
+    found = store.lookup(scope)
+    if found is None or getattr(found, "expired", False):
+        return None
+    return StoredResponse(
+        status=found.status,
+        body=bytes(found.body),
+        content_type=found.content_type,
+        location=found.location,
+        etag=found.etag,
+        job_id=found.job_id,
+    )
 
 
 def claim_execution(scope: Scope) -> bool:

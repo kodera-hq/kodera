@@ -50,6 +50,7 @@ from apps.support.api.community import community_support_tickets
 from apps.support.api.views import bug_reports, support_tickets
 from apps.workspaces.api import administration as structure, bridges, quotas
 from apps.workspaces.api.instant_claim import instant_claim
+from apps.workspaces.api.self_serve import self_serve_workspace
 from apps.workspaces.api.views import initialise, workspace
 from core.well_known import apple_app_site_association, assetlinks
 
@@ -130,6 +131,7 @@ urlpatterns = [
         privacy.workspace_deletion,
     ),
     path("api/v1/workspaces/instant-claim", instant_claim),
+    path("api/v1/workspaces/self-serve", self_serve_workspace),
     path("api/v1/auth/discover", discovery),
     path("api/v1/auth/passport/magic-link/request", passport_magic_link_request),
     path("api/v1/auth/passport/magic-link/verify", passport_magic_link_verify),

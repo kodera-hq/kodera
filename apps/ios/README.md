@@ -2,13 +2,20 @@
 
 The native iOS and iPadOS client for **Kodera**, a collaboration workspace for organisations.
 
-Kodera brings team conversations and calls into one workspace. The first product version targets text channels, audio and video. Collaborative Docs follow in V2. The apps use native interfaces and platform capabilities, with comfort, performance, accessibility and security as design priorities.
+Kodera brings team conversations, voice/video calls, and collaborative Pages into one workspace. `apps/ios` is the companion native iOS and iPadOS client (with zero in-app purchase and zero pricing UI), prioritizing native ergonomics, accessibility, battery discipline, and cryptographic session safety.
+
+```mermaid
+flowchart LR
+  App["App Target (SwiftUI)<br/>Dark Precision / Light Givre"] --> Client["KoderaClient & KoderaAuth<br/>AppAuth PKCE · MatrixRoomClient · NativeVoIPRuntime"]
+  Client --> Domain["KoderaDomain<br/>UuidV7 · CallRingMachine · Passkeys · Proximity v1/v2"]
+  Client --> Vault["iOS Keychain (KDV1 AES-256-GCM)<br/>+ Vectors (mobile-ffi-v1.txt)"]
+```
 
 ## Product and platform
 
-- **This repository:** the Swift and SwiftUI client.
-- **Mobile priority:** iOS and Android.
-- **Desktop sequence:** macOS, then Windows and Linux, developed separately.
+- **This directory:** the Swift and SwiftUI iOS/iPadOS companion client.
+- **Mobile targets:** [`apps/ios`](README.md) and [`apps/android`](../android/README.md).
+- **Desktop shell:** [`apps/desktop`](../desktop/README.md) (macOS, Linux, and Windows in this monorepo).
 - **Product website:** [kodera.io](https://kodera.io).
 
 ## Development status
@@ -23,7 +30,7 @@ The app (bundle ID `io.kodera.app`) has a native organisation-entry screen, an a
 
 Authorised Core requests bound their owned response accumulator to 65,536 bytes. An oversized declared length is refused before body admission; actual incoming bytes are checked before every append, including absent or falsely small lengths. Overflow selects one result and requests cancellation before EOF. This bounds logical `Data.count`, not Foundation buffers, allocation capacity or process memory, and does not promise immediate network shutdown. Host tests separately witness session and fixture-worker drain.
 
-A simulator walkthrough against the local Core e2e stack passed organisation discovery, password and one-time-code sign-in, `/me`, relaunch resume, sign-out and the unknown-identity 403 screen with offline access off. A separate iOS lab walkthrough also proved offline resume and per-client sign-out. See [the recorded scope and rollout gates](docs/native-auth.md). Staging, physical-device validation and store distribution remain open; release offline access remains disabled pending its proof and operator rollout gates. Channel content, audio/video and Docs remain roadmap work. VoiceOver, external keyboard, Dynamic Type, narrow layouts, insets and foreground focus/scroll behaviour of the metadata view remain unmeasured until a separately admitted device run. A host test or unsigned build alone does not establish a working sign-in journey or a shipping app.
+A simulator walkthrough against the local Core e2e stack passed organisation discovery, password and one-time-code sign-in, `/me`, relaunch resume, sign-out and the unknown-identity 403 screen with offline access off. A separate iOS lab walkthrough also proved offline resume and per-client sign-out. See [the recorded scope and rollout gates](docs/native-auth.md). Staging, physical-device validation and store distribution remain open; release offline access remains disabled pending its proof and operator rollout gates. Live Matrix homeserver/APNs credentials, LiveKit WebRTC SDK media driver binding, and full collaborative Docs editing on mobile remain external/roadmap work. VoiceOver, external keyboard, Dynamic Type, narrow layouts, insets and foreground focus/scroll behaviour of the metadata view remain unmeasured until a separately admitted device run. A host test or unsigned build alone does not establish a working sign-in journey or a shipping app.
 
 ## Proximity channel foundation
 
@@ -93,7 +100,7 @@ The signed-in card derives context from the current loaded workspace's first act
 
 The signed-in text-channel studio starts unavailable until explicitly opened as a volatile local preview. Theme codes use the strict shared `kodera-theme:v1:` schema and canonical padded base64, with a 2,048-byte total ceiling and four validated RGB presets. Native generated tokens render the selected light/dark/black preview mode; imported custom RGB values color only a contained sample and do not recolor the app shell. Immutable validated RGB values supply the sample components; interactive controls continue to use generated tokens. The monogram tile stays pure black.
 
-Profile rank and channel-policy controls demonstrate local arithmetic only, never service authorization. Private owner/generation/scope contexts reject stale operations, and channel changes hide the previous draft before clearing it. Display/role fields admit at most64 UTF-8 bytes and document titles120 UTF-8 bytes, a conservative subset of character-count bounds. Markdown bodies admit at most64 KiB, render as literal text and export deterministic quoted frontmatter; no HTML, document server, persistence or remote editing is enabled. Host unit tests and installed-SDK card typechecks remain distinct from full app and physical-device accessibility qualification.
+Profile rank and channel-policy controls demonstrate local arithmetic only, never service authorization. Private owner/generation/scope contexts reject stale operations, and channel changes hide the previous draft before clearing it. Display/role fields admit at most 64 UTF-8 bytes and document titles 120 UTF-8 bytes, a conservative subset of character-count bounds. Markdown bodies admit at most 64 KiB, render as literal text and export deterministic quoted frontmatter; no HTML, document server, persistence or remote editing is enabled. Host unit tests and installed-SDK card typechecks remain distinct from full app and physical-device accessibility qualification.
 
 Native codec fixtures qualify the exact native v1 schema only. The existing Web encoder omits `id`, which the strict native schema requires, so legacy Web-to-native import is not qualified by these tests.
 

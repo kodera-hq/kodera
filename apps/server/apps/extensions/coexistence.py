@@ -405,6 +405,7 @@ def _fetch_pinned_attachment(
             pool="webhook",
             scope_key=str(organisation_id),
             deadline=deadline,
+            max_wire=MAX_FILE + 16384,
         )
     except outbound.BlockedTargetError:
         raise ExtensionRefusedError("coexistence_attachment_target_refused", 422) from None
@@ -413,7 +414,14 @@ def _fetch_pinned_attachment(
     try:
         if resp.status != 200:
             raise ExtensionRefusedError("coexistence_attachment_unavailable", 502)
-        raw = resp.read(MAX_FILE + 1)
+        try:
+            raw = resp.read(MAX_FILE + 1)
+        except outbound.FetchError as err:
+            if str(err) == "too-large" or getattr(err, "reason", None) == "too-large":
+                raise ExtensionRefusedError("import_asset_bound", 413) from None
+            raise ExtensionRefusedError("coexistence_attachment_unavailable", 502) from None
+        except (OSError, http.client.HTTPException):
+            raise ExtensionRefusedError("coexistence_attachment_unavailable", 502) from None
     finally:
         resp.close()
         conn.close()

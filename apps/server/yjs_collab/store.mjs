@@ -106,6 +106,10 @@ export class Store {
           knownMarker !== null && typeof knownMarker === 'object'
             ? knownMarker.head
             : knownMarker
+        const knownDeliveredHead =
+          knownMarker !== null && typeof knownMarker === 'object'
+            ? knownMarker.deliveredHead ?? null
+            : null
         const knownSnapshotEpoch =
           knownMarker !== null && typeof knownMarker === 'object'
             ? knownMarker.snapshotEpoch ?? null
@@ -143,6 +147,31 @@ export class Store {
             journalSeqs.push(state.base + idx + 1)
           }
         }
+        const baseDelivered =
+          (state.snapshot.length === 0 && state.base === 0) ||
+          hasMatchingSnapshot ||
+          (knownDeliveredHead !== null && knownDeliveredHead >= state.base)
+        let deliveredHead = null
+        if (baseDelivered) {
+          if (
+            knownDeliveredHead !== null &&
+            knownHead !== null &&
+            knownDeliveredHead < knownHead &&
+            knownHead >= state.base
+          ) {
+            deliveredHead = knownDeliveredHead
+          } else {
+            let contiguous =
+              knownHead === null || knownHead < state.base
+                ? state.base
+                : (knownDeliveredHead ?? state.base)
+            for (let idx = startOffset; idx < state.updates.length; idx += 1) {
+              if (updHeaders[idx].epoch !== claims.epoch) break
+              contiguous = state.base + idx + 1
+            }
+            deliveredHead = contiguous
+          }
+        }
         const epochBootstrapped =
           (knownBootstrapped ||
             ((state.snapshot.length === 0 && state.base === 0) || includeSnapshot)) &&
@@ -156,6 +185,7 @@ export class Store {
           snapshotEpoch: hasMatchingSnapshot ? claims.epoch : null,
           snapshotBase: hasMatchingSnapshot ? state.base : null,
           epochBootstrapped,
+          deliveredHead,
           head: state.head,
           base: state.base,
           revision: state.revision,
@@ -179,7 +209,7 @@ export class Store {
   async viewerRefusal(claims) {
     return this.transaction(claims, async client => this.audit(client, claims, 'workspace.document.collab_refused'))
   }
-  async compact(claims, upToHead, snapshotEnvelope) {
+  async compact(claims, upToHead, snapshotEnvelope, { deliveredHead = null } = {}) {
     if (!claims.confidential || claims.role !== 'editor') throw new TicketRefused(4403)
     if (!Number.isSafeInteger(upToHead) || upToHead < 0) {
       throw new ConfidentialRefused('invalid confidential compaction cursor')
@@ -202,6 +232,18 @@ export class Store {
         throw new ConfidentialRefused('confidential compaction below snapshot base')
       }
       const targetSeq = Math.max(state.base, upToHead)
+      if (state.snapshot.length > 0) {
+        const snapHeader = storedKde1Header(state.snapshot, 3)
+        if (snapHeader.epoch !== claims.epoch && (deliveredHead === null || deliveredHead < state.base)) {
+          throw new ConfidentialRefused('cannot compact over withheld prior-epoch snapshot')
+        }
+      }
+      for (let idx = 0; idx < targetSeq - state.base; idx += 1) {
+        const updHeader = storedKde1Header(state.updates[idx], 0)
+        if (updHeader.epoch !== claims.epoch && (deliveredHead === null || deliveredHead < state.base + idx + 1)) {
+          throw new ConfidentialRefused('cannot compact over withheld prior-epoch updates')
+        }
+      }
       const remainingBytes = state.updates
         .slice(targetSeq - state.base)
         .reduce((sum, bytes) => sum + bytes.length, 0)

@@ -42,6 +42,12 @@ mod tests {
     use openmls_traits::crypto::OpenMlsCrypto;
     use std::io::Write;
 
+    fn random_test_wrap_key() -> [u8; 32] {
+        let mut out = [0u8; 32];
+        getrandom::fill(&mut out).expect("os csprng");
+        out
+    }
+
     fn verify_public(own: &OpenMlsDevice, request: &SignedRelayRequest, expected_keys: &[&str]) {
         let mut body: BTreeMap<String, Value> = serde_json::from_slice(request.body()).unwrap();
         let signature = body.remove("signature").unwrap();
@@ -87,15 +93,16 @@ mod tests {
         let target = RelayId::parse("01950000-0000-7000-8000-0000000000a4").unwrap();
         let scope = MlsDeviceScope::new(org.clone(), member);
         let mut store = TestStore::default();
+        let wrap_key = random_test_wrap_key();
         let mut own = finish(OpenMlsDevice::create_and_persist(
             scope,
             b"public protocol fixture",
-            &[7; 32],
+            &wrap_key,
             &mut store,
         ))
         .unwrap();
         let key = own.device_key();
-        finish(own.admit_and_persist(target, key, &[7; 32], &mut store)).unwrap();
+        finish(own.admit_and_persist(target, key, &wrap_key, &mut store)).unwrap();
         let room = NativeRoomScope::new(
             org,
             UuidV7::from_bytes_checked([
@@ -137,10 +144,11 @@ mod tests {
     #[test]
     fn every_closed_operation_has_exact_server_fields_and_verifiable_public_proofs() {
         let mut store = TestStore::default();
+        let wrap_key = random_test_wrap_key();
         let mut own = finish(OpenMlsDevice::create_and_persist(
             scope(),
             b"public protocol fixture",
-            &[7; 32],
+            &wrap_key,
             &mut store,
         ))
         .unwrap();
@@ -149,8 +157,8 @@ mod tests {
         assert!(registration.room().is_none());
         verify_public(&own, &registration, &["signingKey"]);
         let public = own.device_key();
-        finish(own.admit_and_persist(admitted(10), public, &[7; 32], &mut store)).unwrap();
-        let package = finish(own.prepare_key_package_and_persist(&[7; 32], &mut store)).unwrap();
+        finish(own.admit_and_persist(admitted(10), public, &wrap_key, &mut store)).unwrap();
+        let package = finish(own.prepare_key_package_and_persist(&wrap_key, &mut store)).unwrap();
         let room = room(1);
         let target = admitted(11);
         let channel = admitted(12);
@@ -496,10 +504,11 @@ mod tests {
             assert!(RelayId::parse(id).is_err());
         }
         let mut store = TestStore::default();
+        let wrap_key = random_test_wrap_key();
         let unadmitted = finish(OpenMlsDevice::create_and_persist(
             scope(),
             b"public protocol fixture",
-            &[7; 32],
+            &wrap_key,
             &mut store,
         ))
         .unwrap();

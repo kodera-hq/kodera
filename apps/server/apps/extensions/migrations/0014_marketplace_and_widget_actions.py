@@ -514,7 +514,7 @@ END $$;
 REVOKE ALL ON FUNCTION extension_erasure_step(uuid,uuid,timestamptz,text,integer) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.account_extension_widget_erasure_hook() RETURNS trigger LANGUAGE plpgsql
-SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $$
+SECURITY DEFINER SET search_path=pg_catalog,public AS $$
 DECLARE
  person uuid:=NEW.user_reference;
  widget_scrubbed bigint:=0;

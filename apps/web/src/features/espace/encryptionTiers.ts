@@ -56,7 +56,7 @@ export function shouldDisplayConfidentialPadlock(input: {
   readonly isConfidential?: boolean | undefined
   readonly isVerifiedE2eeSession?: boolean | undefined
 }): boolean {
-  // #180: Never render a padlock on any live room without a cryptographically verified E2EE session.
+  // issue 180: Never render a padlock on any live room without a cryptographically verified E2EE session.
   if (input.isVerifiedE2eeSession !== true) return false
   if (input.isConfidential === true || input.isDirect === true) return true
   // Tier 3 standard channels (#arrivals, #general, standard team channels) never render a fake padlock.

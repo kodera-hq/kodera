@@ -43,9 +43,16 @@ def _read_request_body(request: HttpRequest) -> bytes:
 @csrf_exempt
 def handle_django_request(request: HttpRequest) -> HttpResponse:
     """Translate a Django `HttpRequest` into `EnterpriseBillingRouter.dispatch` and back."""
+    qs = request.META.get("QUERY_STRING", "")
+    dispatch_path = (
+        f"{request.path}?{qs}"
+        if qs
+        and request.path in ("/api/v1/ee/billing/warm-pool", "/api/v1/ee/billing/warm-pool/claims")
+        else request.path
+    )
     result = _DEFAULT_ROUTER.dispatch(
         request.method or "GET",
-        request.path,
+        dispatch_path,
         body=_read_request_body(request),
         headers={str(k): str(v) for k, v in request.headers.items()},
     )

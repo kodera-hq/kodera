@@ -88,7 +88,7 @@ const tracker = createGitTracker({
   providerOrigin: 'https://github.com',
   repositories: [
     { slug: 'kodera-hq/kodera', defaultBranch: 'main' },
-    { slug: 'kodera-hq/kodera-ops', defaultBranch: 'main' },
+    { slug: 'example-org/service-api', defaultBranch: 'main' },
   ],
   locale: 'en',
   deliveryStore: transactionalOutbox,

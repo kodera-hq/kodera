@@ -36,6 +36,7 @@ export interface OrderWizardProps {
   role: OrderRole
   signatoryName: string
   signatoryEmail: string
+  requestedPackCode?: 'sovereign'
   onNavigate: (step: OrderStep | 'quote', draftId?: string) => void
   onGoToStatus: () => void
 }
@@ -56,11 +57,28 @@ export function OrderWizard({
   role,
   signatoryName,
   signatoryEmail,
+  requestedPackCode,
   onNavigate,
   onGoToStatus,
 }: OrderWizardProps) {
   const { t } = useTranslation()
-  const { draft, update, status } = useOrderDraft(draftId, owner)
+  const { draft: storedDraft, update, status } = useOrderDraft(draftId, owner)
+  const draft =
+    requestedPackCode === 'sovereign' &&
+    storedDraft.orderId === undefined &&
+    storedDraft.packCode === undefined
+      ? { ...storedDraft, packCode: 'sovereign' }
+      : storedDraft
+  useEffect(() => {
+    if (
+      status !== 'held' &&
+      requestedPackCode === 'sovereign' &&
+      storedDraft.orderId === undefined &&
+      storedDraft.packCode === undefined
+    ) {
+      update({ packCode: 'sovereign' })
+    }
+  }, [status, requestedPackCode, storedDraft.orderId, storedDraft.packCode, update])
   const heldReasonId = useId()
   // A placed order is recorded outside the steps (`submission.ts`), so a remount still finds it.
   const [, setRevision] = useState(0)

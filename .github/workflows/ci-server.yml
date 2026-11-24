@@ -92,10 +92,10 @@ jobs:
         run: bash contracts/check-contract-change-ci.sh --repo ../..
 
   server-static-and-unit:
-    name: Server Lint, Types, Contracts & Unit Suite
+    name: Server Lint, Types, Contracts & EE Suite
     runs-on: ubuntu-latest
-    # Full PostgreSQL migration and mutation coverage plus checker refusal proofs.
-    timeout-minutes: 130
+    # Static analysis, policy gates, Yjs runtime tests, and Enterprise Edition suite.
+    timeout-minutes: 60
     services:
       postgres:
         image: postgres:16.16@sha256:dd2bf3ce2dc83a81674cf7f217fcfd8a5009a4b325dda5b843bfee82a06cff6f
@@ -181,14 +181,78 @@ jobs:
           npm ci --ignore-scripts --engine-strict
           node licenses.mjs
           node --test test/*.test.mjs
-      - name: Run full server test suite
+      - name: Verify deterministic pytest shard partition and per-shard collection
         working-directory: apps/server
         run: |
-          env -i PATH="$PATH" HOME="$HOME" DATABASE_URL="$DATABASE_URL" DJANGO_SECRET_KEY="$DJANGO_SECRET_KEY" uv run pytest
+          uv run python scripts/ci/select_pytest_shard.py --selftest
+          for s in 0 1 2 3; do
+            mapfile -t CHECK_TARGETS < <(uv run python scripts/ci/select_pytest_shard.py --shard "$s" --total 4)
+            out=$(env -i PATH="$PATH" HOME="$HOME" DATABASE_URL="$DATABASE_URL" DJANGO_SECRET_KEY="$DJANGO_SECRET_KEY" uv run pytest --collect-only -q --no-cov "${CHECK_TARGETS[@]}" 2>&1) || { printf '%s\n' "$out" >&2; exit 1; }
+          done
       - name: Run Enterprise Edition test suite
         working-directory: apps/server
         run: |
           env -i PATH="$PATH" HOME="$HOME" DATABASE_URL="$DATABASE_URL" DJANGO_SECRET_KEY="$DJANGO_SECRET_KEY" PYTHONPATH=".:../.." uv run pytest -c ../../ee/pytest.ini ../../ee/tests ../../ee/billing/tests
+
+  server-unit-shards:
+    name: Server PostgreSQL Unit & Integration Suite (Shard ${{ matrix.shard }}/4)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    services:
+      postgres:
+        image: postgres:16.16@sha256:dd2bf3ce2dc83a81674cf7f217fcfd8a5009a4b325dda5b843bfee82a06cff6f
+        env:
+          POSTGRES_DB: kodera_server
+          POSTGRES_USER: kodera
+          POSTGRES_PASSWORD: kodera
+          POSTGRES_INITDB_ARGS: "--locale=C --encoding=UTF8"
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U kodera -d kodera_server"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      DATABASE_URL: postgres://kodera:kodera@localhost:5432/kodera_server
+      DJANGO_SECRET_KEY: ci-only-not-a-secret
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          python-version: "3.12"
+      - name: Sync locked Python dependencies
+        working-directory: apps/server
+        run: uv sync --locked
+      - name: Configure ephemeral PostgreSQL (fsync = off) and wait for reload
+        env:
+          PGPASSWORD: kodera
+        run: |
+          psql -h localhost -U kodera -d kodera_server -v ON_ERROR_STOP=1 -c "ALTER SYSTEM SET fsync = off" -c "SELECT pg_reload_conf()"
+          for _ in $(seq 1 25); do
+            [ "$(psql -h localhost -U kodera -d kodera_server -XAtc 'SHOW fsync')" = "off" ] && break
+            sleep 0.2
+          done
+          [ "$(psql -h localhost -U kodera -d kodera_server -XAtc 'SHOW fsync')" = "off" ]
+      - name: Install Yjs collaboration dependencies
+        working-directory: apps/server/yjs_collab
+        run: npm ci --ignore-scripts --engine-strict
+      - name: Run server test suite shard
+        working-directory: apps/server
+        run: |
+          uv run python scripts/ci/select_pytest_shard.py --selftest
+          mapfile -t SHARD_TARGETS < <(uv run python scripts/ci/select_pytest_shard.py --shard "${{ matrix.shard }}" --total 4)
+          [ "${#SHARD_TARGETS[@]}" -gt 0 ]
+          env -i PATH="$PATH" HOME="$HOME" DATABASE_URL="$DATABASE_URL" DJANGO_SECRET_KEY="$DJANGO_SECRET_KEY" uv run pytest "${SHARD_TARGETS[@]}"
 
   advisories:
     name: Server Dependency Advisories

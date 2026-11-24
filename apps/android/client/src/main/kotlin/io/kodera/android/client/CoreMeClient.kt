@@ -9,8 +9,24 @@ data class MemberOrganisation(val id: String, val slug: String, val name: String
 /** The fields of Core's `Me` this client shows. Everything else in the response is ignored. */
 data class MemberProfile(val id: String, val email: String, val displayName: String?,
     val organisations: List<MemberOrganisation>) {
-    /** The membership whose realm is the one the session signed into. */
-    fun organisation(realm: String): MemberOrganisation? = organisations.firstOrNull { it.realm == realm }
+    /** The membership whose realm is the one the session signed into, resolving shared-realm multi-org memberships. */
+    fun organisation(
+        realm: String,
+        preferredOrganisationId: String? = null,
+        preferredSlug: String? = null,
+    ): MemberOrganisation? {
+        val matching = organisations.filter { it.realm == realm }
+        if (!preferredOrganisationId.isNullOrEmpty()) {
+            return matching.singleOrNull { it.id == preferredOrganisationId }
+        }
+        if (!preferredSlug.isNullOrEmpty()) {
+            return matching.singleOrNull { it.slug == preferredSlug }
+        }
+        if (matching.size <= 1) return matching.firstOrNull()
+        if (realm != "community") return null
+        val active = matching.filter { it.state == "active" }.ifEmpty { matching }
+        return active.firstOrNull { it.slug != "community" } ?: active.firstOrNull()
+    }
 }
 
 sealed interface MeFailure {

@@ -32,6 +32,67 @@ WHERE (d.markdown <> '' OR NOT d.is_confidential)
     )
   );
 
+WITH tainted_confidential AS (
+  SELECT d.id
+  FROM public.docs_document d
+  LEFT JOIN public.docs_documentsnapshot s ON s.document_id = d.id
+  WHERE d.is_confidential
+    AND (
+      EXISTS (
+        SELECT 1 FROM public.docs_documentupdate u
+        WHERE u.document_id = d.id
+          AND (octet_length(u.state) < 4 OR substring(u.state from 1 for 4) <> E'\\x4b444531'::bytea)
+      )
+      OR (
+        s.id IS NOT NULL
+        AND octet_length(s.state) > 0
+        AND (octet_length(s.state) < 4 OR substring(s.state from 1 for 4) <> E'\\x4b444531'::bytea)
+      )
+    )
+)
+UPDATE public.docs_documentsnapshot s
+SET sequence = s.head_sequence, updated_at = clock_timestamp()
+FROM tainted_confidential t
+WHERE s.document_id = t.id AND s.sequence < s.head_sequence;
+
+DELETE FROM public.docs_documentupdate u
+USING public.docs_document d, public.docs_documentsnapshot s
+WHERE u.document_id = d.id
+  AND s.document_id = d.id
+  AND d.is_confidential
+  AND (
+    EXISTS (
+      SELECT 1 FROM public.docs_documentupdate bad
+      WHERE bad.document_id = d.id
+        AND (octet_length(bad.state) < 4 OR substring(bad.state from 1 for 4) <> E'\\x4b444531'::bytea)
+    )
+    OR (
+      octet_length(s.state) > 0
+      AND (octet_length(s.state) < 4 OR substring(s.state from 1 for 4) <> E'\\x4b444531'::bytea)
+    )
+  );
+
+UPDATE public.docs_documentsnapshot s
+SET sequence = 0, head_sequence = 0, state = ''::bytea, updated_at = clock_timestamp()
+FROM public.docs_document d
+WHERE s.document_id = d.id
+  AND d.is_confidential
+  AND NOT EXISTS (SELECT 1 FROM public.docs_documentupdate u WHERE u.document_id = d.id)
+  AND (
+    s.sequence <> 0
+    OR s.head_sequence <> 0
+    OR octet_length(s.state) > 0
+  )
+  AND (
+    octet_length(s.state) < 4
+    OR substring(s.state from 1 for 4) <> E'\\x4b444531'::bytea
+  );
+
+DELETE FROM public.docs_collectionrow r
+USING public.docs_document d
+WHERE r.document_id = d.id
+  AND d.is_confidential;
+
 DROP INDEX IF EXISTS public.docs_fulltext;
 CREATE INDEX docs_fulltext ON public.docs_document
   USING gin(to_tsvector('simple', coalesce(title, '') || ' ' || coalesce(markdown, '')))

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Kodera Staff C1 API
-  version: 0.1.0
+  version: 0.2.0
   summary: Zero-trust C1 staff operations, triage and reconciliation API served by kodera-server.
   description: |
     Zero-trust C1 backend contract for `kodera-admin`.
@@ -247,8 +247,8 @@ paths:
   /staff/v1/read/sre:
     get:
       operationId: getStaffSre
-      summary: Read C1 SRE reconciliation queues and fleet job health
-      description: Returns jobs and outbox deliveries awaiting operator reconciliation alongside recent job/delivery counters.
+      summary: Read C1 SRE reconciliation queues, WarmPool posture, FinOps guard and internal SLO indicators
+      description: "Returns jobs and outbox deliveries awaiting operator reconciliation alongside recent job/delivery counters, Sovereign WarmPool slot counts (`max_total <= 3`), dedicated VM tier counts (`PRO2-S`/`PRO2-M`/`PRO2-L`, `min_margin_bps_floor=4400`), and internal operational SLO indicators (`stale_agents_count`, `stuck_jobs_count`, `outbox_lag_seconds`, `unpaid_overdue_orders_count`, `status`)."
       tags: [Read]
       x-kodera-authz:
         roles:

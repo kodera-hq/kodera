@@ -99,6 +99,28 @@ const LOCATIONS: readonly [string, Segments][] = [
       'pattern',
     ],
   ],
+  [
+    'SelfServeOrganisationCreateRequest.slug',
+    [
+      'components',
+      'schemas',
+      'SelfServeOrganisationCreateRequest',
+      'properties',
+      'slug',
+      'pattern',
+    ],
+  ],
+  [
+    'SelfServeWorkspaceCreated.organisation_slug',
+    [
+      'components',
+      'schemas',
+      'SelfServeWorkspaceCreated',
+      'properties',
+      'organisation_slug',
+      'pattern',
+    ],
+  ],
 ]
 
 // Contract 0.50.0's workspace roles carry a slug rule of their own, on the `slug` of

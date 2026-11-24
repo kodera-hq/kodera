@@ -331,3 +331,202 @@ def test_a_proximity_workspace_takes_more_proximity_channels_and_their_members(w
     assert access_of(w, hall["id"])[0]["allow_members"] == [membership(w.member)]
     assert "proximity-hall" in seen_by(w.member)
     assert yard["id"] != hall["id"] != voice["id"]
+
+
+def test_shared_realm_replay_binds_to_original_target_organisation(
+    settings, http_signer, frozen_clock
+):
+    """After claiming `Org A`'s warm-pool allocation under `K1`, losing `org_owner` on `Org A`
+    while owning `Org B` on the same shared realm MUST refuse `K1` replay (same or modified body)
+    with `403 forbidden` and NEVER release `Org A`'s cached `workspaceUrl` / `invitationUrl`."""
+    from customer_http_fixtures import configure, token as signed_token, trust_entry
+    from django.db import transaction
+    from django.test import Client
+    from django.utils import timezone
+
+    from apps.identity.models import Identity, User
+    from apps.orgs.models import Membership, Organisation, SlugReservation
+
+    shared_issuer = "https://auth.kodera.test/realms/community"
+    configure(settings, [trust_entry(http_signer, shared_issuer)])
+    settings.KODERA_DEFAULT_COMMUNITY_ISSUER = shared_issuer
+    settings.KODERA_DEFAULT_COMMUNITY_ORG_SLUG = "community"
+
+    with transaction.atomic():
+        comm = Organisation.objects.create(
+            slug="community",
+            realm="community",
+            issuer=shared_issuer,
+            name="Kodera Community",
+            state="active",
+            is_default_community=True,
+            plan_tier="community",
+        )
+        SlugReservation.objects.create(
+            namespace="organisation",
+            slug="community",
+            organisation=comm,
+            state="permanent",
+            protected_at=timezone.now(),
+        )
+        steward = User.objects.create(email="steward@community.test")
+        Membership.objects.create(
+            user=steward,
+            organisation=comm,
+            role="org_owner",
+            state="active",
+            accepted_at=timezone.now(),
+        )
+
+        caller_user = User.objects.create(email="dual-owner@pme.test")
+        co_owner_a = User.objects.create(email="co-owner-a@pme.test")
+
+        org_a = Organisation.objects.create(
+            slug="shared-alpha",
+            realm="community",
+            issuer=shared_issuer,
+            name="Shared Alpha",
+            state="active",
+            shared_realm=True,
+            plan_tier="freemium_pme",
+        )
+        SlugReservation.objects.create(
+            namespace="organisation",
+            slug="shared-alpha",
+            organisation=org_a,
+            state="permanent",
+            protected_at=timezone.now(),
+        )
+        Identity.objects.create(
+            user=caller_user,
+            organisation=org_a,
+            issuer=shared_issuer,
+            realm="community",
+            subject="sub-shared-replay",
+            email=caller_user.email,
+            enabled=True,
+        )
+        caller_mem_a = Membership.objects.create(
+            user=caller_user,
+            organisation=org_a,
+            role="org_owner",
+            state="active",
+            accepted_at=timezone.now(),
+        )
+        Membership.objects.create(
+            user=co_owner_a,
+            organisation=org_a,
+            role="org_owner",
+            state="active",
+            accepted_at=timezone.now(),
+        )
+
+        plan = build_instant_claim_plan(
+            parse_instant_claim_request(json.dumps(PAYLOAD | {"slug": "shared-alpha"}).encode())
+        )
+        ws_a = Workspace.objects.create(organisation=org_a)
+        cats = {
+            c["key"]: Category.objects.create(
+                workspace=ws_a,
+                name=c["name"],
+                template_key=c["db_template_key"],
+                position=c["position"],
+            )
+            for c in plan["categories"]
+        }
+        for ch in plan["channels"]:
+            vals = {
+                k: v
+                for k, v in ch.items()
+                if k not in {"category_key", "db_template_key", "template_key"}
+            }
+            Channel.objects.create(
+                workspace=ws_a,
+                category=cats[ch["category_key"]],
+                template_key=ch["db_template_key"],
+                room_state="ready",
+                **vals,
+            )
+        WarmPoolAllocation.objects.create(
+            workspace=ws_a,
+            slug="shared-alpha",
+            plan=plan,
+            workspace_url="https://shared-alpha.example.org",
+            invitation_url="https://shared-alpha.example.org/invite?signed=secret-org-a",
+            offer_mode="cloud-shared",
+        )
+
+    cred = signed_token(
+        http_signer,
+        shared_issuer,
+        "sub-shared-replay",
+        email_verified=True,
+        email=caller_user.email,
+    )
+    client = Client()
+    claim_body = PAYLOAD | {"slug": "shared-alpha"}
+    replay_key = "00000000-0000-4000-8000-000000009974"
+
+    # 1. Initial claim as `org_owner` of Org A succeeds with 201.
+    initial = client.post(
+        PATH,
+        json.dumps(claim_body),
+        content_type="application/json",
+        HTTP_AUTHORIZATION=f"Bearer {cred}",
+        HTTP_IDEMPOTENCY_KEY=replay_key,
+    )
+    assert not conformance_errors(initial, "/workspaces/instant-claim", "post")
+    assert initial.status_code == 201, initial.content
+    assert initial.json()["workspaceId"] == str(ws_a.id)
+    assert "secret-org-a" in initial.json()["invitationUrl"]
+
+    # 2. Demote caller in Org A (`org_owner` -> `org_admin`) and grant `org_owner` on Org B!
+    with transaction.atomic():
+        Membership.objects.filter(pk=caller_mem_a.pk).update(role="org_admin")
+        org_b = Organisation.objects.create(
+            slug="shared-bravo",
+            realm="community",
+            issuer=shared_issuer,
+            name="Shared Bravo",
+            state="active",
+            shared_realm=True,
+            plan_tier="freemium_pme",
+        )
+        SlugReservation.objects.create(
+            namespace="organisation",
+            slug="shared-bravo",
+            organisation=org_b,
+            state="permanent",
+            protected_at=timezone.now(),
+        )
+        Identity.objects.create(
+            user=caller_user,
+            organisation=org_b,
+            issuer=shared_issuer,
+            realm="community",
+            subject="sub-shared-replay",
+            email=caller_user.email,
+            enabled=True,
+        )
+        Membership.objects.create(
+            user=caller_user,
+            organisation=org_b,
+            role="org_owner",
+            state="active",
+            accepted_at=timezone.now(),
+        )
+
+    # 3. Replaying `K1` (both exact body AND modified body) MUST fail closed with 403 forbidden!
+    for replay_payload in (claim_body, claim_body | {"organizationName": "Tampered Bravo"}):
+        denied = client.post(
+            PATH,
+            json.dumps(replay_payload),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {cred}",
+            HTTP_IDEMPOTENCY_KEY=replay_key,
+        )
+        assert not conformance_errors(denied, "/workspaces/instant-claim", "post")
+        assert denied.status_code == 403, denied.content
+        assert denied.json()["type"] == "https://kodera.io/problems/forbidden"
+        assert b"shared-alpha.example.org" not in denied.content
+        assert b"secret-org-a" not in denied.content

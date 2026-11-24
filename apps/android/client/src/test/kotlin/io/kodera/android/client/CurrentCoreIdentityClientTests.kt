@@ -794,4 +794,40 @@ class CurrentCoreIdentityClientTests {
         for (edit in edits) expectedFailure(me().apply(edit))
     }
 
+    @Test fun testMultiOrgSharedRealmPayloadAdmitsTargetPmeIdentity() {
+        val pmeOrgA = "8f1d2e3c-8a4b-4c5d-9e6f-0a1b2c3d4e5a"
+        val pmeOrgB = "8f1d2e3c-8a4b-4c5d-9e6f-0a1b2c3d4e5b"
+        val pmeIdA = "33333333-2222-4333-8444-55555555555a"
+        val pmeIdB = "33333333-2222-4333-8444-55555555555b"
+        val root = JsonObject().apply {
+            addProperty("id", "44444444-2222-4333-8444-555555555555")
+            addProperty("staff", false)
+            add("identities", com.google.gson.JsonArray().apply {
+                add(identityValue(identity, realm, "sub-shared"))
+                add(identityValue(pmeIdA, realm, "sub-shared"))
+                add(identityValue(pmeIdB, realm, "sub-shared"))
+            })
+            add("organisations", com.google.gson.JsonArray().apply {
+                add(member(organisation, realm, identity).apply { addProperty("shared_realm", false) })
+                add(JsonObject().apply {
+                    add("organisation", JsonObject().apply {
+                        addProperty("id", pmeOrgA); addProperty("slug", "atelier-martin"); addProperty("name", "Atelier Martin"); addProperty("realm", realm)
+                    })
+                    addProperty("state", "active"); addProperty("shared_realm", true); addProperty("identity_id", pmeIdA)
+                })
+                add(JsonObject().apply {
+                    add("organisation", JsonObject().apply {
+                        addProperty("id", pmeOrgB); addProperty("slug", "studio-nord"); addProperty("name", "Studio Nord"); addProperty("realm", realm)
+                    })
+                    addProperty("state", "active"); addProperty("shared_realm", true); addProperty("identity_id", pmeIdB)
+                })
+            })
+        }
+        val resolvedA = decode(root, pmeOrgA)
+        assertTrue(resolvedA is Outcome.Identity)
+        assertEquals(pmeIdA, (resolvedA as Outcome.Identity).identity.id)
+        assertEquals(pmeOrgA, resolvedA.identity.organisationId)
+        assertEquals("sub-shared", resolvedA.identity.subject)
+    }
+
 }

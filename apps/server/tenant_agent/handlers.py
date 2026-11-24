@@ -173,6 +173,8 @@ class Handlers:
                 }
                 if candidate.moderation_present
                 else None,
+                scope_id=candidate.organisation_id,
+                shared_realm=candidate.shared_realm,
             )
             return self.apply_channels(in_force)
         except Exception:  # noqa: BLE001 - reported as internal_error, never a crash
@@ -218,18 +220,25 @@ class Handlers:
         return self._channels is not None and bool(self._channels.waiting)
 
     def join_waiting(self) -> bool:
-        """Apply the channel set in force again as soon as a member it was waiting for has signed
-        in, so their channels open within seconds rather than at the 15-minute re-application.
-        Not `full`: unchanged rooms get only their membership check. Whether it applied."""
-        stored = self._state.channel_set()
-        if stored is None or self._channels is None or not self._channels.signed_in():
+        """Apply each channel set in force with waiting members as soon as someone it was waiting
+        for has signed in, so their channels open within seconds rather than at the 15-minute
+        re-application. Not `full`: unchanged rooms get only their membership check."""
+        if self._channels is None or not self._channels.signed_in():
             return False
-        outcome = self.apply_channels(stored)
-        log.info("joined members who signed in to Espace: %s", outcome.status)
-        return True
+        joined_any = False
+        for scope_id in self._state.channel_scopes():
+            if not self._channels.scope_waiting(scope_id):
+                continue
+            stored = self._state.channel_set(scope_id=scope_id)
+            if stored is None:
+                continue
+            outcome = self.apply_channels(stored)
+            log.info("joined members who signed in to Espace: %s", outcome.status)
+            joined_any = True
+        return joined_any
 
     def reapply(self) -> Outcome | None:
-        """The 15-minute (and after-restore) re-application of the set in force, if any.
+        """The 15-minute (and after-restore) re-application of the sets in force, if any.
 
         It deactivates again; it never reactivates. Reactivation happens once, when a set naming
         the subject as released arrives, so an engine administrator's later decision stands. The
@@ -244,10 +253,13 @@ class Handlers:
                 outcome = _failed(
                     "internal_error", "the agent failed unexpectedly; see the agent log"
                 )
-        stored = self._state.channel_set()
-        if stored is not None and self._channels is not None:
-            try:
-                self.apply_channels(stored, full=True)
-            except Exception:  # noqa: BLE001 - as in handle
-                log.exception("re-applying channel set %s failed", stored.get("revision"))
+        if self._channels is not None:
+            for scope_id in self._state.channel_scopes():
+                stored = self._state.channel_set(scope_id=scope_id)
+                if stored is None:
+                    continue
+                try:
+                    self.apply_channels(stored, full=True)
+                except Exception:  # noqa: BLE001 - as in handle
+                    log.exception("re-applying channel set %s failed", stored.get("revision"))
         return outcome

@@ -23,7 +23,12 @@ from services.identity.access_tokens import (
     observe_registered_factor_reason,
 )
 
-from .selectors import IdentitySnapshot, PersonSnapshot, current_identity, person_identities
+from .selectors import (
+    IdentitySnapshot,
+    PersonSnapshot,
+    current_identities,
+    person_identities,
+)
 
 
 class UnknownCustomerError(Exception):
@@ -68,16 +73,22 @@ def read_customer(
         with connection.cursor() as cursor:
             cursor.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         # This is deliberately the first snapshot-acquiring statement.
-        resolved = current_identity(issuer=verified.issuer, subject=subject)
-        if resolved is None:
+        resolved_all = current_identities(issuer=verified.issuer, subject=subject)
+        if not resolved_all:
             raise UnknownCustomerError()
-        person, identity = resolved
-        if not has_current_read_grant(
-            user_id=person.id,
-            organisation_id=identity.organisation_id,
-            issuer=identity.issuer,
-            realm=identity.realm,
-        ):
+        person = resolved_all[0][0]
+        identity: IdentitySnapshot | None = None
+        for cand_person, cand_identity in resolved_all:
+            if has_current_read_grant(
+                user_id=cand_person.id,
+                organisation_id=cand_identity.organisation_id,
+                issuer=cand_identity.issuer,
+                realm=cand_identity.realm,
+            ):
+                person = cand_person
+                identity = cand_identity
+                break
+        if identity is None:
             raise CustomerReadForbiddenError()
         candidates = person_identities(user_id=person.id)
         visible = visible_organisation_ids(

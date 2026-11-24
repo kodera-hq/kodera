@@ -7,14 +7,15 @@ This file defines repository-wide engineering, security, and contribution rules 
 ## Repository Layout
 
 - `apps/web/` — `@kodera/web` customer & workspace web client (`Apache-2.0`).
-- `apps/desktop/` — `@kodera/desktop` origin-fenced Tauri v2 desktop shell: `kodera://` and `matrix:` deep-links, system tray and opt-in Push-to-Talk, loopback OIDC, notifications, a zeroized process credential vault behind an OS keychain seam, and the automated self-host stack deployment wizard; persistent OS keychain wiring and notarised installers await operator signing (`Apache-2.0`).
+- `apps/desktop/` — `@kodera/desktop` origin-fenced `tao`/`wry` native desktop host with Tauri-compatible IPC: `kodera://` and `matrix:` deep-links, system tray and opt-in Push-to-Talk, loopback OIDC primitives, notifications, persistent OS keychain backend (`security` / `secret-tool` / `PasswordVault`) with zeroized RAM cache, and the automated self-host stack deployment wizard; installed-package keychain qualification and notarised installers await operator signing (`Apache-2.0`).
 - `apps/ios/` — Native SwiftUI iOS client (`Apache-2.0`).
 - `apps/android/` — Native Kotlin / Jetpack Compose Android client (`Apache-2.0`).
 - `apps/server/` — `kodera-server` Django 6 control plane, room-access, and tenant agent (`AGPL-3.0-or-later`).
 - `packages/kodera-rs/` — Shared zero-unsafe Rust core: `UuidV7`, device identity traits, OpenMLS seam, `#proximity` frame codec (`Apache-2.0`).
 - `packages/design-tokens/` — `@kodera/design-tokens` single source of truth for colour, typography, and motion (`Apache-2.0`).
 - `packages/api-contract/` — `@kodera/api-contract` canonical OpenAPI 3.1 contracts (`Apache-2.0`).
-- `packages/extension-sdk/` — `@kodera/extension-sdk` signed webhook & slash-command SDK (`Apache-2.0`).
+- `packages/extension-sdk/` — `@kodera/extension-sdk` signed webhook, slash-command & sandboxed widget SDK (`Apache-2.0`).
+- `packages/create-kodera-extension/` — `create-kodera-extension` zero-dependency CLI scaffolder for extensions and widgets (`Apache-2.0`).
 - `packages/create-kodera/` — `create-kodera` configuration generator; its Compose assets are a checked copy of `deploy/community/` (`Apache-2.0`).
 - `packages/synapse-policy/` — Matrix Synapse room-policy module (`AGPL-3.0-or-later`).
 - `extensions/` — Starter and community extensions, each a reference implementation; `extensions/catalog.json` is generated from their manifests (`Apache-2.0`).

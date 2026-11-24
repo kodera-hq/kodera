@@ -492,10 +492,8 @@ def get_emoji_blob(
     if row is None:
         raise RefusalError(404)
     blob = bytes(row.webp_bytes)
-    try:
-        verify_custom_emoji_webp_clean(blob)
-    except CustomEmojiValidationError:
-        raise RefusalError(404) from None
+    if verify_custom_emoji_webp_clean(blob) is not None:
+        raise RefusalError(404)
     return blob, row.sha256
 
 

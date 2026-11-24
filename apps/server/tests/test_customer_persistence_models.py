@@ -759,7 +759,7 @@ def test_issuer_insert_bounds_and_realm_suffix_are_checked(models, issuer):
 
 def test_issuer_is_globally_unique(models):
     first, _, _ = anchor(models, state="prospect", owners=0)
-    with named_refusal("23505", "organisation_issuer_unique"):
+    with named_refusal("23505", "organisation_dedicated_issuer_unique"):
         with transaction.atomic():
             models.Organisation.objects.create(
                 slug=first.slug,

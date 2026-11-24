@@ -42,6 +42,7 @@ class LinkRequest:
     reference_kind: str = "invoice"
     checkout_label: str | None = None
     idempotency_key: str | None = None
+    customer_ref: str | None = None
 
     def __post_init__(self) -> None:
         if isinstance(self.amount_minor, bool) or self.amount_minor <= 0:

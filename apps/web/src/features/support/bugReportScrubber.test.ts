@@ -130,7 +130,7 @@ describe('bugReportScrubber allowlist & detectors', () => {
 
   it('detects fallback build_id and device classes across web and Tauri shells', () => {
     expect(detectBuildId('web-2026.11.0')).toBe('web-2026.11.0')
-    expect(detectBuildId(['ghp', 'leakedValue12345'].join('_'))).toBe('web-0.1.1')
+    expect(detectBuildId(['ghp', 'leakedValue12345'].join('_'))).toBe('web-0.2.0')
 
     expect(detectDeviceClass('Mozilla/5.0 (Macintosh; Intel Mac OS X) Tauri/2.0', 0)).toBe(
       'desktop-macos'

@@ -37,6 +37,7 @@ class MemoryStore {
     this.guard(claims)
     if (this.confidential) {
       const knownHead = known !== null && typeof known === 'object' ? known.head : known
+      const knownDeliveredHead = known !== null && typeof known === 'object' ? known.deliveredHead ?? null : null
       const knownSnapEpoch = known !== null && typeof known === 'object' ? known.snapshotEpoch ?? null : null
       const knownSnapBase = known !== null && typeof known === 'object' ? known.snapshotBase ?? null : null
       const knownBootstrapped = known !== null && typeof known === 'object' ? Boolean(known.epochBootstrapped) : false
@@ -62,6 +63,23 @@ class MemoryStore {
           journalSeqs.push(this.base + i + 1)
         }
       }
+      const baseDelivered =
+        (this.confidentialSnapshot === null && this.base === 0) ||
+        hasMatchingSnap ||
+        (knownDeliveredHead !== null && knownDeliveredHead >= this.base)
+      let deliveredHead = null
+      if (baseDelivered) {
+        if (knownDeliveredHead !== null && knownHead !== null && knownDeliveredHead < knownHead && knownHead >= this.base) {
+          deliveredHead = knownDeliveredHead
+        } else {
+          let contiguous = knownHead === null || knownHead < this.base ? this.base : (knownDeliveredHead ?? this.base)
+          for (let i = start; i < this.envelopes.length; i += 1) {
+            if (updHeaders[i].epoch !== claims.epoch) break
+            contiguous = this.base + i + 1
+          }
+          deliveredHead = contiguous
+        }
+      }
       const epochBootstrapped =
         (knownBootstrapped || ((this.confidentialSnapshot === null && this.base === 0) || includeSnap)) &&
         allMatch
@@ -73,6 +91,7 @@ class MemoryStore {
         snapshotEpoch: hasMatchingSnap ? claims.epoch : null,
         snapshotBase: hasMatchingSnap ? this.base : null,
         epochBootstrapped,
+        deliveredHead,
         head,
         base: this.base,
         revision: this.revision,
@@ -88,11 +107,17 @@ class MemoryStore {
     return this.deliver(claims, consumer)
   }
   async emit(claims, consumer) { this.guard(claims);consumer() }
-  async compact(claims, upToHead, snapshotEnvelope) {
+  async compact(claims, upToHead, snapshotEnvelope, { deliveredHead = null } = {}) {
     this.guard(claims)
     if (!this.confidential || claims.role !== 'editor') throw new TicketRefused(4403)
     const head = this.base + this.envelopes.length
     if (upToHead < this.base || upToHead > head) throw new TicketRefused(4403)
+    for (let i = 0; i < upToHead - this.base; i += 1) {
+      const hdr = parseKde1Header(new Uint8Array(this.envelopes[i]))
+      if (hdr.epoch !== claims.epoch && (deliveredHead === null || deliveredHead < this.base + i + 1)) {
+        throw new TicketRefused(4403)
+      }
+    }
     this.envelopes = this.envelopes.slice(upToHead - this.base)
     this.base = upToHead
     this.confidentialSnapshot = Buffer.from(snapshotEnvelope)
@@ -500,7 +525,7 @@ test('confidential rooms replay opaque KDE1 frames without Y.Doc/Awareness and c
   }
 })
 
-test('connected new-epoch viewer receives newly compacted epoch checkpoint even when head does not advance', async () => {
+test('new-epoch editor is refused when attempting to compact over withheld prior-epoch updates', async () => {
   const value = await fixture()
   value.store.confidential = true
   value.store.epoch = 5
@@ -510,6 +535,48 @@ test('connected new-epoch viewer receives newly compacted epoch checkpoint even 
     Buffer.from(makeKde1Frame({ epoch: 5, sender: '101', sequence: 2, kind: 0 }))
   )
   value.store.epoch = 6
+  const sockets = []
+  try {
+    const claims = value.store.claims('editor', { confidential: true, epoch: 6 })
+    const ws = new WebSocket(value.url, { origin: 'https://community.example.org' })
+    ws.on('error', () => {})
+    const inbox = []
+    ws.on('message', bytes => inbox.push(new Uint8Array(bytes)))
+    await once(ws, 'open')
+    ws.send(JSON.stringify({ type: 'auth', token: token(claims, value.key) }))
+    sockets.push(ws)
+    await until(() => value.service.rooms.get(value.store.document)?.connections.size === 1)
+    await pause(25)
+    assert.equal(inbox.length, 0) // prior epoch-5 rows withheld!
+
+    // Editor attempts to compact at upToHead = 2 over withheld epoch-5 rows -> refused 4403!
+    const closed = once(ws, 'close')
+    const cpEpoch6 = makeKde1Frame({ epoch: 6, sender: 'checkpoint', sequence: 1, kind: 3 })
+    ws.send(
+      JSON.stringify({
+        type: 'compact',
+        upToHead: 2,
+        snapshot: Buffer.from(cpEpoch6).toString('base64'),
+      })
+    )
+    assert.equal((await closed)[0], 4403)
+    assert.equal(value.store.envelopes.length, 2)
+    assert.equal(value.store.confidentialSnapshot, null)
+    assert.equal(value.store.audit.includes(claims.membership), true)
+  } finally {
+    for (const ws of sockets) ws.terminate()
+    await value.close()
+  }
+})
+
+test('same-epoch editor compacts delivered updates and late joiner receives compacted checkpoint', async () => {
+  const value = await fixture()
+  value.store.confidential = true
+  value.store.epoch = 6
+  value.store.envelopes.push(
+    Buffer.from(makeKde1Frame({ epoch: 6, sender: '101', sequence: 1, kind: 0 })),
+    Buffer.from(makeKde1Frame({ epoch: 6, sender: '101', sequence: 2, kind: 0 }))
+  )
   const sockets = []
   try {
     const openAtEpoch6 = async role => {
@@ -524,13 +591,9 @@ test('connected new-epoch viewer receives newly compacted epoch checkpoint even 
       return { ws, claims, inbox }
     }
 
-    const viewer = await openAtEpoch6('viewer')
     const editor = await openAtEpoch6('editor')
-    await until(() => value.service.rooms.get(value.store.document)?.connections.size === 2)
-    await pause(25)
-    assert.equal(viewer.inbox.length, 0) // prior epoch-5 rows withheld!
+    await until(() => editor.inbox.length === 2)
 
-    // Editor compacts at upToHead = 2 (same head = 2!) into epoch 6 via JSON compact frame.
     const cpEpoch6 = makeKde1Frame({ epoch: 6, sender: 'checkpoint', sequence: 1, kind: 3 })
     editor.ws.send(
       JSON.stringify({
@@ -539,9 +602,11 @@ test('connected new-epoch viewer receives newly compacted epoch checkpoint even 
         snapshot: Buffer.from(cpEpoch6).toString('base64'),
       })
     )
+    await until(() => value.store.base === 2 && value.store.envelopes.length === 0)
+    const viewer = await openAtEpoch6('viewer')
     await until(() => viewer.inbox.length === 1)
     assert.deepEqual(viewer.inbox[0], cpEpoch6)
-    assert.equal(editor.inbox.length, 0) // compactor does not echo its own checkpoint to itself
+    assert.equal(editor.inbox.length, 2)
   } finally {
     for (const ws of sockets) ws.terminate()
     await value.close()

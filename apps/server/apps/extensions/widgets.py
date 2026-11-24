@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import http.client
 import ipaddress
 import json
 import math
@@ -81,8 +82,12 @@ def marketplace_seal_key() -> bytes:
     return key
 
 
+def _has_surrogate(text: str) -> bool:
+    return any(0xD800 <= ord(ch) <= 0xDFFF for ch in text)
+
+
 def _assert_widget_text(value: Any, *, max_len: int, reason: str) -> str:
-    if not isinstance(value, str):
+    if not isinstance(value, str) or _has_surrogate(value):
         raise ExtensionRefusedError(reason, 422)
     if any(
         (0 <= ord(ch) <= 8) or ord(ch) in {11, 12, 127} or (14 <= ord(ch) <= 31) for ch in value
@@ -95,10 +100,20 @@ def _assert_widget_text(value: Any, *, max_len: int, reason: str) -> str:
 
 
 def _assert_safe_tree(node: Any, depth: int = 0) -> None:
-    if node is None or isinstance(node, (str, bool)):
+    if node is None or isinstance(node, bool):
+        return
+    if isinstance(node, str):
+        if _has_surrogate(node):
+            raise ExtensionRefusedError("widget_value_invalid", 422)
         return
     if isinstance(node, (int, float)):
-        if not math.isfinite(node):
+        if isinstance(node, int) and abs(node) > (1 << 53) - 1:
+            raise ExtensionRefusedError("widget_number_invalid", 422)
+        try:
+            finite = math.isfinite(node)
+        except OverflowError:
+            finite = False
+        if not finite:
             raise ExtensionRefusedError("widget_number_invalid", 422)
         return
     if depth > MAX_WIDGET_AST_DEPTH:
@@ -109,7 +124,7 @@ def _assert_safe_tree(node: Any, depth: int = 0) -> None:
         return
     if isinstance(node, dict):
         for key, val in node.items():
-            if not isinstance(key, str) or key in FORBIDDEN_OBJECT_KEYS:
+            if not isinstance(key, str) or _has_surrogate(key) or key in FORBIDDEN_OBJECT_KEYS:
                 raise ExtensionRefusedError("widget_forbidden_key", 422)
             _assert_safe_tree(val, depth + 1)
         return
@@ -303,7 +318,10 @@ def validate_widget_card(raw_card: Any) -> dict[str, Any]:
         raise ExtensionRefusedError("widget_card_invalid", 422)
     _assert_safe_tree(raw_card, 0)
 
-    raw_bytes = json.dumps(raw_card, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    try:
+        raw_bytes = json.dumps(raw_card, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    except (UnicodeEncodeError, ValueError, TypeError, OverflowError):
+        raise ExtensionRefusedError("widget_card_invalid", 422) from None
     if len(raw_bytes) > MAX_WIDGET_CARD_BYTES:
         raise ExtensionRefusedError("widget_card_too_large", 413)
 
@@ -596,7 +614,10 @@ def dispatch_widget_action(
     except outbound.BlockedTargetError:
         final_state = "refused"
         refusal_error = ExtensionRefusedError("widget_endpoint_blocked", 422)
-    except outbound.FetchError:
+    except (outbound.FetchError, OSError, http.client.HTTPException):
+        final_state = "failed"
+        refusal_error = ExtensionRefusedError("widget_endpoint_unavailable", 502)
+    except Exception:
         final_state = "failed"
         refusal_error = ExtensionRefusedError("widget_endpoint_unavailable", 502)
 

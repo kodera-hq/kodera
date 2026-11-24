@@ -187,6 +187,45 @@ describe('Invite by email (03-people.md §4.2)', () => {
     expect(onClose).not.toHaveBeenCalled()
   })
 
+  it('surfaces the 5-seat freemium ceiling and upgrade CTA on 402 subscription-required', async () => {
+    const onClose = vi.fn()
+    const onSent = vi.fn()
+    renderWithApi(
+      <InviteDrawer
+        organisationId={ORG_ID}
+        organisationSlug="atelier-alpha"
+        callerRole="org_owner"
+        onClose={onClose}
+        onSent={onSent}
+      />,
+      [
+        defaultPeople(),
+        [
+          http.post('*/api/v1/organisations/:org/invitations', () =>
+            HttpResponse.json(
+              {
+                type: 'https://kodera.io/problems/subscription-required',
+                title: 'Subscription required',
+                status: 402,
+                request_id: 'req-402-seat-limit',
+              },
+              { status: 402, headers: { 'Content-Type': 'application/problem+json' } }
+            )
+          ),
+        ],
+      ]
+    )
+    paste('sixieme@atelier-alpha.fr')
+    await userEvent.click(screen.getByRole('button', { name: 'Envoyer 1 invitation' }))
+    expect(
+      await screen.findByText(/Votre espace gratuit a atteint la limite de 5 membres/)
+    ).toBeVisible()
+    const upgrade = screen.getByRole('link', { name: 'Passer à l’offre supérieure' })
+    expect(upgrade).toHaveAttribute('href', '/atelier-alpha/invoices/subscription')
+    expect(onSent).not.toHaveBeenCalled()
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
   it('keeps the addresses and offers a retry when the send fails entirely', async () => {
     renderDrawer([
       defaultPeople(),

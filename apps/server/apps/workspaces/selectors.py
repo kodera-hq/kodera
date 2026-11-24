@@ -111,6 +111,18 @@ def workspace_id_for(*, organisation_id: UUID) -> UUID | None:
     )
 
 
+def workspace_quota_policy(*, workspace_id: UUID) -> tuple[str, int | None, int | None] | None:
+    """Return `(policy_ref, seats, media_bytes)` for `workspace_id`, or `None`."""
+    row = (
+        WorkspaceQuota.objects.filter(workspace_id=workspace_id)
+        .values_list("policy_ref", "seats", "media_bytes")
+        .first()
+    )
+    if row is None:
+        return None
+    return str(row[0]), row[1], row[2]
+
+
 def link_previews_allowed(organisation_id: UUID) -> bool:
     """Whether URL previews are permitted for the organisation's workspace."""
     return not Workspace.objects.filter(

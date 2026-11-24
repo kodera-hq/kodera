@@ -12,7 +12,7 @@ from uuid import UUID
 from django.conf import settings
 from django.db.models import QuerySet
 
-from apps.orgs.selectors import organisation_is_default_community
+from apps.orgs.selectors import organisation_is_default_community, organisation_plan_tier_state
 
 from .models import RESERVED_TENANT_SLUGS, TENANT_STATUSES, Tenant, is_reserved_tenant_slug
 
@@ -25,8 +25,13 @@ def default_urls(row: Any) -> dict[str, str]:
     its default URL (the contract's `Tenant.default_urls`). Here rather than in the tenant reads so
     the operator profile, which does not install the tenant agent's application, can print it."""
     templates: dict[str, str] = settings.KODERA_TENANT_APP_URLS
+    host_slug = (
+        row.realm
+        if getattr(row, "profile_ref", None) == "espace-shared-v1" and getattr(row, "realm", None)
+        else row.slug
+    )
     return {
-        code: templates[code].replace("{slug}", row.slug) for code in row.apps if code in templates
+        code: templates[code].replace("{slug}", host_slug) for code in row.apps if code in templates
     }
 
 
@@ -111,8 +116,12 @@ def organisation_tenant_urls(*, organisation_ids: tuple[UUID, ...]) -> dict[UUID
 def organisation_matrix_homeservers(*, organisation_id: UUID) -> frozenset[str]:
     """Operator URL templates and owned live tenants bind the messaging server name."""
     local = getattr(settings, "KODERA_SYNAPSE_SERVER_NAME", None)
-    if local and organisation_is_default_community(organisation_id=organisation_id):
-        return frozenset({local})
+    if local:
+        plan_state = organisation_plan_tier_state(organisation_id=organisation_id)
+        if organisation_is_default_community(organisation_id=organisation_id) or (
+            plan_state is not None and plan_state[0]
+        ):
+            return frozenset({local})
     return frozenset(
         host
         for row in tenants_not_deleted(organisation_id)

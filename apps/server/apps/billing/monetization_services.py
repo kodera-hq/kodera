@@ -15,7 +15,7 @@ from uuid import UUID
 from django.db import connection, transaction
 from django.utils import timezone
 
-from apps.identity.selectors import current_identity
+from apps.identity.selectors import current_identity_for_organisation
 from apps.orgs.actor_selectors import TenantCaller
 from apps.workspaces.selectors import workspace_id_for
 from services.identity.access_tokens import VerifiedAccessToken
@@ -52,7 +52,9 @@ def _resolve_caller_and_user(
     with transaction.atomic():
         caller = tenant_caller(verified=verified, organisation_id=organisation_id)
         require_role(caller, roles=roles or READERS[scope], scope=scope)
-        resolved = current_identity(issuer=verified.issuer, subject=verified.subject)
+        resolved = current_identity_for_organisation(
+            organisation_id=organisation_id, issuer=verified.issuer, subject=verified.subject
+        )
         if resolved is None:
             raise BillingNotFoundError()
         person, _ = resolved
@@ -63,20 +65,26 @@ def _resolve_caller_and_user(
 def read_workspace_monetization_overview(*, caller: TenantCaller) -> dict[str, Any]:
     """Read Volet A boost packs, active hosting credits, VIP offers, and (for admins/billing)
     creator Connect & DAC7 compliance overview in the caller's read-only snapshot."""
+    from apps.orgs.selectors import is_default_community_organisation
+
     ws_id = _resolve_workspace_or_not_found(caller.organisation_id)
-    packs = [
-        {
-            "code": spec.code,
-            "name": spec.name,
-            "net_amount_minor": spec.net_amount_minor,
-            "credit_amount_minor": spec.credit_amount_minor,
-            "seats_delta": spec.seats_delta,
-            "storage_bytes_delta": spec.storage_bytes_delta,
-            "duration_days": spec.duration_days,
-            "currency": spec.currency,
-        }
-        for spec in boosts.BOOST_PACKS.values()
-    ]
+    packs = (
+        []
+        if is_default_community_organisation(organisation_id=caller.organisation_id)
+        else [
+            {
+                "code": spec.code,
+                "name": spec.name,
+                "net_amount_minor": spec.net_amount_minor,
+                "credit_amount_minor": spec.credit_amount_minor,
+                "seats_delta": spec.seats_delta,
+                "storage_bytes_delta": spec.storage_bytes_delta,
+                "duration_days": spec.duration_days,
+                "currency": spec.currency,
+            }
+            for spec in boosts.BOOST_PACKS.values()
+        ]
+    )
     credits = [
         {
             "id": str(c.id),
@@ -526,6 +534,11 @@ def issue_marketplace_connect_checkout_link(
             reference_kind="extension_marketplace",
             checkout_label=checkout_label,
             idempotency_key=det_idem_key,
+            customer_ref=(
+                payments_pkg.services.existing_stripe_customer_ref(organisation_id=organisation_id)
+                if getattr(active_provider, "name", "") == "stripe"
+                else None
+            ),
             metadata={
                 "volet": "h4_extension_marketplace",
                 "kodera_checkout_kind": "extension_marketplace",

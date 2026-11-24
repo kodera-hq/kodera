@@ -1141,7 +1141,8 @@ N4_PATH = "/organisations/{organisation_id}/bootstrap"
 # Rebound at 0.58.0: community boosts, VIP Connect, live AI translation/captions, smart calendar/booking, and cybersecurity posture; N4 assurance guards unchanged.
 # Rebound at 0.59.0: sandboxed extension widgets, extension marketplace settlement, sanitized WebP custom emojis, Send Later, reminders, and Kodera Labs; N4 assurance guards unchanged.
 # Rebound at 0.60.0: opaque KVKB1 key-backup archive and confidential document collaboration session metadata; N4 assurance guards unchanged.
-N4_VERSION = "0.60.0"
+# Rebound at 0.61.0: cardless freemium PME self-serve workspace creation and shared_realm/plan_tier Me projection; N4 assurance guards unchanged.
+N4_VERSION = "0.61.0"
 # Rebound at 0.19.0 (2026-10-21, on top of 0.18.1): the notice-contacts delta and the Plan example's EU hosting.
 # Rebound at 0.22.0: the ten structure operations, their schemas and Problem.reason's first value;
 # then room_state on WorkspaceChannel, the starter's lounge (template version 2) and AppCode messaging;
@@ -1201,7 +1202,8 @@ N4_VERSION = "0.60.0"
 # Rebound at 0.58.0: community boosts, VIP Connect, live AI translation/captions, smart calendar/booking, and cybersecurity posture; N4 assurance guards unchanged.
 # Rebound at 0.59.0: sandboxed extension widgets, extension marketplace settlement, sanitized WebP custom emojis, Send Later, reminders, and Kodera Labs; N4 assurance guards unchanged.
 # Rebound at 0.60.0: opaque KVKB1 key-backup archive and confidential document collaboration session metadata; N4 assurance guards unchanged.
-N4_OLD_CONTRACT = "5e9528bc8614f3cb7dda5ecd423431da902d4f7516d7cbb0a63d0d29a43fad3f"
+# Rebound at 0.61.0: cardless freemium PME self-serve workspace creation and shared_realm/plan_tier Me projection; N4 assurance guards unchanged.
+N4_OLD_CONTRACT = "621f58de43e0e6964468ea8c77ffeb238537326657a35b3d1929a31d5e953c30"
 # Rebound at 0.20.0 (2026-10-22): CONVENTIONS.md §6 gains the order-in-progress and invoice-issued rows and a changelog line.
 # Rebound at 0.24.0 (2026-10-22): CONVENTIONS.md §6's invoice-issued row narrowed, and a changelog line.
 # Rebound at 0.28.0: CONVENTIONS.md §6 gains the identity-unknown row and a changelog line.

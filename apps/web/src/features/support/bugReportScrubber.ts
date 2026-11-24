@@ -202,7 +202,7 @@ import { buildId } from '../../config'
 export function detectBuildId(envBuildId?: string): string {
   const candidate = (envBuildId ?? buildId() ?? '').trim()
   if (candidate && isValidBuildId(candidate)) return candidate
-  return 'web-0.1.1'
+  return 'web-0.2.0'
 }
 
 export function detectDeviceClass(userAgent?: string, maxTouchPoints?: number): BugDeviceClass {

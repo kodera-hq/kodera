@@ -25,6 +25,7 @@ import type { components } from '../api/schema'
 import { useAuth, useAuthLifetime } from '../auth/AuthProvider'
 import { notifyOrganisationCleanup } from '../auth/localSession'
 import { EspaceDraftProvider } from '../features/espace/EspaceDraftProvider'
+import { homeserverSlugFor } from '../features/espace/homeserver'
 import { cachedTenantSlug } from '../features/workspace/queries'
 import type { AuthIdentity } from '../auth/AuthAdapter'
 import { authAdapter } from '../auth/oidc'
@@ -39,7 +40,13 @@ import { clearReauthenticationFromError } from './reauthenticationMarker'
 import { RouteError } from './RouteError'
 import { RouteFocus } from './RouteFocus'
 import { loadCurrentUser } from './currentUser'
-import { isPublicCommunityMember, sessionCoversOrganisation } from './communityAccess'
+import {
+  isKnownSharedRealmSlug,
+  isPublicCommunityMember,
+  isSharedRealmFreemiumMember,
+  rememberSharedRealmSlug,
+  sessionCoversOrganisation,
+} from './communityAccess'
 import { useShownPathname } from './lazyRouteWait'
 import { SessionLoading } from './SessionLoading'
 import { rootRoute } from './root-route'
@@ -121,7 +128,8 @@ export const orgRoute = createRoute({
       sessionCoversOrganisation(
         session.user?.realm,
         params.org,
-        import.meta.env.VITE_AUTH_MODE === 'oidc'
+        import.meta.env.VITE_AUTH_MODE === 'oidc',
+        isKnownSharedRealmSlug(params.org)
       ) &&
       authAdapter.getAccessToken() === undefined
     )
@@ -139,21 +147,42 @@ export const orgRoute = createRoute({
       sessionCoversOrganisation(
         session.user?.realm,
         params.org,
-        import.meta.env.VITE_AUTH_MODE === 'oidc'
+        import.meta.env.VITE_AUTH_MODE === 'oidc',
+        isKnownSharedRealmSlug(params.org)
       ) &&
       authAdapter.getAccessToken() === undefined
     )
       beforeSignIn()
-    // Tenant organisations require their own issuer. The shared community is the
-    // narrow exception: Core verifies its persisted membership in the loader.
+    // Tenant organisations require their own issuer. The shared community and
+    // shared-realm PME workspaces are verified by Core in `GET /me`.
     const restored = await authAdapter.restoreSession()
+    const currentRealm = authAdapter.getUser()?.realm
+    if (
+      restored &&
+      authAdapter.getAccessToken() !== undefined &&
+      currentRealm === 'community' &&
+      params.org !== 'community' &&
+      !isKnownSharedRealmSlug(params.org)
+    ) {
+      try {
+        const { me } = await loadCurrentUser()
+        for (const entry of me.organisations) {
+          if (entry.shared_realm === true) {
+            rememberSharedRealmSlug(entry.organisation.slug)
+          }
+        }
+      } catch {
+        // Fall through to normal sign-in when `/me` cannot verify shared-realm membership.
+      }
+    }
     const needsSignIn =
       !restored ||
       authAdapter.getAccessToken() === undefined ||
       !sessionCoversOrganisation(
         authAdapter.getUser()?.realm,
         params.org,
-        import.meta.env.VITE_AUTH_MODE === 'oidc'
+        import.meta.env.VITE_AUTH_MODE === 'oidc',
+        isKnownSharedRealmSlug(params.org)
       )
     if (needsSignIn) {
       if (params.org === 'community' && import.meta.env.VITE_AUTH_MODE === 'oidc') {
@@ -208,6 +237,9 @@ export const orgRoute = createRoute({
     if (membership === undefined) {
       throw notFound()
     }
+    if (membership.shared_realm === true) {
+      rememberSharedRealmSlug(membership.organisation.slug)
+    }
     return { me, membership, meGeneration, meCredentialGeneration }
   },
   notFoundComponent: NotFoundOrganisation,
@@ -240,6 +272,7 @@ function useMfaGuard(
 ): boolean {
   return (
     isPublicCommunityMember(me, identity, organisationSlug) ||
+    isSharedRealmFreemiumMember(me, identity, organisationSlug) ||
     isCurrentIdentityMfaEnrolled(me, identity, organisationSlug) ||
     isMfaEnrolledLocally()
   )
@@ -268,8 +301,17 @@ function OrgLayout() {
     }
   }, [activeOrganisationId])
   const tenantSlugFor = useCallback(
-    (organisationId: string) => cachedTenantSlug(client, organisationId),
-    [client]
+    (organisationId: string) => {
+      const targetMembership = me.organisations.find(
+        (entry) => entry.organisation.id === organisationId
+      )
+      return homeserverSlugFor({
+        tenantSlug: cachedTenantSlug(client, organisationId),
+        sharedRealm: targetMembership?.shared_realm,
+        organisationRealm: targetMembership?.organisation.realm,
+      })
+    },
+    [client, me.organisations]
   )
   return (
     <ToastProviderWithCopy>
@@ -347,7 +389,8 @@ function OrgLayoutContent() {
         !sessionCoversOrganisation(
           current.user?.realm,
           org,
-          import.meta.env.VITE_AUTH_MODE === 'oidc'
+          import.meta.env.VITE_AUTH_MODE === 'oidc',
+          isKnownSharedRealmSlug(org)
         ) ||
         authAdapter.getAccessToken() !== undefined
       )

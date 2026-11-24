@@ -60,7 +60,7 @@ PATH = "/api/v1/owner-claims/actions/consume"
 STAFF_ISSUER = bootstrap.STAFF_ISSUER
 BASELINES = {
     "dev/accept_production_http.py": "f4553d3443409af791108f3615976f470af6d01d604aea44ad39dd6dc9cea2ef",
-    "dev/accept_bootstrap_http.py": "c115bd7aac228ab8195cafb006bf6e41219a2e27427df39336445513e0210bbd",
+    "dev/accept_bootstrap_http.py": "c4574e3ff23906383221285cb7be3da7175a531a374a08561b8daca47ec03bae",
 }
 
 

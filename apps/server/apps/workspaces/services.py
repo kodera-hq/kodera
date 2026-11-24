@@ -225,6 +225,7 @@ def _lock_and_verify_template_actor(
     from apps.identity.selectors import (
         active_organisation_identities,
         current_identity,
+        current_identity_for_organisation,
         lock_delivery_identity_if_present,
         lock_user_fence_if_present,
         realm_identities,
@@ -246,12 +247,14 @@ def _lock_and_verify_template_actor(
     from .initialise import lock_organisation
 
     if verified is not None:
-        resolved = current_identity(issuer=verified.issuer, subject=verified.subject)
+        resolved = current_identity_for_organisation(
+            organisation_id=organisation_id, issuer=verified.issuer, subject=verified.subject
+        )
         if resolved is None:
-            raise TemplateActorUnknownError("actor identity absent or disabled")
-        person, identity = resolved
-        if identity.organisation_id != organisation_id:
+            if current_identity(issuer=verified.issuer, subject=verified.subject) is None:
+                raise TemplateActorUnknownError("actor identity absent or disabled")
             raise TemplateActorForbiddenError("actor identity belongs to another organisation")
+        person, identity = resolved
         try:
             initial_caller = read_tenant_caller(verified=verified, organisation_id=organisation_id)
         except TenantCallerUnknownError:
@@ -278,7 +281,12 @@ def _lock_and_verify_template_actor(
             raise TemplateActorForbiddenError("organisation deleted")
         lock_organisation(organisation_id)
 
-        if current_identity(issuer=verified.issuer, subject=verified.subject) is None:
+        if (
+            current_identity_for_organisation(
+                organisation_id=organisation_id, issuer=verified.issuer, subject=verified.subject
+            )
+            is None
+        ):
             raise TemplateActorUnknownError("actor identity disabled under lock")
         try:
             caller = read_tenant_caller(verified=verified, organisation_id=organisation_id)

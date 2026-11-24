@@ -32,7 +32,7 @@
   "console.security.settings.server-backup-discard": "Discard server backup",
   "console.security.settings.server-backup-discarded": "Server key backup discarded. Future publications will advance to epoch {{epoch}}.",
   "console.security.settings.server-backup-publish": "Publish sealed backup to server",
-  "console.security.settings.server-backup-published": "Opaque KVKB1 archive published to server at epoch {{epoch}}.",
+  "console.security.settings.server-backup-published": "Encrypted key backup archive published to server at epoch {{epoch}}.",
   "console.security.settings.server-backup-restore": "Restore from server backup",
   "console.security.settings.start": "Start local security session",
   "console.security.settings.status": "Status: local verification and user-held encrypted archives. Server key-backup storage and durable account cross-signing are not available.",

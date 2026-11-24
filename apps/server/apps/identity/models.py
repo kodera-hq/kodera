@@ -105,9 +105,15 @@ class Identity(RetainedModel):
         constraints = [
             *RetainedModel.Meta.constraints,
             models.UniqueConstraint(
-                fields=["issuer", "subject"], name="identity_issuer_subject_unique"
+                fields=["organisation", "issuer", "subject"],
+                nulls_distinct=False,
+                name="identity_issuer_subject_unique",
             ),
-            models.UniqueConstraint(fields=["issuer", "user"], name="identity_issuer_user_unique"),
+            models.UniqueConstraint(
+                fields=["organisation", "issuer", "user"],
+                nulls_distinct=False,
+                name="identity_issuer_user_unique",
+            ),
             # Printable ASCII, the Agent API contract's subject shape (MemberSubjects): a
             # member's subject can always be named in an engine member set (ADR-0016).
             models.CheckConstraint(

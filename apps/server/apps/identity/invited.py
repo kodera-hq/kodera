@@ -22,19 +22,36 @@ class KnownSubject:
     display_name: str | None
 
 
-def known_subject(*, issuer: str, subject: str) -> KnownSubject | None:
+def known_subject(
+    *, issuer: str, subject: str, organisation_id: UUID | None = None
+) -> KnownSubject | None:
     """The stored customer identity of `(iss, sub)`, usable or not, with its person's contact."""
+    if organisation_id is not None:
+        in_org = (
+            Identity.objects.select_related("user")
+            .filter(organisation_id=organisation_id, issuer=issuer, subject=subject)
+            .first()
+        )
+        if in_org is not None:
+            person = in_org.user
+            usable = (
+                in_org.enabled
+                and in_org.deleted_at is None
+                and person.enabled
+                and person.deleted_at is None
+            )
+            return KnownSubject(in_org.id, person.id, usable, person.email, person.display_name)
     identity = (
         Identity.objects.select_related("user")
         .filter(issuer=issuer, subject=subject, organisation__isnull=False)
+        .order_by("-organisation__is_default_community", "id")
         .first()
     )
     if identity is None:
         return None
     person = identity.user
     usable = (
-        identity.enabled
-        and identity.deleted_at is None
+        (identity.enabled and identity.deleted_at is None if organisation_id is None else True)
         and person.enabled
         and person.deleted_at is None
     )
@@ -69,6 +86,9 @@ def create_invited_identity(
     """A new person and their identity in the organisation's realm, in the caller's transaction."""
     if not connection.in_atomic_block:
         raise RuntimeError("invited identity creation requires the caller's transaction")
+    from .community import lock_identity_principal
+
+    lock_identity_principal(issuer=issuer, subject=subject)
     person = User.objects.create(email=contact, display_name=display_name, enabled=True)
     identity = Identity.objects.create(
         user_id=person.id,
@@ -80,3 +100,69 @@ def create_invited_identity(
         enabled=True,
     )
     return KnownSubject(identity.id, person.id, True, contact, display_name)
+
+
+def ensure_invited_identity_for_organisation(
+    *,
+    organisation_id: UUID,
+    issuer: str,
+    realm: str,
+    subject: str,
+    contact: str,
+    display_name: str | None,
+) -> KnownSubject | None:
+    """Resolve or bind `(Person, Identity)` in `organisation_id` during invitation acceptance."""
+    if not connection.in_atomic_block:
+        raise RuntimeError("invited identity creation requires the caller's transaction")
+    from .community import lock_identity_principal
+
+    lock_identity_principal(issuer=issuer, subject=subject)
+    in_org = (
+        Identity.objects.select_related("user")
+        .filter(organisation_id=organisation_id, issuer=issuer, subject=subject)
+        .first()
+    )
+    if in_org is not None:
+        person = in_org.user
+        usable = (
+            in_org.enabled
+            and in_org.deleted_at is None
+            and person.enabled
+            and person.deleted_at is None
+        )
+        return (
+            KnownSubject(in_org.id, person.id, True, person.email, person.display_name)
+            if usable
+            else None
+        )
+    existing = (
+        Identity.objects.select_related("user")
+        .filter(issuer=issuer, subject=subject, organisation__isnull=False)
+        .order_by("-organisation__is_default_community", "id")
+        .first()
+    )
+    if existing is None:
+        return create_invited_identity(
+            organisation_id=organisation_id,
+            issuer=issuer,
+            realm=realm,
+            subject=subject,
+            contact=contact,
+            display_name=display_name,
+        )
+    person = existing.user
+    if not person.enabled or person.deleted_at is not None:
+        return None
+    if display_name and not person.display_name:
+        person.display_name = display_name
+        person.save(update_fields=["display_name", "updated_at"])
+    created = Identity.objects.create(
+        user_id=person.id,
+        organisation_id=organisation_id,
+        issuer=issuer,
+        realm=realm,
+        subject=subject,
+        email=contact,
+        enabled=True,
+    )
+    return KnownSubject(created.id, person.id, True, person.email, person.display_name)
