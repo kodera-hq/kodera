@@ -141,6 +141,8 @@ Read as: what each role may do to each resource. `own` means "rows belonging to 
 | `WorkspaceCalendar` | full own, export own | full own, export own | full own, export own | full own, export own | — | — | — | — |
 | `CaldavSource` | full own, act own | full own, act own | — | — | — | — | — | — |
 | `BookingPage` | full own | full own | full own | full own | — | — | — | — |
+| `ExtensionMarketplace` | create, read, act own | create, read, act own | read, act own | read, act own | — | — | — | — |
+| `ExtensionWidget` | act own | act own | act own | act own | — | — | — | — |
 
 ### Confidential relay
 

@@ -14,13 +14,13 @@ from django.db import transaction
 from django.http import HttpRequest, HttpResponse
 
 from core.api import lanes, problems
-from core.api.idempotency import StoredResponse, respond_once
+from core.api.idempotency import KEY_HEADER, StoredResponse, is_malformed, is_missing, respond_once
 from core.api.scopes import Operation
 from core.db.ids import new_uuid7
 from services.identity.access_tokens import MAX_TOKEN, TokenVerificationError, VerifiedAccessToken
 from services.identity.trusted_issuers import verify_configured_token
 
-from ..services import read_admin
+from ..services import read_admin, read_member
 from ..wire import ExtensionIdentityUnknownError, ExtensionRefusedError
 
 REQUEST_ID = re.compile(r"[A-Za-z0-9_-]{8,64}\Z")
@@ -151,9 +151,23 @@ def parse_uuid(value: Any) -> UUID:
     return parsed
 
 
+def require_idempotency_key(request: HttpRequest) -> str:
+    value = request.headers.get(KEY_HEADER, "")
+    if is_missing(value):
+        raise ExtensionRefusedError("idempotency_key_missing", 400)
+    if is_malformed(value):
+        raise ExtensionRefusedError("idempotency_key_malformed", 400)
+    return value
+
+
 def _admit_owner_or_admin(verified: VerifiedAccessToken, organisation_id: UUID) -> None:
     with transaction.atomic():
         read_admin(verified, organisation_id)
+
+
+def _admit_member(verified: VerifiedAccessToken, organisation_id: UUID) -> None:
+    with transaction.atomic():
+        read_member(verified, organisation_id)
 
 
 def serve_authenticated(
@@ -163,6 +177,7 @@ def serve_authenticated(
     handlers: dict[str, Handler],
     operations: tuple[Operation, ...] = (),
     idempotent_post: bool = True,
+    require_admin: bool = True,
 ) -> HttpResponse:
     req_id = request_id(request)
     method = request.method or ""
@@ -174,6 +189,7 @@ def serve_authenticated(
         ),
         "",
     )
+    admit_caller = _admit_owner_or_admin if require_admin else _admit_member
     try:
         if method not in handlers:
             return finish(problem(405, req_id, allowed=list(handlers.keys())), req_id)
@@ -183,7 +199,7 @@ def serve_authenticated(
         verified, lane = lanes.admit(verified, lane)
         if lane == "staff":
             raise ExtensionRefusedError("staff_lane_forbidden", 403)
-        _admit_owner_or_admin(verified, organisation_id)
+        admit_caller(verified, organisation_id)
 
         def run_handler() -> HttpResponse:
             try:
@@ -211,7 +227,7 @@ def serve_authenticated(
                 subject=verified.subject,
                 request_id=req_id,
                 handler=effect,
-                authority=lambda _: _admit_owner_or_admin(verified, organisation_id),
+                authority=lambda _: admit_caller(verified, organisation_id),
             )
             if response.status_code in {502, 503}:
                 response["Retry-After"] = "1"

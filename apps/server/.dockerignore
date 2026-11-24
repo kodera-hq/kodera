@@ -404,6 +404,8 @@ config/settings/deploy_worker.py
 !apps/extensions/member_matching.py
 !apps/extensions/imports.py
 !apps/extensions/coexistence.py
+!apps/extensions/marketplace.py
+!apps/extensions/widgets.py
 !apps/extensions/posture.py
 !apps/extensions/api/__init__.py
 !apps/extensions/api/http.py

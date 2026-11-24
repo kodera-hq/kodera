@@ -7,12 +7,12 @@ outbound Stripe port calls strictly outside `transaction.atomic()`.
 
 from __future__ import annotations
 
-from dataclasses import asdict
-from datetime import datetime
+from dataclasses import asdict, dataclass
+from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
 
-from django.db import transaction
+from django.db import connection, transaction
 from django.utils import timezone
 
 from apps.identity.selectors import current_identity
@@ -28,6 +28,8 @@ from .models import (
     VipTierOffer,
     WorkspaceHostingCredit,
 )
+from .payments.port import CONNECT_ACCOUNT_ID, LinkRequest
+from .payments.services import check_return_url
 
 ADMIN_CONNECT_ROLES = frozenset({"org_owner", "org_admin"})
 DAC7_EXPORT_ROLES = frozenset({"org_owner", "org_billing"})
@@ -395,3 +397,144 @@ def export_workspace_dac7_for_caller(
 
 def serialize_dac7_summary_dict(summary: dac7.Dac7SellerSummary) -> dict[str, Any]:
     return asdict(summary)
+
+
+@dataclass(frozen=True, slots=True)
+class SellerConnectReadiness:
+    stripe_connect_account_id: str | None
+    platform_fee_bps: int
+    onboarding_state: str
+    charges_enabled: bool
+    payouts_enabled: bool
+
+
+def resolve_workspace_seller_connect_account(
+    *,
+    organisation_id: UUID,
+    workspace_id: UUID,
+) -> SellerConnectReadiness | None:
+    """Read the workspace's `CreatorConnectAccount` without exposing `apps.billing.models`."""
+    acct = CreatorConnectAccount.objects.filter(
+        organisation_id=organisation_id,
+        workspace_id=workspace_id,
+    ).first()
+    if acct is None:
+        return None
+    return SellerConnectReadiness(
+        stripe_connect_account_id=acct.stripe_connect_account_id,
+        platform_fee_bps=acct.platform_fee_bps,
+        onboarding_state=acct.onboarding_state,
+        charges_enabled=acct.charges_enabled,
+        payouts_enabled=acct.payouts_enabled,
+    )
+
+
+def issue_marketplace_connect_checkout_link(
+    *,
+    organisation_id: UUID,
+    workspace_id: UUID,
+    entitlement_id: UUID,
+    listing_slug: str,
+    listing_title: str,
+    pricing_mode: str,
+    price_excl_vat_minor: int,
+    seller_connect_account_id: str,
+    platform_fee_bps: int = 1000,
+    buyer_user_id: UUID,
+    customer_kind: str = "b2c",
+    buyer_country: str = "FR",
+    return_url: str,
+    locale: str = "fr",
+    withdrawal_waiver_accepted: bool = False,
+    withdrawal_waiver_at: str | None = None,
+    withdrawal_waiver_statement: str | None = None,
+    provider: Any | None = None,
+) -> dict[str, Any]:
+    """Quote EU OSS / B2B VAT and issue a web-only Stripe Connect Checkout link outside `transaction.atomic()`."""
+    if connection.in_atomic_block:
+        raise RuntimeError(
+            "issue_marketplace_connect_checkout_link must execute outside transaction.atomic()"
+        )
+    if pricing_mode not in {"one_time", "recurring"}:
+        raise vip_connect.VipConnectValidationError(f"unsupported pricing_mode {pricing_mode!r}")
+    if not CONNECT_ACCOUNT_ID.fullmatch(seller_connect_account_id):
+        raise vip_connect.VipConnectValidationError("invalid seller_connect_account_id")
+    if locale not in {"fr", "en"}:
+        raise vip_connect.VipConnectValidationError("unsupported locale")
+    check_return_url(return_url)
+
+    now = timezone.now()
+    if customer_kind == "b2b":
+        profile, server_vies_valid = boosts.resolve_server_b2b_vat_status(
+            organisation_id=organisation_id,
+            now=now,
+        )
+        eff_country = profile.country
+        eff_exempt = profile.vat_exempt
+    elif customer_kind == "b2c":
+        eff_country = buyer_country.strip().upper()
+        server_vies_valid = False
+        eff_exempt = False
+    else:
+        raise vip_connect.VipConnectValidationError(f"unsupported customer_kind {customer_kind!r}")
+
+    boosts.verify_b2c_withdrawal_waiver(
+        customer_kind=customer_kind,
+        scope=f"extension-marketplace:{workspace_id}",
+        offer_code=listing_slug,
+        buyer_ref=str(buyer_user_id),
+        withdrawal_waiver_accepted=withdrawal_waiver_accepted,
+        withdrawal_waiver_at=_parse_iso_datetime(withdrawal_waiver_at),
+        withdrawal_waiver_statement=withdrawal_waiver_statement,
+        now=now,
+    )
+
+    billing_period = "monthly" if pricing_mode == "recurring" else "one_time"
+    quote = vip_connect.quote_vip_pass(
+        tier_code=listing_slug,
+        billing_period=billing_period,
+        price_excl_vat_minor=price_excl_vat_minor,
+        platform_fee_bps=platform_fee_bps,
+        buyer_country=eff_country,
+        customer_kind=customer_kind,
+        vat_number_validated=server_vies_valid,
+        vat_exempt=eff_exempt,
+    )
+    active_provider = provider if provider is not None else payments_pkg.configured_provider()
+    checkout_label = (
+        f"Extension Kodera — {listing_title}"
+        if locale == "fr"
+        else f"Kodera Extension — {listing_title}"
+    )
+    issued = active_provider.create_link(
+        LinkRequest(
+            invoice_id=entitlement_id,
+            invoice_number=listing_slug.upper(),
+            amount_minor=quote.total_incl_vat_minor,
+            currency="EUR",
+            expires_at=now + timedelta(hours=23),
+            return_url=return_url,
+            locale=locale,
+            connect_destination_account=seller_connect_account_id,
+            application_fee_amount_minor=quote.stripe_application_fee_minor,
+            payment_methods=("card",),
+            reference_kind="extension_marketplace",
+            checkout_label=checkout_label,
+            metadata={
+                "volet": "h4_extension_marketplace",
+                "marketplace_entitlement_id": str(entitlement_id),
+                "workspace_id": str(workspace_id),
+            },
+        )
+    )
+    return {
+        "checkout_session_id": issued.provider_ref,
+        "checkout_url": issued.url,
+        "vat_regime": quote.vat_regime.code,
+        "vat_rate_bp": quote.vat_regime.rate_bp,
+        "gross_excl_vat_minor": quote.gross_excl_vat_minor,
+        "vat_amount_minor": quote.vat_amount_minor,
+        "total_incl_vat_minor": quote.total_incl_vat_minor,
+        "application_fee_amount_minor": quote.application_fee_amount_minor,
+        "creator_net_minor": quote.creator_net_minor,
+    }

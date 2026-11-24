@@ -14,6 +14,7 @@
     "packages/api-contract",
     "packages/extension-sdk",
     "packages/create-kodera",
+    "packages/create-kodera-extension",
     "extensions/*"
   ],
   "overrides": {

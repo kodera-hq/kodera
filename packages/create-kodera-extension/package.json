@@ -1,0 +1,27 @@
+{
+  "name": "create-kodera-extension",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "Apache-2.0",
+  "description": "Zero-dependency scaffolder for signed Kodera extensions and sandboxed widget cards.",
+  "bin": {
+    "create-kodera-extension": "bin/create-kodera-extension.mjs"
+  },
+  "files": [
+    "bin",
+    "runtime",
+    "src",
+    "build.mjs",
+    "README.md"
+  ],
+  "engines": {
+    "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "selftest": "node bin/create-kodera-extension.mjs --selftest",
+    "typecheck": "tsc -p tsconfig.json",
+    "build": "node build.mjs",
+    "prepack": "node build.mjs"
+  }
+}

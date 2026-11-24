@@ -927,6 +927,10 @@ AUDIT_FIELDS = {
     "coexistence_bridge_created": frozenset({"source", "channel_id"}),
     "coexistence_bridge_revoked": frozenset({"source", "channel_id"}),
     "digest_consent_changed": frozenset({"enabled", "consent_version"}),
+    "marketplace_listing_published": frozenset({"slug", "pricing_mode", "price_excl_vat_minor"}),
+    "marketplace_checkout_started": frozenset({"listing_id", "pricing_mode", "state"}),
+    "marketplace_installed": frozenset({"listing_id", "installation_id"}),
+    "widget_action_dispatched": frozenset({"channel_id", "widget_id", "action_id", "state"}),
 }
 
 

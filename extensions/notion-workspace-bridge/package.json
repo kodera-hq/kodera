@@ -6,7 +6,7 @@
   "license": "Apache-2.0",
   "description": "Reference implementation: sharing and tracking structured Notion workspace pages and database entries alongside Docs in Espace channels.",
   "dependencies": {
-    "@kodera/extension-sdk": "0.1.0"
+    "@kodera/extension-sdk": "0.2.0"
   },
   "scripts": {
     "test": "node --test test/index.test.mjs"

@@ -61,6 +61,11 @@ def confidential_room_grant_ready(*, channel_id: UUID, organisation_id: UUID | N
     return int(epoch) >= 1 and not bool(rekey_required)
 
 
+def channel_has_e2ee_room(*, channel_id: UUID, organisation_id: UUID) -> bool:
+    """Return True if any E2EE room record is bound to `channel_id` within `organisation_id`."""
+    return Room.objects.filter(channel_id=channel_id, organisation_id=organisation_id).exists()
+
+
 def workspace_confidential_posture(
     *, organisation_id: UUID, workspace_id: UUID
 ) -> ConfidentialPostureSnapshot:

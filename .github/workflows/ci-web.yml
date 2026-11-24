@@ -31,7 +31,10 @@ jobs:
       - name: Install locked workspace dependencies
         run: npm ci --ignore-scripts
       - name: Verify scaffolder and refusal self-tests
-        run: npm --workspace create-kodera test && npm --workspace create-kodera run selftest
+        run: |
+          npm --workspace create-kodera test && npm --workspace create-kodera run selftest
+          npm --workspace create-kodera-extension run typecheck
+          npm --workspace create-kodera-extension test && npm --workspace create-kodera-extension run selftest
       - name: Verify @kodera/design-tokens grammar, contrast, drift & tests
         working-directory: packages/design-tokens
         run: node test/run.mjs

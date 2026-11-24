@@ -126,6 +126,15 @@ export function build(files) {
         name: command.name.startsWith('/') ? command.name : `/${command.name}`,
         description: command.description,
       })),
+      ...(manifest.widgets.length > 0
+        ? {
+            widgets: manifest.widgets.map((widget) => ({
+              id: widget.id,
+              title: widget.title,
+              ...(widget.description ? { description: widget.description } : {}),
+            })),
+          }
+        : {}),
       webhookUrl: manifest.webhookUrl ?? null,
     })
   }

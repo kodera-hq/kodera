@@ -1,0 +1,761 @@
+"""Web-only Extension Marketplace catalogue, Stripe Connect checkout, and installation."""
+
+from __future__ import annotations
+
+import hashlib
+import ipaddress
+import json
+import re
+from typing import Any
+from uuid import UUID
+
+from django.db import IntegrityError, connection, transaction
+from django.utils import timezone
+
+from apps.billing import boosts, monetization_services, vip_connect
+from apps.billing.payments.port import (
+    ProviderRefusedError,
+    ProviderUnavailableError,
+    ReturnUrlRequiredError,
+)
+from apps.billing.payments.services import ReturnUrlRefusedError
+from apps.billing.switch import billing_enabled
+from apps.media import outbound
+from apps.orgs.selectors import membership_user_id
+from core import sealing
+
+from . import services, widgets
+from .models import ExtensionMarketplaceListing, Installation, MarketplaceEntitlement
+from .wire import EVENTS, ExtensionRefusedError, canonical
+
+SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,61}[a-z0-9]\Z")
+SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\Z")
+COMMAND_NAME_RE = re.compile(r"^/[a-z][a-z0-9-]{1,31}\Z")
+IDEMPOTENCY_KEY_RE = re.compile(r"^[\x21-\x7e]{1,128}\Z")
+
+ALLOWED_MANIFEST_SCOPES = frozenset(
+    {
+        "messages:read",
+        "messages:write",
+        "ephemeral:write",
+        "channels:read",
+        "commands:register",
+        "webhooks:incoming",
+        "incidents:write",
+        "threads:write",
+        "docs:read",
+        "docs:write",
+        "widgets:write",
+    }
+)
+ALLOWED_PRICING_MODES = frozenset({"free", "one_time", "recurring"})
+MAX_MANIFEST_BYTES = 32 * 1024
+MAX_PRICE_EXCL_VAT_MINOR = 10_000_000
+MIN_PAID_PRICE_EXCL_VAT_MINOR = 100
+
+
+def _check_printable(value: Any, *, field: str, min_len: int = 1, max_len: int = 280) -> str:
+    if not isinstance(value, str):
+        raise ExtensionRefusedError(f"marketplace_{field}_invalid", 422)
+    trimmed = value.strip()
+    if not (min_len <= len(trimmed) <= max_len) or any(
+        ord(ch) < 32 or ord(ch) == 127 for ch in trimmed
+    ):
+        raise ExtensionRefusedError(f"marketplace_{field}_invalid", 422)
+    return trimmed
+
+
+def _validate_public_https_endpoint(raw_url: Any) -> str:
+    if not isinstance(raw_url, str) or not raw_url.strip():
+        raise ExtensionRefusedError("marketplace_endpoint_invalid", 422)
+    try:
+        parsed = outbound.target(raw_url.strip(), https_only=True)
+    except outbound.BlockedTargetError:
+        raise ExtensionRefusedError("marketplace_endpoint_blocked", 422) from None
+    host = parsed.host
+    if host == "localhost" or host.endswith((".localhost", ".local", ".internal")):
+        raise ExtensionRefusedError("marketplace_endpoint_blocked", 422)
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        pass
+    else:
+        try:
+            outbound.public_address(host)
+        except outbound.BlockedTargetError:
+            raise ExtensionRefusedError("marketplace_endpoint_blocked", 422) from None
+    return parsed.url
+
+
+def validate_extension_manifest(
+    raw_manifest: Any, *, expected_slug: str | None = None
+) -> dict[str, Any]:
+    """Validate an extension manifest including optional declarative `kodera.widget.v1` templates."""
+    if not isinstance(raw_manifest, dict):
+        raise ExtensionRefusedError("marketplace_manifest_invalid", 422)
+    allowed_keys = {
+        "schemaVersion",
+        "schema",
+        "id",
+        "slug",
+        "name",
+        "version",
+        "description",
+        "scopes",
+        "events",
+        "commands",
+        "widgets",
+        "webhookUrl",
+        "endpoint",
+    }
+    if set(raw_manifest) - allowed_keys:
+        raise ExtensionRefusedError("marketplace_manifest_invalid", 422)
+
+    slug = raw_manifest.get("slug") if "slug" in raw_manifest else raw_manifest.get("id")
+    if not isinstance(slug, str) or not SLUG_RE.fullmatch(slug):
+        raise ExtensionRefusedError("marketplace_slug_invalid", 422)
+    if expected_slug is not None and slug != expected_slug:
+        raise ExtensionRefusedError("marketplace_slug_mismatch", 422)
+
+    name = _check_printable(raw_manifest.get("name"), field="name", max_len=80)
+    version = raw_manifest.get("version")
+    if not isinstance(version, str) or not SEMVER_RE.fullmatch(version):
+        raise ExtensionRefusedError("marketplace_version_invalid", 422)
+    description = _check_printable(
+        raw_manifest.get("description"), field="description", max_len=280
+    )
+
+    scopes = raw_manifest.get("scopes")
+    if (
+        not isinstance(scopes, list)
+        or not (1 <= len(scopes) <= len(ALLOWED_MANIFEST_SCOPES))
+        or len(set(scopes)) != len(scopes)
+        or any(not isinstance(sc, str) or sc not in ALLOWED_MANIFEST_SCOPES for sc in scopes)
+    ):
+        raise ExtensionRefusedError("marketplace_scopes_invalid", 422)
+
+    events = raw_manifest.get("events")
+    if (
+        not isinstance(events, list)
+        or not (1 <= len(events) <= len(EVENTS))
+        or len(set(events)) != len(events)
+        or any(not isinstance(ev, str) or ev not in EVENTS for ev in events)
+    ):
+        raise ExtensionRefusedError("marketplace_events_invalid", 422)
+    if "widget.action" in events and "widgets:write" not in scopes:
+        raise ExtensionRefusedError("marketplace_widget_scope_required", 422)
+
+    raw_endpoint = (
+        raw_manifest.get("endpoint")
+        if raw_manifest.get("endpoint") is not None
+        else raw_manifest.get("webhookUrl")
+    )
+    endpoint = _validate_public_https_endpoint(raw_endpoint)
+
+    normalized_commands: list[dict[str, str]] = []
+    raw_commands = raw_manifest.get("commands")
+    if raw_commands is not None:
+        if not isinstance(raw_commands, list) or len(raw_commands) > 16:
+            raise ExtensionRefusedError("marketplace_commands_invalid", 422)
+        if raw_commands and "commands:register" not in scopes:
+            raise ExtensionRefusedError("marketplace_commands_scope_required", 422)
+        seen_cmds: set[str] = set()
+        for cmd in raw_commands:
+            if not isinstance(cmd, dict) or set(cmd) - {"name", "description", "usage"}:
+                raise ExtensionRefusedError("marketplace_commands_invalid", 422)
+            cmd_name = cmd.get("name")
+            if (
+                not isinstance(cmd_name, str)
+                or not COMMAND_NAME_RE.fullmatch(cmd_name)
+                or cmd_name in seen_cmds
+            ):
+                raise ExtensionRefusedError("marketplace_commands_invalid", 422)
+            seen_cmds.add(cmd_name)
+            normalized_commands.append(
+                {
+                    "name": cmd_name,
+                    "description": _check_printable(
+                        cmd.get("description"), field="command_description", max_len=140
+                    ),
+                }
+            )
+
+    normalized_widgets: list[dict[str, Any]] = []
+    raw_widgets = raw_manifest.get("widgets")
+    if raw_widgets is not None:
+        if not isinstance(raw_widgets, list) or len(raw_widgets) > 8:
+            raise ExtensionRefusedError("marketplace_widgets_invalid", 422)
+        if raw_widgets and "widgets:write" not in scopes:
+            raise ExtensionRefusedError("marketplace_widget_scope_required", 422)
+        seen_widgets: set[str] = set()
+        for entry in raw_widgets:
+            if not isinstance(entry, dict) or set(entry) - {
+                "id",
+                "title",
+                "description",
+                "defaultCard",
+                "default_card",
+            }:
+                raise ExtensionRefusedError("marketplace_widgets_invalid", 422)
+            wid = entry.get("id")
+            if not isinstance(wid, str) or not SLUG_RE.fullmatch(wid) or wid in seen_widgets:
+                raise ExtensionRefusedError("marketplace_widgets_invalid", 422)
+            seen_widgets.add(wid)
+            w_out: dict[str, Any] = {
+                "id": wid,
+                "title": _check_printable(entry.get("title"), field="widget_title", max_len=80),
+            }
+            if entry.get("description") is not None:
+                w_out["description"] = _check_printable(
+                    entry.get("description"), field="widget_description", max_len=200
+                )
+            raw_default_card = (
+                entry["defaultCard"]
+                if entry.get("defaultCard") is not None
+                else entry.get("default_card")
+            )
+            if raw_default_card is not None:
+                validated_card = widgets.validate_widget_card(raw_default_card)
+                if validated_card["widgetId"] != wid:
+                    raise ExtensionRefusedError("marketplace_widget_card_mismatch", 422)
+                w_out["defaultCard"] = validated_card
+            normalized_widgets.append(w_out)
+
+    normalized: dict[str, Any] = {
+        "schemaVersion": "kodera.extension.v1",
+        "slug": slug,
+        "name": name,
+        "version": version,
+        "description": description,
+        "scopes": sorted(scopes),
+        "events": sorted(events),
+        "commands": normalized_commands,
+        "widgets": normalized_widgets,
+        "endpoint": endpoint,
+    }
+    encoded = json.dumps(normalized, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    if len(encoded) > MAX_MANIFEST_BYTES:
+        raise ExtensionRefusedError("marketplace_manifest_too_large", 413)
+    return normalized
+
+
+def serialize_listing(
+    listing: ExtensionMarketplaceListing,
+    entitlement: MarketplaceEntitlement | None = None,
+) -> dict[str, Any]:
+    return {
+        "id": str(listing.id),
+        "workspaceId": str(listing.workspace_id),
+        "slug": listing.slug,
+        "title": listing.title,
+        "summary": listing.summary,
+        "pricingMode": listing.pricing_mode,
+        "priceExclVatMinor": listing.price_excl_vat_minor,
+        "currency": listing.currency,
+        "manifest": listing.manifest,
+        "publishedAt": (
+            listing.published_at.isoformat() if listing.published_at is not None else None
+        ),
+        "entitlementState": entitlement.state if entitlement is not None else None,
+        "entitlementId": str(entitlement.id) if entitlement is not None else None,
+        "installed": bool(entitlement is not None and entitlement.installation_id is not None),
+        "installationId": (
+            str(entitlement.installation_id)
+            if entitlement is not None and entitlement.installation_id is not None
+            else None
+        ),
+    }
+
+
+@transaction.atomic
+def list_marketplace_listings(*, verified: Any, organisation_id: UUID) -> dict[str, Any]:
+    workspace_id, _ = services.read_member(verified, organisation_id)
+    listings = list(
+        ExtensionMarketplaceListing.objects.filter(
+            workspace_id=workspace_id,
+            published_at__isnull=False,
+            revoked_at__isnull=True,
+        ).order_by("created_at", "id")[:100]
+    )
+    entitlements = list(
+        MarketplaceEntitlement.objects.filter(
+            workspace_id=workspace_id,
+            listing_id__in=[row.id for row in listings],
+            revoked_at__isnull=True,
+            state__in=("pending", "active"),
+        ).order_by("-created_at")
+    )
+    by_listing: dict[UUID, MarketplaceEntitlement] = {}
+    for ent in entitlements:
+        prev = by_listing.get(ent.listing_id)
+        if prev is None or (prev.state != "active" and ent.state == "active"):
+            by_listing[ent.listing_id] = ent
+
+    return {
+        "billingEnabled": billing_enabled(),
+        "listings": [serialize_listing(row, by_listing.get(row.id)) for row in listings],
+    }
+
+
+@transaction.atomic
+def publish_marketplace_listing(
+    *,
+    verified: Any,
+    organisation_id: UUID,
+    slug: str,
+    title: str,
+    summary: str,
+    manifest: dict[str, Any],
+    pricing_mode: str = "free",
+    price_excl_vat_minor: int = 0,
+) -> dict[str, Any]:
+    workspace_id, principal = services.admin(verified, organisation_id)
+    if not isinstance(slug, str) or not SLUG_RE.fullmatch(slug):
+        raise ExtensionRefusedError("marketplace_slug_invalid", 422)
+    clean_title = _check_printable(title, field="title", max_len=80)
+    clean_summary = _check_printable(summary, field="summary", max_len=280)
+    if not isinstance(pricing_mode, str) or pricing_mode not in ALLOWED_PRICING_MODES:
+        raise ExtensionRefusedError("marketplace_pricing_mode_invalid", 422)
+    if type(price_excl_vat_minor) is not int:
+        raise ExtensionRefusedError("marketplace_price_invalid", 422)
+
+    validated_manifest = validate_extension_manifest(manifest, expected_slug=slug)
+
+    seller_connect_account_id: str | None = None
+    if pricing_mode == "free":
+        if price_excl_vat_minor != 0:
+            raise ExtensionRefusedError("marketplace_free_price_nonzero", 422)
+    else:
+        if not billing_enabled():
+            raise ExtensionRefusedError("billing-disabled", 409)
+        if not (MIN_PAID_PRICE_EXCL_VAT_MINOR <= price_excl_vat_minor <= MAX_PRICE_EXCL_VAT_MINOR):
+            raise ExtensionRefusedError("marketplace_price_invalid", 422)
+        seller = monetization_services.resolve_workspace_seller_connect_account(
+            organisation_id=organisation_id,
+            workspace_id=workspace_id,
+        )
+        if (
+            seller is None
+            or not seller.stripe_connect_account_id
+            or seller.onboarding_state != "active"
+            or not seller.charges_enabled
+            or not seller.payouts_enabled
+        ):
+            raise ExtensionRefusedError("marketplace_connect_account_not_ready", 409)
+        seller_connect_account_id = seller.stripe_connect_account_id
+
+    now = timezone.now()
+    try:
+        listing = ExtensionMarketplaceListing.objects.create(
+            organisation_id=organisation_id,
+            workspace_id=workspace_id,
+            creator_id=principal.membership_id,
+            slug=slug,
+            title=clean_title,
+            summary=clean_summary,
+            manifest=validated_manifest,
+            pricing_mode=pricing_mode,
+            price_excl_vat_minor=price_excl_vat_minor,
+            currency="EUR",
+            seller_connect_account_id=seller_connect_account_id,
+            published_at=now,
+        )
+    except IntegrityError:
+        raise ExtensionRefusedError("marketplace_slug_conflict", 409) from None
+
+    services.audit(
+        "marketplace_listing_published",
+        principal,
+        organisation_id,
+        listing.id,
+        {
+            "slug": listing.slug,
+            "pricing_mode": listing.pricing_mode,
+            "price_excl_vat_minor": listing.price_excl_vat_minor,
+        },
+    )
+    return serialize_listing(listing)
+
+
+def _serialize_checkout(
+    entitlement: MarketplaceEntitlement,
+    *,
+    pricing_mode: str,
+    replayed: bool,
+) -> dict[str, Any]:
+    return {
+        "entitlementId": str(entitlement.id),
+        "listingId": str(entitlement.listing_id),
+        "pricingMode": pricing_mode,
+        "state": entitlement.state,
+        "checkoutRequired": entitlement.state == "pending",
+        "checkoutSessionId": entitlement.checkout_ref,
+        "checkoutUrl": entitlement.checkout_url,
+        "grossExclVatMinor": entitlement.gross_excl_vat_minor,
+        "vatAmountMinor": entitlement.vat_amount_minor,
+        "totalInclVatMinor": entitlement.total_incl_vat_minor,
+        "applicationFeeAmountMinor": entitlement.application_fee_amount_minor,
+        "currency": "EUR",
+        "replayed": replayed,
+    }
+
+
+def checkout_marketplace_listing(
+    *,
+    verified: Any,
+    organisation_id: UUID,
+    listing_id: UUID,
+    idempotency_key: str,
+    customer_kind: str = "b2c",
+    buyer_country: str = "FR",
+    return_url: str | None = None,
+    locale: str = "fr",
+    withdrawal_waiver_accepted: bool = False,
+    withdrawal_waiver_at: str | None = None,
+    withdrawal_waiver_statement: str | None = None,
+    provider: Any | None = None,
+) -> dict[str, Any]:
+    """Grant a free marketplace entitlement or issue a web-only Stripe Connect Checkout link outside `transaction.atomic()`."""
+    if connection.in_atomic_block:
+        raise RuntimeError("checkout_marketplace_listing must execute outside transaction.atomic()")
+    if not isinstance(idempotency_key, str) or not IDEMPOTENCY_KEY_RE.fullmatch(idempotency_key):
+        raise ExtensionRefusedError("idempotency_key_invalid", 400)
+
+    request_digest = hashlib.sha256(
+        canonical(
+            {
+                "listing_id": str(listing_id),
+                "customer_kind": customer_kind,
+                "buyer_country": buyer_country,
+                "return_url": return_url,
+                "locale": locale,
+                "withdrawal_waiver_accepted": withdrawal_waiver_accepted,
+            }
+        )
+    ).hexdigest()
+
+    with transaction.atomic():
+        workspace_id, principal = services.member(verified, organisation_id)
+        listing = ExtensionMarketplaceListing.objects.filter(
+            id=listing_id,
+            workspace_id=workspace_id,
+            published_at__isnull=False,
+            revoked_at__isnull=True,
+        ).first()
+        if listing is None:
+            raise ExtensionRefusedError("marketplace_listing_absent", 404)
+
+        prior_idem = (
+            MarketplaceEntitlement.objects.select_for_update()
+            .filter(workspace_id=workspace_id, idempotency_key=idempotency_key)
+            .first()
+        )
+        if prior_idem is not None:
+            if prior_idem.request_sha256 != request_digest or prior_idem.listing_id != listing.id:
+                raise ExtensionRefusedError("idempotency_key_reused", 409)
+            return _serialize_checkout(prior_idem, pricing_mode=listing.pricing_mode, replayed=True)
+
+        already_active = MarketplaceEntitlement.objects.filter(
+            workspace_id=workspace_id,
+            listing=listing,
+            state="active",
+            revoked_at__isnull=True,
+        ).first()
+        if already_active is not None:
+            raise ExtensionRefusedError("marketplace_already_entitled", 409)
+
+        if listing.pricing_mode == "free":
+            entitlement = MarketplaceEntitlement.objects.create(
+                organisation_id=organisation_id,
+                workspace_id=workspace_id,
+                buyer_membership_id=principal.membership_id,
+                listing=listing,
+                state="active",
+                idempotency_key=idempotency_key,
+                request_sha256=request_digest,
+            )
+            services.audit(
+                "marketplace_checkout_started",
+                principal,
+                organisation_id,
+                listing.id,
+                {
+                    "listing_id": str(listing.id),
+                    "pricing_mode": listing.pricing_mode,
+                    "state": "active",
+                },
+            )
+            return _serialize_checkout(
+                entitlement, pricing_mode=listing.pricing_mode, replayed=False
+            )
+
+        if not billing_enabled():
+            raise ExtensionRefusedError("billing-disabled", 409)
+        if not isinstance(return_url, str) or not return_url.strip():
+            raise ExtensionRefusedError("marketplace_return_url_required", 422)
+
+        seller = monetization_services.resolve_workspace_seller_connect_account(
+            organisation_id=organisation_id,
+            workspace_id=workspace_id,
+        )
+        if (
+            seller is None
+            or not seller.stripe_connect_account_id
+            or seller.onboarding_state != "active"
+            or not seller.charges_enabled
+            or not seller.payouts_enabled
+            or listing.seller_connect_account_id != seller.stripe_connect_account_id
+        ):
+            raise ExtensionRefusedError("marketplace_connect_account_not_ready", 409)
+
+        buyer_user_id = membership_user_id(membership_id=principal.membership_id)
+        entitlement = MarketplaceEntitlement.objects.create(
+            organisation_id=organisation_id,
+            workspace_id=workspace_id,
+            buyer_membership_id=principal.membership_id,
+            listing=listing,
+            state="pending",
+            idempotency_key=idempotency_key,
+            request_sha256=request_digest,
+        )
+        entitlement_id = entitlement.id
+        listing_slug = listing.slug
+        listing_title = listing.title
+        listing_pricing_mode = listing.pricing_mode
+        listing_price_minor = listing.price_excl_vat_minor
+        seller_account_id = seller.stripe_connect_account_id
+        platform_fee_bps = seller.platform_fee_bps
+
+    try:
+        issued = monetization_services.issue_marketplace_connect_checkout_link(
+            organisation_id=organisation_id,
+            workspace_id=workspace_id,
+            entitlement_id=entitlement_id,
+            listing_slug=listing_slug,
+            listing_title=listing_title,
+            pricing_mode=listing_pricing_mode,
+            price_excl_vat_minor=listing_price_minor,
+            seller_connect_account_id=seller_account_id,
+            platform_fee_bps=platform_fee_bps,
+            buyer_user_id=buyer_user_id,
+            customer_kind=customer_kind,
+            buyer_country=buyer_country,
+            return_url=return_url,
+            locale=locale,
+            withdrawal_waiver_accepted=withdrawal_waiver_accepted,
+            withdrawal_waiver_at=withdrawal_waiver_at,
+            withdrawal_waiver_statement=withdrawal_waiver_statement,
+            provider=provider,
+        )
+    except (
+        vip_connect.VipConnectValidationError,
+        boosts.BoostValidationError,
+        boosts.WithdrawalWaiverRequiredError,
+        ReturnUrlRequiredError,
+        ReturnUrlRefusedError,
+        ProviderRefusedError,
+        ValueError,
+    ) as exc:
+        with transaction.atomic():
+            MarketplaceEntitlement.objects.filter(id=entitlement_id, state="pending").update(
+                state="revoked",
+                revoked_at=timezone.now(),
+                updated_at=timezone.now(),
+            )
+        raise ExtensionRefusedError("marketplace_checkout_invalid", 422) from exc
+    except ProviderUnavailableError as exc:
+        with transaction.atomic():
+            MarketplaceEntitlement.objects.filter(id=entitlement_id, state="pending").update(
+                state="revoked",
+                revoked_at=timezone.now(),
+                updated_at=timezone.now(),
+            )
+        raise ExtensionRefusedError("marketplace_payment_provider_unavailable", 503) from exc
+
+    with transaction.atomic():
+        entitlement = MarketplaceEntitlement.objects.select_for_update().get(id=entitlement_id)
+        entitlement.checkout_ref = str(issued["checkout_session_id"])
+        entitlement.checkout_url = str(issued["checkout_url"])
+        entitlement.gross_excl_vat_minor = int(issued["gross_excl_vat_minor"])
+        entitlement.vat_amount_minor = int(issued["vat_amount_minor"])
+        entitlement.total_incl_vat_minor = int(issued["total_incl_vat_minor"])
+        entitlement.application_fee_amount_minor = int(issued["application_fee_amount_minor"])
+        entitlement.save(
+            update_fields=[
+                "checkout_ref",
+                "checkout_url",
+                "gross_excl_vat_minor",
+                "vat_amount_minor",
+                "total_incl_vat_minor",
+                "application_fee_amount_minor",
+                "updated_at",
+            ]
+        )
+        services.audit(
+            "marketplace_checkout_started",
+            principal,
+            organisation_id,
+            listing_id,
+            {
+                "listing_id": str(listing_id),
+                "pricing_mode": listing_pricing_mode,
+                "state": "pending",
+            },
+        )
+        return _serialize_checkout(entitlement, pricing_mode=listing_pricing_mode, replayed=False)
+
+
+@transaction.atomic
+def settle_marketplace_checkout(
+    *,
+    organisation_id: UUID,
+    workspace_id: UUID,
+    entitlement_id: UUID,
+    checkout_ref: str,
+) -> MarketplaceEntitlement:
+    """Activate a pending paid marketplace entitlement once provider settlement is verified."""
+    entitlement = (
+        MarketplaceEntitlement.objects.select_for_update()
+        .filter(
+            id=entitlement_id,
+            organisation_id=organisation_id,
+            workspace_id=workspace_id,
+            revoked_at__isnull=True,
+        )
+        .first()
+    )
+    if entitlement is None or entitlement.checkout_ref != checkout_ref:
+        raise ExtensionRefusedError("marketplace_entitlement_absent", 404)
+    if entitlement.state == "active":
+        return entitlement
+    if entitlement.state != "pending":
+        raise ExtensionRefusedError("marketplace_entitlement_state_invalid", 409)
+    entitlement.state = "active"
+    entitlement.checkout_url = None
+    entitlement.save(update_fields=["state", "checkout_url", "updated_at"])
+    return entitlement
+
+
+@transaction.atomic
+def install_marketplace_listing(
+    *,
+    verified: Any,
+    organisation_id: UUID,
+    listing_id: UUID,
+    signing_secret: str,
+    endpoint: str | None = None,
+) -> dict[str, Any]:
+    """Bind an active marketplace entitlement (or auto-grant free listing) to a workspace `Installation`."""
+    workspace_id, principal = services.admin(verified, organisation_id)
+    if (
+        not isinstance(signing_secret, str)
+        or not (32 <= len(signing_secret.encode("utf-8")) <= 512)
+        or not signing_secret.isascii()
+        or not signing_secret.isprintable()
+    ):
+        raise ExtensionRefusedError("extension_signing_secret_invalid", 422)
+
+    listing = ExtensionMarketplaceListing.objects.filter(
+        id=listing_id,
+        workspace_id=workspace_id,
+        published_at__isnull=False,
+        revoked_at__isnull=True,
+    ).first()
+    if listing is None:
+        raise ExtensionRefusedError("marketplace_listing_absent", 404)
+
+    entitlement = (
+        MarketplaceEntitlement.objects.select_for_update()
+        .filter(
+            workspace_id=workspace_id,
+            listing=listing,
+            state="active",
+            revoked_at__isnull=True,
+        )
+        .first()
+    )
+    if entitlement is None:
+        if listing.pricing_mode == "free":
+            auto_key = f"auto-free-install:{listing.id}"
+            auto_hash = hashlib.sha256(auto_key.encode("ascii")).hexdigest()
+            entitlement = MarketplaceEntitlement.objects.create(
+                organisation_id=organisation_id,
+                workspace_id=workspace_id,
+                buyer_membership_id=principal.membership_id,
+                listing=listing,
+                state="active",
+                idempotency_key=auto_key,
+                request_sha256=auto_hash,
+            )
+        else:
+            if not billing_enabled():
+                raise ExtensionRefusedError("billing-disabled", 409)
+            raise ExtensionRefusedError("marketplace_entitlement_required", 403)
+
+    if entitlement.installation_id is not None:
+        existing_inst = Installation.objects.get(id=entitlement.installation_id)
+        return {
+            "installationId": str(existing_inst.id),
+            "entitlementId": str(entitlement.id),
+            "listingId": str(listing.id),
+            "slug": listing.slug,
+            "endpoint": existing_inst.endpoint,
+            "events": list(existing_inst.events),
+            "keyGeneration": str(existing_inst.generation),
+            "replayed": True,
+        }
+
+    manifest_endpoint = listing.manifest.get("endpoint")
+    chosen_endpoint = _validate_public_https_endpoint(
+        endpoint if endpoint is not None else manifest_endpoint
+    )
+    raw_events = listing.manifest.get("events")
+    granted_events = sorted(
+        [ev for ev in raw_events if isinstance(ev, str) and ev in EVENTS]
+        if isinstance(raw_events, list) and raw_events
+        else ["command.invoked"]
+    )
+
+    installation = Installation.objects.create(
+        workspace_id=workspace_id,
+        creator_id=principal.membership_id,
+        name=listing.title,
+        endpoint=chosen_endpoint,
+        events=granted_events,
+    )
+    sealed_secret = sealing.seal(
+        widgets.marketplace_seal_key(),
+        widgets.marketplace_install_aad(organisation_id, installation.id),
+        signing_secret.encode("ascii"),
+    )
+    entitlement.installation = installation
+    entitlement.sealed_signing_secret = sealed_secret
+    entitlement.save(update_fields=["installation", "sealed_signing_secret", "updated_at"])
+
+    services.audit(
+        "installed",
+        principal,
+        organisation_id,
+        installation.id,
+        {"generation": str(installation.generation)},
+    )
+    services.audit(
+        "marketplace_installed",
+        principal,
+        organisation_id,
+        listing.id,
+        {
+            "listing_id": str(listing.id),
+            "installation_id": str(installation.id),
+        },
+    )
+    return {
+        "installationId": str(installation.id),
+        "entitlementId": str(entitlement.id),
+        "listingId": str(listing.id),
+        "slug": listing.slug,
+        "endpoint": installation.endpoint,
+        "events": list(installation.events),
+        "keyGeneration": str(installation.generation),
+        "replayed": False,
+    }

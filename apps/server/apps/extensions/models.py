@@ -399,3 +399,144 @@ class ErasureAdmission(models.Model):
 
     def __str__(self) -> str:
         return f"extension erasure admission {self.erasure_id}"
+
+
+class ExtensionMarketplaceListing(StoredModel):
+    """Published free or web-only Stripe Connect extension listing scoped to a workspace."""
+
+    organisation = models.ForeignKey("orgs.Organisation", on_delete=models.RESTRICT)
+    workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.RESTRICT)
+    creator = models.ForeignKey("orgs.Membership", on_delete=models.RESTRICT)
+    slug = models.TextField()
+    title = models.TextField()
+    summary = models.TextField()
+    manifest = models.JSONField()
+    pricing_mode = models.TextField(default="free")
+    price_excl_vat_minor = models.BigIntegerField(default=0)
+    currency = models.TextField(default="EUR")
+    seller_connect_account_id = models.TextField(null=True)  # noqa: DJ001 - absent on free listings
+    published_at = models.DateTimeField(null=True)
+    revoked_at = models.DateTimeField(null=True)
+
+    class Meta:
+        app_label = "extensions"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["workspace", "slug"],
+                condition=Q(revoked_at__isnull=True),
+                name="extension_marketplace_slug_active_once",
+            ),
+            models.CheckConstraint(
+                name="extension_marketplace_slug_shape",
+                condition=Q(slug__regex=r"^[a-z0-9][a-z0-9-]{0,61}[a-z0-9]$"),
+            ),
+            models.CheckConstraint(
+                name="extension_marketplace_pricing_mode",
+                condition=Q(pricing_mode__in=("free", "one_time", "recurring")),
+            ),
+            models.CheckConstraint(
+                name="extension_marketplace_currency",
+                condition=Q(currency="EUR"),
+            ),
+            models.CheckConstraint(
+                name="extension_marketplace_pricing_consistency",
+                condition=(
+                    Q(
+                        pricing_mode="free",
+                        price_excl_vat_minor=0,
+                        seller_connect_account_id__isnull=True,
+                    )
+                    | Q(
+                        pricing_mode__in=("one_time", "recurring"),
+                        price_excl_vat_minor__gt=0,
+                        seller_connect_account_id__regex=r"^acct_[A-Za-z0-9_]+$",
+                    )
+                ),
+            ),
+        ]
+
+
+class MarketplaceEntitlement(StoredModel):
+    """Buyer entitlement and optional installed extension binding for a marketplace listing."""
+
+    organisation = models.ForeignKey("orgs.Organisation", on_delete=models.RESTRICT)
+    workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.RESTRICT)
+    buyer_membership = models.ForeignKey("orgs.Membership", on_delete=models.RESTRICT)
+    listing = models.ForeignKey(ExtensionMarketplaceListing, on_delete=models.RESTRICT)
+    installation = models.OneToOneField(Installation, on_delete=models.RESTRICT, null=True)
+    state = models.TextField(default="pending")
+    checkout_ref = models.TextField(null=True)  # noqa: DJ001 - absent on free grants
+    checkout_url = models.TextField(null=True)  # noqa: DJ001 - absent on free grants
+    gross_excl_vat_minor = models.BigIntegerField(default=0)
+    vat_amount_minor = models.BigIntegerField(default=0)
+    total_incl_vat_minor = models.BigIntegerField(default=0)
+    application_fee_amount_minor = models.BigIntegerField(default=0)
+    sealed_signing_secret = models.BinaryField(default=b"")
+    idempotency_key = models.TextField()
+    request_sha256 = models.TextField()
+    revoked_at = models.DateTimeField(null=True)
+
+    class Meta:
+        app_label = "extensions"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["workspace", "listing"],
+                condition=Q(state="active"),
+                name="extension_marketplace_active_grant_once",
+            ),
+            models.UniqueConstraint(
+                fields=["workspace", "idempotency_key"],
+                name="extension_marketplace_idem_once",
+            ),
+            models.CheckConstraint(
+                name="extension_marketplace_entitlement_state",
+                condition=Q(state__in=("pending", "active", "revoked", "refunded")),
+            ),
+            models.CheckConstraint(
+                name="extension_marketplace_req_digest",
+                condition=Q(request_sha256__regex=r"^[a-f0-9]{64}$"),
+            ),
+        ]
+
+
+class WidgetActionReceipt(StoredModel):
+    """Idempotency and delivery evidence for interactive channel widget actions."""
+
+    organisation = models.ForeignKey("orgs.Organisation", on_delete=models.RESTRICT)
+    workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.RESTRICT)
+    channel = models.ForeignKey("workspaces.Channel", on_delete=models.RESTRICT)
+    installation = models.ForeignKey(Installation, on_delete=models.RESTRICT)
+    actor_membership = models.ForeignKey("orgs.Membership", on_delete=models.RESTRICT)
+    widget_id = models.TextField()
+    action_id = models.TextField()
+    idempotency_key = models.TextField()
+    request_sha256 = models.TextField()
+    state = models.TextField(default="in_flight")
+    response_status = models.IntegerField(null=True)
+    response_card = models.JSONField(null=True)
+    expires_at = models.DateTimeField(default=delivery_expiry)
+
+    class Meta:
+        app_label = "extensions"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["workspace", "channel", "widget_id", "idempotency_key"],
+                name="extension_widget_action_idem_once",
+            ),
+            models.CheckConstraint(
+                name="extension_widget_action_state",
+                condition=Q(state__in=("in_flight", "delivered", "refused", "failed")),
+            ),
+            models.CheckConstraint(
+                name="extension_widget_action_digest",
+                condition=Q(request_sha256__regex=r"^[a-f0-9]{64}$"),
+            ),
+            models.CheckConstraint(
+                name="extension_widget_action_ids",
+                condition=Q(widget_id__regex=r"^[a-z0-9][a-z0-9-]{0,61}[a-z0-9]$")
+                & Q(action_id__regex=r"^[a-z0-9][a-z0-9_-]{0,63}$"),
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["expires_at"], name="extension_widget_act_exp_idx"),
+        ]
