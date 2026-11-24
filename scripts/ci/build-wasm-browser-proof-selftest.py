@@ -707,8 +707,11 @@ class DescendantControls(unittest.TestCase):
 
 class WorkspaceBrowserCliControls(unittest.TestCase):
     def test_workspace_browser_cli_accepts_workspace_or_hoisted_and_refuses_missing_or_symlink(self):
-        with tempfile.TemporaryDirectory() as name:
-            root = Path(name).resolve()
+        with tempfile.TemporaryDirectory() as name, tempfile.TemporaryDirectory() as ext_name:
+            root = Path(name).resolve(strict=True)
+            outside = Path(ext_name).resolve(strict=True)
+            (outside / 'playwright').mkdir()
+            (outside / 'playwright/cli.js').write_text('// external cli\n')
             with self.assertRaisesRegex(M.Refused, 'Exact workspace browser CLI absent'):
                 M.workspace_browser_cli(root)
             hoisted = root / 'node_modules/playwright/cli.js'
@@ -724,10 +727,31 @@ class WorkspaceBrowserCliControls(unittest.TestCase):
             nested.write_text('// nested cli\n')
             self.assertEqual(M.workspace_browser_cli(root), nested)
             nested.unlink()
+            nested.parent.rmdir()
+            # Symlinked workspace ancestor directory pointing outside repo is refused even if hoisted CLI exists.
+            (root / 'apps/web/node_modules/playwright').symlink_to(
+                outside / 'playwright', target_is_directory=True
+            )
+            with self.assertRaisesRegex(M.Refused, 'Exact workspace browser CLI absent'):
+                M.workspace_browser_cli(root)
+            (root / 'apps/web/node_modules/playwright').unlink()
+            # Symlinked hoisted playwright directory pointing outside repo is refused.
             hoisted.unlink()
-            target = root / 'real-cli.js'
-            target.write_text('// real\n')
-            hoisted.symlink_to(target)
+            hoisted.parent.rmdir()
+            (root / 'node_modules/playwright').symlink_to(
+                outside / 'playwright', target_is_directory=True
+            )
+            with self.assertRaisesRegex(M.Refused, 'Exact workspace browser CLI absent'):
+                M.workspace_browser_cli(root)
+            (root / 'node_modules/playwright').unlink()
+            # Symlinked leaf file is refused.
+            hoisted.parent.mkdir(parents=True)
+            hoisted.symlink_to(outside / 'playwright/cli.js')
+            with self.assertRaisesRegex(M.Refused, 'Exact workspace browser CLI absent'):
+                M.workspace_browser_cli(root)
+            hoisted.unlink()
+            # Non-regular directory at cli.js is refused.
+            hoisted.mkdir()
             with self.assertRaisesRegex(M.Refused, 'Exact workspace browser CLI absent'):
                 M.workspace_browser_cli(root)
 

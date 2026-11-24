@@ -1180,12 +1180,36 @@ os._exit(0)
 
 
 def workspace_browser_cli(repo):
-    for rel in ('apps/web/node_modules/playwright/cli.js', 'node_modules/playwright/cli.js'):
-        cli = repo / rel
-        if cli.is_symlink():
+    try:
+        if Path(repo).is_symlink():
             raise Refused('Exact workspace browser CLI absent')
-        if cli.is_file():
-            return cli
+        repo_real = Path(repo).resolve(strict=True)
+    except OSError as exc:
+        raise Refused('Exact workspace browser CLI absent') from exc
+    for rel in ('apps/web/node_modules/playwright/cli.js', 'node_modules/playwright/cli.js'):
+        current = repo_real
+        missing = False
+        for part in rel.split('/'):
+            current = current / part
+            try:
+                mode = current.lstat().st_mode
+            except FileNotFoundError:
+                missing = True
+                break
+            except OSError as exc:
+                raise Refused('Exact workspace browser CLI absent') from exc
+            if stat.S_ISLNK(mode):
+                raise Refused('Exact workspace browser CLI absent')
+        if missing:
+            continue
+        try:
+            resolved = current.resolve(strict=True)
+            mode = current.lstat().st_mode
+        except OSError as exc:
+            raise Refused('Exact workspace browser CLI absent') from exc
+        if stat.S_ISREG(mode) and resolved == repo_real / rel:
+            return resolved
+        raise Refused('Exact workspace browser CLI absent')
     raise Refused('Exact workspace browser CLI absent')
 
 
