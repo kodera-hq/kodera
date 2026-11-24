@@ -972,7 +972,6 @@ def create_reminder(
         return _reminder_wire(row)
 
 
-@transaction.atomic
 def update_reminder(
     *,
     verified: VerifiedAccessToken,
@@ -984,80 +983,103 @@ def update_reminder(
 ) -> dict[str, Any]:
     if not data:
         raise RefusalError(422)
-    workspace, caller = _caller_context(
-        verified, organisation_id, admin=False, lock=False, require_active_org=True
-    )
-    _lock_caller_erasure_fences(organisation_id, caller.membership_id)
-    workspace, caller = _caller_context(
-        verified, organisation_id, admin=False, lock=False, require_active_org=True
-    )
 
-    row = notification_services.lock_member_reminder(
-        reminder_id=reminder_id,
-        organisation_id=organisation_id,
-        membership_id=caller.membership_id,
-    )
-    if row is None:
-        raise RefusalError(404)
-    _verify_if_match(if_match, _reminder_wire(row))
-    if row.state in ("in_flight", "cancelled", "obsolete"):
-        raise RefusalError(409, "reminder_not_editable")
-
-    now = timezone.now()
-    next_note: str | None = None
-    next_remind_at: datetime | None = None
-    next_state: str | None = None
-
-    if "note" in data:
-        next_note = _validate_note(data["note"])
-
-    has_remind_at = "remind_at" in data or "remindAt" in data
-    if has_remind_at:
-        _assert_plaintext_target(
-            workspace=workspace,
-            caller=caller,
-            channel_id=row.channel_id,
-            room_id=row.room_id,
-            require_post=False,
+    resolved_synapse: str | None = None
+    if not connection.in_atomic_block:
+        peek = notification_services.peek_reminder_target(
+            reminder_id=reminder_id, organisation_id=organisation_id
         )
-        raw_remind = data.get("remind_at") if "remind_at" in data else data.get("remindAt")
-        remind_at = _parse_aware_datetime(raw_remind)
-        _validate_remind_at(remind_at, now=now)
-        next_remind_at = remind_at
-        if "state" not in data:
-            candidate_state = "snoozed" if row.state in ("fired", "snoozed") else "pending"
-            if row.state != candidate_state:
-                next_state = candidate_state
+        if peek is not None and peek[0] is not None and peek[1]:
+            try:
+                resolved_synapse = resolve_authoritative_channel_room(channel_id=peek[0])
+            except MatrixTransportError as exc:
+                if exc.retryable:
+                    raise RefusalError(503, "workspace-busy") from None
 
-    if "state" in data:
-        req_state = data["state"]
-        if req_state not in ("completed", "cancelled", "snoozed", "pending"):
+    with transaction.atomic():
+        workspace, caller = _caller_context(
+            verified, organisation_id, admin=False, lock=False, require_active_org=True
+        )
+        _lock_caller_erasure_fences(organisation_id, caller.membership_id)
+        workspace, caller = _caller_context(
+            verified, organisation_id, admin=False, lock=False, require_active_org=True
+        )
+
+        row = notification_services.lock_member_reminder(
+            reminder_id=reminder_id,
+            organisation_id=organisation_id,
+            membership_id=caller.membership_id,
+        )
+        if row is None:
+            raise RefusalError(404)
+        _verify_if_match(if_match, _reminder_wire(row))
+        if row.state in ("in_flight", "cancelled", "obsolete"):
+            raise RefusalError(409, "reminder_not_editable")
+
+        now = timezone.now()
+        next_note: str | None = None
+        next_remind_at: datetime | None = None
+        next_state: str | None = None
+
+        if "note" in data:
+            next_note = _validate_note(data["note"])
+
+        has_remind_at = "remind_at" in data or "remindAt" in data
+        if has_remind_at:
+            _assert_plaintext_target(
+                workspace=workspace,
+                caller=caller,
+                channel_id=row.channel_id,
+                room_id=row.room_id,
+                require_post=False,
+                resolved_synapse_room_id=resolved_synapse,
+            )
+            raw_remind = data.get("remind_at") if "remind_at" in data else data.get("remindAt")
+            remind_at = _parse_aware_datetime(raw_remind)
+            _validate_remind_at(remind_at, now=now)
+            next_remind_at = remind_at
+            if "state" not in data:
+                candidate_state = "snoozed" if row.state in ("fired", "snoozed") else "pending"
+                if row.state != candidate_state:
+                    next_state = candidate_state
+
+        if "state" in data:
+            req_state = data["state"]
+            if req_state not in ("completed", "cancelled", "snoozed", "pending"):
+                raise RefusalError(422)
+            if req_state in ("snoozed", "pending") and not has_remind_at:
+                _assert_plaintext_target(
+                    workspace=workspace,
+                    caller=caller,
+                    channel_id=row.channel_id,
+                    room_id=row.room_id,
+                    require_post=False,
+                    resolved_synapse_room_id=resolved_synapse,
+                )
+                _validate_remind_at(row.remind_at, now=now)
+            if row.state != req_state:
+                next_state = req_state
+
+        if next_note is None and next_remind_at is None and next_state is None:
             raise RefusalError(422)
-        if req_state in ("snoozed", "pending") and not has_remind_at:
-            _validate_remind_at(row.remind_at, now=now)
-        if row.state != req_state:
-            next_state = req_state
 
-    if next_note is None and next_remind_at is None and next_state is None:
-        raise RefusalError(422)
-
-    updated = notification_services.update_member_reminder(
-        reminder_id=row.id,
-        organisation_id=organisation_id,
-        membership_id=caller.membership_id,
-        note=next_note,
-        remind_at=next_remind_at,
-        state=next_state,
-    )
-    _audit(
-        workspace,
-        caller.membership_id,
-        "workspace.personal_reminder.updated",
-        updated.id,
-        request_id,
-        metadata={"state": updated.state},
-    )
-    return _reminder_wire(updated)
+        updated = notification_services.update_member_reminder(
+            reminder_id=row.id,
+            organisation_id=organisation_id,
+            membership_id=caller.membership_id,
+            note=next_note,
+            remind_at=next_remind_at,
+            state=next_state,
+        )
+        _audit(
+            workspace,
+            caller.membership_id,
+            "workspace.personal_reminder.updated",
+            updated.id,
+            request_id,
+            metadata={"state": updated.state},
+        )
+        return _reminder_wire(updated)
 
 
 @transaction.atomic

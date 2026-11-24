@@ -6,7 +6,7 @@ import hashlib
 import ipaddress
 import json
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -624,7 +624,16 @@ def checkout_marketplace_listing(
                 .exclude(id=entitlement_id)
                 .count()
             )
-            provider_idem_key = f"mkt-checkout-{entitlement_id}-{attempt_epoch}"
+            now_epoch = int(timezone.now().timestamp())
+            created_epoch = int(entitlement.created_at.timestamp())
+            elapsed_s = max(0, now_epoch - created_epoch)
+            time_bucket = elapsed_s // (22 * 3600)
+            anchor_expires_epoch = created_epoch + time_bucket * (22 * 3600) + 23 * 3600
+            checkout_expires_at = datetime.fromtimestamp(anchor_expires_epoch, UTC)
+            epoch_suffix = (
+                f"{attempt_epoch}-{time_bucket}" if time_bucket > 0 else f"{attempt_epoch}"
+            )
+            provider_idem_key = f"mkt-checkout-{entitlement_id}-{epoch_suffix}"
             listing_slug = listing.slug
             listing_title = listing.title
             listing_pricing_mode = listing.pricing_mode
@@ -652,6 +661,7 @@ def checkout_marketplace_listing(
                 withdrawal_waiver_at=withdrawal_waiver_at,
                 withdrawal_waiver_statement=withdrawal_waiver_statement,
                 provider_idempotency_key=provider_idem_key,
+                checkout_expires_at=checkout_expires_at,
                 provider=provider,
             )
         except (

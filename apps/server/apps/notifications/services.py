@@ -787,6 +787,21 @@ def lock_member_reminder(
     return None if row is None else _reminder_record(row)
 
 
+def peek_reminder_target(
+    *,
+    reminder_id: UUID,
+    organisation_id: UUID,
+) -> tuple[UUID | None, str] | None:
+    return (
+        PersonalReminder.objects.filter(
+            id=reminder_id,
+            organisation_id=organisation_id,
+        )
+        .values_list("channel_id", "room_id")
+        .first()
+    )
+
+
 def update_member_reminder(
     *,
     reminder_id: UUID,

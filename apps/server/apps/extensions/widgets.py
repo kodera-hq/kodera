@@ -601,10 +601,30 @@ def dispatch_widget_action(
         refusal_error = ExtensionRefusedError("widget_endpoint_unavailable", 502)
 
     # Stage 3: Persist outcome and audit evidence ONLY after re-verifying in-flight lease,
-    # GDPR org/account erasure cutoffs, active installation (locked in canonical order
-    # `Installation` -> `WidgetActionReceipt`), non-confidential channel, and caller membership.
+    # GDPR org/account erasure cutoffs, caller membership, active installation, and non-confidential
+    # channel in canonical lock order (`advisory erasure fences -> authority (m->i->u->o->w) ->
+    # Installation -> WidgetActionReceipt`).
     aborted_reason: str | None = None
     with transaction.atomic():
+        member_row = membership_delivery_state(
+            membership_id=principal.membership_id, organisation_id=organisation_id
+        )
+        actor_user_id: UUID | None = member_row[0] if member_row is not None else None
+        if actor_user_id is not None:
+            lock_erasure_cutoff_fences(organisation_id=organisation_id, user_id=actor_user_id)
+
+        caller_revoked = False
+        try:
+            post_ws_id, post_principal = services.member(verified, organisation_id)
+        except ExtensionRefusedError:
+            caller_revoked = True
+        else:
+            if (
+                post_ws_id != workspace_id
+                or post_principal.membership_id != principal.membership_id
+            ):
+                caller_revoked = True
+
         post_inst = (
             Installation.objects.select_for_update()
             .filter(id=installation_id, workspace_id=workspace_id)
@@ -616,13 +636,6 @@ def dispatch_widget_action(
         if locked_receipt is None or locked_receipt.state != "in_flight":
             raise ExtensionRefusedError("widget_action_aborted", 409)
         receipt = locked_receipt
-
-        member_row = membership_delivery_state(
-            membership_id=principal.membership_id, organisation_id=organisation_id
-        )
-        actor_user_id: UUID | None = member_row[0] if member_row is not None else None
-        if actor_user_id is not None:
-            lock_erasure_cutoff_fences(organisation_id=organisation_id, user_id=actor_user_id)
 
         cutoff_active = (
             WorkspaceCutoff.objects.filter(organisation_id=organisation_id).exists()
@@ -637,18 +650,8 @@ def dispatch_widget_action(
             or "widget.action" not in post_inst.events
         ):
             aborted_reason = "installation_revoked"
-
-        if aborted_reason is None:
-            try:
-                post_ws_id, post_principal = services.member(verified, organisation_id)
-            except ExtensionRefusedError:
-                aborted_reason = "caller_revoked"
-            else:
-                if (
-                    post_ws_id != workspace_id
-                    or post_principal.membership_id != principal.membership_id
-                ):
-                    aborted_reason = "caller_revoked"
+        elif caller_revoked:
+            aborted_reason = "caller_revoked"
 
         if aborted_reason is None:
             post_snap = workspaces.channel_snapshot(

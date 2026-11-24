@@ -449,6 +449,7 @@ def issue_marketplace_connect_checkout_link(
     withdrawal_waiver_at: str | None = None,
     withdrawal_waiver_statement: str | None = None,
     provider_idempotency_key: str | None = None,
+    checkout_expires_at: datetime | None = None,
     provider: Any | None = None,
 ) -> dict[str, Any]:
     """Quote EU OSS / B2B VAT and issue a web-only Stripe Connect Checkout link outside `transaction.atomic()`."""
@@ -507,13 +508,16 @@ def issue_marketplace_connect_checkout_link(
         else f"Kodera Extension — {listing_title}"
     )
     det_idem_key = provider_idempotency_key or f"mkt-checkout-{entitlement_id}-0"
+    effective_expires_at = (
+        checkout_expires_at if checkout_expires_at is not None else (now + timedelta(hours=23))
+    )
     issued = active_provider.create_link(
         LinkRequest(
             invoice_id=entitlement_id,
             invoice_number=listing_slug.upper(),
             amount_minor=quote.total_incl_vat_minor,
             currency="EUR",
-            expires_at=now + timedelta(hours=23),
+            expires_at=effective_expires_at,
             return_url=return_url,
             locale=locale,
             connect_destination_account=seller_connect_account_id,

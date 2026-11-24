@@ -1095,7 +1095,10 @@ def test_r2_opaque_synapse_room_resolution_outside_atomic_and_strict_strong_if_m
     assert forged_rem.status_code == 422
     assert forged_rem.json()["code"] == "channel_room_mismatch"
 
-    # 3) RFC 9110 §13.1.1 strong comparison on `If-Match`: weak validators (`W/"..."`) are rejected with 412!
+    # 3) RFC 9110 §8.8.3 & §13.1.1 `If-Match`: weak validators (`W/"..."`) and non-matching `""`
+    # fail with 412, malformed tokens fail with 400, AND comma-bearing quoted tags (`"previous,opaque"`)
+    # plus empty strong tags (`""`) in multi-tag lists succeed with 200 OK (including `PATCH /reminders/{id}`
+    # updating `remindAt` on an opaque Synapse room outside `transaction.atomic()`)!
     weak_sched = client.patch(
         f"/api/v1/organisations/{org.id}/workspace/scheduled-messages/{sched_id}",
         data=json.dumps({"body": "Weak validator must fail"}),
@@ -1105,6 +1108,34 @@ def test_r2_opaque_synapse_room_resolution_outside_atomic_and_strict_strong_if_m
     )
     assert weak_sched.status_code == 412
 
+    empty_only_sched = client.patch(
+        f"/api/v1/organisations/{org.id}/workspace/scheduled-messages/{sched_id}",
+        data=json.dumps({"body": "Empty strong tag alone must fail 412"}),
+        content_type="application/json",
+        HTTP_IF_MATCH='""',
+        **_auth_headers(member_cred),
+    )
+    assert empty_only_sched.status_code == 412
+
+    for bad_if_match in ('"unterminated', '*, "abc"', 'w/"lowercase"'):
+        bad_resp = client.patch(
+            f"/api/v1/organisations/{org.id}/workspace/scheduled-messages/{sched_id}",
+            data=json.dumps({"body": "Malformed If-Match"}),
+            content_type="application/json",
+            HTTP_IF_MATCH=bad_if_match,
+            **_auth_headers(member_cred),
+        )
+        assert bad_resp.status_code == 400
+
+    comma_tag_sched = client.patch(
+        f"/api/v1/organisations/{org.id}/workspace/scheduled-messages/{sched_id}",
+        data=json.dumps({"body": "Opaque scheduled note updated via comma-list ETag"}),
+        content_type="application/json",
+        HTTP_IF_MATCH=f'"previous,opaque", {sched_etag}',
+        **_auth_headers(member_cred),
+    )
+    assert comma_tag_sched.status_code == 200, comma_tag_sched.content
+
     weak_rem = client.patch(
         f"/api/v1/organisations/{org.id}/workspace/reminders/{rem_id}",
         data=json.dumps({"note": "Weak validator must fail"}),
@@ -1113,6 +1144,18 @@ def test_r2_opaque_synapse_room_resolution_outside_atomic_and_strict_strong_if_m
         **_auth_headers(member_cred),
     )
     assert weak_rem.status_code == 412
+
+    opaque_transport.in_atomic_during_resolve.clear()
+    updated_future_iso = (timezone.now() + timedelta(hours=3)).isoformat()
+    patch_opaque_rem = client.patch(
+        f"/api/v1/organisations/{org.id}/workspace/reminders/{rem_id}",
+        data=json.dumps({"remindAt": updated_future_iso}),
+        content_type="application/json",
+        HTTP_IF_MATCH=f'"", "prior,tag", {rem_etag}',
+        **_auth_headers(member_cred),
+    )
+    assert patch_opaque_rem.status_code == 200, patch_opaque_rem.content
+    assert opaque_transport.in_atomic_during_resolve == [False]
 
     pref_get = client.get(
         f"/api/v1/organisations/{org.id}/workspace/preferences/me",

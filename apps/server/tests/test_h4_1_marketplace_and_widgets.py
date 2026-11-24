@@ -12,6 +12,7 @@ import time
 import urllib.parse
 import uuid
 from collections.abc import Mapping
+from datetime import timedelta
 from typing import Any
 
 import pytest
@@ -1406,6 +1407,7 @@ def test_r2_live_stripe_adapter_metadata_fresh_key_retry_and_early_dispute_recon
 
     captured_calls: list[dict[str, Any]] = []
     next_statuses: list[tuple[int, dict[str, Any]]] = []
+    fake_clock = [float(now)]
 
     def capturing_stripe_transport(
         method: str, url: str, headers: Mapping[str, str], body: bytes
@@ -1417,6 +1419,7 @@ def test_r2_live_stripe_adapter_metadata_fresh_key_retry_and_early_dispute_recon
                 "url": url,
                 "headers": dict(headers),
                 "form": parsed_form,
+                "raw_body": body,
             }
         )
         status, payload = next_statuses.pop(0)
@@ -1426,6 +1429,7 @@ def test_r2_live_stripe_adapter_metadata_fresh_key_retry_and_early_dispute_recon
         secret_key="rk_test_r2_marketplace_restricted_key",
         webhook_secret=webhook_secret,
         transport=capturing_stripe_transport,
+        clock=lambda: fake_clock[0],
     )
     monkeypatch.setattr("apps.billing.payments.configured_provider", lambda: live_stripe)
 
@@ -1494,9 +1498,14 @@ def test_r2_live_stripe_adapter_metadata_fresh_key_retry_and_early_dispute_recon
             assert r_503.status_code == 503
             assert len(captured_calls) == 1
 
-            # 2) Retry with a BRAND-NEW client Idempotency-Key (`fresh_key_2`) reuses the pending
-            # `checkout_ref is None` entitlement (NO 500 IntegrityError!) AND sends the EXACT SAME
-            # deterministic provider `Idempotency-Key` to Stripe!
+            # 2) Advance server & provider clocks by +5 seconds, then retry with a BRAND-NEW client
+            # Idempotency-Key (`fresh_key_2`): reuses the pending `checkout_ref is None` entitlement,
+            # sends the EXACT SAME deterministic provider `Idempotency-Key` to Stripe, AND emits
+            # byte-identical URL-encoded form parameters (including deterministic `expires_at`)!
+            real_tz_now = timezone.now
+            fake_clock[0] += 5.0
+            later_dt = real_tz_now() + timedelta(seconds=5)
+            monkeypatch.setattr(timezone, "now", lambda: later_dt)
             next_statuses.append(
                 (
                     200,
@@ -1515,6 +1524,7 @@ def test_r2_live_stripe_adapter_metadata_fresh_key_retry_and_early_dispute_recon
                 HTTP_IDEMPOTENCY_KEY=fresh_key_2,
                 HTTP_AUTHORIZATION=f"Bearer {admin_bearer}",
             )
+            monkeypatch.setattr(timezone, "now", real_tz_now)
             assert r_ok.status_code == 201, r_ok.content
             entitlement_1_id = r_ok.json()["entitlementId"]
             total_1_minor = r_ok.json()["totalInclVatMinor"]
@@ -1523,6 +1533,10 @@ def test_r2_live_stripe_adapter_metadata_fresh_key_retry_and_early_dispute_recon
             expected_provider_idem = f"mkt-checkout-{entitlement_1_id}-0"
             assert captured_calls[0]["headers"]["Idempotency-Key"] == expected_provider_idem
             assert captured_calls[1]["headers"]["Idempotency-Key"] == expected_provider_idem
+            assert (
+                captured_calls[0]["form"]["expires_at"] == captured_calls[1]["form"]["expires_at"]
+            )
+            assert captured_calls[0]["raw_body"] == captured_calls[1]["raw_body"]
 
             # Inspect real form parameters emitted by `StripeProvider.create_link`!
             form1 = captured_calls[1]["form"]

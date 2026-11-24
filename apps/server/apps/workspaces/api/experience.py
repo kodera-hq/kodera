@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 from typing import Any
 from uuid import UUID
 
@@ -60,9 +59,6 @@ PREFERENCES_PATCH_FIELDS = {
 }
 
 
-ENTITY_TAG_RE = re.compile(r'^(?:W/)?"[\x21\x23-\x7e]+"(?:\Z)')
-
-
 def _json_response(body: Any, status: int = 200, *, with_etag: bool = False) -> HttpResponse:
     response = HttpResponse(
         json.dumps(body, separators=(",", ":")),
@@ -74,19 +70,60 @@ def _json_response(body: Any, status: int = 200, *, with_etag: bool = False) -> 
     return response
 
 
+def _is_etagc(ch: str) -> bool:
+    """RFC 9110 §8.8.3 `etagc = %x21 / %x23-7E / obs-text` (`%x80-FF`)."""
+    code = ord(ch)
+    return code == 0x21 or (0x23 <= code <= 0x7E) or (0x80 <= code <= 0xFF)
+
+
 def _parse_if_match_tokens(raw: str | None) -> tuple[str, ...]:
-    """Parse RFC 9110 §13.1.1 `If-Match` tokens without stripping `W/` weak prefixes."""
+    """Quote-aware linear RFC 9110 §8.8.3 / §13.1.1 `If-Match` entity-tag list scanner."""
     if raw is None:
         raise RefusalError(428, "precondition-required")
-    trimmed = raw.strip()
+    ows = " \t"
+    trimmed = raw.strip(ows)
     if not trimmed:
         raise RefusalError(400, "malformed-request")
     if trimmed == "*":
         return ("*",)
-    parts = [part.strip() for part in trimmed.split(",")]
-    if not parts or any(ENTITY_TAG_RE.fullmatch(part) is None for part in parts):
+
+    tokens: list[str] = []
+    n = len(trimmed)
+    idx = 0
+    while idx < n:
+        while idx < n and trimmed[idx] in ows:
+            idx += 1
+        if idx < n and trimmed[idx] == ",":
+            idx += 1
+            continue
+        if idx >= n:
+            break
+        weak = False
+        if trimmed.startswith("W/", idx):
+            weak = True
+            idx += 2
+        if idx >= n or trimmed[idx] != '"':
+            raise RefusalError(400, "malformed-request")
+        idx += 1
+        start_opaque = idx
+        while idx < n and trimmed[idx] != '"':
+            if not _is_etagc(trimmed[idx]):
+                raise RefusalError(400, "malformed-request")
+            idx += 1
+        if idx >= n or trimmed[idx] != '"':
+            raise RefusalError(400, "malformed-request")
+        opaque = trimmed[start_opaque:idx]
+        idx += 1
+        tokens.append(f'W/"{opaque}"' if weak else f'"{opaque}"')
+        while idx < n and trimmed[idx] in ows:
+            idx += 1
+        if idx < n:
+            if trimmed[idx] != ",":
+                raise RefusalError(400, "malformed-request")
+            idx += 1
+    if not tokens:
         raise RefusalError(400, "malformed-request")
-    return tuple(parts)
+    return tuple(tokens)
 
 
 def _require_if_match(request: HttpRequest) -> tuple[str, ...]:
