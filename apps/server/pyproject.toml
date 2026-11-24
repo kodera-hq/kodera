@@ -20,7 +20,7 @@ dependencies = [
 
 [project.optional-dependencies]
 billing-documents = [
-    "factur-x==7.9",
+    "factur-x==7.10",
     "reportlab==5.1.0",
     "saxonche==13.1.1",
 ]

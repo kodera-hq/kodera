@@ -72,7 +72,7 @@ dependencies {
     // AppAuth 0.11.1 alone would resolve 1.3.0 of each.
     implementation("androidx.appcompat:appcompat:1.8.0")
     implementation("androidx.browser:browser:1.10.0")
-    implementation(platform("androidx.compose:compose-bom:2026.09.00"))
+    implementation(platform("androidx.compose:compose-bom:2026.11.01"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3")
