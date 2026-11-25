@@ -84,7 +84,7 @@ describe('WhiteboardCanvas', () => {
       <DocsWorkspacePanel tenantSlug="acme-fr" channelId="chan-arch" channelName="Architecture" />
     )
 
-    await user.click(screen.getByRole('button', { name: 'Tableau blanc' }))
+    await user.click(await screen.findByRole('button', { name: 'Nouveau tableau blanc' }))
 
     const canvas = (await screen.findByTestId('whiteboard-canvas')) as HTMLCanvasElement
     expect(canvas).toBeInTheDocument()

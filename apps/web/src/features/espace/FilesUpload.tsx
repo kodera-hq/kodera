@@ -1,10 +1,19 @@
+import { QueryClientContext } from '@tanstack/react-query'
 import { Tooltip } from '../../ui/Tooltip/Tooltip'
 import type { ReactNode } from 'react'
 import { FileDropArea } from '../../ui/FileDrop/FileDrop'
 import { KoderaIcon } from '../../ui/icons/KoderaIcons'
 import { IconButton } from '../../ui/IconButton'
 import { formatBytes } from '../../ui/formatBytes'
-import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import {
+  useContext,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '../../ui/Button/Button'
 import { cleanText } from '../../ui/safeText'
@@ -28,9 +37,10 @@ interface Props {
 
 export function FilesUpload(props: Props) {
   const organisationId = useMessagingOrganisation()
+  const queryClient = useContext(QueryClientContext)
   const { i18n } = useTranslation()
   const copy = filesMessages[i18n.resolvedLanguage?.startsWith('en') ? 'en' : 'fr']
-  return organisationId === null ? (
+  return organisationId === null || queryClient === undefined ? (
     <>
       {props.children?.({
         trigger: (
@@ -96,11 +106,21 @@ function LiveFilesUpload({
   }, [queue])
   const available = channels.flatMap((channel) => {
     const room = snapshot.channels.get(channel.id)
-    return channel.kind === 'text' &&
+    const flags = channel as ChannelSearchEntry & {
+      isConfidential?: boolean
+      is_confidential?: boolean
+    }
+    const boundary =
+      room?.state === 'resolved'
+        ? (store.getRoomBoundary?.(room.roomId) ??
+          snapshot.rooms.find((entry) => entry.roomId === room.roomId)?.confidentiality)
+        : undefined
+    return !flags.isConfidential &&
+      !flags.is_confidential &&
+      channel.kind === 'text' &&
       room?.state === 'resolved' &&
       snapshot.rooms.some((entry) => entry.roomId === room.roomId) &&
-      (store.getRoomBoundary?.(room.roomId) === undefined ||
-        permitsPlaintext(store.getRoomBoundary!(room.roomId))) &&
+      (boundary === undefined || permitsPlaintext(boundary)) &&
       store.canSendMessage?.(room.roomId) !== false
       ? [{ ...channel, roomId: room.roomId }]
       : []
@@ -133,7 +153,9 @@ function LiveFilesUpload({
       ready === null ||
       ready.length === 0 ||
       chosenBytes > remaining ||
-      store.canSendMessage?.(roomId) === false
+      store.canSendMessage?.(roomId) === false ||
+      (store.getRoomBoundary?.(roomId) !== undefined &&
+        !permitsPlaintext(store.getRoomBoundary!(roomId)))
     )
       return
     setSending(true)

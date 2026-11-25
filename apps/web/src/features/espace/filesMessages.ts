@@ -1,9 +1,9 @@
 export const filesMessages = {
   en: {
-    import: 'Import files',
+    import: 'Upload files',
     liveOnly: 'Connect to a workspace to import files.',
     download: 'Download',
-    openChannel: 'Open in',
+    openChannel: 'Open conversation',
     previous: 'Previous file',
     next: 'Next file',
     loading: 'Loading preview…',
@@ -27,7 +27,7 @@ export const filesMessages = {
     import: 'Importer des fichiers',
     liveOnly: 'Connectez-vous à un espace pour importer des fichiers.',
     download: 'Télécharger',
-    openChannel: 'Ouvrir dans',
+    openChannel: 'Ouvrir la conversation',
     previous: 'Fichier précédent',
     next: 'Fichier suivant',
     loading: 'Chargement de l’aperçu…',

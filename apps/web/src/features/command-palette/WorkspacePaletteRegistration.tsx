@@ -371,6 +371,15 @@ export function WorkspacePaletteRegistration({
             open: () => onSelectDirect(dm.roomId),
           })),
       actions: [
+        ...(onOpenCollection && uiMode !== 'messages'
+          ? [
+              {
+                id: 'collections',
+                label: copy.collections,
+                open: () => onOpenCollection('surface:collections'),
+              },
+            ]
+          : []),
         ...(onToggleUiMode
           ? [
               {

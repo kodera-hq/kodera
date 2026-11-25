@@ -72,14 +72,7 @@ export function StudioNavigation({
   }, [compact, panel])
   const openCallsSurface = onOpenCalls ?? (onChange ? () => onChange('calls') : undefined)
   const entries: {
-    name:
-      | 'notifications'
-      | 'messages'
-      | 'docs'
-      | 'calls'
-      | 'files'
-      | 'calendar'
-      | 'integrations'
+    name: 'notifications' | 'messages' | 'docs' | 'calls' | 'files' | 'calendar' | 'integrations'
     icon: StudioGlyphName
     action: () => void
     selected?: boolean
@@ -112,7 +105,7 @@ export function StudioNavigation({
               name: 'docs',
               icon: 'docs',
               action: () => onChange?.('docs'),
-              selected: mode === 'docs',
+              selected: mode === 'docs' || mode === 'files',
             },
             {
               name: 'calls',
@@ -120,14 +113,15 @@ export function StudioNavigation({
               action: openCallsSurface ?? (() => setPanel('calls')),
               ...(openCallsSurface ? { selected: mode === 'calls' } : {}),
             },
-            // « Fichiers » is a canvas of its own where the view offers one (`onChange`), and the
-            // short dialog only where it does not — the organisation console, which has no canvas.
-            {
-              name: 'files',
-              icon: 'files',
-              action: onChange ? () => onChange('files') : () => setPanel('files'),
-              ...(onChange ? { selected: mode === 'files' } : {}),
-            },
+            ...(!onChange
+              ? [
+                  {
+                    name: 'files' as const,
+                    icon: 'files' as const,
+                    action: () => setPanel('files'),
+                  },
+                ]
+              : []),
             {
               name: 'calendar',
               icon: 'calendar',
@@ -288,7 +282,7 @@ export function StudioNavigation({
               <KoderaIcon
                 name={
                   entry.icon === 'docs'
-                    ? 'docs'
+                    ? 'drive'
                     : entry.icon === 'calls'
                       ? 'calls'
                       : entry.icon === 'files'

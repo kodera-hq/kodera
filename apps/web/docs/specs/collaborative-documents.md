@@ -1,8 +1,21 @@
 # Collaborative workspace documents
 
-Status: Implemented for review on Core API 0.43.0; service release remains separate.
+Status: Implemented web surface for review; document records remain compatible with Core API 0.61.0. Service qualification remains separate.
 
 ## Spec
+
+### Unified Drive & Docs
+
+- Studio navigation exposes one **Drive & Docs** destination for both `docs` and legacy `files` canvas commands. Channel and direct-message selection returns to chat. The channel header is hidden on these document surfaces.
+- `DocsWorkspacePanel` renders the workspace directly. Standalone `EspaceLiveView` mounts lazily load the same workspace through `EspaceCanvasPanes`, including channel attachments and shared documents.
+- The collapsible Drive & Pages tree and explorer share folder navigation. The explorer provides search, grid/list views, name/modification sorting, and six filters: All, Folders, Pages, Databases, Whiteboards, Files.
+- Item kinds round-trip through the existing Markdown field: `<!-- kodera:drive-folder -->`, `<!-- kodera:doc-kind:base -->`, and `<!-- kodera:doc-kind:whiteboard -->`. Pages retain their rich editor, Markdown source, outline, backlinks, presence, and Markdown export. Databases open the existing Table/Kanban collection component; validated row metadata is retained in a bounded `kodera:collection-rows:v1` Markdown comment. Whiteboards use the existing Yjs canvas and scoped offline persistence.
+- The virtual **Channel attachments** folder aggregates only accessible ordinary/community sources. Protected, unknown, invalid, and explicitly confidential sources are excluded before their timelines are read. File previews retain an explicit **Open conversation** action; shared documents open in the editor.
+- Uploads use the existing attachment queue and Core storage transport when a workspace and query provider are available. Other hosts may supply a controlled file callback. Upload destinations and sends recheck room boundaries.
+- **Share** reports the current role and folder inheritance, and copies an internal document link without granting access. Confidential rooms disable link copying, creation, uploads, publication, and plaintext body writes. Database metadata and kind writes use existing document preconditions; no backend schema field is added.
+- Publishing a workspace page to a channel retains its document ID. Chat cards resolve both channel documents and workspace pages for **Open in Docs**.
+- Developer documentation opens the external portal at `https://kodera.io/docs` with opener isolation. Static `/llms.txt` and `/developer-docs/*.md` artifacts remain generated and checked separately.
+- `DriveUnified.test.tsx`, `driveKinds.test.ts`, the existing editor/collection/whiteboard suites, and the affected production-browser specs cover these paths. Full cloud matrices remain a separate check.
 
 ### Licence boundary (`B1`)
 
@@ -65,7 +78,7 @@ Status: Implemented for review on Core API 0.43.0; service release remains separ
   - `console.docs.collab.action-save-draft-as-page` keeps the draft as a page of its own — `POST …/documents` with the draft's title and parent, then the draft's Markdown as a conditional body write with the version the creation handed back, because `WorkspaceDocumentRequest` carries no Markdown. The new page is then selected and `console.docs.collab.notice-draft-saved-as-page` names it in a `role="status"` region mounted before the message arrives. It is offered only on `version-conflict`, only to an editor, and never under a confidential policy, under which the body never travels over `REST` at all.
 - Neither sentence names an HTTP status number and neither asks for a retry. `console.docs.collab.error-save` keeps answering for every other failure — offline, a refused field, Core unavailable — and its "réessayez" is right there and wrong for a precondition.
 - **A refusal is a state of the page, and only those two actions end it.** It is held per document, with the draft it refused and as that draft is typed on, and what follows from that:
-  - Opening another page and coming back restores the draft *and* the banner. A version read on the way in says nothing about a draft nobody saved, so the page the server would answer with is left for the moment the member asks for it. The drafts kept this way are bounded, and an entry is dropped when either action ends its conflict.
+  - Opening another page and coming back restores the draft _and_ the banner. A version read on the way in says nothing about a draft nobody saved, so the page the server would answer with is left for the moment the member asks for it. The drafts kept this way are bounded, and an entry is dropped when either action ends its conflict.
   - While a page is in `version-conflict`, no further write of it is attempted: the version it was refused on is the only one this tab has, so every write would be refused in turn — and each refusal would report the missing version the first one left behind, which is the state with no "keep my draft as a new page" on it. The keystrokes are kept instead, so the draft saved as a page of its own is the one typed last, not the one the refused write carried.
   - The re-read reaches the block editor. `CollaborativeBlockEditor` seeds its `Y.Doc` from Markdown once, so a page re-read behind it would keep the fragment from before: the next keystroke would serialize that body and send it with the version the re-read brought — a collaborator's commit overwritten by the very draft the member asked to replace, with a version the server accepts. The page's reload epoch moves the editor's key and tells it that this mount replaces a body rather than resuming one. Only where no collaboration session owns the body (`maySeedFromMarkdown`); where one does, it holds the authoritative state and this tab does not replace it.
   - A write that left before either action and answers after it is discarded, by a per-document write generation both actions move. Cancelling the debounce timer cannot recall a request already on the wire, and its answer must neither write its `ETag` back over the fresh one nor re-open a banner the member has just closed.

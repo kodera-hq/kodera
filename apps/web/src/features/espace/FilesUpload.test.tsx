@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, expect, it, vi } from 'vitest'
@@ -23,6 +24,7 @@ vi.mock('../messaging/attachments/attachmentQueue', () => ({
     close = mocked.close
   },
 }))
+const queryClient = new QueryClient()
 const empty: [] = []
 const snapshot = {
   channels: new Map([
@@ -52,14 +54,16 @@ function View({
   currentStore?: EspaceStoreLike
 }) {
   return (
-    <MessagingOrganisation.Provider value="workspace">
-      <FilesUpload
-        store={currentStore}
-        channels={channels}
-        snapshot={snapshot}
-        {...(activeChannelId ? { activeChannelId } : {})}
-      />
-    </MessagingOrganisation.Provider>
+    <QueryClientProvider client={queryClient}>
+      <MessagingOrganisation.Provider value="workspace">
+        <FilesUpload
+          store={currentStore}
+          channels={channels}
+          snapshot={snapshot}
+          {...(activeChannelId ? { activeChannelId } : {})}
+        />
+      </MessagingOrganisation.Provider>
+    </QueryClientProvider>
   )
 }
 it('hides native browser chrome and defaults to the active channel', async () => {

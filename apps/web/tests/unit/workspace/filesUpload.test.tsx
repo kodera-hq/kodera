@@ -1,9 +1,11 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, expect, it, vi } from 'vitest'
 import '../../../src/i18n'
 import { FilesUpload } from '../../../src/features/espace/FilesUpload'
-import { WorkspaceFilesPanel } from '../../../src/features/espace/WorkspaceFilesPanel'
+import { WorkspaceCollaborativeDocs } from '../../../src/features/docs/WorkspaceCollaborativeDocs'
+import { DriveWorkspaceContext } from '../../../src/features/docs/DriveWorkspaceContext'
 import { MessagingOrganisation } from '../../../src/features/messaging/organisationContext'
 import type { EspaceStoreLike } from '../../../src/features/espace/liveViewModel'
 import type { EspaceSnapshot } from '../../../src/features/espace/matrix/store'
@@ -51,16 +53,20 @@ function mount() {
     send,
   } as unknown as EspaceStoreLike
   const view = render(
-    <MessagingOrganisation.Provider value="org">
-      <FilesUpload
-        store={store}
-        snapshot={snapshot}
-        channels={[
-          { id: 'general', label: 'general', kind: 'text' },
-          { id: 'locked', label: 'locked', kind: 'text' },
-        ]}
-      />
-    </MessagingOrganisation.Provider>
+    <QueryClientProvider
+      client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+    >
+      <MessagingOrganisation.Provider value="org">
+        <FilesUpload
+          store={store}
+          snapshot={snapshot}
+          channels={[
+            { id: 'general', label: 'general', kind: 'text' },
+            { id: 'locked', label: 'locked', kind: 'text' },
+          ]}
+        />
+      </MessagingOrganisation.Provider>
+    </QueryClientProvider>
   )
   return { send, ...view }
 }
@@ -90,7 +96,7 @@ it('stages a file dropped into an explicit writable channel and waits for Send',
   })
 })
 
-it('ignores an empty drop and resolves direct-message sender display names in WorkspaceFilesPanel', async () => {
+it('ignores an empty drop and opens direct-message attachments through the unified explorer', async () => {
   state.limit = 0
   mount()
   await userEvent.selectOptions(screen.getByRole('combobox'), 'general')
@@ -139,6 +145,7 @@ it('ignores an empty drop and resolves direct-message sender display names in Wo
             },
           ] as unknown as readonly MessageView[])
         : [],
+    getRoomBoundary: () => 'ordinary',
     getDirects: () => [
       {
         roomId: '!dm:example.org',
@@ -151,19 +158,39 @@ it('ignores an empty drop and resolves direct-message sender display names in Wo
     send: vi.fn(async () => undefined),
   } as unknown as EspaceStoreLike
 
+  const onOpenDirect = vi.fn()
   render(
-    <MessagingOrganisation.Provider value="org">
-      <WorkspaceFilesPanel
-        store={dmStore}
-        snapshot={dmSnapshot}
-        searchEntries={[]}
-        documents={[]}
-        onOpenChannel={vi.fn()}
-      />
-    </MessagingOrganisation.Provider>
+    <QueryClientProvider
+      client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+    >
+      <MessagingOrganisation.Provider value="org">
+        <DriveWorkspaceContext.Provider
+          value={{
+            workspaceId: 'workspace',
+            store: dmStore,
+            snapshot: dmSnapshot,
+            channels: [],
+            documents: [],
+            activeChannelId: undefined,
+            roomBoundary: 'ordinary',
+            isConfidential: false,
+            requestedDocument: undefined,
+            onOpenChannel: vi.fn(),
+            onOpenDirect,
+          }}
+        >
+          <WorkspaceCollaborativeDocs localDocuments={[]} />
+        </DriveWorkspaceContext.Provider>
+      </MessagingOrganisation.Provider>
+    </QueryClientProvider>
   )
-  expect(screen.getByText(/Claire Moreau · Claire Moreau/)).toBeVisible()
-  expect(screen.queryByText(/Membre · peer/)).toBeNull()
+  await userEvent.click(screen.getByTestId('drive-open-folder-virtual:channel-attachments'))
+  await userEvent.click(screen.getByRole('button', { name: 'contrat.pdf' }))
+  await userEvent.click(
+    await screen.findByRole('button', { name: 'Ouvrir la conversation Claire Moreau' })
+  )
+  expect(onOpenDirect).toHaveBeenCalledWith('!dm:example.org')
+  expect(document.body.textContent).not.toContain('\u202E')
 })
 
 it('refuses a quota overflow before starting an upload', async () => {

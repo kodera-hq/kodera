@@ -25,7 +25,6 @@ import {
   buildChannelDocsPadUrl,
   buildTenantDocsOrigin,
   parseDocsPostMessageEvent,
-  slugifyDocsSegment,
   validateExternalDocsUrl,
 } from './url'
 
@@ -123,21 +122,7 @@ function GuardedDocsSurface({
     )
   }
   return (
-    <DocsWorkspacePanel
-      tenantSlug={tenantSlug}
-      channelId={channelId}
-      channelName={channelName}
-      pads={[
-        {
-          id: `pad-${channelId}`,
-          title: `Notes — ${channelName}`,
-          channelId,
-          channelName,
-          padSlug: slugifyDocsSegment(channelName),
-          url: resolved.url,
-        },
-      ]}
-    />
+    <DocsWorkspacePanel tenantSlug={tenantSlug} channelId={channelId} channelName={channelName} />
   )
 }
 
@@ -662,13 +647,8 @@ describe('DocsSonicIntegration — Sonic Identity DSP + Call Ducking + Docs + Es
       </div>
     )
 
-    expect(
-      screen.getByRole('heading', { name: 'Docs — Documents collaboratifs' })
-    ).toBeInTheDocument()
-    const docsLink = screen.getByRole('link', {
-      name: /Ouvrir Notes — Architecture & Sécurité dans Docs/i,
-    })
-    expect(docsLink).toHaveAttribute('href', resolvedFirst.ok ? resolvedFirst.url : '')
+    expect(await screen.findByRole('heading', { name: 'Drive & Docs' })).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /Ouvrir Notes/ })).toBeNull()
     expect(screen.queryByRole('alert')).toBeNull()
 
     // Verify postMessage handoff accepts only exact https://docs.acme.kodera.io origin

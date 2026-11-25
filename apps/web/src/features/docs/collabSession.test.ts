@@ -12,6 +12,7 @@ import {
   computeReconnectDelayMs,
   maySeedFromMarkdown,
   recordDocsOfflineDatabase,
+  purgeProtectedDocsOfflineDatabases,
   validateCollabWebSocketUrl,
   type WebSocketLike,
 } from './collabSession'
@@ -346,4 +347,21 @@ describe('CollabSessionController and Yjs transport rules', () => {
     expect(maySeedFromMarkdown(true, 'offline-buffered')).toBe(false)
     expect(collabSessionOwnsBody(true, 'offline-buffered')).toBe(true)
   })
+})
+
+it('purges only the newly protected document and retains other offline drafts in its workspace', () => {
+  const deleteDatabase = vi.fn()
+  vi.stubGlobal('indexedDB', { deleteDatabase })
+  try {
+    const protectedDb = buildDocsOfflineDatabaseName('workspace', 'protected')
+    const ordinaryDb = buildDocsOfflineDatabaseName('workspace', 'offline-draft')
+    recordDocsOfflineDatabase(protectedDb)
+    recordDocsOfflineDatabase(ordinaryDb)
+    purgeProtectedDocsOfflineDatabases('workspace', 'protected')
+    expect(deleteDatabase).toHaveBeenCalledWith(protectedDb)
+    expect(deleteDatabase).not.toHaveBeenCalledWith(ordinaryDb)
+    expect(JSON.parse(localStorage.getItem(DOCS_COLLAB_REGISTRY_KEY) ?? '[]')).toContain(ordinaryDb)
+  } finally {
+    vi.unstubAllGlobals()
+  }
 })

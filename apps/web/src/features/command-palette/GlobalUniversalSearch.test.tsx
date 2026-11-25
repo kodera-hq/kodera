@@ -95,6 +95,7 @@ it('indexes synced workspace files and opens the Files view from the palette', a
   const changeCanvas = vi.fn()
   const store = {
     getDirects: () => [],
+    getRoomBoundary: () => 'ordinary',
     getTimeline: () => [
       {
         eventId: '$e1',
@@ -289,4 +290,29 @@ describe('Control+K on a Mac', () => {
     fireEvent.keyDown(window, { key: 'k', ctrlKey: true })
     expect(await screen.findByRole('combobox')).toBeVisible()
   })
+})
+
+it('offers a Core Collections action independently of document search results', async () => {
+  const user = userEvent.setup()
+  const openCollection = vi.fn()
+  render(
+    <PaletteProvider>
+      <ShellShortcuts org="sample" />
+      <WorkspacePaletteRegistration
+        store={{ getDirects: () => [] } as unknown as EspaceStoreLike}
+        entries={[]}
+        documents={[]}
+        onChoose={() => null}
+        onSelectDirect={() => {}}
+        simulation
+        onOpenCollection={openCollection}
+        onChangeCanvasMode={() => {}}
+      />
+    </PaletteProvider>
+  )
+  await user.keyboard('{Control>}k{/Control}')
+  await screen.findByRole('combobox')
+  await user.type(screen.getByRole('combobox'), 'Collections')
+  await user.keyboard('{Enter}')
+  await waitFor(() => expect(openCollection).toHaveBeenCalledWith('surface:collections'))
 })

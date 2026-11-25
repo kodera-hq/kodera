@@ -492,3 +492,51 @@ it('marks the Markdown surface read-only while a remote Yjs session has not yet 
   expect(screen.getByTestId('docs-readonly-banner')).toBeInTheDocument()
   expect(screen.getByTestId('docs-save-state')).not.toHaveTextContent(copy.saveStateSaved)
 })
+
+it('never projects the preceding synced page into a newly selected base', async () => {
+  const { DOCUMENT_KIND_MARKERS } = await import('./driveKinds')
+  const relay = createMockYjsRelay(markdownToTiptapDoc('# Page A secret body'))
+  const base = { ...PAGE_B, markdown: DOCUMENT_KIND_MARKERS.base + '\n\n# Base B' }
+  const loaded = vi.fn()
+  vi.spyOn(docsApi, 'listWorkspaceDocuments').mockResolvedValue([PAGE_A, base])
+  vi.spyOn(docsApi, 'getWorkspaceDocument').mockImplementation(async (_org, id) => ({
+    document: id === PAGE_A.id ? PAGE_A : base,
+    etag: '"v1"',
+  }))
+  vi.spyOn(docsApi, 'listWorkspaceDocumentBacklinks').mockResolvedValue([])
+  vi.spyOn(docsApi, 'createWorkspaceDocumentCollabSession').mockImplementation(async (_org, id) => {
+    if (id !== PAGE_A.id) throw new Error('Unavailable')
+    return {
+      wsUrl: 'wss://core.fixture.test/documents/collab',
+      token: 'ticket',
+      expiresAt: '2026-01-01T01:00:00Z',
+      role: 'editor',
+    }
+  })
+  try {
+    const props = {
+      organisationId: 'org-1',
+      initialSurface: 'blocks' as const,
+      webSocketFactory: relay.webSocketFactory,
+      onDocumentsLoaded: loaded,
+    }
+    const view = render(<WorkspaceCollaborativeDocs {...props} activeDocumentId={PAGE_A.id} />)
+    await waitFor(() =>
+      expect(screen.getByTestId('docs-collab-status-pill')).toHaveTextContent(
+        fr['console.docs.collab.status-synced']
+      )
+    )
+    const beforeSwitch = relay.readServerJson()
+    view.rerender(<WorkspaceCollaborativeDocs {...props} activeDocumentId={base.id} />)
+    await screen.findByTestId('docs-collection-view')
+    expect(
+      loaded.mock.calls
+        .flatMap(([docs]) => docs.filter((doc: CoreWorkspaceDocument) => doc.id === base.id))
+        .every((doc: CoreWorkspaceDocument) => doc.markdown === base.markdown)
+    ).toBe(true)
+    expect(relay.readServerJson()).toEqual(beforeSwitch)
+    view.unmount()
+  } finally {
+    relay.serverDoc.destroy()
+  }
+})

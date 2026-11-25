@@ -1,4 +1,31 @@
 export interface DocsDriveCopy {
+  readonly workspaceTitle: string
+  readonly treeTitle: string
+  readonly collapseTree: string
+  readonly expandTree: string
+  readonly filterBases: string
+  readonly filterWhiteboards: string
+  readonly modeBase: string
+  readonly modeWhiteboard: string
+  readonly newBase: string
+  readonly newWhiteboard: string
+  readonly attachmentsFolder: string
+  readonly attachmentsNotice: string
+  readonly uploadFiles: string
+  readonly dropFiles: string
+  readonly share: string
+  readonly inheritance: string
+  readonly shareAccess: string
+  readonly confidentialRoom: string
+  readonly confidentialNotice: string
+  readonly shareRefused: string
+  readonly copyInternalLink: string
+  readonly linkCopied: string
+  readonly copyFailed: string
+  readonly close: string
+  readonly publish: string
+  readonly published: string
+  readonly publishFailed: string
   readonly modeDrive: string
   readonly modeEditor: string
   readonly driveRoot: string
@@ -41,6 +68,7 @@ export interface DocsDriveCopy {
   readonly foldersHeading: string
   readonly documentsHeading: string
   readonly filesHeading: string
+  readonly documentUnavailable: string
   readonly emptyDrive: string
   readonly emptyFolder: string
   readonly emptySearch: string
@@ -59,8 +87,37 @@ export interface DocsDriveCopy {
 
 const MESSAGES: Readonly<Record<'fr' | 'en', DocsDriveCopy>> = {
   fr: {
+    workspaceTitle: 'Drive & Docs',
+    treeTitle: 'Arborescence Drive & Pages',
+    collapseTree: 'Replier l’arborescence',
+    expandTree: 'Déployer l’arborescence',
+    filterBases: 'Bases',
+    filterWhiteboards: 'Tableaux blancs',
+    modeBase: 'Base structurée',
+    modeWhiteboard: 'Tableau blanc',
+    newBase: 'Nouvelle base',
+    newWhiteboard: 'Nouveau tableau blanc',
+    attachmentsFolder: 'Pièces jointes des salons',
+    attachmentsNotice:
+      'Les fichiers des salons auxquels vous avez accès sont réunis ici. Les pièces jointes confidentielles restent dans leur salon.',
+    uploadFiles: 'Importer des fichiers',
+    dropFiles: 'Déposez vos fichiers ici',
+    share: 'Partager',
+    inheritance: 'Héritage du dossier : les autorisations du dossier parent s’appliquent.',
+    shareAccess: 'Le lien ouvre ce document pour les membres disposant déjà d’un accès.',
+    confidentialRoom: '🔒 Salon confidentiel',
+    confidentialNotice: 'Accès limité aux membres du salon. Liens externes désactivés.',
+    shareRefused: 'Partage externe refusé : ce document appartient à un salon confidentiel.',
+    copyInternalLink: 'Copier le lien interne',
+    linkCopied: 'Lien interne copié.',
+    copyFailed: 'La copie n’est pas disponible dans ce navigateur.',
+    close: 'Fermer',
+    publish: 'Publier dans le salon',
+    published: 'Document publié dans le salon.',
+    publishFailed: 'Le document n’a pas pu être publié.',
+
     modeDrive: 'Explorateur Drive',
-    modeEditor: 'Éditeur',
+    modeEditor: 'Éditeur de page',
     driveRoot: 'Mon Drive',
     backToDrive: 'Retour au dossier Drive',
     toolbarLabel: 'Ruban de mise en forme',
@@ -92,15 +149,16 @@ const MESSAGES: Readonly<Record<'fr' | 'en', DocsDriveCopy>> = {
     filterGroupLabel: 'Filtrer par type',
     filterAll: 'Tout',
     filterFolders: 'Dossiers',
-    filterDocuments: 'Documents',
+    filterDocuments: 'Pages',
     filterFiles: 'Fichiers',
     viewGrid: 'Vue grille',
     viewList: 'Vue liste',
-    sortByName: 'Trier par nom',
-    sortByUpdated: 'Trier par date de modification',
+    sortByName: 'A–Z',
+    sortByUpdated: 'Modifié',
     foldersHeading: 'Dossiers',
     documentsHeading: 'Documents',
     filesHeading: 'Fichiers partagés',
+    documentUnavailable: 'Document introuvable ou inaccessible',
     emptyDrive: 'Aucun dossier ni document dans cet espace. Créez un dossier ou une première page.',
     emptyFolder: 'Ce dossier est vide. Créez un sous-dossier ou un nouveau document ici.',
     emptySearch: 'Aucun élément ne correspond à votre recherche ou au filtre sélectionné.',
@@ -117,8 +175,37 @@ const MESSAGES: Readonly<Record<'fr' | 'en', DocsDriveCopy>> = {
     openFolderIndexNamed: (title) => `Éditer la note d’accueil du dossier ${title}`,
   },
   en: {
+    workspaceTitle: 'Drive & Docs',
+    treeTitle: 'Drive & Pages tree',
+    collapseTree: 'Collapse tree',
+    expandTree: 'Expand tree',
+    filterBases: 'Databases',
+    filterWhiteboards: 'Whiteboards',
+    modeBase: 'Structured database',
+    modeWhiteboard: 'Whiteboard',
+    newBase: 'New database',
+    newWhiteboard: 'New whiteboard',
+    attachmentsFolder: 'Channel attachments',
+    attachmentsNotice:
+      'Files from channels you can access are gathered here. Confidential attachments stay in their room.',
+    uploadFiles: 'Upload files',
+    dropFiles: 'Drop your files here',
+    share: 'Share',
+    inheritance: 'Folder inheritance: parent folder permissions apply.',
+    shareAccess: 'The link opens this document for members who already have access.',
+    confidentialRoom: '🔒 Confidential room',
+    confidentialNotice: 'Access is limited to room members. External links are disabled.',
+    shareRefused: 'External sharing refused: this document belongs to a confidential room.',
+    copyInternalLink: 'Copy internal link',
+    linkCopied: 'Internal link copied.',
+    copyFailed: 'Copying is unavailable in this browser.',
+    close: 'Close',
+    publish: 'Publish to channel',
+    published: 'Document published to channel.',
+    publishFailed: 'The document could not be published.',
+
     modeDrive: 'Drive Explorer',
-    modeEditor: 'Editor',
+    modeEditor: 'Page editor',
     driveRoot: 'My Drive',
     backToDrive: 'Back to Drive folder',
     toolbarLabel: 'Formatting ribbon',
@@ -150,15 +237,16 @@ const MESSAGES: Readonly<Record<'fr' | 'en', DocsDriveCopy>> = {
     filterGroupLabel: 'Filter by type',
     filterAll: 'All',
     filterFolders: 'Folders',
-    filterDocuments: 'Documents',
+    filterDocuments: 'Pages',
     filterFiles: 'Files',
     viewGrid: 'Grid view',
     viewList: 'List view',
-    sortByName: 'Sort by name',
-    sortByUpdated: 'Sort by last modified',
+    sortByName: 'A–Z',
+    sortByUpdated: 'Modified',
     foldersHeading: 'Folders',
     documentsHeading: 'Documents',
     filesHeading: 'Shared files',
+    documentUnavailable: 'Document not found or unavailable',
     emptyDrive: 'No folders or documents in this workspace yet. Create a folder or first page.',
     emptyFolder: 'This folder is empty. Create a subfolder or a new document here.',
     emptySearch: 'No items match your search or active filter.',

@@ -41,3 +41,14 @@ describe('the workspace on the rail', () => {
     }
   })
 })
+
+it('applies the first chat request after a shared link started in docs', async () => {
+  const { CanvasNavigation } = await import('./canvasNavigation')
+  const applied: string[] = []
+  const navigation = new CanvasNavigation((mode) => applied.push(mode), {
+    initialMode: 'docs',
+    reducedMotion: () => true,
+  })
+  navigation.change('chat')
+  expect(applied).toEqual(['chat'])
+})

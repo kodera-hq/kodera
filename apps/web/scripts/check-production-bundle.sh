@@ -288,7 +288,7 @@ import re
 import sys
 
 for name in sys.argv[1:]:
-    code = pathlib.Path(name).read_text()
+    code = pathlib.Path(name).read_text(encoding="utf-8")
     if (all(marker in code for marker in (
             'ENTRY_HEAD_MARKUP_MISSING', 'kodera.web.legacy-worker-reload',
             '.getRegistrations()', '.unregister()'))

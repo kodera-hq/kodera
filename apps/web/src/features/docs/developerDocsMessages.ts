@@ -2,7 +2,6 @@ export const developerDocsMessages = {
   en: {
     workspace: 'Docs workspace',
     views: 'Docs views',
-    team: 'Team pads',
     developer: 'Developer documentation & API (Docs-as-Code)',
     choosePage: 'Documentation page',
     title: 'Developer documentation',
@@ -86,7 +85,6 @@ export const developerDocsMessages = {
   fr: {
     workspace: 'Espace Docs',
     views: 'Vues Docs',
-    team: 'Pads de l’équipe',
     developer: 'Documentation développeur & API (Docs-as-Code)',
     choosePage: 'Fiche de documentation',
     title: 'Documentation développeur',

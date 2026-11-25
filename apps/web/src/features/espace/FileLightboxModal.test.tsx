@@ -66,7 +66,7 @@ it('previews safely in place and downloads only via an explicit link', async () 
     'href',
     'https://files.example.test/file'
   )
-  await user.click(screen.getByRole('button', { name: 'Ouvrir dans #général' }))
+  await user.click(screen.getByRole('button', { name: 'Ouvrir la conversation #général' }))
   expect(open).toHaveBeenCalledWith(entries[0])
 })
 it('navigates from any focused modal control, wraps and closes on Escape', async () => {

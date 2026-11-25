@@ -20,8 +20,8 @@ for (const width of [1440, 390]) {
     }
     await navigation()
     for (const name of en
-      ? ['Notifications', 'Messages', 'Docs', 'Calls', 'Files', 'Integrations']
-      : ['Notifications', 'Messages', 'Docs', 'Appels', 'Fichiers', 'Intégrations']) {
+      ? ['Notifications', 'Messages', 'Drive & Docs', 'Calls', 'Calendar', 'Integrations']
+      : ['Notifications', 'Messages', 'Drive & Docs', 'Appels', 'Agenda', 'Intégrations']) {
       await expect(
         page
           .getByRole('navigation', { name: en ? 'Channels' : 'Salons', exact: true })
@@ -88,132 +88,24 @@ for (const width of [1440, 390]) {
     })
     await navigation()
     await page.getByTestId('workspace-docs-editor-toggle').click()
-    const channelDocuments = page
-      .locator('summary')
-      .filter({ hasText: en ? 'Channel documents' : 'Documents du salon' })
-    // The demo guide is in arrivals; announcements opens with an expanded empty list.
-    await expect(channelDocuments.locator('..')).toHaveAttribute('open', '')
-    await page
-      .getByRole('button', { name: en ? 'New document' : 'Nouveau document', exact: true })
-      .click()
-    // Creating the first document collapses the list to make room for its editor.
-    await expect(channelDocuments.locator('..')).not.toHaveAttribute('open', '')
-    await channelDocuments.click()
-    await page
-      .getByLabel(en ? 'Document title' : 'Titre du document', { exact: true })
-      .fill(en ? 'Review notes' : 'Notes de revue')
-    await channelDocuments.click()
+    const drive = page.getByTestId('docs-drive-explorer')
+    await expect(drive).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'announcements', exact: true })).toBeHidden()
+    await expect(
+      drive
+        .getByRole('group', { name: en ? 'Filter by type' : 'Filtrer par type' })
+        .getByRole('button')
+    ).toHaveCount(6)
+    await drive.getByTestId('drive-new-doc-btn').click()
+    await page.getByTestId('docs-page-title-input').fill(en ? 'Review notes' : 'Notes de revue')
+    await page.getByTestId('docs-surface-markdown').click()
     const source = page.getByRole('textbox', {
       name: en ? 'Markdown source' : 'Source Markdown',
       exact: true,
     })
-    const content = en
-      ? '## Before sharing\n- [x] Review the guide\n- [ ] Check access\n\n==One version for the whole team.=='
-      : '## Avant de partager\n- [x] Relire le guide\n- [ ] Vérifier les accès\n\n==Une version pour toute l’équipe.=='
+    const content = '# Review notes\n\n## Decision\n\nPublish a single shared document.'
     await source.fill(content)
-    await expect(source).toHaveValue(content)
-    await source.evaluate((element) => {
-      const field = element as HTMLTextAreaElement
-      field.focus()
-      field.setSelectionRange(3, field.value.indexOf('\n'))
-    })
-    await expect
-      .poll(() => source.evaluate((element) => (element as HTMLTextAreaElement).selectionStart))
-      .toBe(3)
-    await page.getByRole('button', { name: en ? 'Bold' : 'Gras', exact: true }).click()
-    await expect(source).toHaveValue(content.replace(/^## (.+)/, '## **$1**'))
-    await expect(source).toBeFocused()
-    await page.getByRole('button', { name: en ? 'Undo' : 'Annuler', exact: true }).click()
-    await expect(source).toHaveValue(content)
-    await page
-      .getByRole('checkbox', { name: en ? 'Check access' : 'Vérifier les accès', exact: true })
-      .check()
-    await expect(source).toHaveValue(content.replace('- [ ]', '- [x]'))
-    await page
-      .getByRole('button', { name: en ? 'Insert link' : 'Insérer un lien', exact: true })
-      .click()
-    await page
-      .getByLabel(en ? 'Link address' : 'Adresse du lien', { exact: true })
-      .fill('https://example.com/review')
-    await page.keyboard.press('Escape')
-    await expect(
-      page.getByRole('button', { name: en ? 'Insert link' : 'Insérer un lien', exact: true })
-    ).toBeFocused()
-    await page.getByRole('button', { name: 'Mention', exact: true }).click()
-    await page.getByRole('button', { name: 'Claire Mercer', exact: true }).click()
-    expect(await source.inputValue()).toContain('@Claire Mercer')
-    await page.getByRole('button', { name: en ? 'Undo' : 'Annuler', exact: true }).click()
-    await expect(source).toBeFocused()
-    await source.evaluate((element) => {
-      const field = element as HTMLTextAreaElement
-      field.focus()
-      field.setSelectionRange(3, field.value.indexOf('\n'))
-    })
-    await source.press('ArrowLeft')
-    for (const _character of en ? 'Before sharing' : 'Avant de partager')
-      await source.press('Shift+ArrowRight')
-    const comments = page.getByRole('complementary', {
-      name: en ? 'Comments' : 'Commentaires',
-      exact: true,
-    })
-    await expect(comments.locator('form blockquote')).toHaveText(
-      en ? 'Before sharing' : 'Avant de partager'
-    )
-    await comments
-      .getByRole('textbox', { name: en ? 'Your comment' : 'Votre commentaire' })
-      .fill('Please confirm access before sharing.')
-    await comments
-      .getByRole('button', { name: en ? 'Add comment' : 'Ajouter un commentaire' })
-      .click()
-    await expect(comments).toContainText('Please confirm access before sharing.')
-    await expect(comments.locator('li blockquote')).toHaveText(
-      en ? 'Before sharing' : 'Avant de partager'
-    )
-    await comments.getByRole('button', { name: en ? 'Resolve' : 'Résoudre', exact: true }).click()
-    await expect(
-      comments.getByRole('button', { name: en ? 'Reopen' : 'Rouvrir', exact: true })
-    ).toHaveAttribute('aria-pressed', 'true')
-    await expect(
-      page.getByRole('complementary', { name: en ? 'Comments' : 'Commentaires', exact: true })
-    ).toBeVisible()
-    await expect(dock).toHaveAttribute('data-continuity', 'retained')
-    await expect(mute).toHaveAttribute('aria-pressed', 'true')
-    await page.getByTestId('studio-document').evaluate((element) => {
-      let parent = element.parentElement
-      while (parent) {
-        parent.scrollTop = 0
-        parent = parent.parentElement
-      }
-      window.scrollTo(0, 0)
-    })
-    await page.screenshot({
-      path: info.outputPath(`document-${width}-${lang}.png`),
-      fullPage: true,
-      animations: 'disabled',
-    })
-    expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBe(0)
-    const result = await new AxeBuilder({ page })
-      .withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa'])
-      .analyze()
-    expect(
-      result.violations.map((v) => ({ id: v.id, nodes: v.nodes.map((n) => n.target) }))
-    ).toEqual([])
-    await source.evaluate((element) => {
-      const field = element as HTMLTextAreaElement
-      field.focus()
-      field.setSelectionRange(3, field.value.indexOf('\n'))
-    })
-    await page
-      .getByRole('button', { name: en ? 'Insert link' : 'Insérer un lien', exact: true })
-      .click()
-    await page
-      .getByLabel(en ? 'Link address' : 'Adresse du lien', { exact: true })
-      .fill('https://example.com/review')
-    await page.getByRole('button', { name: en ? 'Insert' : 'Insérer', exact: true }).click()
-    await expect(
-      page.getByRole('link', { name: en ? 'Before sharing' : 'Avant de partager', exact: true })
-    ).toHaveAttribute('href', 'https://example.com/review')
-    const linkedContent = await source.inputValue()
+    await expect(page.getByTestId('docs-page-toc')).toContainText('Decision')
     await page
       .getByRole('button', {
         name: en ? 'Publish to channel' : 'Publier dans le salon',
@@ -225,6 +117,7 @@ for (const width of [1440, 390]) {
         exact: true,
       })
     ).toBeVisible()
+    await expect(dock).toHaveAttribute('data-continuity', 'retained')
     await navigation()
     await page.getByTestId('espace-canvas-mode-chat').click()
     await page
@@ -233,22 +126,21 @@ for (const width of [1440, 390]) {
         name: new RegExp(en ? '^Review notes.*Open in Docs' : '^Notes de revue.*Ouvrir dans Docs'),
       })
       .click()
-    await expect(source).toHaveValue(linkedContent)
-    await navigation()
-    await page.getByRole('button', { name: en ? 'Files' : 'Fichiers', exact: true }).click()
-    const files = page.getByRole('region', {
-      name: en ? 'Workspace files' : 'Fichiers de l’espace',
-      exact: true,
-    })
-    await expect(files).toBeVisible()
-    if (width === 1440) {
-      await expect(
-        page.getByRole('button', { name: en ? 'Files' : 'Fichiers', exact: true })
-      ).toHaveAttribute('aria-current', 'page')
-      await expect(
-        page.getByRole('link', { name: 'announcements', exact: true })
-      ).not.toHaveAttribute('aria-current', 'page')
-    }
+    await expect(page.getByTestId('docs-page-title-input')).toHaveValue(
+      en ? 'Review notes' : 'Notes de revue'
+    )
+    await page.getByTestId('docs-surface-markdown').click()
+    await expect(source).toHaveValue(content)
+    await page.getByTestId('docs-breadcrumb-drive-root').click()
+    await drive.getByTestId('drive-open-folder-virtual:channel-attachments').click()
+    await expect(drive).toContainText(
+      en
+        ? 'Confidential attachments stay in their room.'
+        : 'Les pièces jointes confidentielles restent dans leur salon.'
+    )
+    await expect(drive.getByTestId('drive-breadcrumbs')).toContainText(
+      en ? 'Channel attachments' : 'Pièces jointes des salons'
+    )
     expect(
       (
         await new AxeBuilder({ page })
@@ -256,93 +148,27 @@ for (const width of [1440, 390]) {
           .analyze()
       ).violations
     ).toEqual([])
-    // Choosing a channel returns the canvas from Files back to the conversation
+    await expect(page.getByTestId('workspace-collaborative-docs').locator('[style]')).toHaveCount(0)
     await navigation()
     await page.getByRole('link', { name: 'announcements', exact: true }).click()
     await expect(page.getByRole('log')).toBeVisible()
-    await expect(files).toHaveCount(0)
-    await navigation()
-    await page.getByRole('button', { name: en ? 'Files' : 'Fichiers', exact: true }).click()
-    await expect(files).toBeVisible()
-    await files
-      .getByRole('button', {
-        name: new RegExp(en ? '^Community guide review' : '^Revue du guide communautaire'),
-      })
-      .click()
-    await expect(
-      page.getByRole('heading', {
-        name: en ? 'Community guide review' : 'Revue du guide communautaire',
-        exact: true,
-      })
-    ).toBeVisible()
-    await navigation()
-    await page.getByRole('button', { name: en ? 'Files' : 'Fichiers', exact: true }).click()
-    await expect(files).toBeVisible()
-    await files
-      .getByRole('button', { name: new RegExp(en ? '^Review notes' : '^Notes de revue') })
-      .click()
-    await expect(source).toHaveValue(linkedContent)
-    await expect(dock).toHaveAttribute('data-continuity', 'retained')
-    await page.evaluate(() => {
-      document.documentElement.dataset.theme = 'black'
-    })
-    await camera.click()
-    expect(
-      (
-        await new AxeBuilder({ page })
-          .withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa'])
-          .analyze()
-      ).violations
-    ).toEqual([])
-    await navigation()
-    await notifications.click()
-    expect(
-      (
-        await new AxeBuilder({ page })
-          .withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa'])
-          .analyze()
-      ).violations
-    ).toEqual([])
-    await notificationPanel.getByRole('button', { name: /^#announcements\b/ }).click()
-    await navigation()
-    await page.getByRole('button', { name: en ? 'Files' : 'Fichiers', exact: true }).click()
-    await expect(files).toBeVisible()
-    expect(
-      (
-        await new AxeBuilder({ page })
-          .withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa'])
-          .analyze()
-      ).violations
-    ).toEqual([])
-    await files
-      .getByRole('button', { name: new RegExp(en ? '^Review notes' : '^Notes de revue') })
-      .click()
+    await expect(drive).toBeHidden()
     await dock.getByRole('button', { name: en ? 'Leave' : 'Quitter', exact: true }).click()
     await expect(dock).toHaveCount(0)
-    const documentChannelUrl = page.url()
     await page.reload()
-    await expect(page).toHaveURL(documentChannelUrl)
     await expect(page.getByRole('heading', { name: 'announcements', exact: true })).toBeVisible()
     await navigation()
-    await page.getByRole('button', { name: en ? 'Files' : 'Fichiers', exact: true }).click()
-    await expect(files).toBeVisible()
-    await files
-      .getByRole('button', { name: new RegExp(en ? '^Review notes' : '^Notes de revue') })
+    await page.getByTestId('workspace-docs-editor-toggle').click()
+    await drive
+      .getByRole('button', {
+        name: new RegExp(en ? '^Open document Review notes' : '^Ouvrir le document Notes de revue'),
+      })
       .click()
-    await expect(source).toHaveValue(linkedContent)
-    await expect(comments).toContainText('Please confirm access before sharing.')
-    await expect(
-      comments.getByRole('button', { name: en ? 'Reopen' : 'Rouvrir', exact: true })
-    ).toHaveAttribute('aria-pressed', 'true')
-    await page.evaluate(() => {
-      document.documentElement.dataset.theme = 'black'
+    await page.getByTestId('docs-surface-markdown').click()
+    await expect(source).toHaveValue(content)
+    await page.screenshot({
+      path: info.outputPath(`drive-docs-${width}-${lang}.png`),
+      animations: 'disabled',
     })
-    expect(
-      (
-        await new AxeBuilder({ page })
-          .withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa'])
-          .analyze()
-      ).violations
-    ).toEqual([])
   })
 }

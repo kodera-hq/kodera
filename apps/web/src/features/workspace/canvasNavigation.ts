@@ -7,6 +7,7 @@ interface Transition {
   skipTransition(): void
 }
 interface Options {
+  readonly initialMode?: CanvasMode | undefined
   readonly start?: ((update: () => void) => Transition) | undefined
   readonly reducedMotion: () => boolean
 }
@@ -20,10 +21,12 @@ export class CanvasNavigation {
   constructor(
     private readonly apply: (mode: CanvasMode) => void,
     private readonly options: Options
-  ) {}
+  ) {
+    this.desired = options.initialMode ?? 'chat'
+  }
 
   change(mode: CanvasMode): void {
-    if (mode === this.desired) return
+    if (mode === this.desired && mode !== 'files' && mode !== 'docs') return
     this.desired = mode
     const generation = ++this.generation
     const start = performance.now()

@@ -2313,3 +2313,5 @@ Source: `src/features/espace/EspaceLiveView.tsx`, the call dock and the audio ro
 | `console.workspace.directs.invite-failed` | Could not update this invitation. Try again. |
 | `console.workspace.directs.invites` | Pending invitations ({count}) |
 | `console.shell.session.matrix-rate-limited` | Too many workspace sign-in attempts. Automatic retries have stopped. Wait before reopening your workspace. |
+
+| `console.docs.collection.error-storage-limit` | Base limit reached: 500 rows or 262,144 bytes. Reduce its content before trying again. |

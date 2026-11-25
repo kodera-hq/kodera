@@ -260,6 +260,7 @@ describe('CollaborativeBlockEditor and WorkspaceCollaborativeDocs', () => {
 
     const { container } = render(
       <WorkspaceCollaborativeDocs
+        initialSurface="blocks"
         organisationId="org-1"
         currentUser={{ id: 'u-1', name: 'Alex' }}
         webSocketFactory={noopSocketFactory}
@@ -328,6 +329,7 @@ describe('CollaborativeBlockEditor and WorkspaceCollaborativeDocs', () => {
         .mockResolvedValue({ document: page, etag: '"t-2"' })
       render(
         <WorkspaceCollaborativeDocs
+          initialSurface="blocks"
           organisationId="org-1"
           currentUser={{ id: 'u-1', name: 'Alex' }}
           webSocketFactory={neverOpens}
@@ -371,7 +373,11 @@ describe('CollaborativeBlockEditor and WorkspaceCollaborativeDocs', () => {
         .spyOn(docsApi, 'updateWorkspaceDocument')
         .mockResolvedValue({ document: page, etag: '"t-2"' })
       const view = render(
-        <WorkspaceCollaborativeDocs organisationId="org-1" webSocketFactory={neverOpens} />
+        <WorkspaceCollaborativeDocs
+          initialSurface="blocks"
+          organisationId="org-1"
+          webSocketFactory={neverOpens}
+        />
       )
       await waitFor(() => expect(get).toHaveBeenCalled())
       await waitFor(() =>
@@ -382,6 +388,7 @@ describe('CollaborativeBlockEditor and WorkspaceCollaborativeDocs', () => {
       expect(put).not.toHaveBeenCalled()
       view.rerender(
         <WorkspaceCollaborativeDocs
+          initialSurface="blocks"
           organisationId="org-1"
           webSocketFactory={neverOpens}
           confidential={{ required: true, epoch: 7, cipher: null }}

@@ -159,6 +159,7 @@ export function EspaceChannelHeader({
   return (
     <header
       hidden={
+        effectiveCanvasMode === 'docs' ||
         effectiveCanvasMode === 'files' ||
         effectiveCanvasMode === 'integrations' ||
         effectiveCanvasMode === 'calendar'
@@ -338,11 +339,6 @@ export function EspaceChannelHeader({
           onChoose={onChooseAudioRoom}
         />
       )}
-      {!simpleMode && effectiveCanvasMode === 'docs' ? (
-        <span className="text-sm font-bold text-c-ink">
-          {t('console.workspace.canvas.mode-docs')}
-        </span>
-      ) : null}
     </header>
   )
 }

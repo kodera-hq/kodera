@@ -1,6 +1,6 @@
 # Collective studio product alignment
 
-Status: Implemented web slice; local verification complete; product review pending
+Status: Historical implementation record; the current document surface is specified in collaborative-documents.md.
 
 ## Scope and reference
 

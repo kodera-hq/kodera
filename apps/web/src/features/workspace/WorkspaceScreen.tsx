@@ -5,13 +5,12 @@ import { flushSync } from 'react-dom'
 import { readLocalWorkspaceView } from './localWorkspaceView'
 import { COMMUNITY_CATEGORIES } from '../docs/communityStructure'
 import { developerDocsCopy } from '../docs/developerDocsMessages'
-import { DeveloperDocsHub } from '../docs/DeveloperDocsHub'
+import { DEVELOPER_DOCS_URL } from '../docs/communityPreview'
 import { WORKSPACE_COMMAND_EVENT, type WorkspaceCommand } from './WorkspaceMenu'
 import { workspaceMenuCopy } from './workspaceMenuMessages'
 import { registerThemeShare, useActiveThemeShare } from './themeSharing'
 import { ThemeStudioModal } from '../appearance/ThemeStudioModal'
 import {
-  ChannelDocsEditor,
   createChannelDocsWorkspace,
   type ChannelDocsWorkspace,
   type ChannelDoc,
@@ -20,7 +19,6 @@ import type { WorkspaceCategory, WorkspaceChannel } from './workspace'
 import { appliedTheme, themeMode } from '../../theme/theme'
 import { useThemePreference } from '../../theme/useThemePreference'
 import { Dialog } from '../../ui/Dialog/Dialog'
-import type { DocsWorkspaceView } from '../docs/DocsWorkspacePanel'
 import { useQueryClient } from '@tanstack/react-query'
 import { FirstRunOnboardingModal } from '../onboarding/FirstRunOnboardingModal'
 import { HostingOfferPanel } from './HostingOfferPanel'
@@ -72,7 +70,6 @@ import { Skeleton } from '../../ui/Skeleton/Skeleton'
 import { DocsWorkspacePanel } from '../docs/DocsWorkspacePanel'
 import { EspaceLiveView } from '../espace/EspaceLiveView'
 import { homeserverSlugFor } from '../espace/homeserver'
-import { permitsPlaintext, type RoomBoundary } from '../confidential/room-boundary'
 import { ChannelSidebar } from './ChannelSidebar'
 import {
   espaceOffered,
@@ -311,7 +308,11 @@ const LazyChannelCreateDialog = lazy(() =>
 
 const demoWorkspaceViews = new WeakMap<
   EspaceStoreLike,
-  { channels: Record<string, WorkspaceChannel[]>; docs: ChannelDocsWorkspace }
+  {
+    channels: Record<string, WorkspaceChannel[]>
+    docs: ChannelDocsWorkspace
+    pages: readonly WorkspacePageRecord[]
+  }
 >()
 
 interface LiveWorkspaceProps {
@@ -368,13 +369,19 @@ function LiveWorkspace({
         readLocalWorkspaceView(`${org}:${workspace.id}`, store.getInitialDocuments?.()).docs)
       : createChannelDocsWorkspace()
   )
+  const [workspacePages, setWorkspacePages] = useState<readonly WorkspacePageRecord[]>(() =>
+    store
+      ? (demoWorkspaceViews.get(store)?.pages ??
+        readLocalWorkspaceView(`${org}:${workspace.id}`).pages)
+      : []
+  )
   useEffect(() => {
     if (store) {
-      const value = { channels: localChannels, docs: docsWorkspace }
+      const value = { channels: localChannels, docs: docsWorkspace, pages: workspacePages }
       demoWorkspaceViews.set(store, value)
       if (isDemoActive(org)) writeDemoView(`${org}:${workspace.id}`, value)
     }
-  }, [store, org, workspace.id, localChannels, docsWorkspace])
+  }, [store, org, workspace.id, localChannels, docsWorkspace, workspacePages])
   const liveWorkspace = {
     ...workspace,
     categories: workspace.categories.map((category) => ({
@@ -403,8 +410,10 @@ function LiveWorkspace({
     userId === '' && preferredName === undefined
       ? 'Member'
       : safeDisplayName(preferredName ?? accountName, userId, unnamed)
-  const [drafts, setDrafts] = useState<Record<string, string>>({})
-  const [canvas, setCanvasState] = useState<CanvasMode>('chat')
+  const [canvas, setCanvasState] = useState<CanvasMode>(() =>
+    new URLSearchParams(window.location.search).has('document') ? 'docs' : 'chat'
+  )
+  const [canvasRequestKey, setCanvasRequestKey] = useState(0)
   const [canvasNavigation] = useState(
     () =>
       new CanvasNavigation((mode) => flushSync(() => setCanvasState(mode)), {
@@ -412,26 +421,25 @@ function LiveWorkspace({
           typeof document.startViewTransition === 'function'
             ? (update) => document.startViewTransition(update)
             : undefined,
+        initialMode: canvas,
         reducedMotion: () => window.matchMedia('(prefers-reduced-motion: reduce)').matches,
       })
   )
   const setCanvas = useCallback(
-    (mode: CanvasMode) => canvasNavigation.change(mode),
+    (mode: CanvasMode) => {
+      if (mode === 'files' || mode === 'docs') setCanvasRequestKey((key) => key + 1)
+      canvasNavigation.change(mode)
+    },
     [canvasNavigation]
   )
   useEffect(() => () => canvasNavigation.dispose(), [canvasNavigation])
-  // « Docs » opens on the collaborative Pages in the live workspace. `team` is the channel pads
-  // view, which only a store supplies (`teamPadsSlot` below); without one it falls through to a
-  // placeholder card pointing at a `docs.<host>` address this deployment does not serve, so a
-  // live member's first sight of « Docs » was a dead link. A store means the demo, which has
-  // pads: it opens on them, as its tests expect.
-  const [docsView, setDocsView] = useState<DocsWorkspaceView>(store ? 'team' : 'pages')
-  const [workspacePages, setWorkspacePages] = useState<readonly WorkspacePageRecord[]>([])
-  const [activeWorkspacePageId, setActiveWorkspacePageId] = useState<string | undefined>(undefined)
+  const [activeWorkspacePageId, setActiveWorkspacePageId] = useState<string | undefined>(
+    () => new URLSearchParams(window.location.search).get('document') ?? undefined
+  )
   const [docsSurface, setDocsSurface] = useState<{
     readonly key: number
-    readonly surface: 'blocks' | 'collections'
-  }>({ key: 0, surface: 'blocks' })
+    readonly surface: 'drive' | 'blocks' | 'core-collections'
+  }>({ key: 0, surface: 'drive' })
   const omniboxCollections = useMemo<readonly OmniboxCollectionDescriptor[]>(
     () => [
       ...workspacePages.map((page) => ({
@@ -451,53 +459,12 @@ function LiveWorkspace({
     ],
     [workspacePages, docsWorkspace.docs]
   )
-  const [liveChannelBoundary, setLiveChannelBoundary] = useState<{
-    readonly channelId: string | undefined
-    readonly roomBoundary: RoomBoundary | undefined
-    readonly isConfidential: boolean
-  }>({ channelId: undefined, roomBoundary: undefined, isConfidential: false })
-  const handleActiveChannelBoundaryChange = useCallback(
-    (next: {
-      readonly channelId: string | undefined
-      readonly roomBoundary: RoomBoundary | undefined
-      readonly isConfidential: boolean
-    }) => {
-      setLiveChannelBoundary((prev) =>
-        prev.channelId === next.channelId &&
-        prev.roomBoundary === next.roomBoundary &&
-        prev.isConfidential === next.isConfidential
-          ? prev
-          : next
-      )
-    },
-    []
-  )
   const channel = channelId
     ? liveWorkspace.categories
         .flatMap((category) => category.channels)
         .concat(liveWorkspace.uncategorised_channels)
         .find((entry) => entry.id === channelId)
     : currentChannel(liveWorkspace, channelId)
-  const channelConfFlags = channel as
-    | (WorkspaceChannel & {
-        readonly isConfidential?: boolean | undefined
-        readonly is_confidential?: boolean | undefined
-      })
-    | undefined
-  const matchedLiveBoundary =
-    liveChannelBoundary.channelId === channel?.id ? liveChannelBoundary : undefined
-  const effectiveDocsIsConfidential =
-    channelConfFlags?.isConfidential === true ||
-    channelConfFlags?.is_confidential === true ||
-    matchedLiveBoundary?.isConfidential === true ||
-    matchedLiveBoundary?.roomBoundary === 'confidential-unavailable' ||
-    matchedLiveBoundary?.roomBoundary === 'invalid'
-  const effectiveDocsBoundary: RoomBoundary | undefined = effectiveDocsIsConfidential
-    ? matchedLiveBoundary?.roomBoundary !== undefined &&
-      !permitsPlaintext(matchedLiveBoundary.roomBoundary)
-      ? matchedLiveBoundary.roomBoundary
-      : 'confidential-unavailable'
-    : matchedLiveBoundary?.roomBoundary
   const selectedChannelId = channel?.id
   const selectedChannelKind = channel?.kind
   useEffect(() => {
@@ -509,8 +476,7 @@ function LiveWorkspace({
   useEffect(() => {
     const command = (event: Event) => {
       if (event instanceof CustomEvent && event.detail === 'developer') {
-        setDocsView('developer')
-        setCanvas('docs')
+        window.open(DEVELOPER_DOCS_URL, '_blank', 'noopener,noreferrer')
       }
     }
     window.addEventListener(WORKSPACE_COMMAND_EVENT, command)
@@ -544,7 +510,7 @@ function LiveWorkspace({
         {...(ownerId === undefined ? {} : { ownerId })}
         {...(membershipId === undefined ? {} : { membershipId })}
         {...(membershipActive === undefined ? {} : { membershipActive })}
-        focusedDocs={canvas === 'docs' && (docsView === 'developer' || docsView === 'pages')}
+        focusedDocs={canvas === 'docs' || canvas === 'files'}
         documents={[
           ...docsWorkspace.docs,
           ...workspacePages.map((page): ChannelDoc => ({
@@ -559,28 +525,28 @@ function LiveWorkspace({
         collections={omniboxCollections}
         onOpenCollection={(itemId: string) => {
           if (itemId === 'surface:collections') {
-            setDocsSurface((prev) => ({ key: prev.key + 1, surface: 'collections' }))
-            setDocsView('pages')
-            setCanvas('docs')
+            setDocsSurface((prev) => ({ key: prev.key + 1, surface: 'core-collections' }))
+
+            canvasNavigation.change('docs')
             return
           }
           if (itemId.startsWith('workspace-page:')) {
             setActiveWorkspacePageId(itemId.slice('workspace-page:'.length))
-            setDocsSurface((prev) =>
-              prev.surface === 'blocks' ? prev : { key: prev.key + 1, surface: 'blocks' }
-            )
-            setDocsView('pages')
-            setCanvas('docs')
+            setDocsSurface((prev) => ({ key: prev.key + 1, surface: 'blocks' }))
+
+            canvasNavigation.change('docs')
             return
           }
           const matchedDoc = docsWorkspace.docs.find((doc) => doc.id === itemId)
           if (!matchedDoc) return
+          setActiveWorkspacePageId(`channel:${matchedDoc.id}`)
+          setDocsSurface((prev) => ({ key: prev.key + 1, surface: 'blocks' }))
           setDocsWorkspace((prev) => ({
             ...prev,
             selectedByChannel: { ...prev.selectedByChannel, [matchedDoc.channelId]: matchedDoc.id },
           }))
-          setDocsView('team')
-          setCanvas('docs')
+
+          canvasNavigation.change('docs')
           if (matchedDoc.channelId && matchedDoc.channelId !== channel?.id) {
             void navigation.onNavigateChannel(matchedDoc.channelId)
           }
@@ -588,26 +554,34 @@ function LiveWorkspace({
         onOpenDocument={(doc: ChannelDoc) => {
           if (doc.id.startsWith('workspace-page:')) {
             setActiveWorkspacePageId(doc.id.slice('workspace-page:'.length))
-            setDocsSurface((prev) =>
-              prev.surface === 'blocks' ? prev : { key: prev.key + 1, surface: 'blocks' }
-            )
-            setDocsView('pages')
-            setCanvas('docs')
+            setDocsSurface((prev) => ({ key: prev.key + 1, surface: 'blocks' }))
+
+            canvasNavigation.change('docs')
             return
           }
+          setActiveWorkspacePageId(`channel:${doc.id}`)
+          setDocsSurface((prev) => ({ key: prev.key + 1, surface: 'blocks' }))
           setDocsWorkspace((prev) => ({
             ...prev,
             selectedByChannel: { ...prev.selectedByChannel, [doc.channelId]: doc.id },
           }))
-          setDocsView('team')
-          setCanvas('docs')
+
+          canvasNavigation.change('docs')
           if (doc.channelId !== channel?.id) void navigation.onNavigateChannel(doc.channelId)
+        }}
+        canvasRequestKey={canvasRequestKey}
+        onUpdateChannelDocument={(channelId, id, patch) => {
+          setDocsWorkspace((prev) => ({
+            ...prev,
+            docs: prev.docs.map((doc) =>
+              doc.id === id && doc.channelId === channelId ? { ...doc, ...patch } : doc
+            ),
+          }))
         }}
         activeCanvasMode={canvas}
         onChangeCanvasMode={setCanvas}
         organisationActionSlot={actions}
         {...(store?.addChannel ? { onCreateInCategory: setCreateCategory } : {})}
-        onActiveChannelBoundaryChange={handleActiveChannelBoundaryChange}
         docsCanvasSlot={
           channel ? (
             <DocsWorkspacePanel
@@ -621,7 +595,7 @@ function LiveWorkspace({
                   }
                 >
                   <LazyWorkspaceCollaborativeDocs
-                    key={docsSurface.key}
+                    surfaceRequestKey={docsSurface.key}
                     initialSurface={docsSurface.surface}
                     {...(store
                       ? {
@@ -629,12 +603,6 @@ function LiveWorkspace({
                           onLocalDocumentsChange: setWorkspacePages,
                         }
                       : { organisationId })}
-                    {...(effectiveDocsBoundary === undefined
-                      ? {}
-                      : { roomBoundary: effectiveDocsBoundary })}
-                    {...(effectiveDocsIsConfidential
-                      ? { confidential: { required: true, epoch: 0, cipher: null } }
-                      : {})}
                     currentUser={{
                       id: userId || 'member',
                       name: currentUserName,
@@ -645,85 +613,9 @@ function LiveWorkspace({
                   />
                 </Suspense>
               }
-              teamPadsSlot={
-                store ? (
-                  <ChannelDocsEditor
-                    channelId={channel.id}
-                    channelName={channel.name}
-                    {...(effectiveDocsBoundary === undefined
-                      ? {}
-                      : { roomBoundary: effectiveDocsBoundary })}
-                    isConfidential={effectiveDocsIsConfidential}
-                    workspace={docsWorkspace}
-                    onWorkspaceChange={setDocsWorkspace}
-                    onNavigateDocument={(targetDoc) => {
-                      setDocsView('team')
-                      setCanvas('docs')
-                      if (targetDoc.channelId !== channel.id) {
-                        void navigation.onNavigateChannel(targetDoc.channelId)
-                      }
-                    }}
-                    author={{
-                      userId,
-                      name: currentUserName,
-                    }}
-                    members={(() => {
-                      const room = store.getSnapshot().channels.get(channel.id)
-                      return room?.state === 'resolved'
-                        ? (store.getMembers?.(room.roomId) ?? []).map((member) => ({
-                            userId: member.userId,
-                            name: safeDisplayName(member.name, member.userId, unnamed),
-                          }))
-                        : []
-                    })()}
-                    onPublish={async (title, content, documentId) => {
-                      const room = store.getSnapshot().channels.get(channel.id)
-                      if (room?.state !== 'resolved')
-                        throw new Error('The channel is not available')
-                      if (store.publishDocument)
-                        await store.publishDocument(room.roomId, {
-                          id: documentId,
-                          channelId: channel.id,
-                          title,
-                          content,
-                        })
-                      else await store.send(room.roomId, `## ${title}\n\n${content}`)
-                    }}
-                  />
-                ) : undefined
-              }
-              view={docsView}
-              onViewChange={setDocsView}
-              onOpenSupportChannel={(selected) => {
-                setCanvas('chat')
-                if (org === 'community') {
-                  const target = liveWorkspace.categories
-                    .flatMap((category) => category.channels)
-                    .find((entry) => entry.name === selected)
-                  if (target) void navigation.onNavigateChannel(target.id)
-                } else {
-                  window.open(
-                    'https://community.kodera.io/community/workspace',
-                    '_blank',
-                    'noopener,noreferrer'
-                  )
-                }
-              }}
               tenantSlug={serverSlug}
               channelId={channel.id}
               channelName={channel.name}
-              draftContent={drafts[`${userId}:${org}:${serverSlug}:${channel.id}`]}
-              onDraftContentChange={(content) =>
-                setDrafts((prev) => {
-                  const key = `${userId}:${org}:${serverSlug}:${channel.id}`
-                  const next = { ...prev, [key]: content }
-                  if (Object.keys(next).length > 128) {
-                    const oldest = Object.keys(next)[0]
-                    if (oldest) delete next[oldest]
-                  }
-                  return next
-                })
-              }
             />
           ) : null
         }
@@ -793,7 +685,6 @@ export function WorkspaceScreen() {
   const [connectorsOpen, setConnectorsOpen] = useState(false)
   const [hostingOpen, setHostingOpen] = useState(false)
   const [studioOpen, setStudioOpen] = useState(false)
-  const [developerDocsOpen, setDeveloperDocsOpen] = useState(false)
   const router = useRouter()
   const { preference, choose } = useThemePreference()
   const queryClient = useQueryClient()
@@ -877,7 +768,8 @@ export function WorkspaceScreen() {
       if (action === 'extensions') setConnectorsOpen(true)
       if (action === 'hosting') setHostingOpen(true)
       if (action === 'studio') setStudioOpen(true)
-      if (action === 'developer' && !hasLiveWorkspace) setDeveloperDocsOpen(true)
+      if (action === 'developer' && !hasLiveWorkspace)
+        window.open(DEVELOPER_DOCS_URL, '_blank', 'noopener,noreferrer')
     }
     window.addEventListener(WORKSPACE_COMMAND_EVENT, command)
     return () => window.removeEventListener(WORKSPACE_COMMAND_EVENT, command)
@@ -1028,25 +920,6 @@ export function WorkspaceScreen() {
             organisation={organisationName}
             mode={tenant?.hostingMode ?? tenant?.hosting_mode}
           />
-        </Dialog>
-        <Dialog
-          open={developerDocsOpen}
-          onOpenChange={setDeveloperDocsOpen}
-          title={menuCopy.developer}
-          closeLabel={t('console.common.action-close')}
-          size="lg"
-        >
-          <div className="max-h-[calc(100vh*2/3)] overflow-y-auto">
-            <DeveloperDocsHub
-              onOpenSupportChannel={() =>
-                window.open(
-                  'https://community.kodera.io/community/workspace',
-                  '_blank',
-                  'noopener,noreferrer'
-                )
-              }
-            />
-          </div>
         </Dialog>
         <ThemeStudioModal
           open={studioOpen}

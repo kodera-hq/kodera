@@ -15,7 +15,16 @@ export default defineConfig({
   },
   webServer: {
     command:
-      'npm run docs:check && VITE_ENABLE_MSW=1 VITE_AUTH_MODE=mock npx vite build --outDir dist/docs-browser && npx vite preview --outDir dist/docs-browser --host 127.0.0.1 --port 5190 --strictPort',
+      'npm run docs:check && npx vite build --outDir dist/docs-browser && npx vite preview --outDir dist/docs-browser --host 127.0.0.1 --port 5190 --strictPort',
+    env: {
+      VITE_ENABLE_MSW: '1',
+      VITE_AUTH_MODE: 'mock',
+      VITE_MOCK_UNSERVED: '1',
+      VITE_CORE_API_URL: 'http://127.0.0.1:5190/api/v1',
+      VITE_KEYCLOAK_URL: 'http://127.0.0.1:5190/auth',
+      VITE_OIDC_CLIENT_ID: 'console',
+      VITE_TENANT_DOMAIN: 'kodera.io',
+    },
     url: 'http://127.0.0.1:5190',
     reuseExistingServer: false,
     timeout: 60_000,

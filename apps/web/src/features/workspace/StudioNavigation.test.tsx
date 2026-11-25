@@ -88,5 +88,19 @@ it('identifies the active destination as the current page', () => {
       onChange={() => {}}
     />
   )
-  expect(screen.getByRole('button', { name: 'Docs' })).toHaveAttribute('aria-current', 'page')
+  expect(screen.getByRole('button', { name: 'Drive & Docs' })).toHaveAttribute('aria-current', 'page')
+})
+
+it('converges files and docs into one active canvas destination while retaining standalone files', async () => {
+  const onChange = vi.fn()
+  const { container } = render(<StudioNavigation section="tools" mode="files" rooms={[]} onChoose={() => null} onChange={onChange} />)
+  const entry = screen.getByRole('button', { name: 'Drive & Docs' })
+  expect(entry).toHaveAttribute('aria-current', 'page')
+  expect(entry).toHaveAttribute('data-testid', 'workspace-docs-editor-toggle')
+  expect(entry.querySelector('[data-kodera-icon="drive"]')).not.toBeNull()
+  expect(screen.queryByRole('button', { name: 'Fichiers' })).toBeNull()
+  expect(screen.getAllByRole('button').map((button) => button.textContent)).toEqual(['Drive & Docs', 'Appels', 'Agenda', 'Intégrations'])
+  await userEvent.setup().click(entry)
+  expect(onChange).toHaveBeenCalledWith('docs')
+  expect(container.querySelectorAll('[style]')).toHaveLength(0)
 })

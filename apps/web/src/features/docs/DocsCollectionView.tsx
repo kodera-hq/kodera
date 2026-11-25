@@ -1,3 +1,4 @@
+import { MAX_DRIVE_COLLECTION_ROWS } from './driveKinds'
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Badge } from '@/ui/Badge/Badge'
@@ -7,10 +8,7 @@ import { StatusPill, type StatusPillState } from '@/ui/StatusPill/StatusPill'
 import { cx } from '@/ui/cx'
 import { LINK_TEXT } from '@/ui/linkText'
 import { TOUCH_TARGET } from '@/ui/touchTarget'
-import {
-  exportCollection,
-  type CollectionExportFormat,
-} from './collectionExport'
+import { exportCollection, type CollectionExportFormat } from './collectionExport'
 import { getCollectionCopy, type CollectionCopy } from './collectionMessages'
 import {
   computeCollectionRollups,
@@ -64,10 +62,11 @@ export interface DocsCollectionViewProps {
   readonly initialView?: CollectionViewKind | undefined
   readonly accessRole?: DocumentAccessRole | undefined
   readonly onOpenDocument?: ((documentId: string) => void) | undefined
-  readonly onCreateDocument?: ((title: string) => Promise<string | null> | string | null) | undefined
+  readonly onCreateDocument?:
+    ((title: string) => Promise<string | null> | string | null) | undefined
   readonly onExport?:
-    | ((format: CollectionExportFormat, content: string) => void | Promise<void>)
-    | undefined
+    ((format: CollectionExportFormat, content: string) => void | Promise<void>) | undefined
+  readonly validateRows?: ((rows: readonly WorkspaceCollectionRowModel[]) => boolean) | undefined
   readonly onRowsChange?: ((rows: readonly WorkspaceCollectionRowModel[]) => void) | undefined
 }
 
@@ -149,6 +148,7 @@ export function DocsCollectionView({
   onCreateDocument,
   onExport,
   onRowsChange,
+  validateRows,
 }: DocsCollectionViewProps) {
   const { t, i18n } = useTranslation()
   const copy = getCollectionCopy(i18n.resolvedLanguage)
@@ -183,11 +183,12 @@ export function DocsCollectionView({
     return map
   })
 
-  const rowEtagsRef = useRef<Map<string, string>>(
-    new Map(Object.entries(initialRowEtags ?? {}))
-  )
+  const rowEtagsRef = useRef<Map<string, string>>(new Map(Object.entries(initialRowEtags ?? {})))
   const knownRemoteRowsRef = useRef<Set<string>>(
-    new Set([...(initialRows ?? []).map((r) => r.documentId), ...Object.keys(initialRowEtags ?? {})])
+    new Set([
+      ...(initialRows ?? []).map((r) => r.documentId),
+      ...Object.keys(initialRowEtags ?? {}),
+    ])
   )
   const collectionEtagRef = useRef<string | null>(null)
   const onRowsChangeRef = useRef(onRowsChange)
@@ -248,6 +249,8 @@ export function DocsCollectionView({
   const [validationError, setValidationError] = useState<string | null>(null)
   const [exportNotice, setExportNotice] = useState<string | null>(null)
   const [newEntryTitle, setNewEntryTitle] = useState('')
+  const creatingRowRef = useRef(false)
+  const [isCreatingRow, setIsCreatingRow] = useState(false)
   const [draggedDocId, setDraggedDocId] = useState<string | null>(null)
   const [dragOverColumnId, setDragOverColumnId] = useState<string | null>(null)
 
@@ -317,10 +320,7 @@ export function DocsCollectionView({
   const effectiveRole: DocumentAccessRole =
     forcedRole === 'viewer' || collection.role === 'viewer' ? 'viewer' : 'editor'
 
-  const memberById = useMemo(
-    () => new Map(members.map((m) => [m.id, m.name])),
-    [members]
-  )
+  const memberById = useMemo(() => new Map(members.map((m) => [m.id, m.name])), [members])
 
   const enrichedRows = useMemo<readonly EnrichedCollectionRow[]>(() => {
     return documents.map((doc) => {
@@ -337,24 +337,12 @@ export function DocsCollectionView({
   }, [collection.properties, documents, effectiveRole, rowsByDocId])
 
   const visibleRows = useMemo(
-    () =>
-      filterAndSortCollectionRows(
-        enrichedRows,
-        collection.properties,
-        filters,
-        sort,
-        members
-      ),
+    () => filterAndSortCollectionRows(enrichedRows, collection.properties, filters, sort, members),
     [collection.properties, enrichedRows, filters, members, sort]
   )
 
   const rollups = useMemo(
-    () =>
-      computeCollectionRollups(
-        visibleRows,
-        enrichedRows.length,
-        collection.properties
-      ),
+    () => computeCollectionRollups(visibleRows, enrichedRows.length, collection.properties),
     [collection.properties, enrichedRows.length, visibleRows]
   )
 
@@ -391,17 +379,28 @@ export function DocsCollectionView({
     [boardGroupById, groupableProperties, statusProperty]
   )
 
+  const validateRowMap = (rows: Readonly<Record<string, WorkspaceCollectionRowModel>>): boolean => {
+    const values = Object.values(rows)
+    if (values.length > MAX_DRIVE_COLLECTION_ROWS || validateRows?.(values) === false) {
+      setValidationError(t('console.docs.collection.error-storage-limit'))
+      return false
+    }
+    return true
+  }
+
   const commitRowMap = (
     updater: (
       prev: Readonly<Record<string, WorkspaceCollectionRowModel>>
-    ) => Readonly<Record<string, WorkspaceCollectionRowModel>>
+    ) => Readonly<Record<string, WorkspaceCollectionRowModel>>,
+    onCommit?: () => void
   ) => {
-    setRowsByDocId((prev) => {
-      const next = updater(prev)
-      rowsByDocIdRef.current = next
-      onRowsChangeRef.current?.(Object.values(next))
-      return next
-    })
+    const next = updater(rowsByDocIdRef.current)
+    if (!validateRowMap(next)) return false
+    rowsByDocIdRef.current = next
+    onCommit?.()
+    setRowsByDocId(next)
+    onRowsChangeRef.current?.(Object.values(next))
+    return true
   }
 
   const syncRemoteRowWrite = async (
@@ -564,7 +563,12 @@ export function DocsCollectionView({
     rawValue: unknown
   ): Promise<boolean> => {
     const targetDoc = documents.find((d) => d.id === documentId)
-    if (!targetDoc || effectiveRole === 'viewer' || targetDoc.role === 'viewer') {
+    if (
+      creatingRowRef.current ||
+      !targetDoc ||
+      effectiveRole === 'viewer' ||
+      targetDoc.role === 'viewer'
+    ) {
       return false
     }
 
@@ -588,7 +592,10 @@ export function DocsCollectionView({
       : currentRows[documentId]
     debounceBaselineRowRef.current.delete(documentId)
 
-    const baseValues = buildCompleteRowValues(collection.properties, currentRows[documentId]?.values)
+    const baseValues = buildCompleteRowValues(
+      collection.properties,
+      currentRows[documentId]?.values
+    )
     const nextValues: Record<string, CollectionCellValue> = {
       ...baseValues,
       [property.id]: validated.cell,
@@ -599,10 +606,13 @@ export function DocsCollectionView({
       updatedAt: new Date().toISOString(),
     }
 
-    commitRowMap((prev) => ({
-      ...prev,
-      [documentId]: optimisticRow,
-    }))
+    if (
+      !commitRowMap((prev) => ({
+        ...prev,
+        [documentId]: optimisticRow,
+      }))
+    )
+      return false
 
     return syncRemoteRowWrite(documentId, property, validated.cell, nextValues, previousRow)
   }
@@ -615,7 +625,12 @@ export function DocsCollectionView({
     rawValue: unknown
   ): boolean => {
     const targetDoc = documents.find((d) => d.id === documentId)
-    if (!targetDoc || effectiveRole === 'viewer' || targetDoc.role === 'viewer') {
+    if (
+      creatingRowRef.current ||
+      !targetDoc ||
+      effectiveRole === 'viewer' ||
+      targetDoc.role === 'viewer'
+    ) {
       return false
     }
 
@@ -631,7 +646,10 @@ export function DocsCollectionView({
       debounceBaselineRowRef.current.set(documentId, currentRows[documentId])
     }
 
-    const baseValues = buildCompleteRowValues(collection.properties, currentRows[documentId]?.values)
+    const baseValues = buildCompleteRowValues(
+      collection.properties,
+      currentRows[documentId]?.values
+    )
     const nextValues: Record<string, CollectionCellValue> = {
       ...baseValues,
       [property.id]: validated.cell,
@@ -642,10 +660,13 @@ export function DocsCollectionView({
       updatedAt: new Date().toISOString(),
     }
 
-    commitRowMap((prev) => ({
-      ...prev,
-      [documentId]: optimisticRow,
-    }))
+    if (
+      !commitRowMap((prev) => ({
+        ...prev,
+        [documentId]: optimisticRow,
+      }))
+    )
+      return false
 
     const cellKey = `${documentId}:${property.id}`
     const existingPending = pendingCellPutsRef.current.get(cellKey)
@@ -683,7 +704,10 @@ export function DocsCollectionView({
     return true
   }
 
-  const flushDebouncedCellUpdate = (documentId: string, propertyId: string): Promise<boolean> | null => {
+  const flushDebouncedCellUpdate = (
+    documentId: string,
+    propertyId: string
+  ): Promise<boolean> | null => {
     const cellKey = `${documentId}:${propertyId}`
     const pending = pendingCellPutsRef.current.get(cellKey)
     if (!pending) return null
@@ -716,14 +740,16 @@ export function DocsCollectionView({
           refused.documentId,
           activeProps
         )
-        knownRemoteRowsRef.current.add(refused.documentId)
-        if (freshRow.etag) {
-          rowEtagsRef.current.set(refused.documentId, freshRow.etag)
-        }
-        commitRowMap((prev) => ({
-          ...prev,
-          [refused.documentId]: freshRow.row,
-        }))
+        // Install the row and its version together, including while child creation is pending.
+        const applied = commitRowMap(
+          (prev) => ({ ...prev, [refused.documentId]: freshRow.row }),
+          () => {
+            knownRemoteRowsRef.current.add(refused.documentId)
+            if (freshRow.etag) rowEtagsRef.current.set(refused.documentId, freshRow.etag)
+            else rowEtagsRef.current.delete(refused.documentId)
+          }
+        )
+        if (!applied) throw new Error('The reloaded row could not be installed')
       }
 
       const page = await queryWorkspaceCollection(
@@ -772,18 +798,31 @@ export function DocsCollectionView({
 
   const handleCreateEntry = async () => {
     const trimmed = newEntryTitle.trim()
-    if (!trimmed || !onCreateDocument) return
-    const createdDocId = await onCreateDocument(trimmed)
-    setNewEntryTitle('')
-    if (createdDocId) {
-      commitRowMap((prev) => ({
-        ...prev,
-        [createdDocId]: {
-          documentId: createdDocId,
-          values: buildCompleteRowValues(collection.properties, undefined),
-          updatedAt: new Date().toISOString(),
-        },
-      }))
+    if (!trimmed || !onCreateDocument || creatingRowRef.current) return
+    const candidate = {
+      documentId: '00000000-0000-7000-8000-000000000000',
+      values: buildCompleteRowValues(collection.properties, undefined),
+      updatedAt: new Date().toISOString(),
+    }
+    if (!validateRowMap({ ...rowsByDocIdRef.current, [candidate.documentId]: candidate })) return
+    creatingRowRef.current = true
+    setIsCreatingRow(true)
+    try {
+      const createdDocId = await onCreateDocument(trimmed)
+      setNewEntryTitle('')
+      if (createdDocId) {
+        commitRowMap((prev) => ({
+          ...prev,
+          [createdDocId]: {
+            documentId: createdDocId,
+            values: buildCompleteRowValues(collection.properties, undefined),
+            updatedAt: new Date().toISOString(),
+          },
+        }))
+      }
+    } finally {
+      creatingRowRef.current = false
+      setIsCreatingRow(false)
     }
   }
 
@@ -825,8 +864,7 @@ export function DocsCollectionView({
   ) => {
     const target = event.target as HTMLElement
     const isTextInput =
-      target.tagName === 'INPUT' &&
-      (target as HTMLInputElement).type !== 'checkbox'
+      target.tagName === 'INPUT' && (target as HTMLInputElement).type !== 'checkbox'
 
     if (event.key === 'Escape') {
       if (editingUrlCell) {
@@ -986,6 +1024,7 @@ export function DocsCollectionView({
         }
         return (
           <select
+            disabled={isCreatingRow}
             aria-label={label}
             data-grid-row={rowIndex}
             data-grid-col={colIndex}
@@ -1017,7 +1056,7 @@ export function DocsCollectionView({
             data-grid-col={colIndex}
             data-testid={`collection-cell-${row.documentId}-${prop.id}`}
             checked={checked}
-            disabled={!canEdit}
+            disabled={!canEdit || isCreatingRow}
             onKeyDown={(e) => handleGridCellKeyDown(e, rowIndex, colIndex)}
             onChange={(e) => {
               void updateCellValue(row.documentId, prop, e.target.checked)
@@ -1035,6 +1074,7 @@ export function DocsCollectionView({
         return (
           <input
             type="date"
+            disabled={isCreatingRow}
             aria-label={label}
             data-grid-row={rowIndex}
             data-grid-col={colIndex}
@@ -1060,6 +1100,7 @@ export function DocsCollectionView({
         }
         return (
           <select
+            disabled={isCreatingRow}
             aria-label={label}
             data-grid-row={rowIndex}
             data-grid-col={colIndex}
@@ -1083,8 +1124,7 @@ export function DocsCollectionView({
 
       case 'number': {
         const draftKey = `${row.documentId}:${prop.id}`
-        const committed =
-          cell?.kind === 'number' && cell.value !== null ? String(cell.value) : ''
+        const committed = cell?.kind === 'number' && cell.value !== null ? String(cell.value) : ''
         const displayValue = numberDrafts[draftKey] ?? committed
         if (!canEdit) {
           return <span className="font-mono text-xs text-c-ink">{committed || '—'}</span>
@@ -1107,6 +1147,7 @@ export function DocsCollectionView({
         return (
           <input
             type="number"
+            disabled={isCreatingRow}
             aria-label={label}
             data-grid-row={rowIndex}
             data-grid-col={colIndex}
@@ -1114,15 +1155,24 @@ export function DocsCollectionView({
             value={displayValue}
             onChange={(e) => {
               const raw = e.target.value
-              setNumberDrafts((prev) => ({ ...prev, [draftKey]: raw }))
               const trimmed = raw.trim()
               if (trimmed === '' || (trimmed !== '-' && Number.isFinite(Number(trimmed)))) {
-                scheduleDebouncedCellUpdate(
-                  row.documentId,
-                  prop,
-                  trimmed === '' ? null : Number(trimmed)
-                )
+                if (
+                  !scheduleDebouncedCellUpdate(
+                    row.documentId,
+                    prop,
+                    trimmed === '' ? null : Number(trimmed)
+                  )
+                ) {
+                  setNumberDrafts((prev) => {
+                    const next = { ...prev }
+                    delete next[draftKey]
+                    return next
+                  })
+                  return
+                }
               }
+              setNumberDrafts((prev) => ({ ...prev, [draftKey]: raw }))
             }}
             onBlur={(e) => commitNumber(e.target.value)}
             onKeyDown={(e) => {
@@ -1172,6 +1222,7 @@ export function DocsCollectionView({
             <div className="flex items-center gap-1">
               <input
                 type="url"
+                disabled={isCreatingRow}
                 aria-label={label}
                 data-grid-row={rowIndex}
                 data-grid-col={colIndex}
@@ -1236,6 +1287,7 @@ export function DocsCollectionView({
             {canEdit ? (
               <button
                 type="button"
+                disabled={isCreatingRow}
                 aria-label={label}
                 data-grid-row={rowIndex}
                 data-grid-col={colIndex}
@@ -1287,9 +1339,7 @@ export function DocsCollectionView({
                   type="button"
                   aria-pressed={isSelected}
                   aria-label={copy.toggleTagLabel(row.title, prop.name, opt.label)}
-                  {...(idx === 0
-                    ? { 'data-grid-row': rowIndex, 'data-grid-col': colIndex }
-                    : {})}
+                  {...(idx === 0 ? { 'data-grid-row': rowIndex, 'data-grid-col': colIndex } : {})}
                   onKeyDown={(e) => handleGridCellKeyDown(e, rowIndex, colIndex)}
                   onClick={() => {
                     const next = isSelected
@@ -1320,6 +1370,7 @@ export function DocsCollectionView({
         return (
           <input
             type="text"
+            disabled={isCreatingRow}
             aria-label={label}
             data-grid-row={rowIndex}
             data-grid-col={colIndex}
@@ -1493,15 +1544,14 @@ export function DocsCollectionView({
 
       {/* Schema Validation Error Alert */}
       {validationError !== null ? (
-        <div data-testid="collection-validation-error" className="flex items-center justify-between gap-2">
+        <div
+          data-testid="collection-validation-error"
+          className="flex items-center justify-between gap-2"
+        >
           <InlineAlert kind="error" className="flex-1">
             {validationError}
           </InlineAlert>
-          <Button
-            size="sm"
-            variant="tertiary"
-            onClick={() => setValidationError(null)}
-          >
+          <Button size="sm" variant="tertiary" onClick={() => setValidationError(null)}>
             {copy.validation.dismissAction}
           </Button>
         </div>
@@ -1535,9 +1585,7 @@ export function DocsCollectionView({
                   setFilters((prev) => ({ ...prev, searchQuery: '' }))
                 }
               }}
-              onChange={(e) =>
-                setFilters((prev) => ({ ...prev, searchQuery: e.target.value }))
-              }
+              onChange={(e) => setFilters((prev) => ({ ...prev, searchQuery: e.target.value }))}
               className="h-8 rounded-sm border border-c-border-input bg-c-surface px-3 text-xs text-c-ink placeholder:text-c-placeholder focus-visible:border-c-accent-ink focus-visible:ring focus-visible:outline-hidden"
             />
           </div>
@@ -1623,9 +1671,7 @@ export function DocsCollectionView({
                 id={tagFilterId}
                 data-testid="collection-filter-tag"
                 value={filters.tagId ?? ''}
-                onChange={(e) =>
-                  setFilters((prev) => ({ ...prev, tagId: e.target.value || null }))
-                }
+                onChange={(e) => setFilters((prev) => ({ ...prev, tagId: e.target.value || null }))}
                 className="h-8 rounded-sm border border-c-border-input bg-c-surface px-2 text-xs text-c-ink focus-visible:border-c-accent-ink focus-visible:ring focus-visible:outline-hidden"
               >
                 <option value="">{copy.filterAllOption}</option>
@@ -1647,9 +1693,7 @@ export function DocsCollectionView({
                 id={sortSelectId}
                 data-testid="collection-sort-property"
                 value={sort.propertyId}
-                onChange={(e) =>
-                  setSort((prev) => ({ ...prev, propertyId: e.target.value }))
-                }
+                onChange={(e) => setSort((prev) => ({ ...prev, propertyId: e.target.value }))}
                 className="h-8 rounded-sm border border-c-border-input bg-c-surface px-2 text-xs text-c-ink focus-visible:border-c-accent-ink focus-visible:ring focus-visible:outline-hidden"
               >
                 <option value="title">{copy.sortByTitle}</option>
@@ -1665,9 +1709,7 @@ export function DocsCollectionView({
               size="sm"
               variant="secondary"
               data-testid="collection-sort-direction"
-              aria-label={
-                sort.direction === 'asc' ? copy.sortDirectionAsc : copy.sortDirectionDesc
-              }
+              aria-label={sort.direction === 'asc' ? copy.sortDirectionAsc : copy.sortDirectionDesc}
               onClick={() =>
                 setSort((prev) => ({
                   ...prev,
@@ -1796,11 +1838,7 @@ export function DocsCollectionView({
                       key={prop.id}
                       scope="col"
                       aria-sort={
-                        isSorted
-                          ? sort.direction === 'asc'
-                            ? 'ascending'
-                            : 'descending'
-                          : 'none'
+                        isSorted ? (sort.direction === 'asc' ? 'ascending' : 'descending') : 'none'
                       }
                       className="px-3 py-2 font-semibold whitespace-nowrap text-c-ink-2"
                     >
@@ -2025,9 +2063,7 @@ export function DocsCollectionView({
                               {dueDateCell.value}
                             </span>
                           ) : null}
-                          {assigneeLabel ? (
-                            <Badge variant="neutral">{assigneeLabel}</Badge>
-                          ) : null}
+                          {assigneeLabel ? <Badge variant="neutral">{assigneeLabel}</Badge> : null}
                         </div>
 
                         {canMove && activeBoardProperty ? (
@@ -2156,8 +2192,7 @@ export function DocsCollectionView({
                   ) : null}
                   {tagProperty
                     ? selectedTagIds.map((tagId) => {
-                        const optIdx =
-                          tagProperty.options?.findIndex((o) => o.id === tagId) ?? 0
+                        const optIdx = tagProperty.options?.findIndex((o) => o.id === tagId) ?? 0
                         const opt = tagProperty.options?.[optIdx]
                         const tone = optionToneForIndex(optIdx >= 0 ? optIdx : 0, opt)
                         return (
@@ -2241,7 +2276,7 @@ export function DocsCollectionView({
               size="sm"
               variant="secondary"
               data-testid="collection-new-entry-submit"
-              disabled={newEntryTitle.trim().length === 0}
+              disabled={isCreatingRow || newEntryTitle.trim().length === 0}
               onClick={() => void handleCreateEntry()}
             >
               {copy.addRowAction}
