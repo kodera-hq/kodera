@@ -46,7 +46,9 @@ import hashlib
 import json
 import plistlib
 import re
+import struct
 import sys
+import zlib
 from pathlib import Path
 from xml.parsers.expat import ExpatError
 
@@ -330,11 +332,146 @@ def association_findings(root):
     return errors
 
 
+def _paeth(a, b, c):
+    p = a + b - c
+    pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
+    if pa <= pb and pa <= pc:
+        return a
+    return b if pb <= pc else c
+
+
+def _decode_rgb8_png(raw_bytes):
+    sig = b"\x89PNG\r\n\x1a\n"
+    if len(raw_bytes) < 33 or raw_bytes[:8] != sig:
+        return None, ["AppIcon-1024.png must be an opaque 1024x1024 8-bit RGB PNG without alpha"]
+    pos = 8
+    ihdr = None
+    idat_parts = []
+    saw_iend = False
+    text_chunks = {b"tEXt", b"zTXt", b"iTXt"}
+    errors = []
+    while pos + 8 <= len(raw_bytes):
+        length, ctype = struct.unpack(">I4s", raw_bytes[pos : pos + 8])
+        pos += 8
+        if pos + length + 4 > len(raw_bytes):
+            return None, ["AppIcon-1024.png must be an opaque 1024x1024 8-bit RGB PNG without alpha"]
+        data = raw_bytes[pos : pos + length]
+        pos += length + 4
+        if ctype in text_chunks:
+            errors.append("AppIcon-1024.png carries PNG text metadata; strip all text chunks")
+        elif ctype == b"IHDR":
+            if length != 13:
+                return None, ["AppIcon-1024.png must be an opaque 1024x1024 8-bit RGB PNG without alpha"]
+            ihdr = struct.unpack(">IIBBBBB", data)
+        elif ctype == b"IDAT":
+            idat_parts.append(data)
+        elif ctype == b"IEND":
+            saw_iend = True
+            break
+    if ihdr is None or not saw_iend or not idat_parts:
+        return None, errors or ["AppIcon-1024.png must be an opaque 1024x1024 8-bit RGB PNG without alpha"]
+    width, height, bit_depth, color_type, comp, filt, interlace = ihdr
+    if (width, height, bit_depth, color_type, comp, filt, interlace) != (1024, 1024, 8, 2, 0, 0, 0):
+        errors.append("AppIcon-1024.png must be an opaque 1024x1024 8-bit RGB PNG without alpha")
+        return None, errors
+    try:
+        inflated = zlib.decompress(b"".join(idat_parts))
+    except zlib.error:
+        errors.append("AppIcon-1024.png must be an opaque 1024x1024 8-bit RGB PNG without alpha")
+        return None, errors
+    stride = width * 3
+    if len(inflated) != height * (stride + 1):
+        errors.append("AppIcon-1024.png must be an opaque 1024x1024 8-bit RGB PNG without alpha")
+        return None, errors
+    pixels = bytearray(height * stride)
+    for y in range(height):
+        fbyte = inflated[y * (stride + 1)]
+        src_off = y * (stride + 1) + 1
+        dst_off = y * stride
+        prev_off = (y - 1) * stride
+        if fbyte == 0:
+            pixels[dst_off : dst_off + stride] = inflated[src_off : src_off + stride]
+        elif fbyte == 1:
+            for i in range(stride):
+                left = pixels[dst_off + i - 3] if i >= 3 else 0
+                pixels[dst_off + i] = (inflated[src_off + i] + left) & 0xFF
+        elif fbyte == 2:
+            for i in range(stride):
+                up = pixels[prev_off + i] if y > 0 else 0
+                pixels[dst_off + i] = (inflated[src_off + i] + up) & 0xFF
+        elif fbyte == 3:
+            for i in range(stride):
+                left = pixels[dst_off + i - 3] if i >= 3 else 0
+                up = pixels[prev_off + i] if y > 0 else 0
+                pixels[dst_off + i] = (inflated[src_off + i] + ((left + up) >> 1)) & 0xFF
+        elif fbyte == 4:
+            for i in range(stride):
+                left = pixels[dst_off + i - 3] if i >= 3 else 0
+                up = pixels[prev_off + i] if y > 0 else 0
+                up_left = pixels[prev_off + i - 3] if (y > 0 and i >= 3) else 0
+                pixels[dst_off + i] = (inflated[src_off + i] + _paeth(left, up, up_left)) & 0xFF
+        else:
+            errors.append("AppIcon-1024.png must be an opaque 1024x1024 8-bit RGB PNG without alpha")
+            return None, errors
+    return pixels, errors
+
+
+def app_icon_findings(root):
+    errors = []
+    project = read_bytes(root / "project.yml").decode("utf-8", "replace")
+    active = "\n".join(line.split("#", 1)[0] for line in project.splitlines())
+    if not re.search(r"^[ \t]*-[ \t]*path:[ \t]*App/Resources/Assets\.xcassets[ \t]*$", active, re.MULTILINE):
+        errors.append("project.yml must bundle App/Resources/Assets.xcassets")
+    target = re.search(r"^  Kodera:\n(.*?)(?=^  \S|\Z)", active, re.MULTILINE | re.DOTALL)
+    settings = re.search(
+        r"^    settings:\n      base:\n(.*?)(?=^ {0,6}\S|\Z)",
+        target.group(1) if target else "",
+        re.MULTILINE | re.DOTALL,
+    )
+    base = settings.group(1) if settings else ""
+    if not re.search(r"^        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon[ \t]*$", base, re.MULTILINE):
+        errors.append("project.yml must bind Kodera settings.base ASSETCATALOG_COMPILER_APPICON_NAME to AppIcon")
+
+    iconset = root / "App/Resources/Assets.xcassets/AppIcon.appiconset"
+    contents = read_json(iconset / "Contents.json")
+    want_images = [{"filename": "AppIcon-1024.png", "idiom": "universal", "platform": "ios", "size": "1024x1024"}]
+    if contents.get("images") != want_images:
+        errors.append("AppIcon.appiconset/Contents.json must declare a single 1024x1024 universal iOS icon AppIcon-1024.png")
+
+    png_bytes = read_bytes(iconset / "AppIcon-1024.png")
+    pixels, png_errors = _decode_rgb8_png(png_bytes)
+    errors.extend(png_errors)
+    if pixels is not None:
+        stride = 1024 * 3
+        corners = [
+            tuple(pixels[0:3]),
+            tuple(pixels[(1023 * 3) : (1023 * 3 + 3)]),
+            tuple(pixels[(1023 * stride) : (1023 * stride + 3)]),
+            tuple(pixels[(1023 * stride + 1023 * 3) : (1023 * stride + 1023 * 3 + 3)]),
+        ]
+        if any(c != (8, 9, 10) for c in corners):
+            errors.append("AppIcon-1024.png background must be exact Noir 950 (#08090A), never blue or light")
+        has_givre = False
+        for y in range(256, 768, 4):
+            row = y * stride
+            for x in range(256, 768, 4):
+                off = row + x * 3
+                if (pixels[off], pixels[off + 1], pixels[off + 2]) == (238, 243, 248):
+                    has_givre = True
+                    break
+            if has_givre:
+                break
+        if not has_givre:
+            errors.append("AppIcon-1024.png lacks the Givre (#EEF3F8) Kodera monogram")
+    return errors
+
+
 def findings(root):
     app = root / "App"
     errors = config_findings(root / "Config")
     errors += stray_setting_findings(root)
     errors += association_findings(root)
+    errors += app_icon_findings(root)
 
     pin = read_json(app / "Generated/TokenProvenance.json")
     tokens = app / "Generated/KoderaTokens.swift"

@@ -617,6 +617,57 @@ fresh; printf '\n// .package(name: "Paddle")\n' >> "$work/packages/KoderaClient/
 expect_refusal "a billing provider in a package manifest" 1 \
   "packages/KoderaClient/Package.swift:$(($(wc -l < "$root/packages/KoderaClient/Package.swift") + 2)) names a billing provider or store purchase API (\"Paddle\")$SOLD"
 
+# ── app icon (Noir 950 #08090A + Givre #EEF3F8) ────────────────────────────
+fresh
+python3 - "$work/project.yml" <<'PY'
+import sys
+p = sys.argv[1]
+t = open(p, encoding="utf-8").read()
+t = t.replace("      - path: App/Resources/Assets.xcassets\n        buildPhase: resources\n", "")
+open(p, "w", encoding="utf-8").write(t)
+PY
+expect_refusal "missing Assets.xcassets resource in project.yml" 1 \
+  "project.yml must bundle App/Resources/Assets.xcassets"
+
+fresh
+python3 - "$work/project.yml" <<'PY'
+import sys
+p = sys.argv[1]
+t = open(p, encoding="utf-8").read()
+t = t.replace("ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon", "ASSETCATALOG_COMPILER_APPICON_NAME: LegacyIcon")
+open(p, "w", encoding="utf-8").write(t)
+PY
+expect_refusal "wrong ASSETCATALOG_COMPILER_APPICON_NAME in project.yml" 1 \
+  "project.yml must bind Kodera settings.base ASSETCATALOG_COMPILER_APPICON_NAME to AppIcon"
+
+fresh
+python3 - "$work/App/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png" <<'PY'
+import struct, sys, zlib
+def chunk(t, d):
+    return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xFFFFFFFF)
+ihdr = struct.pack(">IIBBBBB", 1024, 1024, 8, 6, 0, 0, 0)
+row = b"\x00" + (b"\x08\x09\x0a\xff" * 1024)
+png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", zlib.compress(row * 1024)) + chunk(b"IEND", b"")
+open(sys.argv[1], "wb").write(png)
+PY
+expect_refusal "an AppIcon-1024.png with an alpha channel" 1 \
+  "AppIcon-1024.png must be an opaque 1024x1024 8-bit RGB PNG without alpha"
+
+fresh
+python3 - "$work/App/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png" <<'PY'
+import struct, sys, zlib
+def chunk(t, d):
+    return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xFFFFFFFF)
+ihdr = struct.pack(">IIBBBBB", 1024, 1024, 8, 2, 0, 0, 0)
+cobalt_row = b"\x00" + (b"\x2b\x4b\xdb" * 1024)
+center_row = b"\x00" + (b"\x2b\x4b\xdb" * 512) + (b"\xee\xf3\xf8" * 512)
+rows = (cobalt_row * 512) + (center_row * 256) + (cobalt_row * 256)
+png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b"")
+open(sys.argv[1], "wb").write(png)
+PY
+expect_refusal "a legacy cobalt (#2B4BDB) AppIcon-1024.png background" 1 \
+  "AppIcon-1024.png background must be exact Noir 950 (#08090A), never blue or light"
+
 # ── could not look ─────────────────────────────────────────────────────────
 # expect_unreadable LABEL — after the mutation was applied.
 expect_unreadable() {
@@ -651,6 +702,6 @@ fresh
 expect_clean "the copy passes again once restored"
 
 # A harness that aborted early, or a case list that shrank, must not pass.
-expected_cases=119
+expected_cases=123
 [ "$cases" -eq "$expected_cases" ] || fail "ran $cases cases, expected $expected_cases"
 echo "self-test passed: $cases cases, each proved by its own message, finding count AND exit status"

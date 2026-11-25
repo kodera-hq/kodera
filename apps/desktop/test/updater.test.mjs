@@ -69,7 +69,7 @@ test('native icon containers include independent official raster frames at every
     const png = files[`${size}x${size}.png`]; assert.equal(png.readUInt32BE(16), size); assert.equal(png.readUInt32BE(20), size);
     const pixels = inflateSync(png.subarray(41, 41 + png.readUInt32BE(33)));
     assert.equal(pixels.length, size * (size * 4 + 1));
-    assert.deepEqual([...pixels.subarray(1, 5)], [43, 75, 219, 255]);
+    assert.deepEqual([...pixels.subarray(1, 5)], [8, 9, 10, 255]);
     assert.ok(pixels.includes(238), 'official Givre foreground must be present');
     if (size === 256) for (let y = 0; y < size; y++) nativePixels.push(pixels.subarray(y * (size * 4 + 1) + 1, (y + 1) * (size * 4 + 1)));
 

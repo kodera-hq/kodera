@@ -11,7 +11,9 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { beginMatrixSignIn, getMatrixSession } from '../../auth/matrix'
+import { beginMatrixSignIn, getMatrixSession, signInToMatrixDesktop } from '../../auth/matrix'
+import { isDesktopBundledOrigin } from '../../auth/desktopOidc'
+import { authAdapter } from '../../auth/oidc'
 import type { MatrixSession } from '../../auth/matrix'
 import { espaceDevHomeserver, espaceDevServerName, matrixDomain } from '../../config'
 import type { MessageKey } from '../../i18n'
@@ -109,13 +111,13 @@ export function useAutoOpenEspace(
   const [settled, setSettled] = useState(false)
   const { open } = entry
   useEffect(() => {
-    if (!offered || started.current) return
+    if (isDesktopBundledOrigin() || !offered || started.current) return
     started.current = true
     if (claimAutoOpen())
       void open({ replace: true, ...(returnTo === undefined ? {} : { returnTo }) })
     setSettled(true)
   }, [offered, open, returnTo])
-  return offered && !settled && autoOpenDue()
+  return !isDesktopBundledOrigin() && offered && !settled && autoOpenDue()
 }
 
 /** The Console path to come back to: the one on screen, as the callback route expects it. */
@@ -153,6 +155,14 @@ export function useOpenEspace(serverSlug: string) {
       setState('opening')
       try {
         const { baseUrl } = await resolveHomeserver(serverSlug, options)
+        if (isDesktopBundledOrigin()) {
+          const expectedSub = authAdapter.getSnapshot().user?.identity?.subject
+          if (expectedSub === undefined) throw new Error('Missing sign-in identity.')
+          await signInToMatrixDesktop(baseUrl, returnTo ?? currentPath(), expectedSub)
+          opening.current = false
+          setState('idle')
+          return
+        }
         // A full-page navigation: the page stays « opening » until it is gone.
         beginMatrixSignIn(
           baseUrl,

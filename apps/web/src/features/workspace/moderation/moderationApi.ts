@@ -5,13 +5,14 @@
 import { ApiProblem, coreApi } from '../../../api/client'
 import { mutate } from '../../../api/mutations'
 import type { components } from '../../../api/schema'
+import { publicConsoleOrigin } from '../../../config'
 
 export type InviteLink = components['schemas']['WorkspaceInviteLink']
 export type AbuseReport = components['schemas']['AbuseReport']
 export type ModerationAction = components['schemas']['WorkspaceModerationRequest']['action']
 
 /** Where a member opens an invite: the code rides in the fragment, which no server ever receives. */
-export function inviteUrl(code: string, origin = window.location.origin): string {
+export function inviteUrl(code: string, origin = publicConsoleOrigin()): string {
   return `${origin}${import.meta.env.BASE_URL}join#${encodeURIComponent(code)}`
 }
 

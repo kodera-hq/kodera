@@ -212,6 +212,32 @@ def check_workflow_text(text: str, root: Path = ROOT) -> list[str]:
         errors.append("desktop-release must invoke scripts/ci/package-desktop-release.mjs")
     if not (root / "scripts" / "ci" / "package-desktop-release.mjs").is_file():
         errors.append("helper script scripts/ci/package-desktop-release.mjs is missing from repository")
+    for desktop_env in (
+        "VITE_AUTH_MODE: oidc",
+        'VITE_ENABLE_MSW: "0"',
+        'VITE_FIRST_OWNER_JOURNEY: "0"',
+        "VITE_CORE_API_URL: ${{ vars.VITE_CORE_API_URL || 'https://api.kodera.io/api/v1' }}",
+        "VITE_KEYCLOAK_URL: ${{ vars.VITE_KEYCLOAK_URL || 'https://auth.kodera.io' }}",
+        "VITE_OIDC_CLIENT_ID: ${{ vars.VITE_DESKTOP_OIDC_CLIENT_ID || 'kodera-desktop' }}",
+        "VITE_MATRIX_DOMAIN: ${{ vars.VITE_MATRIX_DOMAIN || 'kodera.io' }}",
+        "VITE_TENANT_DOMAIN: ${{ vars.VITE_TENANT_DOMAIN || 'kodera.io' }}",
+        "VITE_CONSOLE_ORIGIN: ${{ vars.VITE_CONSOLE_ORIGIN || 'https://community.kodera.io' }}",
+    ):
+        if desktop_env not in desktop_block:
+            errors.append(f"desktop-release must bind production web env '{desktop_env}'")
+    bundle_gate = "bash apps/web/scripts/check-production-bundle.sh --scan-only apps/web/dist"
+    web_build_idx = desktop_block.find("npm --workspace @kodera/web run build")
+    bundle_gate_idx = desktop_block.find(bundle_gate)
+    desktop_pkg_idx = desktop_block.rfind("node scripts/ci/package-desktop-release.mjs")
+    if (
+        web_build_idx == -1
+        or bundle_gate_idx == -1
+        or desktop_pkg_idx == -1
+        or not (web_build_idx < bundle_gate_idx < desktop_pkg_idx)
+    ):
+        errors.append(
+            "desktop-release must run check-production-bundle.sh --scan-only apps/web/dist after @kodera/web build and before package-desktop-release.mjs"
+        )
 
     android_block = jobs["android-release"]
     if "runs-on: ubuntu-latest" not in android_block:
@@ -669,6 +695,24 @@ def run_selftest(baseline: str) -> int:
             "missing sbom-cyclonedx.json",
             lambda s: s.replace("sbom-cyclonedx.json", "inventory.txt"),
             "publish-release must stage or generate 'sbom-cyclonedx.json'",
+        ),
+        (
+            "missing desktop VITE_OIDC_CLIENT_ID binding",
+            lambda s: s.replace(
+                "VITE_OIDC_CLIENT_ID: ${{ vars.VITE_DESKTOP_OIDC_CLIENT_ID || 'kodera-desktop' }}",
+                "VITE_OIDC_CLIENT_ID: 'console'",
+                1,
+            ),
+            "desktop-release must bind production web env",
+        ),
+        (
+            "missing desktop production bundle verification gate",
+            lambda s: s.replace(
+                "bash apps/web/scripts/check-production-bundle.sh --scan-only apps/web/dist",
+                "echo skipped-bundle-gate",
+                1,
+            ),
+            "desktop-release must run check-production-bundle.sh --scan-only apps/web/dist",
         ),
     ]
 

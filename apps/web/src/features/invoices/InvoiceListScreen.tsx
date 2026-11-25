@@ -10,6 +10,7 @@ import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { orgRoute } from '../../app/org-route'
+import { publicConsoleOrigin } from '../../config'
 import { formatDate, formatMoney } from '../../i18n/format'
 import { Banner } from '../../ui/Banner/Banner'
 import { Button } from '../../ui/Button/Button'
@@ -195,7 +196,7 @@ function InvoiceListContent() {
     try {
       const link = await payOnline(
         invoice.id,
-        `${window.location.origin}/${org}/invoices/${invoice.id}?payment=return`,
+        `${publicConsoleOrigin(org)}/${org}/invoices/${invoice.id}?payment=return`,
         locale,
         isCurrent
       )

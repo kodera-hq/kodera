@@ -23,6 +23,7 @@ import { demoMessages } from '../../app/demoMessages'
 import { keepFocusOnRouteTo, releaseRouteFocus } from '../../app/routeFocusHold'
 import { useNarrowViewport } from '../../app/useNarrowViewport'
 import { getMatrixRegistrationStamp, type MatrixSession } from '../../auth/matrix'
+import { publicConsoleOrigin } from '../../config'
 import { Button } from '../../ui/Button/Button'
 import { cx } from '../../ui/cx'
 import { Drawer } from '../../ui/Drawer/Drawer'
@@ -1403,7 +1404,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
   }
 
   const copyChannelLink = useStableHandler((target: ChannelMenuTarget) => {
-    const url = `${window.location.origin}/${encodeURIComponent(org)}/workspace/${encodeURIComponent(target.channelId)}`
+    const url = `${publicConsoleOrigin(org)}/${encodeURIComponent(org)}/workspace/${encodeURIComponent(target.channelId)}`
     const clipboard = navigator.clipboard
     if (!clipboard?.writeText) {
       setAnnouncement(t('console.workspace.channel-menu.announce-copy-failed'))

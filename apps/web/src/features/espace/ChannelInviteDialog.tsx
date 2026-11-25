@@ -1,5 +1,6 @@
 import { useRef, useState, type FormEvent, type Ref, type RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
+import { publicConsoleOrigin } from '../../config'
 import { Button } from '../../ui/Button/Button'
 import { CopyableField } from '../../ui/CopyableField/CopyableField'
 import { Dialog } from '../../ui/Dialog/Dialog'
@@ -129,7 +130,7 @@ function InviteForm({
     channelSlug: channel.name.toLowerCase().replace(/\s+/g, '-'),
     org,
     channelId: channel.id,
-    origin: window.location.origin,
+    origin: publicConsoleOrigin(org),
   })
 
   async function submit(event: FormEvent) {

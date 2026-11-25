@@ -114,3 +114,29 @@ export const espaceDevServerName = (): string | undefined =>
  * the `import.meta.env` dictionary into the production bundle (`scripts/check-production-bundle.sh`).
  */
 export const buildId = (): string | undefined => read(import.meta.env.VITE_BUILD_ID)
+
+/**
+ * Public HTTPS Console origin used for shareable workspace links, invitation links, and external
+ * payment return URLs. On standard web origins (`https://`, `http://localhost`) this equals
+ * `window.location.origin`. Inside the bundled Desktop WebView (`kodera-asset://localhost` where
+ * `origin === "null"` on macOS/Linux, or `https://kodera-asset.localhost` on Windows), it resolves
+ * to `VITE_CONSOLE_ORIGIN` or the canonical public web surface (`https://community.kodera.io` for
+ * the `community` organisation, `https://app.kodera.io` otherwise).
+ */
+export function publicConsoleOrigin(orgSlug?: string): string {
+  if (typeof window !== 'undefined') {
+    const { origin, protocol, hostname } = window.location
+    if (
+      origin &&
+      origin !== 'null' &&
+      protocol !== 'kodera-asset:' &&
+      hostname !== 'kodera-asset.localhost'
+    ) {
+      return origin
+    }
+  }
+  const explicit = read(import.meta.env.VITE_CONSOLE_ORIGIN)
+  if (explicit !== undefined && orgSlug === undefined) return explicit
+  if (orgSlug === 'community') return 'https://community.kodera.io'
+  return explicit ?? 'https://app.kodera.io'
+}

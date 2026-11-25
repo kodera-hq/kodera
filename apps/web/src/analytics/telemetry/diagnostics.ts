@@ -18,7 +18,10 @@ export function reportTelemetryError(
       kind,
       component,
       area: routeArea(location.pathname),
-      stack: codeStack(error, location.origin),
+      stack: codeStack(
+        error,
+        location.origin === 'null' ? `${location.protocol}//${location.host}` : location.origin
+      ),
     })
   } catch {
     /* Hostile error objects cannot interrupt the application. */

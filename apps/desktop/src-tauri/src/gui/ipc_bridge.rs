@@ -1,5 +1,6 @@
 //! Origin-fenced WebView IPC router, capability rotation, and command envelope dispatcher.
 
+use super::desktop_oidc::{NativeOidcServices, NativeOidcTask};
 use super::picker::{NativeStackFolderPicker, OsNativeStackFolderPicker};
 use super::{
     activate_js_document, dispatch_js_event, escape_js_json_str, resolve_js_promise,
@@ -135,6 +136,7 @@ pub(super) struct IpcEnvelopeHeader {
 /// Stateful WebView IPC router bridging `window.__TAURI_INTERNALS__` and `window.koderaDesktop`
 /// to [`DesktopShellHost`] after strict sender-origin validation.
 pub struct DesktopWebViewBridge {
+    pub(super) native_oidc: NativeOidcServices,
     pub(super) host: DesktopShellHost,
     pub(super) policy: DeepLinkAdmissionPolicy,
     pub(super) allow_dev_origin: bool,
@@ -158,6 +160,7 @@ impl DesktopWebViewBridge {
             pending_deep_links.push_back(admitted.canonical_uri().to_owned());
         }
         Self {
+            native_oidc: NativeOidcServices::default(),
             host: DesktopShellHost::new(),
             policy: DeepLinkAdmissionPolicy::kodera_default(),
             allow_dev_origin,
@@ -175,6 +178,20 @@ impl DesktopWebViewBridge {
         }
     }
 
+    /// Replaces native authentication services and the issuer policy for embedding or testing.
+    pub fn configure_native_oidc(
+        &mut self,
+        http: std::sync::Arc<dyn super::NativeOidcHttpClient>,
+        browser: std::sync::Arc<dyn super::NativeBrowserLauncher>,
+        keychain: std::sync::Arc<std::sync::Mutex<crate::KeychainCredentialStore>>,
+        allowlist: crate::OidcIssuerAllowlist,
+    ) {
+        self.native_oidc.http = http;
+        self.native_oidc.browser = browser;
+        self.native_oidc.keychain = keychain;
+        self.native_oidc.allowlist = allowlist;
+    }
+
     /// Replaces the native OS folder chooser on this bridge instance (deterministic test seam).
     pub fn set_stack_folder_picker(&mut self, picker: std::sync::Arc<dyn NativeStackFolderPicker>) {
         self.stack_folder_picker = picker;
@@ -188,6 +205,12 @@ impl DesktopWebViewBridge {
         if self.document_id.is_some() || self.document_generation != 0 {
             self.pending_deep_links.clear();
         }
+        self.native_oidc
+            .epoch
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.native_oidc
+            .revision
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         self.host.clear_active_session();
         self.listeners.clear();
         self.authorized_stack_dirs.clear();
@@ -198,6 +221,12 @@ impl DesktopWebViewBridge {
     }
 
     pub fn clear_session(&mut self) {
+        self.native_oidc
+            .epoch
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.native_oidc
+            .revision
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         self.host.clear_active_session();
         self.authorized_stack_dirs.clear();
         self.active_modifiers.clear();
@@ -311,6 +340,15 @@ impl DesktopWebViewBridge {
         &mut self,
         sender_url: &str,
         raw_message: &str,
+    ) -> Result<WebViewIpcOutcome, WebViewIpcError> {
+        self.handle_ipc_request_with_native_dispatch(sender_url, raw_message, NativeOidcTask::run)
+    }
+
+    pub(super) fn handle_ipc_request_with_native_dispatch(
+        &mut self,
+        sender_url: &str,
+        raw_message: &str,
+        dispatch: impl FnOnce(NativeOidcTask) -> WebViewIpcOutcome,
     ) -> Result<WebViewIpcOutcome, WebViewIpcError> {
         if raw_message.len() > MAX_IPC_COMMAND_BYTES {
             return Err(WebViewIpcError::MessageTooLarge);
@@ -436,6 +474,34 @@ impl DesktopWebViewBridge {
         let mut window_action = None;
 
         match cmd_raw {
+            "desktop_oidc_exchange_loopback"
+            | "desktop_oidc_refresh_session"
+            | "desktop_oidc_clear_session"
+            | "desktop_matrix_sso_loopback" => {
+                if matches!(
+                    cmd_raw,
+                    "desktop_oidc_exchange_loopback" | "desktop_oidc_clear_session"
+                ) {
+                    self.native_oidc
+                        .epoch
+                        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    self.native_oidc
+                        .revision
+                        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                }
+                return Ok(dispatch(NativeOidcTask {
+                    services: self.native_oidc.clone(),
+                    policy: self.policy.clone(),
+                    command: cmd_raw.to_owned(),
+                    body: json_body.to_owned(),
+                    document_id: document_id.to_owned(),
+                    request_id: req_id,
+                    epoch: self
+                        .native_oidc
+                        .epoch
+                        .load(std::sync::atomic::Ordering::SeqCst),
+                }));
+            }
             "get_app_metadata" | "check_app_updates" => {
                 let payload = super::builtin_meta_payload(cmd_raw, self.ready_update.as_ref())
                     .expect("matched metadata or update command");

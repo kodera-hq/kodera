@@ -27,7 +27,7 @@ export function Handoff({ realm, organisationName }: HandoffProps) {
   const [blocked, setBlocked] = useState(false)
 
   useEffect(() => {
-    void authAdapter.signIn(realm)
+    void authAdapter.signIn(realm).catch(() => setBlocked(true))
     const timer = window.setTimeout(() => setBlocked(true), MANUAL_CONTINUE_DELAY_MS)
     return () => window.clearTimeout(timer)
   }, [realm])
@@ -46,7 +46,7 @@ export function Handoff({ realm, organisationName }: HandoffProps) {
           {blocked ? (
             <>
               <p className="text-sm text-c-ink-3">{t('console.login.handoff.error-blocked')}</p>
-              <Button onClick={() => void authAdapter.signIn(realm)}>
+              <Button onClick={() => void authAdapter.signIn(realm).catch(() => setBlocked(true))}>
                 {t('console.login.handoff.action-continue')}
               </Button>
             </>

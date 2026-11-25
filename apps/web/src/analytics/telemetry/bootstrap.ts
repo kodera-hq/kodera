@@ -61,7 +61,7 @@ export async function startTelemetry(
                     // Examine a resource path only to select a fixed operation; retain no URL.
                     let operation: TelemetryOperation | undefined
                     try {
-                      const path = new URL(entry.name, location.origin).pathname
+                      const path = new URL(entry.name, location.href).pathname
                       if (/\/_matrix\/client\/[^/]+\/rooms\/[^/]+\/send\//.test(path))
                         operation = 'chat_send'
                       else if (/\/_matrix\/media\/[^/]+\/upload$/.test(path))

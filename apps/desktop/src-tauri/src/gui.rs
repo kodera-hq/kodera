@@ -131,6 +131,10 @@ const ADMITTED_WEBVIEW_IPC_COMMANDS: &[&str] = &[
     "configure_media_capture",
     "configure_ptt",
     "delete_keychain_credential",
+    "desktop_matrix_sso_loopback",
+    "desktop_oidc_clear_session",
+    "desktop_oidc_exchange_loopback",
+    "desktop_oidc_refresh_session",
     "dispatch_notification",
     "get_app_metadata",
     "get_media_capture_state",
@@ -168,6 +172,10 @@ const PRIVILEGED_INTERNAL_ONLY_COMMANDS: &[&str] = &[
     "begin_oidc_pkce_loopback",
     "complete_oidc_pkce_callback",
     "delete_keychain_credential",
+    "desktop_matrix_sso_loopback",
+    "desktop_oidc_clear_session",
+    "desktop_oidc_exchange_loopback",
+    "desktop_oidc_refresh_session",
     "load_keychain_credential",
     "plan_self_host",
     "restart_to_update",
@@ -231,6 +239,7 @@ pub fn verify_embedded_default_capability() -> Result<(), &'static str> {
 }
 
 mod assets;
+mod desktop_oidc;
 mod ipc_bridge;
 #[cfg(feature = "desktop-app")]
 mod native_runtime;
@@ -240,6 +249,10 @@ mod picker;
 mod tests;
 
 pub use assets::{resolve_asset_response, AssetHttpPayload};
+pub use desktop_oidc::{
+    NativeBrowserLauncher, NativeOidcHttpClient, NativeOidcHttpResponse, StdBrowserLauncher,
+    StdOidcHttpClient,
+};
 pub use ipc_bridge::{DesktopWebViewBridge, GuiWindowAction, WebViewIpcError, WebViewIpcOutcome};
 #[cfg(feature = "desktop-app")]
 pub use native_runtime::launch_desktop_gui;

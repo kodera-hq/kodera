@@ -641,3 +641,870 @@ fn tao_keycode_and_modifier_mapping_covers_ptt_chords_and_rejects_reserved_keys(
         None
     );
 }
+
+// Native authentication fixtures use loopback sockets and isolated in-memory keychains only.
+mod native_auth {
+    use super::*;
+    use crate::{KeychainCredentialStore, KeychainSecretKind, OidcIssuerAllowlist};
+    use serde_json::{json, Value};
+    use std::collections::BTreeMap;
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+    use std::sync::{Arc, Mutex};
+    use zeroize::Zeroizing;
+
+    type HttpHandler = dyn Fn(&str, &str) -> Result<NativeOidcHttpResponse, String> + Send + Sync;
+    struct Http(Arc<HttpHandler>);
+    impl NativeOidcHttpClient for Http {
+        fn post_form(&self, url: &str, body: &str) -> Result<NativeOidcHttpResponse, String> {
+            (self.0)(url, body)
+        }
+    }
+    type BrowserHandler = dyn Fn(&str) -> Result<(), String> + Send + Sync;
+    struct Browser(Arc<BrowserHandler>);
+    impl NativeBrowserLauncher for Browser {
+        fn open(&self, url: &str) -> Result<(), String> {
+            (self.0)(url)
+        }
+    }
+    fn decode(raw: &str) -> String {
+        let mut bytes = Vec::new();
+        let mut iter = raw.bytes();
+        while let Some(b) = iter.next() {
+            if b == b'%' {
+                let hi = char::from(iter.next().unwrap()).to_digit(16).unwrap();
+                let lo = char::from(iter.next().unwrap()).to_digit(16).unwrap();
+                bytes.push((hi * 16 + lo) as u8);
+            } else {
+                bytes.push(b);
+            }
+        }
+        String::from_utf8(bytes).unwrap()
+    }
+    fn query(raw: &str) -> BTreeMap<String, String> {
+        raw.split('&')
+            .map(|p| {
+                let (k, v) = p.split_once('=').unwrap();
+                (decode(k), decode(v))
+            })
+            .collect()
+    }
+    fn jwt(claims: Value) -> String {
+        format!(
+            "e30.{}.c2ln",
+            super::super::super::desktop_oidc::base64url(claims.to_string().as_bytes())
+        )
+    }
+    fn response(status: u16, body: Value) -> NativeOidcHttpResponse {
+        NativeOidcHttpResponse {
+            status,
+            body: Zeroizing::new(body.to_string().into_bytes()),
+        }
+    }
+    fn args(command: &str) -> Value {
+        json!({"command":command,"issuer_origin":"https://auth.kodera.io","realm":"community","client_id":"kodera-desktop"})
+    }
+    fn envelope(command: &str, body: Value) -> String {
+        format!(
+            "{}:0:{}:1\t{command}\n{body}",
+            "a".repeat(32),
+            "c".repeat(64)
+        )
+    }
+    fn invoke(bridge: &mut DesktopWebViewBridge, command: &str, body: Value) -> WebViewIpcOutcome {
+        bridge
+            .handle_ipc_request(
+                &format!("{INTERNAL_ASSET_ORIGIN}/index.html"),
+                &envelope(command, body),
+            )
+            .unwrap()
+    }
+    fn payload(out: &WebViewIpcOutcome, ok: bool) -> Value {
+        let start = format!("__KODERA_IPC_RESOLVE__(1, {ok}, ");
+        let raw = out.eval_scripts[0]
+            .split_once(&start)
+            .unwrap()
+            .1
+            .strip_suffix("); }")
+            .unwrap();
+        serde_json::from_str(raw).unwrap()
+    }
+    fn setup(
+        http: Http,
+        browser: Browser,
+    ) -> (DesktopWebViewBridge, Arc<Mutex<KeychainCredentialStore>>) {
+        let mut bridge = DesktopWebViewBridge::new(true, None);
+        bridge.document_capability = Some("c".repeat(64));
+        bridge.native_oidc.timeout_ms = 500;
+        let keychain = Arc::new(Mutex::new(KeychainCredentialStore::new()));
+        bridge.configure_native_oidc(
+            Arc::new(http),
+            Arc::new(browser),
+            keychain.clone(),
+            OidcIssuerAllowlist::kodera_default(),
+        );
+        (bridge, keychain)
+    }
+    fn stored(store: &Arc<Mutex<KeychainCredentialStore>>) -> Option<String> {
+        let (org, user) = super::super::super::desktop_oidc::credential_slot("community");
+        store
+            .lock()
+            .unwrap()
+            .load_credential_secret(KeychainSecretKind::OidcRefresh, &org, &user)
+            .unwrap()
+            .map(|(_, s)| s.expose_for_keychain_write().to_owned())
+    }
+    fn seed(store: &Arc<Mutex<KeychainCredentialStore>>) {
+        let (org, user) = super::super::super::desktop_oidc::credential_slot("community");
+        kodera_rs::OrganisationId::parse(&org).unwrap();
+        store
+            .lock()
+            .unwrap()
+            .store_credential(
+                KeychainSecretKind::OidcRefresh,
+                &org,
+                &user,
+                "kodera-desktop",
+                1,
+                None,
+                "refresh-before-native",
+            )
+            .unwrap();
+    }
+    fn unused_browser() -> Browser {
+        Browser(Arc::new(|_| panic!("unexpected browser launch")))
+    }
+    fn unused_http() -> Http {
+        Http(Arc::new(|_, _| panic!("unexpected token request")))
+    }
+    fn callback(uri: String, host: Option<String>) -> std::thread::JoinHandle<String> {
+        std::thread::spawn(move || {
+            let (authority, path) = uri
+                .strip_prefix("http://")
+                .unwrap()
+                .split_once('/')
+                .unwrap();
+            let mut stream = TcpStream::connect(authority).unwrap();
+            stream
+                .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+                .unwrap();
+            let request = format!(
+                "GET /{path} HTTP/1.1\r\nHost: {}\r\n\r\n",
+                host.as_deref().unwrap_or(authority)
+            );
+            // Deliberately fragment HTTP headers: TCP reads need not align with requests.
+            for chunk in request.as_bytes().chunks(7) {
+                stream.write_all(chunk).unwrap();
+            }
+            let mut reply = String::new();
+            let _ = stream.read_to_string(&mut reply);
+            reply
+        })
+    }
+
+    #[test]
+    fn exchange_pkce_validates_nonce_and_stores_only_native_refresh_credential() {
+        for registration in [false, true] {
+            let captured = Arc::new(Mutex::new(BTreeMap::<String, String>::new()));
+            let browser_capture = captured.clone();
+            let browser = Browser(Arc::new(move |url| {
+                assert!(url.starts_with(if registration {
+                    "https://auth.kodera.io/realms/community/protocol/openid-connect/registrations?"
+                } else {
+                    "https://auth.kodera.io/realms/community/protocol/openid-connect/auth?"
+                }));
+                let q = query(url.split_once('?').unwrap().1);
+                assert_eq!(q["scope"], "openid profile email offline_access");
+                assert_eq!(q["code_challenge_method"], "S256");
+                assert_eq!(q["ui_locales"], "fr");
+                assert_eq!(q["prompt"], "login");
+                assert_eq!(q["kc_action"], "CONFIGURE_TOTP");
+                assert_eq!(q["state"].len(), 43);
+                assert_eq!(q["nonce"].len(), 43);
+                callback(format!("{}?code=one-use-code&state={}&iss=https%3A%2F%2Fauth.kodera.io%2Frealms%2Fcommunity",q["redirect_uri"],q["state"]),None);
+                *browser_capture.lock().unwrap() = q;
+                Ok(())
+            }));
+            let http = Http(Arc::new(move |url, body| {
+                assert_eq!(
+                    url,
+                    "https://auth.kodera.io/realms/community/protocol/openid-connect/token"
+                );
+                let form = query(body);
+                let q = captured.lock().unwrap();
+                assert_eq!(form["grant_type"], "authorization_code");
+                assert_eq!(form["code"], "one-use-code");
+                assert_eq!(form["redirect_uri"], q["redirect_uri"]);
+                assert_eq!(form["code_verifier"].len(), 43);
+                assert_eq!(
+                    crate::pkce_s256_challenge(&form["code_verifier"]).unwrap(),
+                    q["code_challenge"]
+                );
+                Ok(response(
+                    200,
+                    json!({"access_token":"short-access", "id_token":jwt(json!({"iss":"https://auth.kodera.io/realms/community","sub":"member","aud":"kodera-desktop","nonce":q["nonce"],"amr":["pwd","otp"]})),"refresh_token":"native-refresh-only","expires_in":300}),
+                ))
+            }));
+            let (mut bridge, store) = setup(http, browser);
+            let mut input = args("desktop_oidc_exchange_loopback");
+            input["registration"] = json!(registration);
+            input["ui_locales"] = json!("fr");
+            input["prompt"] = json!("login");
+            input["kc_action"] = json!("CONFIGURE_TOTP");
+            let out = invoke(&mut bridge, "desktop_oidc_exchange_loopback", input);
+            assert_eq!(out.window_action, Some(GuiWindowAction::ShowAndFocus));
+            assert_eq!(
+                payload(&out, true),
+                json!({"ok":true,"access_token":"short-access","expires_in":300,"realm":"community","issuer":"https://auth.kodera.io/realms/community","subject":"member","amr":["pwd","otp"]})
+            );
+            assert!(!out.eval_scripts[0].contains("native-refresh-only"));
+            assert!(!out.eval_scripts[0].contains("refresh_token"));
+            assert_eq!(stored(&store).as_deref(), Some("native-refresh-only"));
+        }
+    }
+
+    #[test]
+    fn exchange_requires_id_token_bound_to_client() {
+        for (identity, accepted) in [
+            (None, false),
+            (Some(json!({})), false),
+            (
+                Some(json!({"aud":"other-client","azp":"other-client"})),
+                false,
+            ),
+            (Some(json!({"aud":["other-client"]})), false),
+            (Some(json!({"aud":["kodera-desktop", 42]})), false),
+            (Some(json!({"aud":"kodera-desktop"})), true),
+            (Some(json!({"aud":["other-client","kodera-desktop"]})), true),
+            (
+                Some(json!({"aud":"other-client","azp":"kodera-desktop"})),
+                true,
+            ),
+        ] {
+            let nonce = Arc::new(Mutex::new(String::new()));
+            let browser_nonce = nonce.clone();
+            let browser = Browser(Arc::new(move |url| {
+                let q = query(url.split_once('?').unwrap().1);
+                *browser_nonce.lock().unwrap() = q["nonce"].clone();
+                callback(format!("{}?code=single-use&state={}&iss=https%3A%2F%2Fauth.kodera.io%2Frealms%2Fcommunity", q["redirect_uri"], q["state"]), None);
+                Ok(())
+            }));
+            let http = Http(Arc::new(move |_, _| {
+                // Even a valid access-token identity cannot replace the interactive ID token.
+                let mut body = json!({"access_token":jwt(json!({"iss":"https://auth.kodera.io/realms/community","sub":"member","aud":"kodera-desktop","nonce":*nonce.lock().unwrap()})),"refresh_token":"new-native-refresh","expires_in":300});
+                if let Some(mut claims) = identity.clone() {
+                    claims["iss"] = json!("https://auth.kodera.io/realms/community");
+                    claims["sub"] = json!("member");
+                    claims["nonce"] = json!(*nonce.lock().unwrap());
+                    body["id_token"] = json!(jwt(claims));
+                }
+                Ok(response(200, body))
+            }));
+            let (mut bridge, store) = setup(http, browser);
+            seed(&store);
+            let result = invoke(
+                &mut bridge,
+                "desktop_oidc_exchange_loopback",
+                args("desktop_oidc_exchange_loopback"),
+            );
+            if accepted {
+                assert_eq!(payload(&result, true)["subject"], "member");
+                assert_eq!(stored(&store).as_deref(), Some("new-native-refresh"));
+            } else {
+                assert_eq!(payload(&result, false)["error"], "oidc_invalid_identity");
+                assert_eq!(stored(&store).as_deref(), Some("refresh-before-native"));
+            }
+        }
+    }
+
+    #[test]
+    fn background_refresh_does_not_cancel_interactive_exchange() {
+        for refused in [false, true] {
+            let (started_tx, started_rx) = std::sync::mpsc::channel();
+            let (release_tx, release_rx) = std::sync::mpsc::channel();
+            let release_rx = Mutex::new(release_rx);
+            let nonce = Arc::new(Mutex::new(String::new()));
+            let browser_nonce = nonce.clone();
+            let browser = Browser(Arc::new(move |url| {
+                let q = query(url.split_once('?').unwrap().1);
+                *browser_nonce.lock().unwrap() = q["nonce"].clone();
+                callback(format!("{}?code=single-use&state={}&iss=https%3A%2F%2Fauth.kodera.io%2Frealms%2Fcommunity", q["redirect_uri"], q["state"]), None);
+                Ok(())
+            }));
+            let http = Http(Arc::new(move |_, body| {
+                if query(body)["grant_type"] == "refresh_token" {
+                    return Ok(if refused {
+                        response(400, json!({"error":"invalid_grant"}))
+                    } else {
+                        response(
+                            200,
+                            json!({"access_token":jwt(json!({"iss":"https://auth.kodera.io/realms/community","sub":"member"})),"refresh_token":"background-refresh","expires_in":300}),
+                        )
+                    });
+                }
+                started_tx.send(()).unwrap();
+                release_rx.lock().unwrap().recv().unwrap();
+                Ok(response(
+                    200,
+                    json!({"access_token":"interactive-access","id_token":jwt(json!({"iss":"https://auth.kodera.io/realms/community","sub":"member","azp":"kodera-desktop","nonce":*nonce.lock().unwrap()})),"refresh_token":"interactive-refresh","expires_in":300}),
+                ))
+            }));
+            let (mut bridge, store) = setup(http, browser);
+            seed(&store);
+            let mut task = None;
+            bridge
+                .handle_ipc_request_with_native_dispatch(
+                    &format!("{INTERNAL_ASSET_ORIGIN}/index.html"),
+                    &envelope(
+                        "desktop_oidc_exchange_loopback",
+                        args("desktop_oidc_exchange_loopback"),
+                    ),
+                    |prepared| {
+                        task = Some(prepared);
+                        WebViewIpcOutcome {
+                            eval_scripts: vec![],
+                            window_action: None,
+                        }
+                    },
+                )
+                .unwrap();
+            let revision = bridge
+                .native_oidc
+                .revision
+                .load(std::sync::atomic::Ordering::SeqCst);
+            let epoch = bridge
+                .native_oidc
+                .epoch
+                .load(std::sync::atomic::Ordering::SeqCst);
+            let worker = std::thread::spawn(move || task.unwrap().run());
+            started_rx
+                .recv_timeout(std::time::Duration::from_secs(2))
+                .unwrap();
+            let result = invoke(
+                &mut bridge,
+                "desktop_oidc_refresh_session",
+                args("desktop_oidc_refresh_session"),
+            );
+            if refused {
+                assert_eq!(
+                    payload(&result, false)["error"],
+                    "oidc_refused:invalid_grant"
+                );
+            } else {
+                assert_eq!(payload(&result, true)["subject"], "member");
+            }
+            assert_eq!(
+                bridge
+                    .native_oidc
+                    .revision
+                    .load(std::sync::atomic::Ordering::SeqCst),
+                revision
+            );
+            assert_eq!(
+                bridge
+                    .native_oidc
+                    .epoch
+                    .load(std::sync::atomic::Ordering::SeqCst),
+                epoch
+            );
+            release_tx.send(()).unwrap();
+            assert_eq!(
+                payload(&worker.join().unwrap(), true)["access_token"],
+                "interactive-access"
+            );
+            assert_eq!(stored(&store).as_deref(), Some("interactive-refresh"));
+        }
+    }
+
+    #[test]
+    fn refresh_rotates_keychain_and_clear_removes_slot() {
+        let http = Http(Arc::new(|_, body| {
+            assert_eq!(
+                query(body),
+                BTreeMap::from([
+                    ("client_id".into(), "kodera-desktop".into()),
+                    ("grant_type".into(), "refresh_token".into()),
+                    ("refresh_token".into(), "refresh-before-native".into())
+                ])
+            );
+            Ok(response(
+                200,
+                json!({"access_token":jwt(json!({"iss":"https://auth.kodera.io/realms/community","sub":"member"})),"refresh_token":"refresh-after-native","expires_in":300}),
+            ))
+        }));
+        let (mut bridge, store) = setup(http, unused_browser());
+        seed(&store);
+        let result = invoke(
+            &mut bridge,
+            "desktop_oidc_refresh_session",
+            args("desktop_oidc_refresh_session"),
+        );
+        assert_eq!(payload(&result, true)["subject"], "member");
+        assert!(!result.eval_scripts[0].contains("refresh-after-native"));
+        assert_eq!(stored(&store).as_deref(), Some("refresh-after-native"));
+        let result = invoke(
+            &mut bridge,
+            "desktop_oidc_clear_session",
+            json!({"realm":"community"}),
+        );
+        assert_eq!(payload(&result, true), json!({"ok":true}));
+        assert_eq!(stored(&store), None);
+        let result = invoke(
+            &mut bridge,
+            "desktop_oidc_refresh_session",
+            args("desktop_oidc_refresh_session"),
+        );
+        assert_eq!(
+            payload(&result, false)["error"],
+            "oidc_refused:no_refresh_credential"
+        );
+    }
+
+    #[test]
+    fn oauth_refusals_remove_stale_credentials_but_transient_failures_preserve_them() {
+        for error in [
+            "invalid_grant",
+            "unauthorized_client",
+            "invalid_client",
+            "access_denied",
+            "invalid_token",
+            "invalid_scope",
+            "invalid_request",
+            "temporarily_unavailable",
+        ] {
+            let http = Http(Arc::new(move |_, _| {
+                Ok(response(
+                    400,
+                    json!({"error":error,"error_description":"private-provider-detail"}),
+                ))
+            }));
+            let (mut bridge, store) = setup(http, unused_browser());
+            seed(&store);
+            let result = invoke(
+                &mut bridge,
+                "desktop_oidc_refresh_session",
+                args("desktop_oidc_refresh_session"),
+            );
+            let refused = error != "temporarily_unavailable";
+            assert_eq!(
+                payload(&result, false)["error"],
+                if refused {
+                    format!("oidc_refused:{error}")
+                } else {
+                    "oidc_transport".into()
+                }
+            );
+            assert_eq!(stored(&store).is_none(), refused);
+            assert!(!result.eval_scripts[0].contains("private-provider-detail"));
+        }
+    }
+
+    #[test]
+    fn refresh_identity_and_secret_bounds_fail_closed_without_rotation() {
+        for claims in [
+            json!({"iss":"https://evil.example/realms/community","sub":"member"}),
+            json!({"iss":"https://auth.kodera.io/realms/community","sub":""}),
+            json!({"iss":"https://auth.kodera.io/realms/community","sub":"\n"}),
+            json!({"iss":"https://auth.kodera.io/realms/community","sub":"a".repeat(256)}),
+        ] {
+            let http = Http(Arc::new(move |_, _| {
+                Ok(response(
+                    200,
+                    json!({"access_token":jwt(claims.clone()),"refresh_token":"must-not-store","expires_in":300}),
+                ))
+            }));
+            let (mut bridge, store) = setup(http, unused_browser());
+            seed(&store);
+            let result = invoke(
+                &mut bridge,
+                "desktop_oidc_refresh_session",
+                args("desktop_oidc_refresh_session"),
+            );
+            assert_eq!(payload(&result, false)["error"], "oidc_invalid_identity");
+            assert_eq!(stored(&store).as_deref(), Some("refresh-before-native"));
+        }
+        let http = Http(Arc::new(|_, _| {
+            Ok(response(
+                200,
+                json!({"access_token":jwt(json!({"iss":"https://auth.kodera.io/realms/community","sub":"member"})),"refresh_token":"r".repeat(crate::MAX_KEYCHAIN_SECRET_BYTES + 1),"expires_in":300}),
+            ))
+        }));
+        let (mut bridge, store) = setup(http, unused_browser());
+        seed(&store);
+        let result = invoke(
+            &mut bridge,
+            "desktop_oidc_refresh_session",
+            args("desktop_oidc_refresh_session"),
+        );
+        assert_eq!(payload(&result, false)["error"], "oidc_invalid_refresh");
+        assert_eq!(stored(&store).as_deref(), Some("refresh-before-native"));
+    }
+
+    #[test]
+    fn matrix_sso_loopback_validates_callback_and_returns_canonical_uri() {
+        let reply = Arc::new(Mutex::new(None));
+        let capture = reply.clone();
+        let browser = Browser(Arc::new(move |url| {
+            assert!(url
+                .starts_with("https://community.kodera.io/_matrix/client/v3/login/sso/redirect?"));
+            let back = query(url.split_once('?').unwrap().1)["redirectUrl"].clone();
+            *capture.lock().unwrap() = Some(callback(
+                format!("{back}&loginToken=one%2Buse%26token"),
+                None,
+            ));
+            Ok(())
+        }));
+        let (mut bridge, _) = setup(unused_http(), browser);
+        let out = invoke(
+            &mut bridge,
+            "desktop_matrix_sso_loopback",
+            json!({"homeserver_origin":"https://community.kodera.io","state":"0123456789abcdef"}),
+        );
+        let result = payload(&out, true);
+        let uri = result["callback_uri"].as_str().unwrap();
+        assert!(uri.starts_with("http://127.0.0.1:"));
+        assert!(
+            uri.ends_with("/espace/callback?loginToken=one%2Buse%26token&state=0123456789abcdef")
+        );
+        let response = reply.lock().unwrap().take().unwrap().join().unwrap();
+        assert!(response.starts_with("HTTP/1.1 200 OK"));
+        assert!(response.contains("Cache-Control: no-store"));
+        assert!(response.contains("Content-Security-Policy: default-src 'none'"));
+        assert!(!response.contains("one+use"));
+    }
+
+    #[test]
+    fn matrix_rejects_host_state_duplicates_and_redirect_parameters() {
+        for variant in ["host", "state", "redirect", "duplicate", "control", "path"] {
+            let browser = Browser(Arc::new(move |url| {
+                let mut back = query(url.split_once('?').unwrap().1)["redirectUrl"].clone();
+                match variant {
+                    "state" => back = back.replace("0123456789abcdef", "fedcba9876543210"),
+                    "redirect" => back.push_str("&redirect_uri=https%3A%2F%2Fevil.example"),
+                    "duplicate" => back.push_str("&state=0123456789abcdef"),
+                    "path" => back = back.replace("/espace/callback", "/elsewhere"),
+                    _ => {}
+                }
+                back.push_str(if variant == "control" {
+                    "&loginToken=bad%0Atoken"
+                } else {
+                    "&loginToken=single-use"
+                });
+                callback(
+                    back,
+                    if variant == "host" {
+                        Some("evil.example".into())
+                    } else {
+                        None
+                    },
+                );
+                Ok(())
+            }));
+            let (mut bridge, _) = setup(unused_http(), browser);
+            let result = invoke(
+                &mut bridge,
+                "desktop_matrix_sso_loopback",
+                json!({"homeserver_origin":"https://team.kodera.io","state":"0123456789abcdef"}),
+            );
+            assert_eq!(payload(&result, false)["error"], "matrix_invalid_callback");
+        }
+    }
+
+    #[test]
+    fn native_commands_refuse_remote_and_development_origins_before_services_run() {
+        let (mut bridge, _) = setup(unused_http(), unused_browser());
+        for command in [
+            "desktop_matrix_sso_loopback",
+            "desktop_oidc_clear_session",
+            "desktop_oidc_exchange_loopback",
+            "desktop_oidc_refresh_session",
+        ] {
+            for origin in [
+                "https://community.kodera.io/",
+                "https://auth.kodera.io/realms/community/",
+                "http://localhost:5173/",
+                "http://127.0.0.1:5173/",
+            ] {
+                assert_eq!(
+                    bridge.handle_ipc_request(origin, &envelope(command, json!({}))),
+                    Err(WebViewIpcError::UntrustedSenderOrigin)
+                );
+            }
+        }
+        for (key, value) in [
+            ("issuer_origin", "https://evil.example"),
+            ("issuer_origin", "http://auth.kodera.io"),
+            ("realm", "../community"),
+            ("realm", "Community"),
+            ("client_id", "bad client"),
+            ("prompt", "none"),
+            ("kc_action", "other"),
+            ("ui_locales", "en&redirect=evil"),
+        ] {
+            let mut input = args("desktop_oidc_exchange_loopback");
+            input[key] = json!(value);
+            payload(
+                &invoke(&mut bridge, "desktop_oidc_exchange_loopback", input),
+                false,
+            );
+        }
+        for origin in [
+            "http://kodera.io",
+            "https://kodera.io.evil.example",
+            "https://evil.example",
+            "https://kodera.io/path",
+            "https://user@kodera.io",
+            "https://kodera.io:443",
+        ] {
+            payload(
+                &invoke(
+                    &mut bridge,
+                    "desktop_matrix_sso_loopback",
+                    json!({"homeserver_origin":origin,"state":"0123456789abcdef"}),
+                ),
+                false,
+            );
+        }
+        for state in ["short", "contains spaces abcdef", "0123456789abcde&"] {
+            payload(
+                &invoke(
+                    &mut bridge,
+                    "desktop_matrix_sso_loopback",
+                    json!({"homeserver_origin":"https://kodera.io","state":state}),
+                ),
+                false,
+            );
+        }
+    }
+
+    #[test]
+    fn asynchronous_dispatch_happens_only_after_document_capability_validation() {
+        let (mut bridge, _) = setup(unused_http(), unused_browser());
+        let message = envelope(
+            "desktop_oidc_refresh_session",
+            args("desktop_oidc_refresh_session"),
+        );
+        let mut called = false;
+        let result = bridge
+            .handle_ipc_request_with_native_dispatch(
+                &format!("{INTERNAL_ASSET_ORIGIN}/index.html"),
+                &message,
+                |task| {
+                    called = true;
+                    assert_eq!(task.document_id, "a".repeat(32));
+                    WebViewIpcOutcome {
+                        eval_scripts: Vec::new(),
+                        window_action: None,
+                    }
+                },
+            )
+            .unwrap();
+        assert!(called);
+        assert!(result.eval_scripts.is_empty());
+        bridge.begin_document(1);
+        assert_eq!(
+            bridge.handle_ipc_request_with_native_dispatch(
+                &format!("{INTERNAL_ASSET_ORIGIN}/index.html"),
+                &message,
+                |_| panic!("stale document dispatched")
+            ),
+            Err(WebViewIpcError::UntrustedSenderOrigin)
+        );
+    }
+
+    #[test]
+    fn retired_and_in_flight_requests_cannot_recreate_cleared_credentials() {
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let release_rx = Mutex::new(release_rx);
+        let http = Http(Arc::new(move |_, _| {
+            started_tx.send(()).unwrap();
+            release_rx.lock().unwrap().recv().unwrap();
+            Ok(response(
+                200,
+                json!({"access_token":jwt(json!({"iss":"https://auth.kodera.io/realms/community","sub":"member"})), "refresh_token":"late-native-refresh", "expires_in":300}),
+            ))
+        }));
+        let (mut bridge, store) = setup(http, unused_browser());
+        seed(&store);
+        let mut task = None;
+        bridge
+            .handle_ipc_request_with_native_dispatch(
+                &format!("{INTERNAL_ASSET_ORIGIN}/index.html"),
+                &envelope(
+                    "desktop_oidc_refresh_session",
+                    args("desktop_oidc_refresh_session"),
+                ),
+                |prepared| {
+                    task = Some(prepared);
+                    WebViewIpcOutcome {
+                        eval_scripts: vec![],
+                        window_action: None,
+                    }
+                },
+            )
+            .unwrap();
+        let worker = std::thread::spawn(move || task.unwrap().run());
+        started_rx
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap();
+        let result = invoke(
+            &mut bridge,
+            "desktop_oidc_clear_session",
+            json!({"realm":"community"}),
+        );
+        assert_eq!(payload(&result, true), json!({"ok":true}));
+        release_tx.send(()).unwrap();
+        assert_eq!(
+            payload(&worker.join().unwrap(), false)["error"],
+            "oidc_cancelled"
+        );
+        assert!(stored(&store).is_none());
+
+        let (mut bridge, _) = setup(unused_http(), unused_browser());
+        let mut late = None;
+        bridge
+            .handle_ipc_request_with_native_dispatch(
+                &format!("{INTERNAL_ASSET_ORIGIN}/index.html"),
+                &envelope(
+                    "desktop_oidc_exchange_loopback",
+                    args("desktop_oidc_exchange_loopback"),
+                ),
+                |prepared| {
+                    late = Some(prepared);
+                    WebViewIpcOutcome {
+                        eval_scripts: vec![],
+                        window_action: None,
+                    }
+                },
+            )
+            .unwrap();
+        bridge.begin_document(1);
+        assert_eq!(
+            payload(&late.unwrap().run(), false)["error"],
+            "oidc_cancelled"
+        );
+    }
+
+    #[test]
+    fn exchange_rejects_nonce_state_issuer_and_host_mixups() {
+        for variant in ["nonce", "state", "issuer", "host"] {
+            let browser = Browser(Arc::new(move |url| {
+                let q = query(url.split_once('?').unwrap().1);
+                let state = if variant == "state" {
+                    "different-state-0000000000"
+                } else {
+                    &q["state"]
+                };
+                let issuer = if variant == "issuer" {
+                    "https%3A%2F%2Fevil.example%2Frealms%2Fcommunity"
+                } else {
+                    "https%3A%2F%2Fauth.kodera.io%2Frealms%2Fcommunity"
+                };
+                callback(
+                    format!(
+                        "{}?code=single-use&state={state}&iss={issuer}",
+                        q["redirect_uri"]
+                    ),
+                    (variant == "host").then(|| "evil.example".to_owned()),
+                );
+                Ok(())
+            }));
+            let http = Http(Arc::new(move |_, _| {
+                assert_eq!(variant, "nonce", "invalid callback reached token endpoint");
+                Ok(response(
+                    200,
+                    json!({"access_token":"short-access", "id_token":jwt(json!({"iss":"https://auth.kodera.io/realms/community","sub":"member","aud":"kodera-desktop","nonce":"wrong-nonce"})),"refresh_token":"must-not-store-native", "expires_in":300}),
+                ))
+            }));
+            let (mut bridge, store) = setup(http, browser);
+            let result = invoke(
+                &mut bridge,
+                "desktop_oidc_exchange_loopback",
+                args("desktop_oidc_exchange_loopback"),
+            );
+            assert_eq!(
+                payload(&result, false)["error"],
+                if variant == "nonce" {
+                    "oidc_invalid_nonce"
+                } else {
+                    "oidc_loopback"
+                }
+            );
+            assert!(stored(&store).is_none());
+        }
+    }
+
+    #[test]
+    fn native_issuer_allowlist_is_configurable_and_missing_rotation_preserves_refresh() {
+        let http = Http(Arc::new(|url, _| {
+            assert_eq!(
+                url,
+                "https://login.example.test/realms/community/protocol/openid-connect/token"
+            );
+            Ok(response(
+                200,
+                json!({"access_token":jwt(json!({"iss":"https://login.example.test/realms/community","sub":"member"})), "expires_in":300}),
+            ))
+        }));
+        let (mut bridge, store) = setup(http, unused_browser());
+        seed(&store);
+        bridge
+            .native_oidc
+            .allowlist
+            .add_issuer_origin("https://login.example.test")
+            .unwrap();
+        let mut input = args("desktop_oidc_refresh_session");
+        input["issuer_origin"] = json!("https://login.example.test");
+        let result = invoke(&mut bridge, "desktop_oidc_refresh_session", input);
+        assert_eq!(
+            payload(&result, true)["issuer"],
+            "https://login.example.test/realms/community"
+        );
+        assert_eq!(stored(&store).as_deref(), Some("refresh-before-native"));
+    }
+
+    #[test]
+    fn browser_refusal_and_loopback_timeout_return_closed_errors() {
+        let (mut bridge, _) = setup(
+            unused_http(),
+            Browser(Arc::new(|_| Err("oidc_browser".into()))),
+        );
+        let result = invoke(
+            &mut bridge,
+            "desktop_oidc_exchange_loopback",
+            args("desktop_oidc_exchange_loopback"),
+        );
+        assert_eq!(payload(&result, false)["error"], "oidc_browser");
+        let (mut bridge, _) = setup(unused_http(), Browser(Arc::new(|_| Ok(()))));
+        bridge.native_oidc.timeout_ms = 50;
+        let result = invoke(
+            &mut bridge,
+            "desktop_oidc_exchange_loopback",
+            args("desktop_oidc_exchange_loopback"),
+        );
+        assert_eq!(payload(&result, false)["error"], "oidc_loopback");
+        let result = invoke(
+            &mut bridge,
+            "desktop_matrix_sso_loopback",
+            json!({"homeserver_origin":"https://kodera.io","state":"0123456789abcdef"}),
+        );
+        assert_eq!(payload(&result, false)["error"], "matrix_loopback");
+    }
+
+    #[test]
+    fn production_services_reject_non_https_urls_before_spawning() {
+        for url in [
+            "http://auth.kodera.io/",
+            "https://auth.kodera.io/\n",
+            "https://auth.kodera.io/'",
+            "https://auth.kodera.io/\"",
+            "https://auth.kodera.io/\\",
+            "https://user@auth.kodera.io/",
+            "https://auth.kodera.io/é",
+        ] {
+            assert!(StdBrowserLauncher.open(url).is_err());
+            assert!(StdOidcHttpClient.post_form(url, "code=private").is_err());
+        }
+    }
+}

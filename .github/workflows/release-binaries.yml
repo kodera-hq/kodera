@@ -121,9 +121,19 @@ jobs:
         shell: bash
         env:
           DESKTOP_TARGET: ${{ matrix.target }}
+          VITE_AUTH_MODE: oidc
+          VITE_ENABLE_MSW: "0"
+          VITE_FIRST_OWNER_JOURNEY: "0"
+          VITE_CORE_API_URL: ${{ vars.VITE_CORE_API_URL || 'https://api.kodera.io/api/v1' }}
+          VITE_KEYCLOAK_URL: ${{ vars.VITE_KEYCLOAK_URL || 'https://auth.kodera.io' }}
+          VITE_OIDC_CLIENT_ID: ${{ vars.VITE_DESKTOP_OIDC_CLIENT_ID || 'kodera-desktop' }}
+          VITE_MATRIX_DOMAIN: ${{ vars.VITE_MATRIX_DOMAIN || 'kodera.io' }}
+          VITE_TENANT_DOMAIN: ${{ vars.VITE_TENANT_DOMAIN || 'kodera.io' }}
+          VITE_CONSOLE_ORIGIN: ${{ vars.VITE_CONSOLE_ORIGIN || 'https://community.kodera.io' }}
         run: |
           set -euo pipefail
           npm --workspace @kodera/web run build
+          bash apps/web/scripts/check-production-bundle.sh --scan-only apps/web/dist
           node scripts/ci/package-desktop-release.mjs --target "$DESKTOP_TARGET" --out-dir dist-release
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
