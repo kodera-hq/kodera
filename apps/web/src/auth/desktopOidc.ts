@@ -163,7 +163,6 @@ export async function desktopMatrixSsoLoopback(params: {
     throw new Error('Invalid desktop Matrix SSO callback.')
   }
   const port = Number(parsed.port)
-  const loginToken = parsed.searchParams.get('loginToken')
   if (
     parsed.protocol !== 'http:' ||
     parsed.hostname !== '127.0.0.1' ||
@@ -171,10 +170,7 @@ export async function desktopMatrixSsoLoopback(params: {
     port < 1024 ||
     port > 65535 ||
     parsed.pathname !== '/espace/callback' ||
-    parsed.hash !== '' ||
-    parsed.searchParams.get('state') !== params.state ||
-    typeof loginToken !== 'string' ||
-    loginToken.length === 0
+    parsed.hash !== ''
   ) {
     throw new Error('Invalid desktop Matrix SSO callback.')
   }
