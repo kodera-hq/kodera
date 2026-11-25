@@ -13,6 +13,7 @@ import type {
 } from 'oidc-client-ts'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AuthAdapter, AuthCallbackResult } from './AuthAdapter'
+import * as desktopOidc from './desktopOidc'
 import { OidcAuthAdapter } from './oidc'
 
 type Context = Readonly<{
@@ -694,6 +695,7 @@ function load(control?: Control | CorrectionControl): Constructor {
       return { oidcSdkLoaded: () => true, oidcSdk: () => sdk, loadOidcSdk: () => Promise.resolve() }
     if (specifier === '../config')
       return { keycloakUrl: () => provider, oidcClientId: () => 'console' }
+    if (specifier === './desktopOidc') return desktopOidc
     throw new Error('B_SOURCE_IMPORT_REFUSED')
   }
   new Script(converted.outputText, { filename: 'owned-auth-acceptance.cjs' }).runInNewContext(

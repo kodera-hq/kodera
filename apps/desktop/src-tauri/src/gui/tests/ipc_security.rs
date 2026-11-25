@@ -660,7 +660,8 @@ mod native_auth {
             (self.0)(url, body)
         }
     }
-    struct Browser(Arc<dyn Fn(&str) -> Result<(), String> + Send + Sync>);
+    type BrowserHandler = dyn Fn(&str) -> Result<(), String> + Send + Sync;
+    struct Browser(Arc<BrowserHandler>);
     impl NativeBrowserLauncher for Browser {
         fn open(&self, url: &str) -> Result<(), String> {
             (self.0)(url)
