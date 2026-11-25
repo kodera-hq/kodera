@@ -123,19 +123,24 @@ class RosterGuard:
     ) -> tuple[dict[str, frozenset[str]], dict[str, tuple[str, frozenset[str]]]]:
         if self._synapse is None:
             return {}, {}
-        stored, rooms = self._state.channel_set(), self._state.channel_rooms()
-        excluded = frozenset(self._excluded_users(stored))
         found: dict[str, frozenset[str]] = {}
         public_rooms: dict[str, tuple[str, frozenset[str]]] = {}
-        everyone = frozenset((stored or {}).get("all_members", []))
-        for channel in (stored or {}).get("channels", []):
-            room_id = rooms.get(channel["channel_id"])
-            if channel["kind"] != "audio" or room_id is None or channel["archived"]:
+        for scope_id in self._state.channel_scopes():
+            stored = self._state.channel_set(scope_id=scope_id)
+            if stored is None:
                 continue
-            lk_name = livekit_room(room_id)
-            if native_public(channel, self._synapse):
-                public_rooms[lk_name] = (room_id, excluded)
-            else:
-                users = (self._synapse.user_id(s) for s in room_members(channel, everyone))
-                found[lk_name] = frozenset(u for u in users if u is not None) - excluded
+            rooms = self._state.channel_rooms(scope_id=scope_id)
+            shared_realm = bool(stored.get("shared_realm", False))
+            excluded = frozenset(self._excluded_users(stored))
+            everyone = frozenset(stored.get("all_members", []))
+            for channel in stored.get("channels", []):
+                room_id = rooms.get(channel["channel_id"])
+                if channel["kind"] != "audio" or room_id is None or channel["archived"]:
+                    continue
+                lk_name = livekit_room(room_id)
+                if native_public(channel, self._synapse, shared_realm=shared_realm):
+                    public_rooms[lk_name] = (room_id, excluded)
+                else:
+                    users = (self._synapse.user_id(s) for s in room_members(channel, everyone))
+                    found[lk_name] = frozenset(u for u in users if u is not None) - excluded
         return found, public_rooms

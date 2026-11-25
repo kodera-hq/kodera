@@ -278,7 +278,7 @@ test('createExtensionClient enforces payload bounds, SSRF externalUrl checks, an
   const firstHeaders = /** @type {Record<string, string>} */ (calls[0].init?.headers);
   assert.equal(firstHeaders.authorization, 'Bearer kdr_tok_1234567890abcdef');
   assert.equal(firstHeaders['idempotency-key'], 'rel:v1.2.0');
-  assert.equal(firstHeaders['user-agent'], 'kodera-extension-sdk/0.1.0');
+  assert.equal(firstHeaders['user-agent'], 'kodera-extension-sdk/0.2.0');
   assert.ok(calls[0].init?.signal instanceof AbortSignal);
 
   // Oversized text rejected
@@ -362,6 +362,70 @@ test('createExtensionTestHarness and createWebhookHandler run end-to-end with re
           channelId: 'chan_eng',
           tag: 'v1.4.0',
         },
+      }),
+    (err) => err instanceof WebhookVerificationError && err.code === 'REPLAY_DETECTED'
+  );
+});
+
+test('createWebhookHandler releases replay entry when handler throws so server 5xx retry succeeds', async () => {
+  let attempts = 0;
+  const webhook = createWebhookHandler({
+    secret: 'whsec_retry_test_secret_0123456789abcdef',
+    handlers: {
+      'issue.created': async (payload) => {
+        attempts += 1;
+        if (attempts === 1) {
+          throw new Error('transient downstream outage');
+        }
+        return { handled: payload.id, attempts };
+      },
+    },
+  });
+  const harness = createExtensionTestHarness({
+    secret: 'whsec_retry_test_secret_0123456789abcdef',
+    handler: webhook,
+    nowSeconds: 1_762_520_100,
+  });
+
+  await assert.rejects(
+    () =>
+      harness.sendWebhook({
+        event: 'issue.created',
+        deliveryId: 'deliv_retry_001',
+        payload: { id: 'ISS-42' },
+      }),
+    /transient downstream outage/
+  );
+
+  // Failed attempt's exact signed transcript remains bound (swapping delivery-id cannot replay it):
+  await assert.rejects(
+    () =>
+      harness.sendWebhook({
+        event: 'issue.created',
+        deliveryId: 'deliv_spoofed_swap_002',
+        timestampSeconds: 1_762_520_100,
+        payload: { id: 'ISS-42' },
+      }),
+    (err) => err instanceof WebhookVerificationError && err.code === 'REPLAY_DETECTED'
+  );
+
+  // Server retry with identical deliveryId and a fresh timestamp/signature succeeds, then subsequent replay is rejected:
+  const retried = await harness.sendWebhook({
+    event: 'issue.created',
+    deliveryId: 'deliv_retry_001',
+    timestampSeconds: 1_762_520_105,
+    payload: { id: 'ISS-42' },
+  });
+  assert.equal(retried.response.ok, true);
+  assert.equal(retried.response.result.attempts, 2);
+
+  await assert.rejects(
+    () =>
+      harness.sendWebhook({
+        event: 'issue.created',
+        deliveryId: 'deliv_retry_001',
+        timestampSeconds: 1_762_520_110,
+        payload: { id: 'ISS-42' },
       }),
     (err) => err instanceof WebhookVerificationError && err.code === 'REPLAY_DETECTED'
   );

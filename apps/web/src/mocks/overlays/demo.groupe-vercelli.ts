@@ -40,6 +40,10 @@ import {
   WORKSPACE_CALENDAR_DEMO_ROUTES,
   workspaceCalendarDemoHandlers,
 } from '../demo/workspaceCalendar'
+import {
+  HORIZON4_DEMO_ROUTES,
+  horizon4DemoHandlers,
+} from '../demo/horizon4AndSelfServe'
 // The walkable demo (docs/dev/DEMO.md): one scenario overlay that answers
 // EVERY route the built areas call, from the one seed in `src/mocks/demo/seed.ts`.
 //
@@ -192,6 +196,7 @@ export const DEMO_ROUTES: readonly string[] = [
   ...WAVE4_BILLING_PRIVACY_DEMO_ROUTES,
   ...WORKSPACE_MIGRATOR_DEMO_ROUTES,
   ...WORKSPACE_CALENDAR_DEMO_ROUTES,
+  ...HORIZON4_DEMO_ROUTES,
 ]
 
 /** The invoice whose id the console asked for, or the current month's — the
@@ -946,4 +951,5 @@ export const handlers: HttpHandler[] = [
   ...wave4BillingPrivacyDemoHandlers(BASE, headers),
   ...workspaceMigratorDemoHandlers(BASE, headers),
   ...workspaceCalendarDemoHandlers(BASE, headers),
+  ...horizon4DemoHandlers(BASE, headers),
 ]

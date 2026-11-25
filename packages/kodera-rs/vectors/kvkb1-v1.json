@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "domain": "kodera-zk-key-backup",
+  "valid": [
+    {
+      "name": "recovery-key-epoch-1",
+      "organisationId": "01950000-0000-7000-8000-0000000000a1",
+      "accountId": "01950000-0000-7000-8000-0000000000b1",
+      "backupEpoch": 1,
+      "kdfKind": "recovery-key",
+      "iterations": 0,
+      "aadJson": "[\"kodera-zk-key-backup\",1,\"01950000-0000-7000-8000-0000000000a1\",\"01950000-0000-7000-8000-0000000000b1\",1,\"recovery-key\",0]",
+      "capsuleBase64": "S1ZLQjEAAACpWyJrb2RlcmEtemsta2V5LWJhY2t1cCIsMSwiMDE5NTAwMDAtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwMGExIiwiMDE5NTAwMDAtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwMGIxIiwxLCJyZWNvdmVyeS1rZXkiLDAsIkFBRUNBd1FGQmdjSUNRb0xEQTBPRHc9PSIsIkVCRVNFeFFWRmhjWUdSb2IiXaqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+      "capsuleSha256": "374dcd1f2d6978c51b803ec585dbdf432c206afcdf1c9d16cb5cdbc3fac4a138"
+    },
+    {
+      "name": "passphrase-epoch-2",
+      "organisationId": "01950000-0000-7000-8000-0000000000a1",
+      "accountId": "01950000-0000-7000-8000-0000000000b1",
+      "backupEpoch": 2,
+      "kdfKind": "passphrase",
+      "iterations": 600000,
+      "aadJson": "[\"kodera-zk-key-backup\",1,\"01950000-0000-7000-8000-0000000000a1\",\"01950000-0000-7000-8000-0000000000b1\",2,\"passphrase\",600000]",
+      "capsuleBase64": "S1ZLQjEAAACsWyJrb2RlcmEtemsta2V5LWJhY2t1cCIsMSwiMDE5NTAwMDAtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwMGExIiwiMDE5NTAwMDAtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwMGIxIiwyLCJwYXNzcGhyYXNlIiw2MDAwMDAsIkFBRUNBd1FGQmdjSUNRb0xEQTBPRHc9PSIsIkVCRVNFeFFWRmhjWUdSb2IiXbu7u7u7u7u7u7u7u7u7u7u7",
+      "capsuleSha256": "02c67d04912f7db9d39f593ecc03336e4ed77ca90a2494ccf8b83e93f9c4363e"
+    }
+  ],
+  "invalid": [
+    {
+      "name": "wrong-magic",
+      "organisationId": "01950000-0000-7000-8000-0000000000a1",
+      "accountId": "01950000-0000-7000-8000-0000000000b1",
+      "backupEpoch": 1,
+      "capsuleBase64": "S1ZLQjIAAACpWyJrb2RlcmEtemsta2V5LWJhY2t1cCIsMSwiMDE5NTAwMDAtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwMGExIiwiMDE5NTAwMDAtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwMGIxIiwxLCJyZWNvdmVyeS1rZXkiLDAsIkFBRUNBd1FGQmdjSUNRb0xEQTBPRHc9PSIsIkVCRVNFeFFWRmhjWUdSb2IiXaqqqqqqqqqqqqqqqqqqqqqq"
+    },
+    {
+      "name": "non-canonical-json-whitespace",
+      "organisationId": "01950000-0000-7000-8000-0000000000a1",
+      "accountId": "01950000-0000-7000-8000-0000000000b1",
+      "backupEpoch": 1,
+      "capsuleBase64": "S1ZLQjEAAACqWyAia29kZXJhLXprLWtleS1iYWNrdXAiLDEsIjAxOTUwMDAwLTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDBhMSIsIjAxOTUwMDAwLTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDBiMSIsMSwicmVjb3Zlcnkta2V5IiwwLCJBQUVDQXdRRkJnY0lDUW9MREEwT0R3PT0iLCJFQkVTRXhRVkZoY1lHUm9iIl2qqqqqqqqqqqqqqqqqqqqqqg=="
+    },
+    {
+      "name": "wrong-organisation",
+      "organisationId": "01950000-0000-7000-8000-0000000000ff",
+      "accountId": "01950000-0000-7000-8000-0000000000b1",
+      "backupEpoch": 1,
+      "capsuleBase64": "S1ZLQjEAAACpWyJrb2RlcmEtemsta2V5LWJhY2t1cCIsMSwiMDE5NTAwMDAtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwMGExIiwiMDE5NTAwMDAtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwMGIxIiwxLCJyZWNvdmVyeS1rZXkiLDAsIkFBRUNBd1FGQmdjSUNRb0xEQTBPRHc9PSIsIkVCRVNFeFFWRmhjWUdSb2IiXaqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
+    },
+    {
+      "name": "wrong-account",
+      "organisationId": "01950000-0000-7000-8000-0000000000a1",
+      "accountId": "01950000-0000-7000-8000-0000000000ff",
+      "backupEpoch": 1,
+      "capsuleBase64": "S1ZLQjEAAACpWyJrb2RlcmEtemsta2V5LWJhY2t1cCIsMSwiMDE5NTAwMDAtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwMGExIiwiMDE5NTAwMDAtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwMGIxIiwxLCJyZWNvdmVyeS1rZXkiLDAsIkFBRUNBd1FGQmdjSUNRb0xEQTBPRHc9PSIsIkVCRVNFeFFWRmhjWUdSb2IiXaqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
+    },
+    {
+      "name": "wrong-epoch",
+      "organisationId": "01950000-0000-7000-8000-0000000000a1",
+      "accountId": "01950000-0000-7000-8000-0000000000b1",
+      "backupEpoch": 2,
+      "capsuleBase64": "S1ZLQjEAAACpWyJrb2RlcmEtemsta2V5LWJhY2t1cCIsMSwiMDE5NTAwMDAtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwMGExIiwiMDE5NTAwMDAtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwMGIxIiwxLCJyZWNvdmVyeS1rZXkiLDAsIkFBRUNBd1FGQmdjSUNRb0xEQTBPRHc9PSIsIkVCRVNFeFFWRmhjWUdSb2IiXaqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
+    },
+    {
+      "name": "weak-passphrase-iterations",
+      "organisationId": "01950000-0000-7000-8000-0000000000a1",
+      "accountId": "01950000-0000-7000-8000-0000000000b1",
+      "backupEpoch": 1,
+      "capsuleBase64": "S1ZLQjEAAACsWyJrb2RlcmEtemsta2V5LWJhY2t1cCIsMSwiMDE5NTAwMDAtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwMGExIiwiMDE5NTAwMDAtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwMGIxIiwxLCJwYXNzcGhyYXNlIiw1OTk5OTksIkFBRUNBd1FGQmdjSUNRb0xEQTBPRHc9PSIsIkVCRVNFeFFWRmhjWUdSb2IiXaqqqqqqqqqqqqqqqqqqqqqq"
+    },
+    {
+      "name": "excessive-passphrase-iterations",
+      "organisationId": "01950000-0000-7000-8000-0000000000a1",
+      "accountId": "01950000-0000-7000-8000-0000000000b1",
+      "backupEpoch": 1,
+      "capsuleBase64": "S1ZLQjEAAACtWyJrb2RlcmEtemsta2V5LWJhY2t1cCIsMSwiMDE5NTAwMDAtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwMGExIiwiMDE5NTAwMDAtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwMGIxIiwxLCJwYXNzcGhyYXNlIiwyMDAwMDAxLCJBQUVDQXdRRkJnY0lDUW9MREEwT0R3PT0iLCJFQkVTRXhRVkZoY1lHUm9iIl2qqqqqqqqqqqqqqqqqqqqqqg=="
+    },
+    {
+      "name": "recovery-key-nonzero-iterations",
+      "organisationId": "01950000-0000-7000-8000-0000000000a1",
+      "accountId": "01950000-0000-7000-8000-0000000000b1",
+      "backupEpoch": 1,
+      "capsuleBase64": "S1ZLQjEAAACpWyJrb2RlcmEtemsta2V5LWJhY2t1cCIsMSwiMDE5NTAwMDAtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwMGExIiwiMDE5NTAwMDAtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwMGIxIiwxLCJyZWNvdmVyeS1rZXkiLDEsIkFBRUNBd1FGQmdjSUNRb0xEQTBPRHc9PSIsIkVCRVNFeFFWRmhjWUdSb2IiXaqqqqqqqqqqqqqqqqqqqqqq"
+    },
+    {
+      "name": "truncated-ciphertext-tag",
+      "organisationId": "01950000-0000-7000-8000-0000000000a1",
+      "accountId": "01950000-0000-7000-8000-0000000000b1",
+      "backupEpoch": 1,
+      "capsuleBase64": "S1ZLQjEAAACpWyJrb2RlcmEtemsta2V5LWJhY2t1cCIsMSwiMDE5NTAwMDAtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwMGExIiwiMDE5NTAwMDAtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwMGIxIiwxLCJyZWNvdmVyeS1rZXkiLDAsIkFBRUNBd1FGQmdjSUNRb0xEQTBPRHc9PSIsIkVCRVNFeFFWRmhjWUdSb2IiXaqqqqqqqqqqqqqqqqqqqqo="
+    }
+  ]
+}

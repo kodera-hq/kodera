@@ -204,7 +204,11 @@ struct OrganisationEntryView: View {
             } else if session.canSignIn {
                 if let organisation = model.selected {
                     signInButton("signin.action", hint: "signin.hint") {
-                        session.signIn(issuer: organisation.issuer)
+                        session.signIn(
+                            issuer: organisation.issuer,
+                            organisationId: organisation.organisationId,
+                            organisationSlug: organisation.organisationSlug
+                        )
                     }
                 }
                 #if DEBUG

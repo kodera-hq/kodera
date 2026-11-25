@@ -72,6 +72,7 @@ import {
 } from './timeline'
 import {
   deleteLegacyPlaintextTimelineDb,
+  emitVaultSearchRoomEviction,
   EspaceVaultError,
   isVerifiedPlaintextBoundary,
   MAX_OUTBOX_BODY_BYTES,
@@ -545,6 +546,7 @@ export class EspaceStore {
   readonly #quarantined = new Set<string>()
   readonly #confidentialRooms = new Set<string>()
   readonly #forbiddenRooms = new Set<string>()
+  readonly #unlockedEncryptedRooms = new Map<string, { readonly epoch: number }>()
   #workspaceChannelIds: ReadonlySet<string>
   #confidentialChannelIds: ReadonlySet<string>
   #archivedChannelIds: ReadonlySet<string>
@@ -1852,6 +1854,8 @@ export class EspaceStore {
 
   /** Marks a room as confidential out-of-band so plaintext is permanently refused. */
   markConfidentialRoom = (roomId: string): void => {
+    this.#unlockedEncryptedRooms.delete(roomId)
+    emitVaultSearchRoomEviction(roomId)
     this.#confidentialRooms.add(roomId)
     this.#quarantined.add(roomId)
     this.#boundaries.markProtected(roomId)
@@ -1872,6 +1876,39 @@ export class EspaceStore {
       this.#dirty.add(roomId)
       this.#schedule()
     }
+  }
+
+  getSearchVault = (): Promise<EspaceVault | undefined> => this.#ensureVault()
+
+  isRoomQuarantined = (roomId: string): boolean =>
+    this.#forbiddenRooms.has(roomId) ||
+    (this.#quarantined.has(roomId) && !this.#unlockedEncryptedRooms.has(roomId))
+
+  setUnlockedEncryptedRoom = (roomId: string, epoch: number | null): void => {
+    if (epoch === null || !Number.isSafeInteger(epoch) || epoch < 0) {
+      this.#unlockedEncryptedRooms.delete(roomId)
+      this.#quarantined.add(roomId)
+      emitVaultSearchRoomEviction(roomId)
+      void this.#hydrationDone
+        .then(() => this.#ensureVault())
+        .then((vault) => vault?.quarantineRoom(roomId))
+      return
+    }
+    if (this.#stopped || this.#forbiddenRooms.has(roomId) || this.getRoomBoundary(roomId) === 'invalid') {
+      return
+    }
+    this.#unlockedEncryptedRooms.set(roomId, { epoch })
+  }
+
+  getUnlockedEncryptedRoomSearchAuthority = (
+    roomId: string
+  ): { readonly unlocked: true; readonly epoch: number } | null => {
+    if (this.#stopped || this.#forbiddenRooms.has(roomId)) return null
+    const entry = this.#unlockedEncryptedRooms.get(roomId)
+    if (entry === undefined) return null
+    const boundary = this.getRoomBoundary(roomId)
+    if (boundary === 'invalid' || boundary === 'unknown') return null
+    return { unlocked: true, epoch: entry.epoch }
   }
 
   #isRoomMarkedConfidential(roomId: string): boolean {
@@ -1942,6 +1979,8 @@ export class EspaceStore {
   }
 
   #purgeVaultRoomAndRotateKey(roomId: string): void {
+    this.#unlockedEncryptedRooms.delete(roomId)
+    emitVaultSearchRoomEviction(roomId)
     this.#cached.delete(roomId)
     this.#cachedBoundaries.delete(roomId)
     this.#cache?.forget(roomId)

@@ -7,6 +7,8 @@ from uuid import UUID
 
 from django.db import connection
 
+from apps.e2ee.services import confidential_channel_ids_for_workspace
+
 from .models import Collection, CollectionRow, Document, DocumentSnapshot, DocumentUpdate
 
 
@@ -82,12 +84,26 @@ def document_export_parts(
 ) -> Iterator[ExportPart]:
     if not connection.in_atomic_block:
         raise RuntimeError("private document export requires the capture transaction")
-    rows = Document.objects.filter(workspace_id__in=workspace_ids, deleted_at__isnull=True)
+    rows = Document.objects.filter(
+        workspace_id__in=workspace_ids, deleted_at__isnull=True
+    ).select_related("workspace")
     if scope == "account":
         rows = rows.filter(creator__user_id=user_id)
+    confidential_channels_by_ws: dict[UUID, set[UUID]] = {}
     for document in rows.order_by("id").iterator():
         if not permitted(document.id):
             continue
+        ws_conf_channels = confidential_channels_by_ws.get(document.workspace_id)
+        if ws_conf_channels is None:
+            ws_conf_channels = confidential_channel_ids_for_workspace(
+                workspace_id=document.workspace_id,
+                organisation_id=document.workspace.organisation_id,
+            )
+            confidential_channels_by_ws[document.workspace_id] = ws_conf_channels
+        eff_confidential = bool(
+            document.is_confidential
+            or (document.channel_id is not None and document.channel_id in ws_conf_channels)
+        )
         snapshot = DocumentSnapshot.objects.select_for_update().filter(document=document).first()
         if snapshot is None:
             raise PrivacySourceRefusalError("native document snapshot absent")
@@ -101,10 +117,10 @@ def document_export_parts(
                 "title": document.title,
                 "parentId": document.parent_id,
                 "revision": document.revision,
-                "markdownProjection": document.markdown,
+                "markdownProjection": "" if eff_confidential else document.markdown,
                 "snapshotSequence": snapshot.sequence,
                 "headSequence": snapshot.head_sequence,
-                "format": "yjs-v1",
+                "format": "kde1-v1" if eff_confidential else "yjs-v1",
             },
         )
         prefix = f"native/{document.id}"

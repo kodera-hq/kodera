@@ -13,7 +13,13 @@ from django.db.models import F
 from django.utils import timezone
 
 from apps.audit.services import record_workspace_resource_event
-from apps.identity.selectors import IdentitySnapshot, PersonSnapshot, current_identity
+from apps.identity.selectors import (
+    IdentitySnapshot,
+    PersonSnapshot,
+    current_identity,
+    current_identity_for_organisation,
+    is_storable_subject,
+)
 from apps.orgs.actor_selectors import (
     TenantCaller,
     TenantCallerNotFoundError,
@@ -426,20 +432,66 @@ def _link(code: str, *, lock: bool = False, allow_exhausted: bool = False) -> Wo
 
 
 def _identity(
-    verified: VerifiedAccessToken, link: WorkspaceInviteLink
+    verified: VerifiedAccessToken, link: WorkspaceInviteLink, *, materialize: bool = False
 ) -> tuple[PersonSnapshot, IdentitySnapshot]:
     organisation = link.workspace.organisation
-    resolved = current_identity(issuer=verified.issuer, subject=verified.subject)
     if (
         organisation.state != "active"
         or organisation.deleted_at is not None
         or verified.issuer != organisation.issuer
         or not verified.email_verified
-        or resolved is None
-        or resolved[1].organisation_id != organisation.id
+        or not is_storable_subject(verified.subject)
     ):
         raise RefusalError(404)
-    return resolved
+    resolved = current_identity_for_organisation(
+        organisation_id=organisation.id, issuer=verified.issuer, subject=verified.subject
+    )
+    if resolved is not None:
+        return resolved
+    if not organisation.shared_realm:
+        raise RefusalError(404)
+    from django.core.exceptions import ValidationError
+    from django.core.validators import validate_email
+
+    from apps.identity.community import ensure_shared_realm_identity
+    from apps.identity.selectors import organisation_identity_exists
+
+    if organisation_identity_exists(
+        organisation_id=organisation.id, issuer=verified.issuer, subject=verified.subject
+    ):
+        # A disabled or soft-deleted identity in this organisation is never revived.
+        raise RefusalError(404)
+    if materialize:
+        bound = ensure_shared_realm_identity(
+            verified=verified,
+            organisation_id=organisation.id,
+            issuer=organisation.issuer,
+            realm=organisation.realm,
+        )
+        if bound is None:
+            raise RefusalError(404)
+        return bound
+    shared_existing = current_identity(issuer=verified.issuer, subject=verified.subject)
+    if shared_existing is not None:
+        return shared_existing
+    if not verified.email or len(verified.email) > 254:
+        raise RefusalError(404)
+    try:
+        validate_email(verified.email)
+    except ValidationError:
+        raise RefusalError(404) from None
+    placeholder_id = UUID(int=0)
+    return (
+        PersonSnapshot(placeholder_id, verified.email, None),
+        IdentitySnapshot(
+            placeholder_id,
+            organisation.id,
+            organisation.issuer,
+            organisation.realm,
+            verified.subject,
+            verified.email,
+        ),
+    )
 
 
 @transaction.atomic
@@ -511,12 +563,21 @@ def redeem_link(
     initial = _link(code, allow_exhausted=True)
     person, identity = _identity(verified, initial)
     organisation_id = initial.workspace.organisation_id
+    lock_key = (
+        f"workspace_redeem:{organisation_id}:{verified.issuer}:{verified.subject}"
+        if person.id == UUID(int=0)
+        else f"workspace_redeem:{organisation_id}:{person.id}"
+    )
     with connection.cursor() as cursor:
         cursor.execute(
             "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
-            [f"workspace_redeem:{organisation_id}:{person.id}"],
+            [lock_key],
         )
-    existing = for_user(organisation_id=organisation_id, user_id=person.id, lock=False)
+    existing = (
+        None
+        if person.id == UUID(int=0)
+        else for_user(organisation_id=organisation_id, user_id=person.id, lock=False)
+    )
     joined = existing is None
     created: WorkspaceMembership | None = None
     if existing is None:
@@ -525,10 +586,21 @@ def redeem_link(
         _verify_link_creator(
             initial.workspace, initial, check_auto_roles=bool(initial.auto_role_ids)
         )
-        created = create_from_workspace_link(organisation_id=organisation_id, user_id=person.id)
+        person, identity = _identity(verified, initial, materialize=True)
+        existing_after_bind = for_user(
+            organisation_id=organisation_id, user_id=person.id, lock=False
+        )
+        if existing_after_bind is None:
+            created = create_from_workspace_link(organisation_id=organisation_id, user_id=person.id)
+        else:
+            joined = False
+            if existing_after_bind.state != "active" or existing_after_bind.accepted_at is None:
+                raise RefusalError(403)
+            lock_organisation_fence(organisation_id=organisation_id)
     else:
         if existing.state != "active" or existing.accepted_at is None:
             raise RefusalError(403)
+        person, identity = _identity(verified, initial, materialize=True)
         lock_organisation_fence(organisation_id=organisation_id)
     lock_workspace(workspace_id=initial.workspace_id)
     workspace = Workspace.objects.select_related("organisation").get(id=initial.workspace_id)
@@ -700,20 +772,59 @@ def resolve_report(
 
 
 def projection(workspace_id: UUID) -> dict[str, Any]:
+    import re
+
+    from apps.engine_intents.selectors import (
+        known_organisation_subjects,
+        latest_channel_set_had_moderation,
+    )
+    from apps.identity.selectors import realm_subjects
+    from apps.orgs.selectors import current_members, is_default_community_organisation
+
+    subject_shape = re.compile(r"[\x21-\x7e]{1,255}")
     workspace = Workspace.objects.get(pk=workspace_id)
+    org_id = workspace.organisation_id
     rows = list(
         WorkspaceMemberRestriction.objects.filter(workspace=workspace).select_related("membership")
     )
-    if not rows:
+    is_community_host = is_default_community_organisation(organisation_id=org_id)
+    if not rows and not is_community_host:
         return {}
-    from apps.identity.selectors import realm_subjects
 
     by_user: dict[UUID, set[str]] = {}
+    usable_by_user: dict[UUID, set[str]] = {}
+    community_recorded: set[str] = set()
     # A disabled identity can still have an older Matrix session. Keep its
     # subject in removal and mute facts until the workspace restriction is lifted.
-    for user_id, subject, _usable in realm_subjects(organisation_id=workspace.organisation_id):
+    for user_id, subject, is_usable in realm_subjects(organisation_id=org_id):
+        if not subject_shape.fullmatch(subject) or subject.startswith("erased:"):
+            continue
         by_user.setdefault(user_id, set()).add(subject)
-    banned = set()
+        community_recorded.add(subject)
+        if is_usable:
+            usable_by_user.setdefault(user_id, set()).add(subject)
+
+    community_revoked: set[str] = set()
+    if is_community_host:
+        community_recorded |= {
+            s
+            for s in known_organisation_subjects(organisation_id=org_id)
+            if subject_shape.fullmatch(s)
+        }
+        active_user_ids = {
+            user_id for user_id, _role in current_members(organisation_id=org_id).values()
+        }
+        community_usable_active = set().union(
+            *(usable_by_user.get(uid, set()) for uid in active_user_ids)
+        )
+        community_revoked = community_recorded - community_usable_active
+
+    if not rows and not community_revoked:
+        if is_community_host and latest_channel_set_had_moderation(organisation_id=org_id):
+            return {"banned_subjects": [], "muted_subjects": []}
+        return {}
+
+    banned = set(community_revoked)
     muted: list[dict[str, str]] = []
     for row in rows:
         subjects = by_user.get(row.membership.user_id, set())

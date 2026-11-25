@@ -65,10 +65,19 @@ def read_setup(*, organisation_id: UUID, issuer: str) -> Setup:
     owner's confirmation, read in the caller's transaction."""
     if not connection.in_atomic_block:
         raise RuntimeError("the setup state is read in the caller's transaction")
-    from apps.orgs.community import canonical_community
+    from apps.orgs.community import configured_slug
+    from apps.orgs.selectors import is_community_or_shared_realm_organisation
 
-    community = canonical_community()
-    if community is not None and community.id == organisation_id and community.issuer == issuer:
+    default_shared_issuer = getattr(settings, "KODERA_DEFAULT_COMMUNITY_ISSUER", "")
+    if (
+        default_shared_issuer
+        and issuer == default_shared_issuer
+        and is_community_or_shared_realm_organisation(
+            organisation_id=organisation_id,
+            issuer=issuer,
+            community_slug=configured_slug(),
+        )
+    ):
         return (
             Setup("ready", None)
             if is_trusted_issuer(issuer, trusted=settings.KODERA_AUTH_TRUST)

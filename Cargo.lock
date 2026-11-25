@@ -1741,7 +1741,7 @@ dependencies = [
 
 [[package]]
 name = "kodera-desktop"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "ed25519-dalek",
  "getrandom 0.4.3",
@@ -1755,7 +1755,7 @@ dependencies = [
 
 [[package]]
 name = "kodera-rs"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aes-gcm",
  "base64",

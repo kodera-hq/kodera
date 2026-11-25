@@ -135,3 +135,28 @@ def test_immutable_service_period_is_present_and_schema_valid():
     xml = render_xml(row)
     assert b"BillingSpecifiedPeriod" in xml
     validate_xml(xml)
+
+
+def test_missing_issue_date_br03_is_rejected_and_offline_renderer_embeds_truetype_font():
+    import re as _re
+
+    row = snapshot()
+    xml = render_xml(row)
+    validate_xml(xml)
+
+    # EN16931 BR-03: an Invoice shall have an Invoice issue date (BT-2).
+    without_issue_date = _re.sub(
+        rb"<ram:IssueDateTime>.*?</ram:IssueDateTime>",
+        b"",
+        xml,
+        flags=_re.DOTALL,
+    )
+    assert without_issue_date != xml
+    with pytest.raises(
+        IntegrityRefusedError, match="document_xml_xsd_failed|document_xml_schematron_failed"
+    ):
+        validate_xml(without_issue_date)
+
+    pdf = OfflineRenderer().render(row, xml)
+    assert b"/Subtype /TrueType" in pdf
+    assert b"/Subtype /Type3" not in pdf

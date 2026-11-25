@@ -5,6 +5,7 @@ import type { ConfidentialMediaSession } from '../confidential/media-crypto-clie
 // rules without importing another part.
 
 import type { AvatarCache } from './matrix/avatarCache'
+import type { EspaceVault } from './matrix/encryptedCache'
 import type { Passport } from '../profile/passport'
 import type { RoomBoundary } from '../confidential/room-boundary'
 import type { DirectSummary } from './matrix/directs'
@@ -137,6 +138,12 @@ export interface EspaceStoreLike {
   ensureJoined?: (roomIds: readonly string[]) => void
   getJoinState?: (roomId: string) => RoomJoinState | undefined
   getRoomBoundary?: (roomId: string) => RoomBoundary
+  isRoomQuarantined?: (roomId: string) => boolean
+  getUnlockedEncryptedRoomSearchAuthority?: (
+    roomId: string
+  ) => { readonly unlocked: true; readonly epoch: number } | null
+  setUnlockedEncryptedRoom?: (roomId: string, epoch: number | null) => void
+  getSearchVault?: () => Promise<EspaceVault | undefined>
   getOutboxStatus?: (roomId?: string) => readonly OutboxStatusEntry[]
   setWorkspaceContext?: (context: WorkspaceRuntimeContext) => void
   markConfidentialRoom?: (roomId: string) => void

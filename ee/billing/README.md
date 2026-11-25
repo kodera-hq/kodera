@@ -23,7 +23,7 @@ Governed by [`../LICENSE`](../LICENSE) (`LicenseRef-Kodera-EE`), and loaded only
 | Edition | Hosting | Price |
 | :--- | :--- | :--- |
 | Community / Self-Host | Your own infrastructure | 0 € |
-| Team / Pro | Shared European cloud, strict per-seat quotas | 5 € excl. VAT per seat per month, billed annually (6 € billed monthly) |
+| Team / Pro | Shared European cloud, strict per-seat quotas | 0 € up to 5 seats, then 5 € excl. VAT per seat per month, billed annually (6 € billed monthly) |
 | Sovereign / Enterprise | Dedicated tenant | From 290 € excl. VAT per month, or custom |
 
 This table and the one in the root [`README.md`](../../README.md) say the same thing; a price change updates both.

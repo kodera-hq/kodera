@@ -43,6 +43,8 @@ COMMANDS = [
     "erase_core_workspace",
     "manage_statutory_retention",
     "dispatch_push",
+    "dispatch_reminders",
+    "dispatch_scheduled_messages",
     "dispatch_extensions",
     "dispatch_extension_coexistence",
     "purge_extension_payloads",
@@ -91,8 +93,9 @@ COMMANDS = [
     "send_support_tickets",
     "triage_support_tickets",
     "dispatch_bug_reports",
-    # The pilot's operator override of a tenant's status (QUICK_WORKSPACE.md §5).
+    # The pilot's operator override of a tenant's status (QUICK_WORKSPACE.md §5) and SRE summary.
     "tenant_status",
+    "sre_status",
     # The tenant agent's credential (ADR-0016), and the read-only lag report that comes with it.
     "enrol_tenant_agent",
     "revoke_tenant_agent",

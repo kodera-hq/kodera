@@ -46,6 +46,51 @@ def _refused(refused: documents.RefusalError) -> ExtensionRefusedError:
     return ExtensionRefusedError("extension_workspace_refused", refused.status)
 
 
+def read_member(verified, organisation_id):
+    if not organisation_exists(organisation_id=organisation_id):
+        raise ExtensionRefusedError("extension_workspace_absent", 404)
+    if WorkspaceCutoff.objects.filter(organisation_id=organisation_id).exists():
+        raise ExtensionRefusedError("extension_workspace_cut_off", 410)
+    try:
+        workspace_id, principal = documents.read_context(verified, organisation_id)
+    except documents.RefusalError as refused:
+        raise _refused(refused) from None
+    if principal.role not in {"org_owner", "org_admin", "org_billing", "org_member"}:
+        raise ExtensionRefusedError("extension_member_required", 403)
+    return workspace_id, principal
+
+
+def member(verified, organisation_id):
+    if not organisation_exists(organisation_id=organisation_id):
+        raise ExtensionRefusedError("extension_workspace_absent", 404)
+    if WorkspaceCutoff.objects.filter(organisation_id=organisation_id).exists():
+        raise ExtensionRefusedError("extension_workspace_cut_off", 410)
+    try:
+        _, initial = documents.read_context(verified, organisation_id)
+    except documents.RefusalError as refused:
+        raise _refused(refused) from None
+    initial_user_id = membership_user_id(membership_id=initial.membership_id)
+    lock_erasure_cutoff_fences(organisation_id=organisation_id, user_id=initial_user_id)
+    user_id = lock_membership_fence(membership_id=initial.membership_id)
+    lock_delivery_identity(identity_id=initial.identity_id)
+    lock_user_fence(user_id=user_id)
+    if not lock_organisation(organisation_id=organisation_id):
+        raise ExtensionRefusedError("extension_workspace_absent", 404)
+    if WorkspaceCutoff.objects.filter(organisation_id=organisation_id).exists():
+        raise ExtensionRefusedError("extension_workspace_cut_off", 410)
+    try:
+        workspace_id, principal = documents.write_context(verified, organisation_id)
+    except documents.RefusalError as refused:
+        raise _refused(refused) from None
+    if (
+        principal.membership_id != initial.membership_id
+        or principal.identity_id != initial.identity_id
+        or principal.role not in {"org_owner", "org_admin", "org_billing", "org_member"}
+    ):
+        raise ExtensionRefusedError("extension_member_required", 403)
+    return workspace_id, principal
+
+
 def read_admin(verified, organisation_id):
     if not organisation_exists(organisation_id=organisation_id):
         raise ExtensionRefusedError("extension_workspace_absent", 404)
@@ -502,6 +547,9 @@ def disarm_rehearsal_outbound(*, now: datetime) -> dict[str, int]:
         DeliveryAttempt,
         DigestConsent,
         DigestJob,
+        ExtensionMarketplaceListing,
+        MarketplaceEntitlement,
+        WidgetActionReceipt,
     )
 
     if not connection.in_atomic_block:
@@ -550,6 +598,26 @@ def disarm_rehearsal_outbound(*, now: datetime) -> dict[str, int]:
         state="obsolete",
         updated_at=now,
     )
+    listings_revoked = ExtensionMarketplaceListing.objects.filter(revoked_at__isnull=True).update(
+        revoked_at=now,
+        updated_at=now,
+    )
+    entitlements_revoked = MarketplaceEntitlement.objects.filter(
+        Q(revoked_at__isnull=True) | ~Q(sealed_signing_secret=b"") | Q(checkout_url__isnull=False)
+    ).update(
+        state="revoked",
+        revoked_at=now,
+        sealed_signing_secret=b"",
+        checkout_url=None,
+        updated_at=now,
+    )
+    widget_receipts_cleared = WidgetActionReceipt.objects.filter(
+        Q(state="in_flight") | Q(response_card__isnull=False)
+    ).update(
+        state="failed",
+        response_card=None,
+        updated_at=now,
+    )
     return {
         "installations_revoked": installations_revoked,
         "deliveries_obsoleted": deliveries_obsoleted,
@@ -557,6 +625,9 @@ def disarm_rehearsal_outbound(*, now: datetime) -> dict[str, int]:
         "coexistence_secrets_zeroized": bridges_revoked + secrets_zeroized,
         "coexistence_outbound_obsoleted": replay_obsoleted,
         "digest_jobs_obsoleted": digest_jobs_obsoleted,
+        "marketplace_listings_revoked": listings_revoked,
+        "marketplace_entitlements_revoked": entitlements_revoked,
+        "widget_action_receipts_cleared": widget_receipts_cleared,
     }
 
 
@@ -583,7 +654,13 @@ def count_residual_extension_rows_for_organisation(*, organisation_id: UUID) -> 
     """Count unrevoked endpoints, unpurged webhook payloads, or unzeroized secrets for an erased org."""
     from django.db.models import Q
 
-    from .models import CoexistenceBridge, DigestConsent
+    from .models import (
+        CoexistenceBridge,
+        DigestConsent,
+        ExtensionMarketplaceListing,
+        MarketplaceEntitlement,
+        WidgetActionReceipt,
+    )
 
     active_installations = Installation.objects.filter(
         workspace__organisation_id=organisation_id,
@@ -604,4 +681,29 @@ def count_residual_extension_rows_for_organisation(*, organisation_id: UUID) -> 
         membership__organisation_id=organisation_id,
         enabled=True,
     ).count()
-    return active_installations + unpurged_deliveries + active_or_secret_bridges + active_consents
+    active_listings = ExtensionMarketplaceListing.objects.filter(
+        organisation_id=organisation_id,
+        revoked_at__isnull=True,
+    ).count()
+    active_or_secret_entitlements = (
+        MarketplaceEntitlement.objects.filter(organisation_id=organisation_id)
+        .filter(
+            ~Q(state__in=("revoked", "refunded"))
+            | Q(revoked_at__isnull=True)
+            | ~Q(sealed_signing_secret=b"")
+        )
+        .count()
+    )
+    unpurged_widget_receipts = WidgetActionReceipt.objects.filter(
+        organisation_id=organisation_id,
+        response_card__isnull=False,
+    ).count()
+    return (
+        active_installations
+        + unpurged_deliveries
+        + active_or_secret_bridges
+        + active_consents
+        + active_listings
+        + active_or_secret_entitlements
+        + unpurged_widget_receipts
+    )

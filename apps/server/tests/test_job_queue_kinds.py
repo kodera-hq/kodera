@@ -21,6 +21,8 @@ from apps.jobs.keys import derive_key, sub_job_key
 from apps.jobs.kinds import KINDS, REALM_KINDS, SUB_JOB_RELATIONS, Lock, lock_set
 
 HARNESS = Path(__file__).parent / "job_queue"
+if str(HARNESS) not in sys.path:
+    sys.path.insert(0, str(HARNESS))
 
 
 def _harness_module(name: str) -> ModuleType:

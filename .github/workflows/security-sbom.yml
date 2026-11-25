@@ -72,9 +72,17 @@ jobs:
             printf '%s' "$PR_BODY" | python3 .github/scripts/check-vendor-attribution.py --text "pull request body" --allow-empty
           fi
       - name: Refuse committed .env files, unpinned GitHub Actions, disallowed licences or Cargo advisories
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          python-version: "3.12"
+      - name: Verify workflow pins, zero-secret PR CI, licences and Cargo advisories
         run: |
-          python3 scripts/ci/check-workflow-pins.py --selftest
-          python3 scripts/ci/check-workflow-pins.py
+          uv venv "$RUNNER_TEMP/ci-tools"
+          uv pip install --python "$RUNNER_TEMP/ci-tools/bin/python" --require-hashes --no-deps -r scripts/ci/ci-requirements.txt
+          "$RUNNER_TEMP/ci-tools/bin/python" scripts/ci/check-zero-secret-pr-ci.py --selftest
+          "$RUNNER_TEMP/ci-tools/bin/python" scripts/ci/check-zero-secret-pr-ci.py
+          "$RUNNER_TEMP/ci-tools/bin/python" scripts/ci/check-workflow-pins.py --selftest
+          "$RUNNER_TEMP/ci-tools/bin/python" scripts/ci/check-workflow-pins.py
           python3 scripts/ci/check-licenses.py --selftest
           python3 scripts/ci/check-licenses.py
           python3 scripts/ci/check-cargo-advisories.py --selftest

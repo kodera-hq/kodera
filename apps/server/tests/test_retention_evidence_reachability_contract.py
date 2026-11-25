@@ -6374,12 +6374,18 @@ def non_persisted_projection_runtime_refusals(
             meta = getattr(model, "_meta", None)
             table_name = getattr(meta, "db_table", "")
             # `VipMembershipEntitlement` (`billing_vipmembershipentitlement`) is Volet B's
-            # creator Stripe Connect buyer pass record, distinct from the computed SaaS
-            # `Entitlement` projection in MODEL.md.
+            # creator Stripe Connect buyer pass record, and `MarketplaceEntitlement`
+            # (`extensions_marketplaceentitlement`) is H4.1's web extension marketplace
+            # buyer entitlement record, both distinct from the computed SaaS `Entitlement`
+            # projection in MODEL.md.
             if (
                 getattr(model, "__name__", None) == "VipMembershipEntitlement"
                 and getattr(meta, "app_label", None) == "billing"
                 and table_name == "billing_vipmembershipentitlement"
+            ) or (
+                getattr(model, "__name__", None) == "MarketplaceEntitlement"
+                and getattr(meta, "app_label", None) == "extensions"
+                and table_name == "extensions_marketplaceentitlement"
             ):
                 continue
             normalized_table = re.sub(r"[^a-z0-9]", "", str(table_name).lower())

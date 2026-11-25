@@ -10,7 +10,12 @@ from django.db import transaction
 from django.http import HttpRequest
 from django.utils import timezone
 
-from apps.identity.selectors import current_identity, is_storable_subject
+from apps.identity.selectors import (
+    current_identities,
+    current_identity,
+    current_identity_for_organisation,
+    is_storable_subject,
+)
 from apps.orgs.actor_selectors import (
     TenantCallerNotFoundError,
     TenantCallerUnknownError,
@@ -142,22 +147,42 @@ def admit_privacy_request(
 ) -> tuple[bytes, str]:
     if not is_storable_subject(verified.subject):
         raise PrivacyHttpError("identity-unknown")
-    resolved = current_identity(issuer=verified.issuer, subject=verified.subject)
-    if resolved is None:
-        raise PrivacyHttpError("identity-unknown")
-    person, identity = resolved
     scope = "account" if organisation_id is None else "workspace"
     allowed_states = {"active"} if request.method == "POST" else {"active", "suspended"}
     if organisation_id is None:
-        try:
-            caller = read_tenant_caller(verified=verified, organisation_id=identity.organisation_id)
-        except TenantCallerUnknownError:
-            raise PrivacyHttpError("identity-unknown") from None
-        except TenantCallerNotFoundError:
-            raise PrivacyHttpError("forbidden") from None
-        if caller.role not in ACCOUNT_ROLES or caller.organisation_state not in allowed_states:
+        identities = current_identities(issuer=verified.issuer, subject=verified.subject)
+        if not identities:
+            raise PrivacyHttpError("identity-unknown")
+        person = identities[0][0]
+        admitted = False
+        saw_known_identity = False
+        for _, cand_identity in identities:
+            if cand_identity.organisation_id is None:
+                continue
+            try:
+                caller = read_tenant_caller(
+                    verified=verified, organisation_id=cand_identity.organisation_id
+                )
+                saw_known_identity = True
+            except TenantCallerUnknownError:
+                continue
+            except TenantCallerNotFoundError:
+                saw_known_identity = True
+                continue
+            if caller.role in ACCOUNT_ROLES and caller.organisation_state in allowed_states:
+                admitted = True
+                break
+        if not admitted:
+            if not saw_known_identity:
+                raise PrivacyHttpError("identity-unknown")
             raise PrivacyHttpError("forbidden")
     else:
+        resolved = current_identity_for_organisation(
+            organisation_id=organisation_id, issuer=verified.issuer, subject=verified.subject
+        ) or current_identity(issuer=verified.issuer, subject=verified.subject)
+        if resolved is None:
+            raise PrivacyHttpError("identity-unknown")
+        person, _ = resolved
         try:
             caller = read_tenant_caller(verified=verified, organisation_id=organisation_id)
         except TenantCallerUnknownError:

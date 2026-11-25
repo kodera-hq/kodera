@@ -744,7 +744,7 @@ KNOWN_DIAGNOSTIC_CONSTRAINTS = frozenset(
         "organisation_deletion_valid",
         "organisation_identity_binding_unique",
         "organisation_immutable_binding",
-        "organisation_issuer_unique",
+        "organisation_dedicated_issuer_unique",
         "organisation_issuer_valid",
         "organisation_name_valid",
         "organisation_owner_required",

@@ -135,7 +135,11 @@ def support_tickets(request: HttpRequest) -> HttpResponse:
         if lane == "staff":
             service.record_staff_denial(verified=verified, request_id=request_id)
             return _finish(_problem("forbidden", request_id), request_id)
-        caller = service.authorise(verified=verified)
+        try:
+            peeked_org_id = service.peek_target_organisation_id(request.body)
+        except RequestDataTooBig:
+            peeked_org_id = None
+        caller = service.authorise(verified=verified, target_organisation_id=peeked_org_id)
         if service.support_mailbox() is None:
             response = _problem(
                 "service-unavailable", request_id, retry_after_s=UNAVAILABLE_RETRY_S

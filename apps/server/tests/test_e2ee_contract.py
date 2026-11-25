@@ -35,6 +35,12 @@ OPERATIONS = {
     ),
     (ROOM + "envelopes", "post"): ("sendConfidentialEnvelope", "confidential_envelope:create"),
     (ROOM + "envelopes", "get"): ("listConfidentialEnvelopes", "confidential_envelope:read"),
+    (BASE + "key-backup", "get"): ("getConfidentialKeyBackup", "confidential_backup:read"),
+    (BASE + "key-backup", "post"): ("publishConfidentialKeyBackup", "confidential_backup:create"),
+    (BASE + "key-backup", "delete"): (
+        "discardConfidentialKeyBackup",
+        "confidential_backup:delete",
+    ),
 }
 ADMINS = {"createConfidentialRoom", "claimConfidentialKeyPackage"}
 ROLES = {"org_owner", "org_admin", "org_member", "org_billing"}
@@ -46,7 +52,7 @@ def document():
 
 
 def guard(value):
-    assert value["info"]["version"] == "0.58.0"
+    assert value["info"]["version"] == "0.61.0"
     for (path, method), (name, scope) in OPERATIONS.items():
         operation = value["paths"][path][method]
         assert operation["operationId"] == name and operation["x-kodera-scope"] == scope

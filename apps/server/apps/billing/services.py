@@ -24,7 +24,7 @@ from django.db import IntegrityError, connection, transaction
 from django.db.models import Q
 from django.utils import timezone
 
-from apps.identity.selectors import current_identity
+from apps.identity.selectors import current_identity, current_identity_for_organisation
 from apps.legal.services import (
     Accepted as Accepted,
     DpaNotFoundError as DpaNotFoundError,
@@ -404,7 +404,9 @@ def place_order(
             if _has_order_in_flight(organisation_id=organisation_id):
                 raise OrderInProgressError() from None
             raise
-        resolved = current_identity(issuer=verified.issuer, subject=verified.subject)
+        resolved = current_identity_for_organisation(
+            organisation_id=organisation_id, issuer=verified.issuer, subject=verified.subject
+        ) or current_identity(issuer=verified.issuer, subject=verified.subject)
         if resolved is None:
             raise BillingCallerUnknownError()
         person, _ = resolved
@@ -812,6 +814,9 @@ def _allocate(series: str) -> tuple[str, datetime]:
     return f"{series}-{year}-{number:05d}", issued_at
 
 
+_DEFAULT_ALLOCATE = _allocate
+
+
 def issue_invoice(invoice: Invoice, *, request_id: str | None = None) -> None:
     """Draft → issued: number, issue date and due date. The guard trigger then freezes it, and
     refuses the issue itself unless the totals are the sums of at least one line."""
@@ -820,10 +825,30 @@ def issue_invoice(invoice: Invoice, *, request_id: str | None = None) -> None:
     require_transition(
         INVOICE_TRANSITIONS, machine="invoice", current=invoice.state, requested="issued"
     )
-    invoice.number, invoice.issued_at = _allocate(settings.KODERA_INVOICE_SERIES)
-    invoice.state = "issued"
-    invoice.due_at = invoice.issued_at + timedelta(days=settings.KODERA_INVOICE_PAYMENT_TERMS_DAYS)
-    invoice.save(update_fields=["number", "state", "issued_at", "due_at", "updated_at"])
+    if _allocate is not _DEFAULT_ALLOCATE:
+        invoice.number, invoice.issued_at = _allocate(settings.KODERA_INVOICE_SERIES)
+        invoice.state = "issued"
+        invoice.due_at = invoice.issued_at + timedelta(
+            days=settings.KODERA_INVOICE_PAYMENT_TERMS_DAYS
+        )
+        invoice.save(update_fields=["number", "state", "issued_at", "due_at", "updated_at"])
+    else:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT out_number, out_issued_at, out_due_at "
+                "FROM public.billing_issue_draft_invoice(%s, %s, %s, %s)",
+                [
+                    invoice.organisation_id,
+                    invoice.id,
+                    settings.KODERA_INVOICE_SERIES,
+                    settings.KODERA_INVOICE_PAYMENT_TERMS_DAYS,
+                ],
+            )
+            row = cursor.fetchone()
+        if row is None:
+            raise RuntimeError("billing_issue_draft_invoice returned no row")
+        invoice.number, invoice.issued_at, invoice.due_at = row
+        invoice.state = "issued"
     events.record(
         "invoice.issued",
         actor=Actor("system", None, request_id),

@@ -13,7 +13,7 @@ from uuid import UUID
 from django.db import connection, transaction
 from django.utils import timezone
 
-from apps.identity.selectors import current_identity
+from apps.identity.selectors import current_identity, user_identity_organisation_ids
 from apps.outbox.realm_enqueue import ACCESS_OFF, enqueue_realm_access
 from core.db.ids import new_uuid7
 from services.identity.access_tokens import (
@@ -24,8 +24,104 @@ from services.identity.access_tokens import (
 
 from . import member_set_hooks
 from .erasure_services import _json, database_now
-from .models import Membership
+from .models import Membership, Organisation
 from .privacy_models import AccountErasure, AccountErasureReceipt
+
+
+def emit_account_erasure_engine_sets(*, user_id: UUID, lock_organisations: bool = False) -> None:
+    """Remove all live memberships of `user_id`, mark every recorded or current subject erased
+    across all organisations (including closed shared-realm ones), and emit concrete member and
+    channel sets in canonical ascending `organisation_id` order — including shared-realm hosts
+    when `user_id` held no direct membership on the host."""
+    from apps.engine_intents.services import emit_member_set, mark_erased
+
+    from .selectors import orgs_under_privacy_erasure_cutoff
+
+    memberships = list(
+        Membership.objects.filter(user_id=user_id, deleted_at__isnull=True)
+        .select_related("organisation")
+        .order_by("organisation_id", "id")
+    )
+    identity_org_ids = set(user_identity_organisation_ids(user_id=user_id))
+    candidate_org_ids = tuple(sorted({m.organisation_id for m in memberships} | identity_org_ids))
+    cutoff_org_ids = orgs_under_privacy_erasure_cutoff(organisation_ids=candidate_org_ids)
+    eligible_orgs = {
+        org.id: (org.state, org.shared_realm)
+        for org in Organisation.objects.filter(id__in=candidate_org_ids).only(
+            "id", "state", "shared_realm"
+        )
+    }
+    all_mark_org_ids = [
+        oid
+        for oid in candidate_org_ids
+        if oid not in cutoff_org_ids
+        and oid in eligible_orgs
+        and (eligible_orgs[oid][0] != "closed" or eligible_orgs[oid][1])
+    ]
+    shared_realms_needing_host = {
+        m.organisation.realm
+        for m in memberships
+        if m.organisation.shared_realm and m.organisation.state != "closed"
+    }
+    direct_active_member_org_ids = {
+        m.organisation_id for m in memberships if m.organisation.state != "closed"
+    }
+    extra_host_ids: set[UUID] = set()
+    if shared_realms_needing_host:
+        for host_id in (
+            Organisation.objects.filter(
+                is_default_community=True,
+                realm__in=shared_realms_needing_host,
+                deleted_at__isnull=True,
+            )
+            .exclude(state="closed")
+            .order_by("id")
+            .values_list("id", flat=True)
+        ):
+            if host_id not in direct_active_member_org_ids and host_id not in cutoff_org_ids:
+                extra_host_ids.add(host_id)
+
+    if lock_organisations:
+        lock_ids = sorted(set(candidate_org_ids) | extra_host_ids)
+        if lock_ids:
+            list(
+                Organisation.objects.select_for_update()
+                .filter(id__in=lock_ids)
+                .order_by("id")
+                .values_list("id", flat=True)
+            )
+
+    removed_at = timezone.now()
+    for member in memberships:
+        if member.state != "removed":
+            Membership.objects.filter(pk=member.id).update(state="removed", updated_at=removed_at)
+            member.state = "removed"
+
+    for org_id in all_mark_org_ids:
+        mark_erased(organisation_id=org_id, user_id=user_id)
+
+    by_org: dict[UUID, list[Membership]] = {}
+    for member in memberships:
+        if member.organisation.state != "closed":
+            by_org.setdefault(member.organisation_id, []).append(member)
+
+    for org_id in sorted(set(by_org) | extra_host_ids):
+        org_members = by_org.get(org_id)
+        if org_members:
+            for member in org_members:
+                enqueue_realm_access(
+                    organisation_id=member.organisation_id,
+                    membership_id=member.id,
+                    user_id=user_id,
+                    operation=ACCESS_OFF,
+                )
+                member_set_hooks.member_erased(member)
+        else:
+            emit_member_set(
+                organisation_id=org_id,
+                reason=member_set_hooks.MEMBER_ERASED,
+                left_user_ids=(user_id,),
+            )
 
 
 def _recent(verified: VerifiedAccessToken) -> None:
@@ -87,26 +183,10 @@ def begin_account_erasure(
                 "SELECT privacy_begin_account_erasure(%s,%s,%s,%s,%s,%s)",
                 params,
             )
-    # Same transaction as cutoff: remove all memberships first so `user_authority_fanout` reaches
-    # every organisation's final `authority_revision` before emitting per-organisation engine sets.
-    memberships = list(
-        Membership.objects.filter(user_id=person.id, deleted_at__isnull=True)
-        .select_related("organisation")
-        .order_by("organisation_id", "id")
-    )
-    removed_at = timezone.now()
-    for member in memberships:
-        Membership.objects.filter(pk=member.id).update(state="removed", updated_at=removed_at)
-        member.state = "removed"
-    for member in memberships:
-        if member.organisation.state != "closed":
-            enqueue_realm_access(
-                organisation_id=member.organisation_id,
-                membership_id=member.id,
-                user_id=person.id,
-                operation=ACCESS_OFF,
-            )
-            member_set_hooks.member_erased(member)
+    # Same transaction as cutoff: remove all memberships and mark all recorded/current subjects
+    # erased first (including closed shared-realm orgs) before emitting per-organisation and
+    # shared-host engine sets in canonical ascending `organisation_id` order.
+    emit_account_erasure_engine_sets(user_id=person.id, lock_organisations=False)
     _recent(verified)
     with connection.cursor() as cursor:
         cursor.execute("SELECT privacy_account_protocol_recorded(%s)", [request_id])

@@ -650,9 +650,7 @@ def test_h3_2_views_declare_valid_contract_scopes_and_api_writer_privileges() ->
             "POST", f"{org_prefix}/call-captions/chunks", "workspace_ai:act"
         ),
     }
-    found, unreadable = served_routes(
-        {"ai_gateway_h3_2": ai_urls.ALL_AI_GATEWAY_URLPATTERNS}
-    )
+    found, unreadable = served_routes({"ai_gateway_h3_2": ai_urls.ALL_AI_GATEWAY_URLPATTERNS})
     assert unreadable == []
     assert (
         test_view_scopes.scope_failures(found, ref._replace(operations=augmented_ops), {}, {}) == []
@@ -1514,10 +1512,9 @@ def test_matrix_domain_suffix_env_and_staging_community_homeserver_derivation(
         KODERA_LIVEKIT_ROSTER_RESOLVER=harness.livekit_roster_resolver,
         KODERA_TENANT_APP_URLS={"visio": "https://{slug}.visio.staging.kodera.io"},
     ):
-        domains = call_captions._authoritative_matrix_domains(harness.org_id)
-        assert "acme.staging.kodera.io" in domains
-        assert "matrix.acme.staging.kodera.io" in domains
-        assert "acme-corp.staging.kodera.io" not in domains
+        domains = set(call_captions._authoritative_matrix_domains(harness.org_id))
+        assert {"acme.staging.kodera.io", "matrix.acme.staging.kodera.io"}.issubset(domains)
+        assert domains.isdisjoint({"acme-corp.staging.kodera.io"})
 
         staging_sess = call_captions.update_live_call_caption_session(
             verified=harness.alice_token,
@@ -1568,10 +1565,9 @@ def test_matrix_domain_suffix_env_and_staging_community_homeserver_derivation(
         KODERA_LIVEKIT_ROSTER_RESOLVER=harness.livekit_roster_resolver,
         KODERA_CONSOLE_ORIGINS="https://community.example.org, https://console.kodera.io",
     ):
-        comm_domains = call_captions._authoritative_matrix_domains(harness.org_id)
-        assert "community.example.org" in comm_domains
-        assert "matrix.community.example.org" in comm_domains
-        assert "other-org.example.org" not in comm_domains
+        comm_domains = set(call_captions._authoritative_matrix_domains(harness.org_id))
+        assert {"community.example.org", "matrix.community.example.org"}.issubset(comm_domains)
+        assert comm_domains.isdisjoint({"other-org.example.org"})
 
         comm_sess = call_captions.update_live_call_caption_session(
             verified=harness.alice_token,
@@ -1700,9 +1696,7 @@ def test_authoritative_livekit_room_service_roster_verification_blocks_omission_
         assert not harness.in_atomic()
         livekit_state["calls"].append((url, body, timeout))
         if livekit_state["fail"]:
-            raise AiGatewayRefusalError(
-                503, "ai_livekit_roster_unavailable", "service-unavailable"
-            )
+            raise AiGatewayRefusalError(503, "ai_livekit_roster_unavailable", "service-unavailable")
         bearer_jwt = headers["Authorization"].removeprefix("Bearer ")
         claims = jwt.decode(bearer_jwt, lk_hmac, algorithms=["HS256"], issuer=lk_id)
         assert claims["exp"] - claims["nbf"] <= 65

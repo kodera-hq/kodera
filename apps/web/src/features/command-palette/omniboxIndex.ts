@@ -1,4 +1,5 @@
 import { permitsPlaintext, type RoomBoundary } from '../confidential/room-boundary'
+import type { SearchBoundaryTag } from '../espace/matrix/encryptedCache'
 import type { MessageView } from '../espace/matrix/timeline'
 
 export const MIN_OMNIBOX_QUERY_LENGTH = 2
@@ -6,8 +7,17 @@ export const MAX_INDEXED_MESSAGES_PER_ROOM = 500
 export const DEFAULT_MESSAGE_LIMIT = 20
 export const DEFAULT_COLLECTION_LIMIT = 15
 
+export interface UnlockedEncryptedRoomAuthority {
+  readonly unlocked: true
+  readonly epoch: number
+}
+
 export interface RoomBoundaryReader {
   readonly getRoomBoundary?: ((roomId: string) => RoomBoundary) | undefined
+  readonly isRoomQuarantined?: ((roomId: string) => boolean) | undefined
+  readonly getUnlockedEncryptedRoomSearchAuthority?:
+    | ((roomId: string) => UnlockedEncryptedRoomAuthority | null)
+    | undefined
 }
 
 export interface ConfidentialChannelFlags {
@@ -15,13 +25,52 @@ export interface ConfidentialChannelFlags {
   readonly is_confidential?: boolean | undefined
 }
 
+export interface ResolvedRoomSearchBoundary {
+  readonly boundaryTag: SearchBoundaryTag
+  readonly epoch: number
+}
+
+export function resolveRoomSearchBoundary(
+  store: RoomBoundaryReader,
+  roomId: string,
+  channel?: ConfidentialChannelFlags | null | undefined
+): ResolvedRoomSearchBoundary | null {
+  if (store.isRoomQuarantined?.(roomId) === true) return null
+  if (store.getRoomBoundary === undefined) return null
+
+  const boundary = store.getRoomBoundary(roomId)
+  if (boundary === 'unknown' || boundary === 'invalid') return null
+
+  const unlockedAuthority = store.getUnlockedEncryptedRoomSearchAuthority?.(roomId) ?? null
+  if (
+    unlockedAuthority !== null &&
+    unlockedAuthority.unlocked &&
+    typeof unlockedAuthority.epoch === 'number' &&
+    Number.isSafeInteger(unlockedAuthority.epoch) &&
+    unlockedAuthority.epoch >= 0
+  ) {
+    return {
+      boundaryTag: 'confidential-e2ee',
+      epoch: unlockedAuthority.epoch,
+    }
+  }
+
+  if (channel?.isConfidential === true || channel?.is_confidential === true) return null
+  if (!permitsPlaintext(boundary) || (boundary !== 'ordinary' && boundary !== 'community')) {
+    return null
+  }
+  return {
+    boundaryTag: boundary,
+    epoch: 0,
+  }
+}
+
 export function isRoomSearchPermitted(
   store: RoomBoundaryReader,
   roomId: string,
   channel?: ConfidentialChannelFlags | null | undefined
 ): boolean {
-  if (channel?.isConfidential === true || channel?.is_confidential === true) return false
-  return store.getRoomBoundary !== undefined && permitsPlaintext(store.getRoomBoundary(roomId))
+  return resolveRoomSearchBoundary(store, roomId, channel) !== null
 }
 
 const DIACRITICS = /\p{M}/gu

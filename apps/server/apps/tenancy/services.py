@@ -114,3 +114,84 @@ def tenant_status_of(*, organisation_id: UUID, tenant_id: UUID) -> str | None:
         .first()
     )
     return found
+
+
+@dataclass(frozen=True, slots=True)
+class LockedSettlementTenant:
+    id: UUID
+    status: str
+    region: str
+    profile_ref: str | None
+
+
+def tenant_slug_is_reserved(slug: str) -> bool:
+    return is_reserved_tenant_slug(slug)
+
+
+def held_tenant_slugs(candidates: list[str]) -> set[str]:
+    return set(Tenant.objects.filter(slug__in=candidates).values_list("slug", flat=True))
+
+
+def tenant_slug_exists(slug: str) -> bool:
+    return Tenant.objects.filter(slug=slug).exists()
+
+
+def create_active_self_serve_tenant(
+    *,
+    organisation_id: UUID,
+    slug: str,
+    name: str,
+    locale: str,
+    realm: str,
+    now: Any,
+) -> UUID:
+    """Create a shared-infrastructure tenant for PME self-serve bound to the shared realm."""
+    if not connection.in_atomic_block:
+        raise RuntimeError("self-serve tenant must be created inside an atomic transaction")
+    shared_host_status = (
+        Tenant.objects.filter(slug=realm, is_default_community=True)
+        .exclude(status="deleted")
+        .values_list("status", flat=True)
+        .first()
+    )
+    initial_status = (
+        "provisioning" if shared_host_status in {"ordered", "provisioning", "failed"} else "active"
+    )
+    tenant = Tenant.objects.create(
+        organisation_id=organisation_id,
+        slug=slug,
+        name=name,
+        locale=locale,
+        status=initial_status,
+        status_changed_at=now,
+        pack_code="workspace",
+        capacity_tier_code="S",
+        apps=["messaging", "visio", "docs"],
+        profile_ref="espace-shared-v1",
+        realm=realm,
+    )
+    return tenant.id
+
+
+def lock_tenant_for_settlement(*, tenant_id: UUID) -> LockedSettlementTenant | None:
+    """Lock `Tenant` row for paid order settlement inside the caller's transaction."""
+    row = Tenant.objects.select_for_update().filter(id=tenant_id).first()
+    if row is None:
+        return None
+    return LockedSettlementTenant(
+        id=row.id,
+        status=row.status,
+        region=row.region,
+        profile_ref=row.profile_ref,
+    )
+
+
+def transition_tenant_status(*, tenant_id: UUID, expected_status: str, next_status: str) -> bool:
+    """Conditionally transition `Tenant.status` from `expected_status` to `next_status`."""
+    now = timezone.now()
+    moved = Tenant.objects.filter(id=tenant_id, status=expected_status).update(
+        status=next_status,
+        status_changed_at=now,
+        updated_at=now,
+    )
+    return moved == 1

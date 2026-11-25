@@ -1036,7 +1036,7 @@ export function renderDebianControl(conf) {
     'Depends: libwebkit2gtk-4.1-0, libayatana-appindicator3-1, librsvg2-2',
     'Maintainer: Kodera Maintainers <security@kodera.io>',
     `Description: ${conf.productName} Desktop Companion Shell`,
-    ' Native Tauri v2 desktop companion shell for Kodera workspaces.',
+    ' Native tao/wry desktop companion shell for Kodera workspaces.',
     '',
   ].join('\n');
 }

@@ -1,4 +1,5 @@
 export const MANIFEST_SCHEMA_VERSION = 'kodera.extension.v1';
+export const WIDGET_SCHEMA_VERSION = 'kodera.widget.v1';
 export const SIGNATURE_HEADER = 'x-kodera-signature-256';
 export const TIMESTAMP_HEADER = 'x-kodera-timestamp';
 export const EVENT_HEADER = 'x-kodera-event';
@@ -7,6 +8,10 @@ export const DEFAULT_MAX_SKEW_SECONDS = 300;
 export const DEFAULT_TOLERANCE_SECONDS = 300;
 export const MAX_WEBHOOK_REPLAY_ENTRIES = 4096;
 export const MAX_WEBHOOK_BODY_BYTES = 1048576;
+export const MAX_WIDGET_CARD_BYTES = 16384;
+export const MAX_WIDGET_AST_DEPTH = 4;
+export const MAX_WIDGET_BLOCKS = 20;
+export const MAX_WIDGET_BUTTON_ACTIONS = 5;
 
 export type ExtensionScope =
   | 'messages:write'
@@ -15,7 +20,8 @@ export type ExtensionScope =
   | 'webhooks:incoming'
   | 'incidents:write'
   | 'threads:write'
-  | 'commands:register';
+  | 'commands:register'
+  | 'widgets:write';
 
 export type ExtensionEvent =
   | 'command.invoked'
@@ -25,16 +31,30 @@ export type ExtensionEvent =
   | 'ci.workflow_failed'
   | 'incident.opened'
   | 'incident.acknowledged'
-  | 'incident.resolved';
+  | 'incident.resolved'
+  | 'widget.action';
 
 export type IncidentSeverity = 'critical' | 'high' | 'medium' | 'low' | 'info';
 export type IncidentStatus = 'open' | 'investigating' | 'acknowledged' | 'mitigated' | 'resolved';
+export type WidgetBlockType =
+  | 'header'
+  | 'text'
+  | 'kv_list'
+  | 'status_pill'
+  | 'progress_bar'
+  | 'button_row'
+  | 'link_button';
+export type WidgetStatusState = 'success' | 'info' | 'warning' | 'danger' | 'neutral' | 'planned';
+export type WidgetButtonVariant = 'primary' | 'secondary' | 'tertiary' | 'destructive';
 
 export const ALLOWED_EXTENSION_SCOPES: readonly ExtensionScope[];
 export const EXTENSION_SCOPES: readonly ExtensionScope[];
 export const EXTENSION_EVENTS: readonly ExtensionEvent[];
 export const INCIDENT_SEVERITIES: readonly IncidentSeverity[];
 export const INCIDENT_STATUSES: readonly IncidentStatus[];
+export const WIDGET_BLOCK_TYPES: readonly WidgetBlockType[];
+export const WIDGET_STATUS_STATES: readonly WidgetStatusState[];
+export const WIDGET_BUTTON_VARIANTS: readonly WidgetButtonVariant[];
 
 export class WebhookVerificationError extends Error {
   readonly code: string;
@@ -61,6 +81,12 @@ export interface ExtensionManifestCommand {
   readonly description: string;
 }
 
+export interface ExtensionManifestWidget {
+  readonly id: string;
+  readonly title: string;
+  readonly description?: string;
+}
+
 export interface ValidatedExtensionManifest {
   readonly schemaVersion: string;
   readonly id: string;
@@ -71,7 +97,90 @@ export interface ValidatedExtensionManifest {
   readonly events: readonly ExtensionEvent[];
   readonly webhookUrl?: string;
   readonly commands: readonly ExtensionManifestCommand[];
+  readonly widgets: readonly ExtensionManifestWidget[];
 }
+
+export interface WidgetHeaderBlock {
+  readonly type: 'header';
+  readonly title: string;
+  readonly subtitle?: string;
+}
+
+export interface WidgetTextBlock {
+  readonly type: 'text';
+  readonly body: string;
+  readonly tone?: 'default' | 'muted' | 'mono';
+}
+
+export interface WidgetKvItem {
+  readonly label: string;
+  readonly value: string;
+  readonly mono?: boolean;
+}
+
+export interface WidgetKvListBlock {
+  readonly type: 'kv_list';
+  readonly items: readonly WidgetKvItem[];
+}
+
+export interface WidgetStatusPillBlock {
+  readonly type: 'status_pill';
+  readonly label: string;
+  readonly state: WidgetStatusState;
+}
+
+export interface WidgetProgressBarBlock {
+  readonly type: 'progress_bar';
+  readonly label: string;
+  readonly value: number;
+  readonly valueText?: string;
+  readonly tone?: 'default' | 'warning' | 'danger' | 'success';
+}
+
+export interface WidgetButtonAction {
+  readonly actionId: string;
+  readonly label: string;
+  readonly variant?: WidgetButtonVariant;
+  readonly value?: string;
+}
+
+export interface WidgetButtonRowBlock {
+  readonly type: 'button_row';
+  readonly actions: readonly WidgetButtonAction[];
+}
+
+export interface WidgetLinkButtonBlock {
+  readonly type: 'link_button';
+  readonly label: string;
+  readonly href: string;
+  readonly variant?: 'secondary' | 'tertiary';
+}
+
+export type WidgetBlock =
+  | WidgetHeaderBlock
+  | WidgetTextBlock
+  | WidgetKvListBlock
+  | WidgetStatusPillBlock
+  | WidgetProgressBarBlock
+  | WidgetButtonRowBlock
+  | WidgetLinkButtonBlock;
+
+export interface WidgetCard {
+  readonly schemaVersion: typeof WIDGET_SCHEMA_VERSION;
+  readonly widgetId: string;
+  readonly title?: string;
+  readonly blocks: readonly WidgetBlock[];
+}
+
+export interface WidgetCardDefinition {
+  readonly schemaVersion?: typeof WIDGET_SCHEMA_VERSION;
+  readonly widgetId: string;
+  readonly title?: string;
+  readonly blocks: readonly WidgetBlock[];
+}
+
+export function validateWidgetCard(card: unknown): WidgetCard;
+export function defineWidgetCard(definition: WidgetCardDefinition): WidgetCard;
 
 export function validateManifest(
   manifest: Record<string, unknown>,
@@ -224,10 +333,18 @@ export interface PostIncidentCardParams {
   idempotencyKey?: string;
 }
 
+export interface PostWidgetCardParams {
+  channelId: string;
+  card: WidgetCard | WidgetCardDefinition | Record<string, unknown>;
+  text?: string;
+  idempotencyKey?: string;
+}
+
 export interface ExtensionClient {
   postChannelMessage(params: PostChannelMessageParams): Promise<Record<string, unknown>>;
   postThreadReply(params: PostThreadReplyParams): Promise<Record<string, unknown>>;
   postIncidentCard(params: PostIncidentCardParams): Promise<Record<string, unknown>>;
+  postWidgetCard(params: PostWidgetCardParams): Promise<Record<string, unknown>>;
 }
 
 export function createExtensionClient(config: ExtensionClientConfig): ExtensionClient;

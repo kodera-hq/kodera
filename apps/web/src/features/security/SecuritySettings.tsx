@@ -15,13 +15,30 @@ import type {
   SecurityCodes,
 } from '../confidential/cross-signing-client'
 import { createKeyBackupClient } from '../confidential/key-backup-client'
+import {
+  ConfidentialKeyBackupConflictError,
+  discardConfidentialKeyBackup,
+  encodeCapsuleBase64,
+  getConfidentialKeyBackup,
+  publishConfidentialKeyBackup,
+  tryParseKvkb1ArchiveEpoch,
+  type ConfidentialKeyBackupPublishBody,
+  type ConfidentialKeyBackupPublished,
+  type ConfidentialKeyBackupRemote,
+} from '../confidential/key-backup-http'
 import { createBackupVaultClient } from '../confidential/key-backup-vault-client'
+
+export type KeyBackupDeviceSigner = (unsignedBody: {
+  readonly backupEpoch: number
+  readonly capsule: string
+}) => Promise<ConfidentialKeyBackupPublishBody>
 
 export interface SecuritySettingsProps {
   org?: string | undefined
   organisationId: string
   accountId: string
   membershipId: string
+  deviceSigner?: KeyBackupDeviceSigner | undefined
 }
 interface Session {
   cross: ReturnType<typeof createCrossSigningClient>
@@ -30,6 +47,9 @@ interface Session {
   identity: PublicEndorser
   stamp: object
   active: boolean
+  backupEpoch: number
+  nextServerEpoch: number
+  serverKnown: boolean
 }
 export default function SecuritySettings(props: SecuritySettingsProps) {
   const { t, i18n } = useTranslation(),
@@ -58,7 +78,17 @@ export default function SecuritySettings(props: SecuritySettingsProps) {
     [archive, setArchive] = useState<string | null>(null)
   const [imported, setImported] = useState<Uint8Array | null>(null),
     [restoreKey, setRestoreKey] = useState('')
+  const [remoteBackup, setRemoteBackup] = useState<ConfidentialKeyBackupRemote | null>(null),
+    [publishedMeta, setPublishedMeta] = useState<ConfidentialKeyBackupPublished | null>(null),
+    [discardedNextEpoch, setDiscardedNextEpoch] = useState<number | null>(null)
+  const sealedCapsuleRef = useRef<{ bytes: Uint8Array; epoch: number } | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
+  function clearSealedCapsule() {
+    if (sealedCapsuleRef.current) {
+      sealedCapsuleRef.current.bytes.fill(0)
+      sealedCapsuleRef.current = null
+    }
+  }
   function revokeUrl() {
     if (downloadUrl.current) URL.revokeObjectURL(downloadUrl.current)
     downloadUrl.current = null
@@ -76,6 +106,7 @@ export default function SecuritySettings(props: SecuritySettingsProps) {
         session.vault.close()
       }
       revokeUrl()
+      clearSealedCapsule()
       if (fileInput.current) fileInput.current.value = ''
       setIdentity(null)
       setAvailable(false)
@@ -91,6 +122,9 @@ export default function SecuritySettings(props: SecuritySettingsProps) {
       setRestoreKey('')
       setArchive(null)
       setImported(null)
+      setRemoteBackup(null)
+      setPublishedMeta(null)
+      setDiscardedNextEpoch(null)
       setSaved(false)
       setBusy(false)
       setSuccess(false)
@@ -137,20 +171,32 @@ export default function SecuritySettings(props: SecuritySettingsProps) {
     const stamp = lifetime.getRetirementStamp(),
       version = revision.current
     try {
-      const context = {
-        organisationId: props.organisationId,
-        accountId: props.accountId,
-        backupEpoch: 1,
-      }
+      const remoteLookup = await getConfidentialKeyBackup(props.organisationId).catch(() => null)
       cross = createCrossSigningClient({
         organisationId: props.organisationId,
         accountId: props.accountId,
         deviceId: crypto.randomUUID(),
       })
-      vault = createBackupVaultClient({ ...context, membershipId: props.membershipId })
-      backup = createKeyBackupClient(context, vault.vaultPort)
+      const nextServerEpoch =
+        remoteLookup?.status === 'active'
+          ? remoteLookup.backup.backupEpoch + 1
+          : (remoteLookup?.nextBackupEpoch ?? 1)
+      // Start worker epoch floor at 1 so a fresh device can restore any valid .kvkb file (e.g.
+      // archiveEpoch=1) even when prior server DELETE advanced X-Kodera-Next-Backup-Epoch > 1.
+      const probeContext = {
+        organisationId: props.organisationId,
+        accountId: props.accountId,
+        backupEpoch: 1,
+      }
+      vault = createBackupVaultClient({ ...probeContext, membershipId: props.membershipId })
+      backup = createKeyBackupClient(probeContext, vault.vaultPort)
       const publicIdentity = await cross.publicIdentity(),
         status = await vault.status()
+      let activeEpoch = 1
+      if (status.available && nextServerEpoch > 1) {
+        activeEpoch = nextServerEpoch
+        await backup.advanceEpoch?.(activeEpoch)
+      }
       if (
         revision.current !== version ||
         !lifetime.hasUsableCredential() ||
@@ -164,10 +210,19 @@ export default function SecuritySettings(props: SecuritySettingsProps) {
         identity: publicIdentity,
         active: true,
         stamp,
+        backupEpoch: activeEpoch,
+        nextServerEpoch,
+        serverKnown: remoteLookup !== null,
       }
       current.current = session
       setIdentity(publicIdentity)
       setAvailable(status.available)
+      if (remoteLookup?.status === 'active') {
+        setRemoteBackup(remoteLookup.backup)
+        if (!status.available) setMode(remoteLookup.backup.kdfKind)
+      } else {
+        setRemoteBackup(null)
+      }
       setNonce(btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32)))))
     } catch {
       cross?.close()
@@ -215,16 +270,21 @@ export default function SecuritySettings(props: SecuritySettingsProps) {
   }
   async function seal(session: Session) {
     revokeUrl()
+    clearSealedCapsule()
     setArchive(null)
     setRecovery('')
     setSaved(false)
+    setPublishedMeta(null)
+    setDiscardedNextEpoch(null)
     const options =
       mode === 'passphrase'
         ? { kind: 'passphrase' as const, passphrase, iterations: 600_000 }
         : { kind: 'recovery-key' as const }
     setPassphrase('')
+    const sealEpoch = session.backupEpoch
     const result = await session.backup.seal(options)
     if (!live(session)) return
+    sealedCapsuleRef.current = { bytes: result.capsule.slice(), epoch: sealEpoch }
     const url = URL.createObjectURL(
       new Blob([result.capsule], { type: 'application/octet-stream' })
     )
@@ -232,6 +292,48 @@ export default function SecuritySettings(props: SecuritySettingsProps) {
     setArchive(url)
     setRecovery(result.recoveryKey ?? '')
     setSaved(result.recoveryKey === null)
+  }
+  async function publishToServer(session: Session) {
+    const pending = sealedCapsuleRef.current
+    if (!pending || !props.deviceSigner || !saved) return
+    const capsuleB64 = encodeCapsuleBase64(pending.bytes)
+    const signed = await props.deviceSigner({
+      backupEpoch: pending.epoch,
+      capsule: capsuleB64,
+    })
+    let published: ConfidentialKeyBackupPublished
+    try {
+      published = await publishConfidentialKeyBackup(props.organisationId, signed)
+    } catch (err) {
+      if (
+        err instanceof ConfidentialKeyBackupConflictError &&
+        err.nextBackupEpoch !== null &&
+        live(session)
+      ) {
+        session.nextServerEpoch = Math.max(session.nextServerEpoch, err.nextBackupEpoch)
+        if (err.nextBackupEpoch > session.backupEpoch) {
+          await session.backup.advanceEpoch?.(err.nextBackupEpoch)
+          session.backupEpoch = err.nextBackupEpoch
+        }
+        clearSealedCapsule()
+        setDiscardedNextEpoch(err.nextBackupEpoch)
+      }
+      throw err
+    }
+    if (!live(session)) return
+    const nextEpoch = published.backupEpoch + 1
+    await session.backup.advanceEpoch?.(nextEpoch)
+    session.backupEpoch = nextEpoch
+    session.nextServerEpoch = Math.max(session.nextServerEpoch, nextEpoch)
+    const retainedBytes = pending.bytes.slice()
+    clearSealedCapsule()
+    setPublishedMeta(published)
+    setDiscardedNextEpoch(null)
+    setRemoteBackup({
+      ...published,
+      capsule: capsuleB64,
+      capsuleBytes: retainedBytes,
+    })
   }
   async function restore(session: Session) {
     if (!imported || available) return
@@ -241,13 +343,61 @@ export default function SecuritySettings(props: SecuritySettingsProps) {
         : { kind: 'recovery-key' as const, recoveryKey: restoreKey }
     setPassphrase('')
     setRestoreKey('')
-    await session.backup.restore(imported, options)
+    const archiveEpoch = tryParseKvkb1ArchiveEpoch(imported)
+    if (archiveEpoch !== null) {
+      await session.backup.restore(imported, options, archiveEpoch)
+    } else {
+      await session.backup.restore(imported, options)
+    }
     if (live(session)) {
+      const nextEpoch = session.serverKnown
+        ? session.nextServerEpoch
+        : Math.max((archiveEpoch ?? session.backupEpoch) + 1, session.nextServerEpoch)
+      if (nextEpoch > session.backupEpoch) {
+        await session.backup.advanceEpoch?.(nextEpoch)
+        session.backupEpoch = nextEpoch
+      }
       setAvailable(true)
       setImported(null)
       if (fileInput.current) fileInput.current.value = ''
       setSuccess(true)
     }
+  }
+  async function restoreFromServer(session: Session) {
+    if (!remoteBackup || available) return
+    const options =
+      mode === 'passphrase'
+        ? { kind: 'passphrase' as const, passphrase }
+        : { kind: 'recovery-key' as const, recoveryKey: restoreKey }
+    setPassphrase('')
+    setRestoreKey('')
+    await session.backup.restore(remoteBackup.capsuleBytes, options, remoteBackup.backupEpoch)
+    if (live(session)) {
+      const nextEpoch = Math.max(remoteBackup.backupEpoch + 1, session.nextServerEpoch)
+      await session.backup.advanceEpoch?.(nextEpoch)
+      session.backupEpoch = nextEpoch
+      session.nextServerEpoch = Math.max(session.nextServerEpoch, nextEpoch)
+      setAvailable(true)
+      setImported(null)
+      if (fileInput.current) fileInput.current.value = ''
+      setSuccess(true)
+    }
+  }
+  async function discardServerBackup(session: Session) {
+    if (!remoteBackup) return
+    const previousEpoch = remoteBackup.backupEpoch
+    const result = await discardConfidentialKeyBackup(props.organisationId)
+    if (!live(session)) return
+    const nextEpoch = result.nextBackupEpoch ?? previousEpoch + 1
+    session.nextServerEpoch = Math.max(session.nextServerEpoch, nextEpoch)
+    if (nextEpoch > session.backupEpoch) {
+      await session.backup.advanceEpoch?.(nextEpoch)
+      session.backupEpoch = nextEpoch
+    }
+    remoteBackup.capsuleBytes.fill(0)
+    setRemoteBackup(null)
+    setPublishedMeta(null)
+    setDiscardedNextEpoch(nextEpoch)
   }
   const section = 'flex flex-col gap-4 rounded-lg border border-c-border bg-c-surface p-6'
   return (
@@ -447,13 +597,68 @@ export default function SecuritySettings(props: SecuritySettingsProps) {
               </div>
             )}
             {archive && saved && (
-              <a
-                className={LINK_TEXT.standalone}
-                href={archive}
-                download="kodera-key-backup.kvkb"
-              >
-                {t('console.security.settings.download')}
-              </a>
+              <div className="flex flex-wrap items-center gap-3">
+                <a
+                  className={LINK_TEXT.standalone}
+                  href={archive}
+                  download="kodera-key-backup.kvkb"
+                >
+                  {t('console.security.settings.download')}
+                </a>
+                {props.deviceSigner && !publishedMeta && (
+                  <Button
+                    variant="secondary"
+                    disabled={busy}
+                    onClick={() => void run(publishToServer)}
+                  >
+                    {t('console.security.settings.server-backup-publish')}
+                  </Button>
+                )}
+              </div>
+            )}
+            {publishedMeta && (
+              <p role="status">
+                {t('console.security.settings.server-backup-published', {
+                  epoch: publishedMeta.backupEpoch,
+                })}
+              </p>
+            )}
+            {discardedNextEpoch !== null && (
+              <p role="status">
+                {t('console.security.settings.server-backup-discarded', {
+                  epoch: discardedNextEpoch,
+                })}
+              </p>
+            )}
+            {remoteBackup && (
+              <div className="flex flex-col gap-3 rounded-md border border-c-border p-4">
+                <p role="status">
+                  {t('console.security.settings.server-backup-active', {
+                    epoch: remoteBackup.backupEpoch,
+                    mode: remoteBackup.kdfKind,
+                  })}
+                </p>
+                <div className="flex flex-wrap gap-3">
+                  {!available && (
+                    <Button
+                      disabled={
+                        busy ||
+                        (mode === 'passphrase' ? passphrase.length < 12 : !restoreKey)
+                      }
+                      onClick={() => void run(restoreFromServer)}
+                    >
+                      {t('console.security.settings.server-backup-restore')}
+                    </Button>
+                  )}
+                  <Button
+                    variant="secondary"
+                    disabled={busy}
+                    onClick={() => void run(discardServerBackup)}
+                  >
+                    {t('console.security.settings.server-backup-discard')}
+                  </Button>
+                </div>
+              </div>
             )}
             <TextField
               ref={fileInput}

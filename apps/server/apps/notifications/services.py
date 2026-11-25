@@ -3,6 +3,7 @@
 import hashlib
 import json
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
@@ -11,10 +12,17 @@ from django.apps import apps
 from django.conf import settings
 from django.core import signing
 from django.db import IntegrityError, connection, transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from apps.media import outbound
-from apps.media.context import RefusalError as RefusalError, audit, caller, read_caller
+from apps.media.context import (
+    RefusalError as RefusalError,
+    audit,
+    caller,
+    read_all_callers,
+    read_caller,
+)
 from apps.orgs.actor_selectors import TenantCaller
 from apps.orgs.selectors import lock_erasure_cutoff_fences
 from apps.orgs.workspace_members import for_workspace
@@ -22,7 +30,14 @@ from core import sealing
 from services.identity.access_tokens import VerifiedAccessToken
 
 from . import push
-from .models import Notification, PresenceLease, PushOutbox, PushSubscription
+from .models import (
+    NOTIFICATION_KINDS,
+    Notification,
+    PersonalReminder,
+    PresenceLease,
+    PushOutbox,
+    PushSubscription,
+)
 
 PUSH_PLATFORMS: tuple[str, ...] = ("web", "desktop", "ios", "android")
 FOREGROUND_PRESENCE_PLATFORMS: tuple[str, ...] = ("web", "desktop")
@@ -89,7 +104,7 @@ def put_subscription(
     if not isinstance(raw_platform, str) or raw_platform not in PUSH_PLATFORMS:
         raise RefusalError(422)
     with transaction.atomic():
-        initial = read_caller(verified)
+        initials = sorted(read_all_callers(verified), key=lambda c: str(c.organisation_id))
     public_key()
     key = seal_key()
     try:
@@ -99,15 +114,16 @@ def put_subscription(
     except ValueError:
         raise RefusalError(422) from None
     material = {"endpoint": endpoint, "p256dh": body["p256dh"], "auth": body["auth"]}
-    _store_subscription(
-        verified=verified,
-        device_id=device_id,
-        platform=raw_platform,
-        material=material,
-        key=key,
-        organisation_id=initial.organisation_id,
-        request_id=request_id,
-    )
+    for initial in initials:
+        _store_subscription(
+            verified=verified,
+            device_id=device_id,
+            platform=raw_platform,
+            material=material,
+            key=key,
+            organisation_id=initial.organisation_id,
+            request_id=request_id,
+        )
 
 
 @transaction.atomic
@@ -205,58 +221,61 @@ def put_presence(
         or not 1 <= ttl_seconds <= MAX_PRESENCE_TTL_SECONDS
     ):
         raise RefusalError(422)
-    initial = read_caller(verified)
-    member = for_workspace(
-        organisation_id=initial.organisation_id, membership_id=initial.membership_id, lock=False
-    )
-    if member is None:
-        raise RefusalError(403)
-    lock_erasure_cutoff_fences(organisation_id=initial.organisation_id, user_id=member.user_id)
-    if (
-        for_workspace(organisation_id=initial.organisation_id, membership_id=initial.membership_id)
-        is None
-    ):
-        raise RefusalError(403)
-    principal = caller(verified, initial.organisation_id)
-    if (
-        for_workspace(
-            organisation_id=principal.organisation_id,
-            membership_id=principal.membership_id,
-            lock=False,
-        )
-        is None
-    ):
-        raise RefusalError(403)
-    row = (
-        PresenceLease.objects.select_for_update()
-        .filter(
-            organisation_id=principal.organisation_id,
-            membership_id=principal.membership_id,
-            device_id=device_id,
-        )
-        .first()
-    )
+    initials = sorted(read_all_callers(verified), key=lambda c: str(c.organisation_id))
     now = timezone.now()
     expires_at = now + timedelta(seconds=ttl_seconds)
-    try:
-        with transaction.atomic():
-            if row is None:
-                row = PresenceLease(
-                    organisation_id=principal.organisation_id,
-                    membership_id=principal.membership_id,
-                    device_id=device_id,
-                    platform=platform,
-                    expires_at=expires_at,
-                )
-                row.save(force_insert=True)
-            else:
-                PresenceLease.objects.filter(pk=row.pk).update(
-                    platform=platform,
-                    expires_at=expires_at,
-                    updated_at=now,
-                )
-    except IntegrityError:
-        raise RefusalError(409) from None
+    for initial in initials:
+        member = for_workspace(
+            organisation_id=initial.organisation_id, membership_id=initial.membership_id, lock=False
+        )
+        if member is None:
+            raise RefusalError(403)
+        lock_erasure_cutoff_fences(organisation_id=initial.organisation_id, user_id=member.user_id)
+        if (
+            for_workspace(
+                organisation_id=initial.organisation_id, membership_id=initial.membership_id
+            )
+            is None
+        ):
+            raise RefusalError(403)
+        principal = caller(verified, initial.organisation_id)
+        if (
+            for_workspace(
+                organisation_id=principal.organisation_id,
+                membership_id=principal.membership_id,
+                lock=False,
+            )
+            is None
+        ):
+            raise RefusalError(403)
+        row = (
+            PresenceLease.objects.select_for_update()
+            .filter(
+                organisation_id=principal.organisation_id,
+                membership_id=principal.membership_id,
+                device_id=device_id,
+            )
+            .first()
+        )
+        try:
+            with transaction.atomic():
+                if row is None:
+                    row = PresenceLease(
+                        organisation_id=principal.organisation_id,
+                        membership_id=principal.membership_id,
+                        device_id=device_id,
+                        platform=platform,
+                        expires_at=expires_at,
+                    )
+                    row.save(force_insert=True)
+                else:
+                    PresenceLease.objects.filter(pk=row.pk).update(
+                        platform=platform,
+                        expires_at=expires_at,
+                        updated_at=now,
+                    )
+        except IntegrityError:
+            raise RefusalError(409) from None
     return {
         "deviceId": str(device_id),
         "platform": platform,
@@ -268,19 +287,20 @@ def put_presence(
 @transaction.atomic
 def delete_presence(*, verified: VerifiedAccessToken, device_id: UUID, request_id: str) -> None:
     del request_id
-    initial = read_caller(verified)
-    member = for_workspace(
-        organisation_id=initial.organisation_id, membership_id=initial.membership_id, lock=False
-    )
-    if member is None:
-        raise RefusalError(403)
-    lock_erasure_cutoff_fences(organisation_id=initial.organisation_id, user_id=member.user_id)
-    principal = caller(verified, initial.organisation_id)
-    PresenceLease.objects.select_for_update().filter(
-        organisation_id=principal.organisation_id,
-        membership_id=principal.membership_id,
-        device_id=device_id,
-    ).delete()
+    initials = sorted(read_all_callers(verified), key=lambda c: str(c.organisation_id))
+    for initial in initials:
+        member = for_workspace(
+            organisation_id=initial.organisation_id, membership_id=initial.membership_id, lock=False
+        )
+        if member is None:
+            raise RefusalError(403)
+        lock_erasure_cutoff_fences(organisation_id=initial.organisation_id, user_id=member.user_id)
+        principal = caller(verified, initial.organisation_id)
+        PresenceLease.objects.select_for_update().filter(
+            organisation_id=principal.organisation_id,
+            membership_id=principal.membership_id,
+            device_id=device_id,
+        ).delete()
 
 
 def has_active_foreground_presence(
@@ -297,21 +317,23 @@ def has_active_foreground_presence(
 
 @transaction.atomic
 def delete_subscription(*, verified: VerifiedAccessToken, device_id: UUID, request_id: str) -> None:
-    principal = caller(verified)
-    row = (
-        PushSubscription.objects.select_for_update()
-        .filter(
-            organisation_id=principal.organisation_id,
-            membership_id=principal.membership_id,
-            device_id=device_id,
+    initials = sorted(read_all_callers(verified), key=lambda c: str(c.organisation_id))
+    for initial in initials:
+        principal = caller(verified, initial.organisation_id)
+        row = (
+            PushSubscription.objects.select_for_update()
+            .filter(
+                organisation_id=principal.organisation_id,
+                membership_id=principal.membership_id,
+                device_id=device_id,
+            )
+            .first()
         )
-        .first()
-    )
-    if row is not None and row.revoked_at is None:
-        row.revoked_at = timezone.now()
-        row.version = uuid4()
-        row.save(update_fields=["revoked_at", "version", "updated_at"])
-        audit(principal, "workspace.push_subscription.revoked", row.id, request_id)
+        if row is not None and row.revoked_at is None:
+            row.revoked_at = timezone.now()
+            row.version = uuid4()
+            row.save(update_fields=["revoked_at", "version", "updated_at"])
+            audit(principal, "workspace.push_subscription.revoked", row.id, request_id)
 
 
 def wire(row: Notification) -> dict[str, Any]:
@@ -332,6 +354,7 @@ def _visible_ids(
     allowed: set[UUID] = set()
     mention_rows: list[Notification] = []
     document_rows: list[Notification] = []
+    reminder_rows: list[Notification] = []
     for row in rows:
         if row.kind == "moderation":
             if row.resource_id == principal.membership_id:
@@ -343,15 +366,34 @@ def _visible_ids(
                 mention_rows.append(row)
         elif row.kind == "document":
             document_rows.append(row)
+        elif row.kind == "reminder":
+            if row.organisation_id == principal.organisation_id:
+                reminder_rows.append(row)
 
-    if mention_rows:
+    if mention_rows or reminder_rows:
         from apps.workspaces.channel_access import may_view, resolve_channels
-        from apps.workspaces.selectors import workspace_id_for
+        from apps.workspaces.selectors import (
+            is_designated_confidential_channel,
+            workspace_id_for,
+        )
 
         workspace_id = workspace_id_for(organisation_id=principal.organisation_id)
         if workspace_id is not None:
-            access_by_channel = resolve_channels(
-                workspace_id, {row.resource_id for row in mention_rows}
+            reminders_by_id: dict[UUID, PersonalReminder] = {}
+            reminder_channel_ids: set[UUID] = set()
+            if reminder_rows:
+                for rem in PersonalReminder.objects.filter(
+                    id__in={row.resource_id for row in reminder_rows},
+                    organisation_id=principal.organisation_id,
+                    membership_id=principal.membership_id,
+                ).exclude(state__in=("cancelled", "obsolete")):
+                    reminders_by_id[rem.id] = rem
+                    if rem.channel_id is not None:
+                        reminder_channel_ids.add(rem.channel_id)
+
+            needed_channels = {row.resource_id for row in mention_rows} | reminder_channel_ids
+            access_by_channel = (
+                resolve_channels(workspace_id, needed_channels) if needed_channels else {}
             )
             viewable_channels = {
                 channel_id
@@ -364,6 +406,20 @@ def _visible_ids(
                 )
             }
             allowed.update(row.id for row in mention_rows if row.resource_id in viewable_channels)
+            for row in reminder_rows:
+                reminder = reminders_by_id.get(row.resource_id)
+                if reminder is None:
+                    continue
+                if reminder.channel_id is not None:
+                    if (
+                        reminder.channel_id in viewable_channels
+                        and not is_designated_confidential_channel(
+                            workspace_id=workspace_id, channel_id=reminder.channel_id
+                        )
+                    ):
+                        allowed.add(row.id)
+                elif reminder.room_id:
+                    allowed.add(row.id)
 
     if document_rows and apps.is_installed("apps.docs"):
         # A missing document-policy adapter fails closed until the docs application is installed.
@@ -388,13 +444,15 @@ def visible(row: Notification, principal: TenantCaller, verified: VerifiedAccess
 
 @transaction.atomic
 def inbox(*, verified: VerifiedAccessToken, cursor: str | None, limit: int) -> dict[str, Any]:
-    principal = read_caller(verified)
+    principals = read_all_callers(verified)
+    primary = principals[0]
     if type(limit) is not int or not 1 <= limit <= 200:
         raise RefusalError(400)
-    salt = f"notification-inbox:v1:{principal.organisation_id}:{principal.membership_id}:{verified.issuer}:{verified.subject}"
-    rows = Notification.objects.filter(
-        organisation_id=principal.organisation_id, membership_id=principal.membership_id
-    )
+    salt = f"notification-inbox:v1:{primary.organisation_id}:{primary.membership_id}:{verified.issuer}:{verified.subject}"
+    scope_q = Q()
+    for p in principals:
+        scope_q |= Q(organisation_id=p.organisation_id, membership_id=p.membership_id)
+    rows = Notification.objects.filter(scope_q)
     if cursor is not None:
         if not cursor or len(cursor) > 512:
             raise RefusalError(400)
@@ -408,7 +466,14 @@ def inbox(*, verified: VerifiedAccessToken, cursor: str | None, limit: int) -> d
     scanned = list(rows.order_by("-id")[: limit + 1])
     more = len(scanned) > limit
     selected = scanned[:limit]
-    allowed = _visible_ids(selected, principal, verified)
+    by_org: dict[UUID, list[Notification]] = {}
+    for row in selected:
+        by_org.setdefault(row.organisation_id, []).append(row)
+    allowed: set[UUID] = set()
+    for p in principals:
+        org_rows = by_org.get(p.organisation_id)
+        if org_rows:
+            allowed |= _visible_ids(org_rows, p, verified)
     return {
         "data": [wire(row) for row in selected if row.id in allowed],
         "has_more": more,
@@ -418,7 +483,7 @@ def inbox(*, verified: VerifiedAccessToken, cursor: str | None, limit: int) -> d
 
 @transaction.atomic
 def mark_read(*, verified: VerifiedAccessToken, ids: list[UUID], request_id: str) -> None:
-    principal = caller(verified)
+    initials = sorted(read_all_callers(verified), key=lambda c: str(c.organisation_id))
     if (
         not isinstance(ids, list)
         or not 1 <= len(ids) <= 200
@@ -426,16 +491,28 @@ def mark_read(*, verified: VerifiedAccessToken, ids: list[UUID], request_id: str
         or len(set(ids)) != len(ids)
     ):
         raise RefusalError(422)
-    rows = Notification.objects.select_for_update().filter(
-        organisation_id=principal.organisation_id, membership_id=principal.membership_id, id__in=ids
-    )
+    principals = [caller(verified, init.organisation_id) for init in initials]
+    scope_q = Q()
+    for p in principals:
+        scope_q |= Q(organisation_id=p.organisation_id, membership_id=p.membership_id)
+    rows = Notification.objects.select_for_update().filter(scope_q, id__in=ids)
     selected = list(rows)
-    if len(selected) != len(ids) or len(_visible_ids(selected, principal, verified)) != len(
-        selected
-    ):
+    by_org: dict[UUID, list[Notification]] = {}
+    for row in selected:
+        by_org.setdefault(row.organisation_id, []).append(row)
+    allowed: set[UUID] = set()
+    touched_principals: list[TenantCaller] = []
+    for p in principals:
+        org_rows = by_org.get(p.organisation_id)
+        if org_rows:
+            allowed |= _visible_ids(org_rows, p, verified)
+            touched_principals.append(p)
+    if len(selected) != len(ids) or len(allowed) != len(selected):
         raise RefusalError(404)
-    rows.filter(read_at__isnull=True).update(read_at=timezone.now(), updated_at=timezone.now())
-    audit(principal, "workspace.notification.read", principal.membership_id, request_id)
+    now = timezone.now()
+    rows.filter(read_at__isnull=True).update(read_at=now, updated_at=now)
+    for p in touched_principals:
+        audit(p, "workspace.notification.read", p.membership_id, request_id)
 
 
 def record(
@@ -444,9 +521,7 @@ def record(
     """Internal producer. Its caller authorizes the referenced resource in this transaction."""
     if not connection.in_atomic_block:
         raise RuntimeError("notification creation belongs to the producer's transaction")
-    if kind not in {"mention", "invitation", "moderation", "document"} or not isinstance(
-        resource_id, UUID
-    ):
+    if kind not in set(NOTIFICATION_KINDS) or not isinstance(resource_id, UUID):
         raise ValueError("notification kind or resource refused")
     if (
         for_workspace(organisation_id=organisation_id, membership_id=membership_id, lock=False)
@@ -511,12 +586,15 @@ def disarm_rehearsal_outbound(
 
     outbox_qs = PushOutbox.objects.filter(state__in=("pending", "in_flight"))
     sub_qs = PushSubscription.objects.filter(revoked_at__isnull=True)
+    reminder_qs = PersonalReminder.objects.filter(state__in=("pending", "in_flight", "snoozed"))
     if excluded_organisation_ids:
         outbox_qs = outbox_qs.exclude(subscription__organisation_id__in=excluded_organisation_ids)
         sub_qs = sub_qs.exclude(organisation_id__in=excluded_organisation_ids)
+        reminder_qs = reminder_qs.exclude(organisation_id__in=excluded_organisation_ids)
     if excluded_user_ids:
         outbox_qs = outbox_qs.exclude(subscription__membership__user_id__in=excluded_user_ids)
         sub_qs = sub_qs.exclude(membership__user_id__in=excluded_user_ids)
+        reminder_qs = reminder_qs.exclude(membership__user_id__in=excluded_user_ids)
 
     push_outbox_disarmed = outbox_qs.update(
         state="obsolete",
@@ -528,39 +606,49 @@ def disarm_rehearsal_outbound(
         revoked_at=now,
         updated_at=now,
     )
+    personal_reminders_disarmed = reminder_qs.update(
+        state="obsolete",
+        lease_id=None,
+        lease_expires_at=None,
+        updated_at=now,
+    )
     return {
         "push_outbox_disarmed": push_outbox_disarmed,
         "push_subscriptions_revoked": push_subscriptions_revoked,
+        "personal_reminders_disarmed": personal_reminders_disarmed,
     }
 
 
 def count_residual_rows_for_organisation(*, organisation_id: UUID) -> int:
-    """Count any remaining notification, push subscription, outbox, or presence rows for an erased org."""
+    """Count any remaining notification, push subscription, outbox, reminder, or presence rows for an erased org."""
     return (
         Notification.objects.filter(organisation_id=organisation_id).count()
         + PushOutbox.objects.filter(subscription__organisation_id=organisation_id).count()
         + PushSubscription.objects.filter(organisation_id=organisation_id).count()
         + PresenceLease.objects.filter(organisation_id=organisation_id).count()
+        + PersonalReminder.objects.filter(organisation_id=organisation_id).count()
     )
 
 
 def count_residual_rows_for_user(*, user_id: UUID) -> int:
-    """Count any remaining notification, push subscription, outbox, or presence rows for an erased user."""
+    """Count any remaining notification, push subscription, outbox, reminder, or presence rows for an erased user."""
     return (
         Notification.objects.filter(membership__user_id=user_id).count()
         + PushOutbox.objects.filter(subscription__membership__user_id=user_id).count()
         + PushSubscription.objects.filter(membership__user_id=user_id).count()
         + PresenceLease.objects.filter(membership__user_id=user_id).count()
+        + PersonalReminder.objects.filter(membership__user_id=user_id).count()
     )
 
 
 def purge_rows_for_user(*, user_id: UUID) -> int:
-    """Delete notification, push outbox, push subscription, and presence rows for `user_id`."""
+    """Delete notification, push outbox, push subscription, reminder, and presence rows for `user_id`."""
     c_outbox, _ = PushOutbox.objects.filter(subscription__membership__user_id=user_id).delete()
     c_sub, _ = PushSubscription.objects.filter(membership__user_id=user_id).delete()
+    c_rem, _ = PersonalReminder.objects.filter(membership__user_id=user_id).delete()
     c_notif, _ = Notification.objects.filter(membership__user_id=user_id).delete()
     c_pres, _ = PresenceLease.objects.filter(membership__user_id=user_id).delete()
-    return int(c_outbox + c_sub + c_notif + c_pres)
+    return int(c_outbox + c_sub + c_rem + c_notif + c_pres)
 
 
 def drain_snapshot_in_flight_leases(*, now: datetime) -> int:
@@ -609,6 +697,13 @@ def drain_snapshot_in_flight_leases(*, now: datetime) -> int:
                 [now],
             )
             drained = int(cursor.rowcount or 0)
+            cursor.execute(
+                "UPDATE notifications_personalreminder "
+                "SET state = 'obsolete', lease_id = NULL, lease_expires_at = NULL, updated_at = %s "
+                "WHERE state = 'in_flight'",
+                [now],
+            )
+            drained += int(cursor.rowcount or 0)
         finally:
             for uid in fenced_users:
                 cursor.execute(
@@ -625,3 +720,146 @@ def drain_snapshot_in_flight_leases(*, now: datetime) -> int:
                     [org_id],
                 )
     return drained
+
+
+@dataclass(frozen=True, slots=True)
+class PersonalReminderRecord:
+    id: UUID
+    organisation_id: UUID
+    membership_id: UUID
+    channel_id: UUID | None
+    room_id: str
+    target_event_id: str
+    note: str
+    remind_at: datetime
+    state: str
+    notification_id: UUID | None
+    created_at: datetime
+    updated_at: datetime
+
+
+def _reminder_record(row: PersonalReminder) -> PersonalReminderRecord:
+    return PersonalReminderRecord(
+        id=row.id,
+        organisation_id=row.organisation_id,
+        membership_id=row.membership_id,
+        channel_id=row.channel_id,
+        room_id=row.room_id,
+        target_event_id=row.target_event_id,
+        note=row.note,
+        remind_at=row.remind_at,
+        state=row.state,
+        notification_id=row.notification_id,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+def list_member_reminders(
+    *,
+    organisation_id: UUID,
+    membership_id: UUID,
+    include_completed: bool = False,
+    limit: int = 200,
+) -> tuple[PersonalReminderRecord, ...]:
+    qs = PersonalReminder.objects.filter(
+        organisation_id=organisation_id,
+        membership_id=membership_id,
+    )
+    if include_completed:
+        qs = qs.exclude(state__in=("cancelled", "obsolete"))
+    else:
+        qs = qs.filter(state__in=("pending", "in_flight", "fired", "snoozed"))
+    return tuple(_reminder_record(row) for row in qs.order_by("remind_at", "id")[:limit])
+
+
+def count_active_member_reminders(*, organisation_id: UUID, membership_id: UUID) -> int:
+    return PersonalReminder.objects.filter(
+        organisation_id=organisation_id,
+        membership_id=membership_id,
+        state__in=("pending", "in_flight", "fired", "snoozed"),
+    ).count()
+
+
+def create_member_reminder(
+    *,
+    organisation_id: UUID,
+    membership_id: UUID,
+    channel_id: UUID | None,
+    room_id: str,
+    target_event_id: str,
+    note: str,
+    remind_at: datetime,
+) -> PersonalReminderRecord:
+    row = PersonalReminder.objects.create(
+        organisation_id=organisation_id,
+        membership_id=membership_id,
+        channel_id=channel_id,
+        room_id=room_id,
+        target_event_id=target_event_id,
+        note=note,
+        remind_at=remind_at,
+        state=PersonalReminder.State.PENDING,
+    )
+    return _reminder_record(row)
+
+
+def lock_member_reminder(
+    *,
+    reminder_id: UUID,
+    organisation_id: UUID,
+    membership_id: UUID,
+) -> PersonalReminderRecord | None:
+    row = (
+        PersonalReminder.objects.select_for_update()
+        .filter(
+            id=reminder_id,
+            organisation_id=organisation_id,
+            membership_id=membership_id,
+        )
+        .first()
+    )
+    return None if row is None else _reminder_record(row)
+
+
+def peek_reminder_target(
+    *,
+    reminder_id: UUID,
+    organisation_id: UUID,
+) -> tuple[UUID | None, str] | None:
+    return (
+        PersonalReminder.objects.filter(
+            id=reminder_id,
+            organisation_id=organisation_id,
+        )
+        .values_list("channel_id", "room_id")
+        .first()
+    )
+
+
+def update_member_reminder(
+    *,
+    reminder_id: UUID,
+    organisation_id: UUID,
+    membership_id: UUID,
+    note: str | None = None,
+    remind_at: datetime | None = None,
+    state: str | None = None,
+) -> PersonalReminderRecord:
+    row = PersonalReminder.objects.get(
+        id=reminder_id,
+        organisation_id=organisation_id,
+        membership_id=membership_id,
+    )
+    update_fields = ["updated_at"]
+    if note is not None:
+        row.note = note
+        update_fields.append("note")
+    if remind_at is not None:
+        row.remind_at = remind_at
+        update_fields.append("remind_at")
+    if state is not None:
+        row.state = state
+        update_fields.append("state")
+    row.save(update_fields=update_fields)
+    return _reminder_record(row)

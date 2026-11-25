@@ -118,10 +118,15 @@ describe('DirectMessageDialog and canvas mode switching', () => {
     expect(bdi.tagName.toLowerCase()).toBe('bdi')
     expect(bdi).toHaveAttribute('dir', 'ltr')
 
+    // issue 180: Ordinary Matrix DM rooms do not render a false E2EE checkbox/claim prior to H4.3b.
+    expect(screen.queryByRole('checkbox')).toBeNull()
+    expect(screen.queryByText(/chiffrée de bout en bout|end-to-end encrypted/i)).toBeNull()
+
     await user.click(screen.getByRole('button', { name: /Marina Loiseau/ }))
     const openBtn = screen.getByRole('button', { name: 'Ouvrir la conversation' })
     await user.click(openBtn)
     expect(openDirect).toHaveBeenCalledTimes(1)
+    expect(openDirect).toHaveBeenCalledWith([PEER])
     expect(openBtn).toBeDisabled()
 
     // Cancel while openDirect is still in flight

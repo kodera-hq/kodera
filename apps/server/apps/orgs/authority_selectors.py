@@ -6,7 +6,12 @@ from uuid import UUID
 from django.db import connection, transaction
 from psycopg import sql
 
-from apps.identity.selectors import current_identity, is_storable_subject
+from apps.identity.selectors import (
+    current_identities,
+    current_identity,
+    current_identity_for_organisation,
+    is_storable_subject,
+)
 from services.identity.access_tokens import VerifiedAccessToken
 
 from .models import Membership, Organisation
@@ -36,7 +41,9 @@ class MemberAuthorityFacts:
     authority_revision: int
 
 
-def read_member_authority_in_snapshot(*, verified: VerifiedAccessToken) -> MemberAuthorityFacts:
+def read_member_authority_in_snapshot(
+    *, verified: VerifiedAccessToken, organisation_id: UUID | None = None
+) -> MemberAuthorityFacts:
     """Internal composition seam; caller owns the same qualified read snapshot."""
     if not connection.in_atomic_block:
         raise RuntimeError("member authority requires a read-only repeatable-read snapshot")
@@ -49,7 +56,13 @@ def read_member_authority_in_snapshot(*, verified: VerifiedAccessToken) -> Membe
     subject = verified.subject
     if not is_storable_subject(subject):
         raise MemberAuthorityNotFoundError()
-    resolved = current_identity(issuer=verified.issuer, subject=subject)
+    resolved = (
+        current_identity_for_organisation(
+            organisation_id=organisation_id, issuer=verified.issuer, subject=subject
+        )
+        if organisation_id is not None
+        else current_identity(issuer=verified.issuer, subject=subject)
+    )
     if resolved is None:
         raise MemberAuthorityNotFoundError()
     person, identity = resolved
@@ -97,7 +110,9 @@ def read_member_authority_in_snapshot(*, verified: VerifiedAccessToken) -> Membe
     )
 
 
-def resolve_member_authority(*, verified: VerifiedAccessToken) -> MemberAuthorityFacts:
+def resolve_member_authority(
+    *, verified: VerifiedAccessToken, organisation_id: UUID | None = None
+) -> MemberAuthorityFacts:
     """One materialized snapshot; callers must not cache its facts as permission."""
     if connection.in_atomic_block or not connection.get_autocommit():
         raise RuntimeError("member authority requires its own transaction")
@@ -108,7 +123,57 @@ def resolve_member_authority(*, verified: VerifiedAccessToken) -> MemberAuthorit
                     sql.SQL(_SNAPSHOT_ISOLATION)
                 )
             )
-        return read_member_authority_in_snapshot(verified=verified)
+        return read_member_authority_in_snapshot(verified=verified, organisation_id=organisation_id)
+
+
+def resolve_all_member_authorities(
+    *, verified: VerifiedAccessToken
+) -> tuple[tuple[MemberAuthorityFacts, str, bool], ...]:
+    """Resolve `(facts, organisation_slug, is_default_community)` for every active membership of
+    `(verified.issuer, verified.subject)` in one `REPEATABLE READ READ ONLY` snapshot."""
+    if connection.in_atomic_block or not connection.get_autocommit():
+        raise RuntimeError("member authority requires its own transaction")
+    subject = verified.subject
+    if not is_storable_subject(subject):
+        raise MemberAuthorityNotFoundError()
+    with transaction.atomic():
+        with connection.cursor() as cursor:
+            cursor.execute(
+                sql.SQL("SET TRANSACTION ISOLATION LEVEL {} READ ONLY").format(
+                    sql.SQL(_SNAPSHOT_ISOLATION)
+                )
+            )
+        candidates = current_identities(issuer=verified.issuer, subject=subject)
+        if not candidates:
+            raise MemberAuthorityNotFoundError()
+        collected: list[tuple[MemberAuthorityFacts, str, bool]] = []
+        saw_unavailable = False
+        for _person, ident in candidates:
+            if ident.organisation_id is None:
+                continue
+            try:
+                facts = read_member_authority_in_snapshot(
+                    verified=verified, organisation_id=ident.organisation_id
+                )
+            except MemberAuthorityNotFoundError:
+                continue
+            except MemberAuthorityUnavailableError:
+                saw_unavailable = True
+                continue
+            org_meta = (
+                Organisation.objects.filter(id=facts.organisation_id, deleted_at__isnull=True)
+                .values_list("slug", "is_default_community")
+                .first()
+            )
+            if org_meta is None:
+                continue
+            collected.append((facts, str(org_meta[0]), bool(org_meta[1])))
+        if not collected:
+            if saw_unavailable:
+                raise MemberAuthorityUnavailableError()
+            raise MemberAuthorityNotFoundError()
+        collected.sort(key=lambda item: (item[2], item[1], str(item[0].organisation_id)))
+        return tuple(collected)
 
 
 def active_organisation_member_ids(*, organisation_id: UUID, user_ids: set[UUID]) -> list[UUID]:

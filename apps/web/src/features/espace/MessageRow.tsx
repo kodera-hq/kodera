@@ -26,11 +26,26 @@ import { nameOf, sameItems } from './liveViewModel'
 import type { MessageView } from './matrix/timeline'
 import { MessageText, type MentionMember } from './MessageText'
 import { isMatrixUserId } from './roomInvitations'
-import { MessageAttachments } from '../messaging/attachments/MessageAttachments'
 import { useMessagingOrganisation } from '../messaging/organisationContext'
 import { UnfurlCard } from '../messaging/unfurl/UnfurlCard'
 import { aiTranslationMessages } from './ai/aiTranslationMessages'
+import { useCustomEmojis } from './customEmojiStore'
+import { useExperiencePreferences } from './experienceApi'
+import { experienceCopy } from './experienceMessages'
+import { renderReactionGlyph } from './KoderaEmoji'
 import { ReactionPalette } from './ReactionPalette'
+
+const LazyMessageAttachments = lazy(() =>
+  import('../messaging/attachments/MessageAttachments').then((module) => ({
+    default: module.MessageAttachments,
+  }))
+)
+
+const LazyReminderCreateDialog = lazy(() =>
+  import('./RemindersPanel').then((module) => ({
+    default: module.ReminderCreateDialog,
+  }))
+)
 
 const LazyMessageTranslationBlock = lazy(() =>
   import('./ai/MessageTranslationBlock').then((module) => ({
@@ -85,8 +100,12 @@ export interface MessageRowProps extends MessageRowActions {
   mentionMembers?: readonly MentionMember[] | undefined
   /** Resolves a Matrix user ID to its authoritative room profile; never trusts sender HTML labels. */
   resolveMember?: ((userId: string) => MemberProfile) | undefined
+  /** Matrix room ID when available, for personal reminders on non-confidential rooms. */
+  roomId?: string | undefined
   /** Core channel UUID when rendered inside a non-DM workspace channel. */
   channelId?: string | undefined
+  /** Whether room confidentiality boundary permits plaintext inline previews and personal reminders. */
+  plaintextPermitted?: boolean | undefined
   /** Whether room confidentiality boundary permits sovereign AI message translation. */
   allowAiTranslate?: boolean | undefined
 }
@@ -119,17 +138,24 @@ function MessageRowView({
   onPin,
   mentionMembers,
   resolveMember,
+  roomId,
   channelId,
+  plaintextPermitted = true,
   allowAiTranslate = false,
 }: MessageRowProps) {
   const { t, i18n } = useTranslation()
   const locale = i18n.resolvedLanguage === 'en' ? 'en' : 'fr'
   const organisationId = useMessagingOrganisation()
+  const prefs = useExperiencePreferences(organisationId)
+  const { shortcodeSet } = useCustomEmojis(organisationId)
+  const expCopy = experienceCopy(i18n.resolvedLanguage)
   const [translationOpen, setTranslationOpen] = useState(false)
+  const [reminderDialogOpen, setReminderDialogOpen] = useState(false)
   const [activeMessageKey, setActiveMessageKey] = useState(msg.key)
   if (activeMessageKey !== msg.key) {
     setActiveMessageKey(msg.key)
     setTranslationOpen(false)
+    setReminderDialogOpen(false)
   }
   const actionsTrigger = useRef<HTMLButtonElement | null>(null)
   const inThread = placement === 'thread'
@@ -197,7 +223,13 @@ function MessageRowView({
     channelId !== '' &&
     !msg.redacted &&
     msg.body.trim() !== ''
-  const hasMenuItems = allowReact || !inThread || isOwn || canTranslate
+  const canRemind =
+    organisationId !== null &&
+    plaintextPermitted &&
+    prefs.labsFlags.personal_reminders &&
+    !msg.redacted &&
+    Boolean((channelId && channelId !== '') || (roomId && roomId !== ''))
+  const hasMenuItems = allowReact || !inThread || isOwn || canTranslate || canRemind
   return (
     <TimelineMessage
       own={isOwn}
@@ -256,7 +288,7 @@ function MessageRowView({
           : {})}
       reactions={msg.reactions.map((r) => ({
         key: r.key,
-        emoji: r.key,
+        emoji: renderReactionGlyph(r.key, organisationId, shortcodeSet),
         count: r.count,
         mine: r.mine,
         label: t(
@@ -356,6 +388,14 @@ function MessageRowView({
                         },
                       ]
                     : []),
+                  ...(canRemind
+                    ? [
+                        {
+                          label: expCopy.reminders.menuAction,
+                          onSelect: () => setReminderDialogOpen(true),
+                        },
+                      ]
+                    : []),
                   ...(isOwn && allowWrite
                     ? [
                         {
@@ -397,8 +437,24 @@ function MessageRowView({
           onMention={pill.userId === viewerId || !allowWrite ? undefined : onMention}
         />
       )}
-      {msg.attachments === undefined ? null : <MessageAttachments refs={msg.attachments} />}
+      {msg.attachments === undefined ? null : (
+        <Suspense fallback={null}>
+          <LazyMessageAttachments refs={msg.attachments} plaintextPermitted={plaintextPermitted} />
+        </Suspense>
+      )}
       {msg.redacted ? null : <UnfurlCard body={msg.body} />}
+      {reminderDialogOpen && canRemind && organisationId !== null ? (
+        <Suspense fallback={null}>
+          <LazyReminderCreateDialog
+            open={reminderDialogOpen}
+            onOpenChange={setReminderDialogOpen}
+            organisationId={organisationId}
+            channelId={channelId}
+            roomId={roomId}
+            targetEventId={msg.eventId}
+          />
+        </Suspense>
+      ) : null}
       {translationOpen && canTranslate && organisationId !== null && channelId !== undefined ? (
         <Suspense fallback={null}>
           <LazyMessageTranslationBlock

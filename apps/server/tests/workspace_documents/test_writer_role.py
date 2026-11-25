@@ -119,6 +119,7 @@ def test_writer_role_serves_document_operations_and_refuses_tampering(world, wri
         assert (
             refused("UPDATE docs_document SET visibility = 'restricted'") == INSUFFICIENT_PRIVILEGE
         )
+        assert refused("UPDATE docs_document SET is_confidential = false") == INSUFFICIENT_PRIVILEGE
         assert (
             refused("UPDATE docs_document SET workspace_id = workspace_id")
             == INSUFFICIENT_PRIVILEGE

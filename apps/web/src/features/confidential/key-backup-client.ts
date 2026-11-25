@@ -27,7 +27,12 @@ export function createKeyBackupClient(context: BackupContext, vaultPort: Message
   return Object.freeze({
     close: client.close,
     seal: (options: BackupSealOptions) => client.run('seal', options) as Promise<SealedBackup>,
-    restore: (capsule: Uint8Array, options: BackupOpenOptions) =>
-      client.run('restore', { capsule, options }) as Promise<boolean>,
+    restore: (capsule: Uint8Array, options: BackupOpenOptions, backupEpoch?: number) =>
+      client.run(
+        'restore',
+        backupEpoch === undefined ? { capsule, options } : { capsule, options, backupEpoch }
+      ) as Promise<boolean>,
+    advanceEpoch: (backupEpoch: number) =>
+      client.run('advance-epoch', { backupEpoch }) as Promise<number>,
   })
 }

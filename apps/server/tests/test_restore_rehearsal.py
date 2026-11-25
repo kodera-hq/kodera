@@ -815,6 +815,10 @@ class TestRestoreGuardsOrchestrationAndCli:
             mock.patch.object(
                 notification_services, "count_residual_rows_for_user", return_value=0
             ),
+            mock.patch(
+                "apps.orgs.restore_rehearsal.workspace_services.count_residual_experience_rows_for_user",
+                return_value=0,
+            ),
             mock.patch.object(media_services, "count_residual_user_attachment_pii", return_value=0),
             mock.patch.object(e2ee_services, "count_residual_e2ee_for_user", return_value=1),
             mock.patch.object(backend, "_count_user_residual_ee", return_value=1),

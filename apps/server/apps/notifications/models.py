@@ -6,6 +6,17 @@ from django.db import models
 
 from core.db.models import StoredModel
 
+NOTIFICATION_KINDS = ("mention", "invitation", "moderation", "document", "reminder")
+PERSONAL_REMINDER_STATES = (
+    "pending",
+    "in_flight",
+    "fired",
+    "snoozed",
+    "completed",
+    "cancelled",
+    "obsolete",
+)
+
 
 class Notification(StoredModel):
     organisation = models.ForeignKey("orgs.Organisation", on_delete=models.RESTRICT)
@@ -17,7 +28,7 @@ class Notification(StoredModel):
     class Meta:
         constraints = [
             models.CheckConstraint(
-                condition=models.Q(kind__in=["mention", "invitation", "moderation", "document"]),
+                condition=models.Q(kind__in=list(NOTIFICATION_KINDS)),
                 name="notification_kind_valid",
             ),
         ]
@@ -126,3 +137,75 @@ class PushOutbox(StoredModel):
             ),
         ]
         indexes = [models.Index(fields=["state", "available_at"], name="push_outbox_ready")]
+
+
+class PersonalReminder(StoredModel):
+    """Per-member reminder on a non-confidential message, firing an inbox notification."""
+
+    class State:
+        PENDING = "pending"
+        IN_FLIGHT = "in_flight"
+        FIRED = "fired"
+        SNOOZED = "snoozed"
+        COMPLETED = "completed"
+        CANCELLED = "cancelled"
+        OBSOLETE = "obsolete"
+
+    organisation = models.ForeignKey("orgs.Organisation", on_delete=models.RESTRICT)
+    membership = models.ForeignKey("orgs.Membership", on_delete=models.RESTRICT)
+    channel = models.ForeignKey(
+        "workspaces.Channel", on_delete=models.RESTRICT, null=True, blank=True
+    )
+    room_id = models.TextField(default="", blank=True)
+    target_event_id = models.TextField()
+    note = models.TextField(default="", blank=True)
+    remind_at = models.DateTimeField()
+    state = models.TextField(default="pending")
+    lease_id = models.UUIDField(null=True, blank=True)
+    lease_expires_at = models.DateTimeField(null=True, blank=True)
+    notification_id = models.UUIDField(null=True, blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["state", "remind_at"], name="personal_reminder_ready_idx"),
+            models.Index(
+                fields=["organisation", "membership", "state", "remind_at"],
+                name="personal_reminder_member_idx",
+            ),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(channel__isnull=False) | ~models.Q(room_id=""),
+                name="personal_reminder_target_scope_present",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(room_id__length__lte=255),
+                name="personal_reminder_room_id_bound",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(target_event_id__length__range=(1, 255)),
+                name="personal_reminder_event_id_bound",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(note__length__lte=500),
+                name="personal_reminder_note_bound",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(state__in=list(PERSONAL_REMINDER_STATES)),
+                name="personal_reminder_state_valid",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        state="in_flight",
+                        lease_id__isnull=False,
+                        lease_expires_at__isnull=False,
+                    )
+                    | (
+                        ~models.Q(state="in_flight")
+                        & models.Q(lease_id__isnull=True, lease_expires_at__isnull=True)
+                    )
+                ),
+                name="personal_reminder_lease_valid",
+            ),
+        ]

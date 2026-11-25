@@ -24,18 +24,29 @@ import type { MessageView } from './timeline'
 import { CACHE_WRITE_DELAY_MS, CACHED_MESSAGES, isCachedMessage, MAX_AGE_MS } from './timelineCache'
 
 export const ESPACE_VAULT_DATABASE = SESSION_VAULT_DATABASE
+export const ESPACE_VAULT_DB_VERSION = 2
 export const LEGACY_TIMELINE_DATABASE = ESPACE_TIMELINE_DATABASE
 export const VAULT_AAD_TAG = 'kodera-espace-vault-v1'
-export const VAULT_STORES = ['owners', 'rooms', 'outbox', 'drafts', 'quarantine'] as const
+export const LOCAL_FTS_HMAC_DOMAIN = 'kodera-local-fts-v1'
+export const VAULT_STORES = [
+  'owners',
+  'rooms',
+  'outbox',
+  'drafts',
+  'quarantine',
+  'search_index',
+] as const
 
 export const MAX_OUTBOX_ITEMS = 32
 export const MAX_OUTBOX_BODY_BYTES = 64 * 1024
 export const MAX_DRAFT_CHARS = 65_536
 export const MAX_DRAFT_ROOMS = 64
+export const MAX_SEARCH_SHARD_BYTES = 512 * 1024
 const MAX_CIPHERTEXT_BYTES = 4 * 1024 * 1024
 const SIDEBAR_ROOM_SENTINEL = '*'
 
 export type VerifiedPlaintextBoundary = 'ordinary' | 'community'
+export type SearchBoundaryTag = VerifiedPlaintextBoundary | 'confidential-e2ee'
 export type VaultRecordKind = 'room' | 'sidebar' | 'outbox' | 'draft'
 export type EspaceVaultFailure =
   | 'unavailable'
@@ -145,6 +156,53 @@ interface VaultOwnerRow {
   readonly purgeEpoch?: number
   readonly status: 'active' | 'revoked'
   key?: CryptoKey | undefined
+  indexKey?: CryptoKey | undefined
+}
+
+export interface EncryptedSearchIndexRow {
+  readonly id: string
+  readonly ownerKey: string
+  readonly ownerRoom: string
+  readonly incarnation: string
+  readonly roomId: string
+  readonly boundaryTag: SearchBoundaryTag
+  readonly epoch: number
+  readonly savedAt: number
+  readonly iv: ArrayBuffer
+  readonly ciphertext: ArrayBuffer
+}
+
+type SearchEvictionListener = (event: {
+  readonly kind: 'room' | 'all'
+  readonly ownerKey?: string | undefined
+  readonly roomId?: string | undefined
+}) => void
+
+const searchEvictionListeners = new Set<SearchEvictionListener>()
+
+export function registerVaultSearchEviction(listener: SearchEvictionListener): () => void {
+  searchEvictionListeners.add(listener)
+  return () => {
+    searchEvictionListeners.delete(listener)
+  }
+}
+
+export function emitVaultSearchRoomEviction(roomId: string, ownerKey?: string): void {
+  notifyVaultSearchEviction({ kind: 'room', ownerKey, roomId })
+}
+
+function notifyVaultSearchEviction(event: {
+  readonly kind: 'room' | 'all'
+  readonly ownerKey?: string | undefined
+  readonly roomId?: string | undefined
+}): void {
+  for (const listener of [...searchEvictionListeners]) {
+    try {
+      listener(event)
+    } catch {
+      // Eviction listeners must never block vault security operations.
+    }
+  }
 }
 
 interface EncryptedVaultRow {
@@ -178,6 +236,40 @@ function sameVaultRows(before: readonly unknown[], after: readonly unknown[]): b
     return (
       (
         ['id', 'ownerKey', 'incarnation', 'kind', 'roomId', 'verifiedBoundary', 'savedAt'] as const
+      ).every((field) => left[field] === right[field]) &&
+      sameBytes(left.iv, right.iv) &&
+      sameBytes(left.ciphertext, right.ciphertext)
+    )
+  })
+}
+
+function sameSearchRows(before: readonly unknown[], after: readonly unknown[]): boolean {
+  if (before.length !== after.length) return false
+  const sameBytes = (a: ArrayBuffer | undefined, b: ArrayBuffer | undefined) => {
+    if (!a || !b) return a === b
+    if (a.byteLength !== b.byteLength) return false
+    const right = new Uint8Array(b)
+    return new Uint8Array(a).every((value, index) => value === right[index])
+  }
+  return before.every((raw, index) => {
+    const current = after[index]
+    if (!raw || typeof raw !== 'object' || !current || typeof current !== 'object') {
+      return raw === current
+    }
+    const left = raw as Partial<EncryptedSearchIndexRow>
+    const right = current as Partial<EncryptedSearchIndexRow>
+    return (
+      (
+        [
+          'id',
+          'ownerKey',
+          'ownerRoom',
+          'incarnation',
+          'roomId',
+          'boundaryTag',
+          'epoch',
+          'savedAt',
+        ] as const
       ).every((field) => left[field] === right[field]) &&
       sameBytes(left.iv, right.iv) &&
       sameBytes(left.ciphertext, right.ciphertext)
@@ -243,8 +335,16 @@ export function principalOwnerKey(principal: EspaceVaultPrincipal): string {
   return JSON.stringify([p.ownerId, p.organisationId, p.membershipId, p.deviceId])
 }
 
-function recordId(ownerKey: string, kind: VaultRecordKind | 'quarantine', target: string): string {
+function recordId(
+  ownerKey: string,
+  kind: VaultRecordKind | 'quarantine' | 'search-index',
+  target: string
+): string {
   return JSON.stringify([ownerKey, kind, target])
+}
+
+function ownerRoomKey(ownerKey: string, roomId: string): string {
+  return JSON.stringify([ownerKey, roomId])
 }
 
 function isArrayBuffer(value: unknown): value is ArrayBuffer {
@@ -264,6 +364,19 @@ function keyValid(key: unknown): key is CryptoKey {
     key.usages.length === 2 &&
     key.usages.includes('encrypt') &&
     key.usages.includes('decrypt')
+  )
+}
+
+function indexKeyValid(key: unknown): key is CryptoKey {
+  return (
+    typeof CryptoKey !== 'undefined' &&
+    key instanceof CryptoKey &&
+    key.type === 'secret' &&
+    !key.extractable &&
+    key.algorithm.name === 'HMAC' &&
+    (key.algorithm as HmacKeyAlgorithm).hash?.name === 'SHA-256' &&
+    key.usages.length === 1 &&
+    key.usages.includes('sign')
   )
 }
 
@@ -289,6 +402,29 @@ export function buildVaultAad(
   )
 }
 
+export function buildSearchIndexAad(
+  principal: EspaceVaultPrincipal,
+  incarnation: string,
+  roomId: string,
+  boundaryTag: SearchBoundaryTag,
+  epoch: number
+): Uint8Array<ArrayBuffer> {
+  return new TextEncoder().encode(
+    JSON.stringify([
+      VAULT_AAD_TAG,
+      principal.ownerId,
+      principal.organisationId,
+      principal.membershipId,
+      principal.deviceId,
+      incarnation,
+      'search-index',
+      roomId,
+      boundaryTag,
+      epoch,
+    ])
+  )
+}
+
 function validateOwnerHeader(value: unknown, expectedKey: string): VaultOwnerRow {
   if (!value || typeof value !== 'object') fail('not-initialized')
   const row = value as VaultOwnerRow
@@ -307,11 +443,85 @@ function validateOwnerHeader(value: unknown, expectedKey: string): VaultOwnerRow
   return row
 }
 
-function readActiveOwner(value: unknown, expectedKey: string): VaultOwnerRow {
+function readActiveOwner(
+  value: unknown,
+  expectedKey: string,
+  options: { readonly allowMissingIndexKey?: boolean } = {}
+): VaultOwnerRow {
   const row = validateOwnerHeader(value, expectedKey)
   if (row.status === 'revoked') fail('owner-revoked')
   if (!keyValid(row.key)) fail('corrupt')
+  if (row.indexKey === undefined) {
+    if (!options.allowMissingIndexKey) fail('corrupt')
+  } else if (!indexKeyValid(row.indexKey)) {
+    fail('corrupt')
+  }
   return row
+}
+
+function isValidSearchBoundaryTag(value: unknown): value is SearchBoundaryTag {
+  return value === 'ordinary' || value === 'community' || value === 'confidential-e2ee'
+}
+
+function validateSearchIndexRow(
+  value: unknown,
+  expectedId: string,
+  owner: VaultOwnerRow,
+  expectedRoomId: string
+): EncryptedSearchIndexRow | null {
+  if (!value || typeof value !== 'object') return null
+  const row = value as EncryptedSearchIndexRow
+  if (
+    row.id !== expectedId ||
+    row.ownerKey !== owner.ownerKey ||
+    row.ownerRoom !== ownerRoomKey(owner.ownerKey, expectedRoomId) ||
+    row.incarnation !== owner.incarnation ||
+    row.roomId !== expectedRoomId ||
+    !isValidSearchBoundaryTag(row.boundaryTag) ||
+    typeof row.epoch !== 'number' ||
+    !Number.isInteger(row.epoch) ||
+    row.epoch < 0 ||
+    (row.boundaryTag !== 'confidential-e2ee' && row.epoch !== 0) ||
+    typeof row.savedAt !== 'number' ||
+    !Number.isFinite(row.savedAt) ||
+    !isArrayBuffer(row.iv) ||
+    row.iv.byteLength !== 12 ||
+    !isArrayBuffer(row.ciphertext) ||
+    row.ciphertext.byteLength < 18 ||
+    row.ciphertext.byteLength > MAX_SEARCH_SHARD_BYTES + 1024
+  ) {
+    return null
+  }
+  return row
+}
+
+async function generateVaultAesKey(): Promise<CryptoKey> {
+  let key: CryptoKey
+  try {
+    key = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, [
+      'encrypt',
+      'decrypt',
+    ])
+  } catch {
+    fail('unavailable')
+  }
+  if (!keyValid(key)) fail('unavailable')
+  return key
+}
+
+async function generateVaultIndexKey(): Promise<CryptoKey> {
+  let indexKey: CryptoKey
+  try {
+    indexKey = await crypto.subtle.generateKey(
+      { name: 'HMAC', hash: 'SHA-256', length: 256 },
+      false,
+      ['sign']
+    )
+  } catch {
+    fail('unavailable')
+  }
+  if (!indexKeyValid(indexKey)) fail('unavailable')
+  return indexKey
 }
 
 function validateEncryptedRow(
@@ -417,7 +627,7 @@ function openVaultDatabase(
   return new Promise((resolve, reject) => {
     let refused = false
     let absentAborted = false
-    const opening = idb.open(ESPACE_VAULT_DATABASE, 1)
+    const opening = idb.open(ESPACE_VAULT_DATABASE, ESPACE_VAULT_DB_VERSION)
     const refuse = () => {
       refused = true
       reject(new EspaceVaultError('storage'))
@@ -431,7 +641,8 @@ function openVaultDatabase(
     }
     opening.onblocked = refuse
     opening.onupgradeneeded = () => {
-      if (!createIfMissing) {
+      const db = opening.result
+      if (!createIfMissing && !db.objectStoreNames.contains('owners')) {
         absentAborted = true
         try {
           opening.transaction?.abort()
@@ -440,7 +651,6 @@ function openVaultDatabase(
         }
         return
       }
-      const db = opening.result
       if (!db.objectStoreNames.contains('owners')) {
         db.createObjectStore('owners', { keyPath: 'ownerKey' })
       }
@@ -448,6 +658,11 @@ function openVaultDatabase(
         if (!db.objectStoreNames.contains(storeName)) {
           db.createObjectStore(storeName, { keyPath: 'id' }).createIndex('ownerKey', 'ownerKey')
         }
+      }
+      if (!db.objectStoreNames.contains('search_index')) {
+        const searchStore = db.createObjectStore('search_index', { keyPath: 'id' })
+        searchStore.createIndex('ownerKey', 'ownerKey')
+        searchStore.createIndex('ownerRoom', 'ownerRoom')
       }
     }
     opening.onsuccess = () => {
@@ -572,7 +787,8 @@ class VaultCoordinator {
     if (
       existing !== undefined &&
       existing.owner.incarnation === owner.incarnation &&
-      keyValid(existing.owner.key)
+      keyValid(existing.owner.key) &&
+      indexKeyValid(existing.owner.indexKey)
     ) {
       existing.refCount += 1
       return existing.owner
@@ -581,6 +797,7 @@ class VaultCoordinator {
     const refCount = (existing?.refCount ?? 0) + 1
     if (existing !== undefined) {
       delete existing.owner.key
+      delete existing.owner.indexKey
     }
     this.owners.set(owner.ownerKey, { owner: copy, refCount })
     return copy
@@ -591,6 +808,7 @@ class VaultCoordinator {
     const existing = this.owners.get(nextOwner.ownerKey)
     if (existing !== undefined) {
       delete existing.owner.key
+      delete existing.owner.indexKey
       existing.owner = copy
     } else {
       this.owners.set(nextOwner.ownerKey, { owner: copy, refCount: 1 })
@@ -608,6 +826,7 @@ class VaultCoordinator {
     existing.refCount -= 1
     if (existing.refCount <= 0) {
       delete existing.owner.key
+      delete existing.owner.indexKey
       this.owners.delete(ownerKey)
     }
   }
@@ -615,6 +834,7 @@ class VaultCoordinator {
   revokeAll(): void {
     for (const entry of this.owners.values()) {
       delete entry.owner.key
+      delete entry.owner.indexKey
     }
     this.owners.clear()
   }
@@ -727,12 +947,15 @@ export class EspaceVault {
       if (db === null) fail('unavailable')
       const initialize = options.initialize !== false
       try {
-        const lookup = async (tx: IDBTransaction): Promise<VaultOwnerRow | undefined> => {
+        const lookup = async (
+          tx: IDBTransaction,
+          lookupOpts: { readonly allowMissingIndexKey?: boolean } = {}
+        ): Promise<VaultOwnerRow | undefined> => {
           const existing: unknown = await idbRequest(tx.objectStore('owners').get(ownerKey))
           if (existing !== undefined) {
-            return readActiveOwner(existing, ownerKey)
+            return readActiveOwner(existing, ownerKey, lookupOpts)
           }
-          for (const storeName of ['rooms', 'outbox', 'drafts'] as const) {
+          for (const storeName of ['rooms', 'outbox', 'drafts', 'search_index'] as const) {
             const surviving = await idbRequest(
               tx.objectStore(storeName).index('ownerKey').count(ownerKey)
             )
@@ -740,26 +963,36 @@ export class EspaceVault {
           }
           return undefined
         }
-        const prior = await runVaultTx(db, 'readonly', lookup)
+        const prior = await runVaultTx(db, 'readonly', (tx) =>
+          lookup(tx, { allowMissingIndexKey: true })
+        )
         if (prior !== undefined) {
+          if (prior.indexKey === undefined) {
+            const indexKey = await generateVaultIndexKey()
+            const upgraded = await runVaultTx(db, 'readwrite', async (tx) => {
+              const latest = await lookup(tx, { allowMissingIndexKey: true })
+              if (latest === undefined) fail('corrupt')
+              if (latest.indexKey !== undefined) return latest
+              const next: VaultOwnerRow = { ...latest, indexKey }
+              await idbRequest(tx.objectStore('owners').put(next))
+              return next
+            })
+            return new EspaceVault(db, idb, coordinator, principal, upgraded, options)
+          }
           return new EspaceVault(db, idb, coordinator, principal, prior, options)
         }
         if (!initialize) fail('not-initialized')
 
-        let key: CryptoKey
-        try {
-          key = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, [
-            'encrypt',
-            'decrypt',
-          ])
-        } catch {
-          fail('unavailable')
-        }
-        if (!keyValid(key)) fail('unavailable')
+        const [key, indexKey] = await Promise.all([generateVaultAesKey(), generateVaultIndexKey()])
 
         const created = await runVaultTx(db, 'readwrite', async (tx) => {
-          const existing = await lookup(tx)
-          if (existing !== undefined) return existing
+          const existing = await lookup(tx, { allowMissingIndexKey: true })
+          if (existing !== undefined) {
+            if (existing.indexKey !== undefined) return existing
+            const upgraded: VaultOwnerRow = { ...existing, indexKey }
+            await idbRequest(tx.objectStore('owners').put(upgraded))
+            return upgraded
+          }
           const next: VaultOwnerRow = {
             ownerKey,
             ownerId: principal.ownerId,
@@ -769,6 +1002,7 @@ export class EspaceVault {
             incarnation: crypto.randomUUID(),
             status: 'active',
             key,
+            indexKey,
           }
           await idbRequest(tx.objectStore('owners').add(next))
           return next
@@ -808,7 +1042,9 @@ export class EspaceVault {
   #currentOwner(): VaultOwnerRow {
     this.#alive()
     const live = this.#coordinator.getOwner(this.#ownerKey)
-    if (live === undefined || !keyValid(live.key)) fail('owner-revoked')
+    if (live === undefined || !keyValid(live.key) || !indexKeyValid(live.indexKey)) {
+      fail('owner-revoked')
+    }
     this.#cachedIncarnation = live.incarnation
     return live
   }
@@ -822,7 +1058,8 @@ export class EspaceVault {
     if (
       coordinated === undefined ||
       coordinated.incarnation !== current.incarnation ||
-      !keyValid(coordinated.key)
+      !keyValid(coordinated.key) ||
+      !indexKeyValid(coordinated.indexKey)
     ) {
       this.#coordinator.updateOwner(current)
     }
@@ -1401,12 +1638,243 @@ export class EspaceVault {
   }
 
   /**
-   * Immediately purges room cache, outbox entries, and drafts for `roomId`, rotates the owner's
-   * non-extractable `CryptoKey` + `incarnation` so revoked ciphertexts can never be decrypted,
-   * and persists a body-free quarantine marker so restarts refuse plaintext before `/sync` arrives
-   * (issue 180).
+   * Computes a 128-bit lowercase hex blind term tag keyed by the principal's non-extractable
+   * `HMAC-SHA-256` `indexKey` over `"kodera-local-fts-v1\0" + incarnation + "\0" + roomId + "\0" + token`.
+   */
+  async computeBlindTermTag(roomId: string, foldedToken: string): Promise<string> {
+    this.#alive()
+    const validRoom = nonEmptyField(roomId, 255)
+    const validToken = nonEmptyField(foldedToken, 128)
+    const owner = this.#currentOwner()
+    if (!indexKeyValid(owner.indexKey)) fail('owner-revoked')
+    const message = new TextEncoder().encode(
+      `${LOCAL_FTS_HMAC_DOMAIN}\0${owner.incarnation}\0${validRoom}\0${validToken}`
+    )
+    try {
+      const mac = new Uint8Array(await crypto.subtle.sign('HMAC', owner.indexKey, message))
+      this.#alive()
+      let hex = ''
+      for (let i = 0; i < 16; i += 1) {
+        hex += mac[i]!.toString(16).padStart(2, '0')
+      }
+      return hex
+    } catch (error) {
+      throw safeVaultError(error)
+    } finally {
+      message.fill(0)
+    }
+  }
+
+  /**
+   * Seals and persists a per-room local search index shard (`<= 512 KiB`) under `AES-256-GCM`
+   * binding `(principal, incarnation, 'search-index', roomId, boundaryTag, epoch)` as AAD.
+   */
+  async putSearchIndexShard(input: {
+    readonly roomId: string
+    readonly boundaryTag: SearchBoundaryTag
+    readonly epoch: number
+    readonly savedAt?: number | undefined
+    readonly payload: unknown
+  }): Promise<void> {
+    this.#alive()
+    const validRoom = nonEmptyField(input.roomId, 255)
+    if (!isValidSearchBoundaryTag(input.boundaryTag)) fail('invalid-input')
+    if (
+      typeof input.epoch !== 'number' ||
+      !Number.isInteger(input.epoch) ||
+      input.epoch < 0 ||
+      (input.boundaryTag !== 'confidential-e2ee' && input.epoch !== 0)
+    ) {
+      fail('invalid-input')
+    }
+    const plaintext = new TextEncoder().encode(JSON.stringify(input.payload))
+    if (plaintext.byteLength > MAX_SEARCH_SHARD_BYTES) {
+      plaintext.fill(0)
+      fail('capacity')
+    }
+    return this.#coordinator.runExclusive(async () => {
+      try {
+        this.#alive()
+        const activeOwner = this.#currentOwner()
+        if (!keyValid(activeOwner.key)) fail('corrupt')
+        const now = input.savedAt ?? this.#now()
+        const iv = crypto.getRandomValues(new Uint8Array(12))
+        const ciphertext = await crypto.subtle.encrypt(
+          {
+            name: 'AES-GCM',
+            iv,
+            additionalData: buildSearchIndexAad(
+              this.#principal,
+              activeOwner.incarnation,
+              validRoom,
+              input.boundaryTag,
+              input.epoch
+            ),
+          },
+          activeOwner.key,
+          plaintext
+        )
+        this.#alive()
+        const id = recordId(this.#ownerKey, 'search-index', validRoom)
+        await runVaultTx(
+          this.#db,
+          'readwrite',
+          async (tx) => {
+            const owner = await this.#liveOwner(tx)
+            if (owner.incarnation !== activeOwner.incarnation) fail('storage')
+            if (input.boundaryTag !== 'confidential-e2ee') {
+              const qId = recordId(owner.ownerKey, 'quarantine', validRoom)
+              if ((await idbRequest(tx.objectStore('quarantine').get(qId))) !== undefined) {
+                fail('quarantined')
+              }
+            }
+            await idbRequest(
+              tx.objectStore('search_index').put({
+                id,
+                ownerKey: owner.ownerKey,
+                ownerRoom: ownerRoomKey(owner.ownerKey, validRoom),
+                incarnation: activeOwner.incarnation,
+                roomId: validRoom,
+                boundaryTag: input.boundaryTag,
+                epoch: input.epoch,
+                savedAt: now,
+                iv: iv.buffer,
+                ciphertext,
+              } satisfies EncryptedSearchIndexRow)
+            )
+          },
+          this.#alive,
+          this.#transactions
+        )
+      } catch (error) {
+        throw safeVaultError(error)
+      } finally {
+        plaintext.fill(0)
+      }
+    })
+  }
+
+  /** Decrypts a per-room local search index shard if unquarantined and matching expected AAD metadata. */
+  async readSearchIndexShard(
+    roomId: string,
+    expected?: {
+      readonly boundaryTag?: SearchBoundaryTag | undefined
+      readonly epoch?: number | undefined
+    }
+  ): Promise<{
+    readonly boundaryTag: SearchBoundaryTag
+    readonly epoch: number
+    readonly incarnation: string
+    readonly savedAt: number
+    readonly payload: unknown
+  } | null> {
+    this.#alive()
+    const validRoom = nonEmptyField(roomId, 255)
+    return this.#coordinator.runExclusive(async () => {
+      this.#alive()
+      const id = recordId(this.#ownerKey, 'search-index', validRoom)
+      const qId = recordId(this.#ownerKey, 'quarantine', validRoom)
+      const oldest = this.#now() - MAX_AGE_MS
+      const loaded = await runVaultTx(
+        this.#db,
+        'readonly',
+        async (tx) => {
+          const owner = await this.#liveOwner(tx)
+          const [quarantined, raw] = await Promise.all([
+            idbRequest(tx.objectStore('quarantine').get(qId)),
+            idbRequest(tx.objectStore('search_index').get(id)),
+          ])
+          const validated = validateSearchIndexRow(raw, id, owner, validRoom)
+          if (quarantined !== undefined && validated?.boundaryTag !== 'confidential-e2ee') {
+            return { owner, row: null }
+          }
+          return { owner, row: validated }
+        },
+        this.#alive,
+        this.#transactions
+      )
+      if (loaded.row === null || loaded.row.savedAt < oldest) return null
+      if (expected?.boundaryTag !== undefined && loaded.row.boundaryTag !== expected.boundaryTag) {
+        return null
+      }
+      if (expected?.epoch !== undefined && loaded.row.epoch !== expected.epoch) {
+        return null
+      }
+      if (!keyValid(loaded.owner.key)) fail('corrupt')
+      let plaintext: Uint8Array<ArrayBuffer> | undefined
+      try {
+        const clear = await crypto.subtle.decrypt(
+          {
+            name: 'AES-GCM',
+            iv: loaded.row.iv,
+            additionalData: buildSearchIndexAad(
+              this.#principal,
+              loaded.row.incarnation,
+              loaded.row.roomId,
+              loaded.row.boundaryTag,
+              loaded.row.epoch
+            ),
+          },
+          loaded.owner.key,
+          loaded.row.ciphertext
+        )
+        plaintext = new Uint8Array(clear)
+        this.#alive()
+        const parsed: unknown = JSON.parse(
+          new TextDecoder('utf-8', { fatal: true }).decode(plaintext)
+        )
+        await runVaultTx(
+          this.#db,
+          'readonly',
+          async (tx) => {
+            await this.#liveOwner(tx)
+          },
+          this.#alive,
+          this.#transactions
+        )
+        return {
+          boundaryTag: loaded.row.boundaryTag,
+          epoch: loaded.row.epoch,
+          incarnation: loaded.row.incarnation,
+          savedAt: loaded.row.savedAt,
+          payload: parsed,
+        }
+      } catch (error) {
+        if (error instanceof EspaceVaultError && error.code !== 'corrupt') throw error
+        return null
+      } finally {
+        plaintext?.fill(0)
+      }
+    })
+  }
+
+  async deleteSearchIndexShard(roomId: string): Promise<void> {
+    if (this.#closed) return
+    const validRoom = nonEmptyField(roomId, 255)
+    return this.#coordinator.runExclusive(async () => {
+      if (this.#closed) return
+      const id = recordId(this.#ownerKey, 'search-index', validRoom)
+      await runVaultTx(
+        this.#db,
+        'readwrite',
+        async (tx) => {
+          await this.#liveOwner(tx)
+          await idbRequest(tx.objectStore('search_index').delete(id))
+        },
+        this.#alive,
+        this.#transactions
+      )
+    })
+  }
+
+  /**
+   * Immediately purges room cache, search index, outbox entries, and drafts for `roomId`, rotates
+   * the owner's non-extractable `AES-GCM` `key`, `HMAC-SHA-256` `indexKey`, and `incarnation` so
+   * revoked ciphertexts and blind tags can never be used, and persists a body-free quarantine
+   * marker so restarts refuse plaintext before `/sync` arrives (issue 180).
    */
   quarantineRoom(roomId: string): Promise<void> {
+    notifyVaultSearchEviction({ kind: 'room', ownerKey: this.#ownerKey, roomId })
     if (this.#closed) return this.#writing
     this.#pendingRooms.delete(roomId)
     if (this.#pendingSidebar !== null) {
@@ -1421,10 +1889,12 @@ export class EspaceVault {
   }
 
   /**
-   * Purges room cache, outbox entries, and drafts when the member leaves, is banned, or receives
-   * `403 / M_FORBIDDEN`, and rotates the owner's non-extractable `CryptoKey` + `incarnation`.
+   * Purges room cache, search index, outbox entries, and drafts when the member leaves, is banned,
+   * or receives `403 / M_FORBIDDEN`, and rotates the owner's non-extractable `key` + `indexKey` +
+   * `incarnation`.
    */
   forgetRoom(roomId: string): Promise<void> {
+    notifyVaultSearchEviction({ kind: 'room', ownerKey: this.#ownerKey, roomId })
     if (this.#closed) return this.#writing
     this.#pendingRooms.delete(roomId)
     if (this.#pendingSidebar !== null) {
@@ -1450,28 +1920,24 @@ export class EspaceVault {
       'readonly',
       async (tx) => {
         const owner = await this.#liveOwner(tx)
-        const [roomRows, outboxRows, draftRows] = await Promise.all([
+        const [roomRows, outboxRows, draftRows, searchRows] = await Promise.all([
           idbRequest(tx.objectStore('rooms').index('ownerKey').getAll(owner.ownerKey)),
           idbRequest(tx.objectStore('outbox').index('ownerKey').getAll(owner.ownerKey)),
           idbRequest(tx.objectStore('drafts').index('ownerKey').getAll(owner.ownerKey)),
+          idbRequest(tx.objectStore('search_index').index('ownerKey').getAll(owner.ownerKey)),
         ])
-        return { owner, roomRows, outboxRows, draftRows }
+        return { owner, roomRows, outboxRows, draftRows, searchRows }
       },
       this.#alive,
       this.#transactions
     )
     if (this.#closed) return
 
-    let newKey: CryptoKey
-    try {
-      newKey = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, [
-        'encrypt',
-        'decrypt',
-      ])
-    } catch {
-      fail('unavailable')
-    }
-    if (!keyValid(newKey) || this.#closed) return
+    const [newKey, newIndexKey] = await Promise.all([
+      generateVaultAesKey(),
+      generateVaultIndexKey(),
+    ])
+    if (this.#closed) return
 
     const nextOwner: VaultOwnerRow = {
       ownerKey: snapshot.owner.ownerKey,
@@ -1483,6 +1949,7 @@ export class EspaceVault {
       purgeEpoch: (snapshot.owner.purgeEpoch ?? 0) + 1,
       status: 'active',
       key: newKey,
+      indexKey: newIndexKey,
     }
 
     const reencryptedRooms: EncryptedVaultRow[] = []
@@ -1664,6 +2131,11 @@ export class EspaceVault {
           )
           if (!sameVaultRows(prior, current)) return false
         }
+        const currentSearchRows = await idbRequest(
+          tx.objectStore('search_index').index('ownerKey').getAll(this.#ownerKey)
+        )
+        if (!sameSearchRows(snapshot.searchRows, currentSearchRows)) return false
+
         await idbRequest(tx.objectStore('owners').put(nextOwner))
 
         const replaceStoreRows = async (
@@ -1686,6 +2158,17 @@ export class EspaceVault {
         await replaceStoreRows('rooms', reencryptedRooms)
         await replaceStoreRows('outbox', reencryptedOutbox)
         await replaceStoreRows('drafts', reencryptedDrafts)
+
+        const searchStore = tx.objectStore('search_index')
+        const existingSearchRows = await idbRequest(
+          searchStore.index('ownerKey').getAll(nextOwner.ownerKey)
+        )
+        for (const existing of existingSearchRows) {
+          const rec = existing as Partial<EncryptedSearchIndexRow> | undefined
+          if (rec && typeof rec.id === 'string') {
+            await idbRequest(searchStore.delete(rec.id))
+          }
+        }
 
         if (options.quarantine) {
           const qId = recordId(nextOwner.ownerKey, 'quarantine', roomId)
@@ -2029,6 +2512,7 @@ export class EspaceVault {
    * immediately following `deleteDatabase` unblocks cleanly.
    */
   revokeAndCloseSync(): Promise<void> {
+    notifyVaultSearchEviction({ kind: 'all', ownerKey: this.#ownerKey })
     if (this.#wiping) return this.#writing
     this.#wiping = true
     this.#closed = true
@@ -2104,7 +2588,13 @@ export class EspaceVault {
                 } satisfies VaultOwnerRow)
               }
             }
-            for (const storeName of ['rooms', 'outbox', 'drafts', 'quarantine'] as const) {
+            for (const storeName of [
+              'rooms',
+              'outbox',
+              'drafts',
+              'quarantine',
+              'search_index',
+            ] as const) {
               tx.objectStore(storeName).clear()
             }
             const finish = () => {
@@ -2184,6 +2674,7 @@ function deleteDatabaseAsync(idb: IDBFactory, name: string): Promise<void> {
 export function wipeEspaceVault(
   idb: IDBFactory | undefined = globalThis.indexedDB
 ): Promise<void> {
+  notifyVaultSearchEviction({ kind: 'all' })
   const coordinator = getVaultCoordinator(idb, ESPACE_VAULT_DATABASE)
   coordinator.revokeAll()
   const open = [...openVaultInstances].filter((vault) => vault.matchesIdbFactory(idb))
@@ -2215,7 +2706,13 @@ export function wipeEspaceVault(
                   )
                 }
               }
-              for (const storeName of ['rooms', 'outbox', 'drafts', 'quarantine'] as const) {
+              for (const storeName of [
+                'rooms',
+                'outbox',
+                'drafts',
+                'quarantine',
+                'search_index',
+              ] as const) {
                 await idbRequest(tx.objectStore(storeName).clear())
               }
             })
@@ -2239,6 +2736,7 @@ export function wipeEspaceVault(
 }
 
 function revokeOpenVaultsSynchronously(): void {
+  notifyVaultSearchEviction({ kind: 'all' })
   for (const vault of [...openVaultInstances]) {
     void vault.revokeAndCloseSync()
   }

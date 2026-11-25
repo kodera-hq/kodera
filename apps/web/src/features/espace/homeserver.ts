@@ -90,6 +90,26 @@ export interface ResolveOptions extends ServerNameOptions {
 /** The local stack's server name (`tests/espace/stack/synapse/homeserver.yaml.tmpl`). */
 const DEV_SERVER_NAME = 'kodera.test'
 
+export interface TenantHomeserverTarget {
+  tenantSlug: string | undefined
+  sharedRealm?: boolean | undefined
+  organisationRealm?: string | null | undefined
+}
+
+/**
+ * Effective homeserver slug for a workspace tenant: dedicated tenants use `{tenantSlug}`, whereas
+ * shared-realm PME workspaces resolve the shared realm host (`{organisationRealm}`).
+ */
+export function homeserverSlugFor(target: TenantHomeserverTarget): string | undefined {
+  if (target.tenantSlug === undefined) return undefined
+  if (target.sharedRealm === true) {
+    return typeof target.organisationRealm === 'string' && isTenantSlug(target.organisationRealm)
+      ? target.organisationRealm
+      : undefined
+  }
+  return target.tenantSlug
+}
+
 /** Whether `hostname` is the server name itself or a host under it. */
 export function isWithinServerName(hostname: string, serverName: string): boolean {
   return serverName !== '' && (hostname === serverName || hostname.endsWith(`.${serverName}`))

@@ -47,6 +47,77 @@ describe('current identity authority', () => {
     expect(resolved?.identity.mfa_enrolled).toBe(true)
   })
 
+  it('resolves shared_realm memberships via membership.identity_id when the person holds multiple shared-realm orgs', () => {
+    const pmeIdentityId = '01950000-0000-7000-8000-000000000301'
+    const pmeMembershipId = '01950000-0000-7000-8000-000000000302'
+    const pmeOrgId = '01950000-0000-7000-8000-000000000303'
+    const sharedAuth: AuthIdentity = {
+      issuer: 'https://id.example.test/realms/community',
+      subject: 'Shared:Subject/1',
+    }
+    const me: components['schemas']['Me'] = {
+      id: '11111111-2222-4333-8444-555555555555',
+      email: 'owner@example.test',
+      locale: 'fr',
+      staff: false,
+      identities: [
+        {
+          id: identityId,
+          issuer: sharedAuth.issuer,
+          realm: 'community',
+          subject: sharedAuth.subject,
+          email: 'owner@example.test',
+          mfa_enrolled: true,
+        },
+        {
+          id: pmeIdentityId,
+          issuer: sharedAuth.issuer,
+          realm: 'community',
+          subject: sharedAuth.subject,
+          email: 'owner@example.test',
+          mfa_enrolled: true,
+        },
+      ],
+      organisations: [
+        {
+          organisation: {
+            id: organisationId,
+            slug: 'community',
+            name: 'Community',
+            realm: 'community',
+          },
+          membership_id: membershipId,
+          state: 'active',
+          role: 'org_member',
+          identity_id: identityId,
+          plan_tier: 'community',
+        },
+        {
+          organisation: {
+            id: pmeOrgId,
+            slug: 'studio-pme',
+            name: 'Studio PME',
+            realm: 'community',
+          },
+          membership_id: pmeMembershipId,
+          state: 'active',
+          role: 'org_owner',
+          identity_id: pmeIdentityId,
+          shared_realm: true,
+          plan_tier: 'freemium_pme',
+        },
+      ],
+    }
+
+    const pmeResolved = resolveCurrentIdentity(me, sharedAuth, 'studio-pme')
+    expect(pmeResolved?.identity.id).toBe(pmeIdentityId)
+    expect(isCurrentIdentityMfaEnrolled(me, sharedAuth, 'studio-pme')).toBe(true)
+
+    const commResolved = resolveCurrentIdentity(me, sharedAuth, 'community')
+    expect(commResolved?.identity.id).toBe(identityId)
+    expect(isCurrentIdentityMfaEnrolled(me, sharedAuth, 'community')).toBe(true)
+  })
+
   it.each([
     ['missing SDK identity', (me: components['schemas']['Me']) => ({ me, auth: undefined })],
     [

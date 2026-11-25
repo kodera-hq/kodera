@@ -20,6 +20,7 @@ from django.db import connection
 from django.utils import timezone
 
 from apps.audit.services import record_engine_channel_set_event
+from apps.orgs.selectors import shared_realm_host_organisation_id
 
 from .models import EngineAgentCredential, EngineChannelSet
 
@@ -252,6 +253,15 @@ def emit_channel_set(
         .order_by("id")
         .values_list("id", flat=True)
     )
+    if not credential_ids:
+        host_org_id = shared_realm_host_organisation_id(organisation_id=organisation_id)
+        if host_org_id is not None:
+            credential_ids = list(
+                EngineAgentCredential.objects.select_for_update()
+                .filter(organisation_id=host_org_id, state="active")
+                .order_by("id")
+                .values_list("id", flat=True)
+            )
     head.revision = _next_revision(head.revision)
     head.save(update_fields=["revision"])
     channel_set = EngineChannelSet.objects.create(
@@ -278,7 +288,7 @@ def emit_channel_set(
     )
     now = timezone.now()
     for credential_id in credential_ids:
-        _supersede(credential_id, now, channel=True)
+        _supersede(credential_id, now, channel=True, organisation_id=organisation_id)
         _issue(channel_set, credential_id, now, attempt=1)
     return channel_set
 

@@ -137,7 +137,7 @@ def session(request: HttpRequest, organisation_id: UUID, document_id: UUID) -> H
         request,
         {"POST": post},
         organisation_id,
-        authority=lambda verified: service.authorize_document(
+        authority=lambda verified: service.authorize_collab_session(
             verified=verified, organisation_id=organisation_id, document_id=document_id
         ),
     )

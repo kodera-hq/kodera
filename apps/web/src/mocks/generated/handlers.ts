@@ -45,6 +45,12 @@ function send(status: number, body: unknown, headers: Record<string, string>): R
   if (headers['Content-Type'] === 'text/plain' && typeof body === 'string') {
     return HttpResponse.text(body, { status, headers })
   }
+  if (headers['Content-Type'] === 'image/webp' && typeof body === 'string') {
+    return HttpResponse.arrayBuffer(
+      Uint8Array.from(atob(body), (c) => c.charCodeAt(0)).buffer,
+      { status, headers }
+    )
+  }
   return HttpResponse.json(body, { status, headers })
 }
 
@@ -130,6 +136,7 @@ export const handlers: HttpHandler[] = [
   http.get(BASE + "/organisations/:organisation_id/bootstrap", () => answer(EXAMPLES["getOrganisationBootstrap"])),
   http.get(BASE + "/organisations/:organisation_id/workspace", () => answer(EXAMPLES["getWorkspace"])),
   http.post(BASE + "/workspaces/instant-claim", ({ request }) => answerIdempotent(EXAMPLES["instantClaimWorkspace"], request)),
+  http.post(BASE + "/workspaces/self-serve", ({ request }) => answerIdempotent(EXAMPLES["createSelfServeWorkspace"], request)),
   http.post(BASE + "/organisations/:organisation_id/workspace/actions/initialise", ({ request }) => answerIdempotent(EXAMPLES["initialiseWorkspace"], request)),
   http.post(BASE + "/organisations/:organisation_id/workspace/categories", ({ request }) => answerIdempotent(EXAMPLES["createCategory"], request)),
   http.patch(BASE + "/organisations/:organisation_id/workspace/categories/:category_id", ({ request }) => answerRequiringIfMatch(EXAMPLES["patchCategory"], request)),
@@ -330,6 +337,9 @@ export const handlers: HttpHandler[] = [
   http.get(BASE + "/organisations/:organisation_id/workspace/guest-channel", () => answer(EXAMPLES["getSingleGuestChannel"])),
   http.get(BASE + "/organisations/:organisation_id/confidential/rooms/:room_id/discovery", () => answer(EXAMPLES["discoverConfidentialRoom"])),
   http.post(BASE + "/organisations/:organisation_id/confidential/verification-bundles", ({ request }) => answerIdempotent(EXAMPLES["publishDeviceVerificationBundle"], request)),
+  http.get(BASE + "/organisations/:organisation_id/confidential/key-backup", () => answer(EXAMPLES["getConfidentialKeyBackup"])),
+  http.post(BASE + "/organisations/:organisation_id/confidential/key-backup", ({ request }) => answerIdempotent(EXAMPLES["publishConfidentialKeyBackup"], request)),
+  http.delete(BASE + "/organisations/:organisation_id/confidential/key-backup", () => answer(EXAMPLES["discardConfidentialKeyBackup"])),
   http.get(BASE + "/organisations/:organisation_id/workspace/calendar/events", () => answer(EXAMPLES["listCalendarEvents"])),
   http.post(BASE + "/organisations/:organisation_id/workspace/calendar/events", ({ request }) => answerIdempotent(EXAMPLES["createCalendarEvent"], request)),
   http.patch(BASE + "/organisations/:organisation_id/workspace/calendar/events/:event_id", ({ request }) => answerRequiringIfMatch(EXAMPLES["updateCalendarEvent"], request)),
@@ -351,4 +361,23 @@ export const handlers: HttpHandler[] = [
   http.get(BASE + "/organisations/:organisation_id/workspace/channels/:channel_id/call-captions/session", () => answer(EXAMPLES["getLiveCallCaptionSession"])),
   http.post(BASE + "/organisations/:organisation_id/workspace/channels/:channel_id/call-captions/session", ({ request }) => answerIdempotent(EXAMPLES["updateLiveCallCaptionSession"], request)),
   http.post(BASE + "/organisations/:organisation_id/workspace/channels/:channel_id/call-captions/chunks", ({ request }) => answerIdempotent(EXAMPLES["transcribeLiveCallChunk"], request)),
+  http.get(BASE + "/organisations/:organisation_id/workspace/extensions/marketplace", () => answer(EXAMPLES["listMarketplaceExtensions"])),
+  http.post(BASE + "/organisations/:organisation_id/workspace/extensions/marketplace", ({ request }) => answerIdempotent(EXAMPLES["publishMarketplaceExtension"], request)),
+  http.post(BASE + "/organisations/:organisation_id/workspace/extensions/marketplace/:listing_id/checkout", ({ request }) => answerIdempotent(EXAMPLES["checkoutMarketplaceExtension"], request)),
+  http.post(BASE + "/organisations/:organisation_id/workspace/extensions/marketplace/:listing_id/install", ({ request }) => answerIdempotent(EXAMPLES["installMarketplaceExtension"], request)),
+  http.post(BASE + "/organisations/:organisation_id/workspace/channels/:channel_id/widgets/:widget_id/actions", ({ request }) => answerIdempotent(EXAMPLES["invokeChannelWidgetAction"], request)),
+  http.get(BASE + "/organisations/:organisation_id/workspace/emojis", () => answer(EXAMPLES["listWorkspaceCustomEmojis"])),
+  http.post(BASE + "/organisations/:organisation_id/workspace/emojis", ({ request }) => answerIdempotent(EXAMPLES["createWorkspaceCustomEmoji"], request)),
+  http.delete(BASE + "/organisations/:organisation_id/workspace/emojis/:emoji_id", () => answer(EXAMPLES["deleteWorkspaceCustomEmoji"])),
+  http.get(BASE + "/organisations/:organisation_id/workspace/emojis/:emoji_id/blob", () => answer(EXAMPLES["getWorkspaceCustomEmojiBlob"])),
+  http.get(BASE + "/organisations/:organisation_id/workspace/scheduled-messages", () => answer(EXAMPLES["listScheduledMessages"])),
+  http.post(BASE + "/organisations/:organisation_id/workspace/scheduled-messages", ({ request }) => answerIdempotent(EXAMPLES["createScheduledMessage"], request)),
+  http.patch(BASE + "/organisations/:organisation_id/workspace/scheduled-messages/:scheduled_message_id", ({ request }) => answerRequiringIfMatch(EXAMPLES["updateScheduledMessage"], request)),
+  http.delete(BASE + "/organisations/:organisation_id/workspace/scheduled-messages/:scheduled_message_id", () => answer(EXAMPLES["cancelScheduledMessage"])),
+  http.get(BASE + "/organisations/:organisation_id/workspace/reminders", () => answer(EXAMPLES["listPersonalReminders"])),
+  http.post(BASE + "/organisations/:organisation_id/workspace/reminders", ({ request }) => answerIdempotent(EXAMPLES["createPersonalReminder"], request)),
+  http.patch(BASE + "/organisations/:organisation_id/workspace/reminders/:reminder_id", ({ request }) => answerRequiringIfMatch(EXAMPLES["updatePersonalReminder"], request)),
+  http.delete(BASE + "/organisations/:organisation_id/workspace/reminders/:reminder_id", () => answer(EXAMPLES["deletePersonalReminder"])),
+  http.get(BASE + "/organisations/:organisation_id/workspace/preferences/me", () => answer(EXAMPLES["getMyWorkspacePreferences"])),
+  http.patch(BASE + "/organisations/:organisation_id/workspace/preferences/me", ({ request }) => answerRequiringIfMatch(EXAMPLES["updateMyWorkspacePreferences"], request)),
 ]

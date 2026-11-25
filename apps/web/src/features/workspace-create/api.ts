@@ -8,6 +8,9 @@ import type { components } from '../../api/schema'
 
 export type TenantCreation = components['schemas']['TenantCreation']
 export type TenantCreated = components['schemas']['TenantCreated']
+export type SelfServeWorkspaceCreateRequest =
+  components['schemas']['SelfServeOrganisationCreateRequest']
+export type SelfServeWorkspaceCreated = components['schemas']['SelfServeWorkspaceCreated']
 
 export function useCreateTenantMutation(organisationId: string) {
   return useMutation({
@@ -17,6 +20,21 @@ export function useCreateTenantMutation(organisationId: string) {
         {
           params: {
             path: { organisation_id: organisationId },
+            header: { 'Idempotency-Key': input.idempotencyKey },
+          },
+          body: input.body,
+        }
+      ),
+  })
+}
+
+export function useCreateSelfServeWorkspaceMutation() {
+  return useMutation({
+    mutationFn: (input: { body: SelfServeWorkspaceCreateRequest; idempotencyKey: string }) =>
+      mutate(
+        { method: 'post', path: '/workspaces/self-serve' },
+        {
+          params: {
             header: { 'Idempotency-Key': input.idempotencyKey },
           },
           body: input.body,

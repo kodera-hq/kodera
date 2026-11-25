@@ -338,7 +338,7 @@ Before starting this profile, the operator must have:
 - A verified public `community` Keycloak realm, client `console` with exact web
   callbacks, and confidential client `synapse` with callback
   `https://<KODERA_DOMAIN>/_synapse/client/oidc/callback`, PKCE S256 and back-channel
-  logout. Follow the operations repository's `keycloak-ops/MONOREPO-REALMS.md`.
+  logout, configured according to your identity provider's realm runbook.
 - A real, enabled owner `User` UUID already in the server database. Bootstrap
   refuses a missing owner; it does not create an administrator from an email
   address. For a completely fresh database, complete the approved owner/staff

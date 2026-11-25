@@ -1,10 +1,6 @@
 // The files waiting in a composer, one list per room (docs/specs/messaging-media-and-notifications.md).
-// A file is checked on this device the moment it is dropped, pasted or chosen, then sent to storage
-// at once; the message waits until every file it carries is stored. A refused file stays in the list
-// with its reason until the member removes it, so a drop never fails silently.
-//
-// A small store read with `useSyncExternalStore`: the composer draws from a snapshot, and an upload
-// finishing never sets React state from inside an effect.
+// Safe raster images get a CSP-compliant `blob:` thumbnail (`URL.createObjectURL`, revoked on
+// removal, send/clear, preflight refusal, or close/unmount).
 
 import {
   cleanFilename,
@@ -27,11 +23,36 @@ export type QueuedState =
   | { status: 'refused'; reason: PreflightRefusal | 'too-many' }
   | { status: 'failed' }
 
-export type QueuedFile = QueuedState & { key: string; filename: string; sizeBytes: number }
+export type QueuedFile = QueuedState & {
+  key: string
+  filename: string
+  sizeBytes: number
+  previewUrl?: string | undefined
+}
 
 type Upload = (input: UploadInput) => Promise<Attachment>
 
 const NONE: readonly QueuedFile[] = []
+const SAFE_RASTER_PREVIEW_MIME = /^image\/(png|jpeg|webp|gif)$/u
+
+function createRasterPreviewUrl(file: File): string | undefined {
+  if (!SAFE_RASTER_PREVIEW_MIME.test(file.type)) return undefined
+  if (typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') return undefined
+  try {
+    return URL.createObjectURL(file)
+  } catch {
+    return undefined
+  }
+}
+
+function revokeRasterPreviewUrl(url: string | undefined): void {
+  if (!url || typeof URL === 'undefined' || typeof URL.revokeObjectURL !== 'function') return
+  try {
+    URL.revokeObjectURL(url)
+  } catch {
+    // Ignore already-revoked object URLs.
+  }
+}
 
 export class AttachmentQueue {
   readonly #organisationId: string
@@ -83,10 +104,22 @@ export class AttachmentQueue {
     await Promise.all(
       incoming.map(async (file) => {
         const key = `f${++this.#serial}`
-        const base = { key, filename: cleanFilename(file.name), sizeBytes: file.size }
         if (this.files(room).length >= MAX_PENDING_ATTACHMENTS) {
-          this.#put(room, { ...base, status: 'refused', reason: 'too-many' })
+          this.#put(room, {
+            key,
+            filename: cleanFilename(file.name),
+            sizeBytes: file.size,
+            status: 'refused',
+            reason: 'too-many',
+          })
           return
+        }
+        const previewUrl = createRasterPreviewUrl(file)
+        const base = {
+          key,
+          filename: cleanFilename(file.name),
+          sizeBytes: file.size,
+          ...(previewUrl === undefined ? {} : { previewUrl }),
         }
         this.#put(room, { ...base, status: 'uploading' })
         await this.#send(room, key, file, base, generation, metadata)
@@ -100,13 +133,20 @@ export class AttachmentQueue {
     const source = this.#sources.get(key)
     if (existing?.status !== 'failed' || source?.room !== room || !this.#mayUpload(room)) return
     const generation = this.#generation
-    const base = { key, filename: existing.filename, sizeBytes: existing.sizeBytes }
+    const base = {
+      key,
+      filename: existing.filename,
+      sizeBytes: existing.sizeBytes,
+      ...(existing.previewUrl === undefined ? {} : { previewUrl: existing.previewUrl }),
+    }
     this.#sources.delete(key)
     this.#replace(room, key, { ...base, status: 'uploading' })
     await this.#send(room, key, source.file, base, generation, source.metadata)
   }
 
   remove(room: string, key: string): void {
+    const existing = this.files(room).find((item) => item.key === key)
+    revokeRasterPreviewUrl(existing?.previewUrl)
     this.#aborts.get(key)?.abort()
     this.#sources.delete(key)
     this.#set(
@@ -115,18 +155,25 @@ export class AttachmentQueue {
     )
   }
 
-  /** Forgets the room's list once its message is sent. */
+  /** Forgets the room's list once its message is sent, revoking staged blob: URLs. */
   clear(room: string): void {
     for (const file of this.files(room)) {
+      revokeRasterPreviewUrl(file.previewUrl)
       this.#aborts.get(file.key)?.abort()
       this.#sources.delete(file.key)
     }
     this.#set(room, NONE)
   }
 
-  /** Stops every upload: the composer is gone. */
+  /** Stops every upload and revokes all staged blob: URLs when the composer unmounts. */
   close(): void {
     this.#generation += 1
+    for (const roomFiles of this.#rooms.values()) {
+      for (const file of roomFiles) {
+        revokeRasterPreviewUrl(file.previewUrl)
+      }
+    }
+    this.#rooms.clear()
     this.#sources.clear()
     for (const abort of this.#aborts.values()) abort.abort()
     this.#aborts.clear()
@@ -136,7 +183,7 @@ export class AttachmentQueue {
     room: string,
     key: string,
     file: File,
-    base: { key: string; filename: string; sizeBytes: number },
+    base: { key: string; filename: string; sizeBytes: number; previewUrl?: string | undefined },
     generation: number,
     metadata?: AttachmentMetadata
   ): Promise<void> {
@@ -158,15 +205,24 @@ export class AttachmentQueue {
       return
     }
     if (!checked.ok) {
-      this.#replace(room, key, { ...base, status: 'refused', reason: checked.reason })
+      revokeRasterPreviewUrl(base.previewUrl)
+      this.#replace(room, key, {
+        key: base.key,
+        filename: base.filename,
+        sizeBytes: base.sizeBytes,
+        status: 'refused',
+        reason: checked.reason,
+      })
       return
     }
     if (!this.#mayUpload(room)) {
       rememberFailure()
       return
     }
-    if (generation !== this.#generation || !this.files(room).some((entry) => entry.key === key))
+    if (generation !== this.#generation || !this.files(room).some((entry) => entry.key === key)) {
+      revokeRasterPreviewUrl(base.previewUrl)
       return
+    }
     const named = { ...base, filename: checked.filename }
     const abort = new AbortController()
     this.#aborts.set(key, abort)
@@ -226,8 +282,10 @@ export class AttachmentQueue {
   }
 
   #replace(room: string, key: string, file: QueuedFile) {
-    // A file removed while it was being sent stays removed.
-    if (!this.files(room).some((item) => item.key === key)) return
+    if (!this.files(room).some((item) => item.key === key)) {
+      revokeRasterPreviewUrl(file.previewUrl)
+      return
+    }
     this.#set(
       room,
       this.files(room).map((item) => (item.key === key ? file : item))

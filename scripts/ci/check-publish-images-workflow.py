@@ -114,20 +114,18 @@ def check_workflow_text(text: str, root: Path = ROOT) -> list[str]:
     if "pull_request_target" in text:
         errors.append("forbidden trigger 'pull_request_target' present")
 
-    if not re.search(r"(?m)^  push:\s*$", text) or "branches: [main]" not in text:
-        errors.append("workflow must trigger on push to branches: [main]")
-
-    if (
-        '"apps/server/**"' not in text
-        or '"ee/**"' not in text
-        or '".github/workflows/publish-images.yml"' not in text
-    ):
-        errors.append(
-            "push trigger must watch 'apps/server/**', 'ee/**', and '.github/workflows/publish-images.yml'"
-        )
-
-    if not re.search(r"(?m)^  workflow_dispatch:\s*$", text):
-        errors.append("workflow must support workflow_dispatch")
+    on_block = re.search(r"(?ms)^on:\n(.*?)(?=^\S|\Z)", text)
+    if on_block is None:
+        errors.append("workflow must support workflow_dispatch only")
+    else:
+        trigger_keys = {
+            m.group(1)
+            for m in re.finditer(r"(?m)^  ([A-Za-z0-9_-]+):", on_block.group(1))
+        }
+        if trigger_keys != {"workflow_dispatch"}:
+            errors.append(
+                "workflow must trigger exclusively on workflow_dispatch (no automatic push trigger)"
+            )
 
     if not re.search(r"(?m)^permissions:\n  contents: read\s*$", text):
         errors.append("top-level permissions must be exactly 'contents: read'")
@@ -297,9 +295,22 @@ def run_selftest(baseline: str) -> int:
             "workflow must record digest summary to $GITHUB_STEP_SUMMARY",
         ),
         (
-            "missing ee/** watch path on push trigger",
-            lambda s: s.replace('      - "ee/**"\n', "", 1),
-            "push trigger must watch 'apps/server/**', 'ee/**', and '.github/workflows/publish-images.yml'",
+            "automatic push trigger on main reintroduced",
+            lambda s: s.replace(
+                "on:\n  workflow_dispatch:",
+                "on:\n  push:\n    branches: [main]\n  workflow_dispatch:",
+                1,
+            ),
+            "workflow must trigger exclusively on workflow_dispatch (no automatic push trigger)",
+        ),
+        (
+            "workflow_run trigger added alongside workflow_dispatch",
+            lambda s: s.replace(
+                "on:\n  workflow_dispatch:",
+                "on:\n  workflow_dispatch:\n  workflow_run:\n    workflows: [CI]\n    types: [completed]",
+                1,
+            ),
+            "workflow must trigger exclusively on workflow_dispatch (no automatic push trigger)",
         ),
         (
             "missing ee_src=ee build-context on kodera-core",

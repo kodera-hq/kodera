@@ -8,26 +8,29 @@ Status: Implemented through Wave 9 core tracks; Wave 10 in progress; hosted Comm
 - **Wave 3:** native workspace Pages use the Tiptap/ProseMirror block editor and Yjs, persisted document trees and roles, wikilinks, backlinks, search, comments and templates. `apps/server/apps/docs` owns document authorization and `apps/server/yjs_collab` owns the authenticated binary collaboration protocol at `wss://<api-host>/documents/collab` and PostgreSQL update journal. `apps/web/src/features/docs` connects the editor to that service.
 - **Community:** canonical identity-realm signup materializes default membership. Public local rooms, announcement posting permissions, private staff/partner grants and moderation are enforced by Core and `packages/synapse-policy`. Camera video and screen sharing use LiveKit, and CI verifies fresh-volume cold-start runtime and footprint bounds on `deploy/community`.
 - **Wave 4:** typed document Collections (`Table`, `Kanban` and `List` views over validated JSONB schemas), transactional workspace quotas, immutable Factur-X `380`/`381` PDF/A-3 + XML billing documents, VIES VAT evidence, supervised dunning, verified Stripe webhook settlement, and GDPR Art. 17/20 signed exports and erasure (`PrivateVolume` `O_NOFOLLOW` isolation and statutory invoice retention). Self-hosted Community runs with `KODERA_BILLING_ENABLED=false`.
-- **Wave 5:** `packages/kodera-rs` implements scoped OpenMLS (RFC 9420), Vodozemac Megolm, durable device/session state, LiveKit media-key export seams, universal ES256 passkey binding without AAGUID lock-in, and `#proximity` v1/v2 frame codecs. `apps/desktop` implements the origin-fenced Tauri v2 shell, deep-links, tray/PTT controls, zeroized process credential vault and self-host stack deployment wizard; `apps/ios` and `apps/android` implement `ciel` workspace navigation, Matrix room/invitation models and URI coordinators, CallKit/`ConnectionService` call seams, payload-free push seams and universal passkey assertion verification, gated by reproducible candidate and reviewed SPDX SBOM checks.
+- **Wave 5:** `packages/kodera-rs` implements scoped OpenMLS (RFC 9420), Vodozemac Megolm, durable device/session state, LiveKit media-key export seams, universal ES256 passkey binding without AAGUID lock-in, and `#proximity` v1/v2 frame codecs. `apps/desktop` implements the origin-fenced `tao`/`wry` desktop shell, deep-links, tray/PTT controls, zeroized process credential vault and self-host stack deployment wizard; `apps/ios` and `apps/android` implement `ciel` workspace navigation, Matrix room/invitation models and URI coordinators, CallKit/`ConnectionService` call seams, payload-free push seams and universal passkey assertion verification, gated by reproducible candidate and reviewed SPDX SBOM checks.
 - **Wave 6 & Wave 7:** `apps/server` implements the outbound extension runtime v2 (scoped workspace installation, key rotation, reconciliation and dual-key HMAC signed webhook and slash-command dispatch with pinned-IP SSRF protection) alongside 23 reference implementations in `extensions/`, bounded `Slack`, `Discord` and `Notion` importers, explicit partner-room and opt-in open federation controls (`KODERA_FEDERATION_MODE`), developer documentation with `llms.txt`, and cross-surface security hardening.
 - **Wave 8 & Wave 9 (merged core tracks):** `.well-known` discovery, zero-trust `/staff/v1/*` operations, `Kodera Passport` signed PKCE cross-workspace magic-link sign-in and workspace switcher, clean-room Enterprise Edition `ee/` (`SAML 2.0`, `SCIM 2.0`, `Ed25519` compliance audit exports and `ee/billing/` commercial schedules, warm-pool governance and purchase orders), modern `openmls_*` crypto-provider generation, `kodera-rs` `wasm32` browser WASM device-proof bindings, default-off `/api/v1/organisations/{organisation_id}/confidential/*` opaque envelope and HPKE KeyPackage relay (`0.47.0`), atomic browser confidential vault storage (`apps/web/src/features/confidential/`), voluntary `#proximity` check-in over RAM-only Unix socket `/run/proximity/broker.sock` with 15-minute HKDF epoch leases and foreground native BLE/mDNS adapter layers, and the multi-OS GitHub Releases binary distribution workflow (`.github/workflows/release-binaries.yml`).
 
-The hosted Community tenant is live: active tenant promotion, release evidence and identity-provider registration at `auth.kodera.io` are complete. Remaining operator responsibilities are encrypted backup/restore rehearsal, live payment activation, managed-fleet provisioning and signed desktop/mobile store distribution. These completed cutover gates do not establish deployment of every later source change. Mobile association endpoints fail closed with `503 well_known_unconfigured` until `KODERA_IOS_APP_IDS` / `KODERA_ANDROID_ASSETLINKS_SHA256` are configured and public edge routing is qualified.
+The hosted Community tenant is live: active tenant promotion, release evidence and identity-provider registration at `auth.kodera.io` are complete, and automated isolated backup/restore rehearsal (`deploy/community/kodera_ctl.py rehearse-restore` + `rehearse_restore_guards`) is implemented in source. Remaining operator responsibilities are live production backup/restore cutover drills, live payment activation, managed-fleet provisioning and signed desktop/mobile store distribution. These completed cutover gates do not establish deployment of every later source change. Mobile association endpoints fail closed with `503 well_known_unconfigured` until `KODERA_IOS_APP_IDS` / `KODERA_ANDROID_ASSETLINKS_SHA256` are configured and public edge routing is qualified.
 
 ## Wave 10 client capabilities
 
-Status: In progress; OpenAPI 0.58.0, client primitives, SFrame v1 confidential media framing, and operator-gated server discovery/publication implemented.
+Status: In progress; OpenAPI 0.61.0, cardless SMB self-serve (`<= 5` seats), client primitives, SFrame v1 confidential media framing, KDE1 encrypted collaboration relay admission, operator-gated server KVKB1 key-backup publication, and client-local encrypted full-text search implemented.
 
-Merged work in #169, #177, #180, #182 and #183 implements refusal of plaintext fallback and
+Merged work in #169, #177, #180, #182, #183 and OpenAPI 0.60.0 implements refusal of plaintext fallback and
 room quarantine, worker-isolated attachment encryption, confidential Pages updates/snapshots,
-LiveKit media transforms, local worker SAS device comparison, and user-held `KVKB1` encrypted
-local key archives. These are cryptographic capabilities, not a claim that ordinary rooms,
-uploads, documents or calls are encrypted end to end in production. Standard channels and
-ordinary Yjs documents remain server-readable. The existing ordinary collaboration relay does
-not admit confidential `KDE1` envelopes. The operator-gated server directory now publishes
-current participating-device room discovery, consecutive accepted MLS epoch evidence and
-proof-bound public cross-signing/device-verification bundles (`apps/server/apps/confidential`).
-Key-package claims reject stale epochs. Server backup publication, native group/key integration
+LiveKit media transforms, local worker SAS device comparison, user-held `KVKB1` encrypted
+key archives with operator-gated server `KVKB1` publication and monotonic epoch rotation,
+epoch-bound `KDE1` encrypted collaboration relay admission in `apps/server/yjs_collab`,
+client-local encrypted full-text search (`kodera.espace-vault.v1` v2 `search_index`), and the
+three-tier E2EE conversation model (`1:1`/group DMs and private calls default-E2EE policy `Planned` while Web UI wiring completes,
+workspace channels opt-in confidential `🔒`, standard channels `#arrivals`/`#general` server-readable).
+Standard channels and ordinary Yjs documents remain server-readable by design. The operator-gated
+server directory publishes current participating-device room discovery, consecutive accepted MLS
+epoch evidence, proof-bound public cross-signing/device-verification bundles, and opaque `KVKB1`
+key backups (`apps/server/apps/confidential`).
+Key-package claims reject stale epochs. Native group/key integration
 and interoperable browser/codec qualification remain open. The
 [partner/guest channel slice](H2_3_BRIDGES_GUESTS_MLS.md) adds revisioned bilateral
 agreements, single-channel guest grants and live Matrix/media revocation checks; its required
@@ -44,10 +47,7 @@ preferences. The bounded logo and optional preferences use the existing tenant-s
 with conditional writes. Repeated S6 media socket initialization preserves the live listener;
 the worker owns stale-socket recovery under its exclusive lock.
 
-H1.4b's separate native VoIP lane adds PushKit/CallKit, Android ConnectionService and shared
-`kodera-rs` ring deduplication. Integration of that lane into this stack is Planned; the
-current tree contains the earlier native call coordinators. Device/provider qualification and
-signed distribution remain separate acceptance gates.
+H1.4b's native VoIP lane (`NativeVoIPRuntime` PushKit/CallKit on iOS, `NativeTelecomRuntime` `ConnectionService` on Android, and shared `kodera-rs` `CallRingMachine` deduplication) is merged in this tree alongside `MatrixRoomClient` + `MatrixTimelineReducer` and `KDV1` Keychain/Keystore session vaults. Live homeserver/provider qualification, WebRTC media SDK driver binding and signed distribution remain separate acceptance gates.
 
 ## Acceptance evidence
 
@@ -55,4 +55,4 @@ The executable acceptance lives beside the implementation: Synapse policy tests 
 
 ## Remaining scope
 
-Status: Client transport/group integration, physical radio qualification, remaining operator activation and universal encryption roadmap. Live native Matrix messaging, real native media adapters, compiled mobile Rust client bindings, native push runtime acceptance, durable browser/native group integration, operator activation of server discovery/epoch and cross-signing publication, server backup publication, interoperable LiveKit media qualification, persistent desktop OS keychain wiring, background iOS PushKit provisioning, two-device physical `mDNS + QUIC` / `BLE GATT` radio qualification, OS-notarised desktop installers, App Store / Google Play publication, backup/restore rehearsal, live payment activation and managed-fleet provisioning remain open; universal zero-knowledge end-to-end encryption by default across all rooms, documents, attachments and calls is planned in Track 7 of [`ROADMAP.md`](../../ROADMAP.md). The repository issues and GitHub Project remain the authoritative backlog.
+Status: Multi-device MLS group integration, physical radio qualification, remaining operator activation and universal encryption roadmap. Live Matrix homeserver/push provider qualification, live WebRTC native media SDK adapters, unmangled C-ABI dynamic Rust linking (held while `#![forbid(unsafe_code)]` is enforced), durable multi-device browser/native MLS group integration, operator activation of server discovery/epoch, cross-signing and key-backup publication, interoperable LiveKit media qualification, signed-installer desktop OS login-keychain qualification, background iOS PushKit provisioning, two-device physical `mDNS + QUIC` / `BLE GATT` radio qualification, OS-notarised desktop installers, App Store / Google Play publication, live production backup/restore cutover drills, live payment activation and managed-fleet provisioning remain open; universal zero-knowledge end-to-end encryption by default across all rooms, documents, attachments and calls is planned in Track 7 of [`ROADMAP.md`](../../ROADMAP.md). The repository issues and GitHub Project remain the authoritative backlog.

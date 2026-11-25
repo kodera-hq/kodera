@@ -74,12 +74,60 @@ def current_identity(
             user__enabled=True,
             user__deleted_at__isnull=True,
         )
+        .order_by("-organisation__is_default_community", "id")
         .first()
     )
     if identity is None:
         return None
     user = identity.user
     return PersonSnapshot(user.id, user.email, user.display_name), _snapshot(identity)
+
+
+def current_identity_for_organisation(
+    *, organisation_id: UUID, issuer: str, subject: str
+) -> tuple[PersonSnapshot, IdentitySnapshot] | None:
+    identity = (
+        Identity.objects.select_related("user")
+        .filter(
+            organisation_id=organisation_id,
+            issuer=issuer,
+            subject=subject,
+            enabled=True,
+            deleted_at__isnull=True,
+            user__enabled=True,
+            user__deleted_at__isnull=True,
+        )
+        .first()
+    )
+    if identity is None:
+        return None
+    user = identity.user
+    return PersonSnapshot(user.id, user.email, user.display_name), _snapshot(identity)
+
+
+def current_identities(
+    *, issuer: str, subject: str
+) -> tuple[tuple[PersonSnapshot, IdentitySnapshot], ...]:
+    rows = (
+        Identity.objects.select_related("user")
+        .filter(
+            issuer=issuer,
+            subject=subject,
+            organisation__isnull=False,
+            enabled=True,
+            deleted_at__isnull=True,
+            user__enabled=True,
+            user__deleted_at__isnull=True,
+        )
+        .order_by("-organisation__is_default_community", "id")
+    )
+    return tuple(
+        (
+            PersonSnapshot(identity.user.id, identity.user.email, identity.user.display_name),
+            _snapshot(identity),
+        )
+        for identity in rows
+    )
 
 
 def current_identity_by_id(*, identity_id: UUID) -> tuple[PersonSnapshot, IdentitySnapshot] | None:
@@ -136,6 +184,39 @@ def realm_subjects(*, organisation_id: UUID) -> tuple[tuple[UUID, str, bool], ..
         )
         .order_by("id")
         .values_list("user_id", "subject", "enabled", "deleted_at")
+    )
+
+
+def realm_subjects_by_organisation(
+    *, organisation_ids: tuple[UUID, ...]
+) -> tuple[tuple[UUID, UUID, str, bool], ...]:
+    """Every non-tombstoned identity row across `organisation_ids` as
+    `(organisation_id, user_id, subject, usable)` for shared-host member-set union."""
+    if not organisation_ids:
+        return ()
+    return tuple(
+        (org_id, user_id, subject, enabled and deleted_at is None)
+        for org_id, user_id, subject, enabled, deleted_at in Identity.objects.filter(
+            organisation_id__in=organisation_ids
+        )
+        .exclude(subject__startswith="erased:")
+        .order_by("id")
+        .values_list("organisation_id", "user_id", "subject", "enabled", "deleted_at")
+    )
+
+
+def all_identity_organisation_ids(*, issuer: str, subject: str) -> tuple[UUID, ...]:
+    """All organisation IDs ever bound to `(issuer, subject)`, including disabled/deleted rows."""
+    if not is_storable_subject(subject):
+        return ()
+    return tuple(
+        Identity.objects.filter(
+            issuer=issuer,
+            subject=subject,
+            organisation_id__isnull=False,
+        )
+        .order_by("id")
+        .values_list("organisation_id", flat=True)
     )
 
 
@@ -552,3 +633,44 @@ def count_residual_passport_for_user(
         )
         row = cursor.fetchone()
     return int(row[0]) if row is not None else 0
+
+
+def organisation_identity_exists(*, organisation_id: UUID, issuer: str, subject: str) -> bool:
+    """Return True if any identity row (even disabled or soft-deleted) exists in `organisation_id`."""
+    return Identity.objects.filter(
+        organisation_id=organisation_id, issuer=issuer, subject=subject
+    ).exists()
+
+
+def active_shared_issuer_identity_for_user(
+    *, user_id: UUID, issuer: str
+) -> tuple[PersonSnapshot, IdentitySnapshot] | None:
+    """Return an enabled customer identity of `user_id` on `issuer`, preferring default community."""
+    ident = (
+        Identity.objects.select_related("user")
+        .filter(
+            user_id=user_id,
+            issuer=issuer,
+            organisation__isnull=False,
+            enabled=True,
+            deleted_at__isnull=True,
+            user__enabled=True,
+            user__deleted_at__isnull=True,
+        )
+        .order_by("-organisation__is_default_community", "id")
+        .first()
+    )
+    if ident is None:
+        return None
+    user = ident.user
+    return PersonSnapshot(user.id, user.email, user.display_name), _snapshot(ident)
+
+
+def user_identity_organisation_ids(*, user_id: UUID) -> tuple[UUID, ...]:
+    """Return all distinct non-null `organisation_id` values ever bound to `user_id`."""
+    return tuple(
+        Identity.objects.filter(user_id=user_id, organisation_id__isnull=False)
+        .order_by("organisation_id")
+        .values_list("organisation_id", flat=True)
+        .distinct()
+    )

@@ -3,7 +3,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from .models import EngineAgentCredential, EngineKnownSubject
+from .models import EngineAgentCredential, EngineChannelSet, EngineKnownSubject
 
 
 def last_heartbeat(*, organisation_id: UUID, tenant_id: UUID) -> datetime | None:
@@ -31,3 +31,23 @@ def erased_user_ids(*, organisation_id: UUID, user_ids: set[UUID]) -> set[UUID]:
             erased_at__isnull=False,
         ).values_list("user_id", flat=True)
     )
+
+
+def known_organisation_subjects(*, organisation_id: UUID) -> set[str]:
+    """Every non-tombstoned subject ever recorded in `EngineKnownSubject` for `organisation_id`."""
+    return set(
+        EngineKnownSubject.objects.filter(organisation_id=organisation_id)
+        .exclude(subject__startswith="erased:")
+        .values_list("subject", flat=True)
+    )
+
+
+def latest_channel_set_had_moderation(*, organisation_id: UUID) -> bool:
+    """Whether the organisation's latest recorded `EngineChannelSet` carried `banned_subjects`."""
+    latest = (
+        EngineChannelSet.objects.filter(organisation_id=organisation_id)
+        .order_by("-revision")
+        .values_list("moderation", flat=True)
+        .first()
+    )
+    return bool(isinstance(latest, dict) and "banned_subjects" in latest)

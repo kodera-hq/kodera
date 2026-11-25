@@ -16,10 +16,21 @@ from django.db.models.fields import TextField
 from django.utils import timezone
 
 from apps.audit.services import record_workspace_resource_event
+from apps.e2ee.services import (
+    MAX_COLLAB_EPOCH,
+    confidential_channel_ids_for_workspace,
+    has_confidential_room,
+    is_ai_or_service_actor,
+    resolve_confidential_collab_epoch,
+)
 from apps.orgs.actor_selectors import TenantCaller
 from apps.workspaces.channel_sets import lock_workspace
 from apps.workspaces.moderation import RefusalError as WorkspaceRefusal, authorise_workspace
-from apps.workspaces.selectors import workspace_id_for
+from apps.workspaces.selectors import (
+    is_confidential_channel,
+    undeleted_channel_id,
+    workspace_id_for,
+)
 from core.api.pagination import clamp_page_rows
 from services.identity.access_tokens import VerifiedAccessToken
 
@@ -74,6 +85,16 @@ def role(principal: TenantCaller, verified: VerifiedAccessToken, document_id: UU
     return value
 
 
+def is_document_confidential(row: Document, organisation_id: UUID) -> bool:
+    if row.is_confidential:
+        return True
+    if row.channel_id is None:
+        return False
+    return is_confidential_channel(
+        channel_id=row.channel_id, organisation_id=organisation_id
+    ) or has_confidential_room(channel_id=row.channel_id, organisation_id=organisation_id)
+
+
 def resource(
     *,
     workspace_id: UUID,
@@ -88,6 +109,10 @@ def resource(
     permission = role(principal, verified, document_id) if row is not None else None
     if row is None or permission is None:
         raise RefusalError(404)
+    if is_document_confidential(row, principal.organisation_id) and is_ai_or_service_actor(
+        verified
+    ):
+        raise RefusalError(403)
     if edit and permission != "editor":
         raise RefusalError(403)
     return row, permission
@@ -235,6 +260,29 @@ def authorize_document(
 
 
 @transaction.atomic
+def authorize_collab_session(
+    *, verified: VerifiedAccessToken, organisation_id: UUID, document_id: UUID
+) -> None:
+    workspace_id, principal = read_context(verified, organisation_id)
+    row, _ = resource(
+        workspace_id=workspace_id,
+        principal=principal,
+        verified=verified,
+        document_id=document_id,
+    )
+    if is_document_confidential(row, organisation_id):
+        epoch = resolve_confidential_collab_epoch(
+            organisation_id=organisation_id,
+            membership_id=principal.membership_id,
+            identity_id=principal.identity_id,
+            channel_id=row.channel_id,
+            document_epoch=row.encryption_epoch,
+        )
+        if epoch is None or not 0 <= epoch <= MAX_COLLAB_EPOCH:
+            raise RefusalError(403)
+
+
+@transaction.atomic
 def create(
     *,
     verified: VerifiedAccessToken,
@@ -243,31 +291,81 @@ def create(
     parent_id: UUID | None,
     template_key: str | None,
     request_id: str,
+    channel_id: UUID | None = None,
+    is_confidential: bool = False,
+    encryption_epoch: int | None = None,
 ) -> dict[str, Any]:
     workspace_id, principal = write_context(verified, organisation_id)
     if template_key is not None and (
         not isinstance(template_key, str) or template_key not in TEMPLATES
     ):
         raise RefusalError(422)
-    row = Document(
-        workspace_id=workspace_id,
-        creator_id=principal.membership_id,
-        parent_id=parent_id,
-        title=title(name),
-    )
+    if encryption_epoch is not None and (
+        type(encryption_epoch) is not int or not 0 <= encryption_epoch <= MAX_COLLAB_EPOCH
+    ):
+        raise RefusalError(422)
+    parent_row: Document | None = None
     if parent_id is not None:
-        resource(
+        parent_row, _ = resource(
             workspace_id=workspace_id,
             principal=principal,
             verified=verified,
             document_id=parent_id,
             edit=True,
         )
+        if channel_id is not None and parent_row.channel_id != channel_id:
+            raise RefusalError(409)
+    resolved_channel_id = channel_id
+    if resolved_channel_id is None and parent_row is not None and parent_row.channel_id is not None:
+        resolved_channel_id = parent_row.channel_id
+    if (
+        resolved_channel_id is not None
+        and undeleted_channel_id(workspace_id=workspace_id, channel_id=resolved_channel_id) is None
+    ):
+        raise RefusalError(404)
+    parent_confidential = parent_row is not None and is_document_confidential(
+        parent_row, organisation_id
+    )
+    confidential = bool(is_confidential) or parent_confidential
+    if resolved_channel_id is not None and (
+        is_confidential_channel(channel_id=resolved_channel_id, organisation_id=organisation_id)
+        or has_confidential_room(channel_id=resolved_channel_id, organisation_id=organisation_id)
+    ):
+        confidential = True
+    if parent_row is not None and parent_confidential != confidential:
+        raise RefusalError(409)
+    resolved_epoch = encryption_epoch
+    if (
+        confidential
+        and resolved_epoch is None
+        and resolved_channel_id is None
+        and parent_row is not None
+    ):
+        resolved_epoch = parent_row.encryption_epoch
+    if confidential:
+        if is_ai_or_service_actor(verified) or template_key is not None:
+            raise RefusalError(403)
+    row = Document(
+        workspace_id=workspace_id,
+        creator_id=principal.membership_id,
+        parent_id=parent_id,
+        channel_id=resolved_channel_id,
+        title=title(name),
+        is_confidential=confidential,
+        encryption_epoch=resolved_epoch if confidential else None,
+    )
     final = parents(workspace_id)
     final[row.id] = parent_id
     validate_tree(final)
-    result = engine.transform(markdown=TEMPLATES[template_key] if template_key else "")
-    row.markdown = result.markdown
+    if confidential:
+        row.markdown = ""
+        snapshot_bytes = b""
+        doc_links: tuple[str, ...] = ()
+    else:
+        result = engine.transform(markdown=TEMPLATES[template_key] if template_key else "")
+        row.markdown = result.markdown
+        snapshot_bytes = result.snapshot
+        doc_links = result.links
     try:
         row.save(force_insert=True)
     except IntegrityError as error:
@@ -276,10 +374,9 @@ def create(
         if is_guard(error):
             raise
         raise RefusalError(409) from None
-    DocumentSnapshot.objects.create(
-        document=row, sequence=0, head_sequence=0, state=result.snapshot
-    )
-    links(row, result.links)
+    DocumentSnapshot.objects.create(document=row, sequence=0, head_sequence=0, state=snapshot_bytes)
+    if not confidential:
+        links(row, doc_links)
     resolve_incoming(row)
     audit(principal, row, "created", request_id)
     return wire(row, "editor")
@@ -324,18 +421,24 @@ def patch(
         or changes.keys() - {"title", "parentId", "markdown"}
     ):
         raise RefusalError(422)
+    confidential = is_document_confidential(row, organisation_id)
     if "parentId" in changes:
         parent = changes["parentId"]
         if parent is not None:
             if not isinstance(parent, UUID):
                 raise RefusalError(422)
-            resource(
+            parent_row, _ = resource(
                 workspace_id=workspace_id,
                 principal=principal,
                 verified=verified,
                 document_id=parent,
                 edit=True,
             )
+            if (
+                is_document_confidential(parent_row, organisation_id) != confidential
+                or parent_row.channel_id != row.channel_id
+            ):
+                raise RefusalError(409)
         final = parents(workspace_id)
         final[row.id] = parent
         validate_tree(final)
@@ -343,8 +446,10 @@ def patch(
     old_title = row.title
     if "title" in changes:
         row.title = title(changes["title"])
+    if confidential and "markdown" in changes and changes["markdown"] != "":
+        raise RefusalError(403)
     transformed = None
-    if "markdown" in changes and changes["markdown"] != row.markdown:
+    if not confidential and "markdown" in changes and changes["markdown"] != row.markdown:
         if not isinstance(changes["markdown"], str) or any(
             0xD800 <= ord(char) <= 0xDFFF for char in changes["markdown"]
         ):
@@ -356,7 +461,15 @@ def patch(
         row.markdown = transformed.markdown
     row.revision += 1
     try:
-        row.save(update_fields=["parent", "title", "markdown", "revision", "updated_at"])
+        row.save(
+            update_fields=[
+                "parent",
+                "title",
+                "markdown",
+                "revision",
+                "updated_at",
+            ]
+        )
     except IntegrityError as error:
         from apps.workspaces.quotas import is_guard
 
@@ -401,11 +514,23 @@ def delete(
 @transaction.atomic
 def collab_session(
     *, verified: VerifiedAccessToken, organisation_id: UUID, document_id: UUID, request_id: str
-) -> dict[str, str]:
+) -> dict[str, Any]:
     workspace_id, principal = read_context(verified, organisation_id)
     row, permission = resource(
         workspace_id=workspace_id, principal=principal, verified=verified, document_id=document_id
     )
+    confidential = is_document_confidential(row, organisation_id)
+    epoch: int | None = None
+    if confidential:
+        epoch = resolve_confidential_collab_epoch(
+            organisation_id=organisation_id,
+            membership_id=principal.membership_id,
+            identity_id=principal.identity_id,
+            channel_id=row.channel_id,
+            document_epoch=row.encryption_epoch,
+        )
+        if epoch is None or not 0 <= epoch <= MAX_COLLAB_EPOCH:
+            raise RefusalError(403)
     endpoint = getattr(settings, "KODERA_COLLAB_PUBLIC_URL", None)
     from django.core.exceptions import ImproperlyConfigured
 
@@ -418,10 +543,22 @@ def collab_session(
     except ImproperlyConfigured:
         raise RefusalError(503, "service-unavailable") from None
     token, expires = tickets.mint(
-        principal=principal, verified=verified, document_id=row.id, role=permission
+        principal=principal,
+        verified=verified,
+        document_id=row.id,
+        role=permission,
+        confidential=confidential,
+        epoch=epoch,
     )
     audit(principal, row, "collab_created", request_id)
-    return {"wsUrl": endpoint, "token": token, "expiresAt": expires, "role": permission}
+    return {
+        "wsUrl": endpoint,
+        "token": token,
+        "expiresAt": expires,
+        "role": permission,
+        "confidential": confidential,
+        "epoch": epoch,
+    }
 
 
 def cursor_salt(principal: TenantCaller, verified: VerifiedAccessToken, surface: str) -> str:
@@ -477,6 +614,13 @@ def list_documents(
         .annotate(_permission=role_expression(principal, verified, "id"))
         .filter(_permission__isnull=False)
     )
+    if is_ai_or_service_actor(verified):
+        excluded_channels = confidential_channel_ids_for_workspace(
+            workspace_id=workspace_id, organisation_id=organisation_id
+        )
+        rows = rows.filter(is_confidential=False)
+        if excluded_channels:
+            rows = rows.exclude(channel_id__in=excluded_channels)
     if parent_id is not None:
         rows = rows.filter(parent_id=parent_id)
     if after is not None:
@@ -563,9 +707,12 @@ def search(
     if not tokens:
         return {"data": [], "has_more": False, "next_cursor": None}
     tsquery = " & ".join(token + ":*" for token in tokens[:16])
+    excluded_channels = confidential_channel_ids_for_workspace(
+        workspace_id=workspace_id, organisation_id=organisation_id
+    )
     channels = []
     for channel_id, (access, name, topic) in resolve_all(workspace_id).items():
-        if access.lifecycle not in {"active", "archived"}:
+        if access.lifecycle not in {"active", "archived"} or channel_id in excluded_channels:
             continue
         if may_view(
             access,
@@ -582,7 +729,14 @@ def search(
             visible_channels AS (SELECT * FROM jsonb_to_recordset(%s::jsonb) AS c(id uuid,title text,content text)),
             results AS (
               SELECT d.id,'document'::text AS kind,d.title,left(d.markdown,1000) AS excerpt
-              FROM docs_document d,q WHERE d.workspace_id=%s AND d.deleted_at IS NULL AND to_tsvector('simple',coalesce(d.title,'') || ' ' || coalesce(d.markdown,''))@@q.value
+              FROM docs_document d,q WHERE d.workspace_id=%s AND d.deleted_at IS NULL AND NOT d.is_confidential
+              AND (d.channel_id IS NULL OR NOT (d.channel_id = ANY(%s::uuid[])))
+              AND NOT EXISTS (
+                SELECT 1 FROM docs_document p
+                WHERE p.id = d.parent_id
+                  AND (p.is_confidential OR (p.channel_id IS NOT NULL AND p.channel_id = ANY(%s::uuid[])))
+              )
+              AND to_tsvector('simple',coalesce(d.title,'') || ' ' || coalesce(d.markdown,''))@@q.value
               AND docs_document_role(d.id,%s,%s,%s,%s,%s) IS NOT NULL
               UNION ALL SELECT c.id,'channel'::text,c.title,left(c.content,1000) FROM visible_channels c,q
               WHERE to_tsvector('simple',coalesce(c.title,'') || ' ' || coalesce(c.content,''))@@q.value)
@@ -592,6 +746,8 @@ def search(
                 tsquery,
                 json.dumps(channels),
                 workspace_id,
+                sorted(excluded_channels),
+                sorted(excluded_channels),
                 principal.organisation_id,
                 principal.membership_id,
                 principal.identity_id,
@@ -757,6 +913,14 @@ def reconcile_template_document(
                 .order_by("id")
                 .first()
             )
+        if (
+            channel_id is not None
+            and (
+                is_confidential_channel(channel_id=channel_id, organisation_id=organisation_id)
+                or has_confidential_room(channel_id=channel_id, organisation_id=organisation_id)
+            )
+        ) or (row is not None and is_document_confidential(row, organisation_id)):
+            raise RefusalError(403)
         created = False
         if row is None:
             if transformed is None:

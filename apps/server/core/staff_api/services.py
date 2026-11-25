@@ -459,7 +459,9 @@ def _iso_from_json_timestamp(raw: object) -> str | None:
     return None
 
 
-def read_sre(caller: VerifiedStaffRequest) -> dict[str, object]:
+def collect_sre_summary(*, staff_identity_id: UUID | None = None) -> dict[str, object]:
+    """Read-only centralized SRE, WarmPool, FinOps and internal SLO snapshot (`< 100 ms`)."""
+    now = datetime.now(UTC)
     with connection.cursor() as cursor:
         cursor.execute("SELECT status, COUNT(*) FROM jobs_job GROUP BY status")
         job_status_counts = {str(status): int(count) for status, count in cursor.fetchall()}
@@ -489,8 +491,98 @@ def read_sre(caller: VerifiedStaffRequest) -> dict[str, object]:
             for r in cursor.fetchall()
         ]
 
-        cursor.execute("SELECT staff_read_outbox_sre_summary(%s)", [caller.identity_id])
-        outbox_row = cursor.fetchone()
+        if staff_identity_id is not None:
+            cursor.execute("SELECT staff_read_outbox_sre_summary(%s)", [staff_identity_id])
+            outbox_row = cursor.fetchone()
+        else:
+            cursor.execute("SELECT status, COUNT(*) FROM outbox_outboxdelivery GROUP BY status")
+            direct_counts = {str(s): int(c) for s, c in cursor.fetchall()}
+            cursor.execute(
+                """
+                SELECT
+                  id, organisation_id, category, changes_realm, status,
+                  operation_ref, started_at, created_at
+                FROM outbox_outboxdelivery
+                WHERE status = 'needs_reconciliation'
+                ORDER BY created_at DESC, id DESC
+                LIMIT 200
+                """
+            )
+            direct_reconciling = [
+                {
+                    "id": str(r[0]),
+                    "organisation_id": str(r[1]),
+                    "category": str(r[2]),
+                    "changes_realm": bool(r[3]),
+                    "status": str(r[4]),
+                    "operation_ref": str(r[5]) if r[5] is not None else None,
+                    "started_at": _iso(r[6]),
+                    "created_at": _iso(r[7]) or "",
+                }
+                for r in cursor.fetchall()
+            ]
+            outbox_row = (
+                {
+                    "status_counts": direct_counts,
+                    "reconciling_deliveries": direct_reconciling,
+                },
+            )
+
+        cursor.execute(
+            """
+            SELECT state, COUNT(*)
+            FROM ee_billing_warm_pool_slots
+            WHERE profile_ref = 'sovereign-pro2-s-v1'
+            GROUP BY state
+            """
+        )
+        wp_counts = {str(state): int(count) for state, count in cursor.fetchall()}
+
+        cursor.execute(
+            """
+            SELECT COALESCE(ct.vm_shape,
+              CASE t.capacity_tier_code
+                WHEN 'S' THEN 'PRO2-S'
+                WHEN 'M' THEN 'PRO2-M'
+                ELSE 'PRO2-L'
+              END
+            ), COUNT(*)
+            FROM tenancy_tenant t
+            LEFT JOIN billing_capacitytier ct ON ct.code = t.capacity_tier_code
+            JOIN orgs_organisation o ON o.id = t.organisation_id
+            WHERE t.status IN ('provisioning', 'ready', 'active', 'upgrading', 'maintenance')
+              AND o.is_default_community = FALSE
+              AND o.shared_realm = FALSE
+            GROUP BY 1
+            """
+        )
+        raw_tier_counts = {str(shape): int(count) for shape, count in cursor.fetchall()}
+
+        cursor.execute(
+            """
+            SELECT COUNT(*)
+            FROM engine_intents_credential c
+            JOIN tenancy_tenant t ON t.id = c.tenant_ref
+            WHERE c.state = 'active'
+              AND c.revoked_at IS NULL
+              AND t.status = 'active'
+              AND (c.last_seen_at IS NULL OR c.last_seen_at < clock_timestamp() - interval '180 seconds')
+            """
+        )
+        stale_row = cursor.fetchone()
+        stale_agents_count = int(stale_row[0]) if stale_row is not None else 0
+
+        cursor.execute(
+            """
+            SELECT COUNT(DISTINCT o.id)
+            FROM billing_order o
+            JOIN billing_invoice i ON i.order_id = o.id
+            WHERE o.state IN ('placed', 'awaiting_payment')
+              AND (i.state = 'overdue' OR (i.state = 'issued' AND i.due_at IS NOT NULL AND i.due_at < clock_timestamp()))
+            """
+        )
+        overdue_row = cursor.fetchone()
+        unpaid_overdue_orders_count = int(overdue_row[0]) if overdue_row is not None else 0
 
     raw_outbox = outbox_row[0] if outbox_row else None
     if isinstance(raw_outbox, str):
@@ -522,6 +614,45 @@ def read_sre(caller: VerifiedStaffRequest) -> dict[str, object]:
         if isinstance(item, dict)
     ]
 
+    outbox_lag_seconds = 0
+    for delivery in reconciling_deliveries:
+        created_iso = delivery.get("created_at")
+        if isinstance(created_iso, str) and created_iso:
+            try:
+                created_dt = datetime.fromisoformat(created_iso)
+                lag = max(0, int((now - created_dt).total_seconds()))
+                outbox_lag_seconds = max(outbox_lag_seconds, lag)
+            except ValueError:
+                continue
+
+    warm_pool = {
+        "max_total": 3,
+        "provisioning": wp_counts.get("provisioning", 0),
+        "ready": wp_counts.get("ready", 0),
+        "claimed": wp_counts.get("claimed", 0),
+        "unhealthy": wp_counts.get("unhealthy", 0),
+    }
+    sovereign_tiers = {
+        "PRO2-S": raw_tier_counts.get("PRO2-S", 0) + raw_tier_counts.get("vm-s", 0),
+        "PRO2-M": raw_tier_counts.get("PRO2-M", 0) + raw_tier_counts.get("vm-m", 0),
+        "PRO2-L": (
+            raw_tier_counts.get("PRO2-L", 0)
+            + raw_tier_counts.get("vm-l", 0)
+            + raw_tier_counts.get("vm-xl", 0)
+        ),
+    }
+    stuck_jobs_count = (
+        job_status_counts.get("failed", 0)
+        + job_status_counts.get("orphaned", 0)
+        + job_status_counts.get("needs_reconciliation", 0)
+    )
+    if stuck_jobs_count > 0 or stale_agents_count > 0 or warm_pool["unhealthy"] > 0:
+        slo_status = "degraded"
+    elif outbox_lag_seconds > 300 or unpaid_overdue_orders_count > 0:
+        slo_status = "attention"
+    else:
+        slo_status = "healthy"
+
     return {
         "jobs": {
             "status_counts": job_status_counts,
@@ -531,7 +662,23 @@ def read_sre(caller: VerifiedStaffRequest) -> dict[str, object]:
             "status_counts": outbox_status_counts,
             "reconciling_deliveries": reconciling_deliveries,
         },
+        "warm_pool": warm_pool,
+        "finops_guard": {
+            "sovereign_tiers": sovereign_tiers,
+            "min_margin_bps_floor": 4400,
+        },
+        "slo_indicators": {
+            "stale_agents_count": stale_agents_count,
+            "stuck_jobs_count": stuck_jobs_count,
+            "outbox_lag_seconds": outbox_lag_seconds,
+            "unpaid_overdue_orders_count": unpaid_overdue_orders_count,
+            "status": slo_status,
+        },
     }
+
+
+def read_sre(caller: VerifiedStaffRequest) -> dict[str, object]:
+    return collect_sre_summary(staff_identity_id=caller.identity_id)
 
 
 def _safe_staff_display_label(display_name: str | None, subject: str) -> str:

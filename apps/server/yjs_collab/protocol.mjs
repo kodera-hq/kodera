@@ -5,8 +5,111 @@ import * as Y from 'yjs'
 import * as sync from 'y-protocols/sync'
 import { MAX_STATE, Refused } from './engine.mjs'
 
+const utf8Fatal = new TextDecoder('utf-8', { fatal: true })
+export const KDE1_MAGIC = Object.freeze([0x4b, 0x44, 0x45, 0x31])
+
 export class ViewerWrite extends Refused {
   constructor() { super('viewer state update refused') }
+}
+export class ConfidentialRefused extends Refused {
+  constructor(message = 'confidential collaboration frame refused') { super(message) }
+}
+function validConfidentialSender(value) {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 256) return false
+  for (const ch of value) {
+    const point = ch.codePointAt(0)
+    if (point < 32 || (point >= 0xd800 && point <= 0xdfff)) return false
+  }
+  return true
+}
+export function isKde1Magic(bytes) {
+  return (
+    bytes instanceof Uint8Array &&
+    bytes.byteLength >= 4 &&
+    bytes[0] === 0x4b &&
+    bytes[1] === 0x44 &&
+    bytes[2] === 0x45 &&
+    bytes[3] === 0x31
+  )
+}
+export function parseKde1Header(bytes) {
+  if (!(bytes instanceof Uint8Array) || bytes.byteLength < 36 || bytes.byteLength > MAX_STATE + 2048) {
+    throw new ConfidentialRefused('confidential frame out of bounds')
+  }
+  if (!isKde1Magic(bytes)) {
+    throw new ConfidentialRefused('unsealed or non-KDE1 frame refused in confidential room')
+  }
+  const metadataSize = (bytes[4] << 8) | bytes[5]
+  if (metadataSize < 1 || metadataSize > 1024 || bytes.byteLength < 6 + metadataSize + 29) {
+    throw new ConfidentialRefused('confidential frame metadata or AEAD payload out of bounds')
+  }
+  let encoded, meta
+  try {
+    encoded = utf8Fatal.decode(bytes.subarray(6, 6 + metadataSize))
+    meta = JSON.parse(encoded)
+  } catch {
+    throw new ConfidentialRefused('malformed confidential frame metadata')
+  }
+  if (!meta || typeof meta !== 'object' || Array.isArray(meta)) {
+    throw new ConfidentialRefused('invalid confidential metadata container')
+  }
+  if (
+    typeof meta.epoch !== 'number' ||
+    !Number.isSafeInteger(meta.epoch) ||
+    meta.epoch < 0 ||
+    meta.epoch > 0xffffffff ||
+    !validConfidentialSender(meta.sender) ||
+    typeof meta.sequence !== 'number' ||
+    !Number.isSafeInteger(meta.sequence) ||
+    meta.sequence < 1 ||
+    (meta.kind !== 0 && meta.kind !== 1 && meta.kind !== 2 && meta.kind !== 3) ||
+    typeof meta.ratchet !== 'number' ||
+    !Number.isSafeInteger(meta.ratchet) ||
+    meta.ratchet < 0 ||
+    meta.ratchet > 0xffffffff
+  ) {
+    throw new ConfidentialRefused('confidential metadata header invariant failed')
+  }
+  const canonical = JSON.stringify({
+    epoch: meta.epoch,
+    sender: meta.sender,
+    sequence: meta.sequence,
+    kind: meta.kind,
+    ratchet: meta.ratchet,
+  })
+  if (canonical !== encoded) {
+    throw new ConfidentialRefused('non-canonical confidential metadata JSON')
+  }
+  if (meta.kind === 3 && meta.sender !== 'checkpoint') {
+    throw new ConfidentialRefused('confidential checkpoint must carry checkpoint sender')
+  }
+  if (meta.kind !== 3 && meta.sender === 'checkpoint') {
+    throw new ConfidentialRefused('confidential live frame cannot carry checkpoint sender')
+  }
+  if (meta.kind === 1 && bytes.byteLength > 8192 + 2048) {
+    throw new ConfidentialRefused('confidential awareness frame exceeds limit')
+  }
+  if (meta.kind === 2 && bytes.byteLength > 65536 + 2048) {
+    throw new ConfidentialRefused('confidential state vector frame exceeds limit')
+  }
+  return meta
+}
+export function confidentialFrame(bytes, role, expectedEpoch) {
+  const meta = parseKde1Header(bytes)
+  if (meta.epoch !== expectedEpoch) {
+    throw new ConfidentialRefused('confidential metadata epoch mismatch')
+  }
+  if ((meta.kind === 0 || meta.kind === 3) && role !== 'editor') {
+    throw new ViewerWrite()
+  }
+  return {
+    kind: meta.kind,
+    epoch: meta.epoch,
+    sender: meta.sender,
+    sequence: meta.sequence,
+    ratchet: meta.ratchet,
+    envelope: new Uint8Array(bytes),
+  }
 }
 export function frame(bytes, role) {
   if (!(bytes instanceof Uint8Array) || bytes.byteLength > MAX_STATE + 32) throw new Refused('frame exceeds limit')

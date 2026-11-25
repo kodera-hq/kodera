@@ -62,7 +62,7 @@ fun OrganisationEntryScreen(
     onCancel: () -> Unit,
     onSelect: (String) -> Unit,
     signIn: SignInPanel = SignInPanel(),
-    onSignIn: (issuer: String) -> Unit = {},
+    onSignIn: (issuer: String, organisationId: String?, organisationSlug: String?) -> Unit = { _, _, _ -> },
     onCancelSignIn: () -> Unit = {},
 ) {
     val palette = LocalKoderaPalette.current
@@ -162,8 +162,11 @@ fun OrganisationEntryScreen(
                     }
                     else -> Unit
                 }
-                SignInSection(signIn, DiscoveryPresentation.of(state.discovery).signInIssuer,
-                    onSignIn = { issuer -> keyboard?.hide(); focusManager.clearFocus(); onSignIn(issuer) },
+                val found = (DiscoveryPresentation.of(state.discovery) as? DiscoveryPresentation.Found)?.organisation
+                SignInSection(signIn, found?.issuer,
+                    onSignIn = { issuer, orgId, orgSlug -> keyboard?.hide(); focusManager.clearFocus(); onSignIn(issuer, orgId, orgSlug) },
+                    selectedOrganisationId = found?.organisationId,
+                    selectedOrganisationSlug = found?.organisationSlug,
                     onCancel = onCancelSignIn)
             }
         }
@@ -181,7 +184,14 @@ data class SignInPanel(
 )
 
 @Composable
-private fun SignInSection(panel: SignInPanel, selectedIssuer: String?, onSignIn: (String) -> Unit, onCancel: () -> Unit) {
+private fun SignInSection(
+    panel: SignInPanel,
+    selectedIssuer: String?,
+    onSignIn: (String, String?, String?) -> Unit,
+    selectedOrganisationId: String? = null,
+    selectedOrganisationSlug: String? = null,
+    onCancel: () -> Unit,
+) {
     val palette = LocalKoderaPalette.current
     Column(verticalArrangement = Arrangement.spacedBy(KoderaTokens.Space.s3)) {
         if (panel.signingIn) {
@@ -196,13 +206,13 @@ private fun SignInSection(panel: SignInPanel, selectedIssuer: String?, onSignIn:
             }
         } else if (panel.canSignIn) {
             if (selectedIssuer != null) {
-                Button(onClick = { onSignIn(selectedIssuer) }, modifier = Modifier.fillMaxWidth().heightIn(min = KoderaTokens.Space.s12)) {
+                Button(onClick = { onSignIn(selectedIssuer, selectedOrganisationId, selectedOrganisationSlug) }, modifier = Modifier.fillMaxWidth().heightIn(min = KoderaTokens.Space.s12)) {
                     Text(stringResource(R.string.signin_action), style = NativeTypography.emphasis)
                 }
                 Text(stringResource(R.string.signin_hint), style = NativeTypography.caption, color = palette.ink3)
             }
             panel.developmentIssuer?.let { issuer ->
-                OutlinedButton(onClick = { onSignIn(issuer) }, modifier = Modifier.fillMaxWidth().heightIn(min = KoderaTokens.Space.s12)) {
+                OutlinedButton(onClick = { onSignIn(issuer, null, null) }, modifier = Modifier.fillMaxWidth().heightIn(min = KoderaTokens.Space.s12)) {
                     Text(stringResource(R.string.signin_development), style = NativeTypography.emphasis, color = palette.accentInk)
                 }
                 Text(stringResource(R.string.signin_development_hint), style = NativeTypography.caption, color = palette.ink3)

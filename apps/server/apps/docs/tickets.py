@@ -26,9 +26,22 @@ def encode(value: bytes) -> str:
     return base64.urlsafe_b64encode(value).decode().rstrip("=")
 
 
+MAX_COLLAB_EPOCH = 0xFFFFFFFF
+
+
 def mint(
-    *, principal: TenantCaller, verified: VerifiedAccessToken, document_id: UUID, role: str
+    *,
+    principal: TenantCaller,
+    verified: VerifiedAccessToken,
+    document_id: UUID,
+    role: str,
+    confidential: bool = False,
+    epoch: int | None = None,
 ) -> tuple[str, str]:
+    if confidential and (type(epoch) is not int or not 0 <= epoch <= MAX_COLLAB_EPOCH):
+        raise RefusalError(403)
+    if not confidential and epoch is not None:
+        raise RefusalError(503, "service-unavailable")
     now = timezone.now().replace(microsecond=0)
     expires = now + timedelta(seconds=300)
     claims = {
@@ -40,6 +53,8 @@ def mint(
         "issuer": verified.issuer,
         "subject": verified.subject,
         "role": role,
+        "confidential": bool(confidential),
+        "epoch": epoch if confidential else None,
         "issued": int(now.timestamp()),
         "expires": int(expires.timestamp()),
         "nonce": str(uuid4()),

@@ -41,11 +41,18 @@ import { Banner } from '../../ui/Banner/Banner'
 import { loadFreshOrderContext, OrderOwnershipUnavailable } from './freshOwner'
 import { useStatusSummaryQuery } from '../home/queries'
 import type { OrderStep } from './draft'
-import { ORDER_STEPS } from './draft'
+import { emptyDraft, furthestStep, ORDER_STEPS } from './draft'
 import { OrderWizard } from './OrderWizard'
 import type { OrderRole } from './PlanStep'
-import { latestEditableId, readEditable, ownerTuple } from './editableStorage'
-import { furthestStep } from './draft'
+import { latestEditableId, ownerTuple, readEditable, saveEditable } from './editableStorage'
+
+export interface OrderRouteSearch {
+  pack?: 'sovereign'
+}
+
+export function parseOrderRouteSearch(raw: Record<string, unknown>): OrderRouteSearch {
+  return raw.pack === 'sovereign' ? { pack: 'sovereign' } : {}
+}
 
 function isOrderStep(value: string): value is OrderStep {
   return (ORDER_STEPS as readonly string[]).includes(value)
@@ -54,6 +61,7 @@ function isOrderStep(value: string): value is OrderStep {
 function OrderStepScreen() {
   const { t } = useTranslation()
   const { org, draftId, step } = orderStepRoute.useParams()
+  const search = orderRoute.useSearch()
   const navigate = useNavigate()
   const {
     orderContext: { me, membership, owner },
@@ -100,10 +108,12 @@ function OrderStepScreen() {
         role={role}
         signatoryName={me.display_name ?? me.email}
         signatoryEmail={me.email}
+        {...(search.pack === 'sovereign' ? { requestedPackCode: 'sovereign' as const } : {})}
         onNavigate={(nextStep, nextDraftId) => {
           void navigate({
             to: '/$org/order/$draftId/$step',
             params: { org, draftId: nextDraftId ?? draftId, step: nextStep },
+            search: search.pack === 'sovereign' ? { pack: 'sovereign' } : {},
           })
         }}
         onGoToStatus={() => {
@@ -138,6 +148,7 @@ export function OrderGate() {
 export const orderRoute = createRoute({
   getParentRoute: () => orgRoute,
   path: 'order',
+  validateSearch: parseOrderRouteSearch,
   component: OrderGate,
   pendingComponent: SessionLoading,
   pendingMs: 0,
@@ -201,9 +212,39 @@ function OwnershipUnavailable() {
 export const orderIndexRoute = createRoute({
   getParentRoute: () => orderRoute,
   path: '/',
-  beforeLoad: ({ params, context }) => {
+  beforeLoad: ({ params, context, search }) => {
     const owner = context.orderContext.owner
-    const draftId = latestEditableId(owner) ?? crypto.randomUUID()
+    const existingId = latestEditableId(owner)
+    if (search.pack === 'sovereign') {
+      if (existingId !== undefined) {
+        const existing = readEditable(existingId, owner)
+        if (existing.status === 'held') {
+          throw redirect({
+            to: '/$org/order/$draftId/$step',
+            params: { org: params.org, draftId: existingId, step: 'plan' },
+            search: { pack: 'sovereign' },
+            replace: true,
+          })
+        }
+        if (existing.status === 'saved' && existing.draft.packCode === 'sovereign') {
+          throw redirect({
+            to: '/$org/order/$draftId/$step',
+            params: { org: params.org, draftId: existingId, step: furthestStep(existing.draft) },
+            search: { pack: 'sovereign' },
+            replace: true,
+          })
+        }
+      }
+      const freshId = crypto.randomUUID()
+      saveEditable({ ...emptyDraft(), draftId: freshId, packCode: 'sovereign' }, owner)
+      throw redirect({
+        to: '/$org/order/$draftId/$step',
+        params: { org: params.org, draftId: freshId, step: 'plan' },
+        search: { pack: 'sovereign' },
+        replace: true,
+      })
+    }
+    const draftId = existingId ?? crypto.randomUUID()
     const recovered = readEditable(draftId, owner)
     const step = recovered.status === 'saved' ? furthestStep(recovered.draft) : 'plan'
     throw redirect({

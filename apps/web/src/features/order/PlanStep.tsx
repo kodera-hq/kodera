@@ -91,8 +91,9 @@ export function PlanStep({
   const offerCopy = billingCopy(i18n.resolvedLanguage)
   const legendId = useId()
 
+  const sovereignIntent = draft.packCode === 'sovereign'
   const packsQuery = usePacksQuery()
-  const tiersQuery = useCapacityTiersQuery()
+  const tiersQuery = useCapacityTiersQuery(sovereignIntent ? 'sovereign' : undefined)
   const plansQuery = usePlansQuery()
   const packs = packsQuery.data ?? []
   const plans = plansQuery.data ?? []
@@ -104,8 +105,11 @@ export function PlanStep({
     [tiersQuery.data]
   )
 
-  const basePack = basePackOf(packs)
-  const docsPack = docsPackOf(packs)
+  const sovereignPack = sovereignIntent
+    ? packs.find((pack) => pack.available && pack.code === 'sovereign')
+    : undefined
+  const basePack = sovereignPack ?? basePackOf(packs)
+  const docsPack = sovereignPack ?? docsPackOf(packs)
   const separateDocsPack = docsPack?.code === basePack?.code ? undefined : docsPack
   // Both packs' prices, both periods: a card may be drawn from either pack (a plan that
   // includes Docs is sold under the Docs pack), and ticking Docs then draws from the cache.
@@ -365,7 +369,7 @@ export function PlanStep({
         <div>
           <h1 className="text-xl font-semibold text-c-ink">{t('console.order.plan.title')}</h1>
           <p className="mt-1 text-sm text-c-ink-3">{t('console.order.plan.subtitle')}</p>
-          {basePack?.code === UNIFIED_WORKSPACE_PACK_CODE ? (
+          {basePack?.code === UNIFIED_WORKSPACE_PACK_CODE || basePack?.code === 'sovereign' ? (
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <span className="text-xs font-semibold text-c-ink-3">
                 {offerCopy.includedAppsLabel}:
@@ -543,7 +547,8 @@ export function PlanStep({
                             max: range.max,
                           }),
                           capacityText,
-                          ...(basePack?.code === UNIFIED_WORKSPACE_PACK_CODE
+                          ...(basePack?.code === UNIFIED_WORKSPACE_PACK_CODE ||
+                          basePack?.code === 'sovereign'
                             ? [
                                 offerCopy.seatsIncluded(tier.seats_included),
                                 offerCopy.storageIncluded(

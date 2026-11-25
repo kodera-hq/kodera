@@ -1,8 +1,8 @@
 {
   "repository": "kodera-hq/kodera",
-  "ref": "blob:143cf14528a4c6c9098cba0e22b30095808ac5b6",
-  "blob": "143cf14528a4c6c9098cba0e22b30095808ac5b6",
+  "ref": "blob:88358d30a75e9b6ac93b30070f89438167ed2d62",
+  "blob": "88358d30a75e9b6ac93b30070f89438167ed2d62",
   "path": "packages/api-contract/core-api.openapi.yaml",
-  "version": "0.58.0",
-  "sha256": "6f7ba4047e99b3e6f1fcec65f2f874a5d61176ba53626d95f7420d8cbb20913f"
+  "version": "0.61.0",
+  "sha256": "2263ded8a391b691c0d33037f552affa1848f0ddfb27560bd3b11121d6fc895a"
 }

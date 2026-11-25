@@ -1,68 +1,82 @@
-# kodera-server (`apps/server`)
+# `kodera-server` (`apps/server`)
 
-Status: Customer API handlers, persistence and job-runner mechanisms are implemented in source. The deployment API profile exposes the operations below; production infrastructure provisioning remains gated by an empty worker registry and its recorded gaps. Source and local acceptance do not establish a production deployment or complete customer-release qualification.
+Status: Active (`AGPL-3.0-or-later`, OpenAPI `0.61.0`)
 
-Control-plane API and job-processing code for **Kodera**. The architecture covers organisations, plans, subscriptions, tenants, domains, jobs and audit, with intended infrastructure execution on Scaleway `fr-par`. The current production worker registers no job kind, so that infrastructure integration remains gated.
+`apps/server` is the control-plane API, real-time Yjs collaboration relay, LiveKit room-access sidecar, Matrix tenant-agent reconciler, proximity check-in broker, and background job queue of the `kodera-hq/kodera` monorepo. Server architectural decisions live in [`docs/adr/`](docs/adr/README.md); cross-stack trust boundaries and database role separation are documented in [`docs/security/THREAT_MODEL_AND_CRYPTOGRAPHY.md`](../../docs/security/THREAT_MODEL_AND_CRYPTOGRAPHY.md) and [`docs/security/README.md`](docs/security/README.md).
 
-Control-plane API, worker, and tenant agent (`apps/server`) in the Kodera monorepo. Architectural decisions live in [`docs/adr/`](docs/adr/).
+## Runtime Architecture & Role Isolation
 
-The GitHub repository is `kodera-hq/kodera`. Workspace clone directories such as `kodera-server` and `deployment operations` retain their existing names. Hosts, realms, API audiences and contract identifiers also retain their technical names until separately migrated; the product name alone does not change them.
+```mermaid
+flowchart TB
+  subgraph Edge["HTTPS / WSS Ingress"]
+    API["Core HTTP API (Django 6.1 + DRF)<br/>DB Role: kodera_api"]
+    Collab["yjs_collab WebSocket Service<br/>wss://.../documents/collab · DB Role: kodera_collab"]
+    RA["room_access Sidecar<br/>Isolated LIVEKIT_API_SECRET"]
+  end
 
-## What this repo is
+  subgraph Workers["Internal Daemons & Workers (No Public Ingress)"]
+    TA["tenant_agent<br/>Pulls /agent/v1/commands"]
+    Prox["apps.proximity.broker_rpc<br/>RAM-Only /run/proximity/broker.sock"]
+    Ret["Retention & Privacy Worker<br/>DB Role: kodera_retention_worker"]
+    Prov["Provisioning Worker (worker/runner.py)<br/>Idempotent Lease Queue"]
+  end
 
-- **Core API** (Django 6.1 + DRF + Postgres): implemented identity/discovery, organisation intake/bootstrap/owner claims, membership and workspace administration. The [deployment settings](config/settings/deploy.py) select the [customer routes](config/customer_urls.py), consumed by the Console, native clients and admitted operators. The broader system-of-record architecture includes tenant state, domains, releases, backups, probes, jobs and audit.
-- **Provisioning worker** (separate process, no inbound network): a [runner](worker/runner.py) with database-backed queue leases and step dispatch. Its [production registry](worker/registry.py) is empty, with five recorded gaps and provider binding still open. OpenTofu, Ansible and per-job provider credentials describe the intended infrastructure boundary; production provisioning is not enabled by the existing runner.
-- **Agent API**: implemented engine command [pull, acknowledgement and result handlers](apps/engine_intents/api/views.py). The broader heartbeat/vitals/command contract remains in the [Agent API contract](contracts/agent-api.openapi.yaml); handler presence does not establish rollout to tenant VMs.
-- **Billing and legal**: implemented [catalogue, order, subscription, invoice, credit-note and payment-link operations](apps/billing/api/views.py), plus [legal documents and DPA operations](apps/legal/api/views.py). Provider configuration and live payment acceptance remain separate from these source capabilities.
+  subgraph Backing["State & Downstream Engines"]
+    PG[("PostgreSQL 17<br/>4 Non-Superuser Roles + SECURITY DEFINER")]
+    Syn["Matrix Synapse + kodera-synapse-policy"]
+    LK["LiveKit SFU"]
+    EE["ee/ Dynamic Middleware<br/>(Loaded Only Under KODERA_EDITION=enterprise)"]
+  end
 
-## What this repo must never contain
-
-- An infrastructure credential reachable from the API process. Organisation-level Scaleway keys, Keycloak master-realm rights, SSH keys, and age identities exist only in the worker, loaded per job from Scaleway Secret Manager (ADR-0003).
-- Customer personal data in logs, error reports, or fixtures.
-- Tenant secrets in plaintext (ADR-0003).
-- A tenant profile. Profiles (compose + `x-kodera` extension) live in `deployment profiles`, vendored by commit SHA, rendered in a sandboxed Jinja environment.
-- A direct call from the console to Keycloak, Scaleway, or a tenant VM. Everything goes through the Core API and a job.
-
-## Boundaries
-
-```text
-kodera-console ──HTTPS──▶ Core API ──▶ Postgres job queue ──▶ Provisioning worker ──▶ Scaleway / Keycloak / tenant VMs
-                                 ▲                                        │
-                                 └──────────── agent heartbeats ◀─────────┘ (from every tenant VM)
+  API --> PG
+  API <--> Prox
+  Collab --> PG
+  RA --> Syn & LK
+  TA --> API & Syn
+  Ret --> PG
+  Prov --> PG
+  EE -. "Zero Static Imports" .-> API
 ```
 
-- Every mutation of infrastructure is a `Job` with an idempotency key, a lease, ordered steps, and an `AuditEvent`, committed in the same transaction as the desired-state change (ADR-0004).
-- Tenant admins authenticate against their organisation's Keycloak realm; staff use the `kodera-staff` realm. The API never holds master-realm rights; delegated admin uses a per-realm `realm-management` service account.
-- No Kubernetes (ADR-0002).
+## Core Boundaries & Non-Negotiable Invariants
 
-## Data model
+- **Zero Infrastructure Credentials in the API (`SRV-ADR-0003`):** [`config/environment.py`](config/environment.py) inspects `os.environ` before Django settings load and refuses startup if cloud/IaC credentials (`SCW_*`, `AWS_*`, `TF_*`, `SSH_*`, `SOPS_*`, `AGE_*`, `KUBECONFIG`) or unadmitted secret variables exist.
+- **Deny-By-Default Container Context:** [`.dockerignore`](.dockerignore) defaults to `**` and admits an explicit runtime file allowlist, excluding operator commands, migration scripts, test suites, and `ee/` from the Community container image.
+- **PostgreSQL Four-Role Split:**
+  - `kodera_api` ([`core/db/api_writer_role.py`](core/db/api_writer_role.py), verified at startup by [`core/db/api_database_boundary.py`](core/db/api_database_boundary.py)): explicit table/column grants, append-only audit tables, and narrow `SECURITY DEFINER` ports (including `billing_issue_draft_invoice`).
+  - `kodera_collab` ([`yjs_collab/database-boundary.mjs`](yjs_collab/database-boundary.mjs)): scoped strictly to `docs_document*` tables and 4 `SECURITY DEFINER` routines (`docs_collab_fence`, `docs_collab_audit`, `docs_redeem_collaboration_ticket`, `docs_collab_snapshot_admit`), with zero read access to `identity_*`, `orgs_*`, `billing_*`, or `e2ee_*`.
+  - `kodera_retention_worker` & `kodera_retention_admission` ([`core/db/retention_worker_role.py`](core/db/retention_worker_role.py)): separate operator admission from automated statutory GDPR Art. 17 / fiscal retention purges.
+- **IsolatedTenant Profiles & Provisioning:** Tenant deployment profiles (`schemas/x-kodera.schema.json`) live in the private operations repository rather than inside `apps/server`. Every infrastructure state transition is recorded atomically as a `Job` + `AuditEvent` (`SRV-ADR-0004`); the open-source [`worker/registry.py`](worker/registry.py) registers no cloud provider handlers by default, and dedicated Sovereign warm-pool claims (`SOVEREIGN_POOL_WATERMARKS`, `<= 3` pre-warmed cells) execute purely against PostgreSQL state.
 
-One Django app per area under [`apps/`](apps/): `orgs` (organisations, memberships, invitations, owner claims), `identity` (users, identities, staff roles), `billing` (plans, packs, prices, orders, invoices, credit notes, payments), `legal` (documents, DPA, acceptances), `tenancy` (tenants), `workspaces` (Espace categories, channels, resource policies), `engine_intents`, `jobs`, `outbox` and `audit`. Hosts, IP addresses, domains, releases, backups and probes are not modelled yet.
+## Domain Applications & Services
 
-## Contracts owned here
+- **Identity, Discovery & Organisations (`apps/identity`, `apps/orgs`, `apps/tenancy`):** Offline JWT verification (`KODERA_AUTH_TRUST`), `.well-known` realm discovery, `Kodera Passport` PKCE cross-workspace magic-link sign-in, shared-realm vs per-organisation realm binding, invitations, reusable invite links, and GDPR Art. 17/20 export and erasure (`PrivateVolume` `O_NOFOLLOW`).
+- **Workspaces, Self-Serve & Governance (`apps/workspaces`, `apps/engine_intents`, `tenant_agent`, `room_access`):** Cardless shared-realm SMB workspace creation (`POST /api/v1/workspaces/self-serve`, `<= 5` seats, `< 5 s`), channel/category trees, moderation, bilateral `PartnerChannelAgreement` bridges, `single_channel_guest` grants, transactional `WorkspaceQuota` enforcement, Matrix intent reconciliation ([`tenant_agent/README.md`](tenant_agent/README.md)), and isolated LiveKit token minting ([`room_access/README.md`](room_access/README.md)).
+- **Collaborative Pages, Collections & Media (`apps/docs`, `yjs_collab`, `apps/media`, `apps/notifications`):** Document trees/roles, single-use collaboration tickets, binary Yjs sync + `KDE1` confidential collaboration admission ([`yjs_collab/protocol.mjs`](yjs_collab/protocol.mjs)), typed Collections (`Table`, `Kanban`, `List`), checksum-bound S3 attachments, pinned-IP SSRF-guarded link previews, sanitized RIFF/WebP custom emojis, scheduled messages, reminders, notification inbox, and payload-free Web Push.
+- **Confidentiality & Proximity (`apps/e2ee`, `apps/confidential`, `apps/proximity`):** HPKE KeyPackage & opaque envelope relays, participating-device room discovery, consecutive MLS epoch provisioning, proof-bound cross-signing bundles, opaque `KVKB1` key-backup capsules, and the RAM-only `/run/proximity/broker.sock` 15-minute HKDF epoch-lease broker (not an emergency service).
+- **Sovereign AI, Calendar & Posture (`apps/ai_gateway`, `apps/calendar`, `apps/extensions`, `apps/support`):** Default-off `ai_gateway` (`KODERA_AI_GATEWAY_ENABLED=false`, 3-tier opt-in, EU `MistralAdapter` / self-hosted / AEAD `ByomAdapter`, 8-language ephemeral translation, multi-party consent-gated call captions, triple-layer `403` confidential refusal), CalDAV sync & zero-PII `.ics` booking, outbound extension runtime v2 (`kodera.widget.v1` relay, marketplace, `Slack`/`Discord`/`Notion` importers), `0–100` posture advisor, and support tickets.
+- **Billing, Legal & Zero-Trust Staff API (`apps/billing`, `apps/legal`, `core/staff_api`, `apps/audit`):** Offer catalogue (`PRO2-S`/`M`/`L` Sovereign tiers), DPA generation, gap-free Factur-X `380`/`381` PDF/A-3 + EN 16931 XML ledger, EU OSS 27-state VAT & VIES evidence, Community boosts, Stripe Connect VIP passes & DAC7 `DPI2` reporting, verified Stripe `mode=payment` webhook settlement (with automated Sovereign Factur-X issuance & WarmPool claim/cold fallback), `/staff/v1/*` zero-content diagnostics (`GET /staff/v1/read/sre`), and operator `manage.py sre_status [--json]`.
+- **Clean-Room Enterprise Middleware (`core/api/edition.py`, `core/api/ee_billing.py`):** Dynamically mounts [`ee/`](../../ee/README.md) (`SAML 2.0`, `SCIM 2.0`, `Ed25519` audit exports, `ee/billing/` & FinOps) strictly when `KODERA_EDITION=enterprise`.
 
-- **Core and Agent APIs**: [`contracts/core-api.openapi.yaml`](contracts/core-api.openapi.yaml) and [`contracts/agent-api.openapi.yaml`](contracts/agent-api.openapi.yaml); see the [contract guide](contracts/README.md).
-- **Tenant profile extension** `x-kodera` schema: owned by `deployment profiles` at `schemas/x-kodera.schema.json`, referenced by commit SHA rather than copied here (see the [contract guide](contracts/README.md)).
+## Contracts Owned Here
 
-## Development
+- **Customer & Agent OpenAPI 3.1 Contracts:** [`contracts/core-api.openapi.yaml`](contracts/core-api.openapi.yaml) (`0.61.0`), [`contracts/agent-api.openapi.yaml`](contracts/agent-api.openapi.yaml) (`0.11.0`), and [`contracts/staff-api.openapi.yaml`](contracts/staff-api.openapi.yaml) (`0.2.0`); see [`contracts/README.md`](contracts/README.md).
 
-- Python 3.12, Django 6.1, DRF, a Postgres-backed job queue built here (`apps.jobs`), OpenTofu, Ansible. Node is not needed here. The frozen toolchain, with a justification per entry, is [`docs/dev/BASELINE.md`](docs/dev/BASELINE.md).
-- `uv sync --python 3.12 --locked` then `.venv/bin/python dev/accept_runtime.py` builds and tests uniquely owned disposable PostgreSQL/API containers. The development `app` profile serves diagnostics only through [its URL configuration](config/urls.py). The [separate worker](worker/__main__.py) verifies its boundary and database access, then exits without claiming work while its production registry is empty. See [`dev/README.md`](dev/README.md) and the [runtime acceptance contract](docs/dev/RUNTIME_BOOTSTRAP.md).
-- `make lint`, `make typecheck`, `make test`, `make precommit`.
-- CI: lint, typecheck, tests on Postgres, gitleaks, actionlint, conftest policy on rendered compose, `makemigrations --check`. Gates that guard code which does not exist yet are visibly skipped, never silently green. Nothing merges to `main` without a green run; [`AGENTS.md`](AGENTS.md) names the pull requests that need more than that.
-- Environments: `staging` (with its own Keycloak) before production. `lab` is a tenant, not a staging.
+## Local Development & Verification
 
-## Conventions
+Toolchain baseline and runtime bootstrap details live in [`docs/dev/BASELINE.md`](docs/dev/BASELINE.md), [`docs/dev/RUNTIME_BOOTSTRAP.md`](docs/dev/RUNTIME_BOOTSTRAP.md), [`dev/README.md`](dev/README.md), and [`AGENTS.md`](AGENTS.md). Because `SRV-ADR-0003` refuses ambient SSH/SOPS/cloud variables, run Python checks inside a clean environment:
 
-See [`AGENTS.md`](AGENTS.md). English everywhere except user-facing product copy. Feature branch + pull request, never a direct commit to `main`. One-line commit messages on the why. No attribution trailers.
+```bash
+cd apps/server
+uv sync --python 3.12 --locked
 
-## Delivery scope
+# Lint, strict mypy typecheck, authorization matrix & Wave/OpenAPI surface self-tests
+env -i PATH="$PATH" HOME="$HOME" uv run ruff check .
+env -i PATH="$PATH" HOME="$HOME" uv run mypy .
+env -i PATH="$PATH" HOME="$HOME" uv run python scripts/ci/check-authz-matrix.py
+env -i PATH="$PATH" HOME="$HOME" uv run python contracts/check_wave_surfaces.py --selftest
 
-The local runtime bootstrap establishes health and database behavior within its
-stated acceptance scope. Implemented customer API and job mechanisms have their
-own source, specifications and bounded acceptance; their presence does not
-establish live provider integration, production provisioning or complete
-collaboration readiness. The production worker serves no kind while its registry
-and recorded gaps remain as documented.
-The first customer release remains gated on the complete approved product
-scope, not on this runtime or an internal demonstration.
+# PostgreSQL test suite & Yjs collaboration license/unit tests
+env -u SOPS_AGE_KEY_FILE -u SSH_AUTH_SOCK uv run pytest
+(cd yjs_collab && node --test)
+```

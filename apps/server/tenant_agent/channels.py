@@ -81,14 +81,16 @@ POWER_LEVELS = "m.room.power_levels"
 JOIN_RULES = "m.room.join_rules"
 
 
-def native_public(channel: dict[str, Any], synapse: Synapse) -> bool:
-    """Only the canonical community namespace permits local native joins.
+def native_public(channel: dict[str, Any], synapse: Synapse, *, shared_realm: bool = False) -> bool:
+    """Only the canonical community's own namespace permits local native joins.
 
-    A deny override, restricted audience or archive always restores invitation-only access.
-    Customer homeservers retain their existing membership convergence.
+    Shared-realm PME organisations hosted on the community homeserver, any deny override, a
+    restricted audience or an archive always enforce invitation-only room access. Customer
+    homeservers retain their existing membership convergence.
     """
     return (
-        synapse.server_name.startswith("community.")
+        not shared_realm
+        and synapse.server_name.startswith("community.")
         and channel["audience"] == "all"
         and not channel["denied"]
         and not channel["archived"]
@@ -103,6 +105,8 @@ class ChannelSet:
     banned_subjects: frozenset[str] = frozenset()
     muted_subjects: tuple[tuple[str, str], ...] = ()
     moderation_present: bool = False
+    organisation_id: str | None = None
+    shared_realm: bool = False
 
 
 def room_members(channel: dict[str, Any], all_members: frozenset[str]) -> list[str]:
@@ -134,6 +138,16 @@ def parse(payload: dict[str, Any]) -> ChannelSet | None:
     """The set, or None when it breaks the contract: then nothing is touched."""
     revision, channels = payload.get("revision"), payload.get("channels")
     everyone = payload.get("all_members")
+    raw_org_id = payload.get("organisation_id")
+    if raw_org_id is not None and (
+        not isinstance(raw_org_id, str) or not _UUID.fullmatch(raw_org_id)
+    ):
+        return None
+    raw_shared_realm = payload.get("shared_realm", False)
+    if type(raw_shared_realm) is not bool:
+        return None
+    if raw_shared_realm and raw_org_id is None:
+        return None
     if not isinstance(revision, int) or isinstance(revision, bool) or revision < 1:
         return None
     if not isinstance(channels, list) or len(channels) > MAX_CHANNELS:
@@ -256,6 +270,8 @@ def parse(payload: dict[str, Any]) -> ChannelSet | None:
         frozenset(banned),
         tuple(expirations),
         "banned_subjects" in payload or "muted_subjects" in payload,
+        raw_org_id,
+        raw_shared_realm,
     )
 
 
@@ -352,14 +368,15 @@ class _Wanted:
 class _Owed:
     """The audio rooms owing a call check (see `State.calls_owed`), saved only when they change."""
 
-    def __init__(self, state: Any) -> None:
+    def __init__(self, state: Any, *, scope_id: str | None = None) -> None:
         self._state = state
-        self.rooms: set[str] = state.calls_owed()
+        self._scope_id = scope_id
+        self.rooms: set[str] = state.calls_owed(scope_id=scope_id)
         self._saved = set(self.rooms)
 
     def save(self) -> None:
         if self.rooms != self._saved:
-            self._state.keep_calls_owed(self.rooms)
+            self._state.keep_calls_owed(self.rooms, scope_id=self._scope_id)
             self._saved = set(self.rooms)
 
 
@@ -376,12 +393,26 @@ class Channels:
         self._synapse, self._livekit, self._state = synapse, livekit, state
         self._workers = max(1, workers)
         self._partner_channels = dict(partner_channels)
-        # Who the last application could not join for want of an account. In memory only: the
-        # agent re-applies the set in force when it starts, which finds them again.
-        self.waiting: frozenset[str] = frozenset()
+        # Who the last application per scope could not join for want of an account. In memory only:
+        # the agent re-applies the sets in force when it starts, which finds them again.
+        self._waiting_by_scope: dict[str | None, frozenset[str]] = {}
         # This pass's active member users → their realm subjects: the only users joined.
         self._subjects: dict[str, str] = {}
         self._barred: set[str] = set()  # erased accounts, never joined again
+
+    @property
+    def waiting(self) -> frozenset[str]:
+        if not self._waiting_by_scope:
+            return frozenset()
+        return frozenset().union(*self._waiting_by_scope.values())
+
+    @waiting.setter
+    def waiting(self, users: Iterable[str]) -> None:
+        frozen = frozenset(users)
+        self._waiting_by_scope = {None: frozen} if frozen else {}
+
+    def scope_waiting(self, scope_id: str | None) -> bool:
+        return bool(self._waiting_by_scope.get(scope_id))
 
     def _accounts_owed(self, channel_set: ChannelSet) -> None:
         """Who `_join` may join, and make an account for (`Synapse.create_account`): a member the
@@ -422,12 +453,19 @@ class Channels:
 
     def apply(self, channel_set: ChannelSet, *, full: bool = False) -> Applied:
         result = Applied()
+        scope_id = channel_set.organisation_id
         self._accounts_owed(channel_set)
-        rooms = self._state.channel_rooms()
-        prints = self._state.channel_fingerprints()
+        rooms = self._state.channel_rooms(scope_id=scope_id)
+        prints = self._state.channel_fingerprints(scope_id=scope_id)
         channels = channel_set.channels
         wanted = {
-            c["channel_id"]: self._wanted(c, channel_set.all_members, channel_set) for c in channels
+            c["channel_id"]: self._wanted(
+                c,
+                channel_set.all_members,
+                channel_set,
+                mapped_room=rooms.get(c["channel_id"]),
+            )
+            for c in channels
         }
         failed: dict[str, None] = {}  # in order, once each
 
@@ -447,9 +485,9 @@ class Channels:
         for channel_id in stale:
             del prints[channel_id]
         if stale:
-            self._state.keep_channel_fingerprints(prints)
+            self._state.keep_channel_fingerprints(prints, scope_id=scope_id)
         written = dict(prints)
-        owed = _Owed(self._state)
+        owed = _Owed(self._state, scope_id=scope_id)
         deleted = sorted(set(rooms) - set(wanted))
 
         def fresh(channel_id: str) -> bool:
@@ -494,6 +532,7 @@ class Channels:
                         owed,
                         result,
                         channel_set if channel_set.moderation_present else None,
+                        scope_id=scope_id,
                     )
                 except SynapseUnavailableError:
                     for left in channels[index:]:
@@ -516,13 +555,18 @@ class Channels:
             )
         result.failed = list(failed)
         # A pass that stopped early did not reach every channel: whoever was waiting still is.
-        self.waiting = frozenset(
-            result.waiting | (self.waiting if result.unavailable else frozenset())
+        prev_waiting = self._waiting_by_scope.get(scope_id, frozenset())
+        next_waiting = frozenset(
+            result.waiting | (prev_waiting if result.unavailable else frozenset())
         )
+        if next_waiting:
+            self._waiting_by_scope[scope_id] = next_waiting
+        else:
+            self._waiting_by_scope.pop(scope_id, None)
         owed.rooms &= set(rooms.values())  # a room no longer recorded owes nothing
-        self._state.keep_channel_rooms(rooms)
+        self._state.keep_channel_rooms(rooms, scope_id=scope_id)
         if prints != written:
-            self._state.keep_channel_fingerprints(prints)
+            self._state.keep_channel_fingerprints(prints, scope_id=scope_id)
         owed.save()
         return result
 
@@ -550,12 +594,16 @@ class Channels:
         channel: dict[str, Any],
         all_members: frozenset[str],
         moderation: ChannelSet | None = None,
+        *,
+        mapped_room: str | None = None,
     ) -> _Wanted:
         synapse = self._synapse
         users = frozenset(
             u for s in room_members(channel, all_members) if (u := synapse.user_id(s)) is not None
         )
-        mapped_room = self._state.channel_rooms().get(channel["channel_id"])
+        if mapped_room is None:
+            scope_id = moderation.organisation_id if moderation is not None else None
+            mapped_room = self._state.channel_rooms(scope_id=scope_id).get(channel["channel_id"])
         guest_users = frozenset(
             grant["user_id"]
             for grant in channel.get("guest_grants", [])
@@ -583,7 +631,16 @@ class Channels:
         requested = self._partner_channels.get(channel["channel_id"], ())
         partners = requested if (federation.eligible(channel) and confidential is None) else ()
         blocked = bool(requested and not partners)
-        public = native_public(channel, synapse) and not requested and confidential is None
+        is_shared_realm = bool(moderation and moderation.shared_realm)
+        public = (
+            native_public(
+                channel,
+                synapse,
+                shared_realm=is_shared_realm,
+            )
+            and not requested
+            and confidential is None
+        )
         member_invites = (
             channel.get("allow_member_invites", bool(partners))
             and confidential is None
@@ -596,7 +653,7 @@ class Channels:
             allow_federated_invites=bool(partners),
             federation_servers=list(partners),
         )
-        if partners:
+        if partners or is_shared_realm:
             governance["local_members"] = sorted(users)
         if moderation is not None and moderation.moderation_present:
             governance["banned"] = sorted(
@@ -786,6 +843,8 @@ class Channels:
         owed: _Owed,
         result: Applied,
         moderation: ChannelSet | None = None,
+        *,
+        scope_id: str | None = None,
     ) -> str:
         synapse = self._synapse
         channel_id = channel["channel_id"]
@@ -837,7 +896,7 @@ class Channels:
             if rooms.get(channel_id) != room_id:
                 # Recorded at once: a deleted channel's room is then emptied even if this pass stops.
                 rooms[channel_id] = room_id
-                self._state.keep_channel_rooms(rooms)
+                self._state.keep_channel_rooms(rooms, scope_id=scope_id)
         elif wanted.federation_blocked:
             raise EngineError(
                 "partner opt-in requires an unrestricted non-read-only active text channel"

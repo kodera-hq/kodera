@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Kodera Agent API
-  version: 0.10.0
+  version: 0.11.0
   summary: The contract every tenant VM implements, spoken by the agent and served by kodera-server.
   description: |
     Contract 2 of the architecture strategy (Appendix A). The agent runs on every tenant VM and is
@@ -902,6 +902,13 @@ components:
           maxItems: 500
           description: '`engine_set_channel_members`: every channel of the organisation''s workspace that is not deleted. `all_members` plus every channel''s `members`, `denied`, `exempt` and `speak_exempt` number at most 10 000.'
           items: { $ref: '#/components/schemas/ChannelMembership' }
+        organisation_id:
+          type: string
+          format: uuid
+          description: '`engine_set_channel_members`: on a shared-realm host credential, the scoped organisation whose channel rooms, revision watermark and moderation projection this set governs, isolated from the host''s own workspace and sibling organisations. Omitted when the command targets the credential''s own organisation.'
+        shared_realm:
+          type: boolean
+          description: '`engine_set_channel_members`: true when the channel set belongs to a shared-realm SMB organisation hosted on the canonical community instance, requiring invitation-only room access (`join_rule: invite`) rather than native public joins. Omitted on dedicated-instance and host-native commands.'
       examples:
         - { to_version: '1.5', safety_snapshot: true }
         - { mode: 'on' }

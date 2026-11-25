@@ -42,15 +42,20 @@ public final class OrganisationChannelsLoader {
         let id = UUID()
         let accepted: Bool
         let realm: String
+        var preferredOrganisationId: String?
+        var preferredSlug: String?
         let requester: CoreRequester?
         let fetchMember: (@Sendable () async -> MeOutcome)?
         let fetchWorkspace: (@Sendable (String) async -> WorkspaceOutcome)?
         var terminal: TerminalStrength = .none
         var ended = false
         var warned = false
-        init(realm: String, requester: CoreRequester?, accepted: Bool = true, fetchMember: (@Sendable () async -> MeOutcome)?,
+        init(realm: String, preferredOrganisationId: String? = nil, preferredSlug: String? = nil,
+             requester: CoreRequester?, accepted: Bool = true, fetchMember: (@Sendable () async -> MeOutcome)?,
              fetchWorkspace: (@Sendable (String) async -> WorkspaceOutcome)?) {
-            self.accepted = accepted; self.realm = realm; self.requester = requester
+            self.accepted = accepted; self.realm = realm
+            self.preferredOrganisationId = preferredOrganisationId; self.preferredSlug = preferredSlug
+            self.requester = requester
             self.fetchMember = fetchMember; self.fetchWorkspace = fetchWorkspace
         }
         var context: SignOutContext { SignOutContext(owner: id, requester: requester) }
@@ -115,14 +120,25 @@ public final class OrganisationChannelsLoader {
 
     /// A genuine accepted SDK session: retire the previous terminal owner, even with equal realm/public fields.
     public func enter(realm: String, requester: CoreRequester?,
+                      preferredOrganisationId: String? = nil,
+                      preferredSlug: String? = nil,
                       fetchMember: (@Sendable () async -> MeOutcome)? = nil,
                       fetchWorkspace: (@Sendable (String) async -> WorkspaceOutcome)? = nil) {
         invalidateRead()
         owner?.requester?.invalidate()
         authentication = nil
-        owner = Owner(realm: realm, requester: requester, fetchMember: fetchMember, fetchWorkspace: fetchWorkspace)
+        owner = Owner(realm: realm, preferredOrganisationId: preferredOrganisationId,
+                      preferredSlug: preferredSlug, requester: requester,
+                      fetchMember: fetchMember, fetchWorkspace: fetchWorkspace)
         readsClosed = false
         loadMember()
+    }
+
+    public func selectOrganisation(id: String? = nil, slug: String? = nil) {
+        guard let owner, owner.accepted, owner.terminal == .none else { return }
+        owner.preferredOrganisationId = id
+        owner.preferredSlug = slug
+        if foreground && !readsClosed { loadMember() }
     }
 
     public func setForeground(_ active: Bool) {
@@ -191,8 +207,11 @@ public final class OrganisationChannelsLoader {
         loading = false
         switch outcome {
         case let .member(profile):
-            let matching = profile.organisations.filter { $0.realm == owner.realm }
-            let organisation = matching.count == 1 ? matching[0] : nil
+            let organisation = profile.organisation(
+                realm: owner.realm,
+                preferredOrganisationId: owner.preferredOrganisationId,
+                preferredSlug: owner.preferredSlug
+            )
             loadedMemberProfile = profile
             loadedOrganisation = organisation
             state.member = .loaded(name: profile.displayName ?? profile.email, organisation: organisation?.name)

@@ -164,6 +164,9 @@ CASES = (
         for operation, view, method, kwargs in (
             ("discoverConfidentialRoom", "discovery", "get", {**ORG, "room_id": ROW}),
             ("publishDeviceVerificationBundle", "bundles", "post", ORG),
+            ("getConfidentialKeyBackup", "key_backup", "get", ORG),
+            ("publishConfidentialKeyBackup", "key_backup", "post", ORG),
+            ("discardConfidentialKeyBackup", "key_backup", "delete", ORG),
         )
     ),
     Case(
@@ -574,7 +577,7 @@ CASES = (
         ("apps.orgs.api.privacy.admit_privacy_request",),
         error_args=("identity-unknown",),
     ),
-    # The extension routes: owner/admin admission resolves the principal before any handler runs.
+    # The extension routes: owner/admin or member admission resolves the principal before any handler runs.
     *(
         Case(
             operation,
@@ -591,6 +594,151 @@ CASES = (
             ("listCoexistenceBridges", "coexistence_bridges", "get", ORG),
             ("createCoexistenceBridge", "coexistence_bridges", "post", ORG),
             ("revokeCoexistenceBridge", "coexistence_bridge", "delete", {**ORG, "bridge_id": ROW}),
+            ("publishMarketplaceExtension", "marketplace_listings", "post", ORG),
+            (
+                "installMarketplaceExtension",
+                "marketplace_install",
+                "post",
+                {**ORG, "listing_id": ROW},
+            ),
+        )
+    ),
+    *(
+        Case(
+            operation,
+            EXTENSIONS + "." + view,
+            method,
+            kwargs,
+            "apps.extensions.wire.ExtensionIdentityUnknownError",
+            (EXTENSIONS_HTTP + "._admit_member",),
+            verifier=EXTENSIONS_HTTP,
+        )
+        for operation, view, method, kwargs in (
+            ("listMarketplaceExtensions", "marketplace_listings", "get", ORG),
+            (
+                "checkoutMarketplaceExtension",
+                "marketplace_checkout",
+                "post",
+                {**ORG, "listing_id": ROW},
+            ),
+            (
+                "invokeChannelWidgetAction",
+                "channel_widget_actions",
+                "post",
+                {**ORG, "channel_id": ROW, "widget_id": "incident-card"},
+            ),
+        )
+    ),
+    # The H4.2 workspace experience routes (emojis, scheduled messages, reminders, preferences).
+    *(
+        Case(
+            operation,
+            "apps.workspaces.api.experience." + view,
+            method,
+            kwargs,
+            "apps.workspaces.moderation.RefusalError",
+            at,
+            error_args=(403, "identity-unknown"),
+        )
+        for operation, view, method, kwargs, at in (
+            (
+                "listWorkspaceCustomEmojis",
+                "emojis",
+                "get",
+                ORG,
+                ("apps.workspaces.experience.list_emojis",),
+            ),
+            (
+                "createWorkspaceCustomEmoji",
+                "emojis",
+                "post",
+                ORG,
+                ("apps.workspaces.experience.authorize_experience",),
+            ),
+            (
+                "deleteWorkspaceCustomEmoji",
+                "emoji_detail",
+                "delete",
+                {**ORG, "emoji_id": ROW},
+                ("apps.workspaces.experience.delete_emoji",),
+            ),
+            (
+                "getWorkspaceCustomEmojiBlob",
+                "emoji_blob",
+                "get",
+                {**ORG, "emoji_id": ROW},
+                ("apps.workspaces.experience.get_emoji_blob",),
+            ),
+            (
+                "listScheduledMessages",
+                "scheduled_messages",
+                "get",
+                ORG,
+                ("apps.workspaces.experience.list_scheduled_messages",),
+            ),
+            (
+                "createScheduledMessage",
+                "scheduled_messages",
+                "post",
+                ORG,
+                ("apps.workspaces.experience.authorize_experience",),
+            ),
+            (
+                "updateScheduledMessage",
+                "scheduled_message_detail",
+                "patch",
+                {**ORG, "scheduled_message_id": ROW},
+                ("apps.workspaces.experience.update_scheduled_message",),
+            ),
+            (
+                "cancelScheduledMessage",
+                "scheduled_message_detail",
+                "delete",
+                {**ORG, "scheduled_message_id": ROW},
+                ("apps.workspaces.experience.cancel_scheduled_message",),
+            ),
+            (
+                "listPersonalReminders",
+                "reminders",
+                "get",
+                ORG,
+                ("apps.workspaces.experience.list_reminders",),
+            ),
+            (
+                "createPersonalReminder",
+                "reminders",
+                "post",
+                ORG,
+                ("apps.workspaces.experience.authorize_experience",),
+            ),
+            (
+                "updatePersonalReminder",
+                "reminder_detail",
+                "patch",
+                {**ORG, "reminder_id": ROW},
+                ("apps.workspaces.experience.update_reminder",),
+            ),
+            (
+                "deletePersonalReminder",
+                "reminder_detail",
+                "delete",
+                {**ORG, "reminder_id": ROW},
+                ("apps.workspaces.experience.delete_reminder",),
+            ),
+            (
+                "getMyWorkspacePreferences",
+                "my_preferences",
+                "get",
+                ORG,
+                ("apps.workspaces.experience.get_my_preferences",),
+            ),
+            (
+                "updateMyWorkspacePreferences",
+                "my_preferences",
+                "patch",
+                ORG,
+                ("apps.workspaces.experience.update_my_preferences",),
+            ),
         )
     ),
     # The workspace AI routes: `authorize` resolves the caller before any handler or prepare runs.
@@ -612,8 +760,18 @@ CASES = (
             ("putMemberAiConsent", "consent", "put", ORG),
             ("transcribeVoiceNote", "transcribe", "post", {**ORG, "attachment_id": ROW}),
             ("translateChannelMessage", "translate_message", "post", {**ORG, "channel_id": ROW}),
-            ("getLiveCallCaptionSession", "call_captions_session", "get", {**ORG, "channel_id": ROW}),
-            ("updateLiveCallCaptionSession", "call_captions_session", "post", {**ORG, "channel_id": ROW}),
+            (
+                "getLiveCallCaptionSession",
+                "call_captions_session",
+                "get",
+                {**ORG, "channel_id": ROW},
+            ),
+            (
+                "updateLiveCallCaptionSession",
+                "call_captions_session",
+                "post",
+                {**ORG, "channel_id": ROW},
+            ),
             ("transcribeLiveCallChunk", "call_captions_chunks", "post", {**ORG, "channel_id": ROW}),
         )
     ),
@@ -645,7 +803,11 @@ CASES = (
         )
         for operation, view, target in (
             ("createWorkspaceBoostCheckout", "boost_checkout", "start_boost_checkout_for_caller"),
-            ("startCreatorConnectOnboarding", "connect_onboarding", "start_connect_onboarding_for_caller"),
+            (
+                "startCreatorConnectOnboarding",
+                "connect_onboarding",
+                "start_connect_onboarding_for_caller",
+            ),
             ("createVipTierOffer", "vip_tiers", "create_vip_tier_for_caller"),
             ("createVipPassCheckout", "vip_pass_checkout", "start_vip_pass_checkout_for_caller"),
         )
@@ -818,6 +980,7 @@ def test_every_customer_operation_that_resolves_a_principal_is_listed():
         # answers identity-unknown (docs/specs/INVITATIONS.md §3).
         "acceptInvitation",
         "previewInvitation",
+        "createSelfServeWorkspace",
         # Signed provider webhook: it authenticates the bridge HMAC, not a customer OIDC
         # principal, so it never answers identity-unknown.
         "receiveCoexistenceEvent",

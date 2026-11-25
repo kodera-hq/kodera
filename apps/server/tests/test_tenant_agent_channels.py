@@ -2057,3 +2057,160 @@ def test_workspace_invitation_preference_reaches_policy_and_power_levels(
     assert room["state"][(POLICY, "")]["allow_member_invites"] is (enabled or partnered)
     assert room["state"][(POWER_LEVELS, "")]["invite"] == (0 if enabled else 100)
     assert room["state"][(POLICY, "")]["allow_federated_invites"] is partnered
+
+
+def test_shared_community_host_isolates_multi_org_pme_rooms_revisions_moderation_and_guard(
+    tmp_path, monkeypatch
+):
+    import test_tenant_agent_channels as mod
+
+    comm_server = "community.kodera.io"
+    monkeypatch.setattr(mod, "SERVER", comm_server)
+    monkeypatch.setattr(mod, "AGENT", f"@kodera-agent:{comm_server}")
+    monkeypatch.setattr(mod, "ROOMS", f"@kodera-rooms:{comm_server}")
+
+    class SharedCommunityHomeserver(FakeHomeserver):
+        def __init__(self) -> None:
+            super().__init__(users=(ALICE, BOB, CAROL))
+            self.bans: dict[str, set[str]] = {}
+            self.owned_bans: dict[str, set[str]] = {}
+
+        def moderation_bans(self, room: str) -> tuple[set[str], set[str]]:
+            return set(self.bans.get(room, set())), set(self.owned_bans.get(room, set()))
+
+        def ban(self, room: str, user: str) -> None:
+            self.bans.setdefault(room, set()).add(user)
+            self.owned_bans.setdefault(room, set()).add(user)
+            self.rooms[room]["members"][user] = "ban"
+
+        def unban(self, room: str, user: str) -> None:
+            self.bans.get(room, set()).discard(user)
+            self.owned_bans.get(room, set()).discard(user)
+            self.rooms[room]["members"][user] = "leave"
+
+    org_a = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    org_b = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+    comm_text = "cccccccc-cccc-4ccc-8ccc-ccccccccccc1"
+    org_a_text = "aaaaaaaa-1111-4aaa-8aaa-aaaaaaaaaaa1"
+    org_a_audio = "aaaaaaaa-2222-4aaa-8aaa-aaaaaaaaaaa2"
+    org_b_text = "bbbbbbbb-1111-4bbb-8bbb-bbbbbbbbbbb1"
+    org_b_audio = "bbbbbbbb-2222-4bbb-8bbb-bbbbbbbbbbb2"
+    owner_b = "owner-only-in-b"
+    comm_suspended = "suspended-in-comm-active-in-b"
+
+    # Contract & traversal guards on scope_id / shared_realm.
+    assert parse({**channel_set(1, channel()), "shared_realm": True}) is None
+    assert parse({**channel_set(1, channel()), "organisation_id": "../escape"}) is None
+    with pytest.raises(ValueError, match="canonical lowercase UUID"):
+        State(tmp_path).channel_rooms(scope_id="../escape")
+
+    homeserver = SharedCommunityHomeserver()
+    livekit = CallLiveKit({})
+    handlers, _, _, state = build(tmp_path, homeserver=homeserver, livekit=livekit, active=None)
+
+    # 1. Shared-host member_set holds active union across Community + PME Org A + PME Org B.
+    ms_out = handlers.handle(
+        MEMBER_KIND,
+        member_set(
+            1,
+            active=[ALICE, BOB, CAROL, owner_b, comm_suspended],
+            inactive=[],
+            released=[],
+        ),
+    )
+    assert ms_out.status == "succeeded"
+
+    # 2. Canonical Community's own audience="all" room uses native_public (`join_rule: "public"`).
+    comm_payload = channel_set(
+        2,
+        channel(comm_text, audience="all", members=[], denied=[]),
+        all_members=(ALICE, BOB),
+    )
+    assert handlers.handle(CHANNEL_KIND, comm_payload).status == "succeeded"
+    comm_room = homeserver.room_of(comm_text)
+    assert comm_room["state"][(JOIN_RULES, "")] == {"join_rule": "public"}
+
+    # 3. PME Org A at revision 5 WITH banned_subjects=[CAROL] uses `join_rule: "invite"`.
+    org_a_payload = {
+        **channel_set(
+            5,
+            channel(org_a_text, audience="all", members=[], denied=[]),
+            channel(org_a_audio, kind="audio", audience="all", members=[], denied=[]),
+            all_members=(ALICE, BOB, CAROL),
+        ),
+        "organisation_id": org_a,
+        "shared_realm": True,
+        "banned_subjects": [CAROL],
+        "muted_subjects": [],
+    }
+    out_a = handlers.handle(CHANNEL_KIND, org_a_payload)
+    assert out_a.status == "succeeded"
+    assert homeserver.room_of(org_a_text)["state"][(JOIN_RULES, "")] == {"join_rule": "invite"}
+    assert homeserver.room_of(org_a_audio)["state"][(JOIN_RULES, "")] == {"join_rule": "invite"}
+    assert homeserver.joined(org_a_text) == {mod.AGENT, mx(ALICE), mx(BOB)}
+    assert mx(CAROL) in homeserver.bans[state.channel_rooms(scope_id=org_a)[org_a_text]]
+
+    # 4. PME Org B at LOWER revision 1 with omitted/empty bans and owner_b + comm_suspended.
+    org_b_payload = {
+        **channel_set(
+            1,
+            channel(org_b_text, audience="all", members=[], denied=[]),
+            channel(org_b_audio, kind="audio", audience="all", members=[], denied=[]),
+            all_members=(owner_b, comm_suspended, CAROL),
+        ),
+        "organisation_id": org_b,
+        "shared_realm": True,
+    }
+    out_b = handlers.handle(CHANNEL_KIND, org_b_payload)
+    assert out_b.status == "succeeded"
+
+    # Community's room and PME Org A's rooms were NOT wiped, archived, or emptied!
+    assert comm_room["state"][(POLICY, "")]["archived"] is False
+    assert comm_room["state"][(JOIN_RULES, "")] == {"join_rule": "public"}
+    assert homeserver.room_of(org_a_text)["state"][(POLICY, "")]["archived"] is False
+    assert homeserver.joined(org_a_text) == {mod.AGENT, mx(ALICE), mx(BOB)}
+
+    # PME Org B's rooms are private (`join_rule: "invite"`) and admit owner_b, comm_suspended, and CAROL!
+    assert homeserver.room_of(org_b_text)["state"][(JOIN_RULES, "")] == {"join_rule": "invite"}
+    assert homeserver.room_of(org_b_audio)["state"][(JOIN_RULES, "")] == {"join_rule": "invite"}
+    assert homeserver.room_of(org_a_text)["state"][(POLICY, "")]["local_members"] == sorted(
+        [mx(ALICE), mx(BOB)]
+    )
+    assert homeserver.room_of(org_b_text)["state"][(POLICY, "")]["local_members"] == sorted(
+        [mx(owner_b), mx(comm_suspended), mx(CAROL)]
+    )
+    assert "local_members" not in comm_room["state"][(POLICY, "")]
+    assert homeserver.joined(org_b_text) == {
+        mod.AGENT,
+        mx(owner_b),
+        mx(comm_suspended),
+        mx(CAROL),
+    }
+    assert homeserver.accounts[mx(owner_b)] is False
+    assert homeserver.accounts[mx(comm_suspended)] is False
+
+    # RosterGuard enforces per-scope audio rooms (CAROL evicted in Org A, kept in Org B; ALICE evicted in Org B).
+    lk_a = livekit_room(state.channel_rooms(scope_id=org_a)[org_a_audio])
+    lk_b = livekit_room(state.channel_rooms(scope_id=org_b)[org_b_audio])
+    livekit.rooms_[lk_a] = [f"{mx(ALICE)}|D1", f"{mx(CAROL)}|D2"]
+    livekit.rooms_[lk_b] = [f"{mx(owner_b)}|D1", f"{mx(CAROL)}|D2", f"{mx(ALICE)}|D3"]
+    guard = RosterGuard(livekit, Meet(FakeRunner(), "meet-backend"), state, homeserver)
+    guard_report = guard.enforce()
+    assert guard_report.failed_rooms == 0
+    assert (lk_a, f"{mx(CAROL)}|D2") in guard_report.removed
+    assert (lk_b, f"{mx(ALICE)}|D3") in guard_report.removed
+    assert (lk_b, f"{mx(CAROL)}|D2") not in guard_report.removed
+    assert (lk_b, f"{mx(owner_b)}|D1") not in guard_report.removed
+
+    # Periodic reapply() preserves all three scopes cleanly.
+    assert state.channel_scopes() == [None, org_a, org_b]
+    reapplied = handlers.reapply()
+    assert reapplied is not None and reapplied.status == "succeeded"
+    assert homeserver.room_of(comm_text)["state"][(POLICY, "")]["archived"] is False
+    assert homeserver.joined(org_a_text) == {mod.AGENT, mx(ALICE), mx(BOB)}
+    assert homeserver.joined(org_b_text) == {
+        mod.AGENT,
+        mx(owner_b),
+        mx(comm_suspended),
+        mx(CAROL),
+    }

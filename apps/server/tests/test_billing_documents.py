@@ -70,6 +70,7 @@ def test_credit_note_has_381_positive_amounts_and_original_immutable_reference()
     ("change", "message"),
     [
         ({"gross_minor": 2403}, "document_totals_mismatch"),
+        ({"issued_at": None}, "document_snapshot_invalid"),
         ({"type_code": "381"}, "document_snapshot_invalid"),
         ({"currency": "USD"}, "document_snapshot_invalid"),
         ({"lines": ()}, "document_snapshot_invalid"),

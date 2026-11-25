@@ -209,6 +209,19 @@ def check_return_url(return_url: str | None) -> None:
         raise ReturnUrlRefusedError()
 
 
+def existing_stripe_customer_ref(*, organisation_id: UUID) -> str | None:
+    """Return the latest recorded Stripe customer ID for `organisation_id`, if any."""
+    found = (
+        Payment.objects.filter(organisation_id=organisation_id, provider="stripe")
+        .exclude(provider_customer_ref__isnull=True)
+        .exclude(provider_customer_ref="")
+        .order_by("-created_at", "-id")
+        .values_list("provider_customer_ref", flat=True)
+        .first()
+    )
+    return str(found) if found else None
+
+
 def issue_link(
     *, invoice_id: UUID, organisation_id: UUID, return_url: str | None = None, locale: str = "fr"
 ) -> IssuedLink | None:
@@ -242,6 +255,11 @@ def issue_link(
             expires_at=expires_at,
             return_url=return_url,
             locale=locale,
+            customer_ref=(
+                existing_stripe_customer_ref(organisation_id=organisation_id)
+                if provider.name == "stripe"
+                else None
+            ),
         )
     )
     if issued.expires_at is not None:
@@ -635,8 +653,11 @@ def _received(invoice: Invoice, payment: Payment, metadata: dict[str, object]) -
         _move_subscription(invoice, "active")
         order = Order.objects.select_for_update().filter(invoices=invoice).first()
         if order is not None and "paid" in ORDER_TRANSITIONS[order.state]:
+            from apps.billing.sovereign_settlement import settle_paid_order_and_invoice
+
             order.state = "paid"
             order.save(update_fields=["state", "updated_at"])
+            settle_paid_order_and_invoice(invoice=invoice, order=order)
 
 
 def _cancel_at_provider(provider_name: str, provider_ref: str) -> None:

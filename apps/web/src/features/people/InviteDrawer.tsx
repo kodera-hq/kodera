@@ -167,6 +167,11 @@ function beforeReceiptFailure(failure: unknown): MessageKey {
   if (failure instanceof ApiProblem) {
     if (failure.status >= 500 && failure.status <= 599)
       return 'console.people.invite.error-send-unconfirmed'
+    if (
+      failure.status === 402 &&
+      failure.type === 'https://kodera.io/problems/subscription-required'
+    )
+      return 'console.people.invite.error-freemium-seat-limit'
     if (failure.status === 409 && failure.type === 'https://kodera.io/problems/quota-exceeded')
       return 'console.people.invite.error-seat-limit'
     if (failure.status >= 400 && failure.status <= 499)
@@ -177,6 +182,7 @@ function beforeReceiptFailure(failure: unknown): MessageKey {
 const SEND_ERRORS: ReadonlySet<MessageKey> = new Set([
   'console.people.invite.error-send-failed',
   'console.people.invite.error-seat-limit',
+  'console.people.invite.error-freemium-seat-limit',
   'console.people.invite.error-send-unconfirmed',
   'console.people.invite.error-send-refused',
   'console.people.invite.error-result-finalization',
@@ -184,6 +190,7 @@ const SEND_ERRORS: ReadonlySet<MessageKey> = new Set([
 
 export interface InviteDrawerProps {
   organisationId: string
+  organisationSlug?: string
   callerRole: OrganisationRole
   recoveryOwner?: InvitationOwner
   onClose: () => void
@@ -201,6 +208,7 @@ export function InviteDrawer(props: InviteDrawerProps) {
 // new private state lifetime. Credential rotation is deliberately not a key.
 function OwnedInviteDrawer({
   organisationId,
+  organisationSlug,
   callerRole,
   recoveryOwner,
   onClose,
@@ -610,7 +618,23 @@ function OwnedInviteDrawer({
         {sendLevelError && error !== null ? (
           <div className="flex flex-col items-start gap-2">
             <InlineAlert kind="error">{t(error)}</InlineAlert>
-            {error === 'console.people.invite.error-seat-limit' ? (
+            {error === 'console.people.invite.error-freemium-seat-limit' ? (
+              <div className="flex flex-wrap items-center gap-3">
+                <LinkButton
+                  href={
+                    organisationSlug !== undefined
+                      ? `/${encodeURIComponent(organisationSlug)}/invoices/subscription`
+                      : '/workspaces/new?plan=sovereign'
+                  }
+                  variant="primary"
+                >
+                  {t('console.people.invite.action-upgrade-plan')}
+                </LinkButton>
+                <LinkButton href={`mailto:${SUPPORT_EMAIL}`} variant="tertiary">
+                  {t('console.common.action-contact-support')}
+                </LinkButton>
+              </div>
+            ) : error === 'console.people.invite.error-seat-limit' ? (
               <LinkButton href={`mailto:${SUPPORT_EMAIL}`} variant="tertiary">
                 {t('console.common.action-contact-support')}
               </LinkButton>

@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it, vi } from 'vitest'
+import { WorkerFrameCryptor } from './crypto-session.worker-core'
 import {
   createCollabCryptoSession,
   createCollabCryptoSessionPort,
@@ -15,23 +16,87 @@ const context = {
   senderClientId: 11,
 }
 const secret = () => new Uint8Array(32).fill(41)
-const body = () => new Uint8Array([0, ...new TextEncoder().encode('Private Yjs document sentinel')])
+const body = () =>
+  new Uint8Array([0, 2, ...new TextEncoder().encode('Private Yjs document sentinel')])
+const awarenessBody = () =>
+  new Uint8Array([1, ...new TextEncoder().encode('Private Yjs document sentinel')])
+const syncStep1Body = () => new Uint8Array([0, 0, 1, 0])
+const checkpointBody = () =>
+  new Uint8Array([0, 1, ...new TextEncoder().encode('Compacted Yjs snapshot sentinel')])
 const peer = (change = {}) => createCollabCryptoSession({ ...context, ...change }, secret())
 
+function readOuterMeta(envelope: Uint8Array): {
+  epoch: number
+  sender: string
+  sequence: number
+  kind: number
+  ratchet: number
+} {
+  const size = (envelope[4]! << 8) | envelope[5]!
+  return JSON.parse(new TextDecoder().decode(envelope.subarray(6, 6 + size))) as {
+    epoch: number
+    sender: string
+    sequence: number
+    kind: number
+    ratchet: number
+  }
+}
+
 describe('worker confidential collaboration envelopes', () => {
-  it('round-trips sync and awareness with independent IVs and no plaintext wire substring', async () => {
+  it('round-trips sync, SyncStep1 (kind=2), awareness (kind=1), and stateless checkpoints (kind=3) with strict header binding', async () => {
     const sender = peer(),
-      receiver = peer({ senderClientId: 22 })
-    for (const kind of [0, 1]) {
-      const frame = body()
-      frame[0] = kind
+      receiver = peer({ senderClientId: 22 }),
+      reloadedAuthor = peer({ senderClientId: 11 })
+    for (const [frame, expectedKind] of [
+      [body(), 0],
+      [awarenessBody(), 1],
+      [syncStep1Body(), 2],
+    ] as const) {
       const sealed = await sender.seal(frame)
       expect(new TextDecoder().decode(sealed.subarray(0, 4))).toBe('KDE1')
+      expect(readOuterMeta(sealed).kind).toBe(expectedKind)
       expect(new TextDecoder().decode(sealed)).not.toContain('Private Yjs document sentinel')
       expect(await receiver.open(sealed)).toEqual(frame)
       expect(await sender.seal(frame)).not.toEqual(sealed)
     }
+
+    // Stateless kind===3 checkpoint can be opened by peers AND by the author on a reloaded session.
+    const sealedCheckpoint = await sender.seal(checkpointBody(), {
+      checkpoint: true,
+      sequence: 64,
+    })
+    expect(readOuterMeta(sealedCheckpoint)).toMatchObject({
+      epoch: 7,
+      sender: 'checkpoint',
+      sequence: 64,
+      kind: 3,
+      ratchet: 0,
+    })
+    expect(await receiver.open(sealedCheckpoint)).toEqual(checkpointBody())
+    expect(await reloadedAuthor.open(sealedCheckpoint)).toEqual(checkpointBody())
+    // Even opening the same checkpoint twice is statelessly permitted for idempotent CRDT hydration.
+    expect(await receiver.open(sealedCheckpoint)).toEqual(checkpointBody())
+
     sender.close()
+    receiver.close()
+    reloadedAuthor.close()
+  })
+  it('refuses viewer privilege-escalation frames where outer kind=1 or kind=2 wraps an inner MSG_SYNC update', async () => {
+    const rawViewer = new WorkerFrameCryptor(
+      'KDE1',
+      'kodera-confidential-collab',
+      [context.scopeKey, context.documentId],
+      context.epoch,
+      '99',
+      secret()
+    )
+    const receiver = peer({ senderClientId: 22 })
+    // Viewer seals a Yjs state update ([0, 2, ...]) claiming outer kind=1 (awareness) or kind=2 (SyncStep1)
+    const spoofedKind1 = await rawViewer.seal(body(), 1)
+    const spoofedKind2 = await rawViewer.seal(body(), 2)
+    await expect(receiver.open(spoofedKind1)).rejects.toThrow('Invalid collaboration frame.')
+    await expect(receiver.open(spoofedKind2)).rejects.toThrow('Invalid collaboration frame.')
+    rawViewer.close()
     receiver.close()
   })
   it('rejects reflected own frames and empty collaboration plaintext', async () => {
@@ -175,6 +240,23 @@ describe('worker confidential collaboration envelopes', () => {
     expect(client.isActive()).toBe(false)
     client.close()
     keys.port1.close()
+  })
+  it('tracks independent sequence watermarks per (sender, kind) so live awareness never drops delayed durable updates', async () => {
+    const sender = peer({ senderClientId: 11 })
+    const receiver = peer({ senderClientId: 22 })
+    // Sender seals a durable Yjs update (kind=0, seq=1) and two awareness frames (kind=1, seq=1..2).
+    const delayedDurable = await sender.seal(body())
+    const awareness1 = await sender.seal(new Uint8Array([1, 2, 0]))
+    const awareness2 = await sender.seal(new Uint8Array([1, 2, 1]))
+    // Live awareness frames arrive BEFORE the delayed durable update!
+    expect(await receiver.open(awareness1)).toEqual(new Uint8Array([1, 2, 0]))
+    expect(await receiver.open(awareness2)).toEqual(new Uint8Array([1, 2, 1]))
+    // Durable kind=0 seq=1 still opens cleanly without sequence collision!
+    expect(await receiver.open(delayedDurable)).toEqual(body())
+    // Replaying the same durable kind=0 seq=1 is still rejected.
+    await expect(receiver.open(delayedDurable)).rejects.toThrow()
+    sender.close()
+    receiver.close()
   })
   it('refuses importing the worker into a document context', async () => {
     vi.resetModules()

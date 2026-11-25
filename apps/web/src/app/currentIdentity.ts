@@ -30,15 +30,6 @@ export function resolveCurrentIdentity(
   )
     return undefined
 
-  const identities = me.identities.filter(
-    (identity) => identity.issuer === active.issuer && identity.subject === active.subject
-  )
-  if (identities.length !== 1) return undefined
-  const identity = identities[0]!
-  if (!UUID.test(identity.id)) return undefined
-  if (me.identities.filter((candidate) => candidate.id === identity.id).length !== 1)
-    return undefined
-
   const memberships = me.organisations.filter(
     (candidate) => candidate.organisation.slug === organisationSlug
   )
@@ -47,11 +38,33 @@ export function resolveCurrentIdentity(
   if (
     !UUID.test(membership.membership_id) ||
     !UUID.test(membership.organisation.id) ||
-    membership.identity_id !== identity.id ||
+    membership.identity_id === undefined ||
+    !UUID.test(membership.identity_id) ||
     membership.state !== 'active' ||
     me.organisations.filter((candidate) => candidate.membership_id === membership.membership_id)
       .length !== 1
   )
+    return undefined
+
+  const matchingIssuerSubject = me.identities.filter(
+    (identity) => identity.issuer === active.issuer && identity.subject === active.subject
+  )
+  if (matchingIssuerSubject.length === 0) return undefined
+  if (
+    matchingIssuerSubject.length > 1 &&
+    membership.shared_realm !== true &&
+    membership.plan_tier !== 'community'
+  ) {
+    return undefined
+  }
+
+  const identities = matchingIssuerSubject.filter(
+    (identity) => identity.id === membership.identity_id
+  )
+  if (identities.length !== 1) return undefined
+  const identity = identities[0]!
+  if (!UUID.test(identity.id)) return undefined
+  if (me.identities.filter((candidate) => candidate.id === identity.id).length !== 1)
     return undefined
 
   return Object.freeze({ identity, membership })

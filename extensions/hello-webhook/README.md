@@ -11,7 +11,7 @@ Reference **Ring 2** Kodera slash-command & signed-webhook extension built on [`
    cp -R extensions/hello-webhook extensions/github-webhook
    ```
 2. **Rename your workspace package in `extensions/github-webhook/package.json`:**
-   Set `"name": "@kodera/ext-github-webhook"` while keeping `"@kodera/extension-sdk": "0.1.0"`. Because root `package.json` automatically discovers `"extensions/*"`, **you do not need to edit root `package.json`** (preventing merge conflicts across parallel contributors).
+   Set `"name": "@kodera/ext-github-webhook"` while keeping `"@kodera/extension-sdk": "0.2.0"`. Because root `package.json` automatically discovers `"extensions/*"`, **you do not need to edit root `package.json`** (preventing merge conflicts across parallel contributors).
 3. **Implement your command & signed handler in `src/index.mjs`:**
    - Declare least-privilege scopes (`ALLOWED_EXTENSION_SCOPES`, e.g. `['messages:write']`) via `defineSlashCommand(...)`.
    - Verify every inbound HTTP request via `verifyWebhookRequest(...)` using `SIGNATURE_HEADER`, `TIMESTAMP_HEADER`, and `getHeaderValue(...)` (handles both Node `IncomingHttpHeaders` and Web Fetch `Headers`, plus `string | Uint8Array` raw bodies).

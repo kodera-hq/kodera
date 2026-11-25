@@ -374,23 +374,33 @@ class CurrentCoreIdentityClient internal constructor(
             if (!TrustPolicy.canonicalNonNilUUID(root["id"]?.stringValue() ?: refused()) ||
                 root["staff"] != JsonValue.BooleanValue(false)) refused()
             val ids = hashSetOf<String>()
-            val issuers = hashSetOf<String>()
+            val issuerFirstSubjectRealm = hashMapOf<String, Pair<String, String>>()
+            val issuerIdentityIds = hashMapOf<String, MutableList<String>>()
             val identities = root["identities"]?.arrayValue()?.associate { entry ->
                 val value = entry.objectValue()
                 val id = value["id"]?.stringValue() ?: refused()
                 val issuer = value["issuer"]?.stringValue() ?: refused()
                 val realm = value["realm"]?.stringValue() ?: refused()
                 val subject = value["subject"]?.stringValue() ?: refused()
-                if (!TrustPolicy.canonicalNonNilUUID(id) || !ids.add(id) || !issuers.add(issuer) ||
+                if (!TrustPolicy.canonicalNonNilUUID(id) || !ids.add(id) ||
                     issuer.length !in 1..2048 || issuer.any { it.code !in 33..126 } ||
                     !TrustPolicy.canonicalSlug(realm) || subject.length !in 1..255 || subject.any { it.code !in 33..126 }) refused()
+                val existing = issuerFirstSubjectRealm[issuer]
+                if (existing != null) {
+                    if (existing.first != subject || existing.second != realm) refused()
+                } else {
+                    issuerFirstSubjectRealm[issuer] = subject to realm
+                }
+                issuerIdentityIds.getOrPut(issuer) { mutableListOf() }.add(id)
                 id to CoreIdentity(id, issuer, realm, subject, organisationId)
             } ?: refused()
             val entries = root["organisations"]?.arrayValue() ?: refused()
             if (entries.size > 100) refused()
             val orgIds = hashSetOf<String>()
-            var matches = 0
-            var target: String? = null
+            val dedicatedRealmCounts = hashMapOf<String, Int>()
+            val linkedSharedIdentityIds = hashSetOf<String>()
+            val linkedDedicatedIdentityIds = hashSetOf<String>()
+            var foundTargetInSessionRealm = false
             var active = false
             var link: String? = null
             for (entry in entries) {
@@ -401,14 +411,39 @@ class CurrentCoreIdentityClient internal constructor(
                 val realm = org["realm"]?.takeUnless { it == JsonValue.NullValue }?.stringValue()
                 val state = membership["state"]?.stringValue() ?: refused()
                 val identityId = membership["identity_id"]?.stringValue()
+                val sharedRealm = when (val rawShared = membership["shared_realm"]) {
+                    null -> false
+                    is JsonValue.BooleanValue -> rawShared.value
+                    else -> refused()
+                }
                 if (!TrustPolicy.canonicalNonNilUUID(id) || !orgIds.add(id) || !TrustPolicy.canonicalSlug(slug) ||
-                    (realm != null && (!TrustPolicy.canonicalSlug(realm) || realm != slug)) ||
+                    (sharedRealm && realm == null) ||
+                    (realm != null && (!TrustPolicy.canonicalSlug(realm) || (!sharedRealm && realm != slug))) ||
                     state !in setOf("invited", "active", "suspended", "removed") ||
                     (identityId != null && !TrustPolicy.canonicalNonNilUUID(identityId))) refused()
-                if (realm == session.realm) { matches++; target = id; active = state == "active"; link = identityId }
+                if (identityId != null) {
+                    if (sharedRealm) {
+                        if (!linkedSharedIdentityIds.add(identityId)) refused()
+                    } else {
+                        linkedDedicatedIdentityIds.add(identityId)
+                    }
+                }
+                if (!sharedRealm && realm == session.realm) {
+                    val count = (dedicatedRealmCounts[session.realm] ?: 0) + 1
+                    if (count > 1) refused()
+                    dedicatedRealmCounts[session.realm] = count
+                }
+                if (id == organisationId && realm == session.realm) {
+                    foundTargetInSessionRealm = true; active = state == "active"; link = identityId
+                }
             }
-            if (matches > 1) refused()
-            if (matches == 0 || target != organisationId || !active || link == null) Outcome.Unavailable(Failure.NotEligible)
+            for ((_, group) in issuerIdentityIds) {
+                if (group.size > 1) {
+                    val unsharedCount = group.count { it !in linkedSharedIdentityIds }
+                    if (unsharedCount > 1 || group.any { it !in linkedSharedIdentityIds && it !in linkedDedicatedIdentityIds }) refused()
+                }
+            }
+            if (!foundTargetInSessionRealm || !active || link == null) Outcome.Unavailable(Failure.NotEligible)
             else {
                 val selected = identities[link] ?: refused()
                 if (selected.issuer != session.issuer || selected.realm != session.realm) refused()

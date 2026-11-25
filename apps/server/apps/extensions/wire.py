@@ -20,6 +20,7 @@ EVENTS = frozenset(
         "incident.opened",
         "incident.acknowledged",
         "incident.resolved",
+        "widget.action",
     }
 )
 MAX_BODY = 128 * 1024

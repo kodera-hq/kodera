@@ -10,8 +10,14 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from django.db import connection
+from django.db.models import Sum
+from django.db.models.functions import Coalesce
 
-from apps.identity.selectors import current_identity, is_storable_subject
+from apps.identity.selectors import (
+    current_identity,
+    current_identity_for_organisation,
+    is_storable_subject,
+)
 from services.identity.access_tokens import VerifiedAccessToken
 
 from .models import Organisation
@@ -63,12 +69,14 @@ def read_tenant_caller(
             membership_id=membership.id,
             role=membership.role,
         )
-    resolved = current_identity(issuer=verified.issuer, subject=verified.subject)
+    resolved = current_identity_for_organisation(
+        organisation_id=organisation_id, issuer=verified.issuer, subject=verified.subject
+    )
     if resolved is None:
-        raise TenantCallerUnknownError()
-    person, identity = resolved
-    if identity.organisation_id != organisation_id:
+        if current_identity(issuer=verified.issuer, subject=verified.subject) is None:
+            raise TenantCallerUnknownError()
         raise TenantCallerNotFoundError()
+    person, identity = resolved
     if not has_current_read_grant(
         user_id=person.id,
         organisation_id=organisation_id,
@@ -134,3 +142,23 @@ def organisation_authority_revision(*, organisation_id: UUID) -> int | None:
         .first()
     )
     return revision
+
+
+def organisation_authority_revisions(*, organisation_id: UUID) -> tuple[int | None, int | None]:
+    """Return `(authority_revision, shared_authority_revision)` for `organisation_id`, or
+    `(None, None)` when absent or deleted. `shared_authority_revision` is populated only for
+    `is_default_community=True` shared hosts so dedicated organisations run a single query."""
+    row = (
+        Organisation.objects.filter(id=organisation_id, deleted_at__isnull=True)
+        .values_list("authority_revision", "is_default_community", "realm")
+        .first()
+    )
+    if row is None:
+        return None, None
+    authority_rev, is_default_comm, realm = int(row[0]), bool(row[1]), str(row[2])
+    if not is_default_comm:
+        return authority_rev, None
+    shared_total = Organisation.objects.filter(realm=realm, shared_realm=True).aggregate(
+        total=Coalesce(Sum("authority_revision"), 0)
+    )["total"]
+    return authority_rev, int(shared_total or 0)

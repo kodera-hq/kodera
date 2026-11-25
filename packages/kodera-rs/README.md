@@ -1,15 +1,19 @@
 # `kodera-rs`
 
-Shared native Rust engine (`#![forbid(unsafe_code)]`) shared by **Kodera Desktop (`v0.1.0`)**, **Kodera iOS (`SwiftUI`)** and **Kodera Android (`Jetpack Compose`)**.
+Shared zero-unsafe Rust engine (`#![forbid(unsafe_code)]`) consumed across **Kodera Web (`@kodera/web` `wasm32-unknown-unknown` `browser-bindings`)**, **Kodera Desktop (`v0.1.0`)**, **Kodera iOS (`SwiftUI`)** and **Kodera Android (`Jetpack Compose`)**.
 
-Status: Optional native cryptographic engines available for local integration; platform activation,
-hardware attestation, protected persistence and live radio/service acceptance remain pending.
+Status: Deterministic cryptographic engines, wire codecs, `wasm32` browser device-proof bindings and cross-platform golden test vectors implemented; hardware-key attestation, dynamic C-ABI mobile linking (held while `#![forbid(unsafe_code)]` is enforced) and physical radio qualification remain open gates.
 
 ## Responsibilities
 
 1. **Transport-Independent Identifiers (`UuidV7`):** RFC 9562 monotonic identifiers isolating client navigation and caches from backend Matrix/Synapse room identifiers.
-2. **Device Identity & Crypto Providers:** The dependency-free default retains the signing/envelope seams. Optional OpenMLS (RFC 9420) and Vodozemac Megolm engines perform real authenticated encryption and key rotation; optional ES256 passkey helpers verify scoped assertions. These local engines do not activate hardware-backed keys or LiveKit E2EE in a client.
-3. **`#proximity` channel:** Pre-provisioned intra-organisation proximity beacon (`HMAC-SHA256` rotating every 5 minutes) and bounded `<= 256`-byte store-and-forward frame codec (`TTL <= 6` hops) over local Wi-Fi (`mDNS + QUIC`) and `BLE GATT`. It is an everyday presence channel with a voluntary, pseudonymous check-in. It is not an emergency service.
+2. **Device Identity, `SFrame v1`, `KVKB1`, `KDV1` & Crypto Providers:**
+   - OpenMLS (`RFC 9420`, [`src/mls_engine.rs`](src/mls_engine.rs)) over `openmls_rust_crypto` (`0.6.0` backport) and Vodozemac Megolm v1 ([`src/megolm_engine.rs`](src/megolm_engine.rs)) with staged copy-on-write transitions and `kodera-livekit-media-v1` epoch secret export.
+   - `wasm32-unknown-unknown` browser device-proof bindings ([`src/browser_bindings.rs`](src/browser_bindings.rs)).
+   - RFC 9605-aligned `SFrame v1` real-time media framing ([`src/sframe_media.rs`](src/sframe_media.rs), [`vectors/sframe-media-v1.json`](vectors/sframe-media-v1.json)): two-stage `HKDF-SHA-256` (`kodera-sframe-media-v1`), `AES-256-GCM`, codec cleartext prefix AAD and a 1024-frame sliding replay window.
+   - `KVKB1` zero-knowledge key-backup capsule header & KDF/checksum validation ([`src/lib.rs`](src/lib.rs)), plus `KDV1` (`0x4b445631`) `AES-256-GCM` `(organisation_id, device_id)` AAD mobile session vaults and `PacketDispatcher` ([`src/mobile_ffi.rs`](src/mobile_ffi.rs), [`vectors/mobile-ffi-v1.txt`](vectors/mobile-ffi-v1.txt)).
+   - Universal WebAuthn Level 3 ES256 passkey binding without AAGUID lock-in ([`src/passkey_binding.rs`](src/passkey_binding.rs)).
+3. **`#proximity` channel:** Pre-provisioned intra-organisation proximity beacon (`HMAC-SHA256` rotating every 5 minutes, [`src/proximity_beacon_v2.rs`](src/proximity_beacon_v2.rs), [`vectors/proximity-beacon-v2.txt`](vectors/proximity-beacon-v2.txt), [`vectors/proximity-epoch-lease-v1.json`](vectors/proximity-epoch-lease-v1.json)) and bounded `<= 256`-byte store-and-forward frame codec (`TTL <= 6` hops) over local Wi-Fi (`mDNS + QUIC`) and `BLE GATT`. It is an everyday presence channel with a voluntary, pseudonymous check-in. It is not an emergency service.
 
 ## Proximity naming and the frozen frame v1
 

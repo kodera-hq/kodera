@@ -1,10 +1,12 @@
 # Threat model — kodera.io control plane and fleet
 
-**Status:** Proposed · **Owner:** SEC
+**Status:** Active · **Owner:** SEC
 
-Scope: the control plane (`kodera-server` API and provisioning worker), the console, the shared services (Keycloak, observability, backups), and the tenant VMs it provisions on Scaleway `fr-par`. Out of scope: standalone public demo instances and the customer's own external IdP.
+> Cross-stack monorepo cryptography (`MLS`, `SFrame v1`, `KVKB1`, `KDE1`, `KDV1`, `EspaceVault`), PostgreSQL 4-role separation, and client-worker trust boundaries are specified in [`docs/security/THREAT_MODEL_AND_CRYPTOGRAPHY.md`](../../../../docs/security/THREAT_MODEL_AND_CRYPTOGRAPHY.md).
 
-The model is normative. Every threat row names a control and how that control is **asserted**. A control with no assertion is a wish, not a control; it is listed in [Residual risks](#7-residual-risks) instead.
+Scope: the control plane (`kodera-server` API and provisioning worker), the web console (`@kodera/web`), the shared services (Keycloak, observability, backups), and the tenant VMs it provisions on Scaleway `fr-par`. Out of scope: standalone public demo instances and the customer's own external IdP.
+
+The model is normative. Every threat row names a control and how that control is **asserted**. A control with no assertion is a wish, not a control; it is listed in [Residual risks](#7-architectural-trade-offs--residual-risks) instead.
 
 ## 1. Assets
 
@@ -21,7 +23,7 @@ The model is normative. Every threat row names a control and how that control is
 | A9 | Control-plane database (`Organisation`, `Membership`, `Subscription`, `Domain`, `Job`, `AuditEvent`) | Core Postgres, `fr-par` | Customer graph, billing contacts, and the ability to rewrite history | C, I |
 | A10 | The audit trail (`Job` + `AuditEvent`) | Same transaction as the mutation (ADR-0004) | Erase evidence of an intrusion; break the DPA accountability clause | I |
 | A11 | Tenant profiles (declarative compose + `x-kodera`) | Vendored by commit SHA | Profiles are executable input: a malicious profile is remote code on every tenant | I, C |
-| A12 | Image supply chain (`lasuite/*`, `livekit/*`, `postgres`, `redis`, `quay.io/keycloak/*`, `nginxproxy/*`) | Mirrored by digest, `versions.lock.yaml` | One poisoned tag reaches the whole fleet at the next upgrade wave | I |
+| A12 | Image supply chain (`ghcr.io/kodera-hq/*`, `matrixdotorg/synapse`, `livekit/*`, `caddy`, `postgres`, `redis`, `quay.io/keycloak/*`) | Mirrored by digest, `versions.lock.yaml` | One poisoned tag reaches the whole fleet at the next upgrade wave | I |
 | A13 | Two retained flexible IPv4 per tenant (web, media) | Scaleway, `lifecycle=retain` | Losing them breaks DNS and certificates for a customer's published domain | A |
 | A14 | Staff identities (Keycloak `kodera-staff` realm, Scaleway, GitHub, Stripe, Qonto) | Hardware-bound second factor mandatory | The cheapest route to A1–A4 is a person, not a process | C, I, A |
 | A15 | DNS zones (`kodera.io`, delegated tenant sub-zones) | Scaleway DNS; sub-zone delegated into the tenant project | Certificate issuance for our names; traffic interception | C, I |
@@ -99,7 +101,7 @@ So `Membership` separates organisations, not tenants inside one, and it is not l
 
 | STRIDE | Threat | Control | Asserted |
 |---|---|---|---|
-| S | Tenant A's service authenticates as tenant B | **Different organisations:** separate realm, separate OIDC client and secret, separate LiveKit API secret, separate TEM key. **Same organisation:** the realm is shared and `Membership` is organisation-scoped, so the separating controls are the per-tenant OIDC client secret and the per-tenant LiveKit API secret and TEM key. These bind the tenants' **services**; **no control separates the organisation's own members from either tenant** (preamble, RR10) | T: realm A token rejected by tenant B's Meet; T: tenant A's OIDC client secret and LiveKit API secret rejected by tenant B's client and SFU. **Same organisation, human principal: no isolation assertion, because there is nothing to assert.** A characterisation test pins the intended behaviour instead — a member of organisation X is authorised on every tenant of X to the extent their role allows, and a member of another organisation is refused |
+| S | Tenant A's service authenticates as tenant B | **Different organisations:** separate realm, separate OIDC client and secret, separate LiveKit API secret, separate TEM key. **Same organisation:** the realm is shared and `Membership` is organisation-scoped, so the separating controls are the per-tenant OIDC client secret and the per-tenant LiveKit API secret and TEM key. These bind the tenants' **services**; **no control separates the organisation's own members from either tenant** (preamble, RR10) | T: realm A token rejected by tenant B's runtime; T: tenant A's OIDC client secret and LiveKit API secret rejected by tenant B's client and SFU. **Same organisation, human principal: no isolation assertion, because there is nothing to assert.** A characterisation test pins the intended behaviour instead — a member of organisation X is authorised on every tenant of X to the extent their role allows, and a member of another organisation is refused |
 | T | Tenant A writes into tenant B's storage | Separate Scaleway project and project-scoped IAM policy; separate bucket and backup key | C: `tofu plan` diff on `scaleway_iam_policy` reviewed in CI; no cross-project reference in plan output |
 | R | A cross-tenant action cannot be attributed | Every infrastructure mutation is a job scoped to one tenant, or to one organisation for a change to its realm; every other control-plane change commits with its own `AuditEvent` naming its target (ADR-0004) | T |
 | I | Backups of A readable from B | Per-tenant bucket, per-tenant append-only key, Keycloak dump kept as a separate cross-tenant artefact with its own recipients | R: monthly restore drill per tenant; T: key A denied on bucket B |

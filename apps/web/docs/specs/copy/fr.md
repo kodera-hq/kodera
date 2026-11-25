@@ -463,6 +463,15 @@ a number.
 | `console.home.create.error-not-ready` | Votre organisation n’est pas encore prête pour créer un espace. Réessayez dans quelques minutes. |
 | `console.home.create.error-failed` | L’espace n’a pas pu être créé. Réessayez : un seul espace sera créé. |
 | `console.home.create.error-not-shown` | Votre espace est créé, mais cette page n’a pas pu se mettre à jour. Rechargez la page. |
+| `console.home.create.self-serve-subtitle` | Démarrez gratuitement sans carte bancaire jusqu’à 5 membres, avec salons de discussion, appels et documents prêts en quelques secondes. |
+| `console.home.create.sovereign-subtitle` | Configurez l’organisation qui portera votre instance souveraine dédiée sur infrastructure isolée, puis choisissez votre capacité. |
+| `console.home.create.label-plan` | Formule d’hébergement |
+| `console.home.create.plan-freemium` | Espace gratuit sans carte (jusqu’à 5 membres) |
+| `console.home.create.plan-sovereign` | Instance souveraine dédiée |
+| `console.home.create.hint-org-slug-rule` | De 5 à 20 caractères : lettres minuscules sans accent, chiffres et tirets, sans tiret au début ni à la fin. |
+| `console.home.create.action-create-free` | Créer mon espace gratuit |
+| `console.home.create.action-continue-sovereign` | Continuer vers la configuration dédiée |
+| `console.home.create.error-rate-limit` | Vous avez atteint la limite de 3 espaces gratuits actifs. Passez un espace existant sur une offre payante pour continuer. |
 | `console.home.overview.error-discovery-unavailable` | Impossible de vérifier si votre organisation possède déjà une instance. Réessayez avant de commander. |
 | `console.home.overview.error-summary-unavailable` | Impossible d'actualiser ces chiffres. Les valeurs affichées datent de {time}. |
 | `console.home.overview.error-invoice-unavailable` | Le montant de votre prochaine facture n'a pas pu être lu. Ouvrez Facturation pour le détail. |
@@ -653,6 +662,8 @@ a number.
 | `console.people.invite.error-already-invited` | Invitation déjà envoyée. Vous pouvez la renvoyer depuis l'onglet Invitations. |
 | `console.people.invite.error-mailbox-unreachable` | Cette boîte aux lettres n'existe pas. Vérifiez l'adresse, ou créez un accès sur site. |
 | `console.people.invite.error-seat-limit` | Cette invitation n'a pas pu être créée. Écrivez-nous à {email}. |
+| `console.people.invite.error-freemium-seat-limit` | Votre espace gratuit a atteint la limite de 5 membres. Passez à une formule supérieure pour inviter toute votre équipe. |
+| `console.people.invite.action-upgrade-plan` | Passer à l’offre supérieure |
 | `console.people.invite.error-send-failed` | Aucune invitation n'a été envoyée. Vos adresses sont conservées : réessayez. |
 | `console.people.invite.error-send-unconfirmed` | Le résultat de l'envoi n'a pas pu être confirmé. Pour réessayer le même envoi, utilisez ses adresses et son rôle d'origine. Les champs actuels peuvent avoir été modifiés. |
 | `console.people.invite.error-send-refused` | Cette demande d'invitation a été refusée. Vérifiez les informations ou contactez l'assistance. |
@@ -2303,6 +2314,12 @@ Source: `src/features/espace/EspaceLiveView.tsx`, the call dock and the audio ro
 | `console.security.settings.import` | Choisir une archive .kvkb chiffrée |
 | `console.security.settings.restore-key` | Clé de récupération de l’archive, groupe de contrôle inclus |
 | `console.security.settings.restore` | Restaurer l’archive localement |
+| `console.security.settings.server-backup-active` | Sauvegarde serveur opaque enregistrée (époque {epoch}, {mode}). Seul votre secret de récupération peut l’ouvrir. |
+| `console.security.settings.server-backup-discard` | Supprimer la sauvegarde serveur |
+| `console.security.settings.server-backup-discarded` | Sauvegarde serveur supprimée. Les prochaines publications passeront à l’époque {epoch}. |
+| `console.security.settings.server-backup-publish` | Publier la sauvegarde chiffrée sur le serveur |
+| `console.security.settings.server-backup-published` | Archive de sauvegarde chiffrée publiée sur le serveur à l’époque {epoch}. |
+| `console.security.settings.server-backup-restore` | Restaurer depuis la sauvegarde serveur |
 | `console.security.settings.loading` | Chargement des réglages de sécurité… |
 
 | `console.workspace.directs.action-accept` | Accepter et rejoindre |

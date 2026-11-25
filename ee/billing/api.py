@@ -174,6 +174,7 @@ class BillingPrincipal:
     lane: Literal["staff", "internal", "customer"]
     identity_id: str
     org_roles: Mapping[str, str] = field(default_factory=dict)
+    org_identities: Mapping[str, str] = field(default_factory=dict)
     staff_roles: frozenset[str] = field(default_factory=frozenset)
     user_id: str | None = None
     issuer: str | None = None
@@ -204,6 +205,7 @@ def _to_caller_authority(
         subject=principal.subject,
         allowed_org_roles=allowed_org_roles,
         static_org_roles=principal.org_roles,
+        org_identities=principal.org_identities,
         allowed_staff_roles=allowed_staff_roles,
         static_staff_roles=principal.staff_roles,
         live_authority=principal.live_authority,
@@ -272,7 +274,7 @@ def authenticate_bearer_header(
     from apps.orgs.authority_selectors import (
         MemberAuthorityNotFoundError,
         MemberAuthorityUnavailableError,
-        resolve_member_authority,
+        resolve_all_member_authorities,
     )
     from core.api import lanes
     from ee.auth import EE_SAML_SESSION_PREFIX, verify_ee_saml_session_token
@@ -322,16 +324,22 @@ def authenticate_bearer_header(
 
     if lane == "customer":
         try:
-            facts = resolve_member_authority(verified=verified)
+            all_authorities = resolve_all_member_authorities(verified=verified)
         except (MemberAuthorityNotFoundError, MemberAuthorityUnavailableError) as exc:
             raise BillingForbiddenError() from exc
+        primary = all_authorities[0][0]
         return BillingPrincipal(
             lane="customer",
-            identity_id=str(facts.identity_id),
-            org_roles={str(facts.organisation_id): str(facts.stored_role)},
-            user_id=str(facts.user_id),
-            issuer=facts.issuer,
-            subject=facts.subject,
+            identity_id=str(primary.identity_id),
+            org_roles={
+                str(item[0].organisation_id): str(item[0].stored_role) for item in all_authorities
+            },
+            org_identities={
+                str(item[0].organisation_id): str(item[0].identity_id) for item in all_authorities
+            },
+            user_id=str(primary.user_id),
+            issuer=primary.issuer,
+            subject=primary.subject,
             live_authority=True,
         )
 
@@ -610,16 +618,77 @@ class EnterpriseBillingRouter:
                 report = reconcile_finops_payload(data)
                 return _json_response(200, report.to_dict())
 
-            if path == "/api/v1/ee/billing/warm-pool":
+            clean_path, _, raw_query = path.partition("?")
+            if clean_path == "/api/v1/ee/billing/warm-pool":
                 if verb != "GET":
                     return _problem_response(405, "method-not-allowed", "Method not allowed")
                 _require_staff_capability(principal, _STAFF_READ_ROLES)
+                filter_region: str | None = None
+                filter_profile: str | None = None
+                for pair in raw_query.split("&"):
+                    if not pair:
+                        continue
+                    k, eq, v = pair.partition("=")
+                    if eq and k == "region" and v:
+                        filter_region = v
+                    elif eq and k == "profile_ref" and v:
+                        filter_profile = v
                 snap = self.warm_pool.sizing_snapshot(
+                    region=filter_region,
+                    profile_ref=filter_profile,
                     authority=_to_caller_authority(
                         principal, frozenset(), allowed_staff_roles=_STAFF_READ_ROLES
-                    )
+                    ),
                 )
                 return _json_response(200, asdict(snap))
+
+            if clean_path == "/api/v1/ee/billing/warm-pool/claims":
+                if verb != "GET":
+                    return _problem_response(405, "method-not-allowed", "Method not allowed")
+                _require_staff_capability(principal, _STAFF_READ_ROLES)
+                filter_state = "claimed"
+                claims_region: str | None = None
+                claims_profile: str | None = None
+                for pair in raw_query.split("&"):
+                    if not pair:
+                        continue
+                    k, eq, v = pair.partition("=")
+                    if eq and k == "state" and v:
+                        filter_state = v
+                    elif eq and k == "region" and v:
+                        claims_region = v
+                    elif eq and k == "profile_ref" and v:
+                        claims_profile = v
+                slots = self.warm_pool.list_slots(
+                    state=filter_state,  # type: ignore[arg-type]
+                    region=claims_region,
+                    profile_ref=claims_profile,
+                    authority=_to_caller_authority(
+                        principal, frozenset(), allowed_staff_roles=_STAFF_READ_ROLES
+                    ),
+                )
+                return _json_response(
+                    200,
+                    {"slots": [asdict(s) for s in slots], "count": len(slots)},
+                )
+
+            if clean_path.startswith("/api/v1/ee/billing/warm-pool/slots/") and clean_path.endswith(
+                "/ready"
+            ):
+                slot_segment = clean_path[
+                    len("/api/v1/ee/billing/warm-pool/slots/") : -len("/ready")
+                ]
+                if "/" not in slot_segment and slot_segment:
+                    if verb != "POST":
+                        return _problem_response(405, "method-not-allowed", "Method not allowed")
+                    _require_staff_capability(principal, _STAFF_MUTATION_ROLES)
+                    ready_slot = self.warm_pool.mark_ready(
+                        slot_segment,
+                        authority=_to_caller_authority(
+                            principal, frozenset(), allowed_staff_roles=_STAFF_MUTATION_ROLES
+                        ),
+                    )
+                    return _json_response(200, {"slot": asdict(ready_slot)})
 
             if path == "/api/v1/ee/billing/warm-pool/replenish":
                 if verb != "POST":

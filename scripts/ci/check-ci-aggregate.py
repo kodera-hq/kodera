@@ -165,6 +165,44 @@ def check(orchestrator: dict, area_docs: dict[str, dict]) -> list[str]:
             problems.append("server-static-and-unit must run unmasked mypy across ee/")
         if ee_pytest_line not in unit_lines:
             problems.append("server-static-and-unit must run unmasked pytest across ee/")
+    server_shards = ((area_docs.get("ci-server.yml") or {}).get("jobs") or {}).get("server-unit-shards")
+    if not isinstance(server_shards, dict):
+        problems.append("server-unit-shards job is missing")
+    else:
+        if "if" in server_shards or server_shards.get("continue-on-error", False) is not False:
+            problems.append("server-unit-shards must be mandatory")
+        strategy = server_shards.get("strategy") or {}
+        matrix_obj = strategy.get("matrix")
+        if (
+            strategy.get("fail-fast") is not False
+            or not isinstance(matrix_obj, dict)
+            or set(matrix_obj) != {"shard"}
+            or matrix_obj.get("shard") != [0, 1, 2, 3]
+        ):
+            problems.append("server-unit-shards must run fail-fast: false across exact matrix shards [0, 1, 2, 3] without include/exclude")
+        shard_lines = [
+            line.strip()
+            for step in server_shards.get("steps", [])
+            if step.get("working-directory") == "apps/server"
+            and "if" not in step
+            and step.get("continue-on-error", False) is False
+            for line in str(step.get("run", "")).splitlines()
+            if line.strip()
+        ]
+        shard_mapfile_line = (
+            'mapfile -t SHARD_TARGETS < <(uv run python scripts/ci/select_pytest_shard.py'
+            ' --shard "${{ matrix.shard }}" --total 4)'
+        )
+        shard_pytest_line = (
+            'env -i PATH="$PATH" HOME="$HOME" DATABASE_URL="$DATABASE_URL"'
+            ' DJANGO_SECRET_KEY="$DJANGO_SECRET_KEY" uv run pytest "${SHARD_TARGETS[@]}"'
+        )
+        if (
+            "uv run python scripts/ci/select_pytest_shard.py --selftest" not in shard_lines
+            or shard_mapfile_line not in shard_lines
+            or shard_pytest_line not in shard_lines
+        ):
+            problems.append("server-unit-shards must run unmasked shard selftest, exact 4-shard mapfile selection, and pytest")
     rust_job = ((area_docs.get("ci-rust-desktop.yml") or {}).get("jobs") or {}).get("rust-and-desktop")
     if not isinstance(rust_job, dict):
         problems.append("rust-and-desktop job is missing")
@@ -277,6 +315,33 @@ def selftest(root: Path) -> None:
             if "../../ee/pytest.ini" in str(step.get("run", "")):
                 step["run"] = "echo skipped"
 
+    def missing_server_shards(o, a):
+        a["ci-server.yml"]["jobs"].pop("server-unit-shards")
+
+    def soft_server_shards(o, a):
+        a["ci-server.yml"]["jobs"]["server-unit-shards"]["continue-on-error"] = True
+
+    def skipped_server_shards(o, a):
+        a["ci-server.yml"]["jobs"]["server-unit-shards"]["if"] = "false"
+
+    def incomplete_server_shard_matrix(o, a):
+        a["ci-server.yml"]["jobs"]["server-unit-shards"]["strategy"]["matrix"]["shard"] = [0, 1, 2]
+
+    def excluded_server_shard_matrix(o, a):
+        a["ci-server.yml"]["jobs"]["server-unit-shards"]["strategy"]["matrix"]["exclude"] = [{"shard": 2}]
+
+    def drifted_server_shard_total(o, a):
+        step = a["ci-server.yml"]["jobs"]["server-unit-shards"]["steps"][-1]
+        step["run"] = step["run"].replace("--total 4", "--total 8")
+
+    def pinned_single_server_shard(o, a):
+        step = a["ci-server.yml"]["jobs"]["server-unit-shards"]["steps"][-1]
+        step["run"] = step["run"].replace('"${{ matrix.shard }}"', "0")
+
+    def masked_server_shard_pytest(o, a):
+        step = a["ci-server.yml"]["jobs"]["server-unit-shards"]["steps"][-1]
+        step["run"] = step["run"].rstrip() + " || true\n"
+
     def missing_plan_license_gate(o, a):
         for step in o["jobs"]["plan"]["steps"]:
             if "scripts/ci/check-licenses.py" in str(step.get("run", "")):
@@ -336,6 +401,14 @@ def selftest(root: Path) -> None:
         (missing_ee_ruff, "server-static-and-unit must run unmasked ruff check across ee/"),
         (missing_ee_mypy, "server-static-and-unit must run unmasked mypy across ee/"),
         (missing_ee_pytest, "server-static-and-unit must run unmasked pytest across ee/"),
+        (missing_server_shards, "server-unit-shards job is missing"),
+        (soft_server_shards, "server-unit-shards must be mandatory"),
+        (skipped_server_shards, "server-unit-shards must be mandatory"),
+        (incomplete_server_shard_matrix, "server-unit-shards must run fail-fast: false across exact matrix shards [0, 1, 2, 3] without include/exclude"),
+        (excluded_server_shard_matrix, "server-unit-shards must run fail-fast: false across exact matrix shards [0, 1, 2, 3] without include/exclude"),
+        (drifted_server_shard_total, "server-unit-shards must run unmasked shard selftest, exact 4-shard mapfile selection, and pytest"),
+        (pinned_single_server_shard, "server-unit-shards must run unmasked shard selftest, exact 4-shard mapfile selection, and pytest"),
+        (masked_server_shard_pytest, "server-unit-shards must run unmasked shard selftest, exact 4-shard mapfile selection, and pytest"),
         (missing_plan_license_gate, "external npm dependency licence gate must be mandatory in plan"),
         (missing_cargo_advisory_gate, "rust-and-desktop must run unmasked Cargo.lock advisory gate and selftest"),
         (soft_http_failure, "server HTTP image acceptance must be mandatory"),

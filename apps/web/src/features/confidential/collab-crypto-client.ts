@@ -1,10 +1,14 @@
+export interface ConfidentialCollabSealOptions {
+  readonly checkpoint?: boolean | undefined
+  readonly sequence?: number | undefined
+}
 export interface ConfidentialCollabCipher {
   readonly senderClientId: number
   readonly epoch: number
   readonly scopeKey: string
   readonly documentId: string
   isActive(): boolean
-  seal(frame: Uint8Array): Promise<Uint8Array>
+  seal(frame: Uint8Array, options?: ConfidentialCollabSealOptions): Promise<Uint8Array>
   open(frame: Uint8Array): Promise<Uint8Array>
   close(): void
 }
@@ -136,7 +140,11 @@ function portClient(
   }
   port.onmessageerror = close
   port.start()
-  function run(kind: 'seal' | 'open', frame: Uint8Array): Promise<Uint8Array> {
+  function run(
+    kind: 'seal' | 'open' | 'seal-checkpoint',
+    frame: Uint8Array,
+    sequence?: number
+  ): Promise<Uint8Array> {
     const copy = copyFrame(frame)
     const operation = queue.then(async () => {
       try {
@@ -146,7 +154,11 @@ function portClient(
         return await new Promise<Uint8Array>((resolve, reject) => {
           pending.set(id, { resolve, reject, timer: setTimeout(close, 10000) })
           try {
-            port.postMessage({ kind, id, frame: copy })
+            if (kind === 'seal-checkpoint') {
+              port.postMessage({ kind, id, frame: copy, sequence: sequence ?? 1 })
+            } else {
+              port.postMessage({ kind, id, frame: copy })
+            }
           } catch {
             close()
           }
@@ -167,7 +179,10 @@ function portClient(
     scopeKey: context.scopeKey,
     documentId: context.documentId,
     isActive: () => active && ready,
-    seal: (frame: Uint8Array) => run('seal', frame),
+    seal: (frame: Uint8Array, options?: ConfidentialCollabSealOptions) =>
+      options?.checkpoint === true
+        ? run('seal-checkpoint', frame, options.sequence ?? 1)
+        : run('seal', frame),
     open: (frame: Uint8Array) => run('open', frame),
     close,
   })

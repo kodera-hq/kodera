@@ -166,6 +166,7 @@ config/settings/deploy_worker.py
 !apps/workspaces/structure.py
 !apps/workspaces/initialise.py
 !apps/workspaces/instant_claim.py
+!apps/workspaces/self_serve.py
 !apps/workspaces/warm_pool.py
 !apps/workspaces/templates.py
 !apps/workspaces/administration.py
@@ -181,6 +182,7 @@ config/settings/deploy_worker.py
 !apps/workspaces/api/serializers.py
 !apps/workspaces/api/views.py
 !apps/workspaces/api/instant_claim.py
+!apps/workspaces/api/self_serve.py
 !apps/workspaces/api/administration.py
 !apps/workspaces/api/responses.py
 !apps/billing/__init__.py
@@ -214,6 +216,7 @@ config/settings/deploy_worker.py
 !apps/billing/downloads.py
 !apps/billing/documents.py
 !apps/billing/artifacts.py
+!apps/billing/sovereign_settlement.py
 !apps/billing/integrity.py
 !apps/billing/vies.py
 !apps/billing/api/tenants.py
@@ -320,6 +323,9 @@ config/settings/deploy_worker.py
 !apps/workspaces/moderation_policy.py
 !apps/workspaces/moderation_wire.py
 !apps/workspaces/security_posture.py
+!apps/workspaces/custom_emojis.py
+!apps/workspaces/experience.py
+!apps/workspaces/api/experience.py
 !apps/workspaces/api/iam.py
 !apps/workspaces/api/moderation.py
 !apps/workspaces/api/moderation_urls.py
@@ -401,6 +407,8 @@ config/settings/deploy_worker.py
 !apps/extensions/member_matching.py
 !apps/extensions/imports.py
 !apps/extensions/coexistence.py
+!apps/extensions/marketplace.py
+!apps/extensions/widgets.py
 !apps/extensions/posture.py
 !apps/extensions/api/__init__.py
 !apps/extensions/api/http.py

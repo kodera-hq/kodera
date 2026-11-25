@@ -44,7 +44,9 @@ from . import permissions as op, views
 MAX_JSON_BODY = 16_384
 
 
-def _json_problem(status: int, kind: str, title: str, request_id: str, detail: str = "") -> HttpResponse:
+def _json_problem(
+    status: int, kind: str, title: str, request_id: str, detail: str = ""
+) -> HttpResponse:
     body: dict[str, object] = {
         "type": views.PROBLEM_BASE + kind,
         "title": title,
@@ -146,12 +148,17 @@ def _run_post(
     except views._RefusedError:
         response = views._problem(403, request_id)
     except boosts.WithdrawalWaiverRequiredError as exc:
+        detail = (
+            exc.args[0]
+            if exc.args and isinstance(exc.args[0], str) and exc.args[0]
+            else "Explicit consumer 14-day withdrawal waiver acknowledgement is required."
+        )
         response = _json_problem(
             422,
             "validation-error",
             "Explicit 14-day withdrawal waiver required",
             request_id,
-            str(exc),
+            detail,
         )
     except IdempotencyKeyReuseError:
         response = _json_problem(
@@ -164,12 +171,17 @@ def _run_post(
         vip_connect.ConnectOutcomeUnknownError,
         vip_connect.ConnectAccountNotReadyError,
     ) as exc:
+        detail = (
+            exc.args[0]
+            if exc.args and isinstance(exc.args[0], str) and exc.args[0]
+            else "Creator payout account onboarding is not yet complete."
+        )
         response = _json_problem(
             409,
             "conflict",
             "Connect account not ready",
             request_id,
-            str(exc),
+            detail,
         )
     except (
         payment_services.ReturnUrlRefusedError,
@@ -184,16 +196,30 @@ def _run_post(
     except (
         boosts.BoostValidationError,
         vip_connect.VipConnectValidationError,
-        ProviderRefusedError,
-        ValueError,
-        TypeError,
     ) as exc:
+        detail = (
+            exc.args[0][:200]
+            if exc.args and isinstance(exc.args[0], str) and exc.args[0]
+            else "Request parameters failed billing validation."
+        )
         response = _json_problem(
             422,
             "validation-error",
             "Validation error",
             request_id,
-            str(exc)[:200],
+            detail,
+        )
+    except (
+        ProviderRefusedError,
+        ValueError,
+        TypeError,
+    ):
+        response = _json_problem(
+            422,
+            "validation-error",
+            "Validation error",
+            request_id,
+            "Request parameters failed billing validation.",
         )
     except ProviderUnavailableError:
         response = _json_problem(
@@ -225,9 +251,7 @@ def workspace_monetization(request: HttpRequest, organisation_id: UUID) -> HttpR
     )
 
 
-def _read_overview(
-    request: HttpRequest, organisation_id: UUID, request_id: str
-) -> dict[str, Any]:
+def _read_overview(request: HttpRequest, organisation_id: UUID, request_id: str) -> dict[str, Any]:
     verified = _authenticate_tenant_request(
         request,
         organisation_id=organisation_id,
@@ -361,7 +385,9 @@ def dac7_report_export(request: HttpRequest, organisation_id: UUID) -> HttpRespo
     except TokenVerificationError:
         response = views._problem(401, request_id)
     except BillingCallerUnknownError:
-        response = problems.identity_unknown(request_id, op.EXPORT_WORKSPACE_DAC7_REPORT.operation_id)
+        response = problems.identity_unknown(
+            request_id, op.EXPORT_WORKSPACE_DAC7_REPORT.operation_id
+        )
     except BillingNotFoundError:
         response = views._problem(404, request_id)
     except BillingForbiddenError as refused:

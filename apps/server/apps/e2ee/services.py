@@ -18,7 +18,7 @@ from django.db.models import Q
 from django.utils import timezone
 
 from apps.audit.services import record_workspace_resource_event
-from apps.identity.selectors import current_identity
+from apps.identity.selectors import current_identity, current_identity_for_organisation
 from apps.orgs.actor_selectors import TenantCaller
 from apps.workspaces.channel_access import Access, may_view, resolve
 from apps.workspaces.channel_sets import lock_workspace
@@ -120,10 +120,70 @@ def is_ai_or_service_actor(verified: VerifiedAccessToken) -> bool:
 
 def has_confidential_room(*, channel_id: UUID, organisation_id: UUID | None = None) -> bool:
     """Whether an E2EE confidential room row is bound to `channel_id`."""
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT to_regclass('public.e2ee_room') IS NOT NULL")
+        if not cursor.fetchone()[0]:
+            return False
     queryset = Room.objects.filter(channel_id=channel_id)
     if organisation_id is not None:
         queryset = queryset.filter(organisation_id=organisation_id)
     return queryset.exists()
+
+
+def confidential_channel_ids_for_workspace(
+    *, workspace_id: UUID, organisation_id: UUID
+) -> set[UUID]:
+    """Return all channel IDs in `workspace_id` that have an E2EE room or confidential flag."""
+    from apps.workspaces.selectors import confidential_channel_ids_in_workspace
+
+    e2ee_channels: set[UUID] = set()
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT to_regclass('public.e2ee_room') IS NOT NULL")
+        has_e2ee = bool(cursor.fetchone()[0])
+    if has_e2ee:
+        e2ee_channels = set(
+            Room.objects.filter(
+                organisation_id=organisation_id, channel__workspace_id=workspace_id
+            ).values_list("channel_id", flat=True)
+        )
+    return e2ee_channels | confidential_channel_ids_in_workspace(workspace_id=workspace_id)
+
+
+MAX_COLLAB_EPOCH = 0xFFFFFFFF
+
+
+def resolve_confidential_collab_epoch(
+    *,
+    organisation_id: UUID,
+    membership_id: UUID,
+    identity_id: UUID,
+    channel_id: UUID | None,
+    document_epoch: int | None,
+) -> int | None:
+    """Resolve the authoritative u32 encryption epoch for a confidential document collaboration session."""
+    if channel_id is not None:
+        room = Room.objects.filter(organisation_id=organisation_id, channel_id=channel_id).first()
+        if room is None or room.rekey_required:
+            return None
+        epoch_val = int(room.epoch)
+        if not 0 <= epoch_val <= MAX_COLLAB_EPOCH:
+            return None
+        participating = Participant.objects.filter(
+            room=room,
+            organisation_id=organisation_id,
+            left_epoch__isnull=True,
+            joined_epoch__lte=room.epoch,
+            device__organisation_id=organisation_id,
+            device__membership_id=membership_id,
+            device__identity_id=identity_id,
+            device__revoked_at__isnull=True,
+        ).exists()
+        if not participating:
+            return None
+        return epoch_val
+    if document_epoch is None or not 1 <= int(document_epoch) <= MAX_COLLAB_EPOCH:
+        return None
+    return int(document_epoch)
 
 
 # The wire uses JSON integers shared with browser clients; never admit a value
@@ -151,6 +211,7 @@ REQUEST_FIELDS = {
         },
         set(),
     ),
+    "publish-key-backup": ({"deviceId", "backupEpoch", "capsule", "signature"}, set()),
     "register-device": ({"signingKey", "signature"}, set()),
     "publish-key-package": ({"deviceId", "keyPackage", "signature"}, set()),
     "create-room": ({"deviceId", "channelId", "algorithm", "signature"}, set()),
@@ -163,10 +224,17 @@ REQUEST_FIELDS = {
 
 
 class RefusalError(ValueError):
-    def __init__(self, status: int, kind: str | None = None) -> None:
+    def __init__(
+        self,
+        status: int,
+        kind: str | None = None,
+        *,
+        next_backup_epoch: int | None = None,
+    ) -> None:
         super().__init__("confidential transport refused")
         self.status = status
         self.kind = kind
+        self.next_backup_epoch = next_backup_epoch
 
 
 def _uuid(value: Any) -> UUID:
@@ -258,9 +326,13 @@ def _context(
             raise RefusalError(503, "service-unavailable")
     if is_ai_or_service_actor(verified):
         raise RefusalError(403, "forbidden")
-    identity = current_identity(issuer=verified.issuer, subject=verified.subject)
+    identity = current_identity_for_organisation(
+        organisation_id=organisation, issuer=verified.issuer, subject=verified.subject
+    )
     if identity is None:
-        raise RefusalError(403, "identity-unknown")
+        if current_identity(issuer=verified.issuer, subject=verified.subject) is None:
+            raise RefusalError(403, "identity-unknown")
+        raise RefusalError(404)
     if identity[0].email.strip().lower().startswith(NON_HUMAN_EMAIL_PREFIXES) or identity[
         1
     ].email.strip().lower().startswith(NON_HUMAN_EMAIL_PREFIXES):
@@ -1059,6 +1131,45 @@ def verification_context(
 
 
 @transaction.atomic
+def key_backup_publish_context(
+    *, verified: VerifiedAccessToken, organisation_id: UUID, body: dict[str, Any]
+) -> dict[str, str]:
+    """Authenticate an active registered device signing a zero-knowledge key-backup archive."""
+    workspace, principal = _context(verified, organisation_id, body=body)
+    identity = current_identity_for_organisation(
+        organisation_id=organisation_id, issuer=verified.issuer, subject=verified.subject
+    )
+    if identity is None:
+        raise RefusalError(403, "identity-unknown")
+    device = _device(body.get("deviceId"), principal, workspace)
+    _proof(bytes(device.signing_key), "publish-key-backup", principal, None, body)
+    return {
+        "deviceId": str(device.id),
+        "membershipId": str(principal.membership_id),
+        "identityId": str(principal.identity_id),
+        "userId": str(identity[0].id),
+    }
+
+
+@transaction.atomic
+def key_backup_member_context(
+    *, verified: VerifiedAccessToken, organisation_id: UUID
+) -> dict[str, str]:
+    """Authenticate a human organisation member for fresh-device key-backup retrieval or discard."""
+    _, principal = _context(verified, organisation_id)
+    identity = current_identity_for_organisation(
+        organisation_id=organisation_id, issuer=verified.issuer, subject=verified.subject
+    )
+    if identity is None:
+        raise RefusalError(403, "identity-unknown")
+    return {
+        "membershipId": str(principal.membership_id),
+        "identityId": str(principal.identity_id),
+        "userId": str(identity[0].id),
+    }
+
+
+@transaction.atomic
 def admit_directory(*, verified: VerifiedAccessToken, organisation_id: UUID) -> None:
     _context(verified, organisation_id)
 
@@ -1073,20 +1184,26 @@ def purge_account_e2ee_in_account_context(*, user_id: UUID) -> None:
 
 def count_residual_e2ee_for_organisation(*, organisation_id: UUID) -> int:
     """Count remaining confidential relay resources belonging to an erased organisation."""
+    from apps.confidential.services import count_residual_confidential_for_organisation
+
     return int(
         Envelope.objects.filter(organisation_id=organisation_id).count()
         + KeyPackage.objects.filter(organisation_id=organisation_id).count()
         + Participant.objects.filter(organisation_id=organisation_id).count()
         + Room.objects.filter(organisation_id=organisation_id).count()
         + Device.objects.filter(organisation_id=organisation_id).count()
+        + count_residual_confidential_for_organisation(organisation_id=organisation_id)
     )
 
 
 def count_residual_e2ee_for_user(*, user_id: UUID) -> int:
-    """Count unrevoked confidential devices or undiscarded key packages for an erased person."""
+    """Count unrevoked confidential devices, packages, or key backups for an erased person."""
+    from apps.confidential.services import count_residual_confidential_for_user
+
     return int(
         Device.objects.filter(membership__user_id=user_id, revoked_at__isnull=True).count()
         + KeyPackage.objects.filter(
             device__membership__user_id=user_id, package__isnull=False
         ).count()
+        + count_residual_confidential_for_user(user_id=user_id)
     )

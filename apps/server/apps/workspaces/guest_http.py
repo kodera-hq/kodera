@@ -1,5 +1,7 @@
 """Guests have one explicit channel read and never inherit ordinary Core admission."""
 
+from uuid import UUID
+
 from django.conf import settings
 from django.db import transaction
 
@@ -13,6 +15,20 @@ def current_identity(*, issuer: str, subject: str):
     from apps.identity.selectors import current_identity as _current_identity
 
     return _current_identity(issuer=issuer, subject=subject)
+
+
+_DEFAULT_CURRENT_IDENTITY = current_identity
+
+
+def _organisation_id_from_path(path: str) -> UUID | None:
+    prefix = "/api/v1/organisations/"
+    if not path.startswith(prefix):
+        return None
+    raw_segment = path[len(prefix) :].split("/", 1)[0]
+    try:
+        return UUID(raw_segment)
+    except ValueError:
+        return None
 
 
 def is_guest_identity(*, identity_id) -> bool:
@@ -41,8 +57,32 @@ class GuestScopeMiddleware:
             return self.get_response(request)
         if lane == "customer":
             with transaction.atomic():
-                identity = current_identity(issuer=verified.issuer, subject=verified.subject)
-                guest = identity is not None and is_guest_identity(identity_id=identity[1].id)
+                if current_identity is not _DEFAULT_CURRENT_IDENTITY:
+                    identity = current_identity(issuer=verified.issuer, subject=verified.subject)
+                    guest = identity is not None and is_guest_identity(identity_id=identity[1].id)
+                else:
+                    from apps.identity.selectors import (
+                        current_identities,
+                        current_identity_for_organisation,
+                    )
+
+                    target_org_id = _organisation_id_from_path(request.path)
+                    if target_org_id is not None:
+                        identity = current_identity_for_organisation(
+                            organisation_id=target_org_id,
+                            issuer=verified.issuer,
+                            subject=verified.subject,
+                        )
+                        guest = identity is not None and is_guest_identity(
+                            identity_id=identity[1].id
+                        )
+                    else:
+                        identities = current_identities(
+                            issuer=verified.issuer, subject=verified.subject
+                        )
+                        guest = bool(identities) and all(
+                            is_guest_identity(identity_id=item[1].id) for item in identities
+                        )
             if guest:
                 permitted = "/api/v1/organisations/"
                 if not (
@@ -51,7 +91,5 @@ class GuestScopeMiddleware:
                     and request.path.endswith("/workspace/guest-channel")
                 ):
                     request_id = responses.request_id(request)
-                    return responses.finish(
-                        responses.problem("forbidden", request_id), request_id
-                    )
+                    return responses.finish(responses.problem("forbidden", request_id), request_id)
         return self.get_response(request)

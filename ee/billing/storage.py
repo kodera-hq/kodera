@@ -56,6 +56,7 @@ class CallerAuthority:
     subject: str | None = None
     allowed_org_roles: frozenset[str] = frozenset()
     static_org_roles: Mapping[str, str] = field(default_factory=dict)
+    org_identities: Mapping[str, str] = field(default_factory=dict)
     allowed_staff_roles: frozenset[str] = frozenset()
     static_staff_roles: frozenset[str] = frozenset()
     live_authority: bool = False
@@ -257,8 +258,13 @@ def _acquire_ee_caller_fence(
 
     if authority.lane == "customer":
         user_uuid = _try_uuid(authority.user_id)
-        identity_uuid = _try_uuid(authority.identity_id)
         target_org_uuid = _try_uuid(target_organisation_id)
+        effective_identity_raw = (
+            authority.org_identities.get(str(target_org_uuid), authority.identity_id)
+            if target_org_uuid is not None
+            else authority.identity_id
+        )
+        identity_uuid = _try_uuid(effective_identity_raw)
         if user_uuid is None or identity_uuid is None or target_org_uuid is None:
             raise BillingAuthorityForbiddenError("customer authority scope invalid")
 
@@ -665,6 +671,15 @@ class WarmPoolStore(Protocol):
         authority: CallerAuthority | None = None,
     ) -> WarmPoolSlot: ...
 
+    def list_slots(
+        self,
+        *,
+        state: SlotState | None = None,
+        region: str | None = None,
+        profile_ref: str | None = None,
+        authority: CallerAuthority | None = None,
+    ) -> tuple[WarmPoolSlot, ...]: ...
+
 
 class MemoryWarmPoolStore:
     """Thread-safe in-memory store for isolated unit tests (`backend="memory"`)."""
@@ -722,9 +737,7 @@ class MemoryWarmPoolStore:
         _check_static_caller_authority(authority)
         with self._lock:
             counts = self._counts_unlocked(region=region, profile_ref=profile_ref)
-            active_used = (
-                counts["provisioning"] + counts["ready"] + counts["claimed"] + counts["unhealthy"]
-            )
+            active_used = counts["provisioning"] + counts["ready"] + counts["unhealthy"]
             warm_pipeline = counts["ready"] + counts["provisioning"]
             headroom = max(0, watermarks.max_total - active_used)
             desired = max(0, watermarks.target_ready - warm_pipeline)
@@ -834,9 +847,7 @@ class MemoryWarmPoolStore:
                     "unknown warm-pool slot identifier", code="unknown_slot_id"
                 )
             if current.state not in ("claimed", "unhealthy"):
-                raise WarmPoolTransitionError(
-                    f"invalid slot transition {current.state} -> evicted"
-                )
+                raise WarmPoolTransitionError(f"invalid slot transition {current.state} -> evicted")
             if (
                 current.claimed_by_organisation_id is not None
                 and current.idempotency_key is not None
@@ -937,12 +948,7 @@ class MemoryWarmPoolStore:
             )
             if not ready_slots:
                 counts = self._counts_unlocked(region=region, profile_ref=profile_ref)
-                active_used = (
-                    counts["provisioning"]
-                    + counts["ready"]
-                    + counts["claimed"]
-                    + counts["unhealthy"]
-                )
+                active_used = counts["provisioning"] + counts["ready"] + counts["unhealthy"]
                 warm_pipeline = counts["ready"] + counts["provisioning"]
                 headroom = max(0, watermarks.max_total - active_used)
                 desired = max(0, watermarks.target_ready - warm_pipeline)
@@ -983,6 +989,26 @@ class MemoryWarmPoolStore:
                     "unknown warm-pool slot identifier", code="unknown_slot_id"
                 )
             return slot
+
+    def list_slots(
+        self,
+        *,
+        state: SlotState | None = None,
+        region: str | None = None,
+        profile_ref: str | None = None,
+        authority: CallerAuthority | None = None,
+    ) -> tuple[WarmPoolSlot, ...]:
+        _check_static_caller_authority(authority)
+        with self._lock:
+            matched = [
+                slot
+                for slot in self._slots.values()
+                if (state is None or slot.state == state)
+                and (region is None or slot.region == region)
+                and (profile_ref is None or slot.profile_ref == profile_ref)
+            ]
+            matched.sort(key=lambda item: item.sequence)
+            return tuple(matched)
 
 
 def _as_slot_state(value: str) -> SlotState | None:
@@ -1084,12 +1110,7 @@ class PostgresWarmPoolStore:
                 _acquire_ee_caller_fence(cursor, authority)
                 cursor.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", [_WARM_POOL_LOCK_KEY])
                 counts = self._fetch_counts(cursor, region=region, profile_ref=profile_ref)
-                active_used = (
-                    counts["provisioning"]
-                    + counts["ready"]
-                    + counts["claimed"]
-                    + counts["unhealthy"]
-                )
+                active_used = counts["provisioning"] + counts["ready"] + counts["unhealthy"]
                 warm_pipeline = counts["ready"] + counts["provisioning"]
                 headroom = max(0, watermarks.max_total - active_used)
                 desired = max(0, watermarks.target_ready - warm_pipeline)
@@ -1398,12 +1419,7 @@ class PostgresWarmPoolStore:
                 chosen_row = cursor.fetchone()
                 if chosen_row is None:
                     counts = self._fetch_counts(cursor, region=region, profile_ref=profile_ref)
-                    active_used = (
-                        counts["provisioning"]
-                        + counts["ready"]
-                        + counts["claimed"]
-                        + counts["unhealthy"]
-                    )
+                    active_used = counts["provisioning"] + counts["ready"] + counts["unhealthy"]
                     warm_pipeline = counts["ready"] + counts["provisioning"]
                     headroom = max(0, watermarks.max_total - active_used)
                     desired = max(0, watermarks.target_ready - warm_pipeline)
@@ -1467,6 +1483,39 @@ class PostgresWarmPoolStore:
                         "unknown warm-pool slot identifier", code="unknown_slot_id"
                     )
                 return _row_to_slot(row)
+        except DatabaseError as exc:
+            if _pg_sqlstate(exc) in _LOCK_CONFLICT_SQLSTATES:
+                raise BillingAuthorityConflictError(
+                    "concurrent authority or privacy cutoff conflict"
+                ) from exc
+            raise
+
+    def list_slots(
+        self,
+        *,
+        state: SlotState | None = None,
+        region: str | None = None,
+        profile_ref: str | None = None,
+        authority: CallerAuthority | None = None,
+    ) -> tuple[WarmPoolSlot, ...]:
+        from django.db import DatabaseError, connection, transaction
+
+        try:
+            with transaction.atomic(), connection.cursor() as cursor:
+                _acquire_ee_caller_fence(cursor, authority)
+                cursor.execute(
+                    """
+                    SELECT slot_id, sequence, region, profile_ref, state,
+                           claimed_by_organisation_id, checkout_id, idempotency_key, unhealthy_reason
+                    FROM ee_billing_warm_pool_slots
+                    WHERE (%s IS NULL OR state = %s)
+                      AND (%s IS NULL OR region = %s)
+                      AND (%s IS NULL OR profile_ref = %s)
+                    ORDER BY sequence ASC
+                    """,
+                    [state, state, region, region, profile_ref, profile_ref],
+                )
+                return tuple(_row_to_slot(r) for r in cursor.fetchall())
         except DatabaseError as exc:
             if _pg_sqlstate(exc) in _LOCK_CONFLICT_SQLSTATES:
                 raise BillingAuthorityConflictError(
@@ -1624,9 +1673,7 @@ class MemoryPurchaseOrderStore:
                     code="unverified_core_payment",
                 )
 
-    def has_paid_enterprise_entitlement(
-        self, *, organisation_id: str, checkout_id: str
-    ) -> bool:
+    def has_paid_enterprise_entitlement(self, *, organisation_id: str, checkout_id: str) -> bool:
         with self._lock:
             for po in self._orders.values():
                 if (
@@ -2317,6 +2364,21 @@ class _AutoWarmPoolStore:
         return self._active().release_slot(
             slot_id,
             reason=reason,
+            authority=authority,
+        )
+
+    def list_slots(
+        self,
+        *,
+        state: SlotState | None = None,
+        region: str | None = None,
+        profile_ref: str | None = None,
+        authority: CallerAuthority | None = None,
+    ) -> tuple[WarmPoolSlot, ...]:
+        return self._active().list_slots(
+            state=state,
+            region=region,
+            profile_ref=profile_ref,
             authority=authority,
         )
 

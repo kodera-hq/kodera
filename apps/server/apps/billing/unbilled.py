@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
-from apps.identity.selectors import current_identity
+from apps.identity.selectors import current_identity, current_identity_for_organisation
 from apps.legal.services import (
     Accepted as Accepted,
     DpaNotFoundError,
@@ -189,7 +189,9 @@ def create_tenant(
         documents=[request.cgv],
         dpa_id=dpa.id,
     )
-    resolved = current_identity(issuer=verified.issuer, subject=verified.subject)
+    resolved = current_identity_for_organisation(
+        organisation_id=organisation_id, issuer=verified.issuer, subject=verified.subject
+    ) or current_identity(issuer=verified.issuer, subject=verified.subject)
     if resolved is None:
         raise WorkspaceCallerUnknownError()
     person, _ = resolved

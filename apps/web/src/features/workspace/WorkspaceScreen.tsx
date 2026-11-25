@@ -71,6 +71,7 @@ import { InlineAlert } from '../../ui/InlineAlert/InlineAlert'
 import { Skeleton } from '../../ui/Skeleton/Skeleton'
 import { DocsWorkspacePanel } from '../docs/DocsWorkspacePanel'
 import { EspaceLiveView } from '../espace/EspaceLiveView'
+import { homeserverSlugFor } from '../espace/homeserver'
 import { permitsPlaintext, type RoomBoundary } from '../confidential/room-boundary'
 import { ChannelSidebar } from './ChannelSidebar'
 import {
@@ -752,7 +753,7 @@ function LiveWorkspace({
                 access: options.access,
                 template_key: null,
                 lifecycle: 'active',
-                is_confidential: false,
+                is_confidential: kind === 'text' && options.confidential === true,
                 room_state: 'ready',
               }
               store?.addChannel?.(created)
@@ -854,7 +855,14 @@ export function WorkspaceScreen() {
   const awaitingTenant = view?.kind === 'workspace' && tenant === undefined
   const preparing = view?.kind === 'workspace' && phase === 'preparing'
   // The same resolution governs the canvas and commands that require a live conversation.
-  const serverSlug = phase === 'closed' ? undefined : tenant?.slug
+  const serverSlug =
+    phase === 'closed'
+      ? undefined
+      : homeserverSlugFor({
+          tenantSlug: tenant?.slug,
+          sharedRealm: membership.shared_realm,
+          organisationRealm: membership.organisation.realm,
+        })
   const live = liveEntry(serverSlug, preparing)
   const hasLiveWorkspace =
     view?.kind === 'workspace' &&
@@ -950,7 +958,7 @@ export function WorkspaceScreen() {
             <LiveWorkspace
               // One organisation's workspace: its drafts, its chosen channel and its sign-in state
               // are never carried into another's.
-              key={live.serverSlug}
+              key={`${org}:${live.serverSlug}`}
               organisationId={organisationId}
               org={org}
               organisationName={organisationName}

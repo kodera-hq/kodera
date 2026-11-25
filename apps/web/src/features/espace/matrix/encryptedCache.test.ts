@@ -2,11 +2,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   buildVaultAad,
   ESPACE_VAULT_DATABASE,
+  ESPACE_VAULT_DB_VERSION,
   EspaceVaultError,
   LEGACY_TIMELINE_DATABASE,
   MAX_OUTBOX_BODY_BYTES,
   MAX_OUTBOX_ITEMS,
+  MAX_SEARCH_SHARD_BYTES,
   openEspaceVault,
+  principalOwnerKey,
+  registerVaultSearchEviction,
   wipeEspaceVault,
   type EspaceVault,
   type EspaceVaultPrincipal,
@@ -727,5 +731,194 @@ describe('Espace encrypted cold-start & offline outbox vault (kodera.espace-vaul
     expect(idb.deletedDatabases).toContain(ESPACE_VAULT_DATABASE)
     expect(idb.deletedDatabases).toContain(LEGACY_TIMELINE_DATABASE)
     expect(idb.hasDatabase(ESPACE_VAULT_DATABASE)).toBe(false)
+  })
+
+  it('upgrades a v1 database to v2 search_index and provisions a non-extractable HMAC-SHA-256 indexKey', async () => {
+    expect(ESPACE_VAULT_DB_VERSION).toBe(2)
+    const idb = createTestVaultIndexedDb()
+    const legacyKey = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, [
+      'encrypt',
+      'decrypt',
+    ])
+    const ownerKey = principalOwnerKey(PRINCIPAL_A)
+    const incarnation = crypto.randomUUID()
+
+    await new Promise<void>((resolve, reject) => {
+      const req = idb.open(ESPACE_VAULT_DATABASE, 1)
+      req.onupgradeneeded = () => {
+        const db = req.result
+        db.createObjectStore('owners', { keyPath: 'ownerKey' })
+        for (const s of ['rooms', 'outbox', 'drafts', 'quarantine'] as const) {
+          db.createObjectStore(s, { keyPath: 'id' }).createIndex('ownerKey', 'ownerKey')
+        }
+      }
+      req.onerror = () => reject(req.error)
+      req.onsuccess = () => {
+        const db = req.result
+        const tx = db.transaction(['owners'], 'readwrite', { durability: 'strict' })
+        tx.objectStore('owners').add({
+          ownerKey,
+          ownerId: PRINCIPAL_A.ownerId,
+          organisationId: PRINCIPAL_A.organisationId,
+          membershipId: PRINCIPAL_A.membershipId,
+          deviceId: PRINCIPAL_A.deviceId,
+          incarnation,
+          status: 'active',
+          key: legacyKey,
+        })
+        tx.oncomplete = () => {
+          db.close()
+          resolve()
+        }
+        tx.onerror = () => reject(tx.error)
+      }
+    })
+
+    const vault = await openEspaceVault(PRINCIPAL_A, { idb, initialize: false })
+    vaults.push(vault)
+    expect(vault.incarnation).toBe(incarnation)
+
+    const owners = [...idb.peekStoreRows(ESPACE_VAULT_DATABASE, 'owners').values()] as Array<{
+      key?: CryptoKey
+      indexKey?: CryptoKey
+    }>
+    expect(owners).toHaveLength(1)
+    expect(owners[0]!.key).toBe(legacyKey)
+    expect(owners[0]!.indexKey).toBeInstanceOf(CryptoKey)
+    expect(owners[0]!.indexKey!.extractable).toBe(false)
+    expect(owners[0]!.indexKey!.algorithm).toMatchObject({ name: 'HMAC' })
+    await expect(crypto.subtle.exportKey('raw', owners[0]!.indexKey!)).rejects.toThrow()
+
+    const tag = await vault.computeBlindTermTag(ROOM_SECRET, 'roadmap')
+    expect(tag).toMatch(/^[0-9a-f]{32}$/)
+    expect(await vault.computeBlindTermTag(ROOM_SECRET, 'roadmap')).toBe(tag)
+    expect(await vault.computeBlindTermTag(ROOM_GENERAL, 'roadmap')).not.toBe(tag)
+  })
+
+  it('seals search_index shards with AAD binding and synchronously evicts + rotates dual keys on quarantineRoom/forgetRoom', async () => {
+    const idb = createTestVaultIndexedDb()
+    const vault = await openEspaceVault(PRINCIPAL_A, { idb, delayMs: 0 })
+    vaults.push(vault)
+
+    const evictions: Array<{
+      kind: string
+      ownerKey?: string | undefined
+      roomId?: string | undefined
+    }> = []
+    const unsubscribe = registerVaultSearchEviction((ev) => {
+      evictions.push(ev)
+    })
+
+    try {
+      const secretSnippet = 'CONFIDENTIAL_ACQUISITION_TERM_8841'
+      const blindTag = await vault.computeBlindTermTag(ROOM_SECRET, 'acquisition')
+      await vault.putSearchIndexShard({
+        roomId: ROOM_SECRET,
+        boundaryTag: 'confidential-e2ee',
+        epoch: 3,
+        payload: {
+          v: 1,
+          postings: { [blindTag]: ['$ev1'] },
+          docs: [{ eventId: '$ev1', snippet: secretSnippet }],
+        },
+      })
+
+      // Confidential shards permit epoch >= 0 (including newly created rooms at epoch 0); negative epochs fail.
+      await vault.putSearchIndexShard({
+        roomId: '!epoch0-conf:matrix.acme.kodera.test',
+        boundaryTag: 'confidential-e2ee',
+        epoch: 0,
+        payload: { v: 1, docs: [] },
+      })
+      expect(
+        (
+          await vault.readSearchIndexShard('!epoch0-conf:matrix.acme.kodera.test', {
+            boundaryTag: 'confidential-e2ee',
+            epoch: 0,
+          })
+        )?.epoch
+      ).toBe(0)
+      await vault.deleteSearchIndexShard('!epoch0-conf:matrix.acme.kodera.test')
+
+      await expect(
+        vault.putSearchIndexShard({
+          roomId: ROOM_SECRET,
+          boundaryTag: 'confidential-e2ee',
+          epoch: -1,
+          payload: {},
+        })
+      ).rejects.toMatchObject({ code: 'invalid-input' })
+
+      // Oversized shards (> 512 KiB) fail with capacity.
+      await expect(
+        vault.putSearchIndexShard({
+          roomId: ROOM_GENERAL,
+          boundaryTag: 'ordinary',
+          epoch: 0,
+          payload: { pad: 'x'.repeat(MAX_SEARCH_SHARD_BYTES + 64) },
+        })
+      ).rejects.toMatchObject({ code: 'capacity' })
+
+      const rawRows = [...idb.peekStoreRows(ESPACE_VAULT_DATABASE, 'search_index').values()]
+      expect(rawRows).toHaveLength(1)
+      expect(serializeRawBytes(rawRows[0])).not.toContain(secretSnippet)
+      expect(serializeRawBytes(rawRows[0])).not.toContain('acquisition')
+
+      // Wrong expected epoch or boundary fails closed.
+      expect(
+        await vault.readSearchIndexShard(ROOM_SECRET, {
+          boundaryTag: 'confidential-e2ee',
+          epoch: 4,
+        })
+      ).toBeNull()
+      const loaded = await vault.readSearchIndexShard(ROOM_SECRET, {
+        boundaryTag: 'confidential-e2ee',
+        epoch: 3,
+      })
+      expect(loaded?.epoch).toBe(3)
+      expect((loaded?.payload as { docs: Array<{ snippet: string }> }).docs[0]?.snippet).toBe(
+        secretSnippet
+      )
+
+      const priorIncarnation = vault.incarnation
+      // Synchronous eviction fires BEFORE awaiting the IDB promise!
+      const quarantinePromise = vault.quarantineRoom(ROOM_SECRET)
+      expect(evictions).toContainEqual({
+        kind: 'room',
+        ownerKey: vault.ownerKey,
+        roomId: ROOM_SECRET,
+      })
+      await quarantinePromise
+
+      expect(vault.incarnation).not.toBe(priorIncarnation)
+      expect(idb.peekStoreRows(ESPACE_VAULT_DATABASE, 'search_index').size).toBe(0)
+      expect(await vault.computeBlindTermTag(ROOM_GENERAL, 'acquisition')).not.toBe(blindTag)
+      // Plaintext ('ordinary') shard writes stay permanently blocked by the durable quarantine marker,
+      // while re-unlocked 'confidential-e2ee' shards are permitted once unlocked again.
+      await expect(
+        vault.putSearchIndexShard({
+          roomId: ROOM_SECRET,
+          boundaryTag: 'ordinary',
+          epoch: 0,
+          payload: { v: 1 },
+        })
+      ).rejects.toMatchObject({ code: 'quarantined' })
+      await vault.putSearchIndexShard({
+        roomId: ROOM_SECRET,
+        boundaryTag: 'confidential-e2ee',
+        epoch: 0,
+        payload: { v: 1, docs: [{ eventId: '$ev2', snippet: 'unlocked-at-epoch-0' }] },
+      })
+      expect(
+        (
+          await vault.readSearchIndexShard(ROOM_SECRET, {
+            boundaryTag: 'confidential-e2ee',
+            epoch: 0,
+          })
+        )?.epoch
+      ).toBe(0)
+    } finally {
+      unsubscribe()
+    }
   })
 })

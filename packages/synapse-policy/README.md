@@ -1,6 +1,6 @@
 # kodera-synapse-policy
 
-Status: published under AGPL-3.0-or-later. Changes land by pull request.
+Status: Active (`0.1.8`), published under AGPL-3.0-or-later. Changes land by pull request.
 
 A Synapse module that keeps a Kodera instance's rooms under its control plane's policy (`SRV-ADR-0018`).
 
@@ -50,10 +50,12 @@ automatic history copy. Removing the opt-in removes foreign membership and holds
 federated room for replacement. Internal rooms and DMs receive immutable `m.federate: false`
 and a local-server ACL at creation.
 
-Operator opt-in is experimental and has no owner-facing Core control yet. Exact channel UUIDs
-and per-room server lists are configured through `KODERA_MATRIX_PARTNER_CHANNELS`; only active,
-non-read-only Core text channels with audience `all` and no denied override qualify. Listed
-channels cannot be widened. See [deployment instructions](../../deploy/community/README.md#federation).
+Static operator room lists can be configured through `KODERA_MATRIX_PARTNER_CHANNELS` (only active,
+non-read-only Core text channels with audience `all` and no denied override qualify; listed
+channels cannot be widened — see [deployment instructions](../../deploy/community/README.md#federation)),
+while dynamic owner-governed bilateral `PartnerChannelAgreement` bridges and `single_channel_guest`
+grants consult Core live via [Live partner and guest channel authority](#live-partner-and-guest-channel-authority)
+(`H2.3`, [`docs/specs/H2_3_BRIDGES_GUESTS_MLS.md`](../../docs/specs/H2_3_BRIDGES_GUESTS_MLS.md)).
 
 A partner room deliberately shares its history with invited partners under Matrix's `shared`
 history setting. Removing a participant does not recall data already delivered. Server ACLs
@@ -80,9 +82,7 @@ membership policy. Arbitrary timeline payloads cannot be smuggled through state 
 enumerated room metadata/control state is permitted; that metadata remains visible. The server
 cannot verify cryptographic ciphertext without possessing the keys: clients must authenticate it.
 
-Status: Planned — real Synapse confidential-room integration, encrypted envelope API, client
-key persistence, browser/native interoperability and LiveKit frame transforms. No user-facing
-confidential-room capability is qualified by these callback tests alone.
+Status: Implemented in source alongside `apps/server/apps/e2ee` & `apps/confidential` (HPKE KeyPackage/envelope relay, participating-device room discovery, consecutive MLS epoch provisioning, proof-bound cross-signing and opaque `KVKB1` key backups), `apps/web/src/features/confidential/` (`EspaceVault` IndexedDB v2, worker-isolated `SFrame v1` LiveKit media transforms, `KVKB1` recovery and `#180` quarantine), and `apps/server/yjs_collab` (`KDE1` collaboration fence). Durable multi-device MLS group coordinators and live multi-client qualification remain open gates; callback tests alone do not establish deployed qualification.
 
 **To-device messages are not room events**, and Synapse (v1.165.0) offers a module no callback for them. This policy's timeline boundary does not inspect to-device key distribution.
 

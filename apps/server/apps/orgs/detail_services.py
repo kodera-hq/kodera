@@ -4,7 +4,7 @@ from uuid import UUID
 
 from django.db import connection, transaction
 
-from apps.identity.selectors import current_identity
+from apps.identity.selectors import current_identity, current_identity_for_organisation
 from services.identity.access_tokens import VerifiedAccessToken
 
 from .detail_selectors import OrganisationDetail, organisation_detail
@@ -32,12 +32,14 @@ def read_organisation(*, verified: VerifiedAccessToken, target_id: UUID) -> Orga
     with transaction.atomic():
         with connection.cursor() as cursor:
             cursor.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
-        resolved = current_identity(issuer=verified.issuer, subject=subject)
+        resolved = current_identity_for_organisation(
+            organisation_id=target_id, issuer=verified.issuer, subject=subject
+        )
         if resolved is None:
-            raise UnknownOrganisationCustomerError()
-        person, identity = resolved
-        if target_id != identity.organisation_id:
+            if current_identity(issuer=verified.issuer, subject=subject) is None:
+                raise UnknownOrganisationCustomerError()
             raise OrganisationNotFoundError()
+        person, identity = resolved
         if not has_current_read_grant(
             user_id=person.id,
             organisation_id=identity.organisation_id,

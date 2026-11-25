@@ -230,7 +230,7 @@ def test_the_two_constraints_first_visits_rely_on_exist(community):
         found = dict(cursor.fetchall())
     assert set(found) == communities.FIRST_VISIT_CONSTRAINTS
     assert all("UNIQUE" in definition for definition in found.values())
-    assert "(issuer, subject)" in found["identity_issuer_subject_unique"]
+    assert "(organisation_id, issuer, subject)" in found["identity_issuer_subject_unique"]
     assert "(user_id, organisation_id)" in found["membership_current_unique"]
 
 

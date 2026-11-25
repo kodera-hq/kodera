@@ -228,10 +228,20 @@ def find_or_create_starter(*, organisation_id: UUID, actor_id: UUID, request_id:
     return create_starter(organisation_id=organisation_id, actor_id=actor_id, request_id=request_id)
 
 
-def create_starter(*, organisation_id: UUID, actor_id: UUID, request_id: str) -> UUID:
+def create_starter(
+    *,
+    organisation_id: UUID,
+    actor_id: UUID,
+    request_id: str,
+    allow_member_invites: bool = True,
+) -> UUID:
     """The §2 rows, their one audit event and the next channel set, in the caller's transaction,
     under the organisation lock; the caller has found no workspace."""
-    workspace = Workspace.objects.create(organisation_id=organisation_id, structure_revision=1)
+    workspace = Workspace.objects.create(
+        organisation_id=organisation_id,
+        structure_revision=1,
+        allow_member_invites=allow_member_invites,
+    )
     default = ResourcePolicy.objects.create(
         workspace=workspace, visibility=ResourcePolicy.Visibility.ORGANISATION, revision=1
     )
@@ -268,7 +278,10 @@ def _create_categories(workspace: Workspace) -> dict[str, Category]:
     }
 
 
-def _create_channels(workspace: Workspace, categories: dict[str, Category]) -> None:
+def _create_channels(
+    workspace: Workspace,
+    categories: dict[str, Category],
+) -> None:
     positions: dict[str, int] = {}
     for category, key, name, kind in sorted(
         CHANNELS, key=lambda row: not is_arrivals(row[2], row[1])

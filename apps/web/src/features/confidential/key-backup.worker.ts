@@ -211,8 +211,48 @@ export async function openBackup(
     plaintext?.fill(0)
   }
 }
+export interface ParsedKvkb1Header {
+  readonly organisationId: string
+  readonly accountId: string
+  readonly backupEpoch: number
+  readonly kdfKind: 'recovery-key' | 'passphrase'
+  readonly iterations: number
+}
+export function parseKvkb1EnvelopeHeader(input: Uint8Array): ParsedKvkb1Header {
+  const capsule = copyBackupBytes(input, 42, LIMIT + 4096)
+  try {
+    need(decoder.decode(capsule.subarray(0, 5)) === 'KVKB1')
+    const size = new DataView(capsule.buffer).getUint32(5)
+    need(size > 0 && size <= 2048 && capsule.length >= 9 + size + 17)
+    const encoded = decoder.decode(capsule.subarray(9, 9 + size)),
+      raw: unknown = JSON.parse(encoded)
+    need(Array.isArray(raw) && raw.length === 9 && JSON.stringify(raw) === encoded)
+    need(raw[0] === 'kodera-zk-key-backup' && raw[1] === 1)
+    const principal = verificationPrincipal({
+      organisationId: raw[2],
+      accountId: raw[3],
+    })
+    integer(raw[4])
+    need(raw[4] > 0)
+    need(raw[5] === 'recovery-key' || raw[5] === 'passphrase')
+    if (raw[5] === 'recovery-key') need(raw[6] === 0)
+    else iterations(raw[6])
+    unbase64(raw[7], [16])
+    unbase64(raw[8], [12])
+    return Object.freeze({
+      organisationId: principal.organisationId,
+      accountId: principal.accountId,
+      backupEpoch: raw[4],
+      kdfKind: raw[5],
+      iterations: raw[6],
+    })
+  } finally {
+    capsule.fill(0)
+  }
+}
 export function createBackupVaultBridge(port: MessagePort, scope: BackupContext) {
-  const c = context(scope)
+  const base = context(scope)
+  let currentEpoch = base.backupEpoch
   let active = true,
     nextId = 0
   let waiting:
@@ -256,24 +296,37 @@ export function createBackupVaultBridge(port: MessagePort, scope: BackupContext)
     }
   }
   port.start()
+  const currentScope = (): BackupContext =>
+    Object.freeze({ ...base, backupEpoch: currentEpoch })
   const exchange = (kind: 'read' | 'write', bytes: Uint8Array<ArrayBuffer> | null) =>
     new Promise<Uint8Array<ArrayBuffer> | null>((resolve, reject) => {
       need(active && !waiting)
       const id = ++nextId
       waiting = { id, resolve, reject, timer: setTimeout(close, 10_000) }
       try {
-        port.postMessage({ kind, id, context: c, bytes }, bytes ? [bytes.buffer] : [])
+        port.postMessage(
+          { kind, id, context: currentScope(), bytes },
+          bytes ? [bytes.buffer] : []
+        )
       } catch {
         close()
       }
     })
   return Object.freeze({
     close,
+    advanceEpoch(input: unknown) {
+      need(active)
+      const v = fields(input, ['backupEpoch'])
+      integer(v.backupEpoch)
+      need(v.backupEpoch >= currentEpoch)
+      currentEpoch = v.backupEpoch
+      return currentEpoch
+    },
     async seal(options: unknown) {
       const bytes = await exchange('read', null)
       need(bytes)
       try {
-        const result = await sealBackup(c, bytes, options)
+        const result = await sealBackup(currentScope(), bytes, options)
         need(active)
         return result
       } finally {
@@ -281,10 +334,25 @@ export function createBackupVaultBridge(port: MessagePort, scope: BackupContext)
       }
     },
     async restore(input: unknown) {
-      const v = fields(input, ['capsule', 'options'])
+      const hasEpoch =
+        input !== null &&
+        typeof input === 'object' &&
+        Object.prototype.hasOwnProperty.call(input, 'backupEpoch')
+      const v = fields(input, hasEpoch ? ['capsule', 'options', 'backupEpoch'] : ['capsule', 'options'])
+      let restoreScope: BackupContext
+      if (hasEpoch) {
+        integer(v.backupEpoch)
+        need(v.backupEpoch > 0)
+        restoreScope = Object.freeze({ ...base, backupEpoch: v.backupEpoch })
+      } else {
+        const header = parseKvkb1EnvelopeHeader(v.capsule as Uint8Array)
+        need(header.backupEpoch >= currentEpoch)
+        currentEpoch = header.backupEpoch
+        restoreScope = currentScope()
+      }
       let bytes: Uint8Array<ArrayBuffer> | undefined
       try {
-        bytes = await openBackup(c, v.capsule as Uint8Array, v.options)
+        bytes = await openBackup(restoreScope, v.capsule as Uint8Array, v.options)
         need(active)
         const result = await exchange('write', bytes)
         need(active && result === null)
@@ -306,6 +374,7 @@ if (typeof self !== 'undefined' && typeof self.addEventListener === 'function') 
         need(bridge)
         if (operation === 'seal') return bridge.seal(input)
         if (operation === 'restore') return bridge.restore(input)
+        if (operation === 'advance-epoch') return bridge.advanceEpoch(input)
         throw new Error('Unknown backup operation.')
       }
     },

@@ -164,6 +164,7 @@ EXPOSED_HEADERS = (
     "Retry-After",
     "WWW-Authenticate",
     "X-Job-Id",
+    "X-Kodera-Next-Backup-Epoch",
     "X-Request-Id",
 )
 PREFLIGHT_MAX_AGE_S = 600

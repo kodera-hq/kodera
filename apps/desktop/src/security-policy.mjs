@@ -5,7 +5,7 @@
 
 export const DESKTOP_APP_IDENTIFIER = 'io.kodera.desktop';
 export const DESKTOP_PRODUCT_NAME = 'Kodera';
-export const DESKTOP_APP_VERSION = '0.1.1';
+export const DESKTOP_APP_VERSION = '0.2.0';
 
 export const APPROVED_DEEP_LINK_SCHEMES = Object.freeze(['kodera', 'matrix']);
 

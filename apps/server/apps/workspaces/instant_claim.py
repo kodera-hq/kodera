@@ -1,5 +1,6 @@
 """Warm-pool allocation claims with current owner checks and transaction-scoped locks."""
 
+import json
 import re
 from typing import Any
 from urllib.parse import urlsplit
@@ -8,7 +9,7 @@ from uuid import UUID
 from django.db import transaction
 from django.utils import timezone
 
-from apps.identity.selectors import current_identity
+from apps.identity.selectors import all_identity_organisation_ids, current_identities
 from apps.orgs.actor_selectors import (
     TenantCaller,
     TenantCallerNotFoundError,
@@ -17,7 +18,7 @@ from apps.orgs.actor_selectors import (
 )
 from services.identity.access_tokens import VerifiedAccessToken
 
-from .models import Channel, WarmPoolAllocation, WorkspaceTemplateApplication
+from .models import Channel, WarmPoolAllocation, Workspace, WorkspaceTemplateApplication
 from .services import (
     TemplateActorForbiddenError,
     TemplateActorUnknownError,
@@ -28,7 +29,13 @@ from .services import (
     template_spec_fingerprint,
 )
 from .templates import canonical_plan, resolve_template
-from .warm_pool import InstantClaimRequest, build_instant_claim_plan, build_instant_claim_response
+from .warm_pool import (
+    InstantClaimInputError,
+    InstantClaimRequest,
+    build_instant_claim_plan,
+    build_instant_claim_response,
+    parse_instant_claim_request,
+)
 
 
 class ClaimForbiddenError(Exception):
@@ -44,19 +51,43 @@ class PoolUnavailableError(Exception):
 
 
 def _owner(verified: VerifiedAccessToken) -> TenantCaller:
-    resolved = current_identity(issuer=verified.issuer, subject=verified.subject)
-    if resolved is None:
+    candidates = current_identities(issuer=verified.issuer, subject=verified.subject)
+    if not candidates:
         raise ClaimIdentityUnknownError()
-    _, identity = resolved
-    try:
-        caller = read_tenant_caller(verified=verified, organisation_id=identity.organisation_id)
-    except TenantCallerUnknownError:
-        raise ClaimIdentityUnknownError() from None
-    except TenantCallerNotFoundError:
-        raise ClaimForbiddenError() from None
-    if caller.role != "org_owner" or caller.organisation_state != "active":
-        raise ClaimForbiddenError()
-    return caller
+    candidate_org_ids = [
+        ident.organisation_id for _person, ident in candidates if ident.organisation_id is not None
+    ]
+    orgs_with_alloc = (
+        set(
+            WarmPoolAllocation.objects.filter(
+                workspace__organisation_id__in=candidate_org_ids,
+                claimed_at__isnull=True,
+            ).values_list("workspace__organisation_id", flat=True)
+        )
+        if len(candidate_org_ids) > 1
+        else set()
+    )
+    ordered = sorted(
+        candidates,
+        key=lambda item: 0 if item[1].organisation_id in orgs_with_alloc else 1,
+    )
+    saw_known = False
+    for _person, identity in ordered:
+        if identity.organisation_id is None:
+            continue
+        try:
+            caller = read_tenant_caller(verified=verified, organisation_id=identity.organisation_id)
+        except TenantCallerUnknownError:
+            continue
+        except TenantCallerNotFoundError:
+            saw_known = True
+            continue
+        saw_known = True
+        if caller.role == "org_owner" and caller.organisation_state == "active":
+            return caller
+    if not saw_known:
+        raise ClaimIdentityUnknownError()
+    raise ClaimForbiddenError()
 
 
 def _public_https(value: str) -> bool:
@@ -106,6 +137,55 @@ def _lock_and_verify_owner(
 def reauthorise_instant_claim(verified: VerifiedAccessToken, organisation_id: UUID) -> None:
     """Re-read authority under canonical membership/identity/user/organisation locks."""
     _lock_and_verify_owner(verified, organisation_id)
+
+
+def reauthorise_replay_instant_claim(
+    verified: VerifiedAccessToken,
+    *,
+    fallback_organisation_id: UUID,
+    stored_status: int | None,
+    stored_body: bytes | None,
+    request_body: bytes = b"",
+    content_type: str = "",
+) -> None:
+    """Bind replay, key-reuse, and in-flight authority to the original target organisation."""
+    if stored_status is not None and 200 <= stored_status <= 299:
+        try:
+            parsed = json.loads(stored_body or b"")
+            raw_ws_id = parsed.get("workspaceId") if isinstance(parsed, dict) else None
+            ws_id = UUID(raw_ws_id) if isinstance(raw_ws_id, str) else None
+        except (ValueError, UnicodeDecodeError, TypeError):
+            ws_id = None
+        if ws_id is None:
+            raise ClaimForbiddenError()
+        target_org_id = (
+            Workspace.objects.filter(id=ws_id).values_list("organisation_id", flat=True).first()
+        )
+        if target_org_id is None:
+            raise ClaimForbiddenError()
+        _lock_and_verify_owner(verified, target_org_id)
+        return
+
+    caller_org_ids = all_identity_organisation_ids(issuer=verified.issuer, subject=verified.subject)
+    if caller_org_ids:
+        try:
+            candidate = parse_instant_claim_request(request_body, content_type)
+        except InstantClaimInputError:
+            candidate = None
+        if candidate is not None:
+            slug_org_id = (
+                WarmPoolAllocation.objects.filter(
+                    slug=candidate.slug,
+                    workspace__organisation_id__in=caller_org_ids,
+                )
+                .values_list("workspace__organisation_id", flat=True)
+                .first()
+            )
+            if slug_org_id is not None:
+                for target_id in sorted({slug_org_id, fallback_organisation_id}):
+                    _lock_and_verify_owner(verified, target_id)
+                return
+    _lock_and_verify_owner(verified, fallback_organisation_id)
 
 
 def _expected_fingerprint(payload: InstantClaimRequest) -> str:

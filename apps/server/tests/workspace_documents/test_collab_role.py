@@ -4,7 +4,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from django.db import connection, transaction
-from test_intake_writer_role import INSUFFICIENT_PRIVILEGE, acting_as, refused
+from test_intake_writer_role import CHECK_VIOLATION, INSUFFICIENT_PRIVILEGE, acting_as, refused
 from workspace_safety.test_moderation import world as world
 
 from apps.docs import services
@@ -336,3 +336,51 @@ def test_restricted_native_store_persists_and_redeems_one_nonce(
         "widenedRefused": True,
     }
     assert "Restricted store update" in Document.objects.get(id=created["id"]).markdown
+
+
+def test_scope_guard_enforces_encryption_epoch_null_on_plaintext_and_monotonic_on_confidential(
+    world, native_engine, collab_role
+):
+    org, _, _, tokens = world
+    services.create(
+        verified=tokens[3],
+        organisation_id=org.id,
+        name="Plaintext epoch invariant",
+        parent_id=None,
+        template_key=None,
+        request_id=str(uuid4()),
+    )
+    conf_doc = services.create(
+        verified=tokens[3],
+        organisation_id=org.id,
+        name="Confidential epoch invariant",
+        parent_id=None,
+        template_key=None,
+        is_confidential=True,
+        encryption_epoch=3,
+        request_id=str(uuid4()),
+    )
+    conf_id = UUID(conf_doc["id"])
+
+    with acting_as(collab_role):
+        # Plaintext document cannot set encryption_epoch even under collab_role!
+        assert (
+            refused("UPDATE docs_document SET encryption_epoch = 1 WHERE NOT is_confidential")
+            == CHECK_VIOLATION
+        )
+        # Confidential document with encryption_epoch=3 cannot clear to NULL or regress to 2!
+        assert (
+            refused("UPDATE docs_document SET encryption_epoch = NULL WHERE is_confidential")
+            == CHECK_VIOLATION
+        )
+        assert (
+            refused("UPDATE docs_document SET encryption_epoch = 2 WHERE is_confidential")
+            == CHECK_VIOLATION
+        )
+        # Monotonic advancement (3 -> 4) succeeds cleanly.
+        with transaction.atomic(), connection.cursor() as cursor:
+            cursor.execute(
+                "UPDATE docs_document SET encryption_epoch = 4 WHERE id = %s",
+                [conf_id],
+            )
+    assert Document.objects.get(id=conf_id).encryption_epoch == 4

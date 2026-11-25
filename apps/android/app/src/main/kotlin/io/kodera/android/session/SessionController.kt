@@ -182,6 +182,8 @@ class SessionController internal constructor(
     @Volatile private var registeredPushDeviceId: String? = null
     private var activeMemberProfile: MemberProfile? = null
     private var activeMemberOrganisation: MemberOrganisation? = null
+    @Volatile private var preferredOrganisationId: String? = null
+    @Volatile private var preferredOrganisationSlug: String? = null
     private var activeVaultOrganisationId: String? = null
     var nativeCalls: NativeTelecomRuntime? = null
         private set
@@ -230,6 +232,13 @@ class SessionController internal constructor(
     val developmentIssuer: String? get() = deployment.developmentIssuer
     /** The validated Console origin this build names, or null. Held only: no screen opens it. */
     val consoleOrigin: String? get() = deployment.consoleOrigin
+
+    fun selectOrganisation(organisationId: String? = null, slug: String? = null) {
+        if (closed) return
+        preferredOrganisationId = organisationId
+        preferredOrganisationSlug = slug
+        if (phase is SessionPhase.SignedIn) loadMember(refreshFirst = false)
+    }
 
     init {
         // A session that ends anywhere (a refused refresh, Core refusing a fresh token, sign-out)
@@ -338,10 +347,12 @@ class SessionController internal constructor(
         }
     }
 
-    fun signIn(issuer: String) {
+    fun signIn(issuer: String, organisationId: String? = null, organisationSlug: String? = null) {
         requireMain()
         val owner = service ?: return
         if (closed || phase != SessionPhase.SignedOut) return
+        preferredOrganisationId = organisationId
+        preferredOrganisationSlug = organisationSlug
         phase = SessionPhase.SigningIn
         notice = null
         stranded = false
@@ -349,6 +360,8 @@ class SessionController internal constructor(
             if (!ensurePreviousSessionWipedOnWorker()) {
                 main.execute {
                     if (closed || phase != SessionPhase.SigningIn) return@execute
+                    preferredOrganisationId = null
+                    preferredOrganisationSlug = null
                     phase = SessionPhase.SignedOut
                     notice = R.string.session_not_wiped
                 }
@@ -361,6 +374,8 @@ class SessionController internal constructor(
                     if (!enter(it, refreshFirst = false) && !closed && phase == SessionPhase.SigningIn) leaveEndedSession()
                 }.onFailure { error ->
                     val failure = (error as SignInException).failure
+                    preferredOrganisationId = null
+                    preferredOrganisationSlug = null
                     phase = SessionPhase.SignedOut
                     // The member did not cancel a sign-in no Activity could finish: it was interrupted.
                     notice = if (stranded && failure == SignInFailure.CANCELLED) R.string.signin_interrupted else noticeFor(failure)
@@ -442,6 +457,8 @@ class SessionController internal constructor(
         registeredPushDeviceId = null
         activeMemberProfile = null
         activeMemberOrganisation = null
+        preferredOrganisationId = null
+        preferredOrganisationSlug = null
         activeVaultOrganisationId = null
         generation = null
         val retiringFence = rotateSessionFence()
@@ -533,6 +550,8 @@ class SessionController internal constructor(
         registeredPushDeviceId = null
         activeMemberProfile = null
         activeMemberOrganisation = null
+        preferredOrganisationId = null
+        preferredOrganisationSlug = null
         activeVaultOrganisationId = null
         generation = null
         val retiringFence = rotateSessionFence()
@@ -593,7 +612,11 @@ class SessionController internal constructor(
                 when (outcome) {
                     null -> member = MemberState.CoreUnavailable
                     is MeOutcome.Member -> {
-                        val organisation = outcome.profile.organisations.singleOrNull { it.realm == signedIn.session.realm }
+                        val organisation = outcome.profile.organisation(
+                            realm = signedIn.session.realm,
+                            preferredOrganisationId = preferredOrganisationId,
+                            preferredSlug = preferredOrganisationSlug,
+                        )
                         activeMemberProfile = outcome.profile
                         activeMemberOrganisation = organisation
                         configureSessionCoordinators(organisation?.id)

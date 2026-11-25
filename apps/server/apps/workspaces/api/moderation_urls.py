@@ -2,12 +2,23 @@
 
 from django.urls import path
 
-from . import iam, moderation as views, security_posture
+from . import experience, iam, moderation as views, security_posture
 
 ROOT = "api/v1/organisations/<uuid:organisation_id>/workspace/"
 urlpatterns = [
     path(ROOT + "security-posture", security_posture.posture),
     path(ROOT + "security-posture/actions/remediate", security_posture.remediate),
+    path(ROOT + "emojis", experience.emojis),
+    path(ROOT + "emojis/<uuid:emoji_id>", experience.emoji_detail),
+    path(ROOT + "emojis/<uuid:emoji_id>/blob", experience.emoji_blob),
+    path(ROOT + "scheduled-messages", experience.scheduled_messages),
+    path(
+        ROOT + "scheduled-messages/<uuid:scheduled_message_id>",
+        experience.scheduled_message_detail,
+    ),
+    path(ROOT + "reminders", experience.reminders),
+    path(ROOT + "reminders/<uuid:reminder_id>", experience.reminder_detail),
+    path(ROOT + "preferences/me", experience.my_preferences),
     path(ROOT + "roles", iam.roles),
     path(ROOT + "roles/<uuid:role_id>", iam.role),
     path(ROOT + "members/<uuid:membership_id>/roles", iam.member_roles),

@@ -11,21 +11,30 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useRouter } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 import { ApiProblem } from '../../api/client'
+import { rememberSharedRealmSlug } from '../../app/communityAccess'
+import { queryClient as appQueryClient } from '../../app/queryClient'
 import { statusSummaryQueryKey } from '../../app/queryKeys'
 import { isTenantSlug } from '../../api/tenantSlug'
 import { Button } from '../../ui/Button/Button'
 import { InlineAlert } from '../../ui/InlineAlert/InlineAlert'
 import { LINK_TEXT } from '../../ui/linkText'
 import { PAGE_TITLE } from '../../ui/pageTitle'
+import { RadioGroup } from '../../ui/RadioGroup/RadioGroup'
 import { Skeleton } from '../../ui/Skeleton/Skeleton'
 import { TextField } from '../../ui/TextField/TextField'
 import { useLegalDocumentsQuery, useSlugAvailabilityQuery } from '../order/api'
 import type { LegalDocument } from '../order/api'
 import { legalHtmlHref } from '../order/legalHref'
 import { configuredTenantDomain } from '../order/tenantAddress'
-import { forgetCreation, pendingCreation, rememberCreation, useCreateTenantMutation } from './api'
+import {
+  forgetCreation,
+  pendingCreation,
+  rememberCreation,
+  useCreateSelfServeWorkspaceMutation,
+  useCreateTenantMutation,
+} from './api'
 import type { TenantCreation } from './api'
-import { deriveSlug } from './slug'
+import { deriveOrganisationSlug, deriveSlug, isOrganisationSelfServeSlug } from './slug'
 
 /** How long after the last change to the address its availability is read. */
 export const SLUG_CHECK_DELAY_MS = 300
@@ -440,5 +449,288 @@ function DocumentLink({ doc, describedBy }: { doc: LegalDocument; describedBy: s
         </a>
       )}
     </li>
+  )
+}
+
+export type SelfServePlanChoice = 'freemium' | 'sovereign'
+type SelfServeFailure = 'unavailable' | 'failed' | 'rate-limit'
+
+export function SelfServeCreateWorkspace({
+  initialPlan = 'freemium',
+  existingSovereignOrgSlug,
+}: {
+  initialPlan?: SelfServePlanChoice
+  existingSovereignOrgSlug?: string | undefined
+}) {
+  const { t, i18n } = useTranslation()
+  const router = useRouter()
+  const queryClient = useQueryClient()
+  const hintId = useId()
+  const [plan, setPlan] = useState<SelfServePlanChoice>(initialPlan)
+  const [name, setName] = useState('')
+  const [nameTouched, setNameTouched] = useState(false)
+  const [editedSlug, setEditedSlug] = useState<string | undefined>(undefined)
+  const [addressOpen, setAddressOpen] = useState(false)
+  const slug = editedSlug ?? deriveOrganisationSlug(name)
+  const slugValid = isOrganisationSelfServeSlug(slug)
+  const showAddressField = addressOpen || (name.trim().length > 0 && !slugValid)
+  const addressRef = useRef<HTMLInputElement>(null)
+  const idempotencyKeyRef = useRef<{ payload: string; key: string } | null>(null)
+  const [refusals, setRefusals] = useState<Readonly<Record<string, Refusal>>>({})
+  const [refusedName, setRefusedName] = useState<string | undefined>(undefined)
+  const [failure, setFailure] = useState<SelfServeFailure | undefined>(undefined)
+  const [opening, setOpening] = useState(false)
+
+  const selfServe = useCreateSelfServeWorkspaceMutation()
+  const busy = selfServe.isPending || opening
+
+  const currentNameError: NameError | undefined =
+    refusedName === name
+      ? 'characters'
+      : name.trim().length === 0
+        ? 'empty'
+        : [...name].length > 120
+          ? 'too-long'
+          : FORBIDDEN_IN_NAME.test(name)
+            ? 'characters'
+            : undefined
+
+  const refusedAtSubmit = Object.hasOwn(refusals, slug) ? refusals[slug] : undefined
+  const unavailableReason: 'taken' | 'reserved' | undefined = refusedAtSubmit?.reason
+  const suggestions = (refusedAtSubmit?.suggestions ?? []).slice(0, 3)
+
+  const canUseExistingSovereignOrg =
+    plan === 'sovereign' &&
+    existingSovereignOrgSlug !== undefined &&
+    name.trim().length === 0 &&
+    editedSlug === undefined
+
+  const canSubmit =
+    canUseExistingSovereignOrg ||
+    (currentNameError === undefined && slugValid && unavailableReason === undefined)
+
+  function openAddress() {
+    setAddressOpen(true)
+    window.setTimeout(() => addressRef.current?.focus(), 0)
+  }
+
+  function applySuggestion(next: string) {
+    setEditedSlug(next)
+    openAddress()
+  }
+
+  async function submit(event: FormEvent) {
+    event.preventDefault()
+    if (canUseExistingSovereignOrg && existingSovereignOrgSlug !== undefined) {
+      setOpening(true)
+      await router.navigate({
+        to: '/$org/order',
+        params: { org: existingSovereignOrgSlug },
+        search: { pack: 'sovereign' },
+      })
+      return
+    }
+    setNameTouched(true)
+    if (!canSubmit || busy) return
+    const locale: 'fr' | 'en' = i18n.language.startsWith('en') ? 'en' : 'fr'
+    const body = { name: name.trim(), slug, locale } as const
+    const serialized = JSON.stringify(body)
+    const key =
+      idempotencyKeyRef.current?.payload === serialized ? idempotencyKeyRef.current.key : newKey()
+    idempotencyKeyRef.current = { payload: serialized, key }
+    setFailure(undefined)
+
+    try {
+      const created = await selfServe.mutateAsync({ body, idempotencyKey: key })
+      idempotencyKeyRef.current = null
+      setOpening(true)
+      rememberSharedRealmSlug(created.organisation_slug)
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['me'] }),
+        appQueryClient.invalidateQueries({ queryKey: ['me'] }),
+      ])
+      if (plan === 'sovereign') {
+        await router.navigate({
+          to: '/$org/order',
+          params: { org: created.organisation_slug },
+          search: { pack: 'sovereign' },
+        })
+      } else {
+        await router.navigate({
+          to: '/$org/workspace',
+          params: { org: created.organisation_slug },
+        })
+      }
+    } catch (error) {
+      setOpening(false)
+      if (!(error instanceof ApiProblem) || error.status >= 500) {
+        if (error instanceof ApiProblem && error.type === `${PROBLEM}service-unavailable`) {
+          idempotencyKeyRef.current = null
+          setFailure('unavailable')
+          return
+        }
+        setFailure('failed')
+        return
+      }
+      if (error.type === `${PROBLEM}idempotency-key-in-flight`) {
+        setFailure('failed')
+        return
+      }
+      idempotencyKeyRef.current = null
+      if (error.status === 429 || error.type === `${PROBLEM}rate-limited`) {
+        setFailure('rate-limit')
+        return
+      }
+      if (error.type === `${PROBLEM}slug-taken`) {
+        setRefusals((known) => ({
+          ...known,
+          [slug]: { reason: 'taken', suggestions: error.suggestions },
+        }))
+        openAddress()
+        return
+      }
+      if (error.type === `${PROBLEM}validation-error`) {
+        if (error.errors.some((entry) => entry.pointer === '/slug')) {
+          setRefusals((known) => ({
+            ...known,
+            [slug]: { reason: 'reserved', suggestions: [] },
+          }))
+          openAddress()
+          return
+        }
+        if (error.errors.some((entry) => entry.pointer === '/name')) {
+          setRefusedName(name)
+          setNameTouched(true)
+          return
+        }
+      }
+      setFailure('failed')
+    }
+  }
+
+  const formatError =
+    name.trim().length > 0 && !slugValid
+      ? t('console.home.create.error-address-invalid')
+      : undefined
+  const unavailableError =
+    !slugValid || unavailableReason === undefined
+      ? undefined
+      : unavailableReason === 'reserved'
+        ? t('console.home.create.error-address-reserved')
+        : t('console.home.create.error-address-taken')
+
+  return (
+    <form
+      className="flex max-w-shell-document-max-width flex-col gap-6"
+      onSubmit={(event) => void submit(event)}
+      noValidate
+    >
+      <div className="flex flex-col gap-2">
+        <h1 className={PAGE_TITLE}>{t('console.home.create.title')}</h1>
+        <p className="text-sm text-c-ink-2">
+          {plan === 'sovereign'
+            ? t('console.home.create.sovereign-subtitle')
+            : t('console.home.create.self-serve-subtitle')}
+        </p>
+      </div>
+
+      <RadioGroup
+        label={t('console.home.create.label-plan')}
+        value={plan}
+        onValueChange={(next) => setPlan(next as SelfServePlanChoice)}
+        options={[
+          { value: 'freemium', label: t('console.home.create.plan-freemium') },
+          { value: 'sovereign', label: t('console.home.create.plan-sovereign') },
+        ]}
+      />
+
+      <TextField
+        label={t('console.home.create.label-name')}
+        value={name}
+        onChange={(event) => {
+          setName(event.target.value)
+          setNameTouched(true)
+        }}
+        {...(nameTouched && currentNameError !== undefined
+          ? { error: t(`console.home.create.error-name-${currentNameError}`) }
+          : {})}
+      />
+
+      {slug.length > 0 || showAddressField ? (
+        <div className="flex flex-col gap-2">
+          {showAddressField ? (
+            <TextField
+              ref={addressRef}
+              label={t('console.home.create.label-address')}
+              value={slug}
+              autoCapitalize="none"
+              spellCheck={false}
+              onChange={(event) => {
+                setEditedSlug(event.target.value)
+                setAddressOpen(true)
+              }}
+              help={`${t('console.home.create.hint-org-slug-rule')} ${t('console.home.create.hint-address-final')}`}
+              {...(formatError === undefined ? {} : { error: formatError })}
+            />
+          ) : (
+            <div className="flex flex-col gap-1">
+              <span className="text-sm font-semibold text-c-ink">
+                {t('console.home.create.label-address')}
+              </span>
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="font-mono text-sm text-c-ink">{`/${slug}/workspace`}</span>
+                <Button
+                  variant="tertiary"
+                  size="sm"
+                  aria-describedby={hintId}
+                  onClick={openAddress}
+                >
+                  {t('console.home.create.action-edit-address')}
+                </Button>
+              </div>
+              <span id={hintId} className="text-xs text-c-ink-3">
+                {t('console.home.create.hint-address-final')}
+              </span>
+            </div>
+          )}
+
+          {unavailableError === undefined ? null : (
+            <p className="text-xs text-c-bad-ink" role="status" aria-live="polite">
+              {unavailableError}
+            </p>
+          )}
+          {unavailableReason !== undefined && suggestions.length > 0 ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs text-c-ink-3">
+                {t('console.home.create.label-suggestions')}
+              </span>
+              {suggestions.map((suggestion) => (
+                <Button
+                  key={suggestion}
+                  variant="secondary"
+                  size="sm"
+                  aria-label={t('console.home.create.a11y-use-suggestion', { slug: suggestion })}
+                  onClick={() => applySuggestion(suggestion)}
+                >
+                  {suggestion}
+                </Button>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      {failure === undefined ? null : (
+        <InlineAlert kind="error">{t(`console.home.create.error-${failure}`)}</InlineAlert>
+      )}
+
+      <Button type="submit" className="self-start" disabled={!canSubmit} loading={busy}>
+        {busy
+          ? t('console.home.create.action-creating')
+          : plan === 'sovereign'
+            ? t('console.home.create.action-continue-sovereign')
+            : t('console.home.create.action-create-free')}
+      </Button>
+    </form>
   )
 }

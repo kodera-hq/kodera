@@ -188,6 +188,7 @@ def _validate(s: Snapshot) -> None:
     if (
         s.type_code not in {"380", "381"}
         or not s.number
+        or not isinstance(s.issued_at, datetime)
         or s.issued_at.tzinfo is None
         or s.currency != "EUR"
         or not s.lines
@@ -356,6 +357,9 @@ class Validator(Protocol):
     def validate(self, *, pdf: bytes, xml: bytes, snapshot_sha256: str) -> None:
         """Raise unless PDF/A-3, XSD, EN16931 Schematron and embedded XML all validate."""
         ...
+
+
+render_cii = render_xml
 
 
 def render_facturx(

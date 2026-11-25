@@ -2,8 +2,9 @@
 
 import hashlib
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -224,6 +225,7 @@ def _lock_and_verify_template_actor(
     from apps.identity.selectors import (
         active_organisation_identities,
         current_identity,
+        current_identity_for_organisation,
         lock_delivery_identity_if_present,
         lock_user_fence_if_present,
         realm_identities,
@@ -245,12 +247,14 @@ def _lock_and_verify_template_actor(
     from .initialise import lock_organisation
 
     if verified is not None:
-        resolved = current_identity(issuer=verified.issuer, subject=verified.subject)
+        resolved = current_identity_for_organisation(
+            organisation_id=organisation_id, issuer=verified.issuer, subject=verified.subject
+        )
         if resolved is None:
-            raise TemplateActorUnknownError("actor identity absent or disabled")
-        person, identity = resolved
-        if identity.organisation_id != organisation_id:
+            if current_identity(issuer=verified.issuer, subject=verified.subject) is None:
+                raise TemplateActorUnknownError("actor identity absent or disabled")
             raise TemplateActorForbiddenError("actor identity belongs to another organisation")
+        person, identity = resolved
         try:
             initial_caller = read_tenant_caller(verified=verified, organisation_id=organisation_id)
         except TenantCallerUnknownError:
@@ -277,7 +281,12 @@ def _lock_and_verify_template_actor(
             raise TemplateActorForbiddenError("organisation deleted")
         lock_organisation(organisation_id)
 
-        if current_identity(issuer=verified.issuer, subject=verified.subject) is None:
+        if (
+            current_identity_for_organisation(
+                organisation_id=organisation_id, issuer=verified.issuer, subject=verified.subject
+            )
+            is None
+        ):
             raise TemplateActorUnknownError("actor identity disabled under lock")
         try:
             caller = read_tenant_caller(verified=verified, organisation_id=organisation_id)
@@ -827,3 +836,77 @@ def apply_workspace_template(
                 failed_app.last_error = code
                 failed_app.save(update_fields=["state", "last_error", "updated_at"])
         raise
+
+
+def disarm_rehearsal_outbound(
+    *,
+    now: datetime,
+    excluded_organisation_ids: Sequence[UUID] = (),
+    excluded_user_ids: Sequence[UUID] = (),
+) -> dict[str, int]:
+    """Disarm pending and in-flight scheduled messages during isolated restore rehearsal."""
+    if not connection.in_atomic_block:
+        raise RuntimeError("disarm_rehearsal_outbound requires an enclosing atomic transaction")
+    from .models import ScheduledMessage
+
+    sched_qs = ScheduledMessage.objects.filter(state__in=("pending", "in_flight"))
+    if excluded_organisation_ids:
+        sched_qs = sched_qs.exclude(organisation_id__in=excluded_organisation_ids)
+    if excluded_user_ids:
+        sched_qs = sched_qs.exclude(author__user_id__in=excluded_user_ids)
+    disarmed = sched_qs.update(
+        state="obsolete",
+        lease_id=None,
+        lease_expires_at=None,
+        failure_reason="rehearsal_disarmed",
+        updated_at=now,
+    )
+    return {"scheduled_messages_disarmed": int(disarmed)}
+
+
+def drain_snapshot_in_flight_leases(*, now: datetime) -> int:
+    """Drain frozen snapshot `state='in_flight'` scheduled message leases before Art. 17 replay."""
+    if not connection.in_atomic_block:
+        raise RuntimeError(
+            "drain_snapshot_in_flight_leases requires an enclosing atomic transaction"
+        )
+    from .models import ScheduledMessage
+
+    drained = ScheduledMessage.objects.filter(state="in_flight").update(
+        state="obsolete",
+        lease_id=None,
+        lease_expires_at=None,
+        failure_reason="snapshot_lease_drained",
+        updated_at=now,
+    )
+    return int(drained)
+
+
+def count_residual_experience_rows_for_organisation(*, organisation_id: UUID) -> int:
+    """Count remaining custom emojis, scheduled messages, or member preferences for an erased org."""
+    from .models import MemberWorkspacePreference, ScheduledMessage, WorkspaceCustomEmoji
+
+    return (
+        WorkspaceCustomEmoji.objects.filter(organisation_id=organisation_id).count()
+        + ScheduledMessage.objects.filter(organisation_id=organisation_id).count()
+        + MemberWorkspacePreference.objects.filter(organisation_id=organisation_id).count()
+    )
+
+
+def count_residual_experience_rows_for_user(*, user_id: UUID) -> int:
+    """Count remaining scheduled messages or member preferences for an erased user."""
+    from .models import MemberWorkspacePreference, ScheduledMessage
+
+    return (
+        ScheduledMessage.objects.filter(author__user_id=user_id).count()
+        + MemberWorkspacePreference.objects.filter(membership__user_id=user_id).count()
+    )
+
+
+def purge_experience_rows_for_user(*, user_id: UUID) -> int:
+    """Delete scheduled messages and member workspace preferences for `user_id`."""
+    from .models import MemberWorkspacePreference, ScheduledMessage
+
+    c_sched, _ = ScheduledMessage.objects.filter(author__user_id=user_id).delete()
+    c_pref, _ = MemberWorkspacePreference.objects.filter(membership__user_id=user_id).delete()
+    return int(c_sched + c_pref)

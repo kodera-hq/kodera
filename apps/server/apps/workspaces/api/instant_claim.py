@@ -16,11 +16,21 @@ from apps.workspaces.instant_claim import (
     claim_allocation,
     prepare_template_claim,
     reauthorise_instant_claim,
+    reauthorise_replay_instant_claim,
 )
 from apps.workspaces.quota_http import respond_once
 from apps.workspaces.warm_pool import InstantClaimInputError, parse_instant_claim_request
 from core.api import lanes, problems
-from core.api.idempotency import KEY_HEADER, StoredResponse, holds_answer, is_malformed, is_missing
+from core.api.idempotency import (
+    KEY_HEADER,
+    MetadataAuthority,
+    ReplayAuthority,
+    StoredResponse,
+    holds_answer,
+    is_malformed,
+    is_missing,
+    stored_answer,
+)
 from core.api.scopes import Operation, declares
 from services.identity.access_tokens import TokenVerificationError
 from services.identity.trusted_issuers import verify_configured_token
@@ -79,7 +89,20 @@ def instant_claim(request: HttpRequest) -> HttpResponse:
                     request_id=request_id,
                 )
 
-        def authority(_event):
+        def authority(event: object) -> None:
+            if isinstance(event, (ReplayAuthority, MetadataAuthority)):
+                stored = stored_answer(
+                    request, issuer=verified.issuer, subject=verified.subject, key=idem_key
+                )
+                reauthorise_replay_instant_claim(
+                    verified,
+                    fallback_organisation_id=organisation_id,
+                    stored_status=stored.status if stored is not None else None,
+                    stored_body=stored.body if stored is not None else None,
+                    request_body=request.body,
+                    content_type=request.content_type or "",
+                )
+                return
             reauthorise_instant_claim(verified, organisation_id)
 
         response = respond_once(

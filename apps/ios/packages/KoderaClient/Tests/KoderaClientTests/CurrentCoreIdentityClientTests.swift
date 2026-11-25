@@ -746,4 +746,35 @@ final class CurrentCoreIdentityClientTests: XCTestCase {
         try await refused(linked)
     }
 
+    func testMultiOrgSharedRealmPayloadAdmitsTargetPmeIdentity() async throws {
+        let pmeOrgA = "8f1d2e3c-8a4b-4c5d-9e6f-0a1b2c3d4e5a"
+        let pmeOrgB = "8f1d2e3c-8a4b-4c5d-9e6f-0a1b2c3d4e5b"
+        let pmeIdA = "33333333-2222-4333-8444-55555555555a"
+        let pmeIdB = "33333333-2222-4333-8444-55555555555b"
+        let body: [String: Any] = [
+            "id": "22222222-2222-4333-8444-555555555555",
+            "staff": false,
+            "identities": [
+                ["id": F.identity, "issuer": F.issuer, "realm": "example", "subject": "sub-shared"],
+                ["id": pmeIdA, "issuer": F.issuer, "realm": "example", "subject": "sub-shared"],
+                ["id": pmeIdB, "issuer": F.issuer, "realm": "example", "subject": "sub-shared"],
+            ],
+            "organisations": [
+                ["organisation": ["id": F.organisation, "slug": "example", "realm": "example"],
+                 "state": "active", "shared_realm": false, "identity_id": F.identity],
+                ["organisation": ["id": pmeOrgA, "slug": "atelier-martin", "realm": "example"],
+                 "state": "active", "shared_realm": true, "identity_id": pmeIdA],
+                ["organisation": ["id": pmeOrgB, "slug": "studio-nord", "realm": "example"],
+                 "state": "active", "shared_realm": true, "identity_id": pmeIdB],
+            ],
+        ]
+        try F.install(body)
+        let f = try F()
+        f.port.snapshot = try F.snapshot(f.requester, organisation: pmeOrgA)
+        try await settled(f.begin())
+        XCTAssertEqual(f.identity?.id, pmeIdA)
+        XCTAssertEqual(f.identity?.organisationId, pmeOrgA)
+        XCTAssertEqual(f.identity?.subject, "sub-shared")
+    }
+
 }

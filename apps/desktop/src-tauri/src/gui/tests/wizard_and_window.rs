@@ -665,3 +665,57 @@ fn window_builder_clamps_min_inner_size_on_compact_900x600_display() {
         LogicalSize::new(960, 640)
     );
 }
+
+#[test]
+fn release_build_gates_env_overrides_and_excludes_staging_origin() {
+    assert_eq!(
+        crate::gui::APPROVED_WEB_APP_ORIGINS,
+        crate::gui::approved_web_app_origins_for_build(cfg!(debug_assertions))
+    );
+    let release_origins = crate::gui::approved_web_app_origins_for_build(false);
+    assert!(release_origins.contains(&"https://app.kodera.io"));
+    assert!(release_origins.contains(&"https://community.kodera.io"));
+    assert!(!release_origins.contains(&"https://staging.kodera.io"));
+
+    let scratch = ScopedTempDir::new("release-dist-override");
+    let custom_dist = scratch.path().join("custom-dist");
+    fs::create_dir_all(&custom_dist).unwrap();
+    fs::write(custom_dist.join("index.html"), "<!doctype html>").unwrap();
+    assert_eq!(
+        crate::gui::discover_frontend_dist_from_context(
+            Some(&custom_dist),
+            None,
+            None,
+            None,
+            false,
+        ),
+        None
+    );
+    assert_eq!(
+        crate::gui::discover_frontend_dist_from_context(Some(&custom_dist), None, None, None, true,),
+        Some(custom_dist)
+    );
+
+    let release_opts = crate::gui::DesktopGuiOptions::from_values(
+        None,
+        Some("1"),
+        Some("http://localhost:5173"),
+        None,
+        false,
+    );
+    assert!(!release_opts.allow_dev_origin);
+    assert_eq!(release_opts.override_url, None);
+
+    let debug_opts = crate::gui::DesktopGuiOptions::from_values(
+        None,
+        Some("1"),
+        Some("http://localhost:5173"),
+        None,
+        true,
+    );
+    assert!(debug_opts.allow_dev_origin);
+    assert_eq!(
+        debug_opts.override_url.as_deref(),
+        Some("http://localhost:5173")
+    );
+}

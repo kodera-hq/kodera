@@ -17,6 +17,10 @@ const mocks = vi.hoisted(() => ({
   verify: vi.fn(),
   seal: vi.fn(),
   restore: vi.fn(),
+  advanceEpoch: vi.fn(),
+  getRemote: vi.fn(),
+  publishRemote: vi.fn(),
+  discardRemote: vi.fn(),
   stamp: {},
   listeners: new Set<() => void>(),
 }))
@@ -45,8 +49,18 @@ vi.mock('../confidential/key-backup-client', () => ({
     close: mocks.backupClose,
     seal: mocks.seal,
     restore: mocks.restore,
+    advanceEpoch: mocks.advanceEpoch,
   }),
 }))
+vi.mock('../confidential/key-backup-http', async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown>
+  return {
+    ...actual,
+    getConfidentialKeyBackup: (...args: unknown[]) => mocks.getRemote(...args),
+    publishConfidentialKeyBackup: (...args: unknown[]) => mocks.publishRemote(...args),
+    discardConfidentialKeyBackup: (...args: unknown[]) => mocks.discardRemote(...args),
+  }
+})
 vi.mock('../confidential/key-backup-vault-client', () => ({
   createBackupVaultClient: () => ({
     close: mocks.vaultClose,
@@ -76,10 +90,21 @@ beforeEach(async () => {
   mocks.endorse.mockResolvedValue({ statement: 'public-statement', signature: 'public-signature' })
   mocks.verify.mockResolvedValue(true)
   mocks.seal.mockResolvedValue({
-    capsule: new Uint8Array([1, 2, 3]),
+    capsule: new Uint8Array(48).fill(7),
     recoveryKey: 'one-time-recovery-key',
   })
   mocks.restore.mockResolvedValue(true)
+  mocks.advanceEpoch.mockImplementation(async (epoch: number) => epoch)
+  mocks.getRemote.mockRejectedValue(new Error('offline'))
+  mocks.publishRemote.mockResolvedValue({
+    backupEpoch: 1,
+    kdfKind: 'recovery-key',
+    iterations: 0,
+    capsuleSha256: 'a'.repeat(64),
+    sourceDeviceId: '01950000-0000-7000-8000-000000000001',
+    publishedAt: '2026-11-24T12:00:00Z',
+  })
+  mocks.discardRemote.mockResolvedValue({ nextBackupEpoch: 2 })
   vi.stubGlobal(
     'URL',
     class extends URL {
@@ -199,5 +224,166 @@ describe('local security settings', () => {
     expect(startBtn.className).toContain('self-start')
     const mfaLink = screen.getByTestId('security-mfa-link')
     expect(mfaLink).toHaveAttribute('href', '/community/security/mfa')
+  })
+  it('publishes sealed KVKB1 backup to server, restores on fresh device, and discards with monotonic epoch', async () => {
+    const remoteBytes = new Uint8Array(48)
+    remoteBytes.set([0x4b, 0x56, 0x4b, 0x42, 0x31])
+    mocks.getRemote.mockResolvedValueOnce({ status: 'absent', nextBackupEpoch: 1 })
+    const signer = vi.fn(async ({ backupEpoch, capsule }: { backupEpoch: number; capsule: string }) => ({
+      deviceId: '01950000-0000-7000-8000-000000000001',
+      backupEpoch,
+      capsule,
+      signature: 'B'.repeat(88),
+    }))
+    const { unmount } = render(<SecuritySettings {...props} deviceSigner={signer} />)
+    const user = await start()
+    await user.click(screen.getByRole('button', { name: 'Create encrypted archive' }))
+    await user.click(screen.getByRole('checkbox', { name: 'I saved the recovery key separately' }))
+    await user.click(screen.getByRole('button', { name: 'Publish sealed backup to server' }))
+    expect(signer).toHaveBeenCalledWith(expect.objectContaining({ backupEpoch: 1 }))
+    expect(mocks.publishRemote).toHaveBeenCalledTimes(1)
+    expect(await screen.findByText(/Encrypted key backup archive published to server at epoch 1/)).toBeInTheDocument()
+    expect(mocks.advanceEpoch).toHaveBeenCalledWith(2)
+
+    await user.click(screen.getByRole('button', { name: 'Discard server backup' }))
+    expect(mocks.discardRemote).toHaveBeenCalledWith('org-test')
+    expect(await screen.findByText(/Server key backup discarded\. Future publications will advance to epoch 2/)).toBeInTheDocument()
+    unmount()
+
+    // Fresh device with empty vault restores directly from remote server backup.
+    mocks.available = false
+    mocks.getRemote.mockResolvedValueOnce({
+      status: 'active',
+      backup: {
+        backupEpoch: 2,
+        kdfKind: 'recovery-key',
+        iterations: 0,
+        capsuleSha256: 'b'.repeat(64),
+        sourceDeviceId: '01950000-0000-7000-8000-000000000001',
+        publishedAt: '2026-11-24T12:05:00Z',
+        capsule: btoa(String.fromCharCode(...remoteBytes)),
+        capsuleBytes: remoteBytes.slice(),
+      },
+    })
+    render(<SecuritySettings {...props} />)
+    const freshUser = await start()
+    expect(screen.getByText(/Opaque server backup stored \(epoch 2, recovery-key\)/)).toBeInTheDocument()
+    await freshUser.type(
+      screen.getByLabelText('Archive recovery key, including checksum'),
+      'saved-recovery-key'
+    )
+    await freshUser.click(screen.getByRole('button', { name: 'Restore from server backup' }))
+    expect(mocks.restore).toHaveBeenCalledWith(
+      remoteBytes,
+      {
+        kind: 'recovery-key',
+        recoveryKey: 'saved-recovery-key',
+      },
+      2
+    )
+    expect(mocks.advanceEpoch).toHaveBeenCalledWith(3)
+    expect(await screen.findByText(/Archive restored locally/)).toBeInTheDocument()
+  })
+  it('decouples local .kvkb archive epoch from server nextBackupEpoch on fresh device restore and advances on 409 conflict', async () => {
+    mocks.available = false
+    // Server previously discarded epoch 4, so GET 404 returns X-Kodera-Next-Backup-Epoch: 5.
+    mocks.getRemote.mockResolvedValueOnce({ status: 'absent', nextBackupEpoch: 5 })
+    const headerJson = JSON.stringify([
+      'kodera-zk-key-backup',
+      1,
+      'org-test',
+      'account-test',
+      1,
+      'recovery-key',
+      0,
+      btoa(String.fromCharCode(...new Uint8Array(16).fill(1))),
+      btoa(String.fromCharCode(...new Uint8Array(12).fill(2))),
+    ])
+    const headerBytes = new TextEncoder().encode(headerJson)
+    const kvkbEpoch1 = new Uint8Array(9 + headerBytes.length + 32)
+    kvkbEpoch1.set([0x4b, 0x56, 0x4b, 0x42, 0x31], 0)
+    new DataView(kvkbEpoch1.buffer).setUint32(5, headerBytes.length)
+    kvkbEpoch1.set(headerBytes, 9)
+    kvkbEpoch1.fill(0xaa, 9 + headerBytes.length)
+
+    render(<SecuritySettings {...props} />)
+    const user = await start()
+    // Fresh device did NOT advance worker to 5 before restore, so epoch-1 .kvkb restores cleanly!
+    expect(mocks.advanceEpoch).not.toHaveBeenCalled()
+
+    const file = new File([kvkbEpoch1], 'epoch1.kvkb')
+    Object.defineProperty(file, 'arrayBuffer', {
+      value: async () => kvkbEpoch1.slice().buffer,
+    })
+    await user.upload(screen.getByLabelText('Choose encrypted .kvkb archive'), file)
+    await user.type(
+      screen.getByLabelText('Archive recovery key, including checksum'),
+      'saved-recovery-key'
+    )
+    await user.click(screen.getByRole('button', { name: 'Restore archive locally' }))
+    expect(mocks.restore).toHaveBeenCalledWith(
+      kvkbEpoch1,
+      { kind: 'recovery-key', recoveryKey: 'saved-recovery-key' },
+      1
+    )
+    // After restoring epoch 1 against discarded server nextBackupEpoch=5, session advances to 5!
+    expect(mocks.advanceEpoch).toHaveBeenCalledWith(5)
+    expect(await screen.findByText(/Archive restored locally/)).toBeInTheDocument()
+  })
+  it('publishes at backupEpoch=1 when restoring an epoch-1 .kvkb file against a never-published (404 nextBackupEpoch=null) server', async () => {
+    mocks.available = false
+    mocks.getRemote.mockResolvedValueOnce({ status: 'absent', nextBackupEpoch: null })
+    const headerJson = JSON.stringify([
+      'kodera-zk-key-backup',
+      1,
+      'org-test',
+      'account-test',
+      1,
+      'recovery-key',
+      0,
+      btoa(String.fromCharCode(...new Uint8Array(16).fill(1))),
+      btoa(String.fromCharCode(...new Uint8Array(12).fill(2))),
+    ])
+    const headerBytes = new TextEncoder().encode(headerJson)
+    const kvkbEpoch1 = new Uint8Array(9 + headerBytes.length + 32)
+    kvkbEpoch1.set([0x4b, 0x56, 0x4b, 0x42, 0x31], 0)
+    new DataView(kvkbEpoch1.buffer).setUint32(5, headerBytes.length)
+    kvkbEpoch1.set(headerBytes, 9)
+    kvkbEpoch1.fill(0xaa, 9 + headerBytes.length)
+
+    const signer = vi.fn(
+      async ({ backupEpoch, capsule }: { backupEpoch: number; capsule: string }) => ({
+        deviceId: '01950000-0000-7000-8000-000000000001',
+        backupEpoch,
+        capsule,
+        signature: 'B'.repeat(88),
+      })
+    )
+    render(<SecuritySettings {...props} deviceSigner={signer} />)
+    const user = await start()
+
+    const file = new File([kvkbEpoch1], 'epoch1.kvkb')
+    Object.defineProperty(file, 'arrayBuffer', {
+      value: async () => kvkbEpoch1.slice().buffer,
+    })
+    await user.upload(screen.getByLabelText('Choose encrypted .kvkb archive'), file)
+    await user.type(
+      screen.getByLabelText('Archive recovery key, including checksum'),
+      'saved-recovery-key'
+    )
+    await user.click(screen.getByRole('button', { name: 'Restore archive locally' }))
+    expect(await screen.findByText(/Archive restored locally/)).toBeInTheDocument()
+    // Never-published server expects backupEpoch=1, NOT 2!
+    expect(mocks.advanceEpoch).not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole('button', { name: 'Create encrypted archive' }))
+    await user.click(screen.getByRole('checkbox', { name: 'I saved the recovery key separately' }))
+    await user.click(screen.getByRole('button', { name: 'Publish sealed backup to server' }))
+    expect(signer).toHaveBeenCalledWith(expect.objectContaining({ backupEpoch: 1 }))
+    expect(mocks.publishRemote).toHaveBeenCalledTimes(1)
+    expect(
+      await screen.findByText(/Encrypted key backup archive published to server at epoch 1/)
+    ).toBeInTheDocument()
+    expect(mocks.advanceEpoch).toHaveBeenCalledWith(2)
   })
 })

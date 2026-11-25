@@ -721,4 +721,125 @@ describe('the catalogue as it launches, before Docs is on sale', () => {
       await screen.findByRole('radio', { name: /^Business Plus, 690\s€ par mois sans engagement,/ })
     ).toBeInTheDocument()
   })
+
+  it('queries the Sovereign pack tiers and prices and keeps packCode="sovereign" when entered with Sovereign intent', async () => {
+    const requestedPackCodes: (string | null)[] = []
+    const requestedTierPacks: (string | null)[] = []
+    server.use(
+      http.get(`${BASE}/catalog/packs`, () =>
+        HttpResponse.json({
+          data: [
+            {
+              code: 'workspace-v2',
+              name: 'Kodera Workspace',
+              description: 'Shared collaborative workspace',
+              apps: ['messaging', 'visio', 'docs'],
+              available: true,
+              capacity_tier_codes: ['S', 'M', 'L', 'XL'],
+            },
+            {
+              code: 'sovereign',
+              name: 'Kodera Sovereign',
+              description: 'Dedicated instance hosted in France',
+              apps: ['messaging', 'visio', 'docs'],
+              available: true,
+              capacity_tier_codes: ['S', 'M', 'L'],
+            },
+          ],
+          has_more: false,
+          next_cursor: null,
+        })
+      ),
+      http.get(`${BASE}/catalog/plans`, () =>
+        HttpResponse.json({
+          data: [
+            {
+              code: 'sovereign',
+              version: 2,
+              name: 'Sovereign',
+              description:
+                'Dedicated instance hosted in France; messaging, calls and documents included.',
+              available: true,
+            },
+          ],
+          has_more: false,
+          next_cursor: null,
+        })
+      ),
+      http.get(`${BASE}/catalog/capacity-tiers`, ({ request }) => {
+        const packParam = new URL(request.url).searchParams.get('pack_code')
+        requestedTierPacks.push(packParam)
+        return HttpResponse.json({
+          data: [
+            {
+              code: 'S',
+              name: 'Capacité S',
+              seats_included: packParam === 'sovereign' ? 25 : 80,
+              concurrent_participants_included: 25,
+              storage_included_bytes: 50_000_000_000,
+              available: true,
+            },
+            {
+              code: 'M',
+              name: 'Capacité M',
+              seats_included: packParam === 'sovereign' ? 100 : 165,
+              concurrent_participants_included: 100,
+              storage_included_bytes: 200_000_000_000,
+              available: true,
+            },
+          ],
+          has_more: false,
+          next_cursor: null,
+        })
+      }),
+      http.get(`${BASE}/catalog/prices`, ({ request }) => {
+        const url = new URL(request.url)
+        const packParam = url.searchParams.get('pack_code')
+        const periodParam = url.searchParams.get('billing_period')
+        requestedPackCodes.push(packParam)
+        if (packParam !== 'sovereign') {
+          return HttpResponse.json({ data: [], has_more: false, next_cursor: null })
+        }
+        return HttpResponse.json({
+          data:
+            periodParam === 'monthly'
+              ? [
+                  {
+                    id: '01950000-0000-7000-8000-000000000901',
+                    plan_code: 'sovereign',
+                    plan_version: 2,
+                    pack_code: 'sovereign',
+                    capacity_tier_code: 'S',
+                    billing_period: 'monthly',
+                    amount_excl_vat: { amount_minor: 29000, currency: 'EUR' },
+                  },
+                ]
+              : [
+                  {
+                    id: '01950000-0000-7000-8000-000000000902',
+                    plan_code: 'sovereign',
+                    plan_version: 2,
+                    pack_code: 'sovereign',
+                    capacity_tier_code: 'S',
+                    billing_period: 'yearly',
+                    amount_excl_vat: { amount_minor: 348000, currency: 'EUR' },
+                  },
+                ],
+          has_more: false,
+          next_cursor: null,
+        })
+      })
+    )
+
+    const { update } = renderPlanStep({ packCode: 'sovereign', billingPeriod: 'monthly' })
+    const card = await screen.findByRole('radio', {
+      name: /^Sovereign, 290\s€ par mois sans engagement,/,
+    })
+    await userEvent.click(card)
+    expect(requestedTierPacks).toContain('sovereign')
+    expect(requestedPackCodes).toContain('sovereign')
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({ capacityTierCode: 'S', packCode: 'sovereign' })
+    )
+  })
 })

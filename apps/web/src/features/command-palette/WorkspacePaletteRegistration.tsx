@@ -2,6 +2,7 @@ import { useCallback, useLayoutEffect, useMemo, useRef, useSyncExternalStore } f
 import { useTranslation } from 'react-i18next'
 import type { ChannelDoc } from '../docs/ChannelDocsEditor'
 import type { CanvasMode, EspaceStoreLike } from '../espace/liveViewModel'
+import { workspaceLocalEncryptedSearch } from '../espace/localEncryptedSearch'
 import type { EspaceSnapshot } from '../espace/matrix/store'
 import { workspaceFilesOf } from '../espace/workspaceFiles'
 import type { ChannelSearchEntry, ChannelSearchProps } from '../workspace/ChannelSearch'
@@ -99,6 +100,48 @@ function buildLiveOmniboxIndex(options: WorkspaceOmniboxOptions) {
   return buildOmniboxIndex({ store, rooms, collections: effectiveCollections })
 }
 
+function syncLocalEncryptedSearchIndex(options: WorkspaceOmniboxOptions): void {
+  const { store, snapshot: propSnapshot, entries, channelsById, simulation } = options
+  if (typeof store.getTimeline !== 'function') return
+  const liveSnapshot = typeof store.getSnapshot === 'function' ? store.getSnapshot() : propSnapshot
+  const effectiveSnapshot = liveSnapshot ?? propSnapshot
+  const syncRoom = (roomId: string, channel?: ConfidentialChannelFlags) => {
+    const timeline = store.getTimeline(roomId)
+    const indexed = workspaceLocalEncryptedSearch.indexRoomSync({
+      store,
+      roomId,
+      channel,
+      messages: timeline,
+    })
+    if (indexed && store.getSearchVault !== undefined) {
+      void store.getSearchVault().then((vault) => {
+        if (vault !== undefined && !vault.isClosed) {
+          void workspaceLocalEncryptedSearch.indexRoom({
+            store,
+            roomId,
+            channel,
+            messages: timeline,
+            vault,
+          })
+        }
+      })
+    }
+  }
+  if (effectiveSnapshot !== undefined) {
+    for (const entry of entries) {
+      if (entry.kind !== 'text') continue
+      const resolved = effectiveSnapshot.channels.get(entry.id)
+      if (resolved?.state !== 'resolved') continue
+      syncRoom(resolved.roomId, channelsById?.get(entry.id))
+    }
+  }
+  if (!simulation && store.getDirects !== undefined) {
+    for (const dm of store.getDirects()) {
+      syncRoom(dm.roomId)
+    }
+  }
+}
+
 export function useWorkspaceOmniboxDynamicEntries(
   options: WorkspaceOmniboxOptions
 ): (query: string) => readonly ChannelSearchEntry[] {
@@ -117,7 +160,10 @@ export function useWorkspaceOmniboxDynamicEntries(
   // Pre-warm WeakMap caches on render while also creating a new callback identity when storeEpoch changes
   // so open dialogs subscribed to PaletteRegistry re-evaluate immediately on sync events.
   const warmIndex = useMemo(
-    () => buildLiveOmniboxIndex(options),
+    () => {
+      syncLocalEncryptedSearchIndex(options)
+      return buildLiveOmniboxIndex(options)
+    },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [
       options.store,

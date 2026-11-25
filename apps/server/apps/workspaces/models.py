@@ -832,3 +832,200 @@ class SessionEviction(StoredModel):
                 condition=models.Q(revision__gte=1), name="session_eviction_revision"
             ),
         ]
+
+
+CUSTOM_EMOJI_SHORTCODE_RE = r"^[a-z0-9_]{2,32}$"
+MAX_CUSTOM_EMOJI_BYTES = 262_144
+MAX_CUSTOM_EMOJI_DIMENSION = 128
+
+SCHEDULED_MESSAGE_STATES = (
+    "pending",
+    "in_flight",
+    "delivered",
+    "cancelled",
+    "refused_policy",
+    "obsolete",
+)
+SCHEDULED_MESSAGE_TXN_RE = r"^kodera-sched-[0-9a-f]{32}$"
+
+LABS_FLAG_KEYS = (
+    "send_later",
+    "custom_emojis",
+    "personal_reminders",
+    "waiting_room_ambience",
+)
+
+
+class WorkspaceCustomEmoji(StoredModel):
+    """Sanitized RIFF/WebP workspace custom emoji (`<= 128x128`, `<= 256 KiB`, metadata-free)."""
+
+    organisation = models.ForeignKey(
+        "orgs.Organisation", on_delete=models.RESTRICT, db_constraint=False
+    )
+    workspace = models.ForeignKey(Workspace, on_delete=models.RESTRICT, db_constraint=False)
+    creator = models.ForeignKey(
+        "orgs.Membership", on_delete=models.RESTRICT, db_constraint=False, related_name="+"
+    )
+    shortcode = models.TextField()
+    webp_bytes = models.BinaryField()
+    sha256 = models.TextField()
+    width = models.IntegerField()
+    height = models.IntegerField()
+    animated = models.BooleanField(default=False)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(
+                fields=["workspace", "revoked_at", "shortcode"],
+                name="workspace_custom_emoji_ws_idx",
+            ),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["workspace", "shortcode"],
+                condition=models.Q(revoked_at__isnull=True),
+                name="workspace_custom_emoji_active_shortcode_unique",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(shortcode__regex=CUSTOM_EMOJI_SHORTCODE_RE)
+                & ~models.Q(shortcode__startswith="kodera_"),
+                name="workspace_custom_emoji_shortcode_valid",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    webp_bytes__length__gte=1,
+                    webp_bytes__length__lte=MAX_CUSTOM_EMOJI_BYTES,
+                ),
+                name="workspace_custom_emoji_bytes_bound",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(sha256__regex=r"^[0-9a-f]{64}$"),
+                name="workspace_custom_emoji_sha256_valid",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    width__gte=1,
+                    width__lte=MAX_CUSTOM_EMOJI_DIMENSION,
+                    height__gte=1,
+                    height__lte=MAX_CUSTOM_EMOJI_DIMENSION,
+                ),
+                name="workspace_custom_emoji_dimensions_valid",
+            ),
+        ]
+
+
+class ScheduledMessage(StoredModel):
+    """Non-confidential deferred channel or DM message revalidated at delivery time."""
+
+    class State:
+        PENDING = "pending"
+        IN_FLIGHT = "in_flight"
+        DELIVERED = "delivered"
+        CANCELLED = "cancelled"
+        REFUSED_POLICY = "refused_policy"
+        OBSOLETE = "obsolete"
+
+    organisation = models.ForeignKey(
+        "orgs.Organisation", on_delete=models.RESTRICT, db_constraint=False
+    )
+    workspace = models.ForeignKey(Workspace, on_delete=models.RESTRICT, db_constraint=False)
+    channel = models.ForeignKey(
+        Channel, on_delete=models.RESTRICT, db_constraint=False, null=True, blank=True
+    )
+    room_id = models.TextField(default="", blank=True)
+    author = models.ForeignKey(
+        "orgs.Membership", on_delete=models.RESTRICT, db_constraint=False, related_name="+"
+    )
+    body = models.TextField()
+    mentions_json = models.JSONField(default=dict, blank=True)
+    thread_root_event_id = models.TextField(default="", blank=True)
+    deliver_at = models.DateTimeField()
+    matrix_txn_id = models.TextField(unique=True)
+    matrix_event_id = models.TextField(default="", blank=True)
+    state = models.TextField(default="pending")
+    lease_id = models.UUIDField(null=True, blank=True)
+    lease_expires_at = models.DateTimeField(null=True, blank=True)
+    failure_reason = models.TextField(default="", blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["state", "deliver_at"], name="scheduled_message_ready_idx"),
+            models.Index(
+                fields=["workspace", "author", "state", "deliver_at"],
+                name="scheduled_message_author_idx",
+            ),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(body__length__range=(1, 4000)),
+                name="scheduled_message_body_bound",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(channel__isnull=False) | ~models.Q(room_id=""),
+                name="scheduled_message_target_present",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(room_id__length__lte=255),
+                name="scheduled_message_room_id_bound",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(thread_root_event_id__length__lte=255),
+                name="scheduled_message_thread_bound",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(matrix_txn_id__regex=SCHEDULED_MESSAGE_TXN_RE),
+                name="scheduled_message_txn_id_valid",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(matrix_event_id__length__lte=255),
+                name="scheduled_message_event_id_bound",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(failure_reason__length__lte=128),
+                name="scheduled_message_failure_bound",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(state__in=list(SCHEDULED_MESSAGE_STATES)),
+                name="scheduled_message_state_valid",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        state="in_flight",
+                        lease_id__isnull=False,
+                        lease_expires_at__isnull=False,
+                    )
+                    | (
+                        ~models.Q(state="in_flight")
+                        & models.Q(lease_id__isnull=True, lease_expires_at__isnull=True)
+                    )
+                ),
+                name="scheduled_message_lease_valid",
+            ),
+        ]
+
+
+class MemberWorkspacePreference(StoredModel):
+    """Per-member Kodera Labs flags and waiting-room ambience preference within a workspace."""
+
+    organisation = models.ForeignKey(
+        "orgs.Organisation", on_delete=models.RESTRICT, db_constraint=False
+    )
+    workspace = models.ForeignKey(Workspace, on_delete=models.RESTRICT, db_constraint=False)
+    membership = models.ForeignKey(
+        "orgs.Membership", on_delete=models.RESTRICT, db_constraint=False, related_name="+"
+    )
+    labs_flags = models.JSONField(default=dict, blank=True)
+    waiting_room_ambience = models.BooleanField(default=False)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["membership"], name="member_workspace_pref_mem_idx"),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["workspace", "membership"],
+                name="member_workspace_pref_unique",
+            ),
+        ]

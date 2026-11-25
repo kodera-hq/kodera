@@ -26,3 +26,17 @@ export function deriveSlug(name: string): string {
     .slice(0, MAX)
     .replace(/-+$/g, '')
 }
+
+const ORG_SLUG_MAX = 20
+const ORG_SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{3,18}[a-z0-9]$/
+
+export function isOrganisationSelfServeSlug(value: string): boolean {
+  return ORG_SLUG_PATTERN.test(value) && value !== 'community' && !value.startsWith('xn--')
+}
+
+export function deriveOrganisationSlug(name: string): string {
+  const base = deriveSlug(name).slice(0, ORG_SLUG_MAX).replace(/-+$/g, '')
+  if (base.length === 0) return ''
+  if (base.length < 5) return `${base}-team`.slice(0, ORG_SLUG_MAX).replace(/-+$/g, '')
+  return base
+}

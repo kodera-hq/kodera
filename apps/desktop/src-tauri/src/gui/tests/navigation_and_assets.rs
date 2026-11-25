@@ -253,7 +253,8 @@ fn bundle_asset_discovery_resolves_macos_linux_appimage_and_windows_layouts() {
     fs::create_dir_all(mac_exe.parent().unwrap()).unwrap();
     fs::create_dir_all(&mac_web).unwrap();
     fs::write(mac_web.join("index.html"), b"<!doctype html>").unwrap();
-    let found_mac = discover_frontend_dist_from_context(None, None, Some(&mac_exe), None).unwrap();
+    let found_mac =
+        discover_frontend_dist_from_context(None, None, Some(&mac_exe), None, false).unwrap();
     assert_eq!(
         fs::canonicalize(found_mac).unwrap(),
         fs::canonicalize(&mac_web).unwrap()
@@ -265,7 +266,8 @@ fn bundle_asset_discovery_resolves_macos_linux_appimage_and_windows_layouts() {
     fs::create_dir_all(deb_exe.parent().unwrap()).unwrap();
     fs::create_dir_all(&deb_web).unwrap();
     fs::write(deb_web.join("index.html"), b"<!doctype html>").unwrap();
-    let found_deb = discover_frontend_dist_from_context(None, None, Some(&deb_exe), None).unwrap();
+    let found_deb =
+        discover_frontend_dist_from_context(None, None, Some(&deb_exe), None, false).unwrap();
     assert_eq!(
         fs::canonicalize(found_deb).unwrap(),
         fs::canonicalize(&deb_web).unwrap()
@@ -277,7 +279,7 @@ fn bundle_asset_discovery_resolves_macos_linux_appimage_and_windows_layouts() {
     fs::create_dir_all(&appimage_web).unwrap();
     fs::write(appimage_web.join("index.html"), b"<!doctype html>").unwrap();
     let found_appimage =
-        discover_frontend_dist_from_context(None, Some(&appdir), None, None).unwrap();
+        discover_frontend_dist_from_context(None, Some(&appdir), None, None, false).unwrap();
     assert_eq!(
         fs::canonicalize(found_appimage).unwrap(),
         fs::canonicalize(&appimage_web).unwrap()
@@ -288,7 +290,8 @@ fn bundle_asset_discovery_resolves_macos_linux_appimage_and_windows_layouts() {
     let win_web = scratch.path().join("win-install/Kodera/web");
     fs::create_dir_all(&win_web).unwrap();
     fs::write(win_web.join("index.html"), b"<!doctype html>").unwrap();
-    let found_win = discover_frontend_dist_from_context(None, None, Some(&win_exe), None).unwrap();
+    let found_win =
+        discover_frontend_dist_from_context(None, None, Some(&win_exe), None, false).unwrap();
     assert_eq!(
         fs::canonicalize(found_win).unwrap(),
         fs::canonicalize(&win_web).unwrap()

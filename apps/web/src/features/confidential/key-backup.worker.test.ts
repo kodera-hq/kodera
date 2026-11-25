@@ -5,6 +5,7 @@ import {
   createBackupVaultBridge,
   formatRecoveryKey,
   openBackup,
+  parseKvkb1EnvelopeHeader,
   parseRecoveryKey,
   sealBackup,
 } from './key-backup.worker'
@@ -236,5 +237,34 @@ describe('worker zero-knowledge backup', () => {
     vi.stubGlobal('window', {})
     await expect(import('./key-backup.worker')).rejects.toThrow()
     vi.resetModules()
+  })
+  it('parses outer KVKB1 headers and enforces monotonic epoch advancement on bridge', async () => {
+    const sealed = await sealBackup(context, plaintext(), recoveryMode)
+    expect(parseKvkb1EnvelopeHeader(sealed.capsule)).toEqual({
+      organisationId: context.organisationId,
+      accountId: context.accountId,
+      backupEpoch: 3,
+      kdfKind: 'recovery-key',
+      iterations: 0,
+    })
+    const channel = new MessageChannel()
+    channel.port1.onmessage = (event) => {
+      const r = event.data as { kind: string; id: number; context: { backupEpoch: number } }
+      if (r.kind === 'read') {
+        const bytes = plaintext()
+        channel.port1.postMessage({ kind: 'vault-result', id: r.id, bytes }, [bytes.buffer])
+      }
+    }
+    channel.port1.start()
+    const bridge = createBackupVaultBridge(channel.port2, context)
+    try {
+      expect(() => bridge.advanceEpoch({ backupEpoch: 2 })).toThrow()
+      expect(bridge.advanceEpoch({ backupEpoch: 4 })).toBe(4)
+      const rotated = await bridge.seal(recoveryMode)
+      expect(parseKvkb1EnvelopeHeader(rotated.capsule).backupEpoch).toBe(4)
+    } finally {
+      bridge.close()
+      channel.port1.close()
+    }
   })
 })

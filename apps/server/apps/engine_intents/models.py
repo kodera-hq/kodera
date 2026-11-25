@@ -136,6 +136,7 @@ class EngineMemberSet(models.Model):
     # identity write, and is rebuilt outside the path that made the write (DEFAULT_COMMUNITY.md).
     # Null on a set recorded before 0011, read as behind.
     authority_revision = models.BigIntegerField(null=True)
+    shared_authority_revision = models.BigIntegerField(null=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

@@ -1203,4 +1203,74 @@ class SessionControllerTests {
         }
     }
 
+    @Test fun testSharedRealmSelectsActiveNonCommunityMembershipOrBoundOrganisation() {
+        val commOrg = MemberOrganisation(
+            id = "0192f3a4-5b6c-7d8e-9f01-000000000001",
+            slug = "community",
+            name = "Kodera Community",
+            realm = "community",
+            role = "org_member",
+            state = "active",
+        )
+        val pmeOrg = MemberOrganisation(
+            id = organisationA,
+            slug = "atelier-bleu",
+            name = "Atelier Bleu",
+            realm = "community",
+            role = "org_owner",
+            state = "active",
+        )
+        val secondOrg = MemberOrganisation(
+            id = organisationB,
+            slug = "studio-bravo",
+            name = "Studio Bravo",
+            realm = "community",
+            role = "org_owner",
+            state = "active",
+        )
+        val profile = MemberProfile(
+            id = "11111111-2222-4333-8444-555555555555",
+            email = "owner@atelier.test",
+            displayName = "Atelier Owner",
+            organisations = listOf(commOrg, pmeOrg, secondOrg),
+        )
+        assertEquals(pmeOrg, profile.organisation(realm = "community"))
+        assertEquals(commOrg, profile.organisation(realm = "community", preferredOrganisationId = commOrg.id))
+        assertEquals(secondOrg, profile.organisation(realm = "community", preferredSlug = "studio-bravo"))
+        assertNull(profile.organisation(realm = "community", preferredOrganisationId = "0192f3a4-5b6c-7d8e-9f01-999999999999"))
+
+        val communityIssuer = url(ConnectionPolicy.HTTPS, "auth.kodera.test/realms/community")
+        val backend = FakeBrowser()
+        val scriptedMe = ScriptedMe().apply {
+            repeat(3) { then(MeOutcome.Member(profile)) }
+        }
+        val session = controller(
+            backend,
+            core = url(ConnectionPolicy.HTTPS, "core.kodera.test"),
+            me = scriptedMe,
+        )
+        session.start()
+        runMainUntil("restored") { session.phase == SessionPhase.SignedOut }
+        session.signIn(communityIssuer, organisationId = secondOrg.id, organisationSlug = secondOrg.slug)
+        backend.awaitOpened()
+        assertTrue(backend.answer("grant-bravo"))
+        runMainUntil("bravo member loaded") { session.member is MemberState.Loaded }
+        assertEquals(MemberState.Loaded("Atelier Owner", "Studio Bravo"), session.member)
+
+        session.selectOrganisation(slug = pmeOrg.slug)
+        runMainUntil("atelier member loaded") {
+            session.member == MemberState.Loaded("Atelier Owner", "Atelier Bleu")
+        }
+
+        // Sign-out clears preferredOrganisationId / preferredSlug so subsequent plain sign-in defaults cleanly:
+        session.signOut()
+        runMainUntil("signed out") { session.phase == SessionPhase.SignedOut }
+        session.signIn(communityIssuer)
+        backend.awaitOpened()
+        assertTrue(backend.answer("grant-default"))
+        runMainUntil("default member loaded") { session.member is MemberState.Loaded }
+        assertEquals(MemberState.Loaded("Atelier Owner", "Atelier Bleu"), session.member)
+        session.close()
+    }
+
 }

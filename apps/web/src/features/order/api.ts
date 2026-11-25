@@ -60,11 +60,14 @@ export function usePacksQuery() {
   })
 }
 
-export function useCapacityTiersQuery() {
+export function useCapacityTiersQuery(packCode?: string) {
   return useQuery({
-    queryKey: ['order', 'capacity-tiers'],
+    queryKey:
+      packCode === undefined ? ['order', 'capacity-tiers'] : ['order', 'capacity-tiers', packCode],
     queryFn: async () => {
-      const { data } = await coreApi().GET('/catalog/capacity-tiers', { params: { query: {} } })
+      const { data } = await coreApi().GET('/catalog/capacity-tiers', {
+        params: { query: packCode === undefined ? {} : { pack_code: packCode } },
+      })
       return data?.data ?? []
     },
     staleTime: CATALOGUE_STALE_TIME_MS,

@@ -131,6 +131,13 @@ def test_case1_billing_off_an_owner_creates_the_tenant_its_agreements_and_its_wo
 
     assert created.status_code == 201, created.content
     tenant = model("tenancy", "Tenant").objects.get(organisation_id=u.alpha.id)
+    quota = model("workspaces", "WorkspaceQuota").objects.get(workspace__organisation_id=u.alpha.id)
+    assert (quota.policy_ref, quota.seats, quota.media_bytes, quota.pages) == (
+        "community-unlimited-v1",
+        None,
+        None,
+        None,
+    )
     assert created["Location"] == f"/api/v1/tenants/{tenant.id}"
     answer = created.json()
     assert answer["tenant"]["id"] == str(tenant.id)

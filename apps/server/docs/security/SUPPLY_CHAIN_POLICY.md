@@ -1,8 +1,10 @@
 # Supply-chain policy
 
-**Status:** Proposed · **Owner:** PLAT
+**Status:** Active · **Owner:** PLAT
 
-Covers every artefact that reaches a tenant VM, the worker, the API, or CI: container images, Python and Node dependencies, OpenTofu providers, Ansible collections, and the upstream releases of La Suite Meet, Docs and LiveKit.
+> See also [`docs/security/THREAT_MODEL_AND_CRYPTOGRAPHY.md`](../../../../docs/security/THREAT_MODEL_AND_CRYPTOGRAPHY.md) for monorepo zero-secret PR CI, CycloneDX 1.6 SBOM assembly, and mutation-tested CI gates.
+
+Covers every artefact that reaches a tenant VM, the worker, the API, or CI: container images, Python, Rust and Node dependencies, OpenTofu providers, Ansible collections, and the upstream releases of Matrix Synapse, LiveKit, Caddy, and Keycloak.
 
 The rule: **nothing runs in the fleet that was not pinned by digest, mirrored, scanned, and reviewed.** A tenant profile is executable input; an image tag is executable input; a dependency is executable input.
 
@@ -12,7 +14,7 @@ The rule: **nothing runs in the fleet that was not pinned by digest, mirrored, s
 |---|---|
 | Digest only | Every image reference in a rendered compose file is `registry/image@sha256:…`. A tag alone is a build failure, not a warning |
 | Enforcement | The deny-list schema rejects non-digest images; `conftest` runs on the **rendered** compose in CI, not on the template |
-| Allow-list | `lasuite/*`, `livekit/*`, `postgres`, `redis`, `quay.io/keycloak/*`, `nginxproxy/*`. Anything else is a new-vendor security review (ST5 in `SECURE_SDLC.md`) |
+| Allow-list | `ghcr.io/kodera-hq/*`, `matrixdotorg/synapse`, `livekit/*`, `caddy`, `postgres`, `redis`, `quay.io/keycloak/*`. Anything else is a new-vendor security review (ST5 in `SECURE_SDLC.md`) |
 | Mirror | Every allowed image is mirrored into the Scaleway container registry at mirror time; tenants pull from the mirror, never from Docker Hub. This removes the Docker Hub availability and rate-limit dependency and gives us a copy we control |
 | No `latest`, no floating minor | Ever, anywhere, including local development compose files |
 | Base images | The same rules apply to any image we build ourselves; we build as few as possible (no fork rule) |
@@ -23,7 +25,7 @@ One file per fleet repository, the single source of truth for what may run.
 
 | Field | Meaning |
 |---|---|
-| `component` | `meet`, `docs`, `y-provider`, `livekit`, `keycloak`, `postgres`, `redis`, `nginx-proxy`, `acme-companion` |
+| `component` | `kodera-server`, `kodera-web`, `yjs-collab`, `room-access`, `synapse`, `livekit`, `keycloak`, `caddy`, `postgres`, `redis` |
 | `version` | The upstream semantic version, human-readable |
 | `image` | Registry path in **our mirror** |
 | `digest` | `sha256:…`, the only field the renderer reads |
@@ -66,7 +68,7 @@ An exception with no expiry, no compensating control, or no named approver is in
 
 | Rule | Detail |
 |---|---|
-| Generation | An SBOM in **CycloneDX** JSON is generated for every mirrored image at mirror time and for every artefact we build (API image, worker image, console bundle) |
+| Generation | CycloneDX 1.6 JSON SBOMs are generated in CI for release binaries (`release-binaries.yml` / `security-sbom.yml`); per-image CycloneDX SBOM generation for mirrored images and pushed API/worker images is **Planned** |
 | Storage | Stored alongside the release record and referenced from the `Release` row in core, so "what was running on tenant X on a given day" is answerable from the control plane |
 | Use | When an advisory lands, the SBOM answers whether we are affected before anyone opens a shell |
 | Distribution | Available to a customer on request under the DPA's assistance clause; not published by default |
@@ -78,7 +80,7 @@ An exception with no expiry, no compensating control, or no named approver is in
 |---|---|
 | Where available | Verify with `cosign` at mirror time — keyless verification against the expected OIDC issuer and identity for projects that publish it, or the project's published key. Verification failure blocks the mirror |
 | Where not available | Record `signature: none` on the lock row with the upstream digest and the source URL observed at mirror time. This is honest, and it is a residual risk (RR5 in `THREAT_MODEL.md`), not a silent pass |
-| Our own artefacts | Everything we build and push is signed and verified before deployment |
+| Our own artefacts | SHA-256 digests are published for release artefacts today; cryptographic signing and verification (`cosign` / SLSA v1.0 provenance) for built and pushed container images is **Planned** |
 | Provenance | Where a project publishes SLSA provenance, record and verify it; where it does not, do not pretend |
 | Ratchet | The set of components requiring a valid signature only grows. Adding a component to the signed set is a one-way change; removing one needs an exception |
 
@@ -90,6 +92,8 @@ An exception with no expiry, no compensating control, or no named approver is in
 | Node | `package-lock.json` committed; `npm ci` only, never `npm install`, in CI and in images. No `postinstall` script from a dependency runs in CI without review |
 | OpenTofu | Provider versions pinned with `.terraform.lock.hcl` committed, including checksums for every platform CI and the worker use |
 | Ansible | Collections pinned by version in `requirements.yml`; installed from the pinned file, never latest |
+| Rust & Android native builds | `Cargo.lock` committed with SHA-256 crate checksums (`--locked`); numeric Rust toolchain pinning in `release-binaries.yml` (currently `stable`) and Android Gradle lockfiles / `verification-metadata.xml` (Maven SHA-256 digests currently verified in SBOM assembly) are **Planned** |
+| Container build stages | Final `apps/server/Dockerfile` `runtime` stage runs as unprivileged `kodera`; switching the intermediate `dependencies` build stage to a non-root `USER` is **Planned** |
 | Vendoring | Tenant profiles are vendored by **commit SHA**, never by branch or tag |
 
 ### Dependabot cadence
@@ -100,23 +104,23 @@ An exception with no expiry, no compensating control, or no named approver is in
 | Python (`uv`/pip), core and worker | Weekly, Monday | Grouped by minor/patch, dev dependencies separate | No |
 | Node, console and hub | Weekly, Monday | Grouped by minor/patch | No |
 | GitHub Actions | Weekly, pinned by **commit SHA**, not by tag | Grouped | No |
-| Docker base images in our own builds | Weekly | Individual | No |
+| Docker base images in our own builds | Weekly (**Planned** — base images are currently digest-pinned and updated via reviewed PRs) | Individual | No |
 | Major version bumps | Never automatic; arrive as a pull request, never merged as opened. The migration lands as its own reviewed change before or with the bump | — | No |
 
-No dependency update merges without CI green, the same as any other change, and one that touches a path the repository's `AGENTS.md` (or its contributing guide where it has none) names takes that file's extra gates too (in `kodera-core`, a `.github/workflows/` change needs the product owner's explicit OK in chat and an adversarial agent review at its exact head). A dependency bump touching the worker or an authentication path carries a security-review trigger.
+No dependency update merges without CI green, the same as any other change, and one that touches a path the repository's `AGENTS.md` (or its contributing guide where it has none) names takes that file's extra gates too (in `kodera-hq/kodera`, a `.github/workflows/` change requires Ring 0 review and green required CI checks). A dependency bump touching the worker or an authentication path carries a security-review trigger.
 
 ## 7. Upstream watch
 
 | Upstream | What we watch | How | Who |
 |---|---|---|---|
-| `suitenumerique/meet` (La Suite Meet) | Releases and tags, security advisories, breaking configuration changes | Release watch to the team channel; `check-upstream-contract.sh <tag>` must pass before a bump pull request may merge | PLAT |
-| `suitenumerique/docs` and `y-provider` | Same, plus migration reversibility | Same | PLAT |
-| `livekit/livekit`, egress, SIP | Releases, and the security advisories that matter most because media is internet-facing on both IPs | Release watch; capacity ledger re-measured when the SFU minor changes | SRE |
+| `element-hq/synapse` (`matrixdotorg/synapse`) | Releases and tags, security advisories, module API changes affecting `packages/synapse-policy` | Release watch to the team channel; `synapse-policy` test and mutation suite must pass before a bump pull request may merge | PLAT |
+| `yjs` and `apps/server/yjs_collab` dependencies | Releases, security advisories, and collaboration persistence compatibility | Automated lockfile audit and `yjs_collab` PostgreSQL boundary test suite | PLAT |
+| `livekit/livekit`, egress, SIP | Releases, and the security advisories that matter most because media is internet-facing on both IPs | Release watch; capacity baseline re-measured when the SFU minor changes | SRE |
 | Keycloak | Releases and advisories; we require ≥ 26.8 | Release watch; realm template re-validated | SEC |
-| Postgres, Redis, nginx-proxy, acme-companion | Patch releases and advisories | Dependabot on the mirror plus the weekly re-scan | PLAT |
+| Postgres, Redis, Caddy | Patch releases and advisories | Dependabot on the mirror plus the weekly re-scan | PLAT |
 | Debian (host baseline) | Security announcements | Unattended security upgrades on the hosts, plus the announcement list | SRE |
 
-**Bump procedure.** Upstream tag observed → contract gate `check-upstream-contract.sh <tag>` green → mirror by digest with Trivy and cosign at mirror time → SBOM generated and diffed → `versions.yaml` intent pull request merged → canary (`visio.kodera.io`) → **48 hours of soak** → dogfood tenant → fleet waves `serial: [1, 3, 5]` with `any_errors_fatal: true` → red gate stops the wave. Minors are stepped one at a time; a batch is a decision, not a shortcut.
+**Bump procedure.** Upstream tag observed → contract and policy gates green → mirror by digest with Trivy and cosign at mirror time → SBOM generated and diffed → `versions.yaml` intent pull request merged → canary → **48 hours of soak** → dogfood tenant → fleet waves `serial: [1, 3, 5]` with `any_errors_fatal: true` → red gate stops the wave. Minors are stepped one at a time; a batch is a decision, not a shortcut.
 
 **A security release is still a release.** It moves faster through the queue, not around it: the soak may be shortened by SEC with a written reason recorded on the release, and it is never skipped for a component that terminates untrusted input.
 
