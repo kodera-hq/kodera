@@ -3,6 +3,7 @@ import { lazy, Suspense, useEffect } from 'react'
 import { authAdapter } from '../../auth/oidc'
 import { isDesktopBundledOrigin } from '../../auth/desktopOidc'
 import { consumeReturnTo } from '../../auth/return-to'
+import { consumeDesktopWorkspaceCreation } from '../../auth/desktopWorkspaceCreation'
 import { SessionLoading } from '../../app/SessionLoading'
 import { LoginScreen } from './LoginScreen'
 import { shouldRenderCommunityWelcome } from './routes'
@@ -26,7 +27,13 @@ export function LoginRoute() {
         authAdapter.getAccessToken() !== undefined
       ) {
         completed = true
-        void navigate({ to: consumeReturnTo(), replace: true })
+        const returnTo = consumeReturnTo()
+        const creation = consumeDesktopWorkspaceCreation(authAdapter.getUser()?.realm ?? '')
+        // Registration overrides unrelated destinations, but recovery keeps the
+        // query and fragment of an already requested workspace creation route.
+        const destination =
+          creation !== undefined && returnTo.split(/[?#]/, 1)[0] !== creation ? creation : returnTo
+        void navigate({ to: destination, replace: true })
       }
     }
     const unsubscribe = authAdapter.subscribe(complete)

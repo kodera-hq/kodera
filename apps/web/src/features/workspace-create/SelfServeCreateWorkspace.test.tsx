@@ -1,4 +1,5 @@
 import { render, screen, waitFor } from '@testing-library/react'
+import * as axe from 'axe-core'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { http, HttpResponse } from 'msw/http'
@@ -43,6 +44,29 @@ afterEach(() => {
 afterAll(() => server.close())
 
 describe('SelfServeCreateWorkspace (B1.1 cardless PME self-serve)', () => {
+  it('keeps the plan radios accessible and free of inline styles inside the creation form', async () => {
+    const { container } = renderSelfServe()
+    expect(container.querySelector('form')).not.toBeNull()
+    expect(container.querySelector('[style]')).toBeNull()
+    expect(
+      (await axe.run(container, { rules: { 'color-contrast': { enabled: false } } })).violations
+    ).toEqual([])
+    const user = userEvent.setup()
+    const free = screen.getByRole('radio', { name: /gratuit/i })
+    free.focus()
+    await user.keyboard('{ArrowRight}')
+    expect(screen.getByRole('radio', { name: /dédié/i })).toBeChecked()
+    await user.keyboard('{ArrowDown}')
+    expect(free).toBeChecked()
+    await user.keyboard('{ArrowUp}')
+    expect(screen.getByRole('radio', { name: /dédié/i })).toBeChecked()
+    await user.keyboard('{ArrowLeft}')
+    expect(free).toBeChecked()
+    await user.tab()
+    expect(screen.getByRole('textbox', { name: 'Nom de l’espace' })).toHaveFocus()
+    expect(new FormData(container.querySelector('form')!).get('plan')).toBe('freemium')
+  })
+
   it('provisions a cardless freemium PME workspace and navigates straight to /$org/workspace', async () => {
     const observed: { key: string | null; body: unknown }[] = []
     server.use(

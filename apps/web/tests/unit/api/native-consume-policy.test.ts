@@ -410,3 +410,44 @@ describe('the actual configured native consume reference policy', () => {
     assertAccepted(await lintOne(lint, pristine))
   })
 })
+
+describe('bundled Core IPC lint boundary', () => {
+  it('accepts the actual client with the private, conditional IPC transport', async () => {
+    assertAccepted(await lintOne(lint, originalClient))
+  })
+
+  it.each([
+    [
+      'global alias',
+      'async function coreFetch(input: Request): Promise<Response> {',
+      'async function coreFetch(input: Request): Promise<Response> { const escaped = window; void escaped;',
+    ],
+    [
+      'native fetch in IPC helper',
+      'async function coreFetch(input: Request): Promise<Response> {',
+      'async function coreFetch(input: Request): Promise<Response> { void fetch(input);',
+    ],
+    ['unrelated window property', ').koderaDesktop', ').location'],
+    ['computed bridge access', ').koderaDesktop', ')["koderaDesktop"]'],
+    ['exported bridge helper', 'async function coreFetch(', 'export async function coreFetch('],
+    ['exported transport options', 'function coreTransport(', 'export function coreTransport('],
+    [
+      'wrong adapter',
+      'return bundled ? { fetch: coreFetch } : {}',
+      'return bundled ? { fetch: invokeOwnerClaimNative } : {}',
+    ],
+    [
+      'unconditional transport',
+      'return bundled ? { fetch: coreFetch } : {}',
+      'return { fetch: coreFetch }',
+    ],
+  ])('refuses %s without relaxing native dispatch guards', async (_name, before, after) => {
+    const mutated = originalClient.replace(before, after)
+    expect(mutated).not.toBe(originalClient)
+    const result = await lintOne(lint, mutated)
+    expect(
+      result.messages.some((message) => message.ruleId === policyRule && message.severity === 2)
+    ).toBe(true)
+    assertAccepted(await lintOne(lint, originalClient))
+  })
+})

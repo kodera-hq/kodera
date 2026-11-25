@@ -6,9 +6,20 @@
 // every caller has to remember to check — and one of them will not.
 
 import { http } from 'msw/http'
+import type { Middleware } from 'openapi-fetch'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { ApiProblem, NetworkError, coreApi, lastRequestId, setTokenProvider } from '@/api/client'
+import {
+  ApiProblem,
+  NetworkError,
+  coreApi,
+  lastRequestId,
+  setTokenProvider,
+  withAttachmentDispatchGuard,
+} from '@/api/client'
 import { concurrencyToken, mutate } from '@/api/mutations'
+import { desktopOidcClearSession } from '@/auth/desktopOidc'
+import { captureSessionGeneration } from '@/auth/sessionGeneration'
+import { clearLocalSessionStorage } from '@/auth/localSession'
 import { resetIdempotencyStore } from '@/mocks/generated/handlers'
 import { problem } from '@/mocks/problem'
 import { server } from '@/mocks/server'
@@ -264,9 +275,7 @@ describe('failures', () => {
 
   it('leaves currentEtag undefined on precondition-required (428), which carries no tag', async () => {
     server.use(
-      http.patch(`*/api/v1/me`, () =>
-        problem('https://kodera.io/problems/precondition-required')
-      )
+      http.patch(`*/api/v1/me`, () => problem('https://kodera.io/problems/precondition-required'))
     )
     const failure = (await mutate(
       { method: 'patch', path: '/me' },
@@ -352,9 +361,7 @@ describe('mutate', () => {
     )
     expect(body).toHaveProperty('email')
 
-    server.use(
-      http.patch(`*/api/v1/me`, () => problem('https://kodera.io/problems/mfa-required'))
-    )
+    server.use(http.patch(`*/api/v1/me`, () => problem('https://kodera.io/problems/mfa-required')))
     await expect(
       mutate({ method: 'patch', path: '/me' }, { body: { locale: 'fr' }, concurrency: AN_ETAG })
     ).rejects.toBeInstanceOf(ApiProblem)
@@ -406,10 +413,13 @@ const nativeWholeClientSource = readNativeSource(
 // The bounded source-mutation loader owns the owner-claim module prefix. The
 // independently tested private device dispatcher starts at its own import seam;
 // do not relax the owner's size, syntax, import or mutation guards for it.
-const nativeOwnerSeam = "import { parseDevicePrincipal } from '../features/confidential/device-principal'"
+const nativeOwnerSeam =
+  "import { parseDevicePrincipal } from '../features/confidential/device-principal'"
 if (nativeWholeClientSource.split(nativeOwnerSeam).length !== 2) throw Error('A_LOADER_SEAM')
-const nativeClientSource = nativeWholeClientSource.slice(0, nativeWholeClientSource.indexOf(nativeOwnerSeam))
-
+const nativeClientSource = nativeWholeClientSource.slice(
+  0,
+  nativeWholeClientSource.indexOf(nativeOwnerSeam)
+)
 
 function nativeDeferred<Value>() {
   let resolve!: (value: Value) => void
@@ -810,7 +820,14 @@ function nativeCheckSource(source: string): void {
       const specifier = nativeCompiler.isStringLiteral(statement.moduleSpecifier)
         ? statement.moduleSpecifier.text
         : ''
-      if (!['openapi-fetch', '../config', './generated/problems'].includes(specifier))
+      if (
+        ![
+          'openapi-fetch',
+          '../config',
+          './generated/problems',
+          '../auth/sessionGeneration',
+        ].includes(specifier)
+      )
         throw Error('A_LOADER_IMPORT')
     }
   }
@@ -865,6 +882,7 @@ function nativeLoad(source: string, control?: number): NativeApi {
       exports,
       module: loaded,
       require: (name: string) => {
+        if (name === '../auth/sessionGeneration') return { captureSessionGeneration }
         if (name === 'openapi-fetch') return nativeCreateClient
         if (name === '../config') return { coreApiUrl: nativeCoreUrl }
         if (name === './generated/problems') return nativeProblems
@@ -1346,9 +1364,7 @@ describe('unused native owner-claim dispatch boundary', () => {
             expect(error).toMatchObject({
               status: mode === 'registered503' ? 503 : mode === 'undeclared201' ? 201 : 502,
               type:
-                mode === 'registered503'
-                  ? 'https://kodera.io/problems/service-unavailable'
-                  : null,
+                mode === 'registered503' ? 'https://kodera.io/problems/service-unavailable' : null,
             })
             if (mode === 'registered503')
               expect(error).toMatchObject({ retryAfterS: 1, requestId: 'native-problem' })
@@ -2307,5 +2323,729 @@ describe('optional source-free late owner-claim observation', () => {
   it('M07 kills only omitted settlement admission and freshly restores', async () => {
     await lateFault(7)
     for (const mode of ['expiry', 'revoke', 'token'] as const) await lateCleanupFault(mode)
+  })
+})
+
+describe('bundled desktop Core transport', () => {
+  function bundled(
+    invoke: ReturnType<typeof vi.fn>,
+    generation: () => number | undefined = () => undefined
+  ) {
+    const bundledWindow = Object.create(window) as Window
+    Object.defineProperties(bundledWindow, {
+      location: { value: new URL('kodera-asset://localhost/') },
+      koderaDesktop: {
+        value: {
+          invoke,
+          get sessionGeneration() {
+            return generation()
+          },
+        },
+      },
+    })
+    vi.stubGlobal('window', bundledWindow)
+    return vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Unexpected browser fetch'))
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  const nativeOk = { status: 200, headers: {}, body_base64: btoa('{}') }
+
+  function streamingPost(stream: ReadableStream<Uint8Array>, signal?: AbortSignal) {
+    return coreApi().POST('/workspaces/self-serve', {
+      body: { name: 'Test Studio', slug: 'test-studio', locale: 'en' },
+      bodySerializer: () => stream,
+      params: { header: { 'Idempotency-Key': crypto.randomUUID() } },
+      signal,
+      ...{ duplex: 'half' },
+    })
+  }
+
+  function nativeHost() {
+    const source = readNativeSource(
+      nativeJoin(import.meta.dirname, '../../../../desktop/src-tauri/src/gui.rs'),
+      'utf8'
+    )
+    const script = source.split('const IPC_INIT_SCRIPT: &str = r#"')[1]!.split('"#;')[0]!
+    const frames: string[] = []
+    const surface = { ipc: { postMessage: (frame: string) => frames.push(frame) } }
+    runNativeModule(script, { window: surface, crypto })
+    const host = surface as typeof surface & {
+      __KODERA_IPC_ACTIVATE__(generation: number, capability: string): void
+      __KODERA_IPC_RESOLVE__(id: number, ok: boolean, value: unknown): void
+      koderaDesktop: {
+        readonly sessionGeneration: number
+        invoke(command: string, args?: unknown): Promise<unknown>
+      }
+    }
+    host.__KODERA_IPC_ACTIVATE__(0, 'c'.repeat(64))
+    return { host, frames }
+  }
+
+  it.each(['desktop_oidc_clear_session', 'init_session', 'local-clear', 'oidc-clear'] as const)(
+    'retires prepared bearer requests across FIFO and body waits on %s',
+    async (command) => {
+      const { host, frames } = nativeHost()
+      const invoke = vi.fn(host.koderaDesktop.invoke)
+      bundled(invoke, () => host.koderaDesktop.sessionGeneration)
+      setTokenProvider(() => 'pre-retirement-token')
+      const active = Array.from({ length: 6 }, () =>
+        coreApi()
+          .GET('/me')
+          .catch((e: unknown) => e)
+      )
+      await vi.waitFor(() => expect(invoke).toHaveBeenCalledTimes(6))
+      let subscriptions: ReturnType<typeof vi.spyOn> | undefined
+      const queued = coreApi()
+        .GET('/me', {
+          middleware: [
+            {
+              onRequest({ request }) {
+                subscriptions = vi.spyOn(request.signal, 'addEventListener')
+                return request
+              },
+            },
+          ],
+        })
+        .catch((e: unknown) => e)
+      await vi.waitFor(() => expect(subscriptions?.mock.calls).toHaveLength(1))
+      const reading = nativeDeferred<void>()
+      let bodyController!: ReadableStreamDefaultController<Uint8Array>
+      const stalled = streamingPost(
+        new ReadableStream<Uint8Array>(
+          {
+            start(controller) {
+              bodyController = controller
+            },
+            pull() {
+              reading.resolve()
+            },
+          },
+          { highWaterMark: 0 }
+        )
+      ).catch((e: unknown) => e)
+      await reading.promise
+      const generation = host.koderaDesktop.sessionGeneration
+      let retirement: Promise<unknown> | undefined
+      if (command === 'local-clear') clearLocalSessionStorage({ skipBrowserPushCleanup: true })
+      else if (command === 'oidc-clear')
+        retirement = desktopOidcClearSession({ realm: 'community' })
+      else retirement = host.koderaDesktop.invoke(command)
+      if (command !== 'local-clear')
+        expect(host.koderaDesktop.sessionGeneration).toBe(generation + 1)
+      bodyController.close()
+      // Clearing local state does not need a native clear to fence prepared requests.
+      for (let id = 1; id <= 6; id++) host.__KODERA_IPC_RESOLVE__(id, true, nativeOk)
+      const outcomes = await Promise.all([queued, stalled])
+      for (const outcome of outcomes) {
+        expect(outcome).toBeInstanceOf(NetworkError)
+        expect((outcome as Error).cause).toBe('core_api_aborted')
+      }
+      await Promise.all(active)
+      expect(frames.filter((frame) => frame.includes('\tdesktop_core_api_request\n'))).toHaveLength(
+        6
+      )
+      host.__KODERA_IPC_RESOLVE__(7, true, {})
+      await retirement
+      // Fresh requests take the new generation and capacity is fully reusable.
+      setTokenProvider(() => 'fresh-token')
+      const fresh = coreApi().GET('/me')
+      await vi.waitFor(() =>
+        expect(
+          invoke.mock.calls.filter(([cmd]) => cmd === 'desktop_core_api_request')
+        ).toHaveLength(7)
+      )
+      host.__KODERA_IPC_RESOLVE__(command === 'local-clear' ? 7 : 8, true, nativeOk)
+      await fresh
+    }
+  )
+
+  it('uses one reader abort listener and copies thousands of tiny and empty chunks in order', async () => {
+    const invoke = vi.fn().mockResolvedValue(nativeOk)
+    bundled(invoke)
+    let index = 0
+    let subscriptions: ReturnType<typeof vi.spyOn> | undefined
+    const stream = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          if (index === 20000) return controller.close()
+          controller.enqueue(index++ % 2 === 0 ? new Uint8Array(0) : new Uint8Array([index % 256]))
+        },
+      },
+      { highWaterMark: 0 }
+    )
+    await coreApi().POST('/workspaces/self-serve', {
+      body: { name: 'Test Studio', slug: 'test-studio', locale: 'en' },
+      bodySerializer: () => stream,
+      params: { header: { 'Idempotency-Key': crypto.randomUUID() } },
+      ...{ duplex: 'half' },
+      middleware: [
+        {
+          onRequest({ request }) {
+            subscriptions = vi.spyOn(request.signal, 'addEventListener')
+            return request
+          },
+        },
+      ],
+    })
+    // One listener each for body reading, FIFO acquisition, and native dispatch.
+    expect(subscriptions?.mock.calls).toHaveLength(3)
+    const bytes = Uint8Array.from(atob(invoke.mock.calls[0]![1].bodyBase64), (char) =>
+      char.charCodeAt(0)
+    )
+    expect(bytes).toHaveLength(10000)
+    expect(bytes.every((byte, offset) => byte === ((offset + 1) * 2) % 256)).toBe(true)
+  })
+
+  it('queues a burst in FIFO order with six concurrent native transfers', async () => {
+    const firstSix = nativeDeferred<void>(),
+      nextSix = nativeDeferred<void>()
+    const finishes: Array<(value: unknown) => void> = []
+    const invoke = vi.fn().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishes.push(resolve)
+          if (finishes.length === 6) firstSix.resolve()
+          if (finishes.length === 12) nextSix.resolve()
+        })
+    )
+    bundled(invoke)
+    const requests = Array.from({ length: 12 }, (_, index) =>
+      coreApi().GET('/me', {
+        headers: { 'x-request-id': String(index) },
+      })
+    )
+    await firstSix.promise
+    expect(invoke).toHaveBeenCalledTimes(6)
+    for (const finish of finishes.slice()) finish(nativeOk)
+    await nextSix.promise
+    expect(invoke.mock.calls.map((call) => call[1].headers['x-request-id'])).toEqual(
+      Array.from({ length: 12 }, (_, index) => String(index))
+    )
+    for (const finish of finishes.slice(6)) finish(nativeOk)
+    await expect(Promise.all(requests)).resolves.toHaveLength(12)
+  })
+
+  it('removes an aborted FIFO waiter before a slot is available', async () => {
+    const full = nativeDeferred<void>()
+    const finishes: Array<(value: unknown) => void> = []
+    const invoke = vi.fn().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishes.push(resolve)
+          if (finishes.length === 6) full.resolve()
+        })
+    )
+    bundled(invoke)
+    const running = Array.from({ length: 6 }, () => coreApi().GET('/me'))
+    await full.promise
+    const controller = new AbortController()
+    let subscriptions: ReturnType<typeof vi.spyOn> | undefined
+    const waiting = coreApi()
+      .GET('/me', {
+        signal: controller.signal,
+        middleware: [
+          {
+            onRequest({ request }) {
+              subscriptions = vi.spyOn(request.signal, 'addEventListener')
+              return request
+            },
+          },
+        ],
+      })
+      .catch((e: unknown) => e)
+    // The no-body request subscribes only once it is waiting for a FIFO slot.
+    await vi.waitFor(() => expect(subscriptions?.mock.calls).toHaveLength(1))
+    controller.abort()
+    expect(await waiting).toBeInstanceOf(NetworkError)
+    expect(invoke).toHaveBeenCalledTimes(6)
+    finishes.forEach((finish) => finish(nativeOk))
+    await Promise.all(running)
+    expect(invoke).toHaveBeenCalledTimes(6)
+  })
+
+  it('keeps aborted active transfers reserved until native settlement', async () => {
+    const full = nativeDeferred<void>(),
+      seventhStarted = nativeDeferred<void>()
+    const finishes: Array<(value: unknown) => void> = []
+    const invoke = vi.fn().mockImplementation((command: string) => {
+      if (command === 'desktop_core_api_abort') return Promise.resolve({})
+      return new Promise((resolve) => {
+        finishes.push(resolve)
+        if (finishes.length === 6) full.resolve()
+        if (finishes.length === 7) seventhStarted.resolve()
+      })
+    })
+    bundled(invoke)
+    const controllers = Array.from({ length: 6 }, () => new AbortController())
+    const active = controllers.map((controller) =>
+      coreApi()
+        .GET('/me', { signal: controller.signal })
+        .catch((error: unknown) => error)
+    )
+    await full.promise
+    controllers.forEach((controller) => controller.abort())
+    expect((await Promise.all(active)).every((error) => error instanceof NetworkError)).toBe(true)
+    let subscriptions: ReturnType<typeof vi.spyOn> | undefined
+    const waiting = coreApi().GET('/me', {
+      middleware: [
+        {
+          onRequest({ request }) {
+            subscriptions = vi.spyOn(request.signal, 'addEventListener')
+            return request
+          },
+        },
+      ],
+    })
+    await vi.waitFor(() => expect(subscriptions?.mock.calls).toHaveLength(1))
+    expect(finishes).toHaveLength(6)
+    finishes.slice().forEach((finish) => finish(nativeOk))
+    await seventhStarted.promise
+    finishes[6]!(nativeOk)
+    await waiting
+  })
+
+  it('cancels a stalled open upload immediately on abort without native dispatch', async () => {
+    const pulling = nativeDeferred<void>()
+    const cancel = vi.fn()
+    const stream = new ReadableStream<Uint8Array>({
+      pull() {
+        pulling.resolve()
+      },
+      cancel,
+    })
+    const invoke = vi.fn()
+    bundled(invoke)
+    const controller = new AbortController()
+    const outcome = streamingPost(stream, controller.signal).catch((e: unknown) => e)
+    await pulling.promise
+    controller.abort()
+    expect(await outcome).toBeInstanceOf(NetworkError)
+    expect(cancel).toHaveBeenCalledOnce()
+    expect(invoke).not.toHaveBeenCalled()
+  })
+
+  it('cancels an oversized open stream as soon as it crosses 1 MiB', async () => {
+    const cancel = vi.fn()
+    let pulls = 0
+    const stream = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          pulls++
+          if (pulls <= 2) controller.enqueue(new Uint8Array(pulls === 1 ? 1_048_576 : 1))
+          // Never close: refusal must not await the rest of the stream.
+        },
+        cancel,
+      },
+      { highWaterMark: 0 }
+    )
+    const invoke = vi.fn()
+    bundled(invoke)
+    await expect(streamingPost(stream)).rejects.toBeInstanceOf(NetworkError)
+    expect(pulls).toBe(2)
+    expect(cancel).toHaveBeenCalledOnce()
+    expect(invoke).not.toHaveBeenCalled()
+  })
+
+  it.each(['body', 'queue'] as const)(
+    'rechecks live attachment policy after %s waiting',
+    async (phase) => {
+      const full = nativeDeferred<void>(),
+        bodyRead = nativeDeferred<void>()
+      const finishes: Array<(value: unknown) => void> = []
+      const invoke = vi.fn().mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            finishes.push(resolve)
+            if (finishes.length === 6) full.resolve()
+          })
+      )
+      bundled(invoke)
+      const running = phase === 'queue' ? Array.from({ length: 6 }, () => coreApi().GET('/me')) : []
+      if (phase === 'queue') await full.promise
+      let bodyController!: ReadableStreamDefaultController<Uint8Array>
+      const stream = new ReadableStream<Uint8Array>(
+        {
+          start(controller) {
+            bodyController = controller
+          },
+          pull() {
+            bodyRead.resolve()
+          },
+        },
+        { highWaterMark: 0 }
+      )
+      let current = true
+      const request = coreApi().request as (
+        method: string,
+        path: string,
+        init: Record<string, unknown>
+      ) => Promise<unknown>
+      let subscriptions: ReturnType<typeof vi.spyOn> | undefined
+      const observe = {
+        onRequest({ request }: { request: Request }) {
+          subscriptions = vi.spyOn(request.signal, 'addEventListener')
+          return request
+        },
+      }
+      const guardedHeaders: Record<string, string> = {}
+      const outcome = withAttachmentDispatchGuard(
+        guardedHeaders,
+        undefined,
+        () => current,
+        (extra) =>
+          request(
+            'POST',
+            '/organisations/00000000-0000-4000-8000-000000000001/workspace/attachments/uploads',
+            {
+              body: {},
+              headers: guardedHeaders,
+              bodySerializer: () => stream,
+              duplex: 'half',
+              ...extra,
+              middleware: [...(extra.middleware as object[]), observe],
+            }
+          )
+      ).catch((e: unknown) => e)
+      await bodyRead.promise
+      if (phase === 'queue') {
+        bodyController.close()
+        // The second abort subscription proves the completed body is waiting for a slot.
+        await vi.waitFor(() => expect(subscriptions?.mock.calls).toHaveLength(2))
+      }
+      current = false
+      if (phase === 'body') bodyController.close()
+      finishes.forEach((finish) => finish(nativeOk))
+      await Promise.all(running)
+      expect(await outcome).toBeInstanceOf(NetworkError)
+      expect(invoke).toHaveBeenCalledTimes(phase === 'queue' ? 6 : 0)
+    }
+  )
+
+  it.each([
+    ['replace', false],
+    ['remove', false],
+    ['replace', true],
+    ['remove', true],
+  ] as const)(
+    'fails closed when middleware %s changes a guarded attachment key before FIFO dispatch (restored: %s)',
+    async (mode, restoreWhileQueued) => {
+      const full = nativeDeferred<void>()
+      const finishes: Array<(value: unknown) => void> = []
+      const invoke = vi.fn().mockImplementation(() =>
+        finishes.length < 6
+          ? new Promise((resolve) => {
+              finishes.push(resolve)
+              if (finishes.length === 6) full.resolve()
+            })
+          : Promise.resolve(nativeOk)
+      )
+      bundled(invoke)
+      const active = Array.from({ length: 6 }, () => coreApi().GET('/me'))
+      await full.promise
+      const headers: Record<string, string> = {}
+      let subscriptions: ReturnType<typeof vi.spyOn> | undefined
+      let guarded!: Request
+      const outcome = withAttachmentDispatchGuard(
+        headers,
+        undefined,
+        () => true,
+        (extra) =>
+          coreApi().request(
+            'post',
+            '/organisations/{organisation_id}/workspace/attachments/uploads',
+            {
+              params: {
+                path: { organisation_id: '00000000-0000-4000-8000-000000000001' },
+                header: { 'Idempotency-Key': headers['Idempotency-Key']! },
+              },
+              body: {
+                filename: 'attachment.txt',
+                contentType: 'text/plain',
+                sizeBytes: 1,
+                sha256: '0'.repeat(64),
+              },
+              headers,
+              ...extra,
+              middleware: [
+                ...(extra.middleware as Middleware[]),
+                {
+                  onRequest({ request }: { request: Request }) {
+                    guarded = request
+                    subscriptions = vi.spyOn(request.signal, 'addEventListener')
+                    // Mutation before coreFetch must preserve the per-Request guard.
+                    if (mode === 'replace')
+                      request.headers.set('Idempotency-Key', 'replacement-key')
+                    else request.headers.delete('Idempotency-Key')
+                    return request
+                  },
+                },
+              ],
+            }
+          )
+      ).catch((e: unknown) => e)
+      await vi.waitFor(() => expect(subscriptions?.mock.calls).toHaveLength(2))
+      expect(guarded).toBeInstanceOf(Request)
+      // Restoring the live Request must not admit an earlier corrupted payload copy.
+      if (restoreWhileQueued) guarded.headers.set('Idempotency-Key', headers['Idempotency-Key']!)
+      finishes.forEach((finish) => finish(nativeOk))
+      await Promise.all(active)
+      expect(await outcome).toBeInstanceOf(NetworkError)
+      expect(invoke).toHaveBeenCalledTimes(6)
+    }
+  )
+
+  it('keeps a bounded abort control path available when all ordinary bridge slots are full', async () => {
+    const hostSource = readNativeSource(
+      nativeJoin(import.meta.dirname, '../../../../desktop/src-tauri/src/gui.rs'),
+      'utf8'
+    )
+    const script = hostSource.split('const IPC_INIT_SCRIPT: &str = r#"')[1]!.split('"#;')[0]!
+    const frames: string[] = []
+    const surface = { ipc: { postMessage: (frame: string) => frames.push(frame) } }
+    runNativeModule(script, { window: surface, crypto })
+    const host = surface as typeof surface & {
+      __KODERA_IPC_ACTIVATE__(generation: number, capability: string): void
+      __KODERA_IPC_RESOLVE__(id: number, ok: boolean, value: unknown): void
+      koderaDesktop: { invoke(command: string, args?: unknown): Promise<unknown> }
+    }
+    host.__KODERA_IPC_ACTIVATE__(0, 'c'.repeat(64))
+    const ordinary = Array.from({ length: 64 }, () => host.koderaDesktop.invoke('get_app_metadata'))
+    await expect(host.koderaDesktop.invoke('get_app_metadata')).rejects.toThrow('ipc_pending_limit')
+    const controls = Array.from({ length: 8 }, () =>
+      host.koderaDesktop.invoke('desktop_core_api_abort', { requestId: 'a'.repeat(32) })
+    )
+    await expect(host.koderaDesktop.invoke('desktop_core_api_abort')).rejects.toThrow(
+      'ipc_pending_limit'
+    )
+    expect(frames.filter((frame) => frame.includes('\tdesktop_core_api_abort\n'))).toHaveLength(8)
+    // Rejected attempts consume no request IDs; settle every admitted bridge promise.
+    for (let id = 1; id <= 72; id++) host.__KODERA_IPC_RESOLVE__(id, true, {})
+    await Promise.all([...ordinary, ...controls])
+    const reused = host.koderaDesktop.invoke('desktop_core_api_abort')
+    host.__KODERA_IPC_RESOLVE__(73, true, {})
+    await reused
+    for (const command of ['desktop_oidc_clear_session', 'init_session']) {
+      const retired = host.koderaDesktop
+        .invoke('desktop_core_api_request')
+        .catch((error: Error) => error)
+      const clear = host.koderaDesktop.invoke(command)
+      expect(await retired).toMatchObject({ message: 'core_api_aborted' })
+      // The retired request's late reply cannot resurrect it or retain a bridge slot.
+      const firstId = command === 'init_session' ? 76 : 74
+      host.__KODERA_IPC_RESOLVE__(firstId, true, {})
+      host.__KODERA_IPC_RESOLVE__(firstId + 1, true, {})
+      await clear
+    }
+  })
+
+  it('passes middleware bearer and idempotency headers through IPC and captures API metadata', async () => {
+    const invoke = vi.fn().mockResolvedValue({
+      status: 201,
+      headers: { 'content-type': 'application/json', 'x-request-id': 'native-request' },
+      body_base64: btoa(JSON.stringify({ organisation_id: 'synthetic-org' })),
+    })
+    const browserFetch = bundled(invoke)
+    setTokenProvider(() => 'synthetic-native-access')
+    const body = { name: 'Test Studio', slug: 'test-studio', locale: 'en' as const }
+    await mutate({ method: 'post', path: '/workspaces/self-serve' }, { body })
+    expect(invoke).toHaveBeenCalledExactlyOnceWith('desktop_core_api_request', {
+      url: BASE + '/workspaces/self-serve',
+      method: 'POST',
+      headers: expect.objectContaining({
+        authorization: 'Bearer synthetic-native-access',
+        'content-type': 'application/json',
+        'idempotency-key': expect.any(String),
+      }),
+      bodyBase64: btoa(JSON.stringify(body)),
+      requestId: expect.stringMatching(/^[0-9a-f]{32}$/),
+    })
+    expect(lastRequestId()).toBe('native-request')
+    expect(browserFetch).not.toHaveBeenCalled()
+  })
+
+  it('raises API problems returned through IPC without a browser request', async () => {
+    const invoke = vi.fn().mockResolvedValue({
+      status: 403,
+      headers: { 'content-type': 'application/problem+json', 'x-request-id': 'native-refusal' },
+      body_base64: btoa(
+        JSON.stringify({
+          type: 'https://kodera.io/problems/forbidden',
+          status: 403,
+          title: 'Refused',
+        })
+      ),
+    })
+    const browserFetch = bundled(invoke)
+    await expect(coreApi().GET('/me')).rejects.toMatchObject({
+      name: 'ApiProblem',
+      status: 403,
+      requestId: 'native-refusal',
+    })
+    expect(browserFetch).not.toHaveBeenCalled()
+  })
+
+  it('wraps native transport refusal as NetworkError without falling back to browser fetch', async () => {
+    const browserFetch = bundled(vi.fn().mockRejectedValue({ error: 'core_api_refused' }))
+    await expect(coreApi().GET('/me')).rejects.toBeInstanceOf(NetworkError)
+    expect(browserFetch).not.toHaveBeenCalled()
+  })
+
+  it('refuses an already aborted request before invoking native HTTP', async () => {
+    const invoke = vi.fn()
+    const browserFetch = bundled(invoke)
+    await expect(coreApi().GET('/me', { signal: AbortSignal.abort() })).rejects.toBeInstanceOf(
+      NetworkError
+    )
+    expect(invoke).not.toHaveBeenCalled()
+    expect(browserFetch).not.toHaveBeenCalled()
+  })
+
+  it('admits maximum UTF-8 documents and binary, ArrayBuffer and multipart request bodies', async () => {
+    const invoke = vi.fn().mockResolvedValue({ status: 204, headers: {}, body_base64: '' })
+    bundled(invoke)
+    const document = new TextEncoder().encode('🦀'.repeat(262_144))
+    const binary = new Uint8Array([0x52, 0x49, 0x46, 0x46, 0, 0x80, 0xff])
+    const multipart = new FormData()
+    multipart.append('file', new Blob([binary], { type: 'image/webp' }), 'emoji.webp')
+    for (const body of [document, binary, binary.buffer, multipart]) {
+      await coreApi().POST('/workspaces/self-serve', {
+        body: { name: 'Test Studio', slug: 'test-studio', locale: 'en' },
+        bodySerializer: () => body,
+        params: { header: { 'Idempotency-Key': crypto.randomUUID() } },
+      })
+      const payload = invoke.mock.lastCall?.[1] as { bodyBase64: string }
+      const bytes = Uint8Array.from(atob(payload.bodyBase64), (char) => char.charCodeAt(0))
+      if (body === multipart) {
+        expect(new TextDecoder().decode(bytes)).toContain('name="file"')
+        expect(new TextDecoder().decode(bytes)).toContain('Content-Type: image/webp')
+        expect(Array.from(bytes).join(',')).toContain(Array.from(binary).join(','))
+      } else {
+        const expected = body instanceof ArrayBuffer ? new Uint8Array(body) : (body as Uint8Array)
+        expect(bytes.byteLength).toBe(expected.byteLength)
+        expect(bytes.every((byte, index) => byte === expected[index])).toBe(true)
+      }
+    }
+    expect(invoke).toHaveBeenCalledTimes(4)
+  })
+
+  it('refuses decoded request bodies over 1 MiB before IPC', async () => {
+    const invoke = vi.fn()
+    bundled(invoke)
+    await expect(
+      coreApi().POST('/workspaces/self-serve', {
+        body: { name: 'Test Studio', slug: 'test-studio', locale: 'en' },
+        bodySerializer: () => new Uint8Array(1_048_577),
+        params: { header: { 'Idempotency-Key': crypto.randomUUID() } },
+      })
+    ).rejects.toBeInstanceOf(NetworkError)
+    expect(invoke).not.toHaveBeenCalled()
+  })
+
+  it('preserves binary response bytes for arrayBuffer, blob and text consumers', async () => {
+    const bytes = new Uint8Array([0x52, 0x49, 0x46, 0x46, 0, 0x80, 0xff])
+    const invoke = vi.fn().mockResolvedValue({
+      status: 200,
+      headers: { 'content-type': 'image/webp' },
+      body_base64: btoa(String.fromCharCode(...bytes)),
+    })
+    bundled(invoke)
+    const buffer = await coreApi().GET('/me', { parseAs: 'arrayBuffer' })
+    expect(new Uint8Array(buffer.data!)).toEqual(bytes)
+    const blob = await coreApi().GET('/me', { parseAs: 'blob' })
+    expect(new Uint8Array(await blob.data!.arrayBuffer())).toEqual(bytes)
+    const text = await coreApi().GET('/me', { parseAs: 'text' })
+    expect(text.data).toBe(new TextDecoder().decode(bytes))
+    const unicode = { name: 'Studio 🦀' }
+    const encoded = new TextEncoder().encode(JSON.stringify(unicode))
+    invoke.mockResolvedValue({
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+      body_base64: btoa(String.fromCharCode(...encoded)),
+    })
+    expect((await coreApi().GET('/me')).data).toEqual(unicode)
+  })
+
+  it.each([204, 404, 409])('preserves the next backup epoch for status %i', async (status) => {
+    const invoke = vi.fn().mockResolvedValue({
+      status,
+      headers: { 'x-kodera-next-backup-epoch': '7' },
+      body_base64: '',
+    })
+    bundled(invoke)
+    // The normal error middleware consumes non-2xx responses; capture its input first.
+    let epoch: string | null = null
+    const capture = {
+      onResponse({ response }: { response: Response }) {
+        epoch = response.headers.get('x-kodera-next-backup-epoch')
+      },
+    }
+    const client = coreApi()
+    client.use(capture)
+    try {
+      await client.GET('/me').catch(() => {})
+      expect(epoch).toBe('7')
+    } finally {
+      client.eject(capture)
+    }
+  })
+
+  it.each(['core_api_refused', 'core_api_busy', 'native_worker_unavailable'])(
+    'maps %s to NetworkError',
+    async (error) => {
+      bundled(vi.fn().mockRejectedValue({ error }))
+      await expect(coreApi().GET('/me')).rejects.toMatchObject({
+        name: 'NetworkError',
+        cause: { error },
+      })
+    }
+  )
+
+  it.each([undefined, new Error('synthetic cancellation')])(
+    'rejects abort immediately and cancels the matching pending native request',
+    async (reason) => {
+      let finish: (value: unknown) => void = () => {}
+      const pending = new Promise((resolve) => {
+        finish = resolve
+      })
+      let markStarted: () => void = () => {}
+      const started = new Promise<void>((resolve) => {
+        markStarted = resolve
+      })
+      const invoke = vi.fn().mockImplementation((command: string) => {
+        if (command === 'desktop_core_api_abort')
+          return Promise.reject(new Error('already finished'))
+        markStarted()
+        return pending
+      })
+      bundled(invoke)
+      const controller = new AbortController()
+      const outcome = coreApi()
+        .GET('/me', { signal: controller.signal })
+        .catch((error: unknown) => error)
+      await started
+      controller.abort(reason)
+      const error = await outcome
+      expect(error).toBeInstanceOf(NetworkError)
+      expect((error as NetworkError).cause).toBe(controller.signal.reason)
+      const requestId = invoke.mock.calls[0]![1].requestId as string
+      expect(invoke).toHaveBeenLastCalledWith('desktop_core_api_abort', { requestId })
+      // Late settlement after cancellation is handled without publishing or retrying.
+      finish({ status: 200, headers: {}, body_base64: btoa('{}') })
+      await Promise.resolve()
+      expect(invoke).toHaveBeenCalledTimes(2)
+    }
+  )
+
+  it('removes the abort listener after a native request settles', async () => {
+    const invoke = vi.fn().mockResolvedValue({ status: 200, headers: {}, body_base64: btoa('{}') })
+    bundled(invoke)
+    const controller = new AbortController()
+    await coreApi().GET('/me', { signal: controller.signal })
+    controller.abort()
+    expect(invoke).toHaveBeenCalledTimes(1)
   })
 })

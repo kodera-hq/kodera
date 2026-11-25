@@ -10,9 +10,10 @@
 // - a non-2xx response raised as `ApiProblem`, and an unreachable network as
 //   `NetworkError`, so a caller never has to remember to check a result object.
 
+import { captureSessionGeneration } from '../auth/sessionGeneration'
 import createClient from 'openapi-fetch'
 import type { Middleware } from 'openapi-fetch'
-import { coreApiUrl } from '../config'
+import { coreApiUrl, isDesktopBundledOrigin } from '../config'
 import { PROBLEM_TYPES, type ProblemType } from './generated/problems'
 import type { operations, paths } from './schema'
 import type { AuthLifetime } from '../auth/AuthProvider'
@@ -155,6 +156,11 @@ export function lastRequestId(): string | undefined {
 }
 
 const attachmentGuards = new Map<string, (request: Request) => Request>()
+const requestAttachmentGuards = new WeakMap<
+  Request,
+  (request: Request, outgoingHeaders?: Readonly<Record<string, string>>) => Request
+>()
+const requestSessions = new WeakMap<Request, () => boolean>()
 
 function requirePolicy(check: () => boolean): void {
   try {
@@ -193,7 +199,18 @@ export async function withAttachmentDispatchGuard<T>(
   const key =
     params?.header?.['Idempotency-Key'] ?? (headers['Idempotency-Key'] = crypto.randomUUID())
   requirePolicy(() => key !== '' && !attachmentGuards.has(key) && isCurrent() === true)
-  const check = (request: Request) => checkAttachmentRequest(request, isCurrent)
+  const check = (request: Request, outgoingHeaders?: Readonly<Record<string, string>>) => {
+    requirePolicy(
+      () =>
+        request.headers.get('Idempotency-Key') === key &&
+        (outgoingHeaders === undefined || outgoingHeaders['idempotency-key'] === key)
+    )
+    const guarded = checkAttachmentRequest(request, isCurrent)
+    requestAttachmentGuards.set(guarded, check)
+    const session = requestSessions.get(request)
+    if (session) requestSessions.set(guarded, session)
+    return guarded
+  }
   const guard: Middleware = { onRequest: ({ request }) => check(request) }
   attachmentGuards.set(key, check)
   try {
@@ -208,6 +225,7 @@ export async function withAttachmentDispatchGuard<T>(
 
 const middleware: Middleware = {
   onRequest({ request }) {
+    const session = captureSessionGeneration()
     const token = tokenProvider()
     if (token !== undefined) request.headers.set('Authorization', `Bearer ${token}`)
     // The contract requires a key on every POST, and a retried order that creates a
@@ -217,7 +235,9 @@ const middleware: Middleware = {
       request.headers.set('Idempotency-Key', crypto.randomUUID())
     }
     const key = request.headers.get('Idempotency-Key')
-    return (key ? attachmentGuards.get(key) : undefined)?.(request) ?? request
+    const guarded = (key ? attachmentGuards.get(key) : undefined)?.(request) ?? request
+    requestSessions.set(guarded, session)
+    return guarded
   },
   async onResponse({ response }) {
     lastId = response.headers.get('X-Request-Id') ?? undefined
@@ -226,7 +246,7 @@ const middleware: Middleware = {
   },
   onError({ error }) {
     // Returning an Error replaces what openapi-fetch is about to throw.
-    return new NetworkError(error)
+    return error instanceof NetworkError ? error : new NetworkError(error)
   },
 }
 
@@ -243,11 +263,13 @@ const clients = new Map<string, CoreClient>()
  */
 export function coreApi(): CoreClient {
   const baseUrl = coreApiUrl()
-  const existing = clients.get(baseUrl)
+  const bundled = typeof isDesktopBundledOrigin === 'function' && isDesktopBundledOrigin()
+  const key = baseUrl + (bundled ? '|desktop' : '|web')
+  const existing = clients.get(key)
   if (existing !== undefined) return existing
-  const client = createClient<paths>({ baseUrl })
+  const client = createClient<paths>({ baseUrl, ...coreTransport(bundled) })
   client.use(middleware)
-  clients.set(baseUrl, client)
+  clients.set(key, client)
   return client
 }
 
@@ -1134,13 +1156,19 @@ function deviceComplete(cell: DeviceCell, fields: Record<string, unknown>): void
   if (cell.finished) return
   const { binding, lease, rpcId } = cell
   const id = cell.id
-  const deadline = cell.native?.deadline ?? (cell.observedAt === undefined ? undefined : cell.observedAt + 5000)
+  const deadline =
+    cell.native?.deadline ?? (cell.observedAt === undefined ? undefined : cell.observedAt + 5000)
   const consumed = cell.mode === 'attempt' && cell.consumed
   deviceDropCell(cell)
   if (!devicePost(binding, lease, rpcId, { cellId: id, ...fields }, deadline)) {
-    devicePost(binding, lease, rpcId, consumed
-      ? { cellId: id, kind: 'attempt-outcome', outcome: { kind: 'unknown' } }
-      : { cellId: id, kind: 'refused', code: 'ineligible' })
+    devicePost(
+      binding,
+      lease,
+      rpcId,
+      consumed
+        ? { cellId: id, kind: 'attempt-outcome', outcome: { kind: 'unknown' } }
+        : { cellId: id, kind: 'refused', code: 'ineligible' }
+    )
   }
 }
 function deviceRefuse(cell: DeviceCell, code: DeviceCode): void {
@@ -1471,29 +1499,47 @@ async function deviceObserve(cell: DeviceCell): Promise<void> {
   delete cell.response
   deviceTimer(cell, 5000)
   if (cell.mode === 'initialize') {
-    deviceNeed(devicePost(cell.binding, cell.lease, cell.rpcId, {
-      kind: 'initialization-prepared',
-      cellId: cell.id,
-      principal,
-      mode: cell.initializationMode,
-    }, native.deadline), 'ineligible')
+    deviceNeed(
+      devicePost(
+        cell.binding,
+        cell.lease,
+        cell.rpcId,
+        {
+          kind: 'initialization-prepared',
+          cellId: cell.id,
+          principal,
+          mode: cell.initializationMode,
+        },
+        native.deadline
+      ),
+      'ineligible'
+    )
   } else {
     deviceNeed(descriptor)
     const wall = deviceWall()
     deviceInteger(wall, false)
     deviceNeed(wall <= Number.MAX_SAFE_INTEGER - DEVICE_RETRY_MS, 'ineligible')
-    deviceNeed(devicePost(cell.binding, cell.lease, cell.rpcId, {
-      kind: 'attempt-prepared',
-      cellId: cell.id,
-      info: {
-        version: 2,
-        actorOperation: descriptor.actorOperation,
-        operationId: descriptor.operationId,
-        bodySha256: descriptor.bodySha256,
-        observedWallMs: wall,
-        retryBeforeMs: wall + DEVICE_RETRY_MS,
-      },
-    }, native.deadline), 'ineligible')
+    deviceNeed(
+      devicePost(
+        cell.binding,
+        cell.lease,
+        cell.rpcId,
+        {
+          kind: 'attempt-prepared',
+          cellId: cell.id,
+          info: {
+            version: 2,
+            actorOperation: descriptor.actorOperation,
+            operationId: descriptor.operationId,
+            bodySha256: descriptor.bodySha256,
+            observedWallMs: wall,
+            retryBeforeMs: wall + DEVICE_RETRY_MS,
+          },
+        },
+        native.deadline
+      ),
+      'ineligible'
+    )
   }
 }
 async function deviceSend(cell: DeviceCell): Promise<void> {
@@ -1738,4 +1784,149 @@ export function bindConfidentialDeviceDispatch(
     close()
     throw error instanceof DeviceDispatchFailure ? error : new DeviceDispatchFailure('ineligible')
   }
+}
+
+// Keep native transfer and bridge control capacity available during request bursts.
+const MAX_CONCURRENT_DESKTOP_CORE_FETCHES = 6
+let activeDesktopCoreFetches = 0
+const desktopCoreQueue: Array<() => void> = []
+
+function acquireDesktopCoreSlot(signal: AbortSignal): Promise<() => void> {
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      const index = desktopCoreQueue.indexOf(admit)
+      if (index >= 0) desktopCoreQueue.splice(index, 1)
+      reject(signal.reason)
+    }
+    const admit = () => {
+      signal.removeEventListener('abort', onAbort)
+      activeDesktopCoreFetches++
+      let released = false
+      resolve(() => {
+        if (released) return
+        released = true
+        activeDesktopCoreFetches--
+        desktopCoreQueue.shift()?.()
+      })
+    }
+    if (signal.aborted) return reject(signal.reason)
+    signal.addEventListener('abort', onAbort, { once: true })
+    if (activeDesktopCoreFetches < MAX_CONCURRENT_DESKTOP_CORE_FETCHES) admit()
+    else desktopCoreQueue.push(admit)
+  })
+}
+
+// Read incrementally: neither a stalled nor an oversized upload may pin cancellation.
+async function readDesktopCoreBody(input: Request): Promise<Uint8Array | undefined> {
+  input.signal.throwIfAborted()
+  if (!input.body) return undefined
+  const reader = input.body.getReader()
+  const onAbort = () => {
+    void reader.cancel(input.signal.reason).catch(() => {})
+  }
+  input.signal.addEventListener('abort', onAbort, { once: true })
+  try {
+    input.signal.throwIfAborted()
+    let bytes = new Uint8Array(0)
+    let length = 0
+    while (true) {
+      const { done, value } = await reader.read()
+      input.signal.throwIfAborted()
+      if (done) break
+      const nextLength = length + value.byteLength
+      if (nextLength > 1_048_576) {
+        void reader.cancel().catch(() => {})
+        throw new NetworkError(undefined)
+      }
+      if (nextLength > bytes.length) {
+        const grown = new Uint8Array(
+          Math.min(1_048_576, Math.max(nextLength, bytes.length * 2, 8192))
+        )
+        grown.set(bytes.subarray(0, length))
+        bytes = grown
+      }
+      bytes.set(value, length)
+      length = nextLength
+    }
+    return bytes.subarray(0, length)
+  } finally {
+    input.signal.removeEventListener('abort', onAbort)
+    reader.releaseLock()
+  }
+}
+
+// Bundled WebKit documents have an opaque browser origin. Core requests cross the
+// origin-fenced native bridge, preserving the same middleware and response semantics.
+async function coreFetch(input: Request): Promise<Response> {
+  if (!isDesktopBundledOrigin()) throw new NetworkError(undefined)
+  const bridge = (
+    window as Window & {
+      koderaDesktop?: { invoke(command: string, args: Record<string, unknown>): Promise<unknown> }
+    }
+  ).koderaDesktop
+  if (!bridge) throw new NetworkError(undefined)
+  const session = requestSessions.get(input)
+  // Missing request identity fails closed if later middleware replaced the Request.
+  const checkSession = () => {
+    if (!session?.()) throw new NetworkError('core_api_aborted')
+  }
+  checkSession()
+  // Identity survives header mutation and registration retirement during either await.
+  const check = requestAttachmentGuards.get(input)
+  const bytes = await readDesktopCoreBody(input)
+  const headers = Object.fromEntries(input.headers)
+  let bodyBase64: string | undefined
+  if (bytes) {
+    const chunks: string[] = []
+    for (let offset = 0; offset < bytes.length; offset += 8192)
+      chunks.push(String.fromCharCode(...bytes.subarray(offset, offset + 8192)))
+    bodyBase64 = btoa(chunks.join(''))
+  }
+  const requestId = crypto.randomUUID().replaceAll('-', '')
+  const payload = { url: input.url, method: input.method, headers, bodyBase64, requestId }
+  if (new TextEncoder().encode(JSON.stringify(payload)).byteLength > 1_572_000)
+    throw new NetworkError(undefined)
+  const release = await acquireDesktopCoreSlot(input.signal)
+  type NativeResponse = { status: number; headers: Record<string, string>; body_base64: string }
+  let onAbort: () => void = () => {}
+  let dispatched = false
+  try {
+    const result = await new Promise<NativeResponse>((resolve, reject) => {
+      onAbort = () => {
+        void bridge.invoke('desktop_core_api_abort', { requestId }).catch(() => {})
+        reject(input.signal.reason)
+      }
+      input.signal.throwIfAborted()
+      input.signal.addEventListener('abort', onAbort, { once: true })
+      // No await may separate these live checks from native dispatch.
+      check?.(input, payload.headers)
+      checkSession()
+      const pending = bridge.invoke('desktop_core_api_request', payload)
+      dispatched = true
+      // Caller cancellation is immediate; retain capacity until native work settles.
+      void pending.then(
+        (value) => {
+          release()
+          resolve(value as NativeResponse)
+        },
+        (error: unknown) => {
+          release()
+          reject(error)
+        }
+      )
+    })
+    input.signal.throwIfAborted()
+    const body = Uint8Array.from(atob(result.body_base64), (char) => char.charCodeAt(0))
+    return new Response(
+      input.method === 'HEAD' || [204, 205, 304].includes(result.status) ? null : body,
+      { status: result.status, headers: result.headers }
+    )
+  } finally {
+    input.signal.removeEventListener('abort', onAbort)
+    if (!dispatched) release()
+  }
+}
+
+function coreTransport(bundled: boolean) {
+  return bundled ? { fetch: coreFetch } : {}
 }

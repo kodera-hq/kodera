@@ -663,8 +663,9 @@ mod native_auth {
     type BrowserHandler = dyn Fn(&str) -> Result<(), String> + Send + Sync;
     struct Browser(Arc<BrowserHandler>);
     impl NativeBrowserLauncher for Browser {
-        fn open(&self, url: &str) -> Result<(), String> {
-            (self.0)(url)
+        fn open(&self, url: &str) -> Result<Arc<std::sync::atomic::AtomicBool>, String> {
+            (self.0)(url)?;
+            Ok(Arc::new(std::sync::atomic::AtomicBool::new(false)))
         }
     }
     fn decode(raw: &str) -> String {
@@ -842,7 +843,7 @@ mod native_auth {
                 );
                 Ok(response(
                     200,
-                    json!({"access_token":"short-access", "id_token":jwt(json!({"iss":"https://auth.kodera.io/realms/community","sub":"member","aud":"kodera-desktop","nonce":q["nonce"],"amr":["pwd","otp"]})),"refresh_token":"native-refresh-only","expires_in":300}),
+                    json!({"access_token":"short-access", "id_token":jwt(json!({"iss":"https://auth.kodera.io/realms/community","sub":"member","aud":"kodera-desktop","exp":4102444800u64,"nonce":q["nonce"],"amr":["pwd","otp"]})),"refresh_token":"native-refresh-only","expires_in":300}),
                 ))
             }));
             let (mut bridge, store) = setup(http, browser);
@@ -874,11 +875,28 @@ mod native_auth {
             ),
             (Some(json!({"aud":["other-client"]})), false),
             (Some(json!({"aud":["kodera-desktop", 42]})), false),
+            (Some(json!({"azp":"kodera-desktop"})), false),
+            (Some(json!({"aud":"account","azp":"kodera-desktop"})), false),
+            (
+                Some(json!({"aud":"kodera-desktop","azp":"other-client"})),
+                false,
+            ),
+            (
+                Some(json!({"aud":"kodera-desktop","azp":"kodera-desktop"})),
+                true,
+            ),
             (Some(json!({"aud":"kodera-desktop"})), true),
-            (Some(json!({"aud":["other-client","kodera-desktop"]})), true),
+            (Some(json!({"aud":["kodera-desktop"]})), true),
+            (Some(json!({"aud":"kodera-desktop","exp":null})), false),
+            (Some(json!({"aud":"kodera-desktop","exp":0})), false),
+            (Some(json!({"aud":"kodera-desktop","exp":"invalid"})), false),
+            (
+                Some(json!({"aud":["other-client","kodera-desktop"]})),
+                false,
+            ),
             (
                 Some(json!({"aud":"other-client","azp":"kodera-desktop"})),
-                true,
+                false,
             ),
         ] {
             let nonce = Arc::new(Mutex::new(String::new()));
@@ -891,8 +909,11 @@ mod native_auth {
             }));
             let http = Http(Arc::new(move |_, _| {
                 // Even a valid access-token identity cannot replace the interactive ID token.
-                let mut body = json!({"access_token":jwt(json!({"iss":"https://auth.kodera.io/realms/community","sub":"member","aud":"kodera-desktop","nonce":*nonce.lock().unwrap()})),"refresh_token":"new-native-refresh","expires_in":300});
+                let mut body = json!({"access_token":jwt(json!({"iss":"https://auth.kodera.io/realms/community","sub":"member","aud":"kodera-desktop","exp":4102444800u64,"nonce":*nonce.lock().unwrap()})),"refresh_token":"new-native-refresh","expires_in":300});
                 if let Some(mut claims) = identity.clone() {
+                    if claims.get("exp").is_none() {
+                        claims["exp"] = json!(4102444800u64);
+                    }
                     claims["iss"] = json!("https://auth.kodera.io/realms/community");
                     claims["sub"] = json!("member");
                     claims["nonce"] = json!(*nonce.lock().unwrap());
@@ -946,7 +967,7 @@ mod native_auth {
                 release_rx.lock().unwrap().recv().unwrap();
                 Ok(response(
                     200,
-                    json!({"access_token":"interactive-access","id_token":jwt(json!({"iss":"https://auth.kodera.io/realms/community","sub":"member","azp":"kodera-desktop","nonce":*nonce.lock().unwrap()})),"refresh_token":"interactive-refresh","expires_in":300}),
+                    json!({"access_token":"interactive-access","id_token":jwt(json!({"iss":"https://auth.kodera.io/realms/community","sub":"member","aud":"kodera-desktop","azp":"kodera-desktop","exp":4102444800u64,"nonce":*nonce.lock().unwrap()})),"refresh_token":"interactive-refresh","expires_in":300}),
                 ))
             }));
             let (mut bridge, store) = setup(http, browser);
@@ -1234,6 +1255,13 @@ mod native_auth {
         for (key, value) in [
             ("issuer_origin", "https://evil.example"),
             ("issuer_origin", "http://auth.kodera.io"),
+            ("issuer_origin", "javascript:alert(1)"),
+            ("issuer_origin", "file:///tmp/registration"),
+            ("issuer_origin", "https://user@auth.kodera.io"),
+            ("issuer_origin", "https://auth.kodera.io.evil.example"),
+            ("issuer_origin", "https://auth.kodera.io/registration"),
+            ("issuer_origin", "https://auth.kodera.io?redirect=evil"),
+            ("issuer_origin", "not a URL"),
             ("realm", "../community"),
             ("realm", "Community"),
             ("client_id", "bad client"),
@@ -1241,12 +1269,15 @@ mod native_auth {
             ("kc_action", "other"),
             ("ui_locales", "en&redirect=evil"),
         ] {
-            let mut input = args("desktop_oidc_exchange_loopback");
-            input[key] = json!(value);
-            payload(
-                &invoke(&mut bridge, "desktop_oidc_exchange_loopback", input),
-                false,
-            );
+            for registration in [false, true] {
+                let mut input = args("desktop_oidc_exchange_loopback");
+                input[key] = json!(value);
+                input["registration"] = json!(registration);
+                payload(
+                    &invoke(&mut bridge, "desktop_oidc_exchange_loopback", input),
+                    false,
+                );
+            }
         }
         for origin in [
             "http://kodera.io",
@@ -1291,7 +1322,12 @@ mod native_auth {
                 &message,
                 |task| {
                     called = true;
-                    assert_eq!(task.document_id, "a".repeat(32));
+                    match &task {
+                        super::super::super::ipc_bridge::NativeIpcTask::Oidc(oidc) => {
+                            assert_eq!(oidc.document_id, "a".repeat(32))
+                        }
+                        _ => panic!("expected an OIDC task"),
+                    }
                     WebViewIpcOutcome {
                         eval_scripts: Vec::new(),
                         window_action: None,
@@ -1414,7 +1450,7 @@ mod native_auth {
                 assert_eq!(variant, "nonce", "invalid callback reached token endpoint");
                 Ok(response(
                     200,
-                    json!({"access_token":"short-access", "id_token":jwt(json!({"iss":"https://auth.kodera.io/realms/community","sub":"member","aud":"kodera-desktop","nonce":"wrong-nonce"})),"refresh_token":"must-not-store-native", "expires_in":300}),
+                    json!({"access_token":"short-access", "id_token":jwt(json!({"iss":"https://auth.kodera.io/realms/community","sub":"member","aud":"kodera-desktop","exp":4102444800u64,"nonce":"wrong-nonce"})),"refresh_token":"must-not-store-native", "expires_in":300}),
                 ))
             }));
             let (mut bridge, store) = setup(http, browser);
@@ -1506,5 +1542,571 @@ mod native_auth {
             assert!(StdBrowserLauncher.open(url).is_err());
             assert!(StdOidcHttpClient.post_form(url, "code=private").is_err());
         }
+    }
+}
+
+mod native_core_api {
+    use super::super::super::desktop_core_api::{
+        encode_base64, execute_at_origin, parse_response, CoreRequest, MAX_BODY, MAX_REQUEST_BODY,
+    };
+    use super::*;
+    use serde_json::{json, Value};
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    fn payload(url: &str) -> Value {
+        json!({"command":"desktop_core_api_request", "requestId":"0123456789abcdef0123456789abcdef", "url":url, "method":"GET", "headers":{"Accept":"application/json"}})
+    }
+    fn valid(value: Value) -> bool {
+        serde_json::from_value::<CoreRequest>(value)
+            .is_ok_and(|r| r.validate("https://api.kodera.io").is_ok())
+    }
+
+    #[test]
+    fn request_policy_refuses_untrusted_destinations_and_ambiguous_payloads() {
+        assert!(valid(payload("https://api.kodera.io/api/v1/me")));
+        for url in [
+            "javascript:alert(1)",
+            "file:///api/v1/me",
+            "http://api.kodera.io/api/v1/me",
+            "https://api.kodera.io.evil.test/api/v1/me",
+            "https://evil.test/api/v1/me",
+            "https://user@api.kodera.io/api/v1/me",
+            "https://api.kodera.io:443/api/v1/me",
+            "https://api.kodera.io/private",
+            "https://api.kodera.io/api",
+            "https://api.kodera.io/api/v2/me",
+            "https://api.kodera.io/api/private",
+            "https://api.kodera.io/api/v1",
+            "https://api.kodera.io/api/v1?escape=/me",
+            "https://api.kodera.io/api/../admin",
+            "https://api.kodera.io/api/%2E%2e/admin",
+            "https://api.kodera.io/api/%252e/admin",
+            "https://api.kodera.io/api/%2fadmin",
+            "https://api.kodera.io/api/\\admin",
+            "https://api.kodera.io/api/v1/me#fragment",
+            "https://api.kodera.io/api/./admin",
+            "http://127.0.0.1:1234/api/v1/me",
+            "https://api.kodera.io/api/v1/me\r\nInjected:yes",
+        ] {
+            assert!(!valid(payload(url)), "{url}");
+        }
+        for method in ["CONNECT", "TRACE", "get", "POST\r\nHost: evil"] {
+            let mut p = payload("https://api.kodera.io/api/v1/me");
+            p["method"] = json!(method);
+            assert!(!valid(p));
+        }
+        for key in ["extra", "host_op", "redirect", "origin"] {
+            let mut p = payload("https://api.kodera.io/api/v1/me");
+            p[key] = json!(true);
+            assert!(!valid(p));
+        }
+        for header in [
+            "Origin",
+            "Cookie",
+            "Host",
+            "Referer",
+            "Proxy-Authorization",
+            "X-Forwarded-For",
+            "Content-Length",
+        ] {
+            let mut p = payload("https://api.kodera.io/api/v1/me");
+            p["headers"] = json!({header:"value"});
+            assert!(!valid(p));
+        }
+        for headers in [
+            json!({"Accept":"ok\r\nCookie: injected"}),
+            json!({"Accept":"a", "accept":"b"}),
+            json!({"Authorization":"a".repeat(8193)}),
+        ] {
+            let mut p = payload("https://api.kodera.io/api/v1/me");
+            p["headers"] = headers;
+            assert!(!valid(p));
+        }
+        let mut p = payload("https://api.kodera.io/api/v1/workspaces/self-serve");
+        p["method"] = json!("POST");
+        p["body"] = json!("x".repeat(MAX_REQUEST_BODY + 1));
+        assert!(!valid(p));
+    }
+
+    #[test]
+    fn command_is_bundled_only_and_scheduled_through_native_worker() {
+        let mut bridge = DesktopWebViewBridge::new(true, None);
+        bridge.document_capability = Some("c".repeat(64));
+        let raw = format!(
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:0:{}:1\tdesktop_core_api_request\n{}",
+            "c".repeat(64),
+            payload("https://api.kodera.io/api/v1/me")
+        );
+        for sender in [
+            "https://evil.test/",
+            "https://app.kodera.io/",
+            "http://localhost:5173/",
+            "http://127.0.0.1:5173/",
+        ] {
+            assert_eq!(
+                bridge.handle_ipc_request(sender, &raw),
+                Err(WebViewIpcError::UntrustedSenderOrigin)
+            );
+        }
+        let mut scheduled = false;
+        bridge
+            .handle_ipc_request_with_native_dispatch(
+                &format!("{INTERNAL_ASSET_ORIGIN}/"),
+                &raw,
+                |_| {
+                    scheduled = true;
+                    WebViewIpcOutcome {
+                        eval_scripts: vec![],
+                        window_action: None,
+                    }
+                },
+            )
+            .unwrap();
+        assert!(scheduled);
+    }
+
+    fn frame(command: &str, body: &Value) -> String {
+        format!(
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:0:{}:1\t{command}\n{body}",
+            "c".repeat(64)
+        )
+    }
+
+    #[test]
+    fn large_envelopes_are_exclusive_to_authenticated_bounded_core_requests() {
+        use super::super::super::desktop_core_api::MAX_CORE_ENVELOPE;
+        let mut bridge = DesktopWebViewBridge::new(true, None);
+        bridge.document_capability = Some("c".repeat(64));
+        let mut body = payload("https://api.kodera.io/api/v1/documents");
+        body["method"] = json!("PUT");
+        body["bodyBase64"] = json!(encode_base64("🦀".repeat(262_144).as_bytes()));
+        let raw = frame("desktop_core_api_request", &body);
+        assert!(raw.len() > crate::MAX_IPC_COMMAND_BYTES);
+        assert!(raw.len() < MAX_CORE_ENVELOPE);
+        let origin = format!("{INTERNAL_ASSET_ORIGIN}/");
+        let mut scheduled = false;
+        bridge
+            .handle_ipc_request_with_native_dispatch(&origin, &raw, |_| {
+                scheduled = true;
+                WebViewIpcOutcome {
+                    eval_scripts: vec![],
+                    window_action: None,
+                }
+            })
+            .unwrap();
+        assert!(scheduled);
+        for command in [
+            "get_app_metadata",
+            "desktop_core_api_abort",
+            "desktop_oidc_refresh_session",
+        ] {
+            assert_eq!(
+                bridge.handle_ipc_request(&origin, &frame(command, &body)),
+                Err(WebViewIpcError::MessageTooLarge)
+            );
+        }
+        assert_eq!(
+            bridge.handle_ipc_request(&origin, &raw.replacen(&"c".repeat(64), &"d".repeat(64), 1)),
+            Err(WebViewIpcError::UntrustedSenderOrigin)
+        );
+        assert_eq!(
+            bridge.handle_ipc_request("http://localhost:5173/", &raw),
+            Err(WebViewIpcError::UntrustedSenderOrigin)
+        );
+        assert_eq!(
+            bridge.handle_ipc_request(&origin, &(raw + &" ".repeat(MAX_CORE_ENVELOPE))),
+            Err(WebViewIpcError::MessageTooLarge)
+        );
+        body["bodyBase64"] = json!(encode_base64(&vec![0; MAX_REQUEST_BODY + 1]));
+        let refused = bridge
+            .handle_ipc_request_with_native_dispatch(
+                &origin,
+                &frame("desktop_core_api_request", &body),
+                |task| task.run(),
+            )
+            .unwrap();
+        assert!(refused.eval_scripts[0].contains("core_api_refused"));
+        body["bodyBase64"] = json!("");
+        body["command"] = json!("get_app_metadata");
+        assert_eq!(
+            bridge.handle_ipc_request(&origin, &frame("desktop_core_api_request", &body)),
+            Err(WebViewIpcError::MalformedEnvelope)
+        );
+    }
+
+    #[test]
+    fn large_frame_ingress_is_bounded_before_queue_cloning_and_releases_on_drop() {
+        use super::super::super::ipc_bridge::CoreIngress;
+        let ingress = CoreIngress::default();
+        let mut body = payload("https://api.kodera.io/api/v1/documents");
+        body["bodyBase64"] = json!("a".repeat(32768));
+        let raw = frame("desktop_core_api_request", &body);
+        let mut permits = Vec::new();
+        for _ in 0..8 {
+            permits.push(ingress.admit(&raw).unwrap().unwrap());
+        }
+        assert!(ingress.admit(&raw).is_none());
+        assert!(ingress.admit(&frame("get_app_metadata", &body)).is_none());
+        assert!(ingress.admit("small").unwrap().is_none());
+        drop(permits.pop());
+        assert!(ingress.admit(&raw).unwrap().is_some());
+        drop(permits);
+        assert!(ingress.admit(&raw).unwrap().is_some());
+    }
+
+    #[test]
+    fn excess_large_ingress_rejects_only_authenticated_current_document_with_tiny_metadata() {
+        use super::super::super::ipc_bridge::{busy_core_ingress_metadata, CoreIngress};
+        let mut bridge = DesktopWebViewBridge::new(false, None);
+        bridge.document_capability = Some("c".repeat(64));
+        let origin = format!("{INTERNAL_ASSET_ORIGIN}/");
+        let mut body = payload("https://api.kodera.io/api/v1/documents");
+        body["bodyBase64"] = json!("a".repeat(1_398_104));
+        let raw = frame("desktop_core_api_request", &body);
+        let ingress = CoreIngress::default();
+        let permits: Vec<_> = (0..8)
+            .map(|_| ingress.admit(&raw).unwrap().unwrap())
+            .collect();
+        assert!(ingress.admit(&raw).is_none());
+        let metadata = busy_core_ingress_metadata(&raw).unwrap();
+        assert!(metadata.len() <= 258);
+        assert!(!metadata.contains("bodyBase64"));
+        let outcome = bridge.reject_busy_core_ingress(&origin, &metadata).unwrap();
+        assert_eq!(outcome.eval_scripts.len(), 1);
+        assert!(outcome.eval_scripts[0].contains("core_api_busy"));
+        assert!(outcome.eval_scripts[0].contains("__KODERA_IPC_RESOLVE__(1, false,"));
+        for invalid in [
+            metadata.replacen(&"c".repeat(64), &"d".repeat(64), 1),
+            metadata.replacen(":0:", ":1:", 1),
+            metadata.replacen(":1\t", ":0\t", 1),
+            metadata.replacen("desktop_core_api_request", "get_app_metadata", 1),
+        ] {
+            assert!(bridge.reject_busy_core_ingress(&origin, &invalid).is_err());
+        }
+        bridge.document_id = Some("b".repeat(32));
+        assert!(bridge.reject_busy_core_ingress(&origin, &metadata).is_err());
+        assert!(bridge
+            .reject_busy_core_ingress("https://evil.example/", &metadata)
+            .is_err());
+        assert!(busy_core_ingress_metadata(&format!("{}\n{}", "x".repeat(257), raw)).is_none());
+        assert!(busy_core_ingress_metadata(&frame("get_app_metadata", &body)).is_none());
+        drop(permits);
+        assert!(ingress.admit(&raw).unwrap().is_some());
+    }
+
+    #[test]
+    fn body_decoding_occurs_only_on_the_reserved_worker() {
+        let mut bridge = DesktopWebViewBridge::new(false, None);
+        bridge.document_capability = Some("c".repeat(64));
+        let mut body = payload("https://api.kodera.io/api/v1/documents");
+        body["method"] = json!("POST");
+        body["bodyBase64"] = json!("Zh=="); // Noncanonical bits, caught by worker decode.
+        let mut scheduled = false;
+        let result = bridge
+            .handle_ipc_request_with_native_dispatch(
+                &format!("{INTERNAL_ASSET_ORIGIN}/"),
+                &frame("desktop_core_api_request", &body),
+                |task| {
+                    scheduled = true;
+                    task.run()
+                },
+            )
+            .unwrap();
+        assert!(scheduled);
+        assert!(result.eval_scripts[0].contains("core_api_refused"));
+    }
+
+    #[test]
+    fn sign_out_retires_reserved_core_workers_and_fences_late_replies() {
+        let mut bridge = DesktopWebViewBridge::new(false, None);
+        bridge.document_capability = Some("c".repeat(64));
+        let origin = format!("{INTERNAL_ASSET_ORIGIN}/");
+        let mut reserved = None;
+        bridge
+            .handle_ipc_request_with_native_dispatch(
+                &origin,
+                &frame(
+                    "desktop_core_api_request",
+                    &payload("https://api.kodera.io/api/v1/me"),
+                ),
+                |task| {
+                    reserved = Some(task);
+                    WebViewIpcOutcome {
+                        eval_scripts: vec![],
+                        window_action: None,
+                    }
+                },
+            )
+            .unwrap();
+        let epoch = bridge.core_requests.epoch();
+        bridge
+            .handle_ipc_request_with_native_dispatch(
+                &origin,
+                &frame(
+                    "desktop_oidc_clear_session",
+                    &json!({"command":"desktop_oidc_clear_session"}),
+                ),
+                |_| WebViewIpcOutcome {
+                    eval_scripts: vec![],
+                    window_action: None,
+                },
+            )
+            .unwrap();
+        assert_ne!(epoch, bridge.core_requests.epoch());
+        assert!(reserved.unwrap().run().eval_scripts.is_empty());
+    }
+
+    #[test]
+    fn concurrency_cap_is_native_and_reservations_release_on_worker_spawn_failure() {
+        use super::super::super::desktop_core_api::MAX_IN_FLIGHT_CORE_REQUESTS;
+        let mut bridge = DesktopWebViewBridge::new(false, None);
+        bridge.document_capability = Some("c".repeat(64));
+        let origin = format!("{INTERNAL_ASSET_ORIGIN}/");
+        let mut tasks = Vec::new();
+        for index in 0..MAX_IN_FLIGHT_CORE_REQUESTS {
+            let mut body = payload("https://api.kodera.io/api/v1/me");
+            body["requestId"] = json!(format!("{index:032x}"));
+            bridge
+                .handle_ipc_request_with_native_dispatch(
+                    &origin,
+                    &frame("desktop_core_api_request", &body),
+                    |task| {
+                        tasks.push(task);
+                        WebViewIpcOutcome {
+                            eval_scripts: vec![],
+                            window_action: None,
+                        }
+                    },
+                )
+                .unwrap();
+        }
+        let request = frame(
+            "desktop_core_api_request",
+            &payload("https://api.kodera.io/api/v1/me"),
+        );
+        let busy = bridge
+            .handle_ipc_request_with_native_dispatch(&origin, &request, |_| {
+                panic!("ninth worker spawned")
+            })
+            .unwrap();
+        assert!(busy.eval_scripts[0].contains("core_api_busy"));
+        let failure = tasks.pop().unwrap().spawn_with(
+            |_| Err(std::io::Error::other("synthetic thread quota")),
+            |_| panic!("failed worker ran"),
+        );
+        assert!(failure.eval_scripts[0].contains("native_worker_unavailable"));
+        let mut scheduled = false;
+        bridge
+            .handle_ipc_request_with_native_dispatch(&origin, &request, |_| {
+                scheduled = true;
+                WebViewIpcOutcome {
+                    eval_scripts: vec![],
+                    window_action: None,
+                }
+            })
+            .unwrap();
+        assert!(scheduled);
+        bridge.begin_document(1);
+        for task in tasks {
+            let result = task.run();
+            assert!(result.eval_scripts.is_empty());
+        }
+    }
+
+    #[test]
+    fn abort_command_is_strict_bundled_only_and_cancels_reserved_worker() {
+        let mut bridge = DesktopWebViewBridge::new(true, None);
+        bridge.document_capability = Some("c".repeat(64));
+        let body = payload("https://api.kodera.io/api/v1/me");
+        let origin = format!("{INTERNAL_ASSET_ORIGIN}/");
+        let mut task = None;
+        bridge
+            .handle_ipc_request_with_native_dispatch(
+                &origin,
+                &frame("desktop_core_api_request", &body),
+                |work| {
+                    task = Some(work);
+                    WebViewIpcOutcome {
+                        eval_scripts: vec![],
+                        window_action: None,
+                    }
+                },
+            )
+            .unwrap();
+        let abort = json!({"command":"desktop_core_api_abort", "requestId":body["requestId"]});
+        for sender in [
+            "https://evil.test/",
+            "http://localhost:5173/",
+            "https://app.kodera.io/",
+        ] {
+            assert_eq!(
+                bridge.handle_ipc_request(sender, &frame("desktop_core_api_abort", &abort)),
+                Err(WebViewIpcError::UntrustedSenderOrigin)
+            );
+        }
+        for invalid in [
+            json!({"command":"desktop_core_api_abort", "requestId":body["requestId"], "extra":true}),
+            json!({"command":"desktop_core_api_abort", "requestId":"invalid"}),
+        ] {
+            assert_eq!(
+                bridge.handle_ipc_request(&origin, &frame("desktop_core_api_abort", &invalid)),
+                Err(WebViewIpcError::MalformedEnvelope)
+            );
+        }
+        bridge
+            .handle_ipc_request(&origin, &frame("desktop_core_api_abort", &abort))
+            .unwrap();
+        assert!(task.unwrap().run().eval_scripts[0].contains("core_api_aborted"));
+    }
+
+    fn round_trip(method: &str, path: &str, body: Option<&str>, status: u16) -> (Value, String) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let worker = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+                .unwrap();
+            let mut bytes = Vec::new();
+            let mut buffer = [0; 4096];
+            loop {
+                let n = socket.read(&mut buffer).unwrap();
+                assert!(n > 0);
+                bytes.extend_from_slice(&buffer[..n]);
+                if let Some(end) = bytes.windows(4).position(|p| p == b"\r\n\r\n") {
+                    let headers = String::from_utf8_lossy(&bytes[..end]).to_ascii_lowercase();
+                    let length: usize = headers
+                        .lines()
+                        .find_map(|line| {
+                            line.strip_prefix("content-length:")
+                                .map(|n| n.trim().parse().unwrap())
+                        })
+                        .unwrap_or(0);
+                    if bytes.len() >= end + 4 + length {
+                        break;
+                    }
+                }
+            }
+            let response = format!("HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\nContent-Length: 11\r\nX-Request-Id: synthetic-id\r\nSet-Cookie: refused=yes\r\nLocation: http://127.0.0.1:1/private\r\nConnection: close\r\n\r\n{{\"ok\":true}}");
+            socket.write_all(response.as_bytes()).unwrap();
+            String::from_utf8(bytes).unwrap()
+        });
+        let mut request = payload(&format!("{origin}{path}"));
+        request["method"] = json!(method);
+        request["headers"] = json!({"Authorization":"Bearer synthetic", "Content-Type":"application/json", "Idempotency-Key":"synthetic-key"});
+        if let Some(body) = body {
+            request["body"] = json!(body);
+        }
+        let result = execute_at_origin(&request.to_string(), &origin);
+        let wire = worker.join().unwrap();
+        (
+            json!({"result":result.as_ref().ok(), "refused":result.is_err()}),
+            wire,
+        )
+    }
+
+    #[test]
+    fn get_me_and_post_workspace_round_trip_without_browser_cors_or_ambient_headers() {
+        for (method, path, body, status) in [
+            ("GET", "/api/v1/me", None, 200),
+            (
+                "POST",
+                "/api/v1/workspaces/self-serve",
+                Some("{\"name\":\"Test Studio\"}"),
+                201,
+            ),
+            // A leading @ is data, never curl's file-upload syntax.
+            (
+                "POST",
+                "/api/v1/workspaces/self-serve",
+                Some("@/not-a-file\nsecond line"),
+                400,
+            ),
+        ] {
+            let (out, wire) = round_trip(method, path, body, status);
+            assert_eq!(out["refused"], false);
+            assert_eq!(out["result"]["status"], status);
+            assert_eq!(
+                out["result"]["body_base64"],
+                encode_base64(b"{\"ok\":true}")
+            );
+            assert_eq!(out["result"]["headers"]["x-request-id"], "synthetic-id");
+            assert!(out["result"]["headers"].get("set-cookie").is_none());
+            assert!(wire.starts_with(&format!("{method} {path} HTTP/")));
+            assert!(wire.contains("Authorization: Bearer synthetic"));
+            assert!(!wire.to_ascii_lowercase().contains("\r\norigin:"));
+            assert!(!wire.to_ascii_lowercase().contains("\r\ncookie:"));
+            if let Some(body) = body {
+                assert!(wire.ends_with(body));
+            }
+        }
+        assert_eq!(
+            round_trip("GET", "/api/v1/me", None, 302).0["refused"],
+            true
+        );
+    }
+
+    #[test]
+    fn redirect_never_connects_to_its_location() {
+        let destination = TcpListener::bind("127.0.0.1:0").unwrap();
+        destination.set_nonblocking(true).unwrap();
+        let location = format!("http://{}/api/v1/me", destination.local_addr().unwrap());
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let worker = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+                .unwrap();
+            let mut request = [0; 4096];
+            assert!(socket.read(&mut request).unwrap() > 0);
+            socket.write_all(format!("HTTP/1.1 307 Temporary Redirect\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").as_bytes()).unwrap();
+        });
+        assert!(execute_at_origin(
+            &payload(&format!("{origin}/api/v1/me")).to_string(),
+            &origin
+        )
+        .is_err());
+        worker.join().unwrap();
+        assert_eq!(
+            destination.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+    }
+
+    #[test]
+    fn admits_only_the_documented_header_set_and_preserves_conditionals() {
+        let mut p = payload("https://api.kodera.io/api/v1/me");
+        p["headers"] = json!({
+            "Authorization":"Bearer synthetic", "Content-Type":"application/json", "Accept":"application/json",
+            "Accept-Language":"en", "If-Match":"synthetic-etag", "If-None-Match":"synthetic-other-etag",
+            "Idempotency-Key":"synthetic-key", "X-Request-Id":"synthetic-id"
+        });
+        assert!(valid(p));
+        let (head, _) = round_trip("HEAD", "/api/v1/me", None, 200);
+        assert_eq!(head["refused"], false);
+        assert_eq!(head["result"]["body_base64"], "");
+    }
+
+    #[test]
+    fn response_bounds_and_redirects_are_fail_closed() {
+        for status in [101, 301, 302, 307, 308, 600] {
+            assert!(
+                parse_response(format!("HTTP/1.1 {status} Test\r\n\r\n").as_bytes(), b"").is_err()
+            );
+        }
+        assert!(parse_response(b"HTTP/1.1 304 Not Modified\r\nETag: abc\r\n\r\n", b"").is_ok());
+        assert!(parse_response(
+            b"HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\n\r\n",
+            b"{}"
+        )
+        .is_ok());
+        assert!(parse_response(b"HTTP/1.1 200 OK\r\n\r\n", &vec![b'a'; MAX_BODY + 1]).is_err());
+        assert!(parse_response(
+            format!("HTTP/1.1 200 OK\r\nX-Large: {}\r\n\r\n", "a".repeat(32768)).as_bytes(),
+            b""
+        )
+        .is_err());
     }
 }

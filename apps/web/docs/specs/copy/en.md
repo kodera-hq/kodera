@@ -150,6 +150,9 @@ translates it key for key. CI fails when a key exists in one file and not the ot
 | `console.login.realm.hint-slug` | It is in your welcome email. |
 | `console.login.realm.action-use-email` | Use an email address instead |
 | `console.login.realm.action-help` | Need help? |
+| `console.login.realm.action-create-workspace` | Create a workspace |
+| `console.login.realm.status-opening-sign-in` | Opening secure sign-in… |
+| `console.login.realm.error-sign-in` | Sign-in could not start. Please try again. |
 | `console.login.realm.error-email-required` | Enter your email address to continue. |
 | `console.login.realm.error-email-format` | This address does not look complete. Check that it has an @ and a domain name. |
 | `console.login.realm.error-email-invalid` | This address is not valid. Check that it has no spaces or accented letters. |

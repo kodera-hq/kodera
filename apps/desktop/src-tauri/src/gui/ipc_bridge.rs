@@ -1,5 +1,6 @@
 //! Origin-fenced WebView IPC router, capability rotation, and command envelope dispatcher.
 
+use super::desktop_core_api::{CoreAbort, CoreRequestGuard, CoreRequests, MAX_CORE_ENVELOPE};
 use super::desktop_oidc::{NativeOidcServices, NativeOidcTask};
 use super::picker::{NativeStackFolderPicker, OsNativeStackFolderPicker};
 use super::{
@@ -15,6 +16,149 @@ use crate::{
 use core::fmt;
 use std::collections::{BTreeSet, VecDeque};
 use std::path::{Component, Path, PathBuf};
+
+// Both transports use the runtime's worker dispatcher; no network I/O runs on the UI thread.
+pub(super) enum NativeIpcTask {
+    Oidc(NativeOidcTask),
+    Core {
+        body: zeroize::Zeroizing<String>,
+        guard: CoreRequestGuard,
+        document_id: String,
+        request_id: u64,
+    },
+}
+
+// The ingress ceiling is only enlarged for the exact outer Core request command.
+// Capability/origin and the matching JSON command are checked before deserializing its body.
+// The authenticated text header is at most 256 bytes; never scan the upload body
+// just to reject an overloaded ingress frame.
+fn core_ingress_header(raw: &str) -> Option<&str> {
+    let end = raw
+        .as_bytes()
+        .iter()
+        .take(256)
+        .position(|&byte| byte == b'\n')?;
+    let header = &raw[..end];
+    let (_, command) = header.split_once('\t')?;
+    (command == "desktop_core_api_request").then_some(&raw[..=end])
+}
+pub(super) fn within_ipc_ingress_limit(raw: &str) -> bool {
+    raw.len() <= MAX_IPC_COMMAND_BYTES
+        || (raw.len() <= MAX_CORE_ENVELOPE && core_ingress_header(raw).is_some())
+}
+
+pub(super) fn busy_core_ingress_metadata(raw: &str) -> Option<String> {
+    if raw.len() <= MAX_IPC_COMMAND_BYTES || raw.len() > MAX_CORE_ENVELOPE {
+        return None;
+    }
+    Some(format!("{}{{}}", core_ingress_header(raw)?))
+}
+
+// Admission happens before a large renderer frame is cloned into the event queue.
+#[derive(Clone, Default)]
+pub(super) struct CoreIngress(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+#[derive(Debug)]
+pub(super) struct CoreIngressPermit(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+impl CoreIngress {
+    pub(super) fn admit(&self, raw: &str) -> Option<Option<CoreIngressPermit>> {
+        if !within_ipc_ingress_limit(raw) {
+            return None;
+        }
+        if raw.len() <= MAX_IPC_COMMAND_BYTES {
+            return Some(None);
+        }
+        let mut count = self.0.load(std::sync::atomic::Ordering::SeqCst);
+        loop {
+            if count >= 8 {
+                return None;
+            }
+            match self.0.compare_exchange_weak(
+                count,
+                count + 1,
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+            ) {
+                Ok(_) => break,
+                Err(current) => count = current,
+            }
+        }
+        Some(Some(CoreIngressPermit(self.0.clone())))
+    }
+}
+impl Drop for CoreIngressPermit {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+impl NativeIpcTask {
+    pub(super) fn spawn_with(
+        self,
+        spawn: impl FnOnce(Box<dyn FnOnce() + Send>) -> std::io::Result<()>,
+        complete: impl FnOnce(WebViewIpcOutcome) + Send + 'static,
+    ) -> WebViewIpcOutcome {
+        let failure = self.failure_outcome("native_worker_unavailable");
+        match spawn(Box::new(move || complete(self.run()))) {
+            Ok(()) => WebViewIpcOutcome {
+                eval_scripts: Vec::new(),
+                window_action: None,
+            },
+            Err(_) => failure,
+        }
+    }
+
+    pub(super) fn failure_outcome(&self, error: &str) -> WebViewIpcOutcome {
+        let (document, request) = match self {
+            Self::Oidc(task) => (&task.document_id, task.request_id),
+            Self::Core {
+                document_id,
+                request_id,
+                ..
+            } => (document_id, *request_id),
+        };
+        WebViewIpcOutcome {
+            eval_scripts: vec![resolve_js_promise(
+                document,
+                request,
+                false,
+                &serde_json::json!({"error":error}).to_string(),
+            )],
+            window_action: None,
+        }
+    }
+
+    pub(super) fn run(self) -> WebViewIpcOutcome {
+        match self {
+            Self::Oidc(task) => task.run(),
+            Self::Core {
+                body,
+                guard,
+                document_id,
+                request_id,
+            } => {
+                let result = super::desktop_core_api::execute(&body, &guard);
+                if !guard.is_current() {
+                    return WebViewIpcOutcome {
+                        eval_scripts: vec![],
+                        window_action: None,
+                    };
+                }
+                let ok = result.is_ok();
+                let payload =
+                    result.unwrap_or_else(|error| serde_json::json!({"ok":false,"error":error}));
+                WebViewIpcOutcome {
+                    eval_scripts: vec![super::resolve_js_promise(
+                        &document_id,
+                        request_id,
+                        ok,
+                        &payload.to_string(),
+                    )],
+                    window_action: None,
+                }
+            }
+        }
+    }
+}
 
 /// Native window side effect requested by an IPC command execution.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -123,6 +267,12 @@ where
 /// `code_verifier`) via `serde::de::IgnoredAny` without allocating unzeroized `String` copies.
 #[derive(Default, serde::Deserialize)]
 pub(super) struct IpcEnvelopeHeader {
+    #[serde(
+        default,
+        rename = "requestId",
+        deserialize_with = "deserialize_non_null_string"
+    )]
+    pub(super) request_id: Option<String>,
     #[serde(default, deserialize_with = "deserialize_non_null_string")]
     pub(super) command: Option<String>,
     #[serde(default, deserialize_with = "deserialize_present_key")]
@@ -136,6 +286,7 @@ pub(super) struct IpcEnvelopeHeader {
 /// Stateful WebView IPC router bridging `window.__TAURI_INTERNALS__` and `window.koderaDesktop`
 /// to [`DesktopShellHost`] after strict sender-origin validation.
 pub struct DesktopWebViewBridge {
+    pub(super) core_requests: CoreRequests,
     pub(super) native_oidc: NativeOidcServices,
     pub(super) host: DesktopShellHost,
     pub(super) policy: DeepLinkAdmissionPolicy,
@@ -160,6 +311,7 @@ impl DesktopWebViewBridge {
             pending_deep_links.push_back(admitted.canonical_uri().to_owned());
         }
         Self {
+            core_requests: CoreRequests::default(),
             native_oidc: NativeOidcServices::default(),
             host: DesktopShellHost::new(),
             policy: DeepLinkAdmissionPolicy::kodera_default(),
@@ -211,6 +363,7 @@ impl DesktopWebViewBridge {
         self.native_oidc
             .revision
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.core_requests.abort_all();
         self.host.clear_active_session();
         self.listeners.clear();
         self.authorized_stack_dirs.clear();
@@ -227,6 +380,7 @@ impl DesktopWebViewBridge {
         self.native_oidc
             .revision
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.core_requests.abort_all();
         self.host.clear_active_session();
         self.authorized_stack_dirs.clear();
         self.active_modifiers.clear();
@@ -341,16 +495,37 @@ impl DesktopWebViewBridge {
         sender_url: &str,
         raw_message: &str,
     ) -> Result<WebViewIpcOutcome, WebViewIpcError> {
-        self.handle_ipc_request_with_native_dispatch(sender_url, raw_message, NativeOidcTask::run)
+        self.handle_ipc_request_with_native_dispatch(sender_url, raw_message, NativeIpcTask::run)
     }
 
     pub(super) fn handle_ipc_request_with_native_dispatch(
         &mut self,
         sender_url: &str,
         raw_message: &str,
-        dispatch: impl FnOnce(NativeOidcTask) -> WebViewIpcOutcome,
+        dispatch: impl FnOnce(NativeIpcTask) -> WebViewIpcOutcome,
     ) -> Result<WebViewIpcOutcome, WebViewIpcError> {
-        if raw_message.len() > MAX_IPC_COMMAND_BYTES {
+        self.handle_ipc_request_inner(sender_url, raw_message, false, dispatch)
+    }
+
+    pub(super) fn reject_busy_core_ingress(
+        &mut self,
+        sender_url: &str,
+        metadata: &str,
+    ) -> Result<WebViewIpcOutcome, WebViewIpcError> {
+        if metadata.len() > 258 {
+            return Err(WebViewIpcError::MessageTooLarge);
+        }
+        self.handle_ipc_request_inner(sender_url, metadata, true, |_| unreachable!())
+    }
+
+    fn handle_ipc_request_inner(
+        &mut self,
+        sender_url: &str,
+        raw_message: &str,
+        core_ingress_busy: bool,
+        dispatch: impl FnOnce(NativeIpcTask) -> WebViewIpcOutcome,
+    ) -> Result<WebViewIpcOutcome, WebViewIpcError> {
+        if !within_ipc_ingress_limit(raw_message) {
             return Err(WebViewIpcError::MessageTooLarge);
         }
         // Custom WebView IPC commands are denied to all remote web origins (`capabilities/default.json`
@@ -458,6 +633,21 @@ impl DesktopWebViewBridge {
             );
         }
 
+        if core_ingress_busy {
+            if cmd_raw != "desktop_core_api_request" || json_body != "{}" {
+                return Err(WebViewIpcError::MalformedEnvelope);
+            }
+            return Ok(WebViewIpcOutcome {
+                eval_scripts: vec![resolve_js_promise(
+                    document_id,
+                    req_id,
+                    false,
+                    r#"{"error":"core_api_busy"}"#,
+                )],
+                window_action: None,
+            });
+        }
+
         let envelope: IpcEnvelopeHeader =
             serde_json::from_str(json_body).map_err(|_| WebViewIpcError::MalformedEnvelope)?;
         if envelope.host_op.is_some() || envelope.op.is_some() {
@@ -474,10 +664,57 @@ impl DesktopWebViewBridge {
         let mut window_action = None;
 
         match cmd_raw {
+            "desktop_core_api_request" => {
+                let admission = (|| {
+                    let id = envelope
+                        .request_id
+                        .as_deref()
+                        .filter(|id| super::desktop_core_api::valid_request_id(id))
+                        .ok_or_else(|| "core_api_refused".to_owned())?;
+                    if !has_matching_body_command {
+                        return Err("core_api_refused".into());
+                    }
+                    self.core_requests
+                        .reserve(document_id, self.document_generation, id)
+                })();
+                let guard = match admission {
+                    Ok(guard) => guard,
+                    Err(error) => {
+                        return Ok(WebViewIpcOutcome {
+                            eval_scripts: vec![resolve_js_promise(
+                                document_id,
+                                req_id,
+                                false,
+                                &serde_json::json!({"error":error}).to_string(),
+                            )],
+                            window_action: None,
+                        })
+                    }
+                };
+                return Ok(dispatch(NativeIpcTask::Core {
+                    body: zeroize::Zeroizing::new(json_body.to_owned()),
+                    guard,
+                    document_id: document_id.to_owned(),
+                    request_id: req_id,
+                }));
+            }
+            "desktop_core_api_abort" => {
+                let abort: CoreAbort = serde_json::from_str(json_body)
+                    .map_err(|_| WebViewIpcError::MalformedEnvelope)?;
+                if !abort.validate() {
+                    return Err(WebViewIpcError::MalformedEnvelope);
+                }
+                self.core_requests
+                    .abort(document_id, self.document_generation, &abort.request_id);
+                eval_scripts.push(resolve_js_promise(document_id, req_id, true, "{}"));
+            }
             "desktop_oidc_exchange_loopback"
             | "desktop_oidc_refresh_session"
             | "desktop_oidc_clear_session"
             | "desktop_matrix_sso_loopback" => {
+                if cmd_raw == "desktop_oidc_clear_session" {
+                    self.core_requests.abort_all();
+                }
                 if matches!(
                     cmd_raw,
                     "desktop_oidc_exchange_loopback" | "desktop_oidc_clear_session"
@@ -489,7 +726,7 @@ impl DesktopWebViewBridge {
                         .revision
                         .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 }
-                return Ok(dispatch(NativeOidcTask {
+                return Ok(dispatch(NativeIpcTask::Oidc(NativeOidcTask {
                     services: self.native_oidc.clone(),
                     policy: self.policy.clone(),
                     command: cmd_raw.to_owned(),
@@ -500,7 +737,7 @@ impl DesktopWebViewBridge {
                         .native_oidc
                         .epoch
                         .load(std::sync::atomic::Ordering::SeqCst),
-                }));
+                })));
             }
             "get_app_metadata" | "check_app_updates" => {
                 let payload = super::builtin_meta_payload(cmd_raw, self.ready_update.as_ref())
@@ -636,6 +873,7 @@ impl DesktopWebViewBridge {
                 let was_ptt_transmitting = self.host.is_ptt_transmitting();
                 self.authorized_stack_dirs.clear();
                 self.active_modifiers.clear();
+                self.core_requests.abort_all();
                 self.host.clear_active_session();
                 window_action = Some(GuiWindowAction::SetTitle(DESKTOP_WINDOW_TITLE.to_owned()));
                 if let Ok(parsed_init) = serde_json::from_str::<InitSessionArgs>(json_body) {
