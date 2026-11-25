@@ -1486,6 +1486,24 @@ The Appearance page (`docs/specs/10-appearance.md`): the theme choice, reached f
 | `console.docs.collab.option-root-page` | Workspace root |
 | `console.docs.collab.action-move-up` | Move page up |
 | `console.docs.collab.action-move-down` | Move page down |
+| `console.docs.share.choose-subteam` | Choose a subteam… |
+| `console.docs.share.readonly` | Only editors can manage subteam access. |
+| `console.docs.share.saved` | Subteam access updated. |
+| `console.docs.share.subteams` | Subteam access |
+| `console.docs.share.loading` | Loading subteam access… |
+| `console.docs.share.unavailable` | Access to this document is unavailable. Close and reopen sharing to try again. |
+| `console.docs.share.roles-unavailable` | The subteam list is unavailable. You can still view existing access. |
+| `console.docs.share.conflict` | Access has changed since you last viewed it. The list is refreshed; review it before trying again. |
+| `console.docs.share.save-failed` | The access change could not be saved. Try again in a moment. |
+| `console.docs.share.empty` | No direct access granted to a subteam. |
+| `console.docs.share.editor` | Editor |
+| `console.docs.share.viewer` | Viewer |
+| `console.docs.share.grant-level` | Access for {mention} |
+| `console.docs.share.revoke-label` | Revoke {mention} |
+| `console.docs.share.revoke` | Revoke |
+| `console.docs.share.subteam` | Subteam |
+| `console.docs.share.level` | Access level |
+| `console.docs.share.grant` | Grant access |
 | `console.docs.collab.action-delete-page` | Delete page |
 | `console.docs.collab.template-blank` | Blank page |
 | `console.docs.collab.template-spec` | Specification |

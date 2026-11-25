@@ -45,8 +45,8 @@ export class Store {
       await client.query("SET LOCAL statement_timeout='5s'")
       const confidential = Boolean(claims.confidential)
       const epoch = confidential ? claims.epoch : null
-      const domain = await client.query('SELECT docs_collab_fence($1,$2,$3,$4,$5,$6,$7,$8,$9) AS id',
-        [claims.document, claims.organisation, claims.membership, claims.identity, claims.issuer, claims.subject, claims.role, confidential, epoch])
+      const domain = await client.query('SELECT docs_collab_fence($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) AS id',
+        [claims.document, claims.organisation, claims.membership, claims.identity, claims.issuer, claims.subject, claims.role, confidential, epoch, claims.device ?? null])
       if (!domain.rows[0]?.id) throw new TicketRefused(4403)
       alive(claims)
       const result = await operation(client, domain.rows[0].id)

@@ -106,6 +106,7 @@ SELECT = (
     # Native workspace documents, per-document grants, wikilinks, compacted snapshots and updates.
     "docs_document",
     "docs_documentgrant",
+    "docs_documentrolegrant",
     "docs_documentlink",
     "docs_documentsnapshot",
     "docs_documentupdate",
@@ -275,7 +276,8 @@ INSERT = (
     "notifications_pushsubscription",
     "notifications_pushoutbox",
     "notifications_presencelease",
-    # Native workspace documents, wikilinks, snapshots and journal updates (grants stay excluded).
+    # Native workspace documents, wikilinks, snapshots and journal updates (member grants stay excluded).
+    "docs_documentrolegrant",
     "docs_document",
     "docs_documentlink",
     "docs_documentsnapshot",
@@ -764,6 +766,8 @@ UPDATE_COLUMNS = (
     ("notifications_presencelease", "updated_at"),
     # Native workspace document tree/content mutations, soft-delete, snapshot compaction and links;
     # ownership, visibility, creator, channel binding and journal rows stay immutable.
+    ("docs_documentrolegrant", "role"),
+    ("docs_documentrolegrant", "updated_at"),
     ("docs_document", "parent_id"),
     ("docs_document", "title"),
     ("docs_document", "title_key"),
@@ -1017,6 +1021,7 @@ DELETE = (
     "idempotency_record",
     "workspaces_category",
     "workspaces_resourcepolicyrule",
+    "docs_documentrolegrant",
     "docs_documentlink",
     "docs_documentupdate",
     "ee_saml_pending_request",
@@ -1037,6 +1042,7 @@ EXECUTE_FUNCTIONS = (
     "workspace_quota_usage(uuid)",
     "audit_workspace_resource_event(uuid, text, uuid, uuid, uuid, text)",
     "docs_document_role(uuid, uuid, uuid, uuid, text, text)",
+    "docs_document_role(uuid, uuid, uuid, uuid, text, text, uuid)",
     "staff_fence_caller(uuid, uuid, text, text, text[])",
     "staff_read_outbox_sre_summary(uuid)",
     "staff_sync_identity_bridge_role(uuid, uuid, text, text, uuid)",

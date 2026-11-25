@@ -59,6 +59,8 @@ def mint(
         "expires": int(expires.timestamp()),
         "nonce": str(uuid4()),
     }
+    if confidential and verified.device_id is not None:
+        claims["device"] = str(verified.device_id)
     body = encode(
         json.dumps(claims, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
     )

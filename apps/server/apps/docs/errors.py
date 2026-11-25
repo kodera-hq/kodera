@@ -2,7 +2,10 @@
 
 
 class RefusalError(ValueError):
-    def __init__(self, status: int, kind: str | None = None) -> None:
+    def __init__(
+        self, status: int, kind: str | None = None, *, current_etag: str | None = None
+    ) -> None:
         super().__init__("document operation refused")
         self.status = status
         self.kind = kind
+        self.current_etag = current_etag

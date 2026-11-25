@@ -3621,6 +3621,50 @@ export interface paths {
         patch: operations["updateWorkspaceDocument"];
         trace?: never;
     };
+    "/organisations/{organisation_id}/workspace/documents/{document_id}/role-grants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List document subteam grants
+         * @description Active organisation membership and current document editor authority are required, including channel and ancestor restrictions. Responses are Cache-Control: no-store. Only roles of kind subteam in this workspace may be granted access. Available subteams can be read with listWorkspaceRoles by any active workspace member. Lists direct grants only; ancestor grants still apply through the existing document role traversal. At each node the highest member or assigned subteam grant wins (editor over viewer); channel policy and ancestor restrictions remain effective. Confidential grant access requires a valid encryption epoch and an issuer-signed kodera_device_id claim for an active device owned by the caller. Confidential room access additionally requires an issuer-signed kodera_device_id claim identifying an active, unrevoked participating device; organisation administrators cannot bypass this boundary.
+         */
+        get: operations["listDocumentRoleGrants"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/documents/{document_id}/role-grants/{role_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Upsert a document subteam grant
+         * @description Active organisation membership and current document editor authority are required, including channel and ancestor restrictions. Responses are Cache-Control: no-store. Only roles of kind subteam in this workspace may be granted access. Available subteams can be read with listWorkspaceRoles by any active workspace member. Workspace-serialized and audited. Requires the exact current grant-list ETag in If-Match (wildcards are refused). Changes increment the document revision and notify live collaboration sessions. Repeating an unchanged grant preserves the revision, ETag and audit history. Does not change document visibility or confidential channel membership.
+         */
+        put: operations["putDocumentRoleGrant"];
+        post?: never;
+        /**
+         * Revoke a document subteam grant
+         * @description Active organisation membership and current document editor authority are required, including channel and ancestor restrictions. Responses are Cache-Control: no-store. Only roles of kind subteam in this workspace may be granted access. Available subteams can be read with listWorkspaceRoles by any active workspace member. Workspace-serialized and audited. Requires the exact current grant-list ETag in If-Match (wildcards are refused). Changes increment the document revision, notify live collaboration sessions and return the remaining direct grants. Revoking an absent grant preserves the revision, ETag and audit history. Other grants and ancestor restrictions still apply.
+         */
+        delete: operations["revokeDocumentRoleGrant"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/organisations/{organisation_id}/workspace/documents/{document_id}/backlinks": {
         parameters: {
             query?: never;
@@ -6501,6 +6545,52 @@ export interface components {
             role: "editor" | "viewer";
             /** Format: date-time */
             updatedAt: string;
+        };
+        /**
+         * @example {
+         *       "workspaceRoleId": "00000000-0000-7000-8000-000000000002",
+         *       "name": "Engineering",
+         *       "slug": "engineering",
+         *       "role": "editor"
+         *     }
+         */
+        DocumentRoleGrant: {
+            /** Format: uuid */
+            workspaceRoleId: string;
+            name: string;
+            slug: string;
+            /** @enum {string} */
+            role: "editor" | "viewer";
+        };
+        /**
+         * @example {
+         *       "role": "editor"
+         *     }
+         */
+        DocumentRoleGrantRequest: {
+            /** @enum {string} */
+            role: "editor" | "viewer";
+        };
+        /**
+         * @example {
+         *       "revision": 2,
+         *       "data": [
+         *         {
+         *           "workspaceRoleId": "00000000-0000-7000-8000-000000000002",
+         *           "name": "Engineering",
+         *           "slug": "engineering",
+         *           "role": "editor"
+         *         }
+         *       ]
+         *     }
+         */
+        DocumentRoleGrantList: {
+            /**
+             * Format: int64
+             * @description Informational document revision. Grant mutations increment this value without changing the document content ETag or updatedAt. The grant-list ETag depends only on the document ID and ordered direct grant state, independently of title, markdown, revision and updatedAt.
+             */
+            revision: number;
+            data: components["schemas"]["DocumentRoleGrant"][];
         };
         /**
          * DocumentBacklink
@@ -16376,9 +16466,11 @@ export interface components {
          *     `docs/api/CONVENTIONS.md` §8.
          */
         IdempotencyKey: string;
+        /** @description Workspace subteam role identifier. */
+        DocumentSubteamRoleId: string;
         /**
          * @description The `ETag` of the representation this change was computed against. Required on every
-         *     `PATCH` (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
+         *     conditional mutation (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
          *     Stale: `412 precondition-failed`, carrying the current tag, and the client re-reads and
          *     re-applies rather than overwriting a change it never saw.
          *
@@ -16583,7 +16675,7 @@ export interface operations {
             header: {
                 /**
                  * @description The `ETag` of the representation this change was computed against. Required on every
-                 *     `PATCH` (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
+                 *     conditional mutation (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
                  *     Stale: `412 precondition-failed`, carrying the current tag, and the client re-reads and
                  *     re-applies rather than overwriting a change it never saw.
                  *
@@ -16768,7 +16860,7 @@ export interface operations {
             header: {
                 /**
                  * @description The `ETag` of the representation this change was computed against. Required on every
-                 *     `PATCH` (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
+                 *     conditional mutation (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
                  *     Stale: `412 precondition-failed`, carrying the current tag, and the client re-reads and
                  *     re-applies rather than overwriting a change it never saw.
                  *
@@ -16933,7 +17025,7 @@ export interface operations {
             header: {
                 /**
                  * @description The `ETag` of the representation this change was computed against. Required on every
-                 *     `PATCH` (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
+                 *     conditional mutation (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
                  *     Stale: `412 precondition-failed`, carrying the current tag, and the client re-reads and
                  *     re-applies rather than overwriting a change it never saw.
                  *
@@ -17517,7 +17609,7 @@ export interface operations {
             header: {
                 /**
                  * @description The `ETag` of the representation this change was computed against. Required on every
-                 *     `PATCH` (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
+                 *     conditional mutation (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
                  *     Stale: `412 precondition-failed`, carrying the current tag, and the client re-reads and
                  *     re-applies rather than overwriting a change it never saw.
                  *
@@ -17992,7 +18084,7 @@ export interface operations {
             header: {
                 /**
                  * @description The `ETag` of the representation this change was computed against. Required on every
-                 *     `PATCH` (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
+                 *     conditional mutation (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
                  *     Stale: `412 precondition-failed`, carrying the current tag, and the client re-reads and
                  *     re-applies rather than overwriting a change it never saw.
                  *
@@ -18114,7 +18206,7 @@ export interface operations {
             header: {
                 /**
                  * @description The `ETag` of the representation this change was computed against. Required on every
-                 *     `PATCH` (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
+                 *     conditional mutation (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
                  *     Stale: `412 precondition-failed`, carrying the current tag, and the client re-reads and
                  *     re-applies rather than overwriting a change it never saw.
                  *
@@ -18352,7 +18444,7 @@ export interface operations {
             header: {
                 /**
                  * @description The `ETag` of the representation this change was computed against. Required on every
-                 *     `PATCH` (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
+                 *     conditional mutation (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
                  *     Stale: `412 precondition-failed`, carrying the current tag, and the client re-reads and
                  *     re-applies rather than overwriting a change it never saw.
                  *
@@ -18492,7 +18584,7 @@ export interface operations {
             header: {
                 /**
                  * @description The `ETag` of the representation this change was computed against. Required on every
-                 *     `PATCH` (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
+                 *     conditional mutation (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
                  *     Stale: `412 precondition-failed`, carrying the current tag, and the client re-reads and
                  *     re-applies rather than overwriting a change it never saw.
                  *
@@ -18660,7 +18752,7 @@ export interface operations {
             header: {
                 /**
                  * @description The `ETag` of the representation this change was computed against. Required on every
-                 *     `PATCH` (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
+                 *     conditional mutation (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
                  *     Stale: `412 precondition-failed`, carrying the current tag, and the client re-reads and
                  *     re-applies rather than overwriting a change it never saw.
                  *
@@ -20492,7 +20584,7 @@ export interface operations {
             header: {
                 /**
                  * @description The `ETag` of the representation this change was computed against. Required on every
-                 *     `PATCH` (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
+                 *     conditional mutation (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
                  *     Stale: `412 precondition-failed`, carrying the current tag, and the client re-reads and
                  *     re-applies rather than overwriting a change it never saw.
                  *
@@ -21744,7 +21836,7 @@ export interface operations {
             header: {
                 /**
                  * @description The `ETag` of the representation this change was computed against. Required on every
-                 *     `PATCH` (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
+                 *     conditional mutation (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
                  *     Stale: `412 precondition-failed`, carrying the current tag, and the client re-reads and
                  *     re-applies rather than overwriting a change it never saw.
                  *
@@ -22632,7 +22724,7 @@ export interface operations {
             header: {
                 /**
                  * @description The `ETag` of the representation this change was computed against. Required on every
-                 *     `PATCH` (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
+                 *     conditional mutation (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
                  *     Stale: `412 precondition-failed`, carrying the current tag, and the client re-reads and
                  *     re-applies rather than overwriting a change it never saw.
                  *
@@ -22680,7 +22772,7 @@ export interface operations {
             header: {
                 /**
                  * @description The `ETag` of the representation this change was computed against. Required on every
-                 *     `PATCH` (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
+                 *     conditional mutation (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
                  *     Stale: `412 precondition-failed`, carrying the current tag, and the client re-reads and
                  *     re-applies rather than overwriting a change it never saw.
                  *
@@ -23241,7 +23333,7 @@ export interface operations {
             header: {
                 /**
                  * @description The `ETag` of the representation this change was computed against. Required on every
-                 *     `PATCH` (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
+                 *     conditional mutation (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
                  *     Stale: `412 precondition-failed`, carrying the current tag, and the client re-reads and
                  *     re-applies rather than overwriting a change it never saw.
                  *
@@ -24390,7 +24482,7 @@ export interface operations {
             header: {
                 /**
                  * @description The `ETag` of the representation this change was computed against. Required on every
-                 *     `PATCH` (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
+                 *     conditional mutation (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
                  *     Stale: `412 precondition-failed`, carrying the current tag, and the client re-reads and
                  *     re-applies rather than overwriting a change it never saw.
                  *
@@ -24420,6 +24512,190 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WorkspaceDocument"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            422: components["responses"]["ValidationError"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    listDocumentRoleGrants: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                document_id: components["parameters"]["DocumentId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current direct subteam grant set. Use this response ETag as If-Match for either mutation. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    ETag: components["headers"]["ETag"];
+                    /**
+                     * @description Grant responses must never be cached.
+                     * @example no-store
+                     */
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "revision": 2,
+                     *       "data": [
+                     *         {
+                     *           "workspaceRoleId": "00000000-0000-7000-8000-000000000002",
+                     *           "name": "Engineering",
+                     *           "slug": "engineering",
+                     *           "role": "editor"
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["DocumentRoleGrantList"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    putDocumentRoleGrant: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description The `ETag` of the representation this change was computed against. Required on every
+                 *     conditional mutation (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
+                 *     Stale: `412 precondition-failed`, carrying the current tag, and the client re-reads and
+                 *     re-applies rather than overwriting a change it never saw.
+                 *
+                 *     The example is the same value the `ETag` header returns, and is deliberately non-random
+                 *     for the reason given there.
+                 */
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                document_id: components["parameters"]["DocumentId"];
+                /** @description Workspace subteam role identifier. */
+                role_id: components["parameters"]["DocumentSubteamRoleId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DocumentRoleGrantRequest"];
+            };
+        };
+        responses: {
+            /** @description Current direct subteam grant set. Use this response ETag as If-Match for either mutation. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    ETag: components["headers"]["ETag"];
+                    /**
+                     * @description Grant responses must never be cached.
+                     * @example no-store
+                     */
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "revision": 2,
+                     *       "data": [
+                     *         {
+                     *           "workspaceRoleId": "00000000-0000-7000-8000-000000000002",
+                     *           "name": "Engineering",
+                     *           "slug": "engineering",
+                     *           "role": "editor"
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["DocumentRoleGrantList"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            422: components["responses"]["ValidationError"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    revokeDocumentRoleGrant: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description The `ETag` of the representation this change was computed against. Required on every
+                 *     conditional mutation (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
+                 *     Stale: `412 precondition-failed`, carrying the current tag, and the client re-reads and
+                 *     re-applies rather than overwriting a change it never saw.
+                 *
+                 *     The example is the same value the `ETag` header returns, and is deliberately non-random
+                 *     for the reason given there.
+                 */
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                document_id: components["parameters"]["DocumentId"];
+                /** @description Workspace subteam role identifier. */
+                role_id: components["parameters"]["DocumentSubteamRoleId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current direct subteam grant set. Use this response ETag as If-Match for either mutation. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    ETag: components["headers"]["ETag"];
+                    /**
+                     * @description Grant responses must never be cached.
+                     * @example no-store
+                     */
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "revision": 2,
+                     *       "data": [
+                     *         {
+                     *           "workspaceRoleId": "00000000-0000-7000-8000-000000000002",
+                     *           "name": "Engineering",
+                     *           "slug": "engineering",
+                     *           "role": "editor"
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["DocumentRoleGrantList"];
                 };
             };
             400: components["responses"]["MalformedRequest"];
@@ -24785,7 +25061,7 @@ export interface operations {
             header: {
                 /**
                  * @description The `ETag` of the representation this change was computed against. Required on every
-                 *     `PATCH` (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
+                 *     conditional mutation (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
                  *     Stale: `412 precondition-failed`, carrying the current tag, and the client re-reads and
                  *     re-applies rather than overwriting a change it never saw.
                  *
@@ -29115,7 +29391,7 @@ export interface operations {
             header: {
                 /**
                  * @description The `ETag` of the representation this change was computed against. Required on every
-                 *     `PATCH` (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
+                 *     conditional mutation (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
                  *     Stale: `412 precondition-failed`, carrying the current tag, and the client re-reads and
                  *     re-applies rather than overwriting a change it never saw.
                  *
@@ -30646,7 +30922,7 @@ export interface operations {
             header: {
                 /**
                  * @description The `ETag` of the representation this change was computed against. Required on every
-                 *     `PATCH` (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
+                 *     conditional mutation (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
                  *     Stale: `412 precondition-failed`, carrying the current tag, and the client re-reads and
                  *     re-applies rather than overwriting a change it never saw.
                  *
@@ -30830,7 +31106,7 @@ export interface operations {
             header: {
                 /**
                  * @description The `ETag` of the representation this change was computed against. Required on every
-                 *     `PATCH` (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
+                 *     conditional mutation (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
                  *     Stale: `412 precondition-failed`, carrying the current tag, and the client re-reads and
                  *     re-applies rather than overwriting a change it never saw.
                  *
@@ -30911,7 +31187,7 @@ export interface operations {
             header: {
                 /**
                  * @description The `ETag` of the representation this change was computed against. Required on every
-                 *     `PATCH` (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
+                 *     conditional mutation (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
                  *     Stale: `412 precondition-failed`, carrying the current tag, and the client re-reads and
                  *     re-applies rather than overwriting a change it never saw.
                  *

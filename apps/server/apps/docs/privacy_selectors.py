@@ -44,12 +44,34 @@ def document_role_permitted(
     issuer: str,
     subject: str,
 ) -> bool:
+    # Worker exports represent the subject, rather than an HTTP device. Resolve
+    # authority using that subject's current, unrevoked device bindings. The SQL
+    # resolver still enforces room participation and every document/channel rule.
     with connection.cursor() as cursor:
         cursor.execute(
-            "SELECT docs_document_role(%s,%s,%s,%s,%s,%s)",
-            [identifier, organisation_id, membership_id, identity_id, issuer, subject],
+            """SELECT EXISTS (
+                SELECT 1 FROM (
+                    SELECT NULL::uuid AS id
+                    UNION ALL
+                    SELECT id FROM e2ee_device
+                    WHERE organisation_id=%s AND membership_id=%s AND identity_id=%s
+                      AND revoked_at IS NULL
+                ) device
+                WHERE docs_document_role(%s,%s,%s,%s,%s,%s,device.id) IN ('editor','viewer')
+            )""",
+            [
+                organisation_id,
+                membership_id,
+                identity_id,
+                identifier,
+                organisation_id,
+                membership_id,
+                identity_id,
+                issuer,
+                subject,
+            ],
         )
-        return cursor.fetchone()[0] in {"editor", "viewer"}
+        return cursor.fetchone()[0]
 
 
 def collection_disclosure_context(*, identifier: UUID) -> tuple[UUID, UUID, UUID] | None:

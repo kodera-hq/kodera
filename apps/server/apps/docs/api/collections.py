@@ -94,7 +94,7 @@ def query(request, organisation_id, collection_id):
             )
         )
 
-    return http.serve(request, {"POST": post}, organisation_id)
+    return http.serve(request, {"POST": post}, organisation_id, refresh_replay=True)
 
 
 @declares(

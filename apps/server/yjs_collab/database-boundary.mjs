@@ -69,7 +69,7 @@ export async function assertDatabaseBoundary(pool) {
       WHERE n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname !~ '^pg_toast'
       AND CASE WHEN c.relkind='S' THEN has_sequence_privilege(c.oid,'USAGE,SELECT,UPDATE') ELSE false END)
     AND has_function_privilege('docs_collab_fence(uuid,uuid,uuid,uuid,text,text,text)','EXECUTE')
-    AND has_function_privilege('docs_collab_fence(uuid,uuid,uuid,uuid,text,text,text,boolean,bigint)','EXECUTE')
+    AND has_function_privilege('docs_collab_fence(uuid,uuid,uuid,uuid,text,text,text,boolean,bigint,uuid)','EXECUTE')
     AND has_function_privilege('docs_collab_audit(uuid,text,uuid,uuid,uuid,text)','EXECUTE')
     AND has_function_privilege('docs_redeem_collaboration_ticket(uuid,bigint)','EXECUTE')
     AND has_function_privilege('docs_collab_snapshot_admit(uuid,bigint)','EXECUTE')

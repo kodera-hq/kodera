@@ -103,8 +103,14 @@ def restore_leaves():
     # Target the e2ee 0002 privacy integration directly without the downstream
     # MLS directory leaves; restore_all_leaf_migrations runs on teardown.
     executor = MigrationExecutor(connection)
-    targets = [node for node in executor.loader.graph.leaf_nodes() if node[0] != "confidential"]
-    targets.extend([TARGET, ("confidential", None)])
+    # Keep downstream document grants out of the refusal snapshot: Django commits
+    # each reverse migration before reaching the e2ee migration that must refuse.
+    targets = [
+        node
+        for node in executor.loader.graph.leaf_nodes()
+        if node[0] not in {"confidential", "docs"}
+    ]
+    targets.extend([TARGET, ("confidential", None), ("docs", "0012_confidential_collab_admission")])
     executor.migrate(targets)
     current = MigrationExecutor(connection)
     assert current.migration_plan(targets) == []

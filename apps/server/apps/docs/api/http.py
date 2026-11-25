@@ -51,11 +51,15 @@ def problem(failure: RefusalError, request_id: str) -> HttpResponse:
     }
     if failure.status == 503:
         body["retry_after_s"] = 1
+    if failure.status == 412 and failure.current_etag is not None:
+        body["current_etag"] = failure.current_etag
     response = HttpResponse(
         json.dumps(body, separators=(",", ":")),
         status=failure.status,
         content_type="application/problem+json",
     )
+    if failure.status == 412 and failure.current_etag is not None:
+        response["ETag"] = failure.current_etag
     if failure.status == 401:
         response["WWW-Authenticate"] = "Bearer"
     if failure.status == 503:
@@ -96,7 +100,8 @@ def serve(
     request: HttpRequest,
     handlers: dict[str, Handler],
     organisation_id: UUID,
-    authority: Callable[[VerifiedAccessToken], None] | None = None,
+    authority: Callable[[VerifiedAccessToken], str | None] | None = None,
+    refresh_replay: bool = False,
 ) -> HttpResponse:
     request_id = responses.request_id(request)
     method = request.method or ""
@@ -112,7 +117,8 @@ def serve(
         if lane == "staff":
             raise RefusalError(403)
         admit = authority or (lambda principal: authorize(principal, organisation_id))
-        admit(verified)
+        # Resource authority may also supply a context for confidential replay binding.
+        fingerprint_context = admit(verified)
 
         def execute() -> HttpResponse:
             try:
@@ -139,7 +145,11 @@ def serve(
                 handler=effect,
                 policy=quota_replay_policy(),
                 authority=lambda _: admit(verified),
+                fingerprint_context=fingerprint_context,
             )
+            if refresh_replay and response.get("Idempotency-Replayed") == "true":
+                response = execute()
+                response["Idempotency-Replayed"] = "true"
             if response.status_code == 503:
                 response["Retry-After"] = "1"
         else:

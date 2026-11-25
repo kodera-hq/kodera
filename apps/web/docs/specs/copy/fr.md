@@ -1500,6 +1500,24 @@ The Apparence page (`docs/specs/10-appearance.md`): the theme choice, reached fr
 | `console.docs.collab.option-root-page` | Racine de l’espace |
 | `console.docs.collab.action-move-up` | Monter la page |
 | `console.docs.collab.action-move-down` | Descendre la page |
+| `console.docs.share.choose-subteam` | Choisir une sous-équipe… |
+| `console.docs.share.readonly` | Seuls les éditeurs peuvent gérer les accès des sous-équipes. |
+| `console.docs.share.saved` | Les accès des sous-équipes ont été mis à jour. |
+| `console.docs.share.subteams` | Accès des sous-équipes |
+| `console.docs.share.loading` | Chargement des accès des sous-équipes… |
+| `console.docs.share.unavailable` | Les accès à ce document sont indisponibles. Fermez puis rouvrez le partage pour réessayer. |
+| `console.docs.share.roles-unavailable` | La liste des sous-équipes est indisponible. Vous pouvez consulter les accès existants. |
+| `console.docs.share.conflict` | Les accès ont changé depuis votre dernière consultation. La liste est actualisée ; vérifiez-la avant de réessayer. |
+| `console.docs.share.save-failed` | La modification de l’accès n’a pas pu être enregistrée. Réessayez dans un instant. |
+| `console.docs.share.empty` | Aucun accès direct accordé à une sous-équipe. |
+| `console.docs.share.editor` | Éditeur |
+| `console.docs.share.viewer` | Lecteur |
+| `console.docs.share.grant-level` | Accès de {mention} |
+| `console.docs.share.revoke-label` | Révoquer {mention} |
+| `console.docs.share.revoke` | Révoquer |
+| `console.docs.share.subteam` | Sous-équipe |
+| `console.docs.share.level` | Niveau d’accès |
+| `console.docs.share.grant` | Accorder l’accès |
 | `console.docs.collab.action-delete-page` | Supprimer la page |
 | `console.docs.collab.template-blank` | Page vierge |
 | `console.docs.collab.template-spec` | Spécification |

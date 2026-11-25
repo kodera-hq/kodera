@@ -90,6 +90,23 @@ class DocumentGrant(StoredModel):
         ]
 
 
+class DocumentRoleGrant(StoredModel):
+    document = models.ForeignKey(Document, on_delete=models.CASCADE)
+    workspace_role = models.ForeignKey("workspaces.WorkspaceRole", on_delete=models.CASCADE)
+    role = models.TextField()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["document", "workspace_role"], name="docs_role_grant_unique"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(role__in=["editor", "viewer"]),
+                name="docs_role_grant_role_valid",
+            ),
+        ]
+
+
 class DocumentLink(StoredModel):
     source = models.ForeignKey(Document, on_delete=models.RESTRICT, related_name="outgoing_links")
     target = models.ForeignKey(
