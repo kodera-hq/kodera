@@ -9,6 +9,7 @@
 *.webp binary
 *.ico binary
 *.icns binary
+*.rgba binary
 *.woff binary
 *.woff2 binary
 *.ttf binary

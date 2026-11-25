@@ -7,6 +7,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { components } from '../../api/schema'
+import { publicConsoleOrigin } from '../../config'
 import type { MessageKey } from '../../i18n'
 import { Card, CardBody, CardHeader } from '../../ui/Card/Card'
 import { Button } from '../../ui/Button/Button'
@@ -65,7 +66,7 @@ export function ApplicationsCard({
 }: ApplicationsCardProps) {
   const { t, i18n } = useTranslation()
   const isEnglish = i18n.resolvedLanguage?.startsWith('en') === true
-  const origin = typeof window !== 'undefined' ? window.location.origin : 'https://app.kodera.io'
+  const origin = publicConsoleOrigin(org)
   const workspaceHref = org ? `/${org}/workspace` : '/workspace'
   const effectiveApps: DisplayedApp[] | undefined =
     apps === undefined

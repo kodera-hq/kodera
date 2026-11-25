@@ -709,7 +709,32 @@ impl OidcLoopbackListener {
         deep_link_policy: &DeepLinkAdmissionPolicy,
         timeout_ms: u64,
     ) -> Result<OidcCallbackOutcome, OidcLoopbackError> {
-        let clamped_ms = timeout_ms.clamp(50, MAX_LOOPBACK_TIMEOUT_MS);
+        self.accept_with_limit(
+            session,
+            deep_link_policy,
+            timeout_ms,
+            MAX_LOOPBACK_TIMEOUT_MS,
+        )
+    }
+
+    /// Interactive browser login allows up to three minutes without changing the stdio timeout.
+    pub fn accept_once_interactive(
+        self,
+        session: OidcPkceSession,
+        deep_link_policy: &DeepLinkAdmissionPolicy,
+        timeout_ms: u64,
+    ) -> Result<OidcCallbackOutcome, OidcLoopbackError> {
+        self.accept_with_limit(session, deep_link_policy, timeout_ms, 180_000)
+    }
+
+    fn accept_with_limit(
+        self,
+        session: OidcPkceSession,
+        deep_link_policy: &DeepLinkAdmissionPolicy,
+        timeout_ms: u64,
+        max_timeout_ms: u64,
+    ) -> Result<OidcCallbackOutcome, OidcLoopbackError> {
+        let clamped_ms = timeout_ms.clamp(50, max_timeout_ms);
         let deadline = Instant::now() + Duration::from_millis(clamped_ms);
         self.listener
             .set_nonblocking(true)
@@ -738,15 +763,29 @@ impl OidcLoopbackListener {
         let _ = stream.set_read_timeout(Some(Duration::from_millis(1000)));
         let _ = stream.set_write_timeout(Some(Duration::from_millis(1000)));
 
-        let mut buf = [0u8; MAX_LOOPBACK_HTTP_REQUEST_BYTES];
-        let read_len = stream
-            .read(&mut buf)
-            .map_err(|_| OidcLoopbackError::CallbackMalformed)?;
-        if read_len == 0 || read_len == MAX_LOOPBACK_HTTP_REQUEST_BYTES {
-            return Err(OidcLoopbackError::CallbackMalformed);
+        let mut buf = zeroize::Zeroizing::new(Vec::new());
+        let mut byte = [0u8; 1];
+        let request_deadline = deadline.min(Instant::now() + Duration::from_secs(1));
+        while !buf.ends_with(b"\r\n\r\n") {
+            let remaining = request_deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(OidcLoopbackError::ListenerTimedOut);
+            }
+            stream
+                .set_read_timeout(Some(remaining))
+                .map_err(|_| OidcLoopbackError::CallbackMalformed)?;
+            if buf.len() >= MAX_LOOPBACK_HTTP_REQUEST_BYTES
+                || stream
+                    .read(&mut byte)
+                    .map_err(|_| OidcLoopbackError::CallbackMalformed)?
+                    == 0
+            {
+                return Err(OidcLoopbackError::CallbackMalformed);
+            }
+            buf.push(byte[0]);
         }
-        let request_text = core::str::from_utf8(&buf[..read_len])
-            .map_err(|_| OidcLoopbackError::CallbackMalformed)?;
+        let request_text =
+            core::str::from_utf8(&buf).map_err(|_| OidcLoopbackError::CallbackMalformed)?;
         let mut lines = request_text.split("\r\n");
         let request_line = lines.next().ok_or(OidcLoopbackError::CallbackMalformed)?;
         let mut parts = request_line.split(' ');

@@ -12,6 +12,7 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { orgRoute } from '../../app/org-route'
+import { publicConsoleOrigin } from '../../config'
 import { useInvoiceActionLease } from './useInvoiceActionLease'
 import { ApiProblem } from '../../api/client'
 import { formatDate, formatMoney } from '../../i18n/format'
@@ -150,7 +151,7 @@ function InvoiceDetailContent({
     try {
       const link = await payOnline(
         invoiceId,
-        `${window.location.origin}/${org}/invoices/${invoiceId}?payment=return`,
+        `${publicConsoleOrigin(org)}/${org}/invoices/${invoiceId}?payment=return`,
         locale,
         isCurrent
       )

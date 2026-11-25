@@ -55,12 +55,20 @@ function showRecovery(): void {
   if (heading !== null) document.title = heading.textContent ?? document.title
 }
 
+function isBundledDesktopLocation(): boolean {
+  return location.protocol === 'kodera-asset:' || location.hostname === 'kodera-asset.localhost'
+}
+
+function appBaseUrl(): URL {
+  return new URL(import.meta.env.BASE_URL, location.href)
+}
+
 async function releaseOrdinaryPage(entry?: BootEntry): Promise<void> {
   const head = document.getElementById('entry-page-head')
   if (!(head instanceof HTMLTemplateElement)) throw Error('ENTRY_HEAD_MARKUP_MISSING')
   await new Promise<void>((resolve, reject) => {
     const theme = document.createElement('script')
-    theme.src = new URL('theme.js', location.origin + import.meta.env.BASE_URL).href
+    theme.src = new URL('theme.js', appBaseUrl()).href
     theme.async = false
     theme.addEventListener('load', () => resolve(), { once: true })
     theme.addEventListener('error', () => reject(Error('ENTRY_THEME_LOAD_FAILED')), { once: true })
@@ -74,8 +82,9 @@ async function releaseOrdinaryPage(entry?: BootEntry): Promise<void> {
 /** Retires only the old simulation worker; unrelated workers and real OIDC state survive. */
 export async function retireLegacyWorker(): Promise<'ready' | 'reload' | 'blocked'> {
   const marker = 'kodera.web.legacy-worker-reload'
+  const opaqueOrigin = location.origin === 'null' || location.protocol === 'kodera-asset:'
   const legacy = (worker: ServiceWorker | null | undefined): boolean => {
-    if (!worker) return false
+    if (!worker || opaqueOrigin) return false
     try {
       const url = new URL(worker.scriptURL)
       return url.origin === location.origin && url.pathname.endsWith('/mockServiceWorker.js')
@@ -83,7 +92,7 @@ export async function retireLegacyWorker(): Promise<'ready' | 'reload' | 'blocke
       return false
     }
   }
-  const service = navigator.serviceWorker
+  const service = opaqueOrigin ? undefined : navigator.serviceWorker
   const controlled = legacy(service?.controller)
   try {
     const keys = Array.from({ length: sessionStorage.length }, (_, index) =>
@@ -144,6 +153,15 @@ async function startEntry(): Promise<void> {
     showRecovery()
     return
   }
+  if (isBundledDesktopLocation() && location.pathname === '/index.html') {
+    try {
+      const rootHref = `${appBaseUrl().href}${location.search}`
+      history.replaceState(history.state, '', rootHref)
+    } catch {
+      showRecovery()
+      return
+    }
+  }
   let path: string
   try {
     path = decodeURIComponent(location.pathname)
@@ -154,6 +172,10 @@ async function startEntry(): Promise<void> {
   // The admitted callback also serves silent renewal. Only the parent owns the SDK transaction;
   // a framed response must never load the theme or mount another application.
   if (path === '/auth/callback' && window.parent !== window) {
+    if (window.location.origin === 'null') {
+      showRecovery()
+      return
+    }
     window.parent.postMessage(
       { source: 'oidc-client', url: window.location.href, keepOpen: false },
       window.location.origin

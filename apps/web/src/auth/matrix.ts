@@ -29,6 +29,8 @@
 // One device per homeserver per browser: two tabs share it, and signing out in one ends the
 // other's session too, since Synapse's `/logout` deletes the device.
 
+import { desktopMatrixSsoLoopback } from './desktopOidc'
+
 const DEVICE_KEY = 'kodera.web.espace.device:'
 /**
  * The Console page Synapse returns to. Every tenant's `sso.client_whitelist` names the Console's
@@ -271,6 +273,30 @@ export function beginMatrixSignIn(
   back.searchParams.set('state', state)
   const target = `${origin}/_matrix/client/v3/login/sso/redirect?redirectUrl=${encodeURIComponent(back.href)}`
   ;(deps.navigate ?? ((url: string) => window.location.assign(url)))(target)
+}
+
+/** Completes native browser SSO while keeping the bundled WebView at its internal origin. */
+export async function signInToMatrixDesktop(
+  baseUrl: string,
+  returnTo: string,
+  expectedSub: string
+): Promise<{ session: MatrixSession; returnTo: string }> {
+  if (expectedSub.length === 0) throw new MatrixSignInFailed('other-person')
+  const origin = homeserverOrigin(baseUrl)
+  const state = randomState()
+  const generation = sessionGeneration
+  const pending: Pending = { state, baseUrl: origin, returnTo }
+  const storage = window.sessionStorage
+  const serialized = JSON.stringify(pending)
+  storage.setItem(PENDING_KEY, serialized)
+  try {
+    const callbackUri = await desktopMatrixSsoLoopback({ homeserverOrigin: origin, state })
+    if (sessionGeneration !== generation || storage.getItem(PENDING_KEY) !== serialized)
+      throw new MatrixSignInFailed('unexpected-callback')
+    return await completeMatrixSignIn(callbackUri, expectedSub, { replaceUrl: () => {} })
+  } finally {
+    if (storage.getItem(PENDING_KEY) === serialized) storage.removeItem(PENDING_KEY)
+  }
 }
 
 function readPending(storage: Storage): Pending | null {

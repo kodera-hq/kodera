@@ -354,7 +354,7 @@ expect_refusal "full backup that carries the session" 1 \
   "backup_rules.xml does not exclude the session directory from full backup"
 
 # ── adaptive launcher icons ────────────────────────────────────────────────
-fresh; replace $M/res/values/colors.xml '#2B4BDB' '#000000'
+fresh; replace $M/res/values/colors.xml '#08090A' '#2B4BDB'
 expect_refusal "an unapproved launcher background hex" 1 \
   "res/values/colors.xml must define only the approved Cobalt x Givre launcher palette"
 

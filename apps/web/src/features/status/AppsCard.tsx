@@ -8,6 +8,7 @@ import { useEffect, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { trackAppOpened } from './analytics'
 import type { components } from '@/api/schema'
+import { publicConsoleOrigin } from '@/config'
 import { Card, CardBody } from '@/ui/Card/Card'
 import { CopyableField } from '@/ui/CopyableField/CopyableField'
 import type { CopyStatus } from '@/ui/CopyableField/CopyableField'
@@ -173,7 +174,7 @@ export function AppsCard({ apps, org, workspaceFirst = false }: AppsCardProps) {
   const { t, i18n } = useTranslation()
   const titleId = useId()
   const isEnglish = i18n.resolvedLanguage?.startsWith('en') === true
-  const origin = typeof window !== 'undefined' ? window.location.origin : 'https://app.kodera.io'
+  const origin = publicConsoleOrigin(org)
   const workspacePath = org ? `/${org}/workspace` : '/workspace'
 
   const effectiveApps: readonly DisplayedApp[] =

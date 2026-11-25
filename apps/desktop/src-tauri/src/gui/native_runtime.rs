@@ -27,6 +27,10 @@ enum DesktopUserEvent {
         sender_url: String,
         body: String,
     },
+    AsyncIpcResolved {
+        generation: u64,
+        outcome: WebViewIpcOutcome,
+    },
     DocumentChanged(u64),
     UpdateReady(crate::updater::ReadyUpdate),
     InterceptedDeepLink {
@@ -419,6 +423,7 @@ pub fn launch_desktop_gui(options: DesktopGuiOptions) -> Result<(), DesktopShell
             .map_err(|_| DesktopShellError::GuiWebViewInitFailed)?
     };
 
+    let event_proxy = event_loop.create_proxy();
     let update_proxy = event_loop.create_proxy();
     std::thread::spawn(move || {
         if let Ok(update) = crate::updater::check() {
@@ -554,46 +559,72 @@ pub fn launch_desktop_gui(options: DesktopGuiOptions) -> Result<(), DesktopShell
                     return;
                 }
                 bridge.begin_document(generation);
-                if let Ok(outcome) = bridge.handle_ipc_request(&sender_url, &body) {
-                    if generation != document_generation.load(std::sync::atomic::Ordering::SeqCst) {
-                        return;
-                    }
-                    for js in outcome.eval_scripts {
-                        let _ = webview.evaluate_script(&js);
-                    }
-                    if let Some(action) = outcome.window_action {
-                        match action {
-                            GuiWindowAction::ShowAndFocus => {
-                                window.set_visible(true);
-                                window.set_minimized(false);
-                                window.set_focus();
-                                live_state.visible = true;
+                let proxy = event_proxy.clone();
+                if let Ok(outcome) = bridge.handle_ipc_request_with_native_dispatch(
+                    &sender_url,
+                    &body,
+                    move |task| {
+                        std::thread::spawn(move || {
+                            let outcome = task.run();
+                            let _ = proxy.send_event(DesktopUserEvent::AsyncIpcResolved {
+                                generation,
+                                outcome,
+                            });
+                        });
+                        WebViewIpcOutcome {
+                            eval_scripts: Vec::new(),
+                            window_action: None,
+                        }
+                    },
+                ) {
+                    let _ = event_proxy.send_event(DesktopUserEvent::AsyncIpcResolved {
+                        generation,
+                        outcome,
+                    });
+                }
+            }
+            Event::UserEvent(DesktopUserEvent::AsyncIpcResolved {
+                generation,
+                outcome,
+            }) => {
+                if generation != document_generation.load(std::sync::atomic::Ordering::SeqCst) {
+                    return;
+                }
+                for js in outcome.eval_scripts {
+                    let _ = webview.evaluate_script(&js);
+                }
+                if let Some(action) = outcome.window_action {
+                    match action {
+                        GuiWindowAction::ShowAndFocus => {
+                            window.set_visible(true);
+                            window.set_minimized(false);
+                            window.set_focus();
+                            live_state.visible = true;
+                        }
+                        GuiWindowAction::Hide => {
+                            window.set_visible(false);
+                            live_state.visible = false;
+                        }
+                        GuiWindowAction::SetTitle(title) => {
+                            window.set_title(&title);
+                        }
+                        GuiWindowAction::ApplyPlacement(p) => {
+                            window.set_outer_position(LogicalPosition::new(
+                                f64::from(p.bounds.x),
+                                f64::from(p.bounds.y),
+                            ));
+                            window.set_inner_size(LogicalSize::new(
+                                f64::from(p.bounds.width),
+                                f64::from(p.bounds.height),
+                            ));
+                            live_state.bounds = p.bounds;
+                        }
+                        GuiWindowAction::Quit => {
+                            if let Some(ref path) = state_path {
+                                let _ = save_window_state_atomic(path, &live_state);
                             }
-                            GuiWindowAction::Hide => {
-                                window.set_visible(false);
-                                live_state.visible = false;
-                            }
-                            GuiWindowAction::SetTitle(title) => {
-                                window.set_title(&title);
-                            }
-                            GuiWindowAction::ApplyPlacement(p) => {
-                                window.set_outer_position(LogicalPosition::new(
-                                    f64::from(p.bounds.x),
-                                    f64::from(p.bounds.y),
-                                ));
-                                window.set_inner_size(LogicalSize::new(
-                                    f64::from(p.bounds.width),
-                                    f64::from(p.bounds.height),
-                                ));
-                                live_state.bounds = p.bounds;
-                            }
-                            GuiWindowAction::Quit => {
-                                if let Some(ref path) = state_path {
-                                    let _ = save_window_state_atomic(path, &live_state);
-                                }
-                                bridge.clear_session();
-                                *control_flow = ControlFlow::Exit;
-                            }
+                            bridge.clear_session();
+                            *control_flow = ControlFlow::Exit;
                         }
                     }
                 }

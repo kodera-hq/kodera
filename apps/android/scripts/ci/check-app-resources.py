@@ -114,7 +114,7 @@ APPLICATION_ATTRIBUTES = {
     "roundIcon": "@mipmap/ic_launcher_round",
 }
 LAUNCHER_COLORS = {
-    "ic_launcher_background": "#2B4BDB",
+    "ic_launcher_background": "#08090A",
     "ic_launcher_foreground": "#EEF3F8",
 }
 LAUNCHER_ICONS = ("ic_launcher.xml", "ic_launcher_round.xml")

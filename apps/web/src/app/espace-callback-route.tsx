@@ -23,8 +23,10 @@ function safeReturnTo(returnTo: string): string {
     return '/'
   }
   try {
-    const parsed = new URL(returnTo, window.location.origin)
-    if (parsed.origin !== window.location.origin) return '/'
+    const baseOrigin =
+      window.location.origin === 'null' ? 'https://kodera.local' : window.location.origin
+    const parsed = new URL(returnTo, baseOrigin)
+    if (parsed.origin !== baseOrigin) return '/'
     return `${parsed.pathname}${parsed.search}${parsed.hash}`
   } catch {
     return '/'

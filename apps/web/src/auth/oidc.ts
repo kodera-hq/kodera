@@ -7,6 +7,14 @@
 
 import type { User, UserManager } from 'oidc-client-ts'
 import { keycloakUrl, oidcClientId } from '../config'
+import {
+  desktopOidcExchangeLoopback,
+  desktopOidcRefreshSession,
+  desktopOidcClearSession,
+  isDesktopBundledOrigin,
+  isDesktopOidcRefusal,
+} from './desktopOidc'
+import type { DesktopOidcSessionPayload } from './desktopOidc'
 import { loadOidcSdk, oidcSdk, oidcSdkLoaded } from './oidcSdk'
 import type {
   AuthAdapter,
@@ -240,6 +248,9 @@ function managerFor(realm: string, protectedClaim = false, registration = false)
 }
 
 export class OidcAuthAdapter implements AuthAdapter {
+  #desktop: { session: DesktopOidcSessionPayload; expiresAt: number } | undefined
+  #desktopRefused = false
+  #desktopTimers: ReturnType<typeof setTimeout>[] = []
   #manager: UserManager | undefined
   #user: User | undefined
   #identity: AuthIdentity | undefined
@@ -305,6 +316,19 @@ export class OidcAuthAdapter implements AuthAdapter {
       this.#restoration = Promise.resolve(false)
       return this.#restoration
     }
+    if (isDesktopBundledOrigin()) {
+      this.#retireManager()
+      this.#realm = realm
+      this.#publish('pending', true)
+      const generation = this.#snapshot.generation
+      const request = this.renew().then((restored) => {
+        if (this.#snapshot.generation !== generation) return false
+        if (!restored) this.#publish('unauthenticated')
+        return restored
+      })
+      this.#restoration = request
+      return request
+    }
     // Nothing above needs the SDK; restoring does. Ask again once it is here: every check above
     // is then read afresh, so a sign-in or a sign-out that happened meanwhile is honoured.
     if (!oidcSdkLoaded()) return loadOidcSdk().then(() => this.restoreSession())
@@ -330,15 +354,21 @@ export class OidcAuthAdapter implements AuthAdapter {
   }
 
   getAccessToken(): string | undefined {
+    if (isDesktopBundledOrigin() && this.#manager === undefined)
+      return this.#desktop !== undefined && this.#desktop.expiresAt > Date.now()
+        ? this.#desktop.session.access_token
+        : undefined
     return this.#user !== undefined && !this.#user.expired ? this.#user.access_token : undefined
   }
 
   getExpiresAt(): number | undefined {
+    if (isDesktopBundledOrigin() && this.#manager === undefined) return this.#desktop?.expiresAt
     return this.#user?.expires_at === undefined ? undefined : this.#user.expires_at * 1000
   }
 
   renew(): Promise<boolean> {
     if (this.#claim?.pending) return Promise.resolve(false)
+    if (isDesktopBundledOrigin() && this.#manager === undefined) return this.#renewDesktop()
     const manager = this.#manager
     if (manager === undefined || this.#refused === manager) return Promise.resolve(false)
     if (this.#renewal !== undefined) return this.#renewal
@@ -366,6 +396,91 @@ export class OidcAuthAdapter implements AuthAdapter {
       notify(this.#renewalFailedCallbacks)
       return false
     })()
+    this.#renewal = request
+    return request
+  }
+
+  #acceptDesktop(session: DesktopOidcSessionPayload): boolean {
+    const issuer = `${keycloakUrl()}/realms/${this.#realm ?? ''}`
+    if (session.realm !== this.#realm || session.issuer !== issuer)
+      throw new Error('Invalid desktop sign-in identity.')
+    if (
+      this.#identity !== undefined &&
+      (this.#identity.issuer !== session.issuer || this.#identity.subject !== session.subject)
+    ) {
+      void this.signOut().catch(() => {})
+      return false
+    }
+    this.#desktop = { session, expiresAt: Date.now() + session.expires_in * 1000 }
+    this.#identity = Object.freeze({
+      issuer: session.issuer,
+      subject: session.subject,
+      ...(session.amr === undefined ? {} : { amr: session.amr }),
+    })
+    this.#clearDesktopTimers()
+    const generation = this.#snapshot.generation
+    const current = this.#desktop
+    this.#desktopTimers = [
+      setTimeout(
+        () => {
+          if (this.#snapshot.generation !== generation || this.#desktop !== current) return
+          notify(this.#expiringCallbacks)
+          if (this.#snapshot.generation === generation && this.#desktop === current)
+            void this.renew()
+        },
+        Math.max(1000, current.expiresAt - Date.now() - 120_000)
+      ),
+      setTimeout(
+        () => {
+          if (this.#snapshot.generation !== generation || this.#desktop !== current) return
+          this.#desktop = undefined
+          this.#publish('ready')
+          notify(this.#renewalFailedCallbacks)
+        },
+        Math.max(0, current.expiresAt - Date.now())
+      ),
+    ]
+    this.#publish('ready')
+    return true
+  }
+
+  #clearDesktopTimers(): void {
+    for (const timer of this.#desktopTimers) clearTimeout(timer)
+    this.#desktopTimers = []
+  }
+
+  #renewDesktop(): Promise<boolean> {
+    const realm = this.#realm
+    if (realm === undefined || this.#desktopRefused) return Promise.resolve(false)
+    if (this.#renewal !== undefined) return this.#renewal
+    const generation = this.#snapshot.generation
+    const request = Promise.resolve().then(async () => {
+      try {
+        const session = await desktopOidcRefreshSession({
+          issuerOrigin: keycloakUrl(),
+          realm,
+          clientId: oidcClientId(),
+        })
+        if (this.#snapshot.generation !== generation) return false
+        if (!this.#acceptDesktop(session) || this.#snapshot.generation !== generation) return false
+        this.#renewal = undefined
+        notify(this.#renewedCallbacks)
+        return true
+      } catch (error: unknown) {
+        if (this.#snapshot.generation !== generation) return false
+        if (isDesktopOidcRefusal(error)) {
+          this.#desktopRefused = true
+          this.#desktop = undefined
+          this.#clearDesktopTimers()
+          this.#publish(this.#snapshot.status)
+        }
+        this.#renewal = undefined
+        notify(this.#renewalFailedCallbacks)
+        return false
+      } finally {
+        if (this.#renewal === request) this.#renewal = undefined
+      }
+    })
     this.#renewal = request
     return request
   }
@@ -458,7 +573,9 @@ export class OidcAuthAdapter implements AuthAdapter {
       Array.isArray(rawAmr) &&
       rawAmr.length > 0 &&
       rawAmr.length <= 32 &&
-      rawAmr.every((item): item is string => typeof item === 'string' && /^[\x21-\x7e]{1,128}$/.test(item))
+      rawAmr.every(
+        (item): item is string => typeof item === 'string' && /^[\x21-\x7e]{1,128}$/.test(item)
+      )
         ? Object.freeze([...rawAmr])
         : undefined
     return Object.freeze({ issuer, subject, ...(amr === undefined ? {} : { amr }) })
@@ -483,9 +600,29 @@ export class OidcAuthAdapter implements AuthAdapter {
     const generation = this.#snapshot.generation + 1
     // Publish the replacement boundary before storage or SDK setup can throw.
     // Queue setup so concurrent callers share the request before it starts.
-    const request = sdkReady()
-      .then(() => {
+    const request = (isDesktopBundledOrigin() ? Promise.resolve() : sdkReady())
+      .then(async () => {
         if (this.#snapshot.generation !== generation) return
+        if (isDesktopBundledOrigin()) {
+          try {
+            window.sessionStorage.setItem(REALM_KEY, realm)
+          } catch {
+            // Custom-scheme WebViews with restricted storage keep the in-memory session.
+          }
+          const session = await desktopOidcExchangeLoopback({
+            issuerOrigin: keycloakUrl(),
+            realm,
+            clientId: oidcClientId(),
+            registration,
+            uiLocales: signInLocale(),
+            prompt,
+            kcAction,
+          })
+          if (this.#snapshot.generation === generation && !this.#acceptDesktop(session)) {
+            throw new Error('Invalid sign-in identity.')
+          }
+          return
+        }
         window.sessionStorage.setItem(REALM_KEY, realm)
         const manager = managerFor(realm, false, registration)
         this.#manager = manager
@@ -592,6 +729,7 @@ export class OidcAuthAdapter implements AuthAdapter {
     const claim = this.#claim
     if (claim !== undefined) return this.#signOutClaim(claim)
     const manager = this.#manager
+    const desktopRealm = isDesktopBundledOrigin() ? (this.#realm ?? readRealmHint()) : undefined
     this.#user = undefined
     let retired = true
     let failure: unknown
@@ -611,6 +749,7 @@ export class OidcAuthAdapter implements AuthAdapter {
     } catch {
       // Storage policy does not prevent ending the in-memory session.
     }
+    if (desktopRealm !== undefined) await desktopOidcClearSession({ realm: desktopRealm })
     if (retired) return removed
     // Report the retirement failure, not a secondary removal one.
     await removed?.catch(() => {})
@@ -942,6 +1081,9 @@ export class OidcAuthAdapter implements AuthAdapter {
   }
 
   #retireManager(): UserManager | undefined {
+    this.#clearDesktopTimers()
+    this.#desktop = undefined
+    this.#desktopRefused = false
     const manager = this.#manager
     const claim = this.#claim
     this.#claim = undefined
@@ -975,6 +1117,7 @@ export class OidcAuthAdapter implements AuthAdapter {
 // promptly after the click. A first visit to `/login` matches none of these and fetches nothing.
 if (
   typeof window !== 'undefined' &&
+  !isDesktopBundledOrigin() &&
   (readRealmHint() !== undefined ||
     /^\/(?:auth|claim|invitations)\//.test(window.location.pathname))
 )

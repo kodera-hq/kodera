@@ -5,6 +5,7 @@ import { pathToFileURL } from 'node:url';
 
 const root = resolve(import.meta.dirname, '../../..');
 const iconsDir = join(root, 'apps/desktop/src-tauri/icons');
+const iosAppIconPath = join(root, 'apps/ios/App/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png');
 const sizes = [16, 32, 48, 64, 128, 256, 512, 1024];
 const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 
@@ -86,7 +87,8 @@ function source() {
   assert.equal(paths.length, 7, 'official mark must have seven paths');
   assert.ok(transform, 'official mark transform missing');
   const tokens = JSON.parse(readFileSync(join(root, 'packages/design-tokens/tokens.json'), 'utf8'));
-  const colours = [tokens.color.cobalt['500'].$value, tokens.color.frost['100'].$value];
+  const colours = [tokens.color.noir['950'].$value, tokens.color.frost['100'].$value];
+  assert.equal(colours[0].toUpperCase(), '#08090A', 'desktop icon tile must use color.noir.950 (#08090A), never blue');
   return { paths, transform: transform.slice(1).map(Number), colours };
 }
 
@@ -148,6 +150,35 @@ function renderPng(size, spec, rgbaOnly = false) {
   return Buffer.concat([signature, chunk('IHDR', header), chunk('IDAT', deterministicDeflate(raw)), chunk('IEND', Buffer.alloc(0))]);
 }
 
+export function buildIosAppIconPng() {
+  const spec = source();
+  const size = 1024;
+  const rgba = renderPng(size, spec, true);
+  const rawRgb = Buffer.alloc(size * (size * 3 + 1));
+  for (let y = 0; y < size; y++) {
+    const rowStart = y * (size * 3 + 1);
+    rawRgb[rowStart] = 0;
+    for (let x = 0; x < size; x++) {
+      const srcAt = (y * size + x) * 4;
+      const dstAt = rowStart + 1 + x * 3;
+      rawRgb[dstAt] = rgba[srcAt];
+      rawRgb[dstAt + 1] = rgba[srcAt + 1];
+      rawRgb[dstAt + 2] = rgba[srcAt + 2];
+    }
+  }
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(size, 0);
+  header.writeUInt32BE(size, 4);
+  header[8] = 8;
+  header[9] = 2; // 24-bit opaque RGB required by Apple App Store / actool
+  return Buffer.concat([
+    signature,
+    chunk('IHDR', header),
+    chunk('IDAT', deterministicDeflate(rawRgb)),
+    chunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+
 export function buildDeterministicIcns(png32, png128, png256, extras = {}) {
   const entries = [['icp4', extras[16]], ['icp5', png32], ['icp6', extras[64]], ['ic07', png128], ['ic08', png256], ['ic09', extras[512]], ['ic10', extras[1024]]].filter(([, data]) => data);
   const out = Buffer.alloc(8 + entries.reduce((sum, [, data]) => sum + 8 + data.length, 0));
@@ -188,5 +219,13 @@ if (process.argv[1] && pathToFileURL(realpathSync(resolve(process.argv[1]))).hre
     if (mode === '--write') writeFileSync(path, bytes);
     else assert.deepEqual(readFileSync(path), bytes, `${name} differs from the official monogram and design tokens`);
   }
-  console.log('OK: official Cobalt and Givre monogram, PNG sizes 16–1024, ICNS and ICO verified.');
+  const iosBytes = buildIosAppIconPng();
+  if (mode === '--write') writeFileSync(iosAppIconPath, iosBytes);
+  else assert.deepEqual(readFileSync(iosAppIconPath), iosBytes, 'iOS AppIcon-1024.png differs from the official Noir 950 monogram');
+  assert.deepEqual(
+    [...buildIconFiles()['window-icon.rgba'].subarray(0, 4)],
+    [8, 9, 10, 255],
+    'window-icon.rgba top-left pixel must be opaque Noir 950 (#08090A)',
+  );
+  console.log('OK: official Noir 950 (#08090A) and Givre monogram, PNG sizes 16–1024, ICNS, ICO and iOS AppIcon-1024 verified.');
 }
